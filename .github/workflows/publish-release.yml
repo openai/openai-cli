@@ -1,0 +1,57 @@
+---
+name: Publish Release
+permissions:
+  contents: read
+
+concurrency:
+  group: publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    environment: publish
+    steps:
+    - name: Checkout
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Set up Go
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      with:
+        go-version-file: "go.mod"
+    - name: Create release app token for this repo
+      id: app-token
+      uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+      with:
+        app-id: ${{ secrets.RELEASE_APP_ID }}
+        private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        permission-contents: write
+    - name: Create release app token for homebrew-tools
+      id: tap-token
+      uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+      with:
+        app-id: ${{ secrets.RELEASE_APP_ID }}
+        private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        owner: openai
+        repositories: homebrew-tools
+        permission-contents: write
+        permission-pull-requests: write
+    - name: Run GoReleaser
+      uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.1.0
+      with:
+        version: latest
+        args: release --clean
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
+        MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+        MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+        MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+        MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+        MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
