@@ -1,0 +1,34 @@
+---
+name: Publish Release
+permissions:
+  contents: write
+
+concurrency:
+  group: publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    environment: publish
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: "go.mod"
+    - name: Run GoReleaser
+      uses: goreleaser/goreleaser-action@v6.1.0
+      with:
+        version: latest
+        args: release --clean
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

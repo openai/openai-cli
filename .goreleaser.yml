@@ -1,0 +1,96 @@
+project_name: openai
+version: 2
+
+before:
+  hooks:
+    - mkdir -p completions
+    - sh -c "go run ./cmd/openai/main.go @completion bash > completions/openai.bash"
+    - sh -c "go run ./cmd/openai/main.go @completion zsh > completions/openai.zsh"
+    - sh -c "go run ./cmd/openai/main.go @completion fish > completions/openai.fish"
+    - sh -c "go run ./cmd/openai/main.go @manpages -o man"
+
+builds:
+  - id: macos
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    binary: '{{ .ProjectName }}'
+    main: ./cmd/openai/main.go
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    ldflags:
+      - '-s -w -X main.version={{.Version}} -X main.commit={{.Commit}}'
+
+  - id: linux
+    goos: [linux]
+    goarch: ['386', arm, amd64, arm64]
+    env:
+      - CGO_ENABLED=0
+    binary: '{{ .ProjectName }}'
+    main: ./cmd/openai/main.go
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    ldflags:
+      - '-s -w -X main.version={{.Version}} -X main.commit={{.Commit}}'
+
+  - id: windows
+    goos: [windows]
+    goarch: ['386', amd64, arm64]
+    binary: '{{ .ProjectName }}'
+    main: ./cmd/openai/main.go
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    ldflags:
+      - '-s -w -X main.version={{.Version}} -X main.commit={{.Commit}}'
+
+archives:
+  - id: linux-archive
+    ids: [linux]
+    name_template: '{{ .ProjectName }}_{{ .Version }}_linux_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
+    formats: [tar.gz]
+    files:
+      - completions/*
+      - man/*/*
+  - id: macos-archive
+    ids: [macos]
+    name_template: '{{ .ProjectName }}_{{ .Version }}_macos_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
+    formats: [zip]
+    files:
+      - completions/*
+      - man/*/*
+  - id: windows-archive
+    ids: [windows]
+    name_template: '{{ .ProjectName }}_{{ .Version }}_windows_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
+    formats: [zip]
+    files:
+      - completions/*
+      - man/*/*
+
+snapshot:
+  version_template: '{{ .Tag }}-next'
+
+nfpms:
+  - license: Apache-2.0
+    maintainer: support@openai.com
+    bindir: /usr
+    formats:
+      - apk
+      - deb
+      - rpm
+      - termux.deb
+      - archlinux
+    contents:
+      - src: man/man1/*.1.gz
+        dst: /usr/share/man/man1/
+homebrew_casks:
+  - name: openai
+    repository:
+      owner: openai
+      name: homebrew-tools
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://developers.openai.com/api/docs
+    description: The official CLI for the OpenAI API.
+    license: Apache-2.0
+    binary: "openai"
+    completions:
+      bash: "completions/openai.bash"
+      zsh: "completions/openai.zsh"
+      fish: "completions/openai.fish"
+    manpages:
+    - man/man1/openai.1.gz

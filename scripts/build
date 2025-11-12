@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+# Mark the necessary Go modules as private to avoid Go's proxy
+export GOPRIVATE="${GOPRIVATE:+$GOPRIVATE,}github.com/openai/openai-go/v3,github.com/stainless-sdks/openai-go/v3"
+
+echo "==> Building openai"
+go build ./cmd/openai
