@@ -16,7 +16,8 @@ func TestAdminOrganizationProjectsCreate(t *testing.T) {
 			"--admin-api-key", "string",
 			"admin:organization:projects", "create",
 			"--name", "name",
-			"--geography", "US",
+			"--external-key-id", "external_key_id",
+			"--geography", "geography",
 		)
 	})
 
@@ -24,7 +25,8 @@ func TestAdminOrganizationProjectsCreate(t *testing.T) {
 		// Test piping YAML data over stdin
 		pipeData := []byte("" +
 			"name: name\n" +
-			"geography: US\n")
+			"external_key_id: external_key_id\n" +
+			"geography: geography\n")
 		mocktest.TestRunMockTestWithPipeAndFlags(
 			t, pipeData,
 			"--api-key", "string",
@@ -54,13 +56,18 @@ func TestAdminOrganizationProjectsUpdate(t *testing.T) {
 			"--admin-api-key", "string",
 			"admin:organization:projects", "update",
 			"--project-id", "project_id",
+			"--external-key-id", "external_key_id",
+			"--geography", "geography",
 			"--name", "name",
 		)
 	})
 
 	t.Run("piping data", func(t *testing.T) {
 		// Test piping YAML data over stdin
-		pipeData := []byte("name: name")
+		pipeData := []byte("" +
+			"external_key_id: external_key_id\n" +
+			"geography: geography\n" +
+			"name: name\n")
 		mocktest.TestRunMockTestWithPipeAndFlags(
 			t, pipeData,
 			"--api-key", "string",

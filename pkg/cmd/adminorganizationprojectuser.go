@@ -30,10 +30,14 @@ var adminOrganizationProjectsUsersCreate = cli.Command{
 			Required: true,
 			BodyPath: "role",
 		},
-		&requestflag.Flag[string]{
+		&requestflag.Flag[*string]{
+			Name:     "email",
+			Usage:    "Email of the user to add.",
+			BodyPath: "email",
+		},
+		&requestflag.Flag[*string]{
 			Name:     "user-id",
 			Usage:    "The ID of the user.",
-			Required: true,
 			BodyPath: "user_id",
 		},
 	},
@@ -76,10 +80,9 @@ var adminOrganizationProjectsUsersUpdate = cli.Command{
 			Required:  true,
 			PathParam: "user_id",
 		},
-		&requestflag.Flag[string]{
+		&requestflag.Flag[*string]{
 			Name:     "role",
 			Usage:    "`owner` or `member`",
-			Required: true,
 			BodyPath: "role",
 		},
 	},
