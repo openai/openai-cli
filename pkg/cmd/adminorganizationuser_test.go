@@ -28,13 +28,20 @@ func TestAdminOrganizationUsersUpdate(t *testing.T) {
 			"--admin-api-key", "string",
 			"admin:organization:users", "update",
 			"--user-id", "user_id",
-			"--role", "owner",
+			"--developer-persona", "developer_persona",
+			"--role", "role",
+			"--role-id", "role_id",
+			"--technical-level", "technical_level",
 		)
 	})
 
 	t.Run("piping data", func(t *testing.T) {
 		// Test piping YAML data over stdin
-		pipeData := []byte("role: owner")
+		pipeData := []byte("" +
+			"developer_persona: developer_persona\n" +
+			"role: role\n" +
+			"role_id: role_id\n" +
+			"technical_level: technical_level\n")
 		mocktest.TestRunMockTestWithPipeAndFlags(
 			t, pipeData,
 			"--api-key", "string",
