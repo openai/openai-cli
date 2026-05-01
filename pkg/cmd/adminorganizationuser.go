@@ -39,10 +39,25 @@ var adminOrganizationUsersUpdate = cli.Command{
 			Required:  true,
 			PathParam: "user_id",
 		},
-		&requestflag.Flag[string]{
+		&requestflag.Flag[*string]{
+			Name:     "developer-persona",
+			Usage:    "Developer persona metadata.",
+			BodyPath: "developer_persona",
+		},
+		&requestflag.Flag[*string]{
 			Name:     "role",
 			Usage:    "`owner` or `reader`",
 			BodyPath: "role",
+		},
+		&requestflag.Flag[*string]{
+			Name:     "role-id",
+			Usage:    "Role ID to assign to the user.",
+			BodyPath: "role_id",
+		},
+		&requestflag.Flag[*string]{
+			Name:     "technical-level",
+			Usage:    "Technical level metadata.",
+			BodyPath: "technical_level",
 		},
 	},
 	Action:          handleAdminOrganizationUsersUpdate,

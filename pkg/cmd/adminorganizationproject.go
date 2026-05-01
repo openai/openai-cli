@@ -25,7 +25,12 @@ var adminOrganizationProjectsCreate = cli.Command{
 			Required: true,
 			BodyPath: "name",
 		},
-		&requestflag.Flag[string]{
+		&requestflag.Flag[*string]{
+			Name:     "external-key-id",
+			Usage:    "External key ID to associate with the project.",
+			BodyPath: "external_key_id",
+		},
+		&requestflag.Flag[*string]{
 			Name:     "geography",
 			Usage:    "Create the project with the specified data residency region. Your organization must have access to Data residency functionality in order to use. See [data residency controls](https://platform.openai.com/docs/guides/your-data#data-residency-controls) to review the functionality and limitations of setting this field.",
 			BodyPath: "geography",
@@ -60,10 +65,19 @@ var adminOrganizationProjectsUpdate = cli.Command{
 			Required:  true,
 			PathParam: "project_id",
 		},
-		&requestflag.Flag[string]{
+		&requestflag.Flag[*string]{
+			Name:     "external-key-id",
+			Usage:    "External key ID to associate with the project.",
+			BodyPath: "external_key_id",
+		},
+		&requestflag.Flag[*string]{
+			Name:     "geography",
+			Usage:    "Geography for the project.",
+			BodyPath: "geography",
+		},
+		&requestflag.Flag[*string]{
 			Name:     "name",
 			Usage:    "The updated name of the project, this name appears in reports.",
-			Required: true,
 			BodyPath: "name",
 		},
 	},
