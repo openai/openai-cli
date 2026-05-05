@@ -146,3 +146,9 @@ To link to a local copy of the SDK:
 ```
 
 If you run the link script without any arguments, it will default to `../openai-go`.
+
+## License
+
+Copyright 2026 OpenAI
+
+This project is licensed under the [Apache License 2.0](LICENSE).
