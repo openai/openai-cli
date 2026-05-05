@@ -66,7 +66,7 @@ var imagesEdit = cli.Command{
 	Flags: []cli.Flag{
 		&requestflag.Flag[[]string]{
 			Name:      "image",
-			Usage:     "The image(s) to edit. Must be a supported image file or an array of images.\n\nFor the GPT image models (`gpt-image-1`, `gpt-image-1-mini`, and `gpt-image-1.5`), each image should be a `png`, `webp`, or `jpg`\nfile less than 50MB. You can provide up to 16 images.\n`chatgpt-image-latest` follows the same input constraints as GPT image models.\n\nFor `dall-e-2`, you can only provide one image, and it should be a square\n`png` file less than 4MB.\n",
+			Usage:     "The image(s) to edit. Must be a supported image file or an array of images.\n\nFor the GPT image models (`gpt-image-1`, `gpt-image-1-mini`,\n`gpt-image-1.5`, `gpt-image-2`, `gpt-image-2-2026-04-21`, and\n`chatgpt-image-latest`), each image should be a `png`, `webp`, or\n`jpg` file less than 50MB. You can provide up to 16 images.\n\nFor `dall-e-2`, you can only provide one image, and it should be a\nsquare `png` file less than 4MB.\n",
 			Required:  true,
 			BodyPath:  "image",
 			FileInput: true,
@@ -96,7 +96,7 @@ var imagesEdit = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "model",
-			Usage:    "The model to use for image generation. Defaults to `gpt-image-1.5`.",
+			Usage:    "The model to use for image generation. One of `dall-e-2` or a GPT image model (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`, `gpt-image-2-2026-04-21`, or `chatgpt-image-latest`). Defaults to `gpt-image-1.5`.",
 			BodyPath: "model",
 		},
 		&requestflag.Flag[*int64]{
@@ -179,7 +179,7 @@ var imagesGenerate = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "model",
-			Usage:    "The model to use for image generation. One of `dall-e-2`, `dall-e-3`, or a GPT image model (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`). Defaults to `dall-e-2` unless a parameter specific to the GPT image models is used.",
+			Usage:    "The model to use for image generation. One of `dall-e-2`, `dall-e-3`, or a GPT image model (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`, or `gpt-image-2-2026-04-21`). Defaults to `dall-e-2` unless a parameter specific to the GPT image models is used.",
 			BodyPath: "model",
 		},
 		&requestflag.Flag[*string]{
