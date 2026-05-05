@@ -17,7 +17,7 @@ func TestImagesCreateVariation(t *testing.T) {
 			"--admin-api-key", "string",
 			"images", "create-variation",
 			"--image", mocktest.TestFile(t, "Example data"),
-			"--model", "gpt-image-1.5",
+			"--model", "gpt-image-1",
 			"--n", "1",
 			"--response-format", "url",
 			"--size", "1024x1024",
@@ -30,7 +30,7 @@ func TestImagesCreateVariation(t *testing.T) {
 		// Test piping YAML data over stdin
 		pipeDataStr := "" +
 			"image: Example data\n" +
-			"model: gpt-image-1.5\n" +
+			"model: gpt-image-1\n" +
 			"'n': 1\n" +
 			"response_format: url\n" +
 			"size: 1024x1024\n" +
@@ -59,7 +59,7 @@ func TestImagesEdit(t *testing.T) {
 			"--background", "transparent",
 			"--input-fidelity", "high",
 			"--mask", mocktest.TestFile(t, "Example data"),
-			"--model", "gpt-image-1.5",
+			"--model", "gpt-image-2",
 			"--n", "1",
 			"--output-compression", "100",
 			"--output-format", "png",
@@ -81,7 +81,7 @@ func TestImagesEdit(t *testing.T) {
 			"background: transparent\n" +
 			"input_fidelity: high\n" +
 			"mask: Example data\n" +
-			"model: gpt-image-1.5\n" +
+			"model: gpt-image-2\n" +
 			"'n': 1\n" +
 			"output_compression: 100\n" +
 			"output_format: png\n" +
@@ -113,7 +113,7 @@ func TestImagesGenerate(t *testing.T) {
 			"--max-items", "10",
 			"--prompt", "A cute baby sea otter",
 			"--background", "transparent",
-			"--model", "gpt-image-1.5",
+			"--model", "gpt-image-2",
 			"--moderation", "low",
 			"--n", "1",
 			"--output-compression", "100",
@@ -133,7 +133,7 @@ func TestImagesGenerate(t *testing.T) {
 		pipeData := []byte("" +
 			"prompt: A cute baby sea otter\n" +
 			"background: transparent\n" +
-			"model: gpt-image-1.5\n" +
+			"model: gpt-image-2\n" +
 			"moderation: low\n" +
 			"'n': 1\n" +
 			"output_compression: 100\n" +
