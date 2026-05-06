@@ -15,6 +15,10 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     environment: publish
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
     - name: Checkout
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -58,3 +62,16 @@ jobs:
         MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
         MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
         MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+    - name: Attest release artifacts
+      uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+      with:
+        subject-path: dist/*
+    - name: Verify release artifact attestations
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        find dist -maxdepth 1 -type f -print0 | while IFS= read -r -d '' file; do
+          gh attestation verify "$file" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/publish-release.yml"
+        done
