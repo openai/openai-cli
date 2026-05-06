@@ -66,7 +66,7 @@ func TestImagesEdit(t *testing.T) {
 			"--partial-images", "1",
 			"--quality", "high",
 			"--response-format", "url",
-			"--size", "1024x1024",
+			"--size", "256x256",
 			"--stream=false",
 			"--user", "user-1234",
 		)
@@ -88,7 +88,7 @@ func TestImagesEdit(t *testing.T) {
 			"partial_images: 1\n" +
 			"quality: high\n" +
 			"response_format: url\n" +
-			"size: 1024x1024\n" +
+			"size: 256x256\n" +
 			"stream: false\n" +
 			"user: user-1234\n"
 		pipeDataStr = strings.ReplaceAll(pipeDataStr, "Example data", testFile)
@@ -121,7 +121,7 @@ func TestImagesGenerate(t *testing.T) {
 			"--partial-images", "1",
 			"--quality", "medium",
 			"--response-format", "url",
-			"--size", "1024x1024",
+			"--size", "auto",
 			"--stream=false",
 			"--style", "vivid",
 			"--user", "user-1234",
@@ -141,7 +141,7 @@ func TestImagesGenerate(t *testing.T) {
 			"partial_images: 1\n" +
 			"quality: medium\n" +
 			"response_format: url\n" +
-			"size: 1024x1024\n" +
+			"size: auto\n" +
 			"stream: false\n" +
 			"style: vivid\n" +
 			"user: user-1234\n")
