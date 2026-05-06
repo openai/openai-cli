@@ -152,7 +152,7 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.Flag[*int64]{
 			Name:     "top-logprobs",
-			Usage:    "An integer between 0 and 20 specifying the number of most likely tokens to\nreturn at each token position, each with an associated log probability.\n",
+			Usage:    "An integer between 0 and 20 specifying the maximum number of most likely\ntokens to return at each token position, each with an associated log\nprobability. In some cases, the number of returned tokens may be fewer than\nrequested.\n",
 			BodyPath: "top_logprobs",
 		},
 		&requestflag.Flag[*float64]{
