@@ -42,10 +42,13 @@ jobs:
         repositories: homebrew-tools
         permission-contents: write
         permission-pull-requests: write
+    - name: Read GoReleaser version
+      id: goreleaser-version
+      run: echo "version=$(cat .goreleaser-version)" >> "$GITHUB_OUTPUT"
     - name: Run GoReleaser
       uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.1.0
       with:
-        version: latest
+        version: ${{ steps.goreleaser-version.outputs.version }}
         args: release --clean
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
