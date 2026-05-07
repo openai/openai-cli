@@ -1,6 +1,8 @@
 package autocomplete
 
 import (
+	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -153,6 +155,89 @@ func TestGetCompletions_FileFlagBehavior(t *testing.T) {
 
 	assert.EqualValues(t, ShellCompletionBehaviorFile, result.Behavior)
 	assert.Empty(t, result.Completions)
+}
+
+func TestBashCompletionFileCandidatesUseFilenameQuoting(t *testing.T) {
+	t.Parallel()
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not available")
+	}
+
+	completionScript, err := shellCompletions[CompletionStyleBash](&cli.Command{}, "openai")
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	probe := `
+cd "$1" || exit 1
+touch '$(printf autocomplete-marker > completion-output)'
+
+if ! type mapfile >/dev/null 2>&1; then
+  mapfile() {
+    if [[ "$1" == "-t" ]]; then
+      shift
+    fi
+    if [[ "$1" != "COMPREPLY" ]]; then
+      return 2
+    fi
+
+    COMPREPLY=()
+    local line
+    while IFS= read -r line; do
+      COMPREPLY+=("$line")
+    done
+  }
+fi
+
+openai() {
+  return 10
+}
+
+` + completionScript + `
+
+printf 'spec:%s\n' "$(complete -p openai)"
+
+COMP_WORDS=(openai files create --file '@$(')
+COMP_CWORD=4
+__openai_bash_autocomplete
+printf 'forced:%s\n' "${COMPREPLY[0]}"
+
+COMP_WORDS=(openai upload '$(')
+COMP_CWORD=2
+__openai_bash_autocomplete
+printf 'file:%s\n' "${COMPREPLY[0]}"
+
+if [[ -e completion-output ]]; then
+  printf 'unexpected completion-output file\n'
+  exit 1
+fi
+`
+
+	cmd := exec.Command(bash, "-c", probe, "bash-completion-probe", t.TempDir())
+	out, err := cmd.CombinedOutput()
+	output := string(out)
+
+	if !assert.NoError(t, err, output) {
+		return
+	}
+	assert.Contains(t, output, "spec:complete -o filenames -F __openai_bash_autocomplete openai")
+	assert.Contains(t, output, "forced:@$(printf autocomplete-marker > completion-output)")
+	assert.Contains(t, output, "file:$(printf autocomplete-marker > completion-output)")
+	assert.NotContains(t, output, "unexpected completion-output file")
+}
+
+func TestBashCompletionScriptDoesNotRegisterPlainCompletion(t *testing.T) {
+	t.Parallel()
+
+	completionScript, err := shellCompletions[CompletionStyleBash](&cli.Command{}, "openai")
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Contains(t, completionScript, "complete -o filenames -F __openai_bash_autocomplete openai")
+	assert.False(t, strings.Contains(completionScript, "\ncomplete -F __openai_bash_autocomplete openai"))
 }
 
 func TestGetCompletions_NonBoolFlagValue(t *testing.T) {

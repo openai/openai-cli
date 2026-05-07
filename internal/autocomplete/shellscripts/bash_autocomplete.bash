@@ -56,4 +56,4 @@ ____APPNAME___bash_autocomplete() {
   fi
 }
 
-complete -F ____APPNAME___bash_autocomplete __APPNAME__
+complete -o filenames -F ____APPNAME___bash_autocomplete __APPNAME__
