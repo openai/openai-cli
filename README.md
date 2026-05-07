@@ -54,10 +54,24 @@ openai [resource] <command> [flags...]
 ```sh
 export OPENAI_API_KEY="sk-..."
 
-openai chat:completions create \
-  --message '{content: Say this is a test, role: user}' \
-  --model gpt-4o
+openai responses create \
+  --input "Say this is a test" \
+  --model gpt-5.5
 ```
+
+Organization admin endpoints require an admin API key:
+
+```sh
+export OPENAI_ADMIN_KEY="sk-admin-..."
+
+openai admin:organization:usage completions \
+  --start-time 1735689600 \
+  --end-time 1735776000 \
+  --bucket-width 1d
+```
+
+See the [completions usage API reference](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/completions)
+for available filters and grouping options.
 
 For details about specific commands, use the `--help` flag.
 
