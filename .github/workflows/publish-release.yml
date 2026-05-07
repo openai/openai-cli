@@ -30,6 +30,7 @@ jobs:
         persist-credentials: false
     - name: Ensure release tag is on main
       env:
+        GITHUB_TOKEN: ${{ github.token }}
         TAG: ${{ inputs.tag }}
       run: |
         case "$TAG" in
@@ -38,12 +39,13 @@ jobs:
         esac
         git check-ref-format "refs/tags/$TAG"
 
-        remote_tag="$(git ls-remote --exit-code --tags --refs origin "refs/tags/$TAG")"
+        authenticated_origin="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        remote_tag="$(git ls-remote --exit-code --tags --refs "$authenticated_origin" "refs/tags/$TAG")"
         remote_ref="$(printf '%s\n' "$remote_tag" | awk '{print $2}')"
         test "$remote_ref" = "refs/tags/$TAG"
 
-        git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-        git fetch --no-tags origin "+refs/tags/$TAG:refs/tags/$TAG"
+        git fetch --no-tags "$authenticated_origin" +refs/heads/main:refs/remotes/origin/main
+        git fetch --no-tags "$authenticated_origin" "+refs/tags/$TAG:refs/tags/$TAG"
 
         local_ref="$(git for-each-ref --format='%(refname)' "refs/tags/$TAG")"
         test "$local_ref" = "refs/tags/$TAG"
