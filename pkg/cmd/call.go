@@ -61,10 +61,20 @@ var realtimeCallsAccept = requestflag.WithInnerFlags(cli.Command{
 			Default:  []string{"audio"},
 			BodyPath: "output_modalities",
 		},
+		&requestflag.Flag[bool]{
+			Name:     "parallel-tool-calls",
+			Usage:    "Whether the model may call multiple tools in parallel. Only supported by\nreasoning Realtime models such as `gpt-realtime-2`.\n",
+			BodyPath: "parallel_tool_calls",
+		},
 		&requestflag.Flag[map[string]any]{
 			Name:     "prompt",
 			Usage:    "Reference to a prompt template and its variables.\n[Learn more](https://platform.openai.com/docs/guides/text?api-mode=responses#reusable-prompts).\n",
 			BodyPath: "prompt",
+		},
+		&requestflag.Flag[map[string]any]{
+			Name:     "reasoning",
+			Usage:    "Configuration for reasoning-capable Realtime models such as `gpt-realtime-2`.\n",
+			BodyPath: "reasoning",
 		},
 		&requestflag.Flag[any]{
 			Name:     "tool-choice",
@@ -116,6 +126,13 @@ var realtimeCallsAccept = requestflag.WithInnerFlags(cli.Command{
 			Name:       "prompt.version",
 			Usage:      "Optional version of the prompt template.",
 			InnerField: "version",
+		},
+	},
+	"reasoning": {
+		&requestflag.InnerFlag[string]{
+			Name:       "reasoning.effort",
+			Usage:      "Constrains effort on reasoning for reasoning-capable Realtime models such as\n`gpt-realtime-2`.\n",
+			InnerField: "effort",
 		},
 	},
 })

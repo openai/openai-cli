@@ -17,7 +17,7 @@ func TestRealtimeClientSecretsCreate(t *testing.T) {
 			"--admin-api-key", "string",
 			"realtime:client-secrets", "create",
 			"--expires-after", "{anchor: created_at, seconds: 10}",
-			"--session", "{type: realtime, audio: {input: {format: {rate: 24000, type: audio/pcm}, noise_reduction: {type: near_field}, transcription: {language: language, model: whisper-1, prompt: prompt}, turn_detection: {type: server_vad, create_response: true, idle_timeout_ms: 5000, interrupt_response: true, prefix_padding_ms: 0, silence_duration_ms: 0, threshold: 0}}, output: {format: {rate: 24000, type: audio/pcm}, speed: 0.25, voice: alloy}}, include: [item.input_audio_transcription.logprobs], instructions: instructions, max_output_tokens: inf, model: gpt-realtime, output_modalities: [text], prompt: {id: id, variables: {foo: string}, version: version}, tool_choice: none, tools: [{description: description, name: name, parameters: {}, type: function}], tracing: auto, truncation: auto}",
+			"--session", "{type: realtime, audio: {input: {format: {rate: 24000, type: audio/pcm}, noise_reduction: {type: near_field}, transcription: {delay: minimal, language: language, model: whisper-1, prompt: prompt}, turn_detection: {type: server_vad, create_response: true, idle_timeout_ms: 5000, interrupt_response: true, prefix_padding_ms: 0, silence_duration_ms: 0, threshold: 0}}, output: {format: {rate: 24000, type: audio/pcm}, speed: 0.25, voice: alloy}}, include: [item.input_audio_transcription.logprobs], instructions: instructions, max_output_tokens: inf, model: gpt-realtime, output_modalities: [text], parallel_tool_calls: true, prompt: {id: id, variables: {foo: string}, version: version}, reasoning: {effort: minimal}, tool_choice: none, tools: [{description: description, name: name, parameters: {}, type: function}], tracing: auto, truncation: auto}",
 		)
 	})
 
@@ -33,7 +33,7 @@ func TestRealtimeClientSecretsCreate(t *testing.T) {
 			"realtime:client-secrets", "create",
 			"--expires-after.anchor", "created_at",
 			"--expires-after.seconds", "10",
-			"--session", "{type: realtime, audio: {input: {format: {rate: 24000, type: audio/pcm}, noise_reduction: {type: near_field}, transcription: {language: language, model: whisper-1, prompt: prompt}, turn_detection: {type: server_vad, create_response: true, idle_timeout_ms: 5000, interrupt_response: true, prefix_padding_ms: 0, silence_duration_ms: 0, threshold: 0}}, output: {format: {rate: 24000, type: audio/pcm}, speed: 0.25, voice: alloy}}, include: [item.input_audio_transcription.logprobs], instructions: instructions, max_output_tokens: inf, model: gpt-realtime, output_modalities: [text], prompt: {id: id, variables: {foo: string}, version: version}, tool_choice: none, tools: [{description: description, name: name, parameters: {}, type: function}], tracing: auto, truncation: auto}",
+			"--session", "{type: realtime, audio: {input: {format: {rate: 24000, type: audio/pcm}, noise_reduction: {type: near_field}, transcription: {delay: minimal, language: language, model: whisper-1, prompt: prompt}, turn_detection: {type: server_vad, create_response: true, idle_timeout_ms: 5000, interrupt_response: true, prefix_padding_ms: 0, silence_duration_ms: 0, threshold: 0}}, output: {format: {rate: 24000, type: audio/pcm}, speed: 0.25, voice: alloy}}, include: [item.input_audio_transcription.logprobs], instructions: instructions, max_output_tokens: inf, model: gpt-realtime, output_modalities: [text], parallel_tool_calls: true, prompt: {id: id, variables: {foo: string}, version: version}, reasoning: {effort: minimal}, tool_choice: none, tools: [{description: description, name: name, parameters: {}, type: function}], tracing: auto, truncation: auto}",
 		)
 	})
 
@@ -53,6 +53,7 @@ func TestRealtimeClientSecretsCreate(t *testing.T) {
 			"      noise_reduction:\n" +
 			"        type: near_field\n" +
 			"      transcription:\n" +
+			"        delay: minimal\n" +
 			"        language: language\n" +
 			"        model: whisper-1\n" +
 			"        prompt: prompt\n" +
@@ -77,11 +78,14 @@ func TestRealtimeClientSecretsCreate(t *testing.T) {
 			"  model: gpt-realtime\n" +
 			"  output_modalities:\n" +
 			"    - text\n" +
+			"  parallel_tool_calls: true\n" +
 			"  prompt:\n" +
 			"    id: id\n" +
 			"    variables:\n" +
 			"      foo: string\n" +
 			"    version: version\n" +
+			"  reasoning:\n" +
+			"    effort: minimal\n" +
 			"  tool_choice: none\n" +
 			"  tools:\n" +
 			"    - description: description\n" +
