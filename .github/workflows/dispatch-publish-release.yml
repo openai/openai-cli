@@ -1,0 +1,25 @@
+---
+name: Dispatch Publish Release
+permissions:
+  actions: write
+  contents: read
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  dispatch:
+    if: github.repository == 'openai/openai-cli'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Dispatch Publish Release on main
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ github.ref_name }}
+      run: |
+        gh workflow run publish-release.yml \
+          --repo "$GITHUB_REPOSITORY" \
+          --ref main \
+          -f tag="$TAG"
