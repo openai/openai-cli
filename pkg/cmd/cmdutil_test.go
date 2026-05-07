@@ -220,6 +220,19 @@ func TestFormatJSON(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, `{"a":1}`+"\n", string(formatted))
 	})
+
+	t.Run("PrettyEscapesDecodedTerminalControlSequences", func(t *testing.T) {
+		t.Parallel()
+
+		res := gjson.Parse(`{"message":"\u001b]52;c;ZGF0YQ==\u0007"}`)
+		formatted, err := formatJSON(res, ShowJSONOpts{Format: "pretty", Stdout: os.Stdout})
+		require.NoError(t, err)
+
+		out := string(formatted)
+		require.NotContains(t, out, "\x1b]52")
+		require.NotContains(t, out, "\a")
+		require.Contains(t, out, `\u001b]52;c;ZGF0YQ==\u0007`)
+	})
 }
 
 func TestShowJSONIterator(t *testing.T) {
