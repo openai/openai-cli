@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.1.0 (2026-05-07)
+
+Full Changelog: [v1.0.0...v1.1.0](https://github.com/openai/openai-cli/compare/v1.0.0...v1.1.0)
+
+### Features
+
+* **api:** realtime 2 ([c83180c](https://github.com/openai/openai-cli/commit/c83180caca0349714da4625796e2af2a1f152345))
+
+
+### Bug Fixes
+
+* **api:** fix imagegen `size` enum regression ([6ae6672](https://github.com/openai/openai-cli/commit/6ae6672cea74af3147412af49a1155f954eb7a41))
+
+
+### Chores
+
+* redact api-key headers in debug logs ([7452ba1](https://github.com/openai/openai-cli/commit/7452ba1b6d4ad0ddf62ebe2c3f34f88a23b1c6d8))
+
+
+### Documentation
+
+* **api:** update top-logprobs description in chat completions and responses ([f3e204e](https://github.com/openai/openai-cli/commit/f3e204e5d95a0bc347ff21ed59ee5261b7bc38f6))
+
 ## 1.0.0 (2026-05-05)
 
 Full Changelog: [v1.0.0...v1.0.0](https://github.com/openai/openai-cli/compare/v1.0.0...v1.0.0)
