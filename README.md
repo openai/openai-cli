@@ -51,6 +51,8 @@ The CLI follows a resource-based command structure:
 openai [resource] <command> [flags...]
 ```
 
+Standard API endpoints require an [API key](https://platform.openai.com/settings/organization/api-keys):
+
 ```sh
 export OPENAI_API_KEY="sk-..."
 
@@ -59,7 +61,7 @@ openai responses create \
   --model gpt-5.5
 ```
 
-Organization admin endpoints require an admin API key:
+Admin endpoints require an [admin API key](https://platform.openai.com/settings/organization/admin-keys):
 
 ```sh
 export OPENAI_ADMIN_KEY="sk-admin-..."
@@ -69,9 +71,6 @@ openai admin:organization:usage completions \
   --end-time 1735776000 \
   --bucket-width 1d
 ```
-
-See the [completions usage API reference](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/completions)
-for available filters and grouping options.
 
 For details about specific commands, use the `--help` flag.
 
