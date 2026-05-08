@@ -730,9 +730,9 @@ func newAdsRequest(ctx context.Context, cmd *cli.Command, method, path string, q
 		return nil, fmt.Errorf("Ads API key required; set OPENAI_ADS_API_KEY or pass --ads-api-key")
 	}
 
-	baseURL := strings.TrimRight(cmd.Root().String("ads-base-url"), "/")
-	if baseURL == "" {
-		baseURL = defaultAdsBaseURL
+	baseURL := defaultAdsBaseURL
+	if cmd.Root().IsSet("base-url") {
+		baseURL = strings.TrimRight(cmd.Root().String("base-url"), "/")
 	}
 	endpoint, err := url.Parse(baseURL + path)
 	if err != nil {
