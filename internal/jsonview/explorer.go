@@ -24,12 +24,13 @@ import (
 
 const (
 	// UI layout constants
-	borderPadding     = 2
-	heightOffset      = 5
-	tableMinHeight    = 2
-	titlePaddingLeft  = 2
-	titlePaddingTop   = 0
-	footerPaddingLeft = 1
+	borderPadding         = 2
+	heightOffset          = 5
+	tableMinHeight        = 2
+	titlePaddingLeft      = 2
+	titlePaddingTop       = 0
+	footerPaddingLeft     = 1
+	cellHorizontalPadding = 2 // bubbles/v2 table cell style: Padding(0, 1) on both sides
 
 	// Column width constants
 	defaultColumnWidth = 10
@@ -206,6 +207,16 @@ func (tv *TableView) Resize(width, height int) {
 	tv.width = width
 	tv.height = height
 	tv.updateColumnWidths(width)
+	// In bubbles v2 the table's underlying viewport renders nothing when its
+	// width is 0, and pads rows to its full width when set. Size it to the
+	// natural content width so rows aren't padded past the surrounding border.
+	contentWidth := 0
+	for _, c := range tv.table.Columns() {
+		if c.Width > 0 {
+			contentWidth += c.Width + cellHorizontalPadding
+		}
+	}
+	tv.table.SetWidth(contentWidth)
 	tv.table.SetHeight(min(height-heightOffset, tableMinHeight+len(tv.table.Rows())))
 }
 
