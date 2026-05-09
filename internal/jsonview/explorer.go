@@ -5,16 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/color"
 	"math"
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/table"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/table"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/term"
 	"github.com/muesli/reflow/truncate"
 	"github.com/muesli/reflow/wordwrap"
@@ -23,12 +24,13 @@ import (
 
 const (
 	// UI layout constants
-	borderPadding     = 2
-	heightOffset      = 5
-	tableMinHeight    = 2
-	titlePaddingLeft  = 2
-	titlePaddingTop   = 0
-	footerPaddingLeft = 1
+	borderPadding         = 2
+	heightOffset          = 5
+	tableMinHeight        = 2
+	titlePaddingLeft      = 2
+	titlePaddingTop       = 0
+	footerPaddingLeft     = 1
+	cellHorizontalPadding = 2 // bubbles/v2 table cell style: Padding(0, 1) on both sides
 
 	// Column width constants
 	defaultColumnWidth = 10
@@ -38,7 +40,9 @@ const (
 	// String formatting constants
 	maxStringLength  = 100
 	maxPreviewLength = 24
+)
 
+var (
 	arrayColor  = lipgloss.Color("1")
 	stringColor = lipgloss.Color("5")
 	objectColor = lipgloss.Color("4")
@@ -203,6 +207,16 @@ func (tv *TableView) Resize(width, height int) {
 	tv.width = width
 	tv.height = height
 	tv.updateColumnWidths(width)
+	// In bubbles v2 the table's underlying viewport renders nothing when its
+	// width is 0, and pads rows to its full width when set. Size it to the
+	// natural content width so rows aren't padded past the surrounding border.
+	contentWidth := 0
+	for _, c := range tv.table.Columns() {
+		if c.Width > 0 {
+			contentWidth += c.Width + cellHorizontalPadding
+		}
+	}
+	tv.table.SetWidth(contentWidth)
 	tv.table.SetHeight(min(height-heightOffset, tableMinHeight+len(tv.table.Rows())))
 }
 
@@ -279,13 +293,13 @@ func (tv *TextView) Update(msg tea.Msg, raw bool) tea.Cmd {
 func (tv *TextView) Resize(width, height int) {
 	h := height - heightOffset
 	if !tv.ready {
-		tv.viewport = viewport.New(width, h)
+		tv.viewport = viewport.New(viewport.WithWidth(width), viewport.WithHeight(h))
 		tv.viewport.SetContent(wordwrap.String(sanitizeTerminalString(tv.data.Str), width))
 		tv.ready = true
 		return
 	}
-	tv.viewport.Width = width
-	tv.viewport.Height = h
+	tv.viewport.SetWidth(width)
+	tv.viewport.SetHeight(h)
 }
 
 type JSONViewer struct {
@@ -390,7 +404,7 @@ func (v *JSONViewer) Init() tea.Cmd     { return nil }
 
 func (v *JSONViewer) resize(width, height int) {
 	v.width, v.height = width, height
-	v.help.Width = width
+	v.help.SetWidth(width)
 	for i := range v.stack {
 		v.stack[i].Resize(width, height)
 	}
@@ -401,7 +415,7 @@ func (v *JSONViewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		v.resize(msg.Width-borderPadding, msg.Height)
 		return v, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, keys.Quit):
 			return v, tea.Quit
@@ -516,14 +530,14 @@ func (v *JSONViewer) toggleRaw() (tea.Model, tea.Cmd) {
 	return v, nil
 }
 
-func (v *JSONViewer) View() string {
+func (v *JSONViewer) View() tea.View {
 	view := v.current()
 	title := v.buildTitle(view)
 	content := titleStyle.Render(title)
 	style := v.getStyleForData(view.GetData())
 	content += "\n" + style.Render(view.View())
 	content += "\n" + v.help.View(keys)
-	return content
+	return tea.NewView(content)
 }
 
 func (v *JSONViewer) buildTitle(view JSONView) string {
@@ -675,7 +689,7 @@ func newObjectTableView(path string, data gjson.Result, raw bool) *TableView {
 	}
 }
 
-func createTable(columns []table.Column, rows []table.Row, bgColor lipgloss.Color) table.Model {
+func createTable(columns []table.Column, rows []table.Row, bgColor color.Color) table.Model {
 	t := table.New(
 		table.WithColumns(columns),
 		table.WithRows(rows),
