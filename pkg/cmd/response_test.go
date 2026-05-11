@@ -216,6 +216,7 @@ func TestResponsesCompact(t *testing.T) {
 			"--previous-response-id", "resp_123",
 			"--prompt-cache-key", "prompt_cache_key",
 			"--prompt-cache-retention", "in_memory",
+			"--service-tier", "auto",
 		)
 	})
 
@@ -227,7 +228,8 @@ func TestResponsesCompact(t *testing.T) {
 			"instructions: instructions\n" +
 			"previous_response_id: resp_123\n" +
 			"prompt_cache_key: prompt_cache_key\n" +
-			"prompt_cache_retention: in_memory\n")
+			"prompt_cache_retention: in_memory\n" +
+			"service_tier: auto\n")
 		mocktest.TestRunMockTestWithPipeAndFlags(
 			t, pipeData,
 			"--api-key", "string",
