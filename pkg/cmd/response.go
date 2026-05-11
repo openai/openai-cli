@@ -354,6 +354,11 @@ var responsesCompact = cli.Command{
 			Usage:    "How long to retain a prompt cache entry created by this request.",
 			BodyPath: "prompt_cache_retention",
 		},
+		&requestflag.Flag[*string]{
+			Name:     "service-tier",
+			Usage:    "The service tier to use for this request.",
+			BodyPath: "service_tier",
+		},
 	},
 	Action:          handleResponsesCompact,
 	HideHelpCommand: true,
