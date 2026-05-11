@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0 (2026-05-11)
+
+Full Changelog: [v1.1.2...v1.2.0](https://github.com/openai/openai-cli/compare/v1.1.2...v1.2.0)
+
+### Features
+
+* **api:** add service_tier parameter to responses compact method ([5901109](https://github.com/openai/openai-cli/commit/5901109e1b3b10b3802fcd8581a9c4e4a5658fc9))
+
+
+### Documentation
+
+* update README examples ([7e43c6a](https://github.com/openai/openai-cli/commit/7e43c6ad73326fa697a9d1c092bf5886bb0ee0d4))
+
 ## 1.1.2 (2026-05-07)
 
 Full Changelog: [v1.1.1...v1.1.2](https://github.com/openai/openai-cli/compare/v1.1.1...v1.1.2)
