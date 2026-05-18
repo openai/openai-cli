@@ -130,6 +130,27 @@ func TestAdminOrganizationUsageEmbeddings(t *testing.T) {
 	})
 }
 
+func TestAdminOrganizationUsageFileSearchCalls(t *testing.T) {
+	t.Run("regular flags", func(t *testing.T) {
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"admin:organization:usage", "file-search-calls",
+			"--start-time", "0",
+			"--api-key-id", "string",
+			"--bucket-width", "1m",
+			"--end-time", "0",
+			"--group-by", "project_id",
+			"--limit", "0",
+			"--page", "page",
+			"--project-id", "string",
+			"--user-id", "string",
+			"--vector-store-id", "string",
+		)
+	})
+}
+
 func TestAdminOrganizationUsageImages(t *testing.T) {
 	t.Run("regular flags", func(t *testing.T) {
 		mocktest.TestRunMockTestWithFlags(
@@ -188,6 +209,28 @@ func TestAdminOrganizationUsageVectorStores(t *testing.T) {
 			"--limit", "0",
 			"--page", "page",
 			"--project-id", "string",
+		)
+	})
+}
+
+func TestAdminOrganizationUsageWebSearchCalls(t *testing.T) {
+	t.Run("regular flags", func(t *testing.T) {
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"admin:organization:usage", "web-search-calls",
+			"--start-time", "0",
+			"--api-key-id", "string",
+			"--bucket-width", "1m",
+			"--context-level", "low",
+			"--end-time", "0",
+			"--group-by", "project_id",
+			"--limit", "0",
+			"--model", "string",
+			"--page", "page",
+			"--project-id", "string",
+			"--user-id", "string",
 		)
 	})
 }
