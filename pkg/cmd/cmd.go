@@ -416,9 +416,11 @@ func init() {
 					&adminOrganizationUsageCompletions,
 					&adminOrganizationUsageCosts,
 					&adminOrganizationUsageEmbeddings,
+					&adminOrganizationUsageFileSearchCalls,
 					&adminOrganizationUsageImages,
 					&adminOrganizationUsageModerations,
 					&adminOrganizationUsageVectorStores,
+					&adminOrganizationUsageWebSearchCalls,
 				},
 			},
 			{
@@ -571,6 +573,25 @@ func init() {
 				Commands: []*cli.Command{
 					&adminOrganizationProjectsRateLimitsListRateLimits,
 					&adminOrganizationProjectsRateLimitsUpdateRateLimit,
+				},
+			},
+			{
+				Name:     "admin:organization:projects:model-permissions",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationProjectsModelPermissionsRetrieve,
+					&adminOrganizationProjectsModelPermissionsUpdate,
+					&adminOrganizationProjectsModelPermissionsDelete,
+				},
+			},
+			{
+				Name:     "admin:organization:projects:hosted-tool-permissions",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationProjectsHostedToolPermissionsRetrieve,
+					&adminOrganizationProjectsHostedToolPermissionsUpdate,
 				},
 			},
 			{
