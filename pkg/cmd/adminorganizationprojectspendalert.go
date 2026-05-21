@@ -14,9 +14,9 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-var adminOrganizationProjectsGroupsCreate = cli.Command{
+var adminOrganizationProjectsSpendAlertsCreate = requestflag.WithInnerFlags(cli.Command{
 	Name:    "create",
-	Usage:   "Grants a group access to a project.",
+	Usage:   "Creates a project spend alert.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -25,25 +25,55 @@ var adminOrganizationProjectsGroupsCreate = cli.Command{
 			PathParam: "project_id",
 		},
 		&requestflag.Flag[string]{
-			Name:     "group-id",
-			Usage:    "Identifier of the group to add to the project.",
+			Name:     "currency",
+			Usage:    "The currency for the threshold amount.",
 			Required: true,
-			BodyPath: "group_id",
+			BodyPath: "currency",
 		},
 		&requestflag.Flag[string]{
-			Name:     "role",
-			Usage:    "Identifier of the project role to grant to the group.",
+			Name:     "interval",
+			Usage:    "The time interval for evaluating spend against the threshold.",
 			Required: true,
-			BodyPath: "role",
+			BodyPath: "interval",
+		},
+		&requestflag.Flag[map[string]any]{
+			Name:     "notification-channel",
+			Usage:    "Email notification settings for a spend alert.",
+			Required: true,
+			BodyPath: "notification_channel",
+		},
+		&requestflag.Flag[int64]{
+			Name:     "threshold-amount",
+			Usage:    "The alert threshold amount, in cents.",
+			Required: true,
+			BodyPath: "threshold_amount",
 		},
 	},
-	Action:          handleAdminOrganizationProjectsGroupsCreate,
+	Action:          handleAdminOrganizationProjectsSpendAlertsCreate,
 	HideHelpCommand: true,
-}
+}, map[string][]requestflag.HasOuterFlag{
+	"notification-channel": {
+		&requestflag.InnerFlag[[]string]{
+			Name:       "notification-channel.recipients",
+			Usage:      "Email addresses that receive the spend alert notification.",
+			InnerField: "recipients",
+		},
+		&requestflag.InnerFlag[string]{
+			Name:       "notification-channel.type",
+			Usage:      "The notification channel type. Currently only `email` is supported.",
+			InnerField: "type",
+		},
+		&requestflag.InnerFlag[*string]{
+			Name:       "notification-channel.subject-prefix",
+			Usage:      "Optional subject prefix for alert emails.",
+			InnerField: "subject_prefix",
+		},
+	},
+})
 
-var adminOrganizationProjectsGroupsRetrieve = cli.Command{
-	Name:    "retrieve",
-	Usage:   "Retrieves a project's group.",
+var adminOrganizationProjectsSpendAlertsUpdate = requestflag.WithInnerFlags(cli.Command{
+	Name:    "update",
+	Usage:   "Updates a project spend alert.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -52,24 +82,60 @@ var adminOrganizationProjectsGroupsRetrieve = cli.Command{
 			PathParam: "project_id",
 		},
 		&requestflag.Flag[string]{
-			Name:      "group-id",
+			Name:      "alert-id",
 			Required:  true,
-			PathParam: "group_id",
+			PathParam: "alert_id",
 		},
 		&requestflag.Flag[string]{
-			Name:      "group-type",
-			Usage:     "The type of group to retrieve.",
-			Default:   "group",
-			QueryPath: "group_type",
+			Name:     "currency",
+			Usage:    "The currency for the threshold amount.",
+			Required: true,
+			BodyPath: "currency",
+		},
+		&requestflag.Flag[string]{
+			Name:     "interval",
+			Usage:    "The time interval for evaluating spend against the threshold.",
+			Required: true,
+			BodyPath: "interval",
+		},
+		&requestflag.Flag[map[string]any]{
+			Name:     "notification-channel",
+			Usage:    "Email notification settings for a spend alert.",
+			Required: true,
+			BodyPath: "notification_channel",
+		},
+		&requestflag.Flag[int64]{
+			Name:     "threshold-amount",
+			Usage:    "The alert threshold amount, in cents.",
+			Required: true,
+			BodyPath: "threshold_amount",
 		},
 	},
-	Action:          handleAdminOrganizationProjectsGroupsRetrieve,
+	Action:          handleAdminOrganizationProjectsSpendAlertsUpdate,
 	HideHelpCommand: true,
-}
+}, map[string][]requestflag.HasOuterFlag{
+	"notification-channel": {
+		&requestflag.InnerFlag[[]string]{
+			Name:       "notification-channel.recipients",
+			Usage:      "Email addresses that receive the spend alert notification.",
+			InnerField: "recipients",
+		},
+		&requestflag.InnerFlag[string]{
+			Name:       "notification-channel.type",
+			Usage:      "The notification channel type. Currently only `email` is supported.",
+			InnerField: "type",
+		},
+		&requestflag.InnerFlag[*string]{
+			Name:       "notification-channel.subject-prefix",
+			Usage:      "Optional subject prefix for alert emails.",
+			InnerField: "subject_prefix",
+		},
+	},
+})
 
-var adminOrganizationProjectsGroupsList = cli.Command{
+var adminOrganizationProjectsSpendAlertsList = cli.Command{
 	Name:    "list",
-	Usage:   "Lists the groups that have access to a project.",
+	Usage:   "Lists project spend alerts.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -79,18 +145,22 @@ var adminOrganizationProjectsGroupsList = cli.Command{
 		},
 		&requestflag.Flag[string]{
 			Name:      "after",
-			Usage:     "Cursor for pagination. Provide the ID of the last group from the previous response to fetch the next page.",
+			Usage:     "Cursor for pagination. Provide the ID of the last spend alert from the previous response to fetch the next page.",
 			QueryPath: "after",
+		},
+		&requestflag.Flag[string]{
+			Name:      "before",
+			Usage:     "Cursor for pagination. Provide the ID of the first spend alert from the previous response to fetch the previous page.",
+			QueryPath: "before",
 		},
 		&requestflag.Flag[int64]{
 			Name:      "limit",
-			Usage:     "A limit on the number of project groups to return. Defaults to 20.",
-			Default:   20,
+			Usage:     "A limit on the number of spend alerts to return. Defaults to 20.",
 			QueryPath: "limit",
 		},
 		&requestflag.Flag[string]{
 			Name:      "order",
-			Usage:     "Sort order for the returned groups.",
+			Usage:     "Sort order for the returned spend alerts.",
 			Default:   "asc",
 			QueryPath: "order",
 		},
@@ -99,13 +169,13 @@ var adminOrganizationProjectsGroupsList = cli.Command{
 			Usage: "The maximum number of items to return (use -1 for unlimited).",
 		},
 	},
-	Action:          handleAdminOrganizationProjectsGroupsList,
+	Action:          handleAdminOrganizationProjectsSpendAlertsList,
 	HideHelpCommand: true,
 }
 
-var adminOrganizationProjectsGroupsDelete = cli.Command{
+var adminOrganizationProjectsSpendAlertsDelete = cli.Command{
 	Name:    "delete",
-	Usage:   "Revokes a group's access to a project.",
+	Usage:   "Deletes a project spend alert.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -114,16 +184,16 @@ var adminOrganizationProjectsGroupsDelete = cli.Command{
 			PathParam: "project_id",
 		},
 		&requestflag.Flag[string]{
-			Name:      "group-id",
+			Name:      "alert-id",
 			Required:  true,
-			PathParam: "group_id",
+			PathParam: "alert_id",
 		},
 	},
-	Action:          handleAdminOrganizationProjectsGroupsDelete,
+	Action:          handleAdminOrganizationProjectsSpendAlertsDelete,
 	HideHelpCommand: true,
 }
 
-func handleAdminOrganizationProjectsGroupsCreate(ctx context.Context, cmd *cli.Command) error {
+func handleAdminOrganizationProjectsSpendAlertsCreate(ctx context.Context, cmd *cli.Command) error {
 	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
 	unusedArgs := cmd.Args().Slice()
 	if !cmd.IsSet("project-id") && len(unusedArgs) > 0 {
@@ -145,11 +215,11 @@ func handleAdminOrganizationProjectsGroupsCreate(ctx context.Context, cmd *cli.C
 		return err
 	}
 
-	params := openai.AdminOrganizationProjectGroupNewParams{}
+	params := openai.AdminOrganizationProjectSpendAlertNewParams{}
 
 	var res []byte
 	options = append(options, option.WithResponseBodyInto(&res))
-	_, err = client.Admin.Organization.Projects.Groups.New(
+	_, err = client.Admin.Organization.Projects.SpendAlerts.New(
 		ctx,
 		cmd.Value("project-id").(string),
 		params,
@@ -167,20 +237,20 @@ func handleAdminOrganizationProjectsGroupsCreate(ctx context.Context, cmd *cli.C
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
-		Title:          "admin:organization:projects:groups create",
+		Title:          "admin:organization:projects:spend-alerts create",
 		Transform:      transform,
 	})
 }
 
-func handleAdminOrganizationProjectsGroupsRetrieve(ctx context.Context, cmd *cli.Command) error {
+func handleAdminOrganizationProjectsSpendAlertsUpdate(ctx context.Context, cmd *cli.Command) error {
 	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
 	unusedArgs := cmd.Args().Slice()
 	if !cmd.IsSet("project-id") && len(unusedArgs) > 0 {
 		cmd.Set("project-id", unusedArgs[0])
 		unusedArgs = unusedArgs[1:]
 	}
-	if !cmd.IsSet("group-id") && len(unusedArgs) > 0 {
-		cmd.Set("group-id", unusedArgs[0])
+	if !cmd.IsSet("alert-id") && len(unusedArgs) > 0 {
+		cmd.Set("alert-id", unusedArgs[0])
 		unusedArgs = unusedArgs[1:]
 	}
 	if len(unusedArgs) > 0 {
@@ -191,21 +261,21 @@ func handleAdminOrganizationProjectsGroupsRetrieve(ctx context.Context, cmd *cli
 		cmd,
 		apiquery.NestedQueryFormatBrackets,
 		apiquery.ArrayQueryFormatBrackets,
-		EmptyBody,
+		ApplicationJSON,
 		false,
 	)
 	if err != nil {
 		return err
 	}
 
-	params := openai.AdminOrganizationProjectGroupGetParams{}
+	params := openai.AdminOrganizationProjectSpendAlertUpdateParams{}
 
 	var res []byte
 	options = append(options, option.WithResponseBodyInto(&res))
-	_, err = client.Admin.Organization.Projects.Groups.Get(
+	_, err = client.Admin.Organization.Projects.SpendAlerts.Update(
 		ctx,
 		cmd.Value("project-id").(string),
-		cmd.Value("group-id").(string),
+		cmd.Value("alert-id").(string),
 		params,
 		options...,
 	)
@@ -221,12 +291,12 @@ func handleAdminOrganizationProjectsGroupsRetrieve(ctx context.Context, cmd *cli
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
-		Title:          "admin:organization:projects:groups retrieve",
+		Title:          "admin:organization:projects:spend-alerts update",
 		Transform:      transform,
 	})
 }
 
-func handleAdminOrganizationProjectsGroupsList(ctx context.Context, cmd *cli.Command) error {
+func handleAdminOrganizationProjectsSpendAlertsList(ctx context.Context, cmd *cli.Command) error {
 	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
 	unusedArgs := cmd.Args().Slice()
 	if !cmd.IsSet("project-id") && len(unusedArgs) > 0 {
@@ -248,7 +318,7 @@ func handleAdminOrganizationProjectsGroupsList(ctx context.Context, cmd *cli.Com
 		return err
 	}
 
-	params := openai.AdminOrganizationProjectGroupListParams{}
+	params := openai.AdminOrganizationProjectSpendAlertListParams{}
 
 	format := cmd.Root().String("format")
 	explicitFormat := cmd.Root().IsSet("format")
@@ -256,7 +326,7 @@ func handleAdminOrganizationProjectsGroupsList(ctx context.Context, cmd *cli.Com
 	if format == "raw" {
 		var res []byte
 		options = append(options, option.WithResponseBodyInto(&res))
-		_, err = client.Admin.Organization.Projects.Groups.List(
+		_, err = client.Admin.Organization.Projects.SpendAlerts.List(
 			ctx,
 			cmd.Value("project-id").(string),
 			params,
@@ -270,11 +340,11 @@ func handleAdminOrganizationProjectsGroupsList(ctx context.Context, cmd *cli.Com
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
-			Title:          "admin:organization:projects:groups list",
+			Title:          "admin:organization:projects:spend-alerts list",
 			Transform:      transform,
 		})
 	} else {
-		iter := client.Admin.Organization.Projects.Groups.ListAutoPaging(
+		iter := client.Admin.Organization.Projects.SpendAlerts.ListAutoPaging(
 			ctx,
 			cmd.Value("project-id").(string),
 			params,
@@ -288,21 +358,21 @@ func handleAdminOrganizationProjectsGroupsList(ctx context.Context, cmd *cli.Com
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
-			Title:          "admin:organization:projects:groups list",
+			Title:          "admin:organization:projects:spend-alerts list",
 			Transform:      transform,
 		})
 	}
 }
 
-func handleAdminOrganizationProjectsGroupsDelete(ctx context.Context, cmd *cli.Command) error {
+func handleAdminOrganizationProjectsSpendAlertsDelete(ctx context.Context, cmd *cli.Command) error {
 	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
 	unusedArgs := cmd.Args().Slice()
 	if !cmd.IsSet("project-id") && len(unusedArgs) > 0 {
 		cmd.Set("project-id", unusedArgs[0])
 		unusedArgs = unusedArgs[1:]
 	}
-	if !cmd.IsSet("group-id") && len(unusedArgs) > 0 {
-		cmd.Set("group-id", unusedArgs[0])
+	if !cmd.IsSet("alert-id") && len(unusedArgs) > 0 {
+		cmd.Set("alert-id", unusedArgs[0])
 		unusedArgs = unusedArgs[1:]
 	}
 	if len(unusedArgs) > 0 {
@@ -322,10 +392,10 @@ func handleAdminOrganizationProjectsGroupsDelete(ctx context.Context, cmd *cli.C
 
 	var res []byte
 	options = append(options, option.WithResponseBodyInto(&res))
-	_, err = client.Admin.Organization.Projects.Groups.Delete(
+	_, err = client.Admin.Organization.Projects.SpendAlerts.Delete(
 		ctx,
 		cmd.Value("project-id").(string),
-		cmd.Value("group-id").(string),
+		cmd.Value("alert-id").(string),
 		options...,
 	)
 	if err != nil {
@@ -340,7 +410,7 @@ func handleAdminOrganizationProjectsGroupsDelete(ctx context.Context, cmd *cli.C
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
-		Title:          "admin:organization:projects:groups delete",
+		Title:          "admin:organization:projects:spend-alerts delete",
 		Transform:      transform,
 	})
 }

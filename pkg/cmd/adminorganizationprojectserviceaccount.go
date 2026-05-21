@@ -55,6 +55,36 @@ var adminOrganizationProjectsServiceAccountsRetrieve = cli.Command{
 	HideHelpCommand: true,
 }
 
+var adminOrganizationProjectsServiceAccountsUpdate = cli.Command{
+	Name:    "update",
+	Usage:   "Updates a service account in the project.",
+	Suggest: true,
+	Flags: []cli.Flag{
+		&requestflag.Flag[string]{
+			Name:      "project-id",
+			Required:  true,
+			PathParam: "project_id",
+		},
+		&requestflag.Flag[string]{
+			Name:      "service-account-id",
+			Required:  true,
+			PathParam: "service_account_id",
+		},
+		&requestflag.Flag[string]{
+			Name:     "name",
+			Usage:    "The updated service account name.",
+			BodyPath: "name",
+		},
+		&requestflag.Flag[string]{
+			Name:     "role",
+			Usage:    "The updated service account role.",
+			BodyPath: "role",
+		},
+	},
+	Action:          handleAdminOrganizationProjectsServiceAccountsUpdate,
+	HideHelpCommand: true,
+}
+
 var adminOrganizationProjectsServiceAccountsList = cli.Command{
 	Name:    "list",
 	Usage:   "Returns a list of service accounts in the project.",
@@ -201,6 +231,60 @@ func handleAdminOrganizationProjectsServiceAccountsRetrieve(ctx context.Context,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
 		Title:          "admin:organization:projects:service-accounts retrieve",
+		Transform:      transform,
+	})
+}
+
+func handleAdminOrganizationProjectsServiceAccountsUpdate(ctx context.Context, cmd *cli.Command) error {
+	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
+	unusedArgs := cmd.Args().Slice()
+	if !cmd.IsSet("project-id") && len(unusedArgs) > 0 {
+		cmd.Set("project-id", unusedArgs[0])
+		unusedArgs = unusedArgs[1:]
+	}
+	if !cmd.IsSet("service-account-id") && len(unusedArgs) > 0 {
+		cmd.Set("service-account-id", unusedArgs[0])
+		unusedArgs = unusedArgs[1:]
+	}
+	if len(unusedArgs) > 0 {
+		return fmt.Errorf("Unexpected extra arguments: %v", unusedArgs)
+	}
+
+	options, err := flagOptions(
+		cmd,
+		apiquery.NestedQueryFormatBrackets,
+		apiquery.ArrayQueryFormatBrackets,
+		ApplicationJSON,
+		false,
+	)
+	if err != nil {
+		return err
+	}
+
+	params := openai.AdminOrganizationProjectServiceAccountUpdateParams{}
+
+	var res []byte
+	options = append(options, option.WithResponseBodyInto(&res))
+	_, err = client.Admin.Organization.Projects.ServiceAccounts.Update(
+		ctx,
+		cmd.Value("project-id").(string),
+		cmd.Value("service-account-id").(string),
+		params,
+		options...,
+	)
+	if err != nil {
+		return err
+	}
+
+	obj := gjson.ParseBytes(res)
+	format := cmd.Root().String("format")
+	explicitFormat := cmd.Root().IsSet("format")
+	transform := cmd.Root().String("transform")
+	return ShowJSON(obj, ShowJSONOpts{
+		ExplicitFormat: explicitFormat,
+		Format:         format,
+		RawOutput:      cmd.Root().Bool("raw-output"),
+		Title:          "admin:organization:projects:service-accounts update",
 		Transform:      transform,
 	})
 }

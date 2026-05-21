@@ -35,6 +35,26 @@ var adminOrganizationGroupsUsersCreate = cli.Command{
 	HideHelpCommand: true,
 }
 
+var adminOrganizationGroupsUsersRetrieve = cli.Command{
+	Name:    "retrieve",
+	Usage:   "Retrieves a user in a group.",
+	Suggest: true,
+	Flags: []cli.Flag{
+		&requestflag.Flag[string]{
+			Name:      "group-id",
+			Required:  true,
+			PathParam: "group_id",
+		},
+		&requestflag.Flag[string]{
+			Name:      "user-id",
+			Required:  true,
+			PathParam: "user_id",
+		},
+	},
+	Action:          handleAdminOrganizationGroupsUsersRetrieve,
+	HideHelpCommand: true,
+}
+
 var adminOrganizationGroupsUsersList = cli.Command{
 	Name:    "list",
 	Usage:   "Lists the users assigned to a group.",
@@ -136,6 +156,57 @@ func handleAdminOrganizationGroupsUsersCreate(ctx context.Context, cmd *cli.Comm
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
 		Title:          "admin:organization:groups:users create",
+		Transform:      transform,
+	})
+}
+
+func handleAdminOrganizationGroupsUsersRetrieve(ctx context.Context, cmd *cli.Command) error {
+	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
+	unusedArgs := cmd.Args().Slice()
+	if !cmd.IsSet("group-id") && len(unusedArgs) > 0 {
+		cmd.Set("group-id", unusedArgs[0])
+		unusedArgs = unusedArgs[1:]
+	}
+	if !cmd.IsSet("user-id") && len(unusedArgs) > 0 {
+		cmd.Set("user-id", unusedArgs[0])
+		unusedArgs = unusedArgs[1:]
+	}
+	if len(unusedArgs) > 0 {
+		return fmt.Errorf("Unexpected extra arguments: %v", unusedArgs)
+	}
+
+	options, err := flagOptions(
+		cmd,
+		apiquery.NestedQueryFormatBrackets,
+		apiquery.ArrayQueryFormatBrackets,
+		EmptyBody,
+		false,
+	)
+	if err != nil {
+		return err
+	}
+
+	var res []byte
+	options = append(options, option.WithResponseBodyInto(&res))
+	_, err = client.Admin.Organization.Groups.Users.Get(
+		ctx,
+		cmd.Value("group-id").(string),
+		cmd.Value("user-id").(string),
+		options...,
+	)
+	if err != nil {
+		return err
+	}
+
+	obj := gjson.ParseBytes(res)
+	format := cmd.Root().String("format")
+	explicitFormat := cmd.Root().IsSet("format")
+	transform := cmd.Root().String("transform")
+	return ShowJSON(obj, ShowJSONOpts{
+		ExplicitFormat: explicitFormat,
+		Format:         format,
+		RawOutput:      cmd.Root().Bool("raw-output"),
+		Title:          "admin:organization:groups:users retrieve",
 		Transform:      transform,
 	})
 }

@@ -39,6 +39,19 @@ func TestAdminOrganizationProjectsRolesCreate(t *testing.T) {
 	})
 }
 
+func TestAdminOrganizationProjectsRolesRetrieve(t *testing.T) {
+	t.Run("regular flags", func(t *testing.T) {
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"admin:organization:projects:roles", "retrieve",
+			"--project-id", "project_id",
+			"--role-id", "role_id",
+		)
+	})
+}
+
 func TestAdminOrganizationProjectsRolesUpdate(t *testing.T) {
 	t.Run("regular flags", func(t *testing.T) {
 		mocktest.TestRunMockTestWithFlags(
