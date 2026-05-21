@@ -46,6 +46,26 @@ var adminOrganizationProjectsRolesCreate = cli.Command{
 	HideHelpCommand: true,
 }
 
+var adminOrganizationProjectsRolesRetrieve = cli.Command{
+	Name:    "retrieve",
+	Usage:   "Retrieves a project role.",
+	Suggest: true,
+	Flags: []cli.Flag{
+		&requestflag.Flag[string]{
+			Name:      "project-id",
+			Required:  true,
+			PathParam: "project_id",
+		},
+		&requestflag.Flag[string]{
+			Name:      "role-id",
+			Required:  true,
+			PathParam: "role_id",
+		},
+	},
+	Action:          handleAdminOrganizationProjectsRolesRetrieve,
+	HideHelpCommand: true,
+}
+
 var adminOrganizationProjectsRolesUpdate = cli.Command{
 	Name:    "update",
 	Usage:   "Updates an existing project role.",
@@ -182,6 +202,57 @@ func handleAdminOrganizationProjectsRolesCreate(ctx context.Context, cmd *cli.Co
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
 		Title:          "admin:organization:projects:roles create",
+		Transform:      transform,
+	})
+}
+
+func handleAdminOrganizationProjectsRolesRetrieve(ctx context.Context, cmd *cli.Command) error {
+	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
+	unusedArgs := cmd.Args().Slice()
+	if !cmd.IsSet("project-id") && len(unusedArgs) > 0 {
+		cmd.Set("project-id", unusedArgs[0])
+		unusedArgs = unusedArgs[1:]
+	}
+	if !cmd.IsSet("role-id") && len(unusedArgs) > 0 {
+		cmd.Set("role-id", unusedArgs[0])
+		unusedArgs = unusedArgs[1:]
+	}
+	if len(unusedArgs) > 0 {
+		return fmt.Errorf("Unexpected extra arguments: %v", unusedArgs)
+	}
+
+	options, err := flagOptions(
+		cmd,
+		apiquery.NestedQueryFormatBrackets,
+		apiquery.ArrayQueryFormatBrackets,
+		EmptyBody,
+		false,
+	)
+	if err != nil {
+		return err
+	}
+
+	var res []byte
+	options = append(options, option.WithResponseBodyInto(&res))
+	_, err = client.Admin.Organization.Projects.Roles.Get(
+		ctx,
+		cmd.Value("project-id").(string),
+		cmd.Value("role-id").(string),
+		options...,
+	)
+	if err != nil {
+		return err
+	}
+
+	obj := gjson.ParseBytes(res)
+	format := cmd.Root().String("format")
+	explicitFormat := cmd.Root().IsSet("format")
+	transform := cmd.Root().String("transform")
+	return ShowJSON(obj, ShowJSONOpts{
+		ExplicitFormat: explicitFormat,
+		Format:         format,
+		RawOutput:      cmd.Root().Bool("raw-output"),
+		Title:          "admin:organization:projects:roles retrieve",
 		Transform:      transform,
 	})
 }
