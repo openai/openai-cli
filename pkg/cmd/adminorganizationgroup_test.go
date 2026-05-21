@@ -31,6 +31,18 @@ func TestAdminOrganizationGroupsCreate(t *testing.T) {
 	})
 }
 
+func TestAdminOrganizationGroupsRetrieve(t *testing.T) {
+	t.Run("regular flags", func(t *testing.T) {
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"admin:organization:groups", "retrieve",
+			"--group-id", "group_id",
+		)
+	})
+}
+
 func TestAdminOrganizationGroupsUpdate(t *testing.T) {
 	t.Run("regular flags", func(t *testing.T) {
 		mocktest.TestRunMockTestWithFlags(

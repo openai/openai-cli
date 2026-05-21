@@ -451,6 +451,7 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&adminOrganizationUsersRolesCreate,
+					&adminOrganizationUsersRolesRetrieve,
 					&adminOrganizationUsersRolesList,
 					&adminOrganizationUsersRolesDelete,
 				},
@@ -461,6 +462,7 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&adminOrganizationGroupsCreate,
+					&adminOrganizationGroupsRetrieve,
 					&adminOrganizationGroupsUpdate,
 					&adminOrganizationGroupsList,
 					&adminOrganizationGroupsDelete,
@@ -472,6 +474,7 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&adminOrganizationGroupsUsersCreate,
+					&adminOrganizationGroupsUsersRetrieve,
 					&adminOrganizationGroupsUsersList,
 					&adminOrganizationGroupsUsersDelete,
 				},
@@ -482,6 +485,7 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&adminOrganizationGroupsRolesCreate,
+					&adminOrganizationGroupsRolesRetrieve,
 					&adminOrganizationGroupsRolesList,
 					&adminOrganizationGroupsRolesDelete,
 				},
@@ -492,9 +496,30 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&adminOrganizationRolesCreate,
+					&adminOrganizationRolesRetrieve,
 					&adminOrganizationRolesUpdate,
 					&adminOrganizationRolesList,
 					&adminOrganizationRolesDelete,
+				},
+			},
+			{
+				Name:     "admin:organization:data-retention",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationDataRetentionRetrieve,
+					&adminOrganizationDataRetentionUpdate,
+				},
+			},
+			{
+				Name:     "admin:organization:spend-alerts",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationSpendAlertsCreate,
+					&adminOrganizationSpendAlertsUpdate,
+					&adminOrganizationSpendAlertsList,
+					&adminOrganizationSpendAlertsDelete,
 				},
 			},
 			{
@@ -541,6 +566,7 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&adminOrganizationProjectsUsersRolesCreate,
+					&adminOrganizationProjectsUsersRolesRetrieve,
 					&adminOrganizationProjectsUsersRolesList,
 					&adminOrganizationProjectsUsersRolesDelete,
 				},
@@ -552,6 +578,7 @@ func init() {
 				Commands: []*cli.Command{
 					&adminOrganizationProjectsServiceAccountsCreate,
 					&adminOrganizationProjectsServiceAccountsRetrieve,
+					&adminOrganizationProjectsServiceAccountsUpdate,
 					&adminOrganizationProjectsServiceAccountsList,
 					&adminOrganizationProjectsServiceAccountsDelete,
 				},
@@ -600,6 +627,7 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&adminOrganizationProjectsGroupsCreate,
+					&adminOrganizationProjectsGroupsRetrieve,
 					&adminOrganizationProjectsGroupsList,
 					&adminOrganizationProjectsGroupsDelete,
 				},
@@ -610,6 +638,7 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&adminOrganizationProjectsGroupsRolesCreate,
+					&adminOrganizationProjectsGroupsRolesRetrieve,
 					&adminOrganizationProjectsGroupsRolesList,
 					&adminOrganizationProjectsGroupsRolesDelete,
 				},
@@ -620,9 +649,30 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&adminOrganizationProjectsRolesCreate,
+					&adminOrganizationProjectsRolesRetrieve,
 					&adminOrganizationProjectsRolesUpdate,
 					&adminOrganizationProjectsRolesList,
 					&adminOrganizationProjectsRolesDelete,
+				},
+			},
+			{
+				Name:     "admin:organization:projects:data-retention",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationProjectsDataRetentionRetrieve,
+					&adminOrganizationProjectsDataRetentionUpdate,
+				},
+			},
+			{
+				Name:     "admin:organization:projects:spend-alerts",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationProjectsSpendAlertsCreate,
+					&adminOrganizationProjectsSpendAlertsUpdate,
+					&adminOrganizationProjectsSpendAlertsList,
+					&adminOrganizationProjectsSpendAlertsDelete,
 				},
 			},
 			{

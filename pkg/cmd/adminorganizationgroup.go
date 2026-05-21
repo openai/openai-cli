@@ -30,6 +30,21 @@ var adminOrganizationGroupsCreate = cli.Command{
 	HideHelpCommand: true,
 }
 
+var adminOrganizationGroupsRetrieve = cli.Command{
+	Name:    "retrieve",
+	Usage:   "Retrieves a group.",
+	Suggest: true,
+	Flags: []cli.Flag{
+		&requestflag.Flag[string]{
+			Name:      "group-id",
+			Required:  true,
+			PathParam: "group_id",
+		},
+	},
+	Action:          handleAdminOrganizationGroupsRetrieve,
+	HideHelpCommand: true,
+}
+
 var adminOrganizationGroupsUpdate = cli.Command{
 	Name:    "update",
 	Usage:   "Updates a group's information.",
@@ -134,6 +149,48 @@ func handleAdminOrganizationGroupsCreate(ctx context.Context, cmd *cli.Command) 
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
 		Title:          "admin:organization:groups create",
+		Transform:      transform,
+	})
+}
+
+func handleAdminOrganizationGroupsRetrieve(ctx context.Context, cmd *cli.Command) error {
+	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
+	unusedArgs := cmd.Args().Slice()
+	if !cmd.IsSet("group-id") && len(unusedArgs) > 0 {
+		cmd.Set("group-id", unusedArgs[0])
+		unusedArgs = unusedArgs[1:]
+	}
+	if len(unusedArgs) > 0 {
+		return fmt.Errorf("Unexpected extra arguments: %v", unusedArgs)
+	}
+
+	options, err := flagOptions(
+		cmd,
+		apiquery.NestedQueryFormatBrackets,
+		apiquery.ArrayQueryFormatBrackets,
+		EmptyBody,
+		false,
+	)
+	if err != nil {
+		return err
+	}
+
+	var res []byte
+	options = append(options, option.WithResponseBodyInto(&res))
+	_, err = client.Admin.Organization.Groups.Get(ctx, cmd.Value("group-id").(string), options...)
+	if err != nil {
+		return err
+	}
+
+	obj := gjson.ParseBytes(res)
+	format := cmd.Root().String("format")
+	explicitFormat := cmd.Root().IsSet("format")
+	transform := cmd.Root().String("transform")
+	return ShowJSON(obj, ShowJSONOpts{
+		ExplicitFormat: explicitFormat,
+		Format:         format,
+		RawOutput:      cmd.Root().Bool("raw-output"),
+		Title:          "admin:organization:groups retrieve",
 		Transform:      transform,
 	})
 }
