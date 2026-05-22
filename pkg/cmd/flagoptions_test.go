@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/openai/openai-cli/internal/apiform"
 	"github.com/stretchr/testify/require"
 )
 
@@ -235,11 +238,12 @@ func TestEmbedFiles(t *testing.T) {
 		t.Run(tt.name+" io.Reader", func(t *testing.T) {
 			t.Parallel()
 
-			_, err := embedFiles(tt.input, EmbedIOReader, nil)
+			got, err := embedFiles(tt.input, EmbedIOReader, nil)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
+				require.NoError(t, closeFileUploads(got))
 			}
 		})
 	}
@@ -380,6 +384,97 @@ func TestEmbedFilesUploadMetadata(t *testing.T) {
 			require.NoError(t, upload.Close())
 		})
 	}
+}
+
+func TestMultipartRequestBodyStreamsAndClosesUploads(t *testing.T) {
+	t.Parallel()
+
+	upload := &blockingReadCloser{
+		data:        []byte("large file payload"),
+		readStarted: make(chan struct{}),
+		allowRead:   make(chan struct{}),
+		closed:      make(chan struct{}),
+	}
+
+	contentType, body := newMultipartRequestBody(map[string]any{
+		"file": fileUpload{
+			Reader:      upload,
+			filename:    "large.txt",
+			contentType: "text/plain",
+		},
+	}, apiform.FormatBrackets)
+
+	require.Contains(t, contentType, "multipart/form-data; boundary=")
+
+	select {
+	case <-upload.readStarted:
+		t.Fatal("multipart body read upload data before the request body was consumed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	resultCh := make(chan readResult, 1)
+	go func() {
+		data, err := io.ReadAll(body)
+		resultCh <- readResult{data: data, err: err}
+	}()
+
+	select {
+	case <-upload.readStarted:
+	case <-time.After(time.Second):
+		t.Fatal("multipart body did not read upload data after the request body was consumed")
+	}
+	close(upload.allowRead)
+
+	var result readResult
+	select {
+	case result = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("multipart body read did not finish")
+	}
+	require.NoError(t, result.err)
+	require.Contains(t, string(result.data), "large file payload")
+
+	select {
+	case <-upload.closed:
+	case <-time.After(time.Second):
+		t.Fatal("multipart body did not close the uploaded file reader")
+	}
+}
+
+type blockingReadCloser struct {
+	data        []byte
+	readStarted chan struct{}
+	allowRead   chan struct{}
+	closed      chan struct{}
+	startOnce   sync.Once
+	closeOnce   sync.Once
+	offset      int
+}
+
+func (r *blockingReadCloser) Read(p []byte) (int, error) {
+	r.startOnce.Do(func() {
+		close(r.readStarted)
+	})
+	<-r.allowRead
+
+	if r.offset >= len(r.data) {
+		return 0, io.EOF
+	}
+
+	n := copy(p, r.data[r.offset:])
+	r.offset += n
+	return n, nil
+}
+
+func (r *blockingReadCloser) Close() error {
+	r.closeOnce.Do(func() {
+		close(r.closed)
+	})
+	return nil
 }
 
 func writeTestFile(t *testing.T, dir, filename, content string) {
