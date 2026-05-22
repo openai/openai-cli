@@ -233,6 +233,50 @@ func TestFormatJSON(t *testing.T) {
 		require.NotContains(t, out, "\a")
 		require.Contains(t, out, `\u001b]52;c;ZGF0YQ==\u0007`)
 	})
+
+	t.Run("YAMLReturnsBytesWithoutWriting", func(t *testing.T) {
+		t.Parallel()
+
+		stdout, err := os.CreateTemp(t.TempDir(), "stdout")
+		require.NoError(t, err)
+		defer stdout.Close()
+
+		res := gjson.Parse(`{"id":"abc123","settings":{"enabled":true}}`)
+		formatted, err := formatJSON(res, ShowJSONOpts{Format: "yaml", Stdout: stdout})
+		require.NoError(t, err)
+		assert.Contains(t, string(formatted), "id: abc123")
+		assert.Contains(t, string(formatted), "enabled: true")
+
+		_, err = stdout.Seek(0, io.SeekStart)
+		require.NoError(t, err)
+
+		written, err := io.ReadAll(stdout)
+		require.NoError(t, err)
+		assert.Empty(t, written)
+	})
+}
+
+func TestShowJSONYAML(t *testing.T) {
+	t.Parallel()
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	defer r.Close()
+
+	res := gjson.Parse(`{"id":"abc123","settings":{"enabled":true}}`)
+	err = ShowJSON(res, ShowJSONOpts{
+		Format: "yaml",
+		Stderr: io.Discard,
+		Stdout: w,
+		Title:  "test",
+	})
+	w.Close()
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	assert.Contains(t, buf.String(), "id: abc123")
+	assert.Contains(t, buf.String(), "enabled: true")
 }
 
 func TestShowJSONIterator(t *testing.T) {
