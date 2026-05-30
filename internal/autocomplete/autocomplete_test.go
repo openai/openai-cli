@@ -17,6 +17,7 @@ func TestGetCompletions_EmptyArgs(t *testing.T) {
 			{Name: "generate", Usage: "Generate SDK"},
 			{Name: "test", Usage: "Run tests"},
 			{Name: "build", Usage: "Build project"},
+			{Name: "internal", Usage: "Internal command", Hidden: true},
 		},
 	}
 
