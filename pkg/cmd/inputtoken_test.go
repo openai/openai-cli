@@ -21,6 +21,7 @@ func TestResponsesInputTokensCount(t *testing.T) {
 			"--instructions", "instructions",
 			"--model", "model",
 			"--parallel-tool-calls=true",
+			"--personality", "friendly",
 			"--previous-response-id", "resp_123",
 			"--reasoning", "{effort: none, generate_summary: auto, summary: auto}",
 			"--text", "{format: {type: text}, verbosity: low}",
@@ -45,6 +46,7 @@ func TestResponsesInputTokensCount(t *testing.T) {
 			"--instructions", "instructions",
 			"--model", "model",
 			"--parallel-tool-calls=true",
+			"--personality", "friendly",
 			"--previous-response-id", "resp_123",
 			"--reasoning.effort", "none",
 			"--reasoning.generate-summary", "auto",
@@ -65,6 +67,7 @@ func TestResponsesInputTokensCount(t *testing.T) {
 			"instructions: instructions\n" +
 			"model: model\n" +
 			"parallel_tool_calls: true\n" +
+			"personality: friendly\n" +
 			"previous_response_id: resp_123\n" +
 			"reasoning:\n" +
 			"  effort: none\n" +
