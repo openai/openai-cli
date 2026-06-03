@@ -70,6 +70,11 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 			Name:     "model",
 			BodyPath: "model",
 		},
+		&requestflag.Flag[map[string]any]{
+			Name:     "moderation",
+			Usage:    "Configuration for running moderation on the input and output of this response.\n",
+			BodyPath: "moderation",
+		},
 		&requestflag.Flag[*bool]{
 			Name:     "parallel-tool-calls",
 			Usage:    "Whether to allow the model to run tool calls in parallel.\n",
@@ -192,6 +197,13 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 			Usage:                 "Token threshold at which compaction should be triggered for this entry.",
 			InnerField:            "compact_threshold",
 			OuterIsArrayOfObjects: true,
+		},
+	},
+	"moderation": {
+		&requestflag.InnerFlag[string]{
+			Name:       "moderation.model",
+			Usage:      "The moderation model to use for moderated completions, e.g. 'omni-moderation-latest'.",
+			InnerField: "model",
 		},
 	},
 	"prompt": {
