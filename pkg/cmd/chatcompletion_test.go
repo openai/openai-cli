@@ -29,6 +29,7 @@ func TestChatCompletionsCreate(t *testing.T) {
 			"--max-tokens", "0",
 			"--metadata", "{foo: string}",
 			"--modality", "[text]",
+			"--moderation", "{model: model}",
 			"--n", "1",
 			"--parallel-tool-calls=true",
 			"--prediction", "{content: string, type: content}",
@@ -81,6 +82,7 @@ func TestChatCompletionsCreate(t *testing.T) {
 			"--max-tokens", "0",
 			"--metadata", "{foo: string}",
 			"--modality", "[text]",
+			"--moderation.model", "model",
 			"--n", "1",
 			"--parallel-tool-calls=true",
 			"--prediction.content", "string",
@@ -137,6 +139,8 @@ func TestChatCompletionsCreate(t *testing.T) {
 			"  foo: string\n" +
 			"modalities:\n" +
 			"  - text\n" +
+			"moderation:\n" +
+			"  model: model\n" +
 			"'n': 1\n" +
 			"parallel_tool_calls: true\n" +
 			"prediction:\n" +
