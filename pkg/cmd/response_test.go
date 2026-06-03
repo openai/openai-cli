@@ -27,6 +27,7 @@ func TestResponsesCreate(t *testing.T) {
 			"--max-tool-calls", "0",
 			"--metadata", "{foo: string}",
 			"--model", "gpt-5.1",
+			"--moderation", "{model: model}",
 			"--parallel-tool-calls=true",
 			"--previous-response-id", "previous_response_id",
 			"--prompt", "{id: id, variables: {foo: string}, version: version}",
@@ -71,6 +72,7 @@ func TestResponsesCreate(t *testing.T) {
 			"--max-tool-calls", "0",
 			"--metadata", "{foo: string}",
 			"--model", "gpt-5.1",
+			"--moderation.model", "model",
 			"--parallel-tool-calls=true",
 			"--previous-response-id", "previous_response_id",
 			"--prompt.id", "id",
@@ -115,6 +117,8 @@ func TestResponsesCreate(t *testing.T) {
 			"metadata:\n" +
 			"  foo: string\n" +
 			"model: gpt-5.1\n" +
+			"moderation:\n" +
+			"  model: model\n" +
 			"parallel_tool_calls: true\n" +
 			"previous_response_id: previous_response_id\n" +
 			"prompt:\n" +

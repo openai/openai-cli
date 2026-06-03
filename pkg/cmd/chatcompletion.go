@@ -83,6 +83,11 @@ var chatCompletionsCreate = requestflag.WithInnerFlags(cli.Command{
 			Usage:    "Output types that you would like the model to generate.\nMost models are capable of generating text, which is the default:\n\n`[\"text\"]`\n\nThe `gpt-4o-audio-preview` model can also be used to\n[generate audio](https://platform.openai.com/docs/guides/audio). To request that this model generate\nboth text and audio responses, you can use:\n\n`[\"text\", \"audio\"]`\n",
 			BodyPath: "modalities",
 		},
+		&requestflag.Flag[map[string]any]{
+			Name:     "moderation",
+			Usage:    "Configuration for running moderation on the request input and generated output.\n",
+			BodyPath: "moderation",
+		},
 		&requestflag.Flag[*int64]{
 			Name:     "n",
 			Usage:    "How many chat completion choices to generate for each input message. Note that you will be charged based on the number of generated tokens across all of the choices. Keep `n` as `1` to minimize costs.",
@@ -243,6 +248,13 @@ var chatCompletionsCreate = requestflag.WithInnerFlags(cli.Command{
 			Name:       "function.parameters",
 			Usage:      "The parameters the functions accepts, described as a JSON Schema object. See the [guide](https://platform.openai.com/docs/guides/function-calling) for examples, and the [JSON Schema reference](https://json-schema.org/understanding-json-schema/) for documentation about the format. \n\nOmitting `parameters` defines a function with an empty parameter list.",
 			InnerField: "parameters",
+		},
+	},
+	"moderation": {
+		&requestflag.InnerFlag[string]{
+			Name:       "moderation.model",
+			Usage:      "The moderation model to use for moderated completions, e.g. 'omni-moderation-latest'.",
+			InnerField: "model",
 		},
 	},
 	"prediction": {
