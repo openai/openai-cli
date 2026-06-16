@@ -62,8 +62,14 @@ var adminOrganizationAuditLogsList = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.Flag[[]string]{
 			Name:      "resource-id",
-			Usage:     "Return only events performed on these targets. For example, a project ID updated.",
+			Usage:     "Return only events performed on these targets. For example, a project ID updated. For ChatGPT connector role events, use the workspace connector resource ID shown in `details.id`, such as `<workspace_id>__<connector_id>`.",
 			QueryPath: "resource_ids",
+		},
+		&requestflag.Flag[bool]{
+			Name:      "tenant-only",
+			Usage:     "Return only tenant-scoped events associated with this organization. Required for tenant-scoped events such as `role.bound_to_resource` and `role.unbound_from_resource`. When `true`, all supplied event types must be tenant-scoped.",
+			Default:   false,
+			QueryPath: "tenant_only",
 		},
 		&requestflag.Flag[int64]{
 			Name:  "max-items",

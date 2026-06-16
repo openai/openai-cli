@@ -33,7 +33,7 @@ func TestResponsesCreate(t *testing.T) {
 			"--prompt", "{id: id, variables: {foo: string}, version: version}",
 			"--prompt-cache-key", "prompt-cache-key-1234",
 			"--prompt-cache-retention", "in_memory",
-			"--reasoning", "{effort: none, generate_summary: auto, summary: auto}",
+			"--reasoning", "{context: auto, effort: none, generate_summary: auto, summary: auto}",
 			"--safety-identifier", "safety-identifier-1234",
 			"--service-tier", "auto",
 			"--store=true",
@@ -80,6 +80,7 @@ func TestResponsesCreate(t *testing.T) {
 			"--prompt.version", "version",
 			"--prompt-cache-key", "prompt-cache-key-1234",
 			"--prompt-cache-retention", "in_memory",
+			"--reasoning.context", "auto",
 			"--reasoning.effort", "none",
 			"--reasoning.generate-summary", "auto",
 			"--reasoning.summary", "auto",
@@ -129,6 +130,7 @@ func TestResponsesCreate(t *testing.T) {
 			"prompt_cache_key: prompt-cache-key-1234\n" +
 			"prompt_cache_retention: in_memory\n" +
 			"reasoning:\n" +
+			"  context: auto\n" +
 			"  effort: none\n" +
 			"  generate_summary: auto\n" +
 			"  summary: auto\n" +
