@@ -26,6 +26,7 @@ func TestAdminOrganizationAuditLogsList(t *testing.T) {
 			"--limit", "0",
 			"--project-id", "string",
 			"--resource-id", "string",
+			"--tenant-only=true",
 		)
 	})
 
@@ -52,6 +53,7 @@ func TestAdminOrganizationAuditLogsList(t *testing.T) {
 			"--limit", "0",
 			"--project-id", "string",
 			"--resource-id", "string",
+			"--tenant-only=true",
 		)
 	})
 }
