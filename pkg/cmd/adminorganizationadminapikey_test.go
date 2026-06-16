@@ -16,12 +16,15 @@ func TestAdminOrganizationAdminAPIKeysCreate(t *testing.T) {
 			"--admin-api-key", "string",
 			"admin:organization:admin-api-keys", "create",
 			"--name", "New Admin Key",
+			"--expires-in-seconds", "2592000",
 		)
 	})
 
 	t.Run("piping data", func(t *testing.T) {
 		// Test piping YAML data over stdin
-		pipeData := []byte("name: New Admin Key")
+		pipeData := []byte("" +
+			"name: New Admin Key\n" +
+			"expires_in_seconds: 2592000\n")
 		mocktest.TestRunMockTestWithPipeAndFlags(
 			t, pipeData,
 			"--api-key", "string",

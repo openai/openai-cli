@@ -23,7 +23,7 @@ func TestResponsesInputTokensCount(t *testing.T) {
 			"--parallel-tool-calls=true",
 			"--personality", "friendly",
 			"--previous-response-id", "resp_123",
-			"--reasoning", "{effort: none, generate_summary: auto, summary: auto}",
+			"--reasoning", "{context: auto, effort: none, generate_summary: auto, summary: auto}",
 			"--text", "{format: {type: text}, verbosity: low}",
 			"--tool-choice", "none",
 			"--tool", "[{name: name, parameters: {foo: bar}, strict: true, type: function, defer_loading: true, description: description}]",
@@ -48,6 +48,7 @@ func TestResponsesInputTokensCount(t *testing.T) {
 			"--parallel-tool-calls=true",
 			"--personality", "friendly",
 			"--previous-response-id", "resp_123",
+			"--reasoning.context", "auto",
 			"--reasoning.effort", "none",
 			"--reasoning.generate-summary", "auto",
 			"--reasoning.summary", "auto",
@@ -70,6 +71,7 @@ func TestResponsesInputTokensCount(t *testing.T) {
 			"personality: friendly\n" +
 			"previous_response_id: resp_123\n" +
 			"reasoning:\n" +
+			"  context: auto\n" +
 			"  effort: none\n" +
 			"  generate_summary: auto\n" +
 			"  summary: auto\n" +

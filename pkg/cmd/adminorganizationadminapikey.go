@@ -24,6 +24,11 @@ var adminOrganizationAdminAPIKeysCreate = cli.Command{
 			Required: true,
 			BodyPath: "name",
 		},
+		&requestflag.Flag[int64]{
+			Name:     "expires-in-seconds",
+			Usage:    "The number of seconds until the API key expires. Omit this field for a key that does not expire.",
+			BodyPath: "expires_in_seconds",
+		},
 	},
 	Action:          handleAdminOrganizationAdminAPIKeysCreate,
 	HideHelpCommand: true,
