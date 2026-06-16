@@ -66,6 +66,21 @@ var adminOrganizationSpendAlertsCreate = requestflag.WithInnerFlags(cli.Command{
 	},
 })
 
+var adminOrganizationSpendAlertsRetrieve = cli.Command{
+	Name:    "retrieve",
+	Usage:   "Retrieves an organization spend alert.",
+	Suggest: true,
+	Flags: []cli.Flag{
+		&requestflag.Flag[string]{
+			Name:      "alert-id",
+			Required:  true,
+			PathParam: "alert_id",
+		},
+	},
+	Action:          handleAdminOrganizationSpendAlertsRetrieve,
+	HideHelpCommand: true,
+}
+
 var adminOrganizationSpendAlertsUpdate = requestflag.WithInnerFlags(cli.Command{
 	Name:    "update",
 	Usage:   "Updates an organization spend alert.",
@@ -210,6 +225,48 @@ func handleAdminOrganizationSpendAlertsCreate(ctx context.Context, cmd *cli.Comm
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
 		Title:          "admin:organization:spend-alerts create",
+		Transform:      transform,
+	})
+}
+
+func handleAdminOrganizationSpendAlertsRetrieve(ctx context.Context, cmd *cli.Command) error {
+	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
+	unusedArgs := cmd.Args().Slice()
+	if !cmd.IsSet("alert-id") && len(unusedArgs) > 0 {
+		cmd.Set("alert-id", unusedArgs[0])
+		unusedArgs = unusedArgs[1:]
+	}
+	if len(unusedArgs) > 0 {
+		return fmt.Errorf("Unexpected extra arguments: %v", unusedArgs)
+	}
+
+	options, err := flagOptions(
+		cmd,
+		apiquery.NestedQueryFormatBrackets,
+		apiquery.ArrayQueryFormatBrackets,
+		EmptyBody,
+		false,
+	)
+	if err != nil {
+		return err
+	}
+
+	var res []byte
+	options = append(options, option.WithResponseBodyInto(&res))
+	_, err = client.Admin.Organization.SpendAlerts.Get(ctx, cmd.Value("alert-id").(string), options...)
+	if err != nil {
+		return err
+	}
+
+	obj := gjson.ParseBytes(res)
+	format := cmd.Root().String("format")
+	explicitFormat := cmd.Root().IsSet("format")
+	transform := cmd.Root().String("transform")
+	return ShowJSON(obj, ShowJSONOpts{
+		ExplicitFormat: explicitFormat,
+		Format:         format,
+		RawOutput:      cmd.Root().Bool("raw-output"),
+		Title:          "admin:organization:spend-alerts retrieve",
 		Transform:      transform,
 	})
 }
