@@ -62,6 +62,18 @@ func TestAdminOrganizationSpendAlertsCreate(t *testing.T) {
 	})
 }
 
+func TestAdminOrganizationSpendAlertsRetrieve(t *testing.T) {
+	t.Run("regular flags", func(t *testing.T) {
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"admin:organization:spend-alerts", "retrieve",
+			"--alert-id", "alert_id",
+		)
+	})
+}
+
 func TestAdminOrganizationSpendAlertsUpdate(t *testing.T) {
 	t.Run("regular flags", func(t *testing.T) {
 		mocktest.TestRunMockTestWithFlags(

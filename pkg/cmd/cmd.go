@@ -517,6 +517,7 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&adminOrganizationSpendAlertsCreate,
+					&adminOrganizationSpendAlertsRetrieve,
 					&adminOrganizationSpendAlertsUpdate,
 					&adminOrganizationSpendAlertsList,
 					&adminOrganizationSpendAlertsDelete,
@@ -670,6 +671,7 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&adminOrganizationProjectsSpendAlertsCreate,
+					&adminOrganizationProjectsSpendAlertsRetrieve,
 					&adminOrganizationProjectsSpendAlertsUpdate,
 					&adminOrganizationProjectsSpendAlertsList,
 					&adminOrganizationProjectsSpendAlertsDelete,
