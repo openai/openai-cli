@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0 (2026-06-17)
+
+Full Changelog: [v1.2.0...v1.3.0](https://github.com/openai/openai-cli/compare/v1.2.0...v1.3.0)
+
+### Features
+
+* **api:** admin spend_alerts ([f183cb0](https://github.com/openai/openai-cli/commit/f183cb04db80e2a89364c0b46b81f355edbeced5))
+* **api:** responses.moderation and chat_completions.moderation ([d660d08](https://github.com/openai/openai-cli/commit/d660d0873624f3895d9463ec98e6afc9d63a52b8))
+* **api:** update OpenAPI spec or Stainless config ([7aefee4](https://github.com/openai/openai-cli/commit/7aefee4982a088a9299dc68953f0dea796ee5ff5))
+* **api:** update OpenAPI spec or Stainless config ([dee1f3e](https://github.com/openai/openai-cli/commit/dee1f3ea2e7dee54aaa44faddd27675d7e44e43d))
+
 ## 1.2.0 (2026-06-01)
 
 Full Changelog: [v1.1.2...v1.2.0](https://github.com/openai/openai-cli/compare/v1.1.2...v1.2.0)
