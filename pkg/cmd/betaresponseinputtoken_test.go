@@ -9,13 +9,13 @@ import (
 	"github.com/openai/openai-cli/internal/requestflag"
 )
 
-func TestResponsesInputTokensCount(t *testing.T) {
+func TestBetaResponsesInputTokensCount(t *testing.T) {
 	t.Run("regular flags", func(t *testing.T) {
 		mocktest.TestRunMockTestWithFlags(
 			t,
 			"--api-key", "string",
 			"--admin-api-key", "string",
-			"responses:input-tokens", "count",
+			"beta:responses:input-tokens", "count",
 			"--conversation", "string",
 			"--input", "string",
 			"--instructions", "instructions",
@@ -28,19 +28,20 @@ func TestResponsesInputTokensCount(t *testing.T) {
 			"--tool-choice", "none",
 			"--tool", "[{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], defer_loading: true, description: description, output_schema: {foo: bar}}]",
 			"--truncation", "auto",
+			"--beta", "responses_multi_agent=v1",
 		)
 	})
 
 	t.Run("inner flags", func(t *testing.T) {
 		// Check that inner flags have been set up correctly
-		requestflag.CheckInnerFlags(responsesInputTokensCount)
+		requestflag.CheckInnerFlags(betaResponsesInputTokensCount)
 
 		// Alternative argument passing style using inner flags
 		mocktest.TestRunMockTestWithFlags(
 			t,
 			"--api-key", "string",
 			"--admin-api-key", "string",
-			"responses:input-tokens", "count",
+			"beta:responses:input-tokens", "count",
 			"--conversation", "string",
 			"--input", "string",
 			"--instructions", "instructions",
@@ -58,6 +59,7 @@ func TestResponsesInputTokensCount(t *testing.T) {
 			"--tool-choice", "none",
 			"--tool", "[{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], defer_loading: true, description: description, output_schema: {foo: bar}}]",
 			"--truncation", "auto",
+			"--beta", "responses_multi_agent=v1",
 		)
 	})
 
@@ -99,7 +101,8 @@ func TestResponsesInputTokensCount(t *testing.T) {
 			t, pipeData,
 			"--api-key", "string",
 			"--admin-api-key", "string",
-			"responses:input-tokens", "count",
+			"beta:responses:input-tokens", "count",
+			"--beta", "responses_multi_agent=v1",
 		)
 	})
 }

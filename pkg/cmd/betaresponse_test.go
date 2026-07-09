@@ -9,13 +9,13 @@ import (
 	"github.com/openai/openai-cli/internal/requestflag"
 )
 
-func TestResponsesCreate(t *testing.T) {
+func TestBetaResponsesCreate(t *testing.T) {
 	t.Run("regular flags", func(t *testing.T) {
 		mocktest.TestRunMockTestWithFlags(
 			t,
 			"--api-key", "string",
 			"--admin-api-key", "string",
-			"responses", "create",
+			"beta:responses", "create",
 			"--max-items", "10",
 			"--background=true",
 			"--context-management", "[{type: type, compact_threshold: 1000}]",
@@ -28,6 +28,7 @@ func TestResponsesCreate(t *testing.T) {
 			"--metadata", "{foo: string}",
 			"--model", "gpt-5.1",
 			"--moderation", "{model: model, policy: {input: {mode: score}, output: {mode: score}}}",
+			"--multi-agent", "{enabled: true, max_concurrent_subagents: 1}",
 			"--parallel-tool-calls=true",
 			"--previous-response-id", "previous_response_id",
 			"--prompt", "{id: id, variables: {foo: string}, version: version}",
@@ -48,19 +49,20 @@ func TestResponsesCreate(t *testing.T) {
 			"--top-p", "1",
 			"--truncation", "auto",
 			"--user", "user-1234",
+			"--beta", "responses_multi_agent=v1",
 		)
 	})
 
 	t.Run("inner flags", func(t *testing.T) {
 		// Check that inner flags have been set up correctly
-		requestflag.CheckInnerFlags(responsesCreate)
+		requestflag.CheckInnerFlags(betaResponsesCreate)
 
 		// Alternative argument passing style using inner flags
 		mocktest.TestRunMockTestWithFlags(
 			t,
 			"--api-key", "string",
 			"--admin-api-key", "string",
-			"responses", "create",
+			"beta:responses", "create",
 			"--max-items", "10",
 			"--background=true",
 			"--context-management.type", "type",
@@ -75,6 +77,8 @@ func TestResponsesCreate(t *testing.T) {
 			"--model", "gpt-5.1",
 			"--moderation.model", "model",
 			"--moderation.policy", "{input: {mode: score}, output: {mode: score}}",
+			"--multi-agent.enabled=true",
+			"--multi-agent.max-concurrent-subagents", "1",
 			"--parallel-tool-calls=true",
 			"--previous-response-id", "previous_response_id",
 			"--prompt.id", "id",
@@ -103,6 +107,7 @@ func TestResponsesCreate(t *testing.T) {
 			"--top-p", "1",
 			"--truncation", "auto",
 			"--user", "user-1234",
+			"--beta", "responses_multi_agent=v1",
 		)
 	})
 
@@ -130,6 +135,9 @@ func TestResponsesCreate(t *testing.T) {
 			"      mode: score\n" +
 			"    output:\n" +
 			"      mode: score\n" +
+			"multi_agent:\n" +
+			"  enabled: true\n" +
+			"  max_concurrent_subagents: 1\n" +
 			"parallel_tool_calls: true\n" +
 			"previous_response_id: previous_response_id\n" +
 			"prompt:\n" +
@@ -180,60 +188,64 @@ func TestResponsesCreate(t *testing.T) {
 			t, pipeData,
 			"--api-key", "string",
 			"--admin-api-key", "string",
-			"responses", "create",
+			"beta:responses", "create",
 			"--max-items", "10",
+			"--beta", "responses_multi_agent=v1",
 		)
 	})
 }
 
-func TestResponsesRetrieve(t *testing.T) {
+func TestBetaResponsesRetrieve(t *testing.T) {
 	t.Run("regular flags", func(t *testing.T) {
 		mocktest.TestRunMockTestWithFlags(
 			t,
 			"--api-key", "string",
 			"--admin-api-key", "string",
-			"responses", "retrieve",
+			"beta:responses", "retrieve",
 			"--max-items", "10",
 			"--response-id", "resp_677efb5139a88190b512bc3fef8e535d",
 			"--include", "file_search_call.results",
 			"--include-obfuscation=true",
 			"--starting-after", "0",
 			"--stream=false",
+			"--beta", "responses_multi_agent=v1",
 		)
 	})
 }
 
-func TestResponsesDelete(t *testing.T) {
+func TestBetaResponsesDelete(t *testing.T) {
 	t.Run("regular flags", func(t *testing.T) {
 		mocktest.TestRunMockTestWithFlags(
 			t,
 			"--api-key", "string",
 			"--admin-api-key", "string",
-			"responses", "delete",
+			"beta:responses", "delete",
 			"--response-id", "resp_677efb5139a88190b512bc3fef8e535d",
+			"--beta", "responses_multi_agent=v1",
 		)
 	})
 }
 
-func TestResponsesCancel(t *testing.T) {
+func TestBetaResponsesCancel(t *testing.T) {
 	t.Run("regular flags", func(t *testing.T) {
 		mocktest.TestRunMockTestWithFlags(
 			t,
 			"--api-key", "string",
 			"--admin-api-key", "string",
-			"responses", "cancel",
+			"beta:responses", "cancel",
 			"--response-id", "resp_677efb5139a88190b512bc3fef8e535d",
+			"--beta", "responses_multi_agent=v1",
 		)
 	})
 }
 
-func TestResponsesCompact(t *testing.T) {
+func TestBetaResponsesCompact(t *testing.T) {
 	t.Run("regular flags", func(t *testing.T) {
 		mocktest.TestRunMockTestWithFlags(
 			t,
 			"--api-key", "string",
 			"--admin-api-key", "string",
-			"responses", "compact",
+			"beta:responses", "compact",
 			"--model", "gpt-5.6-sol",
 			"--input", "string",
 			"--instructions", "instructions",
@@ -242,19 +254,20 @@ func TestResponsesCompact(t *testing.T) {
 			"--prompt-cache-options", "{mode: implicit, ttl: 30m}",
 			"--prompt-cache-retention", "in_memory",
 			"--service-tier", "auto",
+			"--beta", "responses_multi_agent=v1",
 		)
 	})
 
 	t.Run("inner flags", func(t *testing.T) {
 		// Check that inner flags have been set up correctly
-		requestflag.CheckInnerFlags(responsesCompact)
+		requestflag.CheckInnerFlags(betaResponsesCompact)
 
 		// Alternative argument passing style using inner flags
 		mocktest.TestRunMockTestWithFlags(
 			t,
 			"--api-key", "string",
 			"--admin-api-key", "string",
-			"responses", "compact",
+			"beta:responses", "compact",
 			"--model", "gpt-5.6-sol",
 			"--input", "string",
 			"--instructions", "instructions",
@@ -264,6 +277,7 @@ func TestResponsesCompact(t *testing.T) {
 			"--prompt-cache-options.ttl", "30m",
 			"--prompt-cache-retention", "in_memory",
 			"--service-tier", "auto",
+			"--beta", "responses_multi_agent=v1",
 		)
 	})
 
@@ -284,7 +298,8 @@ func TestResponsesCompact(t *testing.T) {
 			t, pipeData,
 			"--api-key", "string",
 			"--admin-api-key", "string",
-			"responses", "compact",
+			"beta:responses", "compact",
+			"--beta", "responses_multi_agent=v1",
 		)
 	})
 }

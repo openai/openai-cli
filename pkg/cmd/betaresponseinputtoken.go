@@ -10,12 +10,11 @@ import (
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/responses"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
-var responsesInputTokensCount = requestflag.WithInnerFlags(cli.Command{
+var betaResponsesInputTokensCount = requestflag.WithInnerFlags(cli.Command{
 	Name:    "count",
 	Usage:   "Returns input token counts of the request.",
 	Suggest: true,
@@ -57,7 +56,7 @@ var responsesInputTokensCount = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.Flag[map[string]any]{
 			Name:     "reasoning",
-			Usage:    "**gpt-5 and o-series models only**\n\nConfiguration options for\n[reasoning models](https://platform.openai.com/docs/guides/reasoning).\n",
+			Usage:    "**gpt-5 and o-series models only** Configuration options for [reasoning models](https://platform.openai.com/docs/guides/reasoning).",
 			BodyPath: "reasoning",
 		},
 		&requestflag.Flag[map[string]any]{
@@ -80,8 +79,12 @@ var responsesInputTokensCount = requestflag.WithInnerFlags(cli.Command{
 			Usage:    "The truncation strategy to use for the model response. - `auto`: If the input to this Response exceeds the model's context window size, the model will truncate the response to fit the context window by dropping items from the beginning of the conversation. - `disabled` (default): If the input size will exceed the context window size for a model, the request will fail with a 400 error.",
 			BodyPath: "truncation",
 		},
+		&requestflag.Flag[[]string]{
+			Name:       "beta",
+			HeaderPath: "openai-beta",
+		},
 	},
-	Action:          handleResponsesInputTokensCount,
+	Action:          handleBetaResponsesInputTokensCount,
 	HideHelpCommand: true,
 }, map[string][]requestflag.HasOuterFlag{
 	"reasoning": {
@@ -125,7 +128,7 @@ var responsesInputTokensCount = requestflag.WithInnerFlags(cli.Command{
 	},
 })
 
-func handleResponsesInputTokensCount(ctx context.Context, cmd *cli.Command) error {
+func handleBetaResponsesInputTokensCount(ctx context.Context, cmd *cli.Command) error {
 	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
 	unusedArgs := cmd.Args().Slice()
 
@@ -144,11 +147,11 @@ func handleResponsesInputTokensCount(ctx context.Context, cmd *cli.Command) erro
 		return err
 	}
 
-	params := responses.InputTokenCountParams{}
+	params := openai.BetaResponseInputTokenCountParams{}
 
 	var res []byte
 	options = append(options, option.WithResponseBodyInto(&res))
-	_, err = client.Responses.InputTokens.Count(ctx, params, options...)
+	_, err = client.Beta.Responses.InputTokens.Count(ctx, params, options...)
 	if err != nil {
 		return err
 	}
@@ -161,7 +164,7 @@ func handleResponsesInputTokensCount(ctx context.Context, cmd *cli.Command) erro
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
-		Title:          "responses:input-tokens count",
+		Title:          "beta:responses:input-tokens count",
 		Transform:      transform,
 	})
 }

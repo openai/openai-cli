@@ -10,12 +10,11 @@ import (
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/responses"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
-var responsesCreate = requestflag.WithInnerFlags(cli.Command{
+var betaResponsesCreate = requestflag.WithInnerFlags(cli.Command{
 	Name:    "create",
 	Usage:   "Creates a model response. Provide\n[text](https://platform.openai.com/docs/guides/text) or\n[image](https://platform.openai.com/docs/guides/images) inputs to generate\n[text](https://platform.openai.com/docs/guides/text) or\n[JSON](https://platform.openai.com/docs/guides/structured-outputs) outputs. Have\nthe model call your own\n[custom code](https://platform.openai.com/docs/guides/function-calling) or use\nbuilt-in [tools](https://platform.openai.com/docs/guides/tools) like\n[web search](https://platform.openai.com/docs/guides/tools-web-search) or\n[file search](https://platform.openai.com/docs/guides/tools-file-search) to use\nyour own data as input for the model's response.",
 	Suggest: true,
@@ -68,12 +67,18 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.Flag[string]{
 			Name:     "model",
+			Usage:    "Model ID used to generate the response, like `gpt-4o` or `o3`. OpenAI\noffers a wide range of models with different capabilities, performance\ncharacteristics, and price points. Refer to the [model guide](https://platform.openai.com/docs/models)\nto browse and compare available models.\n",
 			BodyPath: "model",
 		},
 		&requestflag.Flag[map[string]any]{
 			Name:     "moderation",
 			Usage:    "Configuration for running moderation on the input and output of this response.\n",
 			BodyPath: "moderation",
+		},
+		&requestflag.Flag[map[string]any]{
+			Name:     "multi-agent",
+			Usage:    "Configuration for server-hosted multi-agent execution.",
+			BodyPath: "multi_agent",
 		},
 		&requestflag.Flag[*bool]{
 			Name:     "parallel-tool-calls",
@@ -182,12 +187,16 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 			Usage:    "This field is being replaced by `safety_identifier` and `prompt_cache_key`. Use `prompt_cache_key` instead to maintain caching optimizations.\nA stable identifier for your end-users.\nUsed to boost cache hit rates by better bucketing similar requests and  to help OpenAI detect and prevent abuse. [Learn more](https://platform.openai.com/docs/guides/safety-best-practices#safety-identifiers).\n",
 			BodyPath: "user",
 		},
+		&requestflag.Flag[[]string]{
+			Name:       "beta",
+			HeaderPath: "openai-beta",
+		},
 		&requestflag.Flag[int64]{
 			Name:  "max-items",
 			Usage: "The maximum number of items to return (use -1 for unlimited).",
 		},
 	},
-	Action:          handleResponsesCreate,
+	Action:          handleBetaResponsesCreate,
 	HideHelpCommand: true,
 }, map[string][]requestflag.HasOuterFlag{
 	"context-management": {
@@ -214,6 +223,18 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 			Name:       "moderation.policy",
 			Usage:      "The policy to apply to moderated response input and output.",
 			InnerField: "policy",
+		},
+	},
+	"multi-agent": {
+		&requestflag.InnerFlag[bool]{
+			Name:       "multi-agent.enabled",
+			Usage:      "Whether to enable server-hosted multi-agent execution for this response.",
+			InnerField: "enabled",
+		},
+		&requestflag.InnerFlag[int64]{
+			Name:       "multi-agent.max-concurrent-subagents",
+			Usage:      "`max_concurrent_subagents` sets the maximum number of subagents that can be active simultaneously across the entire agent tree. It includes all descendants—children, grandchildren, and deeper subagents—but excludes the root agent.\nThe API does not impose a fixed upper bound on this setting. The default is `3`, which is recommended for most workloads. Multi-agent runs also have no fixed limit on tree depth or the total number of subagents created during a run.",
+			InnerField: "max_concurrent_subagents",
 		},
 	},
 	"prompt": {
@@ -293,7 +314,7 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 	},
 })
 
-var responsesRetrieve = cli.Command{
+var betaResponsesRetrieve = cli.Command{
 	Name:    "retrieve",
 	Usage:   "Retrieves a model response with the given ID.",
 	Suggest: true,
@@ -323,16 +344,20 @@ var responsesRetrieve = cli.Command{
 			Usage:     "If set to true, the model response data will be streamed to the client\nas it is generated using [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#Event_stream_format).\nSee the [Streaming section below](https://platform.openai.com/docs/api-reference/responses-streaming)\nfor more information.\n",
 			QueryPath: "stream",
 		},
+		&requestflag.Flag[[]string]{
+			Name:       "beta",
+			HeaderPath: "openai-beta",
+		},
 		&requestflag.Flag[int64]{
 			Name:  "max-items",
 			Usage: "The maximum number of items to return (use -1 for unlimited).",
 		},
 	},
-	Action:          handleResponsesRetrieve,
+	Action:          handleBetaResponsesRetrieve,
 	HideHelpCommand: true,
 }
 
-var responsesDelete = cli.Command{
+var betaResponsesDelete = cli.Command{
 	Name:    "delete",
 	Usage:   "Deletes a model response with the given ID.",
 	Suggest: true,
@@ -342,12 +367,16 @@ var responsesDelete = cli.Command{
 			Required:  true,
 			PathParam: "response_id",
 		},
+		&requestflag.Flag[[]string]{
+			Name:       "beta",
+			HeaderPath: "openai-beta",
+		},
 	},
-	Action:          handleResponsesDelete,
+	Action:          handleBetaResponsesDelete,
 	HideHelpCommand: true,
 }
 
-var responsesCancel = cli.Command{
+var betaResponsesCancel = cli.Command{
 	Name:    "cancel",
 	Usage:   "Cancels a model response with the given ID. Only responses created with the\n`background` parameter set to `true` can be cancelled.\n[Learn more](https://platform.openai.com/docs/guides/background).",
 	Suggest: true,
@@ -357,12 +386,16 @@ var responsesCancel = cli.Command{
 			Required:  true,
 			PathParam: "response_id",
 		},
+		&requestflag.Flag[[]string]{
+			Name:       "beta",
+			HeaderPath: "openai-beta",
+		},
 	},
-	Action:          handleResponsesCancel,
+	Action:          handleBetaResponsesCancel,
 	HideHelpCommand: true,
 }
 
-var responsesCompact = requestflag.WithInnerFlags(cli.Command{
+var betaResponsesCompact = requestflag.WithInnerFlags(cli.Command{
 	Name:    "compact",
 	Usage:   "Compact a conversation. Returns a compacted response object.",
 	Suggest: true,
@@ -408,8 +441,12 @@ var responsesCompact = requestflag.WithInnerFlags(cli.Command{
 			Usage:    "The service tier to use for this request.",
 			BodyPath: "service_tier",
 		},
+		&requestflag.Flag[[]string]{
+			Name:       "beta",
+			HeaderPath: "openai-beta",
+		},
 	},
-	Action:          handleResponsesCompact,
+	Action:          handleBetaResponsesCompact,
 	HideHelpCommand: true,
 }, map[string][]requestflag.HasOuterFlag{
 	"prompt-cache-options": {
@@ -426,7 +463,7 @@ var responsesCompact = requestflag.WithInnerFlags(cli.Command{
 	},
 })
 
-func handleResponsesCreate(ctx context.Context, cmd *cli.Command) error {
+func handleBetaResponsesCreate(ctx context.Context, cmd *cli.Command) error {
 	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
 	unusedArgs := cmd.Args().Slice()
 
@@ -445,13 +482,13 @@ func handleResponsesCreate(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	params := responses.ResponseNewParams{}
+	params := openai.BetaResponseNewParams{}
 
 	format := cmd.Root().String("format")
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	if cmd.Bool("stream") {
-		stream := client.Responses.NewStreaming(ctx, params, options...)
+		stream := client.Beta.Responses.NewStreaming(ctx, params, options...)
 		maxItems := int64(-1)
 		if cmd.IsSet("max-items") {
 			maxItems = cmd.Value("max-items").(int64)
@@ -460,13 +497,13 @@ func handleResponsesCreate(ctx context.Context, cmd *cli.Command) error {
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
-			Title:          "responses create",
+			Title:          "beta:responses create",
 			Transform:      transform,
 		})
 	} else {
 		var res []byte
 		options = append(options, option.WithResponseBodyInto(&res))
-		_, err = client.Responses.New(ctx, params, options...)
+		_, err = client.Beta.Responses.New(ctx, params, options...)
 		if err != nil {
 			return err
 		}
@@ -476,13 +513,13 @@ func handleResponsesCreate(ctx context.Context, cmd *cli.Command) error {
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
-			Title:          "responses create",
+			Title:          "beta:responses create",
 			Transform:      transform,
 		})
 	}
 }
 
-func handleResponsesRetrieve(ctx context.Context, cmd *cli.Command) error {
+func handleBetaResponsesRetrieve(ctx context.Context, cmd *cli.Command) error {
 	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
 	unusedArgs := cmd.Args().Slice()
 	if !cmd.IsSet("response-id") && len(unusedArgs) > 0 {
@@ -504,13 +541,13 @@ func handleResponsesRetrieve(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	params := responses.ResponseGetParams{}
+	params := openai.BetaResponseGetParams{}
 
 	format := cmd.Root().String("format")
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	if cmd.Bool("stream") {
-		stream := client.Responses.GetStreaming(
+		stream := client.Beta.Responses.GetStreaming(
 			ctx,
 			cmd.Value("response-id").(string),
 			params,
@@ -524,13 +561,13 @@ func handleResponsesRetrieve(ctx context.Context, cmd *cli.Command) error {
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
-			Title:          "responses retrieve",
+			Title:          "beta:responses retrieve",
 			Transform:      transform,
 		})
 	} else {
 		var res []byte
 		options = append(options, option.WithResponseBodyInto(&res))
-		_, err = client.Responses.Get(
+		_, err = client.Beta.Responses.Get(
 			ctx,
 			cmd.Value("response-id").(string),
 			params,
@@ -545,13 +582,13 @@ func handleResponsesRetrieve(ctx context.Context, cmd *cli.Command) error {
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
-			Title:          "responses retrieve",
+			Title:          "beta:responses retrieve",
 			Transform:      transform,
 		})
 	}
 }
 
-func handleResponsesDelete(ctx context.Context, cmd *cli.Command) error {
+func handleBetaResponsesDelete(ctx context.Context, cmd *cli.Command) error {
 	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
 	unusedArgs := cmd.Args().Slice()
 	if !cmd.IsSet("response-id") && len(unusedArgs) > 0 {
@@ -573,10 +610,17 @@ func handleResponsesDelete(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	return client.Responses.Delete(ctx, cmd.Value("response-id").(string), options...)
+	params := openai.BetaResponseDeleteParams{}
+
+	return client.Beta.Responses.Delete(
+		ctx,
+		cmd.Value("response-id").(string),
+		params,
+		options...,
+	)
 }
 
-func handleResponsesCancel(ctx context.Context, cmd *cli.Command) error {
+func handleBetaResponsesCancel(ctx context.Context, cmd *cli.Command) error {
 	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
 	unusedArgs := cmd.Args().Slice()
 	if !cmd.IsSet("response-id") && len(unusedArgs) > 0 {
@@ -597,10 +641,17 @@ func handleResponsesCancel(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+
+	params := openai.BetaResponseCancelParams{}
 
 	var res []byte
 	options = append(options, option.WithResponseBodyInto(&res))
-	_, err = client.Responses.Cancel(ctx, cmd.Value("response-id").(string), options...)
+	_, err = client.Beta.Responses.Cancel(
+		ctx,
+		cmd.Value("response-id").(string),
+		params,
+		options...,
+	)
 	if err != nil {
 		return err
 	}
@@ -613,12 +664,12 @@ func handleResponsesCancel(ctx context.Context, cmd *cli.Command) error {
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
-		Title:          "responses cancel",
+		Title:          "beta:responses cancel",
 		Transform:      transform,
 	})
 }
 
-func handleResponsesCompact(ctx context.Context, cmd *cli.Command) error {
+func handleBetaResponsesCompact(ctx context.Context, cmd *cli.Command) error {
 	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
 	unusedArgs := cmd.Args().Slice()
 
@@ -637,11 +688,11 @@ func handleResponsesCompact(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	params := responses.ResponseCompactParams{}
+	params := openai.BetaResponseCompactParams{}
 
 	var res []byte
 	options = append(options, option.WithResponseBodyInto(&res))
-	_, err = client.Responses.Compact(ctx, params, options...)
+	_, err = client.Beta.Responses.Compact(ctx, params, options...)
 	if err != nil {
 		return err
 	}
@@ -654,7 +705,7 @@ func handleResponsesCompact(ctx context.Context, cmd *cli.Command) error {
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
-		Title:          "responses compact",
+		Title:          "beta:responses compact",
 		Transform:      transform,
 	})
 }
