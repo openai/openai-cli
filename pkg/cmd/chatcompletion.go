@@ -116,14 +116,19 @@ var chatCompletionsCreate = requestflag.WithInnerFlags(cli.Command{
 			Usage:    "Used by OpenAI to cache responses for similar requests to optimize your cache hit rates. Replaces the `user` field. [Learn more](https://platform.openai.com/docs/guides/prompt-caching).\n",
 			BodyPath: "prompt_cache_key",
 		},
+		&requestflag.Flag[map[string]any]{
+			Name:     "prompt-cache-options",
+			Usage:    "Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`, which is currently the only supported value. See the [prompt caching guide](https://platform.openai.com/docs/guides/prompt-caching) for current details.",
+			BodyPath: "prompt_cache_options",
+		},
 		&requestflag.Flag[*string]{
 			Name:     "prompt-cache-retention",
-			Usage:    "The retention policy for the prompt cache. Set to `24h` to enable extended prompt caching, which keeps cached prefixes active for longer, up to a maximum of 24 hours. [Learn more](https://platform.openai.com/docs/guides/prompt-caching#prompt-cache-retention).\nFor `gpt-5.5`, `gpt-5.5-pro`, and future models, only `24h` is supported.\n\nFor older models that support both `in_memory` and `24h`, the default depends on your organization's data retention policy:\n  - Organizations without ZDR enabled default to `24h`.\n  - Organizations with ZDR enabled default to `in_memory` when `prompt_cache_retention` is not specified.\n",
+			Usage:    "Deprecated. Use `prompt_cache_options.ttl` instead.\n\nThe retention policy for the prompt cache. Set to `24h` to enable extended prompt caching, which keeps cached prefixes active for longer, up to a maximum of 24 hours. [Learn more](https://platform.openai.com/docs/guides/prompt-caching#prompt-cache-retention).\nThis field expresses a maximum retention policy, while\n`prompt_cache_options.ttl` expresses a minimum cache lifetime. The two\nfields are independent and do not interact.\nFor `gpt-5.5`, `gpt-5.5-pro`, and future models, only `24h` is supported.\n\nFor older models that support both `in_memory` and `24h`, the default depends on your organization's data retention policy:\n  - Organizations without ZDR enabled default to `24h`.\n  - Organizations with ZDR enabled default to `in_memory` when `prompt_cache_retention` is not specified.\n",
 			BodyPath: "prompt_cache_retention",
 		},
 		&requestflag.Flag[*string]{
 			Name:     "reasoning-effort",
-			Usage:    "Constrains effort on reasoning for\n[reasoning models](https://platform.openai.com/docs/guides/reasoning).\nCurrently supported values are `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`. Reducing\nreasoning effort can result in faster responses and fewer tokens used\non reasoning in a response.\n\n- `gpt-5.1` defaults to `none`, which does not perform reasoning. The supported reasoning values for `gpt-5.1` are `none`, `low`, `medium`, and `high`. Tool calls are supported for all reasoning values in gpt-5.1.\n- All models before `gpt-5.1` default to `medium` reasoning effort, and do not support `none`.\n- The `gpt-5-pro` model defaults to (and only supports) `high` reasoning effort.\n- `xhigh` is supported for all models after `gpt-5.1-codex-max`.\n",
+			Usage:    "Constrains effort on reasoning for reasoning models. Currently supported\nvalues are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.\nReducing reasoning effort can result in faster responses and fewer tokens\nused on reasoning in a response. Not all reasoning models support every\nvalue. See the\n[reasoning guide](https://platform.openai.com/docs/guides/reasoning)\nfor model-specific support.\n",
 			Default:  requestflag.Ptr[string]("medium"),
 			BodyPath: "reasoning_effort",
 		},
@@ -256,6 +261,11 @@ var chatCompletionsCreate = requestflag.WithInnerFlags(cli.Command{
 			Usage:      "The moderation model to use for moderated completions, e.g. 'omni-moderation-latest'.",
 			InnerField: "model",
 		},
+		&requestflag.InnerFlag[map[string]any]{
+			Name:       "moderation.policy",
+			Usage:      "The policy to apply to moderated response input and output.",
+			InnerField: "policy",
+		},
 	},
 	"prediction": {
 		&requestflag.InnerFlag[any]{
@@ -267,6 +277,18 @@ var chatCompletionsCreate = requestflag.WithInnerFlags(cli.Command{
 			Name:       "prediction.type",
 			Usage:      "The type of the predicted content you want to provide. This type is\ncurrently always `content`.\n",
 			InnerField: "type",
+		},
+	},
+	"prompt-cache-options": {
+		&requestflag.InnerFlag[string]{
+			Name:       "prompt-cache-options.mode",
+			Usage:      "Controls whether OpenAI automatically creates an implicit cache breakpoint. Defaults to `implicit`. With `implicit`, OpenAI creates one implicit breakpoint and writes up to the latest three explicit breakpoints in the request. With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit breakpoints. If there are no explicit breakpoints, the request does not use prompt caching.",
+			InnerField: "mode",
+		},
+		&requestflag.InnerFlag[string]{
+			Name:       "prompt-cache-options.ttl",
+			Usage:      "The minimum lifetime applied to every implicit and explicit cache breakpoint written by the request. Defaults to `30m`, which is currently the only supported value. The backend may retain cache entries for longer.",
+			InnerField: "ttl",
 		},
 	},
 	"stream-options": {

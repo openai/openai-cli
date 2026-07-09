@@ -26,7 +26,7 @@ func TestBetaThreadsRunsCreate(t *testing.T) {
 			"--max-completion-tokens", "256",
 			"--max-prompt-tokens", "256",
 			"--metadata", "{foo: string}",
-			"--model", "gpt-5.4",
+			"--model", "gpt-5.6-sol",
 			"--parallel-tool-calls=true",
 			"--reasoning-effort", "none",
 			"--response-format", "auto",
@@ -62,7 +62,7 @@ func TestBetaThreadsRunsCreate(t *testing.T) {
 			"--max-completion-tokens", "256",
 			"--max-prompt-tokens", "256",
 			"--metadata", "{foo: string}",
-			"--model", "gpt-5.4",
+			"--model", "gpt-5.6-sol",
 			"--parallel-tool-calls=true",
 			"--reasoning-effort", "none",
 			"--response-format", "auto",
@@ -95,7 +95,7 @@ func TestBetaThreadsRunsCreate(t *testing.T) {
 			"max_prompt_tokens: 256\n" +
 			"metadata:\n" +
 			"  foo: string\n" +
-			"model: gpt-5.4\n" +
+			"model: gpt-5.6-sol\n" +
 			"parallel_tool_calls: true\n" +
 			"reasoning_effort: none\n" +
 			"response_format: auto\n" +
