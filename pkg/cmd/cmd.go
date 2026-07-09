@@ -280,6 +280,34 @@ func init() {
 				},
 			},
 			{
+				Name:     "beta:responses",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&betaResponsesCreate,
+					&betaResponsesRetrieve,
+					&betaResponsesDelete,
+					&betaResponsesCancel,
+					&betaResponsesCompact,
+				},
+			},
+			{
+				Name:     "beta:responses:input-items",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&betaResponsesInputItemsList,
+				},
+			},
+			{
+				Name:     "beta:responses:input-tokens",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&betaResponsesInputTokensCount,
+				},
+			},
+			{
 				Name:     "beta:chatkit:sessions",
 				Category: "API RESOURCE",
 				Suggest:  true,
