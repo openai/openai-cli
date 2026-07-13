@@ -55,6 +55,11 @@ var adminOrganizationProjectsAPIKeysList = cli.Command{
 			Default:   20,
 			QueryPath: "limit",
 		},
+		&requestflag.Flag[string]{
+			Name:      "owner-project-access",
+			Usage:     "Filter API keys by whether the owner currently has effective access to the project. Use `active` for owners with access, `inactive` for owners without access, or `any` for all enabled project API keys. If omitted, the endpoint applies its existing membership-based visibility rules, which may exclude some enabled keys.\n",
+			QueryPath: "owner_project_access",
+		},
 		&requestflag.Flag[int64]{
 			Name:  "max-items",
 			Usage: "The maximum number of items to return (use -1 for unlimited).",
