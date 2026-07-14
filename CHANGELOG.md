@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.4.0 (2026-07-14)
+
+Full Changelog: [v1.3.0...v1.4.0](https://github.com/openai/openai-cli/compare/v1.3.0...v1.4.0)
+
+### Features
+
+* **api:** add owner_project_access to APIKeyListParams ([571c96f](https://github.com/openai/openai-cli/commit/571c96f4cf676a45e35451a29a7636468e59716d))
+* **api:** gpt-5.6-sol updates ([977bac7](https://github.com/openai/openai-cli/commit/977bac746ae0b7dfc46c4cb4043e64de32d42cf5))
+
+
+### Chores
+
+* **internal:** codegen related update ([337b800](https://github.com/openai/openai-cli/commit/337b80062039cedaac772fec6aa089da93c26e14))
+* **internal:** codegen related update ([57caf1e](https://github.com/openai/openai-cli/commit/57caf1eaf22f37257b314ca7f6094c0a814a7415))
+
 ## 1.3.0 (2026-06-17)
 
 Full Changelog: [v1.2.0...v1.3.0](https://github.com/openai/openai-cli/compare/v1.2.0...v1.3.0)
