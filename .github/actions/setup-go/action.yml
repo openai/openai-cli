@@ -17,7 +17,14 @@ runs:
     - name: Configure Git for access to the Go SDK's staging repo
       if: github.repository == 'stainless-sdks/openai-cli'
       shell: bash
-      run: git config --global url."https://x-access-token:${{ steps.get_token.outputs.github_access_token }}@github.com/stainless-sdks/openai-go".insteadOf "https://github.com/stainless-sdks/openai-go"
+      env:
+        GITHUB_ACCESS_TOKEN: ${{ steps.get_token.outputs.github_access_token }}
+      run: |
+        {
+          echo "GIT_CONFIG_COUNT=1"
+          echo "GIT_CONFIG_KEY_0=url.https://x-access-token:${GITHUB_ACCESS_TOKEN}@github.com/stainless-sdks/openai-go.insteadOf"
+          echo "GIT_CONFIG_VALUE_0=https://github.com/stainless-sdks/openai-go"
+        } >> "$GITHUB_ENV"
 
     - name: Setup go
       uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5

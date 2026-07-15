@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -exuo pipefail
+set -euo pipefail
 
 BINARY_NAME="openai"
 DIST_DIR="dist"
@@ -35,7 +35,7 @@ done
 
 (cd "$DIST_DIR" && zip -r "$FILENAME" "${relative_files[@]}")
 
-RESPONSE=$(curl -X POST "$URL?filename=$FILENAME" \
+RESPONSE=$(curl --fail-with-body -sS -X POST "$URL?filename=$FILENAME" \
   -H "Authorization: Bearer $AUTH" \
   -H "Content-Type: application/json")
 
@@ -46,14 +46,15 @@ if [[ "$SIGNED_URL" == "null" ]]; then
   exit 1
 fi
 
-UPLOAD_RESPONSE=$(curl -v -X PUT \
+if UPLOAD_STATUS=$(curl -sS -X PUT \
   -H "Content-Type: application/zip" \
-  --data-binary "@${DIST_DIR}/${FILENAME}" "$SIGNED_URL" 2>&1)
-
-if echo "$UPLOAD_RESPONSE" | grep -q "HTTP/[0-9.]* 200"; then
+  --data-binary "@${DIST_DIR}/${FILENAME}" \
+  --output /dev/null \
+  --write-out "%{http_code}" \
+  "$SIGNED_URL") && [[ "$UPLOAD_STATUS" == "200" ]]; then
   echo -e "\033[32mUploaded build to Stainless storage.\033[0m"
   echo -e "\033[32mInstallation: Download and unzip: 'https://pkg.stainless.com/s/openai-cli/$SHA'. On macOS, run 'xattr -d com.apple.quarantine {executable name}'.\033[0m"
 else
-  echo -e "\033[31mFailed to upload artifact.\033[0m"
+  echo -e "\033[31mFailed to upload artifact. HTTP status: ${UPLOAD_STATUS:-curl failed}.\033[0m"
   exit 1
 fi
