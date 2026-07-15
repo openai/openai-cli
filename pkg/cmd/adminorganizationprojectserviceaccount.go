@@ -16,7 +16,7 @@ import (
 
 var adminOrganizationProjectsServiceAccountsCreate = cli.Command{
 	Name:    "create",
-	Usage:   "Creates a new service account in the project. This also returns an unredacted\nAPI key for the service account.",
+	Usage:   "Creates a new service account in the project. By default, this also returns an\nunredacted API key for the service account.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -29,6 +29,11 @@ var adminOrganizationProjectsServiceAccountsCreate = cli.Command{
 			Usage:    "The name of the service account being created.",
 			Required: true,
 			BodyPath: "name",
+		},
+		&requestflag.Flag[*bool]{
+			Name:     "create-service-account-only",
+			Usage:    "Create the service account without default roles or an API key.",
+			BodyPath: "create_service_account_only",
 		},
 	},
 	Action:          handleAdminOrganizationProjectsServiceAccountsCreate,
