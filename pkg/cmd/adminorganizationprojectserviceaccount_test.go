@@ -17,12 +17,15 @@ func TestAdminOrganizationProjectsServiceAccountsCreate(t *testing.T) {
 			"admin:organization:projects:service-accounts", "create",
 			"--project-id", "project_id",
 			"--name", "name",
+			"--create-service-account-only=true",
 		)
 	})
 
 	t.Run("piping data", func(t *testing.T) {
 		// Test piping YAML data over stdin
-		pipeData := []byte("name: name")
+		pipeData := []byte("" +
+			"name: name\n" +
+			"create_service_account_only: true\n")
 		mocktest.TestRunMockTestWithPipeAndFlags(
 			t, pipeData,
 			"--api-key", "string",
