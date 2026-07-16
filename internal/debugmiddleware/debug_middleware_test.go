@@ -200,6 +200,41 @@ func TestDebugMiddleware(t *testing.T) {
 		require.NotContains(t, logBuf.String(), bodyContent)
 	})
 
+	t.Run("RedactsSensitiveResponseHeaders", func(t *testing.T) {
+		t.Parallel()
+
+		middleware, logBuf := setup()
+		responseHeaders := http.Header{
+			"sEt-CoOkIe":          {"session=" + secretToken + "1", "csrf=" + secretToken + "2"},
+			"aUtHoRiZaTiOn":       {"Bearer " + secretToken + "3"},
+			"pRoXy-AuThOrIzAtIoN": {"Basic " + secretToken + "4"},
+			"X-Api-Key":           {secretToken + "5"},
+			"X-Request-Id":        {"request-id"},
+		}
+		originalHeaders := responseHeaders.Clone()
+
+		req := httptest.NewRequest("GET", "https://example.com", nil)
+		resp, err := middleware.Middleware()(req, func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     responseHeaders,
+				Body:       http.NoBody,
+			}, nil
+		})
+		require.NoError(t, err)
+
+		logged := logBuf.String()
+		for _, suffix := range []string{"1", "2", "3", "4", "5"} {
+			require.NotContains(t, logged, secretToken+suffix)
+		}
+		require.Equal(t, 5, strings.Count(logged, redactedPlaceholder))
+		require.Contains(t, logged, "Bearer "+redactedPlaceholder)
+		require.Contains(t, logged, "Basic "+redactedPlaceholder)
+		require.Contains(t, logged, "X-Request-Id: request-id")
+		require.Equal(t, originalHeaders, resp.Header)
+	})
+
 	t.Run("DoesNotLogOrConsumeResponseBody", func(t *testing.T) {
 		t.Parallel()
 

@@ -17,8 +17,8 @@ type (
 
 const redactedPlaceholder = "<REDACTED>"
 
-// Headers known to contain sensitive information like an API key. Note that this exclude `Authorization`,
-// which is handled specially in `redactRequest` below.
+// Headers known to contain sensitive information like an API key. Authorization
+// headers are handled separately so their authentication scheme remains visible.
 var sensitiveHeaders = []string{
 	"api-key",
 	"x-api-key",
@@ -55,7 +55,10 @@ func (m *RequestLogger) Middleware() Middleware {
 			return resp, err
 		}
 
-		if respBytes, err := httputil.DumpResponse(resp, false); err == nil {
+		loggedResponse := new(http.Response)
+		*loggedResponse = *resp
+		loggedResponse.Header = m.redactHeaders(resp.Header)
+		if respBytes, err := httputil.DumpResponse(loggedResponse, false); err == nil {
 			m.logger.Printf("Response Content:\n%s\n", respBytes)
 		}
 
@@ -68,38 +71,7 @@ func (m *RequestLogger) Middleware() Middleware {
 // the original and that clone is returned. As a small optimization, the
 // original is request is returned unchanged if no redaction is necessary.
 func (m *RequestLogger) redactRequest(req *http.Request) (*http.Request, error) {
-	redactedHeaders := req.Header.Clone()
-
-	// Notably, the clauses below are written so they can redact multiple
-	// headers of the same name if necessary.
-	if values := redactedHeaders.Values("Authorization"); len(values) > 0 {
-		redactedHeaders.Del("Authorization")
-
-		for _, value := range values {
-			// In case we're using something like a bearer token (e.g. `Bearer
-			// <my_token>`), keep the `Bearer` part for more debugging
-			// information.
-			if authKind, _, ok := strings.Cut(value, " "); ok {
-				redactedHeaders.Add("Authorization", authKind+" "+redactedPlaceholder)
-			} else {
-				redactedHeaders.Add("Authorization", redactedPlaceholder)
-			}
-		}
-	}
-
-	for _, header := range m.sensitiveHeaders {
-		values := redactedHeaders.Values(header)
-		if len(values) == 0 {
-			continue
-		}
-
-		redactedHeaders.Del(header)
-
-		for range values {
-			redactedHeaders.Add(header, redactedPlaceholder)
-		}
-	}
-
+	redactedHeaders := m.redactHeaders(req.Header)
 	if reflect.DeepEqual(req.Header, redactedHeaders) {
 		return req, nil
 	}
@@ -107,4 +79,30 @@ func (m *RequestLogger) redactRequest(req *http.Request) (*http.Request, error) 
 	redacted := req.Clone(req.Context())
 	redacted.Header = redactedHeaders
 	return redacted, nil
+}
+
+func (m *RequestLogger) redactHeaders(headers http.Header) http.Header {
+	redacted := headers.Clone()
+	for header, values := range redacted {
+		if strings.EqualFold(header, "Authorization") || strings.EqualFold(header, "Proxy-Authorization") {
+			for i, value := range values {
+				if authKind, _, ok := strings.Cut(value, " "); ok {
+					values[i] = authKind + " " + redactedPlaceholder
+				} else {
+					values[i] = redactedPlaceholder
+				}
+			}
+			continue
+		}
+
+		for _, sensitiveHeader := range m.sensitiveHeaders {
+			if strings.EqualFold(header, sensitiveHeader) {
+				for i := range values {
+					values[i] = redactedPlaceholder
+				}
+				break
+			}
+		}
+	}
+	return redacted
 }
