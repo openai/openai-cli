@@ -610,14 +610,7 @@ func init() {
 					&adminOrganizationProjectsServiceAccountsUpdate,
 					&adminOrganizationProjectsServiceAccountsList,
 					&adminOrganizationProjectsServiceAccountsDelete,
-				},
-			},
-			{
-				Name:     "admin:organization:projects:service-accounts:api-keys",
-				Category: "API RESOURCE",
-				Suggest:  true,
-				Commands: []*cli.Command{
-					&adminOrganizationProjectsServiceAccountsAPIKeysCreate,
+					&adminOrganizationProjectsServiceAccountsCreateAPIKey,
 				},
 			},
 			{
