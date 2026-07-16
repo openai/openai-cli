@@ -212,15 +212,16 @@ func TestDebugMiddleware(t *testing.T) {
 			"X-Request-Id":        {"request-id"},
 		}
 		originalHeaders := responseHeaders.Clone()
+		response := &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     responseHeaders,
+			Body:       http.NoBody,
+		}
 
 		req := httptest.NewRequest("GET", "https://example.com", nil)
 		resp, err := middleware.Middleware()(req, func(req *http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Status:     "200 OK",
-				Header:     responseHeaders,
-				Body:       http.NoBody,
-			}, nil
+			return response, nil
 		})
 		require.NoError(t, err)
 
@@ -232,6 +233,7 @@ func TestDebugMiddleware(t *testing.T) {
 		require.Contains(t, logged, "Bearer "+redactedPlaceholder)
 		require.Contains(t, logged, "Basic "+redactedPlaceholder)
 		require.Contains(t, logged, "X-Request-Id: request-id")
+		require.Same(t, response, resp)
 		require.Equal(t, originalHeaders, resp.Header)
 	})
 

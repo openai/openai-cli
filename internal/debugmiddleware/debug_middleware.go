@@ -55,10 +55,9 @@ func (m *RequestLogger) Middleware() Middleware {
 			return resp, err
 		}
 
-		loggedResponse := new(http.Response)
-		*loggedResponse = *resp
+		loggedResponse := *resp
 		loggedResponse.Header = m.redactHeaders(resp.Header)
-		if respBytes, err := httputil.DumpResponse(loggedResponse, false); err == nil {
+		if respBytes, err := httputil.DumpResponse(&loggedResponse, false); err == nil {
 			m.logger.Printf("Response Content:\n%s\n", respBytes)
 		}
 
@@ -81,6 +80,7 @@ func (m *RequestLogger) redactRequest(req *http.Request) (*http.Request, error) 
 	return redacted, nil
 }
 
+// redactHeaders returns an independent copy with sensitive values removed.
 func (m *RequestLogger) redactHeaders(headers http.Header) http.Header {
 	redacted := headers.Clone()
 	for header, values := range redacted {
