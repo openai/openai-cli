@@ -82,7 +82,7 @@ snapshot:
 nfpms:
   - license: Apache-2.0
     maintainer: support@openai.com
-    bindir: /usr
+    bindir: /usr/bin
     formats:
       - apk
       - deb
