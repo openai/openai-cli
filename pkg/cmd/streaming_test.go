@@ -1,10 +1,10 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -96,8 +96,7 @@ func TestNullableStreamFlags(t *testing.T) {
 		require.Contains(t, string(output), `"id":"completion"`)
 	})
 
-	t.Run("writes SSE output before the response completes", func(t *testing.T) {
-		eventsSent := make(chan struct{})
+	t.Run("writes an SSE event before the response completes", func(t *testing.T) {
 		releaseResponse := make(chan struct{})
 		released := false
 		defer func() {
@@ -113,11 +112,8 @@ func TestNullableStreamFlags(t *testing.T) {
 				http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 				return
 			}
-			for i := range 40 {
-				fmt.Fprintf(w, "data: {\"id\":\"event-%d\"}\n\n", i)
-				flusher.Flush()
-			}
-			close(eventsSent)
+			fmt.Fprint(w, "data: {\"id\":\"event\"}\n\n")
+			flusher.Flush()
 			<-releaseResponse
 			fmt.Fprint(w, "data: [DONE]\n\n")
 			flusher.Flush()
@@ -126,7 +122,7 @@ func TestNullableStreamFlags(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		args := append(baseTestCLIArgs(server.URL), "completions", "create", "--model", "model", "--prompt", "prompt", "--stream", "true")
+		args := append(baseTestCLIArgs(server.URL), "completions", "create", "--model", "model", "--prompt", "prompt", "--stream", "true", "--max-items", "1")
 		command := exec.CommandContext(ctx, cliPath, args...)
 		command.Env = append(os.Environ(), "PAGER=cat")
 		stdout, err := command.StdoutPipe()
@@ -135,22 +131,20 @@ func TestNullableStreamFlags(t *testing.T) {
 		command.Stderr = &stderr
 		require.NoError(t, command.Start())
 
-		select {
-		case <-eventsSent:
-		case <-ctx.Done():
-			require.FailNow(t, "server did not send events")
+		type outputResult struct {
+			line string
+			err  error
 		}
-
-		outputStarted := make(chan error, 1)
+		output := make(chan outputResult, 1)
 		go func() {
-			buffer := make([]byte, 1)
-			_, readErr := io.ReadFull(stdout, buffer)
-			outputStarted <- readErr
+			line, readErr := bufio.NewReader(stdout).ReadString('\n')
+			output <- outputResult{line: line, err: readErr}
 		}()
 
 		select {
-		case readErr := <-outputStarted:
-			require.NoError(t, readErr)
+		case result := <-output:
+			require.NoError(t, result.err)
+			require.JSONEq(t, `{"id":"event"}`, result.line)
 		case <-ctx.Done():
 			require.FailNow(t, "command did not emit streamed output before the response completed")
 		}
