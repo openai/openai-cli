@@ -617,6 +617,54 @@ func TestYamlHandling(t *testing.T) {
 	})
 }
 
+func TestFlagBool(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		flag cli.Flag
+		want bool
+	}{
+		{
+			name: "concrete true",
+			flag: &Flag[bool]{Name: "stream", Default: true},
+			want: true,
+		},
+		{
+			name: "concrete false",
+			flag: &Flag[bool]{Name: "stream", Default: false},
+			want: false,
+		},
+		{
+			name: "nullable true",
+			flag: &Flag[*bool]{Name: "stream", Default: Ptr(true)},
+			want: true,
+		},
+		{
+			name: "nullable false",
+			flag: &Flag[*bool]{Name: "stream", Default: Ptr(false)},
+			want: false,
+		},
+		{
+			name: "nullable null",
+			flag: &Flag[*bool]{Name: "stream", Default: nil},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, FlagBool(&cli.Command{Flags: []cli.Flag{tt.flag}}, "stream"))
+		})
+	}
+
+	t.Run("unknown flag", func(t *testing.T) {
+		t.Parallel()
+		assert.False(t, FlagBool(&cli.Command{}, "stream"))
+	})
+}
+
 // TestNullLiteralHandling pins how each Flag[T] type handles the literal value "null"
 // when passed via the CLI. Pointer-typed flags serialize nil as JSON null, which is how
 // nullable body fields (`anyOf: [T, null]` / `{nullable: true}`) let users clear a field
