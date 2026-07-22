@@ -90,7 +90,7 @@ var betaResponsesInputTokensCount = requestflag.WithInnerFlags(cli.Command{
 	"reasoning": {
 		&requestflag.InnerFlag[*string]{
 			Name:       "reasoning.context",
-			Usage:      "Controls which reasoning items are rendered back to the model on later turns.\nWhen returned on a response, this is the effective reasoning context mode\nused for the response.\n",
+			Usage:      "Controls which reasoning items are rendered back to the model on later turns.\nIf omitted or set to `auto`, the model determines the context mode. The\n`gpt-5.6` model family defaults to `all_turns`; earlier models default to\n`current_turn`.\n\nWhen returned on a response, this is the effective reasoning context mode\nused for the response.\n",
 			InnerField: "context",
 		},
 		&requestflag.InnerFlag[*string]{
@@ -122,7 +122,7 @@ var betaResponsesInputTokensCount = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.InnerFlag[*string]{
 			Name:       "text.verbosity",
-			Usage:      "Constrains the verbosity of the model's response. Lower values will result in\nmore concise responses, while higher values will result in more verbose responses.\nCurrently supported values are `low`, `medium`, and `high`.\n",
+			Usage:      "Constrains the verbosity of the model's response. Lower values will result in\nmore concise responses, while higher values will result in more verbose responses.\nCurrently supported values are `low`, `medium`, and `high`. The default is\n`medium`.\n",
 			InnerField: "verbosity",
 		},
 	},

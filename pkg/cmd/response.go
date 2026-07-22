@@ -91,7 +91,7 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 			Usage:    "Reference to a prompt template and its variables.\n[Learn more](https://platform.openai.com/docs/guides/text?api-mode=responses#reusable-prompts).\n",
 			BodyPath: "prompt",
 		},
-		&requestflag.Flag[string]{
+		&requestflag.Flag[*string]{
 			Name:     "prompt-cache-key",
 			Usage:    "Used by OpenAI to cache responses for similar requests to optimize your cache hit rates. Replaces the `user` field. [Learn more](https://platform.openai.com/docs/guides/prompt-caching).\n",
 			BodyPath: "prompt_cache_key",
@@ -111,7 +111,7 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 			Usage:    "**gpt-5 and o-series models only**\n\nConfiguration options for\n[reasoning models](https://platform.openai.com/docs/guides/reasoning).\n",
 			BodyPath: "reasoning",
 		},
-		&requestflag.Flag[string]{
+		&requestflag.Flag[*string]{
 			Name:     "safety-identifier",
 			Usage:    "A stable identifier used to help detect users of your application that may be violating OpenAI's usage policies.\nThe IDs should be a string that uniquely identifies each user, with a maximum length of 64 characters. We recommend hashing their username or email address, in order to avoid sending us any identifying information. [Learn more](https://platform.openai.com/docs/guides/safety-best-practices#safety-identifiers).\n",
 			BodyPath: "safety_identifier",
@@ -248,7 +248,7 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 	"reasoning": {
 		&requestflag.InnerFlag[*string]{
 			Name:       "reasoning.context",
-			Usage:      "Controls which reasoning items are rendered back to the model on later turns.\nWhen returned on a response, this is the effective reasoning context mode\nused for the response.\n",
+			Usage:      "Controls which reasoning items are rendered back to the model on later turns.\nIf omitted or set to `auto`, the model determines the context mode. The\n`gpt-5.6` model family defaults to `all_turns`; earlier models default to\n`current_turn`.\n\nWhen returned on a response, this is the effective reasoning context mode\nused for the response.\n",
 			InnerField: "context",
 		},
 		&requestflag.InnerFlag[*string]{
@@ -287,7 +287,7 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.InnerFlag[*string]{
 			Name:       "text.verbosity",
-			Usage:      "Constrains the verbosity of the model's response. Lower values will result in\nmore concise responses, while higher values will result in more verbose responses.\nCurrently supported values are `low`, `medium`, and `high`.\n",
+			Usage:      "Constrains the verbosity of the model's response. Lower values will result in\nmore concise responses, while higher values will result in more verbose responses.\nCurrently supported values are `low`, `medium`, and `high`. The default is\n`medium`.\n",
 			InnerField: "verbosity",
 		},
 	},
