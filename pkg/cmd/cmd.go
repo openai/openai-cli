@@ -540,6 +540,16 @@ func init() {
 				},
 			},
 			{
+				Name:     "admin:organization:spend-limit",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationSpendLimitRetrieve,
+					&adminOrganizationSpendLimitUpdate,
+					&adminOrganizationSpendLimitDelete,
+				},
+			},
+			{
 				Name:     "admin:organization:spend-alerts",
 				Category: "API RESOURCE",
 				Suggest:  true,
@@ -699,6 +709,16 @@ func init() {
 				Commands: []*cli.Command{
 					&adminOrganizationProjectsDataRetentionRetrieve,
 					&adminOrganizationProjectsDataRetentionUpdate,
+				},
+			},
+			{
+				Name:     "admin:organization:projects:spend-limit",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationProjectsSpendLimitRetrieve,
+					&adminOrganizationProjectsSpendLimitUpdate,
+					&adminOrganizationProjectsSpendLimitDelete,
 				},
 			},
 			{
