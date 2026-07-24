@@ -51,7 +51,6 @@ jobs:
     name: build
     permissions:
       contents: read
-      id-token: write
     runs-on: ${{ startsWith(github.repository, 'stainless-sdks/') && 'depot-ubuntu-24.04' || 'ubuntu-latest' }}
     if: github.event_name != 'push' || github.event.head_commit.message != 'codegen metadata'
     steps:
@@ -87,21 +86,51 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Package release artifact
+        run: tar -cf openai-cli-dist.tar dist
+
+      - name: Stage release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openai-cli-dist
+          path: openai-cli-dist.tar
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
+  publish:
+    timeout-minutes: 10
+    name: publish
+    needs: build
+    if: |-
+      github.repository == 'stainless-sdks/openai-cli' &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      !startsWith(github.head_ref || github.ref_name, 'stl/')
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ${{ startsWith(github.repository, 'stainless-sdks/') && 'depot-ubuntu-24.04' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Download release artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: openai-cli-dist
+          path: .artifacts/
+
+      - name: Restore release artifact
+        run: tar -xf .artifacts/openai-cli-dist.tar
+
       - name: Get GitHub OIDC Token
-        if: |-
-          github.repository == 'stainless-sdks/openai-cli' &&
-          env.IS_TRUSTED_SOURCE == 'true' &&
-          !startsWith(env.SOURCE_BRANCH, 'stl/')
         id: github-oidc
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: core.setOutput('github_token', await core.getIDToken());
 
       - name: Upload tarball
-        if: |-
-          github.repository == 'stainless-sdks/openai-cli' &&
-          env.IS_TRUSTED_SOURCE == 'true' &&
-          !startsWith(env.SOURCE_BRANCH, 'stl/')
         env:
           URL: https://pkg.stainless.com/s
           AUTH: ${{ steps.github-oidc.outputs.github_token }}
