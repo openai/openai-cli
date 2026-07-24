@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/openai/openai-cli/pkg/cmd"
 	"github.com/openai/openai-go/v3"
@@ -41,15 +42,17 @@ func main() {
 		var apierr *openai.Error
 		if errors.As(err, &apierr) {
 			fmt.Fprintf(os.Stderr, "%s %q: %d %s\n", apierr.Request.Method, apierr.Request.URL, apierr.Response.StatusCode, http.StatusText(apierr.Response.StatusCode))
-			format := app.String("format-error")
+			format := errorOutputFormat(app.String("format-error"))
 			json := gjson.Parse(apierr.RawJSON())
-			show_err := cmd.ShowJSON(json, cmd.ShowJSONOpts{
+			showErr := cmd.ShowJSON(json, cmd.ShowJSONOpts{
 				ExplicitFormat: app.IsSet("format-error"),
 				Format:         format,
+				Stderr:         os.Stderr,
+				Stdout:         os.Stderr,
 				Title:          "Error",
 				Transform:      app.String("transform-error"),
 			})
-			if show_err != nil {
+			if showErr != nil {
 				// Just print the original error:
 				fmt.Fprintf(os.Stderr, "%s\n", err.Error())
 			}
@@ -62,6 +65,13 @@ func main() {
 		}
 		os.Exit(exitCode)
 	}
+}
+
+func errorOutputFormat(format string) string {
+	if strings.EqualFold(format, "explore") {
+		return "json"
+	}
+	return format
 }
 
 func prepareForAutocomplete(cmd *cli.Command) {
