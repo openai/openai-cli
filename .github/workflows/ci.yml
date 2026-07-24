@@ -4,13 +4,7 @@ permissions:
 on:
   push:
     branches:
-      - '**'
-      - '!integrated/**'
-      - '!stl-preview-head/**'
-      - '!stl-preview-base/**'
-      - '!generated'
-      - '!codegen/**'
-      - 'codegen/stl/**'
+      - main
   pull_request:
     branches-ignore:
       - 'stl-preview-head/**'
@@ -18,13 +12,16 @@ on:
 
 env:
   GOPRIVATE: github.com/openai/openai-go/v3,github.com/stainless-sdks/openai-go/v3
+  IS_PUBLISHABLE: ${{ github.repository == 'stainless-sdks/openai-cli' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && !startsWith(github.head_ref || github.ref_name, 'stl/') }}
+  IS_TRUSTED_SOURCE: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+  SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
 
 jobs:
   lint:
     timeout-minutes: 10
     name: lint
     runs-on: ${{ startsWith(github.repository, 'stainless-sdks/') && 'depot-ubuntu-24.04' || 'ubuntu-latest' }}
-    if: (github.event_name == 'push' || github.event.pull_request.head.repo.fork) && (github.event_name != 'push' || github.event.head_commit.message != 'codegen metadata')
+    if: github.event_name != 'push' || github.event.head_commit.message != 'codegen metadata'
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -36,9 +33,11 @@ jobs:
           stainless-api-key: ${{ secrets.STAINLESS_API_KEY }}
 
       - name: Link staging branch
-        if: github.repository == 'stainless-sdks/openai-cli'
+        if: |-
+          github.repository == 'stainless-sdks/openai-cli' &&
+          env.IS_TRUSTED_SOURCE == 'true'
         env:
-          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ github.ref_name }}
+          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ env.SOURCE_BRANCH }}
         run: |
           ./scripts/link "$GO_SDK_REPLACEMENT" || true
 
@@ -48,14 +47,15 @@ jobs:
       - name: Run lints
         run: ./scripts/lint
 
-  build:
+  build-artifacts:
     timeout-minutes: 10
-    name: build
+    name: build artifacts
+    outputs:
+      publishable: ${{ env.IS_PUBLISHABLE }}
     permissions:
       contents: read
-      id-token: write
     runs-on: ${{ startsWith(github.repository, 'stainless-sdks/') && 'depot-ubuntu-24.04' || 'ubuntu-latest' }}
-    if: (github.event_name == 'push' || github.event.pull_request.head.repo.fork) && (github.event_name != 'push' || github.event.head_commit.message != 'codegen metadata')
+    if: github.event_name != 'push' || github.event.head_commit.message != 'codegen metadata'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -66,9 +66,11 @@ jobs:
           stainless-api-key: ${{ secrets.STAINLESS_API_KEY }}
 
       - name: Link staging branch
-        if: github.repository == 'stainless-sdks/openai-cli'
+        if: |-
+          github.repository == 'stainless-sdks/openai-cli' &&
+          env.IS_TRUSTED_SOURCE == 'true'
         env:
-          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ github.ref_name }}
+          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ env.SOURCE_BRANCH }}
         run: |
           ./scripts/link "$GO_SDK_REPLACEMENT" || true
 
@@ -87,30 +89,90 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Package release artifact
+        if: env.IS_PUBLISHABLE == 'true'
+        run: tar -cf openai-cli-dist.tar dist
+
+      - name: Stage release artifact
+        if: env.IS_PUBLISHABLE == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openai-cli-dist
+          path: openai-cli-dist.tar
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
+  publish:
+    timeout-minutes: 10
+    name: publish
+    needs: build-artifacts
+    if: needs.build-artifacts.outputs.publishable == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ${{ startsWith(github.repository, 'stainless-sdks/') && 'depot-ubuntu-24.04' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Download release artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: openai-cli-dist
+          path: .artifacts/
+
+      - name: Restore release artifact
+        run: tar -xf .artifacts/openai-cli-dist.tar
+
       - name: Get GitHub OIDC Token
-        if: |-
-          github.repository == 'stainless-sdks/openai-cli' &&
-          !startsWith(github.ref, 'refs/heads/stl/')
         id: github-oidc
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: core.setOutput('github_token', await core.getIDToken());
 
       - name: Upload tarball
-        if: |-
-          github.repository == 'stainless-sdks/openai-cli' &&
-          !startsWith(github.ref, 'refs/heads/stl/')
         env:
           URL: https://pkg.stainless.com/s
           AUTH: ${{ steps.github-oidc.outputs.github_token }}
           SHA: ${{ github.sha }}
         run: ./scripts/utils/upload-artifact.sh
 
+  build:
+    timeout-minutes: 10
+    name: build
+    needs:
+      - build-artifacts
+      - publish
+    if: |-
+      always() &&
+      (github.event_name != 'push' || github.event.head_commit.message != 'codegen metadata')
+    permissions:
+      contents: read
+    runs-on: ${{ startsWith(github.repository, 'stainless-sdks/') && 'depot-ubuntu-24.04' || 'ubuntu-latest' }}
+    steps:
+      - name: Require successful build and publication
+        env:
+          BUILD_RESULT: ${{ needs.build-artifacts.result }}
+          IS_PUBLISHABLE: ${{ needs.build-artifacts.outputs.publishable }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+        run: |
+          if [[ "$BUILD_RESULT" != "success" ]]; then
+            echo "Build artifacts failed: $BUILD_RESULT"
+            exit 1
+          fi
+
+          if [[ "$IS_PUBLISHABLE" == "true" && "$PUBLISH_RESULT" != "success" ]]; then
+            echo "Artifact publication failed: $PUBLISH_RESULT"
+            exit 1
+          fi
+
   test:
     timeout-minutes: 10
     name: test
     runs-on: ${{ startsWith(github.repository, 'stainless-sdks/') && 'depot-ubuntu-24.04' || 'ubuntu-latest' }}
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork
+    if: github.event_name != 'push' || github.event.head_commit.message != 'codegen metadata'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -121,9 +183,11 @@ jobs:
           stainless-api-key: ${{ secrets.STAINLESS_API_KEY }}
 
       - name: Link staging branch
-        if: github.repository == 'stainless-sdks/openai-cli'
+        if: |-
+          github.repository == 'stainless-sdks/openai-cli' &&
+          env.IS_TRUSTED_SOURCE == 'true'
         env:
-          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ github.ref_name }}
+          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ env.SOURCE_BRANCH }}
         run: |
           ./scripts/link "$GO_SDK_REPLACEMENT" || true
 
