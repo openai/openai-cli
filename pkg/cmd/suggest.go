@@ -98,10 +98,22 @@ func jaroWinkler(a, b string) float64 {
 	return jaroDist + 0.1*prefixMatch*(1.0-jaroDist)
 }
 
+// suggestionThreshold is the minimum jaro-winkler similarity required before we
+// will print a "Did you mean" suggestion. Below this, the closest match is too
+// dissimilar to be a useful guess, so we stay silent rather than mislead.
+// 0.7 matches the boostThreshold used by jaroWinkler above — the prefix boost
+// only kicks in past that, so it's a natural "plausibly the same word" cutoff.
+const suggestionThreshold = 0.7
+
 // suggestCommand takes a list of commands and a provided string to suggest a
-// command name
+// command name. Returns an empty string when no command is sufficiently
+// similar; the upstream urfave/cli error formatter omits the suggestion clause
+// in that case.
 func suggestCommand(commands []*cli.Command, provided string) string {
-	distance := 0.0
+	if provided == "" {
+		return ""
+	}
+	distance := suggestionThreshold
 	var lineage []*cli.Command
 	for _, command := range commands {
 		for _, name := range command.Names() {
@@ -111,6 +123,9 @@ func suggestCommand(commands []*cli.Command, provided string) string {
 				lineage = command.Lineage()
 			}
 		}
+	}
+	if lineage == nil {
+		return ""
 	}
 
 	var parts []string
