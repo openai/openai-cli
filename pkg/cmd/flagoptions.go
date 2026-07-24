@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -492,22 +491,18 @@ func flagOptions(
 	case EmptyBody:
 		break
 	case MultipartFormEncoded:
-		buf := new(bytes.Buffer)
-		writer := multipart.NewWriter(buf)
-
 		// For multipart/form-encoded, we need a map structure
 		bodyMap, ok := requestContents.Body.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("Cannot send a non-map value to a form-encoded endpoint: %v\n", requestContents.Body)
 		}
 		encodingFormat := apiform.FormatBrackets
-		if err := apiform.MarshalWithSettings(bodyMap, writer, encodingFormat); err != nil {
-			return nil, err
-		}
-		if err := writer.Close(); err != nil {
-			return nil, err
-		}
-		options = append(options, option.WithRequestBody(writer.FormDataContentType(), buf))
+		contentType, body := newMultipartRequestBody(bodyMap, encodingFormat)
+		options = append(options,
+			option.WithRequestBody(contentType, body),
+			// Streaming request bodies cannot be replayed safely by the SDK retry loop.
+			option.WithMaxRetries(0),
+		)
 
 	case ApplicationJSON:
 		bodyBytes, err := json.Marshal(requestContents.Body)
@@ -536,6 +531,69 @@ func flagOptions(
 	}
 
 	return options, nil
+}
+
+func newMultipartRequestBody(bodyMap map[string]any, encodingFormat apiform.FormFormat) (string, io.Reader) {
+	reader, writer := io.Pipe()
+	multipartWriter := multipart.NewWriter(writer)
+	contentType := multipartWriter.FormDataContentType()
+
+	go func() {
+		err := apiform.MarshalWithSettings(bodyMap, multipartWriter, encodingFormat)
+		if closeErr := multipartWriter.Close(); err == nil {
+			err = closeErr
+		}
+		if closeErr := closeFileUploads(bodyMap); err == nil {
+			err = closeErr
+		}
+
+		if err != nil {
+			_ = writer.CloseWithError(err)
+			return
+		}
+		_ = writer.Close()
+	}()
+
+	return contentType, reader
+}
+
+func closeFileUploads(value any) error {
+	return closeFileUploadsValue(reflect.ValueOf(value))
+}
+
+func closeFileUploadsValue(v reflect.Value) error {
+	if !v.IsValid() {
+		return nil
+	}
+
+	if v.Kind() == reflect.Interface || v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return nil
+		}
+		return closeFileUploadsValue(v.Elem())
+	}
+
+	if upload, ok := v.Interface().(fileUpload); ok {
+		return upload.Close()
+	}
+
+	switch v.Kind() {
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			if err := closeFileUploadsValue(iter.Value()); err != nil {
+				return err
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			if err := closeFileUploadsValue(v.Index(i)); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 // FilePathValue is a string wrapper that marks a value as a file path whose contents should be read
