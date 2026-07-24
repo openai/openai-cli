@@ -251,6 +251,20 @@ func ExtractRequestContents(cmd *cli.Command) RequestContents {
 	return res
 }
 
+// FlagBool returns the boolean value of a request flag. Nullable boolean flags
+// expose *bool through cli.Command.Value, while cli.Command.Bool only handles
+// concrete bool values.
+func FlagBool(cmd *cli.Command, name string) bool {
+	switch value := cmd.Value(name).(type) {
+	case bool:
+		return value
+	case *bool:
+		return value != nil && *value
+	default:
+		return false
+	}
+}
+
 func GetMissingRequiredFlags(cmd *cli.Command, body any) []cli.Flag {
 	missing := []cli.Flag{}
 	for _, flag := range cmd.Flags {
