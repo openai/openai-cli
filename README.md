@@ -72,6 +72,56 @@ openai admin:organization:usage completions \
   --bucket-width 1d
 ```
 
+
+Ads API endpoints require an Ads API key and send requests to `https://api.ads.openai.com/v1`:
+
+```sh
+export OPENAI_ADS_API_KEY="sk-ads-..."
+
+openai ads account retrieve
+openai ads campaigns list --limit 20 --order desc
+openai ads campaigns create \
+  --name "Spring launch" \
+  --status active \
+  --lifetime-spend-limit-micros 25000000 \
+  --country US \
+  --country CA
+```
+
+Ads CLI command coverage:
+
+| Ads API endpoint | CLI command | Parameters |
+| ---------------- | ----------- | ---------- |
+| `GET /ad_account` | `openai ads account retrieve` | none |
+| `GET /campaigns` | `openai ads campaigns list` | `--limit`, `--after`, `--before`, `--order` |
+| `POST /campaigns` | `openai ads campaigns create` | `--name`, `--description`, `--status`, `--start-time`, `--end-time`, `--lifetime-spend-limit-micros`, `--country`, `--exclude-country` |
+| `GET /campaigns/{campaign_id}` | `openai ads campaigns retrieve <campaign_id>` | `<campaign_id>` or `--campaign-id` |
+| `POST /campaigns/{campaign_id}` | `openai ads campaigns update <campaign_id>` | `<campaign_id>` or `--campaign-id`, `--name`, `--description`, `--status`, `--start-time`, `--end-time`, `--lifetime-spend-limit-micros`, `--targeting`, `--country`, `--exclude-country` |
+| `POST /campaigns/{campaign_id}/activate` | `openai ads campaigns activate <campaign_id>` | `<campaign_id>` or `--campaign-id` |
+| `POST /campaigns/{campaign_id}/pause` | `openai ads campaigns pause <campaign_id>` | `<campaign_id>` or `--campaign-id` |
+| `POST /campaigns/{campaign_id}/archive` | `openai ads campaigns archive <campaign_id>` | `<campaign_id>` or `--campaign-id` |
+| `GET /ad_groups` | `openai ads ad-groups list` | `--campaign-id`, `--limit`, `--after`, `--before`, `--order` |
+| `POST /ad_groups` | `openai ads ad-groups create` | `--campaign-id`, `--name`, `--description`, `--context-hint`, `--status`, `--billing-event-type`, `--max-bid-micros` |
+| `GET /ad_groups/{ad_group_id}` | `openai ads ad-groups retrieve <ad_group_id>` | `<ad_group_id>` or `--ad-group-id` |
+| `POST /ad_groups/{ad_group_id}` | `openai ads ad-groups update <ad_group_id>` | `<ad_group_id>` or `--ad-group-id`, `--name`, `--description`, `--context-hint`, `--status`, `--bidding-config`, `--billing-event-type`, `--max-bid-micros` |
+| `POST /ad_groups/{ad_group_id}/activate` | `openai ads ad-groups activate <ad_group_id>` | `<ad_group_id>` or `--ad-group-id` |
+| `POST /ad_groups/{ad_group_id}/pause` | `openai ads ad-groups pause <ad_group_id>` | `<ad_group_id>` or `--ad-group-id` |
+| `POST /ad_groups/{ad_group_id}/archive` | `openai ads ad-groups archive <ad_group_id>` | `<ad_group_id>` or `--ad-group-id` |
+| `GET /ads` | `openai ads ads list` | `--ad-group-id`, `--limit`, `--after`, `--before`, `--order` |
+| `POST /ads` | `openai ads ads create` | `--ad-group-id`, `--name`, `--status`, `--creative-type`, `--title`, `--body`, `--target-url`, `--file-id` |
+| `GET /ads/{ad_id}` | `openai ads ads retrieve <ad_id>` | `<ad_id>` or `--ad-id` |
+| `POST /ads/{ad_id}` | `openai ads ads update <ad_id>` | `<ad_id>` or `--ad-id`, `--name`, `--status`, `--creative`, `--creative-type`, `--title`, `--body`, `--target-url`, `--file-id` |
+| `POST /ads/{ad_id}/activate` | `openai ads ads activate <ad_id>` | `<ad_id>` or `--ad-id` |
+| `POST /ads/{ad_id}/pause` | `openai ads ads pause <ad_id>` | `<ad_id>` or `--ad-id` |
+| `POST /ads/{ad_id}/archive` | `openai ads ads archive <ad_id>` | `<ad_id>` or `--ad-id` |
+| `POST /upload` | `openai ads files upload` | exactly one of `--file` or `--image-url` |
+| `GET /ad_account/insights` | `openai ads insights account` | `--time-granularity`, `--aggregation-level`, `--limit`, `--after`, `--before`, `--field`, `--time-range`, `--filter`, `--sort` |
+| `GET /campaigns/{campaign_id}/insights` | `openai ads insights campaign <campaign_id>` | `<campaign_id>` or `--campaign-id`, plus insights flags |
+| `GET /ad_groups/{ad_group_id}/insights` | `openai ads insights ad-group <ad_group_id>` | `<ad_group_id>` or `--ad-group-id`, plus insights flags |
+| `GET /ads/{ad_id}/insights` | `openai ads insights ad <ad_id>` | `<ad_id>` or `--ad-id`, plus insights flags |
+
+For details about any Ads command, run `openai ads <resource> <command> --help`.
+
 For details about specific commands, use the `--help` flag.
 
 ### Environment variables
@@ -80,6 +130,7 @@ For details about specific commands, use the `--help` flag.
 | ----------------------- | -------- | ------------- |
 | `OPENAI_API_KEY`        | no       | `null`        |
 | `OPENAI_ADMIN_KEY`      | no       | `null`        |
+| `OPENAI_ADS_API_KEY`    | no       | `null`        |
 | `OPENAI_ORG_ID`         | no       | `null`        |
 | `OPENAI_PROJECT_ID`     | no       | `null`        |
 | `OPENAI_WEBHOOK_SECRET` | no       | `null`        |
@@ -88,6 +139,7 @@ For details about specific commands, use the `--help` flag.
 
 - `--api-key` (can also be set with `OPENAI_API_KEY` env var)
 - `--admin-api-key` (can also be set with `OPENAI_ADMIN_KEY` env var)
+- `--ads-api-key` (can also be set with `OPENAI_ADS_API_KEY` env var)
 - `--organization` (can also be set with `OPENAI_ORG_ID` env var)
 - `--project` (can also be set with `OPENAI_PROJECT_ID` env var)
 - `--webhook-secret` (can also be set with `OPENAI_WEBHOOK_SECRET` env var)
