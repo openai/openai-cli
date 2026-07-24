@@ -12,6 +12,7 @@ on:
 
 env:
   GOPRIVATE: github.com/openai/openai-go/v3,github.com/stainless-sdks/openai-go/v3
+  SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
 
 jobs:
   lint:
@@ -32,7 +33,7 @@ jobs:
       - name: Link staging branch
         if: github.repository == 'stainless-sdks/openai-cli'
         env:
-          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ github.ref_name }}
+          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ env.SOURCE_BRANCH }}
         run: |
           ./scripts/link "$GO_SDK_REPLACEMENT" || true
 
@@ -62,7 +63,7 @@ jobs:
       - name: Link staging branch
         if: github.repository == 'stainless-sdks/openai-cli'
         env:
-          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ github.ref_name }}
+          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ env.SOURCE_BRANCH }}
         run: |
           ./scripts/link "$GO_SDK_REPLACEMENT" || true
 
@@ -84,7 +85,7 @@ jobs:
       - name: Get GitHub OIDC Token
         if: |-
           github.repository == 'stainless-sdks/openai-cli' &&
-          !startsWith(github.ref, 'refs/heads/stl/')
+          !startsWith(env.SOURCE_BRANCH, 'stl/')
         id: github-oidc
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
@@ -93,7 +94,7 @@ jobs:
       - name: Upload tarball
         if: |-
           github.repository == 'stainless-sdks/openai-cli' &&
-          !startsWith(github.ref, 'refs/heads/stl/')
+          !startsWith(env.SOURCE_BRANCH, 'stl/')
         env:
           URL: https://pkg.stainless.com/s
           AUTH: ${{ steps.github-oidc.outputs.github_token }}
@@ -116,7 +117,7 @@ jobs:
       - name: Link staging branch
         if: github.repository == 'stainless-sdks/openai-cli'
         env:
-          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ github.ref_name }}
+          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ env.SOURCE_BRANCH }}
         run: |
           ./scripts/link "$GO_SDK_REPLACEMENT" || true
 
