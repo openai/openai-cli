@@ -216,7 +216,9 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	completions := make([]ShellCompletion, 0)
 	if len(args) == 0 {
 		for _, child := range root.Commands {
-			completions = builder.createFromCommand("", child, completions)
+			if !child.Hidden {
+				completions = builder.createFromCommand("", child, completions)
+			}
 		}
 		return CompletionResult{Completions: completions, Behavior: ShellCompletionBehaviorDefault}
 	}

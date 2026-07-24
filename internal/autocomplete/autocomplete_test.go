@@ -17,6 +17,7 @@ func TestGetCompletions_EmptyArgs(t *testing.T) {
 			{Name: "generate", Usage: "Generate SDK"},
 			{Name: "test", Usage: "Run tests"},
 			{Name: "build", Usage: "Build project"},
+			{Name: "internal", Usage: "Internal command", Hidden: true},
 		},
 	}
 
@@ -238,6 +239,18 @@ func TestBashCompletionScriptDoesNotRegisterPlainCompletion(t *testing.T) {
 
 	assert.Contains(t, completionScript, "complete -o filenames -F __openai_bash_autocomplete openai")
 	assert.False(t, strings.Contains(completionScript, "\ncomplete -F __openai_bash_autocomplete openai"))
+}
+
+func TestFishCompletionScriptDoesNotWriteDebugLogs(t *testing.T) {
+	t.Parallel()
+
+	completionScript, err := shellCompletions[CompletionStyleFish](&cli.Command{}, "openai")
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Contains(t, completionScript, "2>/dev/null")
+	assert.NotContains(t, completionScript, "fish-debug")
 }
 
 func TestGetCompletions_NonBoolFlagValue(t *testing.T) {
