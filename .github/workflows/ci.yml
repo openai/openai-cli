@@ -12,6 +12,7 @@ on:
 
 env:
   GOPRIVATE: github.com/openai/openai-go/v3,github.com/stainless-sdks/openai-go/v3
+  IS_TRUSTED_SOURCE: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
   SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
 
 jobs:
@@ -33,8 +34,7 @@ jobs:
       - name: Link staging branch
         if: |-
           github.repository == 'stainless-sdks/openai-cli' &&
-          (github.event_name == 'push' ||
-            github.event.pull_request.head.repo.full_name == github.repository)
+          env.IS_TRUSTED_SOURCE == 'true'
         env:
           GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ env.SOURCE_BRANCH }}
         run: |
@@ -66,8 +66,7 @@ jobs:
       - name: Link staging branch
         if: |-
           github.repository == 'stainless-sdks/openai-cli' &&
-          (github.event_name == 'push' ||
-            github.event.pull_request.head.repo.full_name == github.repository)
+          env.IS_TRUSTED_SOURCE == 'true'
         env:
           GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ env.SOURCE_BRANCH }}
         run: |
@@ -91,8 +90,7 @@ jobs:
       - name: Get GitHub OIDC Token
         if: |-
           github.repository == 'stainless-sdks/openai-cli' &&
-          (github.event_name == 'push' ||
-            github.event.pull_request.head.repo.full_name == github.repository) &&
+          env.IS_TRUSTED_SOURCE == 'true' &&
           !startsWith(env.SOURCE_BRANCH, 'stl/')
         id: github-oidc
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
@@ -102,8 +100,7 @@ jobs:
       - name: Upload tarball
         if: |-
           github.repository == 'stainless-sdks/openai-cli' &&
-          (github.event_name == 'push' ||
-            github.event.pull_request.head.repo.full_name == github.repository) &&
+          env.IS_TRUSTED_SOURCE == 'true' &&
           !startsWith(env.SOURCE_BRANCH, 'stl/')
         env:
           URL: https://pkg.stainless.com/s
@@ -127,8 +124,7 @@ jobs:
       - name: Link staging branch
         if: |-
           github.repository == 'stainless-sdks/openai-cli' &&
-          (github.event_name == 'push' ||
-            github.event.pull_request.head.repo.full_name == github.repository)
+          env.IS_TRUSTED_SOURCE == 'true'
         env:
           GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ env.SOURCE_BRANCH }}
         run: |
