@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.1 (2026-07-24)
+
+Full Changelog: [v1.5.0...v1.5.1](https://github.com/openai/openai-cli/compare/v1.5.0...v1.5.1)
+
+### Bug Fixes
+
+* **release:** make partially published releases retryable ([#37](https://github.com/openai/openai-cli/issues/37)) ([f823929](https://github.com/openai/openai-cli/commit/f823929757cdb536d7ad9d648a08d51d20490140))
+
 ## 1.5.0 (2026-07-24)
 
 Full Changelog: [v1.4.0...v1.5.0](https://github.com/openai/openai-cli/compare/v1.4.0...v1.5.0)
