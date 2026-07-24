@@ -13,7 +13,6 @@ on:
 env:
   GOPRIVATE: github.com/openai/openai-go/v3,github.com/stainless-sdks/openai-go/v3
   SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
-  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   lint:
@@ -109,7 +108,7 @@ jobs:
         env:
           URL: https://pkg.stainless.com/s
           AUTH: ${{ steps.github-oidc.outputs.github_token }}
-          SHA: ${{ env.SOURCE_SHA }}
+          SHA: ${{ github.sha }}
         run: ./scripts/utils/upload-artifact.sh
 
   test:
