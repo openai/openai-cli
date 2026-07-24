@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.5.0 (2026-07-24)
+
+Full Changelog: [v1.4.0...v1.5.0](https://github.com/openai/openai-cli/compare/v1.4.0...v1.5.0)
+
+### Features
+
+* **api:** /organization/projects/{project_id}/service_accounts/{service_account_id}/api_keys" endpoint ([ad0f9fa](https://github.com/openai/openai-cli/commit/ad0f9fa6c506df6341cb3e7a7170cde6a6744fef))
+* **api:** accept `None` for prompt_cache_key/safety_identifier ([ef9b250](https://github.com/openai/openai-cli/commit/ef9b250fcb6b054bba894e4df2d42a00ba6fb03d))
+* **api:** add support for `spend_limit` admin apis ([5992345](https://github.com/openai/openai-cli/commit/5992345efb39143ef81b6d19c8f589765160f599))
+* **api:** manual updates ([3c1f4b8](https://github.com/openai/openai-cli/commit/3c1f4b878c9c9e612f70369816c2fcf98306a350))
+* **api:** manual updates ([cff8c9d](https://github.com/openai/openai-cli/commit/cff8c9d86782342fbef787152ac4cfa32fdd70f7))
+* **stlc:** configurable CI runner and private-production-repo support in workflow templates ([8c73e8c](https://github.com/openai/openai-cli/commit/8c73e8c92716a1cdb9a374f1325626828a5b9577))
+
+
+### Chores
+
+* **internal:** codegen related update ([6a272cd](https://github.com/openai/openai-cli/commit/6a272cd43849f14518f43fc62b5aec0658830124))
+* **internal:** codegen related update ([5a04ac8](https://github.com/openai/openai-cli/commit/5a04ac8f304f05ea7fee9046fc10969fbc10756b))
+
 ## 1.4.0 (2026-07-14)
 
 Full Changelog: [v1.3.0...v1.4.0](https://github.com/openai/openai-cli/compare/v1.3.0...v1.4.0)
