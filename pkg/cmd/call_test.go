@@ -18,7 +18,7 @@ func TestRealtimeCallsAccept(t *testing.T) {
 			"realtime:calls", "accept",
 			"--call-id", "call_id",
 			"--type", "realtime",
-			"--audio", "{input: {format: {rate: 24000, type: audio/pcm}, noise_reduction: {type: near_field}, transcription: {delay: minimal, language: language, model: whisper-1, prompt: prompt}, turn_detection: {type: server_vad, create_response: true, idle_timeout_ms: 5000, interrupt_response: true, prefix_padding_ms: 0, silence_duration_ms: 0, threshold: 0}}, output: {format: {rate: 24000, type: audio/pcm}, speed: 0.25, voice: alloy}}",
+			"--audio", "{input: {format: {rate: 24000, type: audio/pcm}, noise_reduction: {type: near_field}, transcription: {delay: minimal, keywords: [string], language: language, languages: [string], model: whisper-1, prompt: prompt}, turn_detection: {type: server_vad, create_response: true, idle_timeout_ms: 5000, interrupt_response: true, prefix_padding_ms: 0, silence_duration_ms: 0, threshold: 0}}, output: {format: {rate: 24000, type: audio/pcm}, speed: 0.25, voice: alloy}}",
 			"--include", "item.input_audio_transcription.logprobs",
 			"--instructions", "instructions",
 			"--max-output-tokens", "inf",
@@ -46,7 +46,7 @@ func TestRealtimeCallsAccept(t *testing.T) {
 			"realtime:calls", "accept",
 			"--call-id", "call_id",
 			"--type", "realtime",
-			"--audio.input", "{format: {rate: 24000, type: audio/pcm}, noise_reduction: {type: near_field}, transcription: {delay: minimal, language: language, model: whisper-1, prompt: prompt}, turn_detection: {type: server_vad, create_response: true, idle_timeout_ms: 5000, interrupt_response: true, prefix_padding_ms: 0, silence_duration_ms: 0, threshold: 0}}",
+			"--audio.input", "{format: {rate: 24000, type: audio/pcm}, noise_reduction: {type: near_field}, transcription: {delay: minimal, keywords: [string], language: language, languages: [string], model: whisper-1, prompt: prompt}, turn_detection: {type: server_vad, create_response: true, idle_timeout_ms: 5000, interrupt_response: true, prefix_padding_ms: 0, silence_duration_ms: 0, threshold: 0}}",
 			"--audio.output", "{format: {rate: 24000, type: audio/pcm}, speed: 0.25, voice: alloy}",
 			"--include", "item.input_audio_transcription.logprobs",
 			"--instructions", "instructions",
@@ -78,7 +78,11 @@ func TestRealtimeCallsAccept(t *testing.T) {
 			"      type: near_field\n" +
 			"    transcription:\n" +
 			"      delay: minimal\n" +
+			"      keywords:\n" +
+			"        - string\n" +
 			"      language: language\n" +
+			"      languages:\n" +
+			"        - string\n" +
 			"      model: whisper-1\n" +
 			"      prompt: prompt\n" +
 			"    turn_detection:\n" +
