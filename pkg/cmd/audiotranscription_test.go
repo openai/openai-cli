@@ -21,9 +21,11 @@ func TestAudioTranscriptionsCreate(t *testing.T) {
 			"--model", "gpt-4o-transcribe",
 			"--chunking-strategy", "auto",
 			"--include", "logprobs",
+			"--keyword", "string",
 			"--known-speaker-name", "string",
 			"--known-speaker-reference", "string",
 			"--language", "language",
+			"--language", "string",
 			"--prompt", "prompt",
 			"--response-format", "json",
 			"--stream=false",
@@ -41,11 +43,15 @@ func TestAudioTranscriptionsCreate(t *testing.T) {
 			"chunking_strategy: auto\n" +
 			"include:\n" +
 			"  - logprobs\n" +
+			"keywords:\n" +
+			"  - string\n" +
 			"known_speaker_names:\n" +
 			"  - string\n" +
 			"known_speaker_references:\n" +
 			"  - string\n" +
 			"language: language\n" +
+			"languages:\n" +
+			"  - string\n" +
 			"prompt: prompt\n" +
 			"response_format: json\n" +
 			"stream: false\n" +
