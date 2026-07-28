@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.0 (2026-07-28)
+
+Full Changelog: [v1.5.0...v1.6.0](https://github.com/openai/openai-cli/compare/v1.5.0...v1.6.0)
+
+### Features
+
+* **api:** transcription model updates ([8b665dc](https://github.com/openai/openai-cli/commit/8b665dc243d4c904335f2981f3998d5d5133e39b))
+
+
+### Bug Fixes
+
+* **release:** make partially published releases retryable ([#37](https://github.com/openai/openai-cli/issues/37)) ([d43c2d7](https://github.com/openai/openai-cli/commit/d43c2d7543bc48e8ba903cd8ee57241bbd4891b5))
+
 ## 1.5.0 (2026-07-24)
 
 Full Changelog: [v1.4.0...v1.5.0](https://github.com/openai/openai-cli/compare/v1.4.0...v1.5.0)
