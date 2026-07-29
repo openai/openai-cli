@@ -43,6 +43,11 @@ func init() {
 					return ValidateBaseURL(baseURL, "--base-url")
 				},
 			},
+			&requestflag.Flag[string]{
+				Name:    "ads-api-key",
+				Usage:   "Ads API bearer token.",
+				Sources: cli.EnvVars("OPENAI_ADS_API_KEY"),
+			},
 			&cli.StringFlag{
 				Name:  "format",
 				Usage: "The format for displaying response data (one of: " + strings.Join(OutputFormats, ", ") + ")",
@@ -100,6 +105,7 @@ func init() {
 			},
 		},
 		Commands: []*cli.Command{
+			&adsCommand,
 			{
 				Name:     "completions",
 				Category: "API RESOURCE",
