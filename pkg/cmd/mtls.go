@@ -46,6 +46,10 @@ func mtlsClientFlags() []cli.Flag {
 }
 
 func configureMTLS(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+	if cmd.Metadata == nil {
+		cmd.Metadata = map[string]any{}
+	}
+
 	certFile, _ := cmd.Value(mtlsClientCertFileFlag).(string)
 	keyFile, _ := cmd.Value(mtlsClientKeyFileFlag).(string)
 	baseURL := cmd.String("base-url")
