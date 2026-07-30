@@ -76,13 +76,15 @@ For details about specific commands, use the `--help` flag.
 
 ### Environment variables
 
-| Environment variable    | Required | Default value |
-| ----------------------- | -------- | ------------- |
-| `OPENAI_API_KEY`        | no       | `null`        |
-| `OPENAI_ADMIN_KEY`      | no       | `null`        |
-| `OPENAI_ORG_ID`         | no       | `null`        |
-| `OPENAI_PROJECT_ID`     | no       | `null`        |
-| `OPENAI_WEBHOOK_SECRET` | no       | `null`        |
+| Environment variable | Required | Default value |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | no | `null` |
+| `OPENAI_ADMIN_KEY` | no | `null` |
+| `OPENAI_ORG_ID` | no | `null` |
+| `OPENAI_PROJECT_ID` | no | `null` |
+| `OPENAI_WEBHOOK_SECRET` | no | `null` |
+| `OPENAI_MTLS_CLIENT_CERT_FILE` | no | `null` |
+| `OPENAI_MTLS_CLIENT_KEY_FILE` | no | `null` |
 
 ### Global flags
 
@@ -91,6 +93,8 @@ For details about specific commands, use the `--help` flag.
 - `--organization` (can also be set with `OPENAI_ORG_ID` env var)
 - `--project` (can also be set with `OPENAI_PROJECT_ID` env var)
 - `--webhook-secret` (can also be set with `OPENAI_WEBHOOK_SECRET` env var)
+- `--mtls-client-cert-file` (can also be set with `OPENAI_MTLS_CLIENT_CERT_FILE` env var)
+- `--mtls-client-key-file` (can also be set with `OPENAI_MTLS_CLIENT_KEY_FILE` env var)
 - `--help` - Show command line usage
 - `--debug` - Enable debug logging. This includes HTTP request/response details and bodies; do not share debug logs if they may contain sensitive payloads.
 - `--version`, `-v` - Show the CLI version
@@ -99,6 +103,33 @@ For details about specific commands, use the `--help` flag.
 - `--format-error` - Change the output format for errors (`auto`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`)
 - `--transform` - Transform the data output using [GJSON syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md)
 - `--transform-error` - Transform the error output using [GJSON syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md)
+
+### Mutual TLS
+
+Mutual TLS is currently in beta. To opt in and activate a CA certificate for
+your organization or project, follow the
+[OpenAI Mutual TLS Beta Program](https://help.openai.com/en/articles/10876024-openai-mutual-tls-beta-program)
+instructions.
+
+To authenticate API-key requests with a mutual TLS client certificate, provide
+the client certificate and private key as separate PEM files. If certificate
+chain support is enabled for your organization, the certificate file must
+contain the leaf certificate first, followed by any intermediate certificates.
+Otherwise, use a client certificate signed directly by an activated CA
+certificate.
+
+```sh
+export OPENAI_MTLS_CLIENT_CERT_FILE=/run/secrets/openai/client-chain.pem
+export OPENAI_MTLS_CLIENT_KEY_FILE=/run/secrets/openai/client.key
+export OPENAI_BASE_URL=https://mtls.api.openai.com/v1
+
+openai files list
+```
+
+Both mTLS files must be configured together. Keep the private key in a
+permission-restricted file; do not put private-key contents directly in command
+arguments or environment variables. The CLI does not automatically select an
+mTLS endpoint, so configure `OPENAI_BASE_URL` or `--base-url` explicitly.
 
 ### Passing files as arguments
 
