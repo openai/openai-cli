@@ -141,8 +141,7 @@ func newMTLSHTTPClient(certFile, keyFile, baseURL string) (*http.Client, error) 
 	return &http.Client{
 		Transport: transport,
 		CheckRedirect: func(request *http.Request, via []*http.Request) error {
-			if !strings.EqualFold(request.URL.Scheme, endpoint.Scheme) ||
-				!strings.EqualFold(request.URL.Host, endpoint.Host) {
+			if !sameURLOrigin(request.URL, endpoint) {
 				return http.ErrUseLastResponse
 			}
 			if len(via) >= 10 {
@@ -151,6 +150,25 @@ func newMTLSHTTPClient(certFile, keyFile, baseURL string) (*http.Client, error) 
 			return nil
 		},
 	}, nil
+}
+
+func sameURLOrigin(left, right *url.URL) bool {
+	return strings.EqualFold(left.Scheme, right.Scheme) &&
+		strings.EqualFold(left.Hostname(), right.Hostname()) &&
+		effectiveURLPort(left) == effectiveURLPort(right)
+}
+
+func effectiveURLPort(parsedURL *url.URL) string {
+	if port := parsedURL.Port(); port != "" {
+		return port
+	}
+	if strings.EqualFold(parsedURL.Scheme, "https") {
+		return "443"
+	}
+	if strings.EqualFold(parsedURL.Scheme, "http") {
+		return "80"
+	}
+	return ""
 }
 
 func readMTLSFile(kind, path string) ([]byte, error) {

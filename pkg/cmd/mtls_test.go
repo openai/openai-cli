@@ -179,10 +179,16 @@ func TestNewMTLSHTTPClientPreservesDefaultTransport(t *testing.T) {
 	sameOriginRedirect, err := http.NewRequest(http.MethodGet, "https://api.example.test/redirected", nil)
 	require.NoError(t, err)
 	require.NoError(t, client.CheckRedirect(sameOriginRedirect, []*http.Request{request}))
+	sameOriginDefaultPortRedirect, err := http.NewRequest(http.MethodGet, "https://API.example.test:443/redirected", nil)
+	require.NoError(t, err)
+	require.NoError(t, client.CheckRedirect(sameOriginDefaultPortRedirect, []*http.Request{request}))
 
 	crossOriginRedirect, err := http.NewRequest(http.MethodGet, "https://other.example.test", nil)
 	require.NoError(t, err)
 	assert.ErrorIs(t, client.CheckRedirect(crossOriginRedirect, []*http.Request{request}), http.ErrUseLastResponse)
+	crossOriginPortRedirect, err := http.NewRequest(http.MethodGet, "https://api.example.test:8443", nil)
+	require.NoError(t, err)
+	assert.ErrorIs(t, client.CheckRedirect(crossOriginPortRedirect, []*http.Request{request}), http.ErrUseLastResponse)
 }
 
 func TestCLIUsesMTLSClientCertificateChain(t *testing.T) {
