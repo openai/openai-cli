@@ -159,6 +159,14 @@ func init() {
 				},
 			},
 			{
+				Name:     "content-provenance-checks",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&contentProvenanceChecksCreate,
+				},
+			},
+			{
 				Name:     "audio:transcriptions",
 				Category: "API RESOURCE",
 				Suggest:  true,
