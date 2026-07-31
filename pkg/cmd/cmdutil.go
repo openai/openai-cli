@@ -64,6 +64,9 @@ func getDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 	if baseURL := cmd.String("base-url"); baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
+	if httpClient, ok := cmd.Root().Metadata[mtlsHTTPClientMetadata].(*http.Client); ok {
+		opts = append(opts, option.WithHTTPClient(httpClient))
+	}
 
 	return opts
 }

@@ -30,7 +30,8 @@ func init() {
 		Suggest:   true,
 		Version:   Version,
 		ErrWriter: &CommandErrorBuffer,
-		Flags: []cli.Flag{
+		Before:    configureMTLS,
+		Flags: append([]cli.Flag{
 			&cli.BoolFlag{
 				Name:  "debug",
 				Usage: "Enable debug logging",
@@ -98,7 +99,7 @@ func init() {
 				Name:    "webhook-secret",
 				Sources: cli.EnvVars("OPENAI_WEBHOOK_SECRET"),
 			},
-		},
+		}, mtlsClientFlags()...),
 		Commands: []*cli.Command{
 			{
 				Name:     "completions",
