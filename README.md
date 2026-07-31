@@ -129,7 +129,9 @@ openai files list
 Both mTLS files must be configured together. Keep the private key in a
 permission-restricted file; do not put private-key contents directly in command
 arguments or environment variables. The CLI does not automatically select an
-mTLS endpoint, so configure `OPENAI_BASE_URL` or `--base-url` explicitly.
+mTLS endpoint, so configure `OPENAI_BASE_URL` or `--base-url` explicitly. HTTP
+and SOCKS proxies remain supported, but HTTPS proxies are rejected to prevent
+presenting the client certificate during the proxy's own TLS handshake.
 
 ### Passing files as arguments
 

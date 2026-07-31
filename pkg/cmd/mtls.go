@@ -111,6 +111,19 @@ func newMTLSHTTPClient(certFile, keyFile, baseURL string) (*http.Client, error) 
 
 	transport := baseTransport.Clone()
 	transport.ResponseHeaderTimeout = openAISDKResponseHeaderTimeout
+	if proxy := transport.Proxy; proxy != nil {
+		transport.Proxy = func(request *http.Request) (*url.URL, error) {
+			proxyURL, err := proxy(request)
+			if err != nil || proxyURL == nil {
+				return proxyURL, err
+			}
+			if strings.EqualFold(proxyURL.Scheme, "https") {
+				return nil, errors.New("mTLS does not support HTTPS proxies")
+			}
+			return proxyURL, nil
+		}
+	}
+
 	tlsConfig := transport.TLSClientConfig
 	if tlsConfig == nil {
 		tlsConfig = &tls.Config{}

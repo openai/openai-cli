@@ -122,10 +122,15 @@ func TestNewMTLSHTTPClientPreservesDefaultTransport(t *testing.T) {
 
 	proxyURL, err := url.Parse("http://proxy.example.test:8443")
 	require.NoError(t, err)
+	httpsProxyURL, err := url.Parse("https://proxy.example.test:8443")
+	require.NoError(t, err)
 	rootPool := x509.NewCertPool()
 	require.True(t, rootPool.AppendCertsFromPEM(pki.rootPEM))
 	baseTransport := &http.Transport{
-		Proxy: func(*http.Request) (*url.URL, error) {
+		Proxy: func(request *http.Request) (*url.URL, error) {
+			if request.URL.Host == "https-proxy-target.example.test" {
+				return httpsProxyURL, nil
+			}
 			return proxyURL, nil
 		},
 		TLSClientConfig: &tls.Config{
@@ -164,6 +169,12 @@ func TestNewMTLSHTTPClientPreservesDefaultTransport(t *testing.T) {
 	actualProxyURL, err := transport.Proxy(request)
 	require.NoError(t, err)
 	assert.Equal(t, proxyURL, actualProxyURL)
+
+	httpsProxyRequest, err := http.NewRequest(http.MethodGet, "https://https-proxy-target.example.test", nil)
+	require.NoError(t, err)
+	actualProxyURL, err = transport.Proxy(httpsProxyRequest)
+	require.EqualError(t, err, "mTLS does not support HTTPS proxies")
+	assert.Nil(t, actualProxyURL)
 
 	sameOriginRedirect, err := http.NewRequest(http.MethodGet, "https://api.example.test/redirected", nil)
 	require.NoError(t, err)
