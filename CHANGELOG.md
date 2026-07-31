@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.7.0 (2026-07-31)
+
+Full Changelog: [v1.6.0...v1.7.0](https://github.com/openai/openai-cli/compare/v1.6.0...v1.7.0)
+
+### Features
+
+* Add mutual TLS client certificate support ([#42](https://github.com/openai/openai-cli/issues/42)) ([d2afc76](https://github.com/openai/openai-cli/commit/d2afc7637b2432f87bd8e340b4b18eaa840e573b))
+* **api:** content provenance checks ([f35f186](https://github.com/openai/openai-cli/commit/f35f1867212198f675c803caa9b6cc1c7f2593a8))
+* **api:** fast tier ([be4f41e](https://github.com/openai/openai-cli/commit/be4f41e0e5dd00d4ef887a05e82e8185a845eb29))
+* **api:** manual updates ([4aceee6](https://github.com/openai/openai-cli/commit/4aceee65a57ef3a4fe7807ab8de22d1a20a214f9))
+
+
+### Bug Fixes
+
+* **stlc:** stop hand-edited CI workflows from blocking seals and builds ([3157d3f](https://github.com/openai/openai-cli/commit/3157d3f27d9c054e3c231f71b0935b2724eae6ee))
+
 ## 1.6.0 (2026-07-28)
 
 Full Changelog: [v1.5.0...v1.6.0](https://github.com/openai/openai-cli/compare/v1.5.0...v1.6.0)
