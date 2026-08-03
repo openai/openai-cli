@@ -2,7 +2,6 @@
 name: Dispatch Publish Release
 permissions:
   actions: write
-  contents: read
 
 on:
   push:
