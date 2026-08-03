@@ -5,12 +5,6 @@ concurrency:
   group: publish
 
 on:
-  workflow_call:
-    inputs:
-      tag:
-        description: "Release tag to publish, for example v1.2.3"
-        required: true
-        type: string
   workflow_dispatch:
     inputs:
       tag:
