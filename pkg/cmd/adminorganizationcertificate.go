@@ -26,11 +26,6 @@ var adminOrganizationCertificatesCreate = cli.Command{
 			BodyPath: "certificate",
 		},
 		&requestflag.Flag[string]{
-			Name:     "content",
-			Hidden:   true,
-			BodyPath: "content",
-		},
-		&requestflag.Flag[string]{
 			Name:     "name",
 			Usage:    "An optional name for the certificate",
 			BodyPath: "name",
