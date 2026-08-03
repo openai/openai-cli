@@ -29,8 +29,6 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
-        with:
-          stainless-api-key: ${{ secrets.STAINLESS_API_KEY }}
 
       - name: Link staging branch
         if: |-
@@ -62,8 +60,6 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
-        with:
-          stainless-api-key: ${{ secrets.STAINLESS_API_KEY }}
 
       - name: Link staging branch
         if: |-
@@ -179,8 +175,6 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
-        with:
-          stainless-api-key: ${{ secrets.STAINLESS_API_KEY }}
 
       - name: Link staging branch
         if: |-
