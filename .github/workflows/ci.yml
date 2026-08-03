@@ -9,6 +9,9 @@ on:
     branches-ignore:
       - 'stl-preview-head/**'
       - 'stl-preview-base/**'
+  merge_group:
+    types:
+      - checks_requested
 
 env:
   GOPRIVATE: github.com/openai/openai-go/v3,github.com/stainless-sdks/openai-go/v3
