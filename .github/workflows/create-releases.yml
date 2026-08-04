@@ -11,7 +11,7 @@ jobs:
     name: release
     if: github.ref == 'refs/heads/main' && github.repository == 'openai/openai-cli'
     runs-on: ubuntu-latest
-    environment: publish
+    environment: release
     permissions: {}
 
     steps:
