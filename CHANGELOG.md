@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/openai/openai-cli/compare/v1.7.0...v1.7.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **api:** add module metadata for api_reference package ([#45](https://github.com/openai/openai-cli/issues/45)) ([337a64f](https://github.com/openai/openai-cli/commit/337a64f48dca311887f8d3ee8b5a95f88d91b966))
+
 ## 1.7.0 (2026-07-31)
 
 Full Changelog: [v1.6.0...v1.7.0](https://github.com/openai/openai-cli/compare/v1.6.0...v1.7.0)
