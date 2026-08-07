@@ -348,7 +348,7 @@ func handleBetaThreadsRunsCreate(ctx context.Context, cmd *cli.Command) error {
 	format := cmd.Root().String("format")
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
-	if cmd.Bool("stream") {
+	if requestflag.FlagBool(cmd, "stream") {
 		stream := client.Beta.Threads.Runs.NewStreaming(
 			ctx,
 			cmd.Value("thread-id").(string),
@@ -645,7 +645,7 @@ func handleBetaThreadsRunsSubmitToolOutputs(ctx context.Context, cmd *cli.Comman
 	format := cmd.Root().String("format")
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
-	if cmd.Bool("stream") {
+	if requestflag.FlagBool(cmd, "stream") {
 		stream := client.Beta.Threads.Runs.SubmitToolOutputsStreaming(
 			ctx,
 			cmd.Value("thread-id").(string),

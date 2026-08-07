@@ -433,7 +433,7 @@ func handleChatCompletionsCreate(ctx context.Context, cmd *cli.Command) error {
 	format := cmd.Root().String("format")
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
-	if cmd.Bool("stream") {
+	if requestflag.FlagBool(cmd, "stream") {
 		stream := client.Chat.Completions.NewStreaming(ctx, params, options...)
 		maxItems := int64(-1)
 		if cmd.IsSet("max-items") {
