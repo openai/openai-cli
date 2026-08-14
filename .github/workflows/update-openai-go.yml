@@ -62,36 +62,9 @@ jobs:
           })"
           pr_number="$(jq -r '.[0].number // empty' <<< "$pr_data")"
 
-          main_version="$(go list -m -f '{{.Version}}' "$MODULE")"
-          comparison_version="$main_version"
-
-          if [[ -n "$pr_number" ]]; then
-            git fetch --no-tags origin \
-              "refs/heads/${UPDATE_BRANCH}:refs/remotes/origin/${UPDATE_BRANCH}"
-            comparison_version="$({
-              git show "refs/remotes/origin/${UPDATE_BRANCH}:go.mod" |
-                awk -v module="$MODULE" '$1 == module { print $2; exit }'
-            })"
-
-            if [[ -z "$comparison_version" ]]; then
-              echo "Could not determine the open PR's $MODULE version" >&2
-              exit 1
-            fi
-          fi
-
           go get "${MODULE}@latest"
           go mod tidy
           desired_version="$(go list -m -f '{{.Version}}' "$MODULE")"
-
-          if [[ "$desired_version" == "$comparison_version" ]]; then
-            echo "$MODULE is already at $desired_version"
-            exit 0
-          fi
-
-          if git diff --quiet -- go.mod go.sum; then
-            echo "Version changed from $comparison_version to $desired_version, but no module files changed" >&2
-            exit 1
-          fi
 
           while IFS= read -r changed_file; do
             case "$changed_file" in
@@ -104,6 +77,42 @@ jobs:
           done < <(git diff --name-only)
 
           go mod verify
+
+          if git diff --quiet -- go.mod go.sum; then
+            if [[ -n "$pr_number" ]]; then
+              gh api --method PATCH "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
+                -f state=closed \
+                >/dev/null
+              echo "Closed stale update pull request #${pr_number}"
+            fi
+
+            echo "$MODULE is already at $desired_version on main"
+            exit 0
+          fi
+
+          if [[ -n "$pr_number" ]]; then
+            branch_ref="refs/remotes/origin/${UPDATE_BRANCH}"
+            git fetch --no-tags origin \
+              "refs/heads/${UPDATE_BRANCH}:${branch_ref}"
+
+            branch_is_canonical=true
+            while IFS= read -r changed_file; do
+              case "$changed_file" in
+                go.mod|go.sum) ;;
+                *)
+                  branch_is_canonical=false
+                  echo "Existing update branch also changes: $changed_file"
+                  break
+                  ;;
+              esac
+            done < <(git diff --name-only HEAD "$branch_ref")
+
+            if [[ "$branch_is_canonical" == true ]] &&
+              git diff --quiet "$branch_ref" -- go.mod go.sum; then
+              echo "Existing update pull request already matches verified $MODULE $desired_version"
+              exit 0
+            fi
+          fi
 
           {
             echo 'changed=true'
