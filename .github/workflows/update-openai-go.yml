@@ -1,0 +1,187 @@
+name: Update openai-go
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: update-openai-go-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository == 'openai/openai-cli' && github.ref == 'refs/heads/main'
+    name: update openai-go
+    runs-on: ubuntu-latest
+    environment: release
+    permissions: {}
+
+    env:
+      MODULE: github.com/openai/openai-go/v3
+      UPDATE_BRANCH: automation/update-openai-go
+
+    steps:
+      - name: Create SDKs app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.OPENAI_SDKS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OPENAI_SDKS_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Check out public main
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 1
+          persist-credentials: true
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: ./.github/actions/setup-go
+
+      - name: Prepare dependency update
+        id: update
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo 'changed=false' >> "$GITHUB_OUTPUT"
+
+          pr_data="$({
+            gh api --method GET "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f state=open \
+              -f "head=${GITHUB_REPOSITORY_OWNER}:${UPDATE_BRANCH}" \
+              -f base=main \
+              -F per_page=1
+          })"
+          pr_number="$(jq -r '.[0].number // empty' <<< "$pr_data")"
+
+          go get "${MODULE}@latest"
+          go mod tidy
+          desired_version="$(go list -m -f '{{.Version}}' "$MODULE")"
+
+          while IFS= read -r changed_file; do
+            case "$changed_file" in
+              go.mod|go.sum) ;;
+              *)
+                echo "Unexpected file changed by dependency update: $changed_file" >&2
+                exit 1
+                ;;
+            esac
+          done < <(git diff --name-only)
+
+          go mod verify
+
+          if git diff --quiet -- go.mod go.sum; then
+            if [[ -n "$pr_number" ]]; then
+              gh api --method PATCH "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
+                -f state=closed \
+                >/dev/null
+              echo "Closed stale update pull request #${pr_number}"
+            fi
+
+            echo "$MODULE is already at $desired_version on main"
+            exit 0
+          fi
+
+          if [[ -n "$pr_number" ]]; then
+            branch_ref="refs/remotes/origin/${UPDATE_BRANCH}"
+            git fetch --no-tags origin \
+              "refs/heads/${UPDATE_BRANCH}:${branch_ref}"
+
+            branch_is_canonical=true
+            while IFS= read -r changed_file; do
+              case "$changed_file" in
+                go.mod|go.sum) ;;
+                *)
+                  branch_is_canonical=false
+                  echo "Existing update branch also changes: $changed_file"
+                  break
+                  ;;
+              esac
+            done < <(git diff --name-only HEAD "$branch_ref")
+
+            if [[ "$branch_is_canonical" == true ]] &&
+              git diff --quiet "$branch_ref" -- go.mod go.sum; then
+              echo "Existing update pull request already matches verified $MODULE $desired_version"
+              exit 0
+            fi
+          fi
+
+          {
+            echo 'changed=true'
+            echo "version=$desired_version"
+            echo "pr_number=$pr_number"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit dependency update
+        if: steps.update.outputs.changed == 'true'
+        env:
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ steps.update.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          app_user_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${app_user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+
+          git switch -c "$UPDATE_BRANCH"
+          git add -- go.mod go.sum
+          git commit -m "chore(deps): update openai-go to ${VERSION}"
+
+      - name: Update pull request
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.update.outputs.pr_number }}
+          VERSION: ${{ steps.update.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          title="chore(deps): update openai-go to ${VERSION}"
+          body_file="${RUNNER_TEMP}/openai-go-update.md"
+          cat > "$body_file" <<EOF
+          Updates \`${MODULE}\` to \`${VERSION}\`.
+
+          This pull request is maintained by the hourly openai-go updater.
+          EOF
+
+          remote_sha="$({
+            git ls-remote --heads origin "refs/heads/${UPDATE_BRANCH}" |
+              awk '{ print $1 }'
+          })"
+          if [[ -n "$remote_sha" ]]; then
+            git push \
+              --force-with-lease="refs/heads/${UPDATE_BRANCH}:${remote_sha}" \
+              origin "HEAD:refs/heads/${UPDATE_BRANCH}"
+          else
+            git push origin "HEAD:refs/heads/${UPDATE_BRANCH}"
+          fi
+
+          if [[ -z "$PR_NUMBER" ]]; then
+            PR_NUMBER="$({
+              gh api --method POST "repos/${GITHUB_REPOSITORY}/pulls" \
+                -f title="$title" \
+                -f head="$UPDATE_BRANCH" \
+                -f base=main \
+                -f body="$(< "$body_file")" \
+                -F draft=false \
+                --jq .number
+            })"
+          else
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
+              -f title="$title" \
+              -f body="$(< "$body_file")" \
+              >/dev/null
+          fi
+          gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json url --jq .url
