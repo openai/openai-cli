@@ -124,7 +124,7 @@ var filesDelete = cli.Command{
 
 var filesContent = cli.Command{
 	Name:    "content",
-	Usage:   "Returns the contents of the specified file.",
+	Usage:   "Returns a response containing the contents of the specified file.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
