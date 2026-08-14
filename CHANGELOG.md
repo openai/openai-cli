@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.8.0](https://github.com/openai/openai-cli/compare/v1.7.1...v1.8.0) (2026-08-14)
+
+
+### Features
+
+* **api:** Add gpt-daybreak-blue-latest, gpt-daybreak-red-latest, and ([ed0e180](https://github.com/openai/openai-cli/commit/ed0e18007e860032896c7e8a2c3a1b6d6bdb20de))
+* **api:** add new Responses model identifiers ([#51](https://github.com/openai/openai-cli/issues/51)) ([ed0e180](https://github.com/openai/openai-cli/commit/ed0e18007e860032896c7e8a2c3a1b6d6bdb20de))
+* **api:** add WebSocket stream IDs ([#58](https://github.com/openai/openai-cli/issues/58)) ([8c85942](https://github.com/openai/openai-cli/commit/8c859427d1505e68553fbd1e0563f1312486fa93))
+* **api:** add workload identity access token issued event ([#55](https://github.com/openai/openai-cli/issues/55)) ([75ff54a](https://github.com/openai/openai-cli/commit/75ff54afee9a04b3f56f57026954a3ea90fed021))
+* **api:** deprecate Sora video APIs ([#57](https://github.com/openai/openai-cli/issues/57)) ([7e33190](https://github.com/openai/openai-cli/commit/7e3319056fa7479f371cf966e93b7a40a94ae6e2))
+* **api:** Ultrafast tier, structured MCP and websocket errors, separate websocket events ([#62](https://github.com/openai/openai-cli/issues/62)) ([068a640](https://github.com/openai/openai-cli/commit/068a6407cc3e6b42d896c149bc4846abd815a683))
+
+
+### Bug Fixes
+
+* **api:** clarify audio upload metadata requirements ([#52](https://github.com/openai/openai-cli/issues/52)) ([17c793d](https://github.com/openai/openai-cli/commit/17c793d3c62fb938bac251f14f303f9b6f7a9421))
+* **api:** handle nullable stream flags ([#53](https://github.com/openai/openai-cli/issues/53)) ([fa22e6e](https://github.com/openai/openai-cli/commit/fa22e6ee81cbfef2baf2e9c750b487224b1bdeb9))
+
+
+### Chores
+
+* **api:** Update generated-source attribution in file headers ([1b6ec73](https://github.com/openai/openai-cli/commit/1b6ec733a7033caa99d2c06ac22d37c6e75d34f8))
+* **api:** Update generated-source attribution in file headers ([#49](https://github.com/openai/openai-cli/issues/49)) ([1b6ec73](https://github.com/openai/openai-cli/commit/1b6ec733a7033caa99d2c06ac22d37c6e75d34f8))
+* **deps:** update openai-go to v3.50.0 ([#61](https://github.com/openai/openai-cli/issues/61)) ([f60f255](https://github.com/openai/openai-cli/commit/f60f25564e09a0e9dcbef2c0bfef855c8d2614dd))
+* remove Stainless attribution and infrastructure ([#54](https://github.com/openai/openai-cli/issues/54)) ([2e59ae5](https://github.com/openai/openai-cli/commit/2e59ae57979a1b893c9f91958c9a2d2ba77714de))
+
+
+### Documentation
+
+* **api:** describe response stream event unions ([#59](https://github.com/openai/openai-cli/issues/59)) ([033612a](https://github.com/openai/openai-cli/commit/033612a28ce865d8ae193128ff707ccc42ba3fe6))
+
 ## [1.7.1](https://github.com/openai/openai-cli/compare/v1.7.0...v1.7.1) (2026-08-05)
 
 
