@@ -153,17 +153,7 @@ jobs:
           cat > "$body_file" <<EOF
           Updates \`${MODULE}\` to \`${VERSION}\`.
 
-          This pull request is maintained by the hourly openai-go updater. When a newer
-          version is available, the updater regenerates this branch from \`main\`, force
-          pushes it with a lease, and leaves it ready for review.
-
-          Validation performed by the updater:
-
-          - \`go mod tidy\`
-          - \`go mod verify\`
-          - changed-file allowlist limited to \`go.mod\` and \`go.sum\`
-
-          The repository's required build, lint, and test checks run on this pull request.
+          This pull request is maintained by the hourly openai-go updater.
           EOF
 
           remote_sha="$({
