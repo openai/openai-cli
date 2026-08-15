@@ -492,10 +492,7 @@ func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, op
 		pagerOpts := opts
 		pagerOpts.Stdout = pager
 
-		for iter.Next() {
-			if itemsToDisplay == 0 {
-				break
-			}
+		for itemsToDisplay != 0 && iter.Next() {
 			item := iter.Current()
 			var obj gjson.Result
 			if hasRaw, ok := any(item).(hasRawJSON); ok {
