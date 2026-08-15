@@ -1,14 +1,13 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"mime"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -121,7 +120,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 			val := iter.Value()
 			newVal, err := embedFilesValue(val, embedStyle, stdin)
 			if err != nil {
-				return reflect.Value{}, err
+				return reflect.Value{}, errors.Join(err, closeFileUploads(result.Interface()))
 			}
 			result.SetMapIndex(key, newVal)
 		}
@@ -136,7 +135,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 		for i := 0; i < v.Len(); i++ {
 			newVal, err := embedFilesValue(v.Index(i), embedStyle, stdin)
 			if err != nil {
-				return reflect.Value{}, err
+				return reflect.Value{}, errors.Join(err, closeFileUploads(result.Slice(0, i).Interface()))
 			}
 			result.Index(i).Set(newVal)
 		}
@@ -324,8 +323,16 @@ func flagOptions(
 	// This parameter is true if stdin is already in use to pass a binary parameter by using the special value
 	// "-". In this case, we won't attempt to read it as a JSON/YAML blob for options setting.
 	ignoreStdin bool,
-) ([]option.RequestOption, error) {
-	var options []option.RequestOption
+) (options []option.RequestOption, err error) {
+	// Once multipart files have been opened, close them on every error path
+	// until ownership is transferred to multipartRequestBody below.
+	var pendingMultipartUploads any
+	defer func() {
+		if err != nil && pendingMultipartUploads != nil {
+			err = errors.Join(err, closeFileUploads(pendingMultipartUploads))
+		}
+	}()
+
 	if cmd.Bool("debug") {
 		options = append(options, option.WithMiddleware(debugmiddleware.NewRequestLogger().Middleware()))
 	}
@@ -434,6 +441,9 @@ func flagOptions(
 		return nil, err
 	} else {
 		requestContents.Body = embedded
+		if bodyType == MultipartFormEncoded {
+			pendingMultipartUploads = embedded
+		}
 	}
 
 	if headersWithFiles, err := embedFiles(requestContents.Headers, EmbedText, &stdinReader); err != nil {
@@ -492,22 +502,15 @@ func flagOptions(
 	case EmptyBody:
 		break
 	case MultipartFormEncoded:
-		buf := new(bytes.Buffer)
-		writer := multipart.NewWriter(buf)
-
 		// For multipart/form-encoded, we need a map structure
 		bodyMap, ok := requestContents.Body.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("Cannot send a non-map value to a form-encoded endpoint: %v\n", requestContents.Body)
 		}
 		encodingFormat := apiform.FormatBrackets
-		if err := apiform.MarshalWithSettings(bodyMap, writer, encodingFormat); err != nil {
-			return nil, err
-		}
-		if err := writer.Close(); err != nil {
-			return nil, err
-		}
-		options = append(options, option.WithRequestBody(writer.FormDataContentType(), buf))
+		body := newMultipartRequestBody(bodyMap, encodingFormat)
+		pendingMultipartUploads = nil // multipartRequestBody owns them now.
+		options = append(options, multipartRequestOptions(body)...)
 
 	case ApplicationJSON:
 		bodyBytes, err := json.Marshal(requestContents.Body)
