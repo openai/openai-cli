@@ -50,6 +50,7 @@ updates:
     open-pull-requests-limit: 5
     groups:
       setup-go:
+        group-by: dependency-name
         patterns:
           - "actions/setup-go"
       codeql:
