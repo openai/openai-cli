@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/help"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tidwall/gjson"
 
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,33 @@ func TestNavigateForward_EmptyRowData(t *testing.T) {
 
 	// Stack should remain unchanged (no new view pushed).
 	require.Equal(t, 1, len(viewer.stack), "expected stack length 1, got %d", len(viewer.stack))
+}
+
+func TestGetSelectedContent_EmptyRowData(t *testing.T) {
+	t.Parallel()
+
+	// A list endpoint with no results renders an empty array, and an empty object
+	// is likewise possible; neither produces a row for the cursor to land on.
+	for _, empty := range []string{"[]", "{}"} {
+		t.Run(empty, func(t *testing.T) {
+			t.Parallel()
+
+			view, err := newTableView("", gjson.Parse(empty), false)
+			require.NoError(t, err)
+
+			viewer := &JSONViewer{
+				stack: []JSONView{view},
+				root:  "test",
+				help:  help.New(),
+			}
+
+			// Pressing "p" should print the container rather than panicking.
+			require.NotPanics(t, func() {
+				viewer.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+			})
+			require.Equal(t, empty, viewer.message)
+		})
+	}
 }
 
 // rawJSONItem implements HasRawJSON, returning pre-built JSON.

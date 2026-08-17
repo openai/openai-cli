@@ -426,7 +426,15 @@ func (v *JSONViewer) getSelectedContent() string {
 		return v.current().GetData().Raw
 	}
 
-	selected := tableView.rowData[tableView.table.Cursor()]
+	// An empty array or object builds a table with no rows, so there is no row
+	// under the cursor to print. Fall back to the container itself, which is what
+	// the view is already displaying.
+	cursor := tableView.table.Cursor()
+	if cursor < 0 || cursor >= len(tableView.rowData) {
+		return tableView.GetData().Raw
+	}
+
+	selected := tableView.rowData[cursor]
 	if selected.Type == gjson.String {
 		return sanitizeTerminalString(selected.Str)
 	}
