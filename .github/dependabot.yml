@@ -1,0 +1,66 @@
+version: 2
+
+updates:
+  # api_reference/go.mod has no dependencies; the root is the only active module.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Etc/UTC
+    # Security updates are not subject to version-update cooldowns.
+    cooldown:
+      default-days: 8
+    open-pull-requests-limit: 5
+    groups:
+      charmbracelet:
+        patterns:
+          - "github.com/charmbracelet/*"
+        update-types:
+          - minor
+          - patch
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+        update-types:
+          - minor
+          - patch
+      go-dependencies:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "github.com/charmbracelet/*"
+          - "golang.org/x/*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # The hourly SDK updater owns this dependency and its release automation.
+      - dependency-name: github.com/openai/openai-go/v3
+
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/setup-go
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:30"
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 8
+    open-pull-requests-limit: 5
+    groups:
+      setup-go:
+        # Keep the composite action and release workflow on the same pinned SHA.
+        group-by: dependency-name
+        patterns:
+          - actions/setup-go
+      codeql:
+        patterns:
+          - "github/codeql-action/*"
+      artifact-actions:
+        patterns:
+          - actions/upload-artifact
+          - actions/download-artifact
