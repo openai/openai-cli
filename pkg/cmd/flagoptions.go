@@ -7,13 +7,10 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"mime"
 	"net/http"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/apiform"
@@ -549,153 +546,6 @@ func flagOptions(
 // and embedded in the request. Unlike a regular string, embedFilesValue always treats a FilePathValue
 // as a file path without needing the "@" prefix.
 type FilePathValue string
-
-// fileUpload wraps an io.Reader with filename and content-type metadata for
-// use as a multipart form part. The apiform encoder detects the Filename and
-// ContentType methods and uses them to populate the Content-Disposition
-// filename and the Content-Type header on the part.
-type fileUpload struct {
-	io.Reader   // apiform checks for reader and reads its contents during encode
-	filename    string
-	contentType string
-	size        int64
-	knownSize   bool
-	source      *replayableFileSource
-	ownsSource  bool
-}
-
-func (f fileUpload) Filename() string    { return f.filename }
-func (f fileUpload) ContentType() string { return f.contentType }
-func (f fileUpload) Close() error {
-	if f.ownsSource && f.source != nil {
-		return f.source.Close()
-	}
-	if c, ok := f.Reader.(io.Closer); ok {
-		return c.Close()
-	}
-	return nil
-}
-
-func (f fileUpload) canReplay() bool {
-	return f.source != nil && f.knownSize
-}
-
-func (f fileUpload) replay() (fileUpload, error) {
-	if !f.canReplay() {
-		return fileUpload{}, errors.New("multipart upload is not replayable")
-	}
-	reader, err := f.source.ReplayReader()
-	if err != nil {
-		return fileUpload{}, err
-	}
-	f.Reader = reader
-	f.ownsSource = false
-	return f, nil
-}
-
-type replayableFileSource struct {
-	// file is a stable identity anchor. Each request body reads from a duplicate
-	// handle so closing the anchor never truncates a transport-owned upload.
-	file *os.File
-	size int64
-
-	closeOnce sync.Once
-	closeErr  error
-}
-
-func (s *replayableFileSource) ReplayReader() (io.ReadCloser, error) {
-	info, err := s.file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Size() != s.size {
-		return nil, fmt.Errorf("upload %q changed while being replayed", s.file.Name())
-	}
-	file, err := duplicateFile(s.file)
-	if err != nil {
-		return nil, fmt.Errorf("duplicate upload %q: %w", s.file.Name(), err)
-	}
-	return &sectionReadCloser{
-		SectionReader: io.NewSectionReader(file, 0, s.size),
-		file:          file,
-	}, nil
-}
-
-func (s *replayableFileSource) Close() error {
-	s.closeOnce.Do(func() {
-		s.closeErr = s.file.Close()
-	})
-	return s.closeErr
-}
-
-type sectionReadCloser struct {
-	*io.SectionReader
-	file *os.File
-}
-
-func (r *sectionReadCloser) Close() error {
-	return r.file.Close()
-}
-
-func hasTrustworthyFileSize(file *os.File, info os.FileInfo) bool {
-	if !info.Mode().IsRegular() || info.Size() < 0 {
-		return false
-	}
-
-	// Regular-looking virtual files can report a size unrelated to their
-	// readable contents. Verify both sides of the reported EOF without moving
-	// the descriptor offset; ordinary and sparse files support these ReadAt
-	// probes, while procfs/sysfs-style sources fail or expose extra bytes.
-	var probe [1]byte
-	if info.Size() == 0 {
-		n, err := file.ReadAt(probe[:], 0)
-		return n == 0 && errors.Is(err, io.EOF)
-	}
-	n, err := file.ReadAt(probe[:], info.Size()-1)
-	if n != 1 || err != nil {
-		return false
-	}
-	n, err = file.ReadAt(probe[:], info.Size())
-	return n == 0 && errors.Is(err, io.EOF)
-}
-
-// openFileUpload opens the file at path and returns a fileUpload whose filename
-// is the path's basename and whose content type is derived from the file
-// extension (falling back to application/octet-stream when unknown).
-func openFileUpload(path string) (fileUpload, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return fileUpload{}, err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return fileUpload{}, errors.Join(err, file.Close())
-	}
-	if info.IsDir() {
-		return fileUpload{}, errors.Join(fmt.Errorf("read %s: is a directory", path), file.Close())
-	}
-	contentType := mime.TypeByExtension(filepath.Ext(path))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	if !hasTrustworthyFileSize(file, info) {
-		return fileUpload{
-			Reader:      file,
-			filename:    filepath.Base(path),
-			contentType: contentType,
-		}, nil
-	}
-	source := &replayableFileSource{file: file, size: info.Size()}
-	return fileUpload{
-		Reader:      io.NewSectionReader(file, 0, info.Size()),
-		filename:    filepath.Base(path),
-		contentType: contentType,
-		size:        info.Size(),
-		knownSize:   true,
-		source:      source,
-		ownsSource:  true,
-	}, nil
-}
 
 // applyDataAliases rewrites keys in a body map based on flag `DataAliases` metadata. For top-level flags,
 // `{alias: value}` becomes `{canonical: value}`. For inner flags (those registered under an outer flag
