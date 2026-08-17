@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/apiform"
@@ -557,14 +558,18 @@ type fileUpload struct {
 	io.Reader   // apiform checks for reader and reads its contents during encode
 	filename    string
 	contentType string
-	sourcePath  string
 	size        int64
 	knownSize   bool
+	source      *replayableFileSource
+	ownsSource  bool
 }
 
 func (f fileUpload) Filename() string    { return f.filename }
 func (f fileUpload) ContentType() string { return f.contentType }
 func (f fileUpload) Close() error {
+	if f.ownsSource && f.source != nil {
+		return f.source.Close()
+	}
 	if c, ok := f.Reader.(io.Closer); ok {
 		return c.Close()
 	}
@@ -572,29 +577,68 @@ func (f fileUpload) Close() error {
 }
 
 func (f fileUpload) canReplay() bool {
-	return f.sourcePath != "" && f.knownSize
+	return f.source != nil && f.knownSize
 }
 
-func (f fileUpload) reopen() (fileUpload, error) {
+func (f fileUpload) replay() (fileUpload, error) {
 	if !f.canReplay() {
 		return fileUpload{}, errors.New("multipart upload is not replayable")
 	}
-	file, err := os.Open(f.sourcePath)
+	reader, err := f.source.Reader()
 	if err != nil {
 		return fileUpload{}, err
 	}
-	info, err := file.Stat()
-	if err != nil {
-		return fileUpload{}, errors.Join(err, file.Close())
-	}
-	if !info.Mode().IsRegular() || info.Size() != f.size {
-		return fileUpload{}, errors.Join(
-			fmt.Errorf("upload %q changed while following a redirect", f.sourcePath),
-			file.Close(),
-		)
-	}
-	f.Reader = file
+	f.Reader = reader
+	f.ownsSource = false
 	return f, nil
+}
+
+type replayableFileSource struct {
+	file *os.File
+	size int64
+
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (s *replayableFileSource) Reader() (io.Reader, error) {
+	info, err := s.file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() != s.size {
+		return nil, fmt.Errorf("upload %q changed while being replayed", s.file.Name())
+	}
+	return io.NewSectionReader(s.file, 0, s.size), nil
+}
+
+func (s *replayableFileSource) Close() error {
+	s.closeOnce.Do(func() {
+		s.closeErr = s.file.Close()
+	})
+	return s.closeErr
+}
+
+func hasTrustworthyFileSize(file *os.File, info os.FileInfo) bool {
+	if !info.Mode().IsRegular() || info.Size() < 0 {
+		return false
+	}
+
+	// Regular-looking virtual files can report a size unrelated to their
+	// readable contents. Verify both sides of the reported EOF without moving
+	// the descriptor offset; ordinary and sparse files support these ReadAt
+	// probes, while procfs/sysfs-style sources fail or expose extra bytes.
+	var probe [1]byte
+	if info.Size() == 0 {
+		n, err := file.ReadAt(probe[:], 0)
+		return n == 0 && errors.Is(err, io.EOF)
+	}
+	n, err := file.ReadAt(probe[:], info.Size()-1)
+	if n != 1 || err != nil {
+		return false
+	}
+	n, err = file.ReadAt(probe[:], info.Size())
+	return n == 0 && errors.Is(err, io.EOF)
 }
 
 // openFileUpload opens the file at path and returns a fileUpload whose filename
@@ -616,13 +660,26 @@ func openFileUpload(path string) (fileUpload, error) {
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+	if !hasTrustworthyFileSize(file, info) {
+		return fileUpload{
+			Reader:      file,
+			filename:    filepath.Base(path),
+			contentType: contentType,
+		}, nil
+	}
+	source := &replayableFileSource{file: file, size: info.Size()}
+	reader, err := source.Reader()
+	if err != nil {
+		return fileUpload{}, errors.Join(err, source.Close())
+	}
 	return fileUpload{
-		Reader:      file,
+		Reader:      reader,
 		filename:    filepath.Base(path),
 		contentType: contentType,
-		sourcePath:  path,
 		size:        info.Size(),
-		knownSize:   info.Mode().IsRegular(),
+		knownSize:   true,
+		source:      source,
+		ownsSource:  true,
 	}, nil
 }
 

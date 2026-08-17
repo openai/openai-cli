@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -114,7 +115,7 @@ func TestMultipartRequestBodyClosesOpenedFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("payload"), 0o600))
 	upload, err := openFileUpload(path)
 	require.NoError(t, err)
-	file := upload.Reader.(*os.File)
+	file := upload.source.file
 	body := newMultipartRequestBody(map[string]any{"file": upload}, apiform.FormatBrackets)
 
 	_, err = io.ReadAll(body)
@@ -226,7 +227,7 @@ func TestMultipartRequestOptionsFollow307And308ForRegularFiles(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte("redirect payload"), 0o600))
 			upload, err := openFileUpload(path)
 			require.NoError(t, err)
-			originalFile := upload.Reader.(*os.File)
+			originalFile := upload.source.file
 
 			var requestCount atomic.Int32
 			var uploaded string
@@ -341,6 +342,177 @@ func TestMultipartRequestOptionsRetryScalarOnlyForms(t *testing.T) {
 	require.Equal(t, int32(2), requestCount.Load())
 }
 
+func TestMultipartRequestOptionsRetryRegularFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "retry-upload.txt")
+	require.NoError(t, os.WriteFile(path, []byte("retry payload"), 0o600))
+	upload, err := openFileUpload(path)
+	require.NoError(t, err)
+	sourceFile := upload.source.file
+
+	var requestCount atomic.Int32
+	var uploadsMu sync.Mutex
+	var uploads []string
+	var contentLengths []int64
+	var retryCounts []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		file, _, parseErr := r.FormFile("file")
+		if !assert.NoError(t, parseErr) {
+			http.Error(w, parseErr.Error(), http.StatusBadRequest)
+			return
+		}
+		contents, readErr := io.ReadAll(file)
+		assert.NoError(t, readErr)
+		assert.NoError(t, file.Close())
+		uploadsMu.Lock()
+		uploads = append(uploads, string(contents))
+		contentLengths = append(contentLengths, r.ContentLength)
+		retryCounts = append(retryCounts, r.Header.Get("X-Stainless-Retry-Count"))
+		uploadsMu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		if requestCount.Load() == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"retry me","type":"rate_limit_error"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"file_123","object":"file"}`)
+	}))
+	t.Cleanup(server.Close)
+
+	options, err := multipartRequestOptions(map[string]any{
+		"file":    upload,
+		"purpose": "assistants",
+	}, apiform.FormatBrackets)
+	require.NoError(t, err)
+	client := openai.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL(server.URL+"/"),
+	)
+
+	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
+	require.NoError(t, err)
+	require.Equal(t, int32(2), requestCount.Load())
+	uploadsMu.Lock()
+	require.Equal(t, []string{"retry payload", "retry payload"}, uploads)
+	require.Len(t, contentLengths, 2)
+	require.Positive(t, contentLengths[0])
+	require.Equal(t, contentLengths[0], contentLengths[1])
+	require.Equal(t, []string{"0", "1"}, retryCounts)
+	uploadsMu.Unlock()
+	_, err = sourceFile.Stat()
+	require.ErrorIs(t, err, os.ErrClosed)
+}
+
+func TestMultipartRequestOptionsCloseRegularFilesAfterFinalRetry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "failed-retry-upload.txt")
+	require.NoError(t, os.WriteFile(path, []byte("retry payload"), 0o600))
+	upload, err := openFileUpload(path)
+	require.NoError(t, err)
+	sourceFile := upload.source.file
+
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		file, _, parseErr := r.FormFile("file")
+		if !assert.NoError(t, parseErr) {
+			http.Error(w, parseErr.Error(), http.StatusBadRequest)
+			return
+		}
+		contents, readErr := io.ReadAll(file)
+		assert.NoError(t, readErr)
+		assert.Equal(t, "retry payload", string(contents))
+		assert.NoError(t, file.Close())
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"error":{"message":"retry me","type":"server_error"}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	options, err := multipartRequestOptions(map[string]any{
+		"file":    upload,
+		"purpose": "assistants",
+	}, apiform.FormatBrackets)
+	require.NoError(t, err)
+	client := openai.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL(server.URL+"/"),
+	)
+
+	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
+	require.Error(t, err)
+	require.Equal(t, int32(3), requestCount.Load())
+	_, err = sourceFile.Stat()
+	require.ErrorIs(t, err, os.ErrClosed)
+}
+
+func TestMultipartRequestOptionsRedirectReplayUsesOpenedFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not permit atomically replacing this open test file")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "redirect-upload.txt")
+	replacement := filepath.Join(dir, "replacement.txt")
+	require.NoError(t, os.WriteFile(path, []byte("benign-data"), 0o600))
+	require.NoError(t, os.WriteFile(replacement, []byte("secret-data"), 0o600))
+	upload, err := openFileUpload(path)
+	require.NoError(t, err)
+
+	var requestCount atomic.Int32
+	var uploadsMu sync.Mutex
+	var uploads []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		file, _, parseErr := r.FormFile("file")
+		if !assert.NoError(t, parseErr) {
+			http.Error(w, parseErr.Error(), http.StatusBadRequest)
+			return
+		}
+		contents, readErr := io.ReadAll(file)
+		assert.NoError(t, readErr)
+		assert.NoError(t, file.Close())
+		uploadsMu.Lock()
+		uploads = append(uploads, string(contents))
+		uploadsMu.Unlock()
+
+		if r.URL.Path == "/files" {
+			if !assert.NoError(t, os.Rename(replacement, path)) {
+				http.Error(w, "could not replace upload path", http.StatusInternalServerError)
+				return
+			}
+			http.Redirect(w, r, "/upload", http.StatusTemporaryRedirect)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"file_123","object":"file"}`)
+	}))
+	t.Cleanup(server.Close)
+
+	options, err := multipartRequestOptions(map[string]any{
+		"file":    upload,
+		"purpose": "assistants",
+	}, apiform.FormatBrackets)
+	require.NoError(t, err)
+	client := openai.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL(server.URL+"/"),
+	)
+
+	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
+	require.NoError(t, err)
+	require.Equal(t, int32(2), requestCount.Load())
+	uploadsMu.Lock()
+	require.Equal(t, []string{"benign-data", "benign-data"}, uploads)
+	uploadsMu.Unlock()
+	require.FileExists(t, path)
+	replacedContents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "secret-data", string(replacedContents))
+}
+
 func TestMultipartRequestOptionsSetContentLengthForRegularFiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "upload.txt")
 	require.NoError(t, os.WriteFile(path, []byte("known-size payload"), 0o600))
@@ -418,6 +590,82 @@ func TestMultipartRequestOptionsDisableRetriesForUnknownSources(t *testing.T) {
 func TestOpenFileUploadRejectsDirectoriesBeforeRequest(t *testing.T) {
 	_, err := openFileUpload(t.TempDir())
 	require.ErrorContains(t, err, "is a directory")
+}
+
+func TestOpenFileUploadStreamsProcfsWithUnknownLength(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("procfs reproduction is Linux-specific")
+	}
+	const path = "/proc/version"
+	upload, err := openFileUpload(path)
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
+		t.Skipf("%s is unavailable: %v", path, err)
+	}
+	require.NoError(t, err)
+	require.False(t, upload.knownSize)
+	require.False(t, upload.canReplay())
+	sourceFile := upload.Reader.(*os.File)
+
+	type requestInfo struct {
+		contentLength    int64
+		transferEncoding []string
+		contents         string
+	}
+	infoCh := make(chan requestInfo, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		file, _, parseErr := r.FormFile("file")
+		if parseErr != nil {
+			infoCh <- requestInfo{contentLength: r.ContentLength, transferEncoding: r.TransferEncoding}
+			http.Error(w, parseErr.Error(), http.StatusBadRequest)
+			return
+		}
+		contents, readErr := io.ReadAll(file)
+		_ = file.Close()
+		if readErr != nil {
+			infoCh <- requestInfo{contentLength: r.ContentLength, transferEncoding: r.TransferEncoding}
+			http.Error(w, readErr.Error(), http.StatusBadRequest)
+			return
+		}
+		infoCh <- requestInfo{
+			contentLength:    r.ContentLength,
+			transferEncoding: append([]string(nil), r.TransferEncoding...),
+			contents:         string(contents),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"file_123","object":"file"}`)
+	}))
+	t.Cleanup(server.Close)
+
+	options, err := multipartRequestOptions(map[string]any{
+		"file":    upload,
+		"purpose": "assistants",
+	}, apiform.FormatBrackets)
+	require.NoError(t, err)
+	client := openai.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL(server.URL+"/"),
+	)
+
+	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
+	require.NoError(t, err)
+	info := <-infoCh
+	require.Equal(t, int64(-1), info.contentLength)
+	require.Contains(t, info.transferEncoding, "chunked")
+	require.NotEmpty(t, info.contents)
+	_, err = sourceFile.Stat()
+	require.ErrorIs(t, err, os.ErrClosed)
+}
+
+func TestOpenFileUploadTreatsEmptyRegularFileAsKnownLength(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.txt")
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	upload, err := openFileUpload(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, upload.Close()) })
+
+	require.True(t, upload.knownSize)
+	require.True(t, upload.canReplay())
+	require.Zero(t, upload.size)
 }
 
 func TestEmbedFilesClosesPartialUploadsOnError(t *testing.T) {

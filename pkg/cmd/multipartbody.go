@@ -155,35 +155,183 @@ func multipartRequestOptions(
 		}
 	}
 
+	if info.replayable {
+		return replayableMultipartRequestOptions(bodyMap, encodingFormat, boundary, contentLength)
+	}
+
 	body, err := newMultipartRequestBodyWithBoundary(bodyMap, encodingFormat, boundary)
 	if err != nil {
 		return nil, err
 	}
-	options := []option.RequestOption{
+	return []option.RequestOption{
 		option.WithRequestBody(body.ContentType(), body),
-	}
-
-	if info.replayable {
-		newBody := func() (io.ReadCloser, error) {
-			reopened, err := reopenMultipartBody(bodyMap)
-			if err != nil {
-				return nil, err
-			}
-			return newMultipartRequestBodyWithBoundary(reopened, encodingFormat, boundary)
-		}
-		options = append(options, option.WithMiddleware(func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
-			req.ContentLength = contentLength
-			req.GetBody = newBody
-			return next(req)
-		}))
-		return options, nil
-	}
-
-	options = append(options,
 		option.WithMaxRetries(0),
 		option.WithMiddleware(rejectUnreplayableRedirect),
-	)
-	return options, nil
+	}, nil
+}
+
+// openai-go v3.51 only installs GetBody for its concrete buffered body types.
+// A streamed body therefore needs a replay marker on the SDK-owned request so
+// its native retry loop runs. The middleware replaces that empty marker with a
+// real multipart stream on every SDK attempt and supplies the same factory to
+// net/http for 307/308 redirects. The CLI does not expose retry configuration,
+// so the request fixes the SDK's current default of two retries; that bound also
+// lets the middleware deterministically close its stable file descriptors.
+const replayableMultipartMaxRetries = 2
+
+type replayableMultipartRequest struct {
+	bodyMap        map[string]any
+	encodingFormat apiform.FormFormat
+	boundary       string
+	contentLength  int64
+
+	mu       sync.Mutex
+	attempts int
+	closed   bool
+	closeErr error
+}
+
+func replayableMultipartRequestOptions(
+	bodyMap map[string]any,
+	encodingFormat apiform.FormFormat,
+	boundary string,
+	contentLength int64,
+) ([]option.RequestOption, error) {
+	writer := multipart.NewWriter(io.Discard)
+	if err := writer.SetBoundary(boundary); err != nil {
+		return nil, err
+	}
+	request := &replayableMultipartRequest{
+		bodyMap:        bodyMap,
+		encodingFormat: encodingFormat,
+		boundary:       boundary,
+		contentLength:  contentLength,
+	}
+
+	// The empty *bytes.Reader is deliberate: it makes openai-go install GetBody
+	// on its canonical request before retry decisions. middleware replaces the
+	// marker on every attempt, so no marker bytes reach the network.
+	return []option.RequestOption{
+		option.WithRequestBody(writer.FormDataContentType(), bytes.NewReader(nil)),
+		option.WithMaxRetries(replayableMultipartMaxRetries),
+		option.WithMiddleware(request.middleware),
+	}, nil
+}
+
+func (r *replayableMultipartRequest) middleware(
+	req *http.Request,
+	next option.MiddlewareNext,
+) (*http.Response, error) {
+	attemptIndex := r.beginAttempt()
+	attempt := &multipartReplayAttempt{request: r}
+
+	// Discard the SDK's empty replay marker before installing the actual body.
+	if req.Body != nil {
+		_ = req.Body.Close()
+	}
+	body, err := attempt.newBody()
+	if err != nil {
+		return nil, errors.Join(err, r.close())
+	}
+	req.Body = body
+	req.ContentLength = r.contentLength
+	req.GetBody = attempt.newBody
+
+	res, requestErr := next(req)
+	attemptErr := attempt.close()
+	if req.Context().Err() != nil ||
+		!shouldRetryReplayableMultipart(res) ||
+		attemptIndex >= replayableMultipartMaxRetries {
+		return res, errors.Join(requestErr, attemptErr, r.close())
+	}
+	return res, errors.Join(requestErr, attemptErr)
+}
+
+func (r *replayableMultipartRequest) beginAttempt() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	attempt := r.attempts
+	r.attempts++
+	return attempt
+}
+
+func (r *replayableMultipartRequest) newBody() (*multipartRequestBody, error) {
+	bodyMap, err := replayMultipartBody(r.bodyMap)
+	if err != nil {
+		return nil, err
+	}
+	return newMultipartRequestBodyWithBoundary(bodyMap, r.encodingFormat, r.boundary)
+}
+
+func (r *replayableMultipartRequest) close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.closed {
+		r.closed = true
+		r.closeErr = closeFileUploads(r.bodyMap)
+	}
+	return r.closeErr
+}
+
+type multipartReplayAttempt struct {
+	request *replayableMultipartRequest
+
+	mu     sync.Mutex
+	bodies []*multipartRequestBody
+	closed bool
+}
+
+func (a *multipartReplayAttempt) newBody() (io.ReadCloser, error) {
+	body, err := a.request.newBody()
+	if err != nil {
+		return nil, err
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		_ = body.Close()
+		return nil, errors.New("multipart replay attempt is closed")
+	}
+	a.bodies = append(a.bodies, body)
+	return body, nil
+}
+
+func (a *multipartReplayAttempt) close() error {
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return nil
+	}
+	a.closed = true
+	bodies := append([]*multipartRequestBody(nil), a.bodies...)
+	a.mu.Unlock()
+
+	var errs []error
+	for _, body := range bodies {
+		errs = append(errs, body.Close())
+		<-body.done
+	}
+	return errors.Join(errs...)
+}
+
+// Keep this predicate aligned with openai-go's retry policy. It is only used
+// to decide when the request-level file descriptors can be closed; the SDK
+// still owns retry timing, response cleanup, and the retry decision itself.
+func shouldRetryReplayableMultipart(res *http.Response) bool {
+	if res == nil {
+		return true
+	}
+	if res.Header.Get("x-should-retry") == "true" {
+		return true
+	}
+	if res.Header.Get("x-should-retry") == "false" {
+		return false
+	}
+	return res.StatusCode == http.StatusRequestTimeout ||
+		res.StatusCode == http.StatusConflict ||
+		res.StatusCode == http.StatusTooManyRequests ||
+		res.StatusCode >= http.StatusInternalServerError
 }
 
 func bufferedMultipartRequestOptions(
@@ -264,6 +412,7 @@ func multipartContentLength(
 		}
 		uploadBytes += upload.size
 		upload.Reader = strings.NewReader("")
+		upload.ownsSource = false
 		return upload, nil
 	})
 	if err != nil {
@@ -287,9 +436,9 @@ func multipartContentLength(
 	return int64(framing.Len()) + uploadBytes, nil
 }
 
-func reopenMultipartBody(bodyMap map[string]any) (map[string]any, error) {
+func replayMultipartBody(bodyMap map[string]any) (map[string]any, error) {
 	value, err := transformFileUploads(bodyMap, func(upload fileUpload) (fileUpload, error) {
-		return upload.reopen()
+		return upload.replay()
 	})
 	if err != nil {
 		return nil, err
@@ -336,7 +485,7 @@ func transformFileUploads(
 	}
 }
 
-// closeFileUploads closes every file opened by openFileUpload, including files
+// closeFileUploads closes every source owned by a fileUpload, including values
 // nested inside maps and arrays. Other io.ReadClosers (notably stdin wrappers)
 // are intentionally left alone because this code does not own them.
 func closeFileUploads(value any) error {
