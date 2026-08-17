@@ -584,7 +584,7 @@ func (f fileUpload) replay() (fileUpload, error) {
 	if !f.canReplay() {
 		return fileUpload{}, errors.New("multipart upload is not replayable")
 	}
-	reader, err := f.source.Reader()
+	reader, err := f.source.ReplayReader()
 	if err != nil {
 		return fileUpload{}, err
 	}
@@ -594,6 +594,8 @@ func (f fileUpload) replay() (fileUpload, error) {
 }
 
 type replayableFileSource struct {
+	// file is a stable identity anchor. Each request body reads from a duplicate
+	// handle so closing the anchor never truncates a transport-owned upload.
 	file *os.File
 	size int64
 
@@ -601,7 +603,7 @@ type replayableFileSource struct {
 	closeErr  error
 }
 
-func (s *replayableFileSource) Reader() (io.Reader, error) {
+func (s *replayableFileSource) ReplayReader() (io.ReadCloser, error) {
 	info, err := s.file.Stat()
 	if err != nil {
 		return nil, err
@@ -609,7 +611,14 @@ func (s *replayableFileSource) Reader() (io.Reader, error) {
 	if !info.Mode().IsRegular() || info.Size() != s.size {
 		return nil, fmt.Errorf("upload %q changed while being replayed", s.file.Name())
 	}
-	return io.NewSectionReader(s.file, 0, s.size), nil
+	file, err := duplicateFile(s.file)
+	if err != nil {
+		return nil, fmt.Errorf("duplicate upload %q: %w", s.file.Name(), err)
+	}
+	return &sectionReadCloser{
+		SectionReader: io.NewSectionReader(file, 0, s.size),
+		file:          file,
+	}, nil
 }
 
 func (s *replayableFileSource) Close() error {
@@ -617,6 +626,15 @@ func (s *replayableFileSource) Close() error {
 		s.closeErr = s.file.Close()
 	})
 	return s.closeErr
+}
+
+type sectionReadCloser struct {
+	*io.SectionReader
+	file *os.File
+}
+
+func (r *sectionReadCloser) Close() error {
+	return r.file.Close()
 }
 
 func hasTrustworthyFileSize(file *os.File, info os.FileInfo) bool {
@@ -668,12 +686,8 @@ func openFileUpload(path string) (fileUpload, error) {
 		}, nil
 	}
 	source := &replayableFileSource{file: file, size: info.Size()}
-	reader, err := source.Reader()
-	if err != nil {
-		return fileUpload{}, errors.Join(err, source.Close())
-	}
 	return fileUpload{
-		Reader:      reader,
+		Reader:      io.NewSectionReader(file, 0, info.Size()),
 		filename:    filepath.Base(path),
 		contentType: contentType,
 		size:        info.Size(),

@@ -81,6 +81,24 @@ func TestMultipartRequestBodyPropagatesProducerErrors(t *testing.T) {
 	require.NoError(t, body.Close())
 }
 
+func TestMultipartRequestBodyJoinsCleanupErrorAfterSourceError(t *testing.T) {
+	readErr := errors.New("upload read failed")
+	closeErr := errors.New("upload close failed")
+	upload := &recordingReadCloser{
+		reader:   errorReader{err: readErr},
+		closeErr: closeErr,
+	}
+	body := newMultipartRequestBody(map[string]any{
+		"file": fileUpload{Reader: upload, filename: "broken.bin"},
+	}, apiform.FormatBrackets)
+
+	_, err := io.ReadAll(body)
+	require.ErrorIs(t, err, readErr)
+	require.ErrorIs(t, err, closeErr)
+	waitForMultipartBody(t, body)
+	require.Equal(t, int32(1), upload.closeCount.Load())
+}
+
 func TestMultipartRequestBodySourceErrorCannotBeParsedAsCompleteUpload(t *testing.T) {
 	readErr := errors.New("upload read failed")
 	parseErrCh := make(chan error, 1)
@@ -448,6 +466,145 @@ func TestMultipartRequestOptionsCloseRegularFilesAfterFinalRetry(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrClosed)
 }
 
+func TestMultipartRequestOptionsCloseRegularFilesWhenBackoffCanceled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "canceled-retry-upload.txt")
+	require.NoError(t, os.WriteFile(path, []byte("retry payload"), 0o600))
+	upload, err := openFileUpload(path)
+	require.NoError(t, err)
+	sourceFile := upload.source.file
+
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		_ = r.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "10")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"retry me","type":"rate_limit_error"}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	options, err := multipartRequestOptions(map[string]any{
+		"file":    upload,
+		"purpose": "assistants",
+	}, apiform.FormatBrackets)
+	require.NoError(t, err)
+	attemptReturned := make(chan struct{})
+	observeAttempt := option.WithMiddleware(func(
+		req *http.Request,
+		next option.MiddlewareNext,
+	) (*http.Response, error) {
+		res, requestErr := next(req)
+		close(attemptReturned)
+		return res, requestErr
+	})
+	options = append([]option.RequestOption{observeAttempt}, options...)
+	client := openai.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL(server.URL+"/"),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	requestDone := make(chan error, 1)
+	go func() {
+		_, requestErr := client.Files.New(ctx, openai.FileNewParams{}, options...)
+		requestDone <- requestErr
+	}()
+
+	select {
+	case <-attemptReturned:
+	case <-time.After(multipartTestTimeout):
+		t.Fatal("first retryable attempt did not return")
+	}
+	cancel()
+	select {
+	case requestErr := <-requestDone:
+		require.ErrorIs(t, requestErr, context.Canceled)
+	case <-time.After(multipartTestTimeout):
+		t.Fatal("request did not stop after cancellation during retry backoff")
+	}
+	require.Equal(t, int32(1), requestCount.Load())
+	require.Eventually(t, func() bool {
+		_, statErr := sourceFile.Stat()
+		return errors.Is(statErr, os.ErrClosed)
+	}, time.Second, time.Millisecond, "cancellation cleanup must close the replay source")
+}
+
+func TestMultipartRequestOptionsLetEarlySuccessfulUploadFinish(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "early-response-upload.txt")
+	require.NoError(t, os.WriteFile(path, []byte(strings.Repeat("payload", 1024)), 0o600))
+	upload, err := openFileUpload(path)
+	require.NoError(t, err)
+	sourceFile := upload.source.file
+
+	doer := newEarlyResponseHTTPDoer()
+	options, err := multipartRequestOptions(map[string]any{
+		"file":    upload,
+		"purpose": "assistants",
+	}, apiform.FormatBrackets)
+	require.NoError(t, err)
+	client := openai.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL("https://example.com/"),
+		option.WithHTTPClient(doer),
+	)
+
+	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
+	require.NoError(t, err)
+	close(doer.release)
+	select {
+	case <-doer.done:
+	case <-time.After(multipartTestTimeout):
+		t.Fatal("transport did not finish consuming the request body")
+	}
+	require.NoError(t, doer.err)
+	require.Positive(t, doer.contentLength)
+	require.Equal(t, doer.contentLength, doer.bytesRead)
+	_, err = sourceFile.Stat()
+	require.ErrorIs(t, err, os.ErrClosed)
+}
+
+func TestMultipartReplayAttemptAbortDoesNotWaitForBlockedReader(t *testing.T) {
+	source := newManuallyReleasedReader()
+	body := newMultipartRequestBody(map[string]any{
+		"file": fileUpload{Reader: source, filename: "blocked.bin"},
+	}, apiform.FormatBrackets)
+	attempt := &multipartReplayAttempt{bodies: []*multipartRequestBody{body}}
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, body)
+		readDone <- err
+	}()
+	select {
+	case <-source.started:
+	case <-time.After(multipartTestTimeout):
+		t.Fatal("multipart encoder did not start the blocked source read")
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- attempt.abort() }()
+	returnedPromptly := false
+	select {
+	case <-closeDone:
+		returnedPromptly = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(source.release)
+	if !returnedPromptly {
+		select {
+		case <-closeDone:
+		case <-time.After(multipartTestTimeout):
+			t.Fatal("attempt cleanup did not return after releasing the source")
+		}
+	}
+	select {
+	case <-readDone:
+	case <-time.After(multipartTestTimeout):
+		t.Fatal("request body read did not stop")
+	}
+	require.True(t, returnedPromptly, "attempt cleanup must not wait for an uninterruptible source read")
+}
+
 func TestMultipartRequestOptionsRedirectReplayUsesOpenedFile(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not permit atomically replacing this open test file")
@@ -722,6 +879,70 @@ type recordingReadCloser struct {
 	reader     io.Reader
 	closeErr   error
 	closeCount atomic.Int32
+}
+
+type earlyResponseHTTPDoer struct {
+	release chan struct{}
+	done    chan struct{}
+
+	contentLength int64
+	bytesRead     int64
+	err           error
+}
+
+func newEarlyResponseHTTPDoer() *earlyResponseHTTPDoer {
+	return &earlyResponseHTTPDoer{
+		release: make(chan struct{}),
+		done:    make(chan struct{}),
+	}
+}
+
+func (d *earlyResponseHTTPDoer) Do(req *http.Request) (*http.Response, error) {
+	readStarted := make(chan struct{})
+	d.contentLength = req.ContentLength
+	go func() {
+		defer close(d.done)
+		buf := make([]byte, 1)
+		n, readErr := req.Body.Read(buf)
+		d.bytesRead += int64(n)
+		close(readStarted)
+		<-d.release
+		if readErr == nil {
+			copied, copyErr := io.Copy(io.Discard, req.Body)
+			d.bytesRead += copied
+			readErr = copyErr
+		}
+		if errors.Is(readErr, io.EOF) {
+			readErr = nil
+		}
+		d.err = errors.Join(readErr, req.Body.Close())
+	}()
+	<-readStarted
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"file_123","object":"file"}`)),
+		Request:    req,
+	}, nil
+}
+
+type manuallyReleasedReader struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newManuallyReleasedReader() *manuallyReleasedReader {
+	return &manuallyReleasedReader{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (r *manuallyReleasedReader) Read([]byte) (int, error) {
+	r.once.Do(func() { close(r.started) })
+	<-r.release
+	return 0, io.EOF
 }
 
 func (r *recordingReadCloser) Read(p []byte) (int, error) {

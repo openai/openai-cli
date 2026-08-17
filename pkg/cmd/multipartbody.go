@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -114,8 +115,7 @@ func (b *multipartRequestBody) encode() {
 		// A final multipart boundary asserts that every part completed. Abort the
 		// pipe immediately on a source error instead of making a truncated file
 		// look like a valid zero-byte upload to the receiver.
-		_ = b.writer.CloseWithError(err)
-		_ = b.cleanup()
+		_ = b.writer.CloseWithError(errors.Join(err, b.cleanup()))
 		return
 	}
 
@@ -189,6 +189,8 @@ type replayableMultipartRequest struct {
 	attempts int
 	closed   bool
 	closeErr error
+
+	pendingCancel func() bool
 }
 
 func replayableMultipartRequestOptions(
@@ -224,6 +226,10 @@ func (r *replayableMultipartRequest) middleware(
 ) (*http.Response, error) {
 	attemptIndex := r.beginAttempt()
 	attempt := &multipartReplayAttempt{request: r}
+	stopCancellation := context.AfterFunc(req.Context(), func() {
+		_ = attempt.abort()
+		_ = r.close()
+	})
 
 	// Discard the SDK's empty replay marker before installing the actual body.
 	if req.Body != nil {
@@ -231,6 +237,7 @@ func (r *replayableMultipartRequest) middleware(
 	}
 	body, err := attempt.newBody()
 	if err != nil {
+		stopCancellation()
 		return nil, errors.Join(err, r.close())
 	}
 	req.Body = body
@@ -238,21 +245,55 @@ func (r *replayableMultipartRequest) middleware(
 	req.GetBody = attempt.newBody
 
 	res, requestErr := next(req)
-	attemptErr := attempt.close()
-	if req.Context().Err() != nil ||
-		!shouldRetryReplayableMultipart(res) ||
-		attemptIndex >= replayableMultipartMaxRetries {
+	requestCanceled := req.Context().Err() != nil
+	terminal := requestCanceled || !shouldRetryReplayableMultipart(res) ||
+		attemptIndex >= replayableMultipartMaxRetries
+	if terminal {
+		stopCancellation()
+		var attemptErr error
+		if requestErr != nil || requestCanceled || res == nil ||
+			res.StatusCode >= http.StatusBadRequest {
+			attemptErr = attempt.abort()
+		} else {
+			attempt.release()
+		}
 		return res, errors.Join(requestErr, attemptErr, r.close())
 	}
+
+	// A retry must not race an earlier body. Abort its duplicate handles without
+	// waiting for an uninterruptible read, while retaining the stable request
+	// anchors needed to construct the next SDK attempt.
+	attemptErr := attempt.abort()
+	r.armPendingCancellation(stopCancellation)
 	return res, errors.Join(requestErr, attemptErr)
 }
 
 func (r *replayableMultipartRequest) beginAttempt() int {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	stopCancellation := r.pendingCancel
+	r.pendingCancel = nil
 	attempt := r.attempts
 	r.attempts++
+	r.mu.Unlock()
+	if stopCancellation != nil {
+		stopCancellation()
+	}
 	return attempt
+}
+
+func (r *replayableMultipartRequest) armPendingCancellation(stopCancellation func() bool) {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		stopCancellation()
+		return
+	}
+	previous := r.pendingCancel
+	r.pendingCancel = stopCancellation
+	r.mu.Unlock()
+	if previous != nil {
+		previous()
+	}
 }
 
 func (r *replayableMultipartRequest) newBody() (*multipartRequestBody, error) {
@@ -265,12 +306,18 @@ func (r *replayableMultipartRequest) newBody() (*multipartRequestBody, error) {
 
 func (r *replayableMultipartRequest) close() error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	stopCancellation := r.pendingCancel
+	r.pendingCancel = nil
 	if !r.closed {
 		r.closed = true
 		r.closeErr = closeFileUploads(r.bodyMap)
 	}
-	return r.closeErr
+	closeErr := r.closeErr
+	r.mu.Unlock()
+	if stopCancellation != nil {
+		stopCancellation()
+	}
+	return closeErr
 }
 
 type multipartReplayAttempt struct {
@@ -297,22 +344,32 @@ func (a *multipartReplayAttempt) newBody() (io.ReadCloser, error) {
 	return body, nil
 }
 
-func (a *multipartReplayAttempt) close() error {
+func (a *multipartReplayAttempt) release() {
+	_ = a.seal()
+}
+
+func (a *multipartReplayAttempt) abort() error {
+	bodies := a.seal()
+	var errs []error
+	for _, body := range bodies {
+		errs = append(errs, body.Close())
+	}
+	return errors.Join(errs...)
+}
+
+// seal prevents net/http from creating another redirect body after an attempt
+// returns. The caller either leaves the returned transport-owned bodies to
+// finish naturally or closes them to abort an errored/canceled attempt.
+func (a *multipartReplayAttempt) seal() []*multipartRequestBody {
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.closed {
-		a.mu.Unlock()
 		return nil
 	}
 	a.closed = true
 	bodies := append([]*multipartRequestBody(nil), a.bodies...)
-	a.mu.Unlock()
-
-	var errs []error
-	for _, body := range bodies {
-		errs = append(errs, body.Close())
-		<-body.done
-	}
-	return errors.Join(errs...)
+	a.bodies = nil
+	return bodies
 }
 
 // Keep this predicate aligned with openai-go's retry policy. It is only used
