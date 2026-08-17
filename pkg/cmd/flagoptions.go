@@ -508,9 +508,12 @@ func flagOptions(
 			return nil, fmt.Errorf("Cannot send a non-map value to a form-encoded endpoint: %v\n", requestContents.Body)
 		}
 		encodingFormat := apiform.FormatBrackets
-		body := newMultipartRequestBody(bodyMap, encodingFormat)
+		multipartOptions, err := multipartRequestOptions(bodyMap, encodingFormat)
+		if err != nil {
+			return nil, err
+		}
 		pendingMultipartUploads = nil // multipartRequestBody owns them now.
-		options = append(options, multipartRequestOptions(body)...)
+		options = append(options, multipartOptions...)
 
 	case ApplicationJSON:
 		bodyBytes, err := json.Marshal(requestContents.Body)
@@ -554,6 +557,9 @@ type fileUpload struct {
 	io.Reader   // apiform checks for reader and reads its contents during encode
 	filename    string
 	contentType string
+	sourcePath  string
+	size        int64
+	knownSize   bool
 }
 
 func (f fileUpload) Filename() string    { return f.filename }
@@ -565,6 +571,32 @@ func (f fileUpload) Close() error {
 	return nil
 }
 
+func (f fileUpload) canReplay() bool {
+	return f.sourcePath != "" && f.knownSize
+}
+
+func (f fileUpload) reopen() (fileUpload, error) {
+	if !f.canReplay() {
+		return fileUpload{}, errors.New("multipart upload is not replayable")
+	}
+	file, err := os.Open(f.sourcePath)
+	if err != nil {
+		return fileUpload{}, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return fileUpload{}, errors.Join(err, file.Close())
+	}
+	if !info.Mode().IsRegular() || info.Size() != f.size {
+		return fileUpload{}, errors.Join(
+			fmt.Errorf("upload %q changed while following a redirect", f.sourcePath),
+			file.Close(),
+		)
+	}
+	f.Reader = file
+	return f, nil
+}
+
 // openFileUpload opens the file at path and returns a fileUpload whose filename
 // is the path's basename and whose content type is derived from the file
 // extension (falling back to application/octet-stream when unknown).
@@ -572,6 +604,13 @@ func openFileUpload(path string) (fileUpload, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return fileUpload{}, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return fileUpload{}, errors.Join(err, file.Close())
+	}
+	if info.IsDir() {
+		return fileUpload{}, errors.Join(fmt.Errorf("read %s: is a directory", path), file.Close())
 	}
 	contentType := mime.TypeByExtension(filepath.Ext(path))
 	if contentType == "" {
@@ -581,6 +620,9 @@ func openFileUpload(path string) (fileUpload, error) {
 		Reader:      file,
 		filename:    filepath.Base(path),
 		contentType: contentType,
+		sourcePath:  path,
+		size:        info.Size(),
+		knownSize:   info.Mode().IsRegular(),
 	}, nil
 }
 
