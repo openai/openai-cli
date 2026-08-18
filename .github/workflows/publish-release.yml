@@ -28,6 +28,13 @@ jobs:
         persist-credentials: false
     - name: Set up verified GoReleaser
       uses: ./.github/actions/setup-goreleaser
+    - name: Set up Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: .go-version
+        check-latest: true
+    - name: Preserve trusted vulnerability scanner
+      run: install -m 0755 ./scripts/govulncheck "$RUNNER_TEMP/openai-cli-govulncheck"
     - name: Ensure release tag is on main
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -55,13 +62,9 @@ jobs:
         git merge-base --is-ancestor "$tag_sha" origin/main
         git checkout --detach "$tag_sha"
         test "$(git rev-parse HEAD)" = "$tag_sha"
-    - name: Set up Go
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-      with:
-        go-version-file: .go-version
-        check-latest: true
     - name: Check shipped CLI for reachable vulnerabilities
-      run: ./scripts/govulncheck
+      run: |
+        "$RUNNER_TEMP/openai-cli-govulncheck" "$GITHUB_WORKSPACE"
     - name: Create release app token for this repo
       id: app-token
       uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0

@@ -2,11 +2,15 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "${1:-$(dirname "$0")/..}"
 
 go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
 
-for goos in linux darwin windows; do
-  echo "==> Checking shipped CLI for reachable vulnerabilities ($goos/amd64)"
-  GOOS="$goos" GOARCH=amd64 govulncheck ./cmd/openai
+for target in \
+  darwin/amd64 darwin/arm64 \
+  linux/386 linux/arm/6 linux/amd64 linux/arm64 \
+  windows/386 windows/amd64 windows/arm64; do
+  IFS=/ read -r goos goarch goarm <<< "$target"
+  echo "==> Checking shipped CLI for reachable vulnerabilities ($target)"
+  GOOS="$goos" GOARCH="$goarch" GOARM="${goarm:-}" govulncheck ./cmd/openai
 done

@@ -15,8 +15,17 @@ EOF
 cat > "$test_directory/govulncheck" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s/%s %s\n' "$GOOS" "$GOARCH" "$*" >> "$GOVULNCHECK_TEST_LOG"
-[[ "${GOVULNCHECK_TEST_FAIL_GOOS:-}" != "$GOOS" ]]
+target="$GOOS/$GOARCH"
+if [[ "$GOARCH" == arm ]]; then
+  target="$target/v$GOARM"
+fi
+printf '%s %s\n' "$target" "$*" >> "$GOVULNCHECK_TEST_LOG"
+if [[ "${GOVULNCHECK_TEST_FAIL_TARGET:-}" == "$target" ]]; then
+  exit 1
+fi
+if [[ -n "${GOVULNCHECK_TEST_EXPECTED_DIRECTORY:-}" ]]; then
+  [[ "$PWD" == "$GOVULNCHECK_TEST_EXPECTED_DIRECTORY" ]]
+fi
 EOF
 
 chmod +x "$test_directory/go" "$test_directory/govulncheck"
@@ -25,23 +34,38 @@ scan_log="$test_directory/scans"
 PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
   ./scripts/govulncheck > /dev/null
 
-expected_scans=$'linux/amd64 ./cmd/openai\ndarwin/amd64 ./cmd/openai\nwindows/amd64 ./cmd/openai'
+expected_scans=$'darwin/amd64 ./cmd/openai\ndarwin/arm64 ./cmd/openai\nlinux/386 ./cmd/openai\nlinux/arm/v6 ./cmd/openai\nlinux/amd64 ./cmd/openai\nlinux/arm64 ./cmd/openai\nwindows/386 ./cmd/openai\nwindows/amd64 ./cmd/openai\nwindows/arm64 ./cmd/openai'
 if [[ "$(< "$scan_log")" != "$expected_scans" ]]; then
-  echo 'govulncheck did not cover every shipped operating system' >&2
+  echo 'govulncheck did not cover every shipped release target' >&2
   exit 1
 fi
 
 : > "$scan_log"
 if PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
-  GOVULNCHECK_TEST_FAIL_GOOS=darwin ./scripts/govulncheck > /dev/null 2>&1; then
+  GOVULNCHECK_TEST_FAIL_TARGET=linux/386 ./scripts/govulncheck > /dev/null 2>&1; then
   echo 'govulncheck did not fail closed for a vulnerable target' >&2
   exit 1
 fi
 
-expected_scans=$'linux/amd64 ./cmd/openai\ndarwin/amd64 ./cmd/openai'
-if [[ "$(< "$scan_log")" != "$expected_scans" ]]; then
+expected_failed_scans=$'darwin/amd64 ./cmd/openai\ndarwin/arm64 ./cmd/openai\nlinux/386 ./cmd/openai'
+if [[ "$(< "$scan_log")" != "$expected_failed_scans" ]]; then
   echo 'govulncheck did not stop at the first vulnerable target' >&2
   exit 1
 fi
 
-echo 'govulncheck covers every shipped operating system and fails closed'
+historical_source="$test_directory/historical-release"
+preserved_scanner="$test_directory/preserved-govulncheck"
+mkdir -p "$historical_source"
+cp ./scripts/govulncheck "$preserved_scanner"
+
+: > "$scan_log"
+PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
+  GOVULNCHECK_TEST_EXPECTED_DIRECTORY="$historical_source" \
+  "$preserved_scanner" "$historical_source" > /dev/null
+
+if [[ "$(< "$scan_log")" != "$expected_scans" ]]; then
+  echo 'preserved govulncheck did not scan a historical release checkout' >&2
+  exit 1
+fi
+
+echo 'govulncheck covers every release target, fails closed, and scans historical tags'
