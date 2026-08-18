@@ -26,6 +26,8 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
+    - name: Set up verified GoReleaser
+      uses: ./.github/actions/setup-goreleaser
     - name: Ensure release tag is on main
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -74,14 +76,8 @@ jobs:
         repositories: homebrew-tools
         permission-contents: write
         permission-pull-requests: write
-    - name: Read GoReleaser version
-      id: goreleaser-version
-      run: echo "version=$(cat .goreleaser-version)" >> "$GITHUB_OUTPUT"
     - name: Run GoReleaser
-      uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.1.0
-      with:
-        version: ${{ steps.goreleaser-version.outputs.version }}
-        args: release --clean
+      run: goreleaser release --clean
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
