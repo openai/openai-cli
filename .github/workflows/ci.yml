@@ -1,6 +1,5 @@
 name: CI
-permissions:
-  contents: read
+permissions: {}
 on:
   push:
     branches:
@@ -14,6 +13,8 @@ jobs:
   lint:
     timeout-minutes: 10
     name: lint
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -62,8 +63,7 @@ jobs:
     needs:
       - build-artifacts
     if: always()
-    permissions:
-      contents: read
+    permissions: {}
     runs-on: ubuntu-latest
     steps:
       - name: Require successful build
@@ -78,6 +78,8 @@ jobs:
   test:
     timeout-minutes: 10
     name: test
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
