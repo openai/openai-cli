@@ -44,6 +44,9 @@ func (e *encoder) encodeValue(key string, val reflect.Value, writer *multipart.W
 	if !val.IsValid() {
 		return writer.WriteField(key, "")
 	}
+	if (val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface) && val.IsNil() {
+		return writer.WriteField(key, "")
+	}
 
 	t := val.Type()
 
