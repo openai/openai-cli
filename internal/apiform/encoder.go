@@ -118,7 +118,9 @@ func (e *encoder) encodeArray(key string, val reflect.Value, writer *multipart.W
 				strValue = strconv.FormatInt(item.Int(), 10)
 			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 				strValue = strconv.FormatUint(item.Uint(), 10)
-			case reflect.Float32, reflect.Float64:
+			case reflect.Float32:
+				strValue = strconv.FormatFloat(item.Float(), 'f', -1, 32)
+			case reflect.Float64:
 				strValue = strconv.FormatFloat(item.Float(), 'f', -1, 64)
 			case reflect.Bool:
 				strValue = strconv.FormatBool(item.Bool())
