@@ -364,6 +364,65 @@ func TestMultipartRequestOptionsPreserveIncompleteTransportError(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrClosed)
 }
 
+func TestMultipartRequestOptionsCancellationClosesSourceOnce(t *testing.T) {
+	upload := newCloseUnblocksReader(errors.New("source closed"))
+	options, err := multipartRequestOptions(map[string]any{
+		"file": fileUpload{Reader: upload, filename: "blocked.bin"},
+	}, apiform.FormatBrackets)
+	require.NoError(t, err)
+	client := openai.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL("https://example.com/"),
+		option.WithHTTPClient(bodyReadingHTTPDoer{}),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	requestDone := make(chan error, 1)
+	go func() {
+		_, requestErr := client.Files.New(ctx, openai.FileNewParams{}, options...)
+		requestDone <- requestErr
+	}()
+
+	select {
+	case <-upload.readStarted:
+	case <-time.After(multipartTestTimeout):
+		cancel()
+		t.Fatal("transport did not start reading the upload")
+	}
+	cancel()
+	select {
+	case requestErr := <-requestDone:
+		require.ErrorIs(t, requestErr, context.Canceled)
+	case <-time.After(multipartTestTimeout):
+		t.Fatal("canceled request did not return")
+	}
+	require.Equal(t, int32(1), upload.closeCount.Load())
+}
+
+func TestMultipartRequestOptionsStopCancellationWatcherAfterAttempt(t *testing.T) {
+	upload := &recordingReadCloser{reader: strings.NewReader("not consumed")}
+	doer := &retainingHTTPDoer{}
+	options, err := multipartRequestOptions(map[string]any{
+		"file": fileUpload{Reader: upload, filename: "retained.bin"},
+	}, apiform.FormatBrackets)
+	require.NoError(t, err)
+	client := openai.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL("https://example.com/"),
+		option.WithHTTPClient(doer),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	_, err = client.Files.New(ctx, openai.FileNewParams{}, options...)
+	require.NoError(t, err)
+	cancel()
+	require.Never(t, func() bool { return upload.closeCount.Load() != 0 }, 100*time.Millisecond, time.Millisecond,
+		"a stopped watcher must not close a body after the attempt returns")
+	require.NotNil(t, doer.body)
+	require.NoError(t, doer.body.Close())
+	require.NoError(t, doer.body.Close())
+	require.Equal(t, int32(1), upload.closeCount.Load())
+}
+
 func TestMultipartRequestOptionsSetContentLengthForRegularFiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "upload.txt")
 	require.NoError(t, os.WriteFile(path, []byte("known-size payload"), 0o600))
@@ -539,6 +598,27 @@ func uploadSourceFile(t *testing.T, upload fileUpload) *os.File {
 type failingHTTPDoer struct {
 	err   error
 	calls atomic.Int32
+}
+
+type bodyReadingHTTPDoer struct{}
+
+func (bodyReadingHTTPDoer) Do(req *http.Request) (*http.Response, error) {
+	_, err := io.Copy(io.Discard, req.Body)
+	return nil, err
+}
+
+type retainingHTTPDoer struct {
+	body io.ReadCloser
+}
+
+func (d *retainingHTTPDoer) Do(req *http.Request) (*http.Response, error) {
+	d.body = req.Body
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"file_123","object":"file"}`)),
+		Request:    req,
+	}, nil
 }
 
 func (d *failingHTTPDoer) Do(*http.Request) (*http.Response, error) {

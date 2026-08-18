@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -165,7 +166,22 @@ func streamedMultipartMiddleware(contentLength int64) option.Middleware {
 		if contentLength >= 0 {
 			req.ContentLength = contentLength
 		}
+
+		// The SDK closes a request body after next returns, but a transport can
+		// remain blocked in a streamed source read after the request is canceled.
+		// Close the body independently to release owned files, and wait for an
+		// already-started callback so it cannot outlive this middleware attempt.
+		cancelDone := make(chan struct{})
+		stopCancellation := context.AfterFunc(req.Context(), func() {
+			defer close(cancelDone)
+			if req.Body != nil {
+				_ = req.Body.Close()
+			}
+		})
 		res, err := next(req)
+		if !stopCancellation() {
+			<-cancelDone
+		}
 		if err != nil || res == nil ||
 			(res.StatusCode != http.StatusTemporaryRedirect && res.StatusCode != http.StatusPermanentRedirect) {
 			return res, err
