@@ -39,7 +39,8 @@ and the intentionally separate `api_reference/go.mod` module.
   arguments, `@file` references, escaped `@` values, filenames, stdin, uploads,
   YAML/JSON input, pagination, and streaming as security boundaries. Preserve
   credential isolation, same-origin mutual-TLS redirects, HTTPS-proxy
-  restrictions, bounded resource use, cancellation, and owned-file cleanup.
+  restrictions, streaming where present, cancellation, and owned-file cleanup.
+  Apply appropriate resource limits when changing paths that buffer input.
 - Review direct and transitive Go dependencies, `go.mod`, `go.sum`,
   `api_reference/go.mod`, module sources, `replace` directives, and checksum
   verification. Review `scripts/bootstrap`, `scripts/mock`, the pinned
@@ -58,10 +59,12 @@ and the intentionally separate `api_reference/go.mod` module.
   `id-token: write` and `attestations: write` limited to the attestation job;
   do not publish, dispatch releases, or alter repository settings without
   explicit authorization.
-- Require SDK CODEOWNER review and focused regression tests for changes to
-  authentication, admin endpoints, URL validation, redirects, proxy/TLS/mTLS
-  behavior, file paths or uploads, request parsing, debug logging, dependency
-  installation, generated code, workflows, signing, or release artifacts.
+- Require SDK CODEOWNER review for changes to authentication, admin endpoints,
+  URL validation, redirects, proxy/TLS/mTLS behavior, file paths or uploads,
+  request parsing, debug logging, dependency installation, generated code,
+  workflows, signing, or release artifacts. Add focused regression or security
+  tests when behavior changes; otherwise use the smallest appropriate
+  structural, workflow, dependency, generated-output, or artifact validation.
   Exercise malformed or attacker-controlled inputs where appropriate.
 - Report suspected vulnerabilities privately through [SECURITY.md](SECURITY.md)
   and `disclosure@openai.com`. Never disclose vulnerability details in public

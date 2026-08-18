@@ -71,6 +71,8 @@ observable behavior changes.
   notarization credentials, and short-lived OIDC credentials inside approved
   release, publishing, or attestation boundaries. Never expose them to
   untrusted pull requests, executable dependencies, logs, or artifacts.
+  Release hooks remove publishing, signing, and OIDC credentials before
+  running repository code or Go dependencies.
 - Preserve protected `release` and `publish` environments, validated release
   tags on `main`, GoReleaser artifacts, Homebrew publication, and provenance
   attestations. Restrict `id-token: write` and `attestations: write` to the
@@ -79,12 +81,14 @@ observable behavior changes.
 
 ### Security-sensitive changes
 
-Obtain SDK CODEOWNER review and add targeted security or regression tests for
-changes involving API or admin authentication; endpoint/base-URL validation;
-redirects, proxies, TLS, or mutual TLS; local file paths, `@file` arguments,
-stdin, uploads, or streaming; JSON/YAML parsing; debug output; dependency
-installation; generated code; GitHub Actions; signing; or release artifacts.
-Exercise malformed, unexpected, or attacker-controlled input when relevant.
+Obtain SDK CODEOWNER review for changes involving API or admin authentication;
+endpoint/base-URL validation; redirects, proxies, TLS, or mutual TLS; local
+file paths, `@file` arguments, stdin, uploads, or streaming; JSON/YAML parsing;
+debug output; dependency installation; generated code; GitHub Actions;
+signing; or release artifacts. Add targeted security or regression tests when
+observable behavior changes; otherwise use the smallest appropriate structural,
+dependency, workflow, generated-output, or artifact validation. Exercise
+malformed, unexpected, or attacker-controlled input when relevant.
 
 Report suspected vulnerabilities privately through [SECURITY.md](SECURITY.md)
 and `disclosure@openai.com`. Never disclose vulnerabilities in public GitHub

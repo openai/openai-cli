@@ -7,10 +7,30 @@ release:
 before:
   hooks:
     - mkdir -p completions
-    - sh -c "go run ./cmd/openai/main.go @completion bash > completions/openai.bash"
-    - sh -c "go run ./cmd/openai/main.go @completion zsh > completions/openai.zsh"
-    - sh -c "go run ./cmd/openai/main.go @completion fish > completions/openai.fish"
-    - sh -c "go run ./cmd/openai/main.go @manpages -o man"
+    - >-
+      sh -c "unset GITHUB_TOKEN GH_TOKEN HOMEBREW_TAP_GITHUB_TOKEN
+      MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY
+      MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID
+      ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+      exec go run ./cmd/openai/main.go @completion bash > completions/openai.bash"
+    - >-
+      sh -c "unset GITHUB_TOKEN GH_TOKEN HOMEBREW_TAP_GITHUB_TOKEN
+      MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY
+      MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID
+      ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+      exec go run ./cmd/openai/main.go @completion zsh > completions/openai.zsh"
+    - >-
+      sh -c "unset GITHUB_TOKEN GH_TOKEN HOMEBREW_TAP_GITHUB_TOKEN
+      MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY
+      MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID
+      ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+      exec go run ./cmd/openai/main.go @completion fish > completions/openai.fish"
+    - >-
+      sh -c "unset GITHUB_TOKEN GH_TOKEN HOMEBREW_TAP_GITHUB_TOKEN
+      MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY
+      MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID
+      ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+      exec go run ./cmd/openai/main.go @manpages -o man"
 
 builds:
   - id: macos
