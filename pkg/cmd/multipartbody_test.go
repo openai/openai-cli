@@ -133,7 +133,7 @@ func TestMultipartRequestBodyClosesOpenedFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("payload"), 0o600))
 	upload, err := openFileUpload(path)
 	require.NoError(t, err)
-	file := upload.source.file
+	file := uploadSourceFile(t, upload)
 	body := newMultipartRequestBody(map[string]any{"file": upload}, apiform.FormatBrackets)
 
 	_, err = io.ReadAll(body)
@@ -245,7 +245,7 @@ func TestMultipartRequestOptionsFollow307And308ForRegularFiles(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte("redirect payload"), 0o600))
 			upload, err := openFileUpload(path)
 			require.NoError(t, err)
-			originalFile := upload.source.file
+			originalFile := uploadSourceFile(t, upload)
 
 			var requestCount atomic.Int32
 			var uploaded string
@@ -365,7 +365,7 @@ func TestMultipartRequestOptionsRetryRegularFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("retry payload"), 0o600))
 	upload, err := openFileUpload(path)
 	require.NoError(t, err)
-	sourceFile := upload.source.file
+	sourceFile := uploadSourceFile(t, upload)
 
 	var requestCount atomic.Int32
 	var uploadsMu sync.Mutex
@@ -428,7 +428,7 @@ func TestMultipartRequestOptionsCloseRegularFilesAfterFinalRetry(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("retry payload"), 0o600))
 	upload, err := openFileUpload(path)
 	require.NoError(t, err)
-	sourceFile := upload.source.file
+	sourceFile := uploadSourceFile(t, upload)
 
 	var requestCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -471,7 +471,7 @@ func TestMultipartRequestOptionsCloseRegularFilesWhenBackoffCanceled(t *testing.
 	require.NoError(t, os.WriteFile(path, []byte("retry payload"), 0o600))
 	upload, err := openFileUpload(path)
 	require.NoError(t, err)
-	sourceFile := upload.source.file
+	sourceFile := uploadSourceFile(t, upload)
 
 	var requestCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -535,7 +535,7 @@ func TestMultipartRequestOptionsLetEarlySuccessfulUploadFinish(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(strings.Repeat("payload", 1024)), 0o600))
 	upload, err := openFileUpload(path)
 	require.NoError(t, err)
-	sourceFile := upload.source.file
+	sourceFile := uploadSourceFile(t, upload)
 
 	doer := newEarlyResponseHTTPDoer()
 	options, err := multipartRequestOptions(map[string]any{
@@ -569,7 +569,7 @@ func TestMultipartReplayAttemptAbortDoesNotWaitForBlockedReader(t *testing.T) {
 	body := newMultipartRequestBody(map[string]any{
 		"file": fileUpload{Reader: source, filename: "blocked.bin"},
 	}, apiform.FormatBrackets)
-	attempt := &multipartReplayAttempt{bodies: []*multipartRequestBody{body}}
+	attempt := &multipartReplayAttempt{bodies: []io.ReadCloser{body}}
 	readDone := make(chan error, 1)
 	go func() {
 		_, err := io.Copy(io.Discard, body)
@@ -760,7 +760,7 @@ func TestOpenFileUploadStreamsProcfsWithUnknownLength(t *testing.T) {
 	}
 	require.NoError(t, err)
 	require.False(t, upload.knownSize)
-	require.False(t, upload.canReplay())
+	require.False(t, upload.hasKnownSize())
 	sourceFile := upload.Reader.(*os.File)
 
 	type requestInfo struct {
@@ -821,7 +821,7 @@ func TestOpenFileUploadTreatsEmptyRegularFileAsKnownLength(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, upload.Close()) })
 
 	require.True(t, upload.knownSize)
-	require.True(t, upload.canReplay())
+	require.True(t, upload.hasKnownSize())
 	require.Zero(t, upload.size)
 }
 
@@ -844,6 +844,15 @@ func waitForMultipartBody(t *testing.T, body *multipartRequestBody) {
 	case <-time.After(multipartTestTimeout):
 		t.Fatal("multipart encoder did not stop")
 	}
+}
+
+func uploadSourceFile(t *testing.T, upload fileUpload) *os.File {
+	t.Helper()
+	reader, ok := upload.Reader.(*exactLengthReadCloser)
+	require.True(t, ok, "regular upload must use an exact-length reader")
+	file, ok := reader.closer.(*os.File)
+	require.True(t, ok, "regular upload must own its opened file")
+	return file
 }
 
 type countingReader struct {

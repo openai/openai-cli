@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"net/http"
 	"os"
@@ -272,7 +273,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 
 				upload, err := openFileUpload(filename)
 				if err != nil {
-					if !expectsFile {
+					if !expectsFile && errors.Is(err, fs.ErrNotExist) {
 						// For strings that start with "@" and don't look like a filename, return the string
 						return v, nil
 					}

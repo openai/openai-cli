@@ -21,15 +21,23 @@ func createReplaySnapshotFile() (*os.File, error) {
 	if err := os.Remove(path); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(
-		path,
-		os.O_RDWR|os.O_CREATE|os.O_EXCL|windows.O_FILE_FLAG_DELETE_ON_CLOSE,
-		0o600,
+	pathPtr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, errors.Join(err, os.Remove(path))
+	}
+	handle, err := windows.CreateFile(
+		pathPtr,
+		windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.CREATE_NEW,
+		windows.FILE_ATTRIBUTE_TEMPORARY|windows.FILE_FLAG_DELETE_ON_CLOSE,
+		0,
 	)
 	if err != nil {
 		return nil, errors.Join(err, os.Remove(path))
 	}
-	return file, nil
+	return os.NewFile(uintptr(handle), path), nil
 }
 
 func duplicateFile(file *os.File) (*os.File, error) {

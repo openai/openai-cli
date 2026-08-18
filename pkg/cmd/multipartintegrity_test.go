@@ -74,7 +74,7 @@ func TestFilesCreateCLIUsesImmutableReplayContent(t *testing.T) {
 	}
 }
 
-func TestFilesCreateCLISnapshotsBeforeSourceShrinks(t *testing.T) {
+func TestFilesCreateCLIAbortsWhenSourceShrinksDuringFirstSend(t *testing.T) {
 	const uploadSize = 16 << 20
 	path := filepath.Join(t.TempDir(), "shrinking.bin")
 	require.NoError(t, os.WriteFile(path, []byte(strings.Repeat("a", uploadSize)), 0o600))
@@ -119,11 +119,12 @@ func TestFilesCreateCLISnapshotsBeforeSourceShrinks(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	require.NoError(t, runFilesCreateCLI(t.Context(), server.URL+"/", path))
+	err := runFilesCreateCLI(t.Context(), server.URL+"/", path)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	result := <-resultCh
-	require.NoError(t, result.err)
-	require.True(t, result.committed)
-	require.Equal(t, int64(uploadSize), result.bytes)
+	require.Error(t, result.err)
+	require.False(t, result.committed, "a truncated first stream must not emit a terminal multipart boundary")
+	require.Less(t, result.bytes, int64(uploadSize))
 }
 
 func TestMultipartReplayPrematureEOFDoesNotCommitFinalBoundary(t *testing.T) {
@@ -132,15 +133,18 @@ func TestMultipartReplayPrematureEOFDoesNotCommitFinalBoundary(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(strings.Repeat("a", uploadSize)), 0o600))
 	file, err := os.Open(path)
 	require.NoError(t, err)
-	source := &replayableFileSource{file: file, size: uploadSize}
 	upload := fileUpload{
-		Reader:      io.NewSectionReader(file, 0, uploadSize),
+		Reader: &exactLengthReadCloser{
+			exactLengthReader: exactLengthReader{
+				reader:    io.NewSectionReader(file, 0, uploadSize),
+				remaining: uploadSize,
+			},
+			closer: file,
+		},
 		filename:    filepath.Base(path),
 		contentType: "application/octet-stream",
 		size:        uploadSize,
 		knownSize:   true,
-		source:      source,
-		ownsSource:  true,
 	}
 
 	type receiverResult struct {
@@ -194,25 +198,31 @@ func TestMultipartReplayPrematureEOFDoesNotCommitFinalBoundary(t *testing.T) {
 	require.Error(t, result.err)
 }
 
-func TestOpenFileUploadRemovesSnapshotOnClose(t *testing.T) {
+func TestOpenFileUploadDoesNotRequireSnapshotBeforeRead(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "upload.txt")
-	require.NoError(t, os.WriteFile(path, []byte("snapshot payload"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("streamed payload"), 0o600))
+	setUnavailableTempDir(t)
 	upload, err := openFileUpload(path)
 	require.NoError(t, err)
-	snapshotPath := upload.source.file.Name()
-
+	contents, err := io.ReadAll(upload.Reader)
+	require.NoError(t, err)
+	require.Equal(t, "streamed payload", string(contents))
 	require.NoError(t, upload.Close())
-	_, err = os.Stat(snapshotPath)
-	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
-func TestSnapshotReplayableFileRejectsPrematureEOF(t *testing.T) {
+func TestExactLengthUploadRejectsPrematureEOF(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "short.txt")
 	require.NoError(t, os.WriteFile(path, []byte("short"), 0o600))
 	file, err := os.Open(path)
 	require.NoError(t, err)
-
-	_, err = snapshotReplayableFile(file, int64(len("longer than short")), path)
+	reader := &exactLengthReadCloser{
+		exactLengthReader: exactLengthReader{
+			reader:    file,
+			remaining: int64(len("longer than short")),
+		},
+		closer: file,
+	}
+	_, err = io.ReadAll(reader)
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 }
 
