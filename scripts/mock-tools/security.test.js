@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
+const { attestationEndpoint } = require("./fetch-attestations");
 const { resolveNativeBinary } = require("./resolve-native");
 const { createAuditWorkspace, lockedPackages, verifyAuditOutput, verifyAuditReport } = require("./verify-provenance");
 
@@ -20,6 +21,8 @@ function test(name, run) {
 
 function provenanceStatement(pkg) {
   return {
+    _type: "https://in-toto.io/Statement/v1",
+    predicateType: "https://slsa.dev/provenance/v1",
     subject: [{ digest: { sha512: Buffer.from(pkg.integrity.slice("sha512-".length), "base64").toString("hex") } }],
     predicate: {
       buildDefinition: {
@@ -103,6 +106,13 @@ test("audits all native platforms without downloading their executables", () => 
   }
 });
 
+test("fetches the metadata-advertised attestation path from the scoped registry", () => {
+  assert.strictEqual(
+    attestationEndpoint("https://scoped.example.test/npm/", "https://registry.npmjs.org/custom/attestations"),
+    "https://scoped.example.test/npm/custom/attestations",
+  );
+});
+
 test("accepts verified provenance for all six locked artifacts", () => {
   assert.doesNotThrow(() => verifyAuditReport(auditReport(), packages));
 });
@@ -138,6 +148,24 @@ test("rejects a missing cryptographically verified provenance bundle", () => {
   const report = auditReport();
   report.verified[1].attestationBundles = [];
   assert.throws(() => verifyAuditReport(report, packages), /Missing cryptographically verified SLSA bundle/);
+});
+
+test("rejects a signed statement without the in-toto statement type", () => {
+  const report = auditReport();
+  const statement = provenanceStatement(packages[1]);
+  delete statement._type;
+  report.verified[1].attestationBundles[0].bundle.dsseEnvelope.payload =
+    Buffer.from(JSON.stringify(statement)).toString("base64");
+  assert.throws(() => verifyAuditReport(report, packages), /in-toto statement type/);
+});
+
+test("rejects a signed statement with a different provenance predicate type", () => {
+  const report = auditReport();
+  const statement = provenanceStatement(packages[1]);
+  statement.predicateType = "https://slsa.dev/provenance/v0.2";
+  report.verified[1].attestationBundles[0].bundle.dsseEnvelope.payload =
+    Buffer.from(JSON.stringify(statement)).toString("base64");
+  assert.throws(() => verifyAuditReport(report, packages), /signed SLSA provenance predicate/);
 });
 
 test("rejects an attested digest that does not match the lockfile", () => {

@@ -3,6 +3,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
+const IN_TOTO_STATEMENT = "https://in-toto.io/Statement/v1";
 const PROVENANCE_PREDICATE = "https://slsa.dev/provenance/v1";
 const STEADY_REPOSITORY = "https://github.com/dgellow/steady";
 
@@ -75,6 +76,13 @@ function verifyAuditReport(report, packages) {
     }
 
     const statement = JSON.parse(Buffer.from(provenance.bundle.dsseEnvelope.payload, "base64").toString("utf8"));
+    if (statement._type !== IN_TOTO_STATEMENT) {
+      throw new Error(`Missing signed in-toto statement type for ${expected.name}@${expected.version}`);
+    }
+    if (statement.predicateType !== PROVENANCE_PREDICATE) {
+      throw new Error(`Missing signed SLSA provenance predicate for ${expected.name}@${expected.version}`);
+    }
+
     const expectedDigest = Buffer.from(expected.integrity.slice("sha512-".length), "base64").toString("hex");
     if (statement.subject?.[0]?.digest?.sha512 !== expectedDigest) {
       throw new Error(`Verified provenance does not match locked SHA-512 integrity for ${expected.name}`);
@@ -102,37 +110,18 @@ function verifyAuditOutput(output, count) {
 }
 
 function fetchAttestationReport(packages) {
-  const configuration = spawnSync("npm", ["config", "get", "registry"], { encoding: "utf8" });
-  if (configuration.error) throw configuration.error;
-  if (configuration.status !== 0) {
-    throw new Error(`Unable to determine the npm registry: ${configuration.stderr}`);
+  const response = spawnSync(
+    "npm",
+    ["exec", "--", "node", path.join(__dirname, "fetch-attestations.js"), JSON.stringify(packages)],
+    { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+  );
+
+  if (response.error) throw response.error;
+  if (response.status !== 0) {
+    throw new Error(`Unable to inspect signed npm provenance:\n${response.stderr}`);
   }
 
-  const configuredRegistry = configuration.stdout.trim();
-  const registry = configuredRegistry.endsWith("/") ? configuredRegistry : `${configuredRegistry}/`;
-  const verified = packages.map(({ name, version }) => {
-    const endpoint = new URL(`-/npm/v1/attestations/${encodeURIComponent(name)}@${version}`, registry);
-    const response = spawnSync("curl", ["--fail", "--silent", "--show-error", endpoint.href], {
-      encoding: "utf8",
-      maxBuffer: 16 * 1024 * 1024,
-    });
-
-    if (response.error) throw response.error;
-    if (response.status !== 0) {
-      throw new Error(`Unable to inspect signed provenance for ${name}@${version}: ${response.stderr}`);
-    }
-
-    const attestationBundles = JSON.parse(response.stdout).attestations;
-    const provenance = attestationBundles?.find(({ predicateType }) => predicateType === PROVENANCE_PREDICATE);
-    return {
-      name,
-      version,
-      attestations: provenance ? { provenance: { predicateType: provenance.predicateType } } : {},
-      attestationBundles,
-    };
-  });
-
-  return { invalid: [], missing: [], verified };
+  return JSON.parse(response.stdout);
 }
 
 function verifyProvenance(toolsDirectory) {
