@@ -15,7 +15,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func TestFilesCreateCLIStreamsWhenSnapshotDirectoryUnavailable(t *testing.T) {
+func TestFilesCreateCLIStreamsWithoutTempDirectory(t *testing.T) {
 	for _, payload := range [][]byte{[]byte("streamed payload"), {}} {
 		name := "non_empty"
 		if len(payload) == 0 {
@@ -45,7 +45,7 @@ func TestFilesCreateCLIStreamsWhenSnapshotDirectoryUnavailable(t *testing.T) {
 	}
 }
 
-func TestFilesCreateCLIDisablesReplayWhenSnapshotDirectoryUnavailable(t *testing.T) {
+func TestFilesCreateCLIDoesNotReplayUploads(t *testing.T) {
 	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusTooManyRequests} {
 		t.Run(fmt.Sprintf("status_%d", status), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "upload.bin")
@@ -74,7 +74,7 @@ func TestFilesCreateCLIDisablesReplayWhenSnapshotDirectoryUnavailable(t *testing
 
 			err := runFilesCreateCLI(t.Context(), server.URL+"/", path)
 			require.Error(t, err)
-			require.Equal(t, int32(1), requests.Load(), "snapshot failure must disable network replay")
+			require.Equal(t, int32(1), requests.Load(), "streamed uploads must not be replayed")
 		})
 	}
 }
@@ -97,7 +97,7 @@ func TestVideosCreateCLIPropagatesExtensionlessDirectoryError(t *testing.T) {
 	require.Zero(t, requests.Load(), "an existing invalid upload must not fall back to a scalar")
 }
 
-func TestVideosCreateCLIUploadsExtensionlessFileWhenSnapshotDirectoryUnavailable(t *testing.T) {
+func TestVideosCreateCLIUploadsExtensionlessFileWithoutTempDirectory(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	require.NoError(t, os.WriteFile("artifact", []byte("extensionless payload"), 0o600))

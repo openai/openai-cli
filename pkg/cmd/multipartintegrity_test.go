@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -12,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/openai/openai-cli/internal/apiform"
@@ -21,58 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
-
-func TestFilesCreateCLIUsesImmutableReplayContent(t *testing.T) {
-	for _, status := range []int{
-		http.StatusTemporaryRedirect,
-		http.StatusPermanentRedirect,
-		http.StatusTooManyRequests,
-	} {
-		t.Run(fmt.Sprintf("status_%d", status), func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "upload.txt")
-			require.NoError(t, os.WriteFile(path, []byte("benign-data"), 0o600))
-
-			var mu sync.Mutex
-			var uploads []string
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				contents, readErr := readMultipartUpload(r)
-				if readErr != nil {
-					http.Error(w, readErr.Error(), http.StatusBadRequest)
-					return
-				}
-				mu.Lock()
-				uploads = append(uploads, string(contents))
-				requestNumber := len(uploads)
-				mu.Unlock()
-
-				if requestNumber == 1 {
-					if writeErr := os.WriteFile(path, []byte("secret-data"), 0o600); writeErr != nil {
-						http.Error(w, writeErr.Error(), http.StatusInternalServerError)
-						return
-					}
-					if status == http.StatusTooManyRequests {
-						w.Header().Set("Content-Type", "application/json")
-						w.Header().Set("Retry-After", "0")
-						w.WriteHeader(status)
-						_, _ = io.WriteString(w, `{"error":{"message":"retry me","type":"rate_limit_error"}}`)
-						return
-					}
-					http.Redirect(w, r, "/upload", status)
-					return
-				}
-
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"id":"file_123","object":"file"}`)
-			}))
-			t.Cleanup(server.Close)
-
-			require.NoError(t, runFilesCreateCLI(t.Context(), server.URL+"/", path))
-			mu.Lock()
-			require.Equal(t, []string{"benign-data", "benign-data"}, uploads)
-			mu.Unlock()
-		})
-	}
-}
 
 func TestFilesCreateCLIAbortsWhenSourceShrinksDuringFirstSend(t *testing.T) {
 	const uploadSize = 16 << 20
@@ -127,9 +73,9 @@ func TestFilesCreateCLIAbortsWhenSourceShrinksDuringFirstSend(t *testing.T) {
 	require.Less(t, result.bytes, int64(uploadSize))
 }
 
-func TestMultipartReplayPrematureEOFDoesNotCommitFinalBoundary(t *testing.T) {
+func TestMultipartPrematureEOFDoesNotCommitFinalBoundary(t *testing.T) {
 	const uploadSize = 8 << 20
-	path := filepath.Join(t.TempDir(), "replay-source.bin")
+	path := filepath.Join(t.TempDir(), "short-source.bin")
 	require.NoError(t, os.WriteFile(path, []byte(strings.Repeat("a", uploadSize)), 0o600))
 	file, err := os.Open(path)
 	require.NoError(t, err)
@@ -194,11 +140,11 @@ func TestMultipartReplayPrematureEOFDoesNotCommitFinalBoundary(t *testing.T) {
 	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	result := <-resultCh
-	require.False(t, result.committed, "an incomplete replay source must not emit a terminal multipart boundary")
+	require.False(t, result.committed, "an incomplete source must not emit a terminal multipart boundary")
 	require.Error(t, result.err)
 }
 
-func TestOpenFileUploadDoesNotRequireSnapshotBeforeRead(t *testing.T) {
+func TestOpenFileUploadDoesNotRequireTempStorageBeforeRead(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "upload.txt")
 	require.NoError(t, os.WriteFile(path, []byte("streamed payload"), 0o600))
 	setUnavailableTempDir(t)

@@ -103,9 +103,8 @@ func hasTrustworthyFileSize(file *os.File, info os.FileInfo) bool {
 }
 
 // openFileUpload opens path once. Ordinary files retain their exact stat size
-// so the first request can stream directly with Content-Length while the
-// multipart body opportunistically captures replay bytes. Virtual and
-// unknown-length files remain single-shot streams.
+// so the request can stream with Content-Length. Virtual and unknown-length
+// files remain single-shot streams with chunked transfer encoding.
 func openFileUpload(path string) (fileUpload, error) {
 	file, err := os.Open(path)
 	if err != nil {

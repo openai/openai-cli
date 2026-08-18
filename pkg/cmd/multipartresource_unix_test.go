@@ -18,7 +18,7 @@ import (
 
 const multipartResourceHelperEnv = "OPENAI_MULTIPART_RESOURCE_HELPER"
 
-func TestFilesCreateCLIStreamsSparseFileWhenSnapshotQuotaExceeded(t *testing.T) {
+func TestFilesCreateCLIStreamsSparseFileWithLowFileSizeLimit(t *testing.T) {
 	const uploadSize = 256 << 10
 	path := filepath.Join(t.TempDir(), "sparse.bin")
 	file, err := os.Create(path)
@@ -49,7 +49,7 @@ func TestFilesCreateCLIStreamsSparseFileWhenSnapshotQuotaExceeded(t *testing.T) 
 	require.Equal(t, int64(uploadSize), <-received)
 }
 
-func TestImagesEditCLIDialsBeforeOpeningReplayDescriptors(t *testing.T) {
+func TestImagesEditCLIStreamsMultipleFilesWithLowDescriptorLimit(t *testing.T) {
 	paths := make([]string, 16)
 	for i := range paths {
 		paths[i] = filepath.Join(t.TempDir(), "image.png")
