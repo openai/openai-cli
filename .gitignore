@@ -6,4 +6,5 @@ dist/
 /completions/openai.fish
 /man/man1/openai.1.gz
 /openai
+/scripts/mock-tools/node_modules/
 *.exe

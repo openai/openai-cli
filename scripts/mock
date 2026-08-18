@@ -23,12 +23,29 @@ fi
 
 echo "==> Starting mock server with URL ${URL}"
 
-# Run steady mock on the given spec
-if [ "$1" == "--daemon" ]; then
-  # Pre-install the package so the download doesn't eat into the startup timeout
-  npm exec --package=@stdy/cli@0.22.1 -- steady --version
+# Install the reviewed, integrity-locked native package without lifecycle scripts.
+npm ci --prefix scripts/mock-tools --include=dev --include=optional \
+  --ignore-scripts --no-audit --no-fund
+STEADY="scripts/mock-tools/node_modules/.bin/steady"
 
-  npm exec --package=@stdy/cli@0.22.1 -- steady --host 127.0.0.1 -p 4010 --validator-query-array-format=brackets --validator-form-array-format=brackets --validator-query-object-format=brackets --validator-form-object-format=brackets "$URL" &> .stdy.log &
+# npm registry mirrors do not always expose provenance verification endpoints.
+if [ "${GITHUB_ACTIONS:-}" == "true" ]; then
+  npm audit signatures --prefix scripts/mock-tools
+fi
+
+STEADY_ARGS=(
+  --host 127.0.0.1
+  -p 4010
+  --validator-query-array-format=brackets
+  --validator-form-array-format=brackets
+  --validator-query-object-format=brackets
+  --validator-form-object-format=brackets
+  "$URL"
+)
+
+# Run steady mock on the given spec.
+if [ "$1" == "--daemon" ]; then
+  "$STEADY" "${STEADY_ARGS[@]}" &> .stdy.log &
 
   # Wait for server to come online via health endpoint (max 30s)
   echo -n "Waiting for server"
@@ -52,5 +69,5 @@ if [ "$1" == "--daemon" ]; then
 
   echo
 else
-  npm exec --package=@stdy/cli@0.22.1 -- steady --host 127.0.0.1 -p 4010 --validator-query-array-format=brackets --validator-form-array-format=brackets --validator-query-object-format=brackets --validator-form-object-format=brackets "$URL"
+  "$STEADY" "${STEADY_ARGS[@]}"
 fi
