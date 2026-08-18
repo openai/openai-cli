@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+
+for goos in linux darwin windows; do
+  echo "==> Checking shipped CLI for reachable vulnerabilities ($goos/amd64)"
+  GOOS="$goos" GOARCH=amd64 govulncheck ./cmd/openai
+done

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+test_directory="$(mktemp -d)"
+trap 'rm -rf "$test_directory"' EXIT
+
+cat > "$test_directory/go" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == 'install golang.org/x/vuln/cmd/govulncheck@v1.7.0' ]]
+EOF
+
+cat > "$test_directory/govulncheck" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s/%s %s\n' "$GOOS" "$GOARCH" "$*" >> "$GOVULNCHECK_TEST_LOG"
+[[ "${GOVULNCHECK_TEST_FAIL_GOOS:-}" != "$GOOS" ]]
+EOF
+
+chmod +x "$test_directory/go" "$test_directory/govulncheck"
+
+scan_log="$test_directory/scans"
+PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
+  ./scripts/govulncheck > /dev/null
+
+expected_scans=$'linux/amd64 ./cmd/openai\ndarwin/amd64 ./cmd/openai\nwindows/amd64 ./cmd/openai'
+if [[ "$(< "$scan_log")" != "$expected_scans" ]]; then
+  echo 'govulncheck did not cover every shipped operating system' >&2
+  exit 1
+fi
+
+: > "$scan_log"
+if PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
+  GOVULNCHECK_TEST_FAIL_GOOS=darwin ./scripts/govulncheck > /dev/null 2>&1; then
+  echo 'govulncheck did not fail closed for a vulnerable target' >&2
+  exit 1
+fi
+
+expected_scans=$'linux/amd64 ./cmd/openai\ndarwin/amd64 ./cmd/openai'
+if [[ "$(< "$scan_log")" != "$expected_scans" ]]; then
+  echo 'govulncheck did not stop at the first vulnerable target' >&2
+  exit 1
+fi
+
+echo 'govulncheck covers every shipped operating system and fails closed'

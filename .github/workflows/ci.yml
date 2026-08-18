@@ -39,8 +39,11 @@ jobs:
 
       - uses: ./.github/actions/setup-go
 
+      - name: Test vulnerability scan coverage
+        run: ./scripts/govulncheck-test
+
       - name: Check shipped CLI for reachable vulnerabilities
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./cmd/openai
+        run: ./scripts/govulncheck
 
       - name: Test verified GoReleaser installer
         run: ./scripts/test-goreleaser-installer
