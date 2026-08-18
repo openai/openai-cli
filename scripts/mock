@@ -26,11 +26,11 @@ echo "==> Starting mock server with URL ${URL}"
 # Install the reviewed, integrity-locked native package without lifecycle scripts.
 npm ci --prefix scripts/mock-tools --include=dev --include=optional \
   --ignore-scripts --no-audit --no-fund
-STEADY="scripts/mock-tools/node_modules/.bin/steady"
+STEADY="$(node scripts/mock-tools/resolve-native.js)"
 
 # npm registry mirrors do not always expose provenance verification endpoints.
 if [ "${GITHUB_ACTIONS:-}" == "true" ]; then
-  npm audit signatures --prefix scripts/mock-tools --include=dev --include=optional
+  node scripts/mock-tools/verify-provenance.js
 fi
 
 STEADY_ARGS=(

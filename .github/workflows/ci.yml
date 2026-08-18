@@ -120,5 +120,8 @@ jobs:
 
       - uses: ./.github/actions/setup-go
 
+      - name: Verify mock tooling security
+        run: node scripts/mock-tools/security.test.js
+
       - name: Run tests
         run: ./scripts/test
