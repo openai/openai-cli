@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { resolveNativeBinary } = require("./resolve-native");
-const { createAuditWorkspace, lockedPackages, verifyAuditReport } = require("./verify-provenance");
+const { createAuditWorkspace, lockedPackages, verifyAuditOutput, verifyAuditReport } = require("./verify-provenance");
 
 const packages = lockedPackages(__dirname);
 
@@ -105,6 +105,21 @@ test("audits all native platforms without downloading their executables", () => 
 
 test("accepts verified provenance for all six locked artifacts", () => {
   assert.doesNotThrow(() => verifyAuditReport(auditReport(), packages));
+});
+
+test("accepts complete npm 10 and npm 11 signature and attestation summaries", () => {
+  const output = "audited 6 packages in 1s\n\n6 packages have verified registry signatures\n\n6 packages have verified attestations\n";
+  assert.doesNotThrow(() => verifyAuditOutput(output, packages.length));
+});
+
+test("rejects an incomplete registry-signature summary", () => {
+  const output = "5 packages have verified registry signatures\n6 packages have verified attestations\n";
+  assert.throws(() => verifyAuditOutput(output, packages.length), /registry signatures for all 6/);
+});
+
+test("rejects a missing or incomplete provenance summary", () => {
+  const output = "6 packages have verified registry signatures\n5 packages have verified attestations\n";
+  assert.throws(() => verifyAuditOutput(output, packages.length), /provenance for all 6/);
 });
 
 test("rejects a skipped native platform", () => {

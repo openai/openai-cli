@@ -87,6 +87,54 @@ function verifyAuditReport(report, packages) {
   }
 }
 
+function verifyAuditOutput(output, count) {
+  const packageLabel = count === 1 ? "package has a" : "packages have";
+  const signatures = `${count} ${packageLabel} verified registry signature${count === 1 ? "" : "s"}`;
+  const attestations = `${count} ${packageLabel} verified attestation${count === 1 ? "" : "s"}`;
+  const lines = output.split(/\r?\n/);
+
+  if (!lines.includes(signatures)) {
+    throw new Error(`Expected verified registry signatures for all ${count} locked Steady packages`);
+  }
+  if (!lines.includes(attestations)) {
+    throw new Error(`Expected verified provenance for all ${count} locked Steady packages`);
+  }
+}
+
+function fetchAttestationReport(packages) {
+  const configuration = spawnSync("npm", ["config", "get", "registry"], { encoding: "utf8" });
+  if (configuration.error) throw configuration.error;
+  if (configuration.status !== 0) {
+    throw new Error(`Unable to determine the npm registry: ${configuration.stderr}`);
+  }
+
+  const configuredRegistry = configuration.stdout.trim();
+  const registry = configuredRegistry.endsWith("/") ? configuredRegistry : `${configuredRegistry}/`;
+  const verified = packages.map(({ name, version }) => {
+    const endpoint = new URL(`-/npm/v1/attestations/${encodeURIComponent(name)}@${version}`, registry);
+    const response = spawnSync("curl", ["--fail", "--silent", "--show-error", endpoint.href], {
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    });
+
+    if (response.error) throw response.error;
+    if (response.status !== 0) {
+      throw new Error(`Unable to inspect signed provenance for ${name}@${version}: ${response.stderr}`);
+    }
+
+    const attestationBundles = JSON.parse(response.stdout).attestations;
+    const provenance = attestationBundles?.find(({ predicateType }) => predicateType === PROVENANCE_PREDICATE);
+    return {
+      name,
+      version,
+      attestations: provenance ? { provenance: { predicateType: provenance.predicateType } } : {},
+      attestationBundles,
+    };
+  });
+
+  return { invalid: [], missing: [], verified };
+}
+
 function verifyProvenance(toolsDirectory) {
   const packages = lockedPackages(toolsDirectory);
   const workspace = createAuditWorkspace(packages);
@@ -101,8 +149,6 @@ function verifyProvenance(toolsDirectory) {
         workspace,
         "--include=dev",
         "--include=optional",
-        "--json",
-        "--include-attestations",
       ],
       { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
     );
@@ -112,7 +158,11 @@ function verifyProvenance(toolsDirectory) {
       throw new Error(`npm signature and provenance verification failed:\n${audit.stderr}${audit.stdout}`);
     }
 
-    verifyAuditReport(JSON.parse(audit.stdout), packages);
+    // npm 10 verifies attestations but omits verified bundles from JSON reports.
+    // Its stable human-readable summary proves complete cryptographic coverage;
+    // read each verified bundle separately to check its locked digest and source.
+    verifyAuditOutput(audit.stdout, packages.length);
+    verifyAuditReport(fetchAttestationReport(packages), packages);
     for (const { name, version } of packages) {
       console.log(`Verified signed SLSA provenance for ${name}@${version}`);
     }
@@ -130,4 +180,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { createAuditWorkspace, lockedPackages, verifyAuditReport, verifyProvenance };
+module.exports = { createAuditWorkspace, lockedPackages, verifyAuditOutput, verifyAuditReport, verifyProvenance };
