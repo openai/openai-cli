@@ -3,9 +3,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { attestationEndpoint } = require("./fetch-attestations");
 const { resolveNativeBinary } = require("./resolve-native");
-const { createAuditWorkspace, lockedPackages, verifyAuditOutput, verifyAuditReport } = require("./verify-provenance");
+const { createAuditWorkspace, lockedPackages, verifyAuditOutput, verifyProvenance } = require("./verify-provenance");
 
 const packages = lockedPackages(__dirname);
 
@@ -19,42 +18,31 @@ function test(name, run) {
   }
 }
 
-function provenanceStatement(pkg) {
-  return {
-    _type: "https://in-toto.io/Statement/v1",
-    predicateType: "https://slsa.dev/provenance/v1",
-    subject: [{ digest: { sha512: Buffer.from(pkg.integrity.slice("sha512-".length), "base64").toString("hex") } }],
-    predicate: {
-      buildDefinition: {
-        externalParameters: {
-          workflow: {
-            repository: "https://github.com/dgellow/steady",
-            ref: `refs/tags/v${pkg.version}`,
-          },
-        },
-      },
-    },
-  };
-}
+function withAuditStub(output, exitCode, run) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "openai-cli-steady-audit-test-"));
+  const invocationLog = path.join(directory, "invocations.log");
+  const previousPath = process.env.PATH;
+  const previousConsoleLog = console.log;
 
-function auditReport() {
-  return {
-    invalid: [],
-    missing: [],
-    verified: packages.map((pkg) => ({
-      name: pkg.name,
-      version: pkg.version,
-      attestations: { provenance: { predicateType: "https://slsa.dev/provenance/v1" } },
-      attestationBundles: [{
-        predicateType: "https://slsa.dev/provenance/v1",
-        bundle: {
-          dsseEnvelope: {
-            payload: Buffer.from(JSON.stringify(provenanceStatement(pkg))).toString("base64"),
-          },
-        },
-      }],
-    })),
-  };
+  fs.writeFileSync(path.join(directory, "npm"), [
+    "#!/usr/bin/env node",
+    "const fs = require('node:fs');",
+    `fs.appendFileSync(${JSON.stringify(invocationLog)}, process.argv.slice(2, 4).join(' ') + '\\n');`,
+    "if (process.argv[2] !== 'audit') { process.stderr.write('unexpected second npm invocation'); process.exit(23); }",
+    `process.stdout.write(${JSON.stringify(output)});`,
+    `process.exit(${exitCode});`,
+  ].join("\n"), { mode: 0o755 });
+
+  process.env.PATH = `${directory}${path.delimiter}${previousPath}`;
+  console.log = () => {};
+
+  try {
+    run(invocationLog);
+  } finally {
+    process.env.PATH = previousPath;
+    console.log = previousConsoleLog;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 function withNativeFixture(run) {
@@ -106,20 +94,24 @@ test("audits all native platforms without downloading their executables", () => 
   }
 });
 
-test("fetches the metadata-advertised attestation path from the scoped registry", () => {
-  assert.strictEqual(
-    attestationEndpoint("https://scoped.example.test/npm/", "https://registry.npmjs.org/custom/attestations"),
-    "https://scoped.example.test/npm/custom/attestations",
-  );
-});
-
-test("accepts verified provenance for all six locked artifacts", () => {
-  assert.doesNotThrow(() => verifyAuditReport(auditReport(), packages));
-});
-
 test("accepts complete npm 10 and npm 11 signature and attestation summaries", () => {
   const output = "audited 6 packages in 1s\n\n6 packages have verified registry signatures\n\n6 packages have verified attestations\n";
   assert.doesNotThrow(() => verifyAuditOutput(output, packages.length));
+});
+
+test("uses exactly one canonical npm audit without an independent attestation fetch", () => {
+  const output = "6 packages have verified registry signatures\n6 packages have verified attestations\n";
+  withAuditStub(output, 0, (invocationLog) => {
+    assert.doesNotThrow(() => verifyProvenance(__dirname));
+    assert.deepStrictEqual(fs.readFileSync(invocationLog, "utf8").trim().split("\n"), ["audit signatures"]);
+  });
+});
+
+test("rejects a failed canonical npm audit even when its coverage summary is complete", () => {
+  const output = "6 packages have verified registry signatures\n6 packages have verified attestations\n";
+  withAuditStub(output, 9, () => {
+    assert.throws(() => verifyProvenance(__dirname), /npm signature and provenance verification failed/);
+  });
 });
 
 test("rejects an incomplete registry-signature summary", () => {
@@ -128,72 +120,12 @@ test("rejects an incomplete registry-signature summary", () => {
 });
 
 test("rejects a missing or incomplete provenance summary", () => {
-  const output = "6 packages have verified registry signatures\n5 packages have verified attestations\n";
-  assert.throws(() => verifyAuditOutput(output, packages.length), /provenance for all 6/);
-});
-
-test("rejects a skipped native platform", () => {
-  const report = auditReport();
-  report.verified.pop();
-  assert.throws(() => verifyAuditReport(report, packages), /all 6 locked Steady packages/);
-});
-
-test("rejects stripped SLSA provenance metadata", () => {
-  const report = auditReport();
-  delete report.verified[1].attestations.provenance;
-  assert.throws(() => verifyAuditReport(report, packages), /Missing SLSA provenance attestation/);
-});
-
-test("rejects a missing cryptographically verified provenance bundle", () => {
-  const report = auditReport();
-  report.verified[1].attestationBundles = [];
-  assert.throws(() => verifyAuditReport(report, packages), /Missing cryptographically verified SLSA bundle/);
-});
-
-test("rejects a signed statement without the in-toto statement type", () => {
-  const report = auditReport();
-  const statement = provenanceStatement(packages[1]);
-  delete statement._type;
-  report.verified[1].attestationBundles[0].bundle.dsseEnvelope.payload =
-    Buffer.from(JSON.stringify(statement)).toString("base64");
-  assert.throws(() => verifyAuditReport(report, packages), /in-toto statement type/);
-});
-
-test("rejects a signed statement with a different provenance predicate type", () => {
-  const report = auditReport();
-  const statement = provenanceStatement(packages[1]);
-  statement.predicateType = "https://slsa.dev/provenance/v0.2";
-  report.verified[1].attestationBundles[0].bundle.dsseEnvelope.payload =
-    Buffer.from(JSON.stringify(statement)).toString("base64");
-  assert.throws(() => verifyAuditReport(report, packages), /signed SLSA provenance predicate/);
-});
-
-test("rejects an attested digest that does not match the lockfile", () => {
-  const report = auditReport();
-  const statement = provenanceStatement(packages[1]);
-  statement.subject[0].digest.sha512 = "0".repeat(128);
-  report.verified[1].attestationBundles[0].bundle.dsseEnvelope.payload =
-    Buffer.from(JSON.stringify(statement)).toString("base64");
-  assert.throws(() => verifyAuditReport(report, packages), /does not match locked SHA-512 integrity/);
-});
-
-test("rejects provenance from another repository or release", () => {
-  const report = auditReport();
-  const statement = provenanceStatement(packages[1]);
-  statement.predicate.buildDefinition.externalParameters.workflow.repository = "https://github.com/untrusted/steady";
-  report.verified[1].attestationBundles[0].bundle.dsseEnvelope.payload =
-    Buffer.from(JSON.stringify(statement)).toString("base64");
-  assert.throws(() => verifyAuditReport(report, packages), /does not match the expected Steady release/);
-});
-
-test("rejects missing or invalid registry signatures", () => {
-  const missing = auditReport();
-  missing.missing.push({ name: packages[0].name });
-  assert.throws(() => verifyAuditReport(missing, packages), /missing package signatures/);
-
-  const invalid = auditReport();
-  invalid.invalid.push({ name: packages[0].name });
-  assert.throws(() => verifyAuditReport(invalid, packages), /invalid package signatures or attestations/);
+  const signatures = "6 packages have verified registry signatures\n";
+  assert.throws(() => verifyAuditOutput(signatures, packages.length), /provenance for all 6/);
+  assert.throws(
+    () => verifyAuditOutput(`${signatures}5 packages have verified attestations\n`, packages.length),
+    /provenance for all 6/,
+  );
 });
 
 test("executes only the checked, exact-version native executable", () => {
