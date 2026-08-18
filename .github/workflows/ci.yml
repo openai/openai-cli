@@ -45,15 +45,14 @@ jobs:
       - name: Bootstrap
         run: ./scripts/bootstrap
 
-      - name: Read GoReleaser version
-        id: goreleaser-version
-        run: echo "version=$(cat .goreleaser-version)" >> "$GITHUB_OUTPUT"
+      - name: Test verified GoReleaser installer
+        run: ./scripts/test-goreleaser-installer
 
-      - name: Run goreleaser
-        uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.1.0
-        with:
-          version: ${{ steps.goreleaser-version.outputs.version }}
-          args: release --snapshot --clean --skip=publish
+      - name: Set up verified GoReleaser
+        uses: ./.github/actions/setup-goreleaser
+
+      - name: Run GoReleaser
+        run: goreleaser release --snapshot --clean --skip=publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
