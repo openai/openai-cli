@@ -30,7 +30,7 @@ STEADY="scripts/mock-tools/node_modules/.bin/steady"
 
 # npm registry mirrors do not always expose provenance verification endpoints.
 if [ "${GITHUB_ACTIONS:-}" == "true" ]; then
-  npm audit signatures --prefix scripts/mock-tools
+  npm audit signatures --prefix scripts/mock-tools --include=dev --include=optional
 fi
 
 STEADY_ARGS=(

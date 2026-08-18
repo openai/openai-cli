@@ -40,8 +40,8 @@ elif ! steady_is_running ; then
   echo -e "${RED}ERROR:${NC} The test suite will not run without a mock Steady server"
   echo -e "running against your OpenAPI spec."
   echo
-  echo -e "To run the server, pass in the path or url of your OpenAPI"
-  echo -e "spec to the steady command:"
+  echo -e "To run the mock server, pass the path or URL of your OpenAPI"
+  echo -e "specification to ./scripts/mock:"
   echo
   echo -e "  \$ ${YELLOW}./scripts/mock path/to/your.openapi.yml${NC}"
   echo
