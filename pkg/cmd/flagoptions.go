@@ -1,17 +1,15 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
-	"mime"
-	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"unicode/utf8"
@@ -121,7 +119,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 			val := iter.Value()
 			newVal, err := embedFilesValue(val, embedStyle, stdin)
 			if err != nil {
-				return reflect.Value{}, err
+				return reflect.Value{}, errors.Join(err, closeFileUploads(result.Interface()))
 			}
 			result.SetMapIndex(key, newVal)
 		}
@@ -136,7 +134,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 		for i := 0; i < v.Len(); i++ {
 			newVal, err := embedFilesValue(v.Index(i), embedStyle, stdin)
 			if err != nil {
-				return reflect.Value{}, err
+				return reflect.Value{}, errors.Join(err, closeFileUploads(result.Slice(0, i).Interface()))
 			}
 			result.Index(i).Set(newVal)
 		}
@@ -275,7 +273,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 
 				upload, err := openFileUpload(filename)
 				if err != nil {
-					if !expectsFile {
+					if !expectsFile && errors.Is(err, fs.ErrNotExist) {
 						// For strings that start with "@" and don't look like a filename, return the string
 						return v, nil
 					}
@@ -324,8 +322,16 @@ func flagOptions(
 	// This parameter is true if stdin is already in use to pass a binary parameter by using the special value
 	// "-". In this case, we won't attempt to read it as a JSON/YAML blob for options setting.
 	ignoreStdin bool,
-) ([]option.RequestOption, error) {
-	var options []option.RequestOption
+) (options []option.RequestOption, err error) {
+	// Once multipart files have been opened, close them on every error path
+	// until ownership is transferred to multipartRequestBody below.
+	var pendingMultipartUploads any
+	defer func() {
+		if err != nil && pendingMultipartUploads != nil {
+			err = errors.Join(err, closeFileUploads(pendingMultipartUploads))
+		}
+	}()
+
 	if cmd.Bool("debug") {
 		options = append(options, option.WithMiddleware(debugmiddleware.NewRequestLogger().Middleware()))
 	}
@@ -434,6 +440,9 @@ func flagOptions(
 		return nil, err
 	} else {
 		requestContents.Body = embedded
+		if bodyType == MultipartFormEncoded {
+			pendingMultipartUploads = embedded
+		}
 	}
 
 	if headersWithFiles, err := embedFiles(requestContents.Headers, EmbedText, &stdinReader); err != nil {
@@ -492,22 +501,18 @@ func flagOptions(
 	case EmptyBody:
 		break
 	case MultipartFormEncoded:
-		buf := new(bytes.Buffer)
-		writer := multipart.NewWriter(buf)
-
 		// For multipart/form-encoded, we need a map structure
 		bodyMap, ok := requestContents.Body.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("Cannot send a non-map value to a form-encoded endpoint: %v\n", requestContents.Body)
 		}
 		encodingFormat := apiform.FormatBrackets
-		if err := apiform.MarshalWithSettings(bodyMap, writer, encodingFormat); err != nil {
+		multipartOptions, err := multipartRequestOptions(bodyMap, encodingFormat)
+		if err != nil {
 			return nil, err
 		}
-		if err := writer.Close(); err != nil {
-			return nil, err
-		}
-		options = append(options, option.WithRequestBody(writer.FormDataContentType(), buf))
+		pendingMultipartUploads = nil // multipartRequestBody owns them now.
+		options = append(options, multipartOptions...)
 
 	case ApplicationJSON:
 		bodyBytes, err := json.Marshal(requestContents.Body)
@@ -542,44 +547,6 @@ func flagOptions(
 // and embedded in the request. Unlike a regular string, embedFilesValue always treats a FilePathValue
 // as a file path without needing the "@" prefix.
 type FilePathValue string
-
-// fileUpload wraps an io.Reader with filename and content-type metadata for
-// use as a multipart form part. The apiform encoder detects the Filename and
-// ContentType methods and uses them to populate the Content-Disposition
-// filename and the Content-Type header on the part.
-type fileUpload struct {
-	io.Reader   // apiform checks for reader and reads its contents during encode
-	filename    string
-	contentType string
-}
-
-func (f fileUpload) Filename() string    { return f.filename }
-func (f fileUpload) ContentType() string { return f.contentType }
-func (f fileUpload) Close() error {
-	if c, ok := f.Reader.(io.Closer); ok {
-		return c.Close()
-	}
-	return nil
-}
-
-// openFileUpload opens the file at path and returns a fileUpload whose filename
-// is the path's basename and whose content type is derived from the file
-// extension (falling back to application/octet-stream when unknown).
-func openFileUpload(path string) (fileUpload, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return fileUpload{}, err
-	}
-	contentType := mime.TypeByExtension(filepath.Ext(path))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	return fileUpload{
-		Reader:      file,
-		filename:    filepath.Base(path),
-		contentType: contentType,
-	}, nil
-}
 
 // applyDataAliases rewrites keys in a body map based on flag `DataAliases` metadata. For top-level flags,
 // `{alias: value}` becomes `{canonical: value}`. For inner flags (those registered under an outer flag
