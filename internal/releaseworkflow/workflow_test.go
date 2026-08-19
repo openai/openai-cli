@@ -18,9 +18,9 @@ import (
 
 const (
 	releaseInputsArtifact  = "openai-release-inputs"
-	checkoutAction         = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
-	setupGoAction          = "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff"
-	uploadArtifactAction   = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+	checkoutAction         = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+	setupGoAction          = "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+	uploadArtifactAction   = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
 	downloadArtifactAction = "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
 )
 
@@ -145,8 +145,8 @@ func TestReleaseInputsUseAnIsolatedUnprivilegedJob(t *testing.T) {
 		t.Fatal("the validated release tag SHA must be exported before executable dependencies run")
 	}
 	setupIndex, setup := requireStep(t, job, "Set up Go")
-	if setup.Uses != setupGoAction || setup.With["cache"] != false {
-		t.Fatalf("unprivileged Go setup must be pinned with cache disabled: %#v", setup)
+	if setup.Uses != setupGoAction || setup.With["go-version-file"] != ".go-version" || setup.With["check-latest"] != true || setup.With["cache"] != false {
+		t.Fatalf("unprivileged Go setup must use the reviewed patched toolchain with cache disabled: %#v", setup)
 	}
 	generationIndex, generate := requireStep(t, job, "Generate release inputs")
 	for _, fragment := range []string{
@@ -173,8 +173,8 @@ func TestReleaseInputsUseAnIsolatedUnprivilegedJob(t *testing.T) {
 	if !ok || !reflect.DeepEqual(strings.Fields(paths), releaseInputPaths) {
 		t.Fatalf("uploaded files must be exactly %v; got %q", releaseInputPaths, paths)
 	}
-	if !(checkoutIndex < tagIndex && tagIndex < setupIndex && setupIndex < generationIndex && generationIndex < uploadIndex) {
-		t.Fatal("checkout, validated tag, cache-disabled Go setup, generation, and upload must run in order")
+	if !(checkoutIndex < setupIndex && setupIndex < tagIndex && tagIndex < generationIndex && generationIndex < uploadIndex) {
+		t.Fatal("trusted checkout and patched cache-disabled Go setup must precede tag checkout, generation, and upload")
 	}
 	for _, step := range job.Steps {
 		if strings.Contains(fmt.Sprint(step.With, step.Env, step.Run), "secrets.") {
@@ -204,8 +204,16 @@ func TestPublisherVerifiesIsolatedInputsBeforeReceivingSecrets(t *testing.T) {
 	}
 	checkoutIndex, _ := requireStep(t, job, "Checkout")
 	verifiedBinaryIndex, verifiedBinary := requireStep(t, job, "Set up verified GoReleaser")
-	if verifiedBinary.Uses != "./.github/actions/setup-goreleaser" {
-		t.Fatalf("publisher must install the reviewed digest-verified local GoReleaser: %#v", verifiedBinary)
+	if verifiedBinary.Uses != "./.github/actions/setup-goreleaser" || verifiedBinary.ID != "goreleaser" {
+		t.Fatalf("publisher must expose the reviewed digest-verified GoReleaser executable: %#v", verifiedBinary)
+	}
+	setupIndex, setup := requireStep(t, job, "Set up Go")
+	if setup.Uses != setupGoAction || setup.With["go-version-file"] != ".go-version" || setup.With["check-latest"] != true || setup.With["cache"] != false {
+		t.Fatalf("publisher must bootstrap the trusted patched Go toolchain without shared cache: %#v", setup)
+	}
+	preserveScannerIndex, preserveScanner := requireStep(t, job, "Preserve trusted vulnerability scanner")
+	if !strings.Contains(preserveScanner.Run, `install -m 0755 ./scripts/govulncheck "$RUNNER_TEMP/openai-cli-govulncheck"`) {
+		t.Fatal("publisher must preserve the trusted vulnerability scanner before checking out historical source")
 	}
 	tagIndex, tag := requireStep(t, job, "Ensure release tag is on main")
 	if !strings.Contains(tag.Run, `git merge-base --is-ancestor "$tag_sha" origin/main`) {
@@ -213,6 +221,10 @@ func TestPublisherVerifiesIsolatedInputsBeforeReceivingSecrets(t *testing.T) {
 	}
 	if tag.Env["EXPECTED_TAG_SHA"] != "${{ needs.release-inputs.outputs.tag-sha }}" || !strings.Contains(tag.Run, `test "$tag_sha" = "$EXPECTED_TAG_SHA"`) {
 		t.Fatal("publisher must reject isolated inputs generated from a different trusted tag revision")
+	}
+	scanIndex, scan := requireStep(t, job, "Check shipped CLI for reachable vulnerabilities")
+	if !strings.Contains(scan.Run, `"$RUNNER_TEMP/openai-cli-govulncheck" "$GITHUB_WORKSPACE"`) {
+		t.Fatal("publisher must run the preserved trusted scanner against the validated release source")
 	}
 	downloadIndex, download := requireStep(t, job, "Download isolated release inputs")
 	if download.Uses != downloadArtifactAction || download.With["name"] != releaseInputsArtifact {
@@ -223,8 +235,8 @@ func TestPublisherVerifiesIsolatedInputsBeforeReceivingSecrets(t *testing.T) {
 	}
 	verifyIndex, _ := requireStep(t, job, "Verify isolated release inputs")
 	firstCredentialIndex, _ := requireStep(t, job, "Create release app token for this repo")
-	if !(checkoutIndex < verifiedBinaryIndex && verifiedBinaryIndex < tagIndex && tagIndex < downloadIndex && downloadIndex < verifyIndex && verifyIndex < firstCredentialIndex) {
-		t.Fatal("trusted checkout, verified binary, trusted tag, and isolated artifacts must precede publishing credentials")
+	if !(checkoutIndex < verifiedBinaryIndex && verifiedBinaryIndex < setupIndex && setupIndex < preserveScannerIndex && preserveScannerIndex < tagIndex && tagIndex < scanIndex && scanIndex < downloadIndex && downloadIndex < verifyIndex && verifyIndex < firstCredentialIndex) {
+		t.Fatal("verified tooling, patched Go, preserved scanner, validated tag, vulnerability scan, and isolated artifacts must precede publishing credentials")
 	}
 	for index, step := range job.Steps[:firstCredentialIndex] {
 		if strings.Contains(fmt.Sprint(step.With, step.Env, step.Run), "secrets.") {
@@ -480,8 +492,8 @@ func TestHistoricalTagCannotRunPrivilegedBeforeHooks(t *testing.T) {
 		t.Fatalf("invalid historical-tag regression fixture: hooks=%v err=%v", legacy.Before.Hooks, err)
 	}
 	_, release := requireStep(t, readWorkflow(t, "publish-release.yml").Jobs["goreleaser"], "Run GoReleaser")
-	if release.Run != "goreleaser release --clean --skip=before" || release.Uses != "" {
-		t.Fatalf("publisher must run only the verified local binary with legacy hooks disabled: %#v", release)
+	if strings.TrimSpace(release.Run) != `"$GORELEASER_EXECUTABLE" release --clean --skip=before` || release.Uses != "" || release.Env["GORELEASER_EXECUTABLE"] != "${{ steps.goreleaser.outputs.executable }}" {
+		t.Fatalf("publisher must run only the verified immutable executable with legacy hooks disabled: %#v", release)
 	}
 }
 
@@ -493,11 +505,11 @@ func TestCISnapshotGeneratesInputsBeforeGoReleaser(t *testing.T) {
 	installerTestIndex, _ := requireStep(t, job, "Test verified GoReleaser installer")
 	verifiedBinaryIndex, verifiedBinary := requireStep(t, job, "Set up verified GoReleaser")
 	releaseIndex, release := requireStep(t, job, "Run GoReleaser")
-	if verifiedBinary.Uses != "./.github/actions/setup-goreleaser" {
-		t.Fatal("CI must preserve the reviewed digest-verified GoReleaser installer")
+	if verifiedBinary.Uses != "./.github/actions/setup-goreleaser" || verifiedBinary.ID != "goreleaser" {
+		t.Fatal("CI must expose the reviewed digest-verified GoReleaser executable")
 	}
-	if release.Run != "goreleaser release --snapshot --clean --skip=publish" {
-		t.Fatalf("CI must preserve the existing verified snapshot invocation, got %q", release.Run)
+	if strings.TrimSpace(release.Run) != `"$GORELEASER_EXECUTABLE" release --snapshot --clean --skip=publish` || release.Env["GORELEASER_EXECUTABLE"] != "${{ steps.goreleaser.outputs.executable }}" {
+		t.Fatalf("CI must preserve the existing verified immutable snapshot invocation, got %#v", release)
 	}
 	if !(installerTestIndex < verifiedBinaryIndex && verifiedBinaryIndex < generateIndex && generateIndex < releaseIndex) {
 		t.Fatal("CI must test and verify GoReleaser, then generate inputs before its credential exists")

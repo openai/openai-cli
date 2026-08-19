@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "${1:-$(dirname "$0")/..}"
+
+scanner_workspace="$(mktemp -d)"
+trap 'rm -rf "$scanner_workspace"' EXIT
+
+export GOMODCACHE="$scanner_workspace/modules"
+export GOCACHE="$scanner_workspace/build"
+export GOBIN="$scanner_workspace/bin"
+export GOFLAGS=-modcacherw
+export GOSUMDB=sum.golang.org
+export GONOSUMDB=
+export GOPRIVATE=
+
+go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+
+for target in \
+  darwin/amd64 darwin/arm64 \
+  linux/386 linux/arm/6 linux/amd64 linux/arm64 \
+  windows/386 windows/amd64 windows/arm64; do
+  IFS=/ read -r goos goarch goarm <<< "$target"
+  cgo_enabled="${CGO_ENABLED:-}"
+  if [[ "$goos" == linux ]]; then
+    cgo_enabled=0
+  fi
+  echo "==> Checking shipped CLI for reachable vulnerabilities ($target)"
+  GOOS="$goos" GOARCH="$goarch" GOARM="${goarm:-}" CGO_ENABLED="$cgo_enabled" \
+    "$GOBIN/govulncheck" ./cmd/openai
+done
