@@ -39,15 +39,24 @@ jobs:
 
       - uses: ./.github/actions/setup-go
 
+      - name: Test vulnerability scan coverage
+        run: ./scripts/govulncheck-test
+
+      - name: Check shipped CLI for reachable vulnerabilities
+        run: ./scripts/govulncheck
+
       - name: Test verified GoReleaser installer
         run: ./scripts/test-goreleaser-installer
 
       - name: Set up verified GoReleaser
+        id: goreleaser
         uses: ./.github/actions/setup-goreleaser
 
       - name: Run GoReleaser
-        run: goreleaser release --snapshot --clean --skip=publish
+        run: |
+          "$GORELEASER_EXECUTABLE" release --snapshot --clean --skip=publish
         env:
+          GORELEASER_EXECUTABLE: ${{ steps.goreleaser.outputs.executable }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build:

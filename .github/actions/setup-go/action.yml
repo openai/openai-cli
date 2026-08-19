@@ -6,7 +6,8 @@ runs:
     - name: Setup go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
-        go-version-file: ./go.mod
+        go-version-file: .go-version
+        check-latest: true
 
     - name: Bootstrap
       shell: bash
