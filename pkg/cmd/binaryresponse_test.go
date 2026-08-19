@@ -268,12 +268,8 @@ func TestWriteBinaryResponsePropagatesReadErrorsAndShortWrites(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("writeBinaryResponse(canceled file) error = %v, want %v", err, context.Canceled)
 		}
-		content, readErr := os.ReadFile(outfile)
-		if readErr != nil {
-			t.Fatalf("os.ReadFile(%q) returned error: %v", outfile, readErr)
-		}
-		if string(content) != "partial response" {
-			t.Errorf("writeBinaryResponse(canceled file) content = %q, want %q", content, "partial response")
+		if _, readErr := os.Stat(outfile); !errors.Is(readErr, os.ErrNotExist) {
+			t.Errorf("os.Stat(%q) error = %v, want canceled destination to remain absent", outfile, readErr)
 		}
 	})
 
@@ -578,6 +574,7 @@ func TestWriteAutomaticBinaryResponsePreservesFilenameCollisions(t *testing.T) {
 
 func TestWriteAutomaticBinaryResponseUsesPrivateBoundedSpool(t *testing.T) {
 	spoolDir := t.TempDir()
+	t.Chdir(spoolDir)
 	t.Setenv("TMPDIR", spoolDir)
 	t.Setenv("TMP", spoolDir)
 	t.Setenv("TEMP", spoolDir)
@@ -608,6 +605,7 @@ func TestWriteAutomaticBinaryResponseUsesPrivateBoundedSpool(t *testing.T) {
 
 func TestWriteAutomaticBinaryResponseCleansSpoolOnCancellation(t *testing.T) {
 	spoolDir := t.TempDir()
+	t.Chdir(spoolDir)
 	t.Setenv("TMPDIR", spoolDir)
 	t.Setenv("TMP", spoolDir)
 	t.Setenv("TEMP", spoolDir)
@@ -641,12 +639,17 @@ func TestWriteAutomaticBinaryResponsePropagatesOutputErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("unavailable private temporary storage", func(t *testing.T) {
+	t.Run("unavailable system temporary storage", func(t *testing.T) {
+		t.Chdir(t.TempDir())
 		setUnavailableTempDir(t)
 		response := &http.Response{Body: io.NopCloser(strings.NewReader("text content"))}
-		_, err := writeAutomaticBinaryResponse(response, io.Discard)
-		if !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("writeAutomaticBinaryResponse(unavailable temporary storage) error = %v, want missing-path error", err)
+		var stdout bytes.Buffer
+		_, err := writeAutomaticBinaryResponse(response, &stdout)
+		if err != nil {
+			t.Errorf("writeAutomaticBinaryResponse(unavailable system temporary storage) error = %v, want nil", err)
+		}
+		if stdout.String() != "text content" {
+			t.Errorf("writeAutomaticBinaryResponse(unavailable system temporary storage) stdout = %q, want %q", stdout.String(), "text content")
 		}
 	})
 }

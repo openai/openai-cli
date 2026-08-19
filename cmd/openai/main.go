@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"slices"
+	"syscall"
 
 	"github.com/openai/openai-cli/pkg/cmd"
 	"github.com/openai/openai-go/v3"
@@ -28,7 +30,9 @@ func main() {
 		}
 	}
 
-	if err := app.Run(context.Background(), os.Args); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := app.Run(ctx, os.Args); err != nil {
 		exitCode := 1
 
 		// Check if error has a custom exit code
