@@ -23,9 +23,17 @@ fi
 
 echo "==> Starting mock server with URL ${URL}"
 
-# npm verifies every downloaded package against the reviewed lockfile integrity.
-npm ci --prefix scripts/mock-tools --include=dev --include=optional \
+# Install only reviewed manifests into a new directory, never over prior packages.
+INSTALL_DIRECTORY="$(mktemp -d scripts/mock-tools/.install.XXXXXXXX)"
+trap 'rm -rf "$INSTALL_DIRECTORY"' EXIT
+cp scripts/mock-tools/package.json scripts/mock-tools/package-lock.json "$INSTALL_DIRECTORY/"
+
+npm ci --prefix "$INSTALL_DIRECTORY" --include=dev --include=optional \
   --ignore-scripts --no-audit --no-fund
+node scripts/mock-tools/resolve-native.js "$INSTALL_DIRECTORY" >/dev/null
+
+rm -rf scripts/mock-tools/node_modules
+mv "$INSTALL_DIRECTORY/node_modules" scripts/mock-tools/node_modules
 STEADY="$(node scripts/mock-tools/resolve-native.js)"
 
 STEADY_ARGS=(

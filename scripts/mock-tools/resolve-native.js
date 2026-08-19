@@ -11,7 +11,7 @@ function requireInside(directory, candidate, description, boundary = "its locked
 function resolveLockedPackage(toolsDirectory, name, searchDirectory, expectedVersion) {
   const manifest = require.resolve(`${name}/package.json`, { paths: [searchDirectory] });
   const packageDirectory = fs.realpathSync(path.dirname(manifest));
-  requireInside(toolsDirectory, packageDirectory, `Steady package ${name}`);
+  requireInside(path.join(toolsDirectory, "node_modules"), packageDirectory, `Steady package ${name}`);
 
   const installed = JSON.parse(fs.readFileSync(path.join(packageDirectory, "package.json"), "utf8"));
   if (installed.name !== name || installed.version !== expectedVersion) {
@@ -50,7 +50,7 @@ function resolveNativeBinary(toolsDirectory, platform = process.platform, archit
 
 if (require.main === module) {
   try {
-    process.stdout.write(resolveNativeBinary(__dirname));
+    process.stdout.write(resolveNativeBinary(process.argv[2] || __dirname));
   } catch (error) {
     console.error(`Unable to verify the locked Steady native executable: ${error.message}`);
     process.exitCode = 1;

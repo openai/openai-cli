@@ -1,4 +1,6 @@
 const assert = require("node:assert");
+const { spawnSync } = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -35,6 +37,7 @@ function withNativeFixture(run, layout = "hoisted") {
   try {
     fs.mkdirSync(path.join(packageDirectory, "bin"), { recursive: true });
     fs.mkdirSync(wrapperDirectory, { recursive: true });
+    fs.copyFileSync(path.join(__dirname, "package.json"), path.join(toolsDirectory, "package.json"));
     fs.copyFileSync(path.join(__dirname, "package-lock.json"), path.join(toolsDirectory, "package-lock.json"));
     fs.writeFileSync(path.join(wrapperDirectory, "package.json"), JSON.stringify({ name: "@stdy/cli", version: wrapper.version }));
     fs.writeFileSync(path.join(packageDirectory, "package.json"), JSON.stringify({ name: packageName, version: packageVersion }));
@@ -65,6 +68,28 @@ function withNativeFixture(run, layout = "hoisted") {
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+}
+
+function runMock(repository, toolsDirectory, configuration = {}) {
+  fs.copyFileSync(path.join(__dirname, "..", "mock"), path.join(repository, "scripts", "mock"));
+  fs.copyFileSync(path.join(__dirname, "resolve-native.js"), path.join(toolsDirectory, "resolve-native.js"));
+
+  return spawnSync(path.join(repository, "scripts", "mock"), ["fixture.openapi.yml"], {
+    cwd: repository,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      npm_config_cache: path.join(repository, "empty-cache"),
+      npm_config_offline: "true",
+      OPENAI_API_KEY: "synthetic-sdk95-canary",
+      STEADY_CANARY_FILE: path.join(repository, "stolen-canary"),
+      ...configuration,
+    },
+  });
+}
+
+function installCanaryExecutable(executable) {
+  fs.writeFileSync(executable, '#!/bin/sh\nprintf "%s" "$OPENAI_API_KEY" > "$STEADY_CANARY_FILE"\n', { mode: 0o755 });
 }
 
 test("locks the wrapper and every supported native platform", () => {
@@ -112,6 +137,23 @@ test("rejects a missing native package even when an ancestor package exists", ()
   });
 });
 
+test("rejects a missing native package despite an in-directory NODE_PATH fallback", () => {
+  withNativeFixture(({ toolsDirectory, packageDirectory, packageName }) => {
+    const fallback = path.join(toolsDirectory, "unreviewed");
+    const forgedPackage = path.join(fallback, packageName);
+    fs.mkdirSync(path.dirname(forgedPackage), { recursive: true });
+    fs.renameSync(packageDirectory, forgedPackage);
+
+    const script = 'const { resolveNativeBinary } = require(process.argv[1]); process.stdout.write(resolveNativeBinary(process.argv[2]));';
+    const result = spawnSync(process.execPath, ["-e", script, path.join(__dirname, "resolve-native.js"), toolsDirectory], {
+      encoding: "utf8",
+      env: { ...process.env, NODE_PATH: fallback },
+    });
+
+    assert.notStrictEqual(result.status, 0, `accepted unreviewed NODE_PATH executable: ${result.stdout}`);
+  });
+});
+
 test("rejects an installed native package with a different version", () => {
   withNativeFixture(({ toolsDirectory, packageDirectory, packageName }) => {
     fs.writeFileSync(path.join(packageDirectory, "package.json"), JSON.stringify({ name: packageName, version: "0.22.1" }));
@@ -153,5 +195,46 @@ test("rejects a native executable that escapes its locked package", () => {
     fs.rmSync(executable);
     fs.symlinkSync(external, executable);
     assert.throws(() => resolveNativeBinary(toolsDirectory), /outside its locked package/);
+  });
+});
+
+test("rejects a forged prior installation when ambient npm dry-run succeeds", () => {
+  withNativeFixture(({ repository, toolsDirectory, executable }) => {
+    installCanaryExecutable(executable);
+    const result = runMock(repository, toolsDirectory, { npm_config_dry_run: "true" });
+
+    assert.notStrictEqual(result.status, 0, "ambient dry-run launched a forged prior installation");
+    assert.strictEqual(fs.existsSync(path.join(repository, "stolen-canary")), false);
+  });
+});
+
+test("ignores a sibling shrinkwrap containing counterfeit same-version archives", () => {
+  withNativeFixture(({ repository, toolsDirectory, wrapperDirectory, packageDirectory, packageName, executable }) => {
+    installCanaryExecutable(executable);
+    fs.writeFileSync(
+      path.join(wrapperDirectory, "package.json"),
+      JSON.stringify({ name: "@stdy/cli", version: wrapper.version, optionalDependencies: { [packageName]: wrapper.version } }),
+    );
+
+    const archiveDirectory = path.join(repository, "counterfeit-archives");
+    fs.mkdirSync(archiveDirectory);
+    const shrinkwrap = JSON.parse(fs.readFileSync(path.join(toolsDirectory, "package-lock.json"), "utf8"));
+
+    for (const [name, directory] of [["@stdy/cli", wrapperDirectory], [packageName, packageDirectory]]) {
+      const packed = spawnSync("npm", ["pack", "--ignore-scripts", "--silent", "--pack-destination", archiveDirectory, directory], {
+        encoding: "utf8",
+      });
+      assert.strictEqual(packed.status, 0, packed.stderr);
+      const archive = path.join(archiveDirectory, packed.stdout.trim().split("\n").pop());
+      const entry = shrinkwrap.packages[`node_modules/${name}`];
+      entry.resolved = `file:${archive}`;
+      entry.integrity = `sha512-${crypto.createHash("sha512").update(fs.readFileSync(archive)).digest("base64")}`;
+    }
+
+    fs.writeFileSync(path.join(toolsDirectory, "npm-shrinkwrap.json"), JSON.stringify(shrinkwrap));
+    const result = runMock(repository, toolsDirectory, { npm_config_dry_run: "false" });
+
+    assert.notStrictEqual(result.status, 0, "counterfeit shrinkwrap archives launched their native executable");
+    assert.strictEqual(fs.existsSync(path.join(repository, "stolen-canary")), false);
   });
 });
