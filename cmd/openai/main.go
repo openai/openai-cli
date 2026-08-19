@@ -30,8 +30,21 @@ func main() {
 		}
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt, syscall.SIGTERM)
+	defer func() {
+		signal.Stop(interrupts)
+		cancel()
+	}()
+	go func() {
+		select {
+		case <-interrupts:
+			signal.Stop(interrupts)
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 	if err := app.Run(ctx, os.Args); err != nil {
 		exitCode := 1
 

@@ -3,7 +3,10 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,9 +15,13 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	appcmd "github.com/openai/openai-cli/pkg/cmd"
+	"github.com/urfave/cli/v3"
 )
 
 const interruptedDownloadHelper = "OPENAI_INTERRUPTED_DOWNLOAD_HELPER"
+const blockedSignalHelper = "OPENAI_BLOCKED_SIGNAL_HELPER"
 
 func TestMainCleansInterruptedDownloads(t *testing.T) {
 	for _, interrupted := range []struct {
@@ -120,5 +127,90 @@ func TestInterruptedDownloadHelper(t *testing.T) {
 		"files", "content", "--file-id", "file_123",
 		"--output", os.Getenv("OPENAI_INTERRUPTED_DOWNLOAD_OUTPUT"),
 	}
+	main()
+}
+
+func TestMainSecondSignalTerminatesBlockedOperation(t *testing.T) {
+	for _, interrupted := range []struct {
+		name   string
+		signal os.Signal
+	}{
+		{name: "SIGINT", signal: os.Interrupt},
+		{name: "SIGTERM", signal: syscall.SIGTERM},
+	} {
+		t.Run(interrupted.name, func(t *testing.T) {
+			executable, err := os.Executable()
+			if err != nil {
+				t.Fatalf("os.Executable() = %v, want nil", err)
+			}
+			process := exec.CommandContext(t.Context(), executable, "-test.run=^TestBlockedSignalHelper$")
+			process.Env = append(os.Environ(), blockedSignalHelper+"=1")
+			stdout, err := process.StdoutPipe()
+			if err != nil {
+				t.Fatalf("blocked-signal subprocess StdoutPipe() = %v, want nil", err)
+			}
+			var stderr bytes.Buffer
+			process.Stderr = &stderr
+			if err := process.Start(); err != nil {
+				t.Fatalf("blocked-signal subprocess Start() = %v, want nil", err)
+			}
+			events := make(chan string, 2)
+			go func() {
+				scanner := bufio.NewScanner(stdout)
+				for scanner.Scan() {
+					events <- scanner.Text()
+				}
+			}()
+			waitForSignalEvent := func(want string) {
+				t.Helper()
+				select {
+				case got := <-events:
+					if got != want {
+						t.Fatalf("blocked-signal subprocess event = %q, want %q", got, want)
+					}
+				case <-time.After(5 * time.Second):
+					_ = process.Process.Kill()
+					_ = process.Wait()
+					t.Fatalf("blocked-signal subprocess did not report %q", want)
+				}
+			}
+			waitForSignalEvent("ready")
+			if err := process.Process.Signal(interrupted.signal); err != nil {
+				t.Fatalf("first Signal(%s) = %v, want nil", interrupted.name, err)
+			}
+			waitForSignalEvent("canceled")
+			if err := process.Process.Signal(interrupted.signal); err != nil {
+				t.Fatalf("second Signal(%s) = %v, want nil", interrupted.name, err)
+			}
+			exited := make(chan error, 1)
+			go func() { exited <- process.Wait() }()
+			select {
+			case err := <-exited:
+				if err == nil {
+					t.Errorf("second Signal(%s) exit = nil, want signal termination", interrupted.name)
+				}
+			case <-time.After(2 * time.Second):
+				_ = process.Process.Kill()
+				<-exited
+				t.Errorf("second Signal(%s) did not terminate the blocked CLI; stderr: %s", interrupted.name, stderr.String())
+			}
+		})
+	}
+}
+
+func TestBlockedSignalHelper(t *testing.T) {
+	if os.Getenv(blockedSignalHelper) != "1" {
+		t.Skip("blocked-signal helper subprocess")
+	}
+	appcmd.Command = &cli.Command{
+		Name: "openai",
+		Action: func(ctx context.Context, command *cli.Command) error {
+			fmt.Fprintln(os.Stdout, "ready")
+			<-ctx.Done()
+			fmt.Fprintln(os.Stdout, "canceled")
+			select {}
+		},
+	}
+	os.Args = []string{"openai"}
 	main()
 }
