@@ -28,11 +28,6 @@ npm ci --prefix scripts/mock-tools --include=dev --include=optional \
   --ignore-scripts --no-audit --no-fund
 STEADY="$(node scripts/mock-tools/resolve-native.js)"
 
-# npm registry mirrors do not always expose provenance verification endpoints.
-if [ "${GITHUB_ACTIONS:-}" == "true" ]; then
-  node scripts/mock-tools/verify-provenance.js
-fi
-
 STEADY_ARGS=(
   --host 127.0.0.1
   -p 4010

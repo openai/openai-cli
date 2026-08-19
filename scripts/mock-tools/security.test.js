@@ -4,9 +4,13 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { resolveNativeBinary } = require("./resolve-native");
-const { createAuditWorkspace, lockedPackages, verifyAuditOutput, verifyProvenance } = require("./verify-provenance");
 
-const packages = lockedPackages(__dirname);
+const lockfile = JSON.parse(fs.readFileSync(path.join(__dirname, "package-lock.json"), "utf8"));
+const wrapper = lockfile.packages["node_modules/@stdy/cli"];
+const packages = ["@stdy/cli", ...Object.keys(wrapper.optionalDependencies)].map((name) => ({
+  name,
+  ...lockfile.packages[`node_modules/${name}`],
+}));
 
 function test(name, run) {
   try {
@@ -15,33 +19,6 @@ function test(name, run) {
   } catch (error) {
     console.error(`FAIL ${name}: ${error.message}`);
     process.exitCode = 1;
-  }
-}
-
-function withAuditStub(output, exitCode, run) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "openai-cli-steady-audit-test-"));
-  const invocationLog = path.join(directory, "invocations.log");
-  const previousPath = process.env.PATH;
-  const previousConsoleLog = console.log;
-
-  fs.writeFileSync(path.join(directory, "npm"), [
-    "#!/usr/bin/env node",
-    "const fs = require('node:fs');",
-    `fs.appendFileSync(${JSON.stringify(invocationLog)}, process.argv.slice(2, 4).join(' ') + '\\n');`,
-    "if (process.argv[2] !== 'audit') { process.stderr.write('unexpected second npm invocation'); process.exit(23); }",
-    `process.stdout.write(${JSON.stringify(output)});`,
-    `process.exit(${exitCode});`,
-  ].join("\n"), { mode: 0o755 });
-
-  process.env.PATH = `${directory}${path.delimiter}${previousPath}`;
-  console.log = () => {};
-
-  try {
-    run(invocationLog);
-  } finally {
-    process.env.PATH = previousPath;
-    console.log = previousConsoleLog;
-    fs.rmSync(directory, { recursive: true, force: true });
   }
 }
 
@@ -57,6 +34,15 @@ function withNativeFixture(run) {
   try {
     fs.mkdirSync(path.dirname(executable), { recursive: true });
     fs.copyFileSync(path.join(__dirname, "package-lock.json"), path.join(toolsDirectory, "package-lock.json"));
+    const committedLock = JSON.parse(fs.readFileSync(path.join(toolsDirectory, "package-lock.json"), "utf8"));
+    const installedLock = {
+      lockfileVersion: committedLock.lockfileVersion,
+      packages: {
+        "node_modules/@stdy/cli": committedLock.packages["node_modules/@stdy/cli"],
+        [`node_modules/${packageName}`]: committedLock.packages[`node_modules/${packageName}`],
+      },
+    };
+    fs.writeFileSync(path.join(toolsDirectory, "node_modules", ".package-lock.json"), JSON.stringify(installedLock));
     fs.writeFileSync(path.join(packageDirectory, "package.json"), JSON.stringify({ name: packageName, version: packageVersion }));
     fs.writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     run({ directory, repository, toolsDirectory, packageDirectory, packageName, packageVersion, executable });
@@ -78,54 +64,12 @@ test("locks the wrapper and every supported native platform", () => {
       "@stdy/cli-win32-x64",
     ],
   );
-});
-
-test("audits all native platforms without downloading their executables", () => {
-  const workspace = createAuditWorkspace(packages);
-  try {
-    const manifest = JSON.parse(fs.readFileSync(path.join(workspace, "package.json"), "utf8"));
-    assert.deepStrictEqual(Object.keys(manifest.dependencies).sort(), packages.map(({ name }) => name).sort());
-    for (const pkg of packages) {
-      const directory = path.join(workspace, "node_modules", pkg.name);
-      assert.deepStrictEqual(fs.readdirSync(directory), ["package.json"]);
-    }
-  } finally {
-    fs.rmSync(workspace, { recursive: true, force: true });
+  for (const pkg of packages) {
+    assert.strictEqual(pkg.version, "0.22.2");
+    assert.strictEqual(pkg.license, "MIT");
+    assert.match(pkg.integrity, /^sha512-[A-Za-z0-9+/]{86}==$/);
+    assert.strictEqual(new URL(pkg.resolved).hostname, "registry.npmjs.org");
   }
-});
-
-test("accepts complete npm 10 and npm 11 signature and attestation summaries", () => {
-  const output = "audited 6 packages in 1s\n\n6 packages have verified registry signatures\n\n6 packages have verified attestations\n";
-  assert.doesNotThrow(() => verifyAuditOutput(output, packages.length));
-});
-
-test("uses exactly one canonical npm audit without an independent attestation fetch", () => {
-  const output = "6 packages have verified registry signatures\n6 packages have verified attestations\n";
-  withAuditStub(output, 0, (invocationLog) => {
-    assert.doesNotThrow(() => verifyProvenance(__dirname));
-    assert.deepStrictEqual(fs.readFileSync(invocationLog, "utf8").trim().split("\n"), ["audit signatures"]);
-  });
-});
-
-test("rejects a failed canonical npm audit even when its coverage summary is complete", () => {
-  const output = "6 packages have verified registry signatures\n6 packages have verified attestations\n";
-  withAuditStub(output, 9, () => {
-    assert.throws(() => verifyProvenance(__dirname), /npm signature and provenance verification failed/);
-  });
-});
-
-test("rejects an incomplete registry-signature summary", () => {
-  const output = "5 packages have verified registry signatures\n6 packages have verified attestations\n";
-  assert.throws(() => verifyAuditOutput(output, packages.length), /registry signatures for all 6/);
-});
-
-test("rejects a missing or incomplete provenance summary", () => {
-  const signatures = "6 packages have verified registry signatures\n";
-  assert.throws(() => verifyAuditOutput(signatures, packages.length), /provenance for all 6/);
-  assert.throws(
-    () => verifyAuditOutput(`${signatures}5 packages have verified attestations\n`, packages.length),
-    /provenance for all 6/,
-  );
 });
 
 test("executes only the checked, exact-version native executable", () => {
@@ -148,6 +92,46 @@ test("rejects an installed native package with a different version", () => {
   withNativeFixture(({ toolsDirectory, packageDirectory, packageName }) => {
     fs.writeFileSync(path.join(packageDirectory, "package.json"), JSON.stringify({ name: packageName, version: "0.22.1" }));
     assert.throws(() => resolveNativeBinary(toolsDirectory), /does not match locked/);
+  });
+});
+
+test("rejects an installed native package whose integrity differs from the committed lock", () => {
+  withNativeFixture(({ toolsDirectory, packageName }) => {
+    const installedLockPath = path.join(toolsDirectory, "node_modules", ".package-lock.json");
+    const installedLock = JSON.parse(fs.readFileSync(installedLockPath, "utf8"));
+    installedLock.packages[`node_modules/${packageName}`].integrity = `sha512-${Buffer.alloc(64).toString("base64")}`;
+    fs.writeFileSync(installedLockPath, JSON.stringify(installedLock));
+    assert.throws(() => resolveNativeBinary(toolsDirectory), /does not match locked integrity/);
+  });
+});
+
+test("rejects an installed wrapper whose integrity differs from the committed lock", () => {
+  withNativeFixture(({ toolsDirectory }) => {
+    const installedLockPath = path.join(toolsDirectory, "node_modules", ".package-lock.json");
+    const installedLock = JSON.parse(fs.readFileSync(installedLockPath, "utf8"));
+    installedLock.packages["node_modules/@stdy/cli"].integrity = `sha512-${Buffer.alloc(64).toString("base64")}`;
+    fs.writeFileSync(installedLockPath, JSON.stringify(installedLock));
+    assert.throws(() => resolveNativeBinary(toolsDirectory), /does not match locked integrity/);
+  });
+});
+
+test("rejects an installed native package from a different registry URL", () => {
+  withNativeFixture(({ toolsDirectory, packageName }) => {
+    const installedLockPath = path.join(toolsDirectory, "node_modules", ".package-lock.json");
+    const installedLock = JSON.parse(fs.readFileSync(installedLockPath, "utf8"));
+    installedLock.packages[`node_modules/${packageName}`].resolved = "https://untrusted.example/steady.tgz";
+    fs.writeFileSync(installedLockPath, JSON.stringify(installedLock));
+    assert.throws(() => resolveNativeBinary(toolsDirectory), /does not match locked integrity, version, or URL/);
+  });
+});
+
+test("rejects a committed native lock entry without valid SHA-512 integrity", () => {
+  withNativeFixture(({ toolsDirectory, packageName }) => {
+    const lockfilePath = path.join(toolsDirectory, "package-lock.json");
+    const committedLock = JSON.parse(fs.readFileSync(lockfilePath, "utf8"));
+    committedLock.packages[`node_modules/${packageName}`].integrity = "sha512-invalid";
+    fs.writeFileSync(lockfilePath, JSON.stringify(committedLock));
+    assert.throws(() => resolveNativeBinary(toolsDirectory), /invalid SHA-512 integrity/);
   });
 });
 

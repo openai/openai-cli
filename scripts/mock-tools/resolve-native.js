@@ -17,6 +17,31 @@ function resolveNativeBinary(toolsDirectory, platform = process.platform, archit
     throw new Error(`Locked Steady package ${packageName} does not match the current platform`);
   }
 
+  const installedLockPath = path.join(trustedDirectory, "node_modules", ".package-lock.json");
+  if (fs.realpathSync(installedLockPath) !== installedLockPath) {
+    throw new Error("Steady installation lock resolves outside its locked tooling directory");
+  }
+  const installedLock = JSON.parse(fs.readFileSync(installedLockPath, "utf8"));
+
+  for (const [installedPath, committedPackage] of [
+    ["node_modules/@stdy/cli", wrapper],
+    [lockfilePath, lockedPackage],
+  ]) {
+    if (!/^sha512-[A-Za-z0-9+/]{86}==$/.test(committedPackage.integrity)) {
+      throw new Error(`Locked Steady package ${installedPath} has invalid SHA-512 integrity`);
+    }
+
+    const installed = installedLock.packages?.[installedPath];
+    if (
+      !installed ||
+      installed.version !== committedPackage.version ||
+      installed.resolved !== committedPackage.resolved ||
+      installed.integrity !== committedPackage.integrity
+    ) {
+      throw new Error(`Installed Steady package ${installedPath} does not match locked integrity, version, or URL`);
+    }
+  }
+
   const packageDirectory = path.resolve(trustedDirectory, lockfilePath);
   const actualDirectory = fs.realpathSync(packageDirectory);
   if (actualDirectory !== packageDirectory) {
