@@ -209,11 +209,7 @@ func writeBinaryResponse(response *http.Response, stdout io.Writer, outfile stri
 		if err != nil {
 			return "", err
 		}
-		defer file.Close()
-		if _, err := io.Copy(file, response.Body); err != nil {
-			return "", err
-		}
-		if err := file.Close(); err != nil {
+		if err := copyDownloadFile(file, response.Body); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Wrote output to: %s", outfile), nil
@@ -286,11 +282,20 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
-	if _, err := io.Copy(file, spool); err != nil {
+	if err := copyDownloadFile(file, spool); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("Wrote output to: %s", file.Name()), nil
+}
+
+func copyDownloadFile(file io.WriteCloser, source io.Reader) (err error) {
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+	_, err = io.Copy(file, source)
+	return err
 }
 
 // Return a writable file handle to a new file, which attempts to choose a good filename

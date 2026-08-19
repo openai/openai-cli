@@ -160,6 +160,56 @@ func TestWriteBinaryResponsePreservesExplicitFileBehavior(t *testing.T) {
 	})
 }
 
+func TestDownloadFileCloseErrors(t *testing.T) {
+	closeErr := errors.New("synthetic destination close failure")
+	copyErr := errors.New("synthetic destination copy failure")
+
+	for _, destination := range []string{"explicit destination", "automatic destination"} {
+		t.Run(destination, func(t *testing.T) {
+			t.Run("reports close failure after successful copy", func(t *testing.T) {
+				file := &closeTrackingDownloadFile{closeErr: closeErr}
+				err := copyDownloadFile(file, strings.NewReader("download content"))
+				if !errors.Is(err, closeErr) {
+					t.Errorf("copyDownloadFile(%s) error = %v, want %v", destination, err, closeErr)
+				}
+				if file.closeCalls != 1 {
+					t.Errorf("copyDownloadFile(%s) closed the destination %d times, want 1", destination, file.closeCalls)
+				}
+				if got := file.content.String(); got != "download content" {
+					t.Errorf("copyDownloadFile(%s) content = %q, want %q", destination, got, "download content")
+				}
+			})
+
+			t.Run("preserves copy failure when close also fails", func(t *testing.T) {
+				file := &closeTrackingDownloadFile{closeErr: closeErr, writeErr: copyErr, writeLimit: 7}
+				err := copyDownloadFile(file, strings.NewReader("download content"))
+				if !errors.Is(err, copyErr) {
+					t.Errorf("copyDownloadFile(%s) error = %v, want earlier copy error %v", destination, err, copyErr)
+				}
+				if errors.Is(err, closeErr) {
+					t.Errorf("copyDownloadFile(%s) exposed close error %v instead of preserving copy error %v", destination, closeErr, copyErr)
+				}
+				if file.closeCalls != 1 {
+					t.Errorf("copyDownloadFile(%s) closed the destination %d times, want 1", destination, file.closeCalls)
+				}
+				if got := file.content.String(); got != "downloa" {
+					t.Errorf("copyDownloadFile(%s) partial content = %q, want %q", destination, got, "downloa")
+				}
+			})
+
+			t.Run("closes a successful destination exactly once", func(t *testing.T) {
+				file := &closeTrackingDownloadFile{}
+				if err := copyDownloadFile(file, strings.NewReader("download content")); err != nil {
+					t.Errorf("copyDownloadFile(%s) returned unexpected error: %v", destination, err)
+				}
+				if file.closeCalls != 1 {
+					t.Errorf("copyDownloadFile(%s) closed the destination %d times, want 1", destination, file.closeCalls)
+				}
+			})
+		})
+	}
+}
+
 func TestWriteBinaryResponseDirectOutputsDoNotRequireTemporaryStorage(t *testing.T) {
 	t.Run("stdout", func(t *testing.T) {
 		setUnavailableTempDir(t)
@@ -626,6 +676,33 @@ func (reader *boundedDownloadReader) Read(data []byte) (int, error) {
 func (reader *boundedDownloadReader) Close() error {
 	reader.closed = true
 	return nil
+}
+
+type closeTrackingDownloadFile struct {
+	content    bytes.Buffer
+	closeErr   error
+	writeErr   error
+	writeLimit int
+	closeCalls int
+}
+
+func (file *closeTrackingDownloadFile) Write(data []byte) (int, error) {
+	if file.writeErr != nil {
+		if len(data) > file.writeLimit {
+			data = data[:file.writeLimit]
+		}
+		n, err := file.content.Write(data)
+		if err != nil {
+			return n, err
+		}
+		return n, file.writeErr
+	}
+	return file.content.Write(data)
+}
+
+func (file *closeTrackingDownloadFile) Close() error {
+	file.closeCalls++
+	return file.closeErr
 }
 
 type countingDownloadWriter struct {
