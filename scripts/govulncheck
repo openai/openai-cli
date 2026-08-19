@@ -6,11 +6,18 @@ cd "${1:-$(dirname "$0")/..}"
 
 go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
 
+scanner_directory="$(go env GOBIN)"
+if [[ -z "$scanner_directory" ]]; then
+  gopath="$(go env GOPATH)"
+  scanner_directory="${gopath%%:*}/bin"
+fi
+
 for target in \
   darwin/amd64 darwin/arm64 \
   linux/386 linux/arm/6 linux/amd64 linux/arm64 \
   windows/386 windows/amd64 windows/arm64; do
   IFS=/ read -r goos goarch goarm <<< "$target"
   echo "==> Checking shipped CLI for reachable vulnerabilities ($target)"
-  GOOS="$goos" GOARCH="$goarch" GOARM="${goarm:-}" govulncheck ./cmd/openai
+  GOOS="$goos" GOARCH="$goarch" GOARM="${goarm:-}" \
+    "$scanner_directory/govulncheck" ./cmd/openai
 done

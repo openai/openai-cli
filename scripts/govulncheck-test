@@ -9,10 +9,16 @@ trap 'rm -rf "$test_directory"' EXIT
 
 cat > "$test_directory/go" <<'EOF'
 #!/usr/bin/env bash
-[[ "$*" == 'install golang.org/x/vuln/cmd/govulncheck@v1.7.0' ]]
+case "$*" in
+  'install golang.org/x/vuln/cmd/govulncheck@v1.7.0') ;;
+  'env GOBIN') printf '%s\n' "${GOVULNCHECK_TEST_GOBIN:-}" ;;
+  'env GOPATH') printf '%s\n' "$GOVULNCHECK_TEST_GOPATH" ;;
+  *) exit 1 ;;
+esac
 EOF
 
-cat > "$test_directory/govulncheck" <<'EOF'
+mkdir -p "$test_directory/bin"
+cat > "$test_directory/bin/govulncheck" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 target="$GOOS/$GOARCH"
@@ -28,7 +34,14 @@ if [[ -n "${GOVULNCHECK_TEST_EXPECTED_DIRECTORY:-}" ]]; then
 fi
 EOF
 
-chmod +x "$test_directory/go" "$test_directory/govulncheck"
+cat > "$test_directory/govulncheck" <<'EOF'
+#!/usr/bin/env bash
+echo 'govulncheck executed an untrusted binary from PATH' >&2
+exit 97
+EOF
+
+chmod +x "$test_directory/go" "$test_directory/govulncheck" "$test_directory/bin/govulncheck"
+export GOVULNCHECK_TEST_GOPATH="$test_directory:$test_directory/unused"
 
 scan_log="$test_directory/scans"
 PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
@@ -37,6 +50,19 @@ PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
 expected_scans=$'darwin/amd64 ./cmd/openai\ndarwin/arm64 ./cmd/openai\nlinux/386 ./cmd/openai\nlinux/arm/v6 ./cmd/openai\nlinux/amd64 ./cmd/openai\nlinux/arm64 ./cmd/openai\nwindows/386 ./cmd/openai\nwindows/amd64 ./cmd/openai\nwindows/arm64 ./cmd/openai'
 if [[ "$(< "$scan_log")" != "$expected_scans" ]]; then
   echo 'govulncheck did not cover every shipped release target' >&2
+  exit 1
+fi
+
+configured_gobin="$test_directory/configured-bin"
+mkdir -p "$configured_gobin"
+cp "$test_directory/bin/govulncheck" "$configured_gobin/govulncheck"
+
+: > "$scan_log"
+PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
+  GOVULNCHECK_TEST_GOBIN="$configured_gobin" ./scripts/govulncheck > /dev/null
+
+if [[ "$(< "$scan_log")" != "$expected_scans" ]]; then
+  echo 'govulncheck did not use the configured GOBIN installation directory' >&2
   exit 1
 fi
 
@@ -68,4 +94,4 @@ if [[ "$(< "$scan_log")" != "$expected_scans" ]]; then
   exit 1
 fi
 
-echo 'govulncheck covers every release target, fails closed, and scans historical tags'
+echo 'govulncheck uses its pinned binary, covers every release target, fails closed, and scans historical tags'
