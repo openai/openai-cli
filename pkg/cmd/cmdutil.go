@@ -205,44 +205,118 @@ func writeBinaryResponse(response *http.Response, stdout io.Writer, outfile stri
 		}
 		return writeAutomaticBinaryResponse(response, stdout)
 	default:
-		file, err := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-		if err != nil {
-			return "", err
-		}
-		if err := copyDownloadFile(file, response.Body); err != nil {
+		if err := writeExplicitBinaryResponse(response.Body, outfile); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Wrote output to: %s", outfile), nil
 	}
 }
 
+func writeExplicitBinaryResponse(body io.Reader, outfile string) error {
+	target := outfile
+	info, err := os.Lstat(outfile)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		target, err = filepath.EvalSymlinks(outfile)
+		if err != nil {
+			return err
+		}
+		info, err = os.Stat(target)
+		if err != nil {
+			return err
+		}
+	}
+	if info != nil && !info.Mode().IsRegular() {
+		file, err := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		if err != nil {
+			return err
+		}
+		return copyDownloadFile(file, body)
+	}
+	if info != nil {
+		file, err := os.OpenFile(target, os.O_WRONLY, 0)
+		if err != nil {
+			return err
+		}
+		if err := file.Close(); err != nil {
+			return err
+		}
+	}
+
+	staged, err := os.CreateTemp(filepath.Dir(target), ".openai-cli-download-*")
+	if err != nil {
+		return err
+	}
+	stagedName := staged.Name()
+	defer os.Remove(stagedName)
+
+	if err := copyDownloadFile(staged, body); err != nil {
+		return err
+	}
+	if info != nil {
+		if err := os.Chmod(stagedName, info.Mode().Perm()); err != nil {
+			return err
+		}
+	}
+	return os.Rename(stagedName, target)
+}
+
 // writeAutomaticBinaryResponse preserves full-response UTF-8 detection without
 // keeping an arbitrarily large response in memory.
 func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (string, error) {
-	spool, err := os.CreateTemp("", "openai-cli-download-*")
+	staged, err := os.CreateTemp(".", ".openai-cli-download-*")
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(spool.Name())
-	defer spool.Close()
+	stagedName := staged.Name()
+	defer os.Remove(stagedName)
 
-	if _, err := io.Copy(spool, response.Body); err != nil {
+	if err := copyDownloadFile(staged, response.Body); err != nil {
 		return "", err
 	}
-	if _, err := spool.Seek(0, io.SeekStart); err != nil {
+	sample, text, err := inspectAutomaticBinaryResponse(stagedName, stdout)
+	if err != nil {
 		return "", err
 	}
+	if text {
+		return "", nil
+	}
+
+	file, err := createDownloadFile(response, sample)
+	if err != nil {
+		return "", err
+	}
+	filename := file.Name()
+	if err := file.Close(); err != nil {
+		os.Remove(filename)
+		return "", err
+	}
+	if err := os.Rename(stagedName, filename); err != nil {
+		os.Remove(filename)
+		return "", err
+	}
+	return fmt.Sprintf("Wrote output to: %s", filename), nil
+}
+
+func inspectAutomaticBinaryResponse(filename string, stdout io.Writer) ([]byte, bool, error) {
+	spool, err := os.Open(filename)
+	if err != nil {
+		return nil, false, err
+	}
+	defer spool.Close()
 
 	// DetectContentType examines at most 512 bytes. Keep enough additional
 	// bytes to complete a UTF-8 rune that straddles that boundary.
 	sample := make([]byte, 512+utf8.UTFMax-1)
 	n, err := io.ReadFull(spool, sample)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return "", err
+		return nil, false, err
 	}
 	sample = sample[:n]
 	if _, err := spool.Seek(0, io.SeekStart); err != nil {
-		return "", err
+		return nil, false, err
 	}
 
 	validUTF8 := true
@@ -253,7 +327,7 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 			break
 		}
 		if err != nil {
-			return "", err
+			return nil, false, err
 		}
 		if r == utf8.RuneError && size == 1 {
 			validUTF8 = false
@@ -271,21 +345,13 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 	}
 
 	if _, err := spool.Seek(0, io.SeekStart); err != nil {
-		return "", err
+		return nil, false, err
 	}
 	if validUTF8 && isUTF8TextFile(sample) {
 		_, err := io.Copy(stdout, spool)
-		return "", err
+		return sample, true, err
 	}
-
-	file, err := createDownloadFile(response, sample)
-	if err != nil {
-		return "", err
-	}
-	if err := copyDownloadFile(file, spool); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("Wrote output to: %s", file.Name()), nil
+	return sample, false, nil
 }
 
 func copyDownloadFile(file io.WriteCloser, source io.Reader) (err error) {
