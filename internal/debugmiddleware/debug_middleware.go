@@ -17,7 +17,7 @@ type (
 
 const redactedPlaceholder = "<REDACTED>"
 
-// Headers known to contain sensitive information like an API key. Note that this exclude `Authorization`,
+// Headers known to contain sensitive information like an API key. Note that this excludes `Authorization`,
 // which is handled specially in `redactHeaders` below.
 var sensitiveHeaders = []string{
 	"api-key",
@@ -66,7 +66,7 @@ func (m *RequestLogger) Middleware() Middleware {
 // redactRequest redacts sensitive information from the request for logging
 // purposes. If redaction is necessary, the request is cloned before mutating
 // the original and that clone is returned. As a small optimization, the
-// original is request is returned unchanged if no redaction is necessary.
+// the original request is returned unchanged if no redaction is necessary.
 func (m *RequestLogger) redactRequest(req *http.Request) (*http.Request, error) {
 	redactedHeaders := m.redactHeaders(req.Header)
 
