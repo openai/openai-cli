@@ -340,8 +340,7 @@ printf 'moderations\tCreate moderations\n'
 			}
 
 			scriptPath := filepath.Join(dir, "completion.fish")
-			isolatedScript := strings.ReplaceAll(completionScript, "/tmp/fish-debug.log", debugLog)
-			if !assert.NoError(t, os.WriteFile(scriptPath, []byte(isolatedScript), 0o600)) {
+			if !assert.NoError(t, os.WriteFile(scriptPath, []byte(completionScript), 0o600)) {
 				return
 			}
 
