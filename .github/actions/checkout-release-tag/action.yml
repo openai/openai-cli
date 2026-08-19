@@ -27,13 +27,16 @@ runs:
         esac
         git check-ref-format "refs/tags/$TAG"
 
-        authenticated_origin="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        remote_tag="$(git ls-remote --exit-code --tags --refs "$authenticated_origin" "refs/tags/$TAG")"
+        origin="https://github.com/${GITHUB_REPOSITORY}.git"
+        export RELEASE_GIT_AUTHORIZATION="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+        git_auth=(--config-env=http.https://github.com/.extraheader=RELEASE_GIT_AUTHORIZATION)
+        remote_tag="$(git "${git_auth[@]}" ls-remote --exit-code --tags --refs "$origin" "refs/tags/$TAG")"
         remote_ref="$(printf '%s\n' "$remote_tag" | awk '{print $2}')"
         test "$remote_ref" = "refs/tags/$TAG"
 
-        git fetch --no-tags "$authenticated_origin" +refs/heads/main:refs/remotes/origin/main
-        git fetch --no-tags "$authenticated_origin" "+refs/tags/$TAG:refs/tags/$TAG"
+        git "${git_auth[@]}" fetch --no-tags "$origin" +refs/heads/main:refs/remotes/origin/main
+        git "${git_auth[@]}" fetch --no-tags "$origin" "+refs/tags/$TAG:refs/tags/$TAG"
+        unset RELEASE_GIT_AUTHORIZATION
 
         local_ref="$(git for-each-ref --format='%(refname)' "refs/tags/$TAG")"
         test "$local_ref" = "refs/tags/$TAG"

@@ -500,7 +500,10 @@ func TestReleaseTagValidationRemainsSharedAndAuthenticated(t *testing.T) {
 	}
 	for _, required := range []string{
 		`git check-ref-format "refs/tags/$TAG"`,
-		`git ls-remote --exit-code --tags --refs "$authenticated_origin"`,
+		`origin="https://github.com/${GITHUB_REPOSITORY}.git"`,
+		`--config-env=http.https://github.com/.extraheader=RELEASE_GIT_AUTHORIZATION`,
+		`git "${git_auth[@]}" ls-remote --exit-code --tags --refs "$origin"`,
+		`unset RELEASE_GIT_AUTHORIZATION`,
 		`git merge-base --is-ancestor "$tag_sha" origin/main`,
 		`git checkout --detach "$tag_sha"`,
 		`test "$(git rev-parse HEAD)" = "$tag_sha"`,
