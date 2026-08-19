@@ -12,10 +12,11 @@ on:
         required: true
         type: string
 jobs:
-  goreleaser:
+  release-inputs:
     if: github.repository == 'openai/openai-cli'
     runs-on: ubuntu-latest
-    environment: publish
+    outputs:
+      tag-sha: ${{ steps.trusted-tag.outputs.sha }}
     permissions:
       contents: read
     steps:
@@ -25,6 +26,7 @@ jobs:
         fetch-depth: 0
         persist-credentials: false
     - name: Ensure release tag is on main
+      id: trusted-tag
       env:
         GITHUB_TOKEN: ${{ github.token }}
         TAG: ${{ inputs.tag }}
@@ -51,10 +53,130 @@ jobs:
         git merge-base --is-ancestor "$tag_sha" origin/main
         git checkout --detach "$tag_sha"
         test "$(git rev-parse HEAD)" = "$tag_sha"
+        echo "sha=$tag_sha" >> "$GITHUB_OUTPUT"
     - name: Set up Go
       uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
       with:
         go-version-file: "go.mod"
+        cache: false
+    - name: Generate release inputs
+      run: |
+        mkdir -p completions
+        go run ./cmd/openai/main.go @completion bash > completions/openai.bash
+        go run ./cmd/openai/main.go @completion zsh > completions/openai.zsh
+        go run ./cmd/openai/main.go @completion fish > completions/openai.fish
+        go run ./cmd/openai/main.go @manpages -o man
+    - name: Stage isolated release inputs
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: openai-release-inputs
+        path: |
+          completions/openai.bash
+          completions/openai.zsh
+          completions/openai.fish
+          man/man1/openai.1.gz
+        if-no-files-found: error
+        retention-days: 1
+
+  goreleaser:
+    needs: release-inputs
+    if: github.repository == 'openai/openai-cli'
+    runs-on: ubuntu-latest
+    environment: publish
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Ensure release tag is on main
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        TAG: ${{ inputs.tag }}
+        EXPECTED_TAG_SHA: ${{ needs.release-inputs.outputs.tag-sha }}
+      run: |
+        case "$TAG" in
+          v*) ;;
+          *) echo "Release tag must start with v: $TAG"; exit 1 ;;
+        esac
+        git check-ref-format "refs/tags/$TAG"
+
+        authenticated_origin="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        remote_tag="$(git ls-remote --exit-code --tags --refs "$authenticated_origin" "refs/tags/$TAG")"
+        remote_ref="$(printf '%s\n' "$remote_tag" | awk '{print $2}')"
+        test "$remote_ref" = "refs/tags/$TAG"
+
+        git fetch --no-tags "$authenticated_origin" +refs/heads/main:refs/remotes/origin/main
+        git fetch --no-tags "$authenticated_origin" "+refs/tags/$TAG:refs/tags/$TAG"
+
+        local_ref="$(git for-each-ref --format='%(refname)' "refs/tags/$TAG")"
+        test "$local_ref" = "refs/tags/$TAG"
+
+        tag_sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+        echo "Release tag $TAG resolves to $tag_sha"
+        test "$tag_sha" = "$EXPECTED_TAG_SHA"
+        git merge-base --is-ancestor "$tag_sha" origin/main
+        git checkout --detach "$tag_sha"
+        test "$(git rev-parse HEAD)" = "$tag_sha"
+    - name: Set up Go
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      with:
+        go-version-file: "go.mod"
+    - name: Download isolated release inputs
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        name: openai-release-inputs
+        path: ${{ runner.temp }}/openai-release-inputs
+    - name: Verify isolated release inputs
+      env:
+        RELEASE_INPUT_DIR: ${{ runner.temp }}/openai-release-inputs
+      run: |
+        set -euo pipefail
+
+        if [[ ! -d "$RELEASE_INPUT_DIR" || -L "$RELEASE_INPUT_DIR" ]]; then
+          echo "Release inputs must be a real directory"
+          exit 1
+        fi
+
+        while IFS= read -r -d '' path; do
+          relative="${path#"$RELEASE_INPUT_DIR"/}"
+          case "$relative" in
+            completions|man|man/man1)
+              [[ -d "$path" && ! -L "$path" ]] || exit 1
+              ;;
+            completions/openai.bash|completions/openai.zsh|completions/openai.fish|man/man1/openai.1.gz)
+              [[ -f "$path" && ! -L "$path" ]] || exit 1
+              size="$(wc -c < "$path")"
+              if [[ "$size" -eq 0 || "$size" -gt 10485760 ]]; then
+                echo "Release input has an invalid size: $relative"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unexpected release input: $relative"
+              exit 1
+              ;;
+          esac
+        done < <(find "$RELEASE_INPUT_DIR" -mindepth 1 -print0)
+
+        for path in completions/openai.bash completions/openai.zsh completions/openai.fish man/man1/openai.1.gz; do
+          [[ -f "$RELEASE_INPUT_DIR/$path" && ! -L "$RELEASE_INPUT_DIR/$path" ]] || exit 1
+        done
+
+        mkdir -p completions man/man1
+        for path in completions/openai.bash completions/openai.zsh completions/openai.fish man/man1/openai.1.gz; do
+          install -m 0644 "$RELEASE_INPUT_DIR/$path" "$path"
+        done
+
+        exclude_file="$(git rev-parse --git-path info/exclude)"
+        printf '%s\n' \
+          '/completions/openai.bash' \
+          '/completions/openai.zsh' \
+          '/completions/openai.fish' \
+          '/man/man1/openai.1.gz' \
+          >> "$exclude_file"
     - name: Create release app token for this repo
       id: app-token
       uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -79,7 +201,7 @@ jobs:
       uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.1.0
       with:
         version: ${{ steps.goreleaser-version.outputs.version }}
-        args: release --clean
+        args: release --clean --skip=before
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}

@@ -70,9 +70,9 @@ observable behavior changes.
 - Keep GitHub App private keys, release and Homebrew tokens, macOS signing and
   notarization credentials, and short-lived OIDC credentials inside approved
   release, publishing, or attestation boundaries. Never expose them to
-  untrusted pull requests, executable dependencies, logs, or artifacts.
-  Release hooks remove publishing, signing, and OIDC credentials before
-  running repository code or Go dependencies.
+  untrusted pull requests, executable dependencies, logs, or artifacts. Run
+  repository code and Go dependencies for release inputs in a separate,
+  credential-free job before creating publishing or signing credentials.
 - Preserve protected `release` and `publish` environments, validated release
   tags on `main`, GoReleaser artifacts, Homebrew publication, and provenance
   attestations. Restrict `id-token: write` and `attestations: write` to the
