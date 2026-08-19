@@ -11,10 +11,18 @@ The reviewed checksums cover Linux and macOS hosts on x86_64 and arm64. The
 host architecture does not limit the Linux, macOS, and Windows release targets
 configured in `.goreleaser.yml`.
 
+Shell completions and man pages are generated in a separate, read-only job before
+the protected publishing job receives repository-write tokens or signing and
+notarization credentials. GoReleaser packages those prebuilt files without
+running the application. For local release or snapshot builds, first run
+`./scripts/generate-release-artifacts` without publishing or signing credentials.
+Publishing always skips GoReleaser's `before` hooks, including when an older
+release tag still contains the previous application-executing hooks.
+
 The publish workflow installs GoReleaser from its trusted workflow checkout
 before switching to the requested release tag. This allows existing release tags
 that predate the installer to be republished; the workflow checkout, not the
-historical tag, determines the reviewed GoReleaser version.
+historical tag, determines the reviewed GoReleaser version and artifact generator.
 
 ## Update GoReleaser
 

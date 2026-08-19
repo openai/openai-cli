@@ -1,0 +1,46 @@
+name: Check out an approved release tag
+description: Verify a release tag resolves to a commit on main before checking it out.
+
+inputs:
+  tag:
+    description: Release tag to validate and check out.
+    required: true
+
+outputs:
+  commit:
+    description: Verified commit selected by the release tag.
+    value: ${{ steps.validate.outputs.commit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure release tag is on main
+      id: validate
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        case "$TAG" in
+          v*) ;;
+          *) echo "Release tag must start with v: $TAG"; exit 1 ;;
+        esac
+        git check-ref-format "refs/tags/$TAG"
+
+        authenticated_origin="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        remote_tag="$(git ls-remote --exit-code --tags --refs "$authenticated_origin" "refs/tags/$TAG")"
+        remote_ref="$(printf '%s\n' "$remote_tag" | awk '{print $2}')"
+        test "$remote_ref" = "refs/tags/$TAG"
+
+        git fetch --no-tags "$authenticated_origin" +refs/heads/main:refs/remotes/origin/main
+        git fetch --no-tags "$authenticated_origin" "+refs/tags/$TAG:refs/tags/$TAG"
+
+        local_ref="$(git for-each-ref --format='%(refname)' "refs/tags/$TAG")"
+        test "$local_ref" = "refs/tags/$TAG"
+
+        tag_sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+        echo "Release tag $TAG resolves to $tag_sha"
+        git merge-base --is-ancestor "$tag_sha" origin/main
+        git checkout --detach "$tag_sha"
+        test "$(git rev-parse HEAD)" = "$tag_sha"
+        printf 'commit=%s\n' "$tag_sha" >> "$GITHUB_OUTPUT"
