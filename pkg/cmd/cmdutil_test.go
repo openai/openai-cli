@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -43,6 +45,28 @@ func TestWriteBinaryResponse(t *testing.T) {
 		content, err := os.ReadFile(outfile)
 		require.NoError(t, err)
 		assert.Equal(t, body, content)
+		assertDownloadPermissions(t, outfile, 0600)
+	})
+
+	t.Run("overwrite existing file without changing permissions", func(t *testing.T) {
+		for _, permissions := range []os.FileMode{0600, 0640, 0644} {
+			t.Run(fmt.Sprintf("%04o", permissions), func(t *testing.T) {
+				outfile := filepath.Join(t.TempDir(), "output.txt")
+				require.NoError(t, os.WriteFile(outfile, []byte("existing content to truncate"), permissions))
+				require.NoError(t, os.Chmod(outfile, permissions))
+
+				body := []byte("new")
+				resp := &http.Response{Body: io.NopCloser(bytes.NewReader(body))}
+				msg, err := writeBinaryResponse(resp, os.Stdout, outfile)
+
+				require.NoError(t, err)
+				assert.Contains(t, msg, outfile)
+				content, err := os.ReadFile(outfile)
+				require.NoError(t, err)
+				assert.Equal(t, body, content, "existing output should be overwritten and truncated")
+				assertDownloadPermissions(t, outfile, permissions)
+			})
+		}
 	})
 
 	t.Run("write to stdout", func(t *testing.T) {
@@ -74,6 +98,9 @@ func TestCreateDownloadFile(t *testing.T) {
 		require.NoError(t, err)
 		defer file.Close()
 		assert.Equal(t, "test.txt", filepath.Base(file.Name()))
+		assertDownloadPermissions(t, file.Name(), 0600)
+		_, err = file.WriteString("original content")
+		require.NoError(t, err)
 
 		// Create a second file with the same name to ensure it doesn't clobber the first
 		resp2 := &http.Response{
@@ -86,6 +113,10 @@ func TestCreateDownloadFile(t *testing.T) {
 		defer file2.Close()
 		assert.NotEqual(t, file.Name(), file2.Name(), "second file should have a different name")
 		assert.Contains(t, filepath.Base(file2.Name()), "test")
+		assertDownloadPermissions(t, file2.Name(), 0600)
+		original, err := os.ReadFile(file.Name())
+		require.NoError(t, err)
+		assert.Equal(t, "original content", string(original))
 	})
 
 	t.Run("creates temp file when no header", func(t *testing.T) {
@@ -96,6 +127,7 @@ func TestCreateDownloadFile(t *testing.T) {
 		require.NoError(t, err)
 		defer file.Close()
 		assert.Contains(t, filepath.Base(file.Name()), "file-")
+		assertDownloadPermissions(t, file.Name(), 0600)
 	})
 
 	t.Run("prevents directory traversal", func(t *testing.T) {
@@ -110,7 +142,124 @@ func TestCreateDownloadFile(t *testing.T) {
 		require.NoError(t, err)
 		defer file.Close()
 		assert.Equal(t, "passwd", filepath.Base(file.Name()))
+		assertDownloadPermissions(t, file.Name(), 0600)
 	})
+
+	t.Run("prevents encoded directory traversal", func(t *testing.T) {
+		root := t.TempDir()
+		downloadDir := filepath.Join(root, "downloads")
+		require.NoError(t, os.Mkdir(downloadDir, 0700))
+		t.Chdir(downloadDir)
+
+		outside := filepath.Join(root, "outside.txt")
+		require.NoError(t, os.WriteFile(outside, []byte("untouched"), 0600))
+		resp := &http.Response{
+			Header: http.Header{
+				"Content-Disposition": []string{"attachment; filename*=UTF-8''..%2Foutside.txt"},
+			},
+		}
+
+		file, err := createDownloadFile(resp, []byte("download content"))
+		require.NoError(t, err)
+		defer file.Close()
+		assert.Equal(t, "outside.txt", filepath.Base(file.Name()))
+		assertDownloadPermissions(t, file.Name(), 0600)
+		original, err := os.ReadFile(outside)
+		require.NoError(t, err)
+		assert.Equal(t, "untouched", string(original))
+	})
+
+	t.Run("does not follow an existing symlink", func(t *testing.T) {
+		root := t.TempDir()
+		downloadDir := filepath.Join(root, "downloads")
+		require.NoError(t, os.Mkdir(downloadDir, 0700))
+		t.Chdir(downloadDir)
+
+		target := filepath.Join(root, "target.txt")
+		require.NoError(t, os.WriteFile(target, []byte("untouched"), 0600))
+		if err := os.Symlink(target, "download.txt"); err != nil {
+			if runtime.GOOS == "windows" {
+				t.Skipf("creating symlinks on Windows requires an available privilege: %v", err)
+			}
+			require.NoError(t, err)
+		}
+
+		resp := &http.Response{
+			Header: http.Header{
+				"Content-Disposition": []string{`attachment; filename="download.txt"`},
+			},
+		}
+		file, err := createDownloadFile(resp, []byte("download content"))
+		require.NoError(t, err)
+		defer file.Close()
+		assert.NotEqual(t, "download.txt", filepath.Base(file.Name()))
+		assertDownloadPermissions(t, file.Name(), 0600)
+		original, err := os.ReadFile(target)
+		require.NoError(t, err)
+		assert.Equal(t, "untouched", string(original))
+	})
+
+	t.Run("concurrent downloads use unique private files", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+
+		resp := &http.Response{
+			Header: http.Header{
+				"Content-Disposition": []string{`attachment; filename="download.txt"`},
+			},
+		}
+		body := []byte("download content")
+		type result struct {
+			filename string
+			err      error
+		}
+		const downloadCount = 16
+		results := make(chan result, downloadCount)
+
+		for range downloadCount {
+			go func() {
+				file, err := createDownloadFile(resp, body)
+				if err != nil {
+					results <- result{err: err}
+					return
+				}
+				filename := file.Name()
+				if _, err := file.Write(body); err != nil {
+					file.Close()
+					results <- result{err: fmt.Errorf("write %s: %w", filename, err)}
+					return
+				}
+				if err := file.Close(); err != nil {
+					results <- result{err: fmt.Errorf("close %s: %w", filename, err)}
+					return
+				}
+				results <- result{filename: filename}
+			}()
+		}
+
+		filenames := make(map[string]bool, downloadCount)
+		for range downloadCount {
+			result := <-results
+			require.NoError(t, result.err)
+			assert.False(t, filenames[result.filename], "download filename %q was reused", result.filename)
+			filenames[result.filename] = true
+			assertDownloadPermissions(t, result.filename, 0600)
+			content, err := os.ReadFile(result.filename)
+			require.NoError(t, err)
+			assert.Equal(t, body, content)
+		}
+		assert.Len(t, filenames, downloadCount)
+		assert.True(t, filenames["download.txt"], "one download should use the suggested filename")
+	})
+}
+
+func assertDownloadPermissions(t *testing.T, filename string, expected os.FileMode) {
+	t.Helper()
+
+	info, err := os.Stat(filename)
+	require.NoError(t, err)
+	if runtime.GOOS != "windows" {
+		assert.Equal(t, expected, info.Mode().Perm(), "unexpected permissions for %q", filename)
+	}
 }
 
 func TestValidateBaseURL(t *testing.T) {
