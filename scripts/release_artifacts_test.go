@@ -3,6 +3,9 @@
 package scripts_test
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,6 +111,149 @@ func TestGenerateReleaseArtifactsStopsAfterFailure(t *testing.T) {
 	}
 }
 
+func TestHistoricalReleasePreflight(t *testing.T) {
+	goreleaser, err := exec.LookPath("goreleaser")
+	if err != nil {
+		t.Skip("the verified GoReleaser is unavailable outside the artifact-build job")
+	}
+
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":     "module example.com/historical-release\n\ngo 1.25.0\n",
+		"main.go":    "package main\n\nfunc main() {}\n",
+		".gitignore": "dist/\n",
+		".goreleaser.yml": `version: 2
+project_name: historical-release
+before:
+  hooks:
+    - sh -c "touch legacy-hook-ran"
+builds:
+  - main: .
+    goos: [linux]
+    goarch: [amd64]
+archives:
+  - formats: [tar.gz]
+    files:
+      - completions/*
+      - man/*/*
+`,
+	}
+	for name, contents := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	runHistoricalFixtureCommand(t, root, "git", "init", "--quiet")
+	runHistoricalFixtureCommand(t, root, "git", "remote", "add", "origin", "https://github.com/example/historical-release.git")
+	runHistoricalFixtureCommand(t, root, "git", "add", ".")
+	runHistoricalFixtureCommand(t, root, "git", "-c", "user.name=Release Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "historical release")
+	runHistoricalFixtureCommand(t, root, "git", "tag", "v1.2.3")
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("dist/\n/completions/\n/man/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runHistoricalFixtureCommand(t, root, "git", "add", ".gitignore")
+	runHistoricalFixtureCommand(t, root, "git", "-c", "user.name=Release Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "later ignore rules")
+	runHistoricalFixtureCommand(t, root, "git", "checkout", "--quiet", "--detach", "v1.2.3")
+
+	completions := filepath.Join(root, "completions")
+	manpages := filepath.Join(root, "man", "man1")
+	for _, directory := range []string{completions, manpages} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		path := filepath.Join(completions, "openai."+shell)
+		if err := os.WriteFile(path, []byte("synthetic "+shell+" completion\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manpage, err := os.Create(filepath.Join(manpages, "openai.1.gz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed := gzip.NewWriter(manpage)
+	if _, err := compressed.Write([]byte("synthetic manual\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := manpage.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	release := func() *exec.Cmd {
+		command := exec.Command(goreleaser, "release", "--clean", "--skip=publish,before")
+		command.Dir = root
+		for _, variable := range os.Environ() {
+			name, _, _ := strings.Cut(variable, "=")
+			if !slices.Contains(releaseCredentials, name) {
+				command.Env = append(command.Env, variable)
+			}
+		}
+		return command
+	}
+	output, err := release().CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "git is in a dirty state") {
+		t.Fatalf("historical release did not reject untracked support artifacts: %v; output:\n%s", err, output)
+	}
+
+	workflow := readReleaseYAML[releaseWorkflow](t, filepath.Join("..", ".github", "workflows", "publish-release.yml"))
+	job := workflow.Jobs["goreleaser"]
+	exclude := slices.IndexFunc(job.Steps, func(step releaseStep) bool {
+		return step.Name == "Exclude downloaded release support artifacts"
+	})
+	if exclude >= 0 {
+		runHistoricalFixtureCommand(t, root, "bash", "-c", job.Steps[exclude].Run)
+	}
+	output, err = release().CombinedOutput()
+	if err != nil {
+		t.Fatalf("historical tagged release rejected downloaded support artifacts: %v; output:\n%s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(root, "legacy-hook-ran")); !os.IsNotExist(err) {
+		t.Fatal("historical application-executing hook was not skipped")
+	}
+
+	archives, err := filepath.Glob(filepath.Join(root, "dist", "*.tar.gz"))
+	if err != nil || len(archives) != 1 {
+		t.Fatalf("historical release archives = %v, error = %v; want one archive", archives, err)
+	}
+	archive, err := os.Open(archives[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archive.Close()
+	decompressed, err := gzip.NewReader(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer decompressed.Close()
+	reader := tar.NewReader(decompressed)
+	found := make(map[string]bool)
+	for {
+		header, err := reader.Next()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			t.Fatal(err)
+		}
+		found[header.Name] = true
+	}
+	for _, artifact := range []string{
+		"completions/openai.bash",
+		"completions/openai.zsh",
+		"completions/openai.fish",
+		"man/man1/openai.1.gz",
+	} {
+		if !found[artifact] {
+			t.Errorf("historical release archive omitted %s", artifact)
+		}
+	}
+}
+
 func TestPublishWorkflowSeparatesGenerationFromReleaseCredentials(t *testing.T) {
 	workflow := readReleaseYAML[releaseWorkflow](t, filepath.Join("..", ".github", "workflows", "publish-release.yml"))
 	prepare, ok := workflow.Jobs["prepare-release-artifacts"]
@@ -168,12 +314,19 @@ func TestPublishWorkflowSeparatesGenerationFromReleaseCredentials(t *testing.T) 
 	if len(release.Permissions) != 1 || release.Permissions["contents"] != "read" {
 		t.Errorf("GoReleaser job permissions = %v, want only contents: read", release.Permissions)
 	}
+	releaseCheckout := releaseStepIndex(t, release, "Ensure release tag is on main")
+	exclude := releaseStepIndex(t, release, "Exclude downloaded release support artifacts")
 	download := releaseStepIndex(t, release, "Download release support artifacts")
 	repoToken := releaseStepIndex(t, release, "Create release app token for this repo")
 	tapToken := releaseStepIndex(t, release, "Create release app token for homebrew-tools")
 	run := releaseStepIndex(t, release, "Run GoReleaser")
-	if !(download < repoToken && repoToken < tapToken && tapToken < run) {
-		t.Errorf("privileged steps are out of order: download=%d repo=%d tap=%d release=%d", download, repoToken, tapToken, run)
+	if !(releaseCheckout < exclude && exclude < download && download < repoToken && repoToken < tapToken && tapToken < run) {
+		t.Errorf("privileged steps are out of order: checkout=%d exclude=%d download=%d repo=%d tap=%d release=%d", releaseCheckout, exclude, download, repoToken, tapToken, run)
+	}
+	for _, required := range []string{"/completions/", "/man/", "git rev-parse --git-path info/exclude"} {
+		if !strings.Contains(release.Steps[exclude].Run, required) {
+			t.Errorf("release support artifacts are not excluded through checkout-local Git metadata: missing %s", required)
+		}
 	}
 	if !strings.Contains(release.Steps[run].Run, "--skip=before") {
 		t.Errorf("privileged GoReleaser can execute hooks restored by a historical release tag")
@@ -257,9 +410,13 @@ func TestCIReleaseArtifactsAreGeneratedWithoutPublishingToken(t *testing.T) {
 		t.Fatal("CI has no release-artifact build job")
 	}
 	generate := releaseStepIndex(t, job, "Generate release support artifacts")
+	preflight := releaseStepIndex(t, job, "Verify historical release preflight")
 	release := releaseStepIndex(t, job, "Run GoReleaser")
-	if generate >= release {
-		t.Errorf("CI generates support artifacts after GoReleaser: generate=%d release=%d", generate, release)
+	if !(preflight < generate && generate < release) {
+		t.Errorf("CI release steps are out of order: preflight=%d generate=%d release=%d", preflight, generate, release)
+	}
+	if !strings.Contains(job.Steps[preflight].Run, "TestHistoricalReleasePreflight") {
+		t.Errorf("CI does not execute the real historical-tag release preflight")
 	}
 	if got := job.Steps[generate].Run; got != "./scripts/generate-release-artifacts" {
 		t.Errorf("CI artifact generator = %q, want repository generator", got)
@@ -310,6 +467,17 @@ func TestGoReleaserPreservesArtifactsWithoutApplicationHooks(t *testing.T) {
 	}
 	if !slices.Equal(cask.Manpages, []string{"man/man1/openai.1.gz"}) {
 		t.Errorf("Homebrew man pages = %v, want existing compressed manual", cask.Manpages)
+	}
+}
+
+func runHistoricalFixtureCommand(t *testing.T, directory, name string, args ...string) {
+	t.Helper()
+
+	command := exec.Command(name, args...)
+	command.Dir = directory
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %s: %v; output:\n%s", name, strings.Join(args, " "), err, output)
 	}
 }
 
