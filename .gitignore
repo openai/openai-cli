@@ -1,5 +1,7 @@
 .prism.log
 .stdy.log
 dist/
+/completions/
+/man/
 /openai
 *.exe

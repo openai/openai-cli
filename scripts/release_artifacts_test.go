@@ -111,6 +111,121 @@ func TestGenerateReleaseArtifactsStopsAfterFailure(t *testing.T) {
 	}
 }
 
+func TestLocalReleasePreflight(t *testing.T) {
+	goreleaser, err := exec.LookPath("goreleaser")
+	if err != nil {
+		t.Skip("the verified GoReleaser is unavailable outside the artifact-build job")
+	}
+
+	ignore, err := os.ReadFile(filepath.Join("..", ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	generator, err := os.ReadFile("generate-release-artifacts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	files := map[string]string{
+		".gitignore":                         string(ignore),
+		"scripts/generate-release-artifacts": string(generator),
+		"go.mod":                             "module example.com/local-release\n\ngo 1.25.0\n",
+		"cmd/openai/main.go": `package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+func main() {
+	switch os.Args[1] {
+	case "@completion":
+		fmt.Printf("synthetic %s completion\n", os.Args[2])
+	case "@manpages":
+		directory := filepath.Join(os.Args[3], "man1")
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			panic(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, "openai.1.gz"), []byte("synthetic manual\n"), 0o644); err != nil {
+			panic(err)
+		}
+	}
+}
+`,
+		".goreleaser.yml": `version: 2
+project_name: local-release
+release:
+  disable: true
+builds:
+  - main: ./cmd/openai/main.go
+    goos: [linux]
+    goarch: [amd64]
+archives:
+  - formats: [tar.gz]
+    files:
+      - completions/*
+      - man/*/*
+`,
+	}
+	for name, contents := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(filepath.Join(root, "scripts", "generate-release-artifacts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	runHistoricalFixtureCommand(t, root, "git", "init", "--quiet")
+	runHistoricalFixtureCommand(t, root, "git", "remote", "add", "origin", "https://github.com/example/local-release.git")
+	runHistoricalFixtureCommand(t, root, "git", "add", ".")
+	runHistoricalFixtureCommand(t, root, "git", "-c", "user.name=Release Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "local release")
+	runHistoricalFixtureCommand(t, root, "git", "tag", "v1.2.3")
+
+	environment := make([]string, 0, len(os.Environ()))
+	for _, variable := range os.Environ() {
+		name, _, _ := strings.Cut(variable, "=")
+		if name != "GITHUB_WORKSPACE" && !slices.Contains(releaseCredentials, name) {
+			environment = append(environment, variable)
+		}
+	}
+	prepare := exec.Command("./scripts/generate-release-artifacts")
+	prepare.Dir = root
+	prepare.Env = environment
+	output, err := prepare.CombinedOutput()
+	if err != nil {
+		t.Fatalf("documented local artifact preparation failed: %v; output:\n%s", err, output)
+	}
+	release := func() *exec.Cmd {
+		command := exec.Command(goreleaser, "release", "--clean")
+		command.Dir = root
+		command.Env = environment
+		return command
+	}
+	output, err = release().CombinedOutput()
+	if err != nil {
+		t.Fatalf("documented local non-snapshot release rejected prepared artifacts: %v; output:\n%s", err, output)
+	}
+	assertReleaseArchiveIncludesSupportFiles(t, root, "local")
+
+	unrelated := filepath.Join(root, "nested", "completions")
+	if err := os.MkdirAll(unrelated, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unrelated, "unrelated.txt"), []byte("unrelated dirt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err = release().CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "git is in a dirty state") || !strings.Contains(string(output), "nested/") {
+		t.Fatalf("rooted release-artifact ignores concealed unrelated dirty files: %v; output:\n%s", err, output)
+	}
+}
+
 func TestHistoricalReleasePreflight(t *testing.T) {
 	goreleaser, err := exec.LookPath("goreleaser")
 	if err != nil {
@@ -216,9 +331,15 @@ archives:
 		t.Fatal("historical application-executing hook was not skipped")
 	}
 
+	assertReleaseArchiveIncludesSupportFiles(t, root, "historical")
+}
+
+func assertReleaseArchiveIncludesSupportFiles(t *testing.T, root, scenario string) {
+	t.Helper()
+
 	archives, err := filepath.Glob(filepath.Join(root, "dist", "*.tar.gz"))
 	if err != nil || len(archives) != 1 {
-		t.Fatalf("historical release archives = %v, error = %v; want one archive", archives, err)
+		t.Fatalf("%s release archives = %v, error = %v; want one archive", scenario, archives, err)
 	}
 	archive, err := os.Open(archives[0])
 	if err != nil {
@@ -249,7 +370,7 @@ archives:
 		"man/man1/openai.1.gz",
 	} {
 		if !found[artifact] {
-			t.Errorf("historical release archive omitted %s", artifact)
+			t.Errorf("%s release archive omitted %s", scenario, artifact)
 		}
 	}
 }
@@ -410,13 +531,13 @@ func TestCIReleaseArtifactsAreGeneratedWithoutPublishingToken(t *testing.T) {
 		t.Fatal("CI has no release-artifact build job")
 	}
 	generate := releaseStepIndex(t, job, "Generate release support artifacts")
-	preflight := releaseStepIndex(t, job, "Verify historical release preflight")
+	preflight := releaseStepIndex(t, job, "Verify local and historical release preflight")
 	release := releaseStepIndex(t, job, "Run GoReleaser")
 	if !(preflight < generate && generate < release) {
 		t.Errorf("CI release steps are out of order: preflight=%d generate=%d release=%d", preflight, generate, release)
 	}
-	if !strings.Contains(job.Steps[preflight].Run, "TestHistoricalReleasePreflight") {
-		t.Errorf("CI does not execute the real historical-tag release preflight")
+	if !strings.Contains(job.Steps[preflight].Run, "Test(Local|Historical)ReleasePreflight") {
+		t.Errorf("CI does not execute both real local and historical-tag release preflights")
 	}
 	if got := job.Steps[generate].Run; got != "./scripts/generate-release-artifacts" {
 		t.Errorf("CI artifact generator = %q, want repository generator", got)
