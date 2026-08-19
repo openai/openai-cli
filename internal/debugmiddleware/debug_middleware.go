@@ -82,49 +82,50 @@ func (m *RequestLogger) redactRequest(req *http.Request) (*http.Request, error) 
 // redactResponse clones the response and redacts sensitive headers for logging.
 func (m *RequestLogger) redactResponse(resp *http.Response) *http.Response {
 	redacted := *resp
-	redacted.Header = m.redactHeaders(resp.Header)
+	redacted.Header = m.redactResponseHeaders(resp.Header)
+	redacted.Trailer = m.redactResponseHeaders(resp.Trailer)
+
+	return &redacted
+}
+
+func (m *RequestLogger) redactResponseHeaders(headers http.Header) http.Header {
+	redactedHeaders := m.redactHeaders(headers)
 
 	// Redirect URLs can contain signed query parameters or embedded credentials.
-	if values := redacted.Header.Values("Location"); len(values) > 0 {
-		redacted.Header.Del("Location")
-		for range values {
-			redacted.Header.Add("Location", redactedPlaceholder)
+	for header, values := range redactedHeaders {
+		if strings.EqualFold(header, "Location") {
+			for i := range values {
+				values[i] = redactedPlaceholder
+			}
 		}
 	}
 
-	return &redacted
+	return redactedHeaders
 }
 
 func (m *RequestLogger) redactHeaders(headers http.Header) http.Header {
 	redactedHeaders := headers.Clone()
 
-	// Notably, the clauses below are written so they can redact multiple
-	// headers of the same name if necessary.
-	if values := redactedHeaders.Values("Authorization"); len(values) > 0 {
-		redactedHeaders.Del("Authorization")
-
-		for _, value := range values {
-			// In case we're using something like a bearer token (e.g. `Bearer
-			// <my_token>`), keep the `Bearer` part for more debugging
-			// information.
-			if authKind, _, ok := strings.Cut(value, " "); ok {
-				redactedHeaders.Add("Authorization", authKind+" "+redactedPlaceholder)
-			} else {
-				redactedHeaders.Add("Authorization", redactedPlaceholder)
+	for header, values := range redactedHeaders {
+		if strings.EqualFold(header, "Authorization") {
+			for i, value := range values {
+				// Keep the authentication scheme for more useful debug logging.
+				if authKind, _, ok := strings.Cut(value, " "); ok {
+					values[i] = authKind + " " + redactedPlaceholder
+				} else {
+					values[i] = redactedPlaceholder
+				}
 			}
-		}
-	}
-
-	for _, header := range m.sensitiveHeaders {
-		values := redactedHeaders.Values(header)
-		if len(values) == 0 {
 			continue
 		}
 
-		redactedHeaders.Del(header)
-
-		for range values {
-			redactedHeaders.Add(header, redactedPlaceholder)
+		for _, sensitiveHeader := range m.sensitiveHeaders {
+			if strings.EqualFold(header, sensitiveHeader) {
+				for i := range values {
+					values[i] = redactedPlaceholder
+				}
+				break
+			}
 		}
 	}
 
