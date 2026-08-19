@@ -7,25 +7,56 @@ cd "$(dirname "$0")/.."
 test_directory="$(mktemp -d)"
 trap 'rm -rf "$test_directory"' EXIT
 
+export GOVULNCHECK_TEST_SHARED_MODULE_CACHE="$test_directory/shared-modules"
+export GOVULNCHECK_TEST_SHARED_BUILD_CACHE="$test_directory/shared-build"
+export GOVULNCHECK_TEST_SHARED_BIN="$test_directory/shared-bin"
+export GOVULNCHECK_TEST_TRUSTED_SCANNER="$test_directory/trusted-govulncheck"
+export GOVULNCHECK_TEST_POISONED_SCANNER="$test_directory/poisoned-govulncheck"
+export GOMODCACHE="$GOVULNCHECK_TEST_SHARED_MODULE_CACHE"
+export GOCACHE="$GOVULNCHECK_TEST_SHARED_BUILD_CACHE"
+export GOBIN="$GOVULNCHECK_TEST_SHARED_BIN"
+export GOFLAGS=-mod=mod
+export GOSUMDB=off
+export GONOSUMDB='*'
+export GOPRIVATE='*'
+export GITHUB_PATH="$test_directory/github-path"
+
+mkdir -p "$GOMODCACHE" "$GOCACHE" "$GOBIN"
+
 cat > "$test_directory/go" <<'EOF'
 #!/usr/bin/env bash
+set -euo pipefail
+
 case "$*" in
-  'install golang.org/x/vuln/cmd/govulncheck@v1.7.0') ;;
-  'env GOBIN') printf '%s\n' "${GOVULNCHECK_TEST_GOBIN:-}" ;;
-  'env GOPATH') printf '%s\n' "$GOVULNCHECK_TEST_GOPATH" ;;
+  'install golang.org/x/vuln/cmd/govulncheck@v1.7.0')
+    if [[ "$GOMODCACHE" == "$GOVULNCHECK_TEST_SHARED_MODULE_CACHE" ||
+          "$GOCACHE" == "$GOVULNCHECK_TEST_SHARED_BUILD_CACHE" ||
+          "$GOBIN" == "$GOVULNCHECK_TEST_SHARED_BIN" ]]; then
+      mkdir -p "$GOBIN"
+      cp "$GOVULNCHECK_TEST_POISONED_SCANNER" "$GOBIN/govulncheck"
+      exit 0
+    fi
+    [[ "$GOFLAGS" == -modcacherw ]]
+    [[ "$GOSUMDB" == sum.golang.org ]]
+    [[ -z "$GONOSUMDB" && -z "$GOPRIVATE" ]]
+    mkdir -p "$GOBIN"
+    cp "$GOVULNCHECK_TEST_TRUSTED_SCANNER" "$GOBIN/govulncheck"
+    ;;
   *) exit 1 ;;
 esac
 EOF
 
-mkdir -p "$test_directory/bin"
-cat > "$test_directory/bin/govulncheck" <<'EOF'
+cat > "$GOVULNCHECK_TEST_TRUSTED_SCANNER" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
 target="$GOOS/$GOARCH"
 if [[ "$GOARCH" == arm ]]; then
   target="$target/v$GOARM"
 fi
-printf '%s %s\n' "$target" "$*" >> "$GOVULNCHECK_TEST_LOG"
+printf '%s CGO_ENABLED=%s %s\n' \
+  "$target" "${CGO_ENABLED:-default}" "$*" >> "$GOVULNCHECK_TEST_LOG"
+
 if [[ "${GOVULNCHECK_TEST_FAIL_TARGET:-}" == "$target" ]]; then
   exit 1
 fi
@@ -34,35 +65,43 @@ if [[ -n "${GOVULNCHECK_TEST_EXPECTED_DIRECTORY:-}" ]]; then
 fi
 EOF
 
+cat > "$GOVULNCHECK_TEST_POISONED_SCANNER" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' 'rogue-release-executable' >> "$GITHUB_PATH"
+EOF
+
 cat > "$test_directory/govulncheck" <<'EOF'
 #!/usr/bin/env bash
 echo 'govulncheck executed an untrusted binary from PATH' >&2
 exit 97
 EOF
 
-chmod +x "$test_directory/go" "$test_directory/govulncheck" "$test_directory/bin/govulncheck"
-export GOVULNCHECK_TEST_GOPATH="$test_directory:$test_directory/unused"
+chmod +x "$test_directory/go" "$test_directory/govulncheck" \
+  "$GOVULNCHECK_TEST_TRUSTED_SCANNER" "$GOVULNCHECK_TEST_POISONED_SCANNER"
 
 scan_log="$test_directory/scans"
 PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
   ./scripts/govulncheck > /dev/null
 
-expected_scans=$'darwin/amd64 ./cmd/openai\ndarwin/arm64 ./cmd/openai\nlinux/386 ./cmd/openai\nlinux/arm/v6 ./cmd/openai\nlinux/amd64 ./cmd/openai\nlinux/arm64 ./cmd/openai\nwindows/386 ./cmd/openai\nwindows/amd64 ./cmd/openai\nwindows/arm64 ./cmd/openai'
-if [[ "$(< "$scan_log")" != "$expected_scans" ]]; then
-  echo 'govulncheck did not cover every shipped release target' >&2
+if [[ -s "$GITHUB_PATH" ]]; then
+  echo 'govulncheck trusted an executable built from a poisoned shared cache' >&2
   exit 1
 fi
 
-configured_gobin="$test_directory/configured-bin"
-mkdir -p "$configured_gobin"
-cp "$test_directory/bin/govulncheck" "$configured_gobin/govulncheck"
-
-: > "$scan_log"
-PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
-  GOVULNCHECK_TEST_GOBIN="$configured_gobin" ./scripts/govulncheck > /dev/null
-
+expected_scans="$(cat <<'EOF'
+darwin/amd64 CGO_ENABLED=default ./cmd/openai
+darwin/arm64 CGO_ENABLED=default ./cmd/openai
+linux/386 CGO_ENABLED=0 ./cmd/openai
+linux/arm/v6 CGO_ENABLED=0 ./cmd/openai
+linux/amd64 CGO_ENABLED=0 ./cmd/openai
+linux/arm64 CGO_ENABLED=0 ./cmd/openai
+windows/386 CGO_ENABLED=default ./cmd/openai
+windows/amd64 CGO_ENABLED=default ./cmd/openai
+windows/arm64 CGO_ENABLED=default ./cmd/openai
+EOF
+)"
 if [[ "$(< "$scan_log")" != "$expected_scans" ]]; then
-  echo 'govulncheck did not use the configured GOBIN installation directory' >&2
+  echo 'govulncheck did not match every shipped release target and CGO setting' >&2
   exit 1
 fi
 
@@ -73,7 +112,12 @@ if PATH="$test_directory:$PATH" GOVULNCHECK_TEST_LOG="$scan_log" \
   exit 1
 fi
 
-expected_failed_scans=$'darwin/amd64 ./cmd/openai\ndarwin/arm64 ./cmd/openai\nlinux/386 ./cmd/openai'
+expected_failed_scans="$(cat <<'EOF'
+darwin/amd64 CGO_ENABLED=default ./cmd/openai
+darwin/arm64 CGO_ENABLED=default ./cmd/openai
+linux/386 CGO_ENABLED=0 ./cmd/openai
+EOF
+)"
 if [[ "$(< "$scan_log")" != "$expected_failed_scans" ]]; then
   echo 'govulncheck did not stop at the first vulnerable target' >&2
   exit 1
@@ -94,4 +138,4 @@ if [[ "$(< "$scan_log")" != "$expected_scans" ]]; then
   exit 1
 fi
 
-echo 'govulncheck uses its pinned binary, covers every release target, fails closed, and scans historical tags'
+echo 'govulncheck verifies isolated scanner provenance and matches every release target'

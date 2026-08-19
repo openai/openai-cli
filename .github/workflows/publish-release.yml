@@ -27,12 +27,14 @@ jobs:
         fetch-depth: 0
         persist-credentials: false
     - name: Set up verified GoReleaser
+      id: goreleaser
       uses: ./.github/actions/setup-goreleaser
     - name: Set up Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version-file: .go-version
         check-latest: true
+        cache: false
     - name: Preserve trusted vulnerability scanner
       run: install -m 0755 ./scripts/govulncheck "$RUNNER_TEMP/openai-cli-govulncheck"
     - name: Ensure release tag is on main
@@ -83,8 +85,10 @@ jobs:
         permission-contents: write
         permission-pull-requests: write
     - name: Run GoReleaser
-      run: goreleaser release --clean
+      run: |
+        "$GORELEASER_EXECUTABLE" release --clean
       env:
+        GORELEASER_EXECUTABLE: ${{ steps.goreleaser.outputs.executable }}
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
         GORELEASER_CURRENT_TAG: ${{ inputs.tag }}
