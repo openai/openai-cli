@@ -23,9 +23,10 @@ fi
 
 echo "==> Starting mock server with URL ${URL}"
 
-# Install the reviewed, integrity-locked native package without lifecycle scripts.
+# Preserve and use the reviewed lockfile URLs without running lifecycle scripts.
 npm ci --prefix scripts/mock-tools --include=dev --include=optional \
-  --ignore-scripts --no-audit --no-fund
+  --ignore-scripts --no-audit --no-fund \
+  --omit-lockfile-registry-resolved=false --replace-registry-host=never
 STEADY="$(node scripts/mock-tools/resolve-native.js)"
 
 STEADY_ARGS=(

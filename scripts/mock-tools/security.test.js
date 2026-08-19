@@ -1,4 +1,5 @@
 const assert = require("node:assert");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -51,6 +52,28 @@ function withNativeFixture(run) {
   }
 }
 
+function withMockInstallArguments(configuration, run) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "openai-cli-steady-install-test-"));
+  const argumentsPath = path.join(directory, "arguments.json");
+  const npmPath = path.join(directory, "npm");
+
+  try {
+    fs.writeFileSync(
+      npmPath,
+      `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(argumentsPath)}, JSON.stringify(process.argv.slice(2)));\nprocess.exit(73);\n`,
+      { mode: 0o755 },
+    );
+    const result = spawnSync(path.join(__dirname, "..", "mock"), [path.join(directory, "openapi.yml")], {
+      encoding: "utf8",
+      env: { ...process.env, ...configuration, PATH: `${directory}${path.delimiter}${process.env.PATH}` },
+    });
+    assert.strictEqual(result.status, 73, result.stderr);
+    run(JSON.parse(fs.readFileSync(argumentsPath, "utf8")));
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 test("locks the wrapper and every supported native platform", () => {
   assert.strictEqual(packages.length, 6);
   assert.deepStrictEqual(
@@ -70,6 +93,18 @@ test("locks the wrapper and every supported native platform", () => {
     assert.match(pkg.integrity, /^sha512-[A-Za-z0-9+/]{86}==$/);
     assert.strictEqual(new URL(pkg.resolved).hostname, "registry.npmjs.org");
   }
+});
+
+test("preserves resolved lockfile URLs when ambient npm configuration omits them", () => {
+  withMockInstallArguments({ npm_config_omit_lockfile_registry_resolved: "true" }, (argumentsList) => {
+    assert.ok(argumentsList.includes("--omit-lockfile-registry-resolved=false"));
+  });
+});
+
+test("prevents ambient npm configuration from replacing locked registry hosts", () => {
+  withMockInstallArguments({ npm_config_replace_registry_host: "always" }, (argumentsList) => {
+    assert.ok(argumentsList.includes("--replace-registry-host=never"));
+  });
 });
 
 test("executes only the checked, exact-version native executable", () => {
