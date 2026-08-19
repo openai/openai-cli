@@ -109,6 +109,109 @@ func TestWriteBinaryResponsePreservesExplicitSymlink(t *testing.T) {
 	}
 }
 
+func TestWriteBinaryResponseCreatesDanglingSymlinkTarget(t *testing.T) {
+	directory := t.TempDir()
+	runs := filepath.Join(directory, "runs")
+	if err := os.Mkdir(runs, 0o700); err != nil {
+		t.Fatalf("os.Mkdir(%q) = %v, want nil", runs, err)
+	}
+	outfile := filepath.Join(directory, "latest.bin")
+	if err := os.Symlink(filepath.Join("runs", "new.bin"), outfile); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("creating Windows symlinks requires an available privilege: %v", err)
+		}
+		t.Fatalf("os.Symlink(%q) = %v, want nil", outfile, err)
+	}
+
+	response := &http.Response{Body: io.NopCloser(strings.NewReader("new target content"))}
+	if _, err := writeBinaryResponse(response, io.Discard, outfile); err != nil {
+		t.Fatalf("writeBinaryResponse(dangling symlink %q) = %v, want nil", outfile, err)
+	}
+	link, err := os.Lstat(outfile)
+	if err != nil {
+		t.Fatalf("os.Lstat(%q) = %v, want preserved symlink", outfile, err)
+	}
+	if link.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("writeBinaryResponse(%q) replaced its dangling symlink, want link preserved", outfile)
+	}
+	target := filepath.Join(runs, "new.bin")
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%q) = %v, want newly created target", target, err)
+	}
+	if string(content) != "new target content" {
+		t.Errorf("writeBinaryResponse(%q) target content = %q, want %q", outfile, content, "new target content")
+	}
+	assertDownloadPermissions(t, target, 0o600)
+}
+
+func TestWriteBinaryResponseUpdatesExistingFileInReadOnlyDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not model POSIX directory write permissions")
+	}
+	directory := t.TempDir()
+	outfile := filepath.Join(directory, "download.bin")
+	if err := os.WriteFile(outfile, []byte("original content"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(%q) = %v, want nil", outfile, err)
+	}
+	if err := os.Chmod(directory, 0o500); err != nil {
+		t.Fatalf("os.Chmod(%q) = %v, want nil", directory, err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(directory, 0o700); err != nil {
+			t.Errorf("os.Chmod(%q, 0700) = %v, want nil", directory, err)
+		}
+	})
+
+	response := &http.Response{Body: io.NopCloser(strings.NewReader("replacement"))}
+	if _, err := writeBinaryResponse(response, io.Discard, outfile); err != nil {
+		t.Fatalf("writeBinaryResponse(existing file in read-only directory) = %v, want nil", err)
+	}
+	content, err := os.ReadFile(outfile)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%q) = %v, want nil", outfile, err)
+	}
+	if string(content) != "replacement" {
+		t.Errorf("writeBinaryResponse(%q) content = %q, want %q", outfile, content, "replacement")
+	}
+}
+
+func TestWriteBinaryResponsePreservesExistingInodeAndHardLinks(t *testing.T) {
+	directory := t.TempDir()
+	outfile := filepath.Join(directory, "download.bin")
+	if err := os.WriteFile(outfile, []byte("original content"), 0o640); err != nil {
+		t.Fatalf("os.WriteFile(%q) = %v, want nil", outfile, err)
+	}
+	original, err := os.Stat(outfile)
+	if err != nil {
+		t.Fatalf("os.Stat(%q) = %v, want nil", outfile, err)
+	}
+	hardLink := filepath.Join(directory, "linked.bin")
+	if err := os.Link(outfile, hardLink); err != nil {
+		t.Skipf("the destination filesystem does not support hard links: %v", err)
+	}
+
+	response := &http.Response{Body: io.NopCloser(strings.NewReader("replacement"))}
+	if _, err := writeBinaryResponse(response, io.Discard, outfile); err != nil {
+		t.Fatalf("writeBinaryResponse(%q) = %v, want nil", outfile, err)
+	}
+	updated, err := os.Stat(outfile)
+	if err != nil {
+		t.Fatalf("os.Stat(%q) = %v, want nil", outfile, err)
+	}
+	if !os.SameFile(original, updated) {
+		t.Errorf("writeBinaryResponse(%q) replaced the original inode, want in-place update", outfile)
+	}
+	content, err := os.ReadFile(hardLink)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%q) = %v, want updated hard-link content", hardLink, err)
+	}
+	if string(content) != "replacement" {
+		t.Errorf("writeBinaryResponse(%q) hard-link content = %q, want %q", outfile, content, "replacement")
+	}
+	assertDownloadPermissions(t, outfile, 0o640)
+}
+
 func TestWriteBinaryResponsePreservesReadOnlyDestination(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows read-only file replacement is enforced by the operating system")
@@ -234,6 +337,46 @@ func TestWriteAutomaticBinaryResponseStagesOnDestinationFilesystem(t *testing.T)
 				t.Errorf("writeAutomaticBinaryResponse(binary) content = %q, want %q", data, content.body)
 			}
 		})
+	}
+}
+
+func TestWriteAutomaticBinaryResponsePrintsTextFromReadOnlyDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not model POSIX directory write permissions")
+	}
+	directory := t.TempDir()
+	temporary := t.TempDir()
+	t.Setenv("TMPDIR", temporary)
+	t.Setenv("TMP", temporary)
+	t.Setenv("TEMP", temporary)
+	t.Chdir(directory)
+	if err := os.Chmod(directory, 0o500); err != nil {
+		t.Fatalf("os.Chmod(%q) = %v, want nil", directory, err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(directory, 0o700); err != nil {
+			t.Errorf("os.Chmod(%q, 0700) = %v, want nil", directory, err)
+		}
+	})
+
+	response := &http.Response{Body: io.NopCloser(strings.NewReader("plain text\n")), Header: http.Header{}}
+	var stdout bytes.Buffer
+	message, err := writeAutomaticBinaryResponse(response, &stdout)
+	if err != nil {
+		t.Fatalf("writeAutomaticBinaryResponse(text in read-only directory) = %v, want nil", err)
+	}
+	if message != "" {
+		t.Errorf("writeAutomaticBinaryResponse(text) message = %q, want empty", message)
+	}
+	if stdout.String() != "plain text\n" {
+		t.Errorf("writeAutomaticBinaryResponse(text) stdout = %q, want %q", stdout.String(), "plain text\n")
+	}
+	entries, err := os.ReadDir(temporary)
+	if err != nil {
+		t.Fatalf("os.ReadDir(%q) = %v, want nil", temporary, err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("writeAutomaticBinaryResponse(text) leaked %d temporary files, want none", len(entries))
 	}
 }
 

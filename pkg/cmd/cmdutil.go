@@ -213,20 +213,9 @@ func writeBinaryResponse(response *http.Response, stdout io.Writer, outfile stri
 }
 
 func writeExplicitBinaryResponse(body io.Reader, outfile string) error {
-	target := outfile
-	info, err := os.Lstat(outfile)
+	info, err := os.Stat(outfile)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
-	}
-	if err == nil && info.Mode()&os.ModeSymlink != 0 {
-		target, err = filepath.EvalSymlinks(outfile)
-		if err != nil {
-			return err
-		}
-		info, err = os.Stat(target)
-		if err != nil {
-			return err
-		}
 	}
 	if info != nil && !info.Mode().IsRegular() {
 		file, err := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
@@ -236,12 +225,21 @@ func writeExplicitBinaryResponse(body io.Reader, outfile string) error {
 		return copyDownloadFile(file, body)
 	}
 	if info != nil {
-		file, err := os.OpenFile(target, os.O_WRONLY, 0)
+		return writeExistingBinaryResponse(body, outfile)
+	}
+
+	target := outfile
+	link, err := os.Lstat(outfile)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil && link.Mode()&os.ModeSymlink != 0 {
+		target, err = os.Readlink(outfile)
 		if err != nil {
 			return err
 		}
-		if err := file.Close(); err != nil {
-			return err
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(outfile), target)
 		}
 	}
 
@@ -255,12 +253,40 @@ func writeExplicitBinaryResponse(body io.Reader, outfile string) error {
 	if err := copyDownloadFile(staged, body); err != nil {
 		return err
 	}
-	if info != nil {
-		if err := os.Chmod(stagedName, info.Mode().Perm()); err != nil {
+	return os.Rename(stagedName, target)
+}
+
+func writeExistingBinaryResponse(body io.Reader, outfile string) error {
+	staged, err := os.CreateTemp(filepath.Dir(outfile), ".openai-cli-download-*")
+	if err != nil {
+		staged, err = os.CreateTemp("", ".openai-cli-download-*")
+		if err != nil {
 			return err
 		}
 	}
-	return os.Rename(stagedName, target)
+	stagedName := staged.Name()
+	defer os.Remove(stagedName)
+
+	if err := copyDownloadFile(staged, body); err != nil {
+		return err
+	}
+	complete, err := os.Open(stagedName)
+	if err != nil {
+		return err
+	}
+	defer complete.Close()
+
+	file, err := os.OpenFile(outfile, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	if err := file.Truncate(0); err != nil {
+		if closeErr := file.Close(); closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
+		return err
+	}
+	return copyDownloadFile(file, complete)
 }
 
 // writeAutomaticBinaryResponse preserves full-response UTF-8 detection without
@@ -268,7 +294,10 @@ func writeExplicitBinaryResponse(body io.Reader, outfile string) error {
 func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (string, error) {
 	staged, err := os.CreateTemp(".", ".openai-cli-download-*")
 	if err != nil {
-		return "", err
+		staged, err = os.CreateTemp("", ".openai-cli-download-*")
+		if err != nil {
+			return "", err
+		}
 	}
 	stagedName := staged.Name()
 	defer os.Remove(stagedName)
