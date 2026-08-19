@@ -1,7 +1,9 @@
 package autocomplete
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -238,6 +240,138 @@ func TestBashCompletionScriptDoesNotRegisterPlainCompletion(t *testing.T) {
 
 	assert.Contains(t, completionScript, "complete -o filenames -F __openai_bash_autocomplete openai")
 	assert.False(t, strings.Contains(completionScript, "\ncomplete -F __openai_bash_autocomplete openai"))
+}
+
+func TestFishCompletionScriptDiscardsDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	completionScript, err := shellCompletions[CompletionStyleFish](&cli.Command{}, "openai")
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Contains(t, completionScript, "$current 2>/dev/null)")
+	assert.NotContains(t, completionScript, "/tmp/fish-debug.log")
+	assert.Contains(t, completionScript, "complete -c openai -f -a '(__openai_fish_autocomplete)'")
+}
+
+func TestFishCompletionDoesNotWriteDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	fish, err := exec.LookPath("fish")
+	if err != nil {
+		t.Skip("fish is not available")
+	}
+
+	completionScript, err := shellCompletions[CompletionStyleFish](&cli.Command{}, "openai")
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	tests := []struct {
+		name           string
+		baseURL        string
+		prepareLog     func(t *testing.T, debugLog string) string
+		wantCompletion bool
+	}{
+		{
+			name:           "successful completion does not create a diagnostic file",
+			baseURL:        "https://example.invalid",
+			wantCompletion: true,
+		},
+		{
+			name:    "malformed endpoint does not create a diagnostic file",
+			baseURL: "malformed-user:synthetic-secret@example.invalid",
+		},
+		{
+			name:    "malformed endpoint does not append to an existing diagnostic file",
+			baseURL: "malformed://synthetic-user:synthetic-secret@internal.invalid",
+			prepareLog: func(t *testing.T, debugLog string) string {
+				t.Helper()
+				if !assert.NoError(t, os.WriteFile(debugLog, []byte("unchanged\n"), 0o600)) {
+					return ""
+				}
+				return debugLog
+			},
+		},
+		{
+			name:    "malformed endpoint does not follow a preexisting symlink",
+			baseURL: "malformed://synthetic-user:synthetic-secret@internal.invalid",
+			prepareLog: func(t *testing.T, debugLog string) string {
+				t.Helper()
+				target := filepath.Join(filepath.Dir(debugLog), "protected-target")
+				if !assert.NoError(t, os.WriteFile(target, []byte("unchanged\n"), 0o600)) {
+					return ""
+				}
+				if !assert.NoError(t, os.Symlink(target, debugLog)) {
+					return ""
+				}
+				return target
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			debugLog := filepath.Join(dir, "fish-debug.log")
+			protectedFile := ""
+			if test.prepareLog != nil {
+				protectedFile = test.prepareLog(t, debugLog)
+				if protectedFile == "" {
+					return
+				}
+			}
+
+			mockCLI := `#!/bin/sh
+case "$OPENAI_BASE_URL" in
+  malformed*)
+    printf 'OPENAI_BASE_URL "%s" is missing a scheme (expected http:// or https://)\n' "$OPENAI_BASE_URL" >&2
+    exit 1
+    ;;
+esac
+printf 'models\tList models\n'
+printf 'moderations\tCreate moderations\n'
+`
+			if !assert.NoError(t, os.WriteFile(filepath.Join(dir, "openai"), []byte(mockCLI), 0o755)) {
+				return
+			}
+
+			scriptPath := filepath.Join(dir, "completion.fish")
+			if !assert.NoError(t, os.WriteFile(scriptPath, []byte(completionScript), 0o600)) {
+				return
+			}
+
+			cmd := exec.Command(fish, "--no-config", "-c", `source $argv[1]; complete -C "openai mo"`, scriptPath)
+			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "OPENAI_BASE_URL="+test.baseURL)
+			out, err := cmd.CombinedOutput()
+			output := string(out)
+			if !assert.NoError(t, err, output) {
+				return
+			}
+
+			if test.wantCompletion {
+				assert.Contains(t, output, "models\tList models")
+				assert.Contains(t, output, "moderations\tCreate moderations")
+			} else {
+				assert.Empty(t, output)
+			}
+			assert.NotContains(t, output, "synthetic-secret")
+
+			if protectedFile == "" {
+				_, err := os.Lstat(debugLog)
+				assert.True(t, os.IsNotExist(err), "unexpected diagnostic file %q", debugLog)
+				return
+			}
+
+			contents, err := os.ReadFile(protectedFile)
+			if assert.NoError(t, err) {
+				assert.Equal(t, "unchanged\n", string(contents))
+			}
+		})
+	}
 }
 
 func TestGetCompletions_NonBoolFlagValue(t *testing.T) {
