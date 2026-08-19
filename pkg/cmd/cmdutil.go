@@ -335,7 +335,7 @@ func formatJSONForOutput(res gjson.Result, opts ShowJSONOpts, destination io.Wri
 		return []byte(jsonview.RenderJSON(opts.Title, res) + "\n"), nil
 	case "json":
 		prettyJSON := pretty.Pretty([]byte(res.Raw))
-		if shouldUseColors(opts.Stdout) {
+		if shouldUseColors(destination) {
 			return pretty.Color(prettyJSON, pretty.TerminalStyle), nil
 		} else {
 			return prettyJSON, nil
@@ -343,7 +343,7 @@ func formatJSONForOutput(res gjson.Result, opts ShowJSONOpts, destination io.Wri
 	case "jsonl":
 		// @ugly is gjson syntax for "no whitespace", so it fits on one line
 		oneLineJSON := res.Get("@ugly").Raw
-		if shouldUseColors(opts.Stdout) {
+		if shouldUseColors(destination) {
 			bytes := append(pretty.Color([]byte(oneLineJSON), pretty.TerminalStyle), '\n')
 			return bytes, nil
 		} else {

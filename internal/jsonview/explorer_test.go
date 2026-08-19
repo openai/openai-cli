@@ -63,6 +63,40 @@ func TestSanitizeTerminalStringEscapesControlSequences(t *testing.T) {
 	requireNoRawTerminalControls(t, got)
 }
 
+func TestSanitizeTerminalStringDoesNotAllocateForCleanInput(t *testing.T) {
+	const input = "ordinary terminal output with unicode: café ☕"
+
+	allocations := testing.AllocsPerRun(100, func() {
+		_ = SanitizeTerminalString(input)
+	})
+
+	require.Zero(t, allocations)
+	require.Equal(t, input, SanitizeTerminalString(input))
+}
+
+func TestSanitizeTerminalStringPreservesMalformedUTF8Behavior(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "invalid leading byte", input: string([]byte{0xff, 'a'}), want: "\ufffda"},
+		{name: "invalid middle byte", input: string([]byte{'a', 0xff, 'b'}), want: "a\ufffdb"},
+		{name: "invalid trailing byte", input: string([]byte{'a', 0xff}), want: "a\ufffd"},
+		{name: "valid replacement rune", input: "a\ufffdb", want: "a\ufffdb"},
+		{name: "invalid byte with escape", input: string([]byte{'a', 0xff, '\x1b'}), want: "a\ufffd\\u001b"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, SanitizeTerminalString(tt.input))
+		})
+	}
+}
+
 func TestStaticDisplayEscapesDecodedStrings(t *testing.T) {
 	t.Parallel()
 

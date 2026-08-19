@@ -3,20 +3,35 @@ package jsonview
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // SanitizeTerminalString escapes control characters that terminals can interpret.
 func SanitizeTerminalString(s string) string {
 	var b strings.Builder
-	for _, r := range s {
+	for i, r := range s {
 		escaped := terminalControlEscape(r)
+		if b.Cap() == 0 && escaped == "" {
+			if r != utf8.RuneError {
+				continue
+			}
+			// Preserve range's existing normalization of malformed UTF-8.
+			_, width := utf8.DecodeRuneInString(s[i:])
+			if width != 1 {
+				continue
+			}
+		}
+		if b.Cap() == 0 {
+			b.Grow(len(s))
+			b.WriteString(s[:i])
+		}
 		if escaped == "" {
 			b.WriteRune(r)
-			continue
+		} else {
+			b.WriteString(escaped)
 		}
-		b.WriteString(escaped)
 	}
-	if b.Len() == len(s) {
+	if b.Cap() == 0 {
 		return s
 	}
 	return b.String()

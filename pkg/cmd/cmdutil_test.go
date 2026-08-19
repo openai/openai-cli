@@ -718,18 +718,49 @@ func TestShowJSONIteratorRawOutputPreservesPipelineBytes(t *testing.T) {
 	require.Equal(t, []byte(first+"\n"+second+"\n"), output)
 }
 
-func TestShowJSONIteratorRawOutputEscapesPaginatedTerminalControls(t *testing.T) {
+func TestFormatJSONForOutputUsesFinalDestinationForColors(t *testing.T) {
 	if !isTerminal(os.Stdout) {
-		t.Skip("pager regression requires an interactive stdout terminal")
+		t.Skip("color destination regression requires an interactive stdout terminal")
 	}
 
-	tempDir := t.TempDir()
-	outputPath := filepath.Join(tempDir, "pager-output")
-	pagerPath := filepath.Join(tempDir, "capture-pager")
-	pager := "#!/bin/sh\ncat > \"$OPENAI_CLI_TEST_PAGER_OUTPUT\"\n"
-	require.NoError(t, os.WriteFile(pagerPath, []byte(pager), 0700))
-	t.Setenv("PAGER", pagerPath)
-	t.Setenv("OPENAI_CLI_TEST_PAGER_OUTPUT", outputPath)
+	readPipe, writePipe, err := os.Pipe()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, readPipe.Close()) })
+	t.Cleanup(func() { require.NoError(t, writePipe.Close()) })
+
+	tests := []struct {
+		name        string
+		stdout      *os.File
+		destination *os.File
+		forceColor  string
+		wantColor   bool
+	}{
+		{name: "terminal destination behind pager", stdout: writePipe, destination: os.Stdout, wantColor: true},
+		{name: "nonterminal final destination", stdout: os.Stdout, destination: writePipe, wantColor: false},
+		{name: "forced color for nonterminal", stdout: writePipe, destination: writePipe, forceColor: "1", wantColor: true},
+		{name: "disabled color for terminal", stdout: writePipe, destination: os.Stdout, forceColor: "0", wantColor: false},
+	}
+
+	for _, format := range []string{"json", "jsonl"} {
+		t.Run(format, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Setenv("FORCE_COLOR", tt.forceColor)
+
+					formatted, err := formatJSONForOutput(gjson.Parse(`{"message":"safe"}`), ShowJSONOpts{
+						Format: format,
+						Stdout: tt.stdout,
+					}, tt.destination)
+					require.NoError(t, err)
+					require.Equal(t, tt.wantColor, bytes.Contains(formatted, []byte("\x1b[")))
+				})
+			}
+		})
+	}
+}
+
+func TestShowJSONIteratorRawOutputEscapesPaginatedTerminalControls(t *testing.T) {
+	outputPath := configureCapturePager(t)
 	t.Setenv("FORCE_COLOR", "0")
 
 	value := "\x1b]52;c;ZGF0YQ==\a\u009b31m"
@@ -749,6 +780,52 @@ func TestShowJSONIteratorRawOutputEscapesPaginatedTerminalControls(t *testing.T)
 	output, err := os.ReadFile(outputPath)
 	require.NoError(t, err)
 	require.Equal(t, strings.Repeat(`\u001b]52;c;ZGF0YQ==\u0007\u009b31m`+"\n", len(items)), string(output))
+}
+
+func TestShowJSONIteratorPreservesPaginatedTerminalColors(t *testing.T) {
+	for _, format := range []string{"json", "jsonl"} {
+		t.Run(format, func(t *testing.T) {
+			outputPath := configureCapturePager(t)
+			t.Setenv("FORCE_COLOR", "auto")
+
+			items := make([]map[string]any, 64)
+			for i := range items {
+				items[i] = map[string]any{"message": "safe"}
+			}
+			opts := ShowJSONOpts{Format: format, Stdout: os.Stdout}
+			expected, err := formatJSONForOutput(gjson.Parse(`{"message":"safe"}`), opts, os.Stdout)
+			require.NoError(t, err)
+			require.Contains(t, string(expected), "\x1b[")
+
+			iter := &sliceIterator[map[string]any]{items: items}
+			require.NoError(t, ShowJSONIterator(iter, -1, opts))
+
+			output, err := os.ReadFile(outputPath)
+			require.NoError(t, err)
+			require.Equal(t, bytes.Repeat(expected, len(items)), output)
+		})
+	}
+}
+
+func configureCapturePager(t *testing.T) string {
+	t.Helper()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("pager capture fixture requires a POSIX shell unavailable on Windows")
+	}
+	if !isTerminal(os.Stdout) {
+		t.Skip("pager regression requires an interactive stdout terminal")
+	}
+
+	tempDir := t.TempDir()
+	outputPath := filepath.Join(tempDir, "pager-output")
+	pagerPath := filepath.Join(tempDir, "capture-pager")
+	pager := "#!/bin/sh\ncat > \"$OPENAI_CLI_TEST_PAGER_OUTPUT\"\n"
+	require.NoError(t, os.WriteFile(pagerPath, []byte(pager), 0700))
+	t.Setenv("PAGER", pagerPath)
+	t.Setenv("OPENAI_CLI_TEST_PAGER_OUTPUT", outputPath)
+
+	return outputPath
 }
 
 func rawOutputResult(t *testing.T, value string, transformed bool) (gjson.Result, string) {
