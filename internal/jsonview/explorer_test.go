@@ -57,7 +57,7 @@ func TestSanitizeTerminalStringEscapesControlSequences(t *testing.T) {
 	t.Parallel()
 
 	sample := "before\x1b]52;c;ZGF0YQ==\a\u009b31m\nafter\t"
-	got := sanitizeTerminalString(sample)
+	got := SanitizeTerminalString(sample)
 
 	require.Equal(t, `before\u001b]52;c;ZGF0YQ==\u0007\u009b31m\nafter\t`, got)
 	requireNoRawTerminalControls(t, got)

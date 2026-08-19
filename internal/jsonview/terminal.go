@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-func sanitizeTerminalString(s string) string {
+// SanitizeTerminalString escapes control characters that terminals can interpret.
+func SanitizeTerminalString(s string) string {
 	var b strings.Builder
 	for _, r := range s {
 		escaped := terminalControlEscape(r)

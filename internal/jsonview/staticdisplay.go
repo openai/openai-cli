@@ -38,7 +38,7 @@ func formatJSON(json gjson.Result, width int) string {
 func formatResult(result gjson.Result, indent, width int) string {
 	switch result.Type {
 	case gjson.String:
-		str := sanitizeTerminalString(result.Str)
+		str := SanitizeTerminalString(result.Str)
 		if str == "" {
 			return nullValueStyle.Render("(empty)")
 		}
@@ -104,7 +104,7 @@ func formatJSONObject(result gjson.Result, indent, width int) string {
 	var items []string
 	for _, key := range keys {
 		value := result.Get(key.Str)
-		keyStr := getIndent(indent) + keyStyle.Render(sanitizeTerminalString(key.Str)+":")
+		keyStr := getIndent(indent) + keyStyle.Render(SanitizeTerminalString(key.Str)+":")
 		// If item will be a one-liner, put it inline after the key, otherwise
 		// it starts with a newline and goes below the key.
 		itemWidth := width

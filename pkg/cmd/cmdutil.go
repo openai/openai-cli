@@ -304,6 +304,12 @@ func shouldUseColors(w io.Writer) bool {
 }
 
 func formatJSON(res gjson.Result, opts ShowJSONOpts) ([]byte, error) {
+	return formatJSONForOutput(res, opts, opts.Stdout)
+}
+
+// formatJSONForOutput keeps the final destination available when a pager sits between
+// formatted output and the terminal.
+func formatJSONForOutput(res gjson.Result, opts ShowJSONOpts, destination io.Writer) ([]byte, error) {
 	if opts.Transform != "" {
 		transformed := res.Get(opts.Transform)
 		if transformed.Exists() {
@@ -313,14 +319,18 @@ func formatJSON(res gjson.Result, opts ShowJSONOpts) ([]byte, error) {
 	// Modeled after `jq -r` (`--raw-output`): if the result is a string, print it without JSON quotes so that
 	// it's easier to pipe into other programs.
 	if opts.RawOutput && res.Type == gjson.String {
-		return []byte(res.Str + "\n"), nil
+		value := res.Str
+		if isTerminal(destination) {
+			value = jsonview.SanitizeTerminalString(value)
+		}
+		return []byte(value + "\n"), nil
 	}
 	switch strings.ToLower(opts.Format) {
 	case "auto":
 		autoOpts := opts
 		autoOpts.Format = "json"
 		autoOpts.Transform = ""
-		return formatJSON(res, autoOpts)
+		return formatJSONForOutput(res, autoOpts, destination)
 	case "pretty":
 		return []byte(jsonview.RenderJSON(opts.Title, res) + "\n"), nil
 	case "json":
@@ -507,7 +517,11 @@ func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, op
 				}
 				obj = gjson.ParseBytes(jsonData)
 			}
-			if err := ShowJSON(obj, pagerOpts); err != nil {
+			formatted, err := formatJSONForOutput(obj, pagerOpts, opts.Stdout)
+			if err != nil {
+				return err
+			}
+			if _, err := pager.Write(formatted); err != nil {
 				return err
 			}
 			itemsToDisplay -= 1
