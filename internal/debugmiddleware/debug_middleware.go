@@ -66,7 +66,7 @@ func (m *RequestLogger) Middleware() Middleware {
 // redactRequest redacts sensitive information from the request for logging
 // purposes. If redaction is necessary, the request is cloned before mutating
 // the original and that clone is returned. As a small optimization, the
-// the original request is returned unchanged if no redaction is necessary.
+// original request is returned unchanged if no redaction is necessary.
 func (m *RequestLogger) redactRequest(req *http.Request) (*http.Request, error) {
 	redactedHeaders := m.redactHeaders(req.Header)
 
