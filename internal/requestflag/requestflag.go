@@ -135,16 +135,7 @@ type RequestContents struct {
 	Body    any
 }
 
-// ApplyStdinDataToFlags sets flag values from a parsed stdin data map for flags that have not already been
-// set via the command line. This allows piped YAML/JSON data to satisfy path, query, and header parameters.
-// Body parameters are excluded: they are already handled by the maps.Copy merge in flagOptions.
-// For each unset flag, if the parsed data map contains a key matching the flag's QueryPath, HeaderPath, or
-// PathParam (or any of its DataAliases), the flag is set to that value via flag.Set.
-//
-// Inner flags (those with an outer flag) are also handled: if the outer flag's body path key exists in the
-// data map and contains a nested map with a key matching the inner flag's field (or aliases), the inner
-// flag is set from that nested value.
-func ApplyStdinDataToFlags(cmd *cli.Command, data map[string]any) error {
+func applyStdinDataToFlags(cmd *cli.Command, data map[string]any, onSet func(cli.Flag)) error {
 	for _, flag := range cmd.Flags {
 		if flag.IsSet() {
 			continue
@@ -179,8 +170,8 @@ func ApplyStdinDataToFlags(cmd *cli.Command, data map[string]any) error {
 			if err != nil {
 				return fmt.Errorf("cannot format piped value for flag %q: %w", flag.Names()[0], err)
 			}
-			if err := flag.Set(flag.Names()[0], setVal); err != nil {
-				return fmt.Errorf("cannot set flag %q from piped data: %w", flag.Names()[0], err)
+			if err := setFlagFromStdin(flag, setVal, onSet); err != nil {
+				return err
 			}
 			continue
 		}
@@ -211,8 +202,8 @@ func ApplyStdinDataToFlags(cmd *cli.Command, data map[string]any) error {
 			if err != nil {
 				return fmt.Errorf("cannot format piped value for flag %q: %w", flag.Names()[0], err)
 			}
-			if err := flag.Set(flag.Names()[0], setVal); err != nil {
-				return fmt.Errorf("cannot set flag %q from piped data: %w", flag.Names()[0], err)
+			if err := setFlagFromStdin(flag, setVal, onSet); err != nil {
+				return err
 			}
 			break
 		}
