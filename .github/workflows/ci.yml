@@ -1,6 +1,5 @@
 name: CI
-permissions:
-  contents: read
+permissions: {}
 on:
   push:
     branches:
@@ -14,6 +13,8 @@ jobs:
   lint:
     timeout-minutes: 10
     name: lint
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -21,9 +22,6 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
-
-      - name: Bootstrap
-        run: ./scripts/bootstrap
 
       - name: Run lints
         run: ./scripts/lint
@@ -41,8 +39,11 @@ jobs:
 
       - uses: ./.github/actions/setup-go
 
-      - name: Bootstrap
-        run: ./scripts/bootstrap
+      - name: Test verified GoReleaser installer
+        run: ./scripts/test-goreleaser-installer
+
+      - name: Set up verified GoReleaser
+        uses: ./.github/actions/setup-goreleaser
 
       - name: Generate release inputs
         run: |
@@ -69,15 +70,8 @@ jobs:
             '/man/man1/openai.1.gz' \
             >> "$exclude_file"
 
-      - name: Read GoReleaser version
-        id: goreleaser-version
-        run: echo "version=$(cat .goreleaser-version)" >> "$GITHUB_OUTPUT"
-
-      - name: Run goreleaser
-        uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.1.0
-        with:
-          version: ${{ steps.goreleaser-version.outputs.version }}
-          args: release --snapshot --clean --skip=publish
+      - name: Run GoReleaser
+        run: goreleaser release --snapshot --clean --skip=publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -87,8 +81,7 @@ jobs:
     needs:
       - build-artifacts
     if: always()
-    permissions:
-      contents: read
+    permissions: {}
     runs-on: ubuntu-latest
     steps:
       - name: Require successful build
@@ -103,6 +96,8 @@ jobs:
   test:
     timeout-minutes: 10
     name: test
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -110,9 +105,6 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
-
-      - name: Bootstrap
-        run: ./scripts/bootstrap
 
       - name: Run tests
         run: ./scripts/test

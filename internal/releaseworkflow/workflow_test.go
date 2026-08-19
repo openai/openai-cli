@@ -2,12 +2,14 @@ package releaseworkflow
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -30,7 +32,8 @@ var releaseInputPaths = []string{
 }
 
 type workflow struct {
-	Jobs map[string]workflowJob `yaml:"jobs"`
+	Permissions map[string]string      `yaml:"permissions"`
+	Jobs        map[string]workflowJob `yaml:"jobs"`
 }
 
 type workflowJob struct {
@@ -74,6 +77,36 @@ func requireStep(t *testing.T, job workflowJob, name string) (int, workflowStep)
 	}
 	t.Fatalf("workflow job has no %q step", name)
 	return -1, workflowStep{}
+}
+
+func TestWorkflowPermissionsRemainLeastPrivileged(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"publish-release.yml", "ci.yml"} {
+		parsed := readWorkflow(t, name)
+		if parsed.Permissions == nil || len(parsed.Permissions) != 0 {
+			t.Errorf("%s must explicitly deny default token permissions: %v", name, parsed.Permissions)
+		}
+	}
+
+	publishJobs := readWorkflow(t, "publish-release.yml").Jobs
+	if !reflect.DeepEqual(publishJobs["attest"].Permissions, map[string]string{
+		"attestations": "write",
+		"contents":     "read",
+		"id-token":     "write",
+	}) {
+		t.Fatalf("attestation permissions changed: %v", publishJobs["attest"].Permissions)
+	}
+
+	ciJobs := readWorkflow(t, "ci.yml").Jobs
+	for _, name := range []string{"lint", "build-artifacts", "test"} {
+		if !reflect.DeepEqual(ciJobs[name].Permissions, map[string]string{"contents": "read"}) {
+			t.Errorf("CI job %s permissions changed: %v", name, ciJobs[name].Permissions)
+		}
+	}
+	if ciJobs["build"].Permissions == nil || len(ciJobs["build"].Permissions) != 0 {
+		t.Fatalf("aggregate CI build must not receive repository credentials: %v", ciJobs["build"].Permissions)
+	}
 }
 
 func TestReleaseInputsUseAnIsolatedUnprivilegedJob(t *testing.T) {
@@ -147,6 +180,9 @@ func TestReleaseInputsUseAnIsolatedUnprivilegedJob(t *testing.T) {
 		if strings.Contains(fmt.Sprint(step.With, step.Env, step.Run), "secrets.") {
 			t.Fatalf("unprivileged release-input job references secrets in %q", step.Name)
 		}
+		if strings.HasPrefix(step.Uses, "./") {
+			t.Fatalf("unprivileged asset generator must not run publisher-only local actions: %q", step.Uses)
+		}
 		if strings.HasPrefix(step.Uses, "actions/cache@") {
 			t.Fatal("the unprivileged job must not publish a cache consumed by the privileged job")
 		}
@@ -166,6 +202,11 @@ func TestPublisherVerifiesIsolatedInputsBeforeReceivingSecrets(t *testing.T) {
 	if !reflect.DeepEqual(job.Permissions, map[string]string{"contents": "read"}) {
 		t.Fatalf("publisher permissions unexpectedly changed: %v", job.Permissions)
 	}
+	checkoutIndex, _ := requireStep(t, job, "Checkout")
+	verifiedBinaryIndex, verifiedBinary := requireStep(t, job, "Set up verified GoReleaser")
+	if verifiedBinary.Uses != "./.github/actions/setup-goreleaser" {
+		t.Fatalf("publisher must install the reviewed digest-verified local GoReleaser: %#v", verifiedBinary)
+	}
 	tagIndex, tag := requireStep(t, job, "Ensure release tag is on main")
 	if !strings.Contains(tag.Run, `git merge-base --is-ancestor "$tag_sha" origin/main`) {
 		t.Fatal("publisher must independently verify the trusted release tag")
@@ -182,8 +223,8 @@ func TestPublisherVerifiesIsolatedInputsBeforeReceivingSecrets(t *testing.T) {
 	}
 	verifyIndex, _ := requireStep(t, job, "Verify isolated release inputs")
 	firstCredentialIndex, _ := requireStep(t, job, "Create release app token for this repo")
-	if !(tagIndex < downloadIndex && downloadIndex < verifyIndex && verifyIndex < firstCredentialIndex) {
-		t.Fatal("trusted tag and isolated artifacts must be verified before any publishing credential exists")
+	if !(checkoutIndex < verifiedBinaryIndex && verifiedBinaryIndex < tagIndex && tagIndex < downloadIndex && downloadIndex < verifyIndex && verifyIndex < firstCredentialIndex) {
+		t.Fatal("trusted checkout, verified binary, trusted tag, and isolated artifacts must precede publishing credentials")
 	}
 	for index, step := range job.Steps[:firstCredentialIndex] {
 		if strings.Contains(fmt.Sprint(step.With, step.Env, step.Run), "secrets.") {
@@ -192,8 +233,102 @@ func TestPublisherVerifiesIsolatedInputsBeforeReceivingSecrets(t *testing.T) {
 	}
 }
 
+func TestTrustedTagAuthenticationNeverLeaksCredentials(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("GitHub release tag guards execute with Bash on Ubuntu")
+	}
+
+	const token = "synthetic-github-token-never-log"
+	const tagSHA = "0123456789abcdef0123456789abcdef01234567"
+	encodedToken := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+	fakeGit := `#!/usr/bin/env bash
+set -euo pipefail
+command="$1"
+case "$command" in
+  check-ref-format) ;;
+  ls-remote|fetch)
+    remote=""
+    for argument in "$@"; do
+      case "$argument" in
+        https://*) remote="$argument" ;;
+      esac
+    done
+    if [[ "$FAKE_GIT_FAILURE" == "1" ]]; then
+      echo "fatal: unable to access '$remote': synthetic transport failure" >&2
+      exit 23
+    fi
+    if [[ "$GIT_CONFIG_COUNT" != "1" ||
+          "$GIT_CONFIG_KEY_0" != "http.https://github.com/.extraheader" ||
+          "$GIT_CONFIG_VALUE_0" != "AUTHORIZATION: basic $EXPECTED_AUTH_HEADER" ]]; then
+      echo "missing step-scoped Git authentication" >&2
+      exit 24
+    fi
+    if [[ "$remote" != "https://github.com/openai/openai-cli.git" ]]; then
+      echo "unexpected Git remote: $remote" >&2
+      exit 25
+    fi
+    if [[ "$command" == "ls-remote" ]]; then
+      printf '%s\trefs/tags/%s\n' "$FAKE_TAG_SHA" "$TAG"
+    fi
+    ;;
+  for-each-ref) printf 'refs/tags/%s\n' "$TAG" ;;
+  rev-parse) printf '%s\n' "$FAKE_TAG_SHA" ;;
+  merge-base|checkout) ;;
+  *) echo "unexpected git command: $command" >&2; exit 26 ;;
+esac
+`
+
+	for _, name := range []string{"release-inputs", "goreleaser"} {
+		_, tag := requireStep(t, readWorkflow(t, "publish-release.yml").Jobs[name], "Ensure release tag is on main")
+		for _, failure := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/fetch_failure=%t", name, failure), func(t *testing.T) {
+				t.Parallel()
+
+				bin := t.TempDir()
+				if err := os.WriteFile(filepath.Join(bin, "git"), []byte(fakeGit), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				failed := "0"
+				if failure {
+					failed = "1"
+				}
+				command := exec.Command("bash", "-e", "-c", tag.Run)
+				command.Env = append(os.Environ(),
+					"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+					"GITHUB_TOKEN="+token,
+					"GITHUB_REPOSITORY=openai/openai-cli",
+					"GITHUB_OUTPUT="+filepath.Join(t.TempDir(), "github-output"),
+					"TAG=v1.2.3",
+					"EXPECTED_TAG_SHA="+tagSHA,
+					"FAKE_TAG_SHA="+tagSHA,
+					"EXPECTED_AUTH_HEADER="+encodedToken,
+					"FAKE_GIT_FAILURE="+failed,
+				)
+				output, err := command.CombinedOutput()
+				if failure && err == nil || !failure && err != nil {
+					t.Fatalf("trusted tag command error=%v, failure=%t, output:\n%s", err, failure, output)
+				}
+				visible := string(output)
+				for _, line := range strings.Split(visible, "\n") {
+					if mask, ok := strings.CutPrefix(line, "::add-mask::"); ok {
+						visible = strings.ReplaceAll(visible, line+"\n", "")
+						visible = strings.ReplaceAll(visible, mask, "***")
+					}
+				}
+				if strings.Contains(visible, token) || strings.Contains(visible, encodedToken) {
+					t.Fatalf("Git failure exposed a raw or derived credential in workflow logs:\n%s", visible)
+				}
+			})
+		}
+	}
+}
+
 func TestReleaseInputVerifierRejectsUnsafeArtifacts(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("GitHub release artifact verification executes with Bash on Ubuntu")
+	}
 
 	_, verify := requireStep(t, readWorkflow(t, "publish-release.yml").Jobs["goreleaser"], "Verify isolated release inputs")
 
@@ -345,8 +480,8 @@ func TestHistoricalTagCannotRunPrivilegedBeforeHooks(t *testing.T) {
 		t.Fatalf("invalid historical-tag regression fixture: hooks=%v err=%v", legacy.Before.Hooks, err)
 	}
 	_, release := requireStep(t, readWorkflow(t, "publish-release.yml").Jobs["goreleaser"], "Run GoReleaser")
-	if release.With["args"] != "release --clean --skip=before" {
-		t.Fatalf("historical tagged release hooks remain executable under publisher credentials: args=%v", release.With["args"])
+	if release.Run != "goreleaser release --clean --skip=before" || release.Uses != "" {
+		t.Fatalf("publisher must run only the verified local binary with legacy hooks disabled: %#v", release)
 	}
 }
 
@@ -355,9 +490,17 @@ func TestCISnapshotGeneratesInputsBeforeGoReleaser(t *testing.T) {
 
 	job := readWorkflow(t, "ci.yml").Jobs["build-artifacts"]
 	generateIndex, generate := requireStep(t, job, "Generate release inputs")
-	releaseIndex, release := requireStep(t, job, "Run goreleaser")
-	if generateIndex >= releaseIndex {
-		t.Fatal("CI snapshot inputs must be generated before the GoReleaser credential exists")
+	installerTestIndex, _ := requireStep(t, job, "Test verified GoReleaser installer")
+	verifiedBinaryIndex, verifiedBinary := requireStep(t, job, "Set up verified GoReleaser")
+	releaseIndex, release := requireStep(t, job, "Run GoReleaser")
+	if verifiedBinary.Uses != "./.github/actions/setup-goreleaser" {
+		t.Fatal("CI must preserve the reviewed digest-verified GoReleaser installer")
+	}
+	if release.Run != "goreleaser release --snapshot --clean --skip=publish" {
+		t.Fatalf("CI must preserve the existing verified snapshot invocation, got %q", release.Run)
+	}
+	if !(installerTestIndex < verifiedBinaryIndex && verifiedBinaryIndex < generateIndex && generateIndex < releaseIndex) {
+		t.Fatal("CI must test and verify GoReleaser, then generate inputs before its credential exists")
 	}
 	if len(generate.Env) != 0 || release.Env["GITHUB_TOKEN"] == nil {
 		t.Fatal("CI generation must remain credential-free while preserving existing GoReleaser authentication")
@@ -383,6 +526,9 @@ func TestReleaseWorkflowActionsRemainPinned(t *testing.T) {
 	pinnedAction := regexp.MustCompile(`^[^@]+@[0-9a-f]{40}$`)
 	for name, job := range readWorkflow(t, "publish-release.yml").Jobs {
 		for _, step := range job.Steps {
+			if step.Uses == "./.github/actions/setup-goreleaser" {
+				continue
+			}
 			if step.Uses != "" && !pinnedAction.MatchString(step.Uses) {
 				t.Errorf("job %s step %q does not pin its action to a full commit SHA: %q", name, step.Name, step.Uses)
 			}

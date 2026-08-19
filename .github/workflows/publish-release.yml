@@ -1,6 +1,8 @@
 ---
 name: Publish Release
 
+permissions: {}
+
 concurrency:
   group: publish
 
@@ -37,13 +39,21 @@ jobs:
         esac
         git check-ref-format "refs/tags/$TAG"
 
-        authenticated_origin="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        remote_tag="$(git ls-remote --exit-code --tags --refs "$authenticated_origin" "refs/tags/$TAG")"
+        set +x
+        export GIT_TRACE=0 GIT_TRACE_PACKET=0 GIT_TRACE_CURL=0 GIT_CURL_VERBOSE=0
+        auth_header="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+        printf '::add-mask::%s\n' "$auth_header"
+        export GIT_CONFIG_COUNT=1
+        export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+        export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth_header"
+
+        repository_origin="https://github.com/${GITHUB_REPOSITORY}.git"
+        remote_tag="$(git ls-remote --exit-code --tags --refs "$repository_origin" "refs/tags/$TAG")"
         remote_ref="$(printf '%s\n' "$remote_tag" | awk '{print $2}')"
         test "$remote_ref" = "refs/tags/$TAG"
 
-        git fetch --no-tags "$authenticated_origin" +refs/heads/main:refs/remotes/origin/main
-        git fetch --no-tags "$authenticated_origin" "+refs/tags/$TAG:refs/tags/$TAG"
+        git fetch --no-tags "$repository_origin" +refs/heads/main:refs/remotes/origin/main
+        git fetch --no-tags "$repository_origin" "+refs/tags/$TAG:refs/tags/$TAG"
 
         local_ref="$(git for-each-ref --format='%(refname)' "refs/tags/$TAG")"
         test "$local_ref" = "refs/tags/$TAG"
@@ -91,6 +101,8 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
+    - name: Set up verified GoReleaser
+      uses: ./.github/actions/setup-goreleaser
     - name: Ensure release tag is on main
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -103,13 +115,21 @@ jobs:
         esac
         git check-ref-format "refs/tags/$TAG"
 
-        authenticated_origin="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        remote_tag="$(git ls-remote --exit-code --tags --refs "$authenticated_origin" "refs/tags/$TAG")"
+        set +x
+        export GIT_TRACE=0 GIT_TRACE_PACKET=0 GIT_TRACE_CURL=0 GIT_CURL_VERBOSE=0
+        auth_header="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+        printf '::add-mask::%s\n' "$auth_header"
+        export GIT_CONFIG_COUNT=1
+        export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+        export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth_header"
+
+        repository_origin="https://github.com/${GITHUB_REPOSITORY}.git"
+        remote_tag="$(git ls-remote --exit-code --tags --refs "$repository_origin" "refs/tags/$TAG")"
         remote_ref="$(printf '%s\n' "$remote_tag" | awk '{print $2}')"
         test "$remote_ref" = "refs/tags/$TAG"
 
-        git fetch --no-tags "$authenticated_origin" +refs/heads/main:refs/remotes/origin/main
-        git fetch --no-tags "$authenticated_origin" "+refs/tags/$TAG:refs/tags/$TAG"
+        git fetch --no-tags "$repository_origin" +refs/heads/main:refs/remotes/origin/main
+        git fetch --no-tags "$repository_origin" "+refs/tags/$TAG:refs/tags/$TAG"
 
         local_ref="$(git for-each-ref --format='%(refname)' "refs/tags/$TAG")"
         test "$local_ref" = "refs/tags/$TAG"
@@ -194,14 +214,8 @@ jobs:
         repositories: homebrew-tools
         permission-contents: write
         permission-pull-requests: write
-    - name: Read GoReleaser version
-      id: goreleaser-version
-      run: echo "version=$(cat .goreleaser-version)" >> "$GITHUB_OUTPUT"
     - name: Run GoReleaser
-      uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.1.0
-      with:
-        version: ${{ steps.goreleaser-version.outputs.version }}
-        args: release --clean --skip=before
+      run: goreleaser release --clean --skip=before
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
