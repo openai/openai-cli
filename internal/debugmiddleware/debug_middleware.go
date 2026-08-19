@@ -51,7 +51,7 @@ func (m *RequestLogger) Middleware() Middleware {
 		}
 
 		resp, err := mn(req)
-		if err != nil {
+		if err != nil || resp == nil {
 			return resp, err
 		}
 

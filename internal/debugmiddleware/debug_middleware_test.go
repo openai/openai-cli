@@ -48,6 +48,27 @@ func TestDebugMiddleware(t *testing.T) {
 		require.Contains(t, logBuf.String(), "User-Agent: "+userAgent)
 	})
 
+	t.Run("DoesNotPanicWhenNextReturnsNilResponseWithoutError", func(t *testing.T) {
+		t.Parallel()
+
+		middleware, logBuf := setup()
+		req := httptest.NewRequest(http.MethodGet, "https://example.com", nil)
+
+		var (
+			response *http.Response
+			err      error
+		)
+		require.NotPanics(t, func() {
+			response, err = middleware.Middleware()(req, func(*http.Request) (*http.Response, error) {
+				return nil, nil
+			})
+		})
+		require.Nil(t, response)
+		require.NoError(t, err)
+		require.Contains(t, logBuf.String(), "Request Content:")
+		require.NotContains(t, logBuf.String(), "Response Content:")
+	})
+
 	const secretToken = "secret-token"
 
 	t.Run("RedactsAuthorizationHeader", func(t *testing.T) {
