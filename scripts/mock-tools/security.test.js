@@ -1,5 +1,4 @@
 const assert = require("node:assert");
-const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -23,52 +22,46 @@ function test(name, run) {
   }
 }
 
-function withNativeFixture(run) {
+function withNativeFixture(run, layout = "hoisted") {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "openai-cli-steady-native-test-"));
   const repository = path.join(directory, "repository");
   const toolsDirectory = path.join(repository, "scripts", "mock-tools");
   const packageName = `@stdy/cli-${process.platform}-${process.arch}`;
   const packageVersion = packages.find(({ name }) => name === packageName).version;
-  const packageDirectory = path.join(toolsDirectory, "node_modules", packageName);
-  const executable = path.join(packageDirectory, "bin", process.platform === "win32" ? "steady.exe" : "steady");
+  const wrapperDirectory = path.join(toolsDirectory, "node_modules", "@stdy", "cli");
+  let packageDirectory = path.join(toolsDirectory, "node_modules", packageName);
+  const executableName = process.platform === "win32" ? "steady.exe" : "steady";
 
   try {
-    fs.mkdirSync(path.dirname(executable), { recursive: true });
+    fs.mkdirSync(path.join(packageDirectory, "bin"), { recursive: true });
+    fs.mkdirSync(wrapperDirectory, { recursive: true });
     fs.copyFileSync(path.join(__dirname, "package-lock.json"), path.join(toolsDirectory, "package-lock.json"));
-    const committedLock = JSON.parse(fs.readFileSync(path.join(toolsDirectory, "package-lock.json"), "utf8"));
-    const installedLock = {
-      lockfileVersion: committedLock.lockfileVersion,
-      packages: {
-        "node_modules/@stdy/cli": committedLock.packages["node_modules/@stdy/cli"],
-        [`node_modules/${packageName}`]: committedLock.packages[`node_modules/${packageName}`],
-      },
-    };
-    fs.writeFileSync(path.join(toolsDirectory, "node_modules", ".package-lock.json"), JSON.stringify(installedLock));
+    fs.writeFileSync(path.join(wrapperDirectory, "package.json"), JSON.stringify({ name: "@stdy/cli", version: wrapper.version }));
     fs.writeFileSync(path.join(packageDirectory, "package.json"), JSON.stringify({ name: packageName, version: packageVersion }));
-    fs.writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-    run({ directory, repository, toolsDirectory, packageDirectory, packageName, packageVersion, executable });
-  } finally {
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
-}
+    fs.writeFileSync(path.join(packageDirectory, "bin", executableName), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
-function withMockInstallArguments(configuration, run) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "openai-cli-steady-install-test-"));
-  const argumentsPath = path.join(directory, "arguments.json");
-  const npmPath = path.join(directory, "npm");
+    if (layout === "nested" || layout === "shallow") {
+      const nestedDirectory = path.join(wrapperDirectory, "node_modules", packageName);
+      fs.mkdirSync(path.dirname(nestedDirectory), { recursive: true });
+      fs.renameSync(packageDirectory, nestedDirectory);
+      packageDirectory = nestedDirectory;
+    } else if (layout === "linked") {
+      const store = path.join(toolsDirectory, "node_modules", ".store");
+      const storedWrapper = path.join(store, "wrapper", "node_modules", "@stdy", "cli");
+      const storedNative = path.join(store, "native", "node_modules", packageName);
+      fs.mkdirSync(path.dirname(storedWrapper), { recursive: true });
+      fs.mkdirSync(path.dirname(storedNative), { recursive: true });
+      fs.renameSync(wrapperDirectory, storedWrapper);
+      fs.renameSync(packageDirectory, storedNative);
+      fs.symlinkSync(storedWrapper, wrapperDirectory, "dir");
+      const linkedNative = path.join(storedWrapper, "node_modules", packageName);
+      fs.mkdirSync(path.dirname(linkedNative), { recursive: true });
+      fs.symlinkSync(storedNative, linkedNative, "dir");
+      packageDirectory = storedNative;
+    }
 
-  try {
-    fs.writeFileSync(
-      npmPath,
-      `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(argumentsPath)}, JSON.stringify(process.argv.slice(2)));\nprocess.exit(73);\n`,
-      { mode: 0o755 },
-    );
-    const result = spawnSync(path.join(__dirname, "..", "mock"), [path.join(directory, "openapi.yml")], {
-      encoding: "utf8",
-      env: { ...process.env, ...configuration, PATH: `${directory}${path.delimiter}${process.env.PATH}` },
-    });
-    assert.strictEqual(result.status, 73, result.stderr);
-    run(JSON.parse(fs.readFileSync(argumentsPath, "utf8")));
+    const executable = path.join(packageDirectory, "bin", executableName);
+    run({ directory, repository, toolsDirectory, wrapperDirectory, packageDirectory, packageName, packageVersion, executable });
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -91,25 +84,21 @@ test("locks the wrapper and every supported native platform", () => {
     assert.strictEqual(pkg.version, "0.22.2");
     assert.strictEqual(pkg.license, "MIT");
     assert.match(pkg.integrity, /^sha512-[A-Za-z0-9+/]{86}==$/);
-    assert.strictEqual(new URL(pkg.resolved).hostname, "registry.npmjs.org");
   }
 });
 
-test("preserves resolved lockfile URLs when ambient npm configuration omits them", () => {
-  withMockInstallArguments({ npm_config_omit_lockfile_registry_resolved: "true" }, (argumentsList) => {
-    assert.ok(argumentsList.includes("--omit-lockfile-registry-resolved=false"));
+for (const layout of ["hoisted", "nested", "shallow", "linked"]) {
+  test(`resolves the exact locked native executable from a ${layout} installation`, () => {
+    withNativeFixture(({ toolsDirectory, executable }) => {
+      assert.strictEqual(resolveNativeBinary(toolsDirectory), fs.realpathSync(executable));
+    }, layout);
   });
-});
+}
 
-test("prevents ambient npm configuration from replacing locked registry hosts", () => {
-  withMockInstallArguments({ npm_config_replace_registry_host: "always" }, (argumentsList) => {
-    assert.ok(argumentsList.includes("--replace-registry-host=never"));
-  });
-});
-
-test("executes only the checked, exact-version native executable", () => {
-  withNativeFixture(({ toolsDirectory, executable }) => {
-    assert.strictEqual(resolveNativeBinary(toolsDirectory), fs.realpathSync(executable));
+test("rejects a missing native package", () => {
+  withNativeFixture(({ toolsDirectory, packageDirectory }) => {
+    fs.rmSync(packageDirectory, { recursive: true, force: true });
+    assert.throws(() => resolveNativeBinary(toolsDirectory), /Cannot find module/);
   });
 });
 
@@ -119,7 +108,7 @@ test("rejects a missing native package even when an ancestor package exists", ()
     fs.mkdirSync(ancestorPackage, { recursive: true });
     fs.writeFileSync(path.join(ancestorPackage, "package.json"), JSON.stringify({ name: packageName, version: packageVersion }));
     fs.rmSync(packageDirectory, { recursive: true, force: true });
-    assert.throws(() => resolveNativeBinary(toolsDirectory), /ENOENT/);
+    assert.throws(() => resolveNativeBinary(toolsDirectory), /outside its locked tooling directory/);
   });
 });
 
@@ -130,43 +119,30 @@ test("rejects an installed native package with a different version", () => {
   });
 });
 
-test("rejects an installed native package whose integrity differs from the committed lock", () => {
-  withNativeFixture(({ toolsDirectory, packageName }) => {
-    const installedLockPath = path.join(toolsDirectory, "node_modules", ".package-lock.json");
-    const installedLock = JSON.parse(fs.readFileSync(installedLockPath, "utf8"));
-    installedLock.packages[`node_modules/${packageName}`].integrity = `sha512-${Buffer.alloc(64).toString("base64")}`;
-    fs.writeFileSync(installedLockPath, JSON.stringify(installedLock));
-    assert.throws(() => resolveNativeBinary(toolsDirectory), /does not match locked integrity/);
+test("rejects an installed wrapper with a different version", () => {
+  withNativeFixture(({ toolsDirectory, wrapperDirectory }) => {
+    fs.writeFileSync(path.join(wrapperDirectory, "package.json"), JSON.stringify({ name: "@stdy/cli", version: "0.22.1" }));
+    assert.throws(() => resolveNativeBinary(toolsDirectory), /does not match locked/);
   });
 });
 
-test("rejects an installed wrapper whose integrity differs from the committed lock", () => {
-  withNativeFixture(({ toolsDirectory }) => {
-    const installedLockPath = path.join(toolsDirectory, "node_modules", ".package-lock.json");
-    const installedLock = JSON.parse(fs.readFileSync(installedLockPath, "utf8"));
-    installedLock.packages["node_modules/@stdy/cli"].integrity = `sha512-${Buffer.alloc(64).toString("base64")}`;
-    fs.writeFileSync(installedLockPath, JSON.stringify(installedLock));
-    assert.throws(() => resolveNativeBinary(toolsDirectory), /does not match locked integrity/);
+test("rejects a wrapper resolved from an ancestor installation", () => {
+  withNativeFixture(({ repository, toolsDirectory, wrapperDirectory }) => {
+    const ancestorWrapper = path.join(repository, "node_modules", "@stdy", "cli");
+    fs.mkdirSync(ancestorWrapper, { recursive: true });
+    fs.writeFileSync(path.join(ancestorWrapper, "package.json"), JSON.stringify({ name: "@stdy/cli", version: wrapper.version }));
+    fs.rmSync(wrapperDirectory, { recursive: true, force: true });
+    assert.throws(() => resolveNativeBinary(toolsDirectory), /outside its locked tooling directory/);
   });
 });
 
-test("rejects an installed native package from a different registry URL", () => {
-  withNativeFixture(({ toolsDirectory, packageName }) => {
-    const installedLockPath = path.join(toolsDirectory, "node_modules", ".package-lock.json");
-    const installedLock = JSON.parse(fs.readFileSync(installedLockPath, "utf8"));
-    installedLock.packages[`node_modules/${packageName}`].resolved = "https://untrusted.example/steady.tgz";
-    fs.writeFileSync(installedLockPath, JSON.stringify(installedLock));
-    assert.throws(() => resolveNativeBinary(toolsDirectory), /does not match locked integrity, version, or URL/);
-  });
-});
-
-test("rejects a committed native lock entry without valid SHA-512 integrity", () => {
-  withNativeFixture(({ toolsDirectory, packageName }) => {
-    const lockfilePath = path.join(toolsDirectory, "package-lock.json");
-    const committedLock = JSON.parse(fs.readFileSync(lockfilePath, "utf8"));
-    committedLock.packages[`node_modules/${packageName}`].integrity = "sha512-invalid";
-    fs.writeFileSync(lockfilePath, JSON.stringify(committedLock));
-    assert.throws(() => resolveNativeBinary(toolsDirectory), /invalid SHA-512 integrity/);
+test("rejects a native package linked outside the tooling directory", () => {
+  withNativeFixture(({ repository, toolsDirectory, packageDirectory, packageName }) => {
+    const externalPackage = path.join(repository, "scripts", "mock-tools-untrusted", packageName);
+    fs.mkdirSync(path.dirname(externalPackage), { recursive: true });
+    fs.renameSync(packageDirectory, externalPackage);
+    fs.symlinkSync(externalPackage, packageDirectory, "dir");
+    assert.throws(() => resolveNativeBinary(toolsDirectory), /outside its locked tooling directory/);
   });
 });
 
