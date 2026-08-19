@@ -18,7 +18,7 @@ type (
 const redactedPlaceholder = "<REDACTED>"
 
 // Headers known to contain sensitive information like an API key. Note that this exclude `Authorization`,
-// which is handled specially in `redactRequest` below.
+// which is handled specially in `redactHeaders` below.
 var sensitiveHeaders = []string{
 	"api-key",
 	"x-api-key",
@@ -55,7 +55,7 @@ func (m *RequestLogger) Middleware() Middleware {
 			return resp, err
 		}
 
-		if respBytes, err := httputil.DumpResponse(resp, false); err == nil {
+		if respBytes, err := httputil.DumpResponse(m.redactResponse(resp), false); err == nil {
 			m.logger.Printf("Response Content:\n%s\n", respBytes)
 		}
 
@@ -68,7 +68,35 @@ func (m *RequestLogger) Middleware() Middleware {
 // the original and that clone is returned. As a small optimization, the
 // original is request is returned unchanged if no redaction is necessary.
 func (m *RequestLogger) redactRequest(req *http.Request) (*http.Request, error) {
-	redactedHeaders := req.Header.Clone()
+	redactedHeaders := m.redactHeaders(req.Header)
+
+	if reflect.DeepEqual(req.Header, redactedHeaders) {
+		return req, nil
+	}
+
+	redacted := req.Clone(req.Context())
+	redacted.Header = redactedHeaders
+	return redacted, nil
+}
+
+// redactResponse clones the response and redacts sensitive headers for logging.
+func (m *RequestLogger) redactResponse(resp *http.Response) *http.Response {
+	redacted := *resp
+	redacted.Header = m.redactHeaders(resp.Header)
+
+	// Redirect URLs can contain signed query parameters or embedded credentials.
+	if values := redacted.Header.Values("Location"); len(values) > 0 {
+		redacted.Header.Del("Location")
+		for range values {
+			redacted.Header.Add("Location", redactedPlaceholder)
+		}
+	}
+
+	return &redacted
+}
+
+func (m *RequestLogger) redactHeaders(headers http.Header) http.Header {
+	redactedHeaders := headers.Clone()
 
 	// Notably, the clauses below are written so they can redact multiple
 	// headers of the same name if necessary.
@@ -100,11 +128,5 @@ func (m *RequestLogger) redactRequest(req *http.Request) (*http.Request, error) 
 		}
 	}
 
-	if reflect.DeepEqual(req.Header, redactedHeaders) {
-		return req, nil
-	}
-
-	redacted := req.Clone(req.Context())
-	redacted.Header = redactedHeaders
-	return redacted, nil
+	return redactedHeaders
 }

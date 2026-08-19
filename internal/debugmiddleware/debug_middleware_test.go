@@ -168,6 +168,128 @@ func TestDebugMiddleware(t *testing.T) {
 		require.Equal(t, 2, strings.Count(logBuf.String(), customAPIKeyHeader+": "+redactedPlaceholder))
 	})
 
+	t.Run("RedactsSensitiveResponseHeadersWithoutMutatingResponse", func(t *testing.T) {
+		t.Parallel()
+
+		middleware, logBuf := setup()
+		middleware.sensitiveHeaders = append([]string{customAPIKeyHeader}, middleware.sensitiveHeaders...)
+
+		const signedLocation = "https://example.com/redirect?signature=synthetic-signature"
+		response := &http.Response{
+			StatusCode: http.StatusTemporaryRedirect,
+			Status:     "307 Temporary Redirect",
+			Header: http.Header{
+				"Authorization":    {"Bearer synthetic-response-token", "synthetic-secondary-token"},
+				"Api-Key":          {"synthetic-api-key"},
+				"X-Api-Key":        {"synthetic-x-api-key"},
+				"X-My-Api-Key":     {"synthetic-custom-api-key"},
+				"Cookie":           {"synthetic-cookie=secret"},
+				"Set-Cookie":       {"synthetic-session=first; HttpOnly", "synthetic-session=second; Secure"},
+				"Location":         {signedLocation},
+				"X-Request-Id":     {"request-id"},
+				"X-Response-Trace": {"trace-id"},
+			},
+		}
+		originalHeaders := response.Header.Clone()
+
+		req := httptest.NewRequest("GET", "https://example.com", nil)
+		returned, err := middleware.Middleware()(req, func(*http.Request) (*http.Response, error) {
+			return response, nil
+		})
+		require.NoError(t, err)
+		require.Same(t, response, returned)
+		require.Equal(t, originalHeaders, returned.Header)
+
+		logged := logBuf.String()
+		for _, secret := range []string{
+			"synthetic-response-token",
+			"synthetic-secondary-token",
+			"synthetic-api-key",
+			"synthetic-x-api-key",
+			"synthetic-custom-api-key",
+			"synthetic-cookie=secret",
+			"synthetic-session=first",
+			"synthetic-session=second",
+			"synthetic-signature",
+		} {
+			require.NotContains(t, logged, secret)
+		}
+
+		require.Contains(t, logged, "Authorization: Bearer "+redactedPlaceholder)
+		require.Contains(t, logged, "Authorization: "+redactedPlaceholder)
+		require.Contains(t, logged, "Api-Key: "+redactedPlaceholder)
+		require.Contains(t, logged, "X-Api-Key: "+redactedPlaceholder)
+		require.Contains(t, logged, customAPIKeyHeader+": "+redactedPlaceholder)
+		require.Contains(t, logged, "Cookie: "+redactedPlaceholder)
+		require.Equal(t, 2, strings.Count(logged, "Set-Cookie: "+redactedPlaceholder))
+		require.Contains(t, logged, "Location: "+redactedPlaceholder)
+		require.Contains(t, logged, "X-Request-Id: request-id")
+		require.Contains(t, logged, "X-Response-Trace: trace-id")
+	})
+
+	t.Run("RedactsRealHTTPResponseHeadersWithoutConsumingBody", func(t *testing.T) {
+		t.Parallel()
+
+		middleware, logBuf := setup()
+		const (
+			bodyContent    = "synthetic response body"
+			signedLocation = "https://example.com/redirect?signature=synthetic-integration-signature"
+		)
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			require.Equal(t, "Bearer synthetic-request-token", req.Header.Get("Authorization"))
+			w.Header().Add("Set-Cookie", "synthetic-session=first; HttpOnly")
+			w.Header().Add("Set-Cookie", "synthetic-session=second; Secure")
+			w.Header().Set("Authorization", "Bearer synthetic-response-token")
+			w.Header().Set("X-Api-Key", "synthetic-response-api-key")
+			w.Header().Set("Location", signedLocation)
+			w.Header().Set("X-Request-Id", "request-id")
+			w.WriteHeader(http.StatusTemporaryRedirect)
+			_, err := io.WriteString(w, bodyContent)
+			require.NoError(t, err)
+		}))
+		t.Cleanup(server.Close)
+
+		client := &http.Client{
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+		req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer synthetic-request-token")
+
+		response, err := middleware.Middleware()(req, client.Do)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, response.Body.Close()) })
+		require.Equal(t, []string{"synthetic-session=first; HttpOnly", "synthetic-session=second; Secure"}, response.Header.Values("Set-Cookie"))
+		require.Equal(t, "Bearer synthetic-response-token", response.Header.Get("Authorization"))
+		require.Equal(t, "synthetic-response-api-key", response.Header.Get("X-Api-Key"))
+		require.Equal(t, signedLocation, response.Header.Get("Location"))
+
+		body, err := io.ReadAll(response.Body)
+		require.NoError(t, err)
+		require.Equal(t, bodyContent, string(body))
+
+		logged := logBuf.String()
+		for _, secret := range []string{
+			"synthetic-request-token",
+			"synthetic-response-token",
+			"synthetic-response-api-key",
+			"synthetic-session=first",
+			"synthetic-session=second",
+			"synthetic-integration-signature",
+			bodyContent,
+		} {
+			require.NotContains(t, logged, secret)
+		}
+		require.Equal(t, 2, strings.Count(logged, "Authorization: Bearer "+redactedPlaceholder))
+		require.Equal(t, 2, strings.Count(logged, "Set-Cookie: "+redactedPlaceholder))
+		require.Contains(t, logged, "X-Api-Key: "+redactedPlaceholder)
+		require.Contains(t, logged, "Location: "+redactedPlaceholder)
+		require.Contains(t, logged, "X-Request-Id: request-id")
+	})
+
 	t.Run("DoesNotConsumeRequestBodyWhenIoReader", func(t *testing.T) {
 		t.Parallel()
 
