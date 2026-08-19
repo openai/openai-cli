@@ -23,9 +23,6 @@ jobs:
 
       - uses: ./.github/actions/setup-go
 
-      - name: Bootstrap
-        run: ./scripts/bootstrap
-
       - name: Run lints
         run: ./scripts/lint
 
@@ -41,9 +38,6 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
-
-      - name: Bootstrap
-        run: ./scripts/bootstrap
 
       - name: Test verified GoReleaser installer
         run: ./scripts/test-goreleaser-installer
@@ -86,9 +80,6 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
-
-      - name: Bootstrap
-        run: ./scripts/bootstrap
 
       - name: Run tests
         run: ./scripts/test

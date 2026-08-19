@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
@@ -18,5 +18,11 @@ if [ -f "Brewfile" ] && [ "$(uname -s)" = "Darwin" ] && [ "${SKIP_BREW:-}" != "1
     echo
   }
 fi
-echo "==> Installing Go dependencies…"
-go mod tidy -e || true
+echo "==> Checking Go dependency manifests…"
+go mod tidy -diff
+
+echo "==> Downloading Go dependencies…"
+go mod download
+
+echo "==> Verifying Go dependencies…"
+go mod verify
