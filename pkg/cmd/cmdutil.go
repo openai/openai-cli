@@ -218,7 +218,7 @@ func writeBinaryResponse(response *http.Response, stdout io.Writer, outfile stri
 		}
 		return fmt.Sprintf("Wrote output to: %s", file.Name()), nil
 	default:
-		if err := os.WriteFile(outfile, body, 0644); err != nil {
+		if err := os.WriteFile(outfile, body, 0600); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Wrote output to: %s", outfile), nil
@@ -237,7 +237,7 @@ func createDownloadFile(response *http.Response, data []byte) (*os.File, error) 
 			// Only use the last path component to prevent directory traversal
 			filename = filepath.Base(dispFilename)
 			// Try to create the file with exclusive flag to avoid race conditions
-			file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+			file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 			if err == nil {
 				return file, nil
 			}
