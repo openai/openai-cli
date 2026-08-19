@@ -230,6 +230,197 @@ fi
 	assert.NotContains(t, output, "unexpected completion-output file")
 }
 
+func TestBashCompletionFilePrefixesAreLiteral(t *testing.T) {
+	t.Parallel()
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not available")
+	}
+
+	completionScript, err := shellCompletions[CompletionStyleBash](&cli.Command{}, "openai")
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	tests := []struct {
+		name      string
+		words     []string
+		filenames []string
+		want      []string
+	}{
+		{
+			name:      "GNU sed delimiter and command injection",
+			words:     []string{"openai", "files", "|;e>sed-executed;#@fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"|;e>sed-executed;#@fixture.txt"},
+		},
+		{
+			name:      "sed delimiter",
+			words:     []string{"openai", "files", "delimiter|prefix@fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"delimiter|prefix@fixture.txt"},
+		},
+		{
+			name:      "semicolons",
+			words:     []string{"openai", "files", "before;after@fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"before;after@fixture.txt"},
+		},
+		{
+			name:      "ampersands",
+			words:     []string{"openai", "files", "before&after@fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"before&after@fixture.txt"},
+		},
+		{
+			name:      "backslashes",
+			words:     []string{"openai", "files", `before\after@fix`},
+			filenames: []string{"fixture.txt"},
+			want:      []string{`before\after@fixture.txt`},
+		},
+		{
+			name:      "whitespace",
+			words:     []string{"openai", "files", "before \t after@fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"before \t after@fixture.txt"},
+		},
+		{
+			name:      "at prefix",
+			words:     []string{"openai", "files", "@fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"@fixture.txt"},
+		},
+		{
+			name:      "prefixed file protocol",
+			words:     []string{"openai", "files", "field@file://fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"field@file://fixture.txt"},
+		},
+		{
+			name:      "prefixed data protocol",
+			words:     []string{"openai", "files", "field@data://fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"field@data://fixture.txt"},
+		},
+		{
+			name:      "file protocol",
+			words:     []string{"openai", "files", "@file://fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"//fixture.txt"},
+		},
+		{
+			name:      "data protocol",
+			words:     []string{"openai", "files", "@data://fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"//fixture.txt"},
+		},
+		{
+			name:      "split file protocol",
+			words:     []string{"openai", "files", "@file", ":", "//fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"//fixture.txt"},
+		},
+		{
+			name:      "split data protocol",
+			words:     []string{"openai", "files", "@data", ":", "//fix"},
+			filenames: []string{"fixture.txt"},
+			want:      []string{"//fixture.txt"},
+		},
+		{
+			name:      "filename metacharacters",
+			words:     []string{"openai", "files", "@fix"},
+			filenames: []string{`fixture name & semi; slash\file.txt`},
+			want:      []string{`@fixture name & semi; slash\file.txt`},
+		},
+		{
+			name:      "multiple filenames stay separate",
+			words:     []string{"openai", "files", "@fix"},
+			filenames: []string{"fixture one.txt", "fixture two.txt"},
+			want:      []string{"@fixture one.txt", "@fixture two.txt"},
+		},
+		{
+			name:      "no matching filename",
+			words:     []string{"openai", "files", "@missing"},
+			filenames: []string{"fixture.txt"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			directory := t.TempDir()
+			for _, filename := range tt.filenames {
+				if !assert.NoError(t, os.WriteFile(filepath.Join(directory, filename), nil, 0o600)) {
+					return
+				}
+			}
+
+			probe := `
+cd "$1" || exit 1
+shift
+
+if ! type mapfile >/dev/null 2>&1; then
+  mapfile() {
+    if [[ "$1" == "-t" ]]; then
+      shift
+    fi
+    if [[ "$1" != "COMPREPLY" ]]; then
+      return 2
+    fi
+
+    COMPREPLY=()
+    local line
+    while IFS= read -r line; do
+      COMPREPLY+=("$line")
+    done
+  }
+fi
+
+sed() {
+  # Reproduce GNU sed's e command on platforms that only provide BSD sed.
+  if [[ "$1" == 's|^||;e>sed-executed;#@|' ]]; then
+    : >sed-executed
+    cat
+    return
+  fi
+
+  command sed "$@"
+}
+
+openai() {
+  return 10
+}
+
+` + completionScript + `
+
+COMP_WORDS=("$@")
+COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
+__openai_bash_autocomplete
+
+for completion in "${COMPREPLY[@]}"; do
+  printf '%s\n' "$completion"
+done
+`
+
+			args := append([]string{"-c", probe, "bash-completion-probe", directory}, tt.words...)
+			out, err := exec.Command(bash, args...).CombinedOutput()
+			if !assert.NoError(t, err, string(out)) {
+				return
+			}
+
+			var got []string
+			if len(out) > 0 {
+				got = strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+			}
+
+			assert.ElementsMatch(t, tt.want, got)
+			assert.NoFileExists(t, filepath.Join(directory, "sed-executed"))
+		})
+	}
+}
+
 func TestBashCompletionScriptDoesNotRegisterPlainCompletion(t *testing.T) {
 	t.Parallel()
 

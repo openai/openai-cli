@@ -44,7 +44,11 @@ ____APPNAME___bash_autocomplete() {
     fi
 
     if [[ "$force_file_completion" == true ]]; then
-      mapfile -t COMPREPLY < <(compgen -f -- "$file_part" | sed "s|^|$prefix|")
+      local file
+      COMPREPLY=()
+      while IFS= read -r file; do
+        COMPREPLY+=("$prefix$file")
+      done < <(compgen -f -- "$file_part")
     else
       case $exit_code in
       10) mapfile -t COMPREPLY < <(compgen -f -- "$cur") ;; # file completion
