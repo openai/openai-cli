@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -13,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-go/v3/option"
@@ -190,39 +193,104 @@ func streamToStdout(generateOutput func(w *os.File) error) error {
 // Takes in a stdout reference so we can test this function without overriding os.Stdout in tests.
 func writeBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (string, error) {
 	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		return "", err
-	}
+
 	switch outfile {
 	case "-", "/dev/stdout":
-		_, err := stdout.Write(body)
+		_, err := io.Copy(stdout, response.Body)
 		return "", err
 	case "":
-		// If output file is unspecified, then print to stdout for plain text or
-		// if stdout is not a terminal:
-		if !isTerminal(os.Stdout) || isUTF8TextFile(body) {
-			_, err := stdout.Write(body)
+		if !isTerminal(os.Stdout) {
+			_, err := io.Copy(stdout, response.Body)
 			return "", err
 		}
-
-		// If response has a suggested filename in the content-disposition
-		// header, then use that (with an optional suffix to ensure uniqueness):
-		file, err := createDownloadFile(response, body)
+		return writeAutomaticBinaryResponse(response, stdout)
+	default:
+		file, err := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 		if err != nil {
 			return "", err
 		}
 		defer file.Close()
-		if _, err := file.Write(body); err != nil {
+		if _, err := io.Copy(file, response.Body); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Wrote output to: %s", file.Name()), nil
-	default:
-		if err := os.WriteFile(outfile, body, 0600); err != nil {
+		if err := file.Close(); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Wrote output to: %s", outfile), nil
 	}
+}
+
+// writeAutomaticBinaryResponse preserves full-response UTF-8 detection without
+// keeping an arbitrarily large response in memory.
+func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (string, error) {
+	spool, err := os.CreateTemp("", "openai-cli-download-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(spool.Name())
+	defer spool.Close()
+
+	if _, err := io.Copy(spool, response.Body); err != nil {
+		return "", err
+	}
+	if _, err := spool.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+
+	// DetectContentType examines at most 512 bytes. Keep enough additional
+	// bytes to complete a UTF-8 rune that straddles that boundary.
+	sample := make([]byte, 512+utf8.UTFMax-1)
+	n, err := io.ReadFull(spool, sample)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return "", err
+	}
+	sample = sample[:n]
+	if _, err := spool.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+
+	validUTF8 := true
+	reader := bufio.NewReader(spool)
+	for {
+		r, size, err := reader.ReadRune()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if r == utf8.RuneError && size == 1 {
+			validUTF8 = false
+			break
+		}
+	}
+
+	if validUTF8 {
+		for !utf8.Valid(sample) {
+			sample = sample[:len(sample)-1]
+		}
+	} else if utf8.Valid(sample) {
+		// Preserve .bin fallback when invalid UTF-8 appears after the MIME sample.
+		sample = append(sample, 0xff)
+	}
+
+	if _, err := spool.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	if validUTF8 && isUTF8TextFile(sample) {
+		_, err := io.Copy(stdout, spool)
+		return "", err
+	}
+
+	file, err := createDownloadFile(response, sample)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	if _, err := io.Copy(file, spool); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Wrote output to: %s", file.Name()), nil
 }
 
 // Return a writable file handle to a new file, which attempts to choose a good filename
