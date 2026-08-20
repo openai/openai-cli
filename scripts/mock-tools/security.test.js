@@ -264,32 +264,41 @@ test("preserves repository-level npm registry configuration in the isolated inst
   });
 });
 
-test("never stages copied registry credentials inside the Git worktree", () => {
-  withNativeFixture(({ repository, toolsDirectory }) => {
-    const token = "synthetic-sdk95-registry-credential";
-    const realNpm = spawnSync("which", ["npm"], { encoding: "utf8" }).stdout.trim();
-    const observerDirectory = path.join(repository, "npm-observer");
-    fs.mkdirSync(observerDirectory);
-    fs.writeFileSync(path.join(repository, ".gitignore"), "/.npmrc\n");
-    fs.writeFileSync(path.join(repository, ".npmrc"), `//127.0.0.1:65534/:_authToken=${token}\n`);
-    fs.writeFileSync(
-      path.join(observerDirectory, "npm"),
-      '#!/bin/sh\nif [ "$1" = "ci" ]; then git -C "$SDK95_REPOSITORY" add -A; fi\nexec "$SDK95_REAL_NPM" "$@"\n',
-      { mode: 0o755 },
-    );
-    const initialized = spawnSync("git", ["init", "--quiet", repository], { encoding: "utf8" });
-    assert.strictEqual(initialized.status, 0, initialized.stderr);
+for (const temporaryDirectoryMode of ["external", "inside", "symlink"]) {
+  test(`never stages registry credentials inside the Git worktree (${temporaryDirectoryMode} TMPDIR)`, () => {
+    withNativeFixture(({ directory, repository, toolsDirectory }) => {
+      const token = "synthetic-sdk95-registry-credential";
+      const realNpm = spawnSync("which", ["npm"], { encoding: "utf8" }).stdout.trim();
+      const observerDirectory = path.join(repository, "npm-observer");
+      fs.mkdirSync(observerDirectory);
+      fs.writeFileSync(path.join(repository, ".gitignore"), "/.npmrc\n");
+      fs.writeFileSync(path.join(repository, ".npmrc"), `//127.0.0.1:65534/:_authToken=${token}\n`);
+      fs.writeFileSync(
+        path.join(observerDirectory, "npm"),
+        '#!/bin/sh\nif [ "$1" = "ci" ]; then git -C "$SDK95_REPOSITORY" add -A; fi\nexec "$SDK95_REAL_NPM" "$@"\n',
+        { mode: 0o755 },
+      );
+      const initialized = spawnSync("git", ["init", "--quiet", repository], { encoding: "utf8" });
+      assert.strictEqual(initialized.status, 0, initialized.stderr);
 
-    runMock(repository, toolsDirectory, {
-      PATH: `${observerDirectory}${path.delimiter}${process.env.PATH}`,
-      SDK95_REPOSITORY: repository,
-      SDK95_REAL_NPM: realNpm,
+      const insideTemporaryDirectory = path.join(repository, "temporary");
+      fs.mkdirSync(insideTemporaryDirectory);
+      const symlinkTemporaryDirectory = path.join(directory, "linked-temporary");
+      fs.symlinkSync(insideTemporaryDirectory, symlinkTemporaryDirectory, "dir");
+      const temporaryDirectory = temporaryDirectoryMode === "inside" ? insideTemporaryDirectory : symlinkTemporaryDirectory;
+
+      runMock(repository, toolsDirectory, {
+        PATH: `${observerDirectory}${path.delimiter}${process.env.PATH}`,
+        SDK95_REPOSITORY: repository,
+        SDK95_REAL_NPM: realNpm,
+        ...(temporaryDirectoryMode === "external" ? {} : { TMPDIR: temporaryDirectory }),
+      });
+
+      const exposed = spawnSync("git", ["-C", repository, "grep", "--cached", "-l", token], { encoding: "utf8" });
+      assert.strictEqual(exposed.status, 1, `registry credentials entered the Git index: ${exposed.stdout}`);
     });
-
-    const exposed = spawnSync("git", ["-C", repository, "grep", "--cached", "-l", token], { encoding: "utf8" });
-    assert.strictEqual(exposed.status, 1, `registry credentials entered the Git index: ${exposed.stdout}`);
   });
-});
+}
 
 test("preserves the original effective global npm registry configuration", () => {
   withNativeFixture(({ repository, toolsDirectory }) => {
@@ -313,5 +322,24 @@ test("preserves the original effective global npm registry configuration", () =>
 
     assert.notStrictEqual(result.status, 0);
     assert.match(result.stderr, /127\.0\.0\.1:65533/, `the globally configured npm registry was lost: ${result.stderr}`);
+  });
+});
+
+test("forces local installation when inherited npm configuration enables global mode", () => {
+  withNativeFixture(({ repository, toolsDirectory }) => {
+    fs.writeFileSync(path.join(repository, ".npmrc"), "registry=http://127.0.0.1:65535/\n@stdy:registry=http://127.0.0.1:65535/\n");
+
+    const result = runMock(repository, toolsDirectory, {
+      npm_config_registry: undefined,
+      npm_config_global: "true",
+      npm_config_offline: "false",
+      npm_config_fetch_retries: "0",
+      npm_config_fetch_timeout: "1000",
+      npm_config_dry_run: "false",
+    });
+
+    assert.notStrictEqual(result.status, 0);
+    assert.doesNotMatch(result.stderr, /ECIGLOBAL|does not work for global packages/);
+    assert.match(result.stderr, /127\.0\.0\.1:65535/, `local installation never reached the configured mirror: ${result.stderr}`);
   });
 });

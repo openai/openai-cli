@@ -25,16 +25,20 @@ echo "==> Starting mock server with URL ${URL}"
 
 # Preserve npm's effective configuration while installing outside the checkout.
 NPM_GLOBAL_CONFIG="$(npm config get globalconfig)"
-TEMP_DIRECTORY="${TMPDIR:-/tmp}"
-INSTALL_DIRECTORY="$(mktemp -d "${TEMP_DIRECTORY%/}/openai-cli-mock.XXXXXXXX")"
-INSTALL_DIRECTORY="$(cd "$INSTALL_DIRECTORY" && pwd -P)"
+REPOSITORY_DIRECTORY="$(pwd -P)"
+TEMP_DIRECTORY="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+if [[ "$TEMP_DIRECTORY" == "$REPOSITORY_DIRECTORY" || "$TEMP_DIRECTORY" == "$REPOSITORY_DIRECTORY/"* ]]; then
+  echo "Error: npm installation temporary directory must be outside the checkout" >&2
+  exit 1
+fi
+INSTALL_DIRECTORY="$(mktemp -d "$TEMP_DIRECTORY/openai-cli-mock.XXXXXXXX")"
 trap 'rm -rf "$INSTALL_DIRECTORY"' EXIT
 cp scripts/mock-tools/package.json scripts/mock-tools/package-lock.json "$INSTALL_DIRECTORY/"
 if [[ -f .npmrc ]]; then
   cp .npmrc "$INSTALL_DIRECTORY/.npmrc"
 fi
 
-npm ci --globalconfig "$NPM_GLOBAL_CONFIG" --prefix "$INSTALL_DIRECTORY" --package-lock=true --include=dev --include=optional \
+npm ci --global=false --globalconfig "$NPM_GLOBAL_CONFIG" --prefix "$INSTALL_DIRECTORY" --package-lock=true --include=dev --include=optional \
   --ignore-scripts --no-audit --no-fund
 rm -f "$INSTALL_DIRECTORY/.npmrc"
 node scripts/mock-tools/resolve-native.js "$INSTALL_DIRECTORY" >/dev/null
