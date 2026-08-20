@@ -39,15 +39,49 @@ jobs:
 
       - uses: ./.github/actions/setup-go
 
+      - name: Test vulnerability scan coverage
+        run: ./scripts/govulncheck-test
+
+      - name: Check shipped CLI for reachable vulnerabilities
+        run: ./scripts/govulncheck
+
       - name: Test verified GoReleaser installer
         run: ./scripts/test-goreleaser-installer
 
       - name: Set up verified GoReleaser
+        id: goreleaser
         uses: ./.github/actions/setup-goreleaser
 
+      - name: Generate release inputs
+        run: |
+          mkdir -p completions
+          go run ./cmd/openai/main.go @completion bash > completions/openai.bash
+          go run ./cmd/openai/main.go @completion zsh > completions/openai.zsh
+          go run ./cmd/openai/main.go @completion fish > completions/openai.fish
+          go run ./cmd/openai/main.go @manpages -o man
+
+          for directory in completions man man/man1; do
+            [[ -d "$directory" && ! -L "$directory" ]] || exit 1
+          done
+          for path in completions/openai.bash completions/openai.zsh completions/openai.fish man/man1/openai.1.gz; do
+            [[ -f "$path" && ! -L "$path" ]] || exit 1
+            size="$(wc -c < "$path")"
+            [[ "$size" -gt 0 && "$size" -le 10485760 ]] || exit 1
+          done
+
+          exclude_file="$(git rev-parse --git-path info/exclude)"
+          printf '%s\n' \
+            '/completions/openai.bash' \
+            '/completions/openai.zsh' \
+            '/completions/openai.fish' \
+            '/man/man1/openai.1.gz' \
+            >> "$exclude_file"
+
       - name: Run GoReleaser
-        run: goreleaser release --snapshot --clean --skip=publish
+        run: |
+          "$GORELEASER_EXECUTABLE" release --snapshot --clean --skip=publish
         env:
+          GORELEASER_EXECUTABLE: ${{ steps.goreleaser.outputs.executable }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build:
