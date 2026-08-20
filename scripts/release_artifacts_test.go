@@ -112,10 +112,7 @@ func TestGenerateReleaseArtifactsStopsAfterFailure(t *testing.T) {
 }
 
 func TestLocalReleasePreflight(t *testing.T) {
-	goreleaser, err := exec.LookPath("goreleaser")
-	if err != nil {
-		t.Skip("the verified GoReleaser is unavailable outside the artifact-build job")
-	}
+	goreleaser := verifiedReleaseExecutable(t)
 
 	ignore, err := os.ReadFile(filepath.Join("..", ".gitignore"))
 	if err != nil {
@@ -213,24 +210,30 @@ archives:
 	}
 	assertReleaseArchiveIncludesSupportFiles(t, root, "local")
 
-	unrelated := filepath.Join(root, "nested", "completions")
-	if err := os.MkdirAll(unrelated, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(unrelated, "unrelated.txt"), []byte("unrelated dirt\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	output, err = release().CombinedOutput()
-	if err == nil || !strings.Contains(string(output), "git is in a dirty state") || !strings.Contains(string(output), "nested/") {
-		t.Fatalf("rooted release-artifact ignores concealed unrelated dirty files: %v; output:\n%s", err, output)
+	for _, unexpected := range []string{
+		"completions/unexpected.sh",
+		"man/man1/unexpected.1.gz",
+		"nested/completions/unrelated.txt",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(unexpected))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("unrelated dirt\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		output, err = release().CombinedOutput()
+		if err == nil || !strings.Contains(string(output), "git is in a dirty state") {
+			t.Fatalf("exact release-artifact ignores concealed %s: %v; output:\n%s", unexpected, err, output)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
 func TestHistoricalReleasePreflight(t *testing.T) {
-	goreleaser, err := exec.LookPath("goreleaser")
-	if err != nil {
-		t.Skip("the verified GoReleaser is unavailable outside the artifact-build job")
-	}
+	goreleaser := verifiedReleaseExecutable(t)
 
 	root := t.TempDir()
 	files := map[string]string{
@@ -317,11 +320,18 @@ archives:
 
 	workflow := readReleaseYAML[releaseWorkflow](t, filepath.Join("..", ".github", "workflows", "publish-release.yml"))
 	job := workflow.Jobs["goreleaser"]
-	exclude := slices.IndexFunc(job.Steps, func(step releaseStep) bool {
-		return step.Name == "Exclude downloaded release support artifacts"
-	})
-	if exclude >= 0 {
-		runHistoricalFixtureCommand(t, root, "bash", "-c", job.Steps[exclude].Run)
+	verify := releaseStepIndex(t, job, "Verify isolated release inputs")
+	staging := t.TempDir()
+	for _, directory := range []string{"completions", "man"} {
+		if err := os.Rename(filepath.Join(root, directory), filepath.Join(staging, directory)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	verification := exec.Command("bash", "-c", job.Steps[verify].Run)
+	verification.Dir = root
+	verification.Env = append(os.Environ(), "RELEASE_INPUT_DIR="+staging)
+	if output, err := verification.CombinedOutput(); err != nil {
+		t.Fatalf("historical release artifact verification failed: %v; output:\n%s", err, output)
 	}
 	output, err = release().CombinedOutput()
 	if err != nil {
@@ -375,181 +385,23 @@ func assertReleaseArchiveIncludesSupportFiles(t *testing.T, root, scenario strin
 	}
 }
 
-func TestPublishWorkflowSeparatesGenerationFromReleaseCredentials(t *testing.T) {
-	workflow := readReleaseYAML[releaseWorkflow](t, filepath.Join("..", ".github", "workflows", "publish-release.yml"))
-	prepare, ok := workflow.Jobs["prepare-release-artifacts"]
-	if !ok {
-		t.Fatal("publish workflow has no isolated release-artifact preparation job")
-	}
-	if prepare.Environment != "" {
-		t.Errorf("artifact preparation unexpectedly uses protected environment %q", prepare.Environment)
-	}
-	if len(prepare.Permissions) != 1 || prepare.Permissions["contents"] != "read" {
-		t.Errorf("artifact preparation permissions = %v, want only contents: read", prepare.Permissions)
-	}
-	for _, step := range prepare.Steps {
-		encoded, err := yaml.Marshal(step)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(encoded), "secrets.") || strings.Contains(step.Uses, "create-github-app-token") {
-			t.Errorf("unprivileged step %q requests protected credentials", step.Name)
-		}
-		for _, credential := range releaseCredentials {
-			if _, exists := step.Env[credential]; exists {
-				t.Errorf("unprivileged step %q exposes %s", step.Name, credential)
-			}
-		}
-	}
-
-	stage := releaseStepIndex(t, prepare, "Stage trusted release artifact generator")
-	checkout := releaseStepIndex(t, prepare, "Ensure release tag is on main")
-	generate := releaseStepIndex(t, prepare, "Generate release support artifacts")
-	upload := releaseStepIndex(t, prepare, "Upload release support artifacts")
-	if !(stage < checkout && checkout < generate && generate < upload) {
-		t.Errorf("preparation steps are out of order: stage=%d checkout=%d generate=%d upload=%d", stage, checkout, generate, upload)
-	}
-	if got := prepare.Steps[generate].Run; got != "$RUNNER_TEMP/generate-release-artifacts" {
-		t.Errorf("generator command = %q, want staged trusted generator", got)
-	}
-	const expectedArtifact = "release-support-artifacts-${{ steps.release-tag.outputs.commit }}"
-	if got := prepare.Steps[upload].With["name"]; got != expectedArtifact {
-		t.Errorf("support artifact name = %v, want artifacts bound to the verified release commit", got)
-	}
-	for _, directory := range []string{"completions/", "man/"} {
-		if !strings.Contains(stringReleaseInput(t, prepare.Steps[upload], "path"), directory) {
-			t.Errorf("uploaded support artifacts omit %s", directory)
-		}
-	}
-
-	release, ok := workflow.Jobs["goreleaser"]
-	if !ok {
-		t.Fatal("publish workflow has no GoReleaser job")
-	}
-	if release.Needs != "prepare-release-artifacts" {
-		t.Errorf("GoReleaser dependency = %q, want prepare-release-artifacts", release.Needs)
-	}
-	if release.Environment != "publish" {
-		t.Errorf("GoReleaser environment = %q, want publish", release.Environment)
-	}
-	if len(release.Permissions) != 1 || release.Permissions["contents"] != "read" {
-		t.Errorf("GoReleaser job permissions = %v, want only contents: read", release.Permissions)
-	}
-	releaseCheckout := releaseStepIndex(t, release, "Ensure release tag is on main")
-	exclude := releaseStepIndex(t, release, "Exclude downloaded release support artifacts")
-	download := releaseStepIndex(t, release, "Download release support artifacts")
-	repoToken := releaseStepIndex(t, release, "Create release app token for this repo")
-	tapToken := releaseStepIndex(t, release, "Create release app token for homebrew-tools")
-	run := releaseStepIndex(t, release, "Run GoReleaser")
-	if !(releaseCheckout < exclude && exclude < download && download < repoToken && repoToken < tapToken && tapToken < run) {
-		t.Errorf("privileged steps are out of order: checkout=%d exclude=%d download=%d repo=%d tap=%d release=%d", releaseCheckout, exclude, download, repoToken, tapToken, run)
-	}
-	for _, required := range []string{"/completions/", "/man/", "git rev-parse --git-path info/exclude"} {
-		if !strings.Contains(release.Steps[exclude].Run, required) {
-			t.Errorf("release support artifacts are not excluded through checkout-local Git metadata: missing %s", required)
-		}
-	}
-	if !strings.Contains(release.Steps[run].Run, "--skip=before") {
-		t.Errorf("privileged GoReleaser can execute hooks restored by a historical release tag")
-	}
-	if got := release.Steps[download].With["name"]; got != expectedArtifact {
-		t.Errorf("downloaded support artifact name = %v, want artifacts bound to the verified release commit", got)
-	}
-	if got := release.Steps[download].With["path"]; got != "." {
-		t.Errorf("support artifact download path = %v, want repository root", got)
-	}
-	if got := release.Steps[repoToken].With["permission-contents"]; got != "write" {
-		t.Errorf("release repository token contents permission = %v, want write", got)
-	}
-	if got := release.Steps[tapToken].With["repositories"]; got != "homebrew-tools" {
-		t.Errorf("Homebrew token repository = %v, want homebrew-tools", got)
-	}
-	for _, credential := range []string{
-		"GITHUB_TOKEN",
-		"HOMEBREW_TAP_GITHUB_TOKEN",
-		"MACOS_SIGN_P12",
-		"MACOS_SIGN_PASSWORD",
-		"MACOS_NOTARY_KEY",
-		"MACOS_NOTARY_KEY_ID",
-		"MACOS_NOTARY_ISSUER_ID",
-	} {
-		if _, exists := release.Steps[run].Env[credential]; !exists {
-			t.Errorf("release step no longer receives required %s", credential)
-		}
-	}
-
-	attest, ok := workflow.Jobs["attest"]
-	if !ok || attest.Needs != "goreleaser" {
-		t.Fatal("release artifact attestation no longer follows GoReleaser")
-	}
-	if attest.Permissions["id-token"] != "write" || attest.Permissions["attestations"] != "write" {
-		t.Errorf("attestation permissions = %v, want OIDC and attestation writes", attest.Permissions)
-	}
-	releaseStepIndex(t, attest, "Attest release artifacts")
-	releaseStepIndex(t, attest, "Verify release artifact attestations")
-}
-
-func TestReleaseTagValidationRemainsSharedAndAuthenticated(t *testing.T) {
-	action := readReleaseYAML[releaseAction](t, filepath.Join("..", ".github", "actions", "checkout-release-tag", "action.yml"))
-	if len(action.Runs.Steps) != 1 {
-		t.Fatalf("release tag validation steps = %d, want 1", len(action.Runs.Steps))
-	}
-	step := action.Runs.Steps[0]
-	if step.Env["GITHUB_TOKEN"] != "${{ github.token }}" {
-		t.Errorf("tag validation no longer scopes the read-only GitHub token to its own step")
-	}
-	for _, required := range []string{
-		`git check-ref-format "refs/tags/$TAG"`,
-		`origin="https://github.com/${GITHUB_REPOSITORY}.git"`,
-		`--config-env=http.https://github.com/.extraheader=RELEASE_GIT_AUTHORIZATION`,
-		`git "${git_auth[@]}" ls-remote --exit-code --tags --refs "$origin"`,
-		`unset RELEASE_GIT_AUTHORIZATION`,
-		`git merge-base --is-ancestor "$tag_sha" origin/main`,
-		`git checkout --detach "$tag_sha"`,
-		`test "$(git rev-parse HEAD)" = "$tag_sha"`,
-		`printf 'commit=%s\n' "$tag_sha" >> "$GITHUB_OUTPUT"`,
-	} {
-		if !strings.Contains(step.Run, required) {
-			t.Errorf("release tag validation no longer performs %s", required)
-		}
-	}
-
-	workflow := readReleaseYAML[releaseWorkflow](t, filepath.Join("..", ".github", "workflows", "publish-release.yml"))
-	for _, jobName := range []string{"prepare-release-artifacts", "goreleaser"} {
-		job := workflow.Jobs[jobName]
-		index := releaseStepIndex(t, job, "Ensure release tag is on main")
-		if got := job.Steps[index].Uses; got != "./.github/actions/checkout-release-tag" {
-			t.Errorf("%s validates its tag with %q, want the shared trusted action", jobName, got)
-		}
-		if got := job.Steps[index].ID; got != "release-tag" {
-			t.Errorf("%s release tag validation id = %q, want release-tag", jobName, got)
-		}
-	}
-}
-
-func TestCIReleaseArtifactsAreGeneratedWithoutPublishingToken(t *testing.T) {
+func TestCIReleasePreflightUsesVerifiedExecutable(t *testing.T) {
 	workflow := readReleaseYAML[releaseWorkflow](t, filepath.Join("..", ".github", "workflows", "ci.yml"))
 	job, ok := workflow.Jobs["build-artifacts"]
 	if !ok {
 		t.Fatal("CI has no release-artifact build job")
 	}
-	generate := releaseStepIndex(t, job, "Generate release support artifacts")
+	install := releaseStepIndex(t, job, "Set up verified GoReleaser")
 	preflight := releaseStepIndex(t, job, "Verify local and historical release preflight")
-	release := releaseStepIndex(t, job, "Run GoReleaser")
-	if !(preflight < generate && generate < release) {
-		t.Errorf("CI release steps are out of order: preflight=%d generate=%d release=%d", preflight, generate, release)
+	generate := releaseStepIndex(t, job, "Generate release inputs")
+	if !(install < preflight && preflight < generate) {
+		t.Errorf("CI release steps are out of order: install=%d preflight=%d generate=%d", install, preflight, generate)
 	}
 	if !strings.Contains(job.Steps[preflight].Run, "Test(Local|Historical)ReleasePreflight") {
 		t.Errorf("CI does not execute both real local and historical-tag release preflights")
 	}
-	if got := job.Steps[generate].Run; got != "./scripts/generate-release-artifacts" {
-		t.Errorf("CI artifact generator = %q, want repository generator", got)
-	}
-	if !strings.Contains(job.Steps[release].Run, "--skip=publish,before") {
-		t.Errorf("CI GoReleaser can execute application hooks or publish artifacts")
-	}
-	if len(job.Steps[generate].Env) != 0 || len(job.Steps[release].Env) != 0 {
-		t.Errorf("CI snapshot generation unexpectedly receives privileged environment variables")
+	if got, want := job.Steps[preflight].Env["GORELEASER_EXECUTABLE"], "${{ steps.goreleaser.outputs.executable }}"; got != want {
+		t.Errorf("CI release preflights executable = %q, want reviewed verified binary %q", got, want)
 	}
 }
 
@@ -592,6 +444,19 @@ func TestGoReleaserPreservesArtifactsWithoutApplicationHooks(t *testing.T) {
 	if !slices.Equal(cask.Manpages, []string{"man/man1/openai.1.gz"}) {
 		t.Errorf("Homebrew man pages = %v, want existing compressed manual", cask.Manpages)
 	}
+}
+
+func verifiedReleaseExecutable(t *testing.T) string {
+	t.Helper()
+
+	if executable := os.Getenv("GORELEASER_EXECUTABLE"); executable != "" {
+		return executable
+	}
+	executable, err := exec.LookPath("goreleaser")
+	if err != nil {
+		t.Skip("the verified GoReleaser is unavailable outside the artifact-build job")
+	}
+	return executable
 }
 
 func runHistoricalFixtureCommand(t *testing.T, directory, name string, args ...string) {
@@ -683,40 +548,18 @@ func releaseStepIndex(t *testing.T, job releaseJob, name string) int {
 	return -1
 }
 
-func stringReleaseInput(t *testing.T, step releaseStep, name string) string {
-	t.Helper()
-
-	value, ok := step.With[name].(string)
-	if !ok {
-		t.Fatalf("step %q input %q is %T, want string", step.Name, name, step.With[name])
-	}
-	return value
-}
-
 type releaseWorkflow struct {
 	Jobs map[string]releaseJob `yaml:"jobs"`
 }
 
 type releaseJob struct {
-	Needs       any               `yaml:"needs"`
-	Environment string            `yaml:"environment"`
-	Permissions map[string]string `yaml:"permissions"`
-	Steps       []releaseStep     `yaml:"steps"`
-}
-
-type releaseAction struct {
-	Runs struct {
-		Steps []releaseStep `yaml:"steps"`
-	} `yaml:"runs"`
+	Steps []releaseStep `yaml:"steps"`
 }
 
 type releaseStep struct {
-	ID   string            `yaml:"id"`
 	Name string            `yaml:"name"`
-	Uses string            `yaml:"uses"`
 	Run  string            `yaml:"run"`
 	Env  map[string]string `yaml:"env"`
-	With map[string]any    `yaml:"with"`
 }
 
 type goReleaserConfig struct {

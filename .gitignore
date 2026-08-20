@@ -1,7 +1,9 @@
 .prism.log
 .stdy.log
 dist/
-/completions/
-/man/
+/completions/openai.bash
+/completions/openai.zsh
+/completions/openai.fish
+/man/man1/openai.1.gz
 /openai
 *.exe

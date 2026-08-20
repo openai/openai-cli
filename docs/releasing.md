@@ -18,10 +18,10 @@ running the application. For local release or snapshot builds, first run
 `./scripts/generate-release-artifacts` without publishing or signing credentials.
 Publishing always skips GoReleaser's `before` hooks, including when an older
 release tag still contains the previous application-executing hooks.
-Rooted ignore rules keep locally generated completions and man pages out of Git
-status; the publishing checkout applies the same rooted excludes in its local
-Git metadata so non-snapshot releases also pass GoReleaser's clean-tree
-validation when historical tags predate those ignore rules.
+Rooted, exact-file ignore rules keep only the expected local completions and man
+page out of Git status; the publishing checkout applies the same exact-file
+excludes in its local Git metadata so non-snapshot releases also pass
+GoReleaser's clean-tree validation when historical tags predate those rules.
 
 The publish workflow installs GoReleaser from its trusted workflow checkout
 before switching to the requested release tag. This allows existing release tags
