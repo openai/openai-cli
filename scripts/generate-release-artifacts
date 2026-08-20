@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "${GITHUB_WORKSPACE:-$(dirname "$0")/..}"
+
+credentials=(
+  GITHUB_TOKEN
+  GH_TOKEN
+  HOMEBREW_TAP_GITHUB_TOKEN
+  MACOS_SIGN_P12
+  MACOS_SIGN_PASSWORD
+  MACOS_NOTARY_KEY
+  MACOS_NOTARY_KEY_ID
+  MACOS_NOTARY_ISSUER_ID
+  RELEASE_APP_PRIVATE_KEY
+  ACTIONS_ID_TOKEN_REQUEST_TOKEN
+)
+
+for credential in "${credentials[@]}"; do
+  if [[ -n "${!credential:-}" ]]; then
+    echo "Release artifacts must be generated without $credential" >&2
+    exit 1
+  fi
+done
+
+mkdir -p completions
+for shell in bash zsh fish; do
+  go run ./cmd/openai/main.go @completion "$shell" > "completions/openai.$shell"
+done
+go run ./cmd/openai/main.go @manpages -o man

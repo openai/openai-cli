@@ -52,6 +52,11 @@ jobs:
         id: goreleaser
         uses: ./.github/actions/setup-goreleaser
 
+      - name: Verify local and historical release preflight
+        run: go test ./scripts -run '^Test(Local|Historical)ReleasePreflight$' -count=1
+        env:
+          GORELEASER_EXECUTABLE: ${{ steps.goreleaser.outputs.executable }}
+
       - name: Generate release inputs
         run: |
           mkdir -p completions
