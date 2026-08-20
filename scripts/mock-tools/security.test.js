@@ -263,3 +263,55 @@ test("preserves repository-level npm registry configuration in the isolated inst
     assert.doesNotMatch(result.stderr, /127\.0\.0\.1:65531/);
   });
 });
+
+test("never stages copied registry credentials inside the Git worktree", () => {
+  withNativeFixture(({ repository, toolsDirectory }) => {
+    const token = "synthetic-sdk95-registry-credential";
+    const realNpm = spawnSync("which", ["npm"], { encoding: "utf8" }).stdout.trim();
+    const observerDirectory = path.join(repository, "npm-observer");
+    fs.mkdirSync(observerDirectory);
+    fs.writeFileSync(path.join(repository, ".gitignore"), "/.npmrc\n");
+    fs.writeFileSync(path.join(repository, ".npmrc"), `//127.0.0.1:65534/:_authToken=${token}\n`);
+    fs.writeFileSync(
+      path.join(observerDirectory, "npm"),
+      '#!/bin/sh\nif [ "$1" = "ci" ]; then git -C "$SDK95_REPOSITORY" add -A; fi\nexec "$SDK95_REAL_NPM" "$@"\n',
+      { mode: 0o755 },
+    );
+    const initialized = spawnSync("git", ["init", "--quiet", repository], { encoding: "utf8" });
+    assert.strictEqual(initialized.status, 0, initialized.stderr);
+
+    runMock(repository, toolsDirectory, {
+      PATH: `${observerDirectory}${path.delimiter}${process.env.PATH}`,
+      SDK95_REPOSITORY: repository,
+      SDK95_REAL_NPM: realNpm,
+    });
+
+    const exposed = spawnSync("git", ["-C", repository, "grep", "--cached", "-l", token], { encoding: "utf8" });
+    assert.strictEqual(exposed.status, 1, `registry credentials entered the Git index: ${exposed.stdout}`);
+  });
+});
+
+test("preserves the original effective global npm registry configuration", () => {
+  withNativeFixture(({ repository, toolsDirectory }) => {
+    const globalPrefix = path.join(repository, "global-prefix");
+    const globalConfiguration = path.join(globalPrefix, "etc", "npmrc");
+    const userConfiguration = path.join(repository, "empty-user.npmrc");
+    fs.mkdirSync(path.dirname(globalConfiguration), { recursive: true });
+    fs.writeFileSync(globalConfiguration, "registry=http://127.0.0.1:65533/\n@stdy:registry=http://127.0.0.1:65533/\n");
+    fs.writeFileSync(userConfiguration, "");
+
+    const result = runMock(repository, toolsDirectory, {
+      npm_config_registry: undefined,
+      npm_config_globalconfig: undefined,
+      npm_config_userconfig: userConfiguration,
+      npm_config_prefix: globalPrefix,
+      npm_config_offline: "false",
+      npm_config_fetch_retries: "0",
+      npm_config_fetch_timeout: "1000",
+      npm_config_dry_run: "false",
+    });
+
+    assert.notStrictEqual(result.status, 0);
+    assert.match(result.stderr, /127\.0\.0\.1:65533/, `the globally configured npm registry was lost: ${result.stderr}`);
+  });
+});
