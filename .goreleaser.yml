@@ -4,14 +4,6 @@ version: 2
 release:
   replace_existing_artifacts: true
 
-before:
-  hooks:
-    - mkdir -p completions
-    - sh -c "go run ./cmd/openai/main.go @completion bash > completions/openai.bash"
-    - sh -c "go run ./cmd/openai/main.go @completion zsh > completions/openai.zsh"
-    - sh -c "go run ./cmd/openai/main.go @completion fish > completions/openai.fish"
-    - sh -c "go run ./cmd/openai/main.go @manpages -o man"
-
 builds:
   - id: macos
     goos: [darwin]
