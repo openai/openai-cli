@@ -27,7 +27,7 @@ jobs:
         run: ./scripts/lint
 
   build-artifacts:
-    timeout-minutes: 10
+    timeout-minutes: 30
     name: build artifacts
     permissions:
       contents: read

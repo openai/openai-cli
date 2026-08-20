@@ -42,6 +42,7 @@ type workflowJob struct {
 	Outputs     map[string]string `yaml:"outputs"`
 	Permissions map[string]string `yaml:"permissions"`
 	Steps       []workflowStep    `yaml:"steps"`
+	Timeout     int               `yaml:"timeout-minutes"`
 }
 
 type workflowStep struct {
@@ -501,6 +502,9 @@ func TestCISnapshotGeneratesInputsBeforeGoReleaser(t *testing.T) {
 	t.Parallel()
 
 	job := readWorkflow(t, "ci.yml").Jobs["build-artifacts"]
+	if job.Timeout != 30 {
+		t.Fatalf("CI artifact build timeout = %d minutes, want 30", job.Timeout)
+	}
 	generateIndex, generate := requireStep(t, job, "Generate release inputs")
 	installerTestIndex, _ := requireStep(t, job, "Test verified GoReleaser installer")
 	verifiedBinaryIndex, verifiedBinary := requireStep(t, job, "Set up verified GoReleaser")
