@@ -170,6 +170,10 @@ func escapeQuotes(s string) string {
 	return quoteEscaper.Replace(s)
 }
 
+func multipartBaseName(name string) string {
+	return path.Base(strings.ReplaceAll(name, `\`, "/"))
+}
+
 func validateMIMEHeaderValue(value, component string) error {
 	for i := 0; i < len(value); i++ {
 		if (value[i] < ' ' && value[i] != '\t') || value[i] == '\x7f' {
@@ -193,7 +197,7 @@ func (e *encoder) encodeReader(key string, val reflect.Value, writer *multipart.
 	if named, ok := reader.(interface{ Filename() string }); ok {
 		filename = named.Filename()
 	} else if named, ok := reader.(interface{ Name() string }); ok {
-		filename = path.Base(named.Name())
+		filename = multipartBaseName(named.Name())
 	}
 
 	// Get content type if available
