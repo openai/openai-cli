@@ -238,3 +238,28 @@ test("ignores a sibling shrinkwrap containing counterfeit same-version archives"
     assert.strictEqual(fs.existsSync(path.join(repository, "stolen-canary")), false);
   });
 });
+
+test("requires reviewed lockfile enforcement even when inherited npm configuration disables it", () => {
+  const mock = fs.readFileSync(path.join(__dirname, "..", "mock"), "utf8");
+  assert.match(mock, /npm ci[^\n]*--package-lock(?:=true)?(?:\s|\\|$)/, "npm ci must explicitly enable the reviewed package lock");
+});
+
+test("preserves repository-level npm registry configuration in the isolated install", () => {
+  withNativeFixture(({ repository, toolsDirectory }) => {
+    const userConfiguration = path.join(repository, "user.npmrc");
+    fs.writeFileSync(userConfiguration, "registry=http://127.0.0.1:65531/\n");
+    fs.writeFileSync(path.join(repository, ".npmrc"), "registry=http://127.0.0.1:65532/\n@stdy:registry=http://127.0.0.1:65532/\n");
+
+    const result = runMock(repository, toolsDirectory, {
+      npm_config_registry: undefined,
+      npm_config_userconfig: userConfiguration,
+      npm_config_offline: "false",
+      npm_config_fetch_retries: "0",
+      npm_config_dry_run: "false",
+    });
+
+    assert.notStrictEqual(result.status, 0);
+    assert.match(result.stderr, /127\.0\.0\.1:65532/, `the repository-scoped registry was lost in staging: ${result.stderr}`);
+    assert.doesNotMatch(result.stderr, /127\.0\.0\.1:65531/);
+  });
+});
