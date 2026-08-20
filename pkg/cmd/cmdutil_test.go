@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -547,4 +549,296 @@ func captureShowJSONIterator[T any](t *testing.T, iter jsonview.Iterator[T], for
 	var buf bytes.Buffer
 	_, _ = buf.ReadFrom(r)
 	return buf.String()
+}
+
+func TestFormatJSONRawOutputEscapesInteractiveTerminalControls(t *testing.T) {
+	t.Parallel()
+
+	terminal := os.Stdout
+	if !isTerminal(terminal) {
+		var err error
+		terminal, err = os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+		if err != nil {
+			t.Skipf("terminal unavailable: %v", err)
+		}
+		t.Cleanup(func() { require.NoError(t, terminal.Close()) })
+		if !isTerminal(terminal) {
+			t.Skip("pseudo-terminal master does not expose terminal attributes on this platform")
+		}
+	}
+	require.True(t, isTerminal(terminal), "test must exercise the actual terminal boundary")
+
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "OSC52Clipboard", value: "\x1b]52;c;ZGF0YQ==\a", want: `\u001b]52;c;ZGF0YQ==\u0007`},
+		{name: "BEL", value: "before\aafter", want: `before\u0007after`},
+		{name: "ESC", value: "\x1b[31mspoofed\x1b[0m", want: `\u001b[31mspoofed\u001b[0m`},
+		{name: "C1CSI", value: "\u009b31mspoofed", want: `\u009b31mspoofed`},
+		{name: "MaliciousTitle", value: "\x1b]2;spoofed title\a", want: `\u001b]2;spoofed title\u0007`},
+		{name: "WhitespaceControls", value: "first\nsecond\r\t\b\f", want: `first\nsecond\r\t\b\f`},
+		{name: "DEL", value: "before\x7fafter", want: `before\u007fafter`},
+		{name: "Unicode", value: "safe ☕ text", want: "safe ☕ text"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			for _, transformed := range []bool{false, true} {
+				name := "DirectString"
+				if transformed {
+					name = "TransformedString"
+				}
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+
+					res, transform := rawOutputResult(t, test.value, transformed)
+					formatted, err := formatJSON(res, ShowJSONOpts{
+						Format:    "json",
+						RawOutput: true,
+						Stdout:    terminal,
+						Transform: transform,
+					})
+					require.NoError(t, err)
+					require.Equal(t, test.want+"\n", string(formatted))
+				})
+			}
+		})
+	}
+}
+
+func TestFormatJSONRawOutputPreservesNonTerminalBytes(t *testing.T) {
+	t.Parallel()
+
+	value := "\x1b]52;c;ZGF0YQ==\a\u009b31m\nnext\r\t\b\f\x7f☕"
+
+	destinations := []struct {
+		name string
+		open func(t *testing.T) *os.File
+	}{
+		{
+			name: "Pipe",
+			open: func(t *testing.T) *os.File {
+				r, w, err := os.Pipe()
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, r.Close()) })
+				t.Cleanup(func() { require.NoError(t, w.Close()) })
+				return w
+			},
+		},
+		{
+			name: "File",
+			open: func(t *testing.T) *os.File {
+				file, err := os.CreateTemp(t.TempDir(), "raw-output-*")
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, file.Close()) })
+				return file
+			},
+		},
+	}
+
+	for _, destination := range destinations {
+		t.Run(destination.name, func(t *testing.T) {
+			t.Parallel()
+
+			stdout := destination.open(t)
+			require.False(t, isTerminal(stdout))
+
+			for _, transformed := range []bool{false, true} {
+				name := "DirectString"
+				if transformed {
+					name = "TransformedString"
+				}
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+
+					res, transform := rawOutputResult(t, value, transformed)
+					formatted, err := formatJSON(res, ShowJSONOpts{
+						Format:    "json",
+						RawOutput: true,
+						Stdout:    stdout,
+						Transform: transform,
+					})
+					require.NoError(t, err)
+					require.Equal(t, append([]byte(value), '\n'), formatted)
+				})
+			}
+		})
+	}
+}
+
+func TestShowJSONRawOutputPreservesPipelineBytes(t *testing.T) {
+	t.Parallel()
+
+	value := "\x1b]52;c;ZGF0YQ==\a\u009b31m\nnext"
+	res, transform := rawOutputResult(t, value, true)
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, r.Close()) })
+
+	require.NoError(t, ShowJSON(res, ShowJSONOpts{
+		Format:    "json",
+		RawOutput: true,
+		Stdout:    w,
+		Transform: transform,
+	}))
+	require.NoError(t, w.Close())
+
+	output, err := io.ReadAll(r)
+	require.NoError(t, err)
+	require.Equal(t, append([]byte(value), '\n'), output)
+}
+
+func TestShowJSONIteratorRawOutputPreservesPipelineBytes(t *testing.T) {
+	t.Parallel()
+
+	first := "\x1b]52;c;ZGF0YQ==\a"
+	second := "\u009b31mspoofed\x1b]2;title\a"
+	iter := &sliceIterator[map[string]any]{items: []map[string]any{
+		{"message": first},
+		{"message": second},
+	}}
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, r.Close()) })
+
+	require.NoError(t, ShowJSONIterator(iter, -1, ShowJSONOpts{
+		Format:    "json",
+		RawOutput: true,
+		Stdout:    w,
+		Transform: "message",
+	}))
+	require.NoError(t, w.Close())
+
+	output, err := io.ReadAll(r)
+	require.NoError(t, err)
+	require.Equal(t, []byte(first+"\n"+second+"\n"), output)
+}
+
+func TestFormatJSONForOutputUsesFinalDestinationForColors(t *testing.T) {
+	if !isTerminal(os.Stdout) {
+		t.Skip("color destination regression requires an interactive stdout terminal")
+	}
+
+	readPipe, writePipe, err := os.Pipe()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, readPipe.Close()) })
+	t.Cleanup(func() { require.NoError(t, writePipe.Close()) })
+
+	tests := []struct {
+		name        string
+		stdout      *os.File
+		destination *os.File
+		forceColor  string
+		wantColor   bool
+	}{
+		{name: "terminal destination behind pager", stdout: writePipe, destination: os.Stdout, wantColor: true},
+		{name: "nonterminal final destination", stdout: os.Stdout, destination: writePipe, wantColor: false},
+		{name: "forced color for nonterminal", stdout: writePipe, destination: writePipe, forceColor: "1", wantColor: true},
+		{name: "disabled color for terminal", stdout: writePipe, destination: os.Stdout, forceColor: "0", wantColor: false},
+	}
+
+	for _, format := range []string{"json", "jsonl"} {
+		t.Run(format, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Setenv("FORCE_COLOR", tt.forceColor)
+
+					formatted, err := formatJSONForOutput(gjson.Parse(`{"message":"safe"}`), ShowJSONOpts{
+						Format: format,
+						Stdout: tt.stdout,
+					}, tt.destination)
+					require.NoError(t, err)
+					require.Equal(t, tt.wantColor, bytes.Contains(formatted, []byte("\x1b[")))
+				})
+			}
+		})
+	}
+}
+
+func TestShowJSONIteratorRawOutputEscapesPaginatedTerminalControls(t *testing.T) {
+	outputPath := configureCapturePager(t)
+	t.Setenv("FORCE_COLOR", "0")
+
+	value := "\x1b]52;c;ZGF0YQ==\a\u009b31m"
+	items := make([]map[string]any, 64)
+	for i := range items {
+		items[i] = map[string]any{"message": value}
+	}
+	iter := &sliceIterator[map[string]any]{items: items}
+
+	require.NoError(t, ShowJSONIterator(iter, -1, ShowJSONOpts{
+		Format:    "json",
+		RawOutput: true,
+		Stdout:    os.Stdout,
+		Transform: "message",
+	}))
+
+	output, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+	require.Equal(t, strings.Repeat(`\u001b]52;c;ZGF0YQ==\u0007\u009b31m`+"\n", len(items)), string(output))
+}
+
+func TestShowJSONIteratorPreservesPaginatedTerminalColors(t *testing.T) {
+	for _, format := range []string{"json", "jsonl"} {
+		t.Run(format, func(t *testing.T) {
+			outputPath := configureCapturePager(t)
+			t.Setenv("FORCE_COLOR", "auto")
+
+			items := make([]map[string]any, 64)
+			for i := range items {
+				items[i] = map[string]any{"message": "safe"}
+			}
+			opts := ShowJSONOpts{Format: format, Stdout: os.Stdout}
+			expected, err := formatJSONForOutput(gjson.Parse(`{"message":"safe"}`), opts, os.Stdout)
+			require.NoError(t, err)
+			require.Contains(t, string(expected), "\x1b[")
+
+			iter := &sliceIterator[map[string]any]{items: items}
+			require.NoError(t, ShowJSONIterator(iter, -1, opts))
+
+			output, err := os.ReadFile(outputPath)
+			require.NoError(t, err)
+			require.Equal(t, bytes.Repeat(expected, len(items)), output)
+		})
+	}
+}
+
+func configureCapturePager(t *testing.T) string {
+	t.Helper()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("pager capture fixture requires a POSIX shell unavailable on Windows")
+	}
+	if !isTerminal(os.Stdout) {
+		t.Skip("pager regression requires an interactive stdout terminal")
+	}
+
+	tempDir := t.TempDir()
+	outputPath := filepath.Join(tempDir, "pager-output")
+	pagerPath := filepath.Join(tempDir, "capture-pager")
+	pager := "#!/bin/sh\ncat > \"$OPENAI_CLI_TEST_PAGER_OUTPUT\"\n"
+	require.NoError(t, os.WriteFile(pagerPath, []byte(pager), 0700))
+	t.Setenv("PAGER", pagerPath)
+	t.Setenv("OPENAI_CLI_TEST_PAGER_OUTPUT", outputPath)
+
+	return outputPath
+}
+
+func rawOutputResult(t *testing.T, value string, transformed bool) (gjson.Result, string) {
+	t.Helper()
+
+	var input any = value
+	transform := ""
+	if transformed {
+		input = map[string]string{"message": value}
+		transform = "message"
+	}
+
+	encoded, err := json.Marshal(input)
+	require.NoError(t, err)
+	return gjson.ParseBytes(encoded), transform
 }
