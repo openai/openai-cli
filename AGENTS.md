@@ -17,6 +17,16 @@ The CLI entrypoint, `internal/` packages, and selected files such as
 Keep changes focused and preserve command compatibility, generated ownership,
 and the intentionally separate `api_reference/go.mod` module.
 
+## Custom-code budget
+
+Follow [the custom-code guidance](scripts/castiron/CUSTOM_CODE.md). Budget changes
+belong in a separate PR containing only `.castiron-ratchet.json`, with an explicit justification
+in the PR description. Increases require a **human approving review** before merging.
+Agents may investigate and draft proposals, but must not approve budget increases
+(including through a human's credentials) or bypass the gate. Do not weaken
+counting, broaden exclusions, or alter generation metadata to make a change pass.
+The checker and effective budget come from main, not the PR. Keep default CODEOWNERS.
+
 ## Security requirements
 
 - Never commit, print, or upload live API keys, admin keys, access tokens,
