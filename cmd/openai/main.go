@@ -32,6 +32,7 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	interrupts := make(chan os.Signal, 1)
+	signalExitCodes := make(chan int, 1)
 	signal.Notify(interrupts, os.Interrupt, syscall.SIGTERM)
 	defer func() {
 		signal.Stop(interrupts)
@@ -39,8 +40,9 @@ func main() {
 	}()
 	go func() {
 		select {
-		case <-interrupts:
+		case interrupted := <-interrupts:
 			signal.Stop(interrupts)
+			signalExitCodes <- 128 + int(interrupted.(syscall.Signal))
 			cancel()
 		case <-ctx.Done():
 		}
@@ -51,6 +53,10 @@ func main() {
 		// Check if error has a custom exit code
 		if exitErr, ok := err.(cli.ExitCoder); ok {
 			exitCode = exitErr.ExitCode()
+		}
+		select {
+		case exitCode = <-signalExitCodes:
+		default:
 		}
 
 		var apierr *openai.Error
