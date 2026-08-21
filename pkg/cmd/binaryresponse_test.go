@@ -758,6 +758,7 @@ func (writer *cancelingDownloadWriter) Write(data []byte) (int, error) {
 type observingDownloadReader struct {
 	boundedDownloadReader
 	spoolDir             string
+	sampled              bool
 	observedPrivateSpool bool
 }
 
@@ -766,6 +767,10 @@ func (reader *observingDownloadReader) Read(data []byte) (int, error) {
 		entries, err := os.ReadDir(reader.spoolDir)
 		if err != nil {
 			return 0, err
+		}
+		if len(entries) == 0 && !reader.sampled {
+			reader.sampled = true
+			return reader.boundedDownloadReader.Read(data)
 		}
 		if len(entries) != 1 {
 			return 0, fmt.Errorf("temporary spool count = %d, want 1", len(entries))

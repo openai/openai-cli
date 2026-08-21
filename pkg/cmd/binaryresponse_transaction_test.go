@@ -145,6 +145,52 @@ func TestWriteBinaryResponseCreatesDanglingSymlinkTarget(t *testing.T) {
 	assertDownloadPermissions(t, target, 0o600)
 }
 
+func TestWriteBinaryResponseFollowsDanglingSymlinkChain(t *testing.T) {
+	directory := t.TempDir()
+	runs := filepath.Join(directory, "runs")
+	if err := os.Mkdir(runs, 0o700); err != nil {
+		t.Fatalf("os.Mkdir(%q) = %v, want nil", runs, err)
+	}
+	links := filepath.Join(directory, "links")
+	if err := os.Mkdir(links, 0o700); err != nil {
+		t.Fatalf("os.Mkdir(%q) = %v, want nil", links, err)
+	}
+	current := filepath.Join(links, "current.bin")
+	if err := os.Symlink(filepath.Join("..", "runs", "new.bin"), current); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("creating Windows symlinks requires an available privilege: %v", err)
+		}
+		t.Fatalf("os.Symlink(../runs/new.bin, %q) = %v, want nil", current, err)
+	}
+	latest := filepath.Join(directory, "latest.bin")
+	if err := os.Symlink(filepath.Join("links", "current.bin"), latest); err != nil {
+		t.Fatalf("os.Symlink(links/current.bin, %q) = %v, want nil", latest, err)
+	}
+
+	response := &http.Response{Body: io.NopCloser(strings.NewReader("new target content"))}
+	if _, err := writeBinaryResponse(response, io.Discard, latest); err != nil {
+		t.Fatalf("writeBinaryResponse(dangling symlink chain %q) = %v, want nil", latest, err)
+	}
+	for _, link := range []string{latest, current} {
+		info, err := os.Lstat(link)
+		if err != nil {
+			t.Fatalf("os.Lstat(%q) = %v, want preserved symlink", link, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("writeBinaryResponse(%q) replaced symlink %q, want the full chain preserved", latest, link)
+		}
+	}
+	target := filepath.Join(runs, "new.bin")
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%q) = %v, want newly created terminal target", target, err)
+	}
+	if string(content) != "new target content" {
+		t.Errorf("writeBinaryResponse(%q) terminal target = %q, want %q", latest, content, "new target content")
+	}
+	assertDownloadPermissions(t, target, 0o600)
+}
+
 func TestWriteBinaryResponseUpdatesExistingFileInReadOnlyDirectory(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not model POSIX directory write permissions")
@@ -406,7 +452,7 @@ func TestWriteAutomaticBinaryResponseUsesSinglePrivateDestinationFile(t *testing
 		t.Errorf("writeAutomaticBinaryResponse(binary response) message = %q, want %q", message, "Wrote output to: download.bin")
 	}
 	if !body.observedPrivateSpool {
-		t.Error("writeAutomaticBinaryResponse did not stage its private file in the destination directory")
+		t.Error("writeAutomaticBinaryResponse did not observe its private destination file while streaming")
 	}
 	temporaryEntries, err := os.ReadDir(temporary)
 	if err != nil {
@@ -429,9 +475,147 @@ func TestWriteAutomaticBinaryResponseUsesSinglePrivateDestinationFile(t *testing
 	if info.Size() != 2<<20 {
 		t.Errorf("writeAutomaticBinaryResponse(binary response) size = %d, want %d", info.Size(), 2<<20)
 	}
-	if body.stagedInfo == nil || !os.SameFile(body.stagedInfo, info) {
-		t.Error("writeAutomaticBinaryResponse copied its staging file instead of promoting the same file")
+	if body.destinationInfo == nil || !os.SameFile(body.destinationInfo, info) {
+		t.Error("writeAutomaticBinaryResponse replaced its exclusively opened destination file")
 	}
+}
+
+func TestWriteAutomaticBinaryResponseWritesThroughReservedFile(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	temporary := t.TempDir()
+	t.Setenv("TMPDIR", temporary)
+	t.Setenv("TMP", temporary)
+	t.Setenv("TEMP", temporary)
+
+	content := append([]byte{0xff}, bytes.Repeat([]byte("a"), 4096)...)
+	var reserved os.FileInfo
+	body := &inspectAfterPrefixDownloadReader{
+		Reader: bytes.NewReader(content),
+		inspect: func() error {
+			entries, err := os.ReadDir(directory)
+			if err != nil {
+				return err
+			}
+			if len(entries) != 1 || entries[0].Name() != "download.bin" {
+				return fmt.Errorf("destination entries = %v, want only the exclusively reserved download.bin", entries)
+			}
+			reserved, err = entries[0].Info()
+			return err
+		},
+	}
+	response := &http.Response{
+		Body:   io.NopCloser(body),
+		Header: http.Header{"Content-Disposition": []string{`attachment; filename="download.bin"`}},
+	}
+
+	message, err := writeAutomaticBinaryResponse(response, io.Discard)
+	if err != nil {
+		t.Fatalf("writeAutomaticBinaryResponse(exclusive binary destination) = %v, want nil", err)
+	}
+	if message != "Wrote output to: download.bin" {
+		t.Errorf("writeAutomaticBinaryResponse(exclusive binary destination) message = %q, want %q", message, "Wrote output to: download.bin")
+	}
+	if !body.inspected {
+		t.Error("writeAutomaticBinaryResponse did not retain its exclusive destination while streaming")
+	}
+	info, err := os.Stat("download.bin")
+	if err != nil {
+		t.Fatalf("os.Stat(download.bin) = %v, want nil", err)
+	}
+	if reserved == nil || !os.SameFile(reserved, info) {
+		t.Error("writeAutomaticBinaryResponse replaced its reserved file instead of writing through the original handle")
+	}
+	written, err := os.ReadFile("download.bin")
+	if err != nil {
+		t.Fatalf("os.ReadFile(download.bin) = %v, want nil", err)
+	}
+	if !bytes.Equal(written, content) {
+		t.Errorf("writeAutomaticBinaryResponse(exclusive binary destination) wrote %d bytes, want %d", len(written), len(content))
+	}
+	temporaryEntries, err := os.ReadDir(temporary)
+	if err != nil {
+		t.Fatalf("os.ReadDir(%q) = %v, want nil", temporary, err)
+	}
+	if len(temporaryEntries) != 0 {
+		t.Errorf("writeAutomaticBinaryResponse(binary) created %d temporary files, want none", len(temporaryEntries))
+	}
+}
+
+func TestWriteAutomaticBinaryResponseDoesNotOverwriteReplacedReservation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows prevents removing an open destination handle")
+	}
+	t.Chdir(t.TempDir())
+	body := &inspectAfterPrefixDownloadReader{
+		Reader: bytes.NewReader(append([]byte{0xff}, bytes.Repeat([]byte("a"), 4096)...)),
+		inspect: func() error {
+			if err := os.Remove("download.bin"); err != nil {
+				return err
+			}
+			return os.WriteFile("download.bin", []byte("unrelated replacement"), 0o600)
+		},
+	}
+	response := &http.Response{
+		Body:   io.NopCloser(body),
+		Header: http.Header{"Content-Disposition": []string{`attachment; filename="download.bin"`}},
+	}
+
+	if _, err := writeAutomaticBinaryResponse(response, io.Discard); err != nil {
+		t.Fatalf("writeAutomaticBinaryResponse(replaced reservation) = %v, want nil", err)
+	}
+	if !body.inspected {
+		t.Error("writeAutomaticBinaryResponse did not exercise replacement of its open exclusive reservation")
+	}
+	content, err := os.ReadFile("download.bin")
+	if err != nil {
+		t.Fatalf("os.ReadFile(download.bin) = %v, want preserved replacement", err)
+	}
+	if string(content) != "unrelated replacement" {
+		t.Errorf("writeAutomaticBinaryResponse(replaced reservation) overwrote %q, want %q", content, "unrelated replacement")
+	}
+}
+
+func TestWriteAutomaticBinaryResponseRemovesInterruptedReservedFile(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	content := append([]byte{0xff}, bytes.Repeat([]byte("a"), 4096)...)
+	response := &http.Response{
+		Body: io.NopCloser(&errorAfterDownloadReader{
+			Reader: bytes.NewReader(content),
+			err:    context.Canceled,
+		}),
+		Header: http.Header{"Content-Disposition": []string{`attachment; filename="download.bin"`}},
+	}
+
+	if _, err := writeAutomaticBinaryResponse(response, io.Discard); !errors.Is(err, context.Canceled) {
+		t.Errorf("writeAutomaticBinaryResponse(interrupted exclusive destination) error = %v, want %v", err, context.Canceled)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatalf("os.ReadDir(%q) = %v, want nil", directory, err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("writeAutomaticBinaryResponse(interrupted exclusive destination) left entries %v, want none", entries)
+	}
+}
+
+type inspectAfterPrefixDownloadReader struct {
+	io.Reader
+	read      bool
+	inspected bool
+	inspect   func() error
+}
+
+func (reader *inspectAfterPrefixDownloadReader) Read(data []byte) (int, error) {
+	if reader.read && !reader.inspected {
+		if err := reader.inspect(); err != nil {
+			return 0, err
+		}
+		reader.inspected = true
+	}
+	reader.read = true
+	return reader.Reader.Read(data)
 }
 
 type inspectingDownloadReader struct {
@@ -453,27 +637,30 @@ func (reader *inspectingDownloadReader) Read(data []byte) (int, error) {
 type binaryDestinationDownloadReader struct {
 	observingDownloadReader
 	emittedBinaryPrefix bool
-	stagedInfo          os.FileInfo
+	destinationInfo     os.FileInfo
 }
 
 func (reader *binaryDestinationDownloadReader) Read(data []byte) (int, error) {
 	n, err := reader.observingDownloadReader.Read(data)
-	if reader.stagedInfo == nil {
+	if n > 0 && !reader.emittedBinaryPrefix {
+		data[0] = 0xff
+		reader.emittedBinaryPrefix = true
+	}
+	if reader.destinationInfo == nil {
 		entries, readErr := os.ReadDir(reader.spoolDir)
 		if readErr != nil {
 			return n, readErr
 		}
-		if len(entries) != 1 {
-			return n, fmt.Errorf("destination staging count = %d, want one", len(entries))
+		if len(entries) == 0 {
+			return n, err
 		}
-		reader.stagedInfo, readErr = entries[0].Info()
+		if len(entries) != 1 {
+			return n, fmt.Errorf("destination file count = %d, want one", len(entries))
+		}
+		reader.destinationInfo, readErr = entries[0].Info()
 		if readErr != nil {
 			return n, readErr
 		}
-	}
-	if n > 0 && !reader.emittedBinaryPrefix {
-		data[0] = 0xff
-		reader.emittedBinaryPrefix = true
 	}
 	return n, err
 }

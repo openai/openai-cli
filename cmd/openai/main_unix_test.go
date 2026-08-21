@@ -25,11 +25,12 @@ const blockedSignalHelper = "OPENAI_BLOCKED_SIGNAL_HELPER"
 
 func TestMainCleansInterruptedDownloads(t *testing.T) {
 	for _, interrupted := range []struct {
-		name   string
-		signal os.Signal
+		name     string
+		signal   os.Signal
+		exitCode int
 	}{
-		{name: "SIGINT", signal: os.Interrupt},
-		{name: "SIGTERM", signal: syscall.SIGTERM},
+		{name: "SIGINT", signal: os.Interrupt, exitCode: 130},
+		{name: "SIGTERM", signal: syscall.SIGTERM, exitCode: 143},
 	} {
 		t.Run(interrupted.name, func(t *testing.T) {
 			started := make(chan struct{})
@@ -95,7 +96,9 @@ func TestMainCleansInterruptedDownloads(t *testing.T) {
 				t.Fatalf("interrupted download Signal(%s) = %v, want nil", interrupted.name, err)
 			}
 			if err := process.Wait(); err == nil {
-				t.Errorf("interrupted download Wait(%s) = nil, want a nonzero exit", interrupted.name)
+				t.Errorf("interrupted download Wait(%s) = nil, want exit status %d", interrupted.name, interrupted.exitCode)
+			} else if process.ProcessState.ExitCode() != interrupted.exitCode {
+				t.Errorf("interrupted download Wait(%s) exit status = %d, want %d; subprocess: %s", interrupted.name, process.ProcessState.ExitCode(), interrupted.exitCode, output.String())
 			}
 
 			content, err := os.ReadFile(outfile)

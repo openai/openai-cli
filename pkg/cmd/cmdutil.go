@@ -224,39 +224,6 @@ func writeExplicitBinaryResponse(body io.Reader, outfile string) error {
 		}
 		return copyDownloadFile(file, body)
 	}
-	if info != nil {
-		return writeExistingBinaryResponse(body, outfile)
-	}
-
-	target := outfile
-	link, err := os.Lstat(outfile)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if err == nil && link.Mode()&os.ModeSymlink != 0 {
-		target, err = os.Readlink(outfile)
-		if err != nil {
-			return err
-		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(outfile), target)
-		}
-	}
-
-	staged, err := os.CreateTemp(filepath.Dir(target), ".openai-cli-download-*")
-	if err != nil {
-		return err
-	}
-	stagedName := staged.Name()
-	defer os.Remove(stagedName)
-
-	if err := copyDownloadFile(staged, body); err != nil {
-		return err
-	}
-	return os.Rename(stagedName, target)
-}
-
-func writeExistingBinaryResponse(body io.Reader, outfile string) error {
 	staged, err := os.CreateTemp(filepath.Dir(outfile), ".openai-cli-download-*")
 	if err != nil {
 		staged, err = os.CreateTemp("", ".openai-cli-download-*")
@@ -276,14 +243,8 @@ func writeExistingBinaryResponse(body io.Reader, outfile string) error {
 	}
 	defer complete.Close()
 
-	file, err := os.OpenFile(outfile, os.O_WRONLY, 0)
+	file, err := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		return err
-	}
-	if err := file.Truncate(0); err != nil {
-		if closeErr := file.Close(); closeErr != nil {
-			return errors.Join(err, closeErr)
-		}
 		return err
 	}
 	return copyDownloadFile(file, complete)
@@ -292,6 +253,35 @@ func writeExistingBinaryResponse(body io.Reader, outfile string) error {
 // writeAutomaticBinaryResponse preserves full-response UTF-8 detection without
 // keeping an arbitrarily large response in memory.
 func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (string, error) {
+	// Keep enough bytes to identify MIME content and finish a UTF-8 rune that
+	// straddles DetectContentType's 512-byte boundary.
+	sample := make([]byte, 512+utf8.UTFMax-1)
+	n, readErr := io.ReadFull(response.Body, sample)
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		return "", readErr
+	}
+	sample = sample[:n]
+	complete := errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF)
+	sniff := sample
+	if !complete && !utf8.Valid(sniff) {
+		for trim := 1; trim < utf8.UTFMax && trim <= len(sniff); trim++ {
+			boundary := len(sniff) - trim
+			if utf8.Valid(sniff[:boundary]) && !utf8.FullRune(sniff[boundary:]) {
+				sniff = sniff[:boundary]
+				break
+			}
+		}
+	}
+
+	body := io.MultiReader(bytes.NewReader(sample), response.Body)
+	if !isUTF8TextFile(sniff) {
+		return writeAutomaticDownload(response, sample, body)
+	}
+	if complete {
+		_, err := io.Copy(stdout, bytes.NewReader(sample))
+		return "", err
+	}
+
 	staged, err := os.CreateTemp(".", ".openai-cli-download-*")
 	if err != nil {
 		staged, err = os.CreateTemp("", ".openai-cli-download-*")
@@ -302,7 +292,7 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 	stagedName := staged.Name()
 	defer os.Remove(stagedName)
 
-	if err := copyDownloadFile(staged, response.Body); err != nil {
+	if err := copyDownloadFile(staged, body); err != nil {
 		return "", err
 	}
 	sample, text, err := inspectAutomaticBinaryResponse(stagedName, stdout)
@@ -313,16 +303,21 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 		return "", nil
 	}
 
+	completeBody, err := os.Open(stagedName)
+	if err != nil {
+		return "", err
+	}
+	defer completeBody.Close()
+	return writeAutomaticDownload(response, sample, completeBody)
+}
+
+func writeAutomaticDownload(response *http.Response, sample []byte, body io.Reader) (string, error) {
 	file, err := createDownloadFile(response, sample)
 	if err != nil {
 		return "", err
 	}
 	filename := file.Name()
-	if err := file.Close(); err != nil {
-		os.Remove(filename)
-		return "", err
-	}
-	if err := os.Rename(stagedName, filename); err != nil {
+	if err := copyDownloadFile(file, body); err != nil {
 		os.Remove(filename)
 		return "", err
 	}
