@@ -1,0 +1,9 @@
+{
+  "name": "openai-cli-mock-tools",
+  "private": true,
+  "description": "Locked, test-only OpenAPI mock server tooling for openai-cli.",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@stdy/cli": "0.22.2"
+  }
+}

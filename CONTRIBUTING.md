@@ -6,7 +6,9 @@ Thank you for helping improve the OpenAI CLI. Read [README.md](README.md),
 ## Setting up the environment
 
 Use the Go version required by `go.mod`; the CLI currently requires Go 1.25 or
-later. Review dependency origins and executable setup scripts before running:
+later. The integration tests also require Node.js 14.18 or later, npm 7 or
+later, `curl`, and `lsof`. Review dependency origins and executable setup
+scripts before running:
 
 ```sh
 ./scripts/bootstrap
@@ -15,7 +17,19 @@ later. Review dependency origins and executable setup scripts before running:
 
 `./scripts/bootstrap` downloads Go dependencies and runs `go mod tidy`, which
 can change `go.mod` or `go.sum`. Inspect the resulting diff and do not commit
-unrelated dependency changes. `./scripts/lint` builds the CLI.
+unrelated dependency changes. `./scripts/lint` builds the CLI. The OpenAPI mock
+server's npm dependencies are installed automatically when running integration
+tests; they are not required to build the CLI.
+
+## Project structure
+
+- `cmd/openai/` contains the CLI executable's entry point.
+- `pkg/cmd/` contains API commands, command handling, and integration tests.
+- `internal/` contains shared helpers for flags, request encoding, terminal
+  output, and testing.
+- `api_reference/openapi.transformed.yml` contains the OpenAPI specification
+  used by the mock server.
+- `scripts/` contains the local development, build, and test commands.
 
 ## Generated and handwritten code
 
@@ -31,6 +45,26 @@ files contain handwritten behavior. Preserve existing command flags, output,
 request semantics, supported platforms, generated boundaries, and the separate
 `api_reference/go.mod` module. Keep changes small and add focused tests for
 observable behavior changes.
+
+## Running and building locally
+
+Run the CLI directly from your working tree:
+
+```sh
+./scripts/run --help
+```
+
+Build an `openai` executable in the repository root:
+
+```sh
+./scripts/build
+```
+
+You can also install the local checkout into your Go binary directory:
+
+```sh
+go install ./cmd/openai
+```
 
 ## Custom-code budget
 
@@ -123,16 +157,85 @@ go mod verify
 ./scripts/lint
 ```
 
-The full suite is available through:
+Run the complete test workflow with:
 
 ```sh
 ./scripts/test
 ```
 
-`./scripts/test` can start the existing local mock server, which downloads and
-executes the pinned `@stdy/cli` npm package against the checked-in OpenAPI
-specification. Review that tooling, use synthetic data, and do not substitute a
-live API endpoint or production credentials.
+The script starts an OpenAPI mock server on `127.0.0.1:4010` when one is not
+already running, runs `go test ./...`, and cross-compiles the test packages for
+Windows. Additional arguments are forwarded to `go test`:
+
+```sh
+./scripts/test -run '^TestResponsesCreate$'
+```
+
+To keep the mock server running while iterating on tests, start it in a separate
+terminal:
+
+```sh
+./scripts/mock
+```
+
+The mock server uses the checked-in OpenAPI specification by default. To use a
+different OpenAPI specification, pass its path or URL explicitly:
+
+```sh
+./scripts/mock path/to/openapi.yml
+```
+
+To run tests against an existing compatible server instead, set
+`TEST_API_BASE_URL`:
+
+```sh
+TEST_API_BASE_URL=http://127.0.0.1:4010 ./scripts/test
+```
+
+Use synthetic data, and do not substitute a live API endpoint or production
+credentials.
+
+### Mock-server dependency integrity
+
+The mock server uses the MIT-licensed Steady CLI. Its wrapper and every
+supported platform-specific package are pinned in
+`scripts/mock-tools/package-lock.json`; `./scripts/mock` installs them with
+`npm ci --ignore-scripts` before starting the server. Native executables are not
+checked into the repository.
+
+Each installation starts in an empty, physically verified temporary directory
+outside the checkout, containing copies of the two reviewed manifests and,
+when present, the repository's npm configuration. Checkout-local temporary
+directories are rejected. The temporary configuration is removed immediately
+after installation, and npm's original global configuration is preserved.
+Project-local installation and lockfile enforcement are explicit even when
+inherited configuration selects global installation or disables the lockfile.
+This prevents existing packages, inherited dry-run settings, or an unreviewed
+sibling shrinkwrap from replacing the committed installation boundary while
+preserving repository-scoped and global registry settings. The mock script uses
+Node's normal package resolution and verifies that the exact-version wrapper
+and platform package both resolve inside the private installation's
+`node_modules` directory. Each invocation executes its verified native binary
+directly from that private installation without publishing shared packages.
+The native executable must remain inside its resolved package; global or
+ancestor package fallbacks and escaping executable links are rejected. npm
+verifies downloaded archives against the committed SHA-512 integrity values,
+including when a configured registry mirror supplies the same reviewed bytes.
+
+Run the mock-tooling security regression tests with:
+
+```sh
+node scripts/mock-tools/security.test.js
+```
+
+When updating Steady, update `scripts/mock-tools/package.json` and
+`scripts/mock-tools/package-lock.json` together. Review the exact version,
+licenses, registry URLs, integrity hashes, and native packages for all
+supported platforms. Inspect upstream signatures or provenance as
+dependency-update review evidence when available; mock-server startup does not
+independently verify publisher provenance. Do not replace the locked
+installation with a dynamic `npm exec --package=...` invocation or vendor
+platform binaries.
 
 ## Formatting and releases
 
@@ -145,3 +248,21 @@ GoReleaser, Homebrew, macOS signing/notarization, and artifact-attestation
 workflows. Do not create tags, publish binaries or packages, dispatch release
 workflows, change signing keys, or modify repository settings without explicit
 authorization.
+
+## Linking a local Go SDK
+
+To develop the CLI against a local checkout of the OpenAI Go SDK, run:
+
+```sh
+./scripts/link ../openai-go
+```
+
+If no path is provided, `./scripts/link` defaults to `../openai-go`. Remove the
+local Go module replacement when you are done:
+
+```sh
+./scripts/unlink
+```
+
+Linking updates `go.mod` and can update `go.sum`. Check those files before
+committing so a local replacement is not included unintentionally.
