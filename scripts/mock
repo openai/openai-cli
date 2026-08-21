@@ -38,14 +38,10 @@ if [[ -f .npmrc ]]; then
   cp .npmrc "$INSTALL_DIRECTORY/.npmrc"
 fi
 
-npm ci --global=false --globalconfig "$NPM_GLOBAL_CONFIG" --prefix "$INSTALL_DIRECTORY" --package-lock=true --include=dev --include=optional \
+npm ci --location=project --global=false --globalconfig "$NPM_GLOBAL_CONFIG" --prefix "$INSTALL_DIRECTORY" --package-lock=true --include=dev --include=optional \
   --ignore-scripts --no-audit --no-fund
 rm -f "$INSTALL_DIRECTORY/.npmrc"
-node scripts/mock-tools/resolve-native.js "$INSTALL_DIRECTORY" >/dev/null
-
-rm -rf scripts/mock-tools/node_modules
-mv "$INSTALL_DIRECTORY/node_modules" scripts/mock-tools/node_modules
-STEADY="$(node scripts/mock-tools/resolve-native.js)"
+STEADY="$(node scripts/mock-tools/resolve-native.js "$INSTALL_DIRECTORY")"
 
 STEADY_ARGS=(
   --host 127.0.0.1

@@ -325,21 +325,33 @@ test("preserves the original effective global npm registry configuration", () =>
   });
 });
 
-test("forces local installation when inherited npm configuration enables global mode", () => {
-  withNativeFixture(({ repository, toolsDirectory }) => {
-    fs.writeFileSync(path.join(repository, ".npmrc"), "registry=http://127.0.0.1:65535/\n@stdy:registry=http://127.0.0.1:65535/\n");
+for (const globalConfigurationMode of ["global flag", "persisted global location"]) {
+  test(`forces project-local installation despite ${globalConfigurationMode}`, () => {
+    withNativeFixture(({ repository, toolsDirectory }) => {
+      fs.writeFileSync(path.join(repository, ".npmrc"), "registry=http://127.0.0.1:65535/\n@stdy:registry=http://127.0.0.1:65535/\n");
+      const userConfiguration = path.join(repository, "global-location.npmrc");
+      fs.writeFileSync(userConfiguration, globalConfigurationMode === "persisted global location" ? "location=global\n" : "");
 
-    const result = runMock(repository, toolsDirectory, {
-      npm_config_registry: undefined,
-      npm_config_global: "true",
-      npm_config_offline: "false",
-      npm_config_fetch_retries: "0",
-      npm_config_fetch_timeout: "1000",
-      npm_config_dry_run: "false",
+      const result = runMock(repository, toolsDirectory, {
+        npm_config_registry: undefined,
+        npm_config_userconfig: userConfiguration,
+        npm_config_global: globalConfigurationMode === "global flag" ? "true" : undefined,
+        npm_config_offline: "false",
+        npm_config_fetch_retries: "0",
+        npm_config_fetch_timeout: "1000",
+        npm_config_dry_run: "false",
+      });
+
+      assert.notStrictEqual(result.status, 0);
+      assert.doesNotMatch(result.stderr, /ECIGLOBAL|does not work for global packages/);
+      assert.match(result.stderr, /127\.0\.0\.1:65535/, `local installation never reached the configured mirror: ${result.stderr}`);
     });
-
-    assert.notStrictEqual(result.status, 0);
-    assert.doesNotMatch(result.stderr, /ECIGLOBAL|does not work for global packages/);
-    assert.match(result.stderr, /127\.0\.0\.1:65535/, `local installation never reached the configured mirror: ${result.stderr}`);
   });
+}
+
+test("executes the verified native binary from its private per-invocation installation", () => {
+  const mock = fs.readFileSync(path.join(__dirname, "..", "mock"), "utf8");
+  assert.doesNotMatch(mock, /rm -rf scripts\/mock-tools\/node_modules/, "concurrent invocations must not remove a shared installation");
+  assert.doesNotMatch(mock, /mv "\$INSTALL_DIRECTORY\/node_modules"/, "verified installations must never be published into a shared directory");
+  assert.match(mock, /STEADY="\$\(node scripts\/mock-tools\/resolve-native\.js "\$INSTALL_DIRECTORY"\)"/);
 });
