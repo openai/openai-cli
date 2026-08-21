@@ -210,6 +210,36 @@ func TestDownloadFileCloseErrors(t *testing.T) {
 	}
 }
 
+func TestDownloadFileStatErrors(t *testing.T) {
+	statErr := errors.New("synthetic destination stat failure")
+	closeErr := errors.New("synthetic destination close failure")
+
+	t.Run("preserves the original stat error when closing succeeds", func(t *testing.T) {
+		file := &closeTrackingDownloadFile{statErr: statErr}
+		_, err := statDownloadFile(file)
+		if err != statErr {
+			t.Errorf("statDownloadFile(successful close) error = %v, want original error %v", err, statErr)
+		}
+		if file.closeCalls != 1 {
+			t.Errorf("statDownloadFile(successful close) close calls = %d, want 1", file.closeCalls)
+		}
+	})
+
+	t.Run("reports both stat and close failures", func(t *testing.T) {
+		file := &closeTrackingDownloadFile{statErr: statErr, closeErr: closeErr}
+		_, err := statDownloadFile(file)
+		if !errors.Is(err, statErr) {
+			t.Errorf("statDownloadFile(failed close) error = %v, want stat failure %v", err, statErr)
+		}
+		if !errors.Is(err, closeErr) {
+			t.Errorf("statDownloadFile(failed close) error = %v, want close failure %v", err, closeErr)
+		}
+		if file.closeCalls != 1 {
+			t.Errorf("statDownloadFile(failed close) close calls = %d, want 1", file.closeCalls)
+		}
+	})
+}
+
 func TestWriteBinaryResponseDirectOutputsDoNotRequireTemporaryStorage(t *testing.T) {
 	t.Run("stdout", func(t *testing.T) {
 		setUnavailableTempDir(t)
@@ -745,10 +775,15 @@ func (reader *boundedDownloadReader) Close() error {
 
 type closeTrackingDownloadFile struct {
 	content    bytes.Buffer
+	statErr    error
 	closeErr   error
 	writeErr   error
 	writeLimit int
 	closeCalls int
+}
+
+func (file *closeTrackingDownloadFile) Stat() (os.FileInfo, error) {
+	return nil, file.statErr
 }
 
 func (file *closeTrackingDownloadFile) Write(data []byte) (int, error) {
