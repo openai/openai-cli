@@ -75,6 +75,89 @@ func TestWriteBinaryResponseCommitsExplicitFilesTransactionally(t *testing.T) {
 	}
 }
 
+func TestWriteBinaryResponsePromotesNewFileWithoutCopy(t *testing.T) {
+	directory := t.TempDir()
+	outfile := filepath.Join(directory, "download.bin")
+	var staged os.FileInfo
+	body := &inspectingDownloadReader{
+		Reader: strings.NewReader("complete destination-local download"),
+		inspect: func() error {
+			entries, err := os.ReadDir(directory)
+			if err != nil {
+				return err
+			}
+			if len(entries) != 1 {
+				return fmt.Errorf("destination stage count = %d, want exactly one private stage", len(entries))
+			}
+			staged, err = entries[0].Info()
+			return err
+		},
+	}
+	response := &http.Response{Body: io.NopCloser(body)}
+
+	if _, err := writeBinaryResponse(response, io.Discard, outfile); err != nil {
+		t.Fatalf("writeBinaryResponse(new explicit destination %q) = %v, want nil", outfile, err)
+	}
+	if !body.inspected {
+		t.Error("writeBinaryResponse(new explicit destination) did not observe its private destination-local stage")
+	}
+	committed, err := os.Stat(outfile)
+	if err != nil {
+		t.Fatalf("os.Stat(%q) = %v, want committed destination", outfile, err)
+	}
+	if staged == nil || !os.SameFile(staged, committed) {
+		t.Error("writeBinaryResponse(new explicit destination) copied its complete stage instead of promoting the same inode")
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatalf("os.ReadDir(%q) = %v, want nil", directory, err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "download.bin" {
+		t.Errorf("writeBinaryResponse(new explicit destination) left entries %v, want only download.bin", entries)
+	}
+}
+
+func TestWriteBinaryResponsePreservesConcurrentNewDestination(t *testing.T) {
+	directory := t.TempDir()
+	outfile := filepath.Join(directory, "download.bin")
+	body := &inspectingDownloadReader{
+		Reader: strings.NewReader("response content"),
+		inspect: func() error {
+			return os.WriteFile(outfile, []byte("concurrent owner"), 0o600)
+		},
+	}
+	response := &http.Response{Body: io.NopCloser(body)}
+
+	if _, err := writeBinaryResponse(response, io.Discard, outfile); !errors.Is(err, os.ErrExist) {
+		t.Errorf("writeBinaryResponse(concurrently created destination %q) error = %v, want %v", outfile, err, os.ErrExist)
+	}
+	content, err := os.ReadFile(outfile)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%q) = %v, want preserved concurrent destination", outfile, err)
+	}
+	if string(content) != "concurrent owner" {
+		t.Errorf("writeBinaryResponse(concurrently created destination %q) content = %q, want %q", outfile, content, "concurrent owner")
+	}
+}
+
+func TestWriteBinaryResponseRejectsMissingDirectoryBeforeReading(t *testing.T) {
+	outfile := filepath.Join(t.TempDir(), "missing", "download.bin")
+	body := &inspectingDownloadReader{
+		Reader: strings.NewReader("response must not be consumed"),
+		inspect: func() error {
+			return nil
+		},
+	}
+	response := &http.Response{Body: io.NopCloser(body)}
+
+	if _, err := writeBinaryResponse(response, io.Discard, outfile); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("writeBinaryResponse(missing parent %q) error = %v, want %v", outfile, err, os.ErrNotExist)
+	}
+	if body.inspected {
+		t.Error("writeBinaryResponse(missing parent) consumed response bytes before rejecting the impossible destination")
+	}
+}
+
 func TestWriteBinaryResponsePreservesExplicitSymlink(t *testing.T) {
 	directory := t.TempDir()
 	target := filepath.Join(directory, "target.bin")
@@ -597,6 +680,87 @@ func TestWriteAutomaticBinaryResponseRemovesInterruptedReservedFile(t *testing.T
 	}
 	if len(entries) != 0 {
 		t.Errorf("writeAutomaticBinaryResponse(interrupted exclusive destination) left entries %v, want none", entries)
+	}
+}
+
+func TestWriteAutomaticBinaryResponsePreservesReplacedReservationOnFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows prevents removing an open destination handle")
+	}
+	t.Chdir(t.TempDir())
+	body := &inspectAfterPrefixDownloadReader{
+		Reader: &errorAfterDownloadReader{
+			Reader: bytes.NewReader(append([]byte{0xff}, bytes.Repeat([]byte("a"), 4096)...)),
+			err:    context.Canceled,
+		},
+		inspect: func() error {
+			if err := os.Remove("download.bin"); err != nil {
+				return err
+			}
+			return os.WriteFile("download.bin", []byte("unrelated replacement"), 0o600)
+		},
+	}
+	response := &http.Response{
+		Body:   io.NopCloser(body),
+		Header: http.Header{"Content-Disposition": []string{`attachment; filename="download.bin"`}},
+	}
+
+	if _, err := writeAutomaticBinaryResponse(response, io.Discard); !errors.Is(err, context.Canceled) {
+		t.Errorf("writeAutomaticBinaryResponse(replaced reservation canceled) error = %v, want %v", err, context.Canceled)
+	}
+	if !body.inspected {
+		t.Error("writeAutomaticBinaryResponse(replaced reservation canceled) did not replace its original reserved inode")
+	}
+	content, err := os.ReadFile("download.bin")
+	if err != nil {
+		t.Fatalf("os.ReadFile(download.bin) = %v, want unrelated replacement to remain", err)
+	}
+	if string(content) != "unrelated replacement" {
+		t.Errorf("writeAutomaticBinaryResponse(replaced reservation canceled) replacement = %q, want %q", content, "unrelated replacement")
+	}
+}
+
+func TestWriteAutomaticBinaryResponsePreservesReplacedPrivateStageOnFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows prevents removing an open staging handle")
+	}
+	directory := t.TempDir()
+	t.Chdir(directory)
+	var replaced string
+	body := &inspectAfterPrefixDownloadReader{
+		Reader: &errorAfterDownloadReader{
+			Reader: bytes.NewReader(bytes.Repeat([]byte("a"), 8192)),
+			err:    context.Canceled,
+		},
+		inspect: func() error {
+			entries, err := os.ReadDir(directory)
+			if err != nil {
+				return err
+			}
+			if len(entries) != 1 {
+				return fmt.Errorf("private stage count = %d, want one", len(entries))
+			}
+			replaced = filepath.Join(directory, entries[0].Name())
+			if err := os.Remove(replaced); err != nil {
+				return err
+			}
+			return os.WriteFile(replaced, []byte("unrelated replacement"), 0o600)
+		},
+	}
+	response := &http.Response{Body: io.NopCloser(body), Header: http.Header{}}
+
+	if _, err := writeAutomaticBinaryResponse(response, io.Discard); !errors.Is(err, context.Canceled) {
+		t.Errorf("writeAutomaticBinaryResponse(replaced private stage canceled) error = %v, want %v", err, context.Canceled)
+	}
+	if !body.inspected {
+		t.Fatal("writeAutomaticBinaryResponse(replaced private stage canceled) never replaced its stage")
+	}
+	content, err := os.ReadFile(replaced)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%q) = %v, want unrelated stage replacement to remain", replaced, err)
+	}
+	if string(content) != "unrelated replacement" {
+		t.Errorf("writeAutomaticBinaryResponse(replaced private stage canceled) content = %q, want %q", content, "unrelated replacement")
 	}
 }
 

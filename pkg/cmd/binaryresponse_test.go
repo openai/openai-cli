@@ -313,6 +313,68 @@ func TestWriteBinaryResponseStreamsChunkedHTTPResponse(t *testing.T) {
 	}
 }
 
+func TestWriteAutomaticBinaryResponseRejectsTruncatedShortHTTPResponses(t *testing.T) {
+	framing := []struct {
+		name string
+		wire string
+	}{
+		{
+			name: "fixed content length",
+			wire: "HTTP/1.1 200 OK\r\nContent-Length: 40\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nshort text",
+		},
+		{
+			name: "chunked without terminal chunk",
+			wire: "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\na\r\nshort text\r\n",
+		},
+	}
+
+	for _, test := range framing {
+		t.Run(test.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				connection, buffered, err := response.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Errorf("Hijack(%q) = %v, want nil", test.name, err)
+					return
+				}
+				defer connection.Close()
+				if _, err := buffered.WriteString(test.wire); err != nil {
+					t.Errorf("WriteString(%q response) = %v, want nil", test.name, err)
+					return
+				}
+				if err := buffered.Flush(); err != nil {
+					t.Errorf("Flush(%q response) = %v, want nil", test.name, err)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			response, err := http.Get(server.URL)
+			if err != nil {
+				t.Fatalf("http.Get(%q server) = %v, want response headers", test.name, err)
+			}
+			t.Cleanup(func() {
+				if err := response.Body.Close(); err != nil {
+					t.Errorf("response.Body.Close(%q) = %v, want nil", test.name, err)
+				}
+			})
+			var stdout bytes.Buffer
+			if _, err := writeAutomaticBinaryResponse(response, &stdout); !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Errorf("writeAutomaticBinaryResponse(%q truncated HTTP body) error = %v, want %v", test.name, err, io.ErrUnexpectedEOF)
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("writeAutomaticBinaryResponse(%q truncated HTTP body) stdout = %q, want no partial output", test.name, stdout.Bytes())
+			}
+			entries, err := os.ReadDir(".")
+			if err != nil {
+				t.Fatalf("os.ReadDir(.) = %v, want nil", err)
+			}
+			if len(entries) != 0 {
+				t.Errorf("writeAutomaticBinaryResponse(%q truncated HTTP body) left entries %v, want none", test.name, entries)
+			}
+		})
+	}
+}
+
 func TestWriteBinaryResponseHonorsHTTPContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		_, _ = io.WriteString(response, "first chunk")

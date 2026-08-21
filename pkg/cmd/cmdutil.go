@@ -224,18 +224,42 @@ func writeExplicitBinaryResponse(body io.Reader, outfile string) error {
 		}
 		return copyDownloadFile(file, body)
 	}
+	newDestination := false
+	if info == nil {
+		_, err = os.Lstat(outfile)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		newDestination = errors.Is(err, os.ErrNotExist)
+	}
+
 	staged, err := os.CreateTemp(filepath.Dir(outfile), ".openai-cli-download-*")
 	if err != nil {
+		if newDestination || errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 		staged, err = os.CreateTemp("", ".openai-cli-download-*")
 		if err != nil {
 			return err
 		}
 	}
 	stagedName := staged.Name()
-	defer os.Remove(stagedName)
+	stagedInfo, err := staged.Stat()
+	if err != nil {
+		staged.Close()
+		return err
+	}
+	defer removeOwnedDownloadFile(stagedName, stagedInfo)
 
 	if err := copyDownloadFile(staged, body); err != nil {
 		return err
+	}
+	if newDestination {
+		if err := os.Link(stagedName, outfile); err == nil {
+			return nil
+		} else if errors.Is(err, os.ErrExist) {
+			return err
+		}
 	}
 	complete, err := os.Open(stagedName)
 	if err != nil {
@@ -243,7 +267,11 @@ func writeExplicitBinaryResponse(body io.Reader, outfile string) error {
 	}
 	defer complete.Close()
 
-	file, err := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	if newDestination {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	}
+	file, err := os.OpenFile(outfile, flags, 0600)
 	if err != nil {
 		return err
 	}
@@ -255,13 +283,13 @@ func writeExplicitBinaryResponse(body io.Reader, outfile string) error {
 func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (string, error) {
 	// Keep enough bytes to identify MIME content and finish a UTF-8 rune that
 	// straddles DetectContentType's 512-byte boundary.
-	sample := make([]byte, 512+utf8.UTFMax-1)
-	n, readErr := io.ReadFull(response.Body, sample)
-	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+	buffered := bufio.NewReader(response.Body)
+	sample, readErr := buffered.Peek(512 + utf8.UTFMax - 1)
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
 		return "", readErr
 	}
-	sample = sample[:n]
-	complete := errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF)
+	sample = bytes.Clone(sample)
+	complete := errors.Is(readErr, io.EOF)
 	sniff := sample
 	if !complete && !utf8.Valid(sniff) {
 		for trim := 1; trim < utf8.UTFMax && trim <= len(sniff); trim++ {
@@ -273,9 +301,8 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 		}
 	}
 
-	body := io.MultiReader(bytes.NewReader(sample), response.Body)
 	if !isUTF8TextFile(sniff) {
-		return writeAutomaticDownload(response, sample, body)
+		return writeAutomaticDownload(response, sample, buffered)
 	}
 	if complete {
 		_, err := io.Copy(stdout, bytes.NewReader(sample))
@@ -290,9 +317,14 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 		}
 	}
 	stagedName := staged.Name()
-	defer os.Remove(stagedName)
+	stagedInfo, err := staged.Stat()
+	if err != nil {
+		staged.Close()
+		return "", err
+	}
+	defer removeOwnedDownloadFile(stagedName, stagedInfo)
 
-	if err := copyDownloadFile(staged, body); err != nil {
+	if err := copyDownloadFile(staged, buffered); err != nil {
 		return "", err
 	}
 	sample, text, err := inspectAutomaticBinaryResponse(stagedName, stdout)
@@ -317,11 +349,23 @@ func writeAutomaticDownload(response *http.Response, sample []byte, body io.Read
 		return "", err
 	}
 	filename := file.Name()
+	owned, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return "", err
+	}
 	if err := copyDownloadFile(file, body); err != nil {
-		os.Remove(filename)
+		removeOwnedDownloadFile(filename, owned)
 		return "", err
 	}
 	return fmt.Sprintf("Wrote output to: %s", filename), nil
+}
+
+func removeOwnedDownloadFile(filename string, owned os.FileInfo) {
+	current, err := os.Lstat(filename)
+	if err == nil && os.SameFile(current, owned) {
+		os.Remove(filename)
+	}
 }
 
 func inspectAutomaticBinaryResponse(filename string, stdout io.Writer) ([]byte, bool, error) {
