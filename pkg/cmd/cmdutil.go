@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -13,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-go/v3/option"
@@ -190,57 +193,370 @@ func streamToStdout(generateOutput func(w *os.File) error) error {
 // Takes in a stdout reference so we can test this function without overriding os.Stdout in tests.
 func writeBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (string, error) {
 	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		return "", err
-	}
+
 	switch outfile {
 	case "-", "/dev/stdout":
-		_, err := stdout.Write(body)
+		_, err := io.Copy(stdout, response.Body)
 		return "", err
 	case "":
-		// If output file is unspecified, then print to stdout for plain text or
-		// if stdout is not a terminal:
-		if !isTerminal(os.Stdout) || isUTF8TextFile(body) {
-			_, err := stdout.Write(body)
+		if !isTerminal(os.Stdout) {
+			_, err := io.Copy(stdout, response.Body)
 			return "", err
 		}
-
-		// If response has a suggested filename in the content-disposition
-		// header, then use that (with an optional suffix to ensure uniqueness):
-		file, err := createDownloadFile(response, body)
-		if err != nil {
-			return "", err
-		}
-		defer file.Close()
-		if _, err := file.Write(body); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Wrote output to: %s", file.Name()), nil
+		return writeAutomaticBinaryResponse(response, stdout)
 	default:
-		if err := os.WriteFile(outfile, body, 0600); err != nil {
+		if err := writeExplicitBinaryResponse(response.Body, outfile); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Wrote output to: %s", outfile), nil
 	}
 }
 
+func writeExplicitBinaryResponse(body io.Reader, outfile string) (result error) {
+	info, err := os.Stat(outfile)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if info != nil && !info.Mode().IsRegular() {
+		file, err := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		if err != nil {
+			return err
+		}
+		return copyDownloadFile(file, body)
+	}
+	var destination *os.File
+	if info != nil {
+		destination, err = os.OpenFile(outfile, os.O_WRONLY, 0)
+		if err != nil {
+			return err
+		}
+		owned, statErr := statDownloadFile(destination)
+		if statErr != nil {
+			destination = nil
+			return statErr
+		}
+		defer func() {
+			if destination != nil {
+				if closeErr := destination.Close(); result == nil && closeErr != nil {
+					result = closeErr
+				}
+			}
+		}()
+		if !os.SameFile(info, owned) {
+			return fmt.Errorf("download destination changed before opening: %w", os.ErrInvalid)
+		}
+	}
+	newDestination := false
+	if info == nil {
+		_, err = os.Lstat(outfile)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		newDestination = errors.Is(err, os.ErrNotExist)
+	}
+
+	staged, err := os.CreateTemp(filepath.Dir(outfile), ".openai-cli-download-*")
+	if err != nil {
+		if newDestination || errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		staged, err = os.CreateTemp("", ".openai-cli-download-*")
+		if err != nil {
+			return err
+		}
+	}
+	stagedName := staged.Name()
+	stagedInfo, err := statDownloadFile(staged)
+	if err != nil {
+		return err
+	}
+	defer removeOwnedDownloadFile(stagedName, stagedInfo)
+
+	if err := copyDownloadFile(staged, body); err != nil {
+		return err
+	}
+	complete, err := openOwnedDownloadFile(stagedName, stagedInfo)
+	if err != nil {
+		return err
+	}
+	defer complete.Close()
+	if err := verifyDownloadFile(stagedName, stagedInfo); err != nil {
+		return err
+	}
+	if newDestination {
+		if err := linkDownloadFile(stagedName, outfile, stagedInfo); err == nil {
+			return nil
+		} else if errors.Is(err, os.ErrExist) {
+			return err
+		}
+	}
+	if destination != nil {
+		current, err := os.Stat(outfile)
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(current, info) {
+			return fmt.Errorf("download destination changed during streaming: %w", os.ErrInvalid)
+		}
+		if err := destination.Truncate(0); err != nil {
+			return err
+		}
+		file := destination
+		destination = nil
+		return copyDownloadFile(file, complete)
+	}
+
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	if newDestination {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	}
+	file, err := os.OpenFile(outfile, flags, 0600)
+	if err != nil {
+		return err
+	}
+	return copyDownloadFile(file, complete)
+}
+
+// writeAutomaticBinaryResponse preserves full-response UTF-8 detection without
+// keeping an arbitrarily large response in memory.
+func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (string, error) {
+	// Keep enough bytes to identify MIME content and finish a UTF-8 rune that
+	// straddles DetectContentType's 512-byte boundary.
+	buffered := bufio.NewReader(response.Body)
+	sample, readErr := buffered.Peek(512 + utf8.UTFMax - 1)
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return "", readErr
+	}
+	sample = bytes.Clone(sample)
+	complete := errors.Is(readErr, io.EOF)
+	sniff := sample
+	if !complete && !utf8.Valid(sniff) {
+		for trim := 1; trim < utf8.UTFMax && trim <= len(sniff); trim++ {
+			boundary := len(sniff) - trim
+			if utf8.Valid(sniff[:boundary]) && !utf8.FullRune(sniff[boundary:]) {
+				sniff = sniff[:boundary]
+				break
+			}
+		}
+	}
+
+	if !isUTF8TextFile(sniff) {
+		return writeAutomaticDownload(response, sample, buffered)
+	}
+	if complete {
+		_, err := io.Copy(stdout, bytes.NewReader(sample))
+		return "", err
+	}
+
+	staged, err := os.CreateTemp(".", ".openai-cli-download-*")
+	if err != nil {
+		staged, err = os.CreateTemp("", ".openai-cli-download-*")
+		if err != nil {
+			return "", err
+		}
+	}
+	stagedName := staged.Name()
+	stagedInfo, err := statDownloadFile(staged)
+	if err != nil {
+		return "", err
+	}
+	defer removeOwnedDownloadFile(stagedName, stagedInfo)
+
+	if err := copyDownloadFile(staged, buffered); err != nil {
+		return "", err
+	}
+	completeBody, err := openOwnedDownloadFile(stagedName, stagedInfo)
+	if err != nil {
+		return "", err
+	}
+	defer completeBody.Close()
+	sample, text, err := inspectAutomaticBinaryResponse(completeBody, stdout)
+	if err != nil {
+		return "", err
+	}
+	if text {
+		return "", nil
+	}
+
+	return promoteAutomaticDownload(response, sample, stagedName, stagedInfo, completeBody)
+}
+
+func writeAutomaticDownload(response *http.Response, sample []byte, body io.Reader) (string, error) {
+	file, err := createDownloadFile(response, sample)
+	if err != nil {
+		return "", err
+	}
+	filename := file.Name()
+	owned, err := statDownloadFile(file)
+	if err != nil {
+		return "", err
+	}
+	if err := copyDownloadFile(file, body); err != nil {
+		removeOwnedDownloadFile(filename, owned)
+		return "", err
+	}
+	return fmt.Sprintf("Wrote output to: %s", filename), nil
+}
+
+func statDownloadFile(file interface {
+	Stat() (os.FileInfo, error)
+	Close() error
+}) (os.FileInfo, error) {
+	info, err := file.Stat()
+	if err != nil {
+		if closeErr := file.Close(); closeErr != nil {
+			return nil, errors.Join(err, closeErr)
+		}
+	}
+	return info, err
+}
+
+func openOwnedDownloadFile(filename string, owned os.FileInfo) (*os.File, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	info, err := statDownloadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(info, owned) {
+		err := fmt.Errorf("download file changed during streaming: %w", os.ErrInvalid)
+		if closeErr := file.Close(); closeErr != nil {
+			return nil, errors.Join(err, closeErr)
+		}
+		return nil, err
+	}
+	return file, nil
+}
+
+func verifyDownloadFile(filename string, owned os.FileInfo) error {
+	current, err := os.Lstat(filename)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(current, owned) {
+		return fmt.Errorf("download file changed during streaming: %w", os.ErrInvalid)
+	}
+	return nil
+}
+
+func linkDownloadFile(source, destination string, owned os.FileInfo) error {
+	if err := verifyDownloadFile(source, owned); err != nil {
+		return err
+	}
+	if err := os.Link(source, destination); err != nil {
+		return err
+	}
+	return verifyDownloadFile(destination, owned)
+}
+
+func removeOwnedDownloadFile(filename string, owned os.FileInfo) {
+	current, err := os.Lstat(filename)
+	if err == nil && os.SameFile(current, owned) {
+		os.Remove(filename)
+	}
+}
+
+func inspectAutomaticBinaryResponse(spool *os.File, stdout io.Writer) ([]byte, bool, error) {
+	// DetectContentType examines at most 512 bytes. Keep enough additional
+	// bytes to complete a UTF-8 rune that straddles that boundary.
+	sample := make([]byte, 512+utf8.UTFMax-1)
+	n, err := io.ReadFull(spool, sample)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, false, err
+	}
+	sample = sample[:n]
+	if _, err := spool.Seek(0, io.SeekStart); err != nil {
+		return nil, false, err
+	}
+
+	validUTF8 := true
+	reader := bufio.NewReader(spool)
+	for {
+		r, size, err := reader.ReadRune()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		if r == utf8.RuneError && size == 1 {
+			validUTF8 = false
+			break
+		}
+	}
+
+	if validUTF8 {
+		for !utf8.Valid(sample) {
+			sample = sample[:len(sample)-1]
+		}
+	} else if utf8.Valid(sample) {
+		// Preserve .bin fallback when invalid UTF-8 appears after the MIME sample.
+		sample = append(sample, 0xff)
+	}
+
+	if _, err := spool.Seek(0, io.SeekStart); err != nil {
+		return nil, false, err
+	}
+	if validUTF8 && isUTF8TextFile(sample) {
+		_, err := io.Copy(stdout, spool)
+		return sample, true, err
+	}
+	return sample, false, nil
+}
+
+func copyDownloadFile(file io.WriteCloser, source io.Reader) (err error) {
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+	_, err = io.Copy(file, source)
+	return err
+}
+
+func promoteAutomaticDownload(response *http.Response, sample []byte, staged string, owned os.FileInfo, body io.Reader) (string, error) {
+	filename, exact := downloadFilename(response)
+	extension := filepath.Ext(filename)
+	if extension == "" {
+		extension = guessExtension(sample)
+	}
+	base := strings.TrimSuffix(filename, extension)
+	suffix := strings.TrimPrefix(filepath.Base(staged), ".openai-cli-download-")
+	unique := 0
+	for attempt := 0; attempt < 10000; attempt++ {
+		candidate := filename
+		if !exact || attempt > 0 {
+			candidate = base + "-" + suffix + extension
+			if unique > 0 {
+				candidate = fmt.Sprintf("%s-%s-%d%s", base, suffix, unique, extension)
+			}
+			unique++
+		}
+		err := linkDownloadFile(staged, candidate, owned)
+		if err == nil {
+			return fmt.Sprintf("Wrote output to: %s", candidate), nil
+		}
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if errors.Is(err, syscall.EXDEV) || errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.EOPNOTSUPP) || errors.Is(err, syscall.EPERM) {
+			return writeAutomaticDownload(response, sample, body)
+		}
+		return "", err
+	}
+	return "", fmt.Errorf("could not reserve a unique download filename: %w", os.ErrExist)
+}
+
 // Return a writable file handle to a new file, which attempts to choose a good filename
 // based on the Content-Disposition header or sniffing the MIME filetype of the response.
 func createDownloadFile(response *http.Response, data []byte) (*os.File, error) {
-	filename := "file"
-	// If the header provided an output filename, use that
-	disp := response.Header.Get("Content-Disposition")
-	_, params, err := mime.ParseMediaType(disp)
-	if err == nil {
-		if dispFilename, ok := params["filename"]; ok {
-			// Only use the last path component to prevent directory traversal
-			filename = filepath.Base(dispFilename)
-			// Try to create the file with exclusive flag to avoid race conditions
-			file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-			if err == nil {
-				return file, nil
-			}
+	filename, exact := downloadFilename(response)
+	if exact {
+		file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err == nil {
+			return file, nil
 		}
 	}
 
@@ -251,6 +567,16 @@ func createDownloadFile(response *http.Response, data []byte) (*os.File, error) 
 	}
 	base := strings.TrimSuffix(filename, ext)
 	return os.CreateTemp(".", base+"-*"+ext)
+}
+
+func downloadFilename(response *http.Response) (string, bool) {
+	_, params, err := mime.ParseMediaType(response.Header.Get("Content-Disposition"))
+	if err == nil {
+		if filename, ok := params["filename"]; ok {
+			return filepath.Base(filename), true
+		}
+	}
+	return "file", false
 }
 
 func guessExtension(data []byte) string {
