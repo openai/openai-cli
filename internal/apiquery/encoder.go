@@ -46,7 +46,11 @@ func (e *encoder) encodeMap(key string, value reflect.Value) ([]Pair, error) {
 	var pairs []Pair
 	iter := value.MapRange()
 	for iter.Next() {
-		subkey := iter.Key().String()
+		mapKey := iter.Key()
+		if mapKey.Kind() != reflect.String {
+			return nil, fmt.Errorf("apiquery: cannot encode a map with a non-string key")
+		}
+		subkey := mapKey.String()
 		keyPath := subkey
 		if len(key) > 0 {
 			if e.settings.NestedFormat == NestedQueryFormatDots {
