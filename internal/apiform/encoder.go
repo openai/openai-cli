@@ -51,15 +51,27 @@ func (e *encoder) encodeValue(key string, val reflect.Value, writer *multipart.W
 
 	t := val.Type()
 
+	// Encode nil pointers and nil interfaces as empty fields before any other
+	// type detection. A typed nil pointer whose type implements io.Reader must
+	// not be routed into encodeReader, which would invoke Read on a nil
+	// receiver via io.Copy and panic.
+	switch t.Kind() {
+	case reflect.Pointer:
+		if val.IsNil() {
+			return writer.WriteField(key, "")
+		}
+	case reflect.Interface:
+		if val.IsNil() {
+			return writer.WriteField(key, "")
+		}
+	}
+
 	if t.Implements(reflect.TypeOf((*io.Reader)(nil)).Elem()) {
 		return e.encodeReader(key, val, writer)
 	}
 
 	switch t.Kind() {
 	case reflect.Pointer:
-		if val.IsNil() || !val.IsValid() {
-			return writer.WriteField(key, "")
-		}
 		return e.encodeValue(key, val.Elem(), writer)
 
 	case reflect.Slice, reflect.Array:
@@ -69,9 +81,6 @@ func (e *encoder) encodeValue(key string, val reflect.Value, writer *multipart.W
 		return e.encodeMap(key, val, writer)
 
 	case reflect.Interface:
-		if val.IsNil() {
-			return writer.WriteField(key, "")
-		}
 		return e.encodeValue(key, val.Elem(), writer)
 
 	case reflect.String:
