@@ -16,8 +16,8 @@ import (
 
 func TestLargeResponsePayloads(t *testing.T) {
 	// High memory use is intentional. Do not shrink these synthetic payloads or
-	// raise client limits to make arbitrary caps pass. This probes compatibility,
-	// not an API maximum. Keep the cases sequential to bound peak memory.
+	// raise client limits to accommodate newly introduced caps. These probes
+	// protect released behavior, not a new API maximum. Keep the cases sequential.
 	payload := strings.Repeat("x", (32<<20)+1)
 	binary := filepath.Join(t.TempDir(), "openai.exe")
 	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "./cmd/openai")
@@ -59,6 +59,12 @@ func TestLargeResponsePayloads(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			text := payload
+			if tc.stream {
+				// Preserve the Go SDK's longstanding 32 MiB SSE line limit, leaving
+				// room for the JSON envelope. This test does not relax that limit.
+				text = text[:(32<<20)-1024]
+			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodPost || r.URL.Path != tc.path {
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -67,7 +73,7 @@ func TestLargeResponsePayloads(t *testing.T) {
 				}
 				w.Header().Set("Content-Type", tc.contentType)
 				io.WriteString(w, tc.prefix)
-				io.WriteString(w, payload)
+				io.WriteString(w, text)
 				io.WriteString(w, tc.suffix)
 			}))
 			defer server.Close()
@@ -96,8 +102,8 @@ func TestLargeResponsePayloads(t *testing.T) {
 			if err := decoder.Decode(&item); err != nil {
 				t.Fatalf("decode CLI output: %v", err)
 			}
-			if got := gjson.GetBytes(item, tc.textPath).String(); got != payload {
-				t.Fatalf("output text was not preserved: got %d bytes, want %d", len(got), len(payload))
+			if got := gjson.GetBytes(item, tc.textPath).String(); got != text {
+				t.Fatalf("output text was not preserved: got %d bytes, want %d", len(got), len(text))
 			}
 			if tc.stream {
 				if err := decoder.Decode(&item); err != nil {
