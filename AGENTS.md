@@ -50,7 +50,8 @@ The checker and effective budget come from main, not the PR. Keep default CODEOW
   YAML/JSON input, pagination, and streaming as security boundaries. Preserve
   credential isolation, same-origin mutual-TLS redirects, HTTPS-proxy
   restrictions, streaming where present, cancellation, and owned-file cleanup.
-  Apply appropriate resource limits when changing paths that buffer input.
+  Preserve large API payloads when changing paths that buffer input; follow the
+  large-payload compatibility guidance below.
 - Review direct and transitive Go dependencies, `go.mod`, `go.sum`,
   `api_reference/go.mod`, module sources, `replace` directives, and checksum
   verification. Review `scripts/bootstrap`, `scripts/mock`, the pinned
@@ -95,3 +96,22 @@ The complete `./scripts/test` suite starts the npm-backed local mock server;
 review that dependency and use synthetic data before running it. Avoid
 unrelated `go.mod`/`go.sum`, generated-source, or formatting changes, and
 report exactly which checks ran.
+
+## Large-payload compatibility
+
+Treat large payloads as a normal API contract, not evidence of malformed or
+hostile input. Responses, Chat Completions, and other APIs can legitimately
+return large `application/json` bodies and streaming events. Do not introduce
+arbitrary fixed limits on bodies, events, or lines as a security or efficiency
+fix. Prefer incremental processing, amortized-linear buffering, timely cleanup,
+and caller cancellation. Any new
+rejection limit needs an explicit, owner-approved API contract and a review of
+existing supported payloads and transports.
+
+Protect this behavior with focused, deterministic public-entrypoint tests using
+large synthetic payloads generated in memory, not committed captures or live
+image generation. Their high memory use is intentional: do not shrink the
+payloads or raise client limits to make the tests pass. Keep coverage to the main
+JSON and streaming categories, and run large cases sequentially to keep peak
+memory reasonable. The fixture size is a regression
+probe, not a new API maximum.
