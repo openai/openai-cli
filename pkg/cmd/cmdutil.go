@@ -252,12 +252,6 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 		return "", err
 	}
 	if err := copyDownloadFile(file, buffered); err != nil {
-		current, statErr := os.Lstat(filename)
-		if statErr == nil && os.SameFile(current, owned) {
-			if removeErr := os.Remove(filename); removeErr != nil {
-				return "", errors.Join(err, removeErr)
-			}
-		}
 		return "", err
 	}
 	current, err := os.Lstat(filename)

@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-func TestWriteAutomaticBinaryResponseRemovesIncompleteOwnedDestination(t *testing.T) {
+func TestWriteAutomaticBinaryResponseRetainsIncompleteOwnedDestination(t *testing.T) {
 	for _, failure := range []struct {
 		name string
 		err  error
@@ -35,8 +35,19 @@ func TestWriteAutomaticBinaryResponseRemovesIncompleteOwnedDestination(t *testin
 			if _, err := writeAutomaticBinaryResponse(response, io.Discard); !errors.Is(err, failure.err) {
 				t.Errorf("writeAutomaticBinaryResponse(%s) error = %v, want %v", failure.name, err, failure.err)
 			}
-			if _, err := os.Lstat("download.bin"); !errors.Is(err, os.ErrNotExist) {
-				t.Errorf("os.Lstat(download.bin after %s) error = %v, want %v", failure.name, err, os.ErrNotExist)
+			partial, err := os.ReadFile("download.bin")
+			if err != nil {
+				t.Fatalf("os.ReadFile(download.bin after %s) = %v, want retained owned destination", failure.name, err)
+			}
+			if !bytes.Equal(partial, content) {
+				t.Errorf("writeAutomaticBinaryResponse(%s) retained content = %q, want %q", failure.name, partial, content)
+			}
+			info, err := os.Stat("download.bin")
+			if err != nil {
+				t.Fatalf("os.Stat(download.bin after %s) = %v, want retained private destination", failure.name, err)
+			}
+			if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+				t.Errorf("writeAutomaticBinaryResponse(%s) retained permissions = %#o, want 0600", failure.name, info.Mode().Perm())
 			}
 		})
 	}
