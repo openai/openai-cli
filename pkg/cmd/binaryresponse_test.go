@@ -160,6 +160,60 @@ func TestWriteBinaryResponsePreservesExplicitFileBehavior(t *testing.T) {
 	})
 }
 
+func TestWriteBinaryResponsePreservesExistingHardLinksAndSymlinks(t *testing.T) {
+	t.Run("existing hard link", func(t *testing.T) {
+		directory := t.TempDir()
+		outfile := filepath.Join(directory, "download.bin")
+		linked := filepath.Join(directory, "linked.bin")
+		if err := os.WriteFile(outfile, []byte("original"), 0o640); err != nil {
+			t.Fatalf("os.WriteFile(%q) = %v, want nil", outfile, err)
+		}
+		original, err := os.Stat(outfile)
+		if err != nil {
+			t.Fatalf("os.Stat(%q) = %v, want nil", outfile, err)
+		}
+		if err := os.Link(outfile, linked); err != nil {
+			t.Skipf("filesystem does not support hard links: %v", err)
+		}
+		response := &http.Response{Body: io.NopCloser(strings.NewReader("replacement"))}
+		if _, err := writeBinaryResponse(response, io.Discard, outfile); err != nil {
+			t.Fatalf("writeBinaryResponse(%q) = %v, want nil", outfile, err)
+		}
+		updated, err := os.Stat(outfile)
+		if err != nil {
+			t.Fatalf("os.Stat(%q) = %v, want nil", outfile, err)
+		}
+		if !os.SameFile(original, updated) {
+			t.Error("writeBinaryResponse(existing hard link) replaced the original inode")
+		}
+		content, err := os.ReadFile(linked)
+		if err != nil || string(content) != "replacement" {
+			t.Errorf("os.ReadFile(%q) = %q, %v, want %q, nil", linked, content, err, "replacement")
+		}
+	})
+
+	t.Run("dangling symlink chain", func(t *testing.T) {
+		directory := t.TempDir()
+		target := filepath.Join(directory, "target.bin")
+		middle := filepath.Join(directory, "current.bin")
+		outfile := filepath.Join(directory, "latest.bin")
+		if err := os.Symlink(filepath.Base(target), middle); err != nil {
+			t.Skipf("filesystem does not support symlinks: %v", err)
+		}
+		if err := os.Symlink(filepath.Base(middle), outfile); err != nil {
+			t.Fatalf("os.Symlink(%q, %q) = %v, want nil", middle, outfile, err)
+		}
+		response := &http.Response{Body: io.NopCloser(strings.NewReader("replacement"))}
+		if _, err := writeBinaryResponse(response, io.Discard, outfile); err != nil {
+			t.Fatalf("writeBinaryResponse(dangling symlink chain) = %v, want nil", err)
+		}
+		content, err := os.ReadFile(target)
+		if err != nil || string(content) != "replacement" {
+			t.Errorf("os.ReadFile(%q) = %q, %v, want %q, nil", target, content, err, "replacement")
+		}
+	})
+}
+
 func TestDownloadFileCloseErrors(t *testing.T) {
 	closeErr := errors.New("synthetic destination close failure")
 	copyErr := errors.New("synthetic destination copy failure")
@@ -208,36 +262,6 @@ func TestDownloadFileCloseErrors(t *testing.T) {
 			})
 		})
 	}
-}
-
-func TestDownloadFileStatErrors(t *testing.T) {
-	statErr := errors.New("synthetic destination stat failure")
-	closeErr := errors.New("synthetic destination close failure")
-
-	t.Run("preserves the original stat error when closing succeeds", func(t *testing.T) {
-		file := &closeTrackingDownloadFile{statErr: statErr}
-		_, err := statDownloadFile(file)
-		if err != statErr {
-			t.Errorf("statDownloadFile(successful close) error = %v, want original error %v", err, statErr)
-		}
-		if file.closeCalls != 1 {
-			t.Errorf("statDownloadFile(successful close) close calls = %d, want 1", file.closeCalls)
-		}
-	})
-
-	t.Run("reports both stat and close failures", func(t *testing.T) {
-		file := &closeTrackingDownloadFile{statErr: statErr, closeErr: closeErr}
-		_, err := statDownloadFile(file)
-		if !errors.Is(err, statErr) {
-			t.Errorf("statDownloadFile(failed close) error = %v, want stat failure %v", err, statErr)
-		}
-		if !errors.Is(err, closeErr) {
-			t.Errorf("statDownloadFile(failed close) error = %v, want close failure %v", err, closeErr)
-		}
-		if file.closeCalls != 1 {
-			t.Errorf("statDownloadFile(failed close) close calls = %d, want 1", file.closeCalls)
-		}
-	})
 }
 
 func TestWriteBinaryResponseDirectOutputsDoNotRequireTemporaryStorage(t *testing.T) {
@@ -298,8 +322,12 @@ func TestWriteBinaryResponsePropagatesReadErrorsAndShortWrites(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("writeBinaryResponse(canceled file) error = %v, want %v", err, context.Canceled)
 		}
-		if _, readErr := os.Stat(outfile); !errors.Is(readErr, os.ErrNotExist) {
-			t.Errorf("os.Stat(%q) error = %v, want canceled destination to remain absent", outfile, readErr)
+		content, readErr := os.ReadFile(outfile)
+		if readErr != nil {
+			t.Fatalf("os.ReadFile(%q) returned error: %v", outfile, readErr)
+		}
+		if string(content) != "partial response" {
+			t.Errorf("writeBinaryResponse(canceled file) content = %q, want %q", content, "partial response")
 		}
 	})
 
@@ -564,9 +592,9 @@ func TestWriteAutomaticBinaryResponsePreservesDetectionAndFilenames(t *testing.T
 			wantStdout: true,
 		},
 		{
-			name:          "invalid UTF-8 after the sniff boundary",
-			content:       append(bytes.Repeat([]byte("a"), 4096), 0xff),
-			wantExtension: guessExtension(append(bytes.Repeat([]byte("a"), 4096), 0xff)),
+			name:       "invalid UTF-8 after the bounded sniff boundary streams as text",
+			content:    append(bytes.Repeat([]byte("a"), 4096), 0xff),
+			wantStdout: true,
 		},
 		{
 			name:          "invalid UTF-8 in the sampled prefix",
@@ -664,17 +692,46 @@ func TestWriteAutomaticBinaryResponsePreservesFilenameCollisions(t *testing.T) {
 	}
 }
 
-func TestWriteAutomaticBinaryResponseUsesPrivateBoundedSpool(t *testing.T) {
-	spoolDir := t.TempDir()
-	t.Chdir(spoolDir)
-	t.Setenv("TMPDIR", spoolDir)
-	t.Setenv("TMP", spoolDir)
-	t.Setenv("TEMP", spoolDir)
-	const responseSize = 2 << 20
-	body := &observingDownloadReader{
-		boundedDownloadReader: boundedDownloadReader{remaining: responseSize},
-		spoolDir:              spoolDir,
+func TestWriteAutomaticBinaryResponsePreservesReplacedDestination(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows prevents renaming an open destination handle")
 	}
+	t.Chdir(t.TempDir())
+	content := append([]byte{0xff}, bytes.Repeat([]byte("a"), 8192)...)
+	body := &inspectingDownloadReader{
+		Reader: bytes.NewReader(content),
+		inspect: func() error {
+			if err := os.Rename("download.bin", "original.bin"); err != nil {
+				return err
+			}
+			return os.WriteFile("download.bin", []byte("unrelated replacement"), 0o600)
+		},
+	}
+	response := &http.Response{
+		Body:   io.NopCloser(body),
+		Header: http.Header{"Content-Disposition": []string{`attachment; filename="download.bin"`}},
+	}
+
+	if _, err := writeAutomaticBinaryResponse(response, io.Discard); err != nil {
+		t.Fatalf("writeAutomaticBinaryResponse(replaced destination) = %v, want nil", err)
+	}
+	for filename, want := range map[string][]byte{
+		"original.bin": content,
+		"download.bin": []byte("unrelated replacement"),
+	} {
+		got, err := os.ReadFile(filename)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Errorf("os.ReadFile(%q) = %q, %v, want %q, nil", filename, got, err, want)
+		}
+	}
+}
+
+func TestWriteAutomaticBinaryResponseStreamsTextWithoutSpooling(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	setUnavailableTempDir(t)
+	const responseSize = 8 << 20
+	body := &boundedDownloadReader{remaining: responseSize}
 	stdout := &countingDownloadWriter{}
 	_, err := writeAutomaticBinaryResponse(&http.Response{Body: body, Header: http.Header{}}, stdout)
 	if err != nil {
@@ -683,24 +740,43 @@ func TestWriteAutomaticBinaryResponseUsesPrivateBoundedSpool(t *testing.T) {
 	if stdout.written != responseSize {
 		t.Errorf("writeAutomaticBinaryResponse(large text) wrote %d bytes, want %d", stdout.written, responseSize)
 	}
-	if !body.observedPrivateSpool {
-		t.Error("writeAutomaticBinaryResponse(large text) did not create a private temporary spool")
-	}
-	entries, err := os.ReadDir(spoolDir)
+	entries, err := os.ReadDir(directory)
 	if err != nil {
-		t.Fatalf("os.ReadDir(%q) returned error: %v", spoolDir, err)
+		t.Fatalf("os.ReadDir(%q) returned error: %v", directory, err)
 	}
 	if len(entries) != 0 {
-		t.Errorf("writeAutomaticBinaryResponse(large text) left %d temporary files, want none", len(entries))
+		t.Errorf("writeAutomaticBinaryResponse(large text) created %d temporary files, want none", len(entries))
 	}
 }
 
-func TestWriteAutomaticBinaryResponseCleansSpoolOnCancellation(t *testing.T) {
-	spoolDir := t.TempDir()
-	t.Chdir(spoolDir)
-	t.Setenv("TMPDIR", spoolDir)
-	t.Setenv("TMP", spoolDir)
-	t.Setenv("TEMP", spoolDir)
+func TestWriteAutomaticBinaryResponseStopsUnboundedTextOnWriterError(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	setUnavailableTempDir(t)
+	wantErr := errors.New("synthetic text output failure")
+	body := &boundedDownloadReader{remaining: 1 << 40}
+	stdout := &countingDownloadWriter{limit: 64 << 10, err: wantErr}
+
+	_, err := writeAutomaticBinaryResponse(&http.Response{Body: body, Header: http.Header{}}, stdout)
+	if !errors.Is(err, wantErr) {
+		t.Errorf("writeAutomaticBinaryResponse(unbounded text) error = %v, want %v", err, wantErr)
+	}
+	if stdout.written > 96<<10 {
+		t.Errorf("writeAutomaticBinaryResponse(unbounded text) wrote %d bytes, want at most %d", stdout.written, 96<<10)
+	}
+	entries, readErr := os.ReadDir(directory)
+	if readErr != nil {
+		t.Fatalf("os.ReadDir(%q) returned error: %v", directory, readErr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("writeAutomaticBinaryResponse(unbounded text) created %d temporary files, want none", len(entries))
+	}
+}
+
+func TestWriteAutomaticBinaryResponseStreamsCancellationWithoutTemporaryFiles(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	setUnavailableTempDir(t)
 	body := io.NopCloser(&errorAfterDownloadReader{
 		Reader: strings.NewReader("partial response"),
 		err:    context.Canceled,
@@ -713,9 +789,9 @@ func TestWriteAutomaticBinaryResponseCleansSpoolOnCancellation(t *testing.T) {
 	if stdout.written != 0 {
 		t.Errorf("writeAutomaticBinaryResponse(canceled response) wrote %d bytes, want none", stdout.written)
 	}
-	entries, readErr := os.ReadDir(spoolDir)
+	entries, readErr := os.ReadDir(directory)
 	if readErr != nil {
-		t.Fatalf("os.ReadDir(%q) returned error: %v", spoolDir, readErr)
+		t.Fatalf("os.ReadDir(%q) returned error: %v", directory, readErr)
 	}
 	if len(entries) != 0 {
 		t.Errorf("writeAutomaticBinaryResponse(canceled response) left %d temporary files, want none", len(entries))
@@ -775,15 +851,10 @@ func (reader *boundedDownloadReader) Close() error {
 
 type closeTrackingDownloadFile struct {
 	content    bytes.Buffer
-	statErr    error
 	closeErr   error
 	writeErr   error
 	writeLimit int
 	closeCalls int
-}
-
-func (file *closeTrackingDownloadFile) Stat() (os.FileInfo, error) {
-	return nil, file.statErr
 }
 
 func (file *closeTrackingDownloadFile) Write(data []byte) (int, error) {
@@ -846,40 +917,26 @@ type cancelingDownloadWriter struct {
 	cancel  context.CancelFunc
 }
 
+type inspectingDownloadReader struct {
+	io.Reader
+	read      bool
+	inspected bool
+	inspect   func() error
+}
+
+func (reader *inspectingDownloadReader) Read(data []byte) (int, error) {
+	if reader.read && !reader.inspected {
+		if err := reader.inspect(); err != nil {
+			return 0, err
+		}
+		reader.inspected = true
+	}
+	reader.read = true
+	return reader.Reader.Read(data)
+}
+
 func (writer *cancelingDownloadWriter) Write(data []byte) (int, error) {
 	writer.written += int64(len(data))
 	writer.cancel()
 	return len(data), nil
-}
-
-type observingDownloadReader struct {
-	boundedDownloadReader
-	spoolDir             string
-	sampled              bool
-	observedPrivateSpool bool
-}
-
-func (reader *observingDownloadReader) Read(data []byte) (int, error) {
-	if !reader.observedPrivateSpool {
-		entries, err := os.ReadDir(reader.spoolDir)
-		if err != nil {
-			return 0, err
-		}
-		if len(entries) == 0 && !reader.sampled {
-			reader.sampled = true
-			return reader.boundedDownloadReader.Read(data)
-		}
-		if len(entries) != 1 {
-			return 0, fmt.Errorf("temporary spool count = %d, want 1", len(entries))
-		}
-		info, err := entries[0].Info()
-		if err != nil {
-			return 0, err
-		}
-		if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-			return 0, fmt.Errorf("temporary spool permissions = %#o, want owner-only access", info.Mode().Perm())
-		}
-		reader.observedPrivateSpool = true
-	}
-	return reader.boundedDownloadReader.Read(data)
 }
