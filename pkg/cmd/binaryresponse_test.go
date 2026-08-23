@@ -712,8 +712,8 @@ func TestWriteAutomaticBinaryResponsePreservesReplacedDestination(t *testing.T) 
 		Header: http.Header{"Content-Disposition": []string{`attachment; filename="download.bin"`}},
 	}
 
-	if _, err := writeAutomaticBinaryResponse(response, io.Discard); err != nil {
-		t.Fatalf("writeAutomaticBinaryResponse(replaced destination) = %v, want nil", err)
+	if _, err := writeAutomaticBinaryResponse(response, io.Discard); !errors.Is(err, os.ErrInvalid) {
+		t.Errorf("writeAutomaticBinaryResponse(replaced destination) error = %v, want %v", err, os.ErrInvalid)
 	}
 	for filename, want := range map[string][]byte{
 		"original.bin": content,

@@ -244,8 +244,28 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 		return "", err
 	}
 	filename := file.Name()
-	if err := copyDownloadFile(file, buffered); err != nil {
+	owned, err := file.Stat()
+	if err != nil {
+		if closeErr := file.Close(); closeErr != nil {
+			return "", errors.Join(err, closeErr)
+		}
 		return "", err
+	}
+	if err := copyDownloadFile(file, buffered); err != nil {
+		current, statErr := os.Lstat(filename)
+		if statErr == nil && os.SameFile(current, owned) {
+			if removeErr := os.Remove(filename); removeErr != nil {
+				return "", errors.Join(err, removeErr)
+			}
+		}
+		return "", err
+	}
+	current, err := os.Lstat(filename)
+	if err != nil {
+		return "", err
+	}
+	if !os.SameFile(current, owned) {
+		return "", fmt.Errorf("download destination changed during streaming: %w", os.ErrInvalid)
 	}
 	return fmt.Sprintf("Wrote output to: %s", filename), nil
 }
