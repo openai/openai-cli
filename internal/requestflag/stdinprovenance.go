@@ -30,17 +30,20 @@ func innerFieldIsSet(inner HasOuterFlag) bool {
 	field := inner.GetInnerField()
 	switch values := outer.Get().(type) {
 	case map[string]any:
+		if len(values) == 0 {
+			return true
+		}
 		_, exists := values[field]
 		return exists
 	case []map[string]any:
 		if len(values) == 0 {
-			return false
+			return true
 		}
 		_, exists := values[len(values)-1][field]
 		return exists
 	case []any:
 		if len(values) == 0 {
-			return false
+			return true
 		}
 		last, ok := values[len(values)-1].(map[string]any)
 		if !ok {

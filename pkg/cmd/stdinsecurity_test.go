@@ -353,6 +353,14 @@ func TestUntrustedStdinModeEndToEnd(t *testing.T) {
 		require.Contains(t, string(request.body), "@"+privateReferencePath)
 	})
 
+	t.Run("explicit empty inner array overrides stdin", func(t *testing.T) {
+		request, output, runErr := run(t, "context_management:\n  type: compaction\n", "1", "responses", "create", "--context-management", "[]")
+		require.NoError(t, runErr, "CLI output: %s", output)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(request.body, &body))
+		require.Equal(t, []any{}, body["context_management"])
+	})
+
 	t.Run("explicit nested file reference remains trusted", func(t *testing.T) {
 		stdin := fmt.Sprintf(`{"input":"@%s","metadata":{"piped":"@%s"}}`, privateReferencePath, privateReferencePath)
 		request, output, runErr := run(t, stdin, "1", "responses", "create", "--input", "@"+trustedPath)

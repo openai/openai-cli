@@ -108,3 +108,53 @@ func TestApplyStdinDataToFlagsWithProvenancePreservesExplicitInnerArrayField(t *
 	require.Equal(t, []map[string]any{{"value": "explicit"}}, outer.Get())
 	require.False(t, observed)
 }
+
+func TestApplyStdinDataToFlagsWithProvenancePreservesExplicitEmptyCollections(t *testing.T) {
+	t.Parallel()
+
+	mapOuter := &Flag[map[string]any]{Name: "nested", BodyPath: "nested"}
+	arrayOuter := &Flag[any]{Name: "nested", BodyPath: "nested"}
+	tests := []struct {
+		name     string
+		outer    cli.Flag
+		inner    HasOuterFlag
+		rawValue string
+		expected any
+	}{
+		{
+			name:     "map",
+			outer:    mapOuter,
+			inner:    &InnerFlag[string]{Name: "nested.value", InnerField: "value", OuterFlag: mapOuter},
+			rawValue: `{}`,
+			expected: map[string]any{},
+		},
+		{
+			name:     "untyped array",
+			outer:    arrayOuter,
+			inner:    &InnerFlag[string]{Name: "nested.value", InnerField: "value", OuterFlag: arrayOuter, OuterIsArrayOfObjects: true},
+			rawValue: `[]`,
+			expected: []any{},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.NoError(t, test.outer.PreParse())
+			require.NoError(t, test.outer.Set("nested", test.rawValue))
+			command := &cli.Command{Flags: []cli.Flag{test.outer, test.inner}}
+			observed := false
+
+			err := ApplyStdinDataToFlagsWithProvenance(command, map[string]any{
+				"nested": map[string]any{"value": "piped"},
+			}, func(cli.Flag) {
+				observed = true
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, test.expected, test.outer.Get())
+			require.False(t, observed)
+		})
+	}
+}
