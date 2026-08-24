@@ -106,6 +106,7 @@ func (b *multipartRequestBody) start() {
 
 func (b *multipartRequestBody) encode() {
 	defer close(b.done)
+
 	if err := apiform.MarshalWithSettings(b.bodyMap, b.multipartWriter, b.encodingFormat); err != nil {
 		// A final boundary asserts that every part completed. Abort immediately
 		// instead of making a truncated source look like a complete upload.
