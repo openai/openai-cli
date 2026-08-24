@@ -368,6 +368,7 @@ func flagOptions(
 			}
 			if bodyMap, ok := bodyData.(map[string]any); ok {
 				applyDataAliases(cmd, bodyMap)
+				stdinSecurity.recordBodyFlags(cmd, bodyMap)
 				// Apply any matching keys from the piped data to path, query, and header flags
 				// that have not already been set via the command line.
 				if err := requestflag.ApplyStdinDataToFlagsWithProvenance(cmd, bodyMap, stdinSecurity.recordFlag); err != nil {
@@ -430,10 +431,9 @@ func flagOptions(
 		}
 	}
 
-	// For flags marked as FileInput (type: string, format: binary), the value is always
-	// A FileInput value is a file path, so wrap trusted values with FilePathValue
-	// for automatic expansion. In untrusted-stdin mode, reject piped file paths.
-	if err := wrapFileInputValues(cmd, &requestContents); err != nil {
+	// FileInput values are file paths, so wrap trusted values with FilePathValue
+	// for automatic expansion. In untrusted-stdin mode, reject piped values.
+	if err := wrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
 		return nil, err
 	}
 
@@ -609,7 +609,7 @@ func rewriteAliases(m map[string]any, canonical string, aliases []string) {
 // FilePathValue sentinel values. embedFilesValue recognizes FilePathValue and reads the file contents
 // directly, so the user doesn't need to type the "@" prefix. Untrusted piped
 // file paths are rejected before any file can be opened.
-func wrapFileInputValues(cmd *cli.Command, contents *requestflag.RequestContents) error {
+func wrapFileInputValues(cmd *cli.Command, contents *requestflag.RequestContents, stdinSecurity *stdinSecurity) error {
 	bodyMap, _ := contents.Body.(map[string]any)
 
 	for _, flag := range cmd.Flags {
@@ -631,7 +631,7 @@ func wrapFileInputValues(cmd *cli.Command, contents *requestflag.RequestContents
 		if !exists {
 			continue
 		}
-		if containsUntrustedStdinValue(value) {
+		if stdinSecurity.fileInputFromStdin(flag) {
 			return fmt.Errorf("file input %q from piped YAML/JSON is disabled when %s is enabled; provide --%s explicitly", path, untrustedStdinEnv, flag.Names()[0])
 		}
 		if wrapped, changed := wrapFileInputValue(value); changed {

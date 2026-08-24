@@ -134,6 +134,8 @@ func TestWrapFileInputValuesRejectsUntrustedLocations(t *testing.T) {
 	}{
 		{name: "body", flag: &requestflag.Flag[string]{Name: "file", BodyPath: "file", FileInput: true}, value: untrustedStdinValue("synthetic.txt")},
 		{name: "empty body", flag: &requestflag.Flag[string]{Name: "file", BodyPath: "file", FileInput: true}, value: untrustedStdinValue("")},
+		{name: "null body", flag: &requestflag.Flag[string]{Name: "file", BodyPath: "file", FileInput: true}, value: nil},
+		{name: "number body", flag: &requestflag.Flag[string]{Name: "file", BodyPath: "file", FileInput: true}, value: 123},
 		{name: "body array", flag: &requestflag.Flag[string]{Name: "file", BodyPath: "file", FileInput: true}, value: []any{untrustedStdinValue("synthetic.txt")}},
 		{name: "query", flag: &requestflag.Flag[string]{Name: "file", QueryPath: "file", FileInput: true}, value: untrustedStdinValue("synthetic.txt")},
 		{name: "header", flag: &requestflag.Flag[string]{Name: "file", HeaderPath: "X-File", FileInput: true}, value: untrustedStdinValue("synthetic.txt")},
@@ -149,7 +151,14 @@ func TestWrapFileInputValuesRejectsUntrustedLocations(t *testing.T) {
 				Headers: map[string]any{test.flag.HeaderPath: test.value},
 			}
 
-			err := wrapFileInputValues(&cli.Command{Flags: []cli.Flag{test.flag}}, &contents)
+			command := &cli.Command{Flags: []cli.Flag{test.flag}}
+			security := &stdinSecurity{enabled: true}
+			if test.flag.BodyPath != "" {
+				security.recordBodyFlags(command, contents.Body.(map[string]any))
+			} else {
+				security.recordFlag(test.flag)
+			}
+			err := wrapFileInputValues(command, &contents, security)
 
 			require.ErrorContains(t, err, untrustedStdinEnv)
 			require.ErrorContains(t, err, "provide --file explicitly")
@@ -160,9 +169,13 @@ func TestWrapFileInputValuesRejectsUntrustedLocations(t *testing.T) {
 		t.Parallel()
 
 		flag := &requestflag.Flag[string]{Name: "file", BodyPath: "file", FileInput: true}
+		require.NoError(t, flag.PreParse())
+		require.NoError(t, flag.Set("file", "trusted.txt"))
 		contents := requestflag.RequestContents{Body: map[string]any{"file": "trusted.txt"}}
+		security := &stdinSecurity{enabled: true}
+		security.recordBodyFlags(&cli.Command{Flags: []cli.Flag{flag}}, contents.Body.(map[string]any))
 
-		require.NoError(t, wrapFileInputValues(&cli.Command{Flags: []cli.Flag{flag}}, &contents))
+		require.NoError(t, wrapFileInputValues(&cli.Command{Flags: []cli.Flag{flag}}, &contents, security))
 		require.Equal(t, FilePathValue("trusted.txt"), contents.Body.(map[string]any)["file"])
 	})
 }
@@ -180,8 +193,10 @@ func TestUntrustedStdinFileInputAliasCannotBypassProtection(t *testing.T) {
 	stdin := map[string]any{"upload_alias": "synthetic-private.txt"}
 	applyDataAliases(command, stdin)
 	contents := requestflag.RequestContents{Body: protectStdinValue(stdin)}
+	security := &stdinSecurity{enabled: true}
+	security.recordBodyFlags(command, stdin)
 
-	err := wrapFileInputValues(command, &contents)
+	err := wrapFileInputValues(command, &contents, security)
 
 	require.ErrorContains(t, err, `file input "file"`)
 	require.ErrorContains(t, err, "provide --upload explicitly")
@@ -295,11 +310,23 @@ func TestUntrustedStdinModeEndToEnd(t *testing.T) {
 		require.Equal(t, trustedContent, request.header.Get("Openai-Beta"))
 	})
 
-	t.Run("stdin FileInput fails before request", func(t *testing.T) {
-		request, output, runErr := run(t, fmt.Sprintf("file: %q\npurpose: assistants\n", privateReferencePath), "1", "files", "create")
-		require.Error(t, runErr)
-		require.Contains(t, output, "provide --file explicitly")
-		require.Empty(t, request.request)
+	t.Run("stdin FileInput values fail before request", func(t *testing.T) {
+		for _, test := range []struct {
+			name  string
+			value string
+		}{
+			{name: "path", value: fmt.Sprintf("%q", privateReferencePath)},
+			{name: "empty", value: `""`},
+			{name: "null", value: "null"},
+			{name: "number", value: "123"},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				request, output, runErr := run(t, "file: "+test.value+"\npurpose: assistants\n", "1", "files", "create")
+				require.Error(t, runErr)
+				require.Contains(t, output, "provide --file explicitly")
+				require.Empty(t, request.request)
+			})
+		}
 	})
 
 	t.Run("explicit file flag overrides untrusted stdin", func(t *testing.T) {

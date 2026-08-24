@@ -16,8 +16,8 @@ const untrustedStdinEnv = "OPENAI_UNTRUSTED_STDIN"
 type untrustedStdinValue string
 
 type stdinSecurity struct {
-	enabled bool
-	flags   map[cli.Flag]struct{}
+	enabled    bool
+	stdinFlags map[cli.Flag]struct{}
 }
 
 func newStdinSecurity() (*stdinSecurity, error) {
@@ -36,14 +36,37 @@ func (s *stdinSecurity) recordFlag(flag cli.Flag) {
 	if !s.enabled {
 		return
 	}
+	if s.stdinFlags == nil {
+		s.stdinFlags = make(map[cli.Flag]struct{})
+	}
+	s.stdinFlags[flag] = struct{}{}
 	if inner, ok := flag.(requestflag.HasOuterFlag); ok {
 		protectInnerFlagValue(inner)
+	}
+}
+
+func (s *stdinSecurity) recordBodyFlags(cmd *cli.Command, data map[string]any) {
+	if !s.enabled {
 		return
 	}
-	if s.flags == nil {
-		s.flags = make(map[cli.Flag]struct{})
+	for _, flag := range cmd.Flags {
+		inRequest, ok := flag.(requestflag.InRequest)
+		if !ok || flag.IsSet() {
+			continue
+		}
+		bodyPath := inRequest.GetBodyPath()
+		if bodyPath == "" {
+			continue
+		}
+		if _, exists := data[bodyPath]; exists {
+			s.recordFlag(flag)
+		}
 	}
-	s.flags[flag] = struct{}{}
+}
+
+func (s *stdinSecurity) fileInputFromStdin(flag cli.Flag) bool {
+	_, recorded := s.stdinFlags[flag]
+	return s.enabled && recorded
 }
 
 func (s *stdinSecurity) protectFlagValues(contents *requestflag.RequestContents) {
@@ -51,7 +74,7 @@ func (s *stdinSecurity) protectFlagValues(contents *requestflag.RequestContents)
 		return
 	}
 	body, _ := contents.Body.(map[string]any)
-	for flag := range s.flags {
+	for flag := range s.stdinFlags {
 		inRequest, ok := flag.(requestflag.InRequest)
 		if !ok {
 			continue
@@ -126,24 +149,4 @@ func protectStdinValue(value any) any {
 		return result
 	}
 	return value
-}
-
-func containsUntrustedStdinValue(value any) bool {
-	switch value := value.(type) {
-	case untrustedStdinValue:
-		return true
-	case []any:
-		for _, element := range value {
-			if containsUntrustedStdinValue(element) {
-				return true
-			}
-		}
-	case map[string]any:
-		for _, element := range value {
-			if containsUntrustedStdinValue(element) {
-				return true
-			}
-		}
-	}
-	return false
 }
