@@ -57,3 +57,28 @@ func TestApplyStdinDataToFlagsWithProvenanceDoesNotReportFailedSet(t *testing.T)
 	require.Error(t, err)
 	require.False(t, observed)
 }
+
+func TestApplyStdinDataToFlagsWithProvenancePreservesExplicitInnerMapField(t *testing.T) {
+	t.Parallel()
+
+	outer := &Flag[map[string]any]{Name: "nested", BodyPath: "nested"}
+	inner := &InnerFlag[string]{
+		Name:       "nested.value",
+		InnerField: "value",
+		OuterFlag:  outer,
+	}
+	require.NoError(t, outer.PreParse())
+	require.NoError(t, inner.Set("nested.value", "explicit"))
+	command := &cli.Command{Flags: []cli.Flag{outer, inner}}
+	observed := false
+
+	err := ApplyStdinDataToFlagsWithProvenance(command, map[string]any{
+		"nested": map[string]any{"value": "piped"},
+	}, func(cli.Flag) {
+		observed = true
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "explicit", outer.Get().(map[string]any)["value"])
+	require.False(t, observed)
+}
