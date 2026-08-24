@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -104,4 +106,41 @@ func TestMultipartRequestOptionsReplayTypedNilReaderAcrossRedirects(t *testing.T
 			require.Equal(t, int32(2), requestCount.Load())
 		})
 	}
+}
+
+func TestMultipartRequestOptionsKnownUploadAllowsTypedNilReaderField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "payload.txt")
+	require.NoError(t, os.WriteFile(path, []byte("payload"), 0o600))
+	upload, err := openFileUpload(path)
+	require.NoError(t, err)
+
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		assert.Positive(t, r.ContentLength)
+		if !assert.NoError(t, r.ParseMultipartForm(1<<20)) {
+			http.Error(w, "invalid multipart form", http.StatusBadRequest)
+			return
+		}
+		assert.Equal(t, []string{""}, r.MultipartForm.Value["optional"])
+		assert.Len(t, r.MultipartForm.File["file"], 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"file_123","object":"file","bytes":7,"filename":"payload.txt","purpose":"assistants"}`)
+	}))
+	t.Cleanup(server.Close)
+
+	options, err := multipartRequestOptions(map[string]any{
+		"file":     upload,
+		"optional": typedNilMultipartReader(),
+		"purpose":  "assistants",
+	}, apiform.FormatBrackets)
+	require.NoError(t, err)
+	client := openai.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL(server.URL+"/"),
+	)
+
+	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), requestCount.Load())
 }
