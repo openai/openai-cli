@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -13,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-go/v3/option"
@@ -190,39 +193,85 @@ func streamToStdout(generateOutput func(w *os.File) error) error {
 // Takes in a stdout reference so we can test this function without overriding os.Stdout in tests.
 func writeBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (string, error) {
 	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		return "", err
-	}
+
 	switch outfile {
 	case "-", "/dev/stdout":
-		_, err := stdout.Write(body)
+		_, err := io.Copy(stdout, response.Body)
 		return "", err
 	case "":
-		// If output file is unspecified, then print to stdout for plain text or
-		// if stdout is not a terminal:
-		if !isTerminal(os.Stdout) || isUTF8TextFile(body) {
-			_, err := stdout.Write(body)
+		if !isTerminal(os.Stdout) {
+			_, err := io.Copy(stdout, response.Body)
 			return "", err
 		}
-
-		// If response has a suggested filename in the content-disposition
-		// header, then use that (with an optional suffix to ensure uniqueness):
-		file, err := createDownloadFile(response, body)
+		return writeAutomaticBinaryResponse(response, stdout)
+	default:
+		file, err := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 		if err != nil {
 			return "", err
 		}
-		defer file.Close()
-		if _, err := file.Write(body); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Wrote output to: %s", file.Name()), nil
-	default:
-		if err := os.WriteFile(outfile, body, 0600); err != nil {
+		if err := copyDownloadFile(file, response.Body); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Wrote output to: %s", outfile), nil
 	}
+}
+
+// writeAutomaticBinaryResponse classifies a bounded prefix before streaming the
+// complete response directly to its selected destination.
+func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (string, error) {
+	buffered := bufio.NewReader(response.Body)
+	sample, err := buffered.Peek(512 + utf8.UTFMax - 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	if !errors.Is(err, io.EOF) && !utf8.Valid(sample) {
+		for trim := 1; trim < utf8.UTFMax && trim <= len(sample); trim++ {
+			boundary := len(sample) - trim
+			if utf8.Valid(sample[:boundary]) && !utf8.FullRune(sample[boundary:]) {
+				sample = sample[:boundary]
+				break
+			}
+		}
+	}
+	if isUTF8TextFile(sample) {
+		// bufio.Reader.WriteTo does not report a short final buffered write.
+		_, err := io.Copy(stdout, struct{ io.Reader }{buffered})
+		return "", err
+	}
+
+	file, err := createDownloadFile(response, sample)
+	if err != nil {
+		return "", err
+	}
+	filename := file.Name()
+	owned, err := file.Stat()
+	if err != nil {
+		if closeErr := file.Close(); closeErr != nil {
+			return "", errors.Join(err, closeErr)
+		}
+		return "", err
+	}
+	if err := copyDownloadFile(file, buffered); err != nil {
+		return "", err
+	}
+	current, err := os.Lstat(filename)
+	if err != nil {
+		return "", err
+	}
+	if !os.SameFile(current, owned) {
+		return "", fmt.Errorf("download destination changed during streaming: %w", os.ErrInvalid)
+	}
+	return fmt.Sprintf("Wrote output to: %s", filename), nil
+}
+
+func copyDownloadFile(file io.WriteCloser, source io.Reader) (err error) {
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+	_, err = io.Copy(file, source)
+	return err
 }
 
 // Return a writable file handle to a new file, which attempts to choose a good filename
