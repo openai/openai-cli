@@ -2,6 +2,7 @@ package apiform
 
 import (
 	"bytes"
+	"io"
 	"mime/multipart"
 	"testing"
 
@@ -17,18 +18,31 @@ func (*panicOnRead) Read([]byte) (int, error) {
 func TestMarshalTreatsTypedNilReaderAsEmptyField(t *testing.T) {
 	t.Parallel()
 
-	var reader *panicOnRead
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-	require.NoError(t, writer.SetBoundary("xxx"))
+	var concrete *panicOnRead
+	var reader io.Reader = concrete
+	tests := map[string]any{
+		"concrete pointer in any map": map[string]any{"file": concrete},
+		"pointer in reader map":       map[string]io.Reader{"file": reader},
+		"nil reader interface":        map[string]io.Reader{"file": nil},
+	}
 
-	require.NotPanics(t, func() {
-		require.NoError(t, Marshal(map[string]any{"file": reader}, writer))
-		require.NoError(t, writer.Close())
-	})
+	for name, value := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	require.Equal(t,
-		"--xxx\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\n\r\n--xxx--\r\n",
-		buf.String(),
-	)
+			var buf bytes.Buffer
+			writer := multipart.NewWriter(&buf)
+			require.NoError(t, writer.SetBoundary("xxx"))
+
+			require.NotPanics(t, func() {
+				require.NoError(t, Marshal(value, writer))
+				require.NoError(t, writer.Close())
+			})
+
+			require.Equal(t,
+				"--xxx\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\n\r\n--xxx--\r\n",
+				buf.String(),
+			)
+		})
+	}
 }
