@@ -82,3 +82,29 @@ func TestApplyStdinDataToFlagsWithProvenancePreservesExplicitInnerMapField(t *te
 	require.Equal(t, "explicit", outer.Get().(map[string]any)["value"])
 	require.False(t, observed)
 }
+
+func TestApplyStdinDataToFlagsWithProvenancePreservesExplicitInnerArrayField(t *testing.T) {
+	t.Parallel()
+
+	outer := &Flag[[]map[string]any]{Name: "entries", BodyPath: "entries"}
+	inner := &InnerFlag[string]{
+		Name:                  "entries.value",
+		InnerField:            "value",
+		OuterFlag:             outer,
+		OuterIsArrayOfObjects: true,
+	}
+	require.NoError(t, outer.PreParse())
+	require.NoError(t, inner.Set("entries.value", "explicit"))
+	command := &cli.Command{Flags: []cli.Flag{outer, inner}}
+	observed := false
+
+	err := ApplyStdinDataToFlagsWithProvenance(command, map[string]any{
+		"entries": map[string]any{"value": "piped"},
+	}, func(cli.Flag) {
+		observed = true
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []map[string]any{{"value": "explicit"}}, outer.Get())
+	require.False(t, observed)
+}

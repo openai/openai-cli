@@ -166,7 +166,7 @@ func applyStdinDataToFlags(cmd *cli.Command, data map[string]any, onSet func(cli
 			if !found {
 				continue
 			}
-			if innerMapFieldIsSet(inner) {
+			if innerFieldIsSet(inner) {
 				continue
 			}
 			setVal, err := formatForFlagSet(val)

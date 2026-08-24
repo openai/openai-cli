@@ -99,7 +99,7 @@ func TestStdinSecurityProtectsOnlyPipedFlagValues(t *testing.T) {
 	require.Equal(t, untrustedStdinValue("@piped-inner"), nested["untrusted"])
 }
 
-func TestStdinSecurityProtectsPipedInnerArrayFields(t *testing.T) {
+func TestStdinSecurityPreservesExplicitInnerArrayFields(t *testing.T) {
 	t.Parallel()
 
 	outer := &requestflag.Flag[[]map[string]any]{Name: "entries", BodyPath: "entries"}
@@ -120,9 +120,8 @@ func TestStdinSecurityProtectsPipedInnerArrayFields(t *testing.T) {
 
 	require.NoError(t, err)
 	entries := outer.Get().([]map[string]any)
-	require.Len(t, entries, 2)
+	require.Len(t, entries, 1)
 	require.Equal(t, "@trusted-reference", entries[0]["value"])
-	require.Equal(t, untrustedStdinValue("@piped-reference"), entries[1]["value"])
 }
 
 func TestWrapFileInputValuesRejectsUntrustedLocations(t *testing.T) {
@@ -134,6 +133,7 @@ func TestWrapFileInputValuesRejectsUntrustedLocations(t *testing.T) {
 		value any
 	}{
 		{name: "body", flag: &requestflag.Flag[string]{Name: "file", BodyPath: "file", FileInput: true}, value: untrustedStdinValue("synthetic.txt")},
+		{name: "empty body", flag: &requestflag.Flag[string]{Name: "file", BodyPath: "file", FileInput: true}, value: untrustedStdinValue("")},
 		{name: "body array", flag: &requestflag.Flag[string]{Name: "file", BodyPath: "file", FileInput: true}, value: []any{untrustedStdinValue("synthetic.txt")}},
 		{name: "query", flag: &requestflag.Flag[string]{Name: "file", QueryPath: "file", FileInput: true}, value: untrustedStdinValue("synthetic.txt")},
 		{name: "header", flag: &requestflag.Flag[string]{Name: "file", HeaderPath: "X-File", FileInput: true}, value: untrustedStdinValue("synthetic.txt")},

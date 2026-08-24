@@ -131,7 +131,7 @@ func protectStdinValue(value any) any {
 func containsUntrustedStdinValue(value any) bool {
 	switch value := value.(type) {
 	case untrustedStdinValue:
-		return value != ""
+		return true
 	case []any:
 		for _, element := range value {
 			if containsUntrustedStdinValue(element) {

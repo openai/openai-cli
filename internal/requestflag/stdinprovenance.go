@@ -22,17 +22,34 @@ func ApplyStdinDataToFlagsWithProvenance(cmd *cli.Command, data map[string]any, 
 	return applyStdinDataToFlags(cmd, data, onSet)
 }
 
-func innerMapFieldIsSet(inner HasOuterFlag) bool {
+func innerFieldIsSet(inner HasOuterFlag) bool {
 	outer := inner.GetOuterFlag()
 	if !outer.IsSet() {
 		return false
 	}
-	values, ok := outer.Get().(map[string]any)
-	if !ok {
-		return false
+	field := inner.GetInnerField()
+	switch values := outer.Get().(type) {
+	case map[string]any:
+		_, exists := values[field]
+		return exists
+	case []map[string]any:
+		if len(values) == 0 {
+			return false
+		}
+		_, exists := values[len(values)-1][field]
+		return exists
+	case []any:
+		if len(values) == 0 {
+			return false
+		}
+		last, ok := values[len(values)-1].(map[string]any)
+		if !ok {
+			return false
+		}
+		_, exists := last[field]
+		return exists
 	}
-	_, exists := values[inner.GetInnerField()]
-	return exists
+	return false
 }
 
 func setFlagFromStdin(flag cli.Flag, value string, onSet func(cli.Flag)) error {
