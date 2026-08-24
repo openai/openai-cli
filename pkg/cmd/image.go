@@ -79,7 +79,7 @@ var imagesEdit = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "background",
-			Usage:    "Allows to set transparency for the background of the generated image(s).\nThis parameter is only supported for GPT image models that support\ntransparent backgrounds. Must be one of `transparent`, `opaque`, or\n`auto` (default value). When `auto` is used, the model will\nautomatically determine the best background for the image.\n\n`gpt-image-2` and `gpt-image-2-2026-04-21` do not support\ntransparent backgrounds. Requests with `background` set to\n`transparent` will return an error for these models; use `opaque` or\n`auto` instead.\n\nIf `transparent`, the output format needs to support transparency,\nso it should be set to either `png` (default value) or `webp`.\n",
+			Usage:    "Allows to set transparency for the background of the generated image(s).\nMust be one of `transparent`, `opaque`, or `auto` (default value). When\n`auto` is used, the model will automatically determine the best\nbackground for the image.\n\nTransparent backgrounds are available for supported GPT Image models.\nFor `gpt-image-2` and `gpt-image-2-2026-04-21`, this support is in\npreview. When using `transparent`, set the output format to `png` or\n`webp`.\n",
 			Default:  requestflag.Ptr[string]("auto"),
 			BodyPath: "background",
 		},
@@ -172,7 +172,7 @@ var imagesGenerate = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "background",
-			Usage:    "Allows to set transparency for the background of the generated image(s).\nThis parameter is only supported for GPT image models that support\ntransparent backgrounds. Must be one of `transparent`, `opaque`, or\n`auto` (default value). When `auto` is used, the model will\nautomatically determine the best background for the image.\n\n`gpt-image-2` and `gpt-image-2-2026-04-21` do not support\ntransparent backgrounds. Requests with `background` set to\n`transparent` will return an error for these models; use `opaque` or\n`auto` instead.\n\nIf `transparent`, the output format needs to support transparency,\nso it should be set to either `png` (default value) or `webp`.\n",
+			Usage:    "Allows to set transparency for the background of the generated image(s).\nMust be one of `transparent`, `opaque`, or `auto` (default value). When\n`auto` is used, the model will automatically determine the best\nbackground for the image.\n\nTransparent backgrounds are available for supported GPT Image models.\nFor `gpt-image-2` and `gpt-image-2-2026-04-21`, this support is in\npreview. When using `transparent`, set the output format to `png` or\n`webp`.\n",
 			Default:  requestflag.Ptr[string]("auto"),
 			BodyPath: "background",
 		},

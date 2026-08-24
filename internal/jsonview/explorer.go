@@ -280,7 +280,7 @@ func (tv *TextView) Resize(width, height int) {
 	h := height - heightOffset
 	if !tv.ready {
 		tv.viewport = viewport.New(width, h)
-		tv.viewport.SetContent(wordwrap.String(sanitizeTerminalString(tv.data.Str), width))
+		tv.viewport.SetContent(wordwrap.String(SanitizeTerminalString(tv.data.Str), width))
 		tv.ready = true
 		return
 	}
@@ -428,7 +428,7 @@ func (v *JSONViewer) getSelectedContent() string {
 
 	selected := tableView.rowData[tableView.table.Cursor()]
 	if selected.Type == gjson.String {
-		return sanitizeTerminalString(selected.Str)
+		return SanitizeTerminalString(selected.Str)
 	}
 	return selected.Raw
 }
@@ -472,7 +472,7 @@ func quoteString(s string) string {
 	// Replace backslashes and quotes with escaped versions
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "\"", "\\\"")
-	s = sanitizeTerminalString(s)
+	s = SanitizeTerminalString(s)
 	return stringLiteralStyle.Render("\"" + s + "\"")
 }
 
@@ -612,7 +612,7 @@ func newArrayOfObjectsTableView(path string, data gjson.Result, array []gjson.Re
 		for _, key := range item.Get("@keys").Array() {
 			if _, exists := keySet[key.Str]; !exists {
 				keySet[key.Str] = struct{}{}
-				title := sanitizeTerminalString(key.Str)
+				title := SanitizeTerminalString(key.Str)
 				columns = append(columns, table.Column{Title: title, Width: defaultColumnWidth})
 				columnKeys = append(columnKeys, key.Str)
 			}
@@ -651,7 +651,7 @@ func newObjectTableView(path string, data gjson.Result, raw bool) *TableView {
 
 	for _, key := range keys {
 		value := data.Get(key.Str)
-		title := sanitizeTerminalString(key.Str)
+		title := SanitizeTerminalString(key.Str)
 		rows = append(rows, table.Row{title, formatValue(value, raw)})
 		rowData = append(rowData, value)
 	}
@@ -709,7 +709,7 @@ func formatValue(value gjson.Result, raw bool) string {
 	case value.IsArray():
 		return formatArray(value)
 	case value.Type == gjson.String:
-		return sanitizeTerminalString(value.Str)
+		return SanitizeTerminalString(value.Str)
 	default:
 		return value.Raw
 	}
@@ -721,7 +721,7 @@ func formatObject(value gjson.Result) string {
 
 	for i, key := range keys {
 		val := value.Get(key.Str)
-		keyStrs[i] = formatObjectKey(sanitizeTerminalString(key.Str), val)
+		keyStrs[i] = formatObjectKey(SanitizeTerminalString(key.Str), val)
 	}
 
 	return "{" + strings.Join(keyStrs, ", ") + "}"
@@ -734,7 +734,7 @@ func formatObjectKey(key string, val gjson.Result) string {
 	case val.IsArray():
 		return key + ":[…]"
 	case val.Type == gjson.String:
-		str := sanitizeTerminalString(val.Str)
+		str := SanitizeTerminalString(val.Str)
 		if lipgloss.Width(str) <= maxPreviewLength {
 			return fmt.Sprintf(`%s:"%s"`, key, str)
 		}

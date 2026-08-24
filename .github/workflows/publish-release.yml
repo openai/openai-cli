@@ -1,6 +1,8 @@
 ---
 name: Publish Release
 
+permissions: {}
+
 concurrency:
   group: publish
 
@@ -12,19 +14,27 @@ on:
         required: true
         type: string
 jobs:
-  goreleaser:
+  release-inputs:
     if: github.repository == 'openai/openai-cli'
     runs-on: ubuntu-latest
-    environment: publish
+    outputs:
+      tag-sha: ${{ steps.trusted-tag.outputs.sha }}
     permissions:
       contents: read
     steps:
     - name: Checkout
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         fetch-depth: 0
         persist-credentials: false
+    - name: Set up Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: .go-version
+        check-latest: true
+        cache: false
     - name: Ensure release tag is on main
+      id: trusted-tag
       env:
         GITHUB_TOKEN: ${{ github.token }}
         TAG: ${{ inputs.tag }}
@@ -35,13 +45,21 @@ jobs:
         esac
         git check-ref-format "refs/tags/$TAG"
 
-        authenticated_origin="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        remote_tag="$(git ls-remote --exit-code --tags --refs "$authenticated_origin" "refs/tags/$TAG")"
+        set +x
+        export GIT_TRACE=0 GIT_TRACE_PACKET=0 GIT_TRACE_CURL=0 GIT_CURL_VERBOSE=0
+        auth_header="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+        printf '::add-mask::%s\n' "$auth_header"
+        export GIT_CONFIG_COUNT=1
+        export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+        export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth_header"
+
+        repository_origin="https://github.com/${GITHUB_REPOSITORY}.git"
+        remote_tag="$(git ls-remote --exit-code --tags --refs "$repository_origin" "refs/tags/$TAG")"
         remote_ref="$(printf '%s\n' "$remote_tag" | awk '{print $2}')"
         test "$remote_ref" = "refs/tags/$TAG"
 
-        git fetch --no-tags "$authenticated_origin" +refs/heads/main:refs/remotes/origin/main
-        git fetch --no-tags "$authenticated_origin" "+refs/tags/$TAG:refs/tags/$TAG"
+        git fetch --no-tags "$repository_origin" +refs/heads/main:refs/remotes/origin/main
+        git fetch --no-tags "$repository_origin" "+refs/tags/$TAG:refs/tags/$TAG"
 
         local_ref="$(git for-each-ref --format='%(refname)' "refs/tags/$TAG")"
         test "$local_ref" = "refs/tags/$TAG"
@@ -51,10 +69,143 @@ jobs:
         git merge-base --is-ancestor "$tag_sha" origin/main
         git checkout --detach "$tag_sha"
         test "$(git rev-parse HEAD)" = "$tag_sha"
-    - name: Set up Go
-      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        echo "sha=$tag_sha" >> "$GITHUB_OUTPUT"
+    - name: Generate release inputs
+      run: |
+        mkdir -p completions
+        go run ./cmd/openai/main.go @completion bash > completions/openai.bash
+        go run ./cmd/openai/main.go @completion zsh > completions/openai.zsh
+        go run ./cmd/openai/main.go @completion fish > completions/openai.fish
+        go run ./cmd/openai/main.go @manpages -o man
+    - name: Stage isolated release inputs
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        go-version-file: "go.mod"
+        name: openai-release-inputs
+        path: |
+          completions/openai.bash
+          completions/openai.zsh
+          completions/openai.fish
+          man/man1/openai.1.gz
+        if-no-files-found: error
+        retention-days: 1
+
+  goreleaser:
+    needs: release-inputs
+    if: github.repository == 'openai/openai-cli'
+    runs-on: ubuntu-latest
+    environment: publish
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Set up verified GoReleaser
+      id: goreleaser
+      uses: ./.github/actions/setup-goreleaser
+    - name: Set up Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: .go-version
+        check-latest: true
+        cache: false
+    - name: Preserve trusted vulnerability scanner
+      run: install -m 0755 ./scripts/govulncheck "$RUNNER_TEMP/openai-cli-govulncheck"
+    - name: Ensure release tag is on main
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        TAG: ${{ inputs.tag }}
+        EXPECTED_TAG_SHA: ${{ needs.release-inputs.outputs.tag-sha }}
+      run: |
+        case "$TAG" in
+          v*) ;;
+          *) echo "Release tag must start with v: $TAG"; exit 1 ;;
+        esac
+        git check-ref-format "refs/tags/$TAG"
+
+        set +x
+        export GIT_TRACE=0 GIT_TRACE_PACKET=0 GIT_TRACE_CURL=0 GIT_CURL_VERBOSE=0
+        auth_header="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+        printf '::add-mask::%s\n' "$auth_header"
+        export GIT_CONFIG_COUNT=1
+        export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+        export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth_header"
+
+        repository_origin="https://github.com/${GITHUB_REPOSITORY}.git"
+        remote_tag="$(git ls-remote --exit-code --tags --refs "$repository_origin" "refs/tags/$TAG")"
+        remote_ref="$(printf '%s\n' "$remote_tag" | awk '{print $2}')"
+        test "$remote_ref" = "refs/tags/$TAG"
+
+        git fetch --no-tags "$repository_origin" +refs/heads/main:refs/remotes/origin/main
+        git fetch --no-tags "$repository_origin" "+refs/tags/$TAG:refs/tags/$TAG"
+
+        local_ref="$(git for-each-ref --format='%(refname)' "refs/tags/$TAG")"
+        test "$local_ref" = "refs/tags/$TAG"
+
+        tag_sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+        echo "Release tag $TAG resolves to $tag_sha"
+        test "$tag_sha" = "$EXPECTED_TAG_SHA"
+        git merge-base --is-ancestor "$tag_sha" origin/main
+        git checkout --detach "$tag_sha"
+        test "$(git rev-parse HEAD)" = "$tag_sha"
+    - name: Check shipped CLI for reachable vulnerabilities
+      run: |
+        "$RUNNER_TEMP/openai-cli-govulncheck" "$GITHUB_WORKSPACE"
+    - name: Download isolated release inputs
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        name: openai-release-inputs
+        path: ${{ runner.temp }}/openai-release-inputs
+    - name: Verify isolated release inputs
+      env:
+        RELEASE_INPUT_DIR: ${{ runner.temp }}/openai-release-inputs
+      run: |
+        set -euo pipefail
+
+        if [[ ! -d "$RELEASE_INPUT_DIR" || -L "$RELEASE_INPUT_DIR" ]]; then
+          echo "Release inputs must be a real directory"
+          exit 1
+        fi
+
+        while IFS= read -r -d '' path; do
+          relative="${path#"$RELEASE_INPUT_DIR"/}"
+          case "$relative" in
+            completions|man|man/man1)
+              [[ -d "$path" && ! -L "$path" ]] || exit 1
+              ;;
+            completions/openai.bash|completions/openai.zsh|completions/openai.fish|man/man1/openai.1.gz)
+              [[ -f "$path" && ! -L "$path" ]] || exit 1
+              size="$(wc -c < "$path")"
+              if [[ "$size" -eq 0 || "$size" -gt 10485760 ]]; then
+                echo "Release input has an invalid size: $relative"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unexpected release input: $relative"
+              exit 1
+              ;;
+          esac
+        done < <(find "$RELEASE_INPUT_DIR" -mindepth 1 -print0)
+
+        for path in completions/openai.bash completions/openai.zsh completions/openai.fish man/man1/openai.1.gz; do
+          [[ -f "$RELEASE_INPUT_DIR/$path" && ! -L "$RELEASE_INPUT_DIR/$path" ]] || exit 1
+        done
+
+        mkdir -p completions man/man1
+        for path in completions/openai.bash completions/openai.zsh completions/openai.fish man/man1/openai.1.gz; do
+          install -m 0644 "$RELEASE_INPUT_DIR/$path" "$path"
+        done
+
+        exclude_file="$(git rev-parse --git-path info/exclude)"
+        printf '%s\n' \
+          '/completions/openai.bash' \
+          '/completions/openai.zsh' \
+          '/completions/openai.fish' \
+          '/man/man1/openai.1.gz' \
+          >> "$exclude_file"
     - name: Create release app token for this repo
       id: app-token
       uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -72,15 +223,11 @@ jobs:
         repositories: homebrew-tools
         permission-contents: write
         permission-pull-requests: write
-    - name: Read GoReleaser version
-      id: goreleaser-version
-      run: echo "version=$(cat .goreleaser-version)" >> "$GITHUB_OUTPUT"
     - name: Run GoReleaser
-      uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.1.0
-      with:
-        version: ${{ steps.goreleaser-version.outputs.version }}
-        args: release --clean
+      run: |
+        "$GORELEASER_EXECUTABLE" release --clean --skip=before
       env:
+        GORELEASER_EXECUTABLE: ${{ steps.goreleaser.outputs.executable }}
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
         GORELEASER_CURRENT_TAG: ${{ inputs.tag }}
@@ -90,7 +237,7 @@ jobs:
         MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
         MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
     - name: Stage release artifacts for attestation
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: release-artifacts
         path: dist/*
@@ -112,7 +259,7 @@ jobs:
         name: release-artifacts
         path: dist
     - name: Attest release artifacts
-      uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
       with:
         subject-path: dist/*
     - name: Verify release artifact attestations
