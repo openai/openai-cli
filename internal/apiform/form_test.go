@@ -2,6 +2,7 @@ package apiform
 
 import (
 	"bytes"
+	"io"
 	"mime/multipart"
 	"testing"
 )
@@ -114,5 +115,50 @@ func TestEncode(t *testing.T) {
 				t.Errorf("expected %+#v to serialize to:\n\t%q\nbut got:\n\t%q", test.value, test.expected, result)
 			}
 		})
+	}
+}
+
+// panicReader panics if its Read method is invoked. It is used to assert that
+// a typed nil pointer implementing io.Reader is never dereferenced during
+// multipart encoding.
+type panicReader struct{}
+
+func (*panicReader) Read([]byte) (int, error) {
+	panic("Read called on nil receiver")
+}
+
+func TestEncodeTypedNilReader(t *testing.T) {
+	t.Parallel()
+
+	var reader *panicReader
+
+	buf := bytes.NewBuffer(nil)
+	writer := multipart.NewWriter(buf)
+	writer.SetBoundary("xxx")
+
+	// A typed nil pointer that implements io.Reader must follow the same
+	// empty-field semantics as any other nil value, without invoking Read.
+	form := map[string]any{"foo": reader}
+	if err := MarshalWithSettings(form, writer, FormatRepeat); err != nil {
+		t.Fatalf("serialization of typed nil reader failed with error %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("closing writer failed with error %v", err)
+	}
+
+	parts := multipart.NewReader(bytes.NewReader(buf.Bytes()), writer.Boundary())
+	part, err := parts.NextPart()
+	if err != nil {
+		t.Fatalf("reading encoded field failed with error %v", err)
+	}
+	if part.FormName() != "foo" {
+		t.Errorf("encoded field name = %q, want %q", part.FormName(), "foo")
+	}
+	contents, err := io.ReadAll(part)
+	if err != nil {
+		t.Fatalf("reading encoded field contents failed with error %v", err)
+	}
+	if len(contents) != 0 {
+		t.Errorf("encoded typed nil reader contents = %q, want empty", contents)
 	}
 }
