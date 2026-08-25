@@ -37,7 +37,7 @@ var adminOrganizationProjectsCreate = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "residency",
-			Usage:    "Create the project with the specified residency configuration. Your organization must have access to the requested residency configuration in order to use it. See [data residency controls](https://platform.openai.com/docs/guides/your-data#data-residency-controls) to review the functionality and limitations of setting this field.",
+			Usage:    `Allowed values: "GLOBAL", "US_STORAGE_PROCESSING", "EU_STORAGE_PROCESSING", "JP_STORAGE", "KR_STORAGE", "CA_STORAGE", "SG_STORAGE", "IN_STORAGE", "AU_STORAGE", "GB_STORAGE", "AE_STORAGE", "AE_STORAGE_PROCESSING".`,
 			BodyPath: "residency",
 		},
 	},
