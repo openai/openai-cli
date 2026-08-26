@@ -1,5 +1,63 @@
 # Changelog
 
+## [1.9.0](https://github.com/openai/openai-cli/compare/v1.8.0...v1.9.0) (2026-08-26)
+
+
+### Features
+
+* **api:** Add residency flag and deprecate geography ([#136](https://github.com/openai/openai-cli/issues/136)) ([e460582](https://github.com/openai/openai-cli/commit/e4605829d7d63d2bb4dcc808b78b3ed76d1d0145))
+
+
+### Bug Fixes
+
+* Add provenance-aware untrusted stdin mode ([#137](https://github.com/openai/openai-cli/issues/137)) ([a133707](https://github.com/openai/openai-cli/commit/a1337079da63bfec8e4c55a009af2690a8ff8473))
+* build CLI releases with patched Go toolchains ([#93](https://github.com/openai/openai-cli/issues/93)) ([a58f1cc](https://github.com/openai/openai-cli/commit/a58f1ccae5b89f61066defcab05cbd636c05f6eb))
+* discard fish completion diagnostics ([#109](https://github.com/openai/openai-cli/issues/109)) ([4f35fc0](https://github.com/openai/openai-cli/commit/4f35fc038d2e75b3967fac466b9d2aa1c530427e))
+* escape raw output controls on interactive terminals ([#112](https://github.com/openai/openai-cli/issues/112)) ([7601afb](https://github.com/openai/openai-cli/commit/7601afb0ac531aa40ac82e48aaa2b5dfab7a2745))
+* fail closed when bootstrapping Go dependencies ([#94](https://github.com/openai/openai-cli/issues/94)) ([4ebe610](https://github.com/openai/openai-cli/commit/4ebe610bf56c63fce195f41b7146113685d85d38))
+* lock and verify Steady mock tooling ([#95](https://github.com/openai/openai-cli/issues/95)) ([681d595](https://github.com/openai/openai-cli/commit/681d595d302ffe9db8ec6a7efbd32c2762785ce1))
+* prepare release artifacts before publishing ([#111](https://github.com/openai/openai-cli/issues/111)) ([4193619](https://github.com/openai/openai-cli/commit/41936195a95f246ce1f45caf2600919394e2364b))
+* redact sensitive response headers in debug logs ([#106](https://github.com/openai/openai-cli/issues/106)) ([4931572](https://github.com/openai/openai-cli/commit/49315720f7793cf043137d1f3fd4814698134222))
+* reject invalid multipart MIME header controls ([#105](https://github.com/openai/openai-cli/issues/105)) ([fad98b4](https://github.com/openai/openai-cli/commit/fad98b4e2febb9cb6fd1c68a189ce44cb80b20d3))
+* restrict downloaded file permissions ([#107](https://github.com/openai/openai-cli/issues/107)) ([7a3a7d1](https://github.com/openai/openai-cli/commit/7a3a7d15e5865497d6a1c058304a71d1d1034ef7))
+* safely construct bash file completions ([#110](https://github.com/openai/openai-cli/issues/110)) ([b3e0946](https://github.com/openai/openai-cli/commit/b3e0946d9ae83ea5e31b24d728e5f7b80dd1b472))
+* stream binary download responses ([#108](https://github.com/openai/openai-cli/issues/108)) ([1f3ba6c](https://github.com/openai/openai-cli/commit/1f3ba6cc8e8f9ac31744b35093e7a6be4acf2dd0))
+* stream multipart uploads without buffering ([#65](https://github.com/openai/openai-cli/issues/65)) ([bcf0ecd](https://github.com/openai/openai-cli/commit/bcf0ecd42b9c3350db641abd4c56a0ece9dd51ad))
+* verify GoReleaser before privileged release execution ([#96](https://github.com/openai/openai-cli/issues/96)) ([b3729ea](https://github.com/openai/openai-cli/commit/b3729ea2b4f1075d730e54f2f1be62167d55848c))
+
+
+### Chores
+
+* **api:** clarify image background and audio delta docs ([#124](https://github.com/openai/openai-cli/issues/124)) ([056f306](https://github.com/openai/openai-cli/commit/056f306419877c8b97b4e5a2340a90f6bfda717f))
+* **api:** No customer-visible SDK or public API changes ([#128](https://github.com/openai/openai-cli/issues/128)) ([12e0d28](https://github.com/openai/openai-cli/commit/12e0d2891bd1f53b3536c2664e4c59797cf743e2))
+* **api:** refresh image model API reference ([#115](https://github.com/openai/openai-cli/issues/115)) ([a771913](https://github.com/openai/openai-cli/commit/a7719136b8ed401b0c51a05553a5e4f720150307))
+* **api:** Refresh the bundled OpenAPI reference ([#66](https://github.com/openai/openai-cli/issues/66)) ([d14387a](https://github.com/openai/openai-cli/commit/d14387a46865b8d227d3a1d607dfd40143904047))
+* **api:** Report no customer-visible SDK or public API changes ([#113](https://github.com/openai/openai-cli/issues/113)) ([8da2d53](https://github.com/openai/openai-cli/commit/8da2d53491f0d04431efa89e0802d949fdb57551))
+* **api:** update generation metadata only ([#138](https://github.com/openai/openai-cli/issues/138)) ([4244a62](https://github.com/openai/openai-cli/commit/4244a62d530c81ef1924ac6ef666dbab10d58e64))
+* configure Dependabot for Go and GitHub Actions ([#69](https://github.com/openai/openai-cli/issues/69)) ([f495366](https://github.com/openai/openai-cli/commit/f4953669e8752ceaaf63199f891e0f36b1fbb6ae))
+* **deps:** bump actions/attest-build-provenance from 4.1.0 to 4.2.2 ([#102](https://github.com/openai/openai-cli/issues/102)) ([6594c73](https://github.com/openai/openai-cli/commit/6594c73b818054ad4df62488fcc0045aab37d97f))
+* **deps:** bump actions/checkout from 6.0.2 to 7.0.1 ([#103](https://github.com/openai/openai-cli/issues/103)) ([ce6a6d0](https://github.com/openai/openai-cli/commit/ce6a6d04156b97657fee60a6d3dc33fed2c312bd))
+* **deps:** bump actions/checkout from 6.0.2 to 7.0.1 ([#134](https://github.com/openai/openai-cli/issues/134)) ([f40d5f2](https://github.com/openai/openai-cli/commit/f40d5f2f09afffadc0fd1062897b3c9c40c116e5))
+* **deps:** bump actions/download-artifact from 4.3.0 to 8.0.1 ([#133](https://github.com/openai/openai-cli/issues/133)) ([98ed029](https://github.com/openai/openai-cli/commit/98ed029a2aa673f70eac30940fa8c3e4cb0fa1c1))
+* **deps:** bump actions/github-script from 7.1.0 to 9.0.0 ([#132](https://github.com/openai/openai-cli/issues/132)) ([978ce47](https://github.com/openai/openai-cli/commit/978ce471fb40703d358eb2c3d1d6a4c6ecd78f60))
+* **deps:** bump actions/setup-go in / ([#101](https://github.com/openai/openai-cli/issues/101)) ([5564982](https://github.com/openai/openai-cli/commit/55649826b7714562d85a98119e69715edb6b3bbe))
+* **deps:** bump actions/upload-artifact from 4.6.2 to 7.0.1 ([#104](https://github.com/openai/openai-cli/issues/104)) ([b3ac15a](https://github.com/openai/openai-cli/commit/b3ac15a7feb4602671ea9658187ebcb52c321908))
+* **deps:** bump github.com/charmbracelet/bubbles from 0.21.0 to 1.0.0 ([#99](https://github.com/openai/openai-cli/issues/99)) ([7ac7035](https://github.com/openai/openai-cli/commit/7ac70353fa01b9b6303d8957b9c346dc9188fb98))
+* **deps:** bump github.com/urfave/cli/v3 from 3.4.1 to 3.10.1 in the go-minor-and-patch group across 1 directory ([#130](https://github.com/openai/openai-cli/issues/130)) ([ddc612e](https://github.com/openai/openai-cli/commit/ddc612ef94e14266a5bdb02f4434b5581ae233d5))
+* **deps:** bump the charmbracelet group across 1 directory with 2 updates ([#97](https://github.com/openai/openai-cli/issues/97)) ([2137b80](https://github.com/openai/openai-cli/commit/2137b80a5a37d5b515bba6f93e888db2b0856321))
+* **deps:** bump the codeql group across 1 directory with 2 updates ([#100](https://github.com/openai/openai-cli/issues/100)) ([c95ac0a](https://github.com/openai/openai-cli/commit/c95ac0aa7a3a60628a4934d7cab0aa385a5f337c))
+* **deps:** bump the codeql group across 1 directory with 2 updates ([#131](https://github.com/openai/openai-cli/issues/131)) ([58e3bdd](https://github.com/openai/openai-cli/commit/58e3bdde780f3798f11ad5fbd6ed07abcf191837))
+* **deps:** bump the go-minor-and-patch group across 1 directory with 5 updates ([#98](https://github.com/openai/openai-cli/issues/98)) ([74822be](https://github.com/openai/openai-cli/commit/74822be7d1e5b0a4383cd85295e3e32621469514))
+* **deps:** update openai-go to v3.51.0 ([#63](https://github.com/openai/openai-cli/issues/63)) ([68e3e70](https://github.com/openai/openai-cli/commit/68e3e707ef68bebda13e638fafdb4a882ccafedc))
+* **deps:** update openai-go to v3.52.0 ([#67](https://github.com/openai/openai-cli/issues/67)) ([7d87ee2](https://github.com/openai/openai-cli/commit/7d87ee207c9515e2f147ecf32aadf29f4c3d1ce9))
+* set a 1,000-line custom-code budget ([#126](https://github.com/openai/openai-cli/issues/126)) ([016bfb2](https://github.com/openai/openai-cli/commit/016bfb28b10fc7d5d1d88302e1a272c23eef5a24))
+
+
+### Documentation
+
+* add secure CLI agent and contributor guidance ([#72](https://github.com/openai/openai-cli/issues/72)) ([09ec087](https://github.com/openai/openai-cli/commit/09ec0879824d2be86a1ab5b8fc39fa085ff41ee9))
+* standardize CLI vulnerability disclosure policy ([#71](https://github.com/openai/openai-cli/issues/71)) ([d082a01](https://github.com/openai/openai-cli/commit/d082a010f7c6cacf407d8a1581446a7857f9f1bb))
+
 ## [1.8.0](https://github.com/openai/openai-cli/compare/v1.7.1...v1.8.0) (2026-08-14)
 
 
