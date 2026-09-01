@@ -290,6 +290,11 @@ var adminOrganizationUsageCosts = cli.Command{
 			Default:   7,
 			QueryPath: "limit",
 		},
+		&requestflag.Flag[[]string]{
+			Name:      "line-item",
+			Usage:     "Return only costs for these exact line item names. Each value must match the complete `line_item` value, for example `gpt-5.6-sol, input_tokens`.",
+			QueryPath: "line_items",
+		},
 		&requestflag.Flag[string]{
 			Name:      "page",
 			Usage:     "A cursor for use in pagination. Corresponding to the `next_page` field from the previous response.",
