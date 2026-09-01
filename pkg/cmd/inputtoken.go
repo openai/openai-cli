@@ -57,7 +57,7 @@ var responsesInputTokensCount = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.Flag[map[string]any]{
 			Name:     "reasoning",
-			Usage:    "**gpt-5 and o-series models only**\n\nConfiguration options for\n[reasoning models](https://platform.openai.com/docs/guides/reasoning).\n",
+			Usage:    "Configuration options for\n[reasoning models](https://platform.openai.com/docs/guides/reasoning).\n",
 			BodyPath: "reasoning",
 		},
 		&requestflag.Flag[map[string]any]{
