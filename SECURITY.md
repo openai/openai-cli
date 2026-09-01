@@ -4,7 +4,7 @@
 
 This file is the authority for private vulnerability reporting and disclosure
 expectations. The repository's canonical, detailed threat model and
-trust-boundary guidance lives in
+trust-boundary guidance live in
 [docs/architecture/security-model.md](docs/architecture/security-model.md).
 Codex Security scans and reviewers should use that document from the scanned
 revision when deciding which inputs cross a security boundary and what
