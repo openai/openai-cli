@@ -74,9 +74,10 @@ func (e *encoder) encodeArray(key string, value reflect.Value) ([]Pair, error) {
 			if err != nil {
 				return nil, err
 			}
-			for _, pair := range innerPairs {
-				elements = append(elements, pair.value)
+			if len(innerPairs) != 1 || innerPairs[0].key != "" {
+				return nil, fmt.Errorf("apiquery: comma format does not support complex array elements")
 			}
+			elements = append(elements, innerPairs[0].value)
 		}
 		return []Pair{{key, strings.Join(elements, ",")}}, nil
 
