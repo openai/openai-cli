@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.10.0](https://github.com/openai/openai-cli/compare/v1.9.0...v1.10.0) (2026-09-02)
+
+
+### Features
+
+* **api:** add compute_units to Responses and Chat Completions usage ([#142](https://github.com/openai/openai-cli/issues/142)) ([fe626c6](https://github.com/openai/openai-cli/commit/fe626c6411f106422aba65bcb989db70e12a366e))
+* **api:** make function call output call IDs optional ([#140](https://github.com/openai/openai-cli/issues/140)) ([0cb94ba](https://github.com/openai/openai-cli/commit/0cb94baec8f39fa26ad2bbf815c4b0aabded2213))
+* **api:** update usage APIs and documentation ([#147](https://github.com/openai/openai-cli/issues/147)) ([f0c1afd](https://github.com/openai/openai-cli/commit/f0c1afddc4863eb36c2d3216a4598545147d3783))
+
+
+### Chores
+
+* **deps:** bump the codeql group across 1 directory with 2 updates ([#145](https://github.com/openai/openai-cli/issues/145)) ([5933dd5](https://github.com/openai/openai-cli/commit/5933dd50fbea96b54cb11c46221bd70ed1aa6a52))
+* **deps:** update openai-go to v3.54.0 ([#139](https://github.com/openai/openai-cli/issues/139)) ([23ade14](https://github.com/openai/openai-cli/commit/23ade14892181599ea69cbb886f48494fcb56dfe))
+
+
+### Documentation
+
+* add canonical CLI security model ([#146](https://github.com/openai/openai-cli/issues/146)) ([682a6e8](https://github.com/openai/openai-cli/commit/682a6e8a7c354640a691dd77e712f06bba59748f))
+
 ## [1.9.0](https://github.com/openai/openai-cli/compare/v1.8.0...v1.9.0) (2026-08-26)
 
 
