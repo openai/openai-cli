@@ -35,6 +35,19 @@ func formatJSON(json gjson.Result, width int) string {
 	return formatResult(json, 0, width)
 }
 
+func truncateStringToWidth(str string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(str) <= width {
+		return str
+	}
+	if width == 1 {
+		return "…"
+	}
+	return truncate.String(str, uint(width-1)) + "…"
+}
+
 func formatResult(result gjson.Result, indent, width int) string {
 	switch result.Type {
 	case gjson.String:
@@ -42,9 +55,7 @@ func formatResult(result gjson.Result, indent, width int) string {
 		if str == "" {
 			return nullValueStyle.Render("(empty)")
 		}
-		if lipgloss.Width(str) > width {
-			str = truncate.String(str, uint(width-1)) + "…"
-		}
+		str = truncateStringToWidth(str, width)
 		return stringValueStyle.Render(str)
 	case gjson.Number:
 		return numberValueStyle.Render(result.Raw)
