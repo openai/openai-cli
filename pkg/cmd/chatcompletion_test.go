@@ -18,7 +18,7 @@ func TestChatCompletionsCreate(t *testing.T) {
 			"chat:completions", "create",
 			"--max-items", "10",
 			"--message", "{content: string, role: developer, name: name}",
-			"--model", "gpt-5.4",
+			"--model", "gpt-5.6-sol",
 			"--audio", "{format: wav, voice: alloy}",
 			"--frequency-penalty", "-2",
 			"--function-call", "none",
@@ -69,7 +69,7 @@ func TestChatCompletionsCreate(t *testing.T) {
 			"chat:completions", "create",
 			"--max-items", "10",
 			"--message", "{content: string, role: developer, name: name}",
-			"--model", "gpt-5.4",
+			"--model", "gpt-5.6-sol",
 			"--audio.format", "wav",
 			"--audio.voice", "alloy",
 			"--frequency-penalty", "-2",
@@ -123,7 +123,7 @@ func TestChatCompletionsCreate(t *testing.T) {
 			"  - content: string\n" +
 			"    role: developer\n" +
 			"    name: name\n" +
-			"model: gpt-5.4\n" +
+			"model: gpt-5.6-sol\n" +
 			"audio:\n" +
 			"  format: wav\n" +
 			"  voice: alloy\n" +

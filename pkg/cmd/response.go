@@ -108,7 +108,7 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.Flag[map[string]any]{
 			Name:     "reasoning",
-			Usage:    "**gpt-5 and o-series models only**\n\nConfiguration options for\n[reasoning models](https://platform.openai.com/docs/guides/reasoning).\n",
+			Usage:    "Configuration options for\n[reasoning models](https://platform.openai.com/docs/guides/reasoning).\n",
 			BodyPath: "reasoning",
 		},
 		&requestflag.Flag[*string]{
@@ -369,7 +369,7 @@ var responsesCompact = requestflag.WithInnerFlags(cli.Command{
 	Flags: []cli.Flag{
 		&requestflag.Flag[*string]{
 			Name:     "model",
-			Usage:    "Model ID used to generate the response, like `gpt-5` or `o3`. OpenAI offers a wide range of models with different capabilities, performance characteristics, and price points. Refer to the [model guide](https://platform.openai.com/docs/models) to browse and compare available models.",
+			Usage:    "Model ID used to generate the response, like `gpt-5.6-sol`. OpenAI offers a wide range of models with different capabilities, performance characteristics, and price points. Refer to the [model guide](https://platform.openai.com/docs/models) to browse and compare available models.",
 			Required: true,
 			BodyPath: "model",
 		},
