@@ -15,7 +15,7 @@ func TestModelsRetrieve(t *testing.T) {
 			"--api-key", "string",
 			"--admin-api-key", "string",
 			"models", "retrieve",
-			"--model", "gpt-5.6-sol",
+			"--model", "gpt-6-astra",
 		)
 	})
 }

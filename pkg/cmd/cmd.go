@@ -289,6 +289,14 @@ func init() {
 				},
 			},
 			{
+				Name:     "safety:alerts",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&safetyAlertsRetrieve,
+				},
+			},
+			{
 				Name:     "beta:responses",
 				Category: "API RESOURCE",
 				Suggest:  true,
