@@ -26,7 +26,7 @@ func TestResponsesInputTokensCount(t *testing.T) {
 			"--reasoning", "{context: auto, effort: none, generate_summary: auto, mode: standard, summary: auto}",
 			"--text", "{format: {type: text}, verbosity: low}",
 			"--tool-choice", "none",
-			"--tool", "[{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], defer_loading: true, description: description, output_schema: {foo: bar}}]",
+			"--tool", "[{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], async: true, defer_loading: true, description: description, output_schema: {foo: bar}}]",
 			"--truncation", "auto",
 		)
 	})
@@ -56,7 +56,7 @@ func TestResponsesInputTokensCount(t *testing.T) {
 			"--text.format", "{type: text}",
 			"--text.verbosity", "low",
 			"--tool-choice", "none",
-			"--tool", "[{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], defer_loading: true, description: description, output_schema: {foo: bar}}]",
+			"--tool", "[{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], async: true, defer_loading: true, description: description, output_schema: {foo: bar}}]",
 			"--truncation", "auto",
 		)
 	})
@@ -90,6 +90,7 @@ func TestResponsesInputTokensCount(t *testing.T) {
 			"    type: function\n" +
 			"    allowed_callers:\n" +
 			"      - direct\n" +
+			"    async: true\n" +
 			"    defer_loading: true\n" +
 			"    description: description\n" +
 			"    output_schema:\n" +
