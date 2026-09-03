@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.11.0](https://github.com/openai/openai-cli/compare/v1.10.0...v1.11.0) (2026-09-03)
+
+
+### Features
+
+* **api:** add gpt-6-astra and related features ([#150](https://github.com/openai/openai-cli/issues/150)) ([9d6a64f](https://github.com/openai/openai-cli/commit/9d6a64f97fb24522842d1894cb96b44298e00431))
+
+
+### Chores
+
+* **deps:** update openai-go to v3.55.0 ([#148](https://github.com/openai/openai-cli/issues/148)) ([63d2931](https://github.com/openai/openai-cli/commit/63d29317bb5b660ff15b94c06138cdaaa76222d4))
+* **deps:** update openai-go to v3.56.0 ([#151](https://github.com/openai/openai-cli/issues/151)) ([d5ddcd4](https://github.com/openai/openai-cli/commit/d5ddcd46aae69e2c8af5e8f5910a99f6c2a86137))
+
 ## [1.10.0](https://github.com/openai/openai-cli/compare/v1.9.0...v1.10.0) (2026-09-02)
 
 
