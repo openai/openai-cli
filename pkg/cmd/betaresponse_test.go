@@ -26,7 +26,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"--max-output-tokens", "16",
 			"--max-tool-calls", "0",
 			"--metadata", "{foo: string}",
-			"--model", "gpt-5.6-sol",
+			"--model", "gpt-6-astra",
 			"--moderation", "{model: model, policy: {input: {mode: score}, output: {mode: score}}}",
 			"--multi-agent", "{enabled: true, max_concurrent_subagents: 1}",
 			"--parallel-tool-calls=true",
@@ -44,7 +44,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"--temperature", "1",
 			"--text", "{format: {type: text}, verbosity: low}",
 			"--tool-choice", "none",
-			"--tool", "{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], defer_loading: true, description: description, output_schema: {foo: bar}}",
+			"--tool", "{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], async: true, defer_loading: true, description: description, output_schema: {foo: bar}}",
 			"--top-logprobs", "0",
 			"--top-p", "1",
 			"--truncation", "auto",
@@ -74,7 +74,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"--max-output-tokens", "16",
 			"--max-tool-calls", "0",
 			"--metadata", "{foo: string}",
-			"--model", "gpt-5.6-sol",
+			"--model", "gpt-6-astra",
 			"--moderation.model", "model",
 			"--moderation.policy", "{input: {mode: score}, output: {mode: score}}",
 			"--multi-agent.enabled=true",
@@ -102,7 +102,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"--text.format", "{type: text}",
 			"--text.verbosity", "low",
 			"--tool-choice", "none",
-			"--tool", "{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], defer_loading: true, description: description, output_schema: {foo: bar}}",
+			"--tool", "{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], async: true, defer_loading: true, description: description, output_schema: {foo: bar}}",
 			"--top-logprobs", "0",
 			"--top-p", "1",
 			"--truncation", "auto",
@@ -127,7 +127,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"max_tool_calls: 0\n" +
 			"metadata:\n" +
 			"  foo: string\n" +
-			"model: gpt-5.6-sol\n" +
+			"model: gpt-6-astra\n" +
 			"moderation:\n" +
 			"  model: model\n" +
 			"  policy:\n" +
@@ -176,6 +176,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"    type: function\n" +
 			"    allowed_callers:\n" +
 			"      - direct\n" +
+			"    async: true\n" +
 			"    defer_loading: true\n" +
 			"    description: description\n" +
 			"    output_schema:\n" +
@@ -246,7 +247,7 @@ func TestBetaResponsesCompact(t *testing.T) {
 			"--api-key", "string",
 			"--admin-api-key", "string",
 			"beta:responses", "compact",
-			"--model", "gpt-5.6-sol",
+			"--model", "gpt-6-astra",
 			"--input", "string",
 			"--instructions", "instructions",
 			"--previous-response-id", "resp_123",
@@ -268,7 +269,7 @@ func TestBetaResponsesCompact(t *testing.T) {
 			"--api-key", "string",
 			"--admin-api-key", "string",
 			"beta:responses", "compact",
-			"--model", "gpt-5.6-sol",
+			"--model", "gpt-6-astra",
 			"--input", "string",
 			"--instructions", "instructions",
 			"--previous-response-id", "resp_123",
@@ -284,7 +285,7 @@ func TestBetaResponsesCompact(t *testing.T) {
 	t.Run("piping data", func(t *testing.T) {
 		// Test piping YAML data over stdin
 		pipeData := []byte("" +
-			"model: gpt-5.6-sol\n" +
+			"model: gpt-6-astra\n" +
 			"input: string\n" +
 			"instructions: instructions\n" +
 			"previous_response_id: resp_123\n" +
