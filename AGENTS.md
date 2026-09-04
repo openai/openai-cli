@@ -55,7 +55,7 @@ The checker and effective budget come from main, not the PR. Keep default CODEOW
 - Review direct and transitive Go dependencies, `go.mod`, `go.sum`,
   `api_reference/go.mod`, module sources, `replace` directives, and checksum
   verification. Review `scripts/bootstrap`, `scripts/mock`, the pinned
-  `@stdy/cli` npm mock dependency, and any install hooks before execution.
+  Steady source revision and Deno runtime, and any install hooks before execution.
   Preserve the existing hourly `github.com/openai/openai-go/v3` updater and do
   not introduce competing dependency or release automation.
 - Pin third-party GitHub Actions to reviewed full commit SHAs. Minimize
@@ -92,7 +92,7 @@ go mod verify
 ./scripts/lint
 ```
 
-The complete `./scripts/test` suite starts the npm-backed local mock server;
+The complete `./scripts/test` suite starts the source-based local mock server;
 review that dependency and use synthetic data before running it. Avoid
 unrelated `go.mod`/`go.sum`, generated-source, or formatting changes, and
 report exactly which checks ran.
