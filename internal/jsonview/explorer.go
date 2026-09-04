@@ -178,12 +178,13 @@ func (tv *TableView) loadMoreData(raw bool) tea.Cmd {
 		// For array of objects, we need to format according to columns
 		if len(tv.columns) > 1 && result.IsObject() {
 			newRow = make(table.Row, len(tv.columns))
+			values := result.Map()
 			for i, col := range tv.columns {
 				key := col.Title
 				if i < len(tv.columnKeys) {
 					key = tv.columnKeys[i]
 				}
-				newRow[i] = formatValue(result.Get(key), raw)
+				newRow[i] = formatValue(values[key], raw)
 			}
 		}
 
@@ -624,8 +625,9 @@ func newArrayOfObjectsTableView(path string, data gjson.Result, array []gjson.Re
 
 	for _, item := range array {
 		row := make(table.Row, len(columns))
+		values := item.Map()
 		for i, key := range columnKeys {
-			row[i] = formatValue(item.Get(key), raw)
+			row[i] = formatValue(values[key], raw)
 		}
 		rows = append(rows, row)
 		rowData = append(rowData, item)
@@ -648,9 +650,10 @@ func newObjectTableView(path string, data gjson.Result, raw bool) *TableView {
 	keys := data.Get("@keys").Array()
 	rows := make([]table.Row, 0, len(keys))
 	rowData := make([]gjson.Result, 0, len(keys))
+	values := data.Map()
 
 	for _, key := range keys {
-		value := data.Get(key.Str)
+		value := values[key.Str]
 		title := SanitizeTerminalString(key.Str)
 		rows = append(rows, table.Row{title, formatValue(value, raw)})
 		rowData = append(rowData, value)
@@ -718,9 +721,10 @@ func formatValue(value gjson.Result, raw bool) string {
 func formatObject(value gjson.Result) string {
 	keys := value.Get("@keys").Array()
 	keyStrs := make([]string, len(keys))
+	values := value.Map()
 
 	for i, key := range keys {
-		val := value.Get(key.Str)
+		val := values[key.Str]
 		keyStrs[i] = formatObjectKey(SanitizeTerminalString(key.Str), val)
 	}
 

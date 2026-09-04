@@ -100,10 +100,11 @@ func formatJSONObject(result gjson.Result, indent, width int) string {
 	if len(keys) == 0 {
 		return nullValueStyle.Render("(empty)")
 	}
+	values := result.Map()
 
 	var items []string
 	for _, key := range keys {
-		value := result.Get(key.Str)
+		value := values[key.Str]
 		keyStr := getIndent(indent) + keyStyle.Render(SanitizeTerminalString(key.Str)+":")
 		// If item will be a one-liner, put it inline after the key, otherwise
 		// it starts with a newline and goes below the key.
