@@ -101,6 +101,8 @@ func jaroWinkler(a, b string) float64 {
 // suggestCommand takes a list of commands and a provided string to suggest a
 // command name
 func suggestCommand(commands []*cli.Command, provided string) string {
+	const minSuggestionDistance = 0.75
+
 	distance := 0.0
 	var lineage []*cli.Command
 	for _, command := range commands {
@@ -111,6 +113,9 @@ func suggestCommand(commands []*cli.Command, provided string) string {
 				lineage = command.Lineage()
 			}
 		}
+	}
+	if distance < minSuggestionDistance || len(lineage) == 0 {
+		return ""
 	}
 
 	var parts []string
