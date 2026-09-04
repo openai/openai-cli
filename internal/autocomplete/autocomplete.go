@@ -340,17 +340,8 @@ func rebuildColonSeparatedArgs(args []string) []string {
 
 		// Keep joining while the next element is ":" or the current element ends with ":"
 		for i+1 < len(args) && (args[i+1] == ":" || strings.HasSuffix(current, ":")) {
-			if args[i+1] == ":" {
-				current += ":"
-				i++
-				// Check if there's a following element after the ":"
-				if i+1 < len(args) && args[i+1] != ":" {
-					current += args[i+1]
-					i++
-				}
-			} else {
-				break
-			}
+			current += args[i+1]
+			i++
 		}
 
 		result = append(result, current)
