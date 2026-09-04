@@ -6,8 +6,7 @@ Thank you for helping improve the OpenAI CLI. Read [README.md](README.md),
 ## Setting up the environment
 
 Use the Go version required by `go.mod`; the CLI currently requires Go 1.25 or
-later. The integration tests also require Node.js 14.18 or later, npm 7 or
-later, `curl`, and `lsof`. Review dependency origins and executable setup
+later. The integration tests also require Node.js 14.18 or later, Git, `curl`, `unzip`, and `lsof`. Review dependency origins and executable setup
 scripts before running:
 
 ```sh
@@ -18,7 +17,7 @@ scripts before running:
 `./scripts/bootstrap` downloads Go dependencies and runs `go mod tidy`, which
 can change `go.mod` or `go.sum`. Inspect the resulting diff and do not commit
 unrelated dependency changes. `./scripts/lint` builds the CLI. The OpenAPI mock
-server's npm dependencies are installed automatically when running integration
+server's pinned source and runtime are installed automatically when running integration
 tests; they are not required to build the CLI.
 
 ## Project structure
@@ -110,8 +109,8 @@ local checks, trusted CI, and activation instructions.
   separate `api_reference/go.mod`, module provenance, `replace` directives,
   and checksum verification. Run `go mod verify`; never accept unexplained
   lockfile changes or bypass Go's module integrity protections.
-- Review `scripts/bootstrap`, `scripts/mock`, and the pinned `@stdy/cli` npm
-  mock dependency before executing install hooks or downloading tooling.
+- Review `scripts/bootstrap`, `scripts/mock`, and the pinned Steady source and Deno
+  runtime before executing install hooks or downloading tooling.
   Preserve the existing hourly `github.com/openai/openai-go/v3` updater; do not
   introduce conflicting dependency update or release automation.
 - Pin third-party GitHub Actions to reviewed full commit SHAs and grant each
@@ -148,6 +147,25 @@ source, official binaries, installers, packages, or other release artifacts.
 
 ## Running tests
 
+The mock server uses [the OpenAI Steady fork](https://github.com/openai-oss-forks/steady).
+`scripts/steady/manifest.json` is the single source of dependency pins: the
+Steady Git commit and source digest, plus the Deno version and runtime checksums. `./scripts/steady/install` fetches that source, verifies the runtime,
+and caches dependencies using the fork's frozen Deno lockfile. It requires
+Git, Node.js, curl, unzip, and sha256sum or shasum. The installation supports
+macOS and Linux on x64/ARM64, and Windows x64 through Git Bash.
+
+`./scripts/run-steady` verifies the local source and runtime, then runs without
+downloading dependencies. Pass a local OpenAPI specification path or a trusted URL.
+Remote specifications may be fetched by Steady at runtime, using its network
+access; inspect remote content and references before using them. To update
+Steady, review the fork commit and run
+`node scripts/steady/update.cjs <full-commit-sha>`. This updates the manifest
+with the commit and its source digest; no launcher or test edits are needed.
+Then run `./scripts/steady/install`. Review the release checksums when changing Deno.
+Run `node scripts/steady/test.cjs` to check the
+installation, integrity checks, and mock-server lifecycle.
+
+
 Run focused, offline checks before considering live or release-sensitive work:
 
 ```sh
@@ -179,7 +197,7 @@ terminal:
 ```
 
 The mock server uses the checked-in OpenAPI specification by default. To use a
-different OpenAPI specification, pass its path or URL explicitly:
+different OpenAPI specification, pass its local path or trusted URL explicitly:
 
 ```sh
 ./scripts/mock path/to/openapi.yml
@@ -194,48 +212,6 @@ TEST_API_BASE_URL=http://127.0.0.1:4010 ./scripts/test
 
 Use synthetic data, and do not substitute a live API endpoint or production
 credentials.
-
-### Mock-server dependency integrity
-
-The mock server uses the MIT-licensed Steady CLI. Its wrapper and every
-supported platform-specific package are pinned in
-`scripts/mock-tools/package-lock.json`; `./scripts/mock` installs them with
-`npm ci --ignore-scripts` before starting the server. Native executables are not
-checked into the repository.
-
-Each installation starts in an empty, physically verified temporary directory
-outside the checkout, containing copies of the two reviewed manifests and,
-when present, the repository's npm configuration. Checkout-local temporary
-directories are rejected. The temporary configuration is removed immediately
-after installation, and npm's original global configuration is preserved.
-Project-local installation and lockfile enforcement are explicit even when
-inherited configuration selects global installation or disables the lockfile.
-This prevents existing packages, inherited dry-run settings, or an unreviewed
-sibling shrinkwrap from replacing the committed installation boundary while
-preserving repository-scoped and global registry settings. The mock script uses
-Node's normal package resolution and verifies that the exact-version wrapper
-and platform package both resolve inside the private installation's
-`node_modules` directory. Each invocation executes its verified native binary
-directly from that private installation without publishing shared packages.
-The native executable must remain inside its resolved package; global or
-ancestor package fallbacks and escaping executable links are rejected. npm
-verifies downloaded archives against the committed SHA-512 integrity values,
-including when a configured registry mirror supplies the same reviewed bytes.
-
-Run the mock-tooling security regression tests with:
-
-```sh
-node scripts/mock-tools/security.test.js
-```
-
-When updating Steady, update `scripts/mock-tools/package.json` and
-`scripts/mock-tools/package-lock.json` together. Review the exact version,
-licenses, registry URLs, integrity hashes, and native packages for all
-supported platforms. Inspect upstream signatures or provenance as
-dependency-update review evidence when available; mock-server startup does not
-independently verify publisher provenance. Do not replace the locked
-installation with a dynamic `npm exec --package=...` invocation or vendor
-platform binaries.
 
 ## Formatting and releases
 
