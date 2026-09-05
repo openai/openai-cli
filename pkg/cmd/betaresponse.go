@@ -129,7 +129,7 @@ var betaResponsesCreate = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.Flag[*bool]{
 			Name:     "store",
-			Usage:    "Whether to store the generated model response for later retrieval via\nAPI.\n",
+			Usage:    "Whether to store the generated model response for later retrieval via\nAPI.\nDefaults to true when omitted.\nIf set to true, response data will be stored for at least 30 days, subject to the [data retention exceptions](/api/docs/guides/your-data#v1responses).\n",
 			Default:  requestflag.Ptr[bool](true),
 			BodyPath: "store",
 		},
