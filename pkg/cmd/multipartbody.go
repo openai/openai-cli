@@ -219,6 +219,14 @@ type multipartBodyInfo struct {
 	knownLength bool
 }
 
+func isTypedNilReader(value any) bool {
+	if _, ok := value.(io.Reader); !ok {
+		return false
+	}
+	reflected := reflect.ValueOf(value)
+	return reflected.Kind() == reflect.Pointer && reflected.IsNil()
+}
+
 func inspectMultipartBody(value any) multipartBodyInfo {
 	switch value := value.(type) {
 	case map[string]any:
@@ -240,6 +248,9 @@ func inspectMultipartBody(value any) multipartBodyInfo {
 	case fileUpload:
 		return multipartBodyInfo{hasUpload: true, knownLength: value.hasKnownSize()}
 	default:
+		if isTypedNilReader(value) {
+			return multipartBodyInfo{knownLength: true}
+		}
 		_, isReader := value.(io.Reader)
 		return multipartBodyInfo{hasUpload: isReader, knownLength: !isReader}
 	}
@@ -311,6 +322,9 @@ func transformFileUploads(
 		}
 		return result, nil
 	default:
+		if isTypedNilReader(value) {
+			return value, nil
+		}
 		if _, isReader := value.(io.Reader); isReader {
 			return nil, errors.New("multipart body contains an unknown-size reader")
 		}
