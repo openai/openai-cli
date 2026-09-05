@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.12.0](https://github.com/openai/openai-cli/compare/v1.11.0...v1.12.0) (2026-09-05)
+
+
+### Features
+
+* **api:** Add prompt cache comparison response option ([#155](https://github.com/openai/openai-cli/issues/155)) ([aa76074](https://github.com/openai/openai-cli/commit/aa76074316940047ec21439f541ce5eb06f6b03d))
+* **api:** add service-account API key expiration fields ([#157](https://github.com/openai/openai-cli/issues/157)) ([bf513cb](https://github.com/openai/openai-cli/commit/bf513cb5a3b4cedd0ddb1444ae5c4ae9e937c4cd))
+
+
+### Chores
+
+* **api:** correct function argument completion event fields (openapi-545) ([#156](https://github.com/openai/openai-cli/issues/156)) ([465360b](https://github.com/openai/openai-cli/commit/465360b4ebbdb67f628cb27a205bfe521ce6cc79))
+* **api:** document incomplete web search call status ([#153](https://github.com/openai/openai-cli/issues/153)) ([a843cea](https://github.com/openai/openai-cli/commit/a843cea03c7b7c16cf8b0e1be29b8af7cb7131db))
+* **api:** document throttling and model overload responses — SDK-235 ([#158](https://github.com/openai/openai-cli/issues/158)) ([76d3959](https://github.com/openai/openai-cli/commit/76d39597222479badd615675f485e7848b0dc697))
+* migrate to forked steady ([#152](https://github.com/openai/openai-cli/issues/152)) ([9c18bfa](https://github.com/openai/openai-cli/commit/9c18bfa7be50ee60a4335770c669c5b970c52325))
+
 ## [1.11.0](https://github.com/openai/openai-cli/compare/v1.10.0...v1.11.0) (2026-09-03)
 
 
