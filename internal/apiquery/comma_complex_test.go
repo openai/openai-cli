@@ -39,3 +39,21 @@ func TestCommaArrayStillEncodesPrimitiveElements(t *testing.T) {
 		t.Fatalf("comma-form primitive array = %q, want %q", got, "alice,bob")
 	}
 }
+
+func TestCommaArrayRejectsNestedArrays(t *testing.T) {
+	t.Parallel()
+
+	values, err := MarshalWithSettings(
+		map[string]any{"filter": [][]string{{"alice", "bob"}}},
+		QuerySettings{ArrayFormat: ArrayQueryFormatComma},
+	)
+	if err == nil {
+		t.Fatal("expected comma-form nested array to return an error")
+	}
+	if !strings.Contains(err.Error(), "comma format does not support complex array elements") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if values != nil {
+		t.Fatalf("expected no query values on error, got %v", values)
+	}
+}
