@@ -158,3 +158,36 @@ func TestApplyStdinDataToFlagsWithProvenancePreservesExplicitEmptyCollections(t 
 		})
 	}
 }
+
+func TestApplyStdinDataToFlagsFillsUnsetFieldOnTrailingArrayElement(t *testing.T) {
+	t.Parallel()
+
+	outer := &Flag[[]map[string]any]{Name: "entries", BodyPath: "entries"}
+	typeFlag := &InnerFlag[string]{
+		Name:                  "entries.type",
+		InnerField:            "type",
+		OuterFlag:             outer,
+		OuterIsArrayOfObjects: true,
+	}
+	thresholdFlag := &InnerFlag[int64]{
+		Name:                  "entries.compact-threshold",
+		InnerField:            "compact_threshold",
+		OuterFlag:             outer,
+		OuterIsArrayOfObjects: true,
+	}
+	require.NoError(t, outer.PreParse())
+	require.NoError(t, typeFlag.Set(typeFlag.Name, "first"))
+	require.NoError(t, thresholdFlag.Set(thresholdFlag.Name, "10"))
+	require.NoError(t, typeFlag.Set(typeFlag.Name, "second"))
+
+	command := &cli.Command{Flags: []cli.Flag{outer, typeFlag, thresholdFlag}}
+	err := ApplyStdinDataToFlags(command, map[string]any{
+		"entries": map[string]any{"compact_threshold": 20},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []map[string]any{
+		{"type": "first", "compact_threshold": int64(10)},
+		{"type": "second", "compact_threshold": int64(20)},
+	}, outer.Get())
+}
