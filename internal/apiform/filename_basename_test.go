@@ -24,6 +24,7 @@ func TestMultipartReaderNameUsesBaseFilenameAcrossPathStyles(t *testing.T) {
 		want       string
 	}{
 		{name: "posix", readerName: "/home/alice/reports/report.pdf", want: "report.pdf"},
+		{name: "posix basename with backslash", readerName: `/tmp/invoice\2026.pdf`, want: `invoice\2026.pdf`},
 		{name: "windows", readerName: `C:\Users\alice\reports\report.pdf`, want: "report.pdf"},
 	}
 
@@ -49,7 +50,7 @@ func TestMultipartReaderNameUsesBaseFilenameAcrossPathStyles(t *testing.T) {
 			}
 
 			body := buf.String()
-			if !strings.Contains(body, `filename="`+tt.want+`"`) {
+			if !strings.Contains(body, `filename="`+escapeQuotes(tt.want)+`"`) {
 				t.Fatalf("multipart filename not reduced to basename: %q", body)
 			}
 			if strings.Contains(body, "alice") || strings.Contains(body, "reports") {

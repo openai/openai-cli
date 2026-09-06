@@ -171,7 +171,21 @@ func escapeQuotes(s string) string {
 }
 
 func multipartBaseName(name string) string {
-	return path.Base(strings.ReplaceAll(name, `\`, "/"))
+	if isWindowsPath(name) {
+		name = strings.ReplaceAll(name, `\`, "/")
+	}
+	return path.Base(name)
+}
+
+func isWindowsPath(name string) bool {
+	if strings.HasPrefix(name, `\\`) {
+		return true
+	}
+	if len(name) < 2 || name[1] != ':' {
+		return false
+	}
+	drive := name[0]
+	return (drive >= 'A' && drive <= 'Z') || (drive >= 'a' && drive <= 'z')
 }
 
 func validateMIMEHeaderValue(value, component string) error {
