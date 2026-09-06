@@ -70,13 +70,28 @@ func (e *encoder) encodeArray(key string, value reflect.Value) ([]Pair, error) {
 	case ArrayQueryFormatComma:
 		elements := []string{}
 		for i := 0; i < value.Len(); i++ {
+			item := value.Index(i)
+			for item.Kind() == reflect.Pointer || item.Kind() == reflect.Interface {
+				if item.IsNil() {
+					break
+				}
+				item = item.Elem()
+			}
+			if item.IsValid() {
+				switch item.Kind() {
+				case reflect.Array, reflect.Slice, reflect.Map, reflect.Struct:
+					return nil, fmt.Errorf("apiquery: comma format does not support complex array elements")
+				}
+			}
+
 			innerPairs, err := e.Encode("", value.Index(i))
 			if err != nil {
 				return nil, err
 			}
-			for _, pair := range innerPairs {
-				elements = append(elements, pair.value)
+			if len(innerPairs) != 1 || innerPairs[0].key != "" {
+				return nil, fmt.Errorf("apiquery: comma format does not support complex array elements")
 			}
+			elements = append(elements, innerPairs[0].value)
 		}
 		return []Pair{{key, strings.Join(elements, ",")}}, nil
 
