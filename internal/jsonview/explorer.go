@@ -177,13 +177,14 @@ func (tv *TableView) loadMoreData(raw bool) tea.Cmd {
 
 		// For array of objects, we need to format according to columns
 		if len(tv.columns) > 1 && result.IsObject() {
+			values := result.Map()
 			newRow = make(table.Row, len(tv.columns))
 			for i, col := range tv.columns {
 				key := col.Title
 				if i < len(tv.columnKeys) {
 					key = tv.columnKeys[i]
 				}
-				newRow[i] = formatValue(result.Get(key), raw)
+				newRow[i] = formatValue(values[key], raw)
 			}
 		}
 
@@ -623,9 +624,10 @@ func newArrayOfObjectsTableView(path string, data gjson.Result, array []gjson.Re
 	rowData := make([]gjson.Result, 0, len(array))
 
 	for _, item := range array {
+		values := item.Map()
 		row := make(table.Row, len(columns))
 		for i, key := range columnKeys {
-			row[i] = formatValue(item.Get(key), raw)
+			row[i] = formatValue(values[key], raw)
 		}
 		rows = append(rows, row)
 		rowData = append(rowData, item)
@@ -646,11 +648,12 @@ func newObjectTableView(path string, data gjson.Result, raw bool) *TableView {
 	columns := []table.Column{{Title: "Object"}, {}}
 
 	keys := data.Get("@keys").Array()
+	values := data.Map()
 	rows := make([]table.Row, 0, len(keys))
 	rowData := make([]gjson.Result, 0, len(keys))
 
 	for _, key := range keys {
-		value := data.Get(key.Str)
+		value := values[key.Str]
 		title := SanitizeTerminalString(key.Str)
 		rows = append(rows, table.Row{title, formatValue(value, raw)})
 		rowData = append(rowData, value)
@@ -663,6 +666,7 @@ func newObjectTableView(path string, data gjson.Result, raw bool) *TableView {
 				columns[i].Width = max(columns[i].Width, lipgloss.Width(cell))
 			}
 		}
+
 	}
 
 	t := createTable(columns, rows, objectColor)
@@ -717,10 +721,11 @@ func formatValue(value gjson.Result, raw bool) string {
 
 func formatObject(value gjson.Result) string {
 	keys := value.Get("@keys").Array()
+	values := value.Map()
 	keyStrs := make([]string, len(keys))
 
 	for i, key := range keys {
-		val := value.Get(key.Str)
+		val := values[key.Str]
 		keyStrs[i] = formatObjectKey(SanitizeTerminalString(key.Str), val)
 	}
 
