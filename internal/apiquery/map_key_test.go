@@ -9,10 +9,20 @@ import (
 func TestMarshalRejectsNonStringMapKeys(t *testing.T) {
 	t.Parallel()
 
-	values, err := Marshal(map[int]string{1: "one"})
+	for name, input := range map[string]map[int]string{
+		"populated": {1: "one"},
+		"empty":     {},
+		"nil":       nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	require.ErrorContains(t, err, "non-string key")
-	require.Nil(t, values)
+			values, err := Marshal(input)
+
+			require.ErrorContains(t, err, "non-string key")
+			require.Nil(t, values)
+		})
+	}
 }
 
 func TestMarshalKeepsStringMapKeys(t *testing.T) {
