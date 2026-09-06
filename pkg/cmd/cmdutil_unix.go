@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -39,10 +38,9 @@ func streamOutputOSSpecific(label string, generateOutput func(w *os.File) error)
 		os.Setenv("FORCE_COLOR", "1")
 	}
 
-	// If the pager exits before reading all input, then generateOutput() will
-	// produce a broken pipe error, which is fine and we don't want to propagate it.
+	// Only output-side broken pipes indicate that the pager stopped reading.
 	if err := generateOutput(pagerInput); err != nil &&
-		!strings.Contains(err.Error(), "broken pipe") {
+		!isOutputBrokenPipe(err) {
 		return err
 	}
 
