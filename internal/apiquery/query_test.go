@@ -25,9 +25,21 @@ func TestEncode(t *testing.T) {
 			val: 42,
 			enc: "query=42",
 		},
+		"int8": {
+			val: int8(-8),
+			enc: "query=-8",
+		},
+		"uint8": {
+			val: uint8(8),
+			enc: "query=8",
+		},
 		"float": {
 			val: 3.14,
 			enc: "query=3.14",
+		},
+		"float32": {
+			val: float32(0.1),
+			enc: "query=0.1",
 		},
 		"bool": {
 			val: true,

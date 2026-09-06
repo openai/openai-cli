@@ -135,13 +135,16 @@ func (e *encoder) encodePrimitive(key string, value reflect.Value) ([]Pair, erro
 		}
 		return []Pair{{key, "false"}}, nil
 
-	case reflect.Int, reflect.Int16, reflect.Int32, reflect.Int64:
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return []Pair{{key, strconv.FormatInt(value.Int(), 10)}}, nil
 
-	case reflect.Uint, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return []Pair{{key, strconv.FormatUint(value.Uint(), 10)}}, nil
 
-	case reflect.Float32, reflect.Float64:
+	case reflect.Float32:
+		return []Pair{{key, strconv.FormatFloat(value.Float(), 'f', -1, 32)}}, nil
+
+	case reflect.Float64:
 		return []Pair{{key, strconv.FormatFloat(value.Float(), 'f', -1, 64)}}, nil
 
 	default:
