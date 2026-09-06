@@ -4,10 +4,16 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/urfave/cli/v3"
 )
 
 func TestRebuildColonSeparatedArgs(t *testing.T) {
 	t.Parallel()
+
+	root := &cli.Command{Commands: []*cli.Command{
+		{Name: "config:get"},
+		{Name: "config:set"},
+	}}
 
 	tests := map[string]struct {
 		args []string
@@ -29,12 +35,20 @@ func TestRebuildColonSeparatedArgs(t *testing.T) {
 			args: []string{"a", "b", "c"},
 			want: []string{"a", "b", "c"},
 		},
+		"colon-ending value before flag": {
+			args: []string{"--instructions", "Prefix:", "--mo"},
+			want: []string{"--instructions", "Prefix:", "--mo"},
+		},
+		"colon-ending ordinary value": {
+			args: []string{"Prefix:", "value"},
+			want: []string{"Prefix:", "value"},
+		},
 	}
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, test.want, rebuildColonSeparatedArgs(test.args))
+			assert.Equal(t, test.want, rebuildColonSeparatedArgs(root, test.args))
 		})
 	}
 }
