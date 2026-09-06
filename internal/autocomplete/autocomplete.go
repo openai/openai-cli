@@ -283,7 +283,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 
 func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	root := cmd.Root()
-	args := rebuildColonSeparatedArgs(root.Args().Slice()[1:])
+	args := rebuildColonSeparatedArgs(root, root.Args().Slice()[1:])
 
 	var completionStyle CompletionStyle
 	if style, ok := os.LookupEnv("COMPLETION_STYLE"); ok {
@@ -321,13 +321,12 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	return cli.Exit("", int(result.Behavior))
 }
 
-// When CLI arguments are passed in, they are separated on word barriers.
-// Most commonly this is whitespace but in some cases that may also be colons.
-// We wish to allow arguments with colons. To handle this, we append/prepend colons to their neighboring
-// arguments.
-//
-// Example: `rebuildColonSeparatedArgs(["a", "b", ":", "c", "d"])` => `["a", "b:c", "d"]`
-func rebuildColonSeparatedArgs(args []string) []string {
+// When CLI arguments are passed in, shell word breaking can split a colon
+// command into adjacent tokens. Rejoin explicit colon separators, and only
+// rejoin a token that already ends in ':' when the combined value can still
+// name a command. This avoids swallowing an ordinary following argument such
+// as `--instructions Prefix: --model`.
+func rebuildColonSeparatedArgs(root *cli.Command, args []string) []string {
 	if len(args) == 0 {
 		return args
 	}
@@ -338,10 +337,23 @@ func rebuildColonSeparatedArgs(args []string) []string {
 	for i < len(args) {
 		current := args[i]
 
-		// Keep joining while the next element is ":" or the current element ends with ":"
-		for i+1 < len(args) && (args[i+1] == ":" || strings.HasSuffix(current, ":")) {
-			current += args[i+1]
-			i++
+		for i+1 < len(args) {
+			next := args[i+1]
+			if next == ":" {
+				current += next
+				i++
+				if i+1 < len(args) && args[i+1] != ":" {
+					current += args[i+1]
+					i++
+				}
+				continue
+			}
+			if strings.HasSuffix(current, ":") && hasCommandPrefix(root, current+next) {
+				current += next
+				i++
+				continue
+			}
+			break
 		}
 
 		result = append(result, current)
@@ -349,4 +361,16 @@ func rebuildColonSeparatedArgs(args []string) []string {
 	}
 
 	return result
+}
+
+func hasCommandPrefix(cmd *cli.Command, prefix string) bool {
+	if cmd == nil {
+		return false
+	}
+	for _, child := range cmd.Commands {
+		if strings.HasPrefix(child.Name, prefix) || hasCommandPrefix(child, prefix) {
+			return true
+		}
+	}
+	return false
 }
