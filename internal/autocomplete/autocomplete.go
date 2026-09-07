@@ -87,9 +87,9 @@ func NewShellCompletion(name string, usage string) ShellCompletion {
 type ShellCompletionBehavior int
 
 const (
-	ShellCompletionBehaviorDefault ShellCompletionBehavior = iota
-	ShellCompletionBehaviorFile                            = 10
-	ShellCompletionBehaviorNoComplete
+	ShellCompletionBehaviorDefault    ShellCompletionBehavior = iota
+	ShellCompletionBehaviorFile                               = 10
+	ShellCompletionBehaviorNoComplete                         = 11
 )
 
 type CompletionResult struct {
