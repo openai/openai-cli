@@ -959,6 +959,10 @@ func (c *cliValue[T]) SetInnerField(field string, val any) {
 			// Check if the last element already has the InnerField
 			lastElement := flagValReflect.Index(sliceLen - 1).Interface().(map[string]any)
 			if _, hasInnerField := lastElement[field]; !hasInnerField {
+				if lastElement == nil {
+					lastElement = make(map[string]any)
+					flagValReflect.Index(sliceLen - 1).Set(reflect.ValueOf(lastElement))
+				}
 				// Last element doesn't have the field, set it
 				lastElement[field] = val
 				return
