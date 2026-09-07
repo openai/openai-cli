@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -63,6 +64,8 @@ func TestShellCompletionProtocol(t *testing.T) {
 		{"root value", []string{"--format", "candidate-"}, 11, "", ""},
 		{"nested local value", []string{"models", "list", "--max-items", "candidate-"}, 11, "", ""},
 		{"file value", []string{"--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
+		{"spaced preceding value", []string{"--format", "two words", "--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
+		{"empty preceding value", []string{"--format", "", "--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
 		{"explicit file prefix", []string{"--format", "@candidate-"}, 11, "", "@candidate-fixture.txt\n"},
 		{"command prefix", []string{"mo"}, 0, "models\n", "models\n"},
 	} {
@@ -103,6 +106,7 @@ if ! type mapfile >/dev/null 2>&1; then
   }
 fi
 openai() {
+  printf '%s\0' "$@" > helper.argv
   "$test_binary" -test.run='^TestShellCompletionProtocolHelper$' -- openai "$@"
 }
 ` + script + `
@@ -122,6 +126,10 @@ done
 				require.NoError(t, command.Run())
 				require.Empty(t, stderr.String())
 				require.Equal(t, test.candidates, stdout.String())
+				argv, err := os.ReadFile(filepath.Join(dir, "helper.argv"))
+				require.NoError(t, err)
+				wantArgs := append([]string{"__complete", "--"}, test.args...)
+				require.Equal(t, strings.Join(wantArgs, "\x00")+"\x00", string(argv))
 			})
 		})
 	}
