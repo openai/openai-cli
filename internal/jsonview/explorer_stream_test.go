@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/help"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -23,6 +24,75 @@ func (it *explorerIterator) Err() error   { return nil }
 func explorerKey(v *JSONViewer, key string) tea.Cmd {
 	_, cmd := v.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
 	return cmd
+}
+
+func TestExplorerLazyLoadPreservesSDKResponse(t *testing.T) {
+	for _, raw := range []string{
+		`{"id":"model-demo","object":"model","created":1,"owned_by":"demo","extra":"preserved"}`,
+		`{"id":"model-demo","object":"model","created":1,"owned_by":"demo","extra":"preserved","shutdown_date":null}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			var item openai.Model
+			require.NoError(t, json.Unmarshal([]byte(raw), &item))
+			preloaded, err := marshalItemsToJSONArray([]any{item})
+			require.NoError(t, err)
+			require.JSONEq(t, "["+raw+"]", string(preloaded))
+			view, err := newTableView("", gjson.ParseBytes(preloaded), false)
+			require.NoError(t, err)
+			it := &explorerIterator{items: []any{item}}
+			view.iterator = it
+			v := &JSONViewer{stack: []JSONView{view}, root: "test", help: help.New()}
+			v.resize(80, 24)
+
+			cmd := explorerKey(v, "j")
+			require.NotNil(t, cmd)
+			msg := cmd().(tableItemMsg)
+			require.NoError(t, msg.err)
+			require.Len(t, view.rowData, 1, "only the UI update may append rows")
+			v.Update(msg)
+			require.Len(t, view.rowData, 2)
+			require.JSONEq(t, raw, view.rowData[1].Raw)
+			for i := 0; i < 4; i++ {
+				explorerKey(v, "r")
+				require.Same(t, view, v.current())
+				require.JSONEq(t, raw, view.rowData[1].Raw)
+			}
+			view.table.SetCursor(1)
+			require.JSONEq(t, raw, v.getSelectedContent())
+			explorerKey(v, "l")
+			require.Equal(t, "[1]", v.current().GetPath())
+			require.JSONEq(t, raw, v.current().GetData().Raw)
+			require.Equal(t, 1, it.index)
+		})
+	}
+}
+
+func TestExplorerLazyLoadMarshalFallback(t *testing.T) {
+	for _, item := range []any{map[string]any{"id": "second", "value": nil}, make(chan int)} {
+		t.Run(fmt.Sprintf("%T", item), func(t *testing.T) {
+			view, err := newTableView("", gjson.Parse(`[{"id":"first"}]`), false)
+			require.NoError(t, err)
+			view.iterator = &explorerIterator{items: []any{item}}
+			v := &JSONViewer{stack: []JSONView{view}, root: "test", help: help.New()}
+			v.resize(80, 24)
+			cmd := explorerKey(v, "j")
+			require.NotNil(t, cmd)
+			msg := cmd().(tableItemMsg)
+			v.Update(msg)
+			require.False(t, view.isLoading)
+			if _, ok := item.(chan int); ok {
+				var marshalErr *json.UnsupportedTypeError
+				require.ErrorAs(t, msg.err, &marshalErr)
+				require.False(t, msg.result.Exists())
+				require.Len(t, view.rowData, 1)
+				require.Len(t, view.table.Rows(), 1)
+			} else {
+				require.NoError(t, msg.err)
+				require.Len(t, view.rowData, 2)
+				require.JSONEq(t, `{"id":"second","value":null}`, view.rowData[1].Raw)
+			}
+		})
+	}
 }
 
 func TestExplorerToggleRetainsLoadedItems(t *testing.T) {

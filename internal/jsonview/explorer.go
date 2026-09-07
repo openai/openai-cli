@@ -164,7 +164,12 @@ func (tv *TableView) loadMoreData() tea.Cmd {
 			msg.err = iterator.Err()
 			return msg
 		}
-		jsonBytes, err := json.Marshal(iterator.Current())
+		item := iterator.Current()
+		if hasRaw, ok := item.(hasRawJSON); ok {
+			msg.result = gjson.Parse(hasRaw.RawJSON())
+			return msg
+		}
+		jsonBytes, err := json.Marshal(item)
 		msg.err = err
 		if err == nil {
 			msg.result = gjson.ParseBytes(jsonBytes)
