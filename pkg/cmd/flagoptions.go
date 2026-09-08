@@ -104,6 +104,11 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 		}
 		v = v.Elem()
 	}
+	// Nullable string flags use the same file expansion as ordinary strings.
+	// Keep nil values and other pointer types unchanged.
+	if v.Type() == reflect.TypeFor[*string]() && !v.IsNil() {
+		v = v.Elem()
+	}
 
 	switch v.Kind() {
 	case reflect.Map:
