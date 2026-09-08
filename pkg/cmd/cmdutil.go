@@ -500,7 +500,7 @@ type hasRawJSON interface {
 func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts) error {
 	opts.setDefaults()
 
-	if opts.Format == "explore" {
+	if strings.ToLower(opts.Format) == "explore" {
 		if isTerminal(opts.Stdout) {
 			return jsonview.ExploreJSONStream(opts.Title, iter)
 		}
