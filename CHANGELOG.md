@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.13.0](https://github.com/openai/openai-cli/compare/v1.12.0...v1.13.0) (2026-09-08)
+
+
+### Features
+
+* **api:** document GPT Image 2.5 models and image options ([#175](https://github.com/openai/openai-cli/issues/175)) ([7a9994d](https://github.com/openai/openai-cli/commit/7a9994dd5c6cfe232fc2ebc548a3da95dddb7439))
+
+
+### Bug Fixes
+
+* **autocomplete:** preserve literal completion-token arguments ([#171](https://github.com/openai/openai-cli/issues/171)) ([01123b7](https://github.com/openai/openai-cli/commit/01123b72b815eaea30cdf0e50608c88b485a9eab))
+* **output:** honor case-insensitive explore format ([#169](https://github.com/openai/openai-cli/issues/169)) ([774c240](https://github.com/openai/openai-cli/commit/774c2406188d66c03a1521b31be2c24d9bda4e46))
+
 ## [1.12.0](https://github.com/openai/openai-cli/compare/v1.11.0...v1.12.0) (2026-09-08)
 
 
