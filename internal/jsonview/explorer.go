@@ -320,7 +320,7 @@ func ExploreJSONStream[T any](title string, it Iterator[T]) error {
 	anyIt := genericToAnyIterator(it)
 
 	preloadCount := 20
-	if termHeight, _, err := term.GetSize(os.Stdout.Fd()); err == nil {
+	if _, termHeight, err := term.GetSize(os.Stdout.Fd()); err == nil {
 		preloadCount = termHeight
 	}
 
