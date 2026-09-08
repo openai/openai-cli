@@ -61,12 +61,12 @@ var imagesCreateVariation = cli.Command{
 
 var imagesEdit = cli.Command{
 	Name:    "edit",
-	Usage:   "Creates an edited or extended image given one or more source images and a\nprompt. This endpoint supports GPT Image models (`gpt-image-1.5`, `gpt-image-1`,\n`gpt-image-1-mini`, and `chatgpt-image-latest`) and `dall-e-2`.",
+	Usage:   "Creates an edited or extended image given one or more source images and a\nprompt. This endpoint supports GPT Image models and `dall-e-2`.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[[]string]{
 			Name:      "image",
-			Usage:     "The image(s) to edit. Must be a supported image file or an array of images.\n\nFor the GPT image models (`gpt-image-1`, `gpt-image-1-mini`,\n`gpt-image-1.5`, `gpt-image-2`, `gpt-image-2-2026-04-21`, and\n`chatgpt-image-latest`), each image should be a `png`, `webp`, or\n`jpg` file less than 50MB. You can provide up to 16 images.\n\nFor `dall-e-2`, you can only provide one image, and it should be a\nsquare `png` file less than 4MB.\n",
+			Usage:     "The image(s) to edit. Must be a supported image file or an array of images.\n\nFor the GPT image models (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`,\n`gpt-image-2`, `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`,\n`gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`,\n`gpt-image-2.5-flare-2026-09-08`, and `chatgpt-image-latest`), each image\nshould be a `png`, `webp`, or `jpg` file less than 50MB. You can provide up to\n16 images.\n\nFor `dall-e-2`, you can only provide one image, and it should be a square\n`png` file less than 4MB.\n",
 			Required:  true,
 			BodyPath:  "image",
 			FileInput: true,
@@ -79,7 +79,7 @@ var imagesEdit = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "background",
-			Usage:    "Allows to set transparency for the background of the generated image(s).\nMust be one of `transparent`, `opaque`, or `auto` (default value). When\n`auto` is used, the model will automatically determine the best\nbackground for the image.\n\nTransparent backgrounds are available for supported GPT Image models.\nFor `gpt-image-2` and `gpt-image-2-2026-04-21`, this support is in\npreview. When using `transparent`, set the output format to `png` or\n`webp`.\n",
+			Usage:    "Allows to set transparency for the background of the generated image(s). Must\nbe one of `transparent`, `opaque`, or `auto` (default value). When `auto` is\nused, the model will automatically determine the best background for the\nimage.\n\n`gpt-image-2.5-sunburst` and `gpt-image-2.5-flare`, including their\n`2026-09-08` snapshots, support `opaque` and `transparent` backgrounds.\nTransparent backgrounds are available for supported GPT Image models. For\n`gpt-image-2` and `gpt-image-2-2026-04-21`, this support is in preview. When\nusing `transparent`, set the output format to `png` or `webp`.\n",
 			Default:  requestflag.Ptr[string]("auto"),
 			BodyPath: "background",
 		},
@@ -96,7 +96,7 @@ var imagesEdit = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "model",
-			Usage:    "The model to use for image generation. One of `dall-e-2` or a GPT image model (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`, `gpt-image-2-2026-04-21`, or `chatgpt-image-latest`). Defaults to `gpt-image-1.5`.",
+			Usage:    "The model to use for image generation. One of `dall-e-2` or a GPT image model (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`, `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`, `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`, `gpt-image-2.5-flare-2026-09-08`, or `chatgpt-image-latest`). Defaults to `gpt-image-1.5`.",
 			BodyPath: "model",
 		},
 		&requestflag.Flag[*int64]{
@@ -125,7 +125,7 @@ var imagesEdit = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "quality",
-			Usage:    "The quality of the image that will be generated for GPT image models. Defaults to `auto`.\n",
+			Usage:    "The quality of the image that will be generated for GPT image models. The GPT image models support `low`, `medium`, and `high`. `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare`, including their `2026-09-08` snapshots, also support `xhigh` and `max`. Defaults to `auto`.\n",
 			Default:  requestflag.Ptr[string]("auto"),
 			BodyPath: "quality",
 		},
@@ -136,7 +136,7 @@ var imagesEdit = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "size",
-			Usage:    "The size of the generated images. For `gpt-image-2` and `gpt-image-2-2026-04-21`, arbitrary resolutions are supported as `WIDTHxHEIGHT` strings, for example `1536x864`. Width and height must both be divisible by 16 and the requested aspect ratio must be between 1:3 and 3:1. Resolutions above `2560x1440` are experimental, and the maximum supported resolution is `3840x2160`. The requested size must also satisfy the model's current pixel and edge limits. The standard sizes `1024x1024`, `1536x1024`, and `1024x1536` are supported by the GPT image models; `auto` is supported for models that allow automatic sizing. For `dall-e-2`, use one of `256x256`, `512x512`, or `1024x1024`. For `dall-e-3`, use one of `1024x1024`, `1792x1024`, or `1024x1792`.",
+			Usage:    "The size of the generated images. For `gpt-image-2`, `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`, `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`, and `gpt-image-2.5-flare-2026-09-08`, arbitrary resolutions are supported as `WIDTHxHEIGHT` strings, for example `1536x864`. Width and height must both be divisible by 16 and the requested aspect ratio must be between 1:3 and 3:1. Resolutions above `2560x1440` are experimental, and the maximum supported resolution is `3840x2160`. The requested size must also satisfy the model's current pixel and edge limits. The standard sizes `1024x1024`, `1536x1024`, and `1024x1536` are supported by the GPT image models; `auto` is supported for models that allow automatic sizing. For `dall-e-2`, use one of `256x256`, `512x512`, or `1024x1024`. For `dall-e-3`, use one of `1024x1024`, `1792x1024`, or `1024x1792`.",
 			BodyPath: "size",
 		},
 		&requestflag.Flag[*bool]{
@@ -172,13 +172,13 @@ var imagesGenerate = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "background",
-			Usage:    "Allows to set transparency for the background of the generated image(s).\nMust be one of `transparent`, `opaque`, or `auto` (default value). When\n`auto` is used, the model will automatically determine the best\nbackground for the image.\n\nTransparent backgrounds are available for supported GPT Image models.\nFor `gpt-image-2` and `gpt-image-2-2026-04-21`, this support is in\npreview. When using `transparent`, set the output format to `png` or\n`webp`.\n",
+			Usage:    "Allows to set transparency for the background of the generated image(s). Must\nbe one of `transparent`, `opaque`, or `auto` (default value). When `auto` is\nused, the model will automatically determine the best background for the\nimage.\n\n`gpt-image-2.5-sunburst` and `gpt-image-2.5-flare`, including their\n`2026-09-08` snapshots, support `opaque` and `transparent` backgrounds.\nTransparent backgrounds are available for supported GPT Image models. For\n`gpt-image-2` and `gpt-image-2-2026-04-21`, this support is in preview. When\nusing `transparent`, set the output format to `png` or `webp`.\n",
 			Default:  requestflag.Ptr[string]("auto"),
 			BodyPath: "background",
 		},
 		&requestflag.Flag[*string]{
 			Name:     "model",
-			Usage:    "The model to use for image generation. One of `dall-e-2`, `dall-e-3`, or a GPT image model (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`, or `gpt-image-2-2026-04-21`). Defaults to `dall-e-2` unless a parameter specific to the GPT image models is used.",
+			Usage:    "The model to use for image generation. One of `dall-e-2`, `dall-e-3`, or a GPT image model (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`, `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`, `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`, `gpt-image-2.5-flare-2026-09-08`). Defaults to `dall-e-2` unless a parameter specific to the GPT image models is used.",
 			BodyPath: "model",
 		},
 		&requestflag.Flag[*string]{
@@ -213,7 +213,7 @@ var imagesGenerate = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "quality",
-			Usage:    "The quality of the image that will be generated.\n\n- `auto` (default value) will automatically select the best quality for the given model.\n- `high`, `medium` and `low` are supported for the GPT image models.\n- `hd` and `standard` are supported for `dall-e-3`.\n- `standard` is the only option for `dall-e-2`.\n",
+			Usage:    "The quality of the image that will be generated.\n\n- `auto` (default value) will automatically select the best quality for the given\n  model.\n- `high`, `medium` and `low` are supported for the GPT image models.\n- `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare`, including their `2026-09-08`\n  snapshots, also support `xhigh` and `max`.\n- `hd` and `standard` are supported for `dall-e-3`.\n- `standard` is the only option for `dall-e-2`.\n",
 			Default:  requestflag.Ptr[string]("auto"),
 			BodyPath: "quality",
 		},
@@ -225,7 +225,7 @@ var imagesGenerate = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "size",
-			Usage:    "The size of the generated images. For `gpt-image-2` and `gpt-image-2-2026-04-21`, arbitrary resolutions are supported as `WIDTHxHEIGHT` strings, for example `1536x864`. Width and height must both be divisible by 16 and the requested aspect ratio must be between 1:3 and 3:1. Resolutions above `2560x1440` are experimental, and the maximum supported resolution is `3840x2160`. The requested size must also satisfy the model's current pixel and edge limits. The standard sizes `1024x1024`, `1536x1024`, and `1024x1536` are supported by the GPT image models; `auto` is supported for models that allow automatic sizing. For `dall-e-2`, use one of `256x256`, `512x512`, or `1024x1024`. For `dall-e-3`, use one of `1024x1024`, `1792x1024`, or `1024x1792`.",
+			Usage:    "The size of the generated images. For `gpt-image-2`, `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`, `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`, and `gpt-image-2.5-flare-2026-09-08`, arbitrary resolutions are supported as `WIDTHxHEIGHT` strings, for example `1536x864`. Width and height must both be divisible by 16 and the requested aspect ratio must be between 1:3 and 3:1. Resolutions above `2560x1440` are experimental, and the maximum supported resolution is `3840x2160`. The requested size must also satisfy the model's current pixel and edge limits. The standard sizes `1024x1024`, `1536x1024`, and `1024x1536` are supported by the GPT image models; `auto` is supported for models that allow automatic sizing. For `dall-e-2`, use one of `256x256`, `512x512`, or `1024x1024`. For `dall-e-3`, use one of `1024x1024`, `1792x1024`, or `1024x1792`.",
 			BodyPath: "size",
 		},
 		&requestflag.Flag[*bool]{
