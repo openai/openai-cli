@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"iter"
 	"os"
 	"slices"
 	"strings"
@@ -101,7 +102,7 @@ func isFlag(arg string) bool {
 	return strings.HasPrefix(arg, "-")
 }
 
-func findFlag(cmd *cli.Command, arg string) *cli.Flag {
+func findFlag(cmd *cli.Command, arg string, ancestors []*cli.Command) *cli.Flag {
 	name := strings.TrimLeft(arg, "-")
 	for _, flag := range cmd.Flags {
 		if vf, ok := flag.(cli.VisibleFlag); ok && !vf.IsVisible() {
@@ -112,7 +113,42 @@ func findFlag(cmd *cli.Command, arg string) *cli.Flag {
 			return &flag
 		}
 	}
+	for flag := range inheritedFlags(cmd, ancestors) {
+		if slices.Contains(flag.Names(), name) {
+			return &flag
+		}
+	}
 	return nil
+}
+
+// Match urfave's applied flags: nearest ancestors first, and any collision
+// with a command's own names or aliases excludes the entire ancestor flag.
+// Keep ancestry explicitly while walking raw trees, whose parent links are unset.
+func inheritedFlags(cmd *cli.Command, ancestors []*cli.Command) iter.Seq[cli.Flag] {
+	return func(yield func(cli.Flag) bool) {
+		localNames := map[string]bool{}
+		for _, flag := range cmd.Flags {
+			for _, name := range flag.Names() {
+				localNames[name] = true
+			}
+		}
+		for _, ancestor := range ancestors {
+		flags:
+			for _, flag := range ancestor.Flags {
+				if local, ok := flag.(cli.LocalFlag); !ok || local.IsLocal() {
+					continue
+				}
+				for _, name := range flag.Names() {
+					if localNames[name] {
+						continue flags
+					}
+				}
+				if !yield(flag) {
+					return
+				}
+			}
+		}
+	}
 }
 
 func findChild(cmd *cli.Command, name string) *cli.Command {
@@ -224,12 +260,13 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	current := args[len(args)-1]
 	preceding := args[0 : len(args)-1]
 	cmd := root
+	ancestors := root.Lineage()[1:]
 	i := 0
 	for i < len(preceding) {
 		arg := preceding[i]
 
 		if isFlag(arg) {
-			flag := findFlag(cmd, arg)
+			flag := findFlag(cmd, arg, ancestors)
 			if flag == nil {
 				i++
 			} else if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() {
@@ -241,6 +278,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 		} else {
 			child := findChild(cmd, arg)
 			if child != nil {
+				ancestors = append([]*cli.Command{cmd}, ancestors...)
 				cmd = child
 			}
 			i++
@@ -248,10 +286,10 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	}
 
 	// Check if the previous arg was a flag expecting a value
-	if len(preceding) > 0 {
+	if len(preceding) > 0 && i > len(preceding) {
 		prev := preceding[len(preceding)-1]
 		if isFlag(prev) {
-			flag := findFlag(cmd, prev)
+			flag := findFlag(cmd, prev, ancestors)
 			if flag != nil {
 				if fb, ok := (*flag).(*cli.StringFlag); ok && fb.TakesFile {
 					return CompletionResult{Completions: completions, Behavior: ShellCompletionBehaviorFile}
@@ -266,6 +304,17 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	if isFlag(current) {
 		for _, flag := range cmd.Flags {
 			completions = builder.createFromFlag(current, &flag, completions)
+		}
+		seen := map[string]bool{}
+		for flag := range inheritedFlags(cmd, ancestors) {
+			for _, candidate := range builder.createFromFlag(current, &flag, nil) {
+				if !seen[candidate.Name] {
+					seen[candidate.Name] = true
+					if visible, ok := flag.(cli.VisibleFlag); !ok || visible.IsVisible() {
+						completions = append(completions, candidate)
+					}
+				}
+			}
 		}
 	}
 
