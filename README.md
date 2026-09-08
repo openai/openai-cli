@@ -87,6 +87,12 @@ For details about specific commands, use the `--help` flag.
 | `OPENAI_MTLS_CLIENT_KEY_FILE` | no | `null` |
 | `OPENAI_UNTRUSTED_STDIN` | no | `false` |
 
+JSON and JSONL output (including the default `auto` format) use color on terminals,
+including when paged. Set `NO_COLOR` to any nonempty value, including `0`, to disable
+this default color. An empty or unset `NO_COLOR` leaves automatic color unchanged.
+`FORCE_COLOR=1` explicitly enables color even with `NO_COLOR` or redirected output;
+`FORCE_COLOR=0` explicitly disables it. Other `FORCE_COLOR` values use automatic behavior.
+
 ### Global flags
 
 - `--api-key` (can also be set with `OPENAI_API_KEY` env var)

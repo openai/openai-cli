@@ -719,6 +719,7 @@ func TestShowJSONIteratorRawOutputPreservesPipelineBytes(t *testing.T) {
 }
 
 func TestFormatJSONForOutputUsesFinalDestinationForColors(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	if !isTerminal(os.Stdout) {
 		t.Skip("color destination regression requires an interactive stdout terminal")
 	}
@@ -783,6 +784,7 @@ func TestShowJSONIteratorRawOutputEscapesPaginatedTerminalControls(t *testing.T)
 }
 
 func TestShowJSONIteratorPreservesPaginatedTerminalColors(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	for _, format := range []string{"json", "jsonl"} {
 		t.Run(format, func(t *testing.T) {
 			outputPath := configureCapturePager(t)

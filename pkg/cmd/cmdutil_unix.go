@@ -33,8 +33,8 @@ func streamOutputOSSpecific(label string, generateOutput func(w *os.File) error)
 
 	// If we would be streaming to a terminal and aren't forcing color one way
 	// or the other, we should configure things to use color so the pager gets
-	// colorized input.
-	if isTerminal(os.Stdout) && os.Getenv("FORCE_COLOR") == "" {
+	// colorized input, unless NO_COLOR disables default color.
+	if isTerminal(os.Stdout) && os.Getenv("FORCE_COLOR") == "" && os.Getenv("NO_COLOR") == "" {
 		os.Setenv("FORCE_COLOR", "1")
 	}
 
