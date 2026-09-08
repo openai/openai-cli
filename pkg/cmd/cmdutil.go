@@ -502,7 +502,7 @@ func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, op
 
 	if opts.Format == "explore" {
 		if isTerminal(opts.Stdout) {
-			return jsonview.ExploreJSONStream(opts.Title, iter)
+			return jsonview.ExploreJSONStream(opts.Title, iter, opts.Transform)
 		}
 		if opts.ExplicitFormat {
 			fmt.Fprint(opts.Stderr, warningExploreNotSupported)
