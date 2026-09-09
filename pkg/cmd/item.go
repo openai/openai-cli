@@ -33,7 +33,7 @@ var conversationsItemsCreate = cli.Command{
 		},
 		&requestflag.Flag[[]string]{
 			Name:      "include",
-			Usage:     "Additional fields to include in the response. See the `include`\nparameter for [listing Conversation items above](https://platform.openai.com/docs/api-reference/conversations/list-items#conversations_list_items-include) for more information.\n",
+			Usage:     "Additional fields to include in the response. See the `include`\nparameter for [listing Conversation items above](https://developers.openai.com/api/reference/resources/conversations/subresources/items/methods/list#%28resource%29%20conversations.items%20%3E%20%28method%29%20list%20%3E%20%28params%29%20default%20%3E%20%28param%29%20include%20%3E%20%28schema%29) for more information.\n",
 			QueryPath: "include",
 		},
 	},
@@ -58,7 +58,7 @@ var conversationsItemsRetrieve = cli.Command{
 		},
 		&requestflag.Flag[[]string]{
 			Name:      "include",
-			Usage:     "Additional fields to include in the response. See the `include`\nparameter for [listing Conversation items above](https://platform.openai.com/docs/api-reference/conversations/list-items#conversations_list_items-include) for more information.\n",
+			Usage:     "Additional fields to include in the response. See the `include`\nparameter for [listing Conversation items above](https://developers.openai.com/api/reference/resources/conversations/subresources/items/methods/list#%28resource%29%20conversations.items%20%3E%20%28method%29%20list%20%3E%20%28params%29%20default%20%3E%20%28param%29%20include%20%3E%20%28schema%29) for more information.\n",
 			QueryPath: "include",
 		},
 	},

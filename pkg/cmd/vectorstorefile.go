@@ -16,7 +16,7 @@ import (
 
 var vectorStoresFilesCreate = cli.Command{
 	Name:    "create",
-	Usage:   "Create a vector store file by attaching a\n[File](https://platform.openai.com/docs/api-reference/files) to a\n[vector store](https://platform.openai.com/docs/api-reference/vector-stores/object).",
+	Usage:   "Create a vector store file by attaching a\n[File](https://developers.openai.com/api/reference/resources/files) to a\n[vector store](https://developers.openai.com/api/reference/resources/vector_stores).",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -26,7 +26,7 @@ var vectorStoresFilesCreate = cli.Command{
 		},
 		&requestflag.Flag[string]{
 			Name:     "file-id",
-			Usage:    "A [File](https://platform.openai.com/docs/api-reference/files) ID that the vector store should use. Useful for tools like `file_search` that can access files. For multi-file ingestion, we recommend [`file_batches`](https://platform.openai.com/docs/api-reference/vector-stores-file-batches/createBatch) to minimize per-vector-store write requests.",
+			Usage:    "A [File](https://developers.openai.com/api/reference/resources/files) ID that the vector store should use. Useful for tools like `file_search` that can access files. For multi-file ingestion, we recommend [`file_batches`](https://developers.openai.com/api/reference/resources/vector_stores/subresources/file_batches/methods/create) to minimize per-vector-store write requests.",
 			Required: true,
 			BodyPath: "file_id",
 		},
@@ -139,7 +139,7 @@ var vectorStoresFilesList = cli.Command{
 
 var vectorStoresFilesDelete = cli.Command{
 	Name:    "delete",
-	Usage:   "Delete a vector store file. This will remove the file from the vector store but\nthe file itself will not be deleted. To delete the file, use the\n[delete file](https://platform.openai.com/docs/api-reference/files/delete)\nendpoint.",
+	Usage:   "Delete a vector store file. This will remove the file from the vector store but\nthe file itself will not be deleted. To delete the file, use the\n[delete file](https://developers.openai.com/api/reference/resources/files/methods/delete)\nendpoint.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{

@@ -34,7 +34,7 @@ var audioTranslationsCreate = cli.Command{
 		},
 		&requestflag.Flag[string]{
 			Name:     "prompt",
-			Usage:    "An optional text to guide the model's style or continue a previous audio segment. The [prompt](https://platform.openai.com/docs/guides/speech-to-text#prompting) should be in English.\n",
+			Usage:    "An optional text to guide the model's style or continue a previous audio segment. The [prompt](https://developers.openai.com/api/docs/guides/speech-to-text#prompting) should be in English.\n",
 			BodyPath: "prompt",
 		},
 		&requestflag.Flag[string]{
