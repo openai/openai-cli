@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/openai/openai-cli/compare/v1.13.0...v1.14.0) (2026-09-09)
+
+
+### Features
+
+* **api:** Add service account key expiration flag ([#177](https://github.com/openai/openai-cli/issues/177)) ([2e1a179](https://github.com/openai/openai-cli/commit/2e1a179921d0e1b354443f123e37a74002c9ae69))
+
 ## [1.13.0](https://github.com/openai/openai-cli/compare/v1.12.0...v1.13.0) (2026-09-08)
 
 
