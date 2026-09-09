@@ -16,7 +16,7 @@ import (
 
 var moderationsCreate = cli.Command{
 	Name:    "create",
-	Usage:   "Classifies if text and/or image inputs are potentially harmful. Learn more in\nthe [moderation guide](https://platform.openai.com/docs/guides/moderation).",
+	Usage:   "Classifies if text and/or image inputs are potentially harmful. Learn more in\nthe\n[moderation guide](https://developers.openai.com/api/docs/guides/moderation).",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[any]{
@@ -27,7 +27,7 @@ var moderationsCreate = cli.Command{
 		},
 		&requestflag.Flag[string]{
 			Name:     "model",
-			Usage:    "The content moderation model you would like to use. Learn more in\n[the moderation guide](https://platform.openai.com/docs/guides/moderation), and learn about\navailable models [here](https://platform.openai.com/docs/models#moderation).\n",
+			Usage:    "The content moderation model you would like to use. Learn more in\n[the moderation guide](https://developers.openai.com/api/docs/guides/moderation), and learn about\navailable models [here](https://developers.openai.com/api/docs/guides/moderation).\n",
 			BodyPath: "model",
 		},
 	},
