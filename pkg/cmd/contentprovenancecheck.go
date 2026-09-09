@@ -16,7 +16,7 @@ import (
 
 var contentProvenanceChecksCreate = cli.Command{
 	Name:    "create",
-	Usage:   "Check whether an image or audio file contains known OpenAI provenance signals.\n[Learn more about content provenance](/api/docs/guides/content-provenance).",
+	Usage:   "Check whether an image or audio file contains known OpenAI provenance signals.\n[Learn more about content provenance](https://developers.openai.com/api/docs/guides/content-provenance).",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{

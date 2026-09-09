@@ -21,7 +21,7 @@ var betaThreadsCreate = requestflag.WithInnerFlags(cli.Command{
 	Flags: []cli.Flag{
 		&requestflag.Flag[[]map[string]any]{
 			Name:     "message",
-			Usage:    "A list of [messages](https://platform.openai.com/docs/api-reference/messages) to start the thread with.",
+			Usage:    "A list of [messages](https://developers.openai.com/api/docs/assistants/migration) to start the thread with.",
 			BodyPath: "messages",
 		},
 		&requestflag.Flag[map[string]any]{
@@ -145,7 +145,7 @@ var betaThreadsCreateAndRun = requestflag.WithInnerFlags(cli.Command{
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
 			Name:     "assistant-id",
-			Usage:    "The ID of the [assistant](https://platform.openai.com/docs/api-reference/assistants) to use to execute this run.",
+			Usage:    "The ID of the [assistant](https://developers.openai.com/api/docs/assistants/migration) to use to execute this run.",
 			Required: true,
 			BodyPath: "assistant_id",
 		},
@@ -171,18 +171,18 @@ var betaThreadsCreateAndRun = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "model",
-			Usage:    "The ID of the [Model](https://platform.openai.com/docs/api-reference/models) to be used to execute this run. If a value is provided here, it will override the model associated with the assistant. If not, the model associated with the assistant will be used.",
+			Usage:    "The ID of the [Model](https://developers.openai.com/api/reference/resources/models) to be used to execute this run. If a value is provided here, it will override the model associated with the assistant. If not, the model associated with the assistant will be used.",
 			BodyPath: "model",
 		},
 		&requestflag.Flag[bool]{
 			Name:     "parallel-tool-calls",
-			Usage:    "Whether to enable [parallel function calling](https://platform.openai.com/docs/guides/function-calling#configuring-parallel-function-calling) during tool use.",
+			Usage:    "Whether to enable [parallel function calling](https://developers.openai.com/api/docs/guides/function-calling#parallel-function-calling) during tool use.",
 			Default:  true,
 			BodyPath: "parallel_tool_calls",
 		},
 		&requestflag.Flag[any]{
 			Name:     "response-format",
-			Usage:    "Specifies the format that the model must output. Compatible with [GPT-4o](https://platform.openai.com/docs/models#gpt-4o), [GPT-4 Turbo](https://platform.openai.com/docs/models#gpt-4-turbo-and-gpt-4), and all GPT-3.5 Turbo models since `gpt-3.5-turbo-1106`.\n\nSetting to `{ \"type\": \"json_schema\", \"json_schema\": {...} }` enables Structured Outputs which ensures the model will match your supplied JSON schema. Learn more in the [Structured Outputs guide](https://platform.openai.com/docs/guides/structured-outputs).\n\nSetting to `{ \"type\": \"json_object\" }` enables JSON mode, which ensures the message the model generates is valid JSON.\n\n**Important:** when using JSON mode, you **must** also instruct the model to produce JSON yourself via a system or user message. Without this, the model may generate an unending stream of whitespace until the generation reaches the token limit, resulting in a long-running and seemingly \"stuck\" request. Also note that the message content may be partially cut off if `finish_reason=\"length\"`, which indicates the generation exceeded `max_tokens` or the conversation exceeded the max context length.\n",
+			Usage:    "Specifies the format that the model must output. Compatible with [GPT-4o](https://developers.openai.com/api/docs/models/gpt-4o), [GPT-4 Turbo](https://developers.openai.com/api/docs/models/gpt-4-turbo), and all GPT-3.5 Turbo models since `gpt-3.5-turbo-1106`.\n\nSetting to `{ \"type\": \"json_schema\", \"json_schema\": {...} }` enables Structured Outputs which ensures the model will match your supplied JSON schema. Learn more in the [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs).\n\nSetting to `{ \"type\": \"json_object\" }` enables JSON mode, which ensures the message the model generates is valid JSON.\n\n**Important:** when using JSON mode, you **must** also instruct the model to produce JSON yourself via a system or user message. Without this, the model may generate an unending stream of whitespace until the generation reaches the token limit, resulting in a long-running and seemingly \"stuck\" request. Also note that the message content may be partially cut off if `finish_reason=\"length\"`, which indicates the generation exceeded `max_tokens` or the conversation exceeded the max context length.\n",
 			BodyPath: "response_format",
 		},
 		&requestflag.Flag[*bool]{
@@ -238,7 +238,7 @@ var betaThreadsCreateAndRun = requestflag.WithInnerFlags(cli.Command{
 	"thread": {
 		&requestflag.InnerFlag[[]map[string]any]{
 			Name:       "thread.messages",
-			Usage:      "A list of [messages](https://platform.openai.com/docs/api-reference/messages) to start the thread with.",
+			Usage:      "A list of [messages](https://developers.openai.com/api/docs/assistants/migration) to start the thread with.",
 			InnerField: "messages",
 		},
 		&requestflag.InnerFlag[map[string]any]{

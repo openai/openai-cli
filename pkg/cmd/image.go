@@ -51,7 +51,7 @@ var imagesCreateVariation = cli.Command{
 		},
 		&requestflag.Flag[string]{
 			Name:     "user",
-			Usage:    "A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids).\n",
+			Usage:    "A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).\n",
 			BodyPath: "user",
 		},
 	},
@@ -141,13 +141,13 @@ var imagesEdit = cli.Command{
 		},
 		&requestflag.Flag[*bool]{
 			Name:     "stream",
-			Usage:    "Edit the image in streaming mode. Defaults to `false`. See the\n[Image generation guide](https://platform.openai.com/docs/guides/image-generation) for more information.\n",
+			Usage:    "Edit the image in streaming mode. Defaults to `false`. See the\n[Image generation guide](https://developers.openai.com/api/docs/guides/image-generation) for more information.\n",
 			Default:  requestflag.Ptr[bool](false),
 			BodyPath: "stream",
 		},
 		&requestflag.Flag[string]{
 			Name:     "user",
-			Usage:    "A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids).\n",
+			Usage:    "A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).\n",
 			BodyPath: "user",
 		},
 		&requestflag.Flag[int64]{
@@ -161,7 +161,7 @@ var imagesEdit = cli.Command{
 
 var imagesGenerate = cli.Command{
 	Name:    "generate",
-	Usage:   "Creates an image given a prompt.\n[Learn more](https://platform.openai.com/docs/guides/images).",
+	Usage:   "Creates an image given a prompt.\n[Learn more](https://developers.openai.com/api/docs/guides/images-vision).",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -230,7 +230,7 @@ var imagesGenerate = cli.Command{
 		},
 		&requestflag.Flag[*bool]{
 			Name:     "stream",
-			Usage:    "Generate the image in streaming mode. Defaults to `false`. See the\n[Image generation guide](https://platform.openai.com/docs/guides/image-generation) for more information.\nThis parameter is only supported for the GPT image models.\n",
+			Usage:    "Generate the image in streaming mode. Defaults to `false`. See the\n[Image generation guide](https://developers.openai.com/api/docs/guides/image-generation) for more information.\nThis parameter is only supported for the GPT image models.\n",
 			Default:  requestflag.Ptr[bool](false),
 			BodyPath: "stream",
 		},
@@ -242,7 +242,7 @@ var imagesGenerate = cli.Command{
 		},
 		&requestflag.Flag[string]{
 			Name:     "user",
-			Usage:    "A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids).\n",
+			Usage:    "A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).\n",
 			BodyPath: "user",
 		},
 		&requestflag.Flag[int64]{

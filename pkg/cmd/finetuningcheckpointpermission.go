@@ -16,7 +16,7 @@ import (
 
 var fineTuningCheckpointsPermissionsCreate = cli.Command{
 	Name:    "create",
-	Usage:   "**NOTE:** Calling this endpoint requires an [admin API key](../admin-api-keys).",
+	Usage:   "**NOTE:** Calling this endpoint requires an\n[admin API key](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/admin_api_keys).",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -41,7 +41,7 @@ var fineTuningCheckpointsPermissionsCreate = cli.Command{
 
 var fineTuningCheckpointsPermissionsRetrieve = cli.Command{
 	Name:    "retrieve",
-	Usage:   "**NOTE:** This endpoint requires an [admin API key](../admin-api-keys).",
+	Usage:   "**NOTE:** This endpoint requires an\n[admin API key](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/admin_api_keys).",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -78,7 +78,7 @@ var fineTuningCheckpointsPermissionsRetrieve = cli.Command{
 
 var fineTuningCheckpointsPermissionsList = cli.Command{
 	Name:    "list",
-	Usage:   "**NOTE:** This endpoint requires an [admin API key](../admin-api-keys).",
+	Usage:   "**NOTE:** This endpoint requires an\n[admin API key](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/admin_api_keys).",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -119,7 +119,7 @@ var fineTuningCheckpointsPermissionsList = cli.Command{
 
 var fineTuningCheckpointsPermissionsDelete = cli.Command{
 	Name:    "delete",
-	Usage:   "**NOTE:** This endpoint requires an [admin API key](../admin-api-keys).",
+	Usage:   "**NOTE:** This endpoint requires an\n[admin API key](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/admin_api_keys).",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
