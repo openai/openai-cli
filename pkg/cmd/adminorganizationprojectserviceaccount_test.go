@@ -18,6 +18,7 @@ func TestAdminOrganizationProjectsServiceAccountsCreate(t *testing.T) {
 			"--project-id", "project_id",
 			"--name", "name",
 			"--create-service-account-only=true",
+			"--expires-in-seconds", "1",
 		)
 	})
 
@@ -25,7 +26,8 @@ func TestAdminOrganizationProjectsServiceAccountsCreate(t *testing.T) {
 		// Test piping YAML data over stdin
 		pipeData := []byte("" +
 			"name: name\n" +
-			"create_service_account_only: true\n")
+			"create_service_account_only: true\n" +
+			"expires_in_seconds: 1\n")
 		mocktest.TestRunMockTestWithPipeAndFlags(
 			t, pipeData,
 			"--api-key", "string",
