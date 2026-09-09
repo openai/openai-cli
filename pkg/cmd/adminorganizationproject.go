@@ -32,7 +32,7 @@ var adminOrganizationProjectsCreate = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "geography",
-			Usage:    "Create the project with the specified data residency region. Your organization must have access to Data residency functionality in order to use. See [data residency controls](https://platform.openai.com/docs/guides/your-data#data-residency-controls) to review the functionality and limitations of setting this field.\nDeprecated: use `residency` instead. Do not provide both `geography` and `residency`.",
+			Usage:    "Create the project with the specified data residency region. Your organization must have access to Data residency functionality in order to use. See [data residency controls](https://developers.openai.com/api/docs/guides/your-data#data-residency-controls) to review the functionality and limitations of setting this field.\nDeprecated: use `residency` instead. Do not provide both `geography` and `residency`.",
 			BodyPath: "geography",
 		},
 		&requestflag.Flag[*string]{
