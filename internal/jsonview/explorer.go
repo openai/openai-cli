@@ -117,6 +117,7 @@ type TableView struct {
 	table      table.Model
 	rowData    []gjson.Result
 	iterator   AnyIterator
+	transform  string
 	isLoading  bool
 	columns    []table.Column
 	columnKeys []string
@@ -155,6 +156,7 @@ type tableItemMsg struct {
 
 func (tv *TableView) loadMoreData() tea.Cmd {
 	iterator := tv.iterator
+	transform := tv.transform
 	return func() tea.Msg {
 		msg := tableItemMsg{view: tv}
 		if iterator == nil {
@@ -165,14 +167,10 @@ func (tv *TableView) loadMoreData() tea.Cmd {
 			return msg
 		}
 		item := iterator.Current()
-		if hasRaw, ok := item.(hasRawJSON); ok {
-			msg.result = gjson.Parse(hasRaw.RawJSON())
-			return msg
-		}
-		jsonBytes, err := json.Marshal(item)
+		jsonData, err := marshalExplorerItem(item, transform)
 		msg.err = err
 		if err == nil {
-			msg.result = gjson.ParseBytes(jsonBytes)
+			msg.result = gjson.Parse(jsonData)
 		}
 		return msg
 	}
@@ -316,7 +314,7 @@ type hasRawJSON interface {
 }
 
 // ExploreJSONStream explores JSON data loaded incrementally via an iterator
-func ExploreJSONStream[T any](title string, it Iterator[T]) error {
+func ExploreJSONStream[T any](title string, it Iterator[T], transform string) error {
 	anyIt := genericToAnyIterator(it)
 
 	preloadCount := 20
@@ -333,7 +331,7 @@ func ExploreJSONStream[T any](title string, it Iterator[T]) error {
 		return err
 	}
 
-	arrayJSONBytes, err := marshalItemsToJSONArray(items)
+	arrayJSONBytes, err := marshalItemsToJSONArray(items, transform)
 	if err != nil {
 		return err
 	}
@@ -347,6 +345,7 @@ func ExploreJSONStream[T any](title string, it Iterator[T]) error {
 	// Set iterator if there might be more data
 	if len(items) == preloadCount {
 		view.iterator = anyIt
+		view.transform = transform
 	}
 
 	viewer := &JSONViewer{stack: []JSONView{view}, root: title, rawMode: false, help: help.New()}
@@ -358,7 +357,27 @@ func ExploreJSONStream[T any](title string, it Iterator[T]) error {
 	return err
 }
 
-func marshalItemsToJSONArray(items []any) ([]byte, error) {
+// marshalExplorerItem applies the projection once, before a value becomes row data.
+func marshalExplorerItem(item any, transform string) (string, error) {
+	var data string
+	if hasRaw, ok := item.(hasRawJSON); ok {
+		data = hasRaw.RawJSON()
+	} else {
+		jsonData, err := json.Marshal(item)
+		if err != nil {
+			return "", err
+		}
+		data = string(jsonData)
+	}
+	if transform != "" {
+		if result := gjson.Get(data, transform); result.Exists() {
+			data = result.Raw
+		}
+	}
+	return data, nil
+}
+
+func marshalItemsToJSONArray(items []any, transform string) ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteByte('[')
 
@@ -366,15 +385,11 @@ func marshalItemsToJSONArray(items []any) ([]byte, error) {
 		if i > 0 {
 			buf.WriteByte(',')
 		}
-		if hasRaw, ok := item.(hasRawJSON); ok {
-			buf.WriteString(hasRaw.RawJSON())
-		} else {
-			jsonData, err := json.Marshal(item)
-			if err != nil {
-				return nil, err
-			}
-			buf.Write(jsonData)
+		jsonData, err := marshalExplorerItem(item, transform)
+		if err != nil {
+			return nil, err
 		}
+		buf.WriteString(jsonData)
 	}
 
 	buf.WriteByte(']')
@@ -634,6 +649,10 @@ func newArrayOfObjectsTableView(path string, data gjson.Result, array []gjson.Re
 		}
 	}
 
+	// Empty objects have no columns; keep their values and later items visible.
+	if len(columns) == 0 {
+		return newArrayTableView(path, data, array, raw)
+	}
 	rows := make([]table.Row, 0, len(array))
 	rowData := make([]gjson.Result, 0, len(array))
 

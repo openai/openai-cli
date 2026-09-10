@@ -48,7 +48,7 @@ func TestMarshalItemsToJSONArray_WithHasRawJSON(t *testing.T) {
 		rawJSONItem{raw: `{"id":2,"name":"bob"}`},
 	}
 
-	got, err := marshalItemsToJSONArray(items)
+	got, err := marshalItemsToJSONArray(items, "")
 	require.NoError(t, err)
 	require.JSONEq(t, `[{"id":1,"name":"alice"},{"id":2,"name":"bob"}]`, string(got))
 }
@@ -183,7 +183,7 @@ func TestMarshalItemsToJSONArray_WithoutHasRawJSON(t *testing.T) {
 		map[string]any{"id": 2, "name": "bob"},
 	}
 
-	got, err := marshalItemsToJSONArray(items)
+	got, err := marshalItemsToJSONArray(items, "")
 	require.NoError(t, err)
 	require.JSONEq(t, `[{"id":1,"name":"alice"},{"id":2,"name":"bob"}]`, string(got))
 }
