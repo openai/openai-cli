@@ -788,6 +788,19 @@ func init() {
 				},
 			},
 			{
+				Name:     "live:sessions",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&liveSessionsAccept,
+					&liveSessionsDownloadRecording,
+					&liveSessionsFork,
+					&liveSessionsHangup,
+					&liveSessionsRefer,
+					&liveSessionsReject,
+				},
+			},
+			{
 				Name:     "realtime:client-secrets",
 				Category: "API RESOURCE",
 				Suggest:  true,
