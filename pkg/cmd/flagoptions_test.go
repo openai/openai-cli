@@ -156,6 +156,14 @@ func TestEmbedFiles(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "non-existent file with backslash path @ prefix (error)",
+			input: map[string]any{
+				"missing": "@subfolder\\missingfile",
+			},
+			want:    nil,
+			wantErr: true,
+		},
+		{
 			name: "non-file-like thing with @ prefix",
 			input: map[string]any{
 				"username":        "@user",
