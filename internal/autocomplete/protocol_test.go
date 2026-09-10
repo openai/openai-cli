@@ -63,6 +63,10 @@ func TestShellCompletionProtocol(t *testing.T) {
 	}{
 		{"root value", []string{"--format", "candidate-"}, 11, "", ""},
 		{"nested local value", []string{"models", "list", "--max-items", "candidate-"}, 11, "", ""},
+		{"nested inherited name", []string{"models", "list", "--fo"}, 0, "--format\n", "--format\n"},
+		{"nested inherited value", []string{"models", "list", "--format", "candidate-"}, 11, "", ""},
+		{"nested inherited file", []string{"models", "list", "--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
+		{"nested explicit file prefix", []string{"models", "list", "--format", "@candidate-"}, 11, "", "@candidate-fixture.txt\n"},
 		{"file value", []string{"--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
 		{"spaced preceding value", []string{"--format", "two words", "--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
 		{"empty preceding value", []string{"--format", "", "--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
