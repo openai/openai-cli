@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.15.0](https://github.com/openai/openai-cli/compare/v1.14.0...v1.15.0) (2026-09-10)
+
+
+### Features
+
+* **api:** Add Live API ([#182](https://github.com/openai/openai-cli/issues/182)) ([764e7f5](https://github.com/openai/openai-cli/commit/764e7f56a8d91bc58a1a158b46fc47950545c5c4))
+
+
+### Chores
+
+* **deps:** update openai-go to v3.60.0 ([#173](https://github.com/openai/openai-cli/issues/173)) ([b8c81ec](https://github.com/openai/openai-cli/commit/b8c81ecdcb79aa56324b569de960505b68b86f97))
+
 ## [1.14.0](https://github.com/openai/openai-cli/compare/v1.13.0...v1.14.0) (2026-09-09)
 
 
