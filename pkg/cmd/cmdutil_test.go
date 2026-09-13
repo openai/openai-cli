@@ -424,6 +424,29 @@ func TestShowJSONIterator(t *testing.T) {
 	})
 }
 
+func TestShowJSONIteratorLimitDoesNotAdvancePager(t *testing.T) {
+	stdout, err := os.CreateTemp(t.TempDir(), "stdout")
+	require.NoError(t, err)
+	defer stdout.Close()
+
+	originalStdout := os.Stdout
+	os.Stdout = stdout
+	defer func() { os.Stdout = originalStdout }()
+
+	iter := &sliceIterator[map[string]any]{items: []map[string]any{
+		{"value": make([]int, 40)},
+		{"id": "not-visited"},
+	}}
+	err = ShowJSONIterator(iter, 1, ShowJSONOpts{
+		Format: "pretty",
+		Stderr: io.Discard,
+		Stdout: stdout,
+		Title:  "test",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, iter.index)
+}
+
 func TestExploreFallback(t *testing.T) {
 	t.Parallel()
 
