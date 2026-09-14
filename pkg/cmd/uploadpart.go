@@ -16,7 +16,7 @@ import (
 
 var uploadsPartsCreate = cli.Command{
 	Name:    "create",
-	Usage:   "Adds a\n[Part](https://platform.openai.com/docs/api-reference/uploads/part-object) to an\n[Upload](https://platform.openai.com/docs/api-reference/uploads/object) object.\nA Part represents a chunk of bytes from the file you are trying to upload.",
+	Usage:   "Adds a\n[Part](https://developers.openai.com/api/reference/resources/uploads/subresources/parts)\nto an [Upload](https://developers.openai.com/api/reference/resources/uploads)\nobject. A Part represents a chunk of bytes from the file you are trying to\nupload.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{

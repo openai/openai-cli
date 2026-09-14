@@ -68,7 +68,7 @@ var realtimeCallsAccept = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.Flag[map[string]any]{
 			Name:     "prompt",
-			Usage:    "Reference to a prompt template and its variables.\n[Learn more](https://platform.openai.com/docs/guides/text?api-mode=responses#reusable-prompts).\n",
+			Usage:    "Reference to a prompt template and its variables.\n[Learn more](https://developers.openai.com/api/docs/guides/text?api-mode=responses#version-prompts-in-code).\n",
 			BodyPath: "prompt",
 		},
 		&requestflag.Flag[map[string]any]{

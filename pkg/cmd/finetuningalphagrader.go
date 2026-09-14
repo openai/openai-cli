@@ -27,13 +27,13 @@ var fineTuningAlphaGradersRun = cli.Command{
 		},
 		&requestflag.Flag[string]{
 			Name:     "model-sample",
-			Usage:    "The model sample to be evaluated. This value will be used to populate \nthe `sample` namespace. See [the guide](https://platform.openai.com/docs/guides/graders) for more details.\nThe `output_json` variable will be populated if the model sample is a \nvalid JSON string.\n \n",
+			Usage:    "The model sample to be evaluated. This value will be used to populate\nthe `sample` namespace. See [the guide](https://developers.openai.com/api/docs/guides/graders) for more details.\nThe `output_json` variable will be populated if the model sample is a\nvalid JSON string.\n",
 			Required: true,
 			BodyPath: "model_sample",
 		},
 		&requestflag.Flag[any]{
 			Name:     "item",
-			Usage:    "The dataset item provided to the grader. This will be used to populate \nthe `item` namespace. See [the guide](https://platform.openai.com/docs/guides/graders) for more details. \n",
+			Usage:    "The dataset item provided to the grader. This will be used to populate\nthe `item` namespace. See [the guide](https://developers.openai.com/api/docs/guides/graders) for more details.\n",
 			BodyPath: "item",
 		},
 	},
