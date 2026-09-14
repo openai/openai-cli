@@ -1,6 +1,5 @@
 name: CI
-permissions:
-  contents: read
+permissions: {}
 on:
   push:
     branches:
@@ -14,46 +13,80 @@ jobs:
   lint:
     timeout-minutes: 10
     name: lint
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
-
-      - name: Bootstrap
-        run: ./scripts/bootstrap
 
       - name: Run lints
         run: ./scripts/lint
 
   build-artifacts:
-    timeout-minutes: 10
+    timeout-minutes: 30
     name: build artifacts
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
 
-      - name: Bootstrap
-        run: ./scripts/bootstrap
+      - name: Test vulnerability scan coverage
+        run: ./scripts/govulncheck-test
 
-      - name: Read GoReleaser version
-        id: goreleaser-version
-        run: echo "version=$(cat .goreleaser-version)" >> "$GITHUB_OUTPUT"
+      - name: Check shipped CLI for reachable vulnerabilities
+        run: ./scripts/govulncheck
 
-      - name: Run goreleaser
-        uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.1.0
-        with:
-          version: ${{ steps.goreleaser-version.outputs.version }}
-          args: release --snapshot --clean --skip=publish
+      - name: Test verified GoReleaser installer
+        run: ./scripts/test-goreleaser-installer
+
+      - name: Set up verified GoReleaser
+        id: goreleaser
+        uses: ./.github/actions/setup-goreleaser
+
+      - name: Verify local and historical release preflight
+        run: go test ./scripts -run '^Test(Local|Historical)ReleasePreflight$' -count=1
         env:
+          GORELEASER_EXECUTABLE: ${{ steps.goreleaser.outputs.executable }}
+
+      - name: Generate release inputs
+        run: |
+          mkdir -p completions
+          go run ./cmd/openai/main.go @completion bash > completions/openai.bash
+          go run ./cmd/openai/main.go @completion zsh > completions/openai.zsh
+          go run ./cmd/openai/main.go @completion fish > completions/openai.fish
+          go run ./cmd/openai/main.go @manpages -o man
+
+          for directory in completions man man/man1; do
+            [[ -d "$directory" && ! -L "$directory" ]] || exit 1
+          done
+          for path in completions/openai.bash completions/openai.zsh completions/openai.fish man/man1/openai.1.gz; do
+            [[ -f "$path" && ! -L "$path" ]] || exit 1
+            size="$(wc -c < "$path")"
+            [[ "$size" -gt 0 && "$size" -le 10485760 ]] || exit 1
+          done
+
+          exclude_file="$(git rev-parse --git-path info/exclude)"
+          printf '%s\n' \
+            '/completions/openai.bash' \
+            '/completions/openai.zsh' \
+            '/completions/openai.fish' \
+            '/man/man1/openai.1.gz' \
+            >> "$exclude_file"
+
+      - name: Run GoReleaser
+        run: |
+          "$GORELEASER_EXECUTABLE" release --snapshot --clean --skip=publish
+        env:
+          GORELEASER_EXECUTABLE: ${{ steps.goreleaser.outputs.executable }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build:
@@ -62,8 +95,7 @@ jobs:
     needs:
       - build-artifacts
     if: always()
-    permissions:
-      contents: read
+    permissions: {}
     runs-on: ubuntu-latest
     steps:
       - name: Require successful build
@@ -78,16 +110,18 @@ jobs:
   test:
     timeout-minutes: 10
     name: test
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
 
-      - name: Bootstrap
-        run: ./scripts/bootstrap
+      - name: Verify mock tooling security
+        run: node scripts/mock-tools/security.test.js
 
       - name: Run tests
         run: ./scripts/test
