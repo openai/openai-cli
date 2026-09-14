@@ -36,7 +36,7 @@ var betaThreadsRunsStepsRetrieve = cli.Command{
 		},
 		&requestflag.Flag[[]string]{
 			Name:      "include",
-			Usage:     "A list of additional fields to include in the response. Currently the only supported value is `step_details.tool_calls[*].file_search.results[*].content` to fetch the file search result content.\n\nSee the [file search tool documentation](https://platform.openai.com/docs/assistants/tools/file-search#customizing-file-search-settings) for more information.\n",
+			Usage:     "A list of additional fields to include in the response. Currently the only supported value is `step_details.tool_calls[*].file_search.results[*].content` to fetch the file search result content.\n\nSee the [file search tool documentation](https://developers.openai.com/api/docs/guides/tools-file-search#retrieval-customization) for more information.\n",
 			QueryPath: "include",
 		},
 	},
@@ -71,7 +71,7 @@ var betaThreadsRunsStepsList = cli.Command{
 		},
 		&requestflag.Flag[[]string]{
 			Name:      "include",
-			Usage:     "A list of additional fields to include in the response. Currently the only supported value is `step_details.tool_calls[*].file_search.results[*].content` to fetch the file search result content.\n\nSee the [file search tool documentation](https://platform.openai.com/docs/assistants/tools/file-search#customizing-file-search-settings) for more information.\n",
+			Usage:     "A list of additional fields to include in the response. Currently the only supported value is `step_details.tool_calls[*].file_search.results[*].content` to fetch the file search result content.\n\nSee the [file search tool documentation](https://developers.openai.com/api/docs/guides/tools-file-search#retrieval-customization) for more information.\n",
 			QueryPath: "include",
 		},
 		&requestflag.Flag[int64]{

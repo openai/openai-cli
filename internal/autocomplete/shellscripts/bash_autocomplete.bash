@@ -6,7 +6,12 @@ ____APPNAME___bash_autocomplete() {
     local IFS=$'\n'
     cur="${COMP_WORDS[COMP_CWORD]}"
 
-    completions=$(COMPLETION_STYLE=bash "${COMP_WORDS[0]}" __complete -- "${COMP_WORDS[@]:1:$COMP_CWORD-1}" "$cur" 2>/dev/null)
+    local -a completion_args=()
+    local word_index
+    for ((word_index = 1; word_index <= COMP_CWORD; word_index++)); do
+      completion_args+=("${COMP_WORDS[word_index]}")
+    done
+    completions=$(COMPLETION_STYLE=bash "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
     exit_code=$?
 
     local last_token="$cur"

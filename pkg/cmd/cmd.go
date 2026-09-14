@@ -289,6 +289,14 @@ func init() {
 				},
 			},
 			{
+				Name:     "safety:alerts",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&safetyAlertsRetrieve,
+				},
+			},
+			{
 				Name:     "beta:responses",
 				Category: "API RESOURCE",
 				Suggest:  true,
@@ -778,6 +786,19 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&responsesInputTokensCount,
+				},
+			},
+			{
+				Name:     "live:sessions",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&liveSessionsAccept,
+					&liveSessionsDownloadRecording,
+					&liveSessionsFork,
+					&liveSessionsHangup,
+					&liveSessionsRefer,
+					&liveSessionsReject,
 				},
 			},
 			{
