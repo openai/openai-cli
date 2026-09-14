@@ -41,6 +41,10 @@ func (e *encoder) marshal(value any, writer *multipart.Writer) error {
 }
 
 func (e *encoder) encodeValue(key string, val reflect.Value, writer *multipart.Writer) error {
+	if err := validateMIMEHeaderValue(key, "field name"); err != nil {
+		return err
+	}
+
 	if !val.IsValid() {
 		return writer.WriteField(key, "")
 	}
@@ -166,6 +170,15 @@ func escapeQuotes(s string) string {
 	return quoteEscaper.Replace(s)
 }
 
+func validateMIMEHeaderValue(value, component string) error {
+	for i := 0; i < len(value); i++ {
+		if (value[i] < ' ' && value[i] != '\t') || value[i] == '\x7f' {
+			return fmt.Errorf("apiform: invalid control character in multipart %s", component)
+		}
+	}
+	return nil
+}
+
 func (e *encoder) encodeReader(key string, val reflect.Value, writer *multipart.Writer) error {
 	reader, ok := val.Convert(reflect.TypeOf((*io.Reader)(nil)).Elem()).Interface().(io.Reader)
 	if !ok {
@@ -186,6 +199,13 @@ func (e *encoder) encodeReader(key string, val reflect.Value, writer *multipart.
 	// Get content type if available
 	if typed, ok := reader.(interface{ ContentType() string }); ok {
 		contentType = typed.ContentType()
+	}
+
+	if err := validateMIMEHeaderValue(filename, "filename"); err != nil {
+		return err
+	}
+	if err := validateMIMEHeaderValue(contentType, "content type"); err != nil {
+		return err
 	}
 
 	h := make(textproto.MIMEHeader)

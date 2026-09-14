@@ -1,14 +1,46 @@
 # Security Policy
 
-## Reporting Security Issues
+## Canonical threat model
 
-To report a security issue in the OpenAI CLI, email disclosure@openai.com.
+This file is the authority for private vulnerability reporting and disclosure
+expectations. The repository's canonical, detailed threat model and
+trust-boundary guidance live in
+[docs/architecture/security-model.md](docs/architecture/security-model.md).
+Codex Security scans and reviewers should use that document from the scanned
+revision when deciding which inputs cross a security boundary and what
+constitutes a meaningful privilege gain.
 
-Please follow OpenAI's coordinated vulnerability disclosure policy:
-https://openai.com/policies/coordinated-vulnerability-disclosure-policy
+## Reporting a vulnerability
 
-Do not disclose the issue publicly until OpenAI has had a reasonable opportunity to investigate and address it.
+Report suspected vulnerabilities in the OpenAI CLI privately by emailing
+disclosure@openai.com. Follow OpenAI's
+[coordinated vulnerability disclosure policy](https://openai.com/policies/coordinated-vulnerability-disclosure-policy).
 
-## Scope
+Do not report security vulnerabilities through public GitHub issues, pull
+requests, or discussions.
 
-This policy applies to the OpenAI CLI and its release artifacts. For security issues in OpenAI services or other OpenAI products, use the same OpenAI disclosure process.
+This policy covers the OpenAI CLI, source code in this repository, and official
+release artifacts. For security issues in other OpenAI products or services,
+use the same OpenAI disclosure process.
+
+## What to include
+
+Please include:
+
+- The affected package or product and version, release artifact, or commit.
+- A clear description of the potential security impact.
+- Sanitized steps to reproduce the issue or a minimal proof of concept.
+- Relevant environment details, such as operating system, architecture, and
+  installation method.
+- Any known mitigations or workarounds.
+
+Do not include live credentials, API keys, customer data, or unredacted
+sensitive logs.
+Remove access tokens, private keys, authorization headers, signed URLs, and
+sensitive request or response content before sharing supporting information.
+
+## Coordinated disclosure
+
+Please give the maintainers a reasonable opportunity to investigate and
+address the issue before public disclosure.
+Thank you for helping keep the OpenAI CLI and its users secure.
