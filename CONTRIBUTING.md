@@ -14,9 +14,10 @@ scripts before running:
 ./scripts/lint
 ```
 
-`./scripts/bootstrap` downloads Go dependencies and runs `go mod tidy`, which
-can change `go.mod` or `go.sum`. Inspect the resulting diff and do not commit
-unrelated dependency changes. `./scripts/lint` builds the CLI. The OpenAPI mock
+`./scripts/bootstrap` checks `go.mod` and `go.sum` with `go mod tidy -diff`.
+If changes are needed, it prints a diff and exits without rewriting the files.
+After a successful check, it downloads Go dependencies with `go mod download`
+and verifies them with `go mod verify`. `./scripts/lint` builds the CLI. The OpenAPI mock
 server's pinned source and runtime are installed automatically when running integration
 tests; they are not required to build the CLI.
 
