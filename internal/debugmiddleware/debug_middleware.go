@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -32,11 +33,11 @@ type RequestLogger struct {
 	sensitiveHeaders []string                            // field for testability; usually sensitiveHeaders
 }
 
-// NewRequestLogger returns a new RequestLogger instance with default options.
-func NewRequestLogger() *RequestLogger {
+// NewRequestLogger redacts known credential headers and any additional header names.
+func NewRequestLogger(additionalSensitiveHeaders ...string) *RequestLogger {
 	return &RequestLogger{
 		logger:           log.Default(),
-		sensitiveHeaders: sensitiveHeaders,
+		sensitiveHeaders: slices.Concat(sensitiveHeaders, additionalSensitiveHeaders),
 	}
 }
 
@@ -107,6 +108,13 @@ func (m *RequestLogger) redactHeaders(headers http.Header) http.Header {
 	redactedHeaders := headers.Clone()
 
 	for header, values := range redactedHeaders {
+		if slices.ContainsFunc(m.sensitiveHeaders, func(name string) bool { return strings.EqualFold(header, name) }) {
+			for i := range values {
+				values[i] = redactedPlaceholder
+			}
+			continue
+		}
+
 		if strings.EqualFold(header, "Authorization") {
 			for i, value := range values {
 				// Keep the authentication scheme for more useful debug logging.
@@ -115,16 +123,6 @@ func (m *RequestLogger) redactHeaders(headers http.Header) http.Header {
 				} else {
 					values[i] = redactedPlaceholder
 				}
-			}
-			continue
-		}
-
-		for _, sensitiveHeader := range m.sensitiveHeaders {
-			if strings.EqualFold(header, sensitiveHeader) {
-				for i := range values {
-					values[i] = redactedPlaceholder
-				}
-				break
 			}
 		}
 	}
