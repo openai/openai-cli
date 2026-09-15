@@ -138,65 +138,61 @@ func (tv *TableView) Update(msg tea.Msg, raw bool) tea.Cmd {
 		// Load more when we're at the last row
 		if cursor == totalRows-1 {
 			tv.isLoading = true
-			return tv.loadMoreData(raw)
+			return tv.loadMoreData()
 		}
 	}
 
 	return cmd
 }
 
-func (tv *TableView) loadMoreData(raw bool) tea.Cmd {
+// tableItemMsg transfers iterator work back to the UI loop. Commands must not
+// mutate a view while key and resize messages are being processed.
+type tableItemMsg struct {
+	view   *TableView
+	result gjson.Result
+	err    error
+}
+
+func (tv *TableView) loadMoreData() tea.Cmd {
+	iterator := tv.iterator
 	return func() tea.Msg {
-		if tv.iterator == nil {
-			return nil
+		msg := tableItemMsg{view: tv}
+		if iterator == nil {
+			return msg
 		}
-
-		if !tv.iterator.Next() {
-			tv.isLoading = false
-			return tv.iterator.Err()
+		if !iterator.Next() {
+			msg.err = iterator.Err()
+			return msg
 		}
-
-		obj := tv.iterator.Current()
-		var result gjson.Result
-		if jsonBytes, err := json.Marshal(obj); err != nil {
-			return err
-		} else {
-			result = gjson.ParseBytes(jsonBytes)
+		item := iterator.Current()
+		if hasRaw, ok := item.(hasRawJSON); ok {
+			msg.result = gjson.Parse(hasRaw.RawJSON())
+			return msg
 		}
-
-		if !result.Exists() {
-			tv.isLoading = false
-			return nil
+		jsonBytes, err := json.Marshal(item)
+		msg.err = err
+		if err == nil {
+			msg.result = gjson.ParseBytes(jsonBytes)
 		}
-
-		// Add the new item to our data
-		tv.rowData = append(tv.rowData, result)
-
-		// Add new row to the table
-		newRow := table.Row{formatValue(result, raw)}
-
-		// For array of objects, we need to format according to columns
-		if len(tv.columns) > 1 && result.IsObject() {
-			newRow = make(table.Row, len(tv.columns))
-			for i, col := range tv.columns {
-				key := col.Title
-				if i < len(tv.columnKeys) {
-					key = tv.columnKeys[i]
-				}
-				newRow[i] = formatValue(result.Get(key), raw)
-			}
-		}
-
-		rows := tv.table.Rows()
-		rows = append(rows, newRow)
-		tv.table.SetRows(rows)
-
-		// Resize columns to accommodate the new data
-		tv.Resize(tv.width, tv.height)
-
-		tv.isLoading = false
-		return nil
+		return msg
 	}
+}
+
+func (tv *TableView) appendItem(result gjson.Result, raw bool) {
+	tv.rowData = append(tv.rowData, result)
+	newRow := table.Row{formatValue(result, raw)}
+	if len(tv.columns) > 1 && result.IsObject() {
+		newRow = make(table.Row, len(tv.columns))
+		for i, col := range tv.columns {
+			key := col.Title
+			if i < len(tv.columnKeys) {
+				key = tv.columnKeys[i]
+			}
+			newRow[i] = formatValue(result.Get(key), raw)
+		}
+	}
+	tv.table.SetRows(append(tv.table.Rows(), newRow))
+	tv.Resize(tv.width, tv.height)
 }
 
 func (tv *TableView) Resize(width, height int) {
@@ -280,7 +276,7 @@ func (tv *TextView) Resize(width, height int) {
 	h := height - heightOffset
 	if !tv.ready {
 		tv.viewport = viewport.New(width, h)
-		tv.viewport.SetContent(wordwrap.String(sanitizeTerminalString(tv.data.Str), width))
+		tv.viewport.SetContent(wordwrap.String(SanitizeTerminalString(tv.data.Str), width))
 		tv.ready = true
 		return
 	}
@@ -398,6 +394,18 @@ func (v *JSONViewer) resize(width, height int) {
 
 func (v *JSONViewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tableItemMsg:
+		// A load can finish while a nested view is active.
+		for _, view := range v.stack {
+			if view == msg.view {
+				msg.view.isLoading = false
+				if msg.err == nil && msg.result.Exists() {
+					msg.view.appendItem(msg.result, v.rawMode)
+				}
+				break
+			}
+		}
+		return v, nil
 	case tea.WindowSizeMsg:
 		v.resize(msg.Width-borderPadding, msg.Height)
 		return v, nil
@@ -426,9 +434,17 @@ func (v *JSONViewer) getSelectedContent() string {
 		return v.current().GetData().Raw
 	}
 
-	selected := tableView.rowData[tableView.table.Cursor()]
+	// An empty array or object builds a table with no rows, so there is no row
+	// under the cursor to print. Fall back to the container itself, which is what
+	// the view is already displaying.
+	cursor := tableView.table.Cursor()
+	if cursor < 0 || cursor >= len(tableView.rowData) {
+		return tableView.GetData().Raw
+	}
+
+	selected := tableView.rowData[cursor]
 	if selected.Type == gjson.String {
-		return sanitizeTerminalString(selected.Str)
+		return SanitizeTerminalString(selected.Str)
 	}
 	return selected.Raw
 }
@@ -472,7 +488,7 @@ func quoteString(s string) string {
 	// Replace backslashes and quotes with escaped versions
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "\"", "\\\"")
-	s = sanitizeTerminalString(s)
+	s = SanitizeTerminalString(s)
 	return stringLiteralStyle.Render("\"" + s + "\"")
 }
 
@@ -500,14 +516,21 @@ func (v *JSONViewer) toggleRaw() (tea.Model, tea.Cmd) {
 	v.rawMode = !v.rawMode
 
 	for i, view := range v.stack {
+		if tv, ok := view.(*TableView); ok && tv.data.IsArray() {
+			// rowData includes completed lazy loads. Rebuild only the presentation,
+			// retaining the view identity and any pending iterator command.
+			var rendered *TableView
+			if isArrayOfObjects(tv.rowData) {
+				rendered = newArrayOfObjectsTableView(tv.path, tv.data, tv.rowData, v.rawMode)
+			} else {
+				rendered = newArrayTableView(tv.path, tv.data, tv.rowData, v.rawMode)
+			}
+			tv.table, tv.columns, tv.columnKeys = rendered.table, rendered.columns, rendered.columnKeys
+			continue
+		}
 		viewWithRaw, err := newView(view.GetPath(), view.GetData(), v.rawMode)
 		if err != nil {
 			return v, tea.Printf("Error: %s", err)
-		}
-		if newTV, ok := viewWithRaw.(*TableView); ok {
-			if tv, ok := view.(*TableView); ok && tv.iterator != nil {
-				newTV.iterator = tv.iterator
-			}
 		}
 		v.stack[i] = viewWithRaw
 	}
@@ -612,7 +635,7 @@ func newArrayOfObjectsTableView(path string, data gjson.Result, array []gjson.Re
 		for _, key := range item.Get("@keys").Array() {
 			if _, exists := keySet[key.Str]; !exists {
 				keySet[key.Str] = struct{}{}
-				title := sanitizeTerminalString(key.Str)
+				title := SanitizeTerminalString(key.Str)
 				columns = append(columns, table.Column{Title: title, Width: defaultColumnWidth})
 				columnKeys = append(columnKeys, key.Str)
 			}
@@ -651,7 +674,7 @@ func newObjectTableView(path string, data gjson.Result, raw bool) *TableView {
 
 	for _, key := range keys {
 		value := data.Get(key.Str)
-		title := sanitizeTerminalString(key.Str)
+		title := SanitizeTerminalString(key.Str)
 		rows = append(rows, table.Row{title, formatValue(value, raw)})
 		rowData = append(rowData, value)
 	}
@@ -709,7 +732,7 @@ func formatValue(value gjson.Result, raw bool) string {
 	case value.IsArray():
 		return formatArray(value)
 	case value.Type == gjson.String:
-		return sanitizeTerminalString(value.Str)
+		return SanitizeTerminalString(value.Str)
 	default:
 		return value.Raw
 	}
@@ -721,7 +744,7 @@ func formatObject(value gjson.Result) string {
 
 	for i, key := range keys {
 		val := value.Get(key.Str)
-		keyStrs[i] = formatObjectKey(sanitizeTerminalString(key.Str), val)
+		keyStrs[i] = formatObjectKey(SanitizeTerminalString(key.Str), val)
 	}
 
 	return "{" + strings.Join(keyStrs, ", ") + "}"
@@ -734,7 +757,7 @@ func formatObjectKey(key string, val gjson.Result) string {
 	case val.IsArray():
 		return key + ":[…]"
 	case val.Type == gjson.String:
-		str := sanitizeTerminalString(val.Str)
+		str := SanitizeTerminalString(val.Str)
 		if lipgloss.Width(str) <= maxPreviewLength {
 			return fmt.Sprintf(`%s:"%s"`, key, str)
 		}
