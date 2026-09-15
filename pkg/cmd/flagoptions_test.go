@@ -245,6 +245,35 @@ func TestEmbedFiles(t *testing.T) {
 	}
 }
 
+func TestEmbedFilesBackslashPath(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{"missing": "@subfolder\\missingfile"}
+
+	for _, style := range []struct {
+		name  string
+		style FileEmbedStyle
+	}{
+		{"text", EmbedText},
+		{"io.Reader", EmbedIOReader},
+	} {
+		t.Run("literal fallback on darwin "+style.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := embedFilesForOS(input, style.style, nil, "darwin")
+			require.NoError(t, err)
+			require.Equal(t, input, got)
+		})
+
+		t.Run("error on windows "+style.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := embedFilesForOS(input, style.style, nil, "windows")
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestEmbedFilesStdin(t *testing.T) {
 	t.Parallel()
 
