@@ -15,6 +15,7 @@ import (
 
 func main() {
 	app := cmd.Command
+	app.Flags = append(app.Flags, cmd.NewRequestHeaderFlag())
 
 	if len(os.Args) > 1 && os.Args[1] == "__complete" {
 		prepareForAutocomplete(app)

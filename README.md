@@ -83,6 +83,7 @@ For details about specific commands, use the `--help` flag.
 | `OPENAI_ORG_ID` | no | `null` |
 | `OPENAI_PROJECT_ID` | no | `null` |
 | `OPENAI_WEBHOOK_SECRET` | no | `null` |
+| `OPENAI_CUSTOM_HEADERS` | no | `null` |
 | `OPENAI_MTLS_CLIENT_CERT_FILE` | no | `null` |
 | `OPENAI_MTLS_CLIENT_KEY_FILE` | no | `null` |
 | `OPENAI_UNTRUSTED_STDIN` | no | `false` |
@@ -100,10 +101,43 @@ For details about specific commands, use the `--help` flag.
 - `--debug` - Enable debug logging. This includes HTTP request/response details and bodies; do not share debug logs if they may contain sensitive payloads.
 - `--version`, `-v` - Show the CLI version
 - `--base-url` - Use a custom API backend URL
+- `--header`, `-H` - Add a literal request header as `Name: Value`; repeat for multiple headers
 - `--format` - Change the output format (`auto`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`)
 - `--format-error` - Change the output format for errors (`auto`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`)
 - `--transform` - Transform the data output using [GJSON syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md)
 - `--transform-error` - Transform the error output using [GJSON syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md)
+
+### Request headers
+
+Use `--header` or `-H` before or after a resource command:
+
+```sh
+openai --header 'X-Trace-ID: example-123' models list \
+  -H 'X-Client-Label: local,manual'
+```
+
+Values are literal: commas and colons are preserved, and `@` prefixes do not
+read files. Surrounding spaces and tabs are trimmed from values. `-H 'X-Example:'`
+sends an empty value. If a name is repeated, the last value wins regardless of
+case, overriding default and endpoint-specific headers. Headers managed by the
+HTTP transport, such as `Host` and `Content-Length`, retain the transport's
+behavior. Supplied header values are hidden in help and redacted in debug logs.
+
+For credential-bearing headers, have a secret manager or trusted launcher set
+`OPENAI_CUSTOM_HEADERS` directly in the CLI's environment. This keeps credentials
+out of command arguments and avoids typing literal secrets into shell history.
+The variable accepts one `Name: Value` entry per line. For example, with
+non-sensitive values:
+
+```sh
+export OPENAI_CUSTOM_HEADERS='X-Trace-ID: example-123
+X-Client-Label: local,manual'
+openai models list
+```
+
+`--header` and endpoint-specific header flags override matching environment
+entries. Environment header values are also redacted in debug logs. Use
+`OPENAI_API_KEY` and `OPENAI_ADMIN_KEY` for standard API and admin authentication.
 
 ### Mutual TLS
 

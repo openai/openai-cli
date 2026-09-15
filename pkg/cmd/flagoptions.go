@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -327,6 +328,17 @@ func flagOptions(
 	// "-". In this case, we won't attempt to read it as a JSON/YAML blob for options setting.
 	ignoreStdin bool,
 ) (options []option.RequestOption, err error) {
+	// Validate literal headers before reading any request input. Flag validators
+	// include the supplied value in errors, which can expose credentials.
+	headers, err := requestHeaders(cmd)
+	if err != nil {
+		return nil, err
+	}
+	headerOptions := make([]option.RequestOption, 0, len(headers))
+	for name, values := range headers {
+		headerOptions = append(headerOptions, option.WithHeader(name, values[0]))
+	}
+
 	stdinSecurity, err := newStdinSecurity()
 	if err != nil {
 		return nil, err
@@ -342,7 +354,15 @@ func flagOptions(
 	}()
 
 	if cmd.Bool("debug") {
-		options = append(options, option.WithMiddleware(debugmiddleware.NewRequestLogger().Middleware()))
+		sensitiveHeaders := slices.Collect(maps.Keys(headers))
+		// The SDK reads environment headers. Match its name parsing so these
+		// values receive the same redaction as explicit header flags.
+		for line := range strings.SplitSeq(os.Getenv("OPENAI_CUSTOM_HEADERS"), "\n") {
+			if name, _, ok := strings.Cut(line, ":"); ok {
+				sensitiveHeaders = append(sensitiveHeaders, strings.TrimSpace(name))
+			}
+		}
+		options = append(options, option.WithMiddleware(debugmiddleware.NewRequestLogger(sensitiveHeaders...).Middleware()))
 	}
 
 	requestContents := requestflag.ExtractRequestContents(cmd)
@@ -542,7 +562,7 @@ func flagOptions(
 		// If there is a body root parameter, that will handle setting the request body, we don't need to do it here.
 		for _, flag := range cmd.Flags {
 			if toSend, ok := flag.(requestflag.InRequest); ok && toSend.IsBodyRoot() {
-				return options, nil
+				return append(options, headerOptions...), nil
 			}
 		}
 		if bodyBytes, ok := requestContents.Body.([]byte); ok {
@@ -557,7 +577,7 @@ func flagOptions(
 		panic("Invalid body content type!")
 	}
 
-	return options, nil
+	return append(options, headerOptions...), nil
 }
 
 // FilePathValue is a string wrapper that marks a value as a file path whose contents should be read
