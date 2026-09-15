@@ -18,7 +18,7 @@ import (
 
 var liveSessionsAccept = requestflag.WithInnerFlags(cli.Command{
 	Name:    "accept",
-	Usage:   "Accept an incoming SIP call with Live startup configuration.",
+	Usage:   "Accept an incoming SIP call. Supply session with type live, the model, and\nstartup configuration. Before accepting calls, follow the\n[Live prompting guide](https://developers.openai.com/api/docs/guides/live-prompting)\nto write frontend conversation instructions and a separate backend prompt. SIP\nmedia format is negotiated; omit audio.format.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -154,7 +154,7 @@ var liveSessionsFork = requestflag.WithInnerFlags(cli.Command{
 
 var liveSessionsHangup = cli.Command{
 	Name:    "hangup",
-	Usage:   "Hang up a Live session.",
+	Usage:   "End a SIP call identified by session_id.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -169,7 +169,7 @@ var liveSessionsHangup = cli.Command{
 
 var liveSessionsRefer = cli.Command{
 	Name:    "refer",
-	Usage:   "Transfer a Live SIP call to another destination.",
+	Usage:   "Transfer a SIP call to another destination. Supply a nonblank target_uri for the\nSIP Refer-To header.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -190,7 +190,7 @@ var liveSessionsRefer = cli.Command{
 
 var liveSessionsReject = cli.Command{
 	Name:    "reject",
-	Usage:   "Reject an incoming SIP call.",
+	Usage:   "Reject an incoming SIP call. Send a required SIP rejection status_code between\n300 and 699.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
