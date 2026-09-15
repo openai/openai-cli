@@ -137,11 +137,9 @@ type RequestContents struct {
 
 func applyStdinDataToFlags(cmd *cli.Command, data map[string]any, onSet func(cli.Flag)) error {
 	for _, flag := range cmd.Flags {
-		if flag.IsSet() {
-			continue
-		}
-
-		// Handle inner flags: look for their value nested under the outer flag's body path.
+		// Handle inner flags before the generic IsSet check. InnerFlag tracks whether
+		// it has ever been set, while array-of-object precedence is scoped to the
+		// trailing element of the outer value.
 		if inner, ok := flag.(HasOuterFlag); ok {
 			outer, outerOk := inner.GetOuterFlag().(InRequest)
 			if !outerOk || outer.GetBodyPath() == "" {
@@ -176,6 +174,10 @@ func applyStdinDataToFlags(cmd *cli.Command, data map[string]any, onSet func(cli
 			if err := setFlagFromStdin(flag, setVal, onSet); err != nil {
 				return err
 			}
+			continue
+		}
+
+		if flag.IsSet() {
 			continue
 		}
 

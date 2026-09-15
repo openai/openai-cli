@@ -32,6 +32,8 @@ type InnerFlag[
 	// map[string]any before SetInnerField runs. The hint is ignored for typed outer
 	// flags whose zero value already carries a dispatchable reflect.Kind.
 	OuterIsArrayOfObjects bool
+
+	hasBeenSet bool
 }
 
 // GetDataAliases returns the aliases recognized when parsing inner field keys from piped or flag YAML.
@@ -89,6 +91,7 @@ func (f *InnerFlag[T]) Set(name string, rawVal string) error {
 
 		if settableInnerField, ok := f.OuterFlag.(SettableInnerField); ok {
 			settableInnerField.SetInnerField(f.InnerField, parsedValue)
+			f.hasBeenSet = true
 		} else {
 			return fmt.Errorf("Cannot set inner field on %v", f.OuterFlag)
 		}
@@ -106,7 +109,7 @@ func (f *InnerFlag[T]) String() string {
 }
 
 func (f *InnerFlag[T]) IsSet() bool {
-	return false
+	return f.hasBeenSet
 }
 
 func (f *InnerFlag[T]) Names() []string {
