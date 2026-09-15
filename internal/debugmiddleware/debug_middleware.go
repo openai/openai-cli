@@ -17,8 +17,8 @@ type (
 
 const redactedPlaceholder = "<REDACTED>"
 
-// Headers known to contain sensitive information like an API key. Note that this exclude `Authorization`,
-// which is handled specially in `redactRequest` below.
+// Headers known to contain sensitive information like an API key. Note that this excludes `Authorization`,
+// which is handled specially in `redactHeaders` below.
 var sensitiveHeaders = []string{
 	"api-key",
 	"x-api-key",
@@ -51,11 +51,11 @@ func (m *RequestLogger) Middleware() Middleware {
 		}
 
 		resp, err := mn(req)
-		if err != nil {
+		if err != nil || resp == nil {
 			return resp, err
 		}
 
-		if respBytes, err := httputil.DumpResponse(resp, false); err == nil {
+		if respBytes, err := httputil.DumpResponse(m.redactResponse(resp), false); err == nil {
 			m.logger.Printf("Response Content:\n%s\n", respBytes)
 		}
 
@@ -66,39 +66,9 @@ func (m *RequestLogger) Middleware() Middleware {
 // redactRequest redacts sensitive information from the request for logging
 // purposes. If redaction is necessary, the request is cloned before mutating
 // the original and that clone is returned. As a small optimization, the
-// original is request is returned unchanged if no redaction is necessary.
+// original request is returned unchanged if no redaction is necessary.
 func (m *RequestLogger) redactRequest(req *http.Request) (*http.Request, error) {
-	redactedHeaders := req.Header.Clone()
-
-	// Notably, the clauses below are written so they can redact multiple
-	// headers of the same name if necessary.
-	if values := redactedHeaders.Values("Authorization"); len(values) > 0 {
-		redactedHeaders.Del("Authorization")
-
-		for _, value := range values {
-			// In case we're using something like a bearer token (e.g. `Bearer
-			// <my_token>`), keep the `Bearer` part for more debugging
-			// information.
-			if authKind, _, ok := strings.Cut(value, " "); ok {
-				redactedHeaders.Add("Authorization", authKind+" "+redactedPlaceholder)
-			} else {
-				redactedHeaders.Add("Authorization", redactedPlaceholder)
-			}
-		}
-	}
-
-	for _, header := range m.sensitiveHeaders {
-		values := redactedHeaders.Values(header)
-		if len(values) == 0 {
-			continue
-		}
-
-		redactedHeaders.Del(header)
-
-		for range values {
-			redactedHeaders.Add(header, redactedPlaceholder)
-		}
-	}
+	redactedHeaders := m.redactHeaders(req.Header)
 
 	if reflect.DeepEqual(req.Header, redactedHeaders) {
 		return req, nil
@@ -107,4 +77,57 @@ func (m *RequestLogger) redactRequest(req *http.Request) (*http.Request, error) 
 	redacted := req.Clone(req.Context())
 	redacted.Header = redactedHeaders
 	return redacted, nil
+}
+
+// redactResponse clones the response and redacts sensitive headers for logging.
+func (m *RequestLogger) redactResponse(resp *http.Response) *http.Response {
+	redacted := *resp
+	redacted.Header = m.redactResponseHeaders(resp.Header)
+	redacted.Trailer = m.redactResponseHeaders(resp.Trailer)
+
+	return &redacted
+}
+
+func (m *RequestLogger) redactResponseHeaders(headers http.Header) http.Header {
+	redactedHeaders := m.redactHeaders(headers)
+
+	// Redirect URLs can contain signed query parameters or embedded credentials.
+	for header, values := range redactedHeaders {
+		if strings.EqualFold(header, "Location") {
+			for i := range values {
+				values[i] = redactedPlaceholder
+			}
+		}
+	}
+
+	return redactedHeaders
+}
+
+func (m *RequestLogger) redactHeaders(headers http.Header) http.Header {
+	redactedHeaders := headers.Clone()
+
+	for header, values := range redactedHeaders {
+		if strings.EqualFold(header, "Authorization") {
+			for i, value := range values {
+				// Keep the authentication scheme for more useful debug logging.
+				if authKind, _, ok := strings.Cut(value, " "); ok {
+					values[i] = authKind + " " + redactedPlaceholder
+				} else {
+					values[i] = redactedPlaceholder
+				}
+			}
+			continue
+		}
+
+		for _, sensitiveHeader := range m.sensitiveHeaders {
+			if strings.EqualFold(header, sensitiveHeader) {
+				for i := range values {
+					values[i] = redactedPlaceholder
+				}
+				break
+			}
+		}
+	}
+
+	return redactedHeaders
 }

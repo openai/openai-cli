@@ -33,7 +33,7 @@ var batchesCreate = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.Flag[string]{
 			Name:     "input-file-id",
-			Usage:    "The ID of an uploaded file that contains requests for the new batch.\n\nSee [upload file](https://platform.openai.com/docs/api-reference/files/create) for how to upload a file.\n\nYour input file must be formatted as a [JSONL file](https://platform.openai.com/docs/api-reference/batch/request-input), and must be uploaded with the purpose `batch`. The file can contain up to 50,000 requests, and can be up to 200 MB in size.\n",
+			Usage:    "The ID of an uploaded file that contains requests for the new batch.\n\nSee [upload file](https://developers.openai.com/api/reference/resources/files/methods/create) for how to upload a file.\n\nYour input file must be formatted as a [JSONL file](https://developers.openai.com/api/docs/guides/batch#1-prepare-your-batch-file), and must be uploaded with the purpose `batch`. The file can contain up to 50,000 requests, and can be up to 200 MB in size.\n",
 			Required: true,
 			BodyPath: "input_file_id",
 		},

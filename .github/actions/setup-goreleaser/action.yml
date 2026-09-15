@@ -1,0 +1,16 @@
+name: Setup verified GoReleaser
+description: Install GoReleaser only after verifying a repository-reviewed archive digest
+outputs:
+  executable:
+    description: Absolute path to the checksum-verified GoReleaser executable
+    value: ${{ steps.install.outputs.executable }}
+runs:
+  using: composite
+  steps:
+    - name: Install verified GoReleaser
+      id: install
+      shell: bash
+      run: |
+        installation_directory="$RUNNER_TEMP/openai-cli-goreleaser"
+        ./scripts/install-goreleaser "$installation_directory"
+        printf 'executable=%s\n' "$installation_directory/goreleaser" >> "$GITHUB_OUTPUT"

@@ -18,6 +18,7 @@ func TestAdminOrganizationProjectsCreate(t *testing.T) {
 			"--name", "name",
 			"--external-key-id", "external_key_id",
 			"--geography", "geography",
+			"--residency", "GLOBAL",
 		)
 	})
 
@@ -26,7 +27,8 @@ func TestAdminOrganizationProjectsCreate(t *testing.T) {
 		pipeData := []byte("" +
 			"name: name\n" +
 			"external_key_id: external_key_id\n" +
-			"geography: geography\n")
+			"geography: geography\n" +
+			"residency: GLOBAL\n")
 		mocktest.TestRunMockTestWithPipeAndFlags(
 			t, pipeData,
 			"--api-key", "string",

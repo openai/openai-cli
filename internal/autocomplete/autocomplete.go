@@ -87,9 +87,9 @@ func NewShellCompletion(name string, usage string) ShellCompletion {
 type ShellCompletionBehavior int
 
 const (
-	ShellCompletionBehaviorDefault ShellCompletionBehavior = iota
-	ShellCompletionBehaviorFile                            = 10
-	ShellCompletionBehaviorNoComplete
+	ShellCompletionBehaviorDefault    ShellCompletionBehavior = iota
+	ShellCompletionBehaviorFile                               = 10
+	ShellCompletionBehaviorNoComplete                         = 11
 )
 
 type CompletionResult struct {
@@ -265,6 +265,9 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	// Completing a flag name
 	if isFlag(current) {
 		for _, flag := range cmd.Flags {
+			if vf, ok := flag.(cli.VisibleFlag); ok && !vf.IsVisible() {
+				continue
+			}
 			completions = builder.createFromFlag(current, &flag, completions)
 		}
 	}

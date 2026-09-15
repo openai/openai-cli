@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+repository_root="$(cd "$(dirname "$0")/.." && pwd)"
+temporary_directory="$(mktemp -d)"
+trap 'rm -rf "$temporary_directory"' EXIT
+
+fixture_repository="$temporary_directory/repository"
+fixture_archive_directory="$temporary_directory/archive"
+fixture_tools="$temporary_directory/tools"
+curl_log="$temporary_directory/curl.log"
+execution_log="$temporary_directory/executed.log"
+reviewed_version="$(cat "$repository_root/.goreleaser-version")"
+
+mkdir -p "$fixture_repository/scripts" "$fixture_archive_directory" "$fixture_tools"
+cp "$repository_root/scripts/install-goreleaser" "$fixture_repository/scripts/install-goreleaser"
+printf '%s\n' "$reviewed_version" > "$fixture_repository/.goreleaser-version"
+
+cat > "$fixture_archive_directory/goreleaser" <<'EOF'
+#!/usr/bin/env bash
+printf 'executed\n' >> "$TEST_EXECUTION_LOG"
+EOF
+chmod +x "$fixture_archive_directory/goreleaser"
+tar -czf "$temporary_directory/verified.tar.gz" -C "$fixture_archive_directory" goreleaser
+
+cat > "$fixture_tools/curl" <<'EOF'
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output)
+      output="$2"
+      shift 2
+      ;;
+    *) shift ;;
+  esac
+done
+
+printf 'downloaded\n' >> "$TEST_CURL_LOG"
+cp "$TEST_ARCHIVE" "$output"
+EOF
+chmod +x "$fixture_tools/curl"
+
+case "$(uname -s)" in
+  Darwin) platform=Darwin ;;
+  Linux) platform=Linux ;;
+  *) echo "Unsupported test host operating system" >&2; exit 1 ;;
+esac
+
+case "$(uname -m)" in
+  amd64 | x86_64) architecture=x86_64 ;;
+  aarch64 | arm64) architecture=arm64 ;;
+  *) echo "Unsupported test host architecture" >&2; exit 1 ;;
+esac
+
+archive_name="goreleaser_${platform}_${architecture}.tar.gz"
+checksum="$(shasum -a 256 "$temporary_directory/verified.tar.gz" | awk '{print $1}')"
+printf '%s  v%s/%s\n' "$checksum" "$reviewed_version" "$archive_name" > "$fixture_repository/.goreleaser-checksums"
+
+export PATH="$fixture_tools:$PATH"
+export TEST_ARCHIVE="$temporary_directory/verified.tar.gz"
+export TEST_CURL_LOG="$curl_log"
+export TEST_EXECUTION_LOG="$execution_log"
+
+"$fixture_repository/scripts/install-goreleaser" "$temporary_directory/installed"
+[[ -x "$temporary_directory/installed/goreleaser" ]]
+[[ ! -e "$execution_log" ]]
+
+printf 'tampered archive\n' > "$temporary_directory/tampered.tar.gz"
+TEST_ARCHIVE="$temporary_directory/tampered.tar.gz"
+export TEST_ARCHIVE
+
+if "$fixture_repository/scripts/install-goreleaser" "$temporary_directory/tampered-installation"; then
+  echo "Installer accepted an archive with the wrong digest" >&2
+  exit 1
+fi
+[[ ! -e "$temporary_directory/tampered-installation" ]]
+
+printf '%s  v%s/%s\n' "$checksum" "$reviewed_version" "$archive_name" >> "$fixture_repository/.goreleaser-checksums"
+: > "$curl_log"
+
+if "$fixture_repository/scripts/install-goreleaser" "$temporary_directory/ambiguous-installation"; then
+  echo "Installer accepted multiple reviewed digests for one archive" >&2
+  exit 1
+fi
+[[ ! -s "$curl_log" ]]
+[[ ! -e "$temporary_directory/ambiguous-installation" ]]
+
+printf '0.0.0\n' > "$fixture_repository/.goreleaser-version"
+: > "$curl_log"
+
+if "$fixture_repository/scripts/install-goreleaser" "$temporary_directory/unreviewed-installation"; then
+  echo "Installer accepted a version without a reviewed digest" >&2
+  exit 1
+fi
+[[ ! -s "$curl_log" ]]
+[[ ! -e "$temporary_directory/unreviewed-installation" ]]
+
+echo "GoReleaser installer verification tests passed"

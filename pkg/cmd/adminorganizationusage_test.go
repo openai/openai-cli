@@ -103,6 +103,7 @@ func TestAdminOrganizationUsageCosts(t *testing.T) {
 			"--end-time", "0",
 			"--group-by", "project_id",
 			"--limit", "0",
+			"--line-item", "string",
 			"--page", "page",
 			"--project-id", "string",
 		)

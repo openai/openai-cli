@@ -1,17 +1,15 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
-	"mime"
-	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"unicode/utf8"
@@ -121,7 +119,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 			val := iter.Value()
 			newVal, err := embedFilesValue(val, embedStyle, stdin)
 			if err != nil {
-				return reflect.Value{}, err
+				return reflect.Value{}, errors.Join(err, closeFileUploads(result.Interface()))
 			}
 			result.SetMapIndex(key, newVal)
 		}
@@ -136,13 +134,17 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 		for i := 0; i < v.Len(); i++ {
 			newVal, err := embedFilesValue(v.Index(i), embedStyle, stdin)
 			if err != nil {
-				return reflect.Value{}, err
+				return reflect.Value{}, errors.Join(err, closeFileUploads(result.Slice(0, i).Interface()))
 			}
 			result.Index(i).Set(newVal)
 		}
 		return result, nil
 
 	case reflect.String:
+		if v.Type() == reflect.TypeOf(untrustedStdinValue("")) {
+			return reflect.ValueOf(v.String()), nil
+		}
+
 		// FilePathValue is always treated as a file path without needing the "@" prefix.
 		// These only appear on binary upload parameters (multipart/octet-stream), which
 		// always use EmbedIOReader.
@@ -275,7 +277,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 
 				upload, err := openFileUpload(filename)
 				if err != nil {
-					if !expectsFile {
+					if !expectsFile && errors.Is(err, fs.ErrNotExist) {
 						// For strings that start with "@" and don't look like a filename, return the string
 						return v, nil
 					}
@@ -324,8 +326,21 @@ func flagOptions(
 	// This parameter is true if stdin is already in use to pass a binary parameter by using the special value
 	// "-". In this case, we won't attempt to read it as a JSON/YAML blob for options setting.
 	ignoreStdin bool,
-) ([]option.RequestOption, error) {
-	var options []option.RequestOption
+) (options []option.RequestOption, err error) {
+	stdinSecurity, err := newStdinSecurity()
+	if err != nil {
+		return nil, err
+	}
+
+	// Once multipart files have been opened, close them on every error path
+	// until ownership is transferred to multipartRequestBody below.
+	var pendingMultipartUploads any
+	defer func() {
+		if err != nil && pendingMultipartUploads != nil {
+			err = errors.Join(err, closeFileUploads(pendingMultipartUploads))
+		}
+	}()
+
 	if cmd.Bool("debug") {
 		options = append(options, option.WithMiddleware(debugmiddleware.NewRequestLogger().Middleware()))
 	}
@@ -353,13 +368,18 @@ func flagOptions(
 			}
 			if bodyMap, ok := bodyData.(map[string]any); ok {
 				applyDataAliases(cmd, bodyMap)
+				stdinSecurity.recordBodyFlags(cmd, bodyMap)
 				// Apply any matching keys from the piped data to path, query, and header flags
 				// that have not already been set via the command line.
-				if err := requestflag.ApplyStdinDataToFlags(cmd, bodyMap); err != nil {
+				if err := requestflag.ApplyStdinDataToFlagsWithProvenance(cmd, bodyMap, stdinSecurity.recordFlag); err != nil {
 					return nil, err
 				}
 				// Re-extract request contents now that flags may have been updated.
 				requestContents = requestflag.ExtractRequestContents(cmd)
+				stdinSecurity.protectFlagValues(&requestContents)
+				if stdinSecurity.enabled {
+					bodyMap = protectStdinValue(bodyMap).(map[string]any)
+				}
 				// Remove keys that were consumed as query, header, or path params so they
 				// don't also leak into the request body via the maps.Copy merge below.
 				// We delete both the canonical key and any aliases since the user may have
@@ -387,6 +407,9 @@ func flagOptions(
 					}
 				}
 			} else if bodyType != EmptyBody {
+				if stdinSecurity.enabled {
+					bodyData = protectStdinValue(bodyData)
+				}
 				if flagMap, ok := requestContents.Body.(map[string]any); ok && len(flagMap) > 0 {
 					return nil, fmt.Errorf("Cannot merge flags with a body that is not a map: %v", bodyData)
 				} else {
@@ -408,11 +431,11 @@ func flagOptions(
 		}
 	}
 
-	// For flags marked as FileInput (type: string, format: binary), the value is always
-	// a file path. Wrap with FilePathValue so embedFiles reads the file automatically
-	// without requiring the user to type the "@" prefix. This handles both values set
-	// via explicit CLI flags and values that arrived via piped YAML/JSON data.
-	wrapFileInputValues(cmd, &requestContents)
+	// FileInput values are file paths, so wrap trusted values with FilePathValue
+	// for automatic expansion. In untrusted-stdin mode, reject piped values.
+	if err := wrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
+		return nil, err
+	}
 
 	// Determine stdin availability for FileInput params that use "-".
 	var stdinReader onceStdinReader
@@ -434,6 +457,9 @@ func flagOptions(
 		return nil, err
 	} else {
 		requestContents.Body = embedded
+		if bodyType == MultipartFormEncoded {
+			pendingMultipartUploads = embedded
+		}
 	}
 
 	if headersWithFiles, err := embedFiles(requestContents.Headers, EmbedText, &stdinReader); err != nil {
@@ -492,22 +518,18 @@ func flagOptions(
 	case EmptyBody:
 		break
 	case MultipartFormEncoded:
-		buf := new(bytes.Buffer)
-		writer := multipart.NewWriter(buf)
-
 		// For multipart/form-encoded, we need a map structure
 		bodyMap, ok := requestContents.Body.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("Cannot send a non-map value to a form-encoded endpoint: %v\n", requestContents.Body)
 		}
 		encodingFormat := apiform.FormatBrackets
-		if err := apiform.MarshalWithSettings(bodyMap, writer, encodingFormat); err != nil {
+		multipartOptions, err := multipartRequestOptions(bodyMap, encodingFormat)
+		if err != nil {
 			return nil, err
 		}
-		if err := writer.Close(); err != nil {
-			return nil, err
-		}
-		options = append(options, option.WithRequestBody(writer.FormDataContentType(), buf))
+		pendingMultipartUploads = nil // multipartRequestBody owns them now.
+		options = append(options, multipartOptions...)
 
 	case ApplicationJSON:
 		bodyBytes, err := json.Marshal(requestContents.Body)
@@ -542,44 +564,6 @@ func flagOptions(
 // and embedded in the request. Unlike a regular string, embedFilesValue always treats a FilePathValue
 // as a file path without needing the "@" prefix.
 type FilePathValue string
-
-// fileUpload wraps an io.Reader with filename and content-type metadata for
-// use as a multipart form part. The apiform encoder detects the Filename and
-// ContentType methods and uses them to populate the Content-Disposition
-// filename and the Content-Type header on the part.
-type fileUpload struct {
-	io.Reader   // apiform checks for reader and reads its contents during encode
-	filename    string
-	contentType string
-}
-
-func (f fileUpload) Filename() string    { return f.filename }
-func (f fileUpload) ContentType() string { return f.contentType }
-func (f fileUpload) Close() error {
-	if c, ok := f.Reader.(io.Closer); ok {
-		return c.Close()
-	}
-	return nil
-}
-
-// openFileUpload opens the file at path and returns a fileUpload whose filename
-// is the path's basename and whose content type is derived from the file
-// extension (falling back to application/octet-stream when unknown).
-func openFileUpload(path string) (fileUpload, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return fileUpload{}, err
-	}
-	contentType := mime.TypeByExtension(filepath.Ext(path))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	return fileUpload{
-		Reader:      file,
-		filename:    filepath.Base(path),
-		contentType: contentType,
-	}, nil
-}
 
 // applyDataAliases rewrites keys in a body map based on flag `DataAliases` metadata. For top-level flags,
 // `{alias: value}` becomes `{canonical: value}`. For inner flags (those registered under an outer flag
@@ -623,9 +607,9 @@ func rewriteAliases(m map[string]any, canonical string, aliases []string) {
 
 // wrapFileInputValues replaces string values for FileInput flags (type: string, format: binary) with
 // FilePathValue sentinel values. embedFilesValue recognizes FilePathValue and reads the file contents
-// directly, so the user doesn't need to type the "@" prefix. This handles both values set via explicit
-// CLI flags and values that arrived via piped YAML/JSON data.
-func wrapFileInputValues(cmd *cli.Command, contents *requestflag.RequestContents) {
+// directly, so the user doesn't need to type the "@" prefix. Untrusted piped
+// file paths are rejected before any file can be opened.
+func wrapFileInputValues(cmd *cli.Command, contents *requestflag.RequestContents, stdinSecurity *stdinSecurity) error {
 	bodyMap, _ := contents.Body.(map[string]any)
 
 	for _, flag := range cmd.Flags {
@@ -634,30 +618,27 @@ func wrapFileInputValues(cmd *cli.Command, contents *requestflag.RequestContents
 			continue
 		}
 
-		// Wrap values set via explicit CLI flags.
-		if flag.IsSet() {
-			if wrapped, changed := wrapFileInputValue(flag.Get()); changed {
-				if bodyPath := inReq.GetBodyPath(); bodyPath != "" {
-					if bodyMap != nil {
-						bodyMap[bodyPath] = wrapped
-					}
-				} else if queryPath := inReq.GetQueryPath(); queryPath != "" {
-					contents.Queries[queryPath] = wrapped
-				} else if headerPath := inReq.GetHeaderPath(); headerPath != "" {
-					contents.Headers[headerPath] = wrapped
-				}
-			}
+		var values map[string]any
+		var path string
+		if path = inReq.GetBodyPath(); path != "" {
+			values = bodyMap
+		} else if path = inReq.GetQueryPath(); path != "" {
+			values = contents.Queries
+		} else if path = inReq.GetHeaderPath(); path != "" {
+			values = contents.Headers
 		}
-
-		// Wrap values that arrived via piped YAML/JSON data in the body map.
-		if bodyPath := inReq.GetBodyPath(); bodyPath != "" && bodyMap != nil {
-			if value, exists := bodyMap[bodyPath]; exists {
-				if wrapped, changed := wrapFileInputValue(value); changed {
-					bodyMap[bodyPath] = wrapped
-				}
-			}
+		value, exists := values[path]
+		if !exists {
+			continue
+		}
+		if stdinSecurity.fileInputFromStdin(flag) {
+			return fmt.Errorf("file input %q from piped YAML/JSON is disabled when %s is enabled; provide --%s explicitly", path, untrustedStdinEnv, flag.Names()[0])
+		}
+		if wrapped, changed := wrapFileInputValue(value); changed {
+			values[path] = wrapped
 		}
 	}
+	return nil
 }
 
 func wrapFileInputValue(value any) (any, bool) {

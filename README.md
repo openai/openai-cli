@@ -85,6 +85,7 @@ For details about specific commands, use the `--help` flag.
 | `OPENAI_WEBHOOK_SECRET` | no | `null` |
 | `OPENAI_MTLS_CLIENT_CERT_FILE` | no | `null` |
 | `OPENAI_MTLS_CLIENT_KEY_FILE` | no | `null` |
+| `OPENAI_UNTRUSTED_STDIN` | no | `false` |
 
 ### Global flags
 
@@ -151,6 +152,20 @@ arg:
   image: "@abe.jpg"
 YAML
 ```
+
+When piping JSON or YAML from an untrusted source, enable untrusted-stdin mode:
+
+```bash
+untrusted-producer | OPENAI_UNTRUSTED_STDIN=1 openai <command> --file ./upload.txt
+```
+
+In this mode, values supplied through stdin are treated as literal data: `@`,
+`@file://`, and `@data://` references in request bodies, headers, and query
+parameters do not read local files. File-upload parameters must be provided
+explicitly as command-line flags. Explicit flags retain their normal file
+behavior and take precedence over values supplied through stdin. Leave
+`OPENAI_UNTRUSTED_STDIN` unset when using trusted heredocs or other trusted
+piped input that intentionally references local files.
 
 If you need to pass a string literal that begins with an `@` sign, you can
 escape the `@` sign to avoid accidentally passing a file.
