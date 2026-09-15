@@ -49,6 +49,19 @@ func (e *encoder) encodeValue(key string, val reflect.Value, writer *multipart.W
 		return writer.WriteField(key, "")
 	}
 
+	// Unwrap interfaces before detecting io.Reader. A non-nil interface can
+	// contain a typed nil pointer, which must retain the encoder's empty-field
+	// semantics instead of being passed to io.Copy.
+	for val.Kind() == reflect.Interface {
+		if val.IsNil() {
+			return writer.WriteField(key, "")
+		}
+		val = val.Elem()
+	}
+	if val.Kind() == reflect.Pointer && val.IsNil() {
+		return writer.WriteField(key, "")
+	}
+
 	t := val.Type()
 
 	if t.Implements(reflect.TypeOf((*io.Reader)(nil)).Elem()) {
@@ -57,9 +70,6 @@ func (e *encoder) encodeValue(key string, val reflect.Value, writer *multipart.W
 
 	switch t.Kind() {
 	case reflect.Pointer:
-		if val.IsNil() || !val.IsValid() {
-			return writer.WriteField(key, "")
-		}
 		return e.encodeValue(key, val.Elem(), writer)
 
 	case reflect.Slice, reflect.Array:
@@ -67,12 +77,6 @@ func (e *encoder) encodeValue(key string, val reflect.Value, writer *multipart.W
 
 	case reflect.Map:
 		return e.encodeMap(key, val, writer)
-
-	case reflect.Interface:
-		if val.IsNil() {
-			return writer.WriteField(key, "")
-		}
-		return e.encodeValue(key, val.Elem(), writer)
 
 	case reflect.String:
 		return writer.WriteField(key, val.String())
