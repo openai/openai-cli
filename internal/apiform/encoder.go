@@ -7,6 +7,7 @@ import (
 	"net/textproto"
 	"path"
 	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -171,7 +172,11 @@ func escapeQuotes(s string) string {
 }
 
 func multipartBaseName(name string) string {
-	if isWindowsPath(name) {
+	return multipartBaseNameForOS(name, runtime.GOOS)
+}
+
+func multipartBaseNameForOS(name, goos string) string {
+	if goos == "windows" || isWindowsPath(name) {
 		name = strings.ReplaceAll(name, `\`, "/")
 	}
 	return path.Base(name)

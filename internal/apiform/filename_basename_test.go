@@ -59,3 +59,27 @@ func TestMultipartReaderNameUsesBaseFilenameAcrossPathStyles(t *testing.T) {
 		})
 	}
 }
+
+func TestMultipartBaseNameUsesNativePathSeparators(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		goos       string
+		readerName string
+		want       string
+	}{
+		{name: "windows relative", goos: "windows", readerName: `reports\report.pdf`, want: "report.pdf"},
+		{name: "windows rooted", goos: "windows", readerName: `\reports\report.pdf`, want: "report.pdf"},
+		{name: "posix backslash is literal", goos: "linux", readerName: `reports\report.pdf`, want: `reports\report.pdf`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := multipartBaseNameForOS(tt.readerName, tt.goos); got != tt.want {
+				t.Fatalf("multipartBaseNameForOS(%q, %q) = %q, want %q", tt.readerName, tt.goos, got, tt.want)
+			}
+		})
+	}
+}
