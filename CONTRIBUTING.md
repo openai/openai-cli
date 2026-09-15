@@ -6,16 +6,30 @@ Thank you for helping improve the OpenAI CLI. Read [README.md](README.md),
 ## Setting up the environment
 
 Use the Go version required by `go.mod`; the CLI currently requires Go 1.25 or
-later. Review dependency origins and executable setup scripts before running:
+later. The integration tests also require Node.js 14.18 or later, Git, `curl`, `unzip`, and `lsof`. Review dependency origins and executable setup
+scripts before running:
 
 ```sh
 ./scripts/bootstrap
 ./scripts/lint
 ```
 
-`./scripts/bootstrap` downloads Go dependencies and runs `go mod tidy`, which
-can change `go.mod` or `go.sum`. Inspect the resulting diff and do not commit
-unrelated dependency changes. `./scripts/lint` builds the CLI.
+`./scripts/bootstrap` checks `go.mod` and `go.sum` with `go mod tidy -diff`.
+If changes are needed, it prints a diff and exits without rewriting the files.
+After a successful check, it downloads Go dependencies with `go mod download`
+and verifies them with `go mod verify`. `./scripts/lint` builds the CLI. The OpenAPI mock
+server's pinned source and runtime are installed automatically when running integration
+tests; they are not required to build the CLI.
+
+## Project structure
+
+- `cmd/openai/` contains the CLI executable's entry point.
+- `pkg/cmd/` contains API commands, command handling, and integration tests.
+- `internal/` contains shared helpers for flags, request encoding, terminal
+  output, and testing.
+- `api_reference/openapi.transformed.yml` contains the OpenAPI specification
+  used by the mock server.
+- `scripts/` contains the local development, build, and test commands.
 
 ## Generated and handwritten code
 
@@ -31,6 +45,43 @@ files contain handwritten behavior. Preserve existing command flags, output,
 request semantics, supported platforms, generated boundaries, and the separate
 `api_reference/go.mod` module. Keep changes small and add focused tests for
 observable behavior changes.
+
+## Running and building locally
+
+Run the CLI directly from your working tree:
+
+```sh
+./scripts/run --help
+```
+
+Build an `openai` executable in the repository root:
+
+```sh
+./scripts/build
+```
+
+You can also install the local checkout into your Go binary directory:
+
+```sh
+go install ./cmd/openai
+```
+
+## Custom-code budget
+
+The custom-code budget counts additions plus deletions in the remaining patch
+against verified generated output. `.castiron-ratchet.json` defines this repository's
+ceiling. CI uses the checker and budget on main, not the PR's proposed versions.
+
+Budget changes must be in a separate PR modifying **only `.castiron-ratchet.json`**.
+Justify the current usage, proposed ceiling, and why fixing generation is not
+appropriate in the PR description. Increases require a **human approving review**
+and must merge before an SDK change relies on them. Agents may draft proposals,
+but must not approve increases or bypass the gate. Keep default CODEOWNERS.
+Lower the ceiling after cleanup while retaining headroom; decreases must still
+fit the measured usage.
+
+See [custom-code technical details](scripts/castiron/CUSTOM_CODE.md) for accounting,
+local checks, trusted CI, and activation instructions.
 
 ## Security requirements
 
@@ -59,8 +110,8 @@ observable behavior changes.
   separate `api_reference/go.mod`, module provenance, `replace` directives,
   and checksum verification. Run `go mod verify`; never accept unexplained
   lockfile changes or bypass Go's module integrity protections.
-- Review `scripts/bootstrap`, `scripts/mock`, and the pinned `@stdy/cli` npm
-  mock dependency before executing install hooks or downloading tooling.
+- Review `scripts/bootstrap`, `scripts/mock`, and the pinned Steady source and Deno
+  runtime before executing install hooks or downloading tooling.
   Preserve the existing hourly `github.com/openai/openai-go/v3` updater; do not
   introduce conflicting dependency update or release automation.
 - Pin third-party GitHub Actions to reviewed full commit SHAs and grant each
@@ -97,6 +148,25 @@ source, official binaries, installers, packages, or other release artifacts.
 
 ## Running tests
 
+The mock server uses [the OpenAI Steady fork](https://github.com/openai-oss-forks/steady).
+`scripts/steady/manifest.json` is the single source of dependency pins: the
+Steady Git commit and source digest, plus the Deno version and runtime checksums. `./scripts/steady/install` fetches that source, verifies the runtime,
+and caches dependencies using the fork's frozen Deno lockfile. It requires
+Git, Node.js, curl, unzip, and sha256sum or shasum. The installation supports
+macOS and Linux on x64/ARM64, and Windows x64 through Git Bash.
+
+`./scripts/run-steady` verifies the local source and runtime, then runs without
+downloading dependencies. Pass a local OpenAPI specification path or a trusted URL.
+Remote specifications may be fetched by Steady at runtime, using its network
+access; inspect remote content and references before using them. To update
+Steady, review the fork commit and run
+`node scripts/steady/update.cjs <full-commit-sha>`. This updates the manifest
+with the commit and its source digest; no launcher or test edits are needed.
+Then run `./scripts/steady/install`. Review the release checksums when changing Deno.
+Run `node scripts/steady/test.cjs` to check the
+installation, integrity checks, and mock-server lifecycle.
+
+
 Run focused, offline checks before considering live or release-sensitive work:
 
 ```sh
@@ -106,16 +176,43 @@ go mod verify
 ./scripts/lint
 ```
 
-The full suite is available through:
+Run the complete test workflow with:
 
 ```sh
 ./scripts/test
 ```
 
-`./scripts/test` can start the existing local mock server, which downloads and
-executes the pinned `@stdy/cli` npm package against the checked-in OpenAPI
-specification. Review that tooling, use synthetic data, and do not substitute a
-live API endpoint or production credentials.
+The script starts an OpenAPI mock server on `127.0.0.1:4010` when one is not
+already running, runs `go test ./...`, and cross-compiles the test packages for
+Windows. Additional arguments are forwarded to `go test`:
+
+```sh
+./scripts/test -run '^TestResponsesCreate$'
+```
+
+To keep the mock server running while iterating on tests, start it in a separate
+terminal:
+
+```sh
+./scripts/mock
+```
+
+The mock server uses the checked-in OpenAPI specification by default. To use a
+different OpenAPI specification, pass its local path or trusted URL explicitly:
+
+```sh
+./scripts/mock path/to/openapi.yml
+```
+
+To run tests against an existing compatible server instead, set
+`TEST_API_BASE_URL`:
+
+```sh
+TEST_API_BASE_URL=http://127.0.0.1:4010 ./scripts/test
+```
+
+Use synthetic data, and do not substitute a live API endpoint or production
+credentials.
 
 ## Formatting and releases
 
@@ -128,3 +225,21 @@ GoReleaser, Homebrew, macOS signing/notarization, and artifact-attestation
 workflows. Do not create tags, publish binaries or packages, dispatch release
 workflows, change signing keys, or modify repository settings without explicit
 authorization.
+
+## Linking a local Go SDK
+
+To develop the CLI against a local checkout of the OpenAI Go SDK, run:
+
+```sh
+./scripts/link ../openai-go
+```
+
+If no path is provided, `./scripts/link` defaults to `../openai-go`. Remove the
+local Go module replacement when you are done:
+
+```sh
+./scripts/unlink
+```
+
+Linking updates `go.mod` and can update `go.sum`. Check those files before
+committing so a local replacement is not included unintentionally.

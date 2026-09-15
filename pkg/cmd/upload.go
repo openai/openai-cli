@@ -16,7 +16,7 @@ import (
 
 var uploadsCreate = requestflag.WithInnerFlags(cli.Command{
 	Name:    "create",
-	Usage:   "Creates an intermediate\n[Upload](https://platform.openai.com/docs/api-reference/uploads/object) object\nthat you can add\n[Parts](https://platform.openai.com/docs/api-reference/uploads/part-object) to.\nCurrently, an Upload can accept at most 8 GB in total and expires after an hour\nafter you create it.",
+	Usage:   "Creates an intermediate\n[Upload](https://developers.openai.com/api/reference/resources/uploads) object\nthat you can add\n[Parts](https://developers.openai.com/api/reference/resources/uploads/subresources/parts)\nto. Currently, an Upload can accept at most 8 GB in total and expires after an\nhour after you create it.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[int64]{
@@ -83,7 +83,7 @@ var uploadsCancel = cli.Command{
 
 var uploadsComplete = cli.Command{
 	Name:    "complete",
-	Usage:   "Completes the\n[Upload](https://platform.openai.com/docs/api-reference/uploads/object).",
+	Usage:   "Completes the\n[Upload](https://developers.openai.com/api/reference/resources/uploads).",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
