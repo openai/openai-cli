@@ -76,13 +76,17 @@ For details about specific commands, use the `--help` flag.
 
 ### Environment variables
 
-| Environment variable    | Required | Default value |
-| ----------------------- | -------- | ------------- |
-| `OPENAI_API_KEY`        | no       | `null`        |
-| `OPENAI_ADMIN_KEY`      | no       | `null`        |
-| `OPENAI_ORG_ID`         | no       | `null`        |
-| `OPENAI_PROJECT_ID`     | no       | `null`        |
-| `OPENAI_WEBHOOK_SECRET` | no       | `null`        |
+| Environment variable | Required | Default value |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | no | `null` |
+| `OPENAI_ADMIN_KEY` | no | `null` |
+| `OPENAI_ORG_ID` | no | `null` |
+| `OPENAI_PROJECT_ID` | no | `null` |
+| `OPENAI_WEBHOOK_SECRET` | no | `null` |
+| `OPENAI_CUSTOM_HEADERS` | no | `null` |
+| `OPENAI_MTLS_CLIENT_CERT_FILE` | no | `null` |
+| `OPENAI_MTLS_CLIENT_KEY_FILE` | no | `null` |
+| `OPENAI_UNTRUSTED_STDIN` | no | `false` |
 
 ### Global flags
 
@@ -91,14 +95,78 @@ For details about specific commands, use the `--help` flag.
 - `--organization` (can also be set with `OPENAI_ORG_ID` env var)
 - `--project` (can also be set with `OPENAI_PROJECT_ID` env var)
 - `--webhook-secret` (can also be set with `OPENAI_WEBHOOK_SECRET` env var)
+- `--mtls-client-cert-file` (can also be set with `OPENAI_MTLS_CLIENT_CERT_FILE` env var)
+- `--mtls-client-key-file` (can also be set with `OPENAI_MTLS_CLIENT_KEY_FILE` env var)
 - `--help` - Show command line usage
 - `--debug` - Enable debug logging. This includes HTTP request/response details and bodies; do not share debug logs if they may contain sensitive payloads.
 - `--version`, `-v` - Show the CLI version
 - `--base-url` - Use a custom API backend URL
+- `--header`, `-H` - Add a literal request header as `Name: Value`; repeat for multiple headers
 - `--format` - Change the output format (`auto`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`)
 - `--format-error` - Change the output format for errors (`auto`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`)
 - `--transform` - Transform the data output using [GJSON syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md)
 - `--transform-error` - Transform the error output using [GJSON syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md)
+
+### Request headers
+
+Use `--header` or `-H` before or after a resource command:
+
+```sh
+openai --header 'X-Trace-ID: example-123' models list \
+  -H 'X-Client-Label: local,manual'
+```
+
+Values are literal: commas and colons are preserved, and `@` prefixes do not
+read files. Surrounding spaces and tabs are trimmed from values. `-H 'X-Example:'`
+sends an empty value. If a name is repeated, the last value wins regardless of
+case, overriding default and endpoint-specific headers. Headers managed by the
+HTTP transport, such as `Host` and `Content-Length`, retain the transport's
+behavior. Supplied header values are hidden in help and redacted in debug logs.
+
+For credential-bearing headers, have a secret manager or trusted launcher set
+`OPENAI_CUSTOM_HEADERS` directly in the CLI's environment. This keeps credentials
+out of command arguments and avoids typing literal secrets into shell history.
+The variable accepts one `Name: Value` entry per line. For example, with
+non-sensitive values:
+
+```sh
+export OPENAI_CUSTOM_HEADERS='X-Trace-ID: example-123
+X-Client-Label: local,manual'
+openai models list
+```
+
+`--header` and endpoint-specific header flags override matching environment
+entries. Environment header values are also redacted in debug logs. Use
+`OPENAI_API_KEY` and `OPENAI_ADMIN_KEY` for standard API and admin authentication.
+
+### Mutual TLS
+
+Mutual TLS is currently in beta. To opt in and activate a CA certificate for
+your organization or project, follow the
+[OpenAI Mutual TLS Beta Program](https://help.openai.com/en/articles/10876024-openai-mutual-tls-beta-program)
+instructions.
+
+To authenticate API-key requests with a mutual TLS client certificate, provide
+the client certificate and private key as separate PEM files. If certificate
+chain support is enabled for your organization, the certificate file must
+contain the leaf certificate first, followed by any intermediate certificates.
+Otherwise, use a client certificate signed directly by an activated CA
+certificate.
+
+```sh
+export OPENAI_MTLS_CLIENT_CERT_FILE=/run/secrets/openai/client-chain.pem
+export OPENAI_MTLS_CLIENT_KEY_FILE=/run/secrets/openai/client.key
+export OPENAI_BASE_URL=https://mtls.api.openai.com/v1
+
+openai files list
+```
+
+Both mTLS files must be configured together. Keep the private key in a
+permission-restricted file; do not put private-key contents directly in command
+arguments or environment variables. The CLI does not automatically select an
+mTLS endpoint, so configure `OPENAI_BASE_URL` or `--base-url` explicitly. HTTP
+and SOCKS proxies remain supported, but HTTPS proxies are rejected to prevent
+presenting the client certificate during the proxy's own TLS handshake.
 
 ### Passing files as arguments
 
@@ -118,6 +186,20 @@ arg:
   image: "@abe.jpg"
 YAML
 ```
+
+When piping JSON or YAML from an untrusted source, enable untrusted-stdin mode:
+
+```bash
+untrusted-producer | OPENAI_UNTRUSTED_STDIN=1 openai <command> --file ./upload.txt
+```
+
+In this mode, values supplied through stdin are treated as literal data: `@`,
+`@file://`, and `@data://` references in request bodies, headers, and query
+parameters do not read local files. File-upload parameters must be provided
+explicitly as command-line flags. Explicit flags retain their normal file
+behavior and take precedence over values supplied through stdin. Leave
+`OPENAI_UNTRUSTED_STDIN` unset when using trusted heredocs or other trusted
+piped input that intentionally references local files.
 
 If you need to pass a string literal that begins with an `@` sign, you can
 escape the `@` sign to avoid accidentally passing a file.

@@ -1,4 +1,4 @@
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+// File generated from our OpenAPI spec by Castiron. See CONTRIBUTING.md for details.
 
 package cmd
 
@@ -30,7 +30,8 @@ func init() {
 		Suggest:   true,
 		Version:   Version,
 		ErrWriter: &CommandErrorBuffer,
-		Flags: []cli.Flag{
+		Before:    configureMTLS,
+		Flags: append([]cli.Flag{
 			&cli.BoolFlag{
 				Name:  "debug",
 				Usage: "Enable debug logging",
@@ -98,7 +99,7 @@ func init() {
 				Name:    "webhook-secret",
 				Sources: cli.EnvVars("OPENAI_WEBHOOK_SECRET"),
 			},
-		},
+		}, mtlsClientFlags()...),
 		Commands: []*cli.Command{
 			{
 				Name:     "completions",
@@ -156,6 +157,14 @@ func init() {
 					&imagesCreateVariation,
 					&imagesEdit,
 					&imagesGenerate,
+				},
+			},
+			{
+				Name:     "content-provenance-checks",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&contentProvenanceChecksCreate,
 				},
 			},
 			{
@@ -277,6 +286,14 @@ func init() {
 					&vectorStoresFileBatchesRetrieve,
 					&vectorStoresFileBatchesCancel,
 					&vectorStoresFileBatchesListFiles,
+				},
+			},
+			{
+				Name:     "safety:alerts",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&safetyAlertsRetrieve,
 				},
 			},
 			{
@@ -540,6 +557,16 @@ func init() {
 				},
 			},
 			{
+				Name:     "admin:organization:spend-limit",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationSpendLimitRetrieve,
+					&adminOrganizationSpendLimitUpdate,
+					&adminOrganizationSpendLimitDelete,
+				},
+			},
+			{
 				Name:     "admin:organization:spend-alerts",
 				Category: "API RESOURCE",
 				Suggest:  true,
@@ -610,6 +637,14 @@ func init() {
 					&adminOrganizationProjectsServiceAccountsUpdate,
 					&adminOrganizationProjectsServiceAccountsList,
 					&adminOrganizationProjectsServiceAccountsDelete,
+				},
+			},
+			{
+				Name:     "admin:organization:projects:service-accounts:api-keys",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationProjectsServiceAccountsAPIKeysCreate,
 				},
 			},
 			{
@@ -694,6 +729,16 @@ func init() {
 				},
 			},
 			{
+				Name:     "admin:organization:projects:spend-limit",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationProjectsSpendLimitRetrieve,
+					&adminOrganizationProjectsSpendLimitUpdate,
+					&adminOrganizationProjectsSpendLimitDelete,
+				},
+			},
+			{
 				Name:     "admin:organization:projects:spend-alerts",
 				Category: "API RESOURCE",
 				Suggest:  true,
@@ -741,6 +786,19 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&responsesInputTokensCount,
+				},
+			},
+			{
+				Name:     "live:sessions",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&liveSessionsAccept,
+					&liveSessionsDownloadRecording,
+					&liveSessionsFork,
+					&liveSessionsHangup,
+					&liveSessionsRefer,
+					&liveSessionsReject,
 				},
 			},
 			{

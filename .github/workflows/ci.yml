@@ -1,134 +1,127 @@
 name: CI
-permissions:
-  contents: read
+permissions: {}
 on:
   push:
     branches:
-      - '**'
-      - '!integrated/**'
-      - '!stl-preview-head/**'
-      - '!stl-preview-base/**'
-      - '!generated'
-      - '!codegen/**'
-      - 'codegen/stl/**'
+      - main
   pull_request:
-    branches-ignore:
-      - 'stl-preview-head/**'
-      - 'stl-preview-base/**'
-
-env:
-  GOPRIVATE: github.com/openai/openai-go/v3,github.com/stainless-sdks/openai-go/v3
+  merge_group:
+    types:
+      - checks_requested
 
 jobs:
   lint:
     timeout-minutes: 10
     name: lint
-    runs-on: ${{ github.repository == 'stainless-sdks/openai-cli' && 'depot-ubuntu-24.04' || 'ubuntu-latest' }}
-    if: (github.event_name == 'push' || github.event.pull_request.head.repo.fork) && (github.event_name != 'push' || github.event.head_commit.message != 'codegen metadata')
-
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
-        with:
-          stainless-api-key: ${{ secrets.STAINLESS_API_KEY }}
-
-      - name: Link staging branch
-        if: github.repository == 'stainless-sdks/openai-cli'
-        env:
-          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ github.ref_name }}
-        run: |
-          ./scripts/link "$GO_SDK_REPLACEMENT" || true
-
-      - name: Bootstrap
-        run: ./scripts/bootstrap
 
       - name: Run lints
         run: ./scripts/lint
 
-  build:
-    timeout-minutes: 10
-    name: build
+  build-artifacts:
+    timeout-minutes: 30
+    name: build artifacts
     permissions:
       contents: read
-      id-token: write
-    runs-on: ${{ github.repository == 'stainless-sdks/openai-cli' && 'depot-ubuntu-24.04' || 'ubuntu-latest' }}
-    if: (github.event_name == 'push' || github.event.pull_request.head.repo.fork) && (github.event_name != 'push' || github.event.head_commit.message != 'codegen metadata')
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
-        with:
-          stainless-api-key: ${{ secrets.STAINLESS_API_KEY }}
 
-      - name: Link staging branch
-        if: github.repository == 'stainless-sdks/openai-cli'
+      - name: Test vulnerability scan coverage
+        run: ./scripts/govulncheck-test
+
+      - name: Check shipped CLI for reachable vulnerabilities
+        run: ./scripts/govulncheck
+
+      - name: Test verified GoReleaser installer
+        run: ./scripts/test-goreleaser-installer
+
+      - name: Set up verified GoReleaser
+        id: goreleaser
+        uses: ./.github/actions/setup-goreleaser
+
+      - name: Verify local and historical release preflight
+        run: go test ./scripts -run '^Test(Local|Historical)ReleasePreflight$' -count=1
         env:
-          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ github.ref_name }}
+          GORELEASER_EXECUTABLE: ${{ steps.goreleaser.outputs.executable }}
+
+      - name: Generate release inputs
         run: |
-          ./scripts/link "$GO_SDK_REPLACEMENT" || true
+          mkdir -p completions
+          go run ./cmd/openai/main.go @completion bash > completions/openai.bash
+          go run ./cmd/openai/main.go @completion zsh > completions/openai.zsh
+          go run ./cmd/openai/main.go @completion fish > completions/openai.fish
+          go run ./cmd/openai/main.go @manpages -o man
 
-      - name: Bootstrap
-        run: ./scripts/bootstrap
+          for directory in completions man man/man1; do
+            [[ -d "$directory" && ! -L "$directory" ]] || exit 1
+          done
+          for path in completions/openai.bash completions/openai.zsh completions/openai.fish man/man1/openai.1.gz; do
+            [[ -f "$path" && ! -L "$path" ]] || exit 1
+            size="$(wc -c < "$path")"
+            [[ "$size" -gt 0 && "$size" -le 10485760 ]] || exit 1
+          done
 
-      - name: Read GoReleaser version
-        id: goreleaser-version
-        run: echo "version=$(cat .goreleaser-version)" >> "$GITHUB_OUTPUT"
+          exclude_file="$(git rev-parse --git-path info/exclude)"
+          printf '%s\n' \
+            '/completions/openai.bash' \
+            '/completions/openai.zsh' \
+            '/completions/openai.fish' \
+            '/man/man1/openai.1.gz' \
+            >> "$exclude_file"
 
-      - name: Run goreleaser
-        uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.1.0
-        with:
-          version: ${{ steps.goreleaser-version.outputs.version }}
-          args: release --snapshot --clean --skip=publish
+      - name: Run GoReleaser
+        run: |
+          "$GORELEASER_EXECUTABLE" release --snapshot --clean --skip=publish
         env:
+          GORELEASER_EXECUTABLE: ${{ steps.goreleaser.outputs.executable }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get GitHub OIDC Token
-        if: |-
-          github.repository == 'stainless-sdks/openai-cli' &&
-          !startsWith(github.ref, 'refs/heads/stl/')
-        id: github-oidc
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
-        with:
-          script: core.setOutput('github_token', await core.getIDToken());
-
-      - name: Upload tarball
-        if: |-
-          github.repository == 'stainless-sdks/openai-cli' &&
-          !startsWith(github.ref, 'refs/heads/stl/')
+  build:
+    timeout-minutes: 10
+    name: build
+    needs:
+      - build-artifacts
+    if: always()
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful build
         env:
-          URL: https://pkg.stainless.com/s
-          AUTH: ${{ steps.github-oidc.outputs.github_token }}
-          SHA: ${{ github.sha }}
-        run: ./scripts/utils/upload-artifact.sh
+          BUILD_RESULT: ${{ needs.build-artifacts.result }}
+        run: |
+          if [[ "$BUILD_RESULT" != "success" ]]; then
+            echo "Build artifacts failed: $BUILD_RESULT"
+            exit 1
+          fi
 
   test:
     timeout-minutes: 10
     name: test
-    runs-on: ${{ github.repository == 'stainless-sdks/openai-cli' && 'depot-ubuntu-24.04' || 'ubuntu-latest' }}
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
-        with:
-          stainless-api-key: ${{ secrets.STAINLESS_API_KEY }}
 
-      - name: Link staging branch
-        if: github.repository == 'stainless-sdks/openai-cli'
-        env:
-          GO_SDK_REPLACEMENT: github.com/stainless-sdks/openai-go/v3@${{ github.ref_name }}
-        run: |
-          ./scripts/link "$GO_SDK_REPLACEMENT" || true
-
-      - name: Bootstrap
-        run: ./scripts/bootstrap
+      - name: Verify mock tooling security
+        run: node scripts/mock-tools/security.test.js
 
       - name: Run tests
         run: ./scripts/test

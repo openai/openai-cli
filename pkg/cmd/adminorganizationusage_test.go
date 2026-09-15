@@ -1,4 +1,4 @@
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+// File generated from our OpenAPI spec by Castiron. See CONTRIBUTING.md for details.
 
 package cmd
 
@@ -103,6 +103,7 @@ func TestAdminOrganizationUsageCosts(t *testing.T) {
 			"--end-time", "0",
 			"--group-by", "project_id",
 			"--limit", "0",
+			"--line-item", "string",
 			"--page", "page",
 			"--project-id", "string",
 		)

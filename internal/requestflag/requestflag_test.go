@@ -325,30 +325,28 @@ func TestRequestParams(t *testing.T) {
 func TestFlagSet(t *testing.T) {
 	t.Parallel()
 
-	strFlag := &Flag[string]{
-		Name:    "string-flag",
-		Default: "default-string",
-	}
-
-	superstitiousIntFlag := &Flag[int64]{
-		Name:    "int-flag",
-		Default: 42,
-		Validator: func(val int64) error {
-			if val == 13 {
-				return fmt.Errorf("Unlucky number!")
-			}
-			return nil
-		},
-	}
-
-	boolFlag := &Flag[bool]{
-		Name:    "bool-flag",
-		Default: false,
+	// Parallel subtests need fresh flags because parsing and setting mutate them.
+	newSuperstitiousIntFlag := func() *Flag[int64] {
+		return &Flag[int64]{
+			Name:    "int-flag",
+			Default: 42,
+			Validator: func(val int64) error {
+				if val == 13 {
+					return fmt.Errorf("Unlucky number!")
+				}
+				return nil
+			},
+		}
 	}
 
 	// Test initialization and setting
 	t.Run("PreParse initialization", func(t *testing.T) {
 		t.Parallel()
+
+		strFlag := &Flag[string]{
+			Name:    "string-flag",
+			Default: "default-string",
+		}
 
 		assert.NoError(t, strFlag.PreParse())
 		assert.True(t, strFlag.applied)
@@ -358,6 +356,11 @@ func TestFlagSet(t *testing.T) {
 	t.Run("Set string flag", func(t *testing.T) {
 		t.Parallel()
 
+		strFlag := &Flag[string]{
+			Name:    "string-flag",
+			Default: "default-string",
+		}
+
 		assert.NoError(t, strFlag.Set("string-flag", "new-value"))
 		assert.Equal(t, "new-value", strFlag.Get())
 		assert.True(t, strFlag.IsSet())
@@ -365,6 +368,8 @@ func TestFlagSet(t *testing.T) {
 
 	t.Run("Set int flag with valid value", func(t *testing.T) {
 		t.Parallel()
+
+		superstitiousIntFlag := newSuperstitiousIntFlag()
 
 		assert.NoError(t, superstitiousIntFlag.Set("int-flag", "100"))
 		assert.Equal(t, int64(100), superstitiousIntFlag.Get())
@@ -374,17 +379,26 @@ func TestFlagSet(t *testing.T) {
 	t.Run("Set int flag with invalid value", func(t *testing.T) {
 		t.Parallel()
 
+		superstitiousIntFlag := newSuperstitiousIntFlag()
+
 		assert.Error(t, superstitiousIntFlag.Set("int-flag", "not-an-int"))
 	})
 
 	t.Run("Set int flag with validator failing", func(t *testing.T) {
 		t.Parallel()
 
+		superstitiousIntFlag := newSuperstitiousIntFlag()
+
 		assert.Error(t, superstitiousIntFlag.Set("int-flag", "13"))
 	})
 
 	t.Run("Set bool flag", func(t *testing.T) {
 		t.Parallel()
+
+		boolFlag := &Flag[bool]{
+			Name:    "bool-flag",
+			Default: false,
+		}
 
 		assert.NoError(t, boolFlag.Set("bool-flag", "true"))
 		assert.Equal(t, true, boolFlag.Get())
@@ -614,54 +628,6 @@ func TestYamlHandling(t *testing.T) {
 		cv := &cliValue[any]{}
 		err := cv.Set(invalidYaml)
 		assert.Error(t, err)
-	})
-}
-
-func TestFlagBool(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		flag cli.Flag
-		want bool
-	}{
-		{
-			name: "concrete true",
-			flag: &Flag[bool]{Name: "stream", Default: true},
-			want: true,
-		},
-		{
-			name: "concrete false",
-			flag: &Flag[bool]{Name: "stream", Default: false},
-			want: false,
-		},
-		{
-			name: "nullable true",
-			flag: &Flag[*bool]{Name: "stream", Default: Ptr(true)},
-			want: true,
-		},
-		{
-			name: "nullable false",
-			flag: &Flag[*bool]{Name: "stream", Default: Ptr(false)},
-			want: false,
-		},
-		{
-			name: "nullable null",
-			flag: &Flag[*bool]{Name: "stream", Default: nil},
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.want, FlagBool(&cli.Command{Flags: []cli.Flag{tt.flag}}, "stream"))
-		})
-	}
-
-	t.Run("unknown flag", func(t *testing.T) {
-		t.Parallel()
-		assert.False(t, FlagBool(&cli.Command{}, "stream"))
 	})
 }
 

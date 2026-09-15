@@ -1,4 +1,5 @@
 name: Create releases
+permissions: {}
 on:
   schedule:
     - cron: '0 5 * * *' # every day at 5am UTC
@@ -11,12 +12,25 @@ jobs:
     name: release
     if: github.ref == 'refs/heads/main' && github.repository == 'openai/openai-cli'
     runs-on: ubuntu-latest
-    environment: publish
+    environment: release
     permissions: {}
 
     steps:
-      - uses: stainless-api/trigger-release-please@bb6677c5a04578eec1ccfd9e1913b5b78ed64c61 # v1.4.0
-        id: release
+      - name: Create release app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          repo: ${{ github.event.repository.full_name }}
-          stainless-api-key: ${{ secrets.STAINLESS_API_KEY }}
+          client-id: ${{ vars.OPENAI_SDKS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OPENAI_SDKS_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

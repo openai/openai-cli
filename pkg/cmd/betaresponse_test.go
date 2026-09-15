@@ -1,4 +1,4 @@
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+// File generated from our OpenAPI spec by Castiron. See CONTRIBUTING.md for details.
 
 package cmd
 
@@ -26,14 +26,14 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"--max-output-tokens", "16",
 			"--max-tool-calls", "0",
 			"--metadata", "{foo: string}",
-			"--model", "gpt-5.1",
+			"--model", "gpt-6-astra",
 			"--moderation", "{model: model, policy: {input: {mode: score}, output: {mode: score}}}",
 			"--multi-agent", "{enabled: true, max_concurrent_subagents: 1}",
 			"--parallel-tool-calls=true",
 			"--previous-response-id", "previous_response_id",
 			"--prompt", "{id: id, variables: {foo: string}, version: version}",
 			"--prompt-cache-key", "prompt-cache-key-1234",
-			"--prompt-cache-options", "{mode: implicit, ttl: 30m}",
+			"--prompt-cache-options", "{comparison_response_id: resp_123, mode: implicit, ttl: 30m}",
 			"--prompt-cache-retention", "in_memory",
 			"--reasoning", "{context: auto, effort: none, generate_summary: auto, mode: standard, summary: auto}",
 			"--safety-identifier", "safety-identifier-1234",
@@ -44,7 +44,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"--temperature", "1",
 			"--text", "{format: {type: text}, verbosity: low}",
 			"--tool-choice", "none",
-			"--tool", "{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], defer_loading: true, description: description, output_schema: {foo: bar}}",
+			"--tool", "{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], async: true, defer_loading: true, description: description, output_schema: {foo: bar}}",
 			"--top-logprobs", "0",
 			"--top-p", "1",
 			"--truncation", "auto",
@@ -74,7 +74,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"--max-output-tokens", "16",
 			"--max-tool-calls", "0",
 			"--metadata", "{foo: string}",
-			"--model", "gpt-5.1",
+			"--model", "gpt-6-astra",
 			"--moderation.model", "model",
 			"--moderation.policy", "{input: {mode: score}, output: {mode: score}}",
 			"--multi-agent.enabled=true",
@@ -85,6 +85,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"--prompt.variables", "{foo: string}",
 			"--prompt.version", "version",
 			"--prompt-cache-key", "prompt-cache-key-1234",
+			"--prompt-cache-options.comparison-response-id", "resp_123",
 			"--prompt-cache-options.mode", "implicit",
 			"--prompt-cache-options.ttl", "30m",
 			"--prompt-cache-retention", "in_memory",
@@ -102,7 +103,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"--text.format", "{type: text}",
 			"--text.verbosity", "low",
 			"--tool-choice", "none",
-			"--tool", "{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], defer_loading: true, description: description, output_schema: {foo: bar}}",
+			"--tool", "{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], async: true, defer_loading: true, description: description, output_schema: {foo: bar}}",
 			"--top-logprobs", "0",
 			"--top-p", "1",
 			"--truncation", "auto",
@@ -127,7 +128,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"max_tool_calls: 0\n" +
 			"metadata:\n" +
 			"  foo: string\n" +
-			"model: gpt-5.1\n" +
+			"model: gpt-6-astra\n" +
 			"moderation:\n" +
 			"  model: model\n" +
 			"  policy:\n" +
@@ -147,6 +148,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"  version: version\n" +
 			"prompt_cache_key: prompt-cache-key-1234\n" +
 			"prompt_cache_options:\n" +
+			"  comparison_response_id: resp_123\n" +
 			"  mode: implicit\n" +
 			"  ttl: 30m\n" +
 			"prompt_cache_retention: in_memory\n" +
@@ -176,6 +178,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"    type: function\n" +
 			"    allowed_callers:\n" +
 			"      - direct\n" +
+			"    async: true\n" +
 			"    defer_loading: true\n" +
 			"    description: description\n" +
 			"    output_schema:\n" +
@@ -246,7 +249,7 @@ func TestBetaResponsesCompact(t *testing.T) {
 			"--api-key", "string",
 			"--admin-api-key", "string",
 			"beta:responses", "compact",
-			"--model", "gpt-5.6-sol",
+			"--model", "gpt-6-astra",
 			"--input", "string",
 			"--instructions", "instructions",
 			"--previous-response-id", "resp_123",
@@ -268,7 +271,7 @@ func TestBetaResponsesCompact(t *testing.T) {
 			"--api-key", "string",
 			"--admin-api-key", "string",
 			"beta:responses", "compact",
-			"--model", "gpt-5.6-sol",
+			"--model", "gpt-6-astra",
 			"--input", "string",
 			"--instructions", "instructions",
 			"--previous-response-id", "resp_123",
@@ -284,7 +287,7 @@ func TestBetaResponsesCompact(t *testing.T) {
 	t.Run("piping data", func(t *testing.T) {
 		// Test piping YAML data over stdin
 		pipeData := []byte("" +
-			"model: gpt-5.6-sol\n" +
+			"model: gpt-6-astra\n" +
 			"input: string\n" +
 			"instructions: instructions\n" +
 			"previous_response_id: resp_123\n" +

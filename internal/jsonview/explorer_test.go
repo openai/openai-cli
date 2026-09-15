@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/help"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tidwall/gjson"
 
 	"github.com/stretchr/testify/require"
@@ -33,6 +34,33 @@ func TestNavigateForward_EmptyRowData(t *testing.T) {
 	require.Equal(t, 1, len(viewer.stack), "expected stack length 1, got %d", len(viewer.stack))
 }
 
+func TestGetSelectedContent_EmptyRowData(t *testing.T) {
+	t.Parallel()
+
+	// A list endpoint with no results renders an empty array, and an empty object
+	// is likewise possible; neither produces a row for the cursor to land on.
+	for _, empty := range []string{"[]", "{}"} {
+		t.Run(empty, func(t *testing.T) {
+			t.Parallel()
+
+			view, err := newTableView("", gjson.Parse(empty), false)
+			require.NoError(t, err)
+
+			viewer := &JSONViewer{
+				stack: []JSONView{view},
+				root:  "test",
+				help:  help.New(),
+			}
+
+			// Pressing "p" should print the container rather than panicking.
+			require.NotPanics(t, func() {
+				viewer.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+			})
+			require.Equal(t, empty, viewer.message)
+		})
+	}
+}
+
 // rawJSONItem implements HasRawJSON, returning pre-built JSON.
 type rawJSONItem struct {
 	raw string
@@ -57,10 +85,44 @@ func TestSanitizeTerminalStringEscapesControlSequences(t *testing.T) {
 	t.Parallel()
 
 	sample := "before\x1b]52;c;ZGF0YQ==\a\u009b31m\nafter\t"
-	got := sanitizeTerminalString(sample)
+	got := SanitizeTerminalString(sample)
 
 	require.Equal(t, `before\u001b]52;c;ZGF0YQ==\u0007\u009b31m\nafter\t`, got)
 	requireNoRawTerminalControls(t, got)
+}
+
+func TestSanitizeTerminalStringDoesNotAllocateForCleanInput(t *testing.T) {
+	const input = "ordinary terminal output with unicode: café ☕"
+
+	allocations := testing.AllocsPerRun(100, func() {
+		_ = SanitizeTerminalString(input)
+	})
+
+	require.Zero(t, allocations)
+	require.Equal(t, input, SanitizeTerminalString(input))
+}
+
+func TestSanitizeTerminalStringPreservesMalformedUTF8Behavior(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "invalid leading byte", input: string([]byte{0xff, 'a'}), want: "\ufffda"},
+		{name: "invalid middle byte", input: string([]byte{'a', 0xff, 'b'}), want: "a\ufffdb"},
+		{name: "invalid trailing byte", input: string([]byte{'a', 0xff}), want: "a\ufffd"},
+		{name: "valid replacement rune", input: "a\ufffdb", want: "a\ufffdb"},
+		{name: "invalid byte with escape", input: string([]byte{'a', 0xff, '\x1b'}), want: "a\ufffd\\u001b"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, SanitizeTerminalString(tt.input))
+		})
+	}
 }
 
 func TestStaticDisplayEscapesDecodedStrings(t *testing.T) {

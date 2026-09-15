@@ -99,11 +99,6 @@ func TestNullableStreamFlags(t *testing.T) {
 	t.Run("writes an SSE event before the response completes", func(t *testing.T) {
 		releaseResponse := make(chan struct{})
 		released := false
-		defer func() {
-			if !released {
-				close(releaseResponse)
-			}
-		}()
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -119,6 +114,11 @@ func TestNullableStreamFlags(t *testing.T) {
 			flusher.Flush()
 		}))
 		defer server.Close()
+		defer func() {
+			if !released {
+				close(releaseResponse)
+			}
+		}()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
