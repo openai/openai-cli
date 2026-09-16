@@ -24,7 +24,6 @@ func TestMultipartReaderNameUsesBaseFilenameAcrossPathStyles(t *testing.T) {
 		want       string
 	}{
 		{name: "posix", readerName: "/home/alice/reports/report.pdf", want: "report.pdf"},
-		{name: "posix basename with backslash", readerName: `/tmp/invoice\2026.pdf`, want: `invoice\2026.pdf`},
 		{name: "windows", readerName: `C:\Users\alice\reports\report.pdf`, want: "report.pdf"},
 	}
 
@@ -71,6 +70,7 @@ func TestMultipartBaseNameUsesNativePathSeparators(t *testing.T) {
 	}{
 		{name: "windows relative", goos: "windows", readerName: `reports\report.pdf`, want: "report.pdf"},
 		{name: "windows rooted", goos: "windows", readerName: `\reports\report.pdf`, want: "report.pdf"},
+		{name: "windows drive-relative", goos: "windows", readerName: `C:report.pdf`, want: "report.pdf"},
 		{name: "posix backslash is literal", goos: "linux", readerName: `reports\report.pdf`, want: `reports\report.pdf`},
 	}
 

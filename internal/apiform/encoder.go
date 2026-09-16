@@ -176,7 +176,11 @@ func multipartBaseName(name string) string {
 }
 
 func multipartBaseNameForOS(name, goos string) string {
-	if goos == "windows" || isWindowsPath(name) {
+	windowsPath := isWindowsPath(name)
+	if windowsPath && len(name) >= 2 && name[1] == ':' {
+		name = name[2:]
+	}
+	if goos == "windows" || windowsPath {
 		name = strings.ReplaceAll(name, `\`, "/")
 	}
 	return path.Base(name)
