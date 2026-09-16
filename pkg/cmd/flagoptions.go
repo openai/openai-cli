@@ -21,7 +21,6 @@ import (
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3/option"
 
-	"github.com/goccy/go-yaml"
 	"github.com/urfave/cli/v3"
 )
 
@@ -383,7 +382,7 @@ func flagOptions(
 		if len(pipeData) > 0 {
 			stdinConsumedByPipe = true
 			var bodyData any
-			if err := yaml.Unmarshal(pipeData, &bodyData); err != nil {
+			if err := requestflag.UnmarshalYAMLOrJSON(pipeData, &bodyData); err != nil {
 				return nil, fmt.Errorf("Failed to parse piped data as YAML/JSON:\n%w", err)
 			}
 			if bodyMap, ok := bodyData.(map[string]any); ok {
