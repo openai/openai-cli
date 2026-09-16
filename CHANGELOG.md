@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.16.0](https://github.com/openai/openai-cli/compare/v1.15.0...v1.16.0) (2026-09-16)
+
+
+### Features
+
+* **cli:** support custom request headers ([#190](https://github.com/openai/openai-cli/issues/190)) ([07e3ed9](https://github.com/openai/openai-cli/commit/07e3ed90ad4d285808490811a5638d9384fd76c5))
+
+
+### Bug Fixes
+
+* **apiform:** preserve float32 precision in comma arrays ([#78](https://github.com/openai/openai-cli/issues/78)) ([774612f](https://github.com/openai/openai-cli/commit/774612fbe896c83b2d33fe7244d2ec00470f62ad))
+* **apiform:** support primitive pointers in comma arrays ([#119](https://github.com/openai/openai-cli/issues/119)) ([9d146cd](https://github.com/openai/openai-cli/commit/9d146cd3dfd56fec12156b8621ebe581bd4bbe62))
+* **apiquery:** reject complex elements in comma arrays ([#118](https://github.com/openai/openai-cli/issues/118)) ([46faf2c](https://github.com/openai/openai-cli/commit/46faf2c779a9e04e7d91c94fd3444ec2a7a09783))
+* **apiquery:** reject non-string map keys ([#88](https://github.com/openai/openai-cli/issues/88)) ([687a097](https://github.com/openai/openai-cli/commit/687a0975eb5f3c87c6d02633b4666ac8dac8ed33))
+* **autocomplete:** omit hidden flags from suggestions ([#122](https://github.com/openai/openai-cli/issues/122)) ([137d59b](https://github.com/openai/openai-cli/commit/137d59b65e50d532f2f395fe0c5e1982c3510dfe))
+* **explore:** avoid panic when printing an empty result set ([#68](https://github.com/openai/openai-cli/issues/68)) ([f74838c](https://github.com/openai/openai-cli/commit/f74838cc9a66a19c01bb43bbb698e942e6a0f6ba))
+* install Linux package binaries under /usr/bin ([#34](https://github.com/openai/openai-cli/issues/34)) ([ac4e7cb](https://github.com/openai/openai-cli/commit/ac4e7cb16c9271b712c2cde5f64a0904c8815c4e))
+* omit redirect destinations from multipart upload errors ([#189](https://github.com/openai/openai-cli/issues/189)) ([642d511](https://github.com/openai/openai-cli/commit/642d5119227b54a84de0b0aa38d99d148a51148c))
+* **output:** stop pagination at max items ([#43](https://github.com/openai/openai-cli/issues/43)) ([552840e](https://github.com/openai/openai-cli/commit/552840e37ec4b0156ec498159e3bf03804ee643d))
+
+
+### Chores
+
+* **api:** clarify Live SIP call help ([#193](https://github.com/openai/openai-cli/issues/193)) ([79435c4](https://github.com/openai/openai-cli/commit/79435c4b30f3739bbf0b18045f957e18094b4421))
+* **deps:** bump the codeql group across 1 directory with 2 updates ([#161](https://github.com/openai/openai-cli/issues/161)) ([97734f3](https://github.com/openai/openai-cli/commit/97734f3cde7561fb2d80fe0d4d999bbf154aec96))
+* **deps:** bump the go-minor-and-patch group across 1 directory with 2 updates ([#144](https://github.com/openai/openai-cli/issues/144)) ([aa1158d](https://github.com/openai/openai-cli/commit/aa1158d58e6d7843ec96f82501ac0cd923b8d60b))
+* **deps:** update openai-go to v3.61.0 ([#184](https://github.com/openai/openai-cli/issues/184)) ([de52b2e](https://github.com/openai/openai-cli/commit/de52b2eddf77d9b755c7ae7c3d8888d5e818d272))
+
+
+### Documentation
+
+* correct bootstrap dependency check description ([#181](https://github.com/openai/openai-cli/issues/181)) ([4aa657c](https://github.com/openai/openai-cli/commit/4aa657cbc6a0db66ea3954e26bdb1133e4c5b9f6))
+
 ## [1.15.0](https://github.com/openai/openai-cli/compare/v1.14.0...v1.15.0) (2026-09-10)
 
 
