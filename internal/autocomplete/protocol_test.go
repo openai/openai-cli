@@ -25,10 +25,12 @@ func TestShellCompletionProtocolHelper(t *testing.T) {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "format"},
 			&cli.StringFlag{Name: "file", TakesFile: true},
+			&cli.StringFlag{Name: "header"},
 		},
 		Commands: []*cli.Command{
 			{Name: "models", Commands: []*cli.Command{
 				{Name: "list", Flags: []cli.Flag{&cli.IntFlag{Name: "max-items"}}},
+				{Name: "retrieve", Flags: []cli.Flag{&cli.StringFlag{Name: "model"}}},
 			}},
 			{Name: "__complete", Hidden: true, SkipFlagParsing: true, Action: ExecuteShellCompletion},
 		},
@@ -57,17 +59,26 @@ func TestShellCompletionProtocol(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		args       []string
+		bashArgs   []string
 		code       int
 		output     string
 		candidates string
 	}{
-		{"root value", []string{"--format", "candidate-"}, 11, "", ""},
-		{"nested local value", []string{"models", "list", "--max-items", "candidate-"}, 11, "", ""},
-		{"file value", []string{"--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
-		{"spaced preceding value", []string{"--format", "two words", "--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
-		{"empty preceding value", []string{"--format", "", "--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
-		{"explicit file prefix", []string{"--format", "@candidate-"}, 11, "", "@candidate-fixture.txt\n"},
-		{"command prefix", []string{"mo"}, 0, "models\n", "models\n"},
+		{name: "root value", args: []string{"--format", "candidate-"}, code: 11},
+		{name: "nested local value", args: []string{"models", "list", "--max-items", "candidate-"}, code: 11},
+		{name: "file value", args: []string{"--file", "candidate-"}, code: 10, candidates: "candidate-fixture.txt\n"},
+		{name: "spaced preceding value", args: []string{"--format", "two words", "--file", "candidate-"}, code: 10, candidates: "candidate-fixture.txt\n"},
+		{name: "empty preceding value", args: []string{"--format", "", "--file", "candidate-"}, code: 10, candidates: "candidate-fixture.txt\n"},
+		{name: "explicit file prefix", args: []string{"--format", "@candidate-"}, code: 11, candidates: "@candidate-fixture.txt\n"},
+		{name: "command prefix", args: []string{"mo"}, code: 0, output: "models\n", candidates: "models\n"},
+		{
+			name:       "bash colon-split header value",
+			args:       []string{"--header", "X:completions", "models", "retrieve", "--mo"},
+			bashArgs:   []string{"--header", "X", ":", "completions", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -117,7 +128,11 @@ for candidate in "${COMPREPLY[@]}"; do
   printf '%s\n' "$candidate"
 done
 `
-				args := append([]string{"-c", probe, "completion-probe", binary}, test.args...)
+				bashArgs := test.args
+				if test.bashArgs != nil {
+					bashArgs = test.bashArgs
+				}
+				args := append([]string{"-c", probe, "completion-probe", binary}, bashArgs...)
 				command := exec.Command(bash, args...)
 				command.Dir, command.Env = dir, env
 				stdout.Reset()
@@ -128,7 +143,7 @@ done
 				require.Equal(t, test.candidates, stdout.String())
 				argv, err := os.ReadFile(filepath.Join(dir, "helper.argv"))
 				require.NoError(t, err)
-				wantArgs := append([]string{"__complete", "--"}, test.args...)
+				wantArgs := append([]string{"__complete", "--"}, bashArgs...)
 				require.Equal(t, strings.Join(wantArgs, "\x00")+"\x00", string(argv))
 			})
 		})

@@ -375,8 +375,24 @@ func rebuildColonSeparatedArgs(root *cli.Command, args []string) []string {
 			result = append(result, current)
 			if flag := findFlag(flags, current); flag != nil {
 				if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && i+1 < len(args) {
-					result = append(result, args[i+1])
+					value := args[i+1]
 					i += 2
+
+					// Bash includes ':' in COMP_WORDBREAKS, so a single flag value such as
+					// `X:completions` can arrive as `X`, `:`, `completions`. Rebuild the
+					// split value here, but stop at a colon when the following tokens form
+					// a valid command path. That preserves both `X:completions models ...`
+					// and a value ending in a colon, such as `chat: completions create ...`.
+					for i < len(args) && args[i] == ":" {
+						value += ":"
+						i++
+						if i >= len(args) || commandTailStartsAt(cmd, args[i:]) {
+							break
+						}
+						value += args[i]
+						i++
+					}
+					result = append(result, value)
 					continue
 				}
 			}
@@ -413,6 +429,22 @@ func rebuildColonSeparatedArgs(root *cli.Command, args []string) []string {
 	}
 
 	return result
+}
+
+func commandTailStartsAt(cmd *cli.Command, args []string) bool {
+	matched := false
+	for _, arg := range args {
+		if isFlag(arg) {
+			return matched
+		}
+		child := findChild(cmd, arg)
+		if child == nil {
+			return false
+		}
+		matched = true
+		cmd = child
+	}
+	return matched
 }
 
 func hasCommandPrefix(cmd *cli.Command, prefix string) bool {

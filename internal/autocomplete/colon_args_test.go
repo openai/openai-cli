@@ -16,6 +16,7 @@ func TestRebuildColonSeparatedArgs(t *testing.T) {
 			{Name: "config:get"},
 			{Name: "config:set"},
 			{Name: "completions", Commands: []*cli.Command{{Name: "create"}}},
+			{Name: "models", Commands: []*cli.Command{{Name: "retrieve"}}},
 			{Name: "chat:completions", Commands: []*cli.Command{{Name: "create"}}},
 		},
 	}
@@ -50,6 +51,14 @@ func TestRebuildColonSeparatedArgs(t *testing.T) {
 		},
 		"flag value ending in colon before command": {
 			args: []string{"--header", "chat:", "completions", "create", "--mo"},
+			want: []string{"--header", "chat:", "completions", "create", "--mo"},
+		},
+		"bash-split colon inside flag value": {
+			args: []string{"--header", "X", ":", "completions", "models", "retrieve", "--mo"},
+			want: []string{"--header", "X:completions", "models", "retrieve", "--mo"},
+		},
+		"bash-split trailing colon before command": {
+			args: []string{"--header", "chat", ":", "completions", "create", "--mo"},
 			want: []string{"--header", "chat:", "completions", "create", "--mo"},
 		},
 	}
