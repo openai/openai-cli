@@ -359,13 +359,7 @@ func handleImagesGenerate(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("Unexpected extra arguments: %v", unusedArgs)
 	}
 
-	options, err := flagOptions(
-		cmd,
-		apiquery.NestedQueryFormatBrackets,
-		apiquery.ArrayQueryFormatBrackets,
-		ApplicationJSON,
-		false,
-	)
+	options, imageOutput, err := imageGenerateOptions(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -394,6 +388,10 @@ func handleImagesGenerate(ctx context.Context, cmd *cli.Command) error {
 		_, err = client.Images.Generate(ctx, params, options...)
 		if err != nil {
 			return err
+		}
+
+		if imageOutput != nil {
+			return imageOutput.save(ctx, res, cmd.Root().Writer)
 		}
 
 		obj := gjson.ParseBytes(res)
