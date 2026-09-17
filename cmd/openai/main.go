@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"slices"
 
 	"github.com/openai/openai-cli/pkg/cmd"
 	"github.com/openai/openai-go/v3"
@@ -16,8 +15,9 @@ import (
 
 func main() {
 	app := cmd.Command
+	app.Flags = append(app.Flags, cmd.NewRequestHeaderFlag())
 
-	if slices.Contains(os.Args, "__complete") {
+	if len(os.Args) > 1 && os.Args[1] == "__complete" {
 		prepareForAutocomplete(app)
 	}
 

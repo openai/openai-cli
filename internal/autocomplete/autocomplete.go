@@ -87,9 +87,9 @@ func NewShellCompletion(name string, usage string) ShellCompletion {
 type ShellCompletionBehavior int
 
 const (
-	ShellCompletionBehaviorDefault ShellCompletionBehavior = iota
-	ShellCompletionBehaviorFile                            = 10
-	ShellCompletionBehaviorNoComplete
+	ShellCompletionBehaviorDefault    ShellCompletionBehavior = iota
+	ShellCompletionBehaviorFile                               = 10
+	ShellCompletionBehaviorNoComplete                         = 11
 )
 
 type CompletionResult struct {
@@ -101,9 +101,9 @@ func isFlag(arg string) bool {
 	return strings.HasPrefix(arg, "-")
 }
 
-func findFlag(cmd *cli.Command, arg string) *cli.Flag {
+func findFlag(flags []cli.Flag, arg string) *cli.Flag {
 	name := strings.TrimLeft(arg, "-")
-	for _, flag := range cmd.Flags {
+	for _, flag := range flags {
 		if vf, ok := flag.(cli.VisibleFlag); ok && !vf.IsVisible() {
 			continue
 		}
@@ -113,6 +113,28 @@ func findFlag(cmd *cli.Command, arg string) *cli.Flag {
 		}
 	}
 	return nil
+}
+
+// Completion walks commands before their parent links are initialized. Keep
+// the lineage explicitly to include persistent flags and respect local aliases.
+func completionFlags(lineage []*cli.Command) []cli.Flag {
+	var flags []cli.Flag
+	seen := make(map[string]bool)
+	for i := len(lineage) - 1; i >= 0; i-- {
+		for _, flag := range lineage[i].Flags {
+			if i != len(lineage)-1 {
+				local, ok := flag.(cli.LocalFlag)
+				if !ok || local.IsLocal() || slices.ContainsFunc(flag.Names(), func(name string) bool { return seen[name] }) {
+					continue
+				}
+			}
+			flags = append(flags, flag)
+			for _, name := range flag.Names() {
+				seen[name] = true
+			}
+		}
+	}
+	return flags
 }
 
 func findChild(cmd *cli.Command, name string) *cli.Command {
@@ -224,12 +246,14 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	current := args[len(args)-1]
 	preceding := args[0 : len(args)-1]
 	cmd := root
+	lineage := []*cli.Command{root}
+	flags := completionFlags(lineage)
 	i := 0
 	for i < len(preceding) {
 		arg := preceding[i]
 
 		if isFlag(arg) {
-			flag := findFlag(cmd, arg)
+			flag := findFlag(flags, arg)
 			if flag == nil {
 				i++
 			} else if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() {
@@ -242,6 +266,8 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			child := findChild(cmd, arg)
 			if child != nil {
 				cmd = child
+				lineage = append(lineage, child)
+				flags = completionFlags(lineage)
 			}
 			i++
 		}
@@ -251,7 +277,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	if len(preceding) > 0 {
 		prev := preceding[len(preceding)-1]
 		if isFlag(prev) {
-			flag := findFlag(cmd, prev)
+			flag := findFlag(flags, prev)
 			if flag != nil {
 				if fb, ok := (*flag).(*cli.StringFlag); ok && fb.TakesFile {
 					return CompletionResult{Completions: completions, Behavior: ShellCompletionBehaviorFile}
@@ -264,7 +290,10 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 
 	// Completing a flag name
 	if isFlag(current) {
-		for _, flag := range cmd.Flags {
+		for _, flag := range flags {
+			if vf, ok := flag.(cli.VisibleFlag); ok && !vf.IsVisible() {
+				continue
+			}
 			completions = builder.createFromFlag(current, &flag, completions)
 		}
 	}
