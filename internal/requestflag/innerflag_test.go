@@ -1,9 +1,12 @@
 package requestflag
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
 
@@ -344,4 +347,87 @@ func TestInnerFlagWithSliceType(t *testing.T) {
 			{"name": "second"},
 		}, result)
 	})
+}
+
+func TestInnerFlagAfterNullArrayElement(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"null alone", []string{"--entry", "null"}, `{"entries":[null]}`},
+		{"inner field after null", []string{"--entry", "null", "--entry.name", "demo"}, `{"entries":[{"name":"demo"}]}`},
+		{"empty object control", []string{"--entry", "{}", "--entry.name", "demo"}, `{"entries":[{"name":"demo"}]}`},
+		{
+			"preserve earlier elements and merge siblings",
+			[]string{"--entry", "null", "--entry", "{name: earlier}", "--entry", "null", "--entry.name", "demo", "--entry.description", "details"},
+			`{"entries":[null,{"name":"earlier"},{"name":"demo","description":"details"}]}`,
+		},
+		{
+			"repeated field starts another element",
+			[]string{"--entry", "null", "--entry.name", "first", "--entry.description", "details", "--entry.name", "second"},
+			`{"entries":[{"name":"first","description":"details"},{"name":"second"}]}`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			outer := &Flag[[]map[string]any]{Name: "entry", BodyPath: "entries"}
+			var body []byte
+			command := WithInnerFlags(cli.Command{
+				Name:  "test",
+				Flags: []cli.Flag{outer},
+				Action: func(_ context.Context, cmd *cli.Command) error {
+					var err error
+					body, err = json.Marshal(ExtractRequestContents(cmd).Body)
+					return err
+				},
+			}, map[string][]HasOuterFlag{
+				"entry": {
+					&InnerFlag[string]{Name: "entry.name", InnerField: "name"},
+					&InnerFlag[string]{Name: "entry.description", InnerField: "description"},
+				},
+			})
+			require.NoError(t, command.Run(context.Background(), append([]string{"test"}, tt.args...)))
+			assert.JSONEq(t, tt.want, string(body))
+		})
+	}
+}
+
+func TestInnerFlagAfterNullArrayElementStdinPrecedence(t *testing.T) {
+	t.Parallel()
+
+	outer := &Flag[[]map[string]any]{Name: "entry", BodyPath: "entries"}
+	name := &InnerFlag[string]{Name: "entry.name", InnerField: "name", OuterFlag: outer}
+	description := &InnerFlag[string]{Name: "entry.description", InnerField: "description", OuterFlag: outer}
+	require.NoError(t, outer.Set(outer.Name, "null"))
+	require.NoError(t, name.Set(name.Name, "first"))
+	require.NoError(t, description.Set(description.Name, "first description"))
+	require.NoError(t, outer.Set(outer.Name, "null"))
+	require.NoError(t, name.Set(name.Name, "second"))
+
+	command := &cli.Command{Flags: []cli.Flag{outer, name, description}}
+	require.NoError(t, ApplyStdinDataToFlags(command, map[string]any{
+		"entries": map[string]any{"name": "stdin name", "description": "stdin description"},
+	}))
+	assert.Equal(t, []map[string]any{
+		{"name": "first", "description": "first description"},
+		{"name": "second", "description": "stdin description"},
+	}, outer.Get())
+}
+
+func TestInnerFlagAfterNullElementInUntypedArray(t *testing.T) {
+	t.Parallel()
+
+	outer := &Flag[any]{Name: "entry"}
+	require.NoError(t, outer.PreParse())
+	name := &InnerFlag[string]{
+		Name: "entry.name", InnerField: "name", OuterFlag: outer,
+		OuterIsArrayOfObjects: true,
+	}
+	require.NoError(t, name.Set(name.Name, "first"))
+	require.NoError(t, outer.Set(outer.Name, "null"))
+	require.NoError(t, name.Set(name.Name, "second"))
+	assert.Equal(t, []map[string]any{{"name": "first"}, {"name": "second"}}, outer.Get())
 }

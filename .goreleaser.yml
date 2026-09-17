@@ -1,13 +1,8 @@
 project_name: openai
 version: 2
 
-before:
-  hooks:
-    - mkdir -p completions
-    - sh -c "go run ./cmd/openai/main.go @completion bash > completions/openai.bash"
-    - sh -c "go run ./cmd/openai/main.go @completion zsh > completions/openai.zsh"
-    - sh -c "go run ./cmd/openai/main.go @completion fish > completions/openai.fish"
-    - sh -c "go run ./cmd/openai/main.go @manpages -o man"
+release:
+  replace_existing_artifacts: true
 
 builds:
   - id: macos
@@ -82,7 +77,7 @@ snapshot:
 nfpms:
   - license: Apache-2.0
     maintainer: support@openai.com
-    bindir: /usr
+    bindir: /usr/bin
     formats:
       - apk
       - deb

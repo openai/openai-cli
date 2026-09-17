@@ -1,4 +1,4 @@
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+// File generated from our OpenAPI spec by Castiron. See CONTRIBUTING.md for details.
 
 package cmd
 
@@ -18,7 +18,7 @@ func TestChatCompletionsCreate(t *testing.T) {
 			"chat:completions", "create",
 			"--max-items", "10",
 			"--message", "{content: string, role: developer, name: name}",
-			"--model", "gpt-5.4",
+			"--model", "gpt-6-astra",
 			"--audio", "{format: wav, voice: alloy}",
 			"--frequency-penalty", "-2",
 			"--function-call", "none",
@@ -29,12 +29,13 @@ func TestChatCompletionsCreate(t *testing.T) {
 			"--max-tokens", "0",
 			"--metadata", "{foo: string}",
 			"--modality", "[text]",
-			"--moderation", "{model: model}",
+			"--moderation", "{model: model, policy: {input: {mode: score}, output: {mode: score}}}",
 			"--n", "1",
 			"--parallel-tool-calls=true",
 			"--prediction", "{content: string, type: content}",
 			"--presence-penalty", "-2",
 			"--prompt-cache-key", "prompt-cache-key-1234",
+			"--prompt-cache-options", "{mode: implicit, ttl: 30m}",
 			"--prompt-cache-retention", "in_memory",
 			"--reasoning-effort", "none",
 			"--response-format", "{type: text}",
@@ -68,7 +69,7 @@ func TestChatCompletionsCreate(t *testing.T) {
 			"chat:completions", "create",
 			"--max-items", "10",
 			"--message", "{content: string, role: developer, name: name}",
-			"--model", "gpt-5.4",
+			"--model", "gpt-6-astra",
 			"--audio.format", "wav",
 			"--audio.voice", "alloy",
 			"--frequency-penalty", "-2",
@@ -83,12 +84,15 @@ func TestChatCompletionsCreate(t *testing.T) {
 			"--metadata", "{foo: string}",
 			"--modality", "[text]",
 			"--moderation.model", "model",
+			"--moderation.policy", "{input: {mode: score}, output: {mode: score}}",
 			"--n", "1",
 			"--parallel-tool-calls=true",
 			"--prediction.content", "string",
 			"--prediction.type", "content",
 			"--presence-penalty", "-2",
 			"--prompt-cache-key", "prompt-cache-key-1234",
+			"--prompt-cache-options.mode", "implicit",
+			"--prompt-cache-options.ttl", "30m",
 			"--prompt-cache-retention", "in_memory",
 			"--reasoning-effort", "none",
 			"--response-format", "{type: text}",
@@ -119,7 +123,7 @@ func TestChatCompletionsCreate(t *testing.T) {
 			"  - content: string\n" +
 			"    role: developer\n" +
 			"    name: name\n" +
-			"model: gpt-5.4\n" +
+			"model: gpt-6-astra\n" +
 			"audio:\n" +
 			"  format: wav\n" +
 			"  voice: alloy\n" +
@@ -141,6 +145,11 @@ func TestChatCompletionsCreate(t *testing.T) {
 			"  - text\n" +
 			"moderation:\n" +
 			"  model: model\n" +
+			"  policy:\n" +
+			"    input:\n" +
+			"      mode: score\n" +
+			"    output:\n" +
+			"      mode: score\n" +
 			"'n': 1\n" +
 			"parallel_tool_calls: true\n" +
 			"prediction:\n" +
@@ -148,6 +157,9 @@ func TestChatCompletionsCreate(t *testing.T) {
 			"  type: content\n" +
 			"presence_penalty: -2\n" +
 			"prompt_cache_key: prompt-cache-key-1234\n" +
+			"prompt_cache_options:\n" +
+			"  mode: implicit\n" +
+			"  ttl: 30m\n" +
 			"prompt_cache_retention: in_memory\n" +
 			"reasoning_effort: none\n" +
 			"response_format:\n" +

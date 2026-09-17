@@ -1,4 +1,4 @@
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+// File generated from our OpenAPI spec by Castiron. See CONTRIBUTING.md for details.
 
 package cmd
 
@@ -26,14 +26,15 @@ func TestResponsesCreate(t *testing.T) {
 			"--max-output-tokens", "16",
 			"--max-tool-calls", "0",
 			"--metadata", "{foo: string}",
-			"--model", "gpt-5.1",
-			"--moderation", "{model: model}",
+			"--model", "gpt-6-astra",
+			"--moderation", "{model: model, policy: {input: {mode: score}, output: {mode: score}}}",
 			"--parallel-tool-calls=true",
 			"--previous-response-id", "previous_response_id",
 			"--prompt", "{id: id, variables: {foo: string}, version: version}",
 			"--prompt-cache-key", "prompt-cache-key-1234",
+			"--prompt-cache-options", "{comparison_response_id: resp_123, mode: implicit, ttl: 30m}",
 			"--prompt-cache-retention", "in_memory",
-			"--reasoning", "{context: auto, effort: none, generate_summary: auto, summary: auto}",
+			"--reasoning", "{context: auto, effort: none, generate_summary: auto, mode: standard, summary: auto}",
 			"--safety-identifier", "safety-identifier-1234",
 			"--service-tier", "auto",
 			"--store=true",
@@ -42,7 +43,7 @@ func TestResponsesCreate(t *testing.T) {
 			"--temperature", "1",
 			"--text", "{format: {type: text}, verbosity: low}",
 			"--tool-choice", "none",
-			"--tool", "{name: name, parameters: {foo: bar}, strict: true, type: function, defer_loading: true, description: description}",
+			"--tool", "{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], async: true, defer_loading: true, description: description, output_schema: {foo: bar}}",
 			"--top-logprobs", "0",
 			"--top-p", "1",
 			"--truncation", "auto",
@@ -71,18 +72,23 @@ func TestResponsesCreate(t *testing.T) {
 			"--max-output-tokens", "16",
 			"--max-tool-calls", "0",
 			"--metadata", "{foo: string}",
-			"--model", "gpt-5.1",
+			"--model", "gpt-6-astra",
 			"--moderation.model", "model",
+			"--moderation.policy", "{input: {mode: score}, output: {mode: score}}",
 			"--parallel-tool-calls=true",
 			"--previous-response-id", "previous_response_id",
 			"--prompt.id", "id",
 			"--prompt.variables", "{foo: string}",
 			"--prompt.version", "version",
 			"--prompt-cache-key", "prompt-cache-key-1234",
+			"--prompt-cache-options.comparison-response-id", "resp_123",
+			"--prompt-cache-options.mode", "implicit",
+			"--prompt-cache-options.ttl", "30m",
 			"--prompt-cache-retention", "in_memory",
 			"--reasoning.context", "auto",
 			"--reasoning.effort", "none",
 			"--reasoning.generate-summary", "auto",
+			"--reasoning.mode", "standard",
 			"--reasoning.summary", "auto",
 			"--safety-identifier", "safety-identifier-1234",
 			"--service-tier", "auto",
@@ -93,7 +99,7 @@ func TestResponsesCreate(t *testing.T) {
 			"--text.format", "{type: text}",
 			"--text.verbosity", "low",
 			"--tool-choice", "none",
-			"--tool", "{name: name, parameters: {foo: bar}, strict: true, type: function, defer_loading: true, description: description}",
+			"--tool", "{name: name, parameters: {foo: bar}, strict: true, type: function, allowed_callers: [direct], async: true, defer_loading: true, description: description, output_schema: {foo: bar}}",
 			"--top-logprobs", "0",
 			"--top-p", "1",
 			"--truncation", "auto",
@@ -117,9 +123,14 @@ func TestResponsesCreate(t *testing.T) {
 			"max_tool_calls: 0\n" +
 			"metadata:\n" +
 			"  foo: string\n" +
-			"model: gpt-5.1\n" +
+			"model: gpt-6-astra\n" +
 			"moderation:\n" +
 			"  model: model\n" +
+			"  policy:\n" +
+			"    input:\n" +
+			"      mode: score\n" +
+			"    output:\n" +
+			"      mode: score\n" +
 			"parallel_tool_calls: true\n" +
 			"previous_response_id: previous_response_id\n" +
 			"prompt:\n" +
@@ -128,11 +139,16 @@ func TestResponsesCreate(t *testing.T) {
 			"    foo: string\n" +
 			"  version: version\n" +
 			"prompt_cache_key: prompt-cache-key-1234\n" +
+			"prompt_cache_options:\n" +
+			"  comparison_response_id: resp_123\n" +
+			"  mode: implicit\n" +
+			"  ttl: 30m\n" +
 			"prompt_cache_retention: in_memory\n" +
 			"reasoning:\n" +
 			"  context: auto\n" +
 			"  effort: none\n" +
 			"  generate_summary: auto\n" +
+			"  mode: standard\n" +
 			"  summary: auto\n" +
 			"safety_identifier: safety-identifier-1234\n" +
 			"service_tier: auto\n" +
@@ -152,8 +168,13 @@ func TestResponsesCreate(t *testing.T) {
 			"      foo: bar\n" +
 			"    strict: true\n" +
 			"    type: function\n" +
+			"    allowed_callers:\n" +
+			"      - direct\n" +
+			"    async: true\n" +
 			"    defer_loading: true\n" +
 			"    description: description\n" +
+			"    output_schema:\n" +
+			"      foo: bar\n" +
 			"top_logprobs: 0\n" +
 			"top_p: 1\n" +
 			"truncation: auto\n" +
@@ -216,11 +237,34 @@ func TestResponsesCompact(t *testing.T) {
 			"--api-key", "string",
 			"--admin-api-key", "string",
 			"responses", "compact",
-			"--model", "gpt-5.4",
+			"--model", "gpt-6-astra",
 			"--input", "string",
 			"--instructions", "instructions",
 			"--previous-response-id", "resp_123",
 			"--prompt-cache-key", "prompt_cache_key",
+			"--prompt-cache-options", "{mode: implicit, ttl: 30m}",
+			"--prompt-cache-retention", "in_memory",
+			"--service-tier", "auto",
+		)
+	})
+
+	t.Run("inner flags", func(t *testing.T) {
+		// Check that inner flags have been set up correctly
+		requestflag.CheckInnerFlags(responsesCompact)
+
+		// Alternative argument passing style using inner flags
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"responses", "compact",
+			"--model", "gpt-6-astra",
+			"--input", "string",
+			"--instructions", "instructions",
+			"--previous-response-id", "resp_123",
+			"--prompt-cache-key", "prompt_cache_key",
+			"--prompt-cache-options.mode", "implicit",
+			"--prompt-cache-options.ttl", "30m",
 			"--prompt-cache-retention", "in_memory",
 			"--service-tier", "auto",
 		)
@@ -229,11 +273,14 @@ func TestResponsesCompact(t *testing.T) {
 	t.Run("piping data", func(t *testing.T) {
 		// Test piping YAML data over stdin
 		pipeData := []byte("" +
-			"model: gpt-5.4\n" +
+			"model: gpt-6-astra\n" +
 			"input: string\n" +
 			"instructions: instructions\n" +
 			"previous_response_id: resp_123\n" +
 			"prompt_cache_key: prompt_cache_key\n" +
+			"prompt_cache_options:\n" +
+			"  mode: implicit\n" +
+			"  ttl: 30m\n" +
 			"prompt_cache_retention: in_memory\n" +
 			"service_tier: auto\n")
 		mocktest.TestRunMockTestWithPipeAndFlags(

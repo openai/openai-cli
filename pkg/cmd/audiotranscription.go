@@ -1,4 +1,4 @@
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+// File generated from our OpenAPI spec by Castiron. See CONTRIBUTING.md for details.
 
 package cmd
 
@@ -21,14 +21,14 @@ var audioTranscriptionsCreate = cli.Command{
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
 			Name:      "file",
-			Usage:     "The audio file object (not file name) to transcribe, in one of these formats: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, or webm.\n",
+			Usage:     "The audio file object (not file name) to transcribe, in one of these formats: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, or webm.\nThe request must include enough format metadata for the file to be identified. We recommend an extension-bearing filename and an appropriate content type.\n",
 			Required:  true,
 			BodyPath:  "file",
 			FileInput: true,
 		},
 		&requestflag.Flag[string]{
 			Name:     "model",
-			Usage:    "ID of the model to use. The options are `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`, `gpt-4o-mini-transcribe-2025-12-15`, `whisper-1` (which is powered by our open source Whisper V2 model), and `gpt-4o-transcribe-diarize`.\n",
+			Usage:    "ID of the model to use. The options are `gpt-transcribe`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`, `gpt-4o-mini-transcribe-2025-12-15`, `whisper-1` (which is powered by our open source Whisper V2 model), and `gpt-4o-transcribe-diarize`.\n",
 			Required: true,
 			BodyPath: "model",
 		},
@@ -41,6 +41,11 @@ var audioTranscriptionsCreate = cli.Command{
 			Name:     "include",
 			Usage:    "Additional information to include in the transcription response.\n`logprobs` will return the log probabilities of the tokens in the\nresponse to understand the model's confidence in the transcription.\n`logprobs` only works with response_format set to `json` and only with\nthe models `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`, and `gpt-4o-mini-transcribe-2025-12-15`. This field is not supported when using `gpt-4o-transcribe-diarize`.\n",
 			BodyPath: "include",
+		},
+		&requestflag.Flag[[]string]{
+			Name:     "keyword",
+			Usage:    "Words or phrases to guide transcription of the input audio. Supported by `gpt-transcribe`.\n",
+			BodyPath: "keywords",
 		},
 		&requestflag.Flag[[]string]{
 			Name:     "known-speaker-name",
@@ -57,9 +62,14 @@ var audioTranscriptionsCreate = cli.Command{
 			Usage:    "The language of the input audio. Supplying the input language in [ISO-639-1](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) (e.g. `en`) format will improve accuracy and latency.\n",
 			BodyPath: "language",
 		},
+		&requestflag.Flag[[]string]{
+			Name:     "language",
+			Usage:    "Possible languages of the input audio, in [ISO-639-1](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) format. Supported by `gpt-transcribe`.\n",
+			BodyPath: "languages",
+		},
 		&requestflag.Flag[string]{
 			Name:     "prompt",
-			Usage:    "An optional text to guide the model's style or continue a previous audio segment. The [prompt](https://platform.openai.com/docs/guides/speech-to-text#prompting) should match the audio language. This field is not supported when using `gpt-4o-transcribe-diarize`.\n",
+			Usage:    "An optional text to guide the model's style or continue a previous audio segment. The [prompt](https://developers.openai.com/api/docs/guides/speech-to-text#prompting) should match the audio language. This field is not supported when using `gpt-4o-transcribe-diarize`.\n",
 			BodyPath: "prompt",
 		},
 		&requestflag.Flag[string]{
@@ -70,7 +80,7 @@ var audioTranscriptionsCreate = cli.Command{
 		},
 		&requestflag.Flag[*bool]{
 			Name:     "stream",
-			Usage:    "If set to true, the model response data will be streamed to the client\nas it is generated using [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#Event_stream_format).\nSee the [Streaming section of the Speech-to-Text guide](https://platform.openai.com/docs/guides/speech-to-text?lang=curl#streaming-transcriptions)\nfor more information.\n\nNote: Streaming is not supported for the `whisper-1` model and will be ignored.\n",
+			Usage:    "If set to true, the model response data will be streamed to the client\nas it is generated using [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#Event_stream_format).\nSee the [Streaming section of the Speech-to-Text guide](https://developers.openai.com/api/docs/guides/speech-to-text?lang=curl#streaming)\nfor more information.\n\nNote: Streaming is not supported for the `whisper-1` model and will be ignored.\n",
 			Default:  requestflag.Ptr[bool](false),
 			BodyPath: "stream",
 		},
@@ -119,7 +129,7 @@ func handleAudioTranscriptionsCreate(ctx context.Context, cmd *cli.Command) erro
 	format := cmd.Root().String("format")
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
-	if cmd.Bool("stream") {
+	if streamFlagValue, _ := cmd.Value("stream").(*bool); streamFlagValue != nil && *streamFlagValue {
 		stream := client.Audio.Transcriptions.NewStreaming(ctx, params, options...)
 		maxItems := int64(-1)
 		if cmd.IsSet("max-items") {

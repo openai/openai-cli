@@ -1,4 +1,4 @@
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+// File generated from our OpenAPI spec by Castiron. See CONTRIBUTING.md for details.
 
 package cmd
 
@@ -289,6 +289,11 @@ var adminOrganizationUsageCosts = cli.Command{
 			Usage:     "A limit on the number of buckets to be returned. Limit can range between 1 and 180, and the default is 7.\n",
 			Default:   7,
 			QueryPath: "limit",
+		},
+		&requestflag.Flag[[]string]{
+			Name:      "line-item",
+			Usage:     "Return only costs for these exact line item names. Each value must match the complete `line_item` value, for example `gpt-6-astra, input_tokens`.",
+			QueryPath: "line_items",
 		},
 		&requestflag.Flag[string]{
 			Name:      "page",

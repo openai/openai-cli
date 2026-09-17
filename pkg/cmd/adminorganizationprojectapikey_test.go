@@ -1,4 +1,4 @@
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+// File generated from our OpenAPI spec by Castiron. See CONTRIBUTING.md for details.
 
 package cmd
 
@@ -32,6 +32,7 @@ func TestAdminOrganizationProjectsAPIKeysList(t *testing.T) {
 			"--project-id", "project_id",
 			"--after", "after",
 			"--limit", "0",
+			"--owner-project-access", "active",
 		)
 	})
 }

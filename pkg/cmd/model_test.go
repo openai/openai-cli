@@ -1,4 +1,4 @@
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+// File generated from our OpenAPI spec by Castiron. See CONTRIBUTING.md for details.
 
 package cmd
 
@@ -15,7 +15,7 @@ func TestModelsRetrieve(t *testing.T) {
 			"--api-key", "string",
 			"--admin-api-key", "string",
 			"models", "retrieve",
-			"--model", "gpt-4o-mini",
+			"--model", "gpt-6-astra",
 		)
 	})
 }

@@ -7,6 +7,7 @@ import (
 	"net/textproto"
 	"path"
 	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,6 +42,10 @@ func (e *encoder) marshal(value any, writer *multipart.Writer) error {
 }
 
 func (e *encoder) encodeValue(key string, val reflect.Value, writer *multipart.Writer) error {
+	if err := validateMIMEHeaderValue(key, "field name"); err != nil {
+		return err
+	}
+
 	if !val.IsValid() {
 		return writer.WriteField(key, "")
 	}
@@ -101,14 +106,17 @@ func (e *encoder) encodeArray(key string, val reflect.Value, writer *multipart.W
 		var values []string
 		for i := 0; i < val.Len(); i++ {
 			item := val.Index(i)
-			if (item.Kind() == reflect.Pointer || item.Kind() == reflect.Interface) && item.IsNil() {
-				// Null values are sent as an empty string
-				values = append(values, "")
-				continue
-			}
-			// If item is an interface, reduce it to the concrete type
-			if item.Kind() == reflect.Interface {
+			for item.Kind() == reflect.Pointer || item.Kind() == reflect.Interface {
+				if item.IsNil() {
+					// Null values are sent as an empty string.
+					values = append(values, "")
+					item = reflect.Value{}
+					break
+				}
 				item = item.Elem()
+			}
+			if !item.IsValid() {
+				continue
 			}
 			var strValue string
 			switch item.Kind() {
@@ -118,7 +126,9 @@ func (e *encoder) encodeArray(key string, val reflect.Value, writer *multipart.W
 				strValue = strconv.FormatInt(item.Int(), 10)
 			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 				strValue = strconv.FormatUint(item.Uint(), 10)
-			case reflect.Float32, reflect.Float64:
+			case reflect.Float32:
+				strValue = strconv.FormatFloat(item.Float(), 'f', -1, 32)
+			case reflect.Float64:
 				strValue = strconv.FormatFloat(item.Float(), 'f', -1, 64)
 			case reflect.Bool:
 				strValue = strconv.FormatBool(item.Bool())
@@ -166,6 +176,41 @@ func escapeQuotes(s string) string {
 	return quoteEscaper.Replace(s)
 }
 
+func multipartBaseName(name string) string {
+	return multipartBaseNameForOS(name, runtime.GOOS)
+}
+
+func multipartBaseNameForOS(name, goos string) string {
+	windowsPath := isWindowsPath(name)
+	if windowsPath && len(name) >= 2 && name[1] == ':' {
+		name = name[2:]
+	}
+	if goos == "windows" || windowsPath {
+		name = strings.ReplaceAll(name, `\`, "/")
+	}
+	return path.Base(name)
+}
+
+func isWindowsPath(name string) bool {
+	if strings.HasPrefix(name, `\\`) {
+		return true
+	}
+	if len(name) < 2 || name[1] != ':' {
+		return false
+	}
+	drive := name[0]
+	return (drive >= 'A' && drive <= 'Z') || (drive >= 'a' && drive <= 'z')
+}
+
+func validateMIMEHeaderValue(value, component string) error {
+	for i := 0; i < len(value); i++ {
+		if (value[i] < ' ' && value[i] != '\t') || value[i] == '\x7f' {
+			return fmt.Errorf("apiform: invalid control character in multipart %s", component)
+		}
+	}
+	return nil
+}
+
 func (e *encoder) encodeReader(key string, val reflect.Value, writer *multipart.Writer) error {
 	reader, ok := val.Convert(reflect.TypeOf((*io.Reader)(nil)).Elem()).Interface().(io.Reader)
 	if !ok {
@@ -180,12 +225,19 @@ func (e *encoder) encodeReader(key string, val reflect.Value, writer *multipart.
 	if named, ok := reader.(interface{ Filename() string }); ok {
 		filename = named.Filename()
 	} else if named, ok := reader.(interface{ Name() string }); ok {
-		filename = path.Base(named.Name())
+		filename = multipartBaseName(named.Name())
 	}
 
 	// Get content type if available
 	if typed, ok := reader.(interface{ ContentType() string }); ok {
 		contentType = typed.ContentType()
+	}
+
+	if err := validateMIMEHeaderValue(filename, "filename"); err != nil {
+		return err
+	}
+	if err := validateMIMEHeaderValue(contentType, "content type"); err != nil {
+		return err
 	}
 
 	h := make(textproto.MIMEHeader)

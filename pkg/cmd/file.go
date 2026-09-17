@@ -1,4 +1,4 @@
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+// File generated from our OpenAPI spec by Castiron. See CONTRIBUTING.md for details.
 
 package cmd
 
@@ -124,7 +124,7 @@ var filesDelete = cli.Command{
 
 var filesContent = cli.Command{
 	Name:    "content",
-	Usage:   "Returns the contents of the specified file.",
+	Usage:   "Returns a response containing the contents of the specified file.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{

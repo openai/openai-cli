@@ -1,4 +1,4 @@
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+// File generated from our OpenAPI spec by Castiron. See CONTRIBUTING.md for details.
 
 package cmd
 
@@ -21,7 +21,7 @@ var audioTranslationsCreate = cli.Command{
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
 			Name:      "file",
-			Usage:     "The audio file object (not file name) translate, in one of these formats: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, or webm.\n",
+			Usage:     "The audio file object (not file name) translate, in one of these formats: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, or webm. The request must include enough format metadata for the file to be identified. We recommend an extension-bearing filename and an appropriate content type.\n",
 			Required:  true,
 			BodyPath:  "file",
 			FileInput: true,
@@ -34,7 +34,7 @@ var audioTranslationsCreate = cli.Command{
 		},
 		&requestflag.Flag[string]{
 			Name:     "prompt",
-			Usage:    "An optional text to guide the model's style or continue a previous audio segment. The [prompt](https://platform.openai.com/docs/guides/speech-to-text#prompting) should be in English.\n",
+			Usage:    "An optional text to guide the model's style or continue a previous audio segment. The [prompt](https://developers.openai.com/api/docs/guides/speech-to-text#prompting) should be in English.\n",
 			BodyPath: "prompt",
 		},
 		&requestflag.Flag[string]{

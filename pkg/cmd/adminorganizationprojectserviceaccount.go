@@ -1,4 +1,4 @@
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+// File generated from our OpenAPI spec by Castiron. See CONTRIBUTING.md for details.
 
 package cmd
 
@@ -16,7 +16,7 @@ import (
 
 var adminOrganizationProjectsServiceAccountsCreate = cli.Command{
 	Name:    "create",
-	Usage:   "Creates a new service account in the project. This also returns an unredacted\nAPI key for the service account.",
+	Usage:   "Creates a new service account in the project. By default, this also returns an\nunredacted API key for the service account.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -29,6 +29,16 @@ var adminOrganizationProjectsServiceAccountsCreate = cli.Command{
 			Usage:    "The name of the service account being created.",
 			Required: true,
 			BodyPath: "name",
+		},
+		&requestflag.Flag[*bool]{
+			Name:     "create-service-account-only",
+			Usage:    "Create the service account without default roles or an API key.",
+			BodyPath: "create_service_account_only",
+		},
+		&requestflag.Flag[*int64]{
+			Name:     "expires-in-seconds",
+			Usage:    "Number of seconds until the initial API key expires. If omitted or null, the key does not expire unless the effective organization or project policy requires an expiration. When a policy sets a maximum lifetime, this value must be provided and must not exceed that limit. A non-null value cannot be used when `create_service_account_only` is true.",
+			BodyPath: "expires_in_seconds",
 		},
 	},
 	Action:          handleAdminOrganizationProjectsServiceAccountsCreate,
