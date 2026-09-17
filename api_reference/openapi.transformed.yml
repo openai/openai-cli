@@ -25246,7 +25246,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -25319,7 +25319,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -25417,7 +25417,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -25516,7 +25516,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -25597,7 +25597,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -25703,7 +25703,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -26428,7 +26428,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -26491,7 +26491,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -26559,7 +26559,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -26591,7 +26591,7 @@ paths:
     post:
       operationId: updateAgentSession
       summary: Update an agent session
-      description: Updates session metadata. Omitted fields are unchanged. See [managing sessions](https://developers.openai.com/api/docs/guides/agents-api/sessions/manage).
+      description: Updates session metadata, model, reasoning effort, or service tier. Model settings apply to subsequent turns. Omitted fields are unchanged. See [managing sessions](https://developers.openai.com/api/docs/guides/agents-api/sessions/manage).
       tags:
       - Agents
       parameters:
@@ -26628,7 +26628,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -26692,7 +26692,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -26795,7 +26795,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -26868,7 +26868,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -26940,7 +26940,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -27014,7 +27014,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -27079,7 +27079,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -27155,7 +27155,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -27245,7 +27245,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
         '403':
-          description: The API key lacks the required Responses permission.
+          description: The API key lacks the required permission.
           content:
             application/json:
               schema:
@@ -65423,10 +65423,9 @@ components:
             call_id:
               type: string
               description: |
-                The Transceiver `rtc_...` ID of the pending SIP session. The paired
-                `live.transport.incoming` event derives its `session_id` by replacing the
-                `rtc_` prefix with `live_`. Use the ID returned by the event with the
-                corresponding Realtime or Live API.
+                The ID of the pending SIP call. Pass this value unchanged when
+                accepting or rejecting the call through the Realtime API. For the
+                Live API, use the `session_id` from `live.transport.incoming` instead.
             sip_headers:
               type: array
               description: |
@@ -65472,7 +65471,7 @@ components:
             "type": "realtime.call.incoming",
             "created_at": 1719168000,
             "data": {
-              "call_id": "rtc_479a275623b54bdb9b6fbae2f7cbd408",
+              "call_id": "rtc_u0_479a275623b54bdb9b6fbae2f7cbd408",
               "sip_headers": [
                 {"name": "Max-Forwards", "value": "63"},
                 {"name": "CSeq", "value": "851287 INVITE"},
@@ -70031,6 +70030,9 @@ components:
         mode:
           $ref: '#/components/schemas/PromptCacheModeEnum'
           description: Controls whether OpenAI automatically creates an implicit cache breakpoint. Defaults to `implicit`. With `implicit`, OpenAI creates one implicit breakpoint and writes up to the latest three explicit breakpoints in the request. With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit breakpoints. If there are no explicit breakpoints, the request does not use prompt caching.
+        prewarm:
+          type: boolean
+          description: Prepares the prompt cache without generating output. Defaults to `false`. When set to `true`, overrides the `generate` field to `false`.
         comparison_response_id:
           anyOf:
           - type: string
@@ -79282,9 +79284,42 @@ components:
       - $ref: '#/components/schemas/SessionEventAgentSessionTurnReasoningSummaryPartDone'
       - $ref: '#/components/schemas/SessionEventAgentSessionTurnReasoningSummaryTextDelta'
       - $ref: '#/components/schemas/SessionEventAgentSessionTurnReasoningSummaryTextDone'
+    UpdateSessionReasoningParam:
+      type: object
+      properties:
+        effort:
+          anyOf:
+          - $ref: '#/components/schemas/ReasoningEffortParam'
+          - type: 'null'
+          description: Omit to keep the current effort. Null selects the model's default effort.
+          x-openai-go-optional-enum: true
+      additionalProperties: false
+      description: Reasoning effort for subsequent turns. The reasoning summary stays unchanged.
+    UpdateSessionAgentParam:
+      type: object
+      properties:
+        model:
+          type: string
+          minLength: 0
+          maxLength: 1048576
+          description: The model for subsequent turns. Omit to keep the current model.
+        reasoning:
+          $ref: '#/components/schemas/UpdateSessionReasoningParam'
+          description: Reasoning settings to update. Omit to keep the current effort.
+        service_tier:
+          anyOf:
+          - $ref: '#/components/schemas/ServiceTierParam'
+          - type: 'null'
+          description: Omit to keep the current tier. Null resets it to auto.
+          x-openai-go-optional-enum: true
+      additionalProperties: false
+      description: Model settings that can change after session creation.
     UpdateAgentSessionParams:
       type: object
       properties:
+        agent:
+          $ref: '#/components/schemas/UpdateSessionAgentParam'
+          description: Model settings for subsequent turns. Omitted fields stay unchanged.
         metadata:
           type:
           - object
@@ -94407,6 +94442,9 @@ components:
         mode:
           $ref: '#/components/schemas/BetaPromptCacheModeEnum'
           description: Controls whether OpenAI automatically creates an implicit cache breakpoint. Defaults to `implicit`. With `implicit`, OpenAI creates one implicit breakpoint and writes up to the latest three explicit breakpoints in the request. With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit breakpoints. If there are no explicit breakpoints, the request does not use prompt caching.
+        prewarm:
+          type: boolean
+          description: Prepares the prompt cache without generating output. Defaults to `false`. When set to `true`, overrides the `generate` field to `false`.
         comparison_response_id:
           anyOf:
           - type: string
@@ -94670,7 +94708,6 @@ components:
       - gpt-5.1
       - gpt-5.1-2025-11-13
       - gpt-5.1-codex
-      - gpt-5.1-mini
       - gpt-5.1-chat-latest
       - gpt-5
       - gpt-5-mini
@@ -94701,6 +94738,8 @@ components:
       - gpt-4o-2024-11-20
       - gpt-4o-2024-08-06
       - gpt-4o-2024-05-13
+      - gpt-audio-mini
+      - gpt-audio-mini-2025-12-15
       - gpt-4o-audio-preview
       - gpt-4o-audio-preview-2024-10-01
       - gpt-4o-audio-preview-2024-12-17
@@ -94734,6 +94773,7 @@ components:
       - gpt-3.5-turbo-1106
       - gpt-3.5-turbo-0125
       - gpt-3.5-turbo-16k-0613
+      - gpt-5.1-mini
       x-stainless-nominal: false
     LiveBuiltInVoice:
       type: string
