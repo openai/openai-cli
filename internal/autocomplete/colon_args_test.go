@@ -10,10 +10,15 @@ import (
 func TestRebuildColonSeparatedArgs(t *testing.T) {
 	t.Parallel()
 
-	root := &cli.Command{Commands: []*cli.Command{
-		{Name: "config:get"},
-		{Name: "config:set"},
-	}}
+	root := &cli.Command{
+		Flags: []cli.Flag{&cli.StringFlag{Name: "header"}},
+		Commands: []*cli.Command{
+			{Name: "config:get"},
+			{Name: "config:set"},
+			{Name: "completions", Commands: []*cli.Command{{Name: "create"}}},
+			{Name: "chat:completions", Commands: []*cli.Command{{Name: "create"}}},
+		},
+	}
 
 	tests := map[string]struct {
 		args []string
@@ -42,6 +47,10 @@ func TestRebuildColonSeparatedArgs(t *testing.T) {
 		"colon-ending ordinary value": {
 			args: []string{"Prefix:", "value"},
 			want: []string{"Prefix:", "value"},
+		},
+		"flag value ending in colon before command": {
+			args: []string{"--header", "chat:", "completions", "create", "--mo"},
+			want: []string{"--header", "chat:", "completions", "create", "--mo"},
 		},
 	}
 
