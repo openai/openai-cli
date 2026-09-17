@@ -17,7 +17,7 @@ import (
 // that flag.Set (and thus parseCLIArg) can parse correctly for each flag type.
 // Strings are returned as-is (parseCLIArg[string] assigns the raw value directly, so
 // JSON-quoting must be avoided). Scalars use %v. Complex types (maps, slices) are
-// JSON-encoded, which the yaml.Unmarshal default branch in parseCLIArg can parse.
+// JSON-encoded, which the UnmarshalYAMLOrJSON default branch in parseCLIArg can parse.
 func formatForFlagSet(val any) (string, error) {
 	switch v := val.(type) {
 	case string:
@@ -642,7 +642,7 @@ func parseCLIArg[
 			parsedValue = value
 		} else {
 			var yamlValue T
-			err = yaml.Unmarshal([]byte(value), &yamlValue)
+			err = UnmarshalYAMLOrJSON([]byte(value), &yamlValue)
 			if err == nil {
 				parsedValue = yamlValue
 			} else if allowAsLiteralString(value) {

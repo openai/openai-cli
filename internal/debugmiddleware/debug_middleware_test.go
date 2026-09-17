@@ -118,6 +118,35 @@ func TestDebugMiddleware(t *testing.T) {
 		require.Contains(t, logBuf.String(), "Authorization: Bearer "+redactedPlaceholder)
 	})
 
+	t.Run("RedactsProxyAuthorizationHeader", func(t *testing.T) {
+		t.Parallel()
+
+		middleware, logBuf := setup()
+		requestSecret := "Basic " + secretToken + "-request"
+		responseSecret := "Basic " + secretToken + "-response"
+
+		req := httptest.NewRequest("GET", "https://example.com", nil)
+		req.Header.Set("Proxy-Authorization", requestSecret)
+		response := &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Proxy-Authorization": {responseSecret}},
+		}
+		originalHeaders := response.Header.Clone()
+
+		returned, err := middleware.Middleware()(req, func(got *http.Request) (*http.Response, error) {
+			require.Equal(t, requestSecret, got.Header.Get("Proxy-Authorization"))
+			return response, nil
+		})
+		require.NoError(t, err)
+		require.Same(t, response, returned)
+		require.Equal(t, originalHeaders, returned.Header)
+
+		logged := logBuf.String()
+		require.NotContains(t, logged, secretToken)
+		require.Equal(t, 2, strings.Count(logged, "Proxy-Authorization: Basic "+redactedPlaceholder))
+	})
+
 	t.Run("RedactsMultipleAuthorizationHeaders", func(t *testing.T) {
 		t.Parallel()
 

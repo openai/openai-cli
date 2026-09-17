@@ -7,6 +7,7 @@ import (
 	"net/textproto"
 	"path"
 	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -175,6 +176,32 @@ func escapeQuotes(s string) string {
 	return quoteEscaper.Replace(s)
 }
 
+func multipartBaseName(name string) string {
+	return multipartBaseNameForOS(name, runtime.GOOS)
+}
+
+func multipartBaseNameForOS(name, goos string) string {
+	windowsPath := isWindowsPath(name)
+	if windowsPath && len(name) >= 2 && name[1] == ':' {
+		name = name[2:]
+	}
+	if goos == "windows" || windowsPath {
+		name = strings.ReplaceAll(name, `\`, "/")
+	}
+	return path.Base(name)
+}
+
+func isWindowsPath(name string) bool {
+	if strings.HasPrefix(name, `\\`) {
+		return true
+	}
+	if len(name) < 2 || name[1] != ':' {
+		return false
+	}
+	drive := name[0]
+	return (drive >= 'A' && drive <= 'Z') || (drive >= 'a' && drive <= 'z')
+}
+
 func validateMIMEHeaderValue(value, component string) error {
 	for i := 0; i < len(value); i++ {
 		if (value[i] < ' ' && value[i] != '\t') || value[i] == '\x7f' {
@@ -198,7 +225,7 @@ func (e *encoder) encodeReader(key string, val reflect.Value, writer *multipart.
 	if named, ok := reader.(interface{ Filename() string }); ok {
 		filename = named.Filename()
 	} else if named, ok := reader.(interface{ Name() string }); ok {
-		filename = path.Base(named.Name())
+		filename = multipartBaseName(named.Name())
 	}
 
 	// Get content type if available

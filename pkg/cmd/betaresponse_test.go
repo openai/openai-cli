@@ -33,7 +33,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"--previous-response-id", "previous_response_id",
 			"--prompt", "{id: id, variables: {foo: string}, version: version}",
 			"--prompt-cache-key", "prompt-cache-key-1234",
-			"--prompt-cache-options", "{comparison_response_id: resp_123, mode: implicit, ttl: 30m}",
+			"--prompt-cache-options", "{comparison_response_id: resp_123, mode: implicit, prewarm: true, ttl: 30m}",
 			"--prompt-cache-retention", "in_memory",
 			"--reasoning", "{context: auto, effort: none, generate_summary: auto, mode: standard, summary: auto}",
 			"--safety-identifier", "safety-identifier-1234",
@@ -87,6 +87,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"--prompt-cache-key", "prompt-cache-key-1234",
 			"--prompt-cache-options.comparison-response-id", "resp_123",
 			"--prompt-cache-options.mode", "implicit",
+			"--prompt-cache-options.prewarm=true",
 			"--prompt-cache-options.ttl", "30m",
 			"--prompt-cache-retention", "in_memory",
 			"--reasoning.context", "auto",
@@ -150,6 +151,7 @@ func TestBetaResponsesCreate(t *testing.T) {
 			"prompt_cache_options:\n" +
 			"  comparison_response_id: resp_123\n" +
 			"  mode: implicit\n" +
+			"  prewarm: true\n" +
 			"  ttl: 30m\n" +
 			"prompt_cache_retention: in_memory\n" +
 			"reasoning:\n" +

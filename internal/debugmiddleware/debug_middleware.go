@@ -18,8 +18,8 @@ type (
 
 const redactedPlaceholder = "<REDACTED>"
 
-// Headers known to contain sensitive information like an API key. Note that this excludes `Authorization`,
-// which is handled specially in `redactHeaders` below.
+// Headers known to contain sensitive information like an API key. Note that this excludes
+// `Authorization` and `Proxy-Authorization`, which are handled specially in `redactHeaders` below.
 var sensitiveHeaders = []string{
 	"api-key",
 	"x-api-key",
@@ -115,7 +115,7 @@ func (m *RequestLogger) redactHeaders(headers http.Header) http.Header {
 			continue
 		}
 
-		if strings.EqualFold(header, "Authorization") {
+		if strings.EqualFold(header, "Authorization") || strings.EqualFold(header, "Proxy-Authorization") {
 			for i, value := range values {
 				// Keep the authentication scheme for more useful debug logging.
 				if authKind, _, ok := strings.Cut(value, " "); ok {

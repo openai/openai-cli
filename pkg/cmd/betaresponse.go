@@ -265,6 +265,11 @@ var betaResponsesCreate = requestflag.WithInnerFlags(cli.Command{
 			Usage:      "Controls whether OpenAI automatically creates an implicit cache breakpoint. Defaults to `implicit`. With `implicit`, OpenAI creates one implicit breakpoint and writes up to the latest three explicit breakpoints in the request. With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit breakpoints. If there are no explicit breakpoints, the request does not use prompt caching.",
 			InnerField: "mode",
 		},
+		&requestflag.InnerFlag[bool]{
+			Name:       "prompt-cache-options.prewarm",
+			Usage:      "Prepares the prompt cache without generating output. Defaults to `false`. When set to `true`, overrides the `generate` field to `false`.",
+			InnerField: "prewarm",
+		},
 		&requestflag.InnerFlag[string]{
 			Name:       "prompt-cache-options.ttl",
 			Usage:      "The minimum lifetime applied to every implicit and explicit cache breakpoint written by the request. Defaults to `30m`, which is currently the only supported value. The backend may retain cache entries for longer.",
