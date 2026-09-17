@@ -31,6 +31,11 @@ var adminOrganizationProjectsServiceAccountsAPIKeysCreate = cli.Command{
 			Required:  true,
 			PathParam: "service_account_id",
 		},
+		&requestflag.Flag[*int64]{
+			Name:     "expires-in-seconds",
+			Usage:    "Number of seconds until the API key expires.",
+			BodyPath: "expires_in_seconds",
+		},
 		&requestflag.Flag[string]{
 			Name:     "name",
 			Usage:    "API key name.",

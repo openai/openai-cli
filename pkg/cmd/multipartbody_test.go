@@ -248,7 +248,8 @@ func TestMultipartRequestOptionsReject307And308ForUploads(t *testing.T) {
 			var requestCount atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requestCount.Add(1)
-				http.Redirect(w, r, "/upload", status)
+				w.Header().Set("Location", "https://fake-user:fake-password@example.invalid/fake-capability?signature=fake-signature#fake-fragment")
+				w.WriteHeader(status)
 			}))
 			t.Cleanup(server.Close)
 
@@ -263,7 +264,10 @@ func TestMultipartRequestOptionsReject307And308ForUploads(t *testing.T) {
 			)
 
 			_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
-			require.ErrorContains(t, err, "streamed multipart uploads are not replayable")
+			want := fmt.Sprintf("cannot follow HTTP %d redirect: streamed multipart uploads are not replayable", status)
+			if err == nil || err.Error() != want {
+				t.Errorf("Files.New with redirect status %d: got error %v, want %q", status, err, want)
+			}
 			require.Equal(t, int32(1), requestCount.Load())
 		})
 	}
