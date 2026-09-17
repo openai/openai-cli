@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -85,11 +86,15 @@ func isStdinPath(s string) bool {
 }
 
 func embedFiles(obj any, embedStyle FileEmbedStyle, stdin *onceStdinReader) (any, error) {
+	return embedFilesForOS(obj, embedStyle, stdin, runtime.GOOS)
+}
+
+func embedFilesForOS(obj any, embedStyle FileEmbedStyle, stdin *onceStdinReader, goos string) (any, error) {
 	if obj == nil {
 		return obj, nil
 	}
 	v := reflect.ValueOf(obj)
-	result, err := embedFilesValue(v, embedStyle, stdin)
+	result, err := embedFilesValue(v, embedStyle, stdin, goos)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +102,7 @@ func embedFiles(obj any, embedStyle FileEmbedStyle, stdin *onceStdinReader) (any
 }
 
 // Replace "@file.txt" with the file's contents inside a value
-func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdinReader) (reflect.Value, error) {
+func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdinReader, goos string) (reflect.Value, error) {
 	// Unwrap interface values to get the concrete type
 	if v.Kind() == reflect.Interface {
 		if v.IsNil() {
@@ -118,7 +123,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 		for iter.Next() {
 			key := iter.Key()
 			val := iter.Value()
-			newVal, err := embedFilesValue(val, embedStyle, stdin)
+			newVal, err := embedFilesValue(val, embedStyle, stdin, goos)
 			if err != nil {
 				return reflect.Value{}, errors.Join(err, closeFileUploads(result.Interface()))
 			}
@@ -133,7 +138,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 		// Use `[]any` to allow for types to change when embedding files
 		result := reflect.MakeSlice(reflect.TypeOf([]any{}), v.Len(), v.Len())
 		for i := 0; i < v.Len(); i++ {
-			newVal, err := embedFilesValue(v.Index(i), embedStyle, stdin)
+			newVal, err := embedFilesValue(v.Index(i), embedStyle, stdin, goos)
 			if err != nil {
 				return reflect.Value{}, errors.Join(err, closeFileUploads(result.Slice(0, i).Interface()))
 			}
@@ -237,7 +242,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 					// string literal and not a file reference. However, if the
 					// string looks like "@file.txt" or "@/tmp/file", then it's
 					// probably supposed to be a file.
-					probablyFile := strings.Contains(filename, ".") || strings.Contains(filename, "/")
+					probablyFile := looksLikeFilePath(filename, goos)
 					if probablyFile {
 						// Give a useful error message if the user tried to upload a
 						// file, but the file couldn't be read (e.g. mistyped
@@ -265,7 +270,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 				} else if withoutPrefix, ok := strings.CutPrefix(filename, "file://"); ok {
 					filename = withoutPrefix
 				} else {
-					expectsFile = strings.Contains(filename, ".") || strings.Contains(filename, "/")
+					expectsFile = looksLikeFilePath(filename, goos)
 				}
 
 				if isStdinPath(filename) {
@@ -292,6 +297,16 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 	default:
 		return v, nil
 	}
+}
+
+// Guess whether an "@" reference is meant to be a file path rather than a
+// literal like "@username". Backslash is only a path separator on Windows; on
+// other platforms it is a valid filename character.
+func looksLikeFilePath(filename string, goos string) bool {
+	if strings.Contains(filename, ".") || strings.Contains(filename, "/") {
+		return true
+	}
+	return goos == "windows" && strings.Contains(filename, "\\")
 }
 
 // Guess whether a file's contents are binary (e.g. a .jpg or .mp3), as opposed
