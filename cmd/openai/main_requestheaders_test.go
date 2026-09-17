@@ -327,6 +327,11 @@ func TestMainRequestHeadersHelpAndCompletion(t *testing.T) {
 			t.Errorf("header help = %q, want the environment input documented", got.stdout)
 		}
 	}
+	got := runMainDispatch(t, "zsh", "openai", "__complete", "--header", "chat:", "completions", "create", "--mo")
+	if got.code != 0 || !strings.Contains(got.stdout, "--model:") {
+		t.Errorf("zsh completion after colon-ending header = %+v, want --model suggestion", got)
+	}
+
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
 		t.Run(style, func(t *testing.T) {
 			for _, scope := range [][]string{nil, {"models", "retrieve"}} {

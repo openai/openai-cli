@@ -361,10 +361,28 @@ func rebuildColonSeparatedArgs(root *cli.Command, args []string) []string {
 	}
 
 	result := []string{}
+	cmd := root
+	lineage := []*cli.Command{root}
+	flags := completionFlags(lineage)
 	i := 0
 
 	for i < len(args) {
 		current := args[i]
+
+		// A value-taking flag owns the next shell word. Do not let a trailing colon
+		// in that value absorb the command that follows it.
+		if isFlag(current) {
+			result = append(result, current)
+			if flag := findFlag(flags, current); flag != nil {
+				if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && i+1 < len(args) {
+					result = append(result, args[i+1])
+					i += 2
+					continue
+				}
+			}
+			i++
+			continue
+		}
 
 		for i+1 < len(args) {
 			next := args[i+1]
@@ -386,6 +404,11 @@ func rebuildColonSeparatedArgs(root *cli.Command, args []string) []string {
 		}
 
 		result = append(result, current)
+		if child := findChild(cmd, current); child != nil {
+			cmd = child
+			lineage = append(lineage, child)
+			flags = completionFlags(lineage)
+		}
 		i++
 	}
 
