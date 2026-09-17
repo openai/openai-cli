@@ -187,14 +187,12 @@ func streamedMultipartMiddleware(contentLength int64) option.Middleware {
 			return res, err
 		}
 
-		location := res.Header.Get("Location")
 		if res.Body != nil {
 			_ = res.Body.Close()
 		}
 		return nil, fmt.Errorf(
-			"cannot follow HTTP %d redirect to %q: streamed multipart uploads are not replayable",
+			"cannot follow HTTP %d redirect: streamed multipart uploads are not replayable",
 			res.StatusCode,
-			location,
 		)
 	}
 }

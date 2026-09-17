@@ -7,3 +7,5 @@ dist/
 /man/man1/openai.1.gz
 /openai
 *.exe
+
+/scripts/steady/.cache/
