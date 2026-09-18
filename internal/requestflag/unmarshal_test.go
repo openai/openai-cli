@@ -114,3 +114,58 @@ func TestJSONExponentNumbersInFlagValues(t *testing.T) {
 		assert.Equal(t, map[string]any{"min": 1e-07}, flag.Get())
 	})
 }
+
+func TestUnmarshalYAMLOrJSONByteOrderMark(t *testing.T) {
+	t.Parallel()
+
+	bom := string(utf8BOM)
+	tests := []struct {
+		name  string
+		input string
+		want  any
+	}{
+		{
+			name:  "JSON object",
+			input: bom + `{"model":"test-model","input":"test input"}`,
+			want:  map[string]any{"model": "test-model", "input": "test input"},
+		},
+		{
+			name:  "YAML mapping keeps its first key",
+			input: bom + "model: test-model\ninput: test input\n",
+			want:  map[string]any{"model": "test-model", "input": "test input"},
+		},
+		{
+			name:  "JSON array",
+			input: bom + `[1,2]`,
+			want:  []any{uint64(1), uint64(2)},
+		},
+		{
+			name:  "JSON exponent numbers are still decoded as floats",
+			input: bom + `{"top_p":1e-05}`,
+			want:  map[string]any{"top_p": 1e-05},
+		},
+		{
+			name:  "U+FEFF inside a value is content",
+			input: `{"text":"a` + bom + `b"}`,
+			want:  map[string]any{"text": "a" + bom + "b"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got any
+			require.NoError(t, UnmarshalYAMLOrJSON([]byte(tt.input), &got))
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	t.Run("map flag", func(t *testing.T) {
+		t.Parallel()
+
+		cv := &cliValue[map[string]any]{}
+		require.NoError(t, cv.Set(bom+`{"format":{"type":"text"}}`))
+		assert.Equal(t, map[string]any{"format": map[string]any{"type": "text"}}, cv.Get())
+	})
+}
