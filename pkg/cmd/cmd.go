@@ -297,6 +297,28 @@ func init() {
 				},
 			},
 			{
+				Name:     "webhooks",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&webhooksCreate,
+					&webhooksRetrieve,
+					&webhooksUpdate,
+					&webhooksList,
+					&webhooksDelete,
+					&webhooksRotateSecret,
+					&webhooksTest,
+				},
+			},
+			{
+				Name:     "webhooks:event-types",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&webhooksEventTypesList,
+				},
+			},
+			{
 				Name:     "beta:responses",
 				Category: "API RESOURCE",
 				Suggest:  true,
