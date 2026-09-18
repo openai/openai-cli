@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/openai/openai-cli/internal/apiquery"
-	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
