@@ -16,24 +16,40 @@ import (
 func main() {
 	app := cmd.Command
 	app.Flags = append(app.Flags, cmd.NewRequestHeaderFlag())
+	requestSetup := app.Before
+	app.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
+		if baseURL, ok := os.LookupEnv("OPENAI_BASE_URL"); ok {
+			if err := cmd.ValidateBaseURL(baseURL, "OPENAI_BASE_URL"); err != nil {
+				return ctx, err
+			}
+		}
+		if requestSetup != nil {
+			return requestSetup(ctx, command)
+		}
+		return ctx, nil
+	}
+	args, _, err := cmd.ConfigureHelp(app, os.Args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		if exitErr, ok := err.(cli.ExitCoder); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		os.Exit(1)
+	}
 
 	if len(os.Args) > 1 && os.Args[1] == "__complete" {
 		prepareForAutocomplete(app)
 	}
 
-	if baseURL, ok := os.LookupEnv("OPENAI_BASE_URL"); ok {
-		if err := cmd.ValidateBaseURL(baseURL, "OPENAI_BASE_URL"); err != nil {
-			fmt.Fprintf(os.Stderr, "%s\n", err.Error())
-			os.Exit(1)
-		}
-	}
-
-	if err := app.Run(context.Background(), os.Args); err != nil {
+	if err := app.Run(context.Background(), args); err != nil {
 		exitCode := 1
 
 		// Check if error has a custom exit code
 		if exitErr, ok := err.(cli.ExitCoder); ok {
 			exitCode = exitErr.ExitCode()
+		}
+		if cmd.ShowFriendlyImageError(app, err, os.Stderr) {
+			os.Exit(exitCode)
 		}
 
 		var apierr *openai.Error

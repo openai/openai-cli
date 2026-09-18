@@ -341,6 +341,9 @@ func flagOptions(
 	// This parameter is true if stdin is already in use to pass a binary parameter by using the special value
 	// "-". In this case, we won't attempt to read it as a JSON/YAML blob for options setting.
 	ignoreStdin bool,
+	// Optional observers see the final JSON body after flags, stdin, and file
+	// references are combined. They must not log or persist sensitive contents.
+	inspectJSONBody ...func([]byte),
 ) (options []option.RequestOption, err error) {
 	// Validate literal headers before reading any request input. Flag validators
 	// include the supplied value in errors, which can expose credentials.
@@ -569,6 +572,9 @@ func flagOptions(
 		bodyBytes, err := json.Marshal(requestContents.Body)
 		if err != nil {
 			return nil, err
+		}
+		for _, inspect := range inspectJSONBody {
+			inspect(bodyBytes)
 		}
 		options = append(options, option.WithRequestBody("application/json", bodyBytes))
 
