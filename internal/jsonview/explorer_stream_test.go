@@ -34,7 +34,7 @@ func TestExplorerLazyLoadPreservesSDKResponse(t *testing.T) {
 		t.Run(raw, func(t *testing.T) {
 			var item openai.Model
 			require.NoError(t, json.Unmarshal([]byte(raw), &item))
-			preloaded, err := marshalItemsToJSONArray([]any{item})
+			preloaded, err := marshalItemsToJSONArray([]any{item}, "")
 			require.NoError(t, err)
 			require.JSONEq(t, "["+raw+"]", string(preloaded))
 			view, err := newTableView("", gjson.ParseBytes(preloaded), false)
