@@ -32,6 +32,8 @@ func TestImageOutputTerminalPolicy(t *testing.T) {
 		save      bool
 		noPreview bool
 		open      bool
+		partials  int64
+		wantError string
 	}{
 		{name: "default terminal saves", save: true},
 		{name: "inline on", args: []string{"--inline", "on"}, save: true},
@@ -45,6 +47,16 @@ func TestImageOutputTerminalPolicy(t *testing.T) {
 		{name: "transform stays transform", args: []string{"--transform", "data.0"}},
 		{name: "raw output stays raw", args: []string{"--raw-output"}},
 		{name: "stream stays stream", args: []string{"--stream", "true"}},
+		{name: "stream with name saves", args: []string{"--stream", "true", "--name", "robot"}, save: true},
+		{name: "stream with open saves", args: []string{"--stream", "true", "--open"}, save: true, noPreview: true, open: true},
+		{name: "partials automatically select saved stream", args: []string{"--partial-images", "2"}, save: true, partials: 2},
+		{name: "partials with stream save", args: []string{"--partial-images", "3", "--stream", "true"}, save: true, partials: 3},
+		{name: "partials with JSON remain API output", args: []string{"--partial-images", "2", "--stream", "true", "--format", "json"}},
+		{name: "partials respect inline off", args: []string{"--partial-images", "1", "--inline", "off"}, save: true, partials: 1, noPreview: true},
+		{name: "partial stream false rejected", args: []string{"--partial-images", "1", "--stream", "false"}, wantError: "--partial-images needs streaming"},
+		{name: "save stream event limit rejected", args: []string{"--stream", "true", "--name", "robot", "--max-items", "1"}, wantError: "--max-items limits API events"},
+		{name: "partial event limit rejected", args: []string{"--partial-images", "1", "--max-items", "1"}, wantError: "--max-items limits API events"},
+		{name: "raw stream event limit preserved", args: []string{"--stream", "true", "--max-items", "1"}},
 		{name: "URL stays URL", args: []string{"--response-format", "url"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -65,6 +77,8 @@ func TestImageOutputTerminalPolicy(t *testing.T) {
 					&cli.StringFlag{Name: "transform"},
 					&cli.BoolFlag{Name: "raw-output"},
 					&requestflag.Flag[*bool]{Name: "stream", BodyPath: "stream", Default: requestflag.Ptr(false)},
+					&requestflag.Flag[*int64]{Name: "partial-images", BodyPath: "partial_images", Default: requestflag.Ptr[int64](0)},
+					&requestflag.Flag[int64]{Name: "max-items"},
 					&requestflag.Flag[*string]{Name: "response-format", BodyPath: "response_format"},
 					&requestflag.Flag[*string]{Name: "model", BodyPath: "model"},
 				},
@@ -72,11 +86,17 @@ func TestImageOutputTerminalPolicy(t *testing.T) {
 					body, err := json.Marshal(requestflag.ExtractRequestContents(cmd).Body)
 					require.NoError(t, err)
 					plan, err := prepareImageOutput(cmd, true, gjson.ParseBytes(body))
+					if test.wantError != "" {
+						require.ErrorContains(t, err, test.wantError)
+						require.Nil(t, plan)
+						return nil
+					}
 					require.NoError(t, err)
 					if test.save {
 						require.NotNil(t, plan)
 						require.Equal(t, destination, plan.directory)
 						require.Equal(t, test.open, plan.openFiles)
+						require.Equal(t, test.partials, plan.partialImages)
 						if test.noPreview {
 							require.Empty(t, plan.preview)
 						} else {

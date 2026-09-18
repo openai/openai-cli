@@ -274,14 +274,14 @@ func TestSaveResponseConcurrentNames(t *testing.T) {
 	}
 }
 
-func TestSaveResponseNamedCleanupAndValidation(t *testing.T) {
+func TestSaveResponseNamedPartialSuccessAndValidation(t *testing.T) {
 	directory := t.TempDir()
 	kept := filepath.Join(directory, "robot.png")
 	if err := os.WriteFile(kept, []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	valid := base64.StdEncoding.EncodeToString(imageFixtures(t)[0])
-	if paths, err := SaveResponse(context.Background(), encodedResponse(t, valid, valid+"!"), directory, "robot"); err == nil || len(paths) != 0 {
+	if paths, err := SaveResponse(context.Background(), encodedResponse(t, valid, valid+"!"), directory, "robot"); err == nil || len(paths) != 1 || filepath.Base(paths[0]) != "robot-2.png" {
 		t.Fatalf("invalid batch = %v, %v", paths, err)
 	}
 	for _, names := range [][]string{{"../outside"}, {"one", "two"}} {
@@ -290,15 +290,15 @@ func TestSaveResponseNamedCleanupAndValidation(t *testing.T) {
 		}
 	}
 	entries, err := os.ReadDir(directory)
-	if err != nil || len(entries) != 1 || entries[0].Name() != "robot.png" {
-		t.Fatalf("cleanup changed existing files or left partial files: %v, %v", entries, err)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("cleanup must keep the completed image and the preexisting image: %v, %v", entries, err)
 	}
 	contents, err := os.ReadFile(kept)
 	if err != nil || string(contents) != "keep" {
 		t.Fatalf("cleanup changed existing image: %q, %v", contents, err)
 	}
 	paths, err := SaveResponse(context.Background(), encodedResponse(t, valid), directory, "robot")
-	if err != nil || len(paths) != 1 || filepath.Base(paths[0]) != "robot-2.png" {
+	if err != nil || len(paths) != 1 || filepath.Base(paths[0]) != "robot-3.png" {
 		t.Fatalf("cleaned filename was not available for retry: %v, %v", paths, err)
 	}
 }
@@ -331,12 +331,22 @@ func TestSaveResponseRejectsInvalidDataAndCleansUp(t *testing.T) {
 				t.Fatal(err)
 			}
 			paths, err := SaveResponse(context.Background(), raw, directory)
-			if err == nil || len(paths) != 0 {
+			wantSaved := 0
+			if name == "bad second image" || name == "missing second" {
+				wantSaved = 1
+			}
+			if err == nil || len(paths) != wantSaved {
 				t.Fatalf("invalid response saved: %v, %v", paths, err)
 			}
 			entries, readErr := os.ReadDir(directory)
-			if readErr != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(kept) {
-				t.Fatalf("partial output was not cleaned up: %v, %v", entries, readErr)
+			if readErr != nil || len(entries) != 1+wantSaved {
+				t.Fatalf("incomplete output was not cleaned up or completed output was lost: %v, %v", entries, readErr)
+			}
+			for _, path := range paths {
+				contents, readErr := os.ReadFile(path)
+				if readErr != nil || !bytes.Equal(contents, imageFixtures(t)[0]) {
+					t.Fatalf("completed image changed: %q, %v", contents, readErr)
+				}
 			}
 			contents, readErr := os.ReadFile(kept)
 			if readErr != nil || string(contents) != "keep existing file" {
@@ -374,10 +384,17 @@ func TestSaveResponseCancellation(t *testing.T) {
 		}}
 		fixture := imageFixtures(t)[0]
 		paths, err := SaveResponse(checking, imageResponse(t, fixture, fixture), directory)
-		if !errors.Is(err, context.Canceled) || len(paths) != 0 {
+		if !errors.Is(err, context.Canceled) || len(paths) != 1 {
 			t.Fatalf("partial-write cancellation = %v, %v", paths, err)
 		}
-		assertEmptyDirectory(t, directory)
+		contents, readErr := os.ReadFile(paths[0])
+		if readErr != nil || !bytes.Equal(contents, fixture) {
+			t.Fatalf("cancellation lost the completed image: %v", readErr)
+		}
+		entries, readErr := os.ReadDir(directory)
+		if readErr != nil || len(entries) != 1 {
+			t.Fatalf("cancellation left incomplete files: %v, %v", entries, readErr)
+		}
 	})
 }
 

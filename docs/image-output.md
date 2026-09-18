@@ -1,20 +1,236 @@
 # Saving generated images
 
+## Getting started and finding help
+
+Run `openai` with no arguments for a short starting guide. It appears when you
+ask for the CLI's help, not when you open a shell or run an API request.
+
+```sh
+openai                              # Starting guide
+openai help setup                   # How to enter your API key
+openai images generate --help       # Common controls and defaults
+openai images options               # All everyday settings, in plain language
+openai images options quality       # Choices and an example for one setting
+openai images options quality --all # Longer explanation and compatibility details
+openai images models                # Exact image model IDs and visibility checks
+openai help --all images generate   # Every image option and global flag
+openai help --all                   # All commands and global flags
+```
+
+If you built this checkout with `go build -o openai ./cmd/openai`, use `./openai`
+instead of `openai`. The starting guide uses that same invocation in its examples.
+Help does not require an API key. Generation uses `OPENAI_API_KEY` from your
+environment.
+
+The welcome guide follows the first image workflow: set up your key, describe
+an image, see where it is saved, then find the controls to change the result.
+The setup page provides hidden-input instructions for Bash/zsh and PowerShell;
+it only displays instructions and never prompts for, stores, checks, or prints
+your existing key. Those instructions set the key for the current shell session.
+Short image help shows one starting command, the current model and image preset,
+and common adjustments: name the file, choose a folder/model/count, open it in a
+separate window, or hide the preview. It also calls out the different behavior for JSON/redirected
+output. `help --all images generate` contains defaults, saving/viewing behavior,
+scripting rules, examples, every flag, and the complete generated API descriptions
+(including model limits). Full-help examples preserve the `./openai` invocation
+too. Nothing needs to be looked up online just to recover the previous flag help.
+Mistyped image options get a short correction and help link instead of the long
+reference. A description supplied without `--prompt` gets a copyable example;
+the error does not echo the description.
+
+## When something goes wrong
+
+Interactive image saving gives a short explanation and a next step for common
+API failures: missing or rejected keys, access restrictions, invalid image
+settings, rate limits, quota/billing limits, timeouts and service errors.
+For example, a missing key points to `./openai help setup` when running this
+checkout. A quota failure points to billing/limits instead of advising a wait.
+These messages do not echo credentials, prompts or arbitrary server text.
+
+Use `--format-error json` for the complete API error. Explicit output/error
+formats (including `auto`), transforms, debug mode, CI, API-output mode, and
+redirecting either stdout or stderr preserve the existing error output. Exit
+codes, authentication and the SDK's retry policy are unchanged. This presentation
+layer never switches models or retries a request itself.
+
+Missing prompt and invalid output-folder errors point to usable commands or the
+automatic Downloads folder. `images preview --help` gives a short local-viewing
+guide, and missing files, folders, filenames with spaces and unsupported image
+formats get specific guidance. Previewing an existing file makes no API request.
+
+## The default preset
+
 Run this checkout from a terminal:
 
 ```sh
 go run ./cmd/openai images generate --prompt "A tiny orange robot painting a blue flower"
 ```
 
-The command saves images in `~/Downloads/gpt-images/`, creates that folder if needed,
-and prints each saved file's full path. Default names use local date and time,
-such as `image-2026-09-17-093608.png`. Existing names get a `-2`, `-3`, etc.
+Interactive saving first prints `Generating image...` (or `Generating images...`
+for a batch) to stderr, so you know the command is working. This is a waiting
+message, not a percentage or an estimate. It appears after local validation and
+setup, before the request. Explicit formats/debug, CI and redirected output do
+not receive this message.
+
+The command saves images in `~/Downloads/gpt-images/`, creates that folder automatically,
+and prints each saved file's full path. Default names come from the prompt:
+`A tiny orange robot` becomes `tiny-orange-robot.png`. Existing names get a `-2`, `-3`, etc.
 suffix, so earlier images are never overwritten. PNG, JPEG, and WebP extensions
 follow the returned image bytes.
 When saving and neither a model nor a legacy `--response-format` is supplied,
 this version uses `gpt-image-2.5-sunburst`. `--model` and models supplied through
 JSON/YAML stdin take precedence. An explicit legacy response format preserves
-the API's model selection.
+the API's model selection. The default is the current Sunburst model family;
+the CLI does not query the model catalog or switch models after an error.
+See the [official model documentation](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst).
+For another model, use an explicit name, for example `--model gpt-image-2.5-flare`.
+Image help links to `openai images models` for exact image model IDs. Model
+selection uses exact IDs, with no `fast`/`best` labels.
+
+### Find an image model
+
+```sh
+openai images models                  # Check known image model IDs with your key
+openai images models --all            # Also show known snapshots and hidden rows
+openai images models --offline        # Known names, with no API call or key
+openai --format json images models    # Structured results for scripts
+```
+
+The normal terminal view is a compact table with the CLI default marked and a
+copyable generation example. It returns directly to the shell; there is no pager
+to exit, JSON metadata to inspect, or filtering pipeline to remember. Retired
+models and IDs not visible to the key are hidden from the default table with a
+count and `--all` instruction. The JSON report retains all checked rows.
+
+Discovery checks a maintained catalog of exact image IDs from the installed Go
+SDK. It retrieves each model individually instead of requesting the large
+all-model catalog, so it can still work when `models list` times out. It may miss
+newly released or account-specific image models; explicit `--model` values still
+pass through without requiring catalog membership. The existing `models list`
+operation remains available for the full account catalog.
+
+`Visible` means the current credentials can retrieve model metadata. Generation
+permissions, option compatibility and quota are separate. A 404 is not visible;
+an announced shutdown on or before today's UTC date is retired. Authentication,
+permission failures, rate limits, invalid responses, network errors and timeouts
+remain **unknown**, never an empty list of available models. The CLI displays
+partial results, gives a concise next step, and exits nonzero on unknown checks.
+
+Only metadata GETs are sent: at most three concurrently, with a five-second
+deadline per request and a fifteen-second deadline for the discovery operation.
+Checks do not retry automatically; authentication rejection or rate limiting
+stops queued checks. This command does not generate images or change image
+generation's retry policy. Offline mode is explicitly marked unchecked and makes
+no requests. No credentials, account results or access decisions are cached.
+
+JSON output (also the default for redirected output and CI) includes `source`
+(`live` or `offline`), `default_model`, `complete`, and `models`. Each row includes
+the exact `id`, `snapshot`, `default`, `status`, and optional safe `failure` and
+`shutdown_date`. `complete` means all requested live checks resolved, including
+not-visible/retired results; it is false for offline or incomplete checks. Offline
+mode intentionally exits zero. Partial live failures preserve valid JSON on
+stdout and print a concise explanation on stderr. Existing `models list` output
+and script behavior are unchanged.
+
+### Generation defaults and saving
+
+When the CLI selects its default image model, it fills in these omitted settings:
+
+| Setting | Default | Change it with |
+| --- | --- | --- |
+| Model | `gpt-image-2.5-sunburst` | `--model MODEL` |
+| Number of images | 1 | `--count COUNT` (or `-n COUNT`) |
+| Dimensions | Automatic | `--size WIDTHxHEIGHT` |
+| Quality | Automatic | `--quality LEVEL` |
+| File format | PNG | `--output-format png\|jpeg\|webp` |
+| Background | Automatic | `--background auto\|transparent\|opaque` |
+| Moderation | Automatic | `--moderation auto\|low` |
+| Partial images | None (0) | `--partial-images 0\|1\|2\|3` |
+| Save folder | `~/Downloads/gpt-images/` | `--output-dir DIRECTORY` |
+| Inline preview | On initially | `--inline on\|off` |
+
+Flags and values supplied through stdin override the preset, including explicit
+nulls. An explicitly selected model uses that model's API defaults for omitted
+settings. The preset explicitly sends background/moderation `auto`,
+`partial_images: 0`, and `stream: false`. Requesting progress previews enables
+streaming automatically when saving. Legacy model style and JPEG/WebP
+compression remain optional. Settings can be changed per command; only the
+`images inline on` / `off` commands save a preview preference.
+
+### Choose a setting without reading the full API reference
+
+`openai images options` shows a short directory of controls. Each topic starts
+with one example, the choices/default and essential limits, in at most twelve
+lines. Add `--all` to see its complete explanation, additional examples and
+script behavior. The longer information has been retained:
+
+```sh
+openai images options model
+openai images options size
+openai images options quality
+openai images options count
+openai images options format
+openai images options background
+openai images options moderation
+openai images options partials
+openai images options upload
+openai images options save
+```
+
+These are local help pages: they do not generate images or check credentials.
+The example generation and editing commands do make API requests when run.
+`--count` is a readable alias for both `-n` and `--n`:
+
+```sh
+openai images generate --prompt "A tiny orange robot" --count 10
+openai images generate --prompt "A tiny orange robot" --size 1024x1536 --quality high
+openai images generate --prompt "A tiny orange robot sticker" --background transparent
+```
+
+Count must be 1–10; DALL-E 3 and streaming support one final image per request.
+Partial count must be 0–3, and transparent backgrounds require PNG or WebP.
+The CLI validates these combinations before generation, using the final merged
+flags and JSON/YAML input. It continues to accept exact model IDs and future
+quality/size values without requiring membership in a hardcoded enum.
+
+The attachment control corresponds to the separate `images edit --image PATH`
+command. The upload guide gives a complete example and explicitly describes
+its current API-data output; automatic saving here applies to `images generate`.
+
+### Progress previews while generating
+
+```sh
+openai images generate --prompt "A tiny orange robot" --partial-images 2
+```
+
+In the ordinary terminal workflow, this enables streaming automatically and
+shows up to two progress previews using the existing inline renderer. Only the
+finished image is saved in the selected output folder. Partial files use a
+private temporary directory and are cleaned up. Previews may arrive fewer times
+than requested if the final image is ready sooner. Partial images add API usage;
+`--inline off` hides previews but does not remove that usage. Zero partials is the
+default and does not hide the finished-image preview.
+
+Progress previews require one final image per request (`--count 1`). An explicit
+false/null streaming value with positive partials is rejected rather than
+silently overwritten. An event limit (`--max-items`) cannot truncate a saving
+workflow before the final image. If a stream ends without a final image, the CLI
+reports that no final image was received instead of reporting an empty success.
+
+`--stream true` alone retains the existing API-event workflow. An explicit
+saving flag (`--name`, `--output-dir` or `--open`) opts into saving its final
+image. Explicit API data formats/transforms retain API-event output and require
+`--stream true` when requesting partials; choose an explicit model in scripts:
+
+```sh
+openai --format json images generate --prompt "A tiny orange robot" \
+  --model gpt-image-2.5-sunburst --stream true --partial-images 2
+```
+
+The generated full reference remains available for all API parameters and model
+limits. See the [official image-generation guide](https://developers.openai.com/api/docs/guides/image-generation).
+
+### Names and folders
 
 Choose a meaningful name:
 
@@ -23,16 +239,28 @@ openai images generate --prompt "A tiny orange robot" --name orange-robot
 ```
 
 This saves `orange-robot.png` (or the returned image format), then
-`orange-robot-2.png` if the name is already taken. Supply a filename stem, not a
-path or extension; use `--output-dir` for the folder. Names are checked before
-generation. The CLI does not put prompt text into filenames automatically.
+`orange-robot-2.png` if the name is already taken. You may supply `orange-robot`
+or `orange-robot.png`; a recognized PNG/JPEG/JPG/WebP extension is removed before
+the actual image format supplies its extension. The name does not select a
+format; use `--output-format` for that and `--output-dir` for the folder.
+Names and filesystem filename constraints are checked before generation. The
+CLI creates a short name locally from the prompt; naming makes no extra API call.
+It keeps up to eight words within 80 UTF-8 bytes, removes an initial a/an/the,
+and replaces unsafe filename characters with separators. Unicode words are
+preserved. Prompts without usable text fall back to a dated filename. Explicit
+`--name` values take priority. Generation still receives your original prompt.
+
+For a batch, every complete image is kept even if another image cannot be saved.
+The CLI prints the completed paths, reports how many were saved, and exits with
+an error. It removes incomplete files only and does not regenerate anything.
+Cancellation stops further saving while preserving files already completed.
 
 Choose another existing folder:
 
 ```sh
 go run ./cmd/openai images generate \
   --prompt "A tiny orange robot painting a blue flower" \
-  --output-dir "$HOME/Pictures"
+  --output-dir "~/Downloads"
 ```
 
 An explicit `--output-dir` or `--name` also enables saving in scripts and other environments
@@ -51,7 +279,7 @@ go run ./cmd/openai --format json images generate \
 Redirected or piped stdout retains its API output unless `--output-dir` or `--name` is supplied.
 JSON/YAML piped into stdin can still produce saved images when stdout is a terminal.
 
-An explicit output `--format` other than `auto`, transforms, raw output, streaming,
+An explicit output `--format` other than `auto`, transforms, raw output,
 and `--response-format url` retain their API output. Combining these modes with
 `--output-dir` or `--name` reports a conflict before making an API call.
 
@@ -188,14 +416,17 @@ window width. `inline test` adds a visual check. Readiness follows the owned
 image font, regardless of the tab's profile name. The status label **Image gallery**
 identifies cached images; it is not the name of your selected Inspector profile.
 
-If a preview font was deleted but the cached thumbnails remain, run:
+If the base preview font was deleted but the cached thumbnails remain, run:
 
 ```sh
 openai images inline repair
 ```
 
-Repair rebuilds the font while retaining each image's character mapping, then
-enables it in this tab without selecting another profile. `setup` also repairs a missing font. Neither operation
+Repair rebuilds the base font while retaining each image's character mapping,
+then enables it in this tab without selecting another profile. `setup` also
+repairs a missing base font. If the selected typography variant was deleted,
+first select your original text font in Terminal's Inspector, then run repair;
+the missing variant cannot be inspected automatically. Neither operation
 restores missing thumbnails; in that case, reset the previews and use the saved
 originals again. Missing or damaged ownership metadata is reported rather than
 guessing which files to delete.
@@ -241,7 +472,7 @@ URL-only responses. Local viewer handoff validates PNG/JPEG/WebP contents and
 filename extensions and passes the path directly to the OS without a shell.
 
 Inline previews are **on by default** for interactive saving. iTerm2, Ghostty,
-and Kitty display a real image thumbnail. The configured Apple Terminal profile
+and Kitty display a real image thumbnail. An enabled Apple Terminal tab
 uses the color-font renderer above. Other terminals, including unconfigured
 Apple Terminal windows, display a text approximation using fine block shapes. Terminals that
 advertise full RGB color use it; Apple Terminal 2.15/build 465 and newer also use
@@ -303,7 +534,7 @@ is needed.
 Native protocol detection uses stdout's TTY status and known terminal identifiers. It is best
 effort: terminal settings can disable image display. Preview detection never
 reads replies from stdin. The opt-in Apple Terminal font path additionally checks
-its owned profile through macOS automation. If a preview fails after generation,
+the intended tab's font and settings through macOS automation. If a preview fails after generation,
 the saved file remains available and the command prints local recovery guidance.
 A failed explicit `images preview` or `images inline test` exits unsuccessfully
 so that it cannot report success while showing no image.
@@ -321,13 +552,17 @@ which [Ghostty supports](https://ghostty.org/docs/features).
 go run ./cmd/openai images generate --help
 ```
 
-The help starts with examples for the default folder, a custom folder, and JSON
-output. Common options appear first, the prompt is marked required, and all API
-options remain available. Model-specific limits are linked rather than repeated
-in long flag descriptions. The maximum streaming-event count is unlimited unless
-specified; omitted image sizes are selected by the model/API.
+The short help starts with one runnable example. Full help explains the CLI saving
+preset separately from API defaults, then shows the original API flag descriptions
+with their model-specific limits. Generated documentation is retained automatically;
+CLI notes add context without replacing it. This includes future generated flags.
+The maximum streaming-event count is unlimited unless specified; this counts
+emitted events and is not a limit on generated images or cost.
 
 ## Development workspace
+
+See the [implementation map](image-implementation.md) for the folder layout,
+request flow, font-rendering flow, and a suggested code-review order.
 
 This feature lives in the `openai-cli` checkout on branch `codex/images-save`.
 The Go SDK already calls the image generation API. File saving and presentation

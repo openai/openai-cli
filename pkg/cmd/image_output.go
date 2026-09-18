@@ -25,43 +25,82 @@ const defaultSavedImageModel = "gpt-image-2.5-sunburst"
 type imageOutputPlan struct {
 	directory              string
 	name                   string
+	filenameStem           string
 	options                []option.RequestOption
 	preview                imagepreview.Protocol
 	textPreview, textColor bool
 	textTrueColor          bool
 	openFiles              bool
+	partialImages          int64
 }
 
-func imageGenerateOptions(ctx context.Context, cmd *cli.Command) ([]option.RequestOption, *imageOutputPlan, error) {
+func imageGenerateOptions(ctx context.Context, cmd *cli.Command) ([]option.RequestOption, *imageOutputPlan, bool, error) {
+	presentation := beginImageErrorContext(cmd)
 	var body gjson.Result
 	options, err := flagOptions(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets,
 		ApplicationJSON, false, func(raw []byte) { body = gjson.ParseBytes(raw) })
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
+	}
+	if err := validateImageSettings(body); err != nil {
+		return nil, nil, false, err
 	}
 	plan, err := prepareImageOutput(cmd, isTerminal(cmd.Root().Writer), body)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
+	streaming := body.Get("stream").Type == gjson.True || (plan != nil && plan.partialImages > 0)
+	if plan == nil && body.Get("partial_images").Int() > 0 && !streaming {
+		return nil, nil, false, fmt.Errorf("--partial-images needs --stream true for API output; in a terminal, omit data-format options to preview progress and save the final image automatically")
+	}
+	presentation.saving = plan != nil
 	if plan != nil {
+		if err := imageoutput.CheckName(ctx, plan.directory, plan.filenameStem); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, nil, false, err
+			}
+			label := "image filename"
+			if cmd.IsSet("name") {
+				label = "--name"
+			}
+			return nil, nil, false, fmt.Errorf("%s: %w", label, err)
+		}
 		if plan.textPreview {
 			if err := prepareInteractiveImageFont(ctx, cmd.Root().Writer); err != nil {
-				return nil, nil, fmt.Errorf("inline preview: %w; use --inline off to generate without a preview", err)
+				return nil, nil, false, fmt.Errorf("inline preview: %w; use --inline off to generate without a preview", err)
 			}
 		}
 		if plan.openFiles {
 			if err := imageopen.CheckAvailable(); err != nil {
-				return nil, nil, fmt.Errorf("--open: %w", err)
+				return nil, nil, false, fmt.Errorf("--open: %w", err)
 			}
 		}
 		options = append(options, plan.options...)
+		if streaming {
+			options = append(options, option.WithJSONSet("stream", true))
+		}
+		// Give a waiting user immediate feedback. Keep scripts, explicit data
+		// output and redirected diagnostics free of presentation-only text.
+		if isTerminal(cmd.Root().Writer) && isTerminal(os.Stderr) && !imagePreviewCI(os.Getenv) && imageFriendlyErrorMode(cmd.Root()) {
+			message := "Generating image..."
+			if body.Get("n").Float() > 1 {
+				message = "Generating images..."
+			}
+			if _, err := fmt.Fprintln(os.Stderr, message); err != nil {
+				return nil, nil, false, err
+			}
+		}
 	}
-	return options, plan, nil
+	return options, plan, streaming, nil
 }
 
 // The final body includes flags, piped JSON/YAML, and expanded file references.
 // Body values supplied on stdin are not reflected in cmd.Value or cmd.IsSet.
 func prepareImageOutput(cmd *cli.Command, terminal bool, body gjson.Result) (*imageOutputPlan, error) {
+	partials := body.Get("partial_images").Int()
+	if partials > 0 && body.Get("stream").Exists() && body.Get("stream").Type != gjson.True {
+		return nil, fmt.Errorf("--partial-images needs streaming; omit --stream to enable it automatically when saving, or use --stream true")
+	}
 	inline := strings.ToLower(cmd.String("inline"))
 	if inline == "" && !cmd.IsSet("inline") {
 		inline = "on"
@@ -72,8 +111,12 @@ func prepareImageOutput(cmd *cli.Command, terminal bool, body gjson.Result) (*im
 	if cmd.IsSet("inline") && inline == "on" && cmd.Bool("no-preview") {
 		return nil, fmt.Errorf("--inline on cannot be combined with --no-preview; use --inline off")
 	}
+	name := cmd.String("name")
+	var filenameStem string
 	if cmd.IsSet("name") {
-		if err := imageoutput.ValidateName(cmd.String("name")); err != nil {
+		var err error
+		filenameStem, err = imageoutput.NormalizeName(name)
+		if err != nil {
 			return nil, fmt.Errorf("--name: %w", err)
 		}
 	}
@@ -87,8 +130,6 @@ func prepareImageOutput(cmd *cli.Command, terminal bool, body gjson.Result) (*im
 		conflict = "--format " + format
 	} else if cmd.Root().String("transform") != "" || cmd.Root().Bool("raw-output") {
 		conflict = "--transform or --raw-output"
-	} else if body.Get("stream").Bool() {
-		conflict = "--stream"
 	} else if body.Get("response_format").String() == "url" {
 		conflict = "--response-format url"
 	}
@@ -104,15 +145,32 @@ func prepareImageOutput(cmd *cli.Command, terminal bool, body gjson.Result) (*im
 		}
 		return nil, nil
 	}
+	// Preserve the existing raw --stream workflow. Progress previews or an
+	// explicit saving flag opt into saving the streamed final image instead.
+	if body.Get("stream").Type == gjson.True && partials == 0 && !explicitSave {
+		return nil, nil
+	}
+	if (body.Get("stream").Type == gjson.True || partials > 0) && cmd.IsSet("max-items") {
+		return nil, fmt.Errorf("--max-items limits API events and could stop before the final image; omit it when saving, or use --format json for API-event output")
+	}
 	if cmd.IsSet("output-dir") && cmd.String("output-dir") == "" {
 		return nil, fmt.Errorf("--output-dir must name an existing directory")
+	}
+	if !cmd.IsSet("name") && body.Get("prompt").Type == gjson.String {
+		// Use the final merged prompt, so flags and JSON/YAML/file input follow
+		// the same naming policy. This is local text handling, not another API call.
+		name = imageoutput.NameFromPrompt(body.Get("prompt").String())
+		filenameStem = name
 	}
 
 	directory, err := imageoutput.ResolveDirectory(cmd.String("output-dir"))
 	if err != nil {
-		return nil, err
+		if cmd.IsSet("output-dir") {
+			return nil, fmt.Errorf("%w\nChoose an existing, writable folder with --output-dir, or omit it to save automatically in ~/Downloads/gpt-images/.", err)
+		}
+		return nil, fmt.Errorf("%w\nChoose an existing, writable folder with --output-dir.", err)
 	}
-	plan := &imageOutputPlan{directory: directory, name: cmd.String("name"), openFiles: cmd.Bool("open")}
+	plan := &imageOutputPlan{directory: directory, name: name, filenameStem: filenameStem, openFiles: cmd.Bool("open"), partialImages: partials}
 	if (!plan.openFiles || cmd.IsSet("inline")) && !cmd.Bool("no-preview") && terminal && !imagePreviewCI(os.Getenv) {
 		preview := inline == "on"
 		if !cmd.IsSet("inline") {
@@ -134,6 +192,19 @@ func prepareImageOutput(cmd *cli.Command, terminal bool, body gjson.Result) (*im
 		// model selection when callers intentionally use it.
 		if !body.Get("response_format").Exists() {
 			plan.options = append(plan.options, option.WithJSONSet("model", defaultSavedImageModel))
+			// Keep the everyday preset explicit without overriding supplied values,
+			// including nulls from JSON/YAML. Other models retain their API defaults.
+			for _, preset := range []struct {
+				field string
+				value any
+			}{
+				{"n", 1}, {"size", "auto"}, {"quality", "auto"}, {"output_format", "png"},
+				{"background", "auto"}, {"moderation", "auto"}, {"partial_images", 0}, {"stream", false},
+			} {
+				if !body.Get(preset.field).Exists() {
+					plan.options = append(plan.options, option.WithJSONSet(preset.field, preset.value))
+				}
+			}
 		}
 	} else if (model.String() == "dall-e-2" || model.String() == "dall-e-3") && !body.Get("response_format").Exists() {
 		// Ask for embedded bytes rather than fetching a second, signed URL.
@@ -147,14 +218,16 @@ func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writ
 }
 
 func (p *imageOutputPlan) saveWithOpener(ctx context.Context, response []byte, out io.Writer, openImage func(context.Context, string) error) error {
-	paths, err := imageoutput.SaveResponse(ctx, response, p.directory, p.name)
-	if err != nil {
-		return err
-	}
+	paths, saveErr := imageoutput.SaveResponse(ctx, response, p.directory, p.name)
 	for _, path := range paths {
 		// Quote paths so unusual filenames cannot inject terminal control codes.
 		if _, err := fmt.Fprintf(out, "Saved image: %q\n", path); err != nil {
-			return err
+			return errors.Join(saveErr, err)
+		}
+		// Report every completed file before the batch error. Optional viewers
+		// must not hide this failure or suggest regenerating saved images.
+		if saveErr != nil {
+			continue
 		}
 		if p.openFiles {
 			if err := openImage(ctx, path); err != nil {
@@ -182,6 +255,12 @@ func (p *imageOutputPlan) saveWithOpener(ctx context.Context, response []byte, o
 				}
 			}
 		}
+	}
+	if saveErr != nil {
+		if len(paths) > 0 {
+			return fmt.Errorf("%w\nThe files listed above are saved. You do not need to generate those images again.", saveErr)
+		}
+		return fmt.Errorf("the API responded, but no images could be saved: %w", saveErr)
 	}
 	return nil
 }

@@ -359,7 +359,7 @@ func handleImagesGenerate(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("Unexpected extra arguments: %v", unusedArgs)
 	}
 
-	options, imageOutput, err := imageGenerateOptions(ctx, cmd)
+	options, imageOutput, streaming, err := imageGenerateOptions(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -369,8 +369,11 @@ func handleImagesGenerate(ctx context.Context, cmd *cli.Command) error {
 	format := cmd.Root().String("format")
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
-	if streamFlagValue, _ := cmd.Value("stream").(*bool); streamFlagValue != nil && *streamFlagValue {
+	if streaming {
 		stream := client.Images.GenerateStreaming(ctx, params, options...)
+		if imageOutput != nil {
+			return imageOutput.saveStream(ctx, stream, cmd.Root().Writer)
+		}
 		maxItems := int64(-1)
 		if cmd.IsSet("max-items") {
 			maxItems = cmd.Value("max-items").(int64)
