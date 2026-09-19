@@ -312,7 +312,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 
 func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	root := cmd.Root()
-	args := rebuildColonSeparatedArgs(root.Args().Slice()[1:])
+	args := rebuildColonSeparatedArgs(root, root.Args().Slice()[1:])
 
 	var completionStyle CompletionStyle
 	if style, ok := os.LookupEnv("COMPLETION_STYLE"); ok {
@@ -350,41 +350,111 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	return cli.Exit("", int(result.Behavior))
 }
 
-// When CLI arguments are passed in, they are separated on word barriers.
-// Most commonly this is whitespace but in some cases that may also be colons.
-// We wish to allow arguments with colons. To handle this, we append/prepend colons to their neighboring
-// arguments.
-//
-// Example: `rebuildColonSeparatedArgs(["a", "b", ":", "c", "d"])` => `["a", "b:c", "d"]`
-func rebuildColonSeparatedArgs(args []string) []string {
+// When CLI arguments are passed in, shell word breaking can split a colon
+// command into adjacent tokens. Rejoin explicit colon separators, and only
+// rejoin a token that already ends in ':' when the combined value can still
+// name a command. This avoids swallowing an ordinary following argument such
+// as `--instructions Prefix: --model`.
+func rebuildColonSeparatedArgs(root *cli.Command, args []string) []string {
 	if len(args) == 0 {
 		return args
 	}
 
 	result := []string{}
+	cmd := root
+	lineage := []*cli.Command{root}
+	flags := completionFlags(lineage)
 	i := 0
 
 	for i < len(args) {
 		current := args[i]
 
-		// Keep joining while the next element is ":" or the current element ends with ":"
-		for i+1 < len(args) && (args[i+1] == ":" || strings.HasSuffix(current, ":")) {
-			if args[i+1] == ":" {
-				current += ":"
+		// A value-taking flag owns the next shell word. Do not let a trailing colon
+		// in that value absorb the command that follows it.
+		if isFlag(current) {
+			result = append(result, current)
+			if flag := findFlag(flags, current); flag != nil {
+				if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && i+1 < len(args) {
+					value := args[i+1]
+					i += 2
+
+					// Bash includes ':' in COMP_WORDBREAKS, so a single flag value such as
+					// `X:completions` can arrive as `X`, `:`, `completions`. Rebuild the
+					// split value here, but stop at a colon when the following tokens form
+					// a valid command path. That preserves both `X:completions models ...`
+					// and a value ending in a colon, such as `chat: completions create ...`.
+					for i < len(args) && args[i] == ":" {
+						value += ":"
+						i++
+						if i >= len(args) || commandTailStartsAt(cmd, args[i:]) {
+							break
+						}
+						value += args[i]
+						i++
+					}
+					result = append(result, value)
+					continue
+				}
+			}
+			i++
+			continue
+		}
+
+		for i+1 < len(args) {
+			next := args[i+1]
+			if next == ":" {
+				current += next
 				i++
-				// Check if there's a following element after the ":"
 				if i+1 < len(args) && args[i+1] != ":" {
 					current += args[i+1]
 					i++
 				}
-			} else {
-				break
+				continue
 			}
+			if strings.HasSuffix(current, ":") && hasCommandPrefix(root, current+next) {
+				current += next
+				i++
+				continue
+			}
+			break
 		}
 
 		result = append(result, current)
+		if child := findChild(cmd, current); child != nil {
+			cmd = child
+			lineage = append(lineage, child)
+			flags = completionFlags(lineage)
+		}
 		i++
 	}
 
 	return result
+}
+
+func commandTailStartsAt(cmd *cli.Command, args []string) bool {
+	matched := false
+	for _, arg := range args {
+		if isFlag(arg) {
+			return matched
+		}
+		child := findChild(cmd, arg)
+		if child == nil {
+			return false
+		}
+		matched = true
+		cmd = child
+	}
+	return matched
+}
+
+func hasCommandPrefix(cmd *cli.Command, prefix string) bool {
+	if cmd == nil {
+		return false
+	}
+	for _, child := range cmd.Commands {
+		if strings.HasPrefix(child.Name, prefix) || hasCommandPrefix(child, prefix) {
+			return true
+		}
+	}
+	return false
 }
