@@ -134,3 +134,85 @@ done
 		})
 	}
 }
+
+func TestZshCompletionRespectsCursor(t *testing.T) {
+	t.Parallel()
+
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh is not available")
+	}
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	script, err := shellCompletions[CompletionStyleZsh](&cli.Command{}, "openai")
+	require.NoError(t, err)
+	// An empty prefix also matches the help command installed by the CLI library.
+	const allModelCommands = "list\nhelp:Shows a list of commands or help for one command\nh:Shows a list of commands or help for one command\n"
+
+	for _, test := range []struct {
+		name       string
+		args       []string
+		current    int // Zsh's one-based index, including the executable.
+		code       int
+		candidates string
+	}{
+		{"mid-line command", []string{"models", "li", "--format", "json"}, 3, 0, "list\n"},
+		{"mid-line flag", []string{"models", "list", "--max", "--format", "json"}, 4, 0, "--max-items\n"},
+		{"end-of-line command", []string{"models", "li"}, 3, 0, "list\n"},
+		{"empty mid-line word", []string{"models", "", "--format", "json"}, 3, 0, allModelCommands},
+		{"empty end-of-line word", []string{"models", ""}, 3, 0, allModelCommands},
+		{"spaced preceding value", []string{"--format", "two words", "models", "li", "--file", "unused"}, 5, 0, "list\n"},
+		{"empty preceding value", []string{"--format", "", "models", "li", "--file", "unused"}, 5, 0, "list\n"},
+		{"mid-line file value", []string{"--file", "candidate-", "models", "list"}, 3, 0, "files\n"},
+		{"end-of-line file value", []string{"--file", "candidate-"}, 3, 0, "files\n"},
+		{"spaced file value", []string{"--file", "two words", "models", "list"}, 3, 0, "files\n"},
+		{"explicit file prefix", []string{"--format", "@candidate-", "models", "list"}, 3, 0, "prefix:*@\nfiles\n"},
+		{"file URL prefix", []string{"--format", "@file://candidate-", "models", "list"}, 3, 0, "prefix:*file://\nfiles\n"},
+		{"data URL prefix", []string{"--format", "@data://candidate-", "models", "list"}, 3, 0, "prefix:*data://\nfiles\n"},
+		{"mid-line non-file value", []string{"--format", "json", "models", "list"}, 3, 1, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Stub Zsh's completion UI, but use the real script and Go backend.
+			probe := `
+test_binary=$1
+cursor_word=$2
+shift 2
+compdef() { :; }
+_describe() { printf '%s\n' "${opts[@]}"; }
+_files() { printf 'files\n'; }
+compset() { printf 'prefix:%s\n' "$2"; }
+openai() {
+  printf '%s\0' "$@" > helper.argv
+  "$test_binary" -test.run='^TestShellCompletionProtocolHelper$' -- openai "$@"
+}
+` + script + `
+words=(openai "$@")
+CURRENT=$cursor_word
+__openai_zsh_autocomplete
+`
+			dir := t.TempDir()
+			args := append([]string{"-f", "-c", probe, "zsh-completion-probe", binary, fmt.Sprint(test.current)}, test.args...)
+			command := exec.Command(zsh, args...)
+			command.Dir = dir
+			command.Env = append(os.Environ(), "OPENAI_CLI_COMPLETION_HELPER=1", "COMPLETION_STYLE=zsh")
+			var stdout, stderr bytes.Buffer
+			command.Stdout, command.Stderr = &stdout, &stderr
+			err := command.Run()
+			code := 0
+			if exit, ok := err.(*exec.ExitError); ok {
+				code = exit.ExitCode()
+			} else {
+				require.NoError(t, err)
+			}
+			require.Empty(t, stderr.String())
+			assert.Equal(t, test.code, code)
+			assert.Equal(t, test.candidates, stdout.String())
+			argv, err := os.ReadFile(filepath.Join(dir, "helper.argv"))
+			require.NoError(t, err)
+			wantArgs := append([]string{"__complete"}, test.args[:test.current-1]...)
+			assert.Equal(t, strings.Join(wantArgs, "\x00")+"\x00", string(argv))
+		})
+	}
+}

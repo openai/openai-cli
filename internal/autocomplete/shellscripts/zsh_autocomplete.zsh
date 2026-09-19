@@ -6,7 +6,8 @@ ____APPNAME___zsh_autocomplete() {
   local temp
   local exit_code
 
-  temp=$(COMPLETION_STYLE=zsh "${words[1]}" __complete "${words[@]:1}")
+  # The backend completes the last argument, so stop at the cursor's word.
+  temp=$(COMPLETION_STYLE=zsh "${words[1]}" __complete "${words[@]:1:$((CURRENT - 1))}")
   exit_code=$?
 
   # Check for custom file completion patterns
