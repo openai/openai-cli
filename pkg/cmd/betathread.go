@@ -309,6 +309,9 @@ func handleBetaThreadsCreate(ctx context.Context, cmd *cli.Command) error {
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) beta.threads > (method) create",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -351,6 +354,9 @@ func handleBetaThreadsRetrieve(ctx context.Context, cmd *cli.Command) error {
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) beta.threads > (method) retrieve",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -400,6 +406,9 @@ func handleBetaThreadsUpdate(ctx context.Context, cmd *cli.Command) error {
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) beta.threads > (method) update",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -442,6 +451,9 @@ func handleBetaThreadsDelete(ctx context.Context, cmd *cli.Command) error {
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) beta.threads > (method) delete",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -481,6 +493,9 @@ func handleBetaThreadsCreateAndRun(ctx context.Context, cmd *cli.Command) error 
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(stream, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) beta.threads > (method) create_and_run",
+			OutputKind:     outputStreamEvent,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -497,6 +512,9 @@ func handleBetaThreadsCreateAndRun(ctx context.Context, cmd *cli.Command) error 
 
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) beta.threads > (method) create_and_run",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),

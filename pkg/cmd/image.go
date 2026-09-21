@@ -85,7 +85,7 @@ var imagesEdit = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "input-fidelity",
-			Usage:    "Control how much effort the model will exert to match the style and features, especially facial features, of input images. This parameter is only supported for `gpt-image-1` and `gpt-image-1.5` and later models, unsupported for `gpt-image-1-mini`. Supports `high` and `low`. Defaults to `low`.",
+			Usage:    "Controls fidelity to the original input image(s). This parameter is supported for GPT image models that support input fidelity. `gpt-image-2` and `gpt-image-2-2026-04-21` ignore this parameter.",
 			BodyPath: "input_fidelity",
 		},
 		&requestflag.Flag[string]{
@@ -287,6 +287,9 @@ func handleImagesCreateVariation(ctx context.Context, cmd *cli.Command) error {
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) images > (method) create_variation",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -326,6 +329,9 @@ func handleImagesEdit(ctx context.Context, cmd *cli.Command) error {
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(stream, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) images > (method) edit",
+			OutputKind:     outputStreamEvent,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -342,6 +348,9 @@ func handleImagesEdit(ctx context.Context, cmd *cli.Command) error {
 
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) images > (method) edit",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -382,6 +391,9 @@ func handleImagesGenerate(ctx context.Context, cmd *cli.Command) error {
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(stream, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) images > (method) generate",
+			OutputKind:     outputStreamEvent,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -398,6 +410,9 @@ func handleImagesGenerate(ctx context.Context, cmd *cli.Command) error {
 
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) images > (method) generate",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
