@@ -2,7 +2,6 @@ package custom
 
 import (
 	"crypto/sha256"
-	"fmt"
 	"hash"
 	"io"
 	"strings"
@@ -10,7 +9,6 @@ import (
 	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/pkg/transformers"
-	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
@@ -43,15 +41,21 @@ func configureReadableOutput(root *cli.Command) {
 	}
 }
 
-func writeReadableResult(out io.Writer, value gjson.Result, opts ShowJSONOpts) error {
-	projection := transformers.Readable(value, transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind})
-	if projection.IsText {
-		return writeReadableText(out, projection.Text)
+func writeReadableResult(out io.Writer, output transformers.Output) error {
+	if output.Projection.Text.IsText {
+		return writeReadableText(out, output.Projection.Text.Text)
 	}
-	if summary, ok := transformers.Summary(value, transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}); ok {
-		return readable.Write(out, summary)
+	value := output.Value
+	if output.Projection.Summary.Exists() {
+		value = output.Projection.Summary
 	}
-	return readable.Write(out, value)
+	if err := readable.Write(out, value); err != nil {
+		return err
+	}
+	if output.Projection.Omitted {
+		return writeReadableText(out, "Details: Use --format json for all fields.")
+	}
+	return nil
 }
 
 func writeReadableText(out io.Writer, value string) error {
@@ -69,7 +73,7 @@ func writeReadableText(out io.Writer, value string) error {
 // Text is written as each event arrives, without preloading a screen or opening
 // a pager. Each text part keeps only a digest, so completion snapshots can be
 // compared with deltas without retaining the response text in memory.
-func showReadableIterator[T any](iter jsonview.Iterator[T], opts ShowJSONOpts) error {
+func showReadableIterator(iter jsonview.Iterator[preparedOutput], opts ShowJSONOpts) error {
 	type textPart struct {
 		digest hash.Hash
 		size   int
@@ -131,12 +135,9 @@ func showReadableIterator[T any](iter jsonview.Iterator[T], opts ShowJSONOpts) e
 		return nil
 	}
 	for iter.Next() {
-		item, ok := any(iter.Current()).(hasRawJSON)
-		if !ok {
-			return fmt.Errorf("readable output requires normalized JSON values")
-		}
-		value := applyJSONPath(gjson.Parse(item.RawJSON()), opts.Transform)
-		projection := transformers.Readable(value, transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind})
+		output := iter.Current().Output
+		output.Value = applyJSONPath(output.Value, opts.Transform)
+		projection := output.Projection.Text
 		if projection.Skip {
 			continue
 		}
@@ -171,10 +172,7 @@ func showReadableIterator[T any](iter jsonview.Iterator[T], opts ShowJSONOpts) e
 				return err
 			}
 		}
-		if summary, ok := transformers.Summary(value, transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}); ok {
-			value = summary
-		}
-		if err := readable.Write(opts.Stdout, value); err != nil {
+		if err := writeReadableResult(opts.Stdout, output); err != nil {
 			return &outputWriteError{err}
 		}
 		emitted = true

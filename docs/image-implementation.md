@@ -1,7 +1,8 @@
 # Image feature: code map
 
 Start with [the user guide](image-output.md) to try the commands. This page traces
-the implementation for a code review.
+the implementation for a code review. The [output architecture](architecture/output-pipeline.md)
+defines the shared rendering boundary and proposed PR sequence.
 
 ## Where the code lives
 
@@ -84,9 +85,18 @@ their existing API-data behavior. `--format auto` and `--format text` keep
 automatic saving when otherwise eligible. Errors have no successful-operation route.
 
 Across the CLI, the custom output boundary selects readable text for the default,
-`auto`, and `text` formats. Known text responses and stream events use pure
-projections in `pkg/transformers/readable.go`; other shapes use the recursive
-renderer in `internal/readable`. Text, nested fields, and list entries print
+`auto`, and `text` formats. It selects `transformers.SelectPipeline` once using
+the generated operation and output kind. That pipeline normalizes each value
+and prepares any readable projection before rendering. The typed output keeps
+JSON, text metadata, and summary fields separate; no presentation marker is
+inserted into the API data. The compatibility `Select` function uses the same
+registry for consumers that only need JSON normalization.
+
+Known text responses and stream events use pure projections in
+`pkg/transformers/readable.go`; other shapes use the recursive renderer in
+`internal/readable`. The renderer consumes the prepared projection without
+selecting or running another transformation. CLI help hints and terminal escaping
+belong to the presenter. Text, nested fields, and list entries print
 directly without an automatic pager. Explicit data modes retain full API values.
 This changes the default for scripts: callers that parse JSON must add
 `--format json`. See the [output guide](readable-output.md).
@@ -103,7 +113,7 @@ The `pkg/transformers` package is a code extension point. The existing
 | Generated image API handler and SDK call | [pkg/cmd/image.go](../pkg/cmd/image.go) |
 | Successful-output routing and presentation | [cmdutil.go](../pkg/custom/cmdutil.go), [output_transform.go](../pkg/custom/output_transform.go) |
 | Readable response and stream presentation | [readable_output.go](../pkg/custom/readable_output.go), [pkg/transformers/readable.go](../pkg/transformers/readable.go), [internal/readable/](../internal/readable/) |
-| Pure image response/event transformation | [pkg/transformers/image.go](../pkg/transformers/image.go), [output.go](../pkg/transformers/output.go) |
+| Pipeline selection and pure image response/event transformation | [pkg/transformers/pipeline.go](../pkg/transformers/pipeline.go), [image.go](../pkg/transformers/image.go) |
 | Multipart edit/variation workflow and short help | [image_upload.go](../pkg/custom/image_upload.go) |
 | Defaults, validation, save policy, and preview routing | [image_output.go](../pkg/custom/image_output.go), [image_settings_validation.go](../pkg/custom/image_settings_validation.go) |
 | Names, downloads, collision handling, and saved files | [internal/imageoutput/](../internal/imageoutput/), especially [promptname.go](../internal/imageoutput/promptname.go) |

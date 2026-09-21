@@ -18,8 +18,11 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/imagepreview"
+	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/ssestream"
+	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 type imageStreamTestBody struct {
@@ -86,7 +89,7 @@ func TestImageStreamSavesFinalAndBoundsProgress(t *testing.T) {
 	destination := t.TempDir()
 	plan := &imageOutputPlan{directory: destination, name: "robot.png", partialImages: 3, preview: imagepreview.Kitty}
 	var output bytes.Buffer
-	if err := plan.saveStream(t.Context(), stream, &output); err != nil {
+	if err := plan.saveStream(t.Context(), stream, &output, transformers.ImageStreamEvent); err != nil {
 		t.Fatal(err)
 	}
 	if !body.closed {
@@ -124,7 +127,7 @@ func TestImageStreamPreviewFailureDoesNotLoseFinal(t *testing.T) {
 	destination := t.TempDir()
 	plan := &imageOutputPlan{directory: destination, name: "robot", partialImages: 2, preview: imagepreview.Kitty}
 	var output bytes.Buffer
-	if err := plan.saveStream(t.Context(), stream, &output); err != nil {
+	if err := plan.saveStream(t.Context(), stream, &output, transformers.ImageStreamEvent); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Count(output.String(), "Progress preview unavailable") != 1 || !strings.Contains(output.String(), "Saved image:") {
@@ -147,7 +150,7 @@ func TestImageStreamWithoutInlineOnlySavesFinal(t *testing.T) {
 	stream, _ := imageStreamTestSSE(events)
 	plan := &imageOutputPlan{directory: t.TempDir(), name: "robot", partialImages: 3}
 	var output bytes.Buffer
-	if err := plan.saveStream(t.Context(), stream, &output); err != nil {
+	if err := plan.saveStream(t.Context(), stream, &output, transformers.ImageStreamEvent); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(output.String(), "Saved image:") || strings.Contains(output.String(), "\x1b") || strings.Contains(output.String(), "Progress preview") {
@@ -169,7 +172,7 @@ func TestImageStreamRequiresFinalAndDoesNotLeakErrors(t *testing.T) {
 			stream, body := imageStreamTestSSE(events)
 			plan := &imageOutputPlan{directory: t.TempDir(), partialImages: 1, preview: imagepreview.Kitty}
 			var output bytes.Buffer
-			err := plan.saveStream(t.Context(), stream, &output)
+			err := plan.saveStream(t.Context(), stream, &output, transformers.ImageStreamEvent)
 			if err == nil || !strings.Contains(err.Error(), "final image") || !strings.Contains(err.Error(), "API usage") {
 				t.Fatalf("incomplete stream did not return recovery guidance: %v", err)
 			}
@@ -188,7 +191,7 @@ func TestImageStreamPreservesTypedAPIErrorAndCancellation(t *testing.T) {
 	apierr := &openai.Error{StatusCode: 401}
 	stream := ssestream.NewStream[openai.ImageGenStreamEventUnion](nil, apierr)
 	plan := &imageOutputPlan{directory: t.TempDir()}
-	if err := plan.saveStream(t.Context(), stream, io.Discard); err != apierr {
+	if err := plan.saveStream(t.Context(), stream, io.Discard, transformers.ImageStreamEvent); err != apierr {
 		t.Fatalf("initial API error type lost: %T", err)
 	}
 	_, encoded := imageStreamTestPNG(t, color.RGBA{R: 200, A: 255})
@@ -197,7 +200,7 @@ func TestImageStreamPreservesTypedAPIErrorAndCancellation(t *testing.T) {
 		cancel()
 		stream, body := imageStreamTestSSE(imageStreamTestEvent(t, kind, encoded, 0))
 		var output bytes.Buffer
-		if err := plan.saveStream(ctx, stream, &output); !errors.Is(err, context.Canceled) {
+		if err := plan.saveStream(ctx, stream, &output, transformers.ImageStreamEvent); !errors.Is(err, context.Canceled) {
 			t.Fatalf("canceled %s = %v", kind, err)
 		}
 		if output.Len() != 0 || !body.closed {
@@ -228,7 +231,7 @@ func TestImageStreamCancellationDuringPreviewCleansTemporaryFiles(t *testing.T) 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	output := &imageStreamCancelWriter{cancel: cancel}
-	if err := plan.saveStream(ctx, stream, output); !errors.Is(err, context.Canceled) {
+	if err := plan.saveStream(ctx, stream, output, transformers.ImageStreamEvent); !errors.Is(err, context.Canceled) {
 		t.Fatalf("preview cancellation = %v", err)
 	}
 	if !body.closed || strings.Contains(output.String(), "Saved image:") {
@@ -247,4 +250,104 @@ func assertImageStreamTemporaryEmpty(t *testing.T, directory string) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("temporary progress images remain: %v, %v", entries, err)
 	}
+}
+
+// Count reads and closes at the source, independently of event normalization.
+// A final event must stop consumption even when more data is already available.
+type countedImageStream struct {
+	imageGenerationStream
+	reads, closes int
+}
+
+func (stream *countedImageStream) Next() bool {
+	stream.reads++
+	return stream.imageGenerationStream.Next()
+}
+
+func (stream *countedImageStream) Close() error {
+	stream.closes++
+	return stream.imageGenerationStream.Close()
+}
+
+func TestImageStreamUsesSelectedNormalizerOnceAndStopsAtFinal(t *testing.T) {
+	for _, prefix := range []string{"image_generation", "image_edit"} {
+		t.Run(prefix, func(t *testing.T) {
+			temporary := imageStreamTestTemporaryRoot(t)
+			finalBytes, encoded := imageStreamTestPNG(t, color.RGBA{B: 180, A: 255})
+			events := imageStreamTestEvent(t, prefix+".partial_image", encoded, 0)
+			events += imageStreamTestEvent(t, prefix+".partial_image", encoded, 0) // duplicate
+			events += imageStreamTestEvent(t, prefix+".partial_image", encoded, 8) // out of range
+			events += imageStreamTestEvent(t, prefix+".future", encoded, 0)
+			events += imageStreamTestEvent(t, prefix+".completed", encoded, 0)
+			events += "data: synthetic-unread-tail\n\n"
+			source, body := imageStreamTestSSE(events)
+			stream := &countedImageStream{imageGenerationStream: source}
+			var normalized []string
+			normalize := func(ctx context.Context, value gjson.Result) (gjson.Result, error) {
+				normalized = append(normalized, value.Get("type").String())
+				return transformers.ImageStreamEvent(ctx, value)
+			}
+			plan := &imageOutputPlan{directory: t.TempDir(), name: "selected", partialImages: 1, preview: imagepreview.Kitty}
+			var output bytes.Buffer
+			require.NoError(t, plan.saveStream(t.Context(), stream, &output, normalize))
+			require.Equal(t, []string{prefix + ".partial_image", prefix + ".completed"}, normalized)
+			require.Equal(t, 5, stream.reads)
+			require.Equal(t, 1, stream.closes)
+			require.True(t, body.closed)
+			saved, err := os.ReadFile(filepath.Join(plan.directory, "selected.png"))
+			require.NoError(t, err)
+			require.Equal(t, finalBytes, saved)
+			assertImageStreamTemporaryEmpty(t, temporary)
+		})
+	}
+}
+
+func TestImageStreamSelectedNormalizerPreviewFailureStillSavesFinal(t *testing.T) {
+	temporary := imageStreamTestTemporaryRoot(t)
+	_, encoded := imageStreamTestPNG(t, color.RGBA{R: 200, A: 255})
+	events := imageStreamTestEvent(t, "image_edit.partial_image", encoded, 0)
+	events += imageStreamTestEvent(t, "image_edit.partial_image", encoded, 1)
+	events += imageStreamTestEvent(t, "image_edit.completed", encoded, 0)
+	source, body := imageStreamTestSSE(events)
+	stream := &countedImageStream{imageGenerationStream: source}
+	normalizations := 0
+	normalize := func(ctx context.Context, value gjson.Result) (gjson.Result, error) {
+		normalizations++
+		if value.Get("type").String() == "image_edit.partial_image" {
+			return gjson.Result{}, errors.New("synthetic-private-preview-details")
+		}
+		return transformers.ImageStreamEvent(ctx, value)
+	}
+	plan := &imageOutputPlan{directory: t.TempDir(), name: "final", partialImages: 2, preview: imagepreview.Kitty}
+	var output bytes.Buffer
+	require.NoError(t, plan.saveStream(t.Context(), stream, &output, normalize))
+	require.Equal(t, 2, normalizations, "preview failure disables remaining optional previews")
+	require.Equal(t, 1, stream.closes)
+	require.True(t, body.closed)
+	require.Contains(t, output.String(), "Saved image:")
+	require.Equal(t, 1, strings.Count(output.String(), "Progress preview unavailable"))
+	require.NotContains(t, output.String(), "synthetic-private")
+	assertImageStreamTemporaryEmpty(t, temporary)
+}
+
+func TestImageStreamSelectedNormalizerCancellationCannotSaveFinal(t *testing.T) {
+	_, encoded := imageStreamTestPNG(t, color.RGBA{R: 200, A: 255})
+	source, body := imageStreamTestSSE(imageStreamTestEvent(t, "image_generation.completed", encoded, 0))
+	stream := &countedImageStream{imageGenerationStream: source}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	normalize := func(ctx context.Context, value gjson.Result) (gjson.Result, error) {
+		result, err := transformers.ImageStreamEvent(ctx, value)
+		cancel() // Cancellation between transformation and publication must win.
+		return result, err
+	}
+	plan := &imageOutputPlan{directory: t.TempDir(), name: "cancelled"}
+	var output bytes.Buffer
+	require.ErrorIs(t, plan.saveStream(ctx, stream, &output, normalize), context.Canceled)
+	require.Empty(t, output.String())
+	entries, err := os.ReadDir(plan.directory)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+	require.Equal(t, 1, stream.closes)
+	require.True(t, body.closed)
 }

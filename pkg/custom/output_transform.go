@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/openai/openai-cli/internal/jsonview"
@@ -20,31 +21,36 @@ const (
 	OutputStreamEvent = transformers.OutputStreamEvent
 )
 
-type transformerSelector func(transformers.Route) transformers.Transformer
+type pipelineSelector func(transformers.Route) transformers.Pipeline
 
-func selectOutputTransformer(opts ShowJSONOpts, selectTransformer transformerSelector) transformers.Transformer {
-	// Explicit presentation choices operate on the original API response.
+type selectedOutputPipeline struct {
+	transformers.Pipeline
+	present bool
+}
+
+func selectOutputPipeline(opts ShowJSONOpts, selectPipeline pipelineSelector) selectedOutputPipeline {
+	// Explicit API-data formats operate on the original API response.
 	// Missing or non-success routing metadata also uses identity, including errors.
-	if opts.ExplicitFormat || opts.Transform != "" || opts.RawOutput || opts.Operation == "" {
-		return transformers.Identity
+	format := strings.ToLower(opts.Format)
+	readableFormat := format == "" || format == "auto" || format == "text"
+	if opts.ExplicitFormat && !readableFormat || opts.Transform != "" || opts.RawOutput || opts.Operation == "" {
+		return selectedOutputPipeline{Pipeline: transformers.Pipeline{Transform: transformers.Identity}}
 	}
 	switch opts.OutputKind {
 	case OutputResponse, OutputPageItem, OutputStreamEvent:
-		return selectTransformer(transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind})
+		pipeline := selectPipeline(transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind})
+		if !readableFormat {
+			pipeline.Project = nil
+		}
+		return selectedOutputPipeline{Pipeline: pipeline, present: readableFormat}
 	default:
-		return transformers.Identity
+		return selectedOutputPipeline{Pipeline: transformers.Pipeline{Transform: transformers.Identity}}
 	}
 }
 
 func transformOutput(ctx context.Context, value gjson.Result, transform transformers.Transformer) (gjson.Result, error) {
-	if err := ctx.Err(); err != nil {
-		return gjson.Result{}, err
-	}
-	value, err := transform(ctx, value)
-	if err != nil {
-		return gjson.Result{}, err
-	}
-	return value, ctx.Err()
+	output, err := (transformers.Pipeline{Transform: transform}).Prepare(ctx, value)
+	return output.Value, err
 }
 
 func applyJSONPath(value gjson.Result, path string) gjson.Result {
@@ -60,15 +66,21 @@ type outputJSON struct{ gjson.Result }
 
 func (value outputJSON) RawJSON() string { return value.Raw }
 
+// Presentation metadata is carried in Go values, never injected into API JSON.
+// Repeated Current/RawJSON calls cannot select or run a transformation again.
+type preparedOutput struct{ transformers.Output }
+
+func (value preparedOutput) RawJSON() string { return value.Value.Raw }
+
 // outputIterator shares one lazy transformation boundary across direct output,
 // the pager, and the explorer. Current never reruns a transformation.
 type outputIterator[T any] struct {
 	source     jsonview.Iterator[T]
 	context    context.Context
-	transform  transformers.Transformer
+	pipeline   transformers.Pipeline
 	remaining  int64
 	outputKind OutputKind
-	current    outputJSON
+	current    preparedOutput
 	err        error
 	resultErr  error
 	done       bool
@@ -116,18 +128,19 @@ func (it *outputIterator[T]) Next() bool {
 			it.resultErr = errors.New(message)
 		}
 	}
-	value, it.err = transformOutput(it.context, value, it.transform)
+	output, err := it.pipeline.Prepare(it.context, value)
+	it.err = err
 	if it.err != nil {
 		return false
 	}
-	it.current = outputJSON{value}
+	it.current = preparedOutput{output}
 	if it.remaining > 0 {
 		it.remaining--
 	}
 	return true
 }
 
-func (it *outputIterator[T]) Current() outputJSON { return it.current }
+func (it *outputIterator[T]) Current() preparedOutput { return it.current }
 
 func (it *outputIterator[T]) Err() error {
 	it.errorMu.RLock()

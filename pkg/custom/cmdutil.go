@@ -392,7 +392,7 @@ func formatJSONForOutput(res gjson.Result, opts ShowJSONOpts, destination io.Wri
 	switch strings.ToLower(opts.Format) {
 	case "text":
 		var text bytes.Buffer
-		err := writeReadableResult(&text, res, opts)
+		err := writeReadableResult(&text, transformers.Output{Value: res})
 		return text.Bytes(), err
 	case "pretty":
 		return []byte(jsonview.RenderJSON(opts.Title, res) + "\n"), nil
@@ -460,25 +460,15 @@ func (o *ShowJSONOpts) setDefaults() {
 
 // ShowJSON displays a single JSON result to the user.
 func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
-	if presentation, ok := imagePresentationFor(opts, OutputResponse); ok {
-		value, err := transformOutput(opts.Context, res, selectOutputTransformer(opts, transformers.Select))
-		if err != nil {
-			return err
-		}
-		return presentation.plan.save(opts.Context, []byte(value.Raw), presentation.writer)
-	}
-	return showJSON(res, opts, transformers.Select)
+	return showJSON(res, opts, transformers.SelectPipeline)
 }
 
-func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformerSelector) error {
+func showJSON(res gjson.Result, opts ShowJSONOpts, selectPipeline pipelineSelector) error {
 	opts.setDefaults()
 	if text, ok := audioTextResult(opts); ok {
 		if strings.EqualFold(opts.Format, "raw") || opts.RawOutput {
 			_, err := io.WriteString(opts.Stdout, text)
 			return err
-		}
-		if resolvedOutputFormat(opts) == "text" {
-			return writeReadableText(opts.Stdout, text)
 		}
 		encoded, err := json.Marshal(text)
 		if err != nil {
@@ -486,17 +476,22 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 		}
 		res = gjson.ParseBytes(encoded)
 	}
-	res, err := transformOutput(opts.Context, res, selectOutputTransformer(opts, selectTransformer))
+	pipeline := selectOutputPipeline(opts, selectPipeline)
+	output, err := pipeline.Prepare(opts.Context, res)
 	if err != nil {
 		return err
 	}
+	if presentation, ok := imagePresentationFor(opts, OutputResponse); ok && pipeline.present {
+		return presentation.plan.save(opts.Context, []byte(output.Value.Raw), presentation.writer)
+	}
 	opts.Format = resolvedOutputFormat(opts)
-	res = applyJSONPath(res, opts.Transform)
+	res = applyJSONPath(output.Value, opts.Transform)
+	output.Value = res
 	opts.Transform = ""
 
 	switch strings.ToLower(opts.Format) {
 	case "text":
-		return writeReadableResult(opts.Stdout, res, opts)
+		return writeReadableResult(opts.Stdout, output)
 	case "explore":
 		if isTerminal(opts.Stdout) {
 			return jsonview.ExploreJSON(opts.Title, res)
@@ -525,18 +520,19 @@ type hasRawJSON interface {
 
 // ShowJSONIterator displays an iterator of values to the user. Use itemsToDisplay = -1 for no limit.
 func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts) error {
-	if presentation, ok := imagePresentationFor(opts, OutputStreamEvent); ok {
-		return presentation.plan.saveStream(opts.Context, &imageOutputStream[T]{source: iter}, presentation.writer)
-	}
-	return showJSONIterator(iter, itemsToDisplay, opts, transformers.Select)
+	return showJSONIterator(iter, itemsToDisplay, opts, transformers.SelectPipeline)
 }
 
-func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectTransformer transformerSelector) error {
+func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectPipeline pipelineSelector) error {
 	opts.setDefaults()
+	pipeline := selectOutputPipeline(opts, selectPipeline)
+	if presentation, ok := imagePresentationFor(opts, OutputStreamEvent); ok && pipeline.present {
+		return presentation.plan.saveStream(opts.Context, &imageOutputStream[T]{source: source}, presentation.writer, pipeline.Transform)
+	}
 	iter := &outputIterator[T]{
 		source:     source,
 		context:    opts.Context,
-		transform:  selectOutputTransformer(opts, selectTransformer),
+		pipeline:   pipeline.Pipeline,
 		remaining:  itemsToDisplay,
 		outputKind: opts.OutputKind,
 	}
@@ -567,7 +563,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	output := []byte{}
 	numberOfNewlines := 0
 	for iter.Next() {
-		formatted, err := formatJSON(iter.Current().Result, opts)
+		formatted, err := formatJSON(iter.Current().Value, opts)
 		if err != nil {
 			return err
 		}
@@ -593,7 +589,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 		pagerOpts := opts
 		pagerOpts.Stdout = pager
 		for iter.Next() {
-			formatted, err := formatJSONForOutput(iter.Current().Result, pagerOpts, opts.Stdout)
+			formatted, err := formatJSONForOutput(iter.Current().Value, pagerOpts, opts.Stdout)
 			if err != nil {
 				return err
 			}

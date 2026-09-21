@@ -15,47 +15,47 @@ func TestSummaryManagementResources(t *testing.T) {
 		{
 			"models",
 			`{"id":"gpt-example:exact.id-001","object":"model","created":1234567890,"owned_by":"system","shutdown_date":null}`,
-			`{"id":"gpt-example:exact.id-001","owned_by":"system","details":"Use --format json for all fields."}`,
+			`{"id":"gpt-example:exact.id-001","owned_by":"system"}`,
 		},
 		{
 			"files",
 			`{"object":"file","id":"file_example","bytes":9007199254740993,"created_at":123,"filename":"training data.jsonl","purpose":"fine-tune","status":"processed","expires_at":null,"status_details":null}`,
-			`{"id":"file_example","filename":"training data.jsonl","purpose":"fine-tune","bytes":9007199254740993,"status":"processed","details":"Use --format json for all fields."}`,
+			`{"id":"file_example","filename":"training data.jsonl","purpose":"fine-tune","bytes":9007199254740993,"status":"processed"}`,
 		},
 		{
 			"batches",
 			`{"id":"batch_example","object":"batch","status":"completed","input_file_id":"file_input","output_file_id":"file_output","error_file_id":"file_errors","errors":null,"created_at":123,"completion_window":"24h","endpoint":"/v1/responses","metadata":{"label":"example"},"request_counts":{"total":3,"completed":2,"failed":1}}`,
-			`{"id":"batch_example","status":"completed","request_counts":{"total":3,"completed":2,"failed":1},"input_file_id":"file_input","output_file_id":"file_output","error_file_id":"file_errors","endpoint":"/v1/responses","details":"Use --format json for all fields."}`,
+			`{"id":"batch_example","status":"completed","request_counts":{"total":3,"completed":2,"failed":1},"input_file_id":"file_input","output_file_id":"file_output","error_file_id":"file_errors","endpoint":"/v1/responses"}`,
 		},
 		{
 			"vector_stores",
 			`{"id":"vs_example","object":"vector_store","created_at":123,"file_counts":{"completed":2,"failed":0,"total":2},"last_active_at":124,"metadata":{},"name":"Guide","status":"completed","usage_bytes":0,"expires_after":{"anchor":"last_active_at","days":7},"expires_at":999}`,
-			`{"id":"vs_example","name":"Guide","status":"completed","file_counts":{"completed":2,"failed":0,"total":2},"usage_bytes":0,"expires_at":999,"details":"Use --format json for all fields."}`,
+			`{"id":"vs_example","name":"Guide","status":"completed","file_counts":{"completed":2,"failed":0,"total":2},"usage_bytes":0,"expires_at":999}`,
 		},
 		{
 			"vector_stores.files",
 			`{"id":"file_example","object":"vector_store.file","created_at":123,"status":"completed","last_error":null,"usage_bytes":10,"vector_store_id":"vs_example","attributes":{"section":"appendix"},"chunking_strategy":{"type":"auto"}}`,
-			`{"id":"file_example","vector_store_id":"vs_example","status":"completed","usage_bytes":10,"attributes":{"section":"appendix"},"details":"Use --format json for all fields."}`,
+			`{"id":"file_example","vector_store_id":"vs_example","status":"completed","usage_bytes":10,"attributes":{"section":"appendix"}}`,
 		},
 		{
 			"vector_stores.file_batches",
 			`{"id":"vsfb_example","object":"vector_store.files_batch","created_at":123,"status":"in_progress","vector_store_id":"vs_example","file_counts":{"total":2,"in_progress":1,"completed":1,"failed":0,"cancelled":0}}`,
-			`{"id":"vsfb_example","vector_store_id":"vs_example","status":"in_progress","file_counts":{"total":2,"in_progress":1,"completed":1,"failed":0,"cancelled":0},"details":"Use --format json for all fields."}`,
+			`{"id":"vsfb_example","vector_store_id":"vs_example","status":"in_progress","file_counts":{"total":2,"in_progress":1,"completed":1,"failed":0,"cancelled":0}}`,
 		},
 		{
 			"fine_tuning.jobs",
 			`{"id":"ftjob_example","object":"fine_tuning.job","created_at":123,"status":"succeeded","model":"gpt-example","fine_tuned_model":"ft:gpt-example:org:exact-id","training_file":"file_training","validation_file":null,"result_files":["file_result"],"trained_tokens":9007199254740993,"error":null,"hyperparameters":{"n_epochs":1},"seed":42,"method":{"type":"supervised"},"metadata":{}}`,
-			`{"id":"ftjob_example","status":"succeeded","model":"gpt-example","fine_tuned_model":"ft:gpt-example:org:exact-id","training_file":"file_training","result_files":["file_result"],"trained_tokens":9007199254740993,"details":"Use --format json for all fields."}`,
+			`{"id":"ftjob_example","status":"succeeded","model":"gpt-example","fine_tuned_model":"ft:gpt-example:org:exact-id","training_file":"file_training","result_files":["file_result"],"trained_tokens":9007199254740993}`,
 		},
 		{
 			"beta.assistants",
 			`{"id":"asst_example","object":"assistant","created_at":123,"name":"Help","model":"gpt-example","description":"Answers\nwith examples.","instructions":"Use the reference files.","tools":[{"type":"file_search"}],"metadata":{},"response_format":"auto","temperature":1,"top_p":1,"tool_resources":{}}`,
-			`{"id":"asst_example","name":"Help","model":"gpt-example","description":"Answers\nwith examples.","details":"Use --format json for all fields."}`,
+			`{"id":"asst_example","name":"Help","model":"gpt-example","description":"Answers\nwith examples."}`,
 		},
 		{
 			"beta.threads.runs",
 			`{"id":"run_example","object":"thread.run","thread_id":"thread_example","assistant_id":"asst_example","status":"completed","model":"gpt-example","instructions":"Use examples.","tools":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30},"required_action":null,"last_error":null,"incomplete_details":null,"created_at":123,"metadata":{}}`,
-			`{"id":"run_example","status":"completed","thread_id":"thread_example","assistant_id":"asst_example","model":"gpt-example","usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30},"details":"Use --format json for all fields."}`,
+			`{"id":"run_example","status":"completed","thread_id":"thread_example","assistant_id":"asst_example","model":"gpt-example","usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}`,
 		},
 	} {
 		t.Run(test.resource, func(t *testing.T) {

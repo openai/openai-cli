@@ -35,6 +35,14 @@ type ReadablePart struct {
 // image, mixed-content, or unsuccessful results. Route identity is used only
 // where an API response has no unambiguous object or event discriminator.
 func Readable(value gjson.Result, route Route) ReadableValue {
+	// The custom transport boundary preserves native text/subtitle responses as
+	// JSON strings before preparing output. Only these exact audio response
+	// routes interpret a scalar string as text, retaining all original content.
+	if value.Type == gjson.String && route.OutputKind == OutputResponse &&
+		(route.Operation == "(resource) audio.transcriptions > (method) create" ||
+			route.Operation == "(resource) audio.translations > (method) create") {
+		return readableText(value)
+	}
 	// List entries are independent records: their IDs and repeated text matter.
 	if route.OutputKind == OutputPageItem || !value.IsObject() || readableIssue(value) {
 		return ReadableValue{}

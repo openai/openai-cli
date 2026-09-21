@@ -67,7 +67,8 @@ func (stream *imageOutputStream[T]) Close() error {
 // saveStream keeps progress images temporary and saves only the completed image
 // through the same path as ordinary generation. A completed event is terminal:
 // waiting for another event must not turn a saved image into a failed request.
-func (p *imageOutputPlan) saveStream(ctx context.Context, stream imageGenerationStream, out io.Writer) (resultErr error) {
+// normalize is selected once by the shared output boundary for the actual route.
+func (p *imageOutputPlan) saveStream(ctx context.Context, stream imageGenerationStream, out io.Writer, normalize transformers.Transformer) (resultErr error) {
 	defer stream.Close()
 	var temporaryDirectory string
 	defer func() {
@@ -97,7 +98,7 @@ func (p *imageOutputPlan) saveStream(ctx context.Context, stream imageGeneration
 		event := stream.Current()
 		switch event.Type {
 		case "image_generation.completed", "image_edit.completed":
-			response, err := imageEventResponse(ctx, event)
+			response, err := imageEventResponse(ctx, event, normalize)
 			if err != nil {
 				return err
 			}
@@ -117,7 +118,7 @@ func (p *imageOutputPlan) saveStream(ctx context.Context, stream imageGeneration
 			}
 			if err == nil {
 				var response []byte
-				response, err = imageEventResponse(ctx, event)
+				response, err = imageEventResponse(ctx, event, normalize)
 				if err == nil {
 					err = p.renderImageProgress(ctx, out, temporaryDirectory, response, index)
 				}
@@ -151,7 +152,7 @@ func (p *imageOutputPlan) saveStream(ctx context.Context, stream imageGeneration
 	return errors.New("the image stream ended without a final image; check your API usage before trying again")
 }
 
-func imageEventResponse(ctx context.Context, event openai.ImageGenStreamEventUnion) ([]byte, error) {
+func imageEventResponse(ctx context.Context, event openai.ImageGenStreamEventUnion, normalize transformers.Transformer) ([]byte, error) {
 	raw := event.RawJSON()
 	if raw == "" {
 		data, err := json.Marshal(event)
@@ -160,10 +161,10 @@ func imageEventResponse(ctx context.Context, event openai.ImageGenStreamEventUni
 		}
 		raw = string(data)
 	}
-	// The saving workflow has explicitly selected image presentation. This
-	// conversion also applies to --format auto; raw API streams never enter it.
-	transform := transformers.Select(transformers.Route{Operation: transformers.ImageGenerateOperation, OutputKind: transformers.OutputStreamEvent})
-	response, err := transform(transformers.WithImageOutput(ctx), gjson.Parse(raw))
+	// The output boundary selected this normalizer once for the actual operation.
+	// Saving consumes that selection without registering or selecting its own
+	// route; explicit API-data streams never enter this presentation consumer.
+	response, err := transformOutput(ctx, gjson.Parse(raw), normalize)
 	return []byte(response.Raw), err
 }
 

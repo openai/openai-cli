@@ -19,7 +19,7 @@ func readableStream(t *testing.T, events []string, kind OutputKind) (string, err
 	for _, event := range events {
 		iter.items = append(iter.items, outputJSON{gjson.Parse(event)})
 	}
-	err := ShowJSONIterator(iter, -1, ShowJSONOpts{Stdout: file, OutputKind: kind})
+	err := ShowJSONIterator(iter, -1, ShowJSONOpts{Stdout: file, Operation: "(resource) responses > (method) create", OutputKind: kind})
 	_, seekErr := file.Seek(0, io.SeekStart)
 	require.NoError(t, seekErr)
 	data, readErr := io.ReadAll(file)

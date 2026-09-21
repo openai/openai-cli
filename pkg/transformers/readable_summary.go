@@ -9,12 +9,18 @@ import (
 
 // Summary selects the useful fields of known management resources for readable
 // presentation. API output formats must continue to use the original value.
-// The returned object includes a JSON escape hatch whenever fields are omitted.
 // Unknown fields, resource shapes, and stream events are never summarized.
+// SelectPipeline additionally reports whether fields were omitted, allowing a
+// presenter to explain how to request the complete value in its own interface.
 func Summary(value gjson.Result, route Route) (gjson.Result, bool) {
+	result, selected, _ := summarize(value, route)
+	return result, selected
+}
+
+func summarize(value gjson.Result, route Route) (gjson.Result, bool, bool) {
 	if route.OutputKind == OutputStreamEvent || !value.IsObject() ||
 		value.Get("id").Type != gjson.String || value.Get("id").Str == "" {
-		return gjson.Result{}, false
+		return gjson.Result{}, false, false
 	}
 	resource := readableResource(route.Operation)
 	object := value.Get("object").String()
@@ -51,12 +57,12 @@ func Summary(value gjson.Result, route Route) (gjson.Result, bool) {
 		fields = "id status thread_id assistant_id model required_action last_error incomplete_details usage expires_at"
 		omitted = "object cancelled_at completed_at created_at failed_at instructions max_completion_tokens max_prompt_tokens metadata parallel_tool_calls response_format started_at tool_choice tools truncation_strategy temperature top_p"
 	default:
-		return gjson.Result{}, false
+		return gjson.Result{}, false, false
 	}
 	return summaryFields(value, strings.Fields(fields), strings.Fields(omitted), "")
 }
 
-func summaryDeletion(value gjson.Result, resource, object string, deleted bool) (gjson.Result, bool) {
+func summaryDeletion(value gjson.Result, resource, object string, deleted bool) (gjson.Result, bool, bool) {
 	var noun string
 	switch {
 	case resource == "models" && object == "model":
@@ -76,7 +82,7 @@ func summaryDeletion(value gjson.Result, resource, object string, deleted bool) 
 	case resource == "conversations" && object == "conversation.deleted":
 		noun = "conversation"
 	default:
-		return gjson.Result{}, false
+		return gjson.Result{}, false, false
 	}
 	result := "Deleted " + noun + "."
 	if !deleted {
@@ -88,7 +94,7 @@ func summaryDeletion(value gjson.Result, resource, object string, deleted bool) 
 // Only declared fields may be hidden. A new server field, including an empty
 // one, or a duplicate key falls back to full rendering instead of guessing its
 // importance. Kept values use their original JSON so numbers never round.
-func summaryFields(value gjson.Result, fields, omitted []string, result string) (gjson.Result, bool) {
+func summaryFields(value gjson.Result, fields, omitted []string, result string) (gjson.Result, bool, bool) {
 	allowed := make(map[string]bool, len(fields)+len(omitted))
 	for _, field := range fields {
 		allowed[field] = true
@@ -108,7 +114,7 @@ func summaryFields(value gjson.Result, fields, omitted []string, result string) 
 		return true
 	})
 	if !valid {
-		return gjson.Result{}, false
+		return gjson.Result{}, false, false
 	}
 	var out strings.Builder
 	out.WriteByte('{')
@@ -135,9 +141,6 @@ func summaryFields(value gjson.Result, fields, omitted []string, result string) 
 			kept++
 		}
 	}
-	if kept < len(values) {
-		appendField("details", `"Use --format json for all fields."`)
-	}
 	out.WriteByte('}')
-	return gjson.Parse(out.String()), true
+	return gjson.Parse(out.String()), true, kept < len(values)
 }
