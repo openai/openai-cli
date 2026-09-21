@@ -161,6 +161,9 @@ func handleBetaResponsesInputTokensCount(ctx context.Context, cmd *cli.Command) 
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) beta.responses.input_tokens > (method) count",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),

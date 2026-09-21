@@ -157,7 +157,7 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.Flag[[]map[string]any]{
 			Name:     "tool",
-			Usage:    "An array of tools the model may call while generating a response. You\ncan specify which tool to use by setting the `tool_choice` parameter.\n\nWe support the following categories of tools:\n- **Built-in tools**: Tools that are provided by OpenAI that extend the\n  model's capabilities, like [web search](https://developers.openai.com/api/docs/guides/tools-web-search)\n  or [file search](https://developers.openai.com/api/docs/guides/tools-file-search). Learn more about\n  [built-in tools](https://developers.openai.com/api/docs/guides/tools).\n- **MCP Tools**: Integrations with third-party systems via custom MCP servers\n  or predefined connectors such as Google Drive and SharePoint. Learn more about\n  [MCP Tools](https://developers.openai.com/api/docs/guides/tools-connectors-mcp).\n- **Function calls (custom tools)**: Functions that are defined by you,\n  enabling the model to call your own code with strongly typed arguments\n  and outputs. Learn more about\n  [function calling](https://developers.openai.com/api/docs/guides/function-calling). You can also use\n  custom tools to call your own code.\n",
+			Usage:    "An array of tools the model may call while generating a response. You\ncan specify which tool to use by setting the `tool_choice` parameter.\n\nWe support the following categories of tools:\n- **Built-in tools**: Tools that are provided by OpenAI that extend the\n  model's capabilities, like [web search](https://developers.openai.com/api/docs/guides/tools-web-search)\n  or [file search](https://developers.openai.com/api/docs/guides/tools-file-search). Learn more about\n  [built-in tools](https://developers.openai.com/api/docs/guides/tools).\n- **MCP Tools**: Integrations with third-party systems via custom MCP servers\n  or predefined connectors such as Google Drive and SharePoint. Built-in\n  connectors using `connector_id` are deprecated for models released after\n  September 1, 2026. Use `server_url` to connect to a remote MCP server, or\n  `tunnel_id` to connect through a Secure MCP Tunnel. Learn more about\n  [MCP Tools](https://developers.openai.com/api/docs/guides/tools-connectors-mcp).\n- **Function calls (custom tools)**: Functions that are defined by you,\n  enabling the model to call your own code with strongly typed arguments\n  and outputs. Learn more about\n  [function calling](https://developers.openai.com/api/docs/guides/function-calling). You can also use\n  custom tools to call your own code.\n",
 			BodyPath: "tools",
 		},
 		&requestflag.Flag[*int64]{
@@ -243,6 +243,11 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 			Name:       "prompt-cache-options.mode",
 			Usage:      "Controls whether OpenAI automatically creates an implicit cache breakpoint. Defaults to `implicit`. With `implicit`, OpenAI creates one implicit breakpoint and writes up to the latest three explicit breakpoints in the request. With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit breakpoints. If there are no explicit breakpoints, the request does not use prompt caching.",
 			InnerField: "mode",
+		},
+		&requestflag.InnerFlag[bool]{
+			Name:       "prompt-cache-options.prewarm",
+			Usage:      "Prepares the prompt cache without generating output. Defaults to `false`. When set to `true`, overrides the `generate` field to `false`.",
+			InnerField: "prewarm",
 		},
 		&requestflag.InnerFlag[string]{
 			Name:       "prompt-cache-options.ttl",
@@ -462,6 +467,9 @@ func handleResponsesCreate(ctx context.Context, cmd *cli.Command) error {
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(stream, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) responses > (method) create",
+			OutputKind:     outputStreamEvent,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -478,6 +486,9 @@ func handleResponsesCreate(ctx context.Context, cmd *cli.Command) error {
 
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) responses > (method) create",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -526,6 +537,9 @@ func handleResponsesRetrieve(ctx context.Context, cmd *cli.Command) error {
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(stream, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) responses > (method) retrieve",
+			OutputKind:     outputStreamEvent,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -547,6 +561,9 @@ func handleResponsesRetrieve(ctx context.Context, cmd *cli.Command) error {
 
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) responses > (method) retrieve",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -615,6 +632,9 @@ func handleResponsesCancel(ctx context.Context, cmd *cli.Command) error {
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) responses > (method) cancel",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -656,6 +676,9 @@ func handleResponsesCompact(ctx context.Context, cmd *cli.Command) error {
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) responses > (method) compact",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),

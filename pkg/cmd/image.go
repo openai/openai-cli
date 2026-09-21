@@ -287,6 +287,9 @@ func handleImagesCreateVariation(ctx context.Context, cmd *cli.Command) error {
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) images > (method) create_variation",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -326,6 +329,9 @@ func handleImagesEdit(ctx context.Context, cmd *cli.Command) error {
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(stream, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) images > (method) edit",
+			OutputKind:     outputStreamEvent,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -342,6 +348,9 @@ func handleImagesEdit(ctx context.Context, cmd *cli.Command) error {
 
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) images > (method) edit",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -359,7 +368,13 @@ func handleImagesGenerate(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("Unexpected extra arguments: %v", unusedArgs)
 	}
 
-	options, imageOutput, streaming, err := imageGenerateOptions(ctx, cmd)
+	options, err := flagOptions(
+		cmd,
+		apiquery.NestedQueryFormatBrackets,
+		apiquery.ArrayQueryFormatBrackets,
+		ApplicationJSON,
+		false,
+	)
 	if err != nil {
 		return err
 	}
@@ -369,16 +384,16 @@ func handleImagesGenerate(ctx context.Context, cmd *cli.Command) error {
 	format := cmd.Root().String("format")
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
-	if streaming {
+	if streamFlagValue, _ := cmd.Value("stream").(*bool); streamFlagValue != nil && *streamFlagValue {
 		stream := client.Images.GenerateStreaming(ctx, params, options...)
-		if imageOutput != nil {
-			return imageOutput.saveStream(ctx, stream, cmd.Root().Writer)
-		}
 		maxItems := int64(-1)
 		if cmd.IsSet("max-items") {
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(stream, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) images > (method) generate",
+			OutputKind:     outputStreamEvent,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -393,12 +408,11 @@ func handleImagesGenerate(ctx context.Context, cmd *cli.Command) error {
 			return err
 		}
 
-		if imageOutput != nil {
-			return imageOutput.save(ctx, res, cmd.Root().Writer)
-		}
-
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) images > (method) generate",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
