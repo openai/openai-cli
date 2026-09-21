@@ -1,4 +1,4 @@
-package cmd
+package custom
 
 import (
 	"context"
@@ -342,7 +342,7 @@ func TestCLIRejectsIncompleteMTLSClientChain(t *testing.T) {
 func findCommandFlag(t *testing.T, name string) cli.Flag {
 	t.Helper()
 
-	for _, flag := range Command.Flags {
+	for _, flag := range mtlsClientFlags() {
 		if flag.Names()[0] == name {
 			return flag
 		}
@@ -367,17 +367,17 @@ func runMTLSTestCommandWithArgs(t *testing.T, baseURL string, args ...string) er
 	t.Helper()
 
 	command := &cli.Command{
-		Name:   "openai-test",
-		Before: configureMTLS,
-		Flags: append([]cli.Flag{
+		Name: "openai-test",
+		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "base-url"},
-		}, mtlsClientFlags()...),
+		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			client := openai.NewClient(getDefaultRequestOptions(cmd)...)
+			client := openai.NewClient(GetDefaultRequestOptions(cmd)...)
 			_, err := client.Models.List(ctx)
 			return err
 		},
 	}
+	ConfigureCommand(command)
 	commandArgs := append(
 		[]string{command.Name, "--base-url", baseURL},
 		args...,

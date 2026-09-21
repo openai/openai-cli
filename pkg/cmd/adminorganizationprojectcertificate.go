@@ -139,6 +139,9 @@ func handleAdminOrganizationProjectsCertificatesList(ctx context.Context, cmd *c
 		}
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) admin.organization.projects.certificates > (method) list",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -157,6 +160,9 @@ func handleAdminOrganizationProjectsCertificatesList(ctx context.Context, cmd *c
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(iter, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) admin.organization.projects.certificates > (method) list",
+			OutputKind:     outputPageItem,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -207,6 +213,9 @@ func handleAdminOrganizationProjectsCertificatesActivate(ctx context.Context, cm
 		}
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) admin.organization.projects.certificates > (method) activate",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -225,6 +234,9 @@ func handleAdminOrganizationProjectsCertificatesActivate(ctx context.Context, cm
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(iter, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) admin.organization.projects.certificates > (method) activate",
+			OutputKind:     outputPageItem,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -275,6 +287,9 @@ func handleAdminOrganizationProjectsCertificatesDeactivate(ctx context.Context, 
 		}
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) admin.organization.projects.certificates > (method) deactivate",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -293,6 +308,9 @@ func handleAdminOrganizationProjectsCertificatesDeactivate(ctx context.Context, 
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(iter, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) admin.organization.projects.certificates > (method) deactivate",
+			OutputKind:     outputPageItem,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),

@@ -1,4 +1,4 @@
-package cmd
+package custom
 
 import (
 	"encoding/base64"

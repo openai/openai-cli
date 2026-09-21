@@ -1,9 +1,9 @@
-package cmd
+package custom
 
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/jsonview"
+	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/charmbracelet/x/term"
@@ -39,7 +40,7 @@ func ValidateBaseURL(value, source string) error {
 	return nil
 }
 
-func getDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
+func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 	opts := []option.RequestOption{
 		option.WithHeader("User-Agent", fmt.Sprintf("OpenAI/CLI %s", Version)),
 		option.WithHeader("X-Stainless-Lang", "cli"),
@@ -201,10 +202,10 @@ func isOutputBrokenPipe(err error) bool {
 	return errors.As(err, &outputErr) && strings.Contains(outputErr.Error(), "broken pipe")
 }
 
-// writeBinaryResponse writes a binary response to stdout or a file.
+// WriteBinaryResponse writes a binary response to stdout or a file.
 //
 // Takes in a stdout reference so we can test this function without overriding os.Stdout in tests.
-func writeBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (string, error) {
+func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (string, error) {
 	defer response.Body.Close()
 
 	switch outfile {
@@ -372,12 +373,7 @@ func formatJSON(res gjson.Result, opts ShowJSONOpts) ([]byte, error) {
 // formatJSONForOutput keeps the final destination available when a pager sits between
 // formatted output and the terminal.
 func formatJSONForOutput(res gjson.Result, opts ShowJSONOpts, destination io.Writer) ([]byte, error) {
-	if opts.Transform != "" {
-		transformed := res.Get(opts.Transform)
-		if transformed.Exists() {
-			res = transformed
-		}
-	}
+	res = applyJSONPath(res, opts.Transform)
 	// Modeled after `jq -r` (`--raw-output`): if the result is a string, print it without JSON quotes so that
 	// it's easier to pipe into other programs.
 	if opts.RawOutput && res.Type == gjson.String {
@@ -433,16 +429,22 @@ const warningExploreNotSupported = "Warning: Output format 'explore' not support
 
 // ShowJSONOpts configures how JSON output is displayed.
 type ShowJSONOpts struct {
-	ExplicitFormat bool      // true if the user explicitly passed --format
-	Format         string    // output format (auto, explore, json, jsonl, pretty, raw, yaml)
-	RawOutput      bool      // like jq -r: print strings without JSON quotes
-	Stderr         io.Writer // stderr for warnings; injectable for testing; defaults to os.Stderr
-	Stdout         *os.File  // stdout (or pager); injectable for testing; defaults to os.Stdout
-	Title          string    // display title
-	Transform      string    // GJSON path to extract before displaying
+	Context        context.Context // request cancellation; defaults to context.Background()
+	Operation      string          // generated operation identifier; empty for error presentation
+	OutputKind     OutputKind      // response, page item, or stream event; unspecified for errors
+	ExplicitFormat bool            // true if the user explicitly passed --format
+	Format         string          // output format (auto, explore, json, jsonl, pretty, raw, yaml)
+	RawOutput      bool            // like jq -r: print strings without JSON quotes
+	Stderr         io.Writer       // stderr for warnings; injectable for testing; defaults to os.Stderr
+	Stdout         *os.File        // stdout (or pager); injectable for testing; defaults to os.Stdout
+	Title          string          // display title
+	Transform      string          // GJSON path to extract before displaying
 }
 
 func (o *ShowJSONOpts) setDefaults() {
+	if o.Context == nil {
+		o.Context = context.Background()
+	}
 	if o.Stderr == nil {
 		o.Stderr = os.Stderr
 	}
@@ -453,38 +455,36 @@ func (o *ShowJSONOpts) setDefaults() {
 
 // ShowJSON displays a single JSON result to the user.
 func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
+	return showJSON(res, opts, transformers.Select)
+}
+
+func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
+	res, err := transformOutput(opts.Context, res, selectOutputTransformer(opts, selectTransformer))
+	if err != nil {
+		return err
+	}
+	res = applyJSONPath(res, opts.Transform)
+	opts.Transform = ""
 
 	switch strings.ToLower(opts.Format) {
 	case "auto":
-		autoOpts := opts
-		autoOpts.Format = "json"
-		return ShowJSON(res, autoOpts)
+		opts.Format = "json"
 	case "explore":
-		if !isTerminal(opts.Stdout) {
-			if opts.ExplicitFormat {
-				fmt.Fprint(opts.Stderr, warningExploreNotSupported)
-			}
-			jsonOpts := opts
-			jsonOpts.Format = "json"
-			return ShowJSON(res, jsonOpts)
+		if isTerminal(opts.Stdout) {
+			return jsonview.ExploreJSON(opts.Title, res)
 		}
-		if opts.Transform != "" {
-			transformed := res.Get(opts.Transform)
-			if transformed.Exists() {
-				res = transformed
-			}
+		if opts.ExplicitFormat {
+			fmt.Fprint(opts.Stderr, warningExploreNotSupported)
 		}
-		return jsonview.ExploreJSON(opts.Title, res)
-	default:
-		bytes, err := formatJSON(res, opts)
-		if err != nil {
-			return err
-		}
-
-		_, err = opts.Stdout.Write(bytes)
+		opts.Format = "json"
+	}
+	formatted, err := formatJSON(res, opts)
+	if err != nil {
 		return err
 	}
+	_, err = opts.Stdout.Write(formatted)
+	return err
 }
 
 // Get the number of lines that would be output by writing the data to the terminal
@@ -498,11 +498,22 @@ type hasRawJSON interface {
 
 // ShowJSONIterator displays an iterator of values to the user. Use itemsToDisplay = -1 for no limit.
 func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts) error {
+	return showJSONIterator(iter, itemsToDisplay, opts, transformers.Select)
+}
+
+func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
+	iter := &outputIterator[T]{
+		source:    source,
+		context:   opts.Context,
+		transform: selectOutputTransformer(opts, selectTransformer),
+		remaining: itemsToDisplay,
+	}
 
 	if strings.ToLower(opts.Format) == "explore" {
 		if isTerminal(opts.Stdout) {
-			return jsonview.ExploreJSONStream(opts.Title, iter)
+			err := jsonview.ExploreJSONStream(opts.Title, iter)
+			return errors.Join(err, iter.Err())
 		}
 		if opts.ExplicitFormat {
 			fmt.Fprint(opts.Stderr, warningExploreNotSupported)
@@ -516,33 +527,17 @@ func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, op
 		terminalHeight = 40
 	}
 
-	// Decide whether or not to use a pager based on whether it's a short output or a long output
+	// Decide whether or not to use a pager based on whether it's a short output or a long output.
 	usePager := false
 	output := []byte{}
 	numberOfNewlines := 0
-	// -1 is used to signal no limit of items to display
-	for itemsToDisplay != 0 && iter.Next() {
-		item := iter.Current()
-		var obj gjson.Result
-		if hasRaw, ok := any(item).(hasRawJSON); ok {
-			obj = gjson.Parse(hasRaw.RawJSON())
-		} else {
-			jsonData, err := json.Marshal(item)
-			if err != nil {
-				return err
-			}
-			obj = gjson.ParseBytes(jsonData)
-		}
-		json, err := formatJSON(obj, opts)
+	for iter.Next() {
+		formatted, err := formatJSON(iter.Current().Result, opts)
 		if err != nil {
 			return err
 		}
-
-		output = append(output, json...)
-		itemsToDisplay -= 1
-		numberOfNewlines += countTerminalLines(json, terminalWidth)
-
-		// If the output won't fit in the terminal window, stream it to a pager
+		output = append(output, formatted...)
+		numberOfNewlines += countTerminalLines(formatted, terminalWidth)
 		if numberOfNewlines >= terminalHeight-3 {
 			usePager = true
 			break
@@ -550,43 +545,26 @@ func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, op
 	}
 
 	if !usePager {
-		_, err := opts.Stdout.Write(output)
-		if err != nil {
+		if _, err := opts.Stdout.Write(output); err != nil {
 			return err
 		}
-
 		return iter.Err()
 	}
 
 	return streamOutput(opts.Title, func(pager *os.File) error {
-		_, err := pager.Write(output)
-		if err != nil {
+		if _, err := pager.Write(output); err != nil {
 			return &outputWriteError{err}
 		}
-
 		pagerOpts := opts
 		pagerOpts.Stdout = pager
-
-		for itemsToDisplay != 0 && iter.Next() {
-			item := iter.Current()
-			var obj gjson.Result
-			if hasRaw, ok := any(item).(hasRawJSON); ok {
-				obj = gjson.Parse(hasRaw.RawJSON())
-			} else {
-				jsonData, err := json.Marshal(item)
-				if err != nil {
-					return err
-				}
-				obj = gjson.ParseBytes(jsonData)
-			}
-			formatted, err := formatJSONForOutput(obj, pagerOpts, opts.Stdout)
+		for iter.Next() {
+			formatted, err := formatJSONForOutput(iter.Current().Result, pagerOpts, opts.Stdout)
 			if err != nil {
 				return err
 			}
 			if _, err := pager.Write(formatted); err != nil {
 				return &outputWriteError{err}
 			}
-			itemsToDisplay -= 1
 		}
 		return iter.Err()
 	})
