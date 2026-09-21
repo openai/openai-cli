@@ -1,4 +1,4 @@
-// Package terminalimage writes native terminal images or color-block previews.
+// Package terminalimage writes native images, image fonts, or color-block previews.
 package terminalimage
 
 import (
@@ -73,6 +73,8 @@ func Write(ctx context.Context, w io.Writer, img image.Image, protocol string, c
 			}
 		}
 		return nil
+	case "font":
+		return writeImageFont(ctx, w, img, columns)
 	default:
 		return errors.New("unsupported terminal image protocol")
 	}

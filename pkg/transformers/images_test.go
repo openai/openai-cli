@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -116,12 +117,20 @@ func TestGeneratedImagesTerminalRouting(t *testing.T) {
 }
 
 func TestImageProtocol(t *testing.T) {
+	apple := "blocks"
+	if runtime.GOOS == "darwin" {
+		apple = "font"
+	}
+	for _, name := range []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "STY", "ZELLIJ", "CI"} {
+		t.Setenv(name, "")
+	}
 	for _, test := range []struct{ program, terminal, tmux, want string }{
 		{"iTerm.app", "xterm-256color", "", "iterm"},
 		{"WezTerm", "xterm-256color", "", "iterm"},
+		{"WarpTerminal", "xterm-256color", "", "iterm"},
 		{"ghostty", "xterm-256color", "", "kitty"},
 		{"", "xterm-kitty", "", "kitty"},
-		{"Apple_Terminal", "xterm-256color", "", "blocks"},
+		{"Apple_Terminal", "xterm-256color", "", apple},
 		{"unknown", "xterm-256color", "", "blocks"},
 		{"iTerm.app", "tmux-256color", "synthetic-session", "blocks"},
 		{"iTerm.app", "screen-256color", "", "blocks"},
@@ -137,7 +146,7 @@ func TestImageProtocol(t *testing.T) {
 }
 
 func TestRenderGeneratedImages(t *testing.T) {
-	t.Setenv("TERM_PROGRAM", "iTerm.app")
+	t.Setenv("TERM_PROGRAM", "WarpTerminal")
 	t.Setenv("TERM", "xterm-256color")
 	t.Setenv("TMUX", "")
 	file, err := os.CreateTemp(t.TempDir(), "output")

@@ -42,7 +42,15 @@ func renderGeneratedImages(ctx context.Context, value gjson.Result, stdout *os.F
 		// Approximate a cell as twice as tall as it is wide, and leave room for
 		// the next shell prompt. This limits presentation size, not API payloads.
 		width := max(1, min(columns-1, 80, (rows-2)*2*img.Bounds().Dx()/img.Bounds().Dy()))
-		if err := terminalimage.Write(ctx, stdout, img, protocol, width); err != nil {
+		err = terminalimage.Write(ctx, stdout, img, protocol, width)
+		var fontErr *terminalimage.FontError
+		if errors.As(err, &fontErr) && ctx.Err() == nil {
+			// An Automation denial must not discard a successfully generated
+			// image. Quoting the diagnostic keeps terminal controls inert.
+			fmt.Fprintf(os.Stderr, "Sharp image preview unavailable (%q); displaying a block preview.\n", fontErr.Error())
+			err = terminalimage.Write(ctx, stdout, img, "blocks", width)
+		}
+		if err != nil {
 			return true, err
 		}
 		if _, err := fmt.Fprintln(stdout); err != nil {
@@ -61,10 +69,14 @@ func imageProtocol() string {
 		return "blocks"
 	}
 	switch os.Getenv("TERM_PROGRAM") {
-	case "iTerm.app", "WezTerm":
+	case "iTerm.app", "WezTerm", "WarpTerminal":
 		return "iterm"
 	case "kitty", "ghostty":
 		return "kitty"
+	case "Apple_Terminal":
+		if terminalimage.FontSupported() {
+			return "font"
+		}
 	}
 	if terminal == "xterm-kitty" || terminal == "xterm-ghostty" {
 		return "kitty"
