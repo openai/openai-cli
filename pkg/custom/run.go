@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-go/v3"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -31,7 +31,7 @@ func Run(app *cli.Command, argv []string) int {
 	}
 	args, _, err := ConfigureHelp(app, argv)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, readable.Text(err.Error()))
 		return commandExitCode(err)
 	}
 
@@ -45,30 +45,33 @@ func Run(app *cli.Command, argv []string) int {
 		if ShowFriendlyImageError(app, err, os.Stderr) {
 			return exitCode
 		}
+		if showReadableError(app, err, os.Stderr) {
+			return exitCode
+		}
 
 		var apierr *openai.Error
 		if errors.As(err, &apierr) {
-			fmt.Fprintf(os.Stderr, "%s %q: %d %s\n", apierr.Request.Method, apierr.Request.URL, apierr.Response.StatusCode, http.StatusText(apierr.Response.StatusCode))
 			showErr := ShowJSON(gjson.Parse(apierr.RawJSON()), ShowJSONOpts{
 				// Errors must not enter successful-operation transformers.
 				Context:        ctx,
 				Operation:      "",
 				OutputKind:     OutputUnspecified,
 				ExplicitFormat: app.IsSet("format-error"),
-				Format:         app.String("format-error"),
+				Format:         errorOutputFormat(app),
+				Stdout:         os.Stderr,
 				Title:          "Error",
 				Transform:      app.String("transform-error"),
 			})
 			if showErr != nil {
-				fmt.Fprintln(os.Stderr, err)
+				fmt.Fprintln(os.Stderr, "Could not display the API error:", readable.Text(showErr.Error()))
 			}
 		} else if buffer, ok := app.ErrWriter.(interface {
 			Len() int
 			Bytes() []byte
 		}); ok && buffer.Len() > 0 {
-			_, _ = os.Stderr.Write(buffer.Bytes())
+			_, _ = os.Stderr.Write([]byte(readable.Text(string(buffer.Bytes()))))
 		} else {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, readable.Text(err.Error()))
 		}
 		return exitCode
 	}

@@ -137,7 +137,7 @@ func TestImageModelsDataUsesConfiguredWriter(t *testing.T) {
 	report := imageModelsReport{Source: "offline", DefaultModel: defaultSavedImageModel, Models: []imageModelRow{
 		imageModelTestRow(defaultSavedImageModel, imagemodels.StatusNotChecked, ""),
 	}}
-	for _, format := range []string{"auto", "JSON", "jsonl", "raw", "yaml"} {
+	for _, format := range []string{"auto", "text", "JSON", "jsonl", "raw", "yaml"} {
 		t.Run(format, func(t *testing.T) {
 			var out strings.Builder
 			command := &cli.Command{Name: "openai", Writer: &out, Flags: []cli.Flag{
@@ -149,7 +149,11 @@ func TestImageModelsDataUsesConfiguredWriter(t *testing.T) {
 			if !strings.Contains(out.String(), defaultSavedImageModel) || !strings.Contains(out.String(), "not_checked") {
 				t.Fatalf("report did not reach configured writer: %q", out.String())
 			}
-			if format != "yaml" && !json.Valid([]byte(out.String())) {
+			if format == "auto" || format == "text" {
+				if json.Valid([]byte(out.String())) || !strings.Contains(out.String(), "Source: offline") || !strings.Contains(out.String(), "Default model: "+defaultSavedImageModel) {
+					t.Fatalf("expected readable model report: %q", out.String())
+				}
+			} else if format != "yaml" && !json.Valid([]byte(out.String())) {
 				t.Fatalf("invalid JSON report: %q", out.String())
 			}
 		})

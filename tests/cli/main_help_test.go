@@ -75,7 +75,7 @@ func TestMainHelpNestedCommandAndFullReference(t *testing.T) {
 		"--header string, -H string [ --header string, -H string ]",
 		"32000 characters", "xhigh", "max", "divisible by 16", "60 minutes",
 		"final image may be sent before", "CLI saving preset:", "API behavior:",
-		"Piped or redirected output returns API data by default", "Explicit models and API output use API defaults",
+		"Piped or redirected output still saves images and prints readable paths.", "Explicit models and API output use API defaults",
 		"images inline off (or on)", "images inline setup", "without an API call", "Existing files are never overwritten",
 		"./openai images generate --prompt", "./openai images preview --open FILE", "./openai --format json images generate",
 		".png, .jpg, .jpeg or .webp is optional", "actual format chooses the extension",

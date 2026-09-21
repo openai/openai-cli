@@ -32,7 +32,7 @@ More details: {{$bin}} images options --all
 const imageOptionsDetails = `Image settings
   {{$bin}} images generate --prompt "A tiny orange robot"
 
-That is all you need. In a terminal, the defaults are:
+That is all you need. The defaults are:
   Model: ` + defaultSavedImageModel + ` | Images: 1 | File: PNG
   Size, quality, background, moderation: auto | Partial images: none
   Saved automatically in ~/Downloads/gpt-images/.
@@ -128,7 +128,7 @@ Replace ./robot.png with your image's path:
   {{$bin}} images edit --image ./robot.png --prompt "Make it blue" --model ` + defaultSavedImageModel + `
 
 Accepts PNG, JPEG or WebP. Your original stays unchanged.
-This command uses API credits and currently returns API data, not a saved file.
+Uses API credits. Prints a readable result; add --format json for full image data.
 `,
 	"save": `Choose where your image goes
 Default: ~/Downloads/gpt-images/ (created automatically).
@@ -260,7 +260,7 @@ Default: none (--partial-images 0). You see the finished image.
 Request two intermediate previews:
   {{$bin}} images generate --prompt "A tiny orange robot" --partial-images 2
 
-In a terminal, streaming starts automatically. The finished image is saved.
+Streaming starts automatically. The finished image is saved, including in scripts.
 Previews appear when inline previews are enabled and supported. Preview files are
 temporary; only the final image is kept in your output folder. There may be fewer previews
 if the finished image is ready sooner. Partial images add API usage.
@@ -281,8 +281,8 @@ Add another --image PATH to supply another reference image.
 For GPT Image models: PNG, JPEG or WebP, under 50 MB each, up to 16 images.
 Editing makes an API request and uses credits.
 
-Currently images edit returns API data; automatic saving and the friendly
-preview workflow described in this guide apply to images generate.
+Images edit prints a readable result. Add --format json for full API data,
+including base64 image data. Automatic saving applies to images generate.
 For every editing option:
   {{$bin}} images edit --help
 
@@ -290,7 +290,7 @@ To view a file without editing it or using credits:
   {{$bin}} images preview ./robot.png
 `},
 	{"save", "Choose a filename, folder and preview behavior", `Save and view images
-Images save automatically in ~/Downloads/gpt-images/ in a terminal.
+Images save automatically in ~/Downloads/gpt-images/, including in scripts.
 The folder is created automatically. Existing files are kept.
 "A tiny orange robot" is saved as tiny-orange-robot.png; --name overrides it.
 
@@ -306,8 +306,8 @@ Save without an inline preview:
 Options work together:
   {{$bin}} images generate --prompt "A tiny orange robot" --name robot --count 2 --quality high
 
-Piped or redirected output returns API data by default. Add --output-dir
-or --name to save files from a script. --format json requests API data explicitly.
+Piped or redirected output still saves images and prints readable paths.
+Scripts that need full API JSON must add --format json, which disables saving.
 `},
 }
 

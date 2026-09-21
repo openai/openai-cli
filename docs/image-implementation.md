@@ -11,7 +11,7 @@ openai-cli/
 ├── pkg/cmd/          Generated API commands, flags, and SDK calls
 ├── pkg/custom/       CLI behavior: help, command decoration, saving, and display
 ├── pkg/transformers/ Pure transformations of successful JSON responses/events
-├── internal/        File, font, preview, and preference helpers
+├── internal/        Readable output, file, font, preview, and preference helpers
 ├── tests/cli/       Process-level tests of the assembled CLI
 ├── docs/            Explains behavior and implementation
 ├── scripts/         Builds, tests, and checks generated-code customizations
@@ -60,8 +60,8 @@ flowchart TD
     T -. "Optional partial event" .-> J["pkg/custom: temporary progress preview"]
 ```
 
-The save branch is the default for ordinary interactive generation. Explicit
-formats, redirected output, and saving flags determine which branch runs;
+The save branch is the default for generation, including redirected output and
+streamed final images. Explicit data formats select the API-output branch;
 [the user guide](image-output.md) explains those combinations. Local
 `images preview FILE` starts at the preview branch and makes no API request.
 
@@ -76,8 +76,16 @@ For known partial/completed stream events, it moves `b64_json` into a `data`
 array while preserving other metadata. The custom layer owns iteration,
 temporary previews, final-image saving, and cleanup. Unknown events keep their
 original JSON. Explicit data formats, `--transform`, and `--raw-output` retain
-their existing API-data behavior. `--format auto` keeps automatic saving when
-otherwise eligible. Errors have no successful-operation route.
+their existing API-data behavior. `--format auto` and `--format text` keep
+automatic saving when otherwise eligible. Errors have no successful-operation route.
+
+Across the CLI, the custom output boundary selects readable text for the default,
+`auto`, and `text` formats. Known text responses and stream events use pure
+projections in `pkg/transformers/readable.go`; other shapes use the recursive
+renderer in `internal/readable`. Text, nested fields, and list entries print
+directly without an automatic pager. Explicit data modes retain full API values.
+This changes the default for scripts: callers that parse JSON must add
+`--format json`. See the [output guide](readable-output.md).
 
 The `pkg/transformers` package is a code extension point. The existing
 `--transform` flag remains the user's GJSON field-selection option.
@@ -90,6 +98,7 @@ The `pkg/transformers` package is a code extension point. The existing
 | Short generation help and detailed setting guides | [image_help.go](../pkg/custom/image_help.go), [image_options.go](../pkg/custom/image_options.go) |
 | Generated image API handler and SDK call | [pkg/cmd/image.go](../pkg/cmd/image.go) |
 | Successful-output routing and presentation | [cmdutil.go](../pkg/custom/cmdutil.go), [output_transform.go](../pkg/custom/output_transform.go) |
+| Readable response and stream presentation | [readable_output.go](../pkg/custom/readable_output.go), [pkg/transformers/readable.go](../pkg/transformers/readable.go), [internal/readable/](../internal/readable/) |
 | Pure image response/event transformation | [pkg/transformers/image.go](../pkg/transformers/image.go), [output.go](../pkg/transformers/output.go) |
 | Defaults, validation, save policy, and preview routing | [image_output.go](../pkg/custom/image_output.go), [image_settings_validation.go](../pkg/custom/image_settings_validation.go) |
 | Names, downloads, collision handling, and saved files | [internal/imageoutput/](../internal/imageoutput/), especially [promptname.go](../internal/imageoutput/promptname.go) |
@@ -188,5 +197,5 @@ Areas that still need review before shipping:
   repair cannot restore missing thumbnails or ownership metadata.
 - Model discovery is a maintained list of exact IDs, not a complete account
   catalog. Metadata visibility does not guarantee generation permission.
-- Automatic downloads and friendly final output currently apply to generation;
-  editing and variations retain their existing API-output behavior.
+- Automatic downloads apply to generation. Editing and variations display
+  readable API results; `--format json` returns their full encoded image data.

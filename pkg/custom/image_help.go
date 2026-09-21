@@ -17,7 +17,7 @@ import (
 const imageGenerateQuickHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}Make an image
   {{$bin}} images generate --prompt "A tiny orange robot"
 
-In a terminal: 1 PNG, automatic size and quality.
+Default: 1 PNG, automatic size and quality.
 Model: ` + defaultSavedImageModel + `.
 Saves to ~/Downloads/gpt-images/ and creates the folder automatically.
 Shows a preview when enabled and supported. Existing images are kept.
@@ -33,7 +33,7 @@ Optional: add one of these to the command above.
 Settings explained: {{$bin}} images options | Models: {{$bin}} images models
 Complete API reference: {{$bin}} help --all images generate
 API key setup: {{$bin}} help setup
-Scripts: --format json or redirected output returns API data by default.
+Scripts: add --format json for API data; redirected output still saves images.
 `
 
 const imageGenerateFullHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}Image generation: full reference
@@ -123,7 +123,7 @@ CHOOSE A MODEL
   The check retrieves model information; generation permissions can differ.
 
 SAVE AND NAME
-  In a terminal, images save to ~/Downloads/gpt-images/ automatically.
+  Images save to ~/Downloads/gpt-images/ automatically, including in scripts.
   That folder is created automatically. --output-dir chooses an existing folder.
   Filenames come from your prompt: "A tiny orange robot" becomes tiny-orange-robot.png.
   --name robot overrides the automatic name (for PNG output: robot.png).
@@ -144,21 +144,22 @@ VIEW YOUR IMAGE
   Replace FILE with the saved path. Viewing an existing file uses no API credits.
 
 SCRIPTS AND API OUTPUT
-  Piped or redirected output returns API data by default, without saving images.
-  Use --output-dir or --name to save in scripts. Previews require terminal output.
-  --format json returns API data without saving; it does not choose the image format.
+  Piped or redirected output still saves images and prints readable paths.
+  --format auto and --format text keep this default. Previews require terminal output.
+  Scripts that relied on redirected JSON must now add --format json.
+  --format json returns full API data, including base64, without saving images.
   --output-format png, jpeg or webp chooses the actual image file format.
   --response-format is a separate, legacy DALL-E API setting (url or b64_json).
   Saving flags (--output-dir, --name, --open) cannot be combined with an explicit
   data format, --transform, --raw-output or --response-format url.
-  --stream true by itself emits API events. Add a saving flag to save its final image.
+  --stream true saves the final image. Add --format json for complete API events.
   For partial previews in a terminal, just use --partial-images (see above).
   Partial images in API-output mode require --stream true and an explicit model.
 
 WHEN SOMETHING GOES WRONG
-  Interactive saving shows a short explanation and a next step.
-  Add --format-error json for the full API error. Redirected output, explicit
-  data/error formats and --debug keep the usual API error details.
+  Errors print to stderr. Interactive saving shows an explanation and a next step.
+  Add --format-error json for the full API error. --format json also selects JSON
+  errors unless --format-error overrides it.
 
 EXAMPLES
   @CLI@ images generate --prompt "A tiny orange robot"
@@ -258,7 +259,7 @@ func registerImageGenerate(imagesGenerate *cli.Command) {
 	imagesGenerate.Flags = append(imagesGenerate.Flags, &cli.StringFlag{
 		Name:        "output-dir",
 		Usage:       "Save images to an existing `DIRECTORY` (also works in scripts)",
-		DefaultText: "~/Downloads/gpt-images/ in a terminal",
+		DefaultText: "~/Downloads/gpt-images/",
 	}, &cli.StringFlag{
 		Name:        "inline",
 		Usage:       "Inline preview `MODE`: on or off (overrides your saved preference)",

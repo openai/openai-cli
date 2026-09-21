@@ -30,7 +30,7 @@ func TestMainImageModelsHelpAndOfflineMakeNoRequests(t *testing.T) {
 	})
 	for _, args := range [][]string{
 		{"images", "models", "--help"}, {"help", "images", "models"},
-		{"images", "models", "--offline"}, {"images", "models", "--offline", "--all"},
+		{"--format", "json", "images", "models", "--offline"}, {"--format", "json", "images", "models", "--offline", "--all"},
 	} {
 		t.Run(strings.Join(args, "/"), func(t *testing.T) {
 			argv := append([]string{"./openai", "--base-url", server.URL}, args...)
@@ -83,7 +83,7 @@ func TestMainImageModelsJSONAndHeaders(t *testing.T) {
 	})
 	got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=synthetic-models-key"},
 		"./openai", "--base-url", server.URL, "--organization", "org-synthetic-models", "--project", "proj-synthetic-models",
-		"--header", "X-Models-Check: synthetic-header", "images", "models")
+		"--header", "X-Models-Check: synthetic-header", "--format", "json", "images", "models")
 	if got.code != 0 || got.stderr != "" {
 		t.Fatalf("piped discovery failed: %+v", got)
 	}
@@ -123,7 +123,7 @@ func TestMainImageModelsKeepsPartialResultsOnTimeout(t *testing.T) {
 		mainImageModelResponse(w, r.URL.Path, "null")
 	})
 	got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=synthetic-models-key"},
-		"./openai", "--base-url", server.URL, "images", "models")
+		"./openai", "--base-url", server.URL, "--format", "json", "images", "models")
 	if got.code != 1 {
 		t.Fatalf("partial discovery exit=%d; want 1: %+v", got.code, got)
 	}

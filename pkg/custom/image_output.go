@@ -123,12 +123,9 @@ func prepareImageOutput(cmd *cli.Command, terminal bool, body gjson.Result) (*im
 		}
 	}
 	explicitSave := cmd.IsSet("output-dir") || cmd.IsSet("name") || cmd.Bool("open")
-	if !explicitSave && !terminal {
-		return nil, nil
-	}
 
 	var conflict string
-	if format := strings.ToLower(cmd.Root().String("format")); format != "" && format != "auto" {
+	if format := strings.ToLower(cmd.Root().String("format")); format != "" && format != "auto" && format != "text" {
 		conflict = "--format " + format
 	} else if cmd.Root().String("transform") != "" || cmd.Root().Bool("raw-output") {
 		conflict = "--transform or --raw-output"
@@ -145,11 +142,6 @@ func prepareImageOutput(cmd *cli.Command, terminal bool, body gjson.Result) (*im
 			}
 			return nil, fmt.Errorf("%s cannot be combined with %s; choose saved images or the API response", flag, conflict)
 		}
-		return nil, nil
-	}
-	// Preserve the existing raw --stream workflow. Progress previews or an
-	// explicit saving flag opt into saving the streamed final image instead.
-	if body.Get("stream").Type == gjson.True && partials == 0 && !explicitSave {
 		return nil, nil
 	}
 	if (body.Get("stream").Type == gjson.True || partials > 0) && cmd.IsSet("max-items") {

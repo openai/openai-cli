@@ -29,8 +29,9 @@ it only displays instructions and never prompts for, stores, checks, or prints
 your existing key. Those instructions set the key for the current shell session.
 Short image help shows one starting command, the current model and image preset,
 and common adjustments: name the file, choose a folder/model/count, open it in a
-separate window, or hide the preview. It also calls out the different behavior for JSON/redirected
-output. `help --all images generate` contains defaults, saving/viewing behavior,
+separate window, or hide the preview. It also explains that redirected output
+still saves images and scripts must add `--format json` for API data.
+`help --all images generate` contains defaults, saving/viewing behavior,
 scripting rules, examples, every flag, and the complete generated API descriptions
 (including model limits). Full-help examples preserve the `./openai` invocation
 too. Nothing needs to be looked up online just to recover the previous flag help.
@@ -47,11 +48,11 @@ For example, a missing key points to `./openai help setup` when running this
 checkout. A quota failure points to billing/limits instead of advising a wait.
 These messages do not echo credentials, prompts or arbitrary server text.
 
-Use `--format-error json` for the complete API error. Explicit output/error
-formats (including `auto`), transforms, debug mode, CI, API-output mode, and
-redirecting either stdout or stderr preserve the existing error output. Exit
-codes, authentication and the SDK's retry policy are unchanged. This presentation
-layer never switches models or retries a request itself.
+Errors go to stderr as readable text, including in scripts. Use
+`--format-error json` for the complete API error. `--format json` also selects
+JSON errors unless `--format-error` overrides it. Exit codes, authentication and
+the SDK's retry policy are unchanged. This presentation layer never switches
+models or retries a request itself.
 
 Missing prompt and invalid output-folder errors point to usable commands or the
 automatic Downloads folder. `images preview --help` gives a short local-viewing
@@ -60,7 +61,7 @@ formats get specific guidance. Previewing an existing file makes no API request.
 
 ## The default preset
 
-Run this checkout from a terminal:
+Run this checkout:
 
 ```sh
 go run ./cmd/openai images generate --prompt "A tiny orange robot painting a blue flower"
@@ -73,7 +74,8 @@ setup, before the request. Explicit formats/debug, CI and redirected output do
 not receive this message.
 
 The command saves images in `~/Downloads/gpt-images/`, creates that folder automatically,
-and prints each saved file's full path. Default names come from the prompt:
+and prints each saved file's full path, including when output is piped or redirected.
+Default names come from the prompt:
 `A tiny orange robot` becomes `tiny-orange-robot.png`. Existing names get a `-2`, `-3`, etc.
 suffix, so earlier images are never overwritten. PNG, JPEG, and WebP extensions
 follow the returned image bytes.
@@ -96,7 +98,7 @@ openai images models --offline        # Known names, with no API call or key
 openai --format json images models    # Structured results for scripts
 ```
 
-The normal terminal view is a compact table with the CLI default marked and a
+The readable view is a compact table with the CLI default marked and a
 copyable generation example. It returns directly to the shell; there is no pager
 to exit, JSON metadata to inspect, or filtering pipeline to remember. Retired
 models and IDs not visible to the key are hidden from the default table with a
@@ -123,14 +125,15 @@ stops queued checks. This command does not generate images or change image
 generation's retry policy. Offline mode is explicitly marked unchecked and makes
 no requests. No credentials, account results or access decisions are cached.
 
-JSON output (also the default for redirected output and CI) includes `source`
+Explicit `--format json` output includes `source`
 (`live` or `offline`), `default_model`, `complete`, and `models`. Each row includes
 the exact `id`, `snapshot`, `default`, `status`, and optional safe `failure` and
 `shutdown_date`. `complete` means all requested live checks resolved, including
 not-visible/retired results; it is false for offline or incomplete checks. Offline
-mode intentionally exits zero. Partial live failures preserve valid JSON on
-stdout and print a concise explanation on stderr. Existing `models list` output
-and script behavior are unchanged.
+mode intentionally exits zero. In JSON mode, partial live failures preserve valid
+JSON on stdout and print a concise explanation on stderr. Both `images models`
+and `models list` use readable output by default, including in scripts; add
+`--format json` when parsing their results.
 
 ### Generation defaults and saving
 
@@ -194,8 +197,9 @@ flags and JSON/YAML input. It continues to accept exact model IDs and future
 quality/size values without requiring membership in a hardcoded enum.
 
 The attachment control corresponds to the separate `images edit --image PATH`
-command. The upload guide gives a complete example and explicitly describes
-its current API-data output; automatic saving here applies to `images generate`.
+command. The upload guide gives a complete example. Editing shows a readable
+result; add `--format json` for full API data, including encoded images.
+Automatic saving here applies to `images generate`.
 
 ### Progress previews while generating
 
@@ -203,8 +207,8 @@ its current API-data output; automatic saving here applies to `images generate`.
 openai images generate --prompt "A tiny orange robot" --partial-images 2
 ```
 
-In the ordinary terminal workflow, this enables streaming automatically and
-shows up to two progress previews using the existing inline renderer. Only the
+This enables streaming automatically and shows up to two progress previews
+when terminal previews are enabled and supported. Only the
 finished image is saved in the selected output folder. Partial files use a
 private temporary directory and are cleaned up. Previews may arrive fewer times
 than requested if the final image is ready sooner. Partial images add API usage;
@@ -217,10 +221,10 @@ silently overwritten. An event limit (`--max-items`) cannot truncate a saving
 workflow before the final image. If a stream ends without a final image, the CLI
 reports that no final image was received instead of reporting an empty success.
 
-`--stream true` alone retains the existing API-event workflow. An explicit
-saving flag (`--name`, `--output-dir` or `--open`) opts into saving its final
-image. Explicit API data formats/transforms retain API-event output and require
-`--stream true` when requesting partials; choose an explicit model in scripts:
+`--stream true` also saves the final image automatically, including in scripts.
+Explicit API data formats/transforms retain API-event output and require
+`--stream true` when requesting partials. For complete JSON events, choose a
+format and model explicitly:
 
 ```sh
 openai --format json images generate --prompt "A tiny orange robot" \
@@ -263,8 +267,8 @@ go run ./cmd/openai images generate \
   --output-dir "~/Downloads"
 ```
 
-An explicit `--output-dir` or `--name` also enables saving in scripts and other environments
-without an interactive terminal. Custom folders must already exist; an invalid
+Saving works in scripts without extra flags. Use `--output-dir` or `--name` to
+choose the folder or filename. Custom folders must already exist; an invalid
 folder is rejected before sending the generation request. `--output-format`
 continues to select PNG, JPEG, or WebP encoding, whereas `--output-dir` chooses
 the folder.
@@ -276,12 +280,16 @@ go run ./cmd/openai --format json images generate \
   --model gpt-image-2.5-sunburst --prompt "A tiny orange robot"
 ```
 
-Redirected or piped stdout retains its API output unless `--output-dir` or `--name` is supplied.
-JSON/YAML piped into stdin can still produce saved images when stdout is a terminal.
+Piped or redirected stdout contains readable saved-file information by default.
+**Scripts that previously expected JSON from redirected output must add
+`--format json`.** This is an intentional change to the default. JSON/YAML input
+can still be piped into stdin while images save automatically.
 
-An explicit output `--format` other than `auto`, transforms, raw output,
-and `--response-format url` retain their API output. Combining these modes with
-`--output-dir` or `--name` reports a conflict before making an API call.
+`--format auto` and `--format text` keep automatic saving. Explicit `json`,
+`jsonl`, `raw`, `yaml`, `pretty`, and `explore` formats, transforms, raw output,
+and `--response-format url` select API results instead. Combining these modes
+with `--output-dir`, `--name`, or `--open` reports a conflict before an API call.
+`--format json` includes the full response and encoded image data.
 
 `--response-format b64_json` can still save images; it is a legacy API parameter,
 distinct from the CLI's `--format json` output option. Explicit DALL-E models use
@@ -455,8 +463,8 @@ openai images generate --prompt "A tiny orange robot" --open
 ```
 
 `preview --open` makes no API request and needs no API key. `generate --open`
-saves the original before opening it and implies saving even with redirected
-stdout. By default, `--open` replaces the inline preview; explicitly combining
+saves the original before opening it, including with redirected stdout.
+By default, `--open` replaces the inline preview; explicitly combining
 `--open --inline on` requests both. Desktop windows open only when requested.
 The saved image is never downscaled or rewritten for the external viewer.
 
@@ -467,7 +475,7 @@ the CLI; SSH does not automatically open a file on your laptop. Headless Linux
 reports a missing desktop before generation. If opening fails after a generation,
 the image remains saved and the CLI provides a local retry command.
 
-`--open` conflicts with explicit API output formats, transforms, streaming and
+`--open` conflicts with explicit API output formats, transforms and
 URL-only responses. Local viewer handoff validates PNG/JPEG/WebP contents and
 filename extensions and passes the path directly to the OS without a shell.
 
@@ -524,9 +532,9 @@ privately in the user configuration directory, separately from the preview cache
 `images preview FILE` command still shows an image when automatic previews are off.
 The earlier `--no-preview` opt-out remains compatible but is hidden from help.
 
-Redirected stdout and CI receive no preview. Explicit JSON and streaming keep
-their existing output. tmux/screen/Zellij use text previews rather than graphics
-passthrough. Piped stdin does not disable a terminal preview. Over SSH, a
+Redirected stdout and CI receive no preview. Explicit JSON keeps full API output;
+ordinary streaming saves the final image. tmux/screen/Zellij use text previews
+rather than graphics passthrough. Piped stdin does not disable a terminal preview. Over SSH, a
 recognized terminal identity enables native graphics; otherwise text is used.
 Files remain on the machine running the CLI. No local-file access by the terminal
 is needed.
@@ -584,8 +592,10 @@ consume a stream, write files, or draw a terminal. Those effects remain in
 plus the font helpers for rendering. Neither the custom layer nor the
 transformers package imports generated commands.
 
-This structure preserves the user-facing commands and output choices. Explicit
-API output still retains its original behavior. The Go SDK supplies the API
+This structure preserves the user-facing commands and explicit API output
+choices. The default is now readable output and automatic saving, including in
+scripts; see the [output guide](readable-output.md) for migration examples.
+The Go SDK supplies the API
 call; no new backend operation or schema change is needed. Generation and
 custom-code budget verification remain release gates before this prototype is
 proposed for shipping.

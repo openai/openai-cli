@@ -29,6 +29,7 @@ func TestImageOutputTerminalPolicy(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		args      []string
+		piped     bool
 		save      bool
 		noPreview bool
 		open      bool
@@ -36,17 +37,20 @@ func TestImageOutputTerminalPolicy(t *testing.T) {
 		wantError string
 	}{
 		{name: "default terminal saves", save: true},
+		{name: "default nonterminal saves without preview", piped: true, save: true, noPreview: true},
 		{name: "inline on", args: []string{"--inline", "on"}, save: true},
 		{name: "inline off still saves", args: []string{"--inline", "off"}, save: true, noPreview: true},
 		{name: "open selects original viewer", args: []string{"--open"}, save: true, noPreview: true, open: true},
 		{name: "open and explicit inline", args: []string{"--open", "--inline", "on"}, save: true, open: true},
 		{name: "preview opt out still saves", args: []string{"--no-preview"}, save: true, noPreview: true},
 		{name: "explicit auto saves", args: []string{"--format", "auto"}, save: true},
+		{name: "explicit text saves", args: []string{"--format", "text"}, save: true},
 		{name: "JSON stays JSON", args: []string{"--format", "json"}},
 		{name: "explorer stays explorer", args: []string{"--format", "explore"}},
 		{name: "transform stays transform", args: []string{"--transform", "data.0"}},
 		{name: "raw output stays raw", args: []string{"--raw-output"}},
-		{name: "stream stays stream", args: []string{"--stream", "true"}},
+		{name: "stream saves final image", args: []string{"--stream", "true"}, save: true},
+		{name: "nonterminal stream saves without preview", args: []string{"--stream", "true"}, piped: true, save: true, noPreview: true},
 		{name: "stream with name saves", args: []string{"--stream", "true", "--name", "robot"}, save: true},
 		{name: "stream with open saves", args: []string{"--stream", "true", "--open"}, save: true, noPreview: true, open: true},
 		{name: "partials automatically select saved stream", args: []string{"--partial-images", "2"}, save: true, partials: 2},
@@ -56,7 +60,7 @@ func TestImageOutputTerminalPolicy(t *testing.T) {
 		{name: "partial stream false rejected", args: []string{"--partial-images", "1", "--stream", "false"}, wantError: "--partial-images needs streaming"},
 		{name: "save stream event limit rejected", args: []string{"--stream", "true", "--name", "robot", "--max-items", "1"}, wantError: "--max-items limits API events"},
 		{name: "partial event limit rejected", args: []string{"--partial-images", "1", "--max-items", "1"}, wantError: "--max-items limits API events"},
-		{name: "raw stream event limit preserved", args: []string{"--stream", "true", "--max-items", "1"}},
+		{name: "API stream event limit preserved", args: []string{"--stream", "true", "--max-items", "1", "--format", "json"}},
 		{name: "URL stays URL", args: []string{"--response-format", "url"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -85,7 +89,7 @@ func TestImageOutputTerminalPolicy(t *testing.T) {
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					body, err := json.Marshal(requestflag.ExtractRequestContents(cmd).Body)
 					require.NoError(t, err)
-					plan, err := prepareImageOutput(cmd, true, gjson.ParseBytes(body))
+					plan, err := prepareImageOutput(cmd, !test.piped, gjson.ParseBytes(body))
 					if test.wantError != "" {
 						require.ErrorContains(t, err, test.wantError)
 						require.Nil(t, plan)
@@ -114,7 +118,7 @@ func TestImageOutputTerminalPolicy(t *testing.T) {
 				require.NoError(t, err)
 				require.True(t, info.IsDir())
 			} else {
-				require.True(t, os.IsNotExist(err), "JSON/streaming output must not create download folders")
+				require.True(t, os.IsNotExist(err), "explicit API output must not create download folders")
 			}
 		})
 	}

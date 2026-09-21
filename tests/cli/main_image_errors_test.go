@@ -72,11 +72,11 @@ func TestMainImageErrorsPreserveAPIOutput(t *testing.T) {
 		models     bool
 	}{
 		{name: "explicit JSON errors", mode: "terminal", flags: []string{"--format-error", "json"}},
-		{name: "explicit auto errors", mode: "terminal", flags: []string{"--format-error", "auto"}},
+		{name: "JSON errors override readable output", mode: "terminal", flags: []string{"--format", "text", "--format-error", "json"}},
 		{name: "explicit JSON output", mode: "terminal", flags: []string{"--format", "json"}},
-		{name: "redirected stdout", mode: "redirect-stdout"},
-		{name: "piped output", mode: "pipes"},
-		{name: "unrelated model operation", mode: "terminal", models: true},
+		{name: "redirected JSON output", mode: "redirect-stdout", flags: []string{"--format", "json"}},
+		{name: "piped JSON output", mode: "pipes", flags: []string{"--format", "json"}},
+		{name: "unrelated model JSON operation", mode: "terminal", flags: []string{"--format", "json"}, models: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server, count, wantJSON := imageErrorTestServer(t, 400, "synthetic_bad_value", "size")
@@ -89,6 +89,9 @@ func TestMainImageErrorsPreserveAPIOutput(t *testing.T) {
 			result := runMainImageErrorProcess(t, test.mode, args)
 			if result.code != 1 || count.Load() != 1 {
 				t.Fatalf("exit=%d requests=%d, want one failed request; %s", result.code, count.Load(), imageErrorTestOutput(result))
+			}
+			if test.mode != "terminal" && result.stdout != "" {
+				t.Errorf("error data was written to stdout: %q", result.stdout)
 			}
 			text := result.stdout + result.stderr
 			start, end := strings.IndexByte(text, '{'), strings.LastIndexByte(text, '}')
@@ -107,11 +110,39 @@ func TestMainImageErrorsPreserveAPIOutput(t *testing.T) {
 					t.Errorf("API field %s=%q; want %q", key, payload[key], want)
 				}
 			}
-			if !strings.Contains(text, "400 Bad Request") || strings.Contains(text, "The API rejected --size.") {
-				t.Errorf("original status/error presentation changed: %s", imageErrorTestOutput(result))
-			}
-			if strings.Contains(text, "Generating image") {
+			if strings.Contains(text, "Generating image") || strings.Contains(text, "The API rejected --size.") {
 				t.Errorf("interactive progress leaked into API/script output: %s", imageErrorTestOutput(result))
+			}
+		})
+	}
+}
+
+func TestMainImageErrorsReadableWhenRedirected(t *testing.T) {
+	for _, test := range []struct {
+		name, mode string
+		flags      []string
+	}{
+		{name: "piped default", mode: "pipes"},
+		{name: "redirected default", mode: "redirect-stdout"},
+		{name: "explicit auto errors", mode: "terminal", flags: []string{"--format-error", "auto"}},
+		{name: "readable errors override JSON output", mode: "pipes", flags: []string{"--format", "json", "--format-error", "text"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, count, _ := imageErrorTestServer(t, 400, "synthetic_bad_value", "size")
+			args := append([]string{"./openai", "--base-url", server.URL}, test.flags...)
+			args = append(args, "images", "generate", "--inline", "off", "--prompt", "synthetic private description")
+			result := runMainImageErrorProcess(t, test.mode, args)
+			text := result.stdout + result.stderr
+			if result.code != 1 || count.Load() != 1 || !strings.Contains(text, "--format-error json") {
+				t.Fatalf("readable failure missing guidance: %s", imageErrorTestOutput(result))
+			}
+			if test.mode != "terminal" && result.stdout != "" {
+				t.Errorf("error details were written to stdout: %q", result.stdout)
+			}
+			for _, hidden := range []string{"synthetic raw API detail", "synthetic private description", "synthetic-image-error-key", `"message":`, "\x1b"} {
+				if strings.Contains(text, hidden) {
+					t.Errorf("readable error exposed %q: %s", hidden, imageErrorTestOutput(result))
+				}
 			}
 		})
 	}

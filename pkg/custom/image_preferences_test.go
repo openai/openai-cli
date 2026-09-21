@@ -59,6 +59,8 @@ func TestImageInlinePreferencePolicy(t *testing.T) {
 		broken        bool
 		piped, ci     bool
 		preview, fail bool
+		apiOutput     bool
+		wantError     string
 	}{
 		{name: "saved off"},
 		{name: "saved on", preference: true, preview: true},
@@ -72,11 +74,14 @@ func TestImageInlinePreferencePolicy(t *testing.T) {
 		{name: "explicit off ignores broken preference", broken: true, args: []string{"--inline", "off"}},
 		{name: "open ignores broken preference", broken: true, args: []string{"--open"}},
 		{name: "no-preview ignores broken preference", broken: true, args: []string{"--no-preview"}},
-		{name: "JSON ignores broken preference", broken: true, args: []string{"--format", "json"}},
-		{name: "transform ignores broken preference", broken: true, args: []string{"--transform", "data"}},
-		{name: "raw output ignores broken preference", broken: true, args: []string{"--raw-output"}},
-		{name: "stream ignores broken preference", broken: true, body: `{"stream":true}`},
-		{name: "URL ignores broken preference", broken: true, body: `{"response_format":"url"}`},
+		{name: "JSON ignores broken preference", broken: true, args: []string{"--format", "json"}, apiOutput: true},
+		{name: "transform ignores broken preference", broken: true, args: []string{"--transform", "data"}, apiOutput: true},
+		{name: "raw output ignores broken preference", broken: true, args: []string{"--raw-output"}, apiOutput: true},
+		{name: "stream saving uses saved on", preference: true, body: `{"stream":true}`, preview: true},
+		{name: "stream saving uses saved off", body: `{"stream":true}`},
+		{name: "stream saving reports broken preference", broken: true, body: `{"stream":true}`, fail: true, wantError: "inline preference: invalid image preferences"},
+		{name: "JSON stream ignores broken preference", broken: true, args: []string{"--format", "json"}, body: `{"stream":true}`, apiOutput: true},
+		{name: "URL ignores broken preference", broken: true, body: `{"response_format":"url"}`, apiOutput: true},
 		{name: "pipe ignores broken preference", broken: true, piped: true},
 		{name: "CI ignores broken preference", broken: true, ci: true},
 		{name: "invalid flag still validated in pipe", broken: true, piped: true, args: []string{"--inline", "invalid"}, fail: true},
@@ -110,6 +115,11 @@ func TestImageInlinePreferencePolicy(t *testing.T) {
 				if err != nil {
 					return err
 				}
+				if test.apiOutput {
+					require.Nil(t, plan, "explicit API output must not select image saving")
+				} else {
+					require.NotNil(t, plan, "readable output saves generated images")
+				}
 				preview := plan != nil && (plan.preview != "" || plan.textPreview)
 				require.Equal(t, test.preview, preview)
 				return nil
@@ -117,6 +127,9 @@ func TestImageInlinePreferencePolicy(t *testing.T) {
 			err := app.Run(t.Context(), append([]string{"images"}, test.args...))
 			if test.fail {
 				require.Error(t, err)
+				if test.wantError != "" {
+					require.ErrorContains(t, err, test.wantError)
+				}
 			} else {
 				require.NoError(t, err)
 			}

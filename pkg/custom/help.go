@@ -33,7 +33,7 @@ EXPLORE MORE
   {{$run}} help --all                   Browse every command
   {{$run}} help                         Show this guide again
 
-Add --help to any command. Reading help makes no API request.
+Readable by default. Scripts: --format json. Any command: --help (no API call).
 `
 
 const setupHelp = `{{$run := index .Root.Metadata "help-invocation"}}Set up your API key
@@ -61,7 +61,7 @@ const setupHelp = `{{$run := index .Root.Metadata "help-invocation"}}Set up your
 
 3. MAKE YOUR FIRST IMAGE
    {{$run}} images generate --prompt "A tiny orange robot"
-   Images save automatically to ~/Downloads/gpt-images/ in a terminal.
+   Images save automatically to ~/Downloads/gpt-images/.
 
 This is a guide only. No key has been entered or checked by showing this page.
 `

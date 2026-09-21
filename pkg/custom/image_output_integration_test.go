@@ -155,6 +155,27 @@ func TestImagesGenerateOutputIntegration(t *testing.T) {
 	run := func(t *testing.T, serverURL, stdin string, rootFlags, flags []string) (string, error) {
 		return runWithTerminal(t, serverURL, stdin, rootFlags, flags, "")
 	}
+	assertSavedImage := func(t *testing.T, output string) {
+		t.Helper()
+		require.Equal(t, 1, strings.Count(output, "Saved image: "), output)
+		require.NotContains(t, output, encodedImage)
+		require.NotContains(t, output, "b64_json")
+		for _, line := range strings.Split(output, "\n") {
+			if quoted, ok := strings.CutPrefix(line, "Saved image: "); ok {
+				path, err := strconv.Unquote(quoted)
+				require.NoError(t, err)
+				require.True(t, strings.HasSuffix(path, filepath.Join("Downloads", "gpt-images", "red-pixel.png")), path)
+				saved, err := os.ReadFile(path)
+				require.NoError(t, err)
+				require.Equal(t, pngBytes, saved)
+				files, err := os.ReadDir(filepath.Dir(path))
+				require.NoError(t, err)
+				require.Len(t, files, 1, "only the final image should remain")
+				return
+			}
+		}
+		t.Fatal("saved image path is missing")
+	}
 	readRequest := func(t *testing.T, requests <-chan request) map[string]any {
 		t.Helper()
 		select {
@@ -454,8 +475,31 @@ func TestImagesGenerateOutputIntegration(t *testing.T) {
 		name      string
 		rootFlags []string
 	}{
-		{name: "nonterminal keeps JSON"},
+		{name: "nonterminal default saves image"},
+		{name: "nonterminal explicit auto saves image", rootFlags: []string{"--format", "auto"}},
+		{name: "nonterminal explicit text saves image", rootFlags: []string{"--format", "text"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, requests, calls := newServer(t)
+			output, runErr := run(t, server.URL, "", test.rootFlags, []string{"--prompt", "A red pixel"})
+			require.NoError(t, runErr, output)
+			require.EqualValues(t, 1, calls.Load())
+			body := readRequest(t, requests)
+			require.Equal(t, defaultSavedImageModel, body["model"])
+			assertSavingPreset(t, body, true)
+			require.NotContains(t, output, "Generating image")
+			assertSavedImage(t, output)
+		})
+	}
+
+	for _, test := range []struct {
+		name      string
+		rootFlags []string
+	}{
 		{name: "explicit JSON", rootFlags: []string{"--format", "json"}},
+		{name: "explicit JSONL", rootFlags: []string{"--format", "jsonl"}},
+		{name: "explicit raw", rootFlags: []string{"--format", "raw"}},
+		{name: "explicit pretty", rootFlags: []string{"--format", "pretty"}},
 		{name: "explicit YAML", rootFlags: []string{"--format", "yaml"}},
 		{name: "raw transform", rootFlags: []string{"--transform", "data.0.b64_json", "--raw-output"}},
 	} {
@@ -467,10 +511,14 @@ func TestImagesGenerateOutputIntegration(t *testing.T) {
 			require.NotContains(t, body, "model", "ordinary API output must retain server model selection")
 			assertSavingPreset(t, body, false)
 			require.NotContains(t, output, "Generating image")
-			require.Contains(t, output, encodedImage)
+			require.NotContains(t, output, "Saved image")
 			switch test.name {
+			case "explicit pretty":
+				require.Contains(t, output, "created: 123")
+				require.Contains(t, output, "b64_json: "+encodedImage[:24])
 			case "explicit YAML":
 				require.Contains(t, output, "b64_json:")
+				require.Contains(t, output, encodedImage)
 			case "raw transform":
 				require.Equal(t, encodedImage, strings.TrimSpace(output))
 			default:
@@ -575,7 +623,7 @@ func TestImagesGenerateOutputIntegration(t *testing.T) {
 			}))
 			defer server.Close()
 			flags := append([]string{"--prompt", "A red pixel", "--model", "gpt-image-2"}, test.flags...)
-			output, runErr := run(t, server.URL, test.stdin, nil, flags)
+			output, runErr := run(t, server.URL, test.stdin, []string{"--format", "json"}, flags)
 			require.NoError(t, runErr, output)
 			require.EqualValues(t, 1, calls.Load())
 			body, err := json.Marshal(readRequest(t, requests))
@@ -599,7 +647,7 @@ func TestImagesGenerateOutputIntegration(t *testing.T) {
 		message          string
 	}{
 		{name: "settings API partials need explicit streaming", rootFlags: []string{"--format", "json"}, flags: []string{"--partial-images", "2"}, message: "--partial-images needs --stream true for API output"},
-		{name: "settings piped partials need explicit streaming", stdin: `{"partial_images":2}`, message: "--partial-images needs --stream true for API output"},
+		{name: "settings piped API partials need explicit streaming", stdin: `{"partial_images":2}`, rootFlags: []string{"--format", "json"}, message: "--partial-images needs --stream true for API output"},
 		{name: "settings explicit false partial streaming stays false", stdin: `{"partial_images":2,"stream":false}`, message: "--partial-images needs streaming"},
 		{name: "settings explicit null partial streaming stays null", stdin: `{"partial_images":2,"stream":null}`, message: "--partial-images needs streaming"},
 	} {
@@ -662,13 +710,21 @@ func TestImagesGenerateOutputIntegration(t *testing.T) {
 	for _, test := range []struct {
 		name, stdin string
 		flags       []string
+		format      string
+		partials    int64
 	}{
-		{name: "settings partial images with explicit stream", stdin: `{"partial_images":2}`, flags: []string{"--stream", "true"}},
-		{name: "settings merged stdin selects stream decoder", stdin: `{"partial_images":2,"stream":true}`},
+		{name: "settings partial images with explicit stream save final", stdin: `{"partial_images":2}`, flags: []string{"--stream", "true"}, partials: 2},
+		{name: "settings merged stdin selects saving stream decoder", stdin: `{"partial_images":2,"stream":true}`, partials: 2},
+		{name: "settings piped partials enable saved streaming", stdin: `{"partial_images":2}`, partials: 2},
+		{name: "bare stream saves final", flags: []string{"--stream", "true"}},
+		{name: "explicit JSON stream keeps API events", stdin: `{"partial_images":2}`, flags: []string{"--stream", "true"}, format: "json", partials: 2},
+		{name: "explicit JSONL merged stdin selects API stream decoder", stdin: `{"partial_images":2,"stream":true}`, format: "jsonl", partials: 2},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			requests := make(chan request, 1)
+			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
 				body, readErr := io.ReadAll(r.Body)
 				if readErr != nil {
 					http.Error(w, "cannot read synthetic request", http.StatusBadRequest)
@@ -676,17 +732,36 @@ func TestImagesGenerateOutputIntegration(t *testing.T) {
 				}
 				requests <- request{method: r.Method, path: r.URL.Path, body: body}
 				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = io.WriteString(w, "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"synthetic\"}\n\n")
+				if test.partials > 0 {
+					_, _ = io.WriteString(w, "data: {\"type\":\"image_generation.partial_image\",\"partial_image_index\":0,\"b64_json\":\""+encodedImage+"\"}\n\n")
+				}
+				_, _ = io.WriteString(w, "data: {\"type\":\"image_generation.completed\",\"b64_json\":\""+encodedImage+"\"}\n\n")
 			}))
 			defer server.Close()
 			flags := append([]string{"--prompt", "A red pixel", "--model", "gpt-image-2.5-sunburst"}, test.flags...)
-			output, runErr := run(t, server.URL, test.stdin, nil, flags)
+			var rootFlags []string
+			if test.format != "" {
+				rootFlags = []string{"--format", test.format}
+			}
+			output, runErr := run(t, server.URL, test.stdin, rootFlags, flags)
 			require.NoError(t, runErr, output)
+			require.EqualValues(t, 1, calls.Load())
 			body := readRequest(t, requests)
-			require.EqualValues(t, 2, body["partial_images"])
+			if test.partials > 0 {
+				require.EqualValues(t, test.partials, body["partial_images"])
+			} else {
+				require.NotContains(t, body, "partial_images", "explicit model keeps omitted API options")
+			}
 			require.Equal(t, true, body["stream"])
-			require.Contains(t, output, "image_generation.completed")
-			require.NotContains(t, output, "Saved image")
+			if test.format != "" {
+				require.Contains(t, output, "image_generation.partial_image")
+				require.Contains(t, output, "image_generation.completed")
+				require.Contains(t, output, encodedImage)
+				require.NotContains(t, output, "Saved image")
+			} else {
+				assertSavedImage(t, output)
+				require.NotContains(t, output, "image_generation.completed")
+			}
 		})
 	}
 

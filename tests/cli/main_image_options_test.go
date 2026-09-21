@@ -59,7 +59,7 @@ func TestMainImageOptionsExplainsCompatibility(t *testing.T) {
 		{"format", []string{"--output-format jpeg", "--format json", "instead of saving files"}},
 		{"background", []string{"--background transparent", "PNG", "JPEG cannot"}},
 		{"partials", []string{"up to", "--partial-images 0", "automatically", "--count 1", "API-event output does not save"}},
-		{"upload", []string{"images edit --image ./robot.png", "returns API data", "images preview ./robot.png"}},
+		{"upload", []string{"images edit --image ./robot.png", "prints a readable result", "--format json for full API data", "images preview ./robot.png"}},
 	} {
 		t.Run(tc.topic, func(t *testing.T) {
 			args := []string{"./openai", "images", "options"}

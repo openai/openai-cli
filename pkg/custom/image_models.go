@@ -35,7 +35,7 @@ Use an exact name from the list:
 The known list comes from this CLI's SDK; it may not include newly released models.
 Visibility checks do not guarantee image-generation permissions or quota.
 JSON for scripts: {{$bin}} --format json images models
-Redirected output also returns JSON. Failed checks keep partial results and exit nonzero.
+Readable output also works in scripts. Failed checks keep partial results and exit nonzero.
 API key setup: {{$bin}} help setup
 `
 
@@ -77,7 +77,8 @@ func handleImagesModels(ctx context.Context, command *cli.Command) error {
 		return fmt.Errorf("use %s images models to see image model names; no additional arguments are needed", invocation)
 	}
 	root := command.Root()
-	human := isTerminal(root.Writer) && !imagePreviewCI(os.Getenv) && !root.IsSet("format") && root.String("transform") == "" && !root.Bool("raw-output")
+	human := root.String("transform") == "" && !root.Bool("raw-output") &&
+		resolvedOutputFormat(ShowJSONOpts{Format: root.String("format")}) == "text"
 	report := imageModelsReport{Source: "live", DefaultModel: defaultSavedImageModel, Complete: true}
 	var results []imagemodels.Result
 	if command.Bool("offline") {
@@ -136,8 +137,10 @@ func writeImageModelsData(command *cli.Command, report imageModelsReport) error 
 	obj := gjson.ParseBytes(payload)
 	opts := ShowJSONOpts{
 		Format: root.String("format"), ExplicitFormat: root.IsSet("format"),
-		RawOutput: root.Bool("raw-output"), Title: "Image models",
+		RawOutput: root.Bool("raw-output"), Title: "Image models", Transform: root.String("transform"),
 	}
+	opts.Format = resolvedOutputFormat(opts)
+	opts.Transform = ""
 	if path := root.String("transform"); path != "" {
 		if selected := obj.Get(path); selected.Exists() {
 			obj = selected
