@@ -50,7 +50,9 @@ func imageGenerateOptions(ctx context.Context, cmd *cli.Command) ([]option.Reque
 		return nil, nil, false, err
 	}
 	streaming := body.Get("stream").Type == gjson.True || (plan != nil && plan.partialImages > 0)
-	if plan == nil && body.Get("partial_images").Int() > 0 && !streaming {
+	// Legacy URL responses bypass local previews. Preserve their generated
+	// request contract; the API decides which model-specific fields apply.
+	if plan == nil && body.Get("response_format").String() != "url" && body.Get("partial_images").Int() > 0 && !streaming {
 		return nil, nil, false, fmt.Errorf("--partial-images needs --stream true for API output; in a terminal, omit data-format options to preview progress and save the final image automatically")
 	}
 	presentation.saving = plan != nil
@@ -98,7 +100,7 @@ func imageGenerateOptions(ctx context.Context, cmd *cli.Command) ([]option.Reque
 // Body values supplied on stdin are not reflected in cmd.Value or cmd.IsSet.
 func prepareImageOutput(cmd *cli.Command, terminal bool, body gjson.Result) (*imageOutputPlan, error) {
 	partials := body.Get("partial_images").Int()
-	if partials > 0 && body.Get("stream").Exists() && body.Get("stream").Type != gjson.True {
+	if body.Get("response_format").String() != "url" && partials > 0 && body.Get("stream").Exists() && body.Get("stream").Type != gjson.True {
 		return nil, fmt.Errorf("--partial-images needs streaming; omit --stream to enable it automatically when saving, or use --stream true")
 	}
 	inline := strings.ToLower(cmd.String("inline"))

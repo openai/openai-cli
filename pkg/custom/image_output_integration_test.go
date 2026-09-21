@@ -551,6 +551,40 @@ func TestImagesGenerateOutputIntegration(t *testing.T) {
 		})
 	}
 
+	for _, test := range []struct {
+		name, stdin string
+		flags       []string
+	}{
+		{name: "legacy URL flags retain nonstreaming API output", flags: []string{"--response-format", "url", "--partial-images", "1", "--stream", "false"}},
+		{name: "legacy URL YAML retains nonstreaming API output", stdin: "response_format: url\npartial_images: 1\nstream: false\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requests := make(chan request, 1)
+			var calls atomic.Int32
+			const urlResponse = `{"created":123,"data":[{"url":"https://images.example.invalid/synthetic.png"}]}`
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					http.Error(w, "cannot read synthetic request", http.StatusBadRequest)
+					return
+				}
+				requests <- request{method: r.Method, path: r.URL.Path, body: body}
+				w.Header().Set("Content-Type", "application/json")
+				io.WriteString(w, urlResponse)
+			}))
+			defer server.Close()
+			flags := append([]string{"--prompt", "A red pixel", "--model", "gpt-image-2"}, test.flags...)
+			output, runErr := run(t, server.URL, test.stdin, nil, flags)
+			require.NoError(t, runErr, output)
+			require.EqualValues(t, 1, calls.Load())
+			body, err := json.Marshal(readRequest(t, requests))
+			require.NoError(t, err)
+			require.JSONEq(t, `{"prompt":"A red pixel","model":"gpt-image-2","response_format":"url","partial_images":1,"stream":false}`, string(body))
+			require.JSONEq(t, urlResponse, output)
+		})
+	}
+
 	t.Run("settings API mode validates count before network", func(t *testing.T) {
 		server, _, count := newServer(t)
 		output, runErr := run(t, server.URL, `{"n":11}`, []string{"--format", "json"}, []string{"--prompt", "A red pixel"})

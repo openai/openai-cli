@@ -3,7 +3,6 @@ package imagefont
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"image"
@@ -14,6 +13,9 @@ import (
 	"testing"
 
 	"golang.org/x/image/draw"
+	"golang.org/x/image/font"
+	fontsfnt "golang.org/x/image/font/sfnt"
+	"golang.org/x/image/math/fixed"
 )
 
 func TestDefaultFontGeometryBytes(t *testing.T) {
@@ -22,10 +24,45 @@ func TestDefaultFontGeometryBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Captured before adaptive geometry was introduced: the default font must
-	// remain compatible with existing cached glyphs and their character grids.
-	if got := fmt.Sprintf("%x", sha256.Sum256(result.Data)); got != "77bead97d093f5c3298e2da369be45d3801a4abab65568f7af8c62c71d6980d2" {
-		t.Fatalf("default geometry changed the font bytes: %s", got)
+	// PNG compression can change between supported Go toolchains. Cache
+	// compatibility depends on the character grid, metrics and decoded pixels,
+	// not on one toolchain's compressed representation of the embedded PNGs.
+	wantPreview := Preview{
+		Text: "\ue000\ue001\ue002\ue003\n", Columns: 4, Rows: 1,
+		WidthPixels: 64, HeightPixels: 32, CodepointStart: '\ue000',
+	}
+	if len(result.Previews) != 1 || result.Previews[0] != wantPreview {
+		t.Fatalf("default preview geometry = %+v, want %+v", result.Previews, wantPreview)
+	}
+	tables := fontTables(t, result.Data)
+	parsed, err := fontsfnt.Parse(result.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buffer fontsfnt.Buffer
+	for _, size := range []int{16, 32} {
+		metrics, err := parsed.Metrics(&buffer, fixed.I(size), font.HintingNone)
+		if err != nil || metrics.Ascent != fixed.I(size*3/4) || metrics.Descent != fixed.I(size/4) || metrics.Height != fixed.I(size) {
+			t.Fatalf("default %dpt metrics = %+v, %v", size, metrics, err)
+		}
+		for r, want := range map[rune]fontsfnt.GlyphIndex{'A': 34, '\ue000': 96, '\ue001': 97, '\ue002': 98, '\ue003': 99} {
+			glyph, err := parsed.GlyphIndex(&buffer, r)
+			if err != nil || glyph != want {
+				t.Fatalf("default character %U maps to glyph %d, want %d: %v", r, glyph, want, err)
+			}
+			advance, err := parsed.GlyphAdvance(&buffer, glyph, fixed.I(size), font.HintingNone)
+			if err != nil || advance != fixed.I(size/2) {
+				t.Fatalf("default %dpt character %U advance = %v, %v", size, r, advance, err)
+			}
+		}
+	}
+	for i, strike := range readStrikes(t, tables["sbix"], 100) {
+		scale := i + 1
+		stitched := stitchGeometry(t, strike, 4, 1, 16*scale, 32*scale, 32*scale)
+		want := solid(image.Rect(0, 0, 64*scale, 32*scale), color.NRGBA{R: 19, G: 147, B: 225, A: 128})
+		if !bytes.Equal(stitched.Pix, want.Pix) {
+			t.Fatalf("default %dppem image pixels or alpha changed", 32*scale)
+		}
 	}
 	options := testOptions
 	options.TileWidth, options.TileHeight = 16, 32
