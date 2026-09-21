@@ -79,7 +79,8 @@ func Run(app *cli.Command, argv []string) int {
 }
 
 func commandExitCode(err error) int {
-	if exitErr, ok := err.(cli.ExitCoder); ok {
+	var exitErr cli.ExitCoder
+	if errors.As(err, &exitErr) {
 		return exitErr.ExitCode()
 	}
 	return 1

@@ -18,7 +18,7 @@ func TestImageResponsePreservesEnvelopeAndItemValidation(t *testing.T) {
 }
 
 func TestImageStreamEventNormalizesKnownEvents(t *testing.T) {
-	for _, kind := range []string{"image_generation.completed", "image_generation.partial_image"} {
+	for _, kind := range []string{"image_generation.completed", "image_generation.partial_image", "image_edit.completed", "image_edit.partial_image"} {
 		t.Run(kind, func(t *testing.T) {
 			value := gjson.Parse(`{"type":"` + kind + `","b64_json":"synthetic\\image\"bytes","partial_image_index":2,"created_at":9007199254740993,"usage":{"total_tokens":12},"future":[true,null,{"key":"value"}]}`)
 			result, err := ImageStreamEvent(context.Background(), value)
@@ -110,12 +110,26 @@ func TestImageSelectionDoesNotAffectOtherRoutes(t *testing.T) {
 		{Operation: ImageGenerateOperation, OutputKind: OutputPageItem},
 		{Operation: ImageGenerateOperation, OutputKind: "future"},
 		{Operation: "images.generate", OutputKind: OutputStreamEvent},
-		{Operation: "(resource) images > (method) edit", OutputKind: OutputStreamEvent},
+		{Operation: "(resource) images > (method) future", OutputKind: OutputStreamEvent},
 		{Operation: "(resource) responses > (method) create", OutputKind: OutputStreamEvent},
 		{OutputKind: OutputStreamEvent},
 	} {
 		result, err := Select(route)(WithImageOutput(context.Background()), value)
 		require.NoError(t, err)
 		require.Equal(t, value, result, route)
+	}
+}
+
+func TestImageEditingRoutesRequireOptIn(t *testing.T) {
+	value := gjson.Parse(`{"type":"image_edit.completed","b64_json":"synthetic-image","future":true}`)
+	for _, operation := range []string{ImageEditOperation, ImageVariationOperation} {
+		transform := Select(Route{Operation: operation, OutputKind: OutputStreamEvent})
+		original, err := transform(t.Context(), value)
+		require.NoError(t, err)
+		require.Equal(t, value, original)
+		normalized, err := transform(WithImageOutput(t.Context()), value)
+		require.NoError(t, err)
+		require.Equal(t, "synthetic-image", normalized.Get("data.0.b64_json").String())
+		require.True(t, normalized.Get("future").Bool())
 	}
 }

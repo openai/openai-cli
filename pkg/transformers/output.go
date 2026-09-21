@@ -37,7 +37,7 @@ func Identity(_ context.Context, value gjson.Result) (gjson.Result, error) {
 // Image normalization is opt-in, so API data and unrelated operations retain
 // their original response values.
 func Select(route Route) Transformer {
-	if route.Operation == ImageGenerateOperation {
+	if IsImageOperation(route.Operation) {
 		switch route.OutputKind {
 		case OutputResponse:
 			return imageOutputOnly(ImageResponse)

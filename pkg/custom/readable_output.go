@@ -29,6 +29,7 @@ func resolvedOutputFormat(opts ShowJSONOpts) string {
 
 func configureReadableOutput(root *cli.Command) {
 	configureReadableAudio(root)
+	configureReadableGuidance(root)
 	configureReadableSpeech(root)
 	for _, flag := range root.Flags {
 		if value, ok := flag.(*cli.StringFlag); ok {
@@ -46,6 +47,9 @@ func writeReadableResult(out io.Writer, value gjson.Result, opts ShowJSONOpts) e
 	projection := transformers.Readable(value, transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind})
 	if projection.IsText {
 		return writeReadableText(out, projection.Text)
+	}
+	if summary, ok := transformers.Summary(value, transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}); ok {
+		return readable.Write(out, summary)
 	}
 	return readable.Write(out, value)
 }
@@ -126,7 +130,6 @@ func showReadableIterator[T any](iter jsonview.Iterator[T], opts ShowJSONOpts) e
 		textOpen, emitted, previousKey = true, true, key
 		return nil
 	}
-	var completionErr error
 	for iter.Next() {
 		item, ok := any(iter.Current()).(hasRawJSON)
 		if !ok {
@@ -168,14 +171,11 @@ func showReadableIterator[T any](iter jsonview.Iterator[T], opts ShowJSONOpts) e
 				return err
 			}
 		}
+		if summary, ok := transformers.Summary(value, transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}); ok {
+			value = summary
+		}
 		if err := readable.Write(opts.Stdout, value); err != nil {
 			return &outputWriteError{err}
-		}
-		if opts.OutputKind == OutputStreamEvent {
-			switch value.Get("type").String() {
-			case "response.failed", "response.incomplete", "error":
-				completionErr = fmt.Errorf("the streamed response did not complete successfully")
-			}
 		}
 		emitted = true
 	}
@@ -184,9 +184,6 @@ func showReadableIterator[T any](iter jsonview.Iterator[T], opts ShowJSONOpts) e
 	}
 	if err := iter.Err(); err != nil {
 		return err
-	}
-	if completionErr != nil {
-		return completionErr
 	}
 	if !emitted {
 		return write("No results.\n")

@@ -225,6 +225,9 @@ func TestImagePresentationRequiresMatchingContextOperationAndKind(t *testing.T) 
 	}{
 		{"response", ctx, transformers.ImageGenerateOperation, OutputResponse, OutputResponse, true},
 		{"stream", ctx, transformers.ImageGenerateOperation, OutputStreamEvent, OutputStreamEvent, true},
+		{"edit response", ctx, transformers.ImageEditOperation, OutputResponse, OutputResponse, true},
+		{"edit stream", ctx, transformers.ImageEditOperation, OutputStreamEvent, OutputStreamEvent, true},
+		{"variation response", ctx, transformers.ImageVariationOperation, OutputResponse, OutputResponse, true},
 		{"nil context", nil, transformers.ImageGenerateOperation, OutputResponse, OutputResponse, false},
 		{"unrelated context", t.Context(), transformers.ImageGenerateOperation, OutputResponse, OutputResponse, false},
 		{"transform permission alone", transformers.WithImageOutput(t.Context()), transformers.ImageGenerateOperation, OutputResponse, OutputResponse, false},

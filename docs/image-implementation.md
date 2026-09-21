@@ -60,14 +60,18 @@ flowchart TD
     T -. "Optional partial event" .-> J["pkg/custom: temporary progress preview"]
 ```
 
-The save branch is the default for generation, including redirected output and
-streamed final images. Explicit data formats select the API-output branch;
+The save branch is the default for generation, editing and variations, including
+redirected output. Generation and editing also save streamed final images. Explicit data formats select the API-output branch;
 [the user guide](image-output.md) explains those combinations. Local
 `images preview FILE` starts at the preview branch and makes no API request.
 
 The image wrapper prepares request options once, then delegates the request to
 the generated action. The existing custom `FlagOptions` boundary consumes those
 prepared options, so stdin and file references are not read a second time.
+For edits and variations, `image_upload.go` checks scalar settings and adds defaults
+before the shared multipart encoder takes ownership of upload readers. Upload
+bytes remain streamed, and source files are left unchanged. Variations keep their
+DALL-E 2 request contract; editing supports its own partial/completed stream events.
 Successful output carries an operation identifier, output kind, and context.
 The custom output boundary uses that information to select the image workflow.
 
@@ -100,6 +104,7 @@ The `pkg/transformers` package is a code extension point. The existing
 | Successful-output routing and presentation | [cmdutil.go](../pkg/custom/cmdutil.go), [output_transform.go](../pkg/custom/output_transform.go) |
 | Readable response and stream presentation | [readable_output.go](../pkg/custom/readable_output.go), [pkg/transformers/readable.go](../pkg/transformers/readable.go), [internal/readable/](../internal/readable/) |
 | Pure image response/event transformation | [pkg/transformers/image.go](../pkg/transformers/image.go), [output.go](../pkg/transformers/output.go) |
+| Multipart edit/variation workflow and short help | [image_upload.go](../pkg/custom/image_upload.go) |
 | Defaults, validation, save policy, and preview routing | [image_output.go](../pkg/custom/image_output.go), [image_settings_validation.go](../pkg/custom/image_settings_validation.go) |
 | Names, downloads, collision handling, and saved files | [internal/imageoutput/](../internal/imageoutput/), especially [promptname.go](../internal/imageoutput/promptname.go) |
 | Progress events, temporary previews, and final-image saving | [pkg/custom/image_stream.go](../pkg/custom/image_stream.go) |
@@ -197,5 +202,6 @@ Areas that still need review before shipping:
   repair cannot restore missing thumbnails or ownership metadata.
 - Model discovery is a maintained list of exact IDs, not a complete account
   catalog. Metadata visibility does not guarantee generation permission.
-- Automatic downloads apply to generation. Editing and variations display
-  readable API results; `--format json` returns their full encoded image data.
+- Editing and variations use the shared saving path. Synthetic multipart and
+  streaming tests cover request and file behavior; native preview appearance
+  still needs the same terminal testing as generation.

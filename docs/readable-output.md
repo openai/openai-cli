@@ -12,7 +12,7 @@ openai responses create --model gpt-5.5 --input "Explain a rainbow in one senten
 Known text responses, chat completions, and audio transcripts show their text.
 Requested timestamps, speaker segments, and log probabilities remain visible
 as labeled details. Streamed text appears as it arrives; completion usage appears
-separately. List items retain their IDs and fields. Other responses show labeled fields,
+separately. List items retain their IDs and key fields. Other responses show labeled fields,
 nested details, and separate list entries, for example:
 
 ```text
@@ -26,6 +26,20 @@ Normal text is kept in full. Known base64 image/audio fields and numeric embeddi
 vectors show their size or count with a `--format json` hint. Terminal control
 and directional characters are escaped in readable output, including redirected
 text. Unknown response shapes still show their fields.
+
+## Short resource summaries
+
+Models, files, batches, vector stores, fine-tuning jobs, assistants, and thread
+runs show their ID and the fields needed for the next step: status, filenames,
+result IDs, counts, or required actions. For example, a completed batch shows
+its output file ID and request counts without repeating every lifecycle timestamp.
+Confirmed deletions say what was deleted and include its ID.
+
+Errors, failed counts, warnings, and required tool calls stay visible. Summaries
+include `Use --format json for all fields.` when configuration or metadata is
+left out. `--format json` returns the complete original API value, including
+instructions, timestamps, and configuration. New server fields fall back to
+complete labeled output so new results are not silently hidden.
 
 ## Scripts and complete API data
 
@@ -43,8 +57,9 @@ their existing behavior; choose `explore` when you want the interactive viewer.
 `--transform` and `--raw-output` also retain their existing data extraction
 behavior. Readable output is for reading; use an explicit data format for parsing.
 
-Binary downloads keep their existing byte output or file behavior. Commands
-whose API response has no content remain silent on success.
+Binary downloads keep their existing byte output or file behavior. Successful
+deletions and call/session actions with an empty API response print a short
+confirmation in readable mode. Explicit data formats keep the empty response.
 
 ## Audio and exact bytes
 
@@ -65,7 +80,8 @@ or `--raw-output` alone for the original SSE bytes. `--transform` selects event
 fields; combine it with `--raw-output` to extract unquoted strings.
 
 An explicit speech `--output FILE`, `--output -`, or `--output /dev/stdout`
-always keeps the original response bytes, including SSE framing when selected.
+keeps the original response bytes, including SSE framing when selected. SSE
+failure events still return a nonzero exit code; any received bytes are kept.
 For an ordinary audio file:
 
 ```sh
@@ -75,10 +91,12 @@ openai audio:speech create --model gpt-4o-mini-tts --voice alloy \
 
 ## Images
 
-Image generation saves files automatically, including when stdout is redirected:
+Image generation, edits, and variations save files automatically, including when stdout is redirected:
 
 ```sh
 openai images generate --prompt "A tiny orange robot" > saved-paths.txt
+openai images edit --image robot.png --prompt "Give the robot a blue hat"
+openai images create-variation --image robot.png
 ```
 
 The default folder is `~/Downloads/gpt-images/`. Redirected output contains
@@ -90,9 +108,9 @@ openai --format json images generate --model gpt-image-2.5-sunburst \
   --prompt "A tiny orange robot" > image-response.json
 ```
 
-See the [image guide](image-output.md) for progress streams, file names, and
-preview support. Image editing and variations show readable API results; they
-do not automatically save images.
+Original input files are kept. Edits use the default image model; variations use
+DALL-E 2. See the [image guide](image-output.md) for progress streams, file names,
+model compatibility, and preview support.
 
 ## Errors
 
@@ -104,5 +122,12 @@ openai --format json models list > models.json 2> error.json
 openai --format-error json models list
 ```
 
-Exit codes continue to indicate success or failure. Check the exit code before
-parsing an output file.
+When the API identifies an invalid argument, the message points to the matching
+command option and its help. Known choices are shown when available. Server
+messages and rejected values are available through the explicit JSON error
+format rather than copied into the default guidance.
+
+Recognized failed, cancelled, expired, or incomplete stream events return a
+nonzero exit code, including with explicit JSON or field extraction. Events
+already received remain in the output so callers can inspect the failure.
+Check the exit code before parsing an output file.

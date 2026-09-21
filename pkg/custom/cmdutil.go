@@ -209,8 +209,8 @@ func isOutputBrokenPipe(err error) bool {
 // Takes in a stdout reference so we can test this function without overriding os.Stdout in tests.
 func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (string, error) {
 	defer response.Body.Close()
-	if handled, err := writeReadableSpeech(response, stdout, outfile); handled {
-		return "", err
+	if handled, message, err := writeReadableSpeech(response, stdout, outfile); handled {
+		return message, err
 	}
 
 	switch outfile {
@@ -534,10 +534,11 @@ func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, op
 func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
 	iter := &outputIterator[T]{
-		source:    source,
-		context:   opts.Context,
-		transform: selectOutputTransformer(opts, selectTransformer),
-		remaining: itemsToDisplay,
+		source:     source,
+		context:    opts.Context,
+		transform:  selectOutputTransformer(opts, selectTransformer),
+		remaining:  itemsToDisplay,
+		outputKind: opts.OutputKind,
 	}
 	opts.Format = resolvedOutputFormat(opts)
 	if opts.Format == "text" {

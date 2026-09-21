@@ -10,7 +10,16 @@ import (
 
 // ImageGenerateOperation matches the operation identifier emitted by the
 // generated images generate handler.
-const ImageGenerateOperation = "(resource) images > (method) generate"
+const (
+	ImageGenerateOperation  = "(resource) images > (method) generate"
+	ImageEditOperation      = "(resource) images > (method) edit"
+	ImageVariationOperation = "(resource) images > (method) create_variation"
+)
+
+// IsImageOperation identifies generated handlers whose responses contain images.
+func IsImageOperation(operation string) bool {
+	return operation == ImageGenerateOperation || operation == ImageEditOperation || operation == ImageVariationOperation
+}
 
 type imageOutputContextKey struct{}
 
@@ -52,7 +61,7 @@ func ImageStreamEvent(ctx context.Context, value gjson.Result) (gjson.Result, er
 		return gjson.Result{}, err
 	}
 	switch value.Get("type").String() {
-	case "image_generation.completed", "image_generation.partial_image":
+	case "image_generation.completed", "image_generation.partial_image", "image_edit.completed", "image_edit.partial_image":
 	default:
 		return value, nil
 	}

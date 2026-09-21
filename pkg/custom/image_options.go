@@ -125,10 +125,11 @@ One image at a time. Progress previews add API usage.
 	"upload": `Change an existing image
 Replace ./robot.png with your image's path:
 
-  {{$bin}} images edit --image ./robot.png --prompt "Make it blue" --model ` + defaultSavedImageModel + `
+  {{$bin}} images edit --image ./robot.png --prompt "Make it blue"
 
 Accepts PNG, JPEG or WebP. Your original stays unchanged.
-Uses API credits. Prints a readable result; add --format json for full image data.
+Saves the new image automatically. Uses API credits.
+Add --format json for API data without saving.
 `,
 	"save": `Choose where your image goes
 Default: ~/Downloads/gpt-images/ (created automatically).
@@ -275,16 +276,21 @@ API-event output does not save images automatically.
 Use images edit to change an existing image. The original file is kept.
 Replace ./robot.png with the path to your image:
 
-  {{$bin}} images edit --image ./robot.png --prompt "Make the robot blue" --model ` + defaultSavedImageModel + `
+  {{$bin}} images edit --image ./robot.png --prompt "Make the robot blue"
 
 Add another --image PATH to supply another reference image.
 For GPT Image models: PNG, JPEG or WebP, under 50 MB each, up to 16 images.
 Editing makes an API request and uses credits.
 
-Images edit prints a readable result. Add --format json for full API data,
-including base64 image data. Automatic saving applies to images generate.
+Images edit uses ` + defaultSavedImageModel + ` by default when saving.
+The new image saves to ~/Downloads/gpt-images/ with a name from your prompt.
+Use --name, --output-dir, --open and --inline as with images generate.
+Add --partial-images 1, 2 or 3 for progress previews; only the final image is saved.
+Add --format json for full API data without saving.
+Variations also save automatically: {{$bin}} images create-variation --image ./robot.png
+That endpoint uses dall-e-2 and requires a square PNG under 4 MB.
 For every editing option:
-  {{$bin}} images edit --help
+  {{$bin}} help --all images edit
 
 To view a file without editing it or using credits:
   {{$bin}} images preview ./robot.png

@@ -11,7 +11,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/urfave/cli/v3"
 )
@@ -64,7 +63,7 @@ func imageErrorMessage(presentation *imageErrorContext, err error) string {
 	if invocation == "" {
 		invocation = "openai"
 	}
-	help := invocation + " help --all images generate"
+	help := invocation + " help --all images " + command.Name
 	setup := invocation + " help setup"
 	var apierr *openai.Error
 	isAPIError := errors.As(err, &apierr)
@@ -139,14 +138,8 @@ func imageAPIErrorMessage(apierr *openai.Error, command *cli.Command, help, setu
 		if apierr.Code == "model_not_found" {
 			return "That image model is unavailable or your project cannot access it.\nCheck the model name and project access, or choose a model with --model."
 		}
-		for _, flag := range command.Flags {
-			if parameter, ok := flag.(requestflag.InRequest); ok && parameter.GetBodyPath() != "" && parameter.GetBodyPath() == apierr.Param {
-				prefix := "--"
-				if len(flag.Names()[0]) == 1 {
-					prefix = "-"
-				}
-				return "The API rejected " + prefix + flag.Names()[0] + ".\nCheck the value and your model's supported settings:\n  " + help
-			}
+		if apierr.StatusCode == http.StatusBadRequest || apierr.StatusCode == http.StatusUnprocessableEntity {
+			return readableAPIArgumentMessage(apierr, command)
 		}
 		return "The API could not accept this image request.\nCheck your model and image settings:\n  " + help
 	default:

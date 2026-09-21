@@ -293,8 +293,8 @@ func TestMainReadablePreservesBinaryAndEmptyResponses(t *testing.T) {
 	server = readableTestServer(t, "DELETE /responses/resp_synthetic", "", "", http.StatusNoContent)
 	got := runReadableMain(t, server.URL, nil, "responses", "delete", "resp_synthetic")
 	assertReadableProcessSuccess(t, got)
-	if got.stdout != "" {
-		t.Fatalf("empty response gained output: %q", got.stdout)
+	if got.stdout != "Deleted response \"resp_synthetic\".\n" {
+		t.Fatalf("missing readable deletion confirmation: %q", got.stdout)
 	}
 }
 
@@ -379,7 +379,9 @@ func TestMainReadableUnsuccessfulStreams(t *testing.T) {
 			}
 			for _, format := range []string{"json", "JSON"} {
 				got := runReadableMain(t, server.URL, nil, append([]string{"--format", format}, args...)...)
-				assertReadableProcessSuccess(t, got)
+				if got.code == 0 || strings.TrimSpace(got.stderr) == "" {
+					t.Fatalf("unsuccessful stream must fail even with explicit JSON: %+v", got)
+				}
 				assertReadableJSONValues(t, got.stdout, delta, tc.event)
 			}
 		})

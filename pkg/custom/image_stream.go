@@ -34,12 +34,20 @@ func (stream *imageOutputStream[T]) Next() bool {
 	if stream.err != nil || !stream.source.Next() {
 		return false
 	}
-	var ok bool
-	stream.current, ok = any(stream.source.Current()).(openai.ImageGenStreamEventUnion)
-	if !ok {
+	switch event := any(stream.source.Current()).(type) {
+	case openai.ImageGenStreamEventUnion:
+		stream.current = event
+	case openai.ImageEditStreamEventUnion:
+		// The two SDK unions expose the same image fields. Preserve raw event JSON
+		// so normalization retains metadata and any future response fields.
+		stream.err = json.Unmarshal([]byte(event.RawJSON()), &stream.current)
+		if stream.err != nil {
+			stream.err = errors.New("could not read image edit stream event")
+		}
+	default:
 		stream.err = errors.New("unexpected image stream event type")
 	}
-	return ok
+	return stream.err == nil
 }
 
 func (stream *imageOutputStream[T]) Current() openai.ImageGenStreamEventUnion { return stream.current }
@@ -88,13 +96,13 @@ func (p *imageOutputPlan) saveStream(ctx context.Context, stream imageGeneration
 		}
 		event := stream.Current()
 		switch event.Type {
-		case "image_generation.completed":
+		case "image_generation.completed", "image_edit.completed":
 			response, err := imageEventResponse(ctx, event)
 			if err != nil {
 				return err
 			}
 			return p.save(ctx, response, out)
-		case "image_generation.partial_image":
+		case "image_generation.partial_image", "image_edit.partial_image":
 			index := event.PartialImageIndex
 			if previewUnavailable || p.partialImages < 1 || p.partialImages > 3 ||
 				(p.preview == "" && !p.textPreview) || index < 0 || index >= p.partialImages || seen[index] {

@@ -563,6 +563,9 @@ func FlagOptions(
 		if !ok {
 			return nil, fmt.Errorf("Cannot send a non-map value to a form-encoded endpoint: %v\n", requestContents.Body)
 		}
+		if err := prepareImageMultipartBody(cmd, bodyMap); err != nil {
+			return nil, err
+		}
 		encodingFormat := apiform.FormatBrackets
 		multipartOptions, err := multipartRequestOptions(bodyMap, encodingFormat)
 		if err != nil {

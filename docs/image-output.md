@@ -1,4 +1,4 @@
-# Saving generated images
+# Saving images
 
 ## Getting started and finding help
 
@@ -196,10 +196,33 @@ The CLI validates these combinations before generation, using the final merged
 flags and JSON/YAML input. It continues to accept exact model IDs and future
 quality/size values without requiring membership in a hardcoded enum.
 
-The attachment control corresponds to the separate `images edit --image PATH`
-command. The upload guide gives a complete example. Editing shows a readable
-result; add `--format json` for full API data, including encoded images.
-Automatic saving here applies to `images generate`.
+### Edit an image or make a variation
+
+```sh
+openai images edit --image "photo.png" --prompt "Make the sky purple"
+openai images create-variation --image "square-photo.png"
+```
+
+Both commands save new images automatically, including when redirected, and keep
+your source files unchanged. They share generation's `--name`, `--output-dir`,
+`--count`, `--open` and `--inline` controls, collision protection, and previews.
+Use `--help` for a short guide or `help --all images edit` (or
+`create-variation`) for every generated API option.
+
+Editing uses `gpt-image-2.5-sunburst` by default when saving and names the result
+from your prompt. Repeat `--image` for additional references or supply `--mask`
+to limit edits. Progress previews work with `--partial-images 1`, `2` or `3`;
+only the completed edit is saved. Editing does not send the generation-only
+`moderation` preset.
+
+Variations use the endpoint's supported `dall-e-2` model, require a square PNG
+under 4 MB, and use `image-variation.png` as their automatic filename (with
+collision suffixes). Variations do not support streaming or progress previews.
+
+Add `--format json` for full API data without saving. Explicit data formats,
+`--transform`, `--raw-output` and legacy `--response-format url` keep their API
+behavior. The shared multipart encoder streams uploads without rereading input
+files or stdin; the original files are never replaced by the saved results.
 
 ### Progress previews while generating
 

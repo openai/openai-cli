@@ -27,6 +27,7 @@ type imageOutputPlan struct {
 	name                   string
 	filenameStem           string
 	options                []option.RequestOption
+	defaults               map[string]any
 	preview                imagepreview.Protocol
 	textPreview, textColor bool
 	textTrueColor          bool
@@ -37,63 +38,87 @@ type imageOutputPlan struct {
 func imageGenerateOptions(ctx context.Context, cmd *cli.Command) ([]option.RequestOption, *imageOutputPlan, bool, error) {
 	presentation := beginImageErrorContext(cmd)
 	var body gjson.Result
-	options, err := FlagOptions(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets,
-		ApplicationJSON, false, func(raw []byte) { body = gjson.ParseBytes(raw) })
+	var plan *imageOutputPlan
+	var streaming bool
+	var options []option.RequestOption
+	var err error
+	if imageMultipartCommand(cmd) {
+		state := &imageMultipartPreparation{context: ctx}
+		cmd.Metadata[imageMultipartMetadata] = state
+		defer delete(cmd.Metadata, imageMultipartMetadata)
+		options, err = FlagOptions(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, MultipartFormEncoded, false)
+		body, plan, streaming = state.body, state.plan, state.streaming
+	} else {
+		options, err = FlagOptions(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets,
+			ApplicationJSON, false, func(raw []byte) { body = gjson.ParseBytes(raw) })
+		if err == nil {
+			plan, streaming, err = prepareImageRequestOutput(ctx, cmd, body)
+		}
+		if err == nil && plan != nil {
+			options = append(options, plan.options...)
+			if streaming {
+				options = append(options, option.WithJSONSet("stream", true))
+			}
+		}
+	}
 	if err != nil {
 		return nil, nil, false, err
 	}
+	presentation.saving = plan != nil
+	return options, plan, streaming, nil
+}
+
+func prepareImageRequestOutput(ctx context.Context, cmd *cli.Command, body gjson.Result) (*imageOutputPlan, bool, error) {
 	if err := validateImageSettings(body); err != nil {
-		return nil, nil, false, err
+		return nil, false, err
 	}
 	plan, err := prepareImageOutput(cmd, isTerminal(cmd.Root().Writer), body)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, false, err
 	}
 	streaming := body.Get("stream").Type == gjson.True || (plan != nil && plan.partialImages > 0)
-	// Legacy URL responses bypass local previews. Preserve their generated
-	// request contract; the API decides which model-specific fields apply.
 	if plan == nil && body.Get("response_format").String() != "url" && body.Get("partial_images").Int() > 0 && !streaming {
-		return nil, nil, false, fmt.Errorf("--partial-images needs --stream true for API output; in a terminal, omit data-format options to preview progress and save the final image automatically")
+		return nil, false, fmt.Errorf("--partial-images needs --stream true for API output; omit data-format options to preview progress and save the final image automatically")
 	}
-	presentation.saving = plan != nil
-	if plan != nil {
-		if err := imageoutput.CheckName(ctx, plan.directory, plan.filenameStem); err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil, nil, false, err
-			}
-			label := "image filename"
-			if cmd.IsSet("name") {
-				label = "--name"
-			}
-			return nil, nil, false, fmt.Errorf("%s: %w", label, err)
+	if plan == nil {
+		return nil, streaming, nil
+	}
+	if err := imageoutput.CheckName(ctx, plan.directory, plan.filenameStem); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, false, err
 		}
-		if plan.textPreview {
-			if err := prepareInteractiveImageFont(ctx, cmd.Root().Writer); err != nil {
-				return nil, nil, false, fmt.Errorf("inline preview: %w; use --inline off to generate without a preview", err)
-			}
+		label := "image filename"
+		if cmd.IsSet("name") {
+			label = "--name"
 		}
-		if plan.openFiles {
-			if err := imageopen.CheckAvailable(); err != nil {
-				return nil, nil, false, fmt.Errorf("--open: %w", err)
-			}
-		}
-		options = append(options, plan.options...)
-		if streaming {
-			options = append(options, option.WithJSONSet("stream", true))
-		}
-		// Give a waiting user immediate feedback. Keep scripts, explicit data
-		// output and redirected diagnostics free of presentation-only text.
-		if isTerminal(cmd.Root().Writer) && isTerminal(os.Stderr) && !imagePreviewCI(os.Getenv) && imageFriendlyErrorMode(cmd.Root()) {
-			message := "Generating image..."
-			if body.Get("n").Float() > 1 {
-				message = "Generating images..."
-			}
-			if _, err := fmt.Fprintln(os.Stderr, message); err != nil {
-				return nil, nil, false, err
-			}
+		return nil, false, fmt.Errorf("%s: %w", label, err)
+	}
+	if plan.textPreview {
+		if err := prepareInteractiveImageFont(ctx, cmd.Root().Writer); err != nil {
+			return nil, false, fmt.Errorf("inline preview: %w; use --inline off to save without a preview", err)
 		}
 	}
-	return options, plan, streaming, nil
+	if plan.openFiles {
+		if err := imageopen.CheckAvailable(); err != nil {
+			return nil, false, fmt.Errorf("--open: %w", err)
+		}
+	}
+	if isTerminal(cmd.Root().Writer) && isTerminal(os.Stderr) && !imagePreviewCI(os.Getenv) && imageFriendlyErrorMode(cmd.Root()) {
+		message := "Generating image..."
+		if cmd.Name == "edit" {
+			message = "Editing image..."
+		}
+		if cmd.Name == "create-variation" {
+			message = "Creating image variation..."
+		}
+		if body.Get("n").Float() > 1 {
+			message = "Creating images..."
+		}
+		if _, err := fmt.Fprintln(os.Stderr, message); err != nil {
+			return nil, false, err
+		}
+	}
+	return plan, streaming, nil
 }
 
 // The final body includes flags, piped JSON/YAML, and expanded file references.
@@ -164,7 +189,7 @@ func prepareImageOutput(cmd *cli.Command, terminal bool, body gjson.Result) (*im
 		}
 		return nil, fmt.Errorf("%w\nChoose an existing, writable folder with --output-dir.", err)
 	}
-	plan := &imageOutputPlan{directory: directory, name: name, filenameStem: filenameStem, openFiles: cmd.Bool("open"), partialImages: partials}
+	plan := &imageOutputPlan{defaults: make(map[string]any), directory: directory, name: name, filenameStem: filenameStem, openFiles: cmd.Bool("open"), partialImages: partials}
 	if (!plan.openFiles || cmd.IsSet("inline")) && !cmd.Bool("no-preview") && terminal && !imagePreviewCI(os.Getenv) {
 		preview := inline == "on"
 		if !cmd.IsSet("inline") {
@@ -181,11 +206,23 @@ func prepareImageOutput(cmd *cli.Command, terminal bool, body gjson.Result) (*im
 		}
 	}
 	model := body.Get("model")
+	if cmd.Name == "create-variation" {
+		if !model.Exists() {
+			plan.setDefault("model", "dall-e-2")
+		}
+		if !body.Get("response_format").Exists() {
+			plan.setDefault("response_format", "b64_json")
+		}
+		if !cmd.IsSet("name") {
+			plan.name, plan.filenameStem = "image-variation", "image-variation"
+		}
+		return plan, nil
+	}
 	if !model.Exists() {
 		// Explicit response-format is a legacy-model parameter. Preserve the API's
 		// model selection when callers intentionally use it.
 		if !body.Get("response_format").Exists() {
-			plan.options = append(plan.options, option.WithJSONSet("model", defaultSavedImageModel))
+			plan.setDefault("model", defaultSavedImageModel)
 			// Keep the everyday preset explicit without overriding supplied values,
 			// including nulls from JSON/YAML. Other models retain their API defaults.
 			for _, preset := range []struct {
@@ -195,16 +232,24 @@ func prepareImageOutput(cmd *cli.Command, terminal bool, body gjson.Result) (*im
 				{"n", 1}, {"size", "auto"}, {"quality", "auto"}, {"output_format", "png"},
 				{"background", "auto"}, {"moderation", "auto"}, {"partial_images", 0}, {"stream", false},
 			} {
+				if preset.field == "moderation" && cmd.Name == "edit" {
+					continue
+				}
 				if !body.Get(preset.field).Exists() {
-					plan.options = append(plan.options, option.WithJSONSet(preset.field, preset.value))
+					plan.setDefault(preset.field, preset.value)
 				}
 			}
 		}
 	} else if (model.String() == "dall-e-2" || model.String() == "dall-e-3") && !body.Get("response_format").Exists() {
 		// Ask for embedded bytes rather than fetching a second, signed URL.
-		plan.options = append(plan.options, option.WithJSONSet("response_format", "b64_json"))
+		plan.setDefault("response_format", "b64_json")
 	}
 	return plan, nil
+}
+
+func (p *imageOutputPlan) setDefault(field string, value any) {
+	p.defaults[field] = value
+	p.options = append(p.options, option.WithJSONSet(field, value))
 }
 
 func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writer) error {

@@ -30,6 +30,37 @@ func TestSpeechEventIteratorRetainsFinalEventAtEOF(t *testing.T) {
 	}
 }
 
+func TestSpeechEventIteratorNamedErrorsPreserveOriginalData(t *testing.T) {
+	const event = `{"code":"server_error","message":"Synthetic failure","precise":9007199254740993}`
+	for _, suffix := range []string{"", "\n\ndata: [DONE]\n\n"} {
+		iter := &speechEventIterator{reader: bufio.NewReader(strings.NewReader("event: error\ndata: " + event + suffix))}
+		if !iter.Next() || iter.Current().RawJSON() != event {
+			t.Fatalf("named error must be emitted unchanged before failure: %v", iter.Err())
+		}
+		if iter.Err() == nil || !strings.Contains(iter.Err().Error(), "error while streaming") {
+			t.Fatalf("named error was not reflected in stream status: %v", iter.Err())
+		}
+		if iter.Next() || iter.Err() == nil {
+			t.Fatalf("named error status was lost after completion: %v", iter.Err())
+		}
+	}
+}
+
+func TestSpeechEventNamesAreScopedToOneDispatchedEvent(t *testing.T) {
+	const event = `{"type":"speech.audio.done","event":"error","usage":{"output_tokens":2}}`
+	for _, prefix := range []string{
+		"event: error\n\n",                         // An event without data is not dispatched.
+		"event: error\nevent: speech.audio.done\n", // The last event field wins.
+		"event: error\nevent\n",                    // An empty event name clears the earlier value.
+		"",                                         // An arbitrary JSON field must not override the typed event.
+	} {
+		iter := &speechEventIterator{reader: bufio.NewReader(strings.NewReader(prefix + "data: " + event + "\n\n"))}
+		if !iter.Next() || iter.Current().RawJSON() != event || iter.Next() || iter.Err() != nil {
+			t.Fatalf("SSE event name leaked into another event: prefix=%q error=%v", prefix, iter.Err())
+		}
+	}
+}
+
 func TestSpeechEventIteratorHasNoNewLineOrEventLimit(t *testing.T) {
 	// The original speech download path had no SSE scanner ceiling. Exercise a
 	// line larger than the SDK decoder's 32 MiB limit and preserve the full value.
@@ -67,6 +98,18 @@ func TestSpeechEventIteratorReportsReadAndParseErrors(t *testing.T) {
 	iter = &speechEventIterator{reader: bufio.NewReader(strings.NewReader("data: synthetic-private-invalid-json\n\n"))}
 	if iter.Next() || iter.Err() == nil || strings.Contains(iter.Err().Error(), "synthetic-private") {
 		t.Fatalf("malformed event was accepted or exposed: %v", iter.Err())
+	}
+}
+
+func TestCopySpeechStreamStopsOnShortWrites(t *testing.T) {
+	const size = 1 << 20
+	reader := &boundedDownloadReader{remaining: size}
+	err := copySpeechStream(shortDownloadWriter{}, reader)
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("short speech write was not reported: %v", err)
+	}
+	if consumed := size - reader.remaining; consumed > 4096 {
+		t.Fatalf("speech kept consuming a failed destination: %d bytes", consumed)
 	}
 }
 

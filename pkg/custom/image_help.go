@@ -213,6 +213,10 @@ func imageGenerateAction(action cli.ActionFunc) cli.ActionFunc {
 // error or exit status. Quoting also makes unexpected flag text safe to display.
 func imageGenerateUsageError(_ context.Context, command *cli.Command, err error, _ bool) error {
 	invocation := imageHelpInvocation(command)
+	operation := "generate"
+	if imageMultipartCommand(command) {
+		operation = command.Name
+	}
 	out := command.Root().ErrWriter
 	if provided, ok := strings.CutPrefix(err.Error(), "flag provided but not defined: -"); ok {
 		provided = strings.TrimLeft(provided, "-")
@@ -232,13 +236,13 @@ func imageGenerateUsageError(_ context.Context, command *cli.Command, err error,
 			prefix = "-"
 		}
 		fmt.Fprintf(out, "Option %q needs a value.\n", prefix+provided)
-		if provided == "prompt" {
+		if provided == "prompt" && operation == "generate" {
 			fmt.Fprintf(out, "Try: %s images generate --prompt \"A tiny orange robot\"\n", invocation)
 		}
 	} else {
 		fmt.Fprintf(out, "Could not read the command options: %q\n", err.Error())
 	}
-	fmt.Fprintf(out, "Help: %s images generate --help\n", invocation)
+	fmt.Fprintf(out, "Help: %s images %s --help\n", invocation, operation)
 	return err
 }
 
@@ -256,6 +260,10 @@ func registerImageGenerate(imagesGenerate *cli.Command) {
 	imagesGenerate.Metadata["image-reference-flag"] = renderImageReferenceFlag
 	imagesGenerate.Metadata["image-generate"] = true
 	imagesGenerate.Description = strings.ReplaceAll(imageGenerateDetails, "@CLI@", "openai")
+	registerImageSavingFlags(imagesGenerate)
+}
+
+func registerImageSavingFlags(imagesGenerate *cli.Command) {
 	imagesGenerate.Flags = append(imagesGenerate.Flags, &cli.StringFlag{
 		Name:        "output-dir",
 		Usage:       "Save images to an existing `DIRECTORY` (also works in scripts)",

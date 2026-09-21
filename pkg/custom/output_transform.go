@@ -63,13 +63,15 @@ func (value outputJSON) RawJSON() string { return value.Raw }
 // outputIterator shares one lazy transformation boundary across direct output,
 // the pager, and the explorer. Current never reruns a transformation.
 type outputIterator[T any] struct {
-	source    jsonview.Iterator[T]
-	context   context.Context
-	transform transformers.Transformer
-	remaining int64
-	current   outputJSON
-	err       error
-	done      bool
+	source     jsonview.Iterator[T]
+	context    context.Context
+	transform  transformers.Transformer
+	remaining  int64
+	outputKind OutputKind
+	current    outputJSON
+	err        error
+	resultErr  error
+	done       bool
 
 	// The explorer can return while its lazy Next call is still running.
 	// Publish only completed steps so Err never reads the source concurrently.
@@ -79,7 +81,7 @@ type outputIterator[T any] struct {
 
 func (it *outputIterator[T]) Next() bool {
 	defer func() {
-		err := errors.Join(it.err, it.source.Err())
+		err := errors.Join(it.err, it.resultErr, it.source.Err())
 		it.errorMu.Lock()
 		it.reportedErr = err
 		it.errorMu.Unlock()
@@ -108,6 +110,11 @@ func (it *outputIterator[T]) Next() bool {
 			return false
 		}
 		value = gjson.ParseBytes(encoded)
+	}
+	if it.outputKind == OutputStreamEvent && it.resultErr == nil {
+		if message := transformers.StreamFailure(value); message != "" {
+			it.resultErr = errors.New(message)
+		}
 	}
 	value, it.err = transformOutput(it.context, value, it.transform)
 	if it.err != nil {

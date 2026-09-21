@@ -25,6 +25,11 @@ func configureImageCommands(root *cli.Command) {
 	if generate := images.Command("generate"); generate != nil {
 		registerImageGenerate(generate)
 	}
+	for _, name := range []string{"edit", "create-variation"} {
+		if command := images.Command(name); command != nil {
+			registerImageUpload(command)
+		}
+	}
 	registerImageInline(root)
 	registerImagePreview(root)
 	registerImageModels(root)
@@ -37,8 +42,9 @@ func isImageGenerateCommand(command *cli.Command) bool {
 }
 
 type preparedImageRequest struct {
-	options  []option.RequestOption
-	consumed bool
+	options   []option.RequestOption
+	consumed  bool
+	multipart bool
 }
 
 type imagePresentationKey struct{}
@@ -67,7 +73,7 @@ func imageGenerateWorkflow(next cli.ActionFunc) cli.ActionFunc {
 			return err
 		}
 		defer restoreStream()
-		command.Metadata[imageRequestMetadata] = &preparedImageRequest{options: options}
+		command.Metadata[imageRequestMetadata] = &preparedImageRequest{options: options, multipart: imageMultipartCommand(command)}
 		defer delete(command.Metadata, imageRequestMetadata)
 		if plan != nil {
 			ctx = transformers.WithImageOutput(ctx)
@@ -107,7 +113,11 @@ func consumeImageRequest(command *cli.Command, nested apiquery.NestedQueryFormat
 	if !ok {
 		return nil, false, nil
 	}
-	if prepared.consumed || nested != apiquery.NestedQueryFormatBrackets || array != apiquery.ArrayQueryFormatBrackets || body != ApplicationJSON || ignoreStdin {
+	expectedBody := ApplicationJSON
+	if prepared.multipart {
+		expectedBody = MultipartFormEncoded
+	}
+	if prepared.consumed || nested != apiquery.NestedQueryFormatBrackets || array != apiquery.ArrayQueryFormatBrackets || body != expectedBody || ignoreStdin {
 		return nil, true, errors.New("image request preparation does not match the generated action")
 	}
 	prepared.consumed = true
@@ -115,7 +125,7 @@ func consumeImageRequest(command *cli.Command, nested apiquery.NestedQueryFormat
 }
 
 func imagePresentationFor(opts ShowJSONOpts, kind OutputKind) (imagePresentation, bool) {
-	if opts.Context == nil || opts.Operation != transformers.ImageGenerateOperation || opts.OutputKind != kind {
+	if opts.Context == nil || !transformers.IsImageOperation(opts.Operation) || opts.OutputKind != kind {
 		return imagePresentation{}, false
 	}
 	presentation, ok := opts.Context.Value(imagePresentationKey{}).(imagePresentation)

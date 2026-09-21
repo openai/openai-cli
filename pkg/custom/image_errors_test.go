@@ -135,7 +135,7 @@ func TestImageErrorMessageAPIStatus(t *testing.T) {
 		{name: "model missing", status: 404, code: "model_not_found", want: "choose a model with --model"},
 		{name: "body parameter", status: 400, parameter: "output_format", want: "The API rejected --output-format."},
 		{name: "short parameter", status: 422, parameter: "n", want: "The API rejected -n."},
-		{name: "unknown parameter", status: 400, parameter: "synthetic-private-prompt\x1b[2J", want: "could not accept this image request"},
+		{name: "unknown parameter", status: 400, parameter: "synthetic-private-prompt\x1b[2J", want: "The API rejected the request."},
 		{name: "service error", status: 503, want: "HTTP 503"},
 		{name: "unknown status", status: 418, want: "HTTP 418"},
 	} {
