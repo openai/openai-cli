@@ -4,7 +4,10 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"mime"
+	"net/http"
 
 	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/requestflag"
@@ -76,12 +79,16 @@ func handleAudioTranslationsCreate(ctx context.Context, cmd *cli.Command) error 
 	params := openai.AudioTranslationNewParams{}
 
 	var res []byte
-	options = append(options, option.WithResponseBodyInto(&res))
+	var response *http.Response
+	options = append(options, option.WithResponseBodyInto(&res), option.WithResponseInto(&response))
 	_, err = client.Audio.Translations.New(ctx, params, options...)
 	if err != nil {
 		return err
 	}
 
+	if mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type")); err == nil && mediaType == "text/plain" {
+		res, _ = json.Marshal(string(res))
+	}
 	obj := gjson.ParseBytes(res)
 	format := cmd.Root().String("format")
 	explicitFormat := cmd.Root().IsSet("format")

@@ -599,6 +599,30 @@ paths:
               schema:
                 type: string
                 format: binary
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/aac:
+              schema:
+                type: string
+                format: binary
+            audio/opus:
+              schema:
+                type: string
+                format: binary
+            audio/flac:
+              schema:
+                type: string
+                format: binary
+            audio/pcm:
+              schema:
+                type: string
+                format: binary
+            audio/wav:
+              schema:
+                type: string
+                format: binary
             text/event-stream:
               schema:
                 $ref: '#/components/schemas/CreateSpeechResponseStreamEvent'
@@ -692,7 +716,8 @@ paths:
         Transcribes audio into the input language.
 
         Returns a transcription object in `json`, `diarized_json`, or `verbose_json`
-        format, or a stream of transcript events.
+        format, plain text in `text`, `srt`, or `vtt` format, or a stream of transcript
+        events. Supported formats depend on the model.
       requestBody:
         required: true
         content:
@@ -713,6 +738,9 @@ paths:
                 - $ref: '#/components/schemas/CreateTranscriptionResponseVerboseJson'
                 discriminator:
                   propertyName: task
+            text/plain:
+              schema:
+                type: string
             text/event-stream:
               schema:
                 $ref: '#/components/schemas/CreateTranscriptionResponseStreamEvent'
@@ -1269,6 +1297,9 @@ paths:
                 - $ref: '#/components/schemas/CreateTranslationResponseVerboseJson'
                   x-stainless-skip:
                   - go
+            text/plain:
+              schema:
+                type: string
         '429':
           $ref: '#/components/responses/InferenceRateLimited'
         '503':
@@ -22620,6 +22651,121 @@ paths:
               "created_at": 1741900000,
               "metadata": {"topic": "project-x"}
             }
+  /responses/{response_id}/cancel?beta=true:
+    post:
+      operationId: beta_cancelResponse
+      tags:
+      - Responses
+      summary: Cancel a response
+      description: |
+        Cancels a model response with the given ID. Only responses created with
+        the `background` parameter set to `true` can be cancelled.
+        [Learn more](https://developers.openai.com/api/docs/guides/background).
+      parameters:
+      - in: path
+        name: response_id
+        required: true
+        schema:
+          type: string
+          example: resp_677efb5139a88190b512bc3fef8e535d
+        description: The ID of the response to cancel.
+      - name: openai-beta
+        in: header
+        required: false
+        description: Optional beta features to enable for this request.
+        style: simple
+        explode: false
+        schema:
+          type: array
+          x-stainless-param: betas
+          items:
+            type: string
+            enum:
+            - responses_multi_agent=v1
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BetaResponse'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BetaError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-oaiMeta:
+        group: responses
+        examples:
+          request:
+            curl: |
+              curl -X POST https://api.openai.com/v1/responses/resp_123/cancel \
+                  -H "Content-Type: application/json" \
+                  -H "Authorization: Bearer $OPENAI_API_KEY"
+            javascript: |
+              import OpenAI from "openai";
+              const client = new OpenAI();
+
+              const response = await client.responses.cancel("resp_123");
+              console.log(response);
+            python: |
+              from openai import OpenAI
+              client = OpenAI()
+
+              response = client.responses.cancel("resp_123")
+              print(response)
+          response: |
+            {
+              "id": "resp_67cb71b351908190a308f3859487620d06981a8637e6bc44",
+              "object": "response",
+              "created_at": 1741386163,
+              "status": "cancelled",
+              "background": true,
+              "completed_at": null,
+              "error": null,
+              "incomplete_details": null,
+              "instructions": null,
+              "max_output_tokens": null,
+              "model": "gpt-6-astra",
+              "output": [
+                {
+                  "type": "message",
+                  "id": "msg_67cb71b3c2b0819084d481baaaf148f206981a8637e6bc44",
+                  "status": "in_progress",
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "output_text",
+                      "text": "Silent circuits hum,  \nThoughts emerge in data streams—  \nDigital dawn breaks.",
+                      "annotations": []
+                    }
+                  ]
+                }
+              ],
+              "parallel_tool_calls": true,
+              "previous_response_id": null,
+              "reasoning": {
+                "effort": null,
+                "summary": null
+              },
+              "store": true,
+              "temperature": 1.0,
+              "text": {
+                "format": {
+                  "type": "text"
+                }
+              },
+              "tool_choice": "auto",
+              "tools": [],
+              "top_p": 1.0,
+              "truncation": "disabled",
+              "usage": null,
+              "user": null,
+              "metadata": {}
+            }
   /safety/alerts/{id}:
     get:
       summary: Get project safety alert
@@ -22689,6 +22835,413 @@ paths:
       x-oaiMeta:
         group: live
         returns: The stored session recording as binary stereo WAV audio.
+  /responses/input_tokens?beta=true:
+    post:
+      x-oaiMeta:
+        group: responses
+        examples:
+          request:
+            curl: |
+              curl -X POST https://api.openai.com/v1/responses/input_tokens \
+                  -H "Content-Type: application/json" \
+                  -H "Authorization: Bearer $OPENAI_API_KEY" \
+                  -d '{
+                    "model": "gpt-6-astra",
+                    "input": "Tell me a joke."
+                  }'
+            javascript: |
+              import OpenAI from "openai";
+
+              const client = new OpenAI();
+
+              const response = await client.responses.inputTokens.count({
+                model: "gpt-6-astra",
+                input: "Tell me a joke.",
+              });
+
+              console.log(response.input_tokens);
+            python: |
+              from openai import OpenAI
+
+              client = OpenAI()
+
+              response = client.responses.input_tokens.count(
+                  model="gpt-6-astra",
+                  input="Tell me a joke."
+              )
+              print(response.input_tokens)
+            go: |
+              package main
+
+              import (
+                "context"
+                "fmt"
+
+                "github.com/openai/openai-go"
+                "github.com/openai/openai-go/responses"
+              )
+
+              func main() {
+                client := openai.NewClient()
+                response, err := client.Responses.InputTokens.Count(context.TODO(), responses.InputTokenCountParams{
+                  Model: "gpt-6-astra",
+                  Input: "Tell me a joke.",
+                })
+                if err != nil {
+                  panic(err.Error())
+                }
+                fmt.Printf("%+v\n", response.InputTokens)
+              }
+            ruby: |
+              require "openai"
+
+              openai = OpenAI::Client.new
+
+              response = openai.responses.input_tokens.count(model: "gpt-6-astra", input: "Tell me a joke.")
+
+              puts(response)
+            java: |
+              package com.openai.example;
+
+              import com.openai.client.OpenAIClient;
+              import com.openai.client.okhttp.OpenAIOkHttpClient;
+              import com.openai.models.responses.inputtokens.InputTokenCountParams;
+              import com.openai.models.responses.inputtokens.InputTokenCountResponse;
+
+              public final class Main {
+                  private Main() {}
+
+                  public static void main(String[] args) {
+                      OpenAIClient client = OpenAIOkHttpClient.fromEnv();
+
+                      InputTokenCountParams params = InputTokenCountParams.builder()
+                          .model("gpt-6-astra")
+                          .input("Tell me a joke.")
+                          .build();
+
+                      InputTokenCountResponse response = client.responses().inputTokens().count(params);
+                  }
+              }
+          response: |
+            {
+              "object": "response.input_tokens",
+              "input_tokens": 11
+            }
+      summary: Get input token counts
+      description: |-
+        Returns input token counts of the request.
+
+        Returns an object with `object` set to `response.input_tokens` and an `input_tokens` count.
+      operationId: beta_Getinputtokencounts
+      parameters:
+      - name: openai-beta
+        in: header
+        required: false
+        description: Optional beta features to enable for this request.
+        style: simple
+        explode: false
+        schema:
+          type: array
+          x-stainless-param: betas
+          items:
+            type: string
+            enum:
+            - responses_multi_agent=v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BetaTokenCountsBody'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BetaTokenCountsResource'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /responses/{response_id}/input_items?beta=true:
+    get:
+      operationId: beta_listInputItems
+      tags:
+      - Responses
+      summary: List input items
+      description: Returns a list of input items for a given response.
+      parameters:
+      - in: path
+        name: response_id
+        required: true
+        schema:
+          type: string
+        description: The ID of the response to retrieve input items for.
+      - name: limit
+        in: query
+        description: |
+          A limit on the number of objects to be returned. Limit can range between
+          1 and 100, and the default is 20.
+        required: false
+        schema:
+          type: integer
+          default: 20
+      - in: query
+        name: order
+        schema:
+          type: string
+          enum:
+          - asc
+          - desc
+        description: |
+          The order to return the input items in. Default is `desc`.
+          - `asc`: Return the input items in ascending order.
+          - `desc`: Return the input items in descending order.
+      - in: query
+        name: after
+        schema:
+          type: string
+        description: |
+          An item ID to list items after, used in pagination.
+      - in: query
+        name: include
+        schema:
+          type: array
+          items:
+            $ref: '#/components/schemas/BetaIncludeEnum'
+        description: |
+          Additional fields to include in the response. See the `include`
+          parameter for Response creation above for more information.
+      - name: openai-beta
+        in: header
+        required: false
+        description: Optional beta features to enable for this request.
+        style: simple
+        explode: false
+        schema:
+          type: array
+          x-stainless-param: betas
+          items:
+            type: string
+            enum:
+            - responses_multi_agent=v1
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BetaResponseItemList'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-oaiMeta:
+        group: responses
+        examples:
+          request:
+            curl: |
+              curl https://api.openai.com/v1/responses/resp_abc123/input_items \
+                -H "Content-Type: application/json" \
+                -H "Authorization: Bearer $OPENAI_API_KEY"
+            javascript: |
+              import OpenAI from "openai";
+              const client = new OpenAI();
+
+              const response = await client.responses.inputItems.list("resp_123");
+              console.log(response.data);
+            python: |
+              from openai import OpenAI
+              client = OpenAI()
+
+              response = client.responses.input_items.list("resp_123")
+              print(response.data)
+          response: |
+            {
+              "object": "list",
+              "data": [
+                {
+                  "id": "msg_abc123",
+                  "type": "message",
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "input_text",
+                      "text": "Tell me a three sentence bedtime story about a unicorn."
+                    }
+                  ]
+                }
+              ],
+              "first_id": "msg_abc123",
+              "last_id": "msg_abc123",
+              "has_more": false
+            }
+  /responses/compact?beta=true:
+    post:
+      x-oaiMeta:
+        group: responses
+        examples:
+          request:
+            curl: |
+              curl -X POST https://api.openai.com/v1/responses/compact \
+                  -H "Content-Type: application/json" \
+                  -H "Authorization: Bearer $OPENAI_API_KEY" \
+                  -d '{
+                    "model": "gpt-6-astra",
+                    "input": [
+                      {
+                        "role": "user",
+                        "content": "Create a simple landing page for a dog petting café."
+                      },
+                      {
+                        "id": "msg_001",
+                        "type": "message",
+                        "status": "completed",
+                        "content": [
+                          {
+                            "type": "output_text",
+                            "annotations": [],
+                            "logprobs": [],
+                            "text": "Below is a single file, ready-to-use landing page for a dog petting café:..."
+                          }
+                        ],
+                        "role": "assistant"
+                      }
+                    ]
+                  }'
+            javascript: |
+              import OpenAI from "openai";
+
+              const openai = new OpenAI();
+
+              // Compact the previous response if you are running out of tokens
+              const compactedResponse = await openai.responses.compact({
+                model: "gpt-6-astra",
+                input: [
+                  {
+                    role: "user",
+                    content: "Create a simple landing page for a dog petting café.",
+                  },
+                  // All items returned from previous requests are included here, like reasoning, message, function call, etc.
+                  {
+                    id: "msg_030d085c0b53e67e0069332e3a72d4819c96c6f2c4adc15d33",
+                    type: "message",
+                    status: "completed",
+                    content: [
+                      {
+                        type: "output_text",
+                        annotations: [],
+                        logprobs: [],
+                        text: "Below is a single file, ready-to-use landing page for a dog petting café:...",
+                      },
+                    ],
+                    role: "assistant",
+                  },
+                ],
+              });
+
+              // Pass the compactedResponse.output as input to the next request
+              console.log(compactedResponse);
+            python: |
+              from openai import OpenAI
+
+              client = OpenAI()
+
+              compacted_response = client.responses.compact(
+                  model="gpt-6-astra",
+                  input=[
+                  {
+                      "role": "user",
+                      "content": "Create a simple landing page for a dog petting cafe.",
+                  },
+                  # All items returned from previous requests are included here, like reasoning, message, function call, etc.
+                  {
+                      "id": "msg_001",
+                      "type": "message",
+                      "status": "completed",
+                      "content": [
+                      {
+                          "type": "output_text",
+                          "annotations": [],
+                          "logprobs": [],
+                          "text": "Below is a single file, ready-to-use landing page for a dog petting café:...",
+                      },
+                      ],
+                      "role": "assistant",
+                  },
+                  ]
+              )
+              # Pass the compacted_response.output as input to the next request
+              print(compacted_response)
+          response: |
+            {
+              "id": "resp_001",
+              "object": "response.compaction",
+              "created_at": 1764967971,
+              "output": [
+                {
+                  "id": "msg_000",
+                  "type": "message",
+                  "status": "completed",
+                  "content": [
+                    {
+                      "type": "input_text",
+                      "text": "Create a simple landing page for a dog petting cafe."
+                    }
+                  ],
+                  "role": "user"
+                },
+                {
+                  "id": "cmp_001",
+                  "type": "compaction",
+                  "encrypted_content": "gAAAAABpM0Yj-...="
+                }
+              ],
+              "usage": {
+                "input_tokens": 139,
+                "input_tokens_details": {
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0
+                },
+                "output_tokens": 438,
+                "output_tokens_details": {
+                  "reasoning_tokens": 64
+                },
+                "total_tokens": 577
+              }
+            }
+      summary: Compact conversation
+      description: |-
+        Compact a conversation. Returns a compacted response object.
+
+        Learn when and how to compact long-running conversations in the [conversation state guide](https://developers.openai.com/api/docs/guides/conversation-state#managing-the-context-window). For ZDR-compatible compaction details, see [Compaction (advanced)](https://developers.openai.com/api/docs/guides/conversation-state#compaction-advanced).
+      operationId: beta_Compactconversation
+      parameters:
+      - name: openai-beta
+        in: header
+        required: false
+        description: Optional beta features to enable for this request.
+        style: simple
+        explode: false
+        schema:
+          type: array
+          x-stainless-param: betas
+          items:
+            type: string
+            enum:
+            - responses_multi_agent=v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BetaCompactResponseMethodPublicBody'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BetaCompactResource'
+        '429':
+          $ref: '#/components/responses/InferenceRateLimited'
+        '503':
+          $ref: '#/components/responses/InferenceServiceUnavailable'
   /organization/spend_limit:
     get:
       summary: Get organization spend limit
@@ -23742,27 +24295,6 @@ paths:
             }
   /responses/input_tokens:
     post:
-      summary: Get input token counts
-      description: |-
-        Returns input token counts of the request.
-
-        Returns an object with `object` set to `response.input_tokens` and an `input_tokens` count.
-      operationId: Getinputtokencounts
-      parameters: []
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TokenCountsBody'
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokenCountsResource'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
       x-oaiMeta:
         group: responses
         examples:
@@ -23853,31 +24385,29 @@ paths:
               "object": "response.input_tokens",
               "input_tokens": 11
             }
-  /responses/compact:
-    post:
-      summary: Compact conversation
+      summary: Get input token counts
       description: |-
-        Compact a conversation. Returns a compacted response object.
+        Returns input token counts of the request.
 
-        Learn when and how to compact long-running conversations in the [conversation state guide](https://developers.openai.com/api/docs/guides/conversation-state#managing-the-context-window). For ZDR-compatible compaction details, see [Compaction (advanced)](https://developers.openai.com/api/docs/guides/conversation-state#compaction-advanced).
-      operationId: Compactconversation
+        Returns an object with `object` set to `response.input_tokens` and an `input_tokens` count.
+      operationId: Getinputtokencounts
       parameters: []
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CompactResponseMethodPublicBody'
+              $ref: '#/components/schemas/TokenCountsBody'
       responses:
         '200':
           description: Success
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CompactResource'
+                $ref: '#/components/schemas/TokenCountsResource'
         '429':
-          $ref: '#/components/responses/InferenceRateLimited'
-        '503':
-          $ref: '#/components/responses/InferenceServiceUnavailable'
+          $ref: '#/components/responses/TooManyRequests'
+  /responses/compact:
+    post:
       x-oaiMeta:
         group: responses
         examples:
@@ -24010,6 +24540,29 @@ paths:
                 "total_tokens": 577
               }
             }
+      summary: Compact conversation
+      description: |-
+        Compact a conversation. Returns a compacted response object.
+
+        Learn when and how to compact long-running conversations in the [conversation state guide](https://developers.openai.com/api/docs/guides/conversation-state#managing-the-context-window). For ZDR-compatible compaction details, see [Compaction (advanced)](https://developers.openai.com/api/docs/guides/conversation-state#compaction-advanced).
+      operationId: Compactconversation
+      parameters: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompactResponseMethodPublicBody'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompactResource'
+        '429':
+          $ref: '#/components/responses/InferenceRateLimited'
+        '503':
+          $ref: '#/components/responses/InferenceServiceUnavailable'
   /skills:
     post:
       tags:
@@ -29887,528 +30440,6 @@ paths:
               "object": "response",
               "deleted": true
             }
-  /responses/{response_id}/cancel?beta=true:
-    post:
-      operationId: beta_cancelResponse
-      tags:
-      - Responses
-      summary: Cancel a response
-      description: |
-        Cancels a model response with the given ID. Only responses created with
-        the `background` parameter set to `true` can be cancelled.
-        [Learn more](https://developers.openai.com/api/docs/guides/background).
-      parameters:
-      - in: path
-        name: response_id
-        required: true
-        schema:
-          type: string
-          example: resp_677efb5139a88190b512bc3fef8e535d
-        description: The ID of the response to cancel.
-      - name: openai-beta
-        in: header
-        required: false
-        description: Optional beta features to enable for this request.
-        style: simple
-        explode: false
-        schema:
-          type: array
-          x-stainless-param: betas
-          items:
-            type: string
-            enum:
-            - responses_multi_agent=v1
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BetaResponse'
-        '404':
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BetaError'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-      x-oaiMeta:
-        group: responses
-        examples:
-          request:
-            curl: |
-              curl -X POST https://api.openai.com/v1/responses/resp_123/cancel \
-                  -H "Content-Type: application/json" \
-                  -H "Authorization: Bearer $OPENAI_API_KEY"
-            javascript: |
-              import OpenAI from "openai";
-              const client = new OpenAI();
-
-              const response = await client.responses.cancel("resp_123");
-              console.log(response);
-            python: |
-              from openai import OpenAI
-              client = OpenAI()
-
-              response = client.responses.cancel("resp_123")
-              print(response)
-          response: |
-            {
-              "id": "resp_67cb71b351908190a308f3859487620d06981a8637e6bc44",
-              "object": "response",
-              "created_at": 1741386163,
-              "status": "cancelled",
-              "background": true,
-              "completed_at": null,
-              "error": null,
-              "incomplete_details": null,
-              "instructions": null,
-              "max_output_tokens": null,
-              "model": "gpt-6-astra",
-              "output": [
-                {
-                  "type": "message",
-                  "id": "msg_67cb71b3c2b0819084d481baaaf148f206981a8637e6bc44",
-                  "status": "in_progress",
-                  "role": "assistant",
-                  "content": [
-                    {
-                      "type": "output_text",
-                      "text": "Silent circuits hum,  \nThoughts emerge in data streams—  \nDigital dawn breaks.",
-                      "annotations": []
-                    }
-                  ]
-                }
-              ],
-              "parallel_tool_calls": true,
-              "previous_response_id": null,
-              "reasoning": {
-                "effort": null,
-                "summary": null
-              },
-              "store": true,
-              "temperature": 1.0,
-              "text": {
-                "format": {
-                  "type": "text"
-                }
-              },
-              "tool_choice": "auto",
-              "tools": [],
-              "top_p": 1.0,
-              "truncation": "disabled",
-              "usage": null,
-              "user": null,
-              "metadata": {}
-            }
-  /responses/compact?beta=true:
-    post:
-      summary: Compact conversation
-      description: |-
-        Compact a conversation. Returns a compacted response object.
-
-        Learn when and how to compact long-running conversations in the [conversation state guide](https://developers.openai.com/api/docs/guides/conversation-state#managing-the-context-window). For ZDR-compatible compaction details, see [Compaction (advanced)](https://developers.openai.com/api/docs/guides/conversation-state#compaction-advanced).
-      operationId: beta_Compactconversation
-      parameters:
-      - name: openai-beta
-        in: header
-        required: false
-        description: Optional beta features to enable for this request.
-        style: simple
-        explode: false
-        schema:
-          type: array
-          x-stainless-param: betas
-          items:
-            type: string
-            enum:
-            - responses_multi_agent=v1
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/BetaCompactResponseMethodPublicBody'
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BetaCompactResource'
-        '429':
-          $ref: '#/components/responses/InferenceRateLimited'
-        '503':
-          $ref: '#/components/responses/InferenceServiceUnavailable'
-      x-oaiMeta:
-        group: responses
-        examples:
-          request:
-            curl: |
-              curl -X POST https://api.openai.com/v1/responses/compact \
-                  -H "Content-Type: application/json" \
-                  -H "Authorization: Bearer $OPENAI_API_KEY" \
-                  -d '{
-                    "model": "gpt-6-astra",
-                    "input": [
-                      {
-                        "role": "user",
-                        "content": "Create a simple landing page for a dog petting café."
-                      },
-                      {
-                        "id": "msg_001",
-                        "type": "message",
-                        "status": "completed",
-                        "content": [
-                          {
-                            "type": "output_text",
-                            "annotations": [],
-                            "logprobs": [],
-                            "text": "Below is a single file, ready-to-use landing page for a dog petting café:..."
-                          }
-                        ],
-                        "role": "assistant"
-                      }
-                    ]
-                  }'
-            javascript: |
-              import OpenAI from "openai";
-
-              const openai = new OpenAI();
-
-              // Compact the previous response if you are running out of tokens
-              const compactedResponse = await openai.responses.compact({
-                model: "gpt-6-astra",
-                input: [
-                  {
-                    role: "user",
-                    content: "Create a simple landing page for a dog petting café.",
-                  },
-                  // All items returned from previous requests are included here, like reasoning, message, function call, etc.
-                  {
-                    id: "msg_030d085c0b53e67e0069332e3a72d4819c96c6f2c4adc15d33",
-                    type: "message",
-                    status: "completed",
-                    content: [
-                      {
-                        type: "output_text",
-                        annotations: [],
-                        logprobs: [],
-                        text: "Below is a single file, ready-to-use landing page for a dog petting café:...",
-                      },
-                    ],
-                    role: "assistant",
-                  },
-                ],
-              });
-
-              // Pass the compactedResponse.output as input to the next request
-              console.log(compactedResponse);
-            python: |
-              from openai import OpenAI
-
-              client = OpenAI()
-
-              compacted_response = client.responses.compact(
-                  model="gpt-6-astra",
-                  input=[
-                  {
-                      "role": "user",
-                      "content": "Create a simple landing page for a dog petting cafe.",
-                  },
-                  # All items returned from previous requests are included here, like reasoning, message, function call, etc.
-                  {
-                      "id": "msg_001",
-                      "type": "message",
-                      "status": "completed",
-                      "content": [
-                      {
-                          "type": "output_text",
-                          "annotations": [],
-                          "logprobs": [],
-                          "text": "Below is a single file, ready-to-use landing page for a dog petting café:...",
-                      },
-                      ],
-                      "role": "assistant",
-                  },
-                  ]
-              )
-              # Pass the compacted_response.output as input to the next request
-              print(compacted_response)
-          response: |
-            {
-              "id": "resp_001",
-              "object": "response.compaction",
-              "created_at": 1764967971,
-              "output": [
-                {
-                  "id": "msg_000",
-                  "type": "message",
-                  "status": "completed",
-                  "content": [
-                    {
-                      "type": "input_text",
-                      "text": "Create a simple landing page for a dog petting cafe."
-                    }
-                  ],
-                  "role": "user"
-                },
-                {
-                  "id": "cmp_001",
-                  "type": "compaction",
-                  "encrypted_content": "gAAAAABpM0Yj-...="
-                }
-              ],
-              "usage": {
-                "input_tokens": 139,
-                "input_tokens_details": {
-                  "cached_tokens": 0,
-                  "cache_write_tokens": 0
-                },
-                "output_tokens": 438,
-                "output_tokens_details": {
-                  "reasoning_tokens": 64
-                },
-                "total_tokens": 577
-              }
-            }
-  /responses/{response_id}/input_items?beta=true:
-    get:
-      operationId: beta_listInputItems
-      tags:
-      - Responses
-      summary: List input items
-      description: Returns a list of input items for a given response.
-      parameters:
-      - in: path
-        name: response_id
-        required: true
-        schema:
-          type: string
-        description: The ID of the response to retrieve input items for.
-      - name: limit
-        in: query
-        description: |
-          A limit on the number of objects to be returned. Limit can range between
-          1 and 100, and the default is 20.
-        required: false
-        schema:
-          type: integer
-          default: 20
-      - in: query
-        name: order
-        schema:
-          type: string
-          enum:
-          - asc
-          - desc
-        description: |
-          The order to return the input items in. Default is `desc`.
-          - `asc`: Return the input items in ascending order.
-          - `desc`: Return the input items in descending order.
-      - in: query
-        name: after
-        schema:
-          type: string
-        description: |
-          An item ID to list items after, used in pagination.
-      - in: query
-        name: include
-        schema:
-          type: array
-          items:
-            $ref: '#/components/schemas/BetaIncludeEnum'
-        description: |
-          Additional fields to include in the response. See the `include`
-          parameter for Response creation above for more information.
-      - name: openai-beta
-        in: header
-        required: false
-        description: Optional beta features to enable for this request.
-        style: simple
-        explode: false
-        schema:
-          type: array
-          x-stainless-param: betas
-          items:
-            type: string
-            enum:
-            - responses_multi_agent=v1
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BetaResponseItemList'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-      x-oaiMeta:
-        group: responses
-        examples:
-          request:
-            curl: |
-              curl https://api.openai.com/v1/responses/resp_abc123/input_items \
-                -H "Content-Type: application/json" \
-                -H "Authorization: Bearer $OPENAI_API_KEY"
-            javascript: |
-              import OpenAI from "openai";
-              const client = new OpenAI();
-
-              const response = await client.responses.inputItems.list("resp_123");
-              console.log(response.data);
-            python: |
-              from openai import OpenAI
-              client = OpenAI()
-
-              response = client.responses.input_items.list("resp_123")
-              print(response.data)
-          response: |
-            {
-              "object": "list",
-              "data": [
-                {
-                  "id": "msg_abc123",
-                  "type": "message",
-                  "role": "user",
-                  "content": [
-                    {
-                      "type": "input_text",
-                      "text": "Tell me a three sentence bedtime story about a unicorn."
-                    }
-                  ]
-                }
-              ],
-              "first_id": "msg_abc123",
-              "last_id": "msg_abc123",
-              "has_more": false
-            }
-  /responses/input_tokens?beta=true:
-    post:
-      summary: Get input token counts
-      description: |-
-        Returns input token counts of the request.
-
-        Returns an object with `object` set to `response.input_tokens` and an `input_tokens` count.
-      operationId: beta_Getinputtokencounts
-      parameters:
-      - name: openai-beta
-        in: header
-        required: false
-        description: Optional beta features to enable for this request.
-        style: simple
-        explode: false
-        schema:
-          type: array
-          x-stainless-param: betas
-          items:
-            type: string
-            enum:
-            - responses_multi_agent=v1
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/BetaTokenCountsBody'
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BetaTokenCountsResource'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-      x-oaiMeta:
-        group: responses
-        examples:
-          request:
-            curl: |
-              curl -X POST https://api.openai.com/v1/responses/input_tokens \
-                  -H "Content-Type: application/json" \
-                  -H "Authorization: Bearer $OPENAI_API_KEY" \
-                  -d '{
-                    "model": "gpt-6-astra",
-                    "input": "Tell me a joke."
-                  }'
-            javascript: |
-              import OpenAI from "openai";
-
-              const client = new OpenAI();
-
-              const response = await client.responses.inputTokens.count({
-                model: "gpt-6-astra",
-                input: "Tell me a joke.",
-              });
-
-              console.log(response.input_tokens);
-            python: |
-              from openai import OpenAI
-
-              client = OpenAI()
-
-              response = client.responses.input_tokens.count(
-                  model="gpt-6-astra",
-                  input="Tell me a joke."
-              )
-              print(response.input_tokens)
-            go: |
-              package main
-
-              import (
-                "context"
-                "fmt"
-
-                "github.com/openai/openai-go"
-                "github.com/openai/openai-go/responses"
-              )
-
-              func main() {
-                client := openai.NewClient()
-                response, err := client.Responses.InputTokens.Count(context.TODO(), responses.InputTokenCountParams{
-                  Model: "gpt-6-astra",
-                  Input: "Tell me a joke.",
-                })
-                if err != nil {
-                  panic(err.Error())
-                }
-                fmt.Printf("%+v\n", response.InputTokens)
-              }
-            ruby: |
-              require "openai"
-
-              openai = OpenAI::Client.new
-
-              response = openai.responses.input_tokens.count(model: "gpt-6-astra", input: "Tell me a joke.")
-
-              puts(response)
-            java: |
-              package com.openai.example;
-
-              import com.openai.client.OpenAIClient;
-              import com.openai.client.okhttp.OpenAIOkHttpClient;
-              import com.openai.models.responses.inputtokens.InputTokenCountParams;
-              import com.openai.models.responses.inputtokens.InputTokenCountResponse;
-
-              public final class Main {
-                  private Main() {}
-
-                  public static void main(String[] args) {
-                      OpenAIClient client = OpenAIOkHttpClient.fromEnv();
-
-                      InputTokenCountParams params = InputTokenCountParams.builder()
-                          .model("gpt-6-astra")
-                          .input("Tell me a joke.")
-                          .build();
-
-                      InputTokenCountResponse response = client.responses().inputTokens().count(params);
-                  }
-              }
-          response: |
-            {
-              "object": "response.input_tokens",
-              "input_tokens": 11
-            }
 webhooks:
   batch_cancelled:
     post:
@@ -31452,6 +31483,36 @@ components:
             id:
               type: string
               description: The ID of the external key configuration.
+        certificates.deactivated:
+          type: object
+          description: The details for events with this `type`.
+          properties:
+            certificates:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: The certificate ID.
+                  name:
+                    type: string
+                    description: The name of the certificate.
+        certificates.activated:
+          type: object
+          description: The details for events with this `type`.
+          properties:
+            certificates:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: The certificate ID.
+                  name:
+                    type: string
+                    description: The name of the certificate.
         group.created:
           type: object
           description: The details for events with this `type`.
@@ -32106,36 +32167,6 @@ components:
             certificate:
               type: string
               description: The certificate content in PEM format.
-        certificates.activated:
-          type: object
-          description: The details for events with this `type`.
-          properties:
-            certificates:
-              type: array
-              items:
-                type: object
-                properties:
-                  id:
-                    type: string
-                    description: The certificate ID.
-                  name:
-                    type: string
-                    description: The name of the certificate.
-        certificates.deactivated:
-          type: object
-          description: The details for events with this `type`.
-          properties:
-            certificates:
-              type: array
-              items:
-                type: object
-                properties:
-                  id:
-                    type: string
-                    description: The certificate ID.
-                  name:
-                    type: string
-                    description: The name of the certificate.
       required:
       - id
       - type
@@ -66130,6 +66161,40 @@ components:
             "type": "safety.alert.created",
             "data": {"id": "alert_0123456789abcdef0123456789abcdef"}
           }
+    BetaInputAudio:
+      type: object
+      title: Input audio
+      description: |
+        An audio input to the model.
+      properties:
+        type:
+          type: string
+          description: |
+            The type of the input item. Always `input_audio`.
+          enum:
+          - input_audio
+          x-stainless-const: true
+        input_audio:
+          type: object
+          properties:
+            data:
+              type: string
+              description: |
+                Base64-encoded audio data.
+            format:
+              type: string
+              description: |
+                The format of the audio data. Currently supported formats are `mp3` and
+                `wav`.
+              enum:
+              - mp3
+              - wav
+          required:
+          - data
+          - format
+      required:
+      - type
+      - input_audio
     WebhookSafetyOrgAlertCreated:
       type: object
       title: safety.org_alert.created
@@ -66181,6 +66246,31 @@ components:
             "type": "safety.org_alert.created",
             "data": {"id": "alert_0123456789abcdef0123456789abcdef"}
           }
+    BetaOutputAudio:
+      type: object
+      title: Output audio
+      description: |
+        An audio output from the model.
+      properties:
+        type:
+          type: string
+          description: |
+            The type of the output audio. Always `output_audio`.
+          enum:
+          - output_audio
+          x-stainless-const: true
+        data:
+          type: string
+          description: |
+            Base64-encoded audio data from the model.
+        transcript:
+          type: string
+          description: |
+            The transcript of the audio data from the model.
+      required:
+      - type
+      - data
+      - transcript
     ModerationInputType:
       type: string
       enum:
@@ -70339,6 +70429,96 @@ components:
         URI that should appear in the SIP Refer-To header. Supports values like
         `tel:+14155550123` or `sip:agent@example.com`.
       example: tel:+14155550123
+    BetaCreateModelResponseProperties:
+      allOf:
+      - $ref: '#/components/schemas/BetaModelResponseProperties'
+      - type: object
+        properties:
+          prompt_cache_options:
+            $ref: '#/components/schemas/BetaPromptCacheOptionsParam'
+          top_logprobs:
+            description: |
+              An integer between 0 and 20 specifying the maximum number of most likely
+              tokens to return at each token position, each with an associated log
+              probability. In some cases, the number of returned tokens may be fewer than
+              requested.
+            type: integer
+            minimum: 0
+            maximum: 20
+    BetaModerationMode:
+      type: string
+      enum:
+      - score
+      - block
+    BetaResponseSteerEvent:
+      type: object
+      title: ResponseSteerEvent
+      additionalProperties: false
+      description: |
+        Queues user input to steer a response on this WebSocket connection. Input
+        can contain text, images, and files. Steering is supported only for
+        single-agent responses on models and execution modes that support steering.
+        Responses bound to a conversation or using automatic compaction do not
+        support steering.
+
+        A `response.steer.accepted` event acknowledges that the server owns the
+        queued input, not that it has been applied. The successor's `response.created`
+        event is the commit point. Input that cannot be committed is returned in
+        `response.steer.failed`.
+
+        Steering may cause the active response to finish at a safe output boundary
+        with `response.incomplete` and `incomplete_details.reason` set to `steered`,
+        followed automatically by a successor `response.created`. Normal completion
+        can also be followed by an automatic successor. Automatic successors inherit
+        the previous response's settings and continue from it with the queued input.
+
+        If the response stops for client-owned tool output or approval, accepted
+        steering input remains queued and `response.steer.pending` is emitted after
+        `response.completed`. Fill the `required_input` stubs from that event with
+        saved tool results or approval decisions, and send one explicit
+        `response.create` per parent with the same `previous_response_id` and
+        WebSocket lane. Do not rerun tools or resend accepted steering input. The
+        queued input is prepended in submission order to that request's input, and
+        the explicit request retains its own settings.
+
+        This event accepts only `type`, `previous_response_id`, and `input`. Do not
+        send `stream_id`; the target response determines the WebSocket lane.
+      properties:
+        type:
+          type: string
+          enum:
+          - response.steer
+          description: The event discriminator. Always `response.steer`.
+          x-stainless-const: true
+        previous_response_id:
+          type: string
+          description: The ID of the response to steer on this WebSocket connection.
+        input:
+          $ref: '#/components/schemas/BetaResponseSteerInput'
+      required:
+      - type
+      - previous_response_id
+      - input
+      x-oaiMeta:
+        name: response.steer
+        group: responses
+        example: |
+          {
+            "type": "response.steer",
+            "previous_response_id": "resp_123",
+            "input": [
+              {
+                "type": "message",
+                "role": "user",
+                "content": [
+                  {
+                    "type": "input_text",
+                    "text": "Prioritize the database rollout."
+                  }
+                ]
+              }
+            ]
+          }
     PublicProjectResidency:
       type: string
       enum:
@@ -70843,6 +71023,127 @@ components:
       - object
       - deleted
       - id
+    BetaResponsesClientEvent:
+      discriminator:
+        propertyName: type
+      description: |
+        Client events accepted by the Responses WebSocket server.
+      anyOf:
+      - $ref: '#/components/schemas/BetaResponsesClientEventResponseCreate'
+      - $ref: '#/components/schemas/BetaResponseSteerEvent'
+      - $ref: '#/components/schemas/BetaResponseInjectEvent'
+    BetaResponseInjectEvent:
+      type: object
+      title: ResponseInjectEvent
+      description: |
+        Injects input items into an active response over a WebSocket connection.
+        The items are validated and committed atomically. Currently, the server
+        accepts client-owned tool outputs that resume a waiting agent.
+      properties:
+        type:
+          type: string
+          enum:
+          - response.inject
+          description: The event discriminator. Always `response.inject`.
+          x-stainless-const: true
+        response_id:
+          type: string
+          description: The ID of the active response that should receive the input.
+        input:
+          type: array
+          maxItems: 16384
+          description: Input items to inject into the active response.
+          items:
+            $ref: '#/components/schemas/BetaInputItem'
+      required:
+      - type
+      - response_id
+      - input
+      x-oai-beta: responses_multi_agent=v1
+      x-oaiMeta:
+        example: |
+          {
+            "type": "response.inject",
+            "response_id": "resp_123",
+            "input": [
+              {
+                "type": "function_call_output",
+                "call_id": "call_123",
+                "output": "{\"temperature\":72}"
+              }
+            ]
+          }
+    BetaResponsesWebSocketStreamEvent:
+      allOf:
+      - anyOf:
+        - $ref: '#/components/schemas/BetaResponseAudioDeltaEvent'
+        - $ref: '#/components/schemas/BetaResponseAudioDoneEvent'
+        - $ref: '#/components/schemas/BetaResponseAudioTranscriptDeltaEvent'
+        - $ref: '#/components/schemas/BetaResponseAudioTranscriptDoneEvent'
+        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCodeDeltaEvent'
+        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCodeDoneEvent'
+        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCompletedEvent'
+        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallInProgressEvent'
+        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallInterpretingEvent'
+        - $ref: '#/components/schemas/BetaResponseCompactionCompactingStreamingEvent'
+        - $ref: '#/components/schemas/BetaResponseCompletedEvent'
+        - $ref: '#/components/schemas/BetaResponseContentPartAddedEvent'
+        - $ref: '#/components/schemas/BetaResponseContentPartDoneEvent'
+        - $ref: '#/components/schemas/BetaResponseCreatedEvent'
+        - $ref: '#/components/schemas/BetaResponseFileSearchCallCompletedEvent'
+        - $ref: '#/components/schemas/BetaResponseFileSearchCallInProgressEvent'
+        - $ref: '#/components/schemas/BetaResponseFileSearchCallSearchingEvent'
+        - $ref: '#/components/schemas/BetaResponseFunctionCallArgumentsDeltaEvent'
+        - $ref: '#/components/schemas/BetaResponseFunctionCallArgumentsDoneEvent'
+        - $ref: '#/components/schemas/BetaResponseShellCallCommandAddedStreamingEvent'
+        - $ref: '#/components/schemas/BetaResponseShellCallCommandDeltaStreamingEvent'
+        - $ref: '#/components/schemas/BetaResponseShellCallCommandDoneStreamingEvent'
+        - $ref: '#/components/schemas/BetaResponseShellCallOutputContentDeltaStreamingEvent'
+          x-stainless-skip:
+          - go
+        - $ref: '#/components/schemas/BetaResponseShellCallOutputContentDoneStreamingEvent'
+        - $ref: '#/components/schemas/BetaResponseInProgressEvent'
+        - $ref: '#/components/schemas/BetaResponseFailedEvent'
+        - $ref: '#/components/schemas/BetaResponseIncompleteEvent'
+        - $ref: '#/components/schemas/BetaResponseOutputItemAddedEvent'
+        - $ref: '#/components/schemas/BetaResponseOutputItemDoneEvent'
+        - $ref: '#/components/schemas/BetaResponseReasoningSummaryPartAddedEvent'
+        - $ref: '#/components/schemas/BetaResponseReasoningSummaryPartDoneEvent'
+        - $ref: '#/components/schemas/BetaResponseReasoningSummaryTextDeltaEvent'
+        - $ref: '#/components/schemas/BetaResponseReasoningSummaryTextDoneEvent'
+        - $ref: '#/components/schemas/BetaResponseReasoningTextDeltaEvent'
+        - $ref: '#/components/schemas/BetaResponseReasoningTextDoneEvent'
+        - $ref: '#/components/schemas/BetaResponseRefusalDeltaEvent'
+        - $ref: '#/components/schemas/BetaResponseRefusalDoneEvent'
+        - $ref: '#/components/schemas/BetaResponseTextDeltaEvent'
+        - $ref: '#/components/schemas/BetaResponseTextDoneEvent'
+        - $ref: '#/components/schemas/BetaResponseWebSearchCallCompletedEvent'
+        - $ref: '#/components/schemas/BetaResponseWebSearchCallInProgressEvent'
+        - $ref: '#/components/schemas/BetaResponseWebSearchCallSearchingEvent'
+        - $ref: '#/components/schemas/BetaResponseImageGenCallCompletedEvent'
+        - $ref: '#/components/schemas/BetaResponseImageGenCallGeneratingEvent'
+        - $ref: '#/components/schemas/BetaResponseImageGenCallInProgressEvent'
+        - $ref: '#/components/schemas/BetaResponseImageGenCallPartialImageEvent'
+        - $ref: '#/components/schemas/BetaResponseMCPCallArgumentsDeltaEvent'
+        - $ref: '#/components/schemas/BetaResponseMCPCallArgumentsDoneEvent'
+        - $ref: '#/components/schemas/BetaResponseMCPCallCompletedEvent'
+        - $ref: '#/components/schemas/BetaResponseMCPCallFailedEvent'
+        - $ref: '#/components/schemas/BetaResponseMCPCallInProgressEvent'
+        - $ref: '#/components/schemas/BetaResponseMCPListToolsCompletedEvent'
+        - $ref: '#/components/schemas/BetaResponseMCPListToolsFailedEvent'
+        - $ref: '#/components/schemas/BetaResponseMCPListToolsInProgressEvent'
+        - $ref: '#/components/schemas/BetaResponseOutputTextAnnotationAddedEvent'
+        - $ref: '#/components/schemas/BetaResponseQueuedEvent'
+        - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDeltaEvent'
+        - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDoneEvent'
+      - type: object
+        properties:
+          stream_id:
+            type: string
+            description: |
+              The WebSocket lane that emitted this event. This field is present
+              when the originating `response.create` event supplied a
+              `stream_id`.
     SafetyAlertErrorType:
       type: string
       enum:
@@ -70890,6 +71191,282 @@ components:
       - request_paused
       - error_type
       - reason
+    BetaContextManagementParam:
+      properties:
+        type:
+          type: string
+          description: The context management entry type. Currently only 'compaction' is supported.
+        compact_threshold:
+          anyOf:
+          - type: integer
+            minimum: 1000
+            description: Token threshold at which compaction should be triggered for this entry.
+          - type: 'null'
+      type: object
+      required:
+      - type
+    BetaCreateResponse:
+      allOf:
+      - $ref: '#/components/schemas/BetaCreateModelResponseProperties'
+      - $ref: '#/components/schemas/BetaResponseProperties'
+      - type: object
+        properties:
+          prompt_cache_options:
+            $ref: '#/components/schemas/BetaResponsePromptCacheOptionsParam'
+          service_tier:
+            $ref: '#/components/schemas/BetaServiceTierResponses'
+          truncation:
+            deprecated: true
+            anyOf:
+            - type: string
+              description: |
+                The truncation strategy to use for the model response.
+                - `auto`: If the input to this Response exceeds
+                  the model's context window size, the model will truncate the
+                  response to fit the context window by dropping items from the beginning of the conversation.
+                - `disabled` (default): If the input size will exceed the context window
+                  size for a model, the request will fail with a 400 error.
+              enum:
+              - auto
+              - disabled
+              default: disabled
+            - type: 'null'
+          reasoning:
+            anyOf:
+            - $ref: '#/components/schemas/BetaReasoning'
+            - type: 'null'
+          input:
+            $ref: '#/components/schemas/BetaInputParam'
+          include:
+            anyOf:
+            - type: array
+              description: |-
+                Specify additional output data to include in the model response. Currently supported values are:
+                - `web_search_call.action.sources`: Include the sources of the web search tool call.
+                - `code_interpreter_call.outputs`: Includes the outputs of python code execution in code interpreter tool call items.
+                - `computer_call_output.output.image_url`: Include image urls from the computer call output.
+                - `file_search_call.results`: Include the search results of the file search tool call.
+                - `message.input_image.image_url`: Include image urls from the input message.
+                - `message.output_text.logprobs`: Include logprobs with assistant messages.
+                - `reasoning.encrypted_content`: Includes an encrypted version of reasoning tokens in reasoning item outputs. This enables reasoning items to be used in multi-turn conversations when using the Responses API statelessly (like when the `store` parameter is set to `false`, or when an organization is enrolled in the zero data retention program).
+              items:
+                $ref: '#/components/schemas/BetaIncludeEnum'
+            - type: 'null'
+          parallel_tool_calls:
+            anyOf:
+            - type: boolean
+              description: |
+                Whether to allow the model to run tool calls in parallel.
+              default: true
+            - type: 'null'
+          store:
+            anyOf:
+            - type: boolean
+              description: |
+                Whether to store the generated model response for later retrieval via
+                API.
+                Defaults to true when omitted.
+                If set to true, response data will be stored for at least 30 days, subject to the [data retention exceptions](https://developers.openai.com/api/docs/guides/your-data#v1responses).
+              default: true
+            - type: 'null'
+          instructions:
+            anyOf:
+            - type: string
+              description: |
+                A system (or developer) message inserted into the model's context.
+
+                When using along with `previous_response_id`, the instructions from a previous
+                response will not be carried over to the next response. This makes it simple
+                to swap out system (or developer) messages in new responses.
+            - type: 'null'
+          moderation:
+            anyOf:
+            - $ref: '#/components/schemas/BetaModerationParam'
+              description: |
+                Configuration for running moderation on the input and output of this response.
+            - type: 'null'
+          stream:
+            anyOf:
+            - description: |
+                If set to true, the model response data will be streamed to the client
+                as it is generated using [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#Event_stream_format).
+                See the [Streaming section below](https://developers.openai.com/api/reference/resources/responses/streaming-events)
+                for more information.
+              type: boolean
+              default: false
+            - type: 'null'
+          stream_options:
+            $ref: '#/components/schemas/BetaResponseStreamOptions'
+          conversation:
+            anyOf:
+            - $ref: '#/components/schemas/BetaConversationParam'
+            - type: 'null'
+          context_management:
+            anyOf:
+            - type: array
+              example:
+              - type: compaction
+                compact_threshold: 1000
+              description: |
+                Context management configuration for this request.
+              minItems: 1
+              items:
+                $ref: '#/components/schemas/BetaContextManagementParam'
+            - type: 'null'
+          max_output_tokens:
+            anyOf:
+            - description: |
+                An upper bound for the number of tokens that can be generated for a response, including visible output tokens and [reasoning tokens](https://developers.openai.com/api/docs/guides/reasoning).
+              type: integer
+              minimum: 16
+            - type: 'null'
+          multi_agent:
+            anyOf:
+            - $ref: '#/components/schemas/BetaMultiAgentParam'
+              description: Configuration for server-hosted multi-agent execution.
+            - type: 'null'
+    BetaMultiAgentParam:
+      properties:
+        enabled:
+          type: boolean
+          description: Whether to enable server-hosted multi-agent execution for this response.
+        max_concurrent_subagents:
+          type: integer
+          minimum: 1
+          description: |-
+            `max_concurrent_subagents` sets the maximum number of subagents that can be active simultaneously across the entire agent tree. It includes all descendants—children, grandchildren, and deeper subagents—but excludes the root agent.
+            The API does not impose a fixed upper bound on this setting. The default is `3`, which is recommended for most workloads. Multi-agent runs also have no fixed limit on tree depth or the total number of subagents created during a run.
+      type: object
+      required:
+      - enabled
+      description: Configuration for server-hosted multi-agent execution.
+      x-oai-beta: responses_multi_agent=v1
+    BetaResponseStreamOptions:
+      anyOf:
+      - description: |
+          Options for streaming responses. Only set this when you set `stream: true`.
+        type: object
+        properties:
+          include_obfuscation:
+            type: boolean
+            description: |
+              When true, stream obfuscation will be enabled. Stream obfuscation adds
+              random characters to an `obfuscation` field on streaming delta events to
+              normalize payload sizes as a mitigation to certain side-channel attacks.
+              These obfuscation fields are included by default, but add a small amount
+              of overhead to the data stream. You can set `include_obfuscation` to
+              false to optimize for bandwidth if you trust the network links between
+              your application and the OpenAI API.
+      - type: 'null'
+    BetaResponseStreamEvent:
+      description: Event emitted while a response is streamed.
+      anyOf:
+      - $ref: '#/components/schemas/BetaResponseAudioDeltaEvent'
+      - $ref: '#/components/schemas/BetaResponseAudioDoneEvent'
+      - $ref: '#/components/schemas/BetaResponseAudioTranscriptDeltaEvent'
+      - $ref: '#/components/schemas/BetaResponseAudioTranscriptDoneEvent'
+      - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCodeDeltaEvent'
+      - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCodeDoneEvent'
+      - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCompletedEvent'
+      - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallInProgressEvent'
+      - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallInterpretingEvent'
+      - $ref: '#/components/schemas/BetaResponseCompactionCompactingStreamingEvent'
+      - $ref: '#/components/schemas/BetaResponseCompletedEvent'
+      - $ref: '#/components/schemas/BetaResponseContentPartAddedEvent'
+      - $ref: '#/components/schemas/BetaResponseContentPartDoneEvent'
+      - $ref: '#/components/schemas/BetaResponseCreatedEvent'
+      - $ref: '#/components/schemas/BetaResponseErrorEvent'
+      - $ref: '#/components/schemas/BetaResponseFileSearchCallCompletedEvent'
+      - $ref: '#/components/schemas/BetaResponseFileSearchCallInProgressEvent'
+      - $ref: '#/components/schemas/BetaResponseFileSearchCallSearchingEvent'
+      - $ref: '#/components/schemas/BetaResponseFunctionCallArgumentsDeltaEvent'
+      - $ref: '#/components/schemas/BetaResponseFunctionCallArgumentsDoneEvent'
+      - $ref: '#/components/schemas/BetaResponseShellCallCommandAddedStreamingEvent'
+      - $ref: '#/components/schemas/BetaResponseShellCallCommandDeltaStreamingEvent'
+      - $ref: '#/components/schemas/BetaResponseShellCallCommandDoneStreamingEvent'
+      - $ref: '#/components/schemas/BetaResponseShellCallOutputContentDeltaStreamingEvent'
+        x-stainless-skip:
+        - go
+      - $ref: '#/components/schemas/BetaResponseShellCallOutputContentDoneStreamingEvent'
+      - $ref: '#/components/schemas/BetaResponseInProgressEvent'
+      - $ref: '#/components/schemas/BetaResponseFailedEvent'
+      - $ref: '#/components/schemas/BetaResponseIncompleteEvent'
+      - $ref: '#/components/schemas/BetaResponseOutputItemAddedEvent'
+      - $ref: '#/components/schemas/BetaResponseOutputItemDoneEvent'
+      - $ref: '#/components/schemas/BetaResponseReasoningSummaryPartAddedEvent'
+      - $ref: '#/components/schemas/BetaResponseReasoningSummaryPartDoneEvent'
+      - $ref: '#/components/schemas/BetaResponseReasoningSummaryTextDeltaEvent'
+      - $ref: '#/components/schemas/BetaResponseReasoningSummaryTextDoneEvent'
+      - $ref: '#/components/schemas/BetaResponseReasoningTextDeltaEvent'
+      - $ref: '#/components/schemas/BetaResponseReasoningTextDoneEvent'
+      - $ref: '#/components/schemas/BetaResponseRefusalDeltaEvent'
+      - $ref: '#/components/schemas/BetaResponseRefusalDoneEvent'
+      - $ref: '#/components/schemas/BetaResponseTextDeltaEvent'
+      - $ref: '#/components/schemas/BetaResponseTextDoneEvent'
+      - $ref: '#/components/schemas/BetaResponseWebSearchCallCompletedEvent'
+      - $ref: '#/components/schemas/BetaResponseWebSearchCallInProgressEvent'
+      - $ref: '#/components/schemas/BetaResponseWebSearchCallSearchingEvent'
+      - $ref: '#/components/schemas/BetaResponseImageGenCallCompletedEvent'
+      - $ref: '#/components/schemas/BetaResponseImageGenCallGeneratingEvent'
+      - $ref: '#/components/schemas/BetaResponseImageGenCallInProgressEvent'
+      - $ref: '#/components/schemas/BetaResponseImageGenCallPartialImageEvent'
+      - $ref: '#/components/schemas/BetaResponseMCPCallArgumentsDeltaEvent'
+      - $ref: '#/components/schemas/BetaResponseMCPCallArgumentsDoneEvent'
+      - $ref: '#/components/schemas/BetaResponseMCPCallCompletedEvent'
+      - $ref: '#/components/schemas/BetaResponseMCPCallFailedEvent'
+      - $ref: '#/components/schemas/BetaResponseMCPCallInProgressEvent'
+      - $ref: '#/components/schemas/BetaResponseMCPListToolsCompletedEvent'
+      - $ref: '#/components/schemas/BetaResponseMCPListToolsFailedEvent'
+      - $ref: '#/components/schemas/BetaResponseMCPListToolsInProgressEvent'
+      - $ref: '#/components/schemas/BetaResponseOutputTextAnnotationAddedEvent'
+      - $ref: '#/components/schemas/BetaResponseQueuedEvent'
+      - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDeltaEvent'
+      - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDoneEvent'
+      discriminator:
+        propertyName: type
+    BetaResponsePromptCacheOptionsParam:
+      properties:
+        ttl:
+          $ref: '#/components/schemas/BetaPromptCacheTTLEnum'
+          description: The minimum lifetime applied to every implicit and explicit cache breakpoint written by the request. Defaults to `30m`, which is currently the only supported value. The backend may retain cache entries for longer.
+        mode:
+          $ref: '#/components/schemas/BetaPromptCacheModeEnum'
+          description: Controls whether OpenAI automatically creates an implicit cache breakpoint. Defaults to `implicit`. With `implicit`, OpenAI creates one implicit breakpoint and writes up to the latest three explicit breakpoints in the request. With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit breakpoints. If there are no explicit breakpoints, the request does not use prompt caching.
+        prewarm:
+          type: boolean
+          description: Prepares the prompt cache without generating output. Defaults to `false`. When set to `true`, overrides the `generate` field to `false`.
+        comparison_response_id:
+          anyOf:
+          - type: string
+            description: The ID of a response to compare when diagnosing prompt cache reuse. Supplying this field requests prompt cache diagnostics when the feature is enabled.
+            example: resp_123
+          - type: 'null'
+      type: object
+      required: []
+      title: Prompt cache options
+      description: Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`, which is currently the only supported value. See the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) for current details.
+    BetaModerationConfigParam:
+      properties:
+        mode:
+          $ref: '#/components/schemas/BetaModerationMode'
+      type: object
+      required:
+      - mode
+      description: The moderation policy for the response input.
+    BetaModerationParam:
+      properties:
+        model:
+          type: string
+          description: The moderation model to use for moderated completions, e.g. 'omni-moderation-latest'.
+        policy:
+          anyOf:
+          - $ref: '#/components/schemas/BetaModerationPolicyParam'
+            description: The policy to apply to moderated response input and output.
+          - type: 'null'
+      type: object
+      required:
+      - model
+      description: Configuration for running moderation on the input and output of this response.
     SpendLimitCurrency:
       anyOf:
       - type: string
@@ -78379,6 +78956,41 @@ components:
       - environment
       additionalProperties: false
       description: Emitted when a hosted session environment is ready to connect.
+    BetaErrorPayload:
+      properties:
+        type:
+          type: string
+          description: The error type that was emitted.
+        code:
+          anyOf:
+          - type: string
+            description: The error code that was emitted, if any.
+          - type: 'null'
+        message:
+          type: string
+          description: The human-readable error message that was emitted.
+        param:
+          anyOf:
+          - type: string
+            description: The parameter name that was associated with the error, if any.
+          - type: 'null'
+        headers:
+          additionalProperties:
+            type: string
+            description: The header value that was emitted.
+          type: object
+          description: The response headers that were emitted with the error, if any.
+          x-oaiTypeLabel: map
+        misalignment:
+          $ref: '#/components/schemas/BetaMisalignmentErrorDetailsResource'
+      type: object
+      required:
+      - type
+      - code
+      - message
+      - param
+      title: Error payload
+      description: An error payload that was emitted for a streaming error event.
     SessionEventAgentOutputCommandExecutionOutputDelta:
       type: object
       properties:
@@ -79566,6 +80178,7 @@ components:
         mapping:
           error: '#/components/schemas/SessionEventError'
           agent.session.environment.ready: '#/components/schemas/SessionEventAgentSessionEnvironmentReady'
+          agent.session.turn.reasoning_summary_text.done: '#/components/schemas/SessionEventAgentSessionTurnReasoningSummaryTextDone'
           agent.output.command_execution_output.delta: '#/components/schemas/SessionEventAgentOutputCommandExecutionOutputDelta'
           agent.session.created: '#/components/schemas/SessionEventAgentSessionCreated'
           agent.session.turn.created: '#/components/schemas/SessionEventAgentSessionTurnCreated'
@@ -79593,7 +80206,6 @@ components:
           agent.session.turn.reasoning_summary_part.added: '#/components/schemas/SessionEventAgentSessionTurnReasoningSummaryPartAdded'
           agent.session.turn.reasoning_summary_part.done: '#/components/schemas/SessionEventAgentSessionTurnReasoningSummaryPartDone'
           agent.session.turn.reasoning_summary_text.delta: '#/components/schemas/SessionEventAgentSessionTurnReasoningSummaryTextDelta'
-          agent.session.turn.reasoning_summary_text.done: '#/components/schemas/SessionEventAgentSessionTurnReasoningSummaryTextDone'
       x-oai-discriminator-values:
       - error
       - agent.session.environment.ready
@@ -80250,6 +80862,106 @@ components:
       - mcp_server_url
       additionalProperties: false
       description: Metadata for a bearer-token credential, without automatic OAuth refresh.
+    BetaInputParam:
+      description: |
+        Text, image, or file inputs to the model, used to generate a response.
+
+        Learn more:
+        - [Text inputs and outputs](https://developers.openai.com/api/docs/guides/text)
+        - [Image inputs](https://developers.openai.com/api/docs/guides/images-vision)
+        - [File inputs](https://developers.openai.com/api/docs/guides/file-inputs)
+        - [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
+        - [Function calling](https://developers.openai.com/api/docs/guides/function-calling)
+      anyOf:
+      - type: string
+        title: Text input
+        description: |
+          A text input to the model, equivalent to a text input with the
+          `user` role.
+      - type: array
+        title: Input item list
+        description: |
+          A list of one or many input items to the model, containing
+          different content types.
+        items:
+          $ref: '#/components/schemas/BetaInputItem'
+    BetaContent:
+      description: |
+        Multi-modal input and output contents.
+      anyOf:
+      - title: Input content types
+        $ref: '#/components/schemas/BetaInputContent'
+      - title: Output content types
+        $ref: '#/components/schemas/BetaOutputContent'
+    BetaIncludeEnum:
+      type: string
+      enum:
+      - file_search_call.results
+      - web_search_call.results
+      - web_search_call.action.sources
+      - message.input_image.image_url
+      - computer_call_output.output.image_url
+      - code_interpreter_call.outputs
+      - reasoning.encrypted_content
+      - message.output_text.logprobs
+      description: |-
+        Specify additional output data to include in the model response. Currently supported values are:
+        - `web_search_call.results`: Include the search results of the web search tool call.
+        - `web_search_call.action.sources`: Include the sources of the web search tool call.
+        - `code_interpreter_call.outputs`: Includes the outputs of python code execution in code interpreter tool call items.
+        - `computer_call_output.output.image_url`: Include image urls from the computer call output.
+        - `file_search_call.results`: Include the search results of the file search tool call.
+        - `message.input_image.image_url`: Include image urls from the input message.
+        - `message.output_text.logprobs`: Include logprobs with assistant messages.
+        - `reasoning.encrypted_content`: Includes an encrypted version of reasoning tokens in reasoning item outputs. This enables reasoning items to be used in multi-turn conversations when using the Responses API statelessly (like when the `store` parameter is set to `false`, or when an organization is enrolled in the zero data retention program).
+    BetaResponseWsError:
+      type: object
+      title: ResponseWsError
+      description: Emitted when an error occurs while processing a Responses WebSocket request.
+      properties:
+        agent:
+          anyOf:
+          - $ref: '#/components/schemas/BetaAgentTag'
+          - type: 'null'
+          description: The agent that owns this multi-agent streaming event.
+        type:
+          type: string
+          description: The type of the event. Always `error`.
+          enum:
+          - error
+          x-stainless-const: true
+        status:
+          type: integer
+          description: The HTTP status code associated with a WebSocket protocol error.
+        sequence_number:
+          type: integer
+          description: The sequence number of an error emitted by the response stream.
+        error:
+          $ref: '#/components/schemas/BetaErrorPayload'
+          description: Details about the error.
+        stream_id:
+          type: string
+          description: |
+            The WebSocket lane that emitted this event. This field is present when the
+            originating `response.create` event supplied a `stream_id`.
+      required:
+      - type
+      - error
+      x-oaiMeta:
+        name: error
+        group: responses
+        example: |
+          {
+            "type": "error",
+            "status": 400,
+            "stream_id": "agent_1",
+            "error": {
+              "type": "invalid_request_error",
+              "code": "websocket_stream_limit_reached",
+              "message": "This WebSocket connection has reached its stream limit.",
+              "param": "stream_id"
+            }
+          }
     VaultCredentialAuthResource:
       description: The MCP server and authentication configuration of a vault credential, excluding secrets.
       discriminator:
@@ -80522,6 +81234,861 @@ components:
       - token
       additionalProperties: false
       description: A bearer token for an MCP server, without automatic OAuth refresh.
+    BetaResponsesServerEvent:
+      discriminator:
+        propertyName: type
+      description: |
+        Server events emitted by the Responses WebSocket server.
+      anyOf:
+      - title: BetaResponseAudioWsDelta
+        description: Emitted when there is a partial audio response.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseAudioDeltaEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseAudioWsDone
+        description: Emitted when the audio response is complete.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseAudioDoneEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseAudioTranscriptWsDelta
+        description: Emitted when there is a partial transcript of audio.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseAudioTranscriptDeltaEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseAudioTranscriptWsDone
+        description: Emitted when the full audio transcript is completed.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseAudioTranscriptDoneEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseCodeInterpreterCallCodeWsDelta
+        description: Emitted when a partial code snippet is streamed by the code interpreter.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCodeDeltaEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseCodeInterpreterCallCodeWsDone
+        description: Emitted when the code snippet is finalized by the code interpreter.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCodeDoneEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseCodeInterpreterCallWsCompleted
+        description: Emitted when the code interpreter call is completed.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCompletedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseCodeInterpreterCallInWsProgress
+        description: Emitted when a code interpreter call is in progress.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallInProgressEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseCodeInterpreterCallWsInterpreting
+        description: Emitted when the code interpreter is actively interpreting the code snippet.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallInterpretingEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseCompactionWsCompacting
+        description: Emitted when new summary content is sampled for a compaction trigger. Contains no summary content.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseCompactionCompactingStreamingEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseWsCompleted
+        description: Emitted when the model response is complete.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseCompletedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseContentPartWsAdded
+        description: Emitted when a new content part is added.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseContentPartAddedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseContentPartWsDone
+        description: Emitted when a content part is done.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseContentPartDoneEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseWsCreated
+        description: |
+          An event that is emitted when a response is created.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseCreatedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseFileSearchCallWsCompleted
+        description: Emitted when a file search call is completed (results found).
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseFileSearchCallCompletedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseFileSearchCallInWsProgress
+        description: Emitted when a file search call is initiated.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseFileSearchCallInProgressEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseFileSearchCallWsSearching
+        description: Emitted when a file search is currently searching.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseFileSearchCallSearchingEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseFunctionCallArgumentsWsDelta
+        description: Emitted when there is a partial function-call arguments delta.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseFunctionCallArgumentsDeltaEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseFunctionCallArgumentsWsDone
+        description: Emitted when function-call arguments are finalized.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseFunctionCallArgumentsDoneEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseShellCallCommandWsAdded
+        description: A streaming event that indicated a shell command was added to a tool call.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseShellCallCommandAddedStreamingEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseShellCallCommandWsDelta
+        description: A streaming event that indicated a shell command was incrementally updated.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseShellCallCommandDeltaStreamingEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseShellCallCommandWsDone
+        description: A streaming event that indicated a shell command was completed.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseShellCallCommandDoneStreamingEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseShellCallOutputContentWsDelta
+        description: A streaming event that indicated shell call output was incrementally added.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseShellCallOutputContentDeltaStreamingEvent'
+          x-stainless-skip:
+          - go
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseShellCallOutputContentWsDone
+        description: A streaming event that indicated shell call output was completed.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseShellCallOutputContentDoneStreamingEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseInWsProgress
+        description: Emitted when the response is in progress.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseInProgressEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseWsFailed
+        description: |
+          An event that is emitted when a response fails.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseFailedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseWsIncomplete
+        description: |
+          An event that is emitted when a response finishes as incomplete.
+
+          Over WebSocket, steering can finish a response with
+          `response.incomplete_details.reason` set to `steered`, followed automatically
+          by a successor `response.created` that commits the queued steering input.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseIncompleteEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseOutputItemWsAdded
+        description: Emitted when a new output item is added.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseOutputItemAddedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseOutputItemWsDone
+        description: Emitted when an output item is marked done.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseOutputItemDoneEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseReasoningSummaryPartWsAdded
+        description: Emitted when a new reasoning summary part is added.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseReasoningSummaryPartAddedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseReasoningSummaryPartWsDone
+        description: Emitted when a reasoning summary part is completed.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseReasoningSummaryPartDoneEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseReasoningSummaryTextWsDelta
+        description: Emitted when a delta is added to a reasoning summary text.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseReasoningSummaryTextDeltaEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseReasoningSummaryTextWsDone
+        description: Emitted when a reasoning summary text is completed.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseReasoningSummaryTextDoneEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseReasoningTextWsDelta
+        description: Emitted when a delta is added to a reasoning text.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseReasoningTextDeltaEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseReasoningTextWsDone
+        description: Emitted when a reasoning text is completed.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseReasoningTextDoneEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseRefusalWsDelta
+        description: Emitted when there is a partial refusal text.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseRefusalDeltaEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseRefusalWsDone
+        description: Emitted when refusal text is finalized.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseRefusalDoneEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseTextWsDelta
+        description: Emitted when there is an additional text delta.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseTextDeltaEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseTextWsDone
+        description: Emitted when text content is finalized.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseTextDoneEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseWebSearchCallWsCompleted
+        description: Emitted when a web search call is completed.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseWebSearchCallCompletedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseWebSearchCallInWsProgress
+        description: Emitted when a web search call is initiated.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseWebSearchCallInProgressEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseWebSearchCallWsSearching
+        description: Emitted when a web search call is executing.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseWebSearchCallSearchingEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseImageGenCallWsCompleted
+        description: |
+          Emitted when an image generation tool call has completed and the final image is available.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseImageGenCallCompletedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseImageGenCallWsGenerating
+        description: |
+          Emitted when an image generation tool call is actively generating an image (intermediate state).
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseImageGenCallGeneratingEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseImageGenCallInWsProgress
+        description: |
+          Emitted when an image generation tool call is in progress.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseImageGenCallInProgressEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseImageGenCallPartialWsImage
+        description: |
+          Emitted when a partial image is available during image generation streaming.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseImageGenCallPartialImageEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseMcpCallArgumentsWsDelta
+        description: |
+          Emitted when there is a delta (partial update) to the arguments of an MCP tool call.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseMCPCallArgumentsDeltaEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseMcpCallArgumentsWsDone
+        description: |
+          Emitted when the arguments for an MCP tool call are finalized.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseMCPCallArgumentsDoneEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseMcpCallWsCompleted
+        description: |
+          Emitted when an MCP  tool call has completed successfully.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseMCPCallCompletedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseMcpCallWsFailed
+        description: |
+          Emitted when an MCP  tool call has failed.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseMCPCallFailedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseMcpCallInWsProgress
+        description: |
+          Emitted when an MCP  tool call is in progress.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseMCPCallInProgressEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseMcpListToolsWsCompleted
+        description: |
+          Emitted when the list of available MCP tools has been successfully retrieved.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseMCPListToolsCompletedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseMcpListToolsWsFailed
+        description: |
+          Emitted when the attempt to list available MCP tools has failed.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseMCPListToolsFailedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseMcpListToolsInWsProgress
+        description: |
+          Emitted when the system is in the process of retrieving the list of available MCP tools.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseMCPListToolsInProgressEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseOutputTextAnnotationWsAdded
+        description: |
+          Emitted when an annotation is added to output text content.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseOutputTextAnnotationAddedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseWsQueued
+        description: |
+          Emitted when a response is queued and waiting to be processed.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseQueuedEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseCustomToolCallInputWsDelta
+        description: |
+          Event representing a delta (partial update) to the input of a custom tool call.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDeltaEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - title: BetaResponseCustomToolCallInputWsDone
+        description: |
+          Event indicating that input for a custom tool call is complete.
+        allOf:
+        - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDoneEvent'
+        - type: object
+          properties:
+            stream_id:
+              type: string
+              description: |
+                The WebSocket lane that emitted this event. This field is present
+                when the originating `response.create` event supplied a
+                `stream_id`.
+      - $ref: '#/components/schemas/BetaResponseWsError'
+      - $ref: '#/components/schemas/BetaResponseSteerAcceptedEvent'
+      - $ref: '#/components/schemas/BetaResponseSteerPendingEvent'
+      - $ref: '#/components/schemas/BetaResponseSteerFailedEvent'
+      - $ref: '#/components/schemas/BetaResponseInjectCreatedEvent'
+      - $ref: '#/components/schemas/BetaResponseInjectFailedEvent'
+    BetaResponseInjectFailedEvent:
+      type: object
+      title: ResponseInjectFailedEvent
+      description: |
+        Emitted when injected input could not be committed to a response. The event
+        returns the uncommitted raw input so the client can retry it in another
+        response when appropriate.
+      properties:
+        type:
+          type: string
+          enum:
+          - response.inject.failed
+          description: The event discriminator. Always `response.inject.failed`.
+          x-stainless-const: true
+        response_id:
+          type: string
+          description: The ID of the response that rejected the input.
+        input:
+          type: array
+          description: The raw input items that were not committed.
+          items:
+            $ref: '#/components/schemas/BetaInputItem'
+        error:
+          type: object
+          description: Information about why the input was not committed.
+          properties:
+            code:
+              type: string
+              enum:
+              - response_already_completed
+              - response_not_found
+              description: A machine-readable error code.
+            message:
+              type: string
+              description: A human-readable description of the error.
+          required:
+          - code
+          - message
+        sequence_number:
+          type: integer
+          description: The sequence number for this event.
+        stream_id:
+          type: string
+          description: |
+            The multiplexed WebSocket stream that emitted the event. This field is
+            present only when WebSocket multiplexing is enabled separately.
+      required:
+      - type
+      - response_id
+      - input
+      - error
+      - sequence_number
+      x-oai-beta: responses_multi_agent=v1
+      x-oaiMeta:
+        example: |
+          {
+            "type": "response.inject.failed",
+            "response_id": "resp_123",
+            "input": [
+              {
+                "type": "function_call_output",
+                "call_id": "call_123",
+                "output": "{\"temperature\":72}"
+              }
+            ],
+            "error": {
+              "code": "response_already_completed",
+              "message": "Response 'resp_123' has already completed."
+            },
+            "sequence_number": 9
+          }
+    BetaResponseInjectCreatedEvent:
+      type: object
+      title: ResponseInjectCreatedEvent
+      description: |
+        Emitted when all injected input items were validated and committed to the
+        active response.
+      properties:
+        type:
+          type: string
+          enum:
+          - response.inject.created
+          description: The event discriminator. Always `response.inject.created`.
+          x-stainless-const: true
+        response_id:
+          type: string
+          description: The ID of the response that accepted the input.
+        sequence_number:
+          type: integer
+          description: The sequence number for this event.
+        stream_id:
+          type: string
+          description: |
+            The multiplexed WebSocket stream that emitted the event. This field is
+            present only when WebSocket multiplexing is enabled separately.
+      required:
+      - type
+      - response_id
+      - sequence_number
+      x-oai-beta: responses_multi_agent=v1
+      x-oaiMeta:
+        example: |
+          {
+            "type": "response.inject.created",
+            "response_id": "resp_123",
+            "sequence_number": 8
+          }
+    BetaModerationPolicyParam:
+      properties:
+        input:
+          anyOf:
+          - $ref: '#/components/schemas/BetaModerationConfigParam'
+            description: The moderation policy for the response input.
+          - type: 'null'
+        output:
+          anyOf:
+          - $ref: '#/components/schemas/BetaModerationConfigParam'
+            description: The moderation policy for the response output.
+          - type: 'null'
+      type: object
+      required: []
+      description: The policy to apply to moderated response input and output.
     CreateVaultCredentialAuthParam:
       description: Authentication credentials for an MCP server used by agent tools.
       discriminator:
@@ -80683,6 +82250,50 @@ components:
       - token
       additionalProperties: false
       description: Replace the bearer token for the credential's MCP server.
+    BetaResponsesClientEventResponseCreate:
+      allOf:
+      - type: object
+        properties:
+          type:
+            type: string
+            enum:
+            - response.create
+            description: |
+              The type of the client event. Always `response.create`.
+            x-stainless-const: true
+          stream_id:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: ^[A-Za-z0-9_.-]+$
+            description: |
+              The WebSocket lane for this response. Requests with the same
+              `stream_id` are processed FIFO, and events for the response echo the
+              same `stream_id`.
+
+              `stream_id` controls routing; `previous_response_id` controls
+              conversation lineage, so a new lane can fork from a response created
+              on another lane.
+        required:
+        - type
+      - $ref: '#/components/schemas/BetaCreateResponse'
+      description: |
+        Client event for creating a response over a persistent WebSocket connection.
+        This payload uses the same top-level fields as `POST /v1/responses`, plus
+        WebSocket-only envelope metadata.
+
+        Notes:
+        - `stream` is implicit over WebSocket and should not be sent.
+        - `background` is not supported over WebSocket.
+        - `stream_id` is WebSocket-only and is not part of `POST /v1/responses`.
+      x-oaiMeta:
+        example: |
+          {
+            "type": "response.create",
+            "stream_id": "agent_1",
+            "model": "gpt-6-astra",
+            "input": "Say hello."
+          }
     RotateVaultCredentialAuthParam:
       description: Updates to a vault credential without changing its authentication method or MCP server.
       discriminator:
@@ -93615,1586 +95226,6 @@ components:
               "previous_response_id": "resp_123"
             }
           }
-    BetaResponseSteerEvent:
-      type: object
-      title: ResponseSteerEvent
-      additionalProperties: false
-      description: |
-        Queues user input to steer a response on this WebSocket connection. Input
-        can contain text, images, and files. Steering is supported only for
-        single-agent responses on models and execution modes that support steering.
-        Responses bound to a conversation or using automatic compaction do not
-        support steering.
-
-        A `response.steer.accepted` event acknowledges that the server owns the
-        queued input, not that it has been applied. The successor's `response.created`
-        event is the commit point. Input that cannot be committed is returned in
-        `response.steer.failed`.
-
-        Steering may cause the active response to finish at a safe output boundary
-        with `response.incomplete` and `incomplete_details.reason` set to `steered`,
-        followed automatically by a successor `response.created`. Normal completion
-        can also be followed by an automatic successor. Automatic successors inherit
-        the previous response's settings and continue from it with the queued input.
-
-        If the response stops for client-owned tool output or approval, accepted
-        steering input remains queued and `response.steer.pending` is emitted after
-        `response.completed`. Fill the `required_input` stubs from that event with
-        saved tool results or approval decisions, and send one explicit
-        `response.create` per parent with the same `previous_response_id` and
-        WebSocket lane. Do not rerun tools or resend accepted steering input. The
-        queued input is prepended in submission order to that request's input, and
-        the explicit request retains its own settings.
-
-        This event accepts only `type`, `previous_response_id`, and `input`. Do not
-        send `stream_id`; the target response determines the WebSocket lane.
-      properties:
-        type:
-          type: string
-          enum:
-          - response.steer
-          description: The event discriminator. Always `response.steer`.
-          x-stainless-const: true
-        previous_response_id:
-          type: string
-          description: The ID of the response to steer on this WebSocket connection.
-        input:
-          $ref: '#/components/schemas/BetaResponseSteerInput'
-      required:
-      - type
-      - previous_response_id
-      - input
-      x-oaiMeta:
-        name: response.steer
-        group: responses
-        example: |
-          {
-            "type": "response.steer",
-            "previous_response_id": "resp_123",
-            "input": [
-              {
-                "type": "message",
-                "role": "user",
-                "content": [
-                  {
-                    "type": "input_text",
-                    "text": "Prioritize the database rollout."
-                  }
-                ]
-              }
-            ]
-          }
-    BetaOutputAudio:
-      type: object
-      title: Output audio
-      description: |
-        An audio output from the model.
-      properties:
-        type:
-          type: string
-          description: |
-            The type of the output audio. Always `output_audio`.
-          enum:
-          - output_audio
-          x-stainless-const: true
-        data:
-          type: string
-          description: |
-            Base64-encoded audio data from the model.
-        transcript:
-          type: string
-          description: |
-            The transcript of the audio data from the model.
-      required:
-      - type
-      - data
-      - transcript
-    BetaInputAudio:
-      type: object
-      title: Input audio
-      description: |
-        An audio input to the model.
-      properties:
-        type:
-          type: string
-          description: |
-            The type of the input item. Always `input_audio`.
-          enum:
-          - input_audio
-          x-stainless-const: true
-        input_audio:
-          type: object
-          properties:
-            data:
-              type: string
-              description: |
-                Base64-encoded audio data.
-            format:
-              type: string
-              description: |
-                The format of the audio data. Currently supported formats are `mp3` and
-                `wav`.
-              enum:
-              - mp3
-              - wav
-          required:
-          - data
-          - format
-      required:
-      - type
-      - input_audio
-    BetaInputParam:
-      description: |
-        Text, image, or file inputs to the model, used to generate a response.
-
-        Learn more:
-        - [Text inputs and outputs](https://developers.openai.com/api/docs/guides/text)
-        - [Image inputs](https://developers.openai.com/api/docs/guides/images-vision)
-        - [File inputs](https://developers.openai.com/api/docs/guides/file-inputs)
-        - [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
-        - [Function calling](https://developers.openai.com/api/docs/guides/function-calling)
-      anyOf:
-      - type: string
-        title: Text input
-        description: |
-          A text input to the model, equivalent to a text input with the
-          `user` role.
-      - type: array
-        title: Input item list
-        description: |
-          A list of one or many input items to the model, containing
-          different content types.
-        items:
-          $ref: '#/components/schemas/BetaInputItem'
-    BetaContent:
-      description: |
-        Multi-modal input and output contents.
-      anyOf:
-      - title: Input content types
-        $ref: '#/components/schemas/BetaInputContent'
-      - title: Output content types
-        $ref: '#/components/schemas/BetaOutputContent'
-    BetaIncludeEnum:
-      type: string
-      enum:
-      - file_search_call.results
-      - web_search_call.results
-      - web_search_call.action.sources
-      - message.input_image.image_url
-      - computer_call_output.output.image_url
-      - code_interpreter_call.outputs
-      - reasoning.encrypted_content
-      - message.output_text.logprobs
-      description: |-
-        Specify additional output data to include in the model response. Currently supported values are:
-        - `web_search_call.results`: Include the search results of the web search tool call.
-        - `web_search_call.action.sources`: Include the sources of the web search tool call.
-        - `code_interpreter_call.outputs`: Includes the outputs of python code execution in code interpreter tool call items.
-        - `computer_call_output.output.image_url`: Include image urls from the computer call output.
-        - `file_search_call.results`: Include the search results of the file search tool call.
-        - `message.input_image.image_url`: Include image urls from the input message.
-        - `message.output_text.logprobs`: Include logprobs with assistant messages.
-        - `reasoning.encrypted_content`: Includes an encrypted version of reasoning tokens in reasoning item outputs. This enables reasoning items to be used in multi-turn conversations when using the Responses API statelessly (like when the `store` parameter is set to `false`, or when an organization is enrolled in the zero data retention program).
-    BetaResponsesServerEvent:
-      discriminator:
-        propertyName: type
-      description: |
-        Server events emitted by the Responses WebSocket server.
-      anyOf:
-      - title: BetaResponseAudioWsDelta
-        description: Emitted when there is a partial audio response.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseAudioDeltaEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseAudioWsDone
-        description: Emitted when the audio response is complete.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseAudioDoneEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseAudioTranscriptWsDelta
-        description: Emitted when there is a partial transcript of audio.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseAudioTranscriptDeltaEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseAudioTranscriptWsDone
-        description: Emitted when the full audio transcript is completed.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseAudioTranscriptDoneEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseCodeInterpreterCallCodeWsDelta
-        description: Emitted when a partial code snippet is streamed by the code interpreter.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCodeDeltaEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseCodeInterpreterCallCodeWsDone
-        description: Emitted when the code snippet is finalized by the code interpreter.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCodeDoneEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseCodeInterpreterCallWsCompleted
-        description: Emitted when the code interpreter call is completed.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCompletedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseCodeInterpreterCallInWsProgress
-        description: Emitted when a code interpreter call is in progress.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallInProgressEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseCodeInterpreterCallWsInterpreting
-        description: Emitted when the code interpreter is actively interpreting the code snippet.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallInterpretingEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseCompactionWsCompacting
-        description: Emitted when new summary content is sampled for a compaction trigger. Contains no summary content.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseCompactionCompactingStreamingEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseWsCompleted
-        description: Emitted when the model response is complete.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseCompletedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseContentPartWsAdded
-        description: Emitted when a new content part is added.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseContentPartAddedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseContentPartWsDone
-        description: Emitted when a content part is done.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseContentPartDoneEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseWsCreated
-        description: |
-          An event that is emitted when a response is created.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseCreatedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseFileSearchCallWsCompleted
-        description: Emitted when a file search call is completed (results found).
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseFileSearchCallCompletedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseFileSearchCallInWsProgress
-        description: Emitted when a file search call is initiated.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseFileSearchCallInProgressEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseFileSearchCallWsSearching
-        description: Emitted when a file search is currently searching.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseFileSearchCallSearchingEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseFunctionCallArgumentsWsDelta
-        description: Emitted when there is a partial function-call arguments delta.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseFunctionCallArgumentsDeltaEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseFunctionCallArgumentsWsDone
-        description: Emitted when function-call arguments are finalized.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseFunctionCallArgumentsDoneEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseShellCallCommandWsAdded
-        description: A streaming event that indicated a shell command was added to a tool call.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseShellCallCommandAddedStreamingEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseShellCallCommandWsDelta
-        description: A streaming event that indicated a shell command was incrementally updated.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseShellCallCommandDeltaStreamingEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseShellCallCommandWsDone
-        description: A streaming event that indicated a shell command was completed.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseShellCallCommandDoneStreamingEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseShellCallOutputContentWsDelta
-        description: A streaming event that indicated shell call output was incrementally added.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseShellCallOutputContentDeltaStreamingEvent'
-          x-stainless-skip:
-          - go
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseShellCallOutputContentWsDone
-        description: A streaming event that indicated shell call output was completed.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseShellCallOutputContentDoneStreamingEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseInWsProgress
-        description: Emitted when the response is in progress.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseInProgressEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseWsFailed
-        description: |
-          An event that is emitted when a response fails.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseFailedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseWsIncomplete
-        description: |
-          An event that is emitted when a response finishes as incomplete.
-
-          Over WebSocket, steering can finish a response with
-          `response.incomplete_details.reason` set to `steered`, followed automatically
-          by a successor `response.created` that commits the queued steering input.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseIncompleteEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseOutputItemWsAdded
-        description: Emitted when a new output item is added.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseOutputItemAddedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseOutputItemWsDone
-        description: Emitted when an output item is marked done.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseOutputItemDoneEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseReasoningSummaryPartWsAdded
-        description: Emitted when a new reasoning summary part is added.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseReasoningSummaryPartAddedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseReasoningSummaryPartWsDone
-        description: Emitted when a reasoning summary part is completed.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseReasoningSummaryPartDoneEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseReasoningSummaryTextWsDelta
-        description: Emitted when a delta is added to a reasoning summary text.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseReasoningSummaryTextDeltaEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseReasoningSummaryTextWsDone
-        description: Emitted when a reasoning summary text is completed.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseReasoningSummaryTextDoneEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseReasoningTextWsDelta
-        description: Emitted when a delta is added to a reasoning text.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseReasoningTextDeltaEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseReasoningTextWsDone
-        description: Emitted when a reasoning text is completed.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseReasoningTextDoneEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseRefusalWsDelta
-        description: Emitted when there is a partial refusal text.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseRefusalDeltaEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseRefusalWsDone
-        description: Emitted when refusal text is finalized.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseRefusalDoneEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseTextWsDelta
-        description: Emitted when there is an additional text delta.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseTextDeltaEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseTextWsDone
-        description: Emitted when text content is finalized.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseTextDoneEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseWebSearchCallWsCompleted
-        description: Emitted when a web search call is completed.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseWebSearchCallCompletedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseWebSearchCallInWsProgress
-        description: Emitted when a web search call is initiated.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseWebSearchCallInProgressEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseWebSearchCallWsSearching
-        description: Emitted when a web search call is executing.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseWebSearchCallSearchingEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseImageGenCallWsCompleted
-        description: |
-          Emitted when an image generation tool call has completed and the final image is available.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseImageGenCallCompletedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseImageGenCallWsGenerating
-        description: |
-          Emitted when an image generation tool call is actively generating an image (intermediate state).
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseImageGenCallGeneratingEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseImageGenCallInWsProgress
-        description: |
-          Emitted when an image generation tool call is in progress.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseImageGenCallInProgressEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseImageGenCallPartialWsImage
-        description: |
-          Emitted when a partial image is available during image generation streaming.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseImageGenCallPartialImageEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseMcpCallArgumentsWsDelta
-        description: |
-          Emitted when there is a delta (partial update) to the arguments of an MCP tool call.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseMCPCallArgumentsDeltaEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseMcpCallArgumentsWsDone
-        description: |
-          Emitted when the arguments for an MCP tool call are finalized.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseMCPCallArgumentsDoneEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseMcpCallWsCompleted
-        description: |
-          Emitted when an MCP  tool call has completed successfully.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseMCPCallCompletedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseMcpCallWsFailed
-        description: |
-          Emitted when an MCP  tool call has failed.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseMCPCallFailedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseMcpCallInWsProgress
-        description: |
-          Emitted when an MCP  tool call is in progress.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseMCPCallInProgressEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseMcpListToolsWsCompleted
-        description: |
-          Emitted when the list of available MCP tools has been successfully retrieved.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseMCPListToolsCompletedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseMcpListToolsWsFailed
-        description: |
-          Emitted when the attempt to list available MCP tools has failed.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseMCPListToolsFailedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseMcpListToolsInWsProgress
-        description: |
-          Emitted when the system is in the process of retrieving the list of available MCP tools.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseMCPListToolsInProgressEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseOutputTextAnnotationWsAdded
-        description: |
-          Emitted when an annotation is added to output text content.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseOutputTextAnnotationAddedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseWsQueued
-        description: |
-          Emitted when a response is queued and waiting to be processed.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseQueuedEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseCustomToolCallInputWsDelta
-        description: |
-          Event representing a delta (partial update) to the input of a custom tool call.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDeltaEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - title: BetaResponseCustomToolCallInputWsDone
-        description: |
-          Event indicating that input for a custom tool call is complete.
-        allOf:
-        - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDoneEvent'
-        - type: object
-          properties:
-            stream_id:
-              type: string
-              description: |
-                The WebSocket lane that emitted this event. This field is present
-                when the originating `response.create` event supplied a
-                `stream_id`.
-      - $ref: '#/components/schemas/BetaResponseWsError'
-      - $ref: '#/components/schemas/BetaResponseSteerAcceptedEvent'
-      - $ref: '#/components/schemas/BetaResponseSteerPendingEvent'
-      - $ref: '#/components/schemas/BetaResponseSteerFailedEvent'
-      - $ref: '#/components/schemas/BetaResponseInjectCreatedEvent'
-      - $ref: '#/components/schemas/BetaResponseInjectFailedEvent'
-    BetaResponseInjectFailedEvent:
-      type: object
-      title: ResponseInjectFailedEvent
-      description: |
-        Emitted when injected input could not be committed to a response. The event
-        returns the uncommitted raw input so the client can retry it in another
-        response when appropriate.
-      properties:
-        type:
-          type: string
-          enum:
-          - response.inject.failed
-          description: The event discriminator. Always `response.inject.failed`.
-          x-stainless-const: true
-        response_id:
-          type: string
-          description: The ID of the response that rejected the input.
-        input:
-          type: array
-          description: The raw input items that were not committed.
-          items:
-            $ref: '#/components/schemas/BetaInputItem'
-        error:
-          type: object
-          description: Information about why the input was not committed.
-          properties:
-            code:
-              type: string
-              enum:
-              - response_already_completed
-              - response_not_found
-              description: A machine-readable error code.
-            message:
-              type: string
-              description: A human-readable description of the error.
-          required:
-          - code
-          - message
-        sequence_number:
-          type: integer
-          description: The sequence number for this event.
-        stream_id:
-          type: string
-          description: |
-            The multiplexed WebSocket stream that emitted the event. This field is
-            present only when WebSocket multiplexing is enabled separately.
-      required:
-      - type
-      - response_id
-      - input
-      - error
-      - sequence_number
-      x-oai-beta: responses_multi_agent=v1
-      x-oaiMeta:
-        example: |
-          {
-            "type": "response.inject.failed",
-            "response_id": "resp_123",
-            "input": [
-              {
-                "type": "function_call_output",
-                "call_id": "call_123",
-                "output": "{\"temperature\":72}"
-              }
-            ],
-            "error": {
-              "code": "response_already_completed",
-              "message": "Response 'resp_123' has already completed."
-            },
-            "sequence_number": 9
-          }
-    BetaResponseInjectCreatedEvent:
-      type: object
-      title: ResponseInjectCreatedEvent
-      description: |
-        Emitted when all injected input items were validated and committed to the
-        active response.
-      properties:
-        type:
-          type: string
-          enum:
-          - response.inject.created
-          description: The event discriminator. Always `response.inject.created`.
-          x-stainless-const: true
-        response_id:
-          type: string
-          description: The ID of the response that accepted the input.
-        sequence_number:
-          type: integer
-          description: The sequence number for this event.
-        stream_id:
-          type: string
-          description: |
-            The multiplexed WebSocket stream that emitted the event. This field is
-            present only when WebSocket multiplexing is enabled separately.
-      required:
-      - type
-      - response_id
-      - sequence_number
-      x-oai-beta: responses_multi_agent=v1
-      x-oaiMeta:
-        example: |
-          {
-            "type": "response.inject.created",
-            "response_id": "resp_123",
-            "sequence_number": 8
-          }
-    BetaResponseWsError:
-      type: object
-      title: ResponseWsError
-      description: Emitted when an error occurs while processing a Responses WebSocket request.
-      properties:
-        agent:
-          anyOf:
-          - $ref: '#/components/schemas/BetaAgentTag'
-          - type: 'null'
-          description: The agent that owns this multi-agent streaming event.
-        type:
-          type: string
-          description: The type of the event. Always `error`.
-          enum:
-          - error
-          x-stainless-const: true
-        status:
-          type: integer
-          description: The HTTP status code associated with a WebSocket protocol error.
-        sequence_number:
-          type: integer
-          description: The sequence number of an error emitted by the response stream.
-        error:
-          $ref: '#/components/schemas/BetaErrorPayload'
-          description: Details about the error.
-        stream_id:
-          type: string
-          description: |
-            The WebSocket lane that emitted this event. This field is present when the
-            originating `response.create` event supplied a `stream_id`.
-      required:
-      - type
-      - error
-      x-oaiMeta:
-        name: error
-        group: responses
-        example: |
-          {
-            "type": "error",
-            "status": 400,
-            "stream_id": "agent_1",
-            "error": {
-              "type": "invalid_request_error",
-              "code": "websocket_stream_limit_reached",
-              "message": "This WebSocket connection has reached its stream limit.",
-              "param": "stream_id"
-            }
-          }
-    BetaErrorPayload:
-      properties:
-        type:
-          type: string
-          description: The error type that was emitted.
-        code:
-          anyOf:
-          - type: string
-            description: The error code that was emitted, if any.
-          - type: 'null'
-        message:
-          type: string
-          description: The human-readable error message that was emitted.
-        param:
-          anyOf:
-          - type: string
-            description: The parameter name that was associated with the error, if any.
-          - type: 'null'
-        headers:
-          additionalProperties:
-            type: string
-            description: The header value that was emitted.
-          type: object
-          description: The response headers that were emitted with the error, if any.
-          x-oaiTypeLabel: map
-        misalignment:
-          $ref: '#/components/schemas/BetaMisalignmentErrorDetailsResource'
-      type: object
-      required:
-      - type
-      - code
-      - message
-      - param
-      title: Error payload
-      description: An error payload that was emitted for a streaming error event.
-    BetaResponsesWebSocketStreamEvent:
-      allOf:
-      - anyOf:
-        - $ref: '#/components/schemas/BetaResponseAudioDeltaEvent'
-        - $ref: '#/components/schemas/BetaResponseAudioDoneEvent'
-        - $ref: '#/components/schemas/BetaResponseAudioTranscriptDeltaEvent'
-        - $ref: '#/components/schemas/BetaResponseAudioTranscriptDoneEvent'
-        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCodeDeltaEvent'
-        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCodeDoneEvent'
-        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCompletedEvent'
-        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallInProgressEvent'
-        - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallInterpretingEvent'
-        - $ref: '#/components/schemas/BetaResponseCompactionCompactingStreamingEvent'
-        - $ref: '#/components/schemas/BetaResponseCompletedEvent'
-        - $ref: '#/components/schemas/BetaResponseContentPartAddedEvent'
-        - $ref: '#/components/schemas/BetaResponseContentPartDoneEvent'
-        - $ref: '#/components/schemas/BetaResponseCreatedEvent'
-        - $ref: '#/components/schemas/BetaResponseFileSearchCallCompletedEvent'
-        - $ref: '#/components/schemas/BetaResponseFileSearchCallInProgressEvent'
-        - $ref: '#/components/schemas/BetaResponseFileSearchCallSearchingEvent'
-        - $ref: '#/components/schemas/BetaResponseFunctionCallArgumentsDeltaEvent'
-        - $ref: '#/components/schemas/BetaResponseFunctionCallArgumentsDoneEvent'
-        - $ref: '#/components/schemas/BetaResponseShellCallCommandAddedStreamingEvent'
-        - $ref: '#/components/schemas/BetaResponseShellCallCommandDeltaStreamingEvent'
-        - $ref: '#/components/schemas/BetaResponseShellCallCommandDoneStreamingEvent'
-        - $ref: '#/components/schemas/BetaResponseShellCallOutputContentDeltaStreamingEvent'
-          x-stainless-skip:
-          - go
-        - $ref: '#/components/schemas/BetaResponseShellCallOutputContentDoneStreamingEvent'
-        - $ref: '#/components/schemas/BetaResponseInProgressEvent'
-        - $ref: '#/components/schemas/BetaResponseFailedEvent'
-        - $ref: '#/components/schemas/BetaResponseIncompleteEvent'
-        - $ref: '#/components/schemas/BetaResponseOutputItemAddedEvent'
-        - $ref: '#/components/schemas/BetaResponseOutputItemDoneEvent'
-        - $ref: '#/components/schemas/BetaResponseReasoningSummaryPartAddedEvent'
-        - $ref: '#/components/schemas/BetaResponseReasoningSummaryPartDoneEvent'
-        - $ref: '#/components/schemas/BetaResponseReasoningSummaryTextDeltaEvent'
-        - $ref: '#/components/schemas/BetaResponseReasoningSummaryTextDoneEvent'
-        - $ref: '#/components/schemas/BetaResponseReasoningTextDeltaEvent'
-        - $ref: '#/components/schemas/BetaResponseReasoningTextDoneEvent'
-        - $ref: '#/components/schemas/BetaResponseRefusalDeltaEvent'
-        - $ref: '#/components/schemas/BetaResponseRefusalDoneEvent'
-        - $ref: '#/components/schemas/BetaResponseTextDeltaEvent'
-        - $ref: '#/components/schemas/BetaResponseTextDoneEvent'
-        - $ref: '#/components/schemas/BetaResponseWebSearchCallCompletedEvent'
-        - $ref: '#/components/schemas/BetaResponseWebSearchCallInProgressEvent'
-        - $ref: '#/components/schemas/BetaResponseWebSearchCallSearchingEvent'
-        - $ref: '#/components/schemas/BetaResponseImageGenCallCompletedEvent'
-        - $ref: '#/components/schemas/BetaResponseImageGenCallGeneratingEvent'
-        - $ref: '#/components/schemas/BetaResponseImageGenCallInProgressEvent'
-        - $ref: '#/components/schemas/BetaResponseImageGenCallPartialImageEvent'
-        - $ref: '#/components/schemas/BetaResponseMCPCallArgumentsDeltaEvent'
-        - $ref: '#/components/schemas/BetaResponseMCPCallArgumentsDoneEvent'
-        - $ref: '#/components/schemas/BetaResponseMCPCallCompletedEvent'
-        - $ref: '#/components/schemas/BetaResponseMCPCallFailedEvent'
-        - $ref: '#/components/schemas/BetaResponseMCPCallInProgressEvent'
-        - $ref: '#/components/schemas/BetaResponseMCPListToolsCompletedEvent'
-        - $ref: '#/components/schemas/BetaResponseMCPListToolsFailedEvent'
-        - $ref: '#/components/schemas/BetaResponseMCPListToolsInProgressEvent'
-        - $ref: '#/components/schemas/BetaResponseOutputTextAnnotationAddedEvent'
-        - $ref: '#/components/schemas/BetaResponseQueuedEvent'
-        - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDeltaEvent'
-        - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDoneEvent'
-      - type: object
-        properties:
-          stream_id:
-            type: string
-            description: |
-              The WebSocket lane that emitted this event. This field is present
-              when the originating `response.create` event supplied a
-              `stream_id`.
-    BetaResponsesClientEvent:
-      discriminator:
-        propertyName: type
-      description: |
-        Client events accepted by the Responses WebSocket server.
-      anyOf:
-      - $ref: '#/components/schemas/BetaResponsesClientEventResponseCreate'
-      - $ref: '#/components/schemas/BetaResponseSteerEvent'
-      - $ref: '#/components/schemas/BetaResponseInjectEvent'
-    BetaResponseInjectEvent:
-      type: object
-      title: ResponseInjectEvent
-      description: |
-        Injects input items into an active response over a WebSocket connection.
-        The items are validated and committed atomically. Currently, the server
-        accepts client-owned tool outputs that resume a waiting agent.
-      properties:
-        type:
-          type: string
-          enum:
-          - response.inject
-          description: The event discriminator. Always `response.inject`.
-          x-stainless-const: true
-        response_id:
-          type: string
-          description: The ID of the active response that should receive the input.
-        input:
-          type: array
-          maxItems: 16384
-          description: Input items to inject into the active response.
-          items:
-            $ref: '#/components/schemas/BetaInputItem'
-      required:
-      - type
-      - response_id
-      - input
-      x-oai-beta: responses_multi_agent=v1
-      x-oaiMeta:
-        example: |
-          {
-            "type": "response.inject",
-            "response_id": "resp_123",
-            "input": [
-              {
-                "type": "function_call_output",
-                "call_id": "call_123",
-                "output": "{\"temperature\":72}"
-              }
-            ]
-          }
-    BetaResponsesClientEventResponseCreate:
-      allOf:
-      - type: object
-        properties:
-          type:
-            type: string
-            enum:
-            - response.create
-            description: |
-              The type of the client event. Always `response.create`.
-            x-stainless-const: true
-          stream_id:
-            type: string
-            minLength: 1
-            maxLength: 256
-            pattern: ^[A-Za-z0-9_.-]+$
-            description: |
-              The WebSocket lane for this response. Requests with the same
-              `stream_id` are processed FIFO, and events for the response echo the
-              same `stream_id`.
-
-              `stream_id` controls routing; `previous_response_id` controls
-              conversation lineage, so a new lane can fork from a response created
-              on another lane.
-        required:
-        - type
-      - $ref: '#/components/schemas/BetaCreateResponse'
-      description: |
-        Client event for creating a response over a persistent WebSocket connection.
-        This payload uses the same top-level fields as `POST /v1/responses`, plus
-        WebSocket-only envelope metadata.
-
-        Notes:
-        - `stream` is implicit over WebSocket and should not be sent.
-        - `background` is not supported over WebSocket.
-        - `stream_id` is WebSocket-only and is not part of `POST /v1/responses`.
-      x-oaiMeta:
-        example: |
-          {
-            "type": "response.create",
-            "stream_id": "agent_1",
-            "model": "gpt-6-astra",
-            "input": "Say hello."
-          }
-    BetaCreateResponse:
-      allOf:
-      - $ref: '#/components/schemas/BetaCreateModelResponseProperties'
-      - $ref: '#/components/schemas/BetaResponseProperties'
-      - type: object
-        properties:
-          prompt_cache_options:
-            $ref: '#/components/schemas/BetaResponsePromptCacheOptionsParam'
-          service_tier:
-            $ref: '#/components/schemas/BetaServiceTierResponses'
-          truncation:
-            deprecated: true
-            anyOf:
-            - type: string
-              description: |
-                The truncation strategy to use for the model response.
-                - `auto`: If the input to this Response exceeds
-                  the model's context window size, the model will truncate the
-                  response to fit the context window by dropping items from the beginning of the conversation.
-                - `disabled` (default): If the input size will exceed the context window
-                  size for a model, the request will fail with a 400 error.
-              enum:
-              - auto
-              - disabled
-              default: disabled
-            - type: 'null'
-          reasoning:
-            anyOf:
-            - $ref: '#/components/schemas/BetaReasoning'
-            - type: 'null'
-          input:
-            $ref: '#/components/schemas/BetaInputParam'
-          include:
-            anyOf:
-            - type: array
-              description: |-
-                Specify additional output data to include in the model response. Currently supported values are:
-                - `web_search_call.action.sources`: Include the sources of the web search tool call.
-                - `code_interpreter_call.outputs`: Includes the outputs of python code execution in code interpreter tool call items.
-                - `computer_call_output.output.image_url`: Include image urls from the computer call output.
-                - `file_search_call.results`: Include the search results of the file search tool call.
-                - `message.input_image.image_url`: Include image urls from the input message.
-                - `message.output_text.logprobs`: Include logprobs with assistant messages.
-                - `reasoning.encrypted_content`: Includes an encrypted version of reasoning tokens in reasoning item outputs. This enables reasoning items to be used in multi-turn conversations when using the Responses API statelessly (like when the `store` parameter is set to `false`, or when an organization is enrolled in the zero data retention program).
-              items:
-                $ref: '#/components/schemas/BetaIncludeEnum'
-            - type: 'null'
-          parallel_tool_calls:
-            anyOf:
-            - type: boolean
-              description: |
-                Whether to allow the model to run tool calls in parallel.
-              default: true
-            - type: 'null'
-          store:
-            anyOf:
-            - type: boolean
-              description: |
-                Whether to store the generated model response for later retrieval via
-                API.
-                Defaults to true when omitted.
-                If set to true, response data will be stored for at least 30 days, subject to the [data retention exceptions](https://developers.openai.com/api/docs/guides/your-data#v1responses).
-              default: true
-            - type: 'null'
-          instructions:
-            anyOf:
-            - type: string
-              description: |
-                A system (or developer) message inserted into the model's context.
-
-                When using along with `previous_response_id`, the instructions from a previous
-                response will not be carried over to the next response. This makes it simple
-                to swap out system (or developer) messages in new responses.
-            - type: 'null'
-          moderation:
-            anyOf:
-            - $ref: '#/components/schemas/BetaModerationParam'
-              description: |
-                Configuration for running moderation on the input and output of this response.
-            - type: 'null'
-          stream:
-            anyOf:
-            - description: |
-                If set to true, the model response data will be streamed to the client
-                as it is generated using [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#Event_stream_format).
-                See the [Streaming section below](https://developers.openai.com/api/reference/resources/responses/streaming-events)
-                for more information.
-              type: boolean
-              default: false
-            - type: 'null'
-          stream_options:
-            $ref: '#/components/schemas/BetaResponseStreamOptions'
-          conversation:
-            anyOf:
-            - $ref: '#/components/schemas/BetaConversationParam'
-            - type: 'null'
-          context_management:
-            anyOf:
-            - type: array
-              example:
-              - type: compaction
-                compact_threshold: 1000
-              description: |
-                Context management configuration for this request.
-              minItems: 1
-              items:
-                $ref: '#/components/schemas/BetaContextManagementParam'
-            - type: 'null'
-          max_output_tokens:
-            anyOf:
-            - description: |
-                An upper bound for the number of tokens that can be generated for a response, including visible output tokens and [reasoning tokens](https://developers.openai.com/api/docs/guides/reasoning).
-              type: integer
-              minimum: 16
-            - type: 'null'
-          multi_agent:
-            anyOf:
-            - $ref: '#/components/schemas/BetaMultiAgentParam'
-              description: Configuration for server-hosted multi-agent execution.
-            - type: 'null'
-    BetaMultiAgentParam:
-      properties:
-        enabled:
-          type: boolean
-          description: Whether to enable server-hosted multi-agent execution for this response.
-        max_concurrent_subagents:
-          type: integer
-          minimum: 1
-          description: |-
-            `max_concurrent_subagents` sets the maximum number of subagents that can be active simultaneously across the entire agent tree. It includes all descendants—children, grandchildren, and deeper subagents—but excludes the root agent.
-            The API does not impose a fixed upper bound on this setting. The default is `3`, which is recommended for most workloads. Multi-agent runs also have no fixed limit on tree depth or the total number of subagents created during a run.
-      type: object
-      required:
-      - enabled
-      description: Configuration for server-hosted multi-agent execution.
-      x-oai-beta: responses_multi_agent=v1
-    BetaContextManagementParam:
-      properties:
-        type:
-          type: string
-          description: The context management entry type. Currently only 'compaction' is supported.
-        compact_threshold:
-          anyOf:
-          - type: integer
-            minimum: 1000
-            description: Token threshold at which compaction should be triggered for this entry.
-          - type: 'null'
-      type: object
-      required:
-      - type
-    BetaResponseStreamOptions:
-      anyOf:
-      - description: |
-          Options for streaming responses. Only set this when you set `stream: true`.
-        type: object
-        properties:
-          include_obfuscation:
-            type: boolean
-            description: |
-              When true, stream obfuscation will be enabled. Stream obfuscation adds
-              random characters to an `obfuscation` field on streaming delta events to
-              normalize payload sizes as a mitigation to certain side-channel attacks.
-              These obfuscation fields are included by default, but add a small amount
-              of overhead to the data stream. You can set `include_obfuscation` to
-              false to optimize for bandwidth if you trust the network links between
-              your application and the OpenAI API.
-      - type: 'null'
-    BetaModerationParam:
-      properties:
-        model:
-          type: string
-          description: The moderation model to use for moderated completions, e.g. 'omni-moderation-latest'.
-        policy:
-          anyOf:
-          - $ref: '#/components/schemas/BetaModerationPolicyParam'
-            description: The policy to apply to moderated response input and output.
-          - type: 'null'
-      type: object
-      required:
-      - model
-      description: Configuration for running moderation on the input and output of this response.
-    BetaModerationPolicyParam:
-      properties:
-        input:
-          anyOf:
-          - $ref: '#/components/schemas/BetaModerationConfigParam'
-            description: The moderation policy for the response input.
-          - type: 'null'
-        output:
-          anyOf:
-          - $ref: '#/components/schemas/BetaModerationConfigParam'
-            description: The moderation policy for the response output.
-          - type: 'null'
-      type: object
-      required: []
-      description: The policy to apply to moderated response input and output.
-    BetaModerationConfigParam:
-      properties:
-        mode:
-          $ref: '#/components/schemas/BetaModerationMode'
-      type: object
-      required:
-      - mode
-      description: The moderation policy for the response input.
-    BetaModerationMode:
-      type: string
-      enum:
-      - score
-      - block
-    BetaResponsePromptCacheOptionsParam:
-      properties:
-        ttl:
-          $ref: '#/components/schemas/BetaPromptCacheTTLEnum'
-          description: The minimum lifetime applied to every implicit and explicit cache breakpoint written by the request. Defaults to `30m`, which is currently the only supported value. The backend may retain cache entries for longer.
-        mode:
-          $ref: '#/components/schemas/BetaPromptCacheModeEnum'
-          description: Controls whether OpenAI automatically creates an implicit cache breakpoint. Defaults to `implicit`. With `implicit`, OpenAI creates one implicit breakpoint and writes up to the latest three explicit breakpoints in the request. With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit breakpoints. If there are no explicit breakpoints, the request does not use prompt caching.
-        prewarm:
-          type: boolean
-          description: Prepares the prompt cache without generating output. Defaults to `false`. When set to `true`, overrides the `generate` field to `false`.
-        comparison_response_id:
-          anyOf:
-          - type: string
-            description: The ID of a response to compare when diagnosing prompt cache reuse. Supplying this field requests prompt cache diagnostics when the feature is enabled.
-            example: resp_123
-          - type: 'null'
-      type: object
-      required: []
-      title: Prompt cache options
-      description: Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`, which is currently the only supported value. See the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) for current details.
-    BetaCreateModelResponseProperties:
-      allOf:
-      - $ref: '#/components/schemas/BetaModelResponseProperties'
-      - type: object
-        properties:
-          prompt_cache_options:
-            $ref: '#/components/schemas/BetaPromptCacheOptionsParam'
-          top_logprobs:
-            description: |
-              An integer between 0 and 20 specifying the maximum number of most likely
-              tokens to return at each token position, each with an associated log
-              probability. In some cases, the number of returned tokens may be fewer than
-              requested.
-            type: integer
-            minimum: 0
-            maximum: 20
-    BetaResponseStreamEvent:
-      description: Event emitted while a response is streamed.
-      anyOf:
-      - $ref: '#/components/schemas/BetaResponseAudioDeltaEvent'
-      - $ref: '#/components/schemas/BetaResponseAudioDoneEvent'
-      - $ref: '#/components/schemas/BetaResponseAudioTranscriptDeltaEvent'
-      - $ref: '#/components/schemas/BetaResponseAudioTranscriptDoneEvent'
-      - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCodeDeltaEvent'
-      - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCodeDoneEvent'
-      - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallCompletedEvent'
-      - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallInProgressEvent'
-      - $ref: '#/components/schemas/BetaResponseCodeInterpreterCallInterpretingEvent'
-      - $ref: '#/components/schemas/BetaResponseCompactionCompactingStreamingEvent'
-      - $ref: '#/components/schemas/BetaResponseCompletedEvent'
-      - $ref: '#/components/schemas/BetaResponseContentPartAddedEvent'
-      - $ref: '#/components/schemas/BetaResponseContentPartDoneEvent'
-      - $ref: '#/components/schemas/BetaResponseCreatedEvent'
-      - $ref: '#/components/schemas/BetaResponseErrorEvent'
-      - $ref: '#/components/schemas/BetaResponseFileSearchCallCompletedEvent'
-      - $ref: '#/components/schemas/BetaResponseFileSearchCallInProgressEvent'
-      - $ref: '#/components/schemas/BetaResponseFileSearchCallSearchingEvent'
-      - $ref: '#/components/schemas/BetaResponseFunctionCallArgumentsDeltaEvent'
-      - $ref: '#/components/schemas/BetaResponseFunctionCallArgumentsDoneEvent'
-      - $ref: '#/components/schemas/BetaResponseShellCallCommandAddedStreamingEvent'
-      - $ref: '#/components/schemas/BetaResponseShellCallCommandDeltaStreamingEvent'
-      - $ref: '#/components/schemas/BetaResponseShellCallCommandDoneStreamingEvent'
-      - $ref: '#/components/schemas/BetaResponseShellCallOutputContentDeltaStreamingEvent'
-        x-stainless-skip:
-        - go
-      - $ref: '#/components/schemas/BetaResponseShellCallOutputContentDoneStreamingEvent'
-      - $ref: '#/components/schemas/BetaResponseInProgressEvent'
-      - $ref: '#/components/schemas/BetaResponseFailedEvent'
-      - $ref: '#/components/schemas/BetaResponseIncompleteEvent'
-      - $ref: '#/components/schemas/BetaResponseOutputItemAddedEvent'
-      - $ref: '#/components/schemas/BetaResponseOutputItemDoneEvent'
-      - $ref: '#/components/schemas/BetaResponseReasoningSummaryPartAddedEvent'
-      - $ref: '#/components/schemas/BetaResponseReasoningSummaryPartDoneEvent'
-      - $ref: '#/components/schemas/BetaResponseReasoningSummaryTextDeltaEvent'
-      - $ref: '#/components/schemas/BetaResponseReasoningSummaryTextDoneEvent'
-      - $ref: '#/components/schemas/BetaResponseReasoningTextDeltaEvent'
-      - $ref: '#/components/schemas/BetaResponseReasoningTextDoneEvent'
-      - $ref: '#/components/schemas/BetaResponseRefusalDeltaEvent'
-      - $ref: '#/components/schemas/BetaResponseRefusalDoneEvent'
-      - $ref: '#/components/schemas/BetaResponseTextDeltaEvent'
-      - $ref: '#/components/schemas/BetaResponseTextDoneEvent'
-      - $ref: '#/components/schemas/BetaResponseWebSearchCallCompletedEvent'
-      - $ref: '#/components/schemas/BetaResponseWebSearchCallInProgressEvent'
-      - $ref: '#/components/schemas/BetaResponseWebSearchCallSearchingEvent'
-      - $ref: '#/components/schemas/BetaResponseImageGenCallCompletedEvent'
-      - $ref: '#/components/schemas/BetaResponseImageGenCallGeneratingEvent'
-      - $ref: '#/components/schemas/BetaResponseImageGenCallInProgressEvent'
-      - $ref: '#/components/schemas/BetaResponseImageGenCallPartialImageEvent'
-      - $ref: '#/components/schemas/BetaResponseMCPCallArgumentsDeltaEvent'
-      - $ref: '#/components/schemas/BetaResponseMCPCallArgumentsDoneEvent'
-      - $ref: '#/components/schemas/BetaResponseMCPCallCompletedEvent'
-      - $ref: '#/components/schemas/BetaResponseMCPCallFailedEvent'
-      - $ref: '#/components/schemas/BetaResponseMCPCallInProgressEvent'
-      - $ref: '#/components/schemas/BetaResponseMCPListToolsCompletedEvent'
-      - $ref: '#/components/schemas/BetaResponseMCPListToolsFailedEvent'
-      - $ref: '#/components/schemas/BetaResponseMCPListToolsInProgressEvent'
-      - $ref: '#/components/schemas/BetaResponseOutputTextAnnotationAddedEvent'
-      - $ref: '#/components/schemas/BetaResponseQueuedEvent'
-      - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDeltaEvent'
-      - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDoneEvent'
-      discriminator:
-        propertyName: type
     OAuthErrorCode:
       anyOf:
       - enum:
