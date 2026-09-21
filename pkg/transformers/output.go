@@ -1,9 +1,10 @@
-// Package transformers contains SDK-owned response transformations. Presentation,
-// output formats, and terminal sanitization belong to pkg/custom.
+// Package transformers contains SDK-owned response transformations and optional
+// terminal renderers. Output-mode selection and JSON presentation belong to pkg/custom.
 package transformers
 
 import (
 	"context"
+	"os"
 
 	"github.com/tidwall/gjson"
 )
@@ -37,4 +38,17 @@ func Identity(_ context.Context, value gjson.Result) (gjson.Result, error) {
 // The initial migration deliberately preserves every command's existing output.
 func Select(_ Route) Transformer {
 	return Identity
+}
+
+// TerminalRenderer presents a default response directly to a terminal. A false
+// result leaves the response available for ordinary JSON presentation.
+type TerminalRenderer func(context.Context, gjson.Result, *os.File) (bool, error)
+
+// SelectTerminal selects an optional renderer after the caller has established
+// that stdout is a terminal and the user has not requested an explicit format.
+func SelectTerminal(route Route) TerminalRenderer {
+	if route.Operation == "(resource) images > (method) generate" && route.OutputKind == OutputResponse {
+		return renderGeneratedImages
+	}
+	return nil
 }
