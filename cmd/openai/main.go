@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/openai/openai-cli/pkg/cmd"
+	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/openai/openai-go/v3"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -28,7 +29,8 @@ func main() {
 		}
 	}
 
-	if err := app.Run(context.Background(), os.Args); err != nil {
+	ctx := context.Background()
+	if err := app.Run(ctx, os.Args); err != nil {
 		exitCode := 1
 
 		// Check if error has a custom exit code
@@ -42,6 +44,10 @@ func main() {
 			format := app.String("format-error")
 			json := gjson.Parse(apierr.RawJSON())
 			show_err := cmd.ShowJSON(json, cmd.ShowJSONOpts{
+				// Error output has no successful-operation transformer routing.
+				Context:        ctx,
+				Operation:      "",
+				OutputKind:     custom.OutputUnspecified,
 				ExplicitFormat: app.IsSet("format-error"),
 				Format:         format,
 				Title:          "Error",

@@ -178,6 +178,9 @@ func handleFineTuningCheckpointsPermissionsCreate(ctx context.Context, cmd *cli.
 		}
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) fine_tuning.checkpoints.permissions > (method) create",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -196,6 +199,9 @@ func handleFineTuningCheckpointsPermissionsCreate(ctx context.Context, cmd *cli.
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(iter, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) fine_tuning.checkpoints.permissions > (method) create",
+			OutputKind:     outputPageItem,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -246,6 +252,9 @@ func handleFineTuningCheckpointsPermissionsRetrieve(ctx context.Context, cmd *cl
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) fine_tuning.checkpoints.permissions > (method) retrieve",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -295,6 +304,9 @@ func handleFineTuningCheckpointsPermissionsList(ctx context.Context, cmd *cli.Co
 		}
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) fine_tuning.checkpoints.permissions > (method) list",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -313,6 +325,9 @@ func handleFineTuningCheckpointsPermissionsList(ctx context.Context, cmd *cli.Co
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(iter, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) fine_tuning.checkpoints.permissions > (method) list",
+			OutputKind:     outputPageItem,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -365,6 +380,9 @@ func handleFineTuningCheckpointsPermissionsDelete(ctx context.Context, cmd *cli.
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) fine_tuning.checkpoints.permissions > (method) delete",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),

@@ -165,6 +165,9 @@ func handleAdminOrganizationRolesCreate(ctx context.Context, cmd *cli.Command) e
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) admin.organization.roles > (method) create",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -207,6 +210,9 @@ func handleAdminOrganizationRolesRetrieve(ctx context.Context, cmd *cli.Command)
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) admin.organization.roles > (method) retrieve",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -256,6 +262,9 @@ func handleAdminOrganizationRolesUpdate(ctx context.Context, cmd *cli.Command) e
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) admin.organization.roles > (method) update",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -297,6 +306,9 @@ func handleAdminOrganizationRolesList(ctx context.Context, cmd *cli.Command) err
 		}
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) admin.organization.roles > (method) list",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -310,6 +322,9 @@ func handleAdminOrganizationRolesList(ctx context.Context, cmd *cli.Command) err
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(iter, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) admin.organization.roles > (method) list",
+			OutputKind:     outputPageItem,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -353,6 +368,9 @@ func handleAdminOrganizationRolesDelete(ctx context.Context, cmd *cli.Command) e
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) admin.organization.roles > (method) delete",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),

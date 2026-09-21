@@ -1,4 +1,4 @@
-package cmd
+package custom
 
 import (
 	"fmt"
@@ -119,8 +119,4 @@ func suggestCommand(commands []*cli.Command, provided string) string {
 	}
 	slices.Reverse(parts)
 	return fmt.Sprintf("Did you mean '%s'?", strings.Join(parts, " "))
-}
-
-func init() {
-	cli.SuggestCommand = suggestCommand
 }

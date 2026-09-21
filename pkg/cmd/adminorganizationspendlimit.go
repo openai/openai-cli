@@ -91,6 +91,9 @@ func handleAdminOrganizationSpendLimitRetrieve(ctx context.Context, cmd *cli.Com
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) admin.organization.spend_limit > (method) retrieve",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -132,6 +135,9 @@ func handleAdminOrganizationSpendLimitUpdate(ctx context.Context, cmd *cli.Comma
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) admin.organization.spend_limit > (method) update",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -171,6 +177,9 @@ func handleAdminOrganizationSpendLimitDelete(ctx context.Context, cmd *cli.Comma
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) admin.organization.spend_limit > (method) delete",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),

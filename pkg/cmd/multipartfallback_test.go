@@ -139,7 +139,7 @@ func setUnavailableTempDir(t *testing.T) {
 }
 
 func runVideosCreateCLI(ctx context.Context, baseURL, inputReference string) error {
-	create := videosCreate
+	create := runtimeTestCommand("videos", "create")
 	command := &cli.Command{
 		Name: "openai",
 		Flags: []cli.Flag{
@@ -166,7 +166,7 @@ func runVideosCreateCLI(ctx context.Context, baseURL, inputReference string) err
 }
 
 func runImagesEditCLI(ctx context.Context, baseURL string, paths []string) error {
-	edit := imagesEdit
+	edit := runtimeTestCommand("images", "edit")
 	command := &cli.Command{
 		Name: "openai",
 		Flags: []cli.Flag{

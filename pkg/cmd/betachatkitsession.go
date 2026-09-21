@@ -158,6 +158,9 @@ func handleBetaChatKitSessionsCreate(ctx context.Context, cmd *cli.Command) erro
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) beta.chatkit.sessions > (method) create",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -200,6 +203,9 @@ func handleBetaChatKitSessionsCancel(ctx context.Context, cmd *cli.Command) erro
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) beta.chatkit.sessions > (method) cancel",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),

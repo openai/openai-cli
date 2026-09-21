@@ -1,4 +1,4 @@
-package cmd
+package custom
 
 import (
 	"bytes"
@@ -39,7 +39,7 @@ func TestWriteBinaryResponse(t *testing.T) {
 			Body: io.NopCloser(bytes.NewReader(body)),
 		}
 
-		msg, err := writeBinaryResponse(resp, os.Stdout, outfile)
+		msg, err := WriteBinaryResponse(resp, os.Stdout, outfile)
 
 		require.NoError(t, err)
 		assert.Contains(t, msg, outfile)
@@ -59,7 +59,7 @@ func TestWriteBinaryResponse(t *testing.T) {
 
 				body := []byte("new")
 				resp := &http.Response{Body: io.NopCloser(bytes.NewReader(body))}
-				msg, err := writeBinaryResponse(resp, os.Stdout, outfile)
+				msg, err := WriteBinaryResponse(resp, os.Stdout, outfile)
 
 				require.NoError(t, err)
 				assert.Contains(t, msg, outfile)
@@ -79,7 +79,7 @@ func TestWriteBinaryResponse(t *testing.T) {
 		resp := &http.Response{
 			Body: io.NopCloser(bytes.NewReader(body)),
 		}
-		msg, err := writeBinaryResponse(resp, &buf, "-")
+		msg, err := WriteBinaryResponse(resp, &buf, "-")
 
 		require.NoError(t, err)
 		assert.Empty(t, msg)

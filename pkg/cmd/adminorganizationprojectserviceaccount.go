@@ -186,6 +186,9 @@ func handleAdminOrganizationProjectsServiceAccountsCreate(ctx context.Context, c
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) admin.organization.projects.service_accounts > (method) create",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -237,6 +240,9 @@ func handleAdminOrganizationProjectsServiceAccountsRetrieve(ctx context.Context,
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) admin.organization.projects.service_accounts > (method) retrieve",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -291,6 +297,9 @@ func handleAdminOrganizationProjectsServiceAccountsUpdate(ctx context.Context, c
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) admin.organization.projects.service_accounts > (method) update",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -340,6 +349,9 @@ func handleAdminOrganizationProjectsServiceAccountsList(ctx context.Context, cmd
 		}
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) admin.organization.projects.service_accounts > (method) list",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -358,6 +370,9 @@ func handleAdminOrganizationProjectsServiceAccountsList(ctx context.Context, cmd
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(iter, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) admin.organization.projects.service_accounts > (method) list",
+			OutputKind:     outputPageItem,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -410,6 +425,9 @@ func handleAdminOrganizationProjectsServiceAccountsDelete(ctx context.Context, c
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) admin.organization.projects.service_accounts > (method) delete",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),

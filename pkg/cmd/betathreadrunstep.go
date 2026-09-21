@@ -146,6 +146,9 @@ func handleBetaThreadsRunsStepsRetrieve(ctx context.Context, cmd *cli.Command) e
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) beta.threads.runs.steps > (method) retrieve",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -200,6 +203,9 @@ func handleBetaThreadsRunsStepsList(ctx context.Context, cmd *cli.Command) error
 		}
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) beta.threads.runs.steps > (method) list",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -219,6 +225,9 @@ func handleBetaThreadsRunsStepsList(ctx context.Context, cmd *cli.Command) error
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(iter, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) beta.threads.runs.steps > (method) list",
+			OutputKind:     outputPageItem,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
