@@ -288,6 +288,14 @@ func init() {
 				},
 			},
 			{
+				Name:     "safety:cases",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&safetyCasesRetrieve,
+				},
+			},
+			{
 				Name:     "safety:alerts",
 				Category: "API RESOURCE",
 				Suggest:  true,
@@ -575,6 +583,18 @@ func init() {
 				Commands: []*cli.Command{
 					&adminOrganizationDataRetentionRetrieve,
 					&adminOrganizationDataRetentionUpdate,
+				},
+			},
+			{
+				Name:     "admin:organization:external-storage",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationExternalStorageCreate,
+					&adminOrganizationExternalStorageRetrieve,
+					&adminOrganizationExternalStorageList,
+					&adminOrganizationExternalStorageDelete,
+					&adminOrganizationExternalStorageValidate,
 				},
 			},
 			{
