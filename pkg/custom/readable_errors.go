@@ -16,7 +16,9 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func errorOutputFormat(root *cli.Command) string {
+// ErrorOutputFormat resolves the requested error format, inheriting an explicit
+// machine-readable output format unless --format-error overrides it.
+func ErrorOutputFormat(root *cli.Command) string {
 	format := root.String("format-error")
 	if !root.IsSet("format-error") && root.IsSet("format") {
 		switch strings.ToLower(root.String("format")) {
@@ -27,11 +29,12 @@ func errorOutputFormat(root *cli.Command) string {
 	return resolvedOutputFormat(ShowJSONOpts{Format: format, Transform: root.String("transform-error")})
 }
 
-// Error summaries use status and known codes, never server-supplied prose that
+// ShowReadableError writes a concise error summary and reports whether it handled
+// the error. Summaries use status and known codes, never server-supplied prose that
 // may contain a rejected key, prompt, signed URL, or terminal control sequence.
 // Detailed API data remains available through an explicit output format.
-func showReadableError(root *cli.Command, failure error, out io.Writer) bool {
-	if errorOutputFormat(root) != "text" || root.String("transform-error") != "" {
+func ShowReadableError(root *cli.Command, failure error, out io.Writer) bool {
+	if ErrorOutputFormat(root) != "text" || root.String("transform-error") != "" {
 		return false
 	}
 	if errors.Is(failure, context.Canceled) {

@@ -13,20 +13,20 @@ generated runtime bridge and response-routing metadata. Feature work uses that
 contract; it does not need another Castiron change to establish the same split.
 
 ```text
-cmd/openai/main.go                  Launch custom.Run(cmd.Command, os.Args)
+cmd/openai/main.go                  CLI lifecycle, completion, and error handling
         │
         ▼
 pkg/cmd                            Generated command tree and API handlers
         │                          Generated custom_runtime.go bridge
         ▼
-pkg/custom                         Request defaults, lifecycle, output selection
+pkg/custom                         Request defaults, help, output selection
         │                          Printing, saving, previews, and errors
         ▼
 pkg/transformers                    Pure response normalization and projections
 
 internal                           Focused implementation helpers used by custom
-tests/cli                          Tests through the executable's runtime
-tests/architecture                 Checks package and bootstrap boundaries
+cmd/openai/*_test.go                Tests through the executable's entrypoint
+tests/architecture                 Checks package dependencies
 ```
 
 Dependencies flow from generated commands to custom runtime to transformers.
@@ -40,10 +40,10 @@ files such as `image.go`. The generated tree installs `custom.ConfigureCommand`
 after assembly. Command decoration can adjust defaults or add local commands
 before execution without changing generated handlers.
 
-After startup, the command pipeline has no dependency on `main.go`.
-`custom.Run` owns the outer lifecycle, including help, completion, error
-presentation, and exit codes. The executable only passes in the generated tree
-and arguments, then exits with the returned status.
+`main.go` owns the outer lifecycle: request setup, completion, command execution,
+error handling, and exit codes. It calls focused custom hooks for help and
+readable error presentation. The command and output pipeline stays in the
+custom and transformer packages.
 
 ### An inherited compatibility exception
 
@@ -133,9 +133,8 @@ converted into JSON responses.
 ## Guardrails and checks
 
 `tests/architecture/output_pipeline_test.go` checks production imports across
-platform-specific files, excludes tests and test fixtures, and requires the
-executable to remain a single bootstrap file. New transformer dependencies
-need review; terminal, filesystem, network, process, and CLI implementation
+platform-specific files and excludes tests and test fixtures. New transformer
+dependencies need review; terminal, filesystem, network, process, and CLI implementation
 dependencies belong outside that package. These checks work in an ordinary
 clone without Git history or generated snapshots. They are structural
 guardrails, not a proof that every function is pure.
@@ -149,7 +148,7 @@ replace or alter that check.
 ```sh
 go test ./tests/architecture ./pkg/transformers
 go test ./pkg/custom -run 'Test(ShowJSON|OutputIterator|ConfigureCommand|ImageWorkflow|ImagePresentation)'
-go test ./tests/cli
+go test ./cmd/openai
 ```
 
 See [the image implementation map](../image-implementation.md) for individual

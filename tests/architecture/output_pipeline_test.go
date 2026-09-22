@@ -1,7 +1,6 @@
 package architecture_test
 
 import (
-	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -76,74 +75,6 @@ func prohibitedImport(layer, imported string) string {
 
 func packageWithin(path, prefix string) bool {
 	return path == prefix || strings.HasPrefix(path, prefix+"/")
-}
-
-func TestExecutableRemainsThinBootstrap(t *testing.T) {
-	root := repositoryRoot(t)
-	directory := filepath.Join(root, "cmd", "openai")
-	files := productionGoFiles(t, directory)
-	if len(files) != 1 || files[0] != filepath.Join(directory, "main.go") {
-		t.Fatalf("cmd/openai should contain only main.go as production Go code; move workflows to pkg/custom: %v", files)
-	}
-	file, err := parser.ParseFile(token.NewFileSet(), files[0], nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if file.Name.Name != "main" {
-		t.Fatal("the executable must remain package main")
-	}
-	wantImports := map[string]bool{"os": false, modulePath + "/pkg/cmd": false, modulePath + "/pkg/custom": false}
-	for _, imported := range file.Imports {
-		path, err := strconv.Unquote(imported.Path.Value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, allowed := wantImports[path]; !allowed || imported.Name != nil {
-			t.Errorf("main.go imports %s; feature and lifecycle dependencies belong in pkg/custom", imported.Path.Value)
-		}
-		wantImports[path] = true
-	}
-	for path, found := range wantImports {
-		if !found {
-			t.Errorf("main.go is missing bootstrap import %q", path)
-		}
-	}
-	var main *ast.FuncDecl
-	for _, declaration := range file.Decls {
-		if imports, ok := declaration.(*ast.GenDecl); ok && imports.Tok == token.IMPORT {
-			continue
-		}
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Name.Name != "main" || main != nil {
-			t.Fatal("main.go must only declare main; move initialization, state, and helpers to pkg/custom")
-		}
-		main = function
-	}
-	if main == nil || main.Body == nil || len(main.Body.List) != 1 || main.Recv != nil || main.Type.Params.NumFields() != 0 || main.Type.Results.NumFields() != 0 {
-		t.Fatal("main must only launch custom.Run and pass its exit code to os.Exit")
-	}
-	statement, ok := main.Body.List[0].(*ast.ExprStmt)
-	if !ok {
-		t.Fatal("main must launch custom.Run without adding a workflow")
-	}
-	exit, ok := statement.X.(*ast.CallExpr)
-	if !ok || !selector(exit.Fun, "os", "Exit") || len(exit.Args) != 1 {
-		t.Fatal("main must pass the CLI exit code to os.Exit")
-	}
-	run, ok := exit.Args[0].(*ast.CallExpr)
-	if !ok || !selector(run.Fun, "custom", "Run") || len(run.Args) != 2 ||
-		!selector(run.Args[0], "cmd", "Command") || !selector(run.Args[1], "os", "Args") {
-		t.Fatal("main must delegate to custom.Run(cmd.Command, os.Args)")
-	}
-}
-
-func selector(expression ast.Expr, pkg, name string) bool {
-	member, ok := expression.(*ast.SelectorExpr)
-	if !ok || member.Sel.Name != name {
-		return false
-	}
-	base, ok := member.X.(*ast.Ident)
-	return ok && base.Name == pkg
 }
 
 func productionGoFiles(t *testing.T, directory string) []string {

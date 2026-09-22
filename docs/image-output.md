@@ -595,11 +595,11 @@ emitted events and is not a limit on generated images or cost.
 See the [implementation map](image-implementation.md) for the folder layout,
 request flow, font-rendering flow, and a suggested code-review order.
 
-The executable entrypoint in `cmd/openai/main.go` only passes the generated
-command tree and arguments to `pkg/custom.Run`. The API commands in `pkg/cmd`
-remain generated. `custom.ConfigureCommand` decorates that tree with image
-settings and local commands after assembly; image features do not require
-manual changes to generated handlers.
+The executable entrypoint in `cmd/openai/main.go` runs the generated command
+tree and handles completion, request setup, errors, and exit codes. The API
+commands in `pkg/cmd` remain generated. `custom.ConfigureCommand` decorates that
+tree with image settings and local commands after assembly; image features do
+not require manual changes to generated handlers.
 
 `pkg/custom` owns CLI behavior: help, request defaults, validation, output policy,
 file saving, streaming progress, and terminal presentation. Its image action
@@ -636,12 +636,12 @@ Focused tests use synthetic responses and temporary directories:
 ```sh
 go test ./internal/imagefont ./internal/imagefontmac ./internal/imagegallery ./internal/imageprefs ./internal/imageopen ./internal/imageoutput ./internal/imagepreview
 go test ./pkg/transformers ./pkg/custom -run '^Test(Image|ImagesGenerate|ReportImagePreview)' -count=1
-go test ./tests/cli -count=1
+go test ./cmd/openai -count=1
 ```
 
-The process-level CLI tests live in `tests/cli`, so normal `go test ./...`
-discovery includes them while `cmd/openai` contains only the bootstrap. These
-checks exercise the assembled CLI against local HTTP servers. A final real
-generation uses `OPENAI_API_KEY` from your environment and confirms account/model
+The process-level CLI tests live alongside the executable in `cmd/openai` and
+are included by `go test ./...`. These checks exercise the actual entrypoint
+against local HTTP servers. A final real generation uses `OPENAI_API_KEY` from
+your environment and confirms account/model
 access and the hosted API response. Keep credentials out of commands, source
 files, and chat.

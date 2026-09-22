@@ -1,4 +1,4 @@
-package cli_test
+package main
 
 import (
 	"bytes"
@@ -9,9 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/openai/openai-cli/pkg/cmd"
-	"github.com/openai/openai-cli/pkg/custom"
 )
 
 func TestMainDispatchProcess(t *testing.T) {
@@ -23,7 +20,8 @@ func TestMainDispatchProcess(t *testing.T) {
 		t.Fatal("missing subprocess argument separator")
 	}
 	os.Args = os.Args[separator+1:]
-	os.Exit(custom.Run(cmd.Command, os.Args))
+	main()
+	os.Exit(0)
 }
 
 type mainDispatchResult struct {

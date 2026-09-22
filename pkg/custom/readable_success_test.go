@@ -48,7 +48,9 @@ func TestReadableBodylessActionPreservesFailuresAndExitCodes(t *testing.T) {
 	var wrapped *readableCommandError
 	require.ErrorAs(t, err, &wrapped)
 	require.Equal(t, "delete", wrapped.command.Name)
-	require.Equal(t, 7, commandExitCode(err))
+	var exitErr cli.ExitCoder
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 7, exitErr.ExitCode())
 	require.ErrorIs(t, err, failure)
 }
 

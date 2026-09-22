@@ -8,12 +8,11 @@ defines the shared rendering boundary and proposed PR sequence.
 
 ```text
 openai-cli/
-├── cmd/openai/       One main.go: passes the generated tree to the custom runner
+├── cmd/openai/       Executable lifecycle and entrypoint tests
 ├── pkg/cmd/          Generated API commands, flags, and SDK calls
 ├── pkg/custom/       CLI behavior: help, command decoration, saving, and display
 ├── pkg/transformers/ Pure transformations of successful JSON responses/events
 ├── internal/        Readable output, file, font, preview, and preference helpers
-├── tests/cli/       Process-level tests of the assembled CLI
 ├── docs/            Explains behavior and implementation
 ├── scripts/         Builds, tests, and checks generated-code customizations
 ├── api_reference/   API specification used by the local mock server
@@ -29,12 +28,12 @@ Editing source does not update an executable that was built earlier. The
 The generated command tree calls `custom.ConfigureCommand` after assembly.
 That hook decorates the existing image command and registers local commands such
 as `images preview`, `images inline`, `images models`, and `images options`.
-`main.go` then passes the tree and arguments to `custom.Run`, which owns help,
-completion, request setup, exit codes, and error presentation.
+`main.go` runs the tree and owns completion, request setup, exit codes, and
+error handling. It calls focused custom hooks for help and readable errors.
 
 | Layer | What belongs here |
 | --- | --- |
-| `cmd/openai` | Bootstrap the program. It contains no image workflow or tests. |
+| `cmd/openai` | Run the CLI lifecycle and test the executable's entrypoint. |
 | `pkg/cmd` | Generated commands and their existing custom-runtime adapter. The image feature does not hand-edit generated handlers or flag definitions. |
 | `pkg/custom` | Decorate commands, choose defaults, prepare requests, validate local settings, save files, manage previews, and present output. |
 | `pkg/transformers` | Transform one JSON response or stream event into a reusable data shape. Transformers respect cancellation and do not make requests, write files, render terminals, or advance streams. |
@@ -48,7 +47,7 @@ without embedding the feature implementation in generated files.
 
 ```mermaid
 flowchart TD
-    A["./openai images generate --prompt ..."] --> B["cmd/openai: custom.Run with generated tree"]
+    A["./openai images generate --prompt ..."] --> B["cmd/openai: run the generated command tree"]
     B --> C["pkg/custom: help, settings, and output plan"]
     C --> D["pkg/cmd: generated action calls Go SDK"]
     D --> E["pkg/custom: successful-output boundary"]
@@ -106,7 +105,7 @@ The `pkg/transformers` package is a code extension point. The existing
 
 | Follow this part | Start here |
 | --- | --- |
-| Bootstrap and CLI lifecycle | [cmd/openai/main.go](../cmd/openai/main.go), [pkg/custom/run.go](../pkg/custom/run.go) |
+| Executable lifecycle and error handling | [cmd/openai/main.go](../cmd/openai/main.go) |
 | Extension registration and image action wrapper | [command.go](../pkg/custom/command.go), [image_command.go](../pkg/custom/image_command.go) |
 | Welcome page, setup help, and full-reference routing | [pkg/custom/help.go](../pkg/custom/help.go) |
 | Short generation help and detailed setting guides | [image_help.go](../pkg/custom/image_help.go), [image_options.go](../pkg/custom/image_options.go) |
@@ -184,18 +183,17 @@ cache bytes: font revisions and typography variants also occupy space.
 
 Unit tests sit beside their implementations in `*_test.go`. Helper tests cover
 synthetic image data, file handling, rendering, fonts, and cache ownership.
-Command tests in `pkg/custom` and process-level tests in `tests/cli` use local
+Command tests in `pkg/custom` and process-level tests in `cmd/openai` use local
 HTTP servers for saving, errors, model checks, streaming, and help. Transformer
 tests cover response/event data and cancellation independently of the terminal.
-`tests/cli` is included by `go test ./...`; a directory named `__tests__` would
-be skipped by Go's recursive package discovery. Terminal automation tests use
-mocks; additional macOS tests read installed fonts through CoreText. These
-checks do not prove visual correctness
-in every terminal or font.
+The entrypoint tests invoke the actual `main()` in a fresh process and are
+included by `go test ./...`. Terminal automation tests use mocks; additional
+macOS tests read installed fonts through CoreText. These checks do not prove
+visual correctness in every terminal or font.
 
 ```sh
 go test ./internal/imagefont ./internal/imagefontmac ./internal/imagegallery ./internal/imageoutput ./internal/imagepreview ./internal/imageopen ./internal/imageprefs ./internal/imagemodels
-go test ./pkg/transformers ./pkg/custom ./tests/cli -run '^Test(Main|Help|Image[A-Z]|ImagesGenerate(Output|FriendlyStream)|ReportImagePreview)' -count=1
+go test ./pkg/transformers ./pkg/custom ./cmd/openai -run '^Test(Main|Help|Image[A-Z]|ImagesGenerate(Output|FriendlyStream)|ReportImagePreview)' -count=1
 ```
 
 The existing generated API tests additionally need the repository's local mock

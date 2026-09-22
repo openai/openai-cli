@@ -35,7 +35,7 @@ func TestReadableErrorCancellationTimeoutAndConnection(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := readableErrorTestCommand(t)
 			var out bytes.Buffer
-			require.True(t, showReadableError(root, test.err, &out))
+			require.True(t, ShowReadableError(root, test.err, &out))
 			require.Contains(t, out.String(), test.want)
 			assertReadableErrorContainsNoPrivateDetails(t, out.String())
 			if strings.Contains(test.name, "cancel") {
@@ -70,7 +70,7 @@ func TestReadableAPIErrorSummaryDoesNotEchoResponseDetails(t *testing.T) {
 				Param:   "synthetic-private-param",
 			}
 			var out bytes.Buffer
-			require.True(t, showReadableError(root, fmt.Errorf("synthetic-wrapper: %w", apierr), &out))
+			require.True(t, ShowReadableError(root, fmt.Errorf("synthetic-wrapper: %w", apierr), &out))
 			require.Contains(t, out.String(), test.want)
 			require.Contains(t, out.String(), fmt.Sprintf("Request failed (%d", test.status))
 			require.Contains(t, out.String(), "--format-error json")
@@ -104,9 +104,9 @@ func TestReadableErrorFormatRouting(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := readableErrorTestCommand(t, test.args...)
-			require.Equal(t, test.format, errorOutputFormat(root))
+			require.Equal(t, test.format, ErrorOutputFormat(root))
 			var out bytes.Buffer
-			require.Equal(t, test.summary, showReadableError(root, &openai.Error{StatusCode: http.StatusBadRequest}, &out))
+			require.Equal(t, test.summary, ShowReadableError(root, &openai.Error{StatusCode: http.StatusBadRequest}, &out))
 			if test.summary {
 				require.Contains(t, out.String(), "The API rejected the request.")
 			} else {
