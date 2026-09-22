@@ -83,7 +83,7 @@ var adminOrganizationExternalStorageList = cli.Command{
 
 var adminOrganizationExternalStorageDelete = cli.Command{
 	Name:    "delete",
-	Usage:   "Soft-delete one customer-managed external storage configuration.",
+	Usage:   "Disconnect a customer-managed external storage configuration. Removing the\nproject's last configuration restores organization-default retention if\ncustomer-managed retention was active. Repeating a deletion also completes any\ninterrupted retention update. Cloud storage is unchanged.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
