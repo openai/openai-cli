@@ -1,15 +1,39 @@
-package transformers
+package readable
 
 import (
 	"strconv"
 	"strings"
 
+	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/tidwall/gjson"
 )
 
-// ReadableValue describes a text-only API result. A zero value asks the caller
+// View describes the readable presentation of one API value. The original JSON
+// stays separate, so explicit data formats never lose fields to a summary.
+type View struct {
+	Text    TextValue
+	Summary gjson.Result
+	Omitted bool
+}
+
+// Project chooses text or a resource summary without modifying the API value.
+// Unknown response shapes use the complete labeled representation.
+func Project(value gjson.Result, route transformers.Route) View {
+	switch route.OutputKind {
+	case transformers.OutputResponse, transformers.OutputPageItem, transformers.OutputStreamEvent:
+	default:
+		return View{}
+	}
+	view := View{Text: projectText(value, route)}
+	if !view.Text.IsText && !view.Text.Skip {
+		view.Summary, _, view.Omitted = summarize(value, route)
+	}
+	return view
+}
+
+// TextValue describes a text-only API result. A zero value asks the caller
 // to present the original value in full. Text is never escaped or truncated here.
-type ReadableValue struct {
+type TextValue struct {
 	Text     string
 	IsText   bool
 	Delta    bool
@@ -21,31 +45,31 @@ type ReadableValue struct {
 	// of the entire response; the caller owns deduplication and stream state.
 	// A response:<output_index>:* key covers all text parts of one output item.
 	Key   string
-	Parts []ReadablePart // component snapshots for aggregated completion events
+	Parts []TextPart // component snapshots for aggregated completion events
 	// Details contains completion metadata to display after text; zero means none.
 	Details gjson.Result
 }
 
-// ReadablePart identifies one text component inside an aggregated snapshot.
-type ReadablePart struct {
+// TextPart identifies one text component inside an aggregated snapshot.
+type TextPart struct {
 	Key, Text string
 }
 
-// Readable projects known text responses and events without discarding tool,
+// projectText selects known text responses and events without discarding tool,
 // image, mixed-content, or unsuccessful results. Route identity is used only
 // where an API response has no unambiguous object or event discriminator.
-func Readable(value gjson.Result, route Route) ReadableValue {
+func projectText(value gjson.Result, route transformers.Route) TextValue {
 	// The custom transport boundary preserves native text/subtitle responses as
 	// JSON strings before preparing output. Only these exact audio response
 	// routes interpret a scalar string as text, retaining all original content.
-	if value.Type == gjson.String && route.OutputKind == OutputResponse &&
+	if value.Type == gjson.String && route.OutputKind == transformers.OutputResponse &&
 		(route.Operation == "(resource) audio.transcriptions > (method) create" ||
 			route.Operation == "(resource) audio.translations > (method) create") {
 		return readableText(value)
 	}
 	// List entries are independent records: their IDs and repeated text matter.
-	if route.OutputKind == OutputPageItem || !value.IsObject() || readableIssue(value) {
-		return ReadableValue{}
+	if route.OutputKind == transformers.OutputPageItem || !value.IsObject() || readableIssue(value) {
+		return TextValue{}
 	}
 	if kind := value.Get("type").String(); kind != "" {
 		return readableEvent(value, kind)
@@ -57,17 +81,17 @@ func Readable(value gjson.Result, route Route) ReadableValue {
 	case object == "chat.completion.chunk":
 		return readableChoices(value, true, true)
 	case object == "chat.completion", object == "" && resource == "chat.completions":
-		return readableChoices(value, true, route.OutputKind == OutputStreamEvent)
+		return readableChoices(value, true, route.OutputKind == transformers.OutputStreamEvent)
 	case object == "text_completion", object == "" && resource == "completions":
-		return readableChoices(value, false, route.OutputKind == OutputStreamEvent)
+		return readableChoices(value, false, route.OutputKind == transformers.OutputStreamEvent)
 	case object == "" && (resource == "audio.transcriptions" || resource == "audio.translations"):
 		if readableStatus(value, false) && readableFields(value,
 			"text", "task", "language", "languages", "duration", "usage", "status", "error") {
 			return readableText(value.Get("text"))
 		}
-		return ReadableValue{}
+		return TextValue{}
 	default:
-		return ReadableValue{}
+		return TextValue{}
 	}
 }
 
@@ -82,11 +106,11 @@ func readableResource(operation string) string {
 	return ""
 }
 
-func readableText(value gjson.Result) ReadableValue {
+func readableText(value gjson.Result) TextValue {
 	if value.Type != gjson.String {
-		return ReadableValue{}
+		return TextValue{}
 	}
-	return ReadableValue{Text: value.Str, IsText: true}
+	return TextValue{Text: value.Str, IsText: true}
 }
 
 func readableIssue(value gjson.Result) bool {
@@ -106,13 +130,13 @@ func readableStatus(value gjson.Result, progress bool) bool {
 	return status.Type == gjson.String && (status.Str == "completed" || progress && status.Str == "in_progress")
 }
 
-func readableResponse(value gjson.Result) ReadableValue {
+func readableResponse(value gjson.Result) TextValue {
 	if readableIssue(value) || !readableStatus(value, false) {
-		return ReadableValue{}
+		return TextValue{}
 	}
 	output := value.Get("output")
 	if !output.IsArray() || len(output.Array()) == 0 {
-		return ReadableValue{}
+		return TextValue{}
 	}
 	var texts []string
 	for _, item := range output.Array() {
@@ -121,14 +145,14 @@ func readableResponse(value gjson.Result) ReadableValue {
 		}
 		text, ok := readableMessage(item, false)
 		if !ok {
-			return ReadableValue{}
+			return TextValue{}
 		}
 		texts = append(texts, text...)
 	}
 	if len(texts) == 0 {
-		return ReadableValue{}
+		return TextValue{}
 	}
-	return ReadableValue{Text: strings.Join(texts, "\n\n"), IsText: true}
+	return TextValue{Text: strings.Join(texts, "\n\n"), IsText: true}
 }
 
 func readableEmptyReasoning(value gjson.Result) bool {
@@ -162,11 +186,11 @@ func readableMessage(value gjson.Result, progress bool) ([]string, bool) {
 	return texts, true
 }
 
-func readablePart(value gjson.Result) ReadableValue {
+func readablePart(value gjson.Result) TextValue {
 	switch value.Get("type").String() {
 	case "output_text":
 		if !readableFields(value, "type", "text", "annotations") || readablePresent(value.Get("annotations")) {
-			return ReadableValue{}
+			return TextValue{}
 		}
 		return readableText(value.Get("text"))
 	case "refusal":
@@ -174,26 +198,26 @@ func readablePart(value gjson.Result) ReadableValue {
 			return readableText(value.Get("refusal"))
 		}
 	}
-	return ReadableValue{}
+	return TextValue{}
 }
 
-func readableChoices(value gjson.Result, chat, stream bool) ReadableValue {
+func readableChoices(value gjson.Result, chat, stream bool) TextValue {
 	if !readableStatus(value, false) || readableIssue(value) || stream && readablePresent(value.Get("usage")) {
-		return ReadableValue{}
+		return TextValue{}
 	}
 	choices := value.Get("choices")
 	// A single text stream cannot represent interleaved alternatives faithfully.
 	if !choices.IsArray() || len(choices.Array()) != 1 {
-		return ReadableValue{}
+		return TextValue{}
 	}
 	choice := choices.Array()[0]
 	if readablePresent(choice.Get("logprobs")) {
-		return ReadableValue{}
+		return TextValue{}
 	}
 	if finish := choice.Get("finish_reason"); finish.Exists() && finish.Type != gjson.Null && finish.String() != "stop" {
-		return ReadableValue{}
+		return TextValue{}
 	}
-	var result ReadableValue
+	var result TextValue
 	if chat {
 		key := "message"
 		if stream {
@@ -201,10 +225,10 @@ func readableChoices(value gjson.Result, chat, stream bool) ReadableValue {
 		}
 		message := choice.Get(key)
 		if !message.IsObject() || !readableFields(message, "role", "content", "refusal") {
-			return ReadableValue{}
+			return TextValue{}
 		}
 		if role := message.Get("role"); readablePresent(role) && role.String() != "assistant" {
-			return ReadableValue{}
+			return TextValue{}
 		}
 		var texts []string
 		seenText := false
@@ -216,12 +240,12 @@ func readableChoices(value gjson.Result, chat, stream bool) ReadableValue {
 					texts = append(texts, content.Str)
 				}
 			} else if content.Exists() && content.Type != gjson.Null {
-				return ReadableValue{}
+				return TextValue{}
 			}
 		}
-		result = ReadableValue{Text: strings.Join(texts, "\n\n"), IsText: seenText}
+		result = TextValue{Text: strings.Join(texts, "\n\n"), IsText: seenText}
 		if stream && result.Text == "" && !readablePresent(value.Get("usage")) && !readablePresent(choice.Get("logprobs")) {
-			return ReadableValue{Skip: true}
+			return TextValue{Skip: true}
 		}
 	} else {
 		result = readableText(choice.Get("text"))
@@ -233,35 +257,35 @@ func readableChoices(value gjson.Result, chat, stream bool) ReadableValue {
 	return result
 }
 
-func readableEvent(value gjson.Result, kind string) ReadableValue {
+func readableEvent(value gjson.Result, kind string) TextValue {
 	if !readableStatus(value, false) {
-		return ReadableValue{}
+		return TextValue{}
 	}
-	var result ReadableValue
+	var result TextValue
 	var partTexts []string
 	contentIndex := strconv.FormatInt(value.Get("content_index").Int(), 10)
 	switch kind {
 	case "response.output_text.delta", "response.refusal.delta", "transcript.text.delta":
 		if !readableEventFields(value, "delta", "obfuscation") {
-			return ReadableValue{}
+			return TextValue{}
 		}
 		result = readableText(value.Get("delta"))
 		result.Delta = result.IsText
 	case "response.output_text.done":
 		if !readableEventFields(value, "text", "annotations") || readablePresent(value.Get("annotations")) {
-			return ReadableValue{}
+			return TextValue{}
 		}
 		result = readableText(value.Get("text"))
 		result.Snapshot = result.IsText
 	case "response.refusal.done":
 		if !readableEventFields(value, "refusal") {
-			return ReadableValue{}
+			return TextValue{}
 		}
 		result = readableText(value.Get("refusal"))
 		result.Snapshot = result.IsText
 	case "transcript.text.done":
 		if !readableEventFields(value, "text", "languages", "usage") {
-			return ReadableValue{}
+			return TextValue{}
 		}
 		result = readableText(value.Get("text"))
 		result.Snapshot, result.Final = result.IsText, result.IsText
@@ -270,7 +294,7 @@ func readableEvent(value gjson.Result, kind string) ReadableValue {
 		}
 	case "response.completed":
 		if !readableEventFields(value, "response") {
-			return ReadableValue{}
+			return TextValue{}
 		}
 		response := value.Get("response")
 		result = readableResponse(response)
@@ -286,41 +310,41 @@ func readableEvent(value gjson.Result, kind string) ReadableValue {
 		return result
 	case "response.content_part.added", "response.content_part.done":
 		if !readableEventFields(value, "part") {
-			return ReadableValue{}
+			return TextValue{}
 		}
 		result = readablePart(value.Get("part"))
 		result.Snapshot = result.IsText
 		if kind == "response.content_part.added" && result.IsText && result.Text == "" {
-			return ReadableValue{Skip: true}
+			return TextValue{Skip: true}
 		}
 	case "response.output_item.added", "response.output_item.done":
 		if !readableEventFields(value, "item") {
-			return ReadableValue{}
+			return TextValue{}
 		}
 		texts, ok := readableMessage(value.Get("item"), kind == "response.output_item.added")
 		if !ok {
-			return ReadableValue{}
+			return TextValue{}
 		}
 		if len(texts) == 0 && kind == "response.output_item.added" {
-			return ReadableValue{Skip: true}
+			return TextValue{Skip: true}
 		}
 		if len(texts) == 0 {
-			return ReadableValue{}
+			return TextValue{}
 		}
 		if len(texts) > 1 {
 			contentIndex = "*"
 			partTexts = texts
 		}
-		result = ReadableValue{Text: strings.Join(texts, "\n\n"), IsText: true, Snapshot: true}
+		result = TextValue{Text: strings.Join(texts, "\n\n"), IsText: true, Snapshot: true}
 	case "response.created", "response.in_progress":
 		response := value.Get("response")
 		if !readableEventFields(value, "response") || !response.IsObject() || readableIssue(response) || !readableStatus(response, true) ||
 			readablePresent(response.Get("output")) || readablePresent(response.Get("usage")) {
-			return ReadableValue{}
+			return TextValue{}
 		}
-		return ReadableValue{Skip: true}
+		return TextValue{Skip: true}
 	default:
-		return ReadableValue{}
+		return TextValue{}
 	}
 	if result.IsText {
 		if strings.HasPrefix(kind, "transcript.") {
@@ -340,10 +364,10 @@ func readableEvent(value gjson.Result, kind string) ReadableValue {
 	return result
 }
 
-func readableParts(outputIndex string, texts []string) []ReadablePart {
-	parts := make([]ReadablePart, len(texts))
+func readableParts(outputIndex string, texts []string) []TextPart {
+	parts := make([]TextPart, len(texts))
 	for index, text := range texts {
-		parts[index] = ReadablePart{Key: "response:" + outputIndex + ":" + strconv.Itoa(index), Text: text}
+		parts[index] = TextPart{Key: "response:" + outputIndex + ":" + strconv.Itoa(index), Text: text}
 	}
 	return parts
 }

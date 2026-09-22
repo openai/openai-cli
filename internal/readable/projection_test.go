@@ -1,10 +1,11 @@
-package transformers
+package readable
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -105,8 +106,8 @@ func TestReadableResponses(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			value := gjson.Parse(test.input)
-			actual := Readable(value, Route{Operation: test.operation, OutputKind: OutputResponse})
-			require.Equal(t, ReadableValue{Text: test.text, IsText: true}, actual)
+			actual := projectText(value, transformers.Route{Operation: test.operation, OutputKind: transformers.OutputResponse})
+			require.Equal(t, TextValue{Text: test.text, IsText: true}, actual)
 			require.Equal(t, test.input, value.Raw)
 		})
 	}
@@ -115,27 +116,27 @@ func TestReadableResponses(t *testing.T) {
 func TestReadablePreservesRequestedDetailedContent(t *testing.T) {
 	for _, test := range []struct {
 		name, input string
-		route       Route
+		route       transformers.Route
 	}{
 		{
 			name:  "transcription word timestamps",
 			input: `{"text":"Hello","words":[{"word":"Hello","start":0,"end":0.5}]}`,
-			route: Route{Operation: "(resource) audio.transcriptions > (method) create", OutputKind: OutputResponse},
+			route: transformers.Route{Operation: "(resource) audio.transcriptions > (method) create", OutputKind: transformers.OutputResponse},
 		},
 		{
 			name:  "diarized transcription speakers",
 			input: `{"text":"Hello","segments":[{"text":"Hello","speaker":"speaker_0","start":0,"end":0.5}]}`,
-			route: Route{Operation: "(resource) audio.transcriptions > (method) create", OutputKind: OutputResponse},
+			route: transformers.Route{Operation: "(resource) audio.transcriptions > (method) create", OutputKind: transformers.OutputResponse},
 		},
 		{
 			name:  "translation segments",
 			input: `{"text":"Hello","segments":[{"text":"Hello","start":0,"end":0.5}]}`,
-			route: Route{Operation: "(resource) audio.translations > (method) create", OutputKind: OutputResponse},
+			route: transformers.Route{Operation: "(resource) audio.translations > (method) create", OutputKind: transformers.OutputResponse},
 		},
 		{
 			name:  "transcription log probabilities",
 			input: `{"text":"Hello","logprobs":[{"token":"Hello","logprob":-0.1}]}`,
-			route: Route{Operation: "(resource) audio.transcriptions > (method) create", OutputKind: OutputResponse},
+			route: transformers.Route{Operation: "(resource) audio.transcriptions > (method) create", OutputKind: transformers.OutputResponse},
 		},
 		{
 			name:  "chat log probabilities",
@@ -152,37 +153,37 @@ func TestReadablePreservesRequestedDetailedContent(t *testing.T) {
 		{
 			name:  "chat delta log probabilities",
 			input: `{"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"},"logprobs":{"content":[{"token":"Hello","logprob":-0.1}]}}]}`,
-			route: Route{OutputKind: OutputStreamEvent},
+			route: transformers.Route{OutputKind: transformers.OutputStreamEvent},
 		},
 		{
 			name:  "completion delta log probabilities",
 			input: `{"object":"text_completion","choices":[{"index":0,"text":"Hello","logprobs":{"tokens":["Hello"],"token_logprobs":[-0.1]}}]}`,
-			route: Route{OutputKind: OutputStreamEvent},
+			route: transformers.Route{OutputKind: transformers.OutputStreamEvent},
 		},
 		{
 			name:  "response delta log probabilities",
 			input: `{"type":"response.output_text.delta","delta":"Hello","logprobs":[{"token":"Hello","logprob":-0.1}]}`,
-			route: Route{OutputKind: OutputStreamEvent},
+			route: transformers.Route{OutputKind: transformers.OutputStreamEvent},
 		},
 		{
 			name:  "response done log probabilities",
 			input: `{"type":"response.output_text.done","text":"Hello","logprobs":[{"token":"Hello","logprob":-0.1}]}`,
-			route: Route{OutputKind: OutputStreamEvent},
+			route: transformers.Route{OutputKind: transformers.OutputStreamEvent},
 		},
 		{
 			name:  "transcript delta log probabilities",
 			input: `{"type":"transcript.text.delta","delta":"Hello","logprobs":[{"token":"Hello","logprob":-0.1}]}`,
-			route: Route{OutputKind: OutputStreamEvent},
+			route: transformers.Route{OutputKind: transformers.OutputStreamEvent},
 		},
 		{
 			name:  "transcript done log probabilities",
 			input: `{"type":"transcript.text.done","text":"Hello","logprobs":[{"token":"Hello","logprob":-0.1}]}`,
-			route: Route{OutputKind: OutputStreamEvent},
+			route: transformers.Route{OutputKind: transformers.OutputStreamEvent},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			value := gjson.Parse(test.input)
-			require.Equal(t, ReadableValue{}, Readable(value, test.route))
+			require.Equal(t, TextValue{}, projectText(value, test.route))
 			require.Equal(t, test.input, value.Raw)
 		})
 	}
@@ -193,13 +194,13 @@ func TestReadablePageItemsKeepIndependentRecords(t *testing.T) {
 	for _, id := range []string{"chat_one", "chat_two"} {
 		input := `{"id":"` + id + `","object":"chat.completion","choices":[{"message":{"content":"Same answer"}}]}`
 		value := gjson.Parse(input)
-		require.Equal(t, ReadableValue{}, Readable(value, Route{
-			Operation: "(resource) chat.completions > (method) list", OutputKind: OutputPageItem,
+		require.Equal(t, TextValue{}, projectText(value, transformers.Route{
+			Operation: "(resource) chat.completions > (method) list", OutputKind: transformers.OutputPageItem,
 		}))
 		require.Equal(t, input, value.Raw)
 	}
 	input := `{"object":"response","output":[{"type":"message","content":[{"type":"output_text","text":"Answer"}]}]}`
-	require.Equal(t, ReadableValue{}, Readable(gjson.Parse(input), Route{OutputKind: OutputPageItem}))
+	require.Equal(t, TextValue{}, projectText(gjson.Parse(input), transformers.Route{OutputKind: transformers.OutputPageItem}))
 }
 
 func TestReadablePreservesMixedUnknownAndUnsuccessfulValues(t *testing.T) {
@@ -240,13 +241,13 @@ func TestReadablePreservesMixedUnknownAndUnsuccessfulValues(t *testing.T) {
 	for name, input := range tests {
 		t.Run(name, func(t *testing.T) {
 			value := gjson.Parse(input)
-			require.Equal(t, ReadableValue{}, Readable(value, Route{OutputKind: OutputResponse}))
+			require.Equal(t, TextValue{}, projectText(value, transformers.Route{OutputKind: transformers.OutputResponse}))
 			require.Equal(t, input, value.Raw)
 		})
 	}
 	// A familiar property name on an unrelated or future operation is insufficient.
 	for _, operation := range []string{"", "responses.input_items", "(resource) files > (method) content", "(resource) future > (method) create"} {
-		require.Equal(t, ReadableValue{}, Readable(gjson.Parse(`{"text":"label"}`), Route{Operation: operation}))
+		require.Equal(t, TextValue{}, projectText(gjson.Parse(`{"text":"label"}`), transformers.Route{Operation: operation}))
 	}
 	for _, input := range []string{
 		`{"text":"Partial","status":"cancelled"}`,
@@ -254,7 +255,7 @@ func TestReadablePreservesMixedUnknownAndUnsuccessfulValues(t *testing.T) {
 		`{"text":"Speech","audio":{"data":"synthetic"}}`,
 		`{"text":"Speech","future_content":{"value":1}}`,
 	} {
-		require.Equal(t, ReadableValue{}, Readable(gjson.Parse(input), Route{Operation: "(resource) audio.transcriptions > (method) create"}))
+		require.Equal(t, TextValue{}, projectText(gjson.Parse(input), transformers.Route{Operation: "(resource) audio.transcriptions > (method) create"}))
 	}
 }
 
@@ -263,129 +264,129 @@ func TestReadableStreamEvents(t *testing.T) {
 		name      string
 		operation string
 		input     string
-		want      ReadableValue
+		want      TextValue
 	}{
 		{
 			name:  "response delta",
 			input: `{"type":"response.output_text.delta","delta":"Hello ","output_index":2,"content_index":1}`,
-			want:  ReadableValue{Text: "Hello ", IsText: true, Delta: true, Key: "response:2:1"},
+			want:  TextValue{Text: "Hello ", IsText: true, Delta: true, Key: "response:2:1"},
 		},
 		{
 			name:  "refusal delta",
 			input: `{"type":"response.refusal.delta","delta":"Cannot ","output_index":0,"content_index":0}`,
-			want:  ReadableValue{Text: "Cannot ", IsText: true, Delta: true, Key: "response:0:0"},
+			want:  TextValue{Text: "Cannot ", IsText: true, Delta: true, Key: "response:0:0"},
 		},
 		{
 			name:  "text snapshot",
 			input: `{"type":"response.output_text.done","text":"Hello world","output_index":2,"content_index":1}`,
-			want:  ReadableValue{Text: "Hello world", IsText: true, Snapshot: true, Key: "response:2:1"},
+			want:  TextValue{Text: "Hello world", IsText: true, Snapshot: true, Key: "response:2:1"},
 		},
 		{
 			name:  "refusal snapshot",
 			input: `{"type":"response.refusal.done","refusal":"Cannot help","output_index":0,"content_index":0}`,
-			want:  ReadableValue{Text: "Cannot help", IsText: true, Snapshot: true, Key: "response:0:0"},
+			want:  TextValue{Text: "Cannot help", IsText: true, Snapshot: true, Key: "response:0:0"},
 		},
 		{
 			name:  "completed response",
 			input: `{"type":"response.completed","response":{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Hello"}]}]}}`,
-			want:  ReadableValue{Text: "Hello", IsText: true, Snapshot: true, Final: true, Parts: []ReadablePart{{Key: "response:0:0", Text: "Hello"}}},
+			want:  TextValue{Text: "Hello", IsText: true, Snapshot: true, Final: true, Parts: []TextPart{{Key: "response:0:0", Text: "Hello"}}},
 		},
 		{
 			name:  "content done snapshot",
 			input: `{"type":"response.content_part.done","output_index":2,"content_index":1,"part":{"type":"output_text","text":"Hello"}}`,
-			want:  ReadableValue{Text: "Hello", IsText: true, Snapshot: true, Key: "response:2:1"},
+			want:  TextValue{Text: "Hello", IsText: true, Snapshot: true, Key: "response:2:1"},
 		},
 		{
 			name:  "message done snapshot",
 			input: `{"type":"response.output_item.done","output_index":2,"item":{"type":"message","status":"completed","content":[{"type":"refusal","refusal":"Cannot help"}]}}`,
-			want:  ReadableValue{Text: "Cannot help", IsText: true, Snapshot: true, Key: "response:2:0"},
+			want:  TextValue{Text: "Cannot help", IsText: true, Snapshot: true, Key: "response:2:0"},
 		},
 		{
 			name:  "message with multiple completed parts",
 			input: `{"type":"response.output_item.done","output_index":2,"item":{"type":"message","status":"completed","content":[{"type":"output_text","text":"One"},{"type":"output_text","text":"Two"}]}}`,
-			want: ReadableValue{Text: "One\n\nTwo", IsText: true, Snapshot: true, Key: "response:2:*", Parts: []ReadablePart{
+			want: TextValue{Text: "One\n\nTwo", IsText: true, Snapshot: true, Key: "response:2:*", Parts: []TextPart{
 				{Key: "response:2:0", Text: "One"}, {Key: "response:2:1", Text: "Two"},
 			}},
 		},
 		{
 			name:  "transcription delta",
 			input: `{"type":"transcript.text.delta","delta":"Spoken "}`,
-			want:  ReadableValue{Text: "Spoken ", IsText: true, Delta: true, Key: "transcript"},
+			want:  TextValue{Text: "Spoken ", IsText: true, Delta: true, Key: "transcript"},
 		},
 		{
 			name:  "transcription final",
 			input: `{"type":"transcript.text.done","text":"Spoken words"}`,
-			want:  ReadableValue{Text: "Spoken words", IsText: true, Snapshot: true, Final: true, Key: "transcript"},
+			want:  TextValue{Text: "Spoken words", IsText: true, Snapshot: true, Final: true, Key: "transcript"},
 		},
 		{
 			name:  "chat delta",
 			input: `{"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello "},"finish_reason":null}]}`,
-			want:  ReadableValue{Text: "Hello ", IsText: true, Delta: true, Key: "choice:0"},
+			want:  TextValue{Text: "Hello ", IsText: true, Delta: true, Key: "choice:0"},
 		},
 		{
 			name:  "chat refusal delta",
 			input: `{"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":null,"refusal":"Cannot "}}]}`,
-			want:  ReadableValue{Text: "Cannot ", IsText: true, Delta: true, Key: "choice:0"},
+			want:  TextValue{Text: "Cannot ", IsText: true, Delta: true, Key: "choice:0"},
 		},
 		{
 			name:      "completion delta",
 			operation: "(resource) completions > (method) create",
 			input:     `{"object":"text_completion","choices":[{"index":0,"text":"Hello "}]}`,
-			want:      ReadableValue{Text: "Hello ", IsText: true, Delta: true, Key: "choice:0"},
+			want:      TextValue{Text: "Hello ", IsText: true, Delta: true, Key: "choice:0"},
 		},
 		{
 			name:  "empty message scaffold",
 			input: `{"type":"response.output_item.added","item":{"type":"message","status":"in_progress","content":[]}}`,
-			want:  ReadableValue{Skip: true},
+			want:  TextValue{Skip: true},
 		},
 		{
 			name:  "empty content scaffold",
 			input: `{"type":"response.content_part.added","part":{"type":"output_text","text":"","annotations":[]}}`,
-			want:  ReadableValue{Skip: true},
+			want:  TextValue{Skip: true},
 		},
 		{
 			name:  "response created scaffold",
 			input: `{"type":"response.created","response":{"status":"in_progress","output":[],"usage":null}}`,
-			want:  ReadableValue{Skip: true},
+			want:  TextValue{Skip: true},
 		},
 		{
 			name:  "response in progress scaffold",
 			input: `{"type":"response.in_progress","response":{"status":"in_progress","output":[]}}`,
-			want:  ReadableValue{Skip: true},
+			want:  TextValue{Skip: true},
 		},
 		{
 			name:  "chat role scaffold",
 			input: `{"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}`,
-			want:  ReadableValue{Skip: true},
+			want:  TextValue{Skip: true},
 		},
 		{
 			name:  "chat normal termination",
 			input: `{"object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
-			want:  ReadableValue{Skip: true},
+			want:  TextValue{Skip: true},
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			require.Equal(t, test.want, Readable(gjson.Parse(test.input), Route{Operation: test.operation, OutputKind: OutputStreamEvent}))
+			require.Equal(t, test.want, projectText(gjson.Parse(test.input), transformers.Route{Operation: test.operation, OutputKind: transformers.OutputStreamEvent}))
 		})
 	}
 }
 
 func TestReadableCompletedPartsKeepOriginalIndexes(t *testing.T) {
 	response := `{"status":"completed","output":[{"type":"reasoning","summary":[]},{"type":"message","content":[{"type":"output_text","text":"One"},{"type":"refusal","refusal":"Two"}]},{"type":"reasoning","summary":[]},{"type":"message","content":[{"type":"output_text","text":"Three"}]}]}`
-	value := Readable(gjson.Parse(`{"type":"response.completed","response":`+response+`}`), Route{OutputKind: OutputStreamEvent})
+	value := projectText(gjson.Parse(`{"type":"response.completed","response":`+response+`}`), transformers.Route{OutputKind: transformers.OutputStreamEvent})
 	require.True(t, value.IsText)
 	require.True(t, value.Final)
 	require.True(t, value.Snapshot)
 	require.Equal(t, "One\n\nTwo\n\nThree", value.Text)
-	require.Equal(t, []ReadablePart{
+	require.Equal(t, []TextPart{
 		{Key: "response:1:0", Text: "One"},
 		{Key: "response:1:1", Text: "Two"},
 		{Key: "response:3:0", Text: "Three"},
 	}, value.Parts)
 	// A normal response remains a single text projection without stream state.
-	plain := Readable(gjson.Parse(response), Route{Operation: "(resource) responses > (method) create", OutputKind: OutputResponse})
-	require.Equal(t, ReadableValue{Text: value.Text, IsText: true}, plain)
+	plain := projectText(gjson.Parse(response), transformers.Route{Operation: "(resource) responses > (method) create", OutputKind: transformers.OutputResponse})
+	require.Equal(t, TextValue{Text: value.Text, IsText: true}, plain)
 }
 
 func TestReadableStreamCompletionRetainsUsageSeparately(t *testing.T) {
@@ -395,7 +396,7 @@ func TestReadableStreamCompletionRetainsUsageSeparately(t *testing.T) {
 		`{"type":"response.completed","response":` + response + `}`,
 		`{"type":"transcript.text.done","text":"Hello","usage":` + usage + `}`,
 	} {
-		value := Readable(gjson.Parse(input), Route{OutputKind: OutputStreamEvent})
+		value := projectText(gjson.Parse(input), transformers.Route{OutputKind: transformers.OutputStreamEvent})
 		require.True(t, value.IsText)
 		require.True(t, value.Snapshot)
 		require.Equal(t, "Hello", value.Text)
@@ -405,14 +406,14 @@ func TestReadableStreamCompletionRetainsUsageSeparately(t *testing.T) {
 		require.False(t, value.Details.Get("output").Exists())
 	}
 	// Ordinary replies still project text; usage is not added to that policy.
-	plain := Readable(gjson.Parse(response), Route{OutputKind: OutputResponse})
-	require.Equal(t, ReadableValue{Text: "Hello", IsText: true}, plain)
-	plain = Readable(gjson.Parse(`{"text":"Hello","usage":`+usage+`}`), Route{
-		Operation: "(resource) audio.transcriptions > (method) create", OutputKind: OutputResponse,
+	plain := projectText(gjson.Parse(response), transformers.Route{OutputKind: transformers.OutputResponse})
+	require.Equal(t, TextValue{Text: "Hello", IsText: true}, plain)
+	plain = projectText(gjson.Parse(`{"text":"Hello","usage":`+usage+`}`), transformers.Route{
+		Operation: "(resource) audio.transcriptions > (method) create", OutputKind: transformers.OutputResponse,
 	})
-	require.Equal(t, ReadableValue{Text: "Hello", IsText: true}, plain)
+	require.Equal(t, TextValue{Text: "Hello", IsText: true}, plain)
 	for _, emptyUsage := range []string{`null`, `{}`, `[]`} {
-		value := Readable(gjson.Parse(`{"type":"transcript.text.done","text":"Hello","usage":`+emptyUsage+`}`), Route{OutputKind: OutputStreamEvent})
+		value := projectText(gjson.Parse(`{"type":"transcript.text.done","text":"Hello","usage":`+emptyUsage+`}`), transformers.Route{OutputKind: transformers.OutputStreamEvent})
 		require.Equal(t, gjson.Result{}, value.Details)
 	}
 }
@@ -450,7 +451,7 @@ func TestReadableStreamPreservesNontextAndFailureEvents(t *testing.T) {
 	}
 	for name, input := range tests {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, ReadableValue{}, Readable(gjson.Parse(input), Route{OutputKind: OutputStreamEvent}))
+			require.Equal(t, TextValue{}, projectText(gjson.Parse(input), transformers.Route{OutputKind: transformers.OutputStreamEvent}))
 		})
 	}
 }
@@ -460,7 +461,7 @@ func TestReadableTextIsUnmodifiedAndUnbounded(t *testing.T) {
 	encoded, err := json.Marshal(text)
 	require.NoError(t, err)
 	input := `{"object":"chat.completion","choices":[{"message":{"content":` + string(encoded) + `}}]}`
-	require.Equal(t, ReadableValue{Text: text, IsText: true}, Readable(gjson.Parse(input), Route{OutputKind: OutputResponse}))
+	require.Equal(t, TextValue{Text: text, IsText: true}, projectText(gjson.Parse(input), transformers.Route{OutputKind: transformers.OutputResponse}))
 	stream := `{"type":"response.output_text.delta","delta":` + string(encoded) + `,"output_index":0,"content_index":0}`
-	require.Equal(t, ReadableValue{Text: text, IsText: true, Delta: true, Key: "response:0:0"}, Readable(gjson.Parse(stream), Route{OutputKind: OutputStreamEvent}))
+	require.Equal(t, TextValue{Text: text, IsText: true, Delta: true, Key: "response:0:0"}, projectText(gjson.Parse(stream), transformers.Route{OutputKind: transformers.OutputStreamEvent}))
 }

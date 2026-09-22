@@ -1,24 +1,17 @@
-package transformers
+package readable
 
 import (
 	"encoding/json"
 	"strings"
 
+	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/tidwall/gjson"
 )
 
-// Summary selects the useful fields of known management resources for readable
-// presentation. API output formats must continue to use the original value.
-// Unknown fields, resource shapes, and stream events are never summarized.
-// SelectPipeline additionally reports whether fields were omitted, allowing a
-// presenter to explain how to request the complete value in its own interface.
-func Summary(value gjson.Result, route Route) (gjson.Result, bool) {
-	result, selected, _ := summarize(value, route)
-	return result, selected
-}
-
-func summarize(value gjson.Result, route Route) (gjson.Result, bool, bool) {
-	if route.OutputKind == OutputStreamEvent || !value.IsObject() ||
+// Summaries retain useful fields of known resources. Unknown fields and shapes
+// fall back to the full value. The original JSON remains available separately.
+func summarize(value gjson.Result, route transformers.Route) (gjson.Result, bool, bool) {
+	if route.OutputKind == transformers.OutputStreamEvent || !value.IsObject() ||
 		value.Get("id").Type != gjson.String || value.Get("id").Str == "" {
 		return gjson.Result{}, false, false
 	}

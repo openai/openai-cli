@@ -1,9 +1,10 @@
-package transformers
+package readable
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -59,9 +60,9 @@ func TestSummaryManagementResources(t *testing.T) {
 		},
 	} {
 		t.Run(test.resource, func(t *testing.T) {
-			for _, kind := range []OutputKind{OutputResponse, OutputPageItem} {
+			for _, kind := range []transformers.OutputKind{transformers.OutputResponse, transformers.OutputPageItem} {
 				input := gjson.Parse(test.input)
-				got, ok := Summary(input, Route{Operation: "(resource) " + test.resource + " > (method) retrieve", OutputKind: kind})
+				got, ok, _ := summarize(input, transformers.Route{Operation: "(resource) " + test.resource + " > (method) retrieve", OutputKind: kind})
 				require.True(t, ok)
 				require.Equal(t, test.want, got.Raw)
 				require.Equal(t, test.input, input.Raw, "original API value must stay unchanged")
@@ -85,7 +86,7 @@ func TestSummaryPreservesIssuesAndActionableContent(t *testing.T) {
 	} {
 		t.Run(test.resource+"/"+gjson.Get(test.input, "status").String(), func(t *testing.T) {
 			value := gjson.Parse(test.input)
-			got, ok := Summary(value, Route{Operation: "(resource) " + test.resource + " > (method) retrieve", OutputKind: OutputResponse})
+			got, ok, _ := summarize(value, transformers.Route{Operation: "(resource) " + test.resource + " > (method) retrieve", OutputKind: transformers.OutputResponse})
 			require.True(t, ok)
 			for _, field := range test.kept {
 				require.Equal(t, value.Get(field).Raw, got.Get(field).Raw, field)
@@ -114,13 +115,13 @@ func TestSummaryLeavesUnrecognizedContentIntact(t *testing.T) {
 	} {
 		t.Run(test.input, func(t *testing.T) {
 			value := gjson.Parse(test.input)
-			got, ok := Summary(value, Route{Operation: "(resource) " + test.resource + " > (method) retrieve", OutputKind: OutputResponse})
+			got, ok, _ := summarize(value, transformers.Route{Operation: "(resource) " + test.resource + " > (method) retrieve", OutputKind: transformers.OutputResponse})
 			require.False(t, ok)
 			require.False(t, got.Exists())
 			require.Equal(t, test.input, value.Raw)
 		})
 	}
-	_, ok := Summary(gjson.Parse(`{"id":"model_example","object":"model"}`), Route{Operation: "(resource) models > (method) retrieve", OutputKind: OutputStreamEvent})
+	_, ok, _ := summarize(gjson.Parse(`{"id":"model_example","object":"model"}`), transformers.Route{Operation: "(resource) models > (method) retrieve", OutputKind: transformers.OutputStreamEvent})
 	require.False(t, ok, "stream events must not be summarized")
 }
 
@@ -138,18 +139,18 @@ func TestSummaryDeletion(t *testing.T) {
 		{"conversations", "conversation.deleted", "conversation"},
 	} {
 		t.Run(test.resource, func(t *testing.T) {
-			route := Route{Operation: "(resource) " + test.resource + " > (method) delete", OutputKind: OutputResponse}
+			route := transformers.Route{Operation: "(resource) " + test.resource + " > (method) delete", OutputKind: transformers.OutputResponse}
 			input := `{"id":"example-123","object":"` + test.object + `","deleted":true}`
-			got, ok := Summary(gjson.Parse(input), route)
+			got, ok, _ := summarize(gjson.Parse(input), route)
 			require.True(t, ok)
 			require.Equal(t, "Deleted "+test.noun+".", got.Get("result").Str)
 			require.Equal(t, "example-123", got.Get("id").Str)
 			require.True(t, got.Get("deleted").Bool())
-			got, ok = Summary(gjson.Parse(strings.Replace(input, "true", "false", 1)), route)
+			got, ok, _ = summarize(gjson.Parse(strings.Replace(input, "true", "false", 1)), route)
 			require.True(t, ok)
 			require.Equal(t, "Deletion was not confirmed.", got.Get("result").Str)
 			require.False(t, got.Get("deleted").Bool())
-			_, ok = Summary(gjson.Parse(strings.TrimSuffix(input, "}")+`,"warning":"Additional action needed."}`), route)
+			_, ok, _ = summarize(gjson.Parse(strings.TrimSuffix(input, "}")+`,"warning":"Additional action needed."}`), route)
 			require.False(t, ok)
 		})
 	}

@@ -38,15 +38,15 @@ func TestShowJSONTransformsOnceBeforeFormatFallback(t *testing.T) {
 			file := outputFile(t)
 			ctx := context.WithValue(context.Background(), struct{}{}, "request")
 			selected, transformed := 0, 0
-			selector := func(route transformers.Route) transformers.Pipeline {
+			selector := func(route transformers.Route) transformers.Transformer {
 				selected++
 				require.Equal(t, transformers.Route{Operation: "images.generate", OutputKind: OutputResponse}, route)
-				return transformers.Pipeline{Transform: func(got context.Context, value gjson.Result) (gjson.Result, error) {
+				return func(got context.Context, value gjson.Result) (gjson.Result, error) {
 					transformed++
 					require.Same(t, ctx, got)
 					require.Equal(t, "original", value.Get("id").String())
 					return gjson.Parse(`{"id":"transformed"}`), nil
-				}}
+				}
 			}
 			err := showJSON(gjson.Parse(`{"id":"original"}`), ShowJSONOpts{
 				Context: ctx, Operation: "images.generate", OutputKind: OutputResponse,
@@ -82,9 +82,9 @@ func TestShowJSONExplicitOutputAndErrorsBypassDefaults(t *testing.T) {
 			}
 			file := outputFile(t)
 			opts.Stdout = file
-			err := showJSON(gjson.Parse(`{"id":"original"}`), opts, func(transformers.Route) transformers.Pipeline {
+			err := showJSON(gjson.Parse(`{"id":"original"}`), opts, func(transformers.Route) transformers.Transformer {
 				t.Fatal("explicit output or error presentation selected a default transformer")
-				return transformers.Pipeline{}
+				return transformers.Identity
 			})
 			require.NoError(t, err)
 			require.Equal(t, test.want, readOutput(t, file))
@@ -94,14 +94,14 @@ func TestShowJSONExplicitOutputAndErrorsBypassDefaults(t *testing.T) {
 		{OutputKind: OutputResponse},
 		{Operation: "images.generate", OutputKind: "unknown"},
 	} {
-		selected := selectOutputPipeline(opts, func(transformers.Route) transformers.Pipeline {
+		selected := selectOutputTransformer(opts, func(transformers.Route) transformers.Transformer {
 			t.Fatal("incomplete routing selected a default transformer")
-			return transformers.Pipeline{}
+			return transformers.Identity
 		})
 		value := gjson.Parse(`{"error":"synthetic"}`)
-		result, err := selected.Prepare(context.Background(), value)
+		result, err := selected(context.Background(), value)
 		require.NoError(t, err)
-		require.Equal(t, value, result.Value)
+		require.Equal(t, value, result)
 	}
 }
 
@@ -141,13 +141,13 @@ func TestShowJSONIteratorTransformsLazilyAcrossPagerBoundary(t *testing.T) {
 			selected, transformed := 0, 0
 			err = showJSONIterator(iter, 40, ShowJSONOpts{
 				Operation: "responses.list", OutputKind: kind, Format: "jsonl", Stdout: file,
-			}, func(route transformers.Route) transformers.Pipeline {
+			}, func(route transformers.Route) transformers.Transformer {
 				selected++
 				require.Equal(t, kind, route.OutputKind)
-				return transformers.Pipeline{Transform: func(_ context.Context, value gjson.Result) (gjson.Result, error) {
+				return func(_ context.Context, value gjson.Result) (gjson.Result, error) {
 					transformed++
 					return gjson.Parse(fmt.Sprintf(`{"transformed":%d}`, value.Get("id").Int())), nil
-				}}
+				}
 			})
 			require.NoError(t, err)
 			require.Equal(t, 1, selected)
@@ -170,10 +170,10 @@ func TestOutputIteratorSharedExplorerBoundary(t *testing.T) {
 	calls := 0
 	iter := &outputIterator[any]{
 		source: source, context: context.Background(), remaining: 1,
-		pipeline: transformers.Pipeline{Transform: func(context.Context, gjson.Result) (gjson.Result, error) {
+		transform: func(context.Context, gjson.Result) (gjson.Result, error) {
 			calls++
 			return gjson.Parse(`{"nested":{"changed":true}}`), nil
-		}},
+		},
 	}
 	require.Equal(t, 0, source.calls)
 	require.True(t, iter.Next())
@@ -218,14 +218,14 @@ func TestShowJSONIteratorPreservesErrorsAndCancellation(t *testing.T) {
 			calls := 0
 			err := showJSONIterator(iter, -1, ShowJSONOpts{
 				Context: ctx, Operation: "responses.list", OutputKind: OutputPageItem, Format: "jsonl", Stdout: file,
-			}, func(transformers.Route) transformers.Pipeline {
-				return transformers.Pipeline{Transform: func(_ context.Context, value gjson.Result) (gjson.Result, error) {
+			}, func(transformers.Route) transformers.Transformer {
+				return func(_ context.Context, value gjson.Result) (gjson.Result, error) {
 					calls++
 					if test.cancelDuring {
 						cancel()
 					}
 					return value, test.transformErr
-				}}
+				}
 			})
 			require.ErrorIs(t, err, test.want)
 			require.Equal(t, test.wantCalls, calls)
@@ -246,8 +246,8 @@ func TestShowJSONCancellationAndTransformerErrors(t *testing.T) {
 	failure := errors.New("synthetic transform failure")
 	err = showJSON(gjson.Parse(`{"id":"original"}`), ShowJSONOpts{
 		Operation: "images.generate", OutputKind: OutputResponse, Format: "auto", Stdout: file,
-	}, func(transformers.Route) transformers.Pipeline {
-		return transformers.Pipeline{Transform: func(context.Context, gjson.Result) (gjson.Result, error) { return gjson.Result{}, failure }}
+	}, func(transformers.Route) transformers.Transformer {
+		return func(context.Context, gjson.Result) (gjson.Result, error) { return gjson.Result{}, failure }
 	})
 	require.ErrorIs(t, err, failure)
 	require.Empty(t, readOutput(t, file))
@@ -283,7 +283,7 @@ func TestOutputIteratorErrDoesNotWaitForOrReadActiveNext(t *testing.T) {
 	}
 	iter := &outputIterator[any]{
 		source: source, context: context.Background(), remaining: -1,
-		pipeline: transformers.Pipeline{Transform: transformers.Identity},
+		transform: transformers.Identity,
 	}
 	nextDone := make(chan bool, 1)
 	go func() { nextDone <- iter.Next() }()

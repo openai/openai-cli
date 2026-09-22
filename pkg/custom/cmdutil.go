@@ -392,7 +392,7 @@ func formatJSONForOutput(res gjson.Result, opts ShowJSONOpts, destination io.Wri
 	switch strings.ToLower(opts.Format) {
 	case "text":
 		var text bytes.Buffer
-		err := writeReadableResult(&text, transformers.Output{Value: res})
+		err := writeReadableResult(&text, preparedOutput{Value: res})
 		return text.Bytes(), err
 	case "pretty":
 		return []byte(jsonview.RenderJSON(opts.Title, res) + "\n"), nil
@@ -460,10 +460,10 @@ func (o *ShowJSONOpts) setDefaults() {
 
 // ShowJSON displays a single JSON result to the user.
 func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
-	return showJSON(res, opts, transformers.SelectPipeline)
+	return showJSON(res, opts, transformers.Select)
 }
 
-func showJSON(res gjson.Result, opts ShowJSONOpts, selectPipeline pipelineSelector) error {
+func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
 	if text, ok := audioTextResult(opts); ok {
 		if strings.EqualFold(opts.Format, "raw") || opts.RawOutput {
@@ -476,12 +476,13 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectPipeline pipelineSelect
 		}
 		res = gjson.ParseBytes(encoded)
 	}
-	pipeline := selectOutputPipeline(opts, selectPipeline)
-	output, err := pipeline.Prepare(opts.Context, res)
+	transform := selectOutputTransformer(opts, selectTransformer)
+	route := readableOutputRoute(opts)
+	output, err := prepareOutput(opts.Context, res, transform, route)
 	if err != nil {
 		return err
 	}
-	if presentation, ok := imagePresentationFor(opts, OutputResponse); ok && pipeline.present {
+	if presentation, ok := imagePresentationFor(opts, OutputResponse); ok && route.Operation != "" {
 		return presentation.plan.save(opts.Context, []byte(output.Value.Raw), presentation.writer)
 	}
 	opts.Format = resolvedOutputFormat(opts)
@@ -520,19 +521,21 @@ type hasRawJSON interface {
 
 // ShowJSONIterator displays an iterator of values to the user. Use itemsToDisplay = -1 for no limit.
 func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts) error {
-	return showJSONIterator(iter, itemsToDisplay, opts, transformers.SelectPipeline)
+	return showJSONIterator(iter, itemsToDisplay, opts, transformers.Select)
 }
 
-func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectPipeline pipelineSelector) error {
+func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
-	pipeline := selectOutputPipeline(opts, selectPipeline)
-	if presentation, ok := imagePresentationFor(opts, OutputStreamEvent); ok && pipeline.present {
-		return presentation.plan.saveStream(opts.Context, &imageOutputStream[T]{source: source}, presentation.writer, pipeline.Transform)
+	transform := selectOutputTransformer(opts, selectTransformer)
+	route := readableOutputRoute(opts)
+	if presentation, ok := imagePresentationFor(opts, OutputStreamEvent); ok && route.Operation != "" {
+		return presentation.plan.saveStream(opts.Context, &imageOutputStream[T]{source: source}, presentation.writer, transform)
 	}
 	iter := &outputIterator[T]{
 		source:     source,
 		context:    opts.Context,
-		pipeline:   pipeline.Pipeline,
+		transform:  transform,
+		route:      route,
 		remaining:  itemsToDisplay,
 		outputKind: opts.OutputKind,
 	}

@@ -33,8 +33,16 @@ func Identity(_ context.Context, value gjson.Result) (gjson.Result, error) {
 	return value, nil
 }
 
-// Select preserves the original transformation hook contract. The same route
-// registry also supplies typed readable projections through SelectPipeline.
+// Select is the SDK-owned hook for command-specific default transformations.
+// Readable presentation remains separate from the original API value.
 func Select(route Route) Transformer {
-	return SelectPipeline(route).Transform
+	if IsImageOperation(route.Operation) {
+		switch route.OutputKind {
+		case OutputResponse:
+			return imageOutputOnly(ImageResponse)
+		case OutputStreamEvent:
+			return imageOutputOnly(ImageStreamEvent)
+		}
+	}
+	return Identity
 }
