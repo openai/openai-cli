@@ -49,7 +49,7 @@ and Deno runtime with the checked-in OpenAPI specification.
 | Boundaries and dependencies | Architecture tests, vet, module verification and unchanged generated-source check |
 | Windows and Linux | All packages and tests cross-compiled; runtime was not exercised |
 
-Full `go test -json -p 1 ./... -count=1 -timeout 30m`: **3,877 tests/subtests passed,
+Fresh full `go test -json -p 1 ./... -count=1 -timeout 30m`: **3,882 tests/subtests passed,
 13 skipped, one failed**. All packages except `pkg/cmd` passed. The single failure
 is reproduced on untouched #227, as detailed below. The final terminal migration
 changes also passed a fresh complete `internal/terminalimage` run.
@@ -62,6 +62,34 @@ The six top-level terminal-only output tests skipped by the noninteractive full
 run subsequently passed using the compiled test binary in an allocated PTY:
 binary-file output, explorer dispatch, output colors, pager control escaping,
 pager colors, and interactive raw-output escaping.
+
+## Parity recheck against both PRs
+
+The source audit compared combined commit `1346df4` with the exact PR heads above:
+
+- #226: all 484 original files remain, 458 byte-identical; all 217 original Go
+  test files and all 932 named test/fuzz/benchmark functions remain.
+- #227: all 391 original files remain, 356 byte-identical. The native renderer
+  and font builder are unchanged. Five native-font tests and five geometry tests
+  moved with only helper/name changes; their assertions remain identical.
+  Gallery-capacity and default-transformer tests were renamed and extended.
+- Default piped output and explicit `auto` deliberately follow #226's readable
+  output and automatic saving. Explicit JSON/raw/extraction retain the full API
+  response. Those two #227 JSON-default assertions were replaced with tests of
+  the requested behavior, not claimed as unchanged output.
+
+The audit found one integration regression: legacy and per-tab caches missing
+`state.json` could appear absent to status/reset. Cache discovery now includes
+remaining font/image artifacts so the existing recovery diagnostic runs. It
+keeps their bytes and makes no native font changes. Empty lock tombstones and
+unrelated files remain ignored. Regression tests failed before this fix and
+passed afterward, including status and reset for both cache layouts.
+
+The full suite above ran before this final discovery fix; the complete terminal
+package was checked afterward with the race detector. The six terminal-only
+output checks also passed in an allocated PTY. Fresh logs are local at
+`/private/tmp/openai-parity-*`. Actual native rendering and foreign-platform
+runtime limits below still apply.
 
 ## Known inherited failure
 

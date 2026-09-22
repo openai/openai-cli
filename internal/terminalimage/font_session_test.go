@@ -62,6 +62,14 @@ func TestResetIncludesClosedTabCachesAndRetainsUnrelatedFiles(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(root, "unrelated-directory"), 0700))
 	tombstone := sessionImageFontDirectory(root, "closed", "/dev/ttys003")
 	require.NoError(t, os.Mkdir(tombstone, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(tombstone, ".lock"), nil, 0600))
+	for _, name := range []string{"fonts", "images"} {
+		require.NoError(t, os.Mkdir(filepath.Join(tombstone, name), 0700))
+	}
+	unrelatedSession := sessionImageFontDirectory(root, "unrelated", "/dev/ttys004")
+	require.NoError(t, os.Mkdir(unrelatedSession, 0700))
+	unrelatedNote := filepath.Join(unrelatedSession, "keep.txt")
+	require.NoError(t, os.WriteFile(unrelatedNote, []byte("synthetic unrelated file"), 0600))
 	var output bytes.Buffer
 	require.NoError(t, printImageFontCacheStatus(t.Context(), &output, root, true))
 	require.Contains(t, output.String(), "Cached image galleries: 3")
@@ -79,6 +87,43 @@ func TestResetIncludesClosedTabCachesAndRetainsUnrelatedFiles(t *testing.T) {
 	}
 	require.FileExists(t, unrelated)
 	require.DirExists(t, tombstone)
+	require.FileExists(t, filepath.Join(tombstone, ".lock"))
+	require.FileExists(t, unrelatedNote)
+}
+
+func TestResetReportsMissingGalleryStateWithoutRemovingArtifacts(t *testing.T) {
+	for _, location := range []string{"legacy", "session"} {
+		t.Run(location, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "image-terminal")
+			directory := root
+			if location == "session" {
+				directory = sessionImageFontDirectory(root, "lost-state", "/dev/ttys001")
+			}
+			bridge := newFakeImageFontBridge(t)
+			gallery, err := prepareImageFontGallery(t.Context(), directory, bridge.services())
+			require.NoError(t, err)
+			font := gallery.State().FontPath
+			require.NoError(t, gallery.Close())
+			original, err := os.ReadFile(font)
+			require.NoError(t, err)
+			require.NoError(t, os.Remove(filepath.Join(directory, "state.json")))
+			bridge.calls = nil
+
+			var output bytes.Buffer
+			err = printImageFontCacheStatus(t.Context(), &output, root, true)
+			require.ErrorContains(t, err, "state.json is missing")
+			require.NotContains(t, output.String(), "Not set up")
+			output.Reset()
+			err = resetImageFontCaches(t.Context(), &output, root, bridge.services())
+			require.ErrorContains(t, err, "state.json is missing")
+			require.ErrorContains(t, err, "cached files were kept")
+			require.Empty(t, output.String(), "a damaged cache must not report a successful reset")
+			require.Empty(t, bridge.calls, "missing identity must not trigger native font changes")
+			preserved, err := os.ReadFile(font)
+			require.NoError(t, err)
+			require.Equal(t, original, preserved)
+		})
+	}
 }
 
 func TestBindSessionDoesNotBindSharedLegacyGallery(t *testing.T) {

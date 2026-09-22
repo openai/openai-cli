@@ -134,23 +134,55 @@ func imageFontCacheDirectories(root string) ([]string, error) {
 		return nil, err
 	}
 	var directories []string
-	if info, err := os.Lstat(filepath.Join(root, "state.json")); err == nil && info.Mode().IsRegular() {
-		directories = append(directories, root)
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if present, err := imageFontCachePresent(root); err != nil {
 		return nil, err
+	} else if present {
+		directories = append(directories, root)
 	}
 	for _, entry := range entries {
 		directory := filepath.Join(root, entry.Name())
 		if !entry.IsDir() || !isSessionFontDirectory(directory) {
 			continue
 		}
-		if _, err := os.Lstat(filepath.Join(directory, "state.json")); err == nil {
-			directories = append(directories, directory)
-		} else if !errors.Is(err, os.ErrNotExist) {
+		if present, err := imageFontCachePresent(directory); err != nil {
 			return nil, err
+		} else if present {
+			directories = append(directories, directory)
 		}
 	}
 	return directories, nil
+}
+
+// Missing metadata does not mean no cache exists. Let OpenForReset report a
+// damaged gallery without touching its artifacts; only empty tombstones can be
+// skipped. Invalid reserved paths also reach its ownership and permission checks.
+func imageFontCachePresent(directory string) (bool, error) {
+	if _, err := os.Lstat(filepath.Join(directory, "state.json")); err == nil {
+		return true, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	for _, name := range []string{"fonts", "images"} {
+		path := filepath.Join(directory, name)
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if !info.IsDir() {
+			return true, nil
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return false, err
+		}
+		if len(entries) != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func resetImageFontCaches(ctx context.Context, out io.Writer, root string, services imageFontServices) error {
