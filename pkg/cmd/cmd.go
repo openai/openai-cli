@@ -782,6 +782,18 @@ func init() {
 				},
 			},
 			{
+				Name:     "admin:organization:external-storage",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationExternalStorageCreate,
+					&adminOrganizationExternalStorageRetrieve,
+					&adminOrganizationExternalStorageList,
+					&adminOrganizationExternalStorageDelete,
+					&adminOrganizationExternalStorageValidate,
+				},
+			},
+			{
 				Name:     "responses",
 				Category: "API RESOURCE",
 				Suggest:  true,
