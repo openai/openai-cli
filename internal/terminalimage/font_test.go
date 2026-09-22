@@ -60,6 +60,14 @@ func (bridge *testFontBridge) services(t *testing.T) fontServices {
 			bridge.status.FontName = font
 			return nil
 		},
+		restore: func(_ context.Context, _, _, font string, original imagefontmac.ProfileStatus) error {
+			expected := original
+			expected.FontName = font
+			if bridge.status == expected {
+				bridge.status.FontName = original.FontName
+			}
+			return nil
+		},
 		inspect: func(context.Context, string, string) (imagefontmac.ProfileStatus, error) {
 			if bridge.change {
 				bridge.status.FontSize++

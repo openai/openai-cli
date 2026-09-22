@@ -99,7 +99,7 @@ func TestBridgePreflight(t *testing.T) {
 				t.Fatal("native bridge invoked despite preflight failure")
 				return nil, nil
 			})
-			if err == nil || tt.want != nil && !errors.Is(err, tt.want) || strings.ContainsAny(err.Error(), "\n\x1b") {
+			if err == nil || tt.want != nil && !errors.Is(err, tt.want) || strings.ContainsAny(err.Error(), "\n\x1b") || strings.Contains(err.Error(), path) {
 				t.Fatalf("error=%v want=%v", err, tt.want)
 			}
 		})

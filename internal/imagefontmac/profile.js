@@ -28,9 +28,9 @@ function run(argv) {
     var match = /^OpenAI Images ([0-9a-f]{8})$/.exec(name);
     if (!match) { return result(false, "profile"); }
     var prefix = "OpenAIImages-" + match[1] + "-";
-    if (action !== "inspect" && action !== "snapshot" && action !== "preserve") { return result(false, "profile"); }
+    if (action !== "inspect" && action !== "snapshot" && action !== "preserve" && action !== "restore") { return result(false, "profile"); }
     if (!/^\/dev\/ttys[0-9]+$/.test(tty)) { return result(false, "tab"); }
-    if (action === "preserve" && (!/^[A-Za-z0-9-]{1,63}$/.test(font) || font.indexOf(prefix) !== 0)) {
+    if ((action === "preserve" || action === "restore") && (!/^[A-Za-z0-9-]{1,63}$/.test(font) || font.indexOf(prefix) !== 0)) {
         return result(false, "font");
     }
     try {
@@ -61,12 +61,16 @@ function run(argv) {
         if (found === null) { return result(false, "tab"); }
         var settings = found.currentSettings();
         if (action === "snapshot") { return result(true, "", settings); }
-        if (action === "preserve") {
+        if (action === "preserve" || action === "restore") {
             var expected;
             try { expected = JSON.parse(argv[4]); } catch (parseError) { return result(false, "changed"); }
             var captured = snapshot(settings), capturedID = Number(settings.id());
-            if (!expected || capturedID !== expected.profileID || captured.name !== expected.profileName || captured.font !== expected.fontName || captured.size !== expected.fontSize) {
+            if (!expected || (action === "preserve" && (capturedID !== expected.profileID || captured.name !== expected.profileName || captured.font !== expected.fontName || captured.size !== expected.fontSize))) {
                 return result(false, "changed");
+            }
+            if (action === "restore") {
+                captured = {name: expected.profileName, font: expected.fontName, size: expected.fontSize};
+                capturedID = expected.profileID;
             }
             if (captured.size < 1 || captured.size > 1024 || captured.size % 1 !== 0) { return result(false, "size"); }
             function sameCapturedTab() {
@@ -82,6 +86,9 @@ function run(argv) {
                     if (current.fontName() === font && font !== captured.font) { current.fontName = captured.font; }
                     return matches(found.currentSettings(), captured);
                 } catch (undoError) { return false; }
+            }
+            if (action === "restore") {
+                return undoPreservedFont() ? result(true) : result(false, "rollback");
             }
             try {
                 if (!sameCapturedTab() || !matches(found.currentSettings(), captured)) { return result(false, "changed"); }

@@ -45,6 +45,13 @@ func Preserve(ctx context.Context, profileName, tty, fontName string, expected P
 	return err
 }
 
+// Restore undoes activation only while this tab still has the generated font
+// and captured settings. Concurrent changes belong to the user and are left alone.
+func Restore(ctx context.Context, profileName, tty, fontName string, original ProfileStatus) error {
+	_, err := inspectProfile(ctx, "restore", profileName, tty, fontName, Supported, run, original)
+	return err
+}
+
 // InspectProfile reads this tab's image font and size without changing it.
 // An unsupported font size returns the checked status together with an error.
 // This may request macOS Automation permission when the user
@@ -65,17 +72,17 @@ func inspectProfile(ctx context.Context, action, profileName, tty, fontName stri
 	if match == nil {
 		return status, errors.New("invalid image-font session identifier")
 	}
-	if action != "inspect" && action != "snapshot" && action != "preserve" {
+	if action != "inspect" && action != "snapshot" && action != "preserve" && action != "restore" {
 		return status, errors.New("invalid image profile operation")
 	}
 	if !terminalTTY.MatchString(tty) {
 		return status, errors.New("image-font previews require a local Apple Terminal tab")
 	}
-	if action == "preserve" && (!postScriptName.MatchString(fontName) || !strings.HasPrefix(fontName, "OpenAIImages-"+match[1]+"-")) {
+	if (action == "preserve" || action == "restore") && (!postScriptName.MatchString(fontName) || !strings.HasPrefix(fontName, "OpenAIImages-"+match[1]+"-")) {
 		return status, errors.New("the image font does not belong to this gallery profile")
 	}
 	args := []string{"-l", "JavaScript", "-e", profileBridge, action, profileName, tty, fontName}
-	if action == "preserve" {
+	if action == "preserve" || action == "restore" {
 		if len(expected) != 1 || !validCapturedFont(expected[0]) || !validCapturedProfile(expected[0]) {
 			return status, errors.New("invalid original Terminal font settings")
 		}

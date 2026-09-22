@@ -34,11 +34,21 @@ func renderGeneratedImages(ctx context.Context, value gjson.Result, stdout *os.F
 	if err != nil || columns < 2 || rows < 3 {
 		columns, rows = 80, 24
 	}
-	for i, item := range items {
+	// Prepare the complete response before emitting terminal graphics. A failed
+	// download or decode must leave the successful API response available as JSON,
+	// including when an earlier image in the same response was valid.
+	images := make([]image.Image, 0, len(items))
+	for _, item := range items {
 		img, err := loadGeneratedImage(ctx, item)
 		if err != nil {
-			return true, fmt.Errorf("image %d: %w", i+1, err)
+			if ctx.Err() != nil {
+				return true, ctx.Err()
+			}
+			return false, nil
 		}
+		images = append(images, img)
+	}
+	for _, img := range images {
 		// Approximate a cell as twice as tall as it is wide, and leave room for
 		// the next shell prompt. This limits presentation size, not API payloads.
 		width := max(1, min(columns-1, 80, (rows-2)*2*img.Bounds().Dx()/img.Bounds().Dy()))
@@ -46,8 +56,8 @@ func renderGeneratedImages(ctx context.Context, value gjson.Result, stdout *os.F
 		var fontErr *terminalimage.FontError
 		if errors.As(err, &fontErr) && ctx.Err() == nil {
 			// An Automation denial must not discard a successfully generated
-			// image. Quoting the diagnostic keeps terminal controls inert.
-			fmt.Fprintf(os.Stderr, "Sharp image preview unavailable (%q); displaying a block preview.\n", fontErr.Error())
+			// image. Redact filesystem paths before quoting terminal controls.
+			fmt.Fprintf(os.Stderr, "Sharp image preview unavailable (%q); displaying a block preview.\n", fontPreviewDiagnostic(fontErr))
 			err = terminalimage.Write(ctx, stdout, img, "blocks", width)
 		}
 		if err != nil {

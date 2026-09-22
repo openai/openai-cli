@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/openai/openai-cli/internal/imagefont"
 	"github.com/openai/openai-cli/internal/imagefontmac"
@@ -36,6 +37,7 @@ type fontServices struct {
 	source   func(context.Context, string, int) (imagefontmac.SourceFont, error)
 	register func(context.Context, string) error
 	preserve func(context.Context, string, string, string, imagefontmac.ProfileStatus) error
+	restore  func(context.Context, string, string, string, imagefontmac.ProfileStatus) error
 	inspect  func(context.Context, string, string) (imagefontmac.ProfileStatus, error)
 }
 
@@ -70,7 +72,10 @@ func writeImageFont(ctx context.Context, out io.Writer, img image.Image, columns
 	// font slot would replace images already visible in that tab's scrollback.
 	session := sha256.Sum256([]byte(os.Getenv("TERM_SESSION_ID") + "\x00" + tty))
 	directory := filepath.Join(cache, "openai", "image-terminal", fmt.Sprintf("%x", session[:16]))
-	services := fontServices{imagefontmac.Snapshot, imagefontmac.Source, imagefontmac.Register, imagefontmac.Preserve, imagefontmac.InspectProfile}
+	// Cleanup is conservative and best-effort: an unavailable tab inventory or
+	// an old cache failure must not prevent the current tab's preview.
+	_ = cleanupClosedFontGalleries(ctx, directory, tty)
+	services := fontServices{imagefontmac.Snapshot, imagefontmac.Source, imagefontmac.Register, imagefontmac.Preserve, imagefontmac.Restore, imagefontmac.InspectProfile}
 	return displayImageFont(ctx, out, img, columns, directory, tty, func() fontViewport {
 		return readFontViewport(file.Fd())
 	}, services)
@@ -88,6 +93,9 @@ func displayImageFont(ctx context.Context, out io.Writer, img image.Image, colum
 		return err
 	}
 	defer gallery.Close()
+	if err := gallery.BindTTY(ctx, tty); err != nil {
+		return err
+	}
 	initial, err := gallery.Initialize(ctx)
 	if err != nil {
 		return err
@@ -160,6 +168,15 @@ func displayImageFont(ctx context.Context, out io.Writer, img image.Image, colum
 			return err
 		}
 	}
+	defer func() {
+		if err != nil && !writing {
+			// Activation may succeed even if its reply is lost to cancellation.
+			// Give conditional rollback an independent, bounded opportunity.
+			restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			err = errors.Join(err, services.restore(restoreCtx, state.ProfileName, tty, display.PostScript, before))
+		}
+	}()
 	if err := services.preserve(ctx, state.ProfileName, tty, display.PostScript, before); err != nil {
 		return err
 	}

@@ -31,6 +31,8 @@ func Write(ctx context.Context, w io.Writer, img image.Image, protocol string, c
 	destination := contextWriter{ctx, w}
 	switch protocol {
 	case "kitty":
+		// Keep native cursor movement enabled (C=0): the terminal advances over
+		// the placement using its actual cell size; the caller adds a newline.
 		return kitty.EncodeGraphics(destination, img, &kitty.Options{
 			Action: kitty.TransmitAndPut, Transmission: kitty.Direct,
 			Format: kitty.PNG, Chunk: true, Quite: 2, Columns: columns,

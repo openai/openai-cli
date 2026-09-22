@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -172,4 +173,64 @@ func TestRenderGeneratedImages(t *testing.T) {
 	handled, err = renderGeneratedImages(context.Background(), value, file)
 	require.True(t, handled)
 	require.ErrorIs(t, err, os.ErrClosed)
+}
+
+func TestRenderGeneratedImagesFallsBackBeforeWriting(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "WarpTerminal")
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("TMUX", "")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "synthetic response", http.StatusForbidden)
+	}))
+	defer server.Close()
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+	valid := map[string]string{"b64_json": base64.StdEncoding.EncodeToString(testImagePNG(t))}
+	for name, item := range map[string]map[string]string{
+		"HTTP failure":     {"url": server.URL + "/?signature=synthetic-token"},
+		"download failure": {"url": closed.URL},
+		"invalid encoding": {"b64_json": "not-base64"},
+		"invalid image":    {"b64_json": base64.StdEncoding.EncodeToString([]byte("not an image"))},
+	} {
+		for _, preceding := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/preceding=%t", name, preceding), func(t *testing.T) {
+				items := []any{item}
+				if preceding {
+					items = append([]any{valid}, items...)
+				}
+				value := imageValue(t, map[string]any{"created": 123, "data": items})
+				file, err := os.CreateTemp(t.TempDir(), "output")
+				require.NoError(t, err)
+				defer file.Close()
+				handled, err := renderGeneratedImages(t.Context(), value, file)
+				require.NoError(t, err)
+				require.False(t, handled, "the original response must remain available for JSON output")
+				output, err := os.ReadFile(file.Name())
+				require.NoError(t, err)
+				require.Empty(t, output, "JSON fallback must not follow partial image output")
+			})
+		}
+	}
+}
+
+func TestRenderGeneratedImagesPreservesCancellation(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "WarpTerminal")
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("TMUX", "")
+	ctx, cancel := context.WithCancel(t.Context())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		cancel()
+		http.Error(w, "synthetic response", http.StatusForbidden)
+	}))
+	defer server.Close()
+	file, err := os.CreateTemp(t.TempDir(), "output")
+	require.NoError(t, err)
+	defer file.Close()
+	value := imageValue(t, map[string]any{"data": []any{map[string]string{"url": server.URL}}})
+	handled, err := renderGeneratedImages(ctx, value, file)
+	require.True(t, handled)
+	require.ErrorIs(t, err, context.Canceled)
+	output, err := os.ReadFile(file.Name())
+	require.NoError(t, err)
+	require.Empty(t, output)
 }

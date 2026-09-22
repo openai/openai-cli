@@ -76,7 +76,7 @@ func invoke(ctx context.Context, action, path string, supported func() bool, exe
 	if action != "unregister" {
 		info, err := os.Stat(path)
 		if err != nil {
-			return nativeResult{}, fmt.Errorf("read generated font %q: %w", path, fileErrorCause(err))
+			return nativeResult{}, fmt.Errorf("read generated font: %w", fileErrorCause(err))
 		}
 		if !info.Mode().IsRegular() {
 			return nativeResult{}, errors.New("generated font must be a regular file")
