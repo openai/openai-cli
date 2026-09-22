@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.1](https://github.com/openai/openai-cli/compare/v1.16.0...v1.16.1) (2026-09-22)
+
+
+### Chores
+
+* **deps:** update openai-go to v3.64.3 ([#230](https://github.com/openai/openai-cli/issues/230)) ([4c1280e](https://github.com/openai/openai-cli/commit/4c1280ea3924d5c6801d99494b52c547698bc543))
+
 ## [1.16.0](https://github.com/openai/openai-cli/compare/v1.15.0...v1.16.0) (2026-09-22)
 
 
