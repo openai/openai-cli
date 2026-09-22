@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.2](https://github.com/openai/openai-cli/compare/v1.16.1...v1.16.2) (2026-09-22)
+
+
+### Chores
+
+* **api:** document GPT-Rosalind research model ([#234](https://github.com/openai/openai-cli/issues/234)) ([8a9731c](https://github.com/openai/openai-cli/commit/8a9731ce4f5056561bc9256614b57adc610e6ce6))
+
 ## [1.16.1](https://github.com/openai/openai-cli/compare/v1.16.0...v1.16.1) (2026-09-22)
 
 
