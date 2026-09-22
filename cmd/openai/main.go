@@ -70,7 +70,7 @@ func main() {
 			if show_err != nil {
 				fmt.Fprintln(os.Stderr, "Could not display the API error:", readable.Text(show_err.Error()))
 			}
-		} else {
+		} else if !custom.ShowStructuredError(app, err, cmd.CommandErrorBuffer.String(), os.Stderr) {
 			if cmd.CommandErrorBuffer.Len() > 0 {
 				fmt.Fprint(os.Stderr, readable.Text(cmd.CommandErrorBuffer.String()))
 			} else {

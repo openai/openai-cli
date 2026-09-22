@@ -3,12 +3,14 @@ package custom
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -113,6 +115,45 @@ func TestReadableErrorFormatRouting(t *testing.T) {
 				require.Empty(t, out.String(), "explicit data formatting must retain ownership of the error")
 			}
 		})
+	}
+}
+
+func TestStructuredLocalErrors(t *testing.T) {
+	for _, test := range []struct {
+		name, diagnostic, want string
+		err                    error
+	}{
+		{"decode", "", "Could not decode JSON: a value has an unexpected type.",
+			fmt.Errorf("synthetic-private-wrapper: %w", &json.UnmarshalTypeError{Value: "synthetic-private-value", Type: reflect.TypeOf("")})},
+		{"syntax", "", "Could not decode JSON: invalid JSON syntax.", &json.SyntaxError{}},
+		{"connection", "", "Could not connect to the API.",
+			&url.Error{Op: "Post", URL: "https://synthetic.invalid/?token=synthetic-secret", Err: errors.New("synthetic-private-error")}},
+		{"canceled", "", "Request canceled.", fmt.Errorf("synthetic-private-wrapper: %w", context.Canceled)},
+		{"deadline", "", "The request timed out.", fmt.Errorf("synthetic-private-wrapper: %w", context.DeadlineExceeded)},
+		{"timeout", "", "The request timed out.", &net.DNSError{Name: "synthetic-private-host", IsTimeout: true}},
+		{"validation", "", "Required flag model not set", errors.New("Required flag model not set")},
+		{"command diagnostic", "Choose --count from 1 to 10.\n", "Choose --count from 1 to 10.", errors.New("exit status 2")},
+		{"empty", "", "The command could not be completed.", errors.New("")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := readableErrorTestCommand(t, "--format-error", "json")
+			var out bytes.Buffer
+			require.True(t, ShowStructuredError(root, test.err, test.diagnostic, &out))
+			var payload map[string]string
+			require.NoError(t, json.Unmarshal(out.Bytes(), &payload))
+			require.Len(t, payload, 1, "do not invent an HTTP status when the SDK did not retain one")
+			require.Contains(t, payload["message"], test.want)
+			assertReadableErrorContainsNoPrivateDetails(t, out.String())
+		})
+	}
+}
+
+func TestStructuredErrorRespectsReadableOverride(t *testing.T) {
+	for _, args := range [][]string{nil, {"--format", "json", "--format-error", "text"}, {"--format-error", "auto"}} {
+		root := readableErrorTestCommand(t, args...)
+		var out bytes.Buffer
+		require.False(t, ShowStructuredError(root, errors.New("bad argument"), "", &out))
+		require.Empty(t, out.String())
 	}
 }
 

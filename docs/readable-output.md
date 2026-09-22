@@ -126,6 +126,11 @@ If an HTTP failure has no usable JSON error body, JSON error output contains
 `status_code` and a local `message` explaining the failure. Valid API error
 payloads keep their original fields. Errors remain on stderr with a nonzero exit.
 
+SDK decoding failures, connection failures, and local command errors also follow
+the selected error format. Without an API error payload, they contain a
+`message`; an HTTP status is included only when it is available. For example,
+`--format-error json` keeps these failures parseable as JSON too.
+
 When the API identifies an invalid argument, the message points to the matching
 command option and its help. Known choices are shown when available. Server
 messages and rejected values are available through the explicit JSON error

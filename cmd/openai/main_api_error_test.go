@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/goccy/go-yaml"
 )
 
 func TestMainAPIErrorsWithoutJSONDetails(t *testing.T) {
@@ -76,6 +78,120 @@ func TestMainAPIErrorsPreserveJSONDetailsAndExtraction(t *testing.T) {
 
 func runMainAPIErrorResponse(t *testing.T, status int, contentType, body string, flags ...string) mainDispatchResult {
 	t.Helper()
+	return runMainCommandAPIErrorResponse(t, status, contentType, body, []string{"models", "retrieve", "--model", "synthetic-model"}, flags...)
+}
+
+// SDK decoding failures are not *openai.Error values. Their presentation still
+// needs to honor the format selected for errors, across generated commands.
+func TestMainAPIErrorsWithUnexpectedJSONShapes(t *testing.T) {
+	for _, details := range []string{
+		`"synthetic private response detail"`, `42`, `true`, `[]`,
+		`{"message":42}`, `{"type":false}`, `{"code":[]}`, `{"param":{}}`,
+	} {
+		for _, format := range []string{"json", "jsonl", "raw", "yaml"} {
+			t.Run(details+"/"+format, func(t *testing.T) {
+				result := runMainAPIErrorResponse(t, http.StatusBadGateway, "application/json", `{"error":`+details+`}`, "--format-error", format)
+				var payload map[string]any
+				if strings.HasPrefix(details, "{") {
+					// The SDK retains JSON objects even when individual known fields
+					// have unexpected types. Keep those original details unchanged.
+					payload = decodeMainErrorObject(t, format, result.stderr)
+					var want map[string]any
+					if format == "yaml" {
+						if err := yaml.Unmarshal([]byte(details), &want); err != nil {
+							t.Fatal(err)
+						}
+					} else if err := json.Unmarshal([]byte(details), &want); err != nil {
+						t.Fatal(err)
+					}
+					if !reflect.DeepEqual(payload, want) {
+						t.Errorf("original API fields changed: got %#v, want %#v", payload, want)
+					}
+				} else {
+					payload = decodeMainStructuredError(t, format, result.stderr)
+				}
+				if _, exists := payload["status_code"]; exists {
+					t.Errorf("invented an HTTP status for an SDK decoding error: %v", payload)
+				}
+				if strings.Contains(result.stderr, "synthetic private response detail") || strings.Contains(result.stderr, "synthetic-image-error-key") {
+					t.Errorf("structured diagnostic contains private response data: %q", result.stderr)
+				}
+			})
+		}
+	}
+}
+
+func TestMainAPIErrorsStructuredAcrossCommands(t *testing.T) {
+	for _, command := range [][]string{
+		{"models", "list"},
+		{"images", "generate", "--inline", "off", "--prompt", "synthetic private prompt", "--model", "synthetic-model"},
+		{"responses", "create", "--model", "synthetic-model", "--input", "synthetic private input"},
+	} {
+		for _, format := range []string{"json", "jsonl", "raw", "yaml"} {
+			t.Run(strings.Join(command[:2], "/")+"/"+format, func(t *testing.T) {
+				result := runMainCommandAPIErrorResponse(t, http.StatusBadGateway, "application/json", `{"error":true}`, command, "--format", format)
+				decodeMainStructuredError(t, format, result.stderr)
+			})
+		}
+	}
+}
+
+func TestMainAPIErrorsUnexpectedShapeFormatPrecedenceAndExtraction(t *testing.T) {
+	const body = `{"error":true}`
+	for _, flags := range [][]string{
+		{"--format", "text", "--format-error", "json"},
+		{"--format", "yaml", "--format-error", "json"},
+		{"--format-error", "JSON"},
+	} {
+		t.Run(strings.Join(flags, "/"), func(t *testing.T) {
+			result := runMainAPIErrorResponse(t, http.StatusBadGateway, "application/json", body, flags...)
+			decodeMainStructuredError(t, "json", result.stderr)
+		})
+	}
+	for _, format := range []string{"auto", "text"} {
+		t.Run("readable override/"+format, func(t *testing.T) {
+			result := runMainAPIErrorResponse(t, http.StatusBadGateway, "application/json", body, "--format", "json", "--format-error", format)
+			if strings.TrimSpace(result.stderr) == "" || json.Valid([]byte(result.stderr)) {
+				t.Errorf("expected a readable error, got %q", result.stderr)
+			}
+		})
+	}
+	result := runMainAPIErrorResponse(t, http.StatusBadGateway, "application/json", body, "--format-error", "json", "--transform-error", "message")
+	var message string
+	if err := json.Unmarshal([]byte(result.stderr), &message); err != nil || strings.TrimSpace(message) == "" {
+		t.Errorf("expected JSON message extraction, got %q (%v)", result.stderr, err)
+	}
+}
+
+func decodeMainStructuredError(t *testing.T, format, output string) map[string]any {
+	t.Helper()
+	payload := decodeMainErrorObject(t, format, output)
+	if message, ok := payload["message"].(string); !ok || strings.TrimSpace(message) == "" {
+		t.Errorf("expected a nonempty diagnostic message: %q", output)
+	}
+	return payload
+}
+
+func decodeMainErrorObject(t *testing.T, format, output string) map[string]any {
+	t.Helper()
+	var payload map[string]any
+	var err error
+	if format == "yaml" {
+		err = yaml.Unmarshal([]byte(output), &payload)
+	} else {
+		err = json.Unmarshal([]byte(output), &payload)
+	}
+	if err != nil {
+		t.Fatalf("stderr is not a %s error object: %v; %q", format, err, output)
+	}
+	if format == "jsonl" && strings.Count(output, "\n") != 1 {
+		t.Errorf("JSONL error spans multiple lines: %q", output)
+	}
+	return payload
+}
+
+func runMainCommandAPIErrorResponse(t *testing.T, status int, contentType, body string, command []string, flags ...string) mainDispatchResult {
+	t.Helper()
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -86,7 +202,7 @@ func runMainAPIErrorResponse(t *testing.T, status int, contentType, body string,
 	}))
 	t.Cleanup(server.Close)
 	args := append([]string{"./openai", "--base-url", server.URL}, flags...)
-	args = append(args, "models", "retrieve", "--model", "synthetic-model")
+	args = append(args, command...)
 	result := runMainImageErrorProcess(t, "pipes", args)
 	if result.code != 1 || requests.Load() != 1 || result.stdout != "" {
 		t.Fatalf("exit=%d requests=%d stdout=%q, want exit=1 requests=1 empty stdout; stderr=%q", result.code, requests.Load(), result.stdout, result.stderr)

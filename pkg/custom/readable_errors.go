@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/tidwall/gjson"
@@ -54,6 +55,58 @@ func ErrorOutputFormat(root *cli.Command) string {
 		}
 	}
 	return resolvedOutputFormat(ShowJSONOpts{Format: format, Transform: root.String("transform-error")})
+}
+
+// ShowStructuredError formats failures that have no SDK API error payload, such
+// as decoding, connection, and local command errors. Status codes are omitted:
+// the SDK does not retain the HTTP response on every failure.
+func ShowStructuredError(root *cli.Command, failure error, diagnostic string, out io.Writer) bool {
+	format := ErrorOutputFormat(root)
+	switch strings.ToLower(format) {
+	case "json", "jsonl", "raw", "yaml", "pretty", "explore":
+	case "text":
+		if root.String("transform-error") == "" {
+			return false
+		}
+	default:
+		return false
+	}
+	data, _ := json.Marshal(struct {
+		Message string `json:"message"`
+	}{localErrorMessage(failure, diagnostic)})
+	if err := ShowJSON(gjson.ParseBytes(data), ShowJSONOpts{
+		Format: format, ExplicitFormat: root.IsSet("format-error"),
+		Stdout: out, Stderr: out, Title: "Error", Transform: root.String("transform-error"),
+	}); err != nil {
+		fmt.Fprintln(out, "Could not display the error:", readable.Text(err.Error()))
+	}
+	return true
+}
+
+func localErrorMessage(failure error, diagnostic string) string {
+	var networkError *url.Error
+	var timeout net.Error
+	var typeError *json.UnmarshalTypeError
+	var syntaxError *json.SyntaxError
+	switch {
+	case errors.Is(failure, context.Canceled):
+		return "Request canceled."
+	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
+		return "The request timed out. The API may have received it; check its status before repeating it."
+	case errors.As(failure, &networkError):
+		return "Could not connect to the API. Check your connection, proxy, and --base-url setting."
+	case errors.As(failure, &typeError):
+		return "Could not decode JSON: a value has an unexpected type."
+	case errors.As(failure, &syntaxError):
+		return "Could not decode JSON: invalid JSON syntax."
+	}
+	if strings.TrimSpace(diagnostic) != "" {
+		return readable.Text(strings.TrimSpace(diagnostic))
+	}
+	if message := strings.TrimSpace(failure.Error()); message != "" {
+		return readable.Text(message)
+	}
+	return "The command could not be completed."
 }
 
 // ShowReadableError writes a concise error summary and reports whether it handled
