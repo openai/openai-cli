@@ -34,7 +34,16 @@ func Identity(_ context.Context, value gjson.Result) (gjson.Result, error) {
 }
 
 // Select is the SDK-owned hook for command-specific default transformations.
-// The initial migration deliberately preserves every command's existing output.
-func Select(_ Route) Transformer {
+// Image normalization is opt-in, so API data and unrelated operations retain
+// their original response values.
+func Select(route Route) Transformer {
+	if route.Operation == ImageGenerateOperation {
+		switch route.OutputKind {
+		case OutputResponse:
+			return imageOutputOnly(ImageResponse)
+		case OutputStreamEvent:
+			return imageOutputOnly(ImageStreamEvent)
+		}
+	}
 	return Identity
 }

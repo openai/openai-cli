@@ -455,6 +455,13 @@ func (o *ShowJSONOpts) setDefaults() {
 
 // ShowJSON displays a single JSON result to the user.
 func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
+	if presentation, ok := imagePresentationFor(opts, OutputResponse); ok {
+		value, err := transformOutput(opts.Context, res, selectOutputTransformer(opts, transformers.Select))
+		if err != nil {
+			return err
+		}
+		return presentation.plan.save(opts.Context, []byte(value.Raw), presentation.writer)
+	}
 	return showJSON(res, opts, transformers.Select)
 }
 
@@ -498,6 +505,9 @@ type hasRawJSON interface {
 
 // ShowJSONIterator displays an iterator of values to the user. Use itemsToDisplay = -1 for no limit.
 func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts) error {
+	if presentation, ok := imagePresentationFor(opts, OutputStreamEvent); ok {
+		return presentation.plan.saveStream(opts.Context, &imageOutputStream[T]{source: iter}, presentation.writer)
+	}
 	return showJSONIterator(iter, itemsToDisplay, opts, transformers.Select)
 }
 

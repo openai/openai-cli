@@ -23,8 +23,12 @@ tests; they are not required to build the CLI.
 
 ## Project structure
 
-- `cmd/openai/` contains the CLI executable's entry point.
-- `pkg/cmd/` contains API commands, command handling, and integration tests.
+- `cmd/openai/` contains the CLI executable's thin entry point.
+- `pkg/cmd/` contains generated API commands and their integration tests.
+- `pkg/custom/` decorates generated commands and owns CLI-only commands,
+  runtime setup, request helpers, and presentation.
+- `pkg/transformers/` converts API response values without terminal or file I/O.
+- `tests/cli/` tests the executable's runtime and command dispatch.
 - `internal/` contains shared helpers for flags, request encoding, terminal
   output, and testing.
 - `api_reference/openapi.transformed.yml` contains the OpenAPI specification
@@ -40,8 +44,10 @@ generation inputs. Establish ownership before editing generated files and fix
 recurring generated problems in the authoritative schema or generator when
 available.
 
-The `cmd/openai/` entrypoint, `internal/` packages, and selected `pkg/cmd/`
-files contain handwritten behavior. Preserve existing command flags, output,
+Put handwritten behavior in `pkg/custom/`, `pkg/transformers/`, and `internal/`.
+Keep `cmd/openai/main.go` limited to launching the CLI, and use the custom
+configuration and output hooks instead of editing generated handlers.
+Preserve existing command flags, output,
 request semantics, supported platforms, generated boundaries, and the separate
 `api_reference/go.mod` module. Keep changes small and add focused tests for
 observable behavior changes.

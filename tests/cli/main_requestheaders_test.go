@@ -1,4 +1,4 @@
-package main
+package cli_test
 
 import (
 	"encoding/json"
@@ -316,6 +316,7 @@ func TestMainRequestHeadersRejectInvalidInput(t *testing.T) {
 
 func TestMainRequestHeadersHelpAndCompletion(t *testing.T) {
 	for _, args := range [][]string{
+		{"openai", "help", "--all"},
 		{"openai", "--header", "X-Test: fake-help-secret", "--help"},
 		{"openai", "models", "retrieve", "-H", "X-Test: fake-help-secret", "--help"},
 	} {
@@ -323,7 +324,7 @@ func TestMainRequestHeadersHelpAndCompletion(t *testing.T) {
 		if got.code != 0 || strings.Contains(got.stdout+got.stderr, "fake-help-secret") || strings.Contains(got.stdout+got.stderr, "fake-env-help-secret") {
 			t.Errorf("main help with header = %+v, want exit 0 without header value", got)
 		}
-		if !strings.Contains(got.stdout, "OPENAI_CUSTOM_HEADERS") {
+		if args[1] != "--header" && !strings.Contains(got.stdout, "OPENAI_CUSTOM_HEADERS") {
 			t.Errorf("header help = %q, want the environment input documented", got.stdout)
 		}
 	}

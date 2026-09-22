@@ -16,6 +16,7 @@ require (
 	github.com/tidwall/pretty v1.2.1
 	github.com/urfave/cli-docs/v3 v3.1.0
 	github.com/urfave/cli/v3 v3.11.0
+	golang.org/x/image v0.45.0
 	golang.org/x/sys v0.47.0
 )
 
@@ -43,5 +44,5 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )

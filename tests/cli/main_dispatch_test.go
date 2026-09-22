@@ -1,4 +1,4 @@
-package main
+package cli_test
 
 import (
 	"bytes"
@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/openai/openai-cli/pkg/cmd"
+	"github.com/openai/openai-cli/pkg/custom"
 )
 
 func TestMainDispatchProcess(t *testing.T) {
@@ -20,8 +23,7 @@ func TestMainDispatchProcess(t *testing.T) {
 		t.Fatal("missing subprocess argument separator")
 	}
 	os.Args = os.Args[separator+1:]
-	main()
-	os.Exit(0)
+	os.Exit(custom.Run(cmd.Command, os.Args))
 }
 
 type mainDispatchResult struct {
@@ -116,7 +118,7 @@ func TestMainDispatchOrdinaryArguments(t *testing.T) {
 
 func TestMainDispatchEmptyArguments(t *testing.T) {
 	want := runMainDispatch(t, "bash", "openai", "--help")
-	if want.code != 0 || want.stderr != "" || !strings.Contains(want.stdout, "CLI for the openai API") {
+	if want.code != 0 || want.stderr != "" || !strings.Contains(want.stdout, "OpenAI CLI") {
 		t.Fatalf("root help control failed: %+v", want)
 	}
 	for _, argv := range [][]string{nil, {"openai"}, {""}, {"__complete"}, {"openai", "", "--help"}} {
