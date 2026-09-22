@@ -1,4 +1,4 @@
-package imagepreview
+package terminalimage
 
 import "github.com/charmbracelet/x/term"
 

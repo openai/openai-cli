@@ -1,10 +1,9 @@
-package custom
+package terminalimage
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/openai/openai-cli/internal/imagepreview"
 	"io"
 	"os"
 )
@@ -36,9 +35,9 @@ func setupCurrentImageFont(ctx context.Context, out io.Writer, dir, tty string, 
 	if err != nil {
 		return err
 	}
-	var size imagepreview.Size
+	var size Size
 	if file, ok := out.(*os.File); ok && isTerminal(file) {
-		size = imagepreview.TerminalSize(file.Fd())
+		size = TerminalSize(file.Fd())
 	}
 	geometry, err := imageFontPreservedGeometry(size, int(before.FontSize), source)
 	if err != nil {

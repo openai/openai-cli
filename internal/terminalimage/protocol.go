@@ -1,6 +1,8 @@
-// Package imagepreview displays saved images using terminal graphics protocols.
+// Package terminalimage renders saved images using native graphics, Apple
+// Terminal's opt-in image font, or a text approximation. It owns terminal
+// detection and rendering; API requests and image saving belong to callers.
 // The caller is responsible for selecting a supported, interactive terminal.
-package imagepreview
+package terminalimage
 
 import (
 	"bytes"

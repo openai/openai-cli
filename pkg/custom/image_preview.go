@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/imageopen"
+	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/urfave/cli/v3"
 )
 
@@ -106,13 +107,13 @@ func handleImagesPreviewWithOpener(ctx context.Context, cmd *cli.Command, openIm
 		_, err := fmt.Fprintln(cmd.Root().Writer, "Opening original image in your default viewer.")
 		return err
 	}
-	protocol := imagePreviewProtocol(true, os.Getenv)
+	protocol := terminalimage.DetectProtocol(true, os.Getenv)
 	if protocol == "" {
-		if err := prepareInteractiveImageFont(ctx, cmd.Root().Writer); err != nil {
+		if err := terminalimage.Prepare(ctx, cmd.Root().Writer, imageInlineExecutable()); err != nil {
 			return err
 		}
 	}
-	err = renderImagePreview(ctx, cmd.Root().Writer, path, protocol, imagePreviewTextColor(os.Getenv), imagePreviewTrueColor(os.Getenv))
+	err = terminalimage.Preview(ctx, cmd.Root().Writer, path, protocol, terminalimage.TextColor(os.Getenv), terminalimage.TrueColor(os.Getenv))
 	return explainImagePreviewFormat(err, path)
 }
 

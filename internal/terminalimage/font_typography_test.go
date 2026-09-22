@@ -1,4 +1,4 @@
-package custom
+package terminalimage
 
 import (
 	"bytes"
@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/imagefontmac"
-	"github.com/openai/openai-cli/internal/imagepreview"
 )
 
 func TestImageInlineTypographyKeepsSizesAndReusesImages(t *testing.T) {
@@ -32,7 +31,7 @@ func TestImageInlineTypographyKeepsSizesAndReusesImages(t *testing.T) {
 			var previous string
 			for i := 0; i < 2; i++ {
 				output.Reset()
-				if err := displayImageFont(t.Context(), &output, dir, path, "/dev/ttys001", imagepreview.Size{Columns: 80}, services); err != nil {
+				if err := displayImageFont(t.Context(), &output, dir, path, "/dev/ttys001", Size{Columns: 80}, services); err != nil {
 					t.Fatal(err)
 				}
 				if bridge.fontSize != float64(pointSize) {
@@ -100,7 +99,7 @@ func TestImageInlineTypographyConcurrentChangeEmitsNoImage(t *testing.T) {
 		return errors.New("settings changed")
 	}
 	output.Reset()
-	err := displayImageFont(t.Context(), &output, dir, path, "/dev/ttys001", imagepreview.Size{Columns: 80}, services)
+	err := displayImageFont(t.Context(), &output, dir, path, "/dev/ttys001", Size{Columns: 80}, services)
 	if err == nil || output.Len() != 0 || imageInlineState(t, dir) != before {
 		t.Fatalf("concurrent change printed or committed image: %v", err)
 	}

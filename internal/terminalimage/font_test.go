@@ -1,4 +1,4 @@
-package custom
+package terminalimage
 
 import (
 	"bytes"
@@ -16,7 +16,6 @@ import (
 
 	"github.com/openai/openai-cli/internal/imagefontmac"
 	"github.com/openai/openai-cli/internal/imagegallery"
-	"github.com/openai/openai-cli/internal/imagepreview"
 )
 
 type fakeImageFontBridge struct {
@@ -204,7 +203,7 @@ func TestImageInlinePreviewRetainsImagesAndDeduplicates(t *testing.T) {
 		}
 	}
 	bridge.calls = nil
-	if err := displayImageFont(ctx, &output, dir, red, "/dev/ttys001", imagepreview.Size{Columns: 12, Rows: 30}, bridge.services()); err != nil {
+	if err := displayImageFont(ctx, &output, dir, red, "/dev/ttys001", Size{Columns: 12, Rows: 30}, bridge.services()); err != nil {
 		t.Fatal(err)
 	}
 	firstText := output.String()
@@ -218,7 +217,7 @@ func TestImageInlinePreviewRetainsImagesAndDeduplicates(t *testing.T) {
 	}
 	before = stateBytes()
 	output.Reset()
-	if err := displayImageFont(ctx, &output, dir, blue, "/dev/ttys001", imagepreview.Size{Columns: 12, Rows: 30}, bridge.services()); err != nil {
+	if err := displayImageFont(ctx, &output, dir, blue, "/dev/ttys001", Size{Columns: 12, Rows: 30}, bridge.services()); err != nil {
 		t.Fatal(err)
 	}
 	secondText := output.String()
@@ -236,7 +235,7 @@ func TestImageInlinePreviewRetainsImagesAndDeduplicates(t *testing.T) {
 	}
 	before = stateBytes()
 	output.Reset()
-	if err := displayImageFont(ctx, &output, dir, red, "/dev/ttys001", imagepreview.Size{Columns: 80, Rows: 30}, bridge.services()); err != nil {
+	if err := displayImageFont(ctx, &output, dir, red, "/dev/ttys001", Size{Columns: 80, Rows: 30}, bridge.services()); err != nil {
 		t.Fatal(err)
 	}
 	if output.String() != firstText || imageInlineState(t, dir) != second {
@@ -276,7 +275,7 @@ func TestImageInlinePreviewFailuresNeverPublish(t *testing.T) {
 			}
 			var output bytes.Buffer
 			path := imageInlineFixture(t, "image.png", color.NRGBA{100, 30, 255, 255})
-			err := displayImageFont(context.Background(), &output, dir, path, "/dev/ttys001", imagepreview.Size{Columns: 12}, services)
+			err := displayImageFont(context.Background(), &output, dir, path, "/dev/ttys001", Size{Columns: 12}, services)
 			if !errors.Is(err, failure) || output.Len() != 0 || imageInlineState(t, dir) != before {
 				t.Fatalf("failure published state or output: error=%v output=%q", err, output.String())
 			}
@@ -295,16 +294,16 @@ func TestImageInlinePreviewRequiresEnoughWidth(t *testing.T) {
 	path := imageInlineFixture(t, "image.png", color.NRGBA{150, 30, 10, 255})
 	before := imageInlineState(t, dir)
 	output.Reset()
-	err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", imagepreview.Size{Columns: 8}, bridge.services())
+	err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", Size{Columns: 8}, bridge.services())
 	if err == nil || !strings.Contains(err.Error(), "at least 9 columns") || output.Len() != 0 || imageInlineState(t, dir) != before {
 		t.Fatal("narrow terminal emitted or committed an image")
 	}
-	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", imagepreview.Size{Columns: 40}, bridge.services()); err != nil {
+	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", Size{Columns: 40}, bridge.services()); err != nil {
 		t.Fatal(err)
 	}
 	before = imageInlineState(t, dir)
 	output.Reset()
-	err = displayImageFont(ctx, &output, dir, path, "/dev/ttys001", imagepreview.Size{Columns: 20}, bridge.services())
+	err = displayImageFont(ctx, &output, dir, path, "/dev/ttys001", Size{Columns: 20}, bridge.services())
 	if err == nil || !strings.Contains(err.Error(), "at least 33 columns") || output.Len() != 0 || imageInlineState(t, dir) != before {
 		t.Fatal("cached image was reflowed into a narrower terminal")
 	}
@@ -361,7 +360,7 @@ func TestImageInlineEnvironmentPolicy(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
 	t.Setenv("TERM", "xterm-256color")
 	var output bytes.Buffer
-	if handled, err := tryImageFontPreview(context.Background(), &output, "unused.png", imagepreview.Size{}); handled || err != nil || output.Len() != 0 {
+	if handled, err := tryImageFontPreview(context.Background(), &output, "unused.png", Size{}); handled || err != nil || output.Len() != 0 {
 		t.Fatal("nonterminal output reached the native gallery workflow")
 	}
 	if err := preflightImageFont(context.Background(), &output); err != nil || output.Len() != 0 {
@@ -373,7 +372,7 @@ func TestImageInlineEnvironmentPolicy(t *testing.T) {
 	}
 	defer reader.Close()
 	defer writer.Close()
-	if handled, err := tryImageFontPreview(context.Background(), writer, "unused.png", imagepreview.Size{}); handled || err != nil {
+	if handled, err := tryImageFontPreview(context.Background(), writer, "unused.png", Size{}); handled || err != nil {
 		t.Fatal("pipe output reached the native gallery workflow")
 	}
 	if err := preflightImageFont(context.Background(), writer); err != nil {

@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openai/openai-cli/internal/imagepreview"
+	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/ssestream"
@@ -87,7 +87,7 @@ func TestImageStreamSavesFinalAndBoundsProgress(t *testing.T) {
 	events.WriteString("data: {\"error\":\"synthetic-private-prompt\"}\n\n")
 	stream, body := imageStreamTestSSE(events.String())
 	destination := t.TempDir()
-	plan := &imageOutputPlan{directory: destination, name: "robot.png", partialImages: 3, preview: imagepreview.Kitty}
+	plan := &imageOutputPlan{directory: destination, name: "robot.png", partialImages: 3, preview: terminalimage.Kitty}
 	var output bytes.Buffer
 	if err := plan.saveStream(t.Context(), stream, &output, transformers.ImageStreamEvent); err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestImageStreamPreviewFailureDoesNotLoseFinal(t *testing.T) {
 	events += imageStreamTestEvent(t, "image_generation.completed", final, 0)
 	stream, _ := imageStreamTestSSE(events)
 	destination := t.TempDir()
-	plan := &imageOutputPlan{directory: destination, name: "robot", partialImages: 2, preview: imagepreview.Kitty}
+	plan := &imageOutputPlan{directory: destination, name: "robot", partialImages: 2, preview: terminalimage.Kitty}
 	var output bytes.Buffer
 	if err := plan.saveStream(t.Context(), stream, &output, transformers.ImageStreamEvent); err != nil {
 		t.Fatal(err)
@@ -170,7 +170,7 @@ func TestImageStreamRequiresFinalAndDoesNotLeakErrors(t *testing.T) {
 		t.Run(fmt.Sprint(len(events)), func(t *testing.T) {
 			temporary := imageStreamTestTemporaryRoot(t)
 			stream, body := imageStreamTestSSE(events)
-			plan := &imageOutputPlan{directory: t.TempDir(), partialImages: 1, preview: imagepreview.Kitty}
+			plan := &imageOutputPlan{directory: t.TempDir(), partialImages: 1, preview: terminalimage.Kitty}
 			var output bytes.Buffer
 			err := plan.saveStream(t.Context(), stream, &output, transformers.ImageStreamEvent)
 			if err == nil || !strings.Contains(err.Error(), "final image") || !strings.Contains(err.Error(), "API usage") {
@@ -227,7 +227,7 @@ func TestImageStreamCancellationDuringPreviewCleansTemporaryFiles(t *testing.T) 
 	events := imageStreamTestEvent(t, "image_generation.partial_image", encoded, 0) + imageStreamTestEvent(t, "image_generation.completed", encoded, 0)
 	stream, body := imageStreamTestSSE(events)
 	destination := t.TempDir()
-	plan := &imageOutputPlan{directory: destination, partialImages: 1, preview: imagepreview.Kitty}
+	plan := &imageOutputPlan{directory: destination, partialImages: 1, preview: terminalimage.Kitty}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	output := &imageStreamCancelWriter{cancel: cancel}
@@ -287,7 +287,7 @@ func TestImageStreamUsesSelectedNormalizerOnceAndStopsAtFinal(t *testing.T) {
 				normalized = append(normalized, value.Get("type").String())
 				return transformers.ImageStreamEvent(ctx, value)
 			}
-			plan := &imageOutputPlan{directory: t.TempDir(), name: "selected", partialImages: 1, preview: imagepreview.Kitty}
+			plan := &imageOutputPlan{directory: t.TempDir(), name: "selected", partialImages: 1, preview: terminalimage.Kitty}
 			var output bytes.Buffer
 			require.NoError(t, plan.saveStream(t.Context(), stream, &output, normalize))
 			require.Equal(t, []string{prefix + ".partial_image", prefix + ".completed"}, normalized)
@@ -318,7 +318,7 @@ func TestImageStreamSelectedNormalizerPreviewFailureStillSavesFinal(t *testing.T
 		}
 		return transformers.ImageStreamEvent(ctx, value)
 	}
-	plan := &imageOutputPlan{directory: t.TempDir(), name: "final", partialImages: 2, preview: imagepreview.Kitty}
+	plan := &imageOutputPlan{directory: t.TempDir(), name: "final", partialImages: 2, preview: terminalimage.Kitty}
 	var output bytes.Buffer
 	require.NoError(t, plan.saveStream(t.Context(), stream, &output, normalize))
 	require.Equal(t, 2, normalizations, "preview failure disables remaining optional previews")

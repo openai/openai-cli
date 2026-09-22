@@ -1,4 +1,4 @@
-package custom
+package terminalimage
 
 import (
 	"bytes"
@@ -12,63 +12,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/imagegallery"
-	"github.com/openai/openai-cli/internal/imagepreview"
-	"github.com/urfave/cli/v3"
 )
-
-// These workflow checks use synthetic files and an in-memory font bridge.
-// They never access Terminal, register native fonts, or call an API.
-func TestImageInlineSetupAndRepairHaveNoProfileCreationOptions(t *testing.T) {
-	var commands []*cli.Command
-	root := &cli.Command{Commands: []*cli.Command{{Name: "images"}}}
-	registerImageInline(root)
-	for _, resource := range root.Commands {
-		if resource.Name != "images" {
-			continue
-		}
-		for _, group := range resource.Commands {
-			if group.Name != "inline" {
-				continue
-			}
-			for _, command := range group.Commands {
-				if command.Name == "setup" || command.Name == "repair" {
-					commands = append(commands, command)
-				}
-			}
-		}
-	}
-	if len(commands) != 2 {
-		t.Fatalf("expected setup and repair, found %d", len(commands))
-	}
-	for _, command := range commands {
-		for _, argument := range []string{"--new-window", "--no-open", "--help"} {
-			t.Run(command.Name+argument, func(t *testing.T) {
-				var output bytes.Buffer
-				called := false
-				// Use the registered command's flags/help, with a harmless action
-				// so a regression cannot reach native Terminal APIs during tests.
-				probe := &cli.Command{Name: command.Name, Usage: command.Usage, Description: command.Description, Flags: command.Flags, Writer: &output, ErrWriter: &output,
-					Action: func(context.Context, *cli.Command) error { called = true; return nil }}
-				err := probe.Run(context.Background(), []string{command.Name, argument})
-				if called {
-					t.Fatal("profile option reached the command action")
-				}
-				if argument == "--help" {
-					if err != nil {
-						t.Fatal(err)
-					}
-					for _, obsolete := range []string{"--new-window", "--no-open", "Open this profile", "NEW window"} {
-						if strings.Contains(output.String(), obsolete) {
-							t.Fatalf("help advertises removed profile workflow: %q", output.String())
-						}
-					}
-				} else if err == nil {
-					t.Fatalf("removed profile option %s was accepted", argument)
-				}
-			})
-		}
-	}
-}
 
 func TestImageInlineSetupRepairsMissingFontAndKeepsImageMapping(t *testing.T) {
 	ctx := context.Background()
@@ -80,7 +24,7 @@ func TestImageInlineSetupRepairsMissingFontAndKeepsImageMapping(t *testing.T) {
 	}
 	path := imageInlineFixture(t, "original.png", color.NRGBA{230, 120, 20, 255})
 	output.Reset()
-	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", imagepreview.Size{Columns: 12}, bridge.services()); err != nil {
+	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", Size{Columns: 12}, bridge.services()); err != nil {
 		t.Fatal(err)
 	}
 	oldText := output.String()
@@ -104,7 +48,7 @@ func TestImageInlineSetupRepairsMissingFontAndKeepsImageMapping(t *testing.T) {
 		t.Fatalf("repair accessed an unrelated native operation: %v", bridge.calls)
 	}
 	output.Reset()
-	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", imagepreview.Size{Columns: 80}, bridge.services()); err != nil {
+	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", Size{Columns: 80}, bridge.services()); err != nil {
 		t.Fatal(err)
 	}
 	if output.String() != oldText || imageInlineState(t, dir) != after {
@@ -125,7 +69,7 @@ func TestImageInlineResetRecoversMissingArtifactsAndKeepsOriginal(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", imagepreview.Size{Columns: 12}, bridge.services()); err != nil {
+	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", Size{Columns: 12}, bridge.services()); err != nil {
 		t.Fatal(err)
 	}
 	before := imageInlineState(t, dir)
@@ -219,7 +163,7 @@ func TestImageInlineWidthChecksKnownAndUnknownWindowSizes(t *testing.T) {
 		{"cached wider", 32, 80, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			err := checkImageFontWidth(imagegallery.State{MaxColumns: tt.cached}, imagepreview.Size{Columns: tt.columns})
+			err := checkImageFontWidth(imagegallery.State{MaxColumns: tt.cached}, Size{Columns: tt.columns})
 			if (err != nil) != tt.wantError {
 				t.Fatalf("width check returned %v", err)
 			}
@@ -237,7 +181,7 @@ func TestImageInlineVisualCheckReusesSampleAndRemovesTemporaryFile(t *testing.T)
 	}
 	output.Reset()
 	bridge.calls = nil
-	if err := runImageInlineTest(ctx, &output, dir, "/dev/ttys001", imagepreview.Size{Columns: 80}, bridge.services()); err != nil {
+	if err := runImageInlineTest(ctx, &output, dir, "/dev/ttys001", Size{Columns: 80}, bridge.services()); err != nil {
 		t.Fatal(err)
 	}
 	first := imageInlineState(t, dir)
@@ -248,7 +192,7 @@ func TestImageInlineVisualCheckReusesSampleAndRemovesTemporaryFile(t *testing.T)
 		t.Fatalf("visual check did not check the target profile: %v", bridge.calls)
 	}
 	output.Reset()
-	if err := runImageInlineTest(ctx, &output, dir, "/dev/ttys001", imagepreview.Size{Columns: 80}, bridge.services()); err != nil {
+	if err := runImageInlineTest(ctx, &output, dir, "/dev/ttys001", Size{Columns: 80}, bridge.services()); err != nil {
 		t.Fatal(err)
 	}
 	if after := imageInlineState(t, dir); after != first || !containsImageGlyphs(output.String()) {
@@ -272,7 +216,7 @@ func TestImageInlineVisualCheckFailurePreservesCache(t *testing.T) {
 			}
 			before := imageInlineState(t, dir)
 			failure := errors.New("synthetic preview check failure")
-			size := imagepreview.Size{Columns: 80}
+			size := Size{Columns: 80}
 			switch stage {
 			case "check":
 				bridge.checkErr = failure

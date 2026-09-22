@@ -1,4 +1,4 @@
-package custom
+package terminalimage
 
 import (
 	"bytes"
@@ -50,6 +50,7 @@ func TestImageInlineOfferChoiceOnlyChangesCurrentTabAfterAcceptance(t *testing.T
 			var output bytes.Buffer
 			var confirms, setups int
 			err := runImageInlineOffer(t.Context(), &output, true, imageInlineOfferServices{
+				command:  "./local-openai",
 				ready:    func(context.Context) (bool, error) { return false, nil },
 				confirm:  func(context.Context) (bool, error) { confirms++; return accepted, nil },
 				setup:    func(context.Context) error { setups++; return nil },
@@ -64,7 +65,7 @@ func TestImageInlineOfferChoiceOnlyChangesCurrentTabAfterAcceptance(t *testing.T
 				require.Equal(t, 1, setups)
 			} else {
 				require.Zero(t, setups)
-				require.Contains(t, output.String(), imageInlineExecutable()+" images inline setup")
+				require.Contains(t, output.String(), "./local-openai images inline setup")
 			}
 		})
 	}
@@ -191,14 +192,15 @@ func TestImageInlineOfferDoesNotEvaluateInputOrShellStartup(t *testing.T) {
 		t.Skip("the production reader is local macOS only")
 	}
 	marker := filepath.Join(t.TempDir(), "must-not-exist")
+	quotedMarker := "'" + strings.ReplaceAll(marker, "'", "'\\''") + "'"
 	startup := filepath.Join(t.TempDir(), "startup")
-	require.NoError(t, os.WriteFile(startup, []byte("touch "+quoteImageShellArgument(marker)+"\n"), 0600))
+	require.NoError(t, os.WriteFile(startup, []byte("touch "+quotedMarker+"\n"), 0600))
 	t.Setenv("ENV", startup)
 	t.Setenv("BASH_ENV", startup)
 	input, writer, err := os.Pipe()
 	require.NoError(t, err)
 	defer input.Close()
-	_, err = io.WriteString(writer, "$(touch "+quoteImageShellArgument(marker)+")\n")
+	_, err = io.WriteString(writer, "$(touch "+quotedMarker+")\n")
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 	accepted, err := readImageInlineChoice(t.Context(), input)

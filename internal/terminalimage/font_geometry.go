@@ -1,9 +1,7 @@
-package custom
+package terminalimage
 
 import (
 	"errors"
-
-	"github.com/openai/openai-cli/internal/imagepreview"
 )
 
 // imageFontTileGeometry returns bitmap tile pixels at the font's 32ppem strike.
@@ -11,7 +9,7 @@ import (
 // pixel fields. Its unpadded viewport can include less than one leftover cell.
 // Inferring an integer cell from both counts and points preserves custom spacing
 // without changing the selected Terminal profile.
-func imageFontTileGeometry(size imagepreview.Size, pointSize float64) (width, height int, err error) {
+func imageFontTileGeometry(size Size, pointSize float64) (width, height int, err error) {
 	if pointSize != 16 && pointSize != 32 {
 		return 0, 0, errors.New("sharp image previews require a 16 or 32 point font; run 'openai images inline setup', then retry")
 	}

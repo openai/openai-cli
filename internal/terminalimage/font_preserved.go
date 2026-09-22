@@ -1,4 +1,4 @@
-package custom
+package terminalimage
 
 import (
 	"context"
@@ -10,10 +10,9 @@ import (
 	"github.com/openai/openai-cli/internal/imagefont"
 	"github.com/openai/openai-cli/internal/imagefontmac"
 	"github.com/openai/openai-cli/internal/imagegallery"
-	"github.com/openai/openai-cli/internal/imagepreview"
 )
 
-func displayPreservedImageFont(ctx context.Context, out io.Writer, gallery *imagegallery.Gallery, path, tty string, size imagepreview.Size, before imagefontmac.ProfileStatus, source imagefontmac.SourceFont, services imageFontServices) error {
+func displayPreservedImageFont(ctx context.Context, out io.Writer, gallery *imagegallery.Gallery, path, tty string, size Size, before imagefontmac.ProfileStatus, source imagefontmac.SourceFont, services imageFontServices) error {
 	if services.preserve == nil {
 		return errors.New("font-preserving Terminal activation is unavailable")
 	}
@@ -56,7 +55,7 @@ func displayPreservedImageFont(ctx context.Context, out io.Writer, gallery *imag
 	}
 	current := size
 	if file, ok := out.(*os.File); ok && isTerminal(file) {
-		current = imagepreview.TerminalSize(file.Fd())
+		current = TerminalSize(file.Fd())
 	}
 	final, err := imageFontPreservedGeometry(current, int(after.FontSize), source)
 	if err != nil || after.FontSize != before.FontSize || after.FontName != display.PostScript || after.ProfileID != before.ProfileID || after.ProfileName != before.ProfileName || final.CellWidth != geometry.CellWidth || final.CellHeight != geometry.CellHeight {
@@ -86,7 +85,7 @@ func restoreSelectedImageFont(ctx context.Context, gallery *imagegallery.Gallery
 	return registerImageFont(ctx, services, path, true)
 }
 
-func imageFontCompanionGeometry(size imagepreview.Size, pointSize int, source imagefontmac.SourceFont) ([]imagefont.PreserveOptions, error) {
+func imageFontCompanionGeometry(size Size, pointSize int, source imagefontmac.SourceFont) ([]imagefont.PreserveOptions, error) {
 	var companions []imagefont.PreserveOptions
 	for _, face := range source.Companions {
 		geometry, err := imageFontPreservedGeometry(size, pointSize, face)

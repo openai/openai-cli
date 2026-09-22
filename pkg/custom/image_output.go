@@ -6,13 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/imageopen"
 	"github.com/openai/openai-cli/internal/imageoutput"
-	"github.com/openai/openai-cli/internal/imagepreview"
+	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -28,7 +27,7 @@ type imageOutputPlan struct {
 	filenameStem           string
 	options                []option.RequestOption
 	defaults               map[string]any
-	preview                imagepreview.Protocol
+	preview                terminalimage.Protocol
 	textPreview, textColor bool
 	textTrueColor          bool
 	openFiles              bool
@@ -94,7 +93,7 @@ func prepareImageRequestOutput(ctx context.Context, cmd *cli.Command, body gjson
 		return nil, false, fmt.Errorf("%s: %w", label, err)
 	}
 	if plan.textPreview {
-		if err := prepareInteractiveImageFont(ctx, cmd.Root().Writer); err != nil {
+		if err := terminalimage.Prepare(ctx, cmd.Root().Writer, imageInlineExecutable()); err != nil {
 			return nil, false, fmt.Errorf("inline preview: %w; use --inline off to save without a preview", err)
 		}
 	}
@@ -103,7 +102,7 @@ func prepareImageRequestOutput(ctx context.Context, cmd *cli.Command, body gjson
 			return nil, false, fmt.Errorf("--open: %w", err)
 		}
 	}
-	if isTerminal(cmd.Root().Writer) && isTerminal(os.Stderr) && !imagePreviewCI(os.Getenv) && imageFriendlyErrorMode(cmd.Root()) {
+	if isTerminal(cmd.Root().Writer) && isTerminal(os.Stderr) && !terminalimage.InCI(os.Getenv) && imageFriendlyErrorMode(cmd.Root()) {
 		message := "Generating image..."
 		if cmd.Name == "edit" {
 			message = "Editing image..."
@@ -190,7 +189,7 @@ func prepareImageOutput(cmd *cli.Command, terminal bool, body gjson.Result) (*im
 		return nil, fmt.Errorf("%w\nChoose an existing, writable folder with --output-dir.", err)
 	}
 	plan := &imageOutputPlan{defaults: make(map[string]any), directory: directory, name: name, filenameStem: filenameStem, openFiles: cmd.Bool("open"), partialImages: partials}
-	if (!plan.openFiles || cmd.IsSet("inline")) && !cmd.Bool("no-preview") && terminal && !imagePreviewCI(os.Getenv) {
+	if (!plan.openFiles || cmd.IsSet("inline")) && !cmd.Bool("no-preview") && terminal && !terminalimage.InCI(os.Getenv) {
 		preview := inline == "on"
 		if !cmd.IsSet("inline") {
 			preview, err = imageInlinePreference()
@@ -199,10 +198,10 @@ func prepareImageOutput(cmd *cli.Command, terminal bool, body gjson.Result) (*im
 			}
 		}
 		if preview {
-			plan.preview = imagePreviewProtocol(terminal, os.Getenv)
+			plan.preview = terminalimage.DetectProtocol(terminal, os.Getenv)
 			plan.textPreview = plan.preview == ""
-			plan.textColor = imagePreviewTextColor(os.Getenv)
-			plan.textTrueColor = imagePreviewTrueColor(os.Getenv)
+			plan.textColor = terminalimage.TextColor(os.Getenv)
+			plan.textTrueColor = terminalimage.TrueColor(os.Getenv)
 		}
 	}
 	model := body.Get("model")
@@ -283,13 +282,13 @@ func (p *imageOutputPlan) saveWithOpener(ctx context.Context, response []byte, o
 			}
 		}
 		if p.preview != "" || p.textPreview {
-			if previewErr := renderImagePreview(ctx, out, path, p.preview, p.textColor, p.textTrueColor); previewErr != nil {
+			if previewErr := terminalimage.Preview(ctx, out, path, p.preview, p.textColor, p.textTrueColor); previewErr != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
 				// Saving succeeded. An optional preview failure must not invite
 				// another paid generation or expose decoder details.
-				if err := reportImagePreviewFailure(out, previewErr); err != nil {
+				if err := terminalimage.ReportFailure(out, previewErr); err != nil {
 					return err
 				}
 			}
@@ -302,109 +301,4 @@ func (p *imageOutputPlan) saveWithOpener(ctx context.Context, response []byte, o
 		return fmt.Errorf("the API responded, but no images could be saved: %w", saveErr)
 	}
 	return nil
-}
-
-func reportImagePreviewFailure(out io.Writer, previewErr error) error {
-	message := "Preview unavailable; open the saved image to view it."
-	var fontErr *imageFontPreviewError
-	if errors.As(previewErr, &fontErr) {
-		message = fontErr.Error() + "\nThe generated image is saved; no new generation is needed."
-	}
-	_, err := fmt.Fprintln(out, message)
-	return err
-}
-
-// Read geometry after generation so resizing while waiting is respected.
-// The local preview command uses this same path without another API request.
-func renderImagePreview(ctx context.Context, out io.Writer, path string, protocol imagepreview.Protocol, textColor, trueColor bool) error {
-	var size imagepreview.Size
-	if file, ok := out.(*os.File); ok {
-		size = imagepreview.TerminalSize(file.Fd())
-	}
-	if protocol == "" {
-		if handled, err := tryImageFontPreview(ctx, out, path, size); handled {
-			return err
-		}
-		if _, err := fmt.Fprintln(out, "Inline preview (text approximation):"); err != nil {
-			return err
-		}
-		if err := imagepreview.RenderText(ctx, out, path, size, textColor, trueColor); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintln(out, "Use --open for full resolution in a separate window, or Ghostty/iTerm2 for a native inline image.")
-		return err
-	}
-	return imagepreview.Render(ctx, out, path, protocol, size)
-}
-
-// Recognize terminal identities without queries or reads from stdin.
-// Multiplexers need passthrough handling: inherited terminal identities do not
-// prove that graphics will reach the outer terminal safely.
-func imagePreviewProtocol(terminal bool, getenv func(string) string) imagepreview.Protocol {
-	if !terminal {
-		return ""
-	}
-	if imagePreviewCI(getenv) {
-		return ""
-	}
-	t := getenv("TERM")
-	if t == "dumb" || strings.HasPrefix(t, "screen") || strings.HasPrefix(t, "tmux") ||
-		getenv("TMUX") != "" || getenv("STY") != "" || getenv("ZELLIJ") != "" {
-		return ""
-	}
-	switch getenv("TERM_PROGRAM") {
-	case "iTerm.app":
-		return imagepreview.ITerm2
-	case "ghostty":
-		return imagepreview.Kitty
-	case "": // Useful over SSH when TERM_PROGRAM was not forwarded.
-	default:
-		return "" // An explicitly different terminal takes precedence.
-	}
-	if t == "xterm-kitty" || t == "xterm-ghostty" {
-		return imagepreview.Kitty
-	}
-	return ""
-}
-
-func imagePreviewCI(getenv func(string) string) bool {
-	ci := strings.ToLower(getenv("CI"))
-	return ci != "" && ci != "false" && ci != "0"
-}
-
-// Basic terminals still get ASCII. Use color only when advertised, without
-// queries or input reads; imagePreviewTrueColor selects RGB where supported.
-func imagePreviewTextColor(getenv func(string) string) bool {
-	if getenv("NO_COLOR") != "" || getenv("CLICOLOR") == "0" || getenv("TERM") == "dumb" {
-		return false
-	}
-	color := strings.ToLower(getenv("COLORTERM"))
-	return strings.Contains(getenv("TERM"), "256color") || color == "truecolor" || color == "24bit" || getenv("TERM_PROGRAM") == "Apple_Terminal"
-}
-
-// Tahoe added RGB color to Apple Terminal (2.15, build 465). Inspect the
-// terminal's advertised build, not the CLI host OS, so SSH remains correct.
-// https://ratatui.rs/examples/layout/flex/
-func imagePreviewTrueColor(getenv func(string) string) bool {
-	if !imagePreviewTextColor(getenv) {
-		return false
-	}
-	color := strings.ToLower(getenv("COLORTERM"))
-	if color == "truecolor" || color == "24bit" {
-		return true
-	}
-	term := getenv("TERM")
-	if getenv("TERM_PROGRAM") != "Apple_Terminal" ||
-		getenv("TMUX") != "" || getenv("STY") != "" || getenv("ZELLIJ") != "" ||
-		strings.HasPrefix(term, "screen") || strings.HasPrefix(term, "tmux") {
-		return false
-	}
-	parts := strings.Split(getenv("TERM_PROGRAM_VERSION"), ".")
-	for _, part := range parts {
-		if part == "" || strings.IndexFunc(part, func(r rune) bool { return r < '0' || r > '9' }) != -1 {
-			return false
-		}
-	}
-	build, err := strconv.Atoi(parts[0])
-	return err == nil && build >= 465
 }

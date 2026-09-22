@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/openai/openai-cli/internal/imagepreview"
 	"github.com/openai/openai-cli/internal/requestflag"
+	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -104,7 +104,7 @@ func TestImageOutputTerminalPolicy(t *testing.T) {
 						if test.noPreview {
 							require.Empty(t, plan.preview)
 						} else {
-							require.Equal(t, imagepreview.Kitty, plan.preview)
+							require.Equal(t, terminalimage.Kitty, plan.preview)
 						}
 					} else {
 						require.Nil(t, plan)
@@ -272,81 +272,19 @@ func TestImagePreviewTextFallback(t *testing.T) {
 	}
 }
 
-func TestImagePreviewDetection(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		tty  bool
-		env  map[string]string
-		want imagepreview.Protocol
-	}{
-		{"iTerm2", true, map[string]string{"TERM_PROGRAM": "iTerm.app"}, imagepreview.ITerm2},
-		{"Ghostty", true, map[string]string{"TERM_PROGRAM": "ghostty"}, imagepreview.Kitty},
-		{"Kitty", true, map[string]string{"TERM": "xterm-kitty"}, imagepreview.Kitty},
-		{"Ghostty TERM over SSH", true, map[string]string{"TERM": "xterm-ghostty", "SSH_TTY": "/dev/pts/1"}, imagepreview.Kitty},
-		{"forwarded identity over SSH", true, map[string]string{"TERM": "xterm-256color", "TERM_PROGRAM": "ghostty", "SSH_CONNECTION": "synthetic"}, imagepreview.Kitty},
-		{"pipe", false, map[string]string{"TERM_PROGRAM": "ghostty"}, ""},
-		{"generic xterm", true, map[string]string{"TERM": "xterm-256color"}, ""},
-		{"unknown identity", true, map[string]string{"TERM_PROGRAM": "vscode", "TERM": "xterm-kitty"}, ""},
-		{"inherited session ID", true, map[string]string{"ITERM_SESSION_ID": "old", "KITTY_WINDOW_ID": "1"}, ""},
-		{"dumb", true, map[string]string{"TERM": "dumb", "TERM_PROGRAM": "iTerm.app"}, ""},
-		{"tmux variable", true, map[string]string{"TMUX": "/tmp/tmux", "TERM_PROGRAM": "ghostty"}, ""},
-		{"tmux TERM", true, map[string]string{"TERM": "tmux-256color", "TERM_PROGRAM": "ghostty"}, ""},
-		{"screen TERM", true, map[string]string{"TERM": "screen-256color", "TERM_PROGRAM": "iTerm.app"}, ""},
-		{"screen variable", true, map[string]string{"STY": "1.screen", "TERM_PROGRAM": "iTerm.app"}, ""},
-		{"zellij", true, map[string]string{"ZELLIJ": "0", "TERM_PROGRAM": "ghostty"}, ""},
-		{"CI", true, map[string]string{"CI": "true", "TERM_PROGRAM": "ghostty"}, ""},
-		{"CI false", true, map[string]string{"CI": "false", "TERM_PROGRAM": "ghostty"}, imagepreview.Kitty},
-		{"NO_COLOR only disables colors", true, map[string]string{"NO_COLOR": "1", "TERM_PROGRAM": "ghostty"}, imagepreview.Kitty},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			require.Equal(t, test.want, imagePreviewProtocol(test.tty, func(key string) string { return test.env[key] }))
-		})
-	}
-}
-
-func TestImagePreviewTrueColorDetection(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		env  map[string]string
-		want bool
-	}{
-		{"Tahoe first build", map[string]string{"TERM_PROGRAM": "Apple_Terminal", "TERM_PROGRAM_VERSION": "465"}, true},
-		{"Tahoe dotted build", map[string]string{"TERM_PROGRAM": "Apple_Terminal", "TERM_PROGRAM_VERSION": "470.2"}, true},
-		{"older Apple", map[string]string{"TERM_PROGRAM": "Apple_Terminal", "TERM_PROGRAM_VERSION": "464.9"}, false},
-		{"unknown Apple version", map[string]string{"TERM_PROGRAM": "Apple_Terminal"}, false},
-		{"malformed version", map[string]string{"TERM_PROGRAM": "Apple_Terminal", "TERM_PROGRAM_VERSION": "470.invalid"}, false},
-		{"overflow version", map[string]string{"TERM_PROGRAM": "Apple_Terminal", "TERM_PROGRAM_VERSION": "999999999999999999999"}, false},
-		{"different terminal build", map[string]string{"TERM_PROGRAM": "other", "TERM_PROGRAM_VERSION": "470.2", "TERM": "xterm-256color"}, false},
-		{"explicit capability", map[string]string{"COLORTERM": "truecolor"}, true},
-		{"explicit 24bit", map[string]string{"COLORTERM": "24bit"}, true},
-		{"generic ANSI256", map[string]string{"TERM": "xterm-256color"}, false},
-		{"no color", map[string]string{"TERM_PROGRAM": "Apple_Terminal", "TERM_PROGRAM_VERSION": "470.2", "NO_COLOR": "1"}, false},
-		{"color disabled", map[string]string{"COLORTERM": "truecolor", "CLICOLOR": "0"}, false},
-		{"dumb overrides capability", map[string]string{"COLORTERM": "truecolor", "TERM": "dumb"}, false},
-		{"inherited Apple through tmux", map[string]string{"TERM_PROGRAM": "Apple_Terminal", "TERM_PROGRAM_VERSION": "470.2", "TMUX": "synthetic"}, false},
-		{"screen term", map[string]string{"TERM_PROGRAM": "Apple_Terminal", "TERM_PROGRAM_VERSION": "470.2", "TERM": "screen-256color"}, false},
-		{"multiplexer advertises RGB", map[string]string{"TERM": "tmux-256color", "COLORTERM": "truecolor", "TMUX": "synthetic"}, true},
-		{"forwarded Apple over SSH", map[string]string{"TERM_PROGRAM": "Apple_Terminal", "TERM_PROGRAM_VERSION": "470.2", "SSH_TTY": "/dev/pts/1"}, true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			require.Equal(t, test.want, imagePreviewTrueColor(func(key string) string { return test.env[key] }))
-		})
-	}
-}
-
 func TestImageOutputPreview(t *testing.T) {
 	var pngData bytes.Buffer
 	require.NoError(t, png.Encode(&pngData, image.NewNRGBA(image.Rect(0, 0, 16, 8))))
 	for _, test := range []struct {
 		name     string
-		protocol imagepreview.Protocol
+		protocol terminalimage.Protocol
 		data     []byte
 		marker   string
 	}{
-		{"iTerm2", imagepreview.ITerm2, pngData.Bytes(), "\x1b]1337;File="},
-		{"Kitty", imagepreview.Kitty, pngData.Bytes(), "\x1b_Ga=T"},
+		{"iTerm2", terminalimage.ITerm2, pngData.Bytes(), "\x1b]1337;File="},
+		{"Kitty", terminalimage.Kitty, pngData.Bytes(), "\x1b_Ga=T"},
 		{"unsupported terminal", "", pngData.Bytes(), ""},
-		{"broken preview keeps saved file", imagepreview.Kitty, []byte("\x89PNG\r\n\x1a\ninvalid"), ""},
+		{"broken preview keeps saved file", terminalimage.Kitty, []byte("\x89PNG\r\n\x1a\ninvalid"), ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response, err := json.Marshal(map[string]any{"data": []map[string]string{{"b64_json": base64.StdEncoding.EncodeToString(test.data)}}})

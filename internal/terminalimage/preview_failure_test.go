@@ -1,4 +1,4 @@
-package custom
+package terminalimage
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ func TestReportImagePreviewFailureSharpRetry(t *testing.T) {
 			previewErr = fmt.Errorf("optional preview: %w", previewErr)
 		}
 		var output bytes.Buffer
-		require.NoError(t, reportImagePreviewFailure(&output, previewErr))
+		require.NoError(t, ReportFailure(&output, previewErr))
 		require.Contains(t, output.String(), "Sharp inline preview unavailable")
 		require.Contains(t, output.String(), "widen the terminal to at least 33 columns")
 		require.Contains(t, output.String(), "openai images preview FILE")
@@ -29,7 +29,7 @@ func TestReportImagePreviewFailureSharpRetry(t *testing.T) {
 func TestReportImagePreviewFailureEscapesControls(t *testing.T) {
 	cause := errors.New("bad file\n\r\t\x1b[2J\x07\"name")
 	var output bytes.Buffer
-	require.NoError(t, reportImagePreviewFailure(&output, &imageFontPreviewError{cause: cause}))
+	require.NoError(t, ReportFailure(&output, &imageFontPreviewError{cause: cause}))
 	text := output.String()
 	require.Contains(t, text, `bad file\n\r\t\x1b[2J\a\"name`)
 	for _, control := range []string{"\r", "\t", "\x1b", "\x07"} {
@@ -41,14 +41,14 @@ func TestReportImagePreviewFailureEscapesControls(t *testing.T) {
 func TestReportImagePreviewFailureHidesDecoderDetails(t *testing.T) {
 	var output bytes.Buffer
 	err := errors.New("decoder failed at private source /synthetic/private-image.png\n\x1b[2J")
-	require.NoError(t, reportImagePreviewFailure(&output, err))
+	require.NoError(t, ReportFailure(&output, err))
 	require.Equal(t, "Preview unavailable; open the saved image to view it.\n", output.String())
 }
 
 func TestReportImagePreviewFailurePropagatesWriterError(t *testing.T) {
 	failure := errors.New("synthetic writer failure")
 	for _, previewErr := range []error{errors.New("decoder failure"), &imageFontPreviewError{cause: errors.New("font failure")}} {
-		require.ErrorIs(t, reportImagePreviewFailure(imagePreviewFailureWriter{failure}, previewErr), failure)
+		require.ErrorIs(t, ReportFailure(imagePreviewFailureWriter{failure}, previewErr), failure)
 	}
 }
 

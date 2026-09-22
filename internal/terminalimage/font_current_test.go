@@ -1,4 +1,4 @@
-package custom
+package terminalimage
 
 import (
 	"bytes"
@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/imagefontmac"
-	"github.com/openai/openai-cli/internal/imagepreview"
 	"golang.org/x/image/font/gofont/gomono"
 )
 
@@ -217,7 +216,7 @@ func TestImageInlineCurrentSetupPreservesEarlierImageMappings(t *testing.T) {
 	}
 	path := imageInlineFixture(t, "synthetic.png", color.NRGBA{R: 235, G: 90, B: 20, A: 255})
 	output.Reset()
-	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", imagepreview.Size{Columns: 12}, services); err != nil {
+	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", Size{Columns: 12}, services); err != nil {
 		t.Fatal(err)
 	}
 	before := imageInlineState(t, dir)
@@ -241,7 +240,7 @@ func TestImageInlineCurrentSetupPreservesEarlierImageMappings(t *testing.T) {
 		t.Fatal("repeated setup mutated the existing font file")
 	}
 	output.Reset()
-	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", imagepreview.Size{Columns: 80}, services); err != nil {
+	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", Size{Columns: 80}, services); err != nil {
 		t.Fatal(err)
 	}
 	if output.String() != characters || imageInlineState(t, dir) != before {
@@ -260,7 +259,7 @@ func TestImageInlineCurrentSetupRepairsFontWithoutImport(t *testing.T) {
 	}
 	path := imageInlineFixture(t, "synthetic.png", color.NRGBA{R: 20, G: 90, B: 235, A: 255})
 	output.Reset()
-	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", imagepreview.Size{Columns: 12}, services); err != nil {
+	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", Size{Columns: 12}, services); err != nil {
 		t.Fatal(err)
 	}
 	characters := output.String()
@@ -281,7 +280,7 @@ func TestImageInlineCurrentSetupRepairsFontWithoutImport(t *testing.T) {
 		t.Fatalf("repair changed gallery identity or discarded mappings: before=%+v after=%+v", before, after)
 	}
 	output.Reset()
-	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", imagepreview.Size{Columns: 80}, services); err != nil {
+	if err := displayImageFont(ctx, &output, dir, path, "/dev/ttys001", Size{Columns: 80}, services); err != nil {
 		t.Fatal(err)
 	}
 	if output.String() != characters || imageInlineState(t, dir) != after {

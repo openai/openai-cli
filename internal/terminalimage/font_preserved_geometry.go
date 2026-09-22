@@ -1,4 +1,4 @@
-package custom
+package terminalimage
 
 import (
 	"errors"
@@ -6,13 +6,12 @@ import (
 
 	"github.com/openai/openai-cli/internal/imagefont"
 	"github.com/openai/openai-cli/internal/imagefontmac"
-	"github.com/openai/openai-cli/internal/imagepreview"
 )
 
 // imageFontPreservedGeometry leaves the user's point size and source font
 // metrics unchanged. Terminal's viewport extents are logical points; matching
 // them to the cell counts measures the user's character and line spacing.
-func imageFontPreservedGeometry(size imagepreview.Size, pointSize int, source imagefontmac.SourceFont) (imagefont.PreserveOptions, error) {
+func imageFontPreservedGeometry(size Size, pointSize int, source imagefontmac.SourceFont) (imagefont.PreserveOptions, error) {
 	invalid := errors.New("cannot determine this font's image geometry without changing your settings; select a supported font size and retry")
 	if pointSize < 1 || pointSize > 1024 || source.PostScript == "" {
 		return imagefont.PreserveOptions{}, invalid

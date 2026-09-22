@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-go/v3"
 	"github.com/urfave/cli/v3"
 )
@@ -37,7 +38,7 @@ func beginImageErrorContext(command *cli.Command) *imageErrorContext {
 // This is presentation after failure, not a new credential check or retry policy.
 func ShowFriendlyImageError(root *cli.Command, err error, stderr io.Writer) bool {
 	presentation, _ := root.Metadata[imageErrorContextKey].(*imageErrorContext)
-	if presentation == nil || !isTerminal(root.Writer) || !isTerminal(stderr) || imagePreviewCI(os.Getenv) {
+	if presentation == nil || !isTerminal(root.Writer) || !isTerminal(stderr) || terminalimage.InCI(os.Getenv) {
 		return false
 	}
 	if !imageFriendlyErrorMode(root) {

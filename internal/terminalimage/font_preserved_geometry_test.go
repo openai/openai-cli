@@ -1,4 +1,4 @@
-package custom
+package terminalimage
 
 import (
 	"math"
@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/imagefontmac"
-	"github.com/openai/openai-cli/internal/imagepreview"
 )
 
 func TestImageFontPreservedGeometryOriginalSizes(t *testing.T) {
@@ -20,7 +19,7 @@ func TestImageFontPreservedGeometryOriginalSizes(t *testing.T) {
 			for _, factor := range []float64{0.5, 0.8, 1, 1.3, 1.5} {
 				width := max(1, int(math.Round(source.Advance*factor)))
 				height := max(1, int(math.Ceil(float64(baseHeight)*factor)))
-				size := imagepreview.Size{Columns: 100, Rows: 50, PixelWidth: 100*width + width - 1, PixelHeight: 50*height + height - 1}
+				size := Size{Columns: 100, Rows: 50, PixelWidth: 100*width + width - 1, PixelHeight: 50*height + height - 1}
 				got, err := imageFontPreservedGeometry(size, points, source)
 				if err != nil {
 					t.Fatalf("spacing %g: %v", factor, err)
@@ -38,7 +37,7 @@ func TestImageFontPreservedGeometryOriginalSizes(t *testing.T) {
 
 func TestImageFontPreservedGeometryWithoutViewport(t *testing.T) {
 	source := imagefontmac.SourceFont{PostScript: "CustomFace", Ascent: 11.7, Descent: 3.2, Leading: 1.1, Advance: 7.8, LineHeight: 18}
-	got, err := imageFontPreservedGeometry(imagepreview.Size{}, 14, source)
+	got, err := imageFontPreservedGeometry(Size{}, 14, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +57,7 @@ func TestImageFontPreservedGeometryKeepsMonacoLayout(t *testing.T) {
 		{18, 18.2, 5.7, 0.5, 25, 25, 6},
 	} {
 		source := imagefontmac.SourceFont{PostScript: "Monaco", Ascent: tt.ascent, Descent: tt.descent, Leading: tt.leading, Advance: 8, LineHeight: tt.lineHeight}
-		got, err := imageFontPreservedGeometry(imagepreview.Size{}, tt.point, source)
+		got, err := imageFontPreservedGeometry(Size{}, tt.point, source)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -70,7 +69,7 @@ func TestImageFontPreservedGeometryKeepsMonacoLayout(t *testing.T) {
 
 func TestImageFontPreservedGeometryRejectsAmbiguousOrInvalid(t *testing.T) {
 	source := imagefontmac.SourceFont{PostScript: "Menlo-Regular", Ascent: 12, Descent: 4, Advance: 8, LineHeight: 16}
-	for _, size := range []imagepreview.Size{
+	for _, size := range []Size{
 		{Columns: 1, Rows: 1, PixelWidth: 12, PixelHeight: 24},
 		{Columns: 100, Rows: 50, PixelWidth: 800},
 		{Columns: 100, Rows: 50, PixelWidth: 1, PixelHeight: 1},
@@ -81,14 +80,14 @@ func TestImageFontPreservedGeometryRejectsAmbiguousOrInvalid(t *testing.T) {
 		}
 	}
 	for _, points := range []int{0, -1, 1025} {
-		if _, err := imageFontPreservedGeometry(imagepreview.Size{}, points, source); err == nil {
+		if _, err := imageFontPreservedGeometry(Size{}, points, source); err == nil {
 			t.Fatalf("accepted point size %d", points)
 		}
 	}
 	for _, invalid := range []float64{0, -1, math.NaN(), math.Inf(1), 1e30} {
 		bad := source
 		bad.Advance = invalid
-		if _, err := imageFontPreservedGeometry(imagepreview.Size{}, 16, bad); err == nil {
+		if _, err := imageFontPreservedGeometry(Size{}, 16, bad); err == nil {
 			t.Fatalf("accepted advance %g", invalid)
 		}
 	}
@@ -96,7 +95,7 @@ func TestImageFontPreservedGeometryRejectsAmbiguousOrInvalid(t *testing.T) {
 
 func TestImageFontPreservedGeometryKeepsBundledLookupName(t *testing.T) {
 	source := imagefontmac.SourceFont{PostScript: "SFMono-RegularItalic", LookupName: "SF Mono Regular Italic", Tables: map[string][]byte{"test": {1}}, Ascent: 12, Descent: 4, Advance: 8, LineHeight: 16}
-	got, err := imageFontPreservedGeometry(imagepreview.Size{}, 13, source)
+	got, err := imageFontPreservedGeometry(Size{}, 13, source)
 	if err != nil || got.SourcePostScript != source.PostScript || got.SourceName != source.LookupName {
 		t.Fatalf("bundled lookup identity lost: %+v %v", got, err)
 	}

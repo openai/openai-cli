@@ -10,6 +10,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/imageoutput"
 	"github.com/openai/openai-cli/internal/jsonview"
+	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/openai/openai-go/v3"
 	"github.com/tidwall/gjson"
@@ -178,5 +179,5 @@ func (p *imageOutputPlan) renderImageProgress(ctx context.Context, out io.Writer
 	if _, err := fmt.Fprintf(out, "Progress preview %d of %d:\n", index+1, p.partialImages); err != nil {
 		return err
 	}
-	return renderImagePreview(ctx, out, path, p.preview, p.textColor, p.textTrueColor)
+	return terminalimage.Preview(ctx, out, path, p.preview, p.textColor, p.textTrueColor)
 }

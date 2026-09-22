@@ -1,4 +1,4 @@
-package custom
+package terminalimage
 
 import (
 	"context"
@@ -13,7 +13,9 @@ import (
 // An automatic offer is allowed only on the same interactive terminal as the
 // request's input. In particular, a drained pipe is still not a terminal.
 // Callers select this path only for readable output with previews enabled.
-func prepareInteractiveImageFont(ctx context.Context, out io.Writer) error {
+// invocation is the caller's shell-quoted display command for the setup hint;
+// it is printed only, never executed by this package.
+func Prepare(ctx context.Context, out io.Writer, invocation string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -39,7 +41,8 @@ func prepareInteractiveImageFont(ctx context.Context, out io.Writer) error {
 		return fallback(ctx)
 	}
 	return runImageInlineOffer(ctx, out, true, imageInlineOfferServices{
-		ready: func(ctx context.Context) (bool, error) { return imageFontReady(ctx, out) },
+		command: invocation,
+		ready:   func(ctx context.Context) (bool, error) { return imageFontReady(ctx, out) },
 		confirm: func(ctx context.Context) (bool, error) {
 			return confirmImageInlineTTY(ctx, outTTY, os.Stdin)
 		},
@@ -59,6 +62,7 @@ func imageInlineOfferSameTTY(input, output string) bool {
 }
 
 type imageInlineOfferServices struct {
+	command  string
 	ready    func(context.Context) (bool, error)
 	confirm  func(context.Context) (bool, error)
 	setup    func(context.Context) error
@@ -95,7 +99,11 @@ func runImageInlineOffer(ctx context.Context, out io.Writer, interactive bool, s
 		return err
 	}
 	if !accepted {
-		_, err := fmt.Fprintf(out, "Using a text preview for this command. Enable sharp images later with:\n  %s images inline setup\n", imageInlineExecutable())
+		command := services.command
+		if command == "" {
+			command = "openai"
+		}
+		_, err := fmt.Fprintf(out, "Using a text preview for this command. Enable sharp images later with:\n  %s images inline setup\n", command)
 		return err
 	}
 	return services.setup(ctx)

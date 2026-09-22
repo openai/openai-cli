@@ -1,5 +1,5 @@
 //go:build !darwin && !dragonfly && !freebsd && !linux && !netbsd && !openbsd
 
-package imagepreview
+package terminalimage
 
 func terminalPixelSize(uintptr) Size { return Size{} }

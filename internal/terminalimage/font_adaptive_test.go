@@ -1,4 +1,4 @@
-package custom
+package terminalimage
 
 import (
 	"bytes"
@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/imagegallery"
-	"github.com/openai/openai-cli/internal/imagepreview"
 )
 
 func TestImageInlineAdaptivePreviewPreservesImagesAcrossSpacingChanges(t *testing.T) {
@@ -39,13 +38,13 @@ func TestImageInlineAdaptivePreviewPreservesImagesAcrossSpacingChanges(t *testin
 	for _, tc := range []struct {
 		name                  string
 		pointSize             float64
-		size                  imagepreview.Size
+		size                  Size
 		tileWidth, tileHeight int
 	}{
-		{"16pt custom", 16, imagepreview.Size{Columns: 80, Rows: 40, PixelWidth: 809, PixelHeight: 860}, 20, 42},
-		{"32pt custom", 32, imagepreview.Size{Columns: 80, Rows: 40, PixelWidth: 1538, PixelHeight: 1516}, 19, 37},
-		{"standard measured", 16, imagepreview.Size{Columns: 80, Rows: 40, PixelWidth: 640, PixelHeight: 640}, 16, 32},
-		{"repeat 16pt custom", 16, imagepreview.Size{Columns: 80, Rows: 40, PixelWidth: 800, PixelHeight: 840}, 20, 42},
+		{"16pt custom", 16, Size{Columns: 80, Rows: 40, PixelWidth: 809, PixelHeight: 860}, 20, 42},
+		{"32pt custom", 32, Size{Columns: 80, Rows: 40, PixelWidth: 1538, PixelHeight: 1516}, 19, 37},
+		{"standard measured", 16, Size{Columns: 80, Rows: 40, PixelWidth: 640, PixelHeight: 640}, 16, 32},
+		{"repeat 16pt custom", 16, Size{Columns: 80, Rows: 40, PixelWidth: 800, PixelHeight: 840}, 20, 42},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bridge.fontSize = tc.pointSize
@@ -116,11 +115,11 @@ func TestImageInlineAdaptivePreviewRejectsUnreliableGeometryBeforePreparing(t *t
 	failure := errors.New("synthetic inspection denied")
 	for _, tc := range []struct {
 		name       string
-		size       imagepreview.Size
+		size       Size
 		inspectErr error
 	}{
-		{"inspection failed", imagepreview.Size{Columns: 80, Rows: 40, PixelWidth: 640, PixelHeight: 640}, failure},
-		{"inconsistent dimensions", imagepreview.Size{Columns: 80, Rows: 40, PixelWidth: 680, PixelHeight: 640}, nil},
+		{"inspection failed", Size{Columns: 80, Rows: 40, PixelWidth: 640, PixelHeight: 640}, failure},
+		{"inconsistent dimensions", Size{Columns: 80, Rows: 40, PixelWidth: 680, PixelHeight: 640}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -186,7 +185,7 @@ func TestImageInlineAdaptivePreviewRechecksAfterActivationBeforePublishing(t *te
 				}
 			}
 			var output bytes.Buffer
-			size := imagepreview.Size{Columns: 80, Rows: 40, PixelWidth: 640, PixelHeight: 640}
+			size := Size{Columns: 80, Rows: 40, PixelWidth: 640, PixelHeight: 640}
 			err = displayImageFont(ctx, &output, dir, source, "/dev/ttys001", size, bridge.services())
 			if err == nil {
 				t.Fatal("preview accepted stale settings after native activation")
