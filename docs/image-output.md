@@ -592,36 +592,18 @@ emitted events and is not a limit on generated images or cost.
 
 ## Development workspace
 
-See the [implementation map](image-implementation.md) for the folder layout,
-request flow, font-rendering flow, and a suggested code-review order.
+The [feature implementation map](image-implementation.md) lists the integration
+files and libraries for each feature, with request and font-rendering diagrams.
+The [output architecture](architecture/output-pipeline.md) explains how those
+features use the existing generated hooks from PR #223 and why the entrypoint
+changes are needed.
 
-The executable entrypoint in `cmd/openai/main.go` runs the generated command
-tree and handles completion, request setup, errors, and exit codes. The API
-commands in `pkg/cmd` remain generated. `custom.ConfigureCommand` decorates that
-tree with image settings and local commands after assembly; image features do
-not require manual changes to generated handlers.
-
-`pkg/custom` owns CLI behavior: help, request defaults, validation, output policy,
-file saving, streaming progress, and terminal presentation. Its image action
-wrapper prepares request options once and delegates the API call to the generated
-action. The shared custom runtime consumes those options and receives the
-response or event with its operation, output kind, and context.
-
-`pkg/transformers` owns reusable JSON response/event transformations. The image
-transformer keeps ordinary response data intact and normalizes known progress
-and completion events into the same `data` shape. It does not call the API,
-consume a stream, write files, or draw a terminal. Those effects remain in
-`pkg/custom`, using `internal/imageoutput` for files and `internal/imagepreview`
-plus the font helpers for rendering. Neither the custom layer nor the
-transformers package imports generated commands.
-
-This structure preserves the user-facing commands and explicit API output
-choices. The default is now readable output and automatic saving, including in
-scripts; see the [output guide](readable-output.md) for migration examples.
-The Go SDK supplies the API
-call; no new backend operation or schema change is needed. Generation and
-custom-code budget verification remain release gates before this prototype is
-proposed for shipping.
+Generated handlers still make API calls. The custom layer coordinates commands;
+`internal/imageoutput` owns saving and `internal/terminalimage` owns previews.
+Explicit API output choices are preserved. Readable output and automatic saving
+are now the default even in scripts; see the [output guide](readable-output.md)
+for migration examples. Generation and custom-code budget verification remain
+release gates before shipping.
 
 Preview decoding has a 32-megapixel budget (32 × 1024 × 1024 pixels) and a
 16,384-pixel limit per axis. The axis limit also bounds the resize working buffers
@@ -634,7 +616,7 @@ Neither protocol changes the original image.
 Focused tests use synthetic responses and temporary directories:
 
 ```sh
-go test ./internal/imagefont ./internal/imagefontmac ./internal/imagegallery ./internal/imageprefs ./internal/imageopen ./internal/imageoutput ./internal/imagepreview
+go test ./internal/imagefont ./internal/imagefontmac ./internal/imagegallery ./internal/imageprefs ./internal/imageopen ./internal/imageoutput ./internal/terminalimage
 go test ./pkg/transformers ./pkg/custom -run '^Test(Image|ImagesGenerate|ReportImagePreview)' -count=1
 go test ./cmd/openai -count=1
 ```

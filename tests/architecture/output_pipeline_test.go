@@ -20,23 +20,52 @@ func TestOutputPipelineDependencies(t *testing.T) {
 	root := repositoryRoot(t)
 	for _, layer := range []string{"custom", "transformers"} {
 		t.Run(layer, func(t *testing.T) {
-			for _, filename := range productionGoFiles(t, filepath.Join(root, "pkg", layer)) {
-				file, err := parser.ParseFile(token.NewFileSet(), filename, nil, parser.ImportsOnly)
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, spec := range file.Imports {
-					path, err := strconv.Unquote(spec.Path.Value)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if reason := prohibitedImport(layer, path); reason != "" {
-						relative, _ := filepath.Rel(root, filename)
-						t.Errorf("%s imports %q: %s", relative, path, reason)
-					}
-				}
-			}
+			checkProductionImports(t, root, filepath.Join(root, "pkg", layer), func(imported string) string {
+				return prohibitedImport(layer, imported)
+			})
 		})
+	}
+}
+
+// Feature libraries own implementation independently of command registration.
+// They may share data-only transformer types, but must never call back into the
+// generated command tree or custom runtime that coordinates them.
+func TestFeatureLibraryDependencies(t *testing.T) {
+	root := repositoryRoot(t)
+	for _, library := range []string{
+		"clihelp", "readable", "terminalimage", "imagefont", "imagefontmac",
+		"imagegallery", "imageoutput", "imagemodels", "imageopen", "imageprefs",
+	} {
+		t.Run(library, func(t *testing.T) {
+			checkProductionImports(t, root, filepath.Join(root, "internal", library), func(imported string) string {
+				for _, prefix := range []string{"pkg/cmd", "pkg/custom", "cmd/openai"} {
+					if packageWithin(imported, modulePath+"/"+prefix) {
+						return "implementation libraries must not depend on command registration or the executable"
+					}
+				}
+				return ""
+			})
+		})
+	}
+}
+
+func checkProductionImports(t *testing.T, root, directory string, prohibited func(string) string) {
+	t.Helper()
+	for _, filename := range productionGoFiles(t, directory) {
+		file, err := parser.ParseFile(token.NewFileSet(), filename, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, spec := range file.Imports {
+			imported, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reason := prohibited(imported); reason != "" {
+				relative, _ := filepath.Rel(root, filename)
+				t.Errorf("%s imports %q: %s", relative, imported, reason)
+			}
+		}
 	}
 }
 

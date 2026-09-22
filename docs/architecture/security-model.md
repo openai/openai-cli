@@ -20,9 +20,10 @@ request setup, and handles API errors with custom presentation hooks
 
 Most endpoint commands under `pkg/cmd/` are generated from the checked-in
 OpenAPI snapshot. Handwritten request plumbing, command decoration, and
-presentation live under `pkg/custom`; `pkg/transformers` transforms successful
-JSON responses or individual stream events without network, filesystem, or
-terminal effects. That split matters for maintenance, but both generated and
+presentation policy live under `pkg/custom`, with implementation in focused
+`internal` libraries. `pkg/transformers` transforms successful JSON responses or
+individual stream events without network, filesystem, or terminal effects.
+That split matters for maintenance, but both generated and
 handwritten tracked source are repository code once reviewed and executed
 ([CONTRIBUTING.md:34-47](../../CONTRIBUTING.md#L34-L47),
 [pkg/cmd/cmd.go:1](../../pkg/cmd/cmd.go#L1)).
@@ -32,7 +33,8 @@ handwritten tracked source are repository code once reviewed and executed
 | `cmd/openai` | Run the assembled CLI, including help configuration, completion, request setup, error handling, and exit codes. | [cmd/openai/main.go](../../cmd/openai/main.go) |
 | Generated `pkg/cmd` commands | Parse API arguments, construct SDK clients, and invoke API resources, including ordinary and organization-administration operations. | [pkg/cmd/cmd.go](../../pkg/cmd/cmd.go), [pkg/cmd/custom_runtime.go](../../pkg/cmd/custom_runtime.go) |
 | `pkg/custom` command and output extensions | Decorate generated commands, select output behavior, and own local effects such as saving files and rendering previews. | [pkg/custom/command.go](../../pkg/custom/command.go), [pkg/custom/image_command.go](../../pkg/custom/image_command.go), [pkg/custom/image_output.go](../../pkg/custom/image_output.go) |
-| `pkg/transformers` | Prepare one successful JSON response/event at a time, keeping readable projections separate from its JSON value; selection depends on the operation and output kind. Explicit API-data formats, extraction, and errors bypass default transformations. | [pkg/transformers/pipeline.go](../../pkg/transformers/pipeline.go), [pkg/transformers/image.go](../../pkg/transformers/image.go), [pkg/custom/output_transform.go](../../pkg/custom/output_transform.go) |
+| `pkg/transformers` | Normalize one successful JSON response/event at a time using the existing `Select` hook. Explicit API-data formats, extraction, and errors bypass default transformations. | [pkg/transformers/output.go](../../pkg/transformers/output.go), [pkg/transformers/image.go](../../pkg/transformers/image.go), [pkg/custom/output_transform.go](../../pkg/custom/output_transform.go) |
+| Feature implementation libraries | Project and print readable output, save images, render terminal previews, and manage the owned font/gallery cache. These libraries do not import the command runtime. | [internal/readable/](../../internal/readable/), [internal/imageoutput/](../../internal/imageoutput/), [internal/terminalimage/](../../internal/terminalimage/), [docs/image-implementation.md](../image-implementation.md) |
 | `internal/requestflag` and `pkg/custom/flagoptions.go` | Map flags and piped YAML/JSON into path, query, header, and body values; expand file references; serialize requests. | [internal/requestflag/requestflag.go:61-80](../../internal/requestflag/requestflag.go#L61-L80), [pkg/custom/flagoptions.go:320-560](../../pkg/custom/flagoptions.go#L320-L560) |
 | `pkg/custom/mtls.go` | Read a caller-selected client certificate/key pair and construct the custom mTLS transport. | [pkg/custom/mtls.go:29-45](../../pkg/custom/mtls.go#L29-L45), [pkg/custom/mtls.go:78-152](../../pkg/custom/mtls.go#L78-L152) |
 | `internal/debugmiddleware` and output code | Log redacted HTTP metadata when requested and display or write API responses. | [internal/debugmiddleware/debug_middleware.go:43-63](../../internal/debugmiddleware/debug_middleware.go#L43-L63), [pkg/cmd/response.go:429-481](../../pkg/cmd/response.go#L429-L481) |
