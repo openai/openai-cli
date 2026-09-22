@@ -2,6 +2,7 @@ package custom
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,8 +14,34 @@ import (
 
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
+	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
+
+// APIErrorValue preserves API error data when available. Proxies and gateways
+// can return HTML, plain text, or an empty body; these still need a structured
+// diagnostic. The fallback uses only the HTTP status, never response contents,
+// request URLs, or credentials.
+func APIErrorValue(apierr *openai.Error) gjson.Result {
+	raw := apierr.RawJSON()
+	if gjson.Valid(raw) {
+		value := gjson.Parse(raw)
+		if value.Type != gjson.Null {
+			return value
+		}
+	}
+	message := fmt.Sprintf("HTTP %d", apierr.StatusCode)
+	if reason := http.StatusText(apierr.StatusCode); reason != "" {
+		message += " " + reason
+	}
+	message += ": the server returned no usable JSON error details."
+	// Integer and string fields cannot fail JSON encoding.
+	data, _ := json.Marshal(struct {
+		StatusCode int    `json:"status_code"`
+		Message    string `json:"message"`
+	}{apierr.StatusCode, message})
+	return gjson.ParseBytes(data)
+}
 
 // ErrorOutputFormat resolves the requested error format, inheriting an explicit
 // machine-readable output format unless --format-error overrides it.

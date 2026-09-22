@@ -10,7 +10,6 @@ import (
 	"github.com/openai/openai-cli/pkg/cmd"
 	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/openai/openai-go/v3"
-	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
@@ -56,7 +55,7 @@ func main() {
 		var apierr *openai.Error
 		if errors.As(err, &apierr) {
 			format := custom.ErrorOutputFormat(app)
-			json := gjson.Parse(apierr.RawJSON())
+			json := custom.APIErrorValue(apierr)
 			show_err := cmd.ShowJSON(json, cmd.ShowJSONOpts{
 				// Error output has no successful-operation transformer routing.
 				Context:        ctx,

@@ -122,6 +122,10 @@ openai --format json models list > models.json 2> error.json
 openai --format-error json models list
 ```
 
+If an HTTP failure has no usable JSON error body, JSON error output contains
+`status_code` and a local `message` explaining the failure. Valid API error
+payloads keep their original fields. Errors remain on stderr with a nonzero exit.
+
 When the API identifies an invalid argument, the message points to the matching
 command option and its help. Known choices are shown when available. Server
 messages and rejected values are available through the explicit JSON error
