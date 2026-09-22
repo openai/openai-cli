@@ -181,6 +181,11 @@ func configureImageHelp(root *cli.Command, invocation string) {
 	if imagesGenerate := images.Command("generate"); imagesGenerate != nil {
 		imagesGenerate.UsageText = invocation + " images generate --prompt TEXT [options]"
 		imagesGenerate.Description = strings.ReplaceAll(imageGenerateDetails, "@CLI@", invocation)
+		if imagesGenerate.Metadata == nil {
+			imagesGenerate.Metadata = map[string]any{}
+		}
+		imagesGenerate.Metadata["local-help-full"] = imageGenerateFullHelp
+		imagesGenerate.Metadata["image-reference-flag"] = renderImageReferenceFlag
 	}
 	if preview := images.Command("preview"); preview != nil {
 		preview.UsageText = invocation + " images preview [--open] FILE"
