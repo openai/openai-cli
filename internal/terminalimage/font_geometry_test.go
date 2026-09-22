@@ -1,102 +1,120 @@
 package terminalimage
 
 import (
+	"fmt"
 	"math"
-	"strconv"
+	"strings"
 	"testing"
-
-	"github.com/openai/openai-cli/internal/imagefontmac"
 )
 
-func TestPreservedGeometryOriginalSizes(t *testing.T) {
-	// Menlo's exact metrics are fractional even at integer point sizes. These
-	// values exercise the line rounding that caused seams in fixed-size strikes.
-	for _, points := range []int{12, 13, 14, 15, 18, 24} {
-		t.Run(strconv.Itoa(points), func(t *testing.T) {
-			s := float64(points)
-			source := imagefontmac.SourceFont{PostScript: "Menlo-Regular", Tables: map[string][]byte{"test": {1, 2, 3}}, Ascent: s * 1901 / 2048, Descent: s * 483 / 2048, Advance: s * 1233 / 2048, LineHeight: math.Ceil(s * 2384 / 2048)}
-			baseHeight := int(max(math.Ceil(source.Ascent)+math.Ceil(source.Descent), source.LineHeight))
-			for _, factor := range []float64{0.5, 0.8, 1, 1.3, 1.5} {
-				width := max(1, int(math.Round(source.Advance*factor)))
-				height := max(1, int(math.Ceil(float64(baseHeight)*factor)))
-				size := fontViewport{Columns: 100, Rows: 50, PixelWidth: 100*width + width - 1, PixelHeight: 50*height + height - 1}
-				got, err := preservedGeometry(size, points, source)
-				if err != nil {
-					t.Fatalf("spacing %g: %v", factor, err)
+func TestImageFontTileGeometry(t *testing.T) {
+	for _, pointSize := range []int{16, 32} {
+		// These bounds are Terminal's supported 0.5…1.5 spacing factors.
+		// Every cell dimension, including odd custom sizes, must round-trip.
+		for cellWidth := pointSize / 4; cellWidth <= 3*pointSize/4; cellWidth++ {
+			for cellHeight := pointSize / 2; cellHeight <= 3*pointSize/2; cellHeight++ {
+				for _, leftover := range []bool{false, true} {
+					size := Size{Columns: 120, Rows: 60, PixelWidth: cellWidth * 120, PixelHeight: cellHeight * 60}
+					if leftover {
+						size.PixelWidth += cellWidth - 1
+						size.PixelHeight += cellHeight - 1
+					}
+					width, height, err := imageFontTileGeometry(size, float64(pointSize))
+					if err != nil || width != cellWidth*32/pointSize || height != cellHeight*32/pointSize {
+						t.Fatalf("font %d, cell %dx%d, leftover=%v: got %dx%d, %v", pointSize, cellWidth, cellHeight, leftover, width, height, err)
+					}
 				}
-				if got.PointSize != points || got.CellWidth != width || got.CellHeight != height || got.Baseline != int(-math.Floor(-source.Descent+0.5)) {
-					t.Fatalf("unexpected geometry %+v", got)
+			}
+		}
+
+		for _, size := range []Size{{}, {Columns: 80, Rows: 24}} {
+			width, height, err := imageFontTileGeometry(size, float64(pointSize))
+			if err != nil || width != 16 || height != 32 {
+				t.Fatalf("unknown dimensions at %dpt: got %dx%d, %v", pointSize, width, height, err)
+			}
+		}
+	}
+}
+
+func TestImageFontTileGeometryShippedProfiles(t *testing.T) {
+	// Values come from Terminal 2.15's shipped Initial Settings, not user prefs.
+	// Missing spacing values inherit 1.0; Homebrew and Pro disable antialiasing.
+	profiles := []struct {
+		name       string
+		widthScale float64
+		antialias  bool
+	}{
+		{"Basic", 1.004032258064516, true},
+		{"Clear Dark", 1, true},
+		{"Clear Light", 1, true},
+		{"Grass", 1, true},
+		{"Homebrew", 1, false},
+		{"Man Page", 1.004032, true},
+		{"Novel", 1, true},
+		{"Ocean", 0.995968, true},
+		{"Pro", 0.995968, false},
+		{"Red Sands", 1.004032, true},
+		{"Silver Aerogel", 1.004032, true},
+		{"Solid Colors", 1.004032, true},
+	}
+	for _, profile := range profiles {
+		for _, pointSize := range []int{16, 32} {
+			t.Run(fmt.Sprintf("%s/%dpt", profile.name, pointSize), func(t *testing.T) {
+				advance := float64(pointSize) / 2 * profile.widthScale
+				if !profile.antialias {
+					advance += 0.15
 				}
-				if got.SourcePostScript != source.PostScript || &got.Tables["test"][0] != &source.Tables["test"][0] {
-					t.Fatal("lost immutable source face")
+				cellWidth := int(math.Round(advance))
+				size := Size{Columns: 120, Rows: 60, PixelWidth: cellWidth * 120, PixelHeight: pointSize * 60}
+				width, height, err := imageFontTileGeometry(size, float64(pointSize))
+				if err != nil || width != 16 || height != 32 {
+					t.Fatalf("expected standard strike tiles; got %dx%d, %v", width, height, err)
 				}
+			})
+		}
+	}
+}
+
+func TestImageFontTileGeometryRejectsUnreliableMeasurements(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		size Size
+	}{
+		{"width missing", Size{Columns: 80, Rows: 24, PixelHeight: 384}},
+		{"height missing", Size{Columns: 80, Rows: 24, PixelWidth: 640}},
+		{"columns missing", Size{Rows: 24, PixelWidth: 640, PixelHeight: 384}},
+		{"rows missing", Size{Columns: 80, PixelWidth: 640, PixelHeight: 384}},
+		{"negative width", Size{Columns: 80, Rows: 24, PixelWidth: -640, PixelHeight: 384}},
+		{"negative height", Size{Columns: 80, Rows: 24, PixelWidth: 640, PixelHeight: -384}},
+		{"negative columns without pixels", Size{Columns: -80, Rows: 24}},
+		{"negative rows without pixels", Size{Columns: 80, Rows: -24}},
+		{"width too small", Size{Columns: 80, Rows: 24, PixelWidth: 80 * 3, PixelHeight: 384}},
+		{"width too large", Size{Columns: 80, Rows: 24, PixelWidth: 80 * 13, PixelHeight: 384}},
+		{"height too small", Size{Columns: 80, Rows: 24, PixelWidth: 640, PixelHeight: 24 * 7}},
+		{"height too large", Size{Columns: 80, Rows: 24, PixelWidth: 640, PixelHeight: 24 * 25}},
+		{"inconsistent width", Size{Columns: 80, Rows: 24, PixelWidth: 680, PixelHeight: 384}},
+		{"inconsistent height", Size{Columns: 80, Rows: 24, PixelWidth: 640, PixelHeight: 402}},
+		{"ambiguous narrow window", Size{Columns: 1, Rows: 60, PixelWidth: 8, PixelHeight: 960}},
+		{"ambiguous short window", Size{Columns: 80, Rows: 1, PixelWidth: 640, PixelHeight: 16}},
+		{"huge extents", Size{Columns: 80, Rows: 24, PixelWidth: math.MaxInt, PixelHeight: math.MaxInt}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			width, height, err := imageFontTileGeometry(tc.size, 16)
+			if err == nil || width != 0 || height != 0 {
+				t.Fatalf("unreliable dimensions produced %dx%d, %v", width, height, err)
+			}
+			if !strings.Contains(err.Error(), "enlarge") || !strings.Contains(err.Error(), "retry") {
+				t.Fatalf("missing actionable recovery: %v", err)
 			}
 		})
 	}
 }
 
-func TestPreservedGeometryWithoutViewport(t *testing.T) {
-	source := imagefontmac.SourceFont{PostScript: "CustomFace", Ascent: 11.7, Descent: 3.2, Leading: 1.1, Advance: 7.8, LineHeight: 18}
-	got, err := preservedGeometry(fontViewport{}, 14, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.PointSize != 14 || got.CellWidth != 8 || got.CellHeight != 18 || got.Baseline != 4 {
-		t.Fatalf("unexpected nominal geometry %+v", got)
-	}
-}
-
-func TestPreservedGeometryKeepsMonacoLayout(t *testing.T) {
-	for _, tt := range []struct {
-		point                                int
-		ascent, descent, leading, lineHeight float64
-		height, baseline                     int
-	}{
-		{12, 12, 4, 0, 16, 16, 4},
-		{13, 13.1, 4.2, 0, 17, 17, 4},
-		{18, 18.2, 5.7, 0.5, 25, 25, 6},
-	} {
-		source := imagefontmac.SourceFont{PostScript: "Monaco", Ascent: tt.ascent, Descent: tt.descent, Leading: tt.leading, Advance: 8, LineHeight: tt.lineHeight}
-		got, err := preservedGeometry(fontViewport{}, tt.point, source)
-		if err != nil {
-			t.Fatal(err)
+func TestImageFontTileGeometryRejectsUnsupportedFontSize(t *testing.T) {
+	for _, size := range []float64{0, -16, 12, 16.5, 24, 64, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		width, height, err := imageFontTileGeometry(Size{}, size)
+		if err == nil || width != 0 || height != 0 || !strings.Contains(err.Error(), "inline setup") {
+			t.Fatalf("unsupported font size %v: got %dx%d, %v", size, width, height, err)
 		}
-		if got.CellHeight != tt.height || got.Baseline != tt.baseline {
-			t.Fatalf("Monaco %dpt: %+v", tt.point, got)
-		}
-	}
-}
-
-func TestPreservedGeometryRejectsAmbiguousOrInvalid(t *testing.T) {
-	source := imagefontmac.SourceFont{PostScript: "Menlo-Regular", Ascent: 12, Descent: 4, Advance: 8, LineHeight: 16}
-	for _, size := range []fontViewport{
-		{Columns: 1, Rows: 1, PixelWidth: 12, PixelHeight: 24},
-		{Columns: 100, Rows: 50, PixelWidth: 800},
-		{Columns: 100, Rows: 50, PixelWidth: 1, PixelHeight: 1},
-		{Columns: -1},
-	} {
-		if _, err := preservedGeometry(size, 16, source); err == nil {
-			t.Fatalf("accepted invalid geometry %+v", size)
-		}
-	}
-	for _, points := range []int{0, -1, 1025} {
-		if _, err := preservedGeometry(fontViewport{}, points, source); err == nil {
-			t.Fatalf("accepted point size %d", points)
-		}
-	}
-	for _, invalid := range []float64{0, -1, math.NaN(), math.Inf(1), 1e30} {
-		bad := source
-		bad.Advance = invalid
-		if _, err := preservedGeometry(fontViewport{}, 16, bad); err == nil {
-			t.Fatalf("accepted advance %g", invalid)
-		}
-	}
-}
-
-func TestPreservedGeometryKeepsBundledLookupName(t *testing.T) {
-	source := imagefontmac.SourceFont{PostScript: "SFMono-RegularItalic", LookupName: "SF Mono Regular Italic", Tables: map[string][]byte{"test": {1}}, Ascent: 12, Descent: 4, Advance: 8, LineHeight: 16}
-	got, err := preservedGeometry(fontViewport{}, 13, source)
-	if err != nil || got.SourcePostScript != source.PostScript || got.SourceName != source.LookupName {
-		t.Fatalf("bundled lookup identity lost: %+v %v", got, err)
 	}
 }

@@ -149,6 +149,8 @@ func (g *Gallery) cleanupClosed(ctx context.Context, current TerminalSession, in
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	fontNames := make([]string, 0, len(fonts)+1+len(g.state.RetiredFonts))
+	seen := make(map[string]bool)
 	for _, font := range fonts {
 		if !isFontName(font.Name()) {
 			return nil
@@ -156,15 +158,47 @@ func (g *Gallery) cleanupClosed(ctx context.Context, current TerminalSession, in
 		if err := checkPrivate(filepath.Join(fontDirectory, font.Name()), false); err != nil {
 			return nil
 		}
+		fontNames = append(fontNames, font.Name())
+		seen[font.Name()] = true
+	}
+	// Registration belongs to the original URL even if a cache cleaner has
+	// removed its file. Repair records those missing URLs for later cleanup.
+	if len(g.state.RetiredFonts) > maxRetiredFonts {
+		return nil
+	}
+	for _, name := range append([]string{g.state.Font}, g.state.RetiredFonts...) {
+		if !isFontName(name) {
+			return nil
+		}
+		if err := checkPrivate(filepath.Join(fontDirectory, name), false); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if !seen[name] {
+			fontNames = append(fontNames, name)
+			seen[name] = true
+		}
+	}
+	// Unknown files belong to the user; leave the entire gallery untouched.
+	images, err := os.ReadDir(filepath.Join(g.directory, "images"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, img := range images {
+		if !isImageName(img.Name()) {
+			return nil
+		}
+		if err := checkPrivate(filepath.Join(g.directory, "images", img.Name()), false); err != nil {
+			return nil
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	for _, font := range fonts {
+	for _, name := range fontNames {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := unregister(ctx, filepath.Join(fontDirectory, font.Name())); err != nil {
+		if err := unregister(ctx, filepath.Join(fontDirectory, name)); err != nil {
 			return err
 		}
 	}

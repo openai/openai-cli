@@ -1,5 +1,5 @@
-// Package imagegallery stores private, immutable font revisions for terminal
-// image scrollback. It never registers fonts or controls the terminal.
+// Package imagegallery stores private, immutable font revisions for an opt-in
+// terminal image gallery. It never registers fonts or controls the terminal.
 package imagegallery
 
 import (
@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	_ "image/jpeg"
 	"image/png"
 	"io"
 	"math"
@@ -22,12 +23,20 @@ import (
 
 	"github.com/openai/openai-cli/internal/imagefont"
 	"golang.org/x/image/draw"
+	_ "golang.org/x/image/webp"
 )
 
 var (
-	ErrBusy = errors.New("image gallery is already in use; finish the other image command first")
-	ErrFull = errors.New("image gallery is full; open a new Terminal tab to start a new image gallery")
+	ErrBusy        = errors.New("image gallery is already in use; finish the other image command first")
+	ErrFull        = errors.New("image gallery is full; reset it to start a new gallery (old image scrollback will no longer display)")
+	ErrNeedsRepair = errors.New("image gallery font needs repair")
+	ErrNeedsReset  = errors.New("image gallery preview cache needs reset")
 )
+
+// Missing retired fonts retain their original registration URLs until explicit
+// reset. Bound their metadata growth when external cleanup repeatedly removes
+// the active font before repair.
+const maxRetiredFonts = 256
 
 // State is a copy of the currently committed gallery metadata.
 type State struct {
@@ -43,13 +52,14 @@ type entry struct {
 	Start   rune   `json:"start"`
 }
 type diskState struct {
-	Version    int     `json:"version"`
-	ID         string  `json:"id"`
-	Revision   int     `json:"revision"`
-	Font       string  `json:"font"`
-	PostScript string  `json:"postscript"`
-	Family     string  `json:"family"`
-	Images     []entry `json:"images"`
+	Version      int      `json:"version"`
+	ID           string   `json:"id"`
+	Revision     int      `json:"revision"`
+	Font         string   `json:"font"`
+	PostScript   string   `json:"postscript"`
+	Family       string   `json:"family"`
+	Images       []entry  `json:"images"`
+	RetiredFonts []string `json:"retired_fonts,omitempty"`
 }
 
 // Revision is prepared before its font is registered and activated. Commit it
@@ -73,7 +83,31 @@ type Gallery struct {
 	closed    bool
 }
 
+type openMode uint8
+
+const (
+	openStrict openMode = iota
+	openRepair
+	openReset
+)
+
 func Open(ctx context.Context, directory string) (*Gallery, error) {
+	return open(ctx, directory, openStrict)
+}
+
+// OpenForReset retains all identity, permission, and lock checks, but allows
+// missing owned artifacts so a damaged cache can still be safely cleared.
+func OpenForReset(ctx context.Context, directory string) (*Gallery, error) {
+	return open(ctx, directory, openReset)
+}
+
+// OpenForRepair allows a missing current font. Image caches must still exist;
+// Repair checks their contents before rebuilding the existing character map.
+func OpenForRepair(ctx context.Context, directory string) (*Gallery, error) {
+	return open(ctx, directory, openRepair)
+}
+
+func open(ctx context.Context, directory string, mode openMode) (*Gallery, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -112,13 +146,27 @@ func Open(ctx context.Context, directory string) (*Gallery, error) {
 		if err = decoder.Decode(&extra); err != io.EOF {
 			return nil, errors.New("invalid image gallery state: trailing data")
 		}
-		if err = g.validate(); err != nil {
+		if err = g.validate(mode); err != nil {
 			return nil, err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
+	} else if mode != openStrict {
+		// Without metadata the profile identity is unknown. Do not mistake
+		// existing artifacts for a new gallery or erase them speculatively.
+		for _, owned := range []struct {
+			directory string
+			valid     func(string) bool
+		}{{"fonts", isFontName}, {"images", isImageName}} {
+			files, listErr := g.ownedFiles(owned.directory, owned.valid)
+			if listErr != nil {
+				return nil, listErr
+			}
+			if len(files) > 0 {
+				return nil, errors.New("image gallery state.json is missing; restore its backup to recover the profile safely (cached files were kept)")
+			}
+		}
 	}
-
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -161,9 +209,56 @@ func (g *Gallery) Initialize(ctx context.Context) (*Revision, error) {
 	return g.build(ctx, diskState{Version: 1, ID: id, Images: []entry{}}, nil, nil)
 }
 
-// Prepare caches a reduced PNG and builds a new immutable cumulative font.
-// Existing images retain their codepoints. The source image is not modified.
-func (g *Gallery) Prepare(ctx context.Context, img image.Image, columns int) (*Revision, error) {
+// Repair prepares a fresh font identity containing exactly the committed image
+// mappings. Existing revisions are kept until explicit reset, and metadata is
+// unchanged until the caller activates and commits the returned revision.
+func (g *Gallery) Repair(ctx context.Context) (*Revision, error) {
+	if err := g.check(ctx); err != nil {
+		return nil, err
+	}
+	if g.state.ID == "" {
+		return nil, errors.New("image gallery is not set up; run 'openai images inline setup'")
+	}
+	next := g.state
+	if err := checkPrivate(g.State().FontPath, false); errors.Is(err, os.ErrNotExist) {
+		if len(next.RetiredFonts) >= maxRetiredFonts {
+			return nil, fmt.Errorf("%w: retired font registrations reached their limit; run 'openai images inline reset' to start a new gallery", ErrNeedsReset)
+		}
+		// Existing font files remain discoverable on disk. A removed font
+		// instead needs a persistent URL so reset can unregister it after
+		// users close windows that might still display its glyphs.
+		next.RetiredFonts = append(append([]string(nil), next.RetiredFonts...), next.Font)
+	} else if err != nil {
+		return nil, err
+	}
+	frames := make([]imagefont.Frame, 0, len(g.state.Images))
+	for _, saved := range g.state.Images {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		decoded, err := g.cachedImage(saved)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w; run 'openai images inline reset' to start a new gallery", ErrNeedsReset, err)
+		}
+		frames = append(frames, imagefont.Frame{Image: decoded, Columns: saved.Columns, Rows: saved.Rows, CodepointStart: saved.Start})
+	}
+	next.Revision++
+	return g.build(ctx, next, frames, nil)
+}
+
+// Prepare decodes a local PNG/JPEG/WebP into a private, reduced PNG and builds
+// a new immutable cumulative font. Existing images retain their codepoints.
+func (g *Gallery) Prepare(ctx context.Context, imagePath string, columns int) (*Revision, error) {
+	return g.prepare(ctx, columns, func() (image.Image, []byte, error) { return normalize(ctx, imagePath) })
+}
+
+// PrepareImage caches an already decoded image using the same immutable glyph
+// allocation as Prepare. The source image is not modified.
+func (g *Gallery) PrepareImage(ctx context.Context, img image.Image, columns int) (*Revision, error) {
+	return g.prepare(ctx, columns, func() (image.Image, []byte, error) { return normalizeImage(ctx, img) })
+}
+
+func (g *Gallery) prepare(ctx context.Context, columns int, normalizeSource func() (image.Image, []byte, error)) (*Revision, error) {
 	if err := g.check(ctx); err != nil {
 		return nil, err
 	}
@@ -176,7 +271,7 @@ func (g *Gallery) Prepare(ctx context.Context, img image.Image, columns int) (*R
 	if columns < 1 || columns > 64 {
 		return nil, errors.New("image gallery requires 1 to 64 columns")
 	}
-	normalized, data, err := normalize(ctx, img)
+	normalized, data, err := normalizeSource()
 	if err != nil {
 		return nil, err
 	}
@@ -305,13 +400,167 @@ func (g *Gallery) Commit(ctx context.Context, revision *Revision) error {
 	return nil
 }
 
+// Fonts lists only owned immutable revisions, including uncommitted ones.
+func (g *Gallery) Fonts() ([]string, error) {
+	if g.closed {
+		return nil, errors.New("image gallery is closed")
+	}
+	fonts, err := g.ownedFiles("fonts", isFontName)
+	if err != nil {
+		return nil, err
+	}
+	if g.state.ID != "" {
+		seen := make(map[string]bool, len(fonts))
+		for _, path := range fonts {
+			seen[path] = true
+		}
+		// Font registration belongs to its original URL even after a cache
+		// cleaner removes the file. Keep current and retired URLs in the
+		// unregister list without duplicating files restored by a backup.
+		for _, name := range append([]string{g.state.Font}, g.state.RetiredFonts...) {
+			path := filepath.Join(g.directory, "fonts", name)
+			if !seen[path] {
+				fonts = append(fonts, path)
+				seen[path] = true
+			}
+		}
+	}
+	return fonts, nil
+}
+
+// Usage describes only this gallery's font and thumbnail artifacts. Bytes
+// excludes unrelated files; MissingFiles counts the active font and thumbnails
+// lost from disk. Retired registration URLs do not count as cache damage.
+type Usage struct {
+	Bytes                               int64
+	FontCount, ImageCount, MissingFiles int
+}
+
+func (g *Gallery) Usage() (Usage, error) {
+	if g.closed {
+		return Usage{}, errors.New("image gallery is closed")
+	}
+	fonts, err := g.Fonts()
+	if err != nil {
+		return Usage{}, err
+	}
+	images, err := g.ownedFiles("images", isImageName)
+	if err != nil {
+		return Usage{}, err
+	}
+	seen := make(map[string]bool, len(images))
+	for _, path := range images {
+		seen[path] = true
+	}
+	for _, saved := range g.state.Images {
+		path := filepath.Join(g.directory, "images", saved.Hash+".png")
+		if !seen[path] {
+			images = append(images, path)
+		}
+	}
+	var usage Usage
+	currentFont := g.State().FontPath
+	for _, files := range []struct {
+		paths  []string
+		count  *int
+		images bool
+	}{{fonts, &usage.FontCount, false}, {images, &usage.ImageCount, true}} {
+		for _, path := range files.paths {
+			if err := checkPrivate(path, false); errors.Is(err, os.ErrNotExist) {
+				// Missing retired revisions are registration bookkeeping,
+				// not damage to the current preview or its thumbnails.
+				if files.images || path == currentFont {
+					usage.MissingFiles++
+				}
+				continue
+			} else if err != nil {
+				return Usage{}, err
+			}
+			info, err := os.Lstat(path)
+			if err != nil {
+				return Usage{}, err
+			}
+			usage.Bytes += info.Size()
+			*files.count += 1
+		}
+	}
+	return usage, nil
+}
+
+// Clear removes owned cache artifacts after the caller unregisters their fonts.
+// It preserves unrelated files and its own lock until Close.
+func (g *Gallery) Clear(ctx context.Context) error {
+	if err := g.check(ctx); err != nil {
+		return err
+	}
+	fonts, err := g.Fonts()
+	if err != nil {
+		return err
+	}
+	images, err := g.ownedFiles("images", isImageName)
+	if err != nil {
+		return err
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	// Keep identity metadata until the artifacts are gone. OpenForReset can
+	// tolerate missing artifacts and resume interrupted cleanup while still
+	// identifying the exact profile whose fonts must be unregistered.
+	state := filepath.Join(g.directory, "state.json")
+	_, err = readPrivate(state, 1<<20)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, path := range append(fonts, images...) {
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		if err = os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	if err = os.Remove(state); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	g.state = diskState{}
+	g.pending = nil
+	return nil
+}
+
+func (g *Gallery) ownedFiles(directory string, valid func(string) bool) ([]string, error) {
+	path := filepath.Join(g.directory, directory)
+	if err := checkPrivate(path, true); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	var result []string
+	for _, item := range entries {
+		if !valid(item.Name()) {
+			continue
+		}
+		file := filepath.Join(path, item.Name())
+		if err = checkPrivate(file, false); err != nil {
+			return nil, err
+		}
+		result = append(result, file)
+	}
+	return result, nil
+}
+
 func (g *Gallery) check(ctx context.Context) error {
 	if g.closed {
 		return errors.New("image gallery is closed")
 	}
 	return ctx.Err()
 }
-func (g *Gallery) validate() error {
+func (g *Gallery) validate(mode openMode) error {
 	s := g.state
 	if s.Version != 1 || !isHex(s.ID, 32) || s.Revision < 0 || !isFontName(s.Font) || s.PostScript == "" || s.Family == "" || len(s.Images) > imagefont.MaxGlyphs {
 		return errors.New("invalid image gallery metadata")
@@ -321,7 +570,23 @@ func (g *Gallery) validate() error {
 	if s.PostScript != "OpenAIImages-"+s.ID[:8]+"-"+token+"-Regular" || s.Family != "OpenAI Image Gallery "+s.ID[:8]+" "+token[:8] {
 		return errors.New("invalid image gallery font identity")
 	}
-	if err := checkPrivate(filepath.Join(g.directory, "fonts", s.Font), false); err != nil {
+	if len(s.RetiredFonts) > maxRetiredFonts {
+		return errors.New("invalid image gallery retired font metadata")
+	}
+	retired := make(map[string]bool, len(s.RetiredFonts))
+	for _, name := range s.RetiredFonts {
+		if !isFontName(name) || name == s.Font || retired[name] {
+			return errors.New("invalid image gallery retired font identity")
+		}
+		if err := checkPrivate(filepath.Join(g.directory, "fonts", name), false); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		retired[name] = true
+	}
+	if err := checkPrivate(filepath.Join(g.directory, "fonts", s.Font), false); err != nil && !(mode != openStrict && errors.Is(err, os.ErrNotExist)) {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: %w; run 'openai images inline repair' to rebuild it", ErrNeedsRepair, err)
+		}
 		return err
 	}
 	next := imagefont.FirstCodepoint
@@ -331,8 +596,10 @@ func (g *Gallery) validate() error {
 		if !isHex(item.Hash, 64) || seen[item.Hash] || item.Columns < 1 || item.Columns > 64 || item.Rows < 1 || item.Rows > 32 || item.Start != next || count > int(imagefont.LastCodepoint-next)+1 {
 			return errors.New("invalid image gallery character allocation")
 		}
-		if err := checkPrivate(filepath.Join(g.directory, "images", item.Hash+".png"), false); err != nil {
-
+		if err := checkPrivate(filepath.Join(g.directory, "images", item.Hash+".png"), false); err != nil && !(mode == openReset && errors.Is(err, os.ErrNotExist)) {
+			if errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("%w: %w; run 'openai images inline reset' to start a new gallery", ErrNeedsReset, err)
+			}
 			return err
 		}
 		seen[item.Hash] = true
@@ -368,7 +635,51 @@ func textFor(item entry) string {
 	}
 	return text.String()
 }
-func normalize(ctx context.Context, decoded image.Image) (image.Image, []byte, error) {
+func normalize(ctx context.Context, path string) (image.Image, []byte, error) {
+	// Check before opening so named pipes and devices cannot block previewing.
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read preview image: %w", safePathError(err))
+	}
+	if !info.Mode().IsRegular() {
+		return nil, nil, errors.New("preview image must be a regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read preview image: %w", safePathError(err))
+	}
+	defer file.Close()
+	info, err = file.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, nil, errors.New("preview image must be a regular file")
+	}
+	config, format, err := image.DecodeConfig(file)
+	if err != nil {
+		return nil, nil, errors.New("preview image must be PNG, JPEG, or WebP")
+	}
+	if format != "png" && format != "jpeg" && format != "webp" {
+		return nil, nil, errors.New("preview image must be PNG, JPEG, or WebP")
+	}
+	if config.Width < 1 || config.Height < 1 || config.Width > 16384 || config.Height > 16384 || int64(config.Width)*int64(config.Height) > 32*1024*1024 {
+		return nil, nil, errors.New("image exceeds preview dimensions; the original file is unchanged")
+	}
+	if _, err = file.Seek(0, io.SeekStart); err != nil {
+		return nil, nil, err
+	}
+	decoded, _, err := image.Decode(file)
+	if err != nil {
+		return nil, nil, errors.New("could not decode preview image")
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	return normalizeImage(ctx, decoded)
+}
+
+func normalizeImage(ctx context.Context, decoded image.Image) (image.Image, []byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -389,6 +700,7 @@ func normalize(ctx context.Context, decoded image.Image) (image.Image, []byte, e
 	}
 	return normalized, buffer.Bytes(), nil
 }
+
 func privateDirectory(path string) error {
 	err := os.MkdirAll(path, 0700)
 	if err != nil {
@@ -467,7 +779,9 @@ func isHex(value string, length int) bool {
 func isFontName(name string) bool {
 	return strings.HasPrefix(name, "revision-") && strings.HasSuffix(name, ".ttf") && isHex(strings.TrimSuffix(strings.TrimPrefix(name, "revision-"), ".ttf"), 32)
 }
-
+func isImageName(name string) bool {
+	return strings.HasSuffix(name, ".png") && isHex(strings.TrimSuffix(name, ".png"), 64)
+}
 func safePathError(err error) error {
 	var pathError *os.PathError
 	if errors.As(err, &pathError) {

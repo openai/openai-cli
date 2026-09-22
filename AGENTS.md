@@ -12,8 +12,12 @@ generation inputs. Establish whether the generator owns a file before editing
 it. Fix recurring generated defects in the authoritative schema or generator
 when available instead of introducing broad manual changes.
 
-The CLI entrypoint, `internal/` packages, and selected files such as
-`pkg/cmd/flagoptions.go` and `pkg/cmd/mtls.go` contain handwritten behavior.
+`cmd/openai/main.go` owns the executable lifecycle, completion, and error
+handling. Handwritten command decoration, CLI-only commands, request helpers,
+and presentation belong in `pkg/custom/`. Response conversions and the terminal renderer inherited from PR #227 belong in
+`pkg/transformers/`; new conversions should stay free of I/O. Shared implementation
+helpers belong in `internal/`.
+Entrypoint tests live alongside the executable in `cmd/openai/`.
 Keep changes focused and preserve command compatibility, generated ownership,
 and the intentionally separate `api_reference/go.mod` module.
 

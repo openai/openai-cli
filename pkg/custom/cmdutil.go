@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,7 +30,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-var OutputFormats = []string{"auto", "explore", "json", "jsonl", "pretty", "raw", "yaml"}
+var OutputFormats = []string{"auto", "text", "explore", "json", "jsonl", "pretty", "raw", "yaml"}
 
 // ValidateBaseURL checks that a base URL is correctly prefixed with a protocol scheme and produces a better
 // error message than the person would see otherwise if it doesn't.
@@ -42,6 +43,7 @@ func ValidateBaseURL(value, source string) error {
 
 func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 	opts := []option.RequestOption{
+		option.WithMiddleware(captureAudioText),
 		option.WithHeader("User-Agent", fmt.Sprintf("OpenAI/CLI %s", Version)),
 		option.WithHeader("X-Stainless-Lang", "cli"),
 		option.WithHeader("X-Stainless-Package-Version", Version),
@@ -207,6 +209,9 @@ func isOutputBrokenPipe(err error) bool {
 // Takes in a stdout reference so we can test this function without overriding os.Stdout in tests.
 func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (string, error) {
 	defer response.Body.Close()
+	if handled, message, err := writeReadableSpeech(response, stdout, outfile); handled {
+		return message, err
+	}
 
 	switch outfile {
 	case "-", "/dev/stdout":
@@ -373,6 +378,7 @@ func formatJSON(res gjson.Result, opts ShowJSONOpts) ([]byte, error) {
 // formatJSONForOutput keeps the final destination available when a pager sits between
 // formatted output and the terminal.
 func formatJSONForOutput(res gjson.Result, opts ShowJSONOpts, destination io.Writer) ([]byte, error) {
+	opts.Format = resolvedOutputFormat(opts)
 	res = applyJSONPath(res, opts.Transform)
 	// Modeled after `jq -r` (`--raw-output`): if the result is a string, print it without JSON quotes so that
 	// it's easier to pipe into other programs.
@@ -384,11 +390,10 @@ func formatJSONForOutput(res gjson.Result, opts ShowJSONOpts, destination io.Wri
 		return []byte(value + "\n"), nil
 	}
 	switch strings.ToLower(opts.Format) {
-	case "auto":
-		autoOpts := opts
-		autoOpts.Format = "json"
-		autoOpts.Transform = ""
-		return formatJSONForOutput(res, autoOpts, destination)
+	case "text":
+		var text bytes.Buffer
+		err := writeReadableResult(&text, preparedOutput{Value: res})
+		return text.Bytes(), err
 	case "pretty":
 		return []byte(jsonview.RenderJSON(opts.Title, res) + "\n"), nil
 	case "json":
@@ -433,10 +438,10 @@ type ShowJSONOpts struct {
 	Operation      string          // generated operation identifier; empty for error presentation
 	OutputKind     OutputKind      // response, page item, or stream event; unspecified for errors
 	ExplicitFormat bool            // true if the user explicitly passed --format
-	Format         string          // output format (auto, explore, json, jsonl, pretty, raw, yaml)
+	Format         string          // output format (auto, text, explore, json, jsonl, pretty, raw, yaml)
 	RawOutput      bool            // like jq -r: print strings without JSON quotes
 	Stderr         io.Writer       // stderr for warnings; injectable for testing; defaults to os.Stderr
-	Stdout         *os.File        // stdout (or pager); injectable for testing; defaults to os.Stdout
+	Stdout         io.Writer       // stdout (or pager); injectable for testing; defaults to os.Stdout
 	Title          string          // display title
 	Transform      string          // GJSON path to extract before displaying
 }
@@ -463,23 +468,48 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	if err := opts.Context.Err(); err != nil {
 		return err
 	}
-	if !opts.ExplicitFormat && opts.Transform == "" && !opts.RawOutput && strings.EqualFold(opts.Format, "auto") && isTerminal(opts.Stdout) {
-		if render := transformers.SelectTerminal(transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}); render != nil {
-			if handled, err := render(opts.Context, res, opts.Stdout); handled || err != nil {
-				return err
-			}
+	if text, ok := audioTextResult(opts); ok {
+		if strings.EqualFold(opts.Format, "raw") || opts.RawOutput {
+			_, err := io.WriteString(opts.Stdout, text)
+			return err
 		}
+		encoded, err := json.Marshal(text)
+		if err != nil {
+			return err
+		}
+		res = gjson.ParseBytes(encoded)
 	}
-	res, err := transformOutput(opts.Context, res, selectOutputTransformer(opts, selectTransformer))
+	transform := selectOutputTransformer(opts, selectTransformer)
+	route := readableOutputRoute(opts)
+	output, err := prepareOutput(opts.Context, res, transform, route)
+
 	if err != nil {
 		return err
 	}
-	res = applyJSONPath(res, opts.Transform)
+	if presentation, ok := imagePresentationFor(opts, OutputResponse); ok && route.Operation != "" {
+		return presentation.plan.save(opts.Context, []byte(output.Value.Raw), presentation.writer)
+	}
+	// Keep the base terminal renderer for callers without an image workflow.
+	// Configured commands own saving and preview policy, including explicit URL
+	// output and disabled previews; they must never render a second time here.
+	_, imageWorkflow := opts.Context.Value(imagePresentationKey{}).(imagePresentation)
+	if !imageWorkflow && !opts.ExplicitFormat && opts.Transform == "" && !opts.RawOutput && strings.EqualFold(opts.Format, "auto") && isTerminal(opts.Stdout) {
+		if stdout, ok := opts.Stdout.(*os.File); ok {
+			if render := transformers.SelectTerminal(transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}); render != nil {
+				if handled, err := render(opts.Context, output.Value, stdout); handled || err != nil {
+					return err
+				}
+			}
+		}
+	}
+	opts.Format = resolvedOutputFormat(opts)
+	res = applyJSONPath(output.Value, opts.Transform)
+	output.Value = res
 	opts.Transform = ""
 
 	switch strings.ToLower(opts.Format) {
-	case "auto":
-		opts.Format = "json"
+	case "text":
+		return writeReadableResult(opts.Stdout, output)
 	case "explore":
 		if isTerminal(opts.Stdout) {
 			return jsonview.ExploreJSON(opts.Title, res)
@@ -513,11 +543,22 @@ func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, op
 
 func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
+	transform := selectOutputTransformer(opts, selectTransformer)
+	route := readableOutputRoute(opts)
+	if presentation, ok := imagePresentationFor(opts, OutputStreamEvent); ok && route.Operation != "" {
+		return presentation.plan.saveStream(opts.Context, &imageOutputStream[T]{source: source}, presentation.writer, transform)
+	}
 	iter := &outputIterator[T]{
-		source:    source,
-		context:   opts.Context,
-		transform: selectOutputTransformer(opts, selectTransformer),
-		remaining: itemsToDisplay,
+		source:     source,
+		context:    opts.Context,
+		transform:  transform,
+		route:      route,
+		remaining:  itemsToDisplay,
+		outputKind: opts.OutputKind,
+	}
+	opts.Format = resolvedOutputFormat(opts)
+	if opts.Format == "text" {
+		return showReadableIterator(iter, opts)
 	}
 
 	if strings.ToLower(opts.Format) == "explore" {
@@ -542,7 +583,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	output := []byte{}
 	numberOfNewlines := 0
 	for iter.Next() {
-		formatted, err := formatJSON(iter.Current().Result, opts)
+		formatted, err := formatJSON(iter.Current().Value, opts)
 		if err != nil {
 			return err
 		}
@@ -568,7 +609,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 		pagerOpts := opts
 		pagerOpts.Stdout = pager
 		for iter.Next() {
-			formatted, err := formatJSONForOutput(iter.Current().Result, pagerOpts, opts.Stdout)
+			formatted, err := formatJSONForOutput(iter.Current().Value, pagerOpts, opts.Stdout)
 			if err != nil {
 				return err
 			}

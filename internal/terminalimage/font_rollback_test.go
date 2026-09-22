@@ -69,7 +69,7 @@ func TestImageFontRestoresOriginalAfterActivationFailure(t *testing.T) {
 				return size
 			}
 			var output bytes.Buffer
-			err := displayImageFont(ctx, &output, image.NewRGBA(image.Rect(0, 0, 16, 16)), 32, directory, "/dev/ttys001", viewport, services)
+			err := displayNativeImageFont(ctx, &output, image.NewRGBA(image.Rect(0, 0, 16, 16)), 32, directory, "/dev/ttys001", viewport, services)
 			require.Error(t, err)
 			var fontErr *FontError
 			require.ErrorAs(t, err, &fontErr)
@@ -110,7 +110,7 @@ func TestImageFontRollbackPreservesConcurrentSettings(t *testing.T) {
 				return bridge.status, nil
 			}
 			var output bytes.Buffer
-			err := displayImageFont(t.Context(), &output, image.NewRGBA(image.Rect(0, 0, 16, 16)), 32, filepath.Join(t.TempDir(), "gallery"), "/dev/ttys001", testFontViewport, services)
+			err := displayNativeImageFont(t.Context(), &output, image.NewRGBA(image.Rect(0, 0, 16, 16)), 32, filepath.Join(t.TempDir(), "gallery"), "/dev/ttys001", testFontViewport, services)
 			require.Error(t, err)
 			require.Empty(t, output.String())
 			require.Equal(t, changed, bridge.status)
@@ -128,7 +128,7 @@ func TestImageFontReportsRollbackFailure(t *testing.T) {
 	}
 	services.restore = func(context.Context, string, string, string, imagefontmac.ProfileStatus) error { return restoreErr }
 	var output bytes.Buffer
-	err := displayImageFont(t.Context(), &output, image.NewRGBA(image.Rect(0, 0, 16, 16)), 32, filepath.Join(t.TempDir(), "gallery"), "/dev/ttys001", testFontViewport, services)
+	err := displayNativeImageFont(t.Context(), &output, image.NewRGBA(image.Rect(0, 0, 16, 16)), 32, filepath.Join(t.TempDir(), "gallery"), "/dev/ttys001", testFontViewport, services)
 	require.ErrorIs(t, err, inspectErr)
 	require.ErrorIs(t, err, restoreErr)
 	require.Empty(t, output.String())

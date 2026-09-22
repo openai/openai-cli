@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/openai/openai-cli/internal/jsonview"
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/tidwall/gjson"
 )
@@ -22,29 +24,65 @@ const (
 
 type transformerSelector func(transformers.Route) transformers.Transformer
 
-func selectOutputTransformer(opts ShowJSONOpts, selectTransformer transformerSelector) transformers.Transformer {
-	// Explicit presentation choices operate on the original API response.
-	// Missing or non-success routing metadata also uses identity, including errors.
-	if opts.ExplicitFormat || opts.Transform != "" || opts.RawOutput || opts.Operation == "" {
-		return transformers.Identity
+// Default transformations run only for successfully routed API output. Explicit
+// data formats and extraction keep the original API response.
+func usesDefaultOutput(opts ShowJSONOpts) bool {
+	format := strings.ToLower(opts.Format)
+	readableFormat := format == "" || format == "auto" || format == "text"
+	if opts.ExplicitFormat && !readableFormat || opts.Transform != "" || opts.RawOutput || opts.Operation == "" {
+		return false
 	}
 	switch opts.OutputKind {
 	case OutputResponse, OutputPageItem, OutputStreamEvent:
-		return selectTransformer(transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind})
+		return true
 	default:
+		return false
+	}
+}
+
+func selectOutputTransformer(opts ShowJSONOpts, selectTransformer transformerSelector) transformers.Transformer {
+	if !usesDefaultOutput(opts) {
 		return transformers.Identity
 	}
+	return selectTransformer(transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind})
+}
+
+func readableOutputRoute(opts ShowJSONOpts) transformers.Route {
+	if usesDefaultOutput(opts) && resolvedOutputFormat(opts) == "text" {
+		return transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}
+	}
+	return transformers.Route{}
 }
 
 func transformOutput(ctx context.Context, value gjson.Result, transform transformers.Transformer) (gjson.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return gjson.Result{}, err
 	}
-	value, err := transform(ctx, value)
-	if err != nil {
-		return gjson.Result{}, err
+	if transform != nil {
+		var err error
+		value, err = transform(ctx, value)
+		if err != nil {
+			return gjson.Result{}, err
+		}
 	}
 	return value, ctx.Err()
+}
+
+// Prepare the concrete readable view beside the API value. Rendering metadata
+// is never injected into JSON, and neither step is repeated by Current/RawJSON.
+func prepareOutput(ctx context.Context, value gjson.Result, transform transformers.Transformer, route transformers.Route) (preparedOutput, error) {
+	value, err := transformOutput(ctx, value, transform)
+	if err != nil {
+		return preparedOutput{}, err
+	}
+	output := preparedOutput{Value: value}
+	if route.Operation != "" {
+		output.View = readable.Project(value, route)
+	}
+	if err := ctx.Err(); err != nil {
+		return preparedOutput{}, err
+	}
+	return output, nil
 }
 
 func applyJSONPath(value gjson.Result, path string) gjson.Result {
@@ -60,16 +98,28 @@ type outputJSON struct{ gjson.Result }
 
 func (value outputJSON) RawJSON() string { return value.Raw }
 
+// Presentation metadata is carried in Go values, never injected into API JSON.
+// Repeated Current/RawJSON calls cannot select or run a transformation again.
+type preparedOutput struct {
+	Value gjson.Result
+	View  readable.View
+}
+
+func (value preparedOutput) RawJSON() string { return value.Value.Raw }
+
 // outputIterator shares one lazy transformation boundary across direct output,
 // the pager, and the explorer. Current never reruns a transformation.
 type outputIterator[T any] struct {
-	source    jsonview.Iterator[T]
-	context   context.Context
-	transform transformers.Transformer
-	remaining int64
-	current   outputJSON
-	err       error
-	done      bool
+	source     jsonview.Iterator[T]
+	context    context.Context
+	transform  transformers.Transformer
+	route      transformers.Route
+	remaining  int64
+	outputKind OutputKind
+	current    preparedOutput
+	err        error
+	resultErr  error
+	done       bool
 
 	// The explorer can return while its lazy Next call is still running.
 	// Publish only completed steps so Err never reads the source concurrently.
@@ -79,7 +129,7 @@ type outputIterator[T any] struct {
 
 func (it *outputIterator[T]) Next() bool {
 	defer func() {
-		err := errors.Join(it.err, it.source.Err())
+		err := errors.Join(it.err, it.resultErr, it.source.Err())
 		it.errorMu.Lock()
 		it.reportedErr = err
 		it.errorMu.Unlock()
@@ -109,18 +159,24 @@ func (it *outputIterator[T]) Next() bool {
 		}
 		value = gjson.ParseBytes(encoded)
 	}
-	value, it.err = transformOutput(it.context, value, it.transform)
+	if it.outputKind == OutputStreamEvent && it.resultErr == nil {
+		if message := transformers.StreamFailure(value); message != "" {
+			it.resultErr = errors.New(message)
+		}
+	}
+	output, err := prepareOutput(it.context, value, it.transform, it.route)
+	it.err = err
 	if it.err != nil {
 		return false
 	}
-	it.current = outputJSON{value}
+	it.current = output
 	if it.remaining > 0 {
 		it.remaining--
 	}
 	return true
 }
 
-func (it *outputIterator[T]) Current() outputJSON { return it.current }
+func (it *outputIterator[T]) Current() preparedOutput { return it.current }
 
 func (it *outputIterator[T]) Err() error {
 	it.errorMu.RLock()

@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMainImagesGeneratePreservesExplicitAndPipedOutput(t *testing.T) {
+func TestMainImagesGeneratePreservesExplicitDataOutput(t *testing.T) {
 	var downloads, generations atomic.Int32
 	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		downloads.Add(1)
@@ -44,9 +44,7 @@ func TestMainImagesGeneratePreservesExplicitAndPipedOutput(t *testing.T) {
 		want  string
 		exact bool
 	}{
-		{name: "default piped output", want: response},
 		{name: "explicit JSON", flags: []string{"--format", "json"}, want: response},
-		{name: "explicit auto", flags: []string{"--format", "auto"}, want: response},
 		{name: "explicit raw", flags: []string{"--format", "raw"}, want: response + "\n", exact: true},
 		{name: "extraction", flags: []string{"--transform", "data.0.url"}, want: strconv.Quote(imageURL)},
 		{name: "raw extraction", flags: []string{"--transform", "data.0.url", "--raw-output"}, want: imageURL + "\n", exact: true},

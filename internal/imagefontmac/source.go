@@ -46,7 +46,7 @@ var sourceBridge = sourceBundledBridge + "\n" + sourceMainBridge
 
 // ErrLegacyFont identifies an older gallery whose original text face was not
 // recorded. Callers can retain that gallery's existing rendering behavior.
-var ErrLegacyFont = errors.New("this older image font cannot identify your original font; select your original font and size in Terminal, then retry the command")
+var ErrLegacyFont = errors.New("this older image font cannot identify your original font; select your original font and size in Terminal, then run openai images inline setup again")
 
 var ownedSourceName = regexp.MustCompile(`^OpenAIImages-[0-9a-f]{8}-[0-9a-f]{32}-(Regular|Bold|Italic|BoldItalic)$`)
 
@@ -82,7 +82,7 @@ func source(ctx context.Context, postScript string, size int, supported func() b
 		return SourceFont{}, err
 	}
 	if resolved.PostScript != origin.PostScript {
-		return SourceFont{}, errors.New("the recorded original font resolved to a different face; restore your preferred font in Inspector, then retry the command")
+		return SourceFont{}, errors.New("the recorded original font resolved to a different face; restore your preferred font in Inspector, then run setup again")
 	}
 	return resolved, nil
 }

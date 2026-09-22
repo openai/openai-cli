@@ -35,7 +35,7 @@ func typographySource(t *testing.T) imagefont.PreserveOptions {
 func TestTypographyKeepsScrollbackAndReusesImmutableFonts(t *testing.T) {
 	g := initialized(t)
 	source := typographySource(t)
-	red := fixture(color.NRGBA{R: 200, A: 255})
+	red := fixture(t, t.TempDir(), "red.png", color.NRGBA{R: 200, A: 255})
 	first, err := g.Prepare(t.Context(), red, 4)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestTypographyKeepsScrollbackAndReusesImmutableFonts(t *testing.T) {
 	if err := g.Commit(t.Context(), first); err != nil {
 		t.Fatal(err)
 	}
-	second, err := g.Prepare(t.Context(), fixture(color.NRGBA{B: 200, A: 255}), 4)
+	second, err := g.Prepare(t.Context(), fixture(t, t.TempDir(), "blue.png", color.NRGBA{B: 200, A: 255}), 4)
 	if err != nil {
 		t.Fatal(err)
 	}

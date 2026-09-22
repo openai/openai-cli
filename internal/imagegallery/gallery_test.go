@@ -8,6 +8,7 @@ import (
 	"errors"
 	"image"
 	"image/color"
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,14 +20,23 @@ import (
 	"github.com/openai/openai-cli/internal/imagefont"
 )
 
-func fixture(shade color.NRGBA) image.Image {
+func fixture(t *testing.T, directory, name string, shade color.NRGBA) string {
+	t.Helper()
 	img := image.NewNRGBA(image.Rect(0, 0, 64, 64))
 	for y := 0; y < 64; y++ {
 		for x := 0; x < 64; x++ {
 			img.SetNRGBA(x, y, shade)
 		}
 	}
-	return img
+	var output bytes.Buffer
+	if err := png.Encode(&output, img); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, name)
+	if err := os.WriteFile(path, output.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 func initialized(t *testing.T) *Gallery {
 	t.Helper()
@@ -51,7 +61,8 @@ func initialized(t *testing.T) *Gallery {
 func TestGalleryImmutableRevisionsAndDedup(t *testing.T) {
 	ctx := context.Background()
 	g := initialized(t)
-	red := fixture(color.NRGBA{240, 40, 20, 255})
+	sources := t.TempDir()
+	red := fixture(t, sources, "private-prompt-red.png", color.NRGBA{240, 40, 20, 255})
 	first, err := g.Prepare(ctx, red, 4)
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +78,7 @@ func TestGalleryImmutableRevisionsAndDedup(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldEntry := g.state.Images[0]
-	second, err := g.Prepare(ctx, fixture(color.NRGBA{20, 40, 240, 255}), 4)
+	second, err := g.Prepare(ctx, fixture(t, sources, "blue.png", color.NRGBA{20, 40, 240, 255}), 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +111,10 @@ func TestGalleryImmutableRevisionsAndDedup(t *testing.T) {
 	if g.State().ImageCount != 2 || g.State().UsedGlyphs != 16 {
 		t.Fatalf("unexpected state: %+v", g.State())
 	}
-
+	data, _ := os.ReadFile(filepath.Join(g.directory, "state.json"))
+	if bytes.Contains(data, []byte(sources)) || bytes.Contains(data, []byte("private-prompt")) {
+		t.Fatal("source metadata was persisted")
+	}
 	directory := g.directory
 	if err = g.Close(); err != nil {
 		t.Fatal(err)
@@ -127,7 +141,7 @@ func TestGalleryImmutableRevisionsAndDedup(t *testing.T) {
 func TestGalleryFailedActivationRetainsArtifactsWithoutCommit(t *testing.T) {
 	g := initialized(t)
 	before := g.State()
-	path := fixture(color.NRGBA{200, 0, 0, 255})
+	path := fixture(t, t.TempDir(), "red.png", color.NRGBA{200, 0, 0, 255})
 	abandoned, err := g.Prepare(context.Background(), path, 4)
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +149,7 @@ func TestGalleryFailedActivationRetainsArtifactsWithoutCommit(t *testing.T) {
 	if g.State() != before {
 		t.Fatal("failed activation changed state")
 	}
-	files, err := os.ReadDir(filepath.Join(g.directory, "fonts"))
+	files, err := g.Fonts()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +179,7 @@ func TestGalleryLockCorruptionAndCancellation(t *testing.T) {
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := g.Prepare(cancelled, nil, 32); !errors.Is(err, context.Canceled) {
+	if _, err := g.Prepare(cancelled, "unused", 32); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 	directory := g.directory
@@ -219,18 +233,20 @@ func TestGalleryRejectsSymlinkStorage(t *testing.T) {
 	if err := os.Symlink(outside, font); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.validate(); err == nil {
+	if _, err := g.Fonts(); err == nil {
 		t.Fatal("followed symlink font")
 	}
-
+	if err := g.Clear(context.Background()); err == nil {
+		t.Fatal("cleared symlink font")
+	}
 	if data, _ := os.ReadFile(outside); string(data) != "do not remove" {
 		t.Fatal("modified external file")
 	}
 }
 
-func TestGalleryFull(t *testing.T) {
+func TestGalleryFullAndClear(t *testing.T) {
 	g := initialized(t)
-	source := fixture(color.NRGBA{255, 0, 0, 255})
+	source := fixture(t, t.TempDir(), "red.png", color.NRGBA{255, 0, 0, 255})
 	// Exercise the allocation boundary without generating a 6,400-glyph fixture.
 	g.state.Images = []entry{{Columns: 64, Rows: 32}, {Columns: 64, Rows: 32}, {Columns: 64, Rows: 32}, {Columns: 64, Rows: 4}}
 	if _, err := g.Prepare(context.Background(), source, 4); !errors.Is(err, ErrFull) {
@@ -239,11 +255,35 @@ func TestGalleryFull(t *testing.T) {
 	if g.State().UsedGlyphs != imagefont.MaxGlyphs {
 		t.Fatal("capacity mutated")
 	}
+	g.state.Images = nil
+	unknown := filepath.Join(g.directory, "fonts", "notes.txt")
+	if err := os.WriteFile(unknown, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Clear(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if g.State().Initialized {
+		t.Fatal("clear retained state")
+	}
+	if _, err := os.Stat(unknown); err != nil {
+		t.Fatal("clear removed unrelated file")
+	}
+	if _, err := Open(context.Background(), g.directory); !errors.Is(err, ErrBusy) {
+		t.Fatal("clear released lock prematurely")
+	}
+	revision, err := g.Initialize(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = g.Commit(context.Background(), revision); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestGalleryRejectsCorruptCacheAndAllocations(t *testing.T) {
 	g := initialized(t)
-	source := fixture(color.NRGBA{255, 0, 0, 255})
+	source := fixture(t, t.TempDir(), "red.png", color.NRGBA{255, 0, 0, 255})
 	first, err := g.Prepare(context.Background(), source, 4)
 	if err != nil {
 		t.Fatal(err)
@@ -255,7 +295,7 @@ func TestGalleryRejectsCorruptCacheAndAllocations(t *testing.T) {
 	if err = os.WriteFile(cached, []byte("not a PNG"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	other := fixture(color.NRGBA{0, 0, 255, 255})
+	other := fixture(t, t.TempDir(), "blue.png", color.NRGBA{0, 0, 255, 255})
 	if _, err = g.Prepare(context.Background(), other, 4); err == nil || !strings.Contains(err.Error(), "hash") {
 		t.Fatalf("accepted corrupt cache: %v", err)
 	}

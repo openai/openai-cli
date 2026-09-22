@@ -4,13 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/pkg/cmd"
 	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/openai/openai-go/v3"
-	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
@@ -22,27 +21,41 @@ func main() {
 		prepareForAutocomplete(app)
 	}
 
-	if baseURL, ok := os.LookupEnv("OPENAI_BASE_URL"); ok {
-		if err := cmd.ValidateBaseURL(baseURL, "OPENAI_BASE_URL"); err != nil {
-			fmt.Fprintf(os.Stderr, "%s\n", err.Error())
-			os.Exit(1)
+	// Validate request configuration during execution so local help stays usable.
+	requestSetup := app.Before
+	app.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
+		if baseURL, ok := os.LookupEnv("OPENAI_BASE_URL"); ok {
+			if err := cmd.ValidateBaseURL(baseURL, "OPENAI_BASE_URL"); err != nil {
+				return ctx, err
+			}
 		}
+		if requestSetup != nil {
+			return requestSetup(ctx, command)
+		}
+		return ctx, nil
 	}
+	args, _, err := custom.ConfigureHelp(app, os.Args)
 
 	ctx := context.Background()
-	if err := app.Run(ctx, os.Args); err != nil {
+	if err == nil {
+		err = app.Run(ctx, args)
+	}
+	if err != nil {
 		exitCode := 1
 
-		// Check if error has a custom exit code
-		if exitErr, ok := err.(cli.ExitCoder); ok {
+		// Check if error has a custom exit code, including wrapped command errors.
+		var exitErr cli.ExitCoder
+		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
+		}
+		if custom.ShowFriendlyImageError(app, err, os.Stderr) || custom.ShowReadableError(app, err, os.Stderr) {
+			os.Exit(exitCode)
 		}
 
 		var apierr *openai.Error
 		if errors.As(err, &apierr) {
-			fmt.Fprintf(os.Stderr, "%s %q: %d %s\n", apierr.Request.Method, apierr.Request.URL, apierr.Response.StatusCode, http.StatusText(apierr.Response.StatusCode))
-			format := app.String("format-error")
-			json := gjson.Parse(apierr.RawJSON())
+			format := custom.ErrorOutputFormat(app)
+			json := custom.APIErrorValue(apierr)
 			show_err := cmd.ShowJSON(json, cmd.ShowJSONOpts{
 				// Error output has no successful-operation transformer routing.
 				Context:        ctx,
@@ -50,18 +63,18 @@ func main() {
 				OutputKind:     custom.OutputUnspecified,
 				ExplicitFormat: app.IsSet("format-error"),
 				Format:         format,
+				Stdout:         os.Stderr,
 				Title:          "Error",
 				Transform:      app.String("transform-error"),
 			})
 			if show_err != nil {
-				// Just print the original error:
-				fmt.Fprintf(os.Stderr, "%s\n", err.Error())
+				fmt.Fprintln(os.Stderr, "Could not display the API error:", readable.Text(show_err.Error()))
 			}
-		} else {
+		} else if !custom.ShowStructuredError(app, err, cmd.CommandErrorBuffer.String(), os.Stderr) {
 			if cmd.CommandErrorBuffer.Len() > 0 {
-				os.Stderr.Write(cmd.CommandErrorBuffer.Bytes())
+				fmt.Fprint(os.Stderr, readable.Text(cmd.CommandErrorBuffer.String()))
 			} else {
-				fmt.Fprintf(os.Stderr, "%s\n", err.Error())
+				fmt.Fprintln(os.Stderr, readable.Text(err.Error()))
 			}
 		}
 		os.Exit(exitCode)

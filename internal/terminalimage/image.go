@@ -81,19 +81,3 @@ func Write(ctx context.Context, w io.Writer, img image.Image, protocol string, c
 		return errors.New("unsupported terminal image protocol")
 	}
 }
-
-type contextWriter struct {
-	context context.Context
-	writer  io.Writer
-}
-
-func (w contextWriter) Write(data []byte) (int, error) {
-	if err := w.context.Err(); err != nil {
-		return 0, err
-	}
-	n, err := w.writer.Write(data)
-	if err == nil && n != len(data) {
-		err = io.ErrShortWrite
-	}
-	return n, errors.Join(err, w.context.Err())
-}

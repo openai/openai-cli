@@ -58,7 +58,7 @@ func TestLookupFontPSMissingOrUnsafeFiles(t *testing.T) {
 	name := "OpenAIImages-" + g.State().ID[:8] + "-" + token + "-Regular"
 	path := filepath.Join(g.directory, "fonts", "revision-"+token+".ttf")
 	_, err := g.LookupFontPS(t.Context(), name)
-	if !errors.Is(err, os.ErrNotExist) || !strings.Contains(err.Error(), "select your original font and size") {
+	if !errors.Is(err, os.ErrNotExist) || !strings.Contains(err.Error(), "select your original font and size") || !strings.Contains(err.Error(), "openai images inline setup") {
 		t.Fatalf("missing font did not explain recovery: %v", err)
 	}
 	if err := os.Mkdir(path, 0700); err != nil {

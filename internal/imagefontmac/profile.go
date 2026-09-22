@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"regexp"
@@ -21,6 +22,10 @@ var postScriptName = regexp.MustCompile(`^[A-Za-z0-9-]{1,63}$`)
 // ErrOtherProfile means this tab needs the image font enabled. Its Inspector
 // profile name is not significant once the owned font is selected.
 var ErrOtherProfile = errors.New("sharp image settings are not enabled in this tab")
+
+// ErrProfileMissing is retained for legacy profile-import callers. Enabling
+// the font in an existing tab does not require an imported settings profile.
+var ErrProfileMissing = errors.New("the image profile has not been imported into Terminal")
 
 // ProfileStatus describes the settings that Terminal exposes for the exact
 // local tab. It does not certify line spacing, which Terminal's scripting API
@@ -54,10 +59,39 @@ func Restore(ctx context.Context, profileName, tty, fontName string, original Pr
 
 // InspectProfile reads this tab's image font and size without changing it.
 // An unsupported font size returns the checked status together with an error.
-// This may request macOS Automation permission when the user
+// Like CheckProfile, this may request macOS Automation permission when the user
 // runs the command; it never selects a tab or changes a default.
 func InspectProfile(ctx context.Context, profileName, tty string) (ProfileStatus, error) {
 	return inspectProfile(ctx, "inspect", profileName, tty, "", Supported, run)
+}
+
+// CheckProfile verifies the caller's exact local tab uses the owned image
+// font at its supported size, regardless of its Inspector profile name.
+// This requests macOS Automation permission
+// when invoked by the user; it never selects a tab or changes a default.
+func CheckProfile(ctx context.Context, profileName, tty string) error {
+	return invokeProfile(ctx, "check", profileName, tty, "", Supported, run)
+}
+
+// Activate updates only the font on the caller's temporary tab settings.
+// Other tabs and saved profiles are not changed.
+// The caller must first register an immutable font preserving prior glyph maps.
+// This operation may request macOS Automation permission when run by the user.
+func Activate(ctx context.Context, profileName, tty, fontName string) error {
+	return invokeProfile(ctx, "activate", profileName, tty, fontName, Supported, run)
+}
+
+// EnsureProfileUnused checks every Terminal tab before the caller removes a
+// gallery's font registrations or cache. A retained font can still be in use
+// even when CoreText accepts unregistering it, so matching profile tabs must
+// be closed first. This operation only reads tab profile names.
+func EnsureProfileUnused(ctx context.Context, profileName string) error {
+	return invokeProfile(ctx, "unused", profileName, "", "", Supported, run)
+}
+
+func invokeProfile(ctx context.Context, action, profileName, tty, fontName string, supported func() bool, execute runner) error {
+	_, err := inspectProfile(ctx, action, profileName, tty, fontName, supported, execute)
+	return err
 }
 
 func inspectProfile(ctx context.Context, action, profileName, tty, fontName string, supported func() bool, execute runner, expected ...ProfileStatus) (ProfileStatus, error) {
@@ -72,13 +106,13 @@ func inspectProfile(ctx context.Context, action, profileName, tty, fontName stri
 	if match == nil {
 		return status, errors.New("invalid image-font session identifier")
 	}
-	if action != "inspect" && action != "snapshot" && action != "preserve" && action != "restore" {
+	if action != "check" && action != "inspect" && action != "activate" && action != "unused" && action != "snapshot" && action != "preserve" && action != "restore" {
 		return status, errors.New("invalid image profile operation")
 	}
-	if !terminalTTY.MatchString(tty) {
+	if action != "unused" && !terminalTTY.MatchString(tty) {
 		return status, errors.New("image-font previews require a local Apple Terminal tab")
 	}
-	if (action == "preserve" || action == "restore") && (!postScriptName.MatchString(fontName) || !strings.HasPrefix(fontName, "OpenAIImages-"+match[1]+"-")) {
+	if (action == "activate" || action == "preserve" || action == "restore") && (!postScriptName.MatchString(fontName) || !strings.HasPrefix(fontName, "OpenAIImages-"+match[1]+"-")) {
 		return status, errors.New("the image font does not belong to this gallery profile")
 	}
 	args := []string{"-l", "JavaScript", "-e", profileBridge, action, profileName, tty, fontName}
@@ -118,19 +152,27 @@ func inspectProfile(ctx context.Context, action, profileName, tty, fontName stri
 	case "permission":
 		return status, errors.New("allow this command to control Terminal in macOS Privacy & Security > Automation, then retry")
 	case "tab":
-		return status, errors.New("could not identify this local Apple Terminal tab")
+		return status, errors.New("could not identify this local Apple Terminal tab; run setup directly in Apple Terminal")
+	case "missing":
+		return status, ErrProfileMissing
+	case "ambiguous":
+		return status, fmt.Errorf("Terminal has multiple profiles named %q; give duplicate profiles distinct names before retrying setup", profileName)
+	case "selection":
+		return status, errors.New("Terminal did not apply the image settings to this tab; run openai images inline setup again")
 	case "rollback":
 		return status, errors.New("could not restore this tab's previous font after image rendering failed; restore its font in Terminal's Inspector, then retry")
 	case "profile":
-		return status, ErrOtherProfile
+		return status, fmt.Errorf("%w; run openai images inline setup here (any starting profile is supported)", ErrOtherProfile)
 	case "font":
-		return status, errors.New("Terminal did not apply the image font to this tab")
+		return status, errors.New("Terminal did not apply this gallery's image font; run openai images inline setup in this tab")
 	case "size":
 		return status, errors.New("this Terminal font size is unsupported; choose a whole-number point size before enabling sharp previews")
 	case "changed":
-		return status, errors.New("this tab's settings changed while preparing the image font; retry the command")
+		return status, errors.New("this tab's settings changed during setup; let setup finish before changing Inspector settings, then retry")
+	case "in-use":
+		return status, fmt.Errorf("close every Terminal tab displaying images from gallery %q, then retry reset", profileName)
 	default:
-		return status, errors.New("could not apply image settings to this tab")
+		return status, errors.New("could not apply image settings to this tab; run openai images inline setup again")
 	}
 }
 

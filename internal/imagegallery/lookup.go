@@ -35,7 +35,7 @@ func (g *Gallery) LookupFontPS(ctx context.Context, postScript string) (string, 
 	path := filepath.Join(directory, "revision-"+parts[0]+".ttf")
 	if err := checkPrivate(path, false); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("the previously selected image font is missing; select your original font and size in Terminal, then retry again: %w", os.ErrNotExist)
+			return "", fmt.Errorf("the previously selected image font is missing; select your original font and size in Terminal, then run openai images inline setup again: %w", os.ErrNotExist)
 		}
 		return "", fmt.Errorf("check cached image font: %w", safePathError(err))
 	}

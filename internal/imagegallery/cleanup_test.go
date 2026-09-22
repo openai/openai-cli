@@ -22,7 +22,7 @@ func cleanupFixture(t *testing.T, bind bool) (string, string, State) {
 	initial, err := gallery.Initialize(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, gallery.Commit(t.Context(), initial))
-	revision, err := gallery.Prepare(t.Context(), image.NewRGBA(image.Rect(0, 0, 2, 2)), 1)
+	revision, err := gallery.PrepareImage(t.Context(), image.NewRGBA(image.Rect(0, 0, 2, 2)), 1)
 	require.NoError(t, err)
 	require.NoError(t, gallery.Commit(t.Context(), revision))
 	if bind {
@@ -194,4 +194,39 @@ func TestCleanupSkipsUninitializedOwner(t *testing.T) {
 		t.Fatal("uninitialized ownership is not enough to unregister fonts")
 		return nil, nil, nil
 	}, nil))
+}
+
+func TestCleanupUnregistersMissingRepairedFontURLs(t *testing.T) {
+	root, directory, before := cleanupFixture(t, true)
+	require.NoError(t, os.Remove(before.FontPath))
+	gallery, err := OpenForRepair(t.Context(), directory)
+	require.NoError(t, err)
+	repaired, err := gallery.Repair(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, gallery.Commit(t.Context(), repaired))
+	require.NoError(t, gallery.Close())
+	var unregistered []string
+	require.NoError(t, CleanupClosed(t.Context(), root, TerminalSession{}, func(context.Context) ([]string, []string, error) {
+		return nil, nil, nil
+	}, func(_ context.Context, path string) error {
+		unregistered = append(unregistered, path)
+		return nil
+	}))
+	require.Contains(t, unregistered, before.FontPath)
+	require.Contains(t, unregistered, repaired.FontPath)
+	require.NoFileExists(t, filepath.Join(directory, "state.json"))
+}
+
+func TestCleanupPreservesUnrelatedImageFiles(t *testing.T) {
+	root, directory, state := cleanupFixture(t, true)
+	unrelated := filepath.Join(directory, "images", "notes.txt")
+	require.NoError(t, os.WriteFile(unrelated, []byte("keep"), 0600))
+	require.NoError(t, CleanupClosed(t.Context(), root, TerminalSession{}, func(context.Context) ([]string, []string, error) {
+		return nil, nil, nil
+	}, func(context.Context, string) error {
+		t.Fatal("unrelated files must prevent automatic cleanup")
+		return nil
+	}))
+	require.FileExists(t, unrelated)
+	require.FileExists(t, state.FontPath)
 }

@@ -74,6 +74,24 @@ openai admin:organization:usage completions \
 
 For details about specific commands, use the `--help` flag.
 
+### Readable output
+
+Commands print readable results by default, including when output is piped or
+redirected. Lists and streams print directly without opening a pager. Image
+generation saves files automatically and prints their locations.
+
+**Scripts that previously relied on redirected JSON must now add `--format json`.**
+This is an intentional change to the default. Explicit JSON retains the complete
+API response, including encoded image/audio data, and disables image saving.
+
+```sh
+openai models list
+openai --format json models list > models.json
+```
+
+See the [output guide](docs/readable-output.md) for text, streaming, errors, and
+other formats, or the [image guide](docs/image-output.md) for saving and previews.
+
 ### Environment variables
 
 | Environment variable | Required | Default value |
@@ -102,8 +120,8 @@ For details about specific commands, use the `--help` flag.
 - `--version`, `-v` - Show the CLI version
 - `--base-url` - Use a custom API backend URL
 - `--header`, `-H` - Add a literal request header as `Name: Value`; repeat for multiple headers
-- `--format` - Change the output format (`auto`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`)
-- `--format-error` - Change the output format for errors (`auto`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`)
+- `--format` - Change the output format (`auto`, `text`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`); `auto` and `text` select readable output
+- `--format-error` - Change the error format on stderr (same choices); `--format json` also selects JSON errors unless overridden
 - `--transform` - Transform the data output using [GJSON syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md)
 - `--transform-error` - Transform the error output using [GJSON syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md)
 

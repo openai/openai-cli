@@ -1,5 +1,5 @@
-// Addresses the caller's exact TTY, never the frontmost window.
-// Changes only that tab's font;
+// Used only by the opt-in CLI workflow. It addresses the caller's exact TTY,
+// never the frontmost window. Setup changes only that tab's font;
 // the selected profile and all its other appearance settings stay unchanged.
 function run(argv) {
     // Terminal gives a tab a temporary copy of a saved profile. Its ID is
@@ -28,14 +28,14 @@ function run(argv) {
     var match = /^OpenAI Images ([0-9a-f]{8})$/.exec(name);
     if (!match) { return result(false, "profile"); }
     var prefix = "OpenAIImages-" + match[1] + "-";
-    if (action !== "inspect" && action !== "snapshot" && action !== "preserve" && action !== "restore") { return result(false, "profile"); }
-    if (!/^\/dev\/ttys[0-9]+$/.test(tty)) { return result(false, "tab"); }
-    if ((action === "preserve" || action === "restore") && (!/^[A-Za-z0-9-]{1,63}$/.test(font) || font.indexOf(prefix) !== 0)) {
+    if (action !== "check" && action !== "inspect" && action !== "activate" && action !== "unused" && action !== "snapshot" && action !== "preserve" && action !== "restore") { return result(false, "profile"); }
+    if (action !== "unused" && !/^\/dev\/ttys[0-9]+$/.test(tty)) { return result(false, "tab"); }
+    if ((action === "activate" || action === "preserve" || action === "restore") && (!/^[A-Za-z0-9-]{1,63}$/.test(font) || font.indexOf(prefix) !== 0)) {
         return result(false, "font");
     }
     try {
         var terminal = Application("com.apple.Terminal");
-        if (!terminal.running()) { return result(false, "tab"); }
+        if (!terminal.running()) { return result(action === "unused", "tab"); }
         var found = null;
         var windows = terminal.windows();
         for (var i = 0; i < windows.length; i++) {
@@ -47,17 +47,27 @@ function run(argv) {
                 if (!isFinite(windowCode)) { windowCode = Number(windowError.errorNumber); }
                 // Terminal can enumerate Inspector and other windows without
                 // tabs. Skip only that missing-object error for an exact-TTY
-                // operation.
-                if (windowCode === -1728) { continue; }
+                // operation. Reset must inspect every window or fail closed.
+                if (action !== "unused" && windowCode === -1728) { continue; }
                 throw windowError;
             }
             for (var j = 0; j < tabs.length; j++) {
+                if (action === "unused") {
+                    // Reset is unsafe while any matching tab remains open,
+                    // including a renamed profile or a manually changed font.
+                    var candidate = tabs[j].currentSettings();
+                    if (candidate.name() === name || candidate.fontName().indexOf(prefix) === 0) {
+                        return result(false, "in-use");
+                    }
+                    continue;
+                }
                 if (tabs[j].tty() === tty) {
                     if (found !== null) { return result(false, "tab"); }
                     found = tabs[j];
                 }
             }
         }
+        if (action === "unused") { return result(true); }
         if (found === null) { return result(false, "tab"); }
         var settings = found.currentSettings();
         if (action === "snapshot") { return result(true, "", settings); }
@@ -109,6 +119,16 @@ function run(argv) {
         if (!ownedFont) { return result(false, "profile"); }
         var size = settings.fontSize();
         if (size < 1 || size > 1024 || size % 1 !== 0) { return result(false, "size", settings); }
+        if (action === "activate") {
+            // Recheck the tab/profile immediately before the only mutation.
+            var before = snapshot(settings);
+            if (found.tty() !== tty || !matches(found.currentSettings(), before)) {
+                return result(false, "changed");
+            }
+            if (settings.fontName() !== font) { settings.fontName = font; }
+            before.font = font;
+            if (found.tty() !== tty || !matches(found.currentSettings(), before)) { return result(false, "font"); }
+        }
         return result(true, "", settings);
     } catch (error) {
         // -1743 is macOS Automation permission denial. Do not emit arbitrary

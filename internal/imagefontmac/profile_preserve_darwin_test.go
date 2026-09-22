@@ -206,3 +206,52 @@ function run(argv) { var result = JSON.parse(profileOperation(argv)); result.mut
 		t.Fatalf("snapshot changed or misread original font: %+v", reply)
 	}
 }
+
+func TestUnusedProfileJavaScriptFailsClosedOnUnreadableWindow(t *testing.T) {
+	if !Supported() {
+		t.Skip("built-in JavaScript interpreter unavailable")
+	}
+	for _, position := range []string{"before", "after"} {
+		for _, code := range []int{-1728, -1743} {
+			t.Run(fmt.Sprintf("%s/%d", position, code), func(t *testing.T) {
+				const app = `Application("com.apple.Terminal")`
+				if strings.Count(profileBridge, app) != 1 {
+					t.Fatal("native bridge changed; review test before executing")
+				}
+				logic := strings.Replace(profileBridge, app, "mockTerminal", 1)
+				logic = strings.Replace(logic, "function run(argv)", "function profileOperation(argv)", 1)
+				if strings.Contains(logic, "Application(") {
+					t.Fatal("test cannot contain native application access")
+				}
+				options, err := json.Marshal(map[string]any{"unreadableWindow": position, "windowError": code})
+				if err != nil {
+					t.Fatal(err)
+				}
+				logic = "var options = " + string(options) + ";\n" + switchProfileMock + logic + `
+function run(argv) { var result = JSON.parse(profileOperation(argv)); result.mutations = mutations; return JSON.stringify(result); }
+`
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				data, err := run(ctx, interpreter, []string{"-l", "JavaScript", "-e", logic, "unused", "OpenAI Images 0123abcd", "", ""}, []string{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var reply struct {
+					OK        bool
+					Reason    string
+					Mutations []string
+				}
+				if err := json.Unmarshal(data, &reply); err != nil {
+					t.Fatal(err)
+				}
+				want := "native"
+				if code == -1743 {
+					want = "permission"
+				}
+				if reply.OK || reply.Reason != want || len(reply.Mutations) != 0 {
+					t.Fatalf("reset failed to reject an uninspectable window: %+v", reply)
+				}
+			})
+		}
+	}
+}
