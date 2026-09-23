@@ -964,22 +964,29 @@ func (c *cliValue[T]) SetInnerField(field string, val any) {
 	flagValReflect := reflect.ValueOf(flagVal)
 	switch flagValReflect.Kind() {
 	case reflect.Slice:
-		if flagValReflect.Type().Elem().Kind() != reflect.Map {
+		// An untyped outer flag holds a []any once it is set from a JSON or YAML array
+		// literal, so elements are dispatched by their dynamic type rather than by the
+		// static element kind.
+		switch flagValReflect.Type().Elem().Kind() {
+		case reflect.Map, reflect.Interface:
+		default:
 			return
 		}
 
 		sliceLen := flagValReflect.Len()
 		if sliceLen > 0 {
 			// Check if the last element already has the InnerField
-			lastElement := flagValReflect.Index(sliceLen - 1).Interface().(map[string]any)
-			if _, hasInnerField := lastElement[field]; !hasInnerField {
-				if lastElement == nil {
-					lastElement = make(map[string]any)
-					flagValReflect.Index(sliceLen - 1).Set(reflect.ValueOf(lastElement))
+			lastElement, isObject := flagValReflect.Index(sliceLen - 1).Interface().(map[string]any)
+			if isObject {
+				if _, hasInnerField := lastElement[field]; !hasInnerField {
+					if lastElement == nil {
+						lastElement = make(map[string]any)
+						flagValReflect.Index(sliceLen - 1).Set(reflect.ValueOf(lastElement))
+					}
+					// Last element doesn't have the field, set it
+					lastElement[field] = val
+					return
 				}
-				// Last element doesn't have the field, set it
-				lastElement[field] = val
-				return
 			}
 		}
 

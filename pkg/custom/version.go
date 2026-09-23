@@ -1,3 +1,3 @@
 package custom
 
-const Version = "1.16.6" // x-release-please-version
+const Version = "1.16.7" // x-release-please-version
