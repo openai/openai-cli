@@ -22,7 +22,7 @@ OpenAPI snapshot; shared request plumbing and selected files such as
 `flagoptions.go` and `mtls.go` are handwritten. That split matters for
 maintenance, but both generated and handwritten tracked source are repository
 code once reviewed and executed
-([CONTRIBUTING.md:34-47](../../CONTRIBUTING.md#L34-L47),
+([CONTRIBUTING.md:51-64](../../CONTRIBUTING.md#L51-L64),
 [pkg/cmd/cmd.go:1](../../pkg/cmd/cmd.go#L1)).
 
 | Component | Responsibility | Evidence |
