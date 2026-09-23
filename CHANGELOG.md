@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.7](https://github.com/openai/openai-cli/compare/v1.16.6...v1.16.7) (2026-09-23)
+
+
+### Bug Fixes
+
+* **jsonview:** keep single-column stream tables column-shaped ([#207](https://github.com/openai/openai-cli/issues/207)) ([64c5f23](https://github.com/openai/openai-cli/commit/64c5f23479ac43638cb91d3f9beb72063ceb3ea7))
+
 ## [1.16.6](https://github.com/openai/openai-cli/compare/v1.16.5...v1.16.6) (2026-09-23)
 
 
