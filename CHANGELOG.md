@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.4](https://github.com/openai/openai-cli/compare/v1.16.3...v1.16.4) (2026-09-23)
+
+
+### Chores
+
+* **api:** clarify Chat Completions seed range ([#239](https://github.com/openai/openai-cli/issues/239)) ([fcda650](https://github.com/openai/openai-cli/commit/fcda65015bd46032a328d3590f8c76f13ba6251d))
+
 ## [1.16.3](https://github.com/openai/openai-cli/compare/v1.16.2...v1.16.3) (2026-09-22)
 
 
