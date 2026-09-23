@@ -22,15 +22,26 @@ func main() {
 		prepareForAutocomplete(app)
 	}
 
-	if baseURL, ok := os.LookupEnv("OPENAI_BASE_URL"); ok {
-		if err := cmd.ValidateBaseURL(baseURL, "OPENAI_BASE_URL"); err != nil {
-			fmt.Fprintf(os.Stderr, "%s\n", err.Error())
-			os.Exit(1)
+	// Request configuration must not prevent local help from opening.
+	requestSetup := app.Before
+	app.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
+		if baseURL, ok := os.LookupEnv("OPENAI_BASE_URL"); ok {
+			if err := cmd.ValidateBaseURL(baseURL, "OPENAI_BASE_URL"); err != nil {
+				return ctx, err
+			}
 		}
+		if requestSetup != nil {
+			return requestSetup(ctx, command)
+		}
+		return ctx, nil
 	}
+	args, _, err := custom.ConfigureHelp(app, os.Args)
 
 	ctx := context.Background()
-	if err := app.Run(ctx, os.Args); err != nil {
+	if err == nil {
+		err = app.Run(ctx, args)
+	}
+	if err != nil {
 		exitCode := 1
 
 		// Check if error has a custom exit code

@@ -72,7 +72,17 @@ openai admin:organization:usage completions \
   --bucket-width 1d
 ```
 
-For details about specific commands, use the `--help` flag.
+Run `openai` for a short starting guide. Help works without an API key or network connection:
+
+```sh
+openai help setup                  # Enter your API key safely
+openai images generate --help      # Example and common inputs
+openai help --all images generate  # Every image option and its details
+openai help --all                  # Every command and global option
+```
+
+Add `--help` (or `-h`) to any command for its short guide. Help changes only
+what is displayed; command behavior, defaults, and output formats are unchanged.
 
 ### Environment variables
 
