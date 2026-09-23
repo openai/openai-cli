@@ -20,6 +20,11 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 	Usage:   "Creates a model response. Provide\n[text](https://developers.openai.com/api/docs/guides/text) or\n[image](https://developers.openai.com/api/docs/guides/images-vision) inputs to\ngenerate [text](https://developers.openai.com/api/docs/guides/text) or\n[JSON](https://developers.openai.com/api/docs/guides/structured-outputs)\noutputs. Have the model call your own\n[custom code](https://developers.openai.com/api/docs/guides/function-calling) or\nuse built-in [tools](https://developers.openai.com/api/docs/guides/tools) like\n[web search](https://developers.openai.com/api/docs/guides/tools-web-search) or\n[file search](https://developers.openai.com/api/docs/guides/tools-file-search)\nto use your own data as input for the model's response.",
 	Suggest: true,
 	Flags: []cli.Flag{
+		&requestflag.Flag[map[string]any]{
+			Name:     "access-programs",
+			Usage:    "Domain-specific access programs to use for this request.",
+			BodyPath: "access_programs",
+		},
 		&requestflag.Flag[*bool]{
 			Name:     "background",
 			Usage:    "Whether to run the model response in the background.\n[Learn more](https://developers.openai.com/api/docs/guides/background).\n",
@@ -190,6 +195,13 @@ var responsesCreate = requestflag.WithInnerFlags(cli.Command{
 	Action:          handleResponsesCreate,
 	HideHelpCommand: true,
 }, map[string][]requestflag.HasOuterFlag{
+	"access-programs": {
+		&requestflag.InnerFlag[string]{
+			Name:       "access-programs.cyber",
+			Usage:      "The Cyber access program to use for this request. Supported values are `standard`, `daybreak_blue`, and `daybreak_red`. If omitted, the API resolves the program from the model's Cyber tier and your organization and project access, subject to model-specific eligibility restrictions. By default, models without a Cyber tier use Standard. Blue-tier models use Daybreak Blue when authorized; otherwise they fall back to Standard unless the model requires Daybreak access. Red-tier models use Daybreak Red and require authorization. Requests that require unavailable Daybreak access return 403. An implicit Standard fallback is represented by null in the response's access_programs field, rather than an explicit Standard selection.",
+			InnerField: "cyber",
+		},
+	},
 	"context-management": {
 		&requestflag.InnerFlag[string]{
 			Name:                  "context-management.type",

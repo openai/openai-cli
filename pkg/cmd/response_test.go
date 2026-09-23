@@ -17,6 +17,7 @@ func TestResponsesCreate(t *testing.T) {
 			"--admin-api-key", "string",
 			"responses", "create",
 			"--max-items", "10",
+			"--access-programs", "{cyber: standard}",
 			"--background=true",
 			"--context-management", "[{type: type, compact_threshold: 1000}]",
 			"--conversation", "string",
@@ -62,6 +63,7 @@ func TestResponsesCreate(t *testing.T) {
 			"--admin-api-key", "string",
 			"responses", "create",
 			"--max-items", "10",
+			"--access-programs.cyber", "standard",
 			"--background=true",
 			"--context-management.type", "type",
 			"--context-management.compact-threshold", "1000",
@@ -111,6 +113,8 @@ func TestResponsesCreate(t *testing.T) {
 	t.Run("piping data", func(t *testing.T) {
 		// Test piping YAML data over stdin
 		pipeData := []byte("" +
+			"access_programs:\n" +
+			"  cyber: standard\n" +
 			"background: true\n" +
 			"context_management:\n" +
 			"  - type: type\n" +
