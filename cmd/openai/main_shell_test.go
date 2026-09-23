@@ -26,7 +26,7 @@ type nativeShell struct {
 // These checks execute installed shells and the built CLI. They do not cover
 // terminal-app rendering, interactive hidden input, or installed completion.
 func TestMainNativeShell(t *testing.T) {
-	work := filepath.Join(t.TempDir(), "CLI with spaces")
+	work := filepath.Join(t.TempDir(), "CLI with spaces & apostrophe's")
 	if err := os.Mkdir(work, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -93,23 +93,39 @@ func TestMainNativeShell(t *testing.T) {
 					}
 				})
 			}
-			t.Run("copy displayed command", func(t *testing.T) {
-				short := runNativeShell(t, shell, work, home, "not-a-url", shell.binary+" images generate --help")
-				var command string
-				for line := range strings.SplitSeq(short.stdout, "\n") {
-					if after, ok := strings.CutPrefix(strings.TrimSpace(line), "Full help: "); ok {
-						command = after
-						break
+			for _, elsewhere := range []bool{false, true} {
+				name, directory, invocation := "copy displayed command", work, shell.binary
+				if elsewhere {
+					name += " from another directory"
+					directory = t.TempDir()
+					path := filepath.Join(work, binary)
+					if shell.name == "cmd" {
+						invocation = `"` + path + `"`
+					} else {
+						invocation = "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+						if shell.name == "powershell" || shell.name == "pwsh" {
+							invocation = "& '" + strings.ReplaceAll(path, "'", "''") + "'"
+						}
 					}
 				}
-				if short.code != 0 || command == "" {
-					t.Fatalf("short help lacks a copyable full-help command: %+v", short)
-				}
-				got := runNativeShell(t, shell, work, home, "not-a-url", command)
-				if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "--output-compression") {
-					t.Fatalf("displayed command %q failed: %+v", command, got)
-				}
-			})
+				t.Run(name, func(t *testing.T) {
+					short := runNativeShell(t, shell, directory, home, "not-a-url", invocation+" images generate --help")
+					var command string
+					for line := range strings.SplitSeq(short.stdout, "\n") {
+						if after, ok := strings.CutPrefix(strings.TrimSpace(line), "Full help: "); ok {
+							command = after
+							break
+						}
+					}
+					if short.code != 0 || command == "" {
+						t.Fatalf("short help lacks a copyable full-help command: %+v", short)
+					}
+					got := runNativeShell(t, shell, directory, home, "not-a-url", command)
+					if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "--output-compression") {
+						t.Fatalf("displayed command %q failed: %+v", command, got)
+					}
+				})
+			}
 			t.Run("copy image example", func(t *testing.T) {
 				short := runNativeShell(t, shell, work, home, "not-a-url", shell.binary+" images generate --help")
 				var command string

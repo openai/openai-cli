@@ -304,11 +304,8 @@ func Invocation(fallback string, args []string) string {
 	needsQuoting := strings.IndexFunc(name, func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("/._:-", r) || runtime.GOOS == "windows" && r == '\\')
 	}) >= 0
-	if runtime.GOOS == "windows" && needsQuoting {
-		return "& '" + strings.ReplaceAll(name, "'", "''") + "'"
-	}
 	if needsQuoting {
-		return "'" + strings.ReplaceAll(name, "'", "'\\''") + "'"
+		return quoteInvocation(name, fallback)
 	}
 	return name
 }
