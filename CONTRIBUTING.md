@@ -22,7 +22,7 @@ Thank you for helping improve the OpenAI CLI. Read [README.md](README.md),
 
 ## Setting up the environment
 
-Use the Go version required by `go.mod`; the CLI currently requires Go 1.25 or
+Use the Go version required by `go.mod`; the CLI currently requires Go 1.26 or
 later. The integration tests also require Node.js 14.18 or later, Git, `curl`, `unzip`, and `lsof`. Review dependency origins and executable setup
 scripts before running:
 
