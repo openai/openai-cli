@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.16.10](https://github.com/openai/openai-cli/compare/v1.16.9...v1.16.10) (2026-09-23)
+
+
+### Bug Fixes
+
+* **completion:** resolve command aliases while traversing commands ([#221](https://github.com/openai/openai-cli/issues/221)) ([8c43b32](https://github.com/openai/openai-cli/commit/8c43b328961356f950ed1c9f2da9726916ac03f0))
+* **jsonview:** propagate lazy-loading failures ([#219](https://github.com/openai/openai-cli/issues/219)) ([ef82331](https://github.com/openai/openai-cli/commit/ef82331c2557390f9d24818f05e5b7f4b87b7ea7))
+
 ## [1.16.9](https://github.com/openai/openai-cli/compare/v1.16.8...v1.16.9) (2026-09-23)
 
 
