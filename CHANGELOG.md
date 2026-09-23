@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.9](https://github.com/openai/openai-cli/compare/v1.16.8...v1.16.9) (2026-09-23)
+
+
+### Bug Fixes
+
+* **cmd:** expand file references in nullable string flags ([#216](https://github.com/openai/openai-cli/issues/216)) ([9b46ed6](https://github.com/openai/openai-cli/commit/9b46ed60c9bc5affc2e2aec4df41e14347cfebcb))
+
 ## [1.16.8](https://github.com/openai/openai-cli/compare/v1.16.7...v1.16.8) (2026-09-23)
 
 
