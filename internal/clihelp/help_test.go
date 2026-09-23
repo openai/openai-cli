@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
@@ -162,5 +164,24 @@ func TestHelpInvocationPreservesCopyablePaths(t *testing.T) {
 		if got := Invocation("openai", []string{tc.input}); got != tc.want {
 			t.Errorf("Invocation(%q) = %q; want %q", tc.input, got, tc.want)
 		}
+	}
+}
+
+func TestHelpInvocationFromSpacedWorkingDirectory(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "my cli")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(directory)
+	name, want := "openai", "./openai"
+	if runtime.GOOS == "windows" {
+		name, want = "openai.exe", `.\openai.exe`
+	}
+	path := filepath.Join(directory, name)
+	if err := os.WriteFile(path, nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := Invocation("openai", []string{path}); got != want {
+		t.Fatalf("local executable = %q; want shell-independent %q", got, want)
 	}
 }

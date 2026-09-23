@@ -25,13 +25,13 @@ func TestMainHelpWelcome(t *testing.T) {
 	if lines := len(strings.Split(strings.TrimSpace(want.stdout), "\n")); lines > 20 {
 		t.Errorf("welcome uses %d lines; want at most 20", lines)
 	}
-	for _, text := range []string{"openai help setup", "openai models list", "--help", "help --all"} {
+	for _, text := range []string{"openai help setup", "openai models list", "--help", "help --all", "openai images --help", "openai help --all images generate"} {
 		if !strings.Contains(want.stdout, text) {
 			t.Errorf("welcome lacks %q: %s", text, want.stdout)
 		}
 	}
 	for _, args := range [][]string{
-		{"openai", "help"}, {"openai", "--help"}, {"openai", "-h"},
+		{"openai", "help"}, {"openai", "--help"}, {"openai", "-h"}, {"openai", "--h"},
 		{"openai", "--debug", "help"}, {"openai", "--organization", "help", "--help"},
 	} {
 		t.Run(strings.Join(args, "/"), func(t *testing.T) {
@@ -59,6 +59,8 @@ func TestMainHelpCommandRoutes(t *testing.T) {
 			routes := [][]string{
 				append([]string{"openai", "help"}, path...),
 				append(append([]string{"openai"}, path...), "-h"),
+				append(append([]string{"openai"}, path...), "--h"),
+				append(append([]string{"openai", "help"}, path...), "--h"),
 				append([]string{"openai", "--debug", "help"}, path...),
 				append([]string{"openai", "--base-url", "http://127.0.0.1:1", "help"}, path...),
 			}
@@ -282,7 +284,7 @@ func TestMainHelpSetupIsReadOnly(t *testing.T) {
 }
 
 func TestMainHelpWordsRemainRequestValues(t *testing.T) {
-	for _, value := range []string{"help", "--help", "-h", "--all", "setup"} {
+	for _, value := range []string{"help", "--help", "-h", "--h", "--all", "setup"} {
 		for _, equals := range []bool{false, true} {
 			t.Run(value+"/"+map[bool]string{false: "separate", true: "equals"}[equals], func(t *testing.T) {
 				var requests atomic.Int32

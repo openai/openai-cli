@@ -23,9 +23,11 @@ START HERE
   {{$run}} models list                 List models available to your key
 
 GET HELP
-  {{$run}} images generate --help      Image generation
-  {{$run}} responses create --help     Send a prompt to a model
+  {{$run}} --help                      This menu (also -h)
+  {{$run}} images --help               Browse image commands
+  {{$run}} images generate --help      Example and common inputs
   {{$run}} help --all                  Every command and global option
+  {{$run}} help --all images generate  Complete help for one command
 
 Add --help (or -h) to any command. Help needs no API key or internet.
 `
@@ -45,12 +47,19 @@ const setupHelp = `{{$run := index .Root.Metadata "help-invocation"}}Set up your
        export OPENAI_API_KEY
        printf '\n'
 
-   PowerShell (Windows)
+   PowerShell (Windows, macOS, or Linux)
      Run this line, paste your key (hidden), then press Enter:
        $openaiKey = Read-Host "API key" -AsSecureString
      Then run these lines:
        $env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new("", $openaiKey).Password
        Remove-Variable openaiKey
+
+   Using Command Prompt (cmd.exe)? Run powershell first, then use the
+   PowerShell steps above. Run the CLI in that same PowerShell session.
+   Using Fish? Run bash first, then use the Bash steps above.
+
+   Windows command examples use PowerShell syntax. In cmd.exe, run
+   openai from PATH or .\openai.exe from the folder containing the CLI.
 
    These steps set the key for this shell session. A new window needs it again.
 
@@ -119,7 +128,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 				literal := false
 				for _, topic := range args[i+1:] {
 					literal = literal || topic == "--"
-					if literal || topic != "--help" && topic != "-h" {
+					if literal || topic != "--help" && topic != "-h" && topic != "--h" {
 						out = append(out, topic)
 					}
 				}
@@ -130,7 +139,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 				switch topic {
 				case "--all":
 					all = true
-				case "--help", "-h":
+				case "--help", "-h", "--h":
 				default:
 					next := current.Command(topic)
 					if next == nil || next.Hidden || topic == "help" {
@@ -148,7 +157,7 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 		}
 		// Flags and values remain entirely under the framework parser. In
 		// particular, --prompt "help" must never turn a request into help.
-		if arg == "--help" || arg == "-h" {
+		if arg == "--help" || arg == "-h" || arg == "--h" {
 			return args, true, nil
 		}
 		if local, _ := current.Metadata["local-help"].(bool); local && arg == "--all" {
@@ -272,6 +281,17 @@ func Invocation(fallback string, args []string) string {
 	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return fallback
 	}
+	// PowerShell can supply an absolute argv[0] even for .\openai.exe. When
+	// already in the executable's folder, use the relative form accepted by
+	// both PowerShell and cmd.exe, including folders containing spaces.
+	if filepath.IsAbs(name) {
+		if local, err := filepath.Abs(filepath.Base(name)); err == nil && sameExecutable(name, local) {
+			if runtime.GOOS == "windows" {
+				return `.\` + filepath.Base(name)
+			}
+			return "./" + filepath.Base(name)
+		}
+	}
 	needsQuoting := strings.IndexFunc(name, func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("/._:-", r) || runtime.GOOS == "windows" && r == '\\')
 	}) >= 0
@@ -282,4 +302,13 @@ func Invocation(fallback string, args []string) string {
 		return "'" + strings.ReplaceAll(name, "'", "'\\''") + "'"
 	}
 	return name
+}
+
+func sameExecutable(first, second string) bool {
+	a, err := os.Stat(first)
+	if err != nil {
+		return false
+	}
+	b, err := os.Stat(second)
+	return err == nil && os.SameFile(a, b)
 }
