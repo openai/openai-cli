@@ -460,6 +460,16 @@ func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
 
 func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
+	if err := opts.Context.Err(); err != nil {
+		return err
+	}
+	if !opts.ExplicitFormat && opts.Transform == "" && !opts.RawOutput && strings.EqualFold(opts.Format, "auto") && isTerminal(opts.Stdout) {
+		if render := transformers.SelectTerminal(transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}); render != nil {
+			if handled, err := render(opts.Context, res, opts.Stdout); handled || err != nil {
+				return err
+			}
+		}
+	}
 	res, err := transformOutput(opts.Context, res, selectOutputTransformer(opts, selectTransformer))
 	if err != nil {
 		return err
