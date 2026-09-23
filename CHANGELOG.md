@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.8](https://github.com/openai/openai-cli/compare/v1.16.7...v1.16.8) (2026-09-23)
+
+
+### Bug Fixes
+
+* **requestflag:** merge inner flags into untyped array literals ([#211](https://github.com/openai/openai-cli/issues/211)) ([808fb45](https://github.com/openai/openai-cli/commit/808fb45a8cd3797d7171bb2b0758bca01ef10b01))
+
 ## [1.16.7](https://github.com/openai/openai-cli/compare/v1.16.6...v1.16.7) (2026-09-23)
 
 
