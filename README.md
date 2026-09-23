@@ -242,6 +242,13 @@ To link to a local copy of the SDK:
 
 If you run the link script without any arguments, it will default to `../openai-go`.
 
+## Contributing
+
+Please share bug reports and feature requests through [GitHub issues](https://github.com/openai/openai-cli/issues).
+Pull requests are limited to repository collaborators; we do not accept pull requests from non-collaborators.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution policy and development guide.
+For security vulnerabilities, follow [SECURITY.md](SECURITY.md).
+
 ## License
 
 Copyright 2026 OpenAI
