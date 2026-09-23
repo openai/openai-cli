@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.6](https://github.com/openai/openai-cli/compare/v1.16.5...v1.16.6) (2026-09-23)
+
+
+### Bug Fixes
+
+* **cli:** reject non-finite float flag values ([#200](https://github.com/openai/openai-cli/issues/200)) ([c8dd3e9](https://github.com/openai/openai-cli/commit/c8dd3e90a1a0cc60abab60823902bcb50f1c86d0))
+
 ## [1.16.5](https://github.com/openai/openai-cli/compare/v1.16.4...v1.16.5) (2026-09-23)
 
 
