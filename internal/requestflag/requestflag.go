@@ -3,6 +3,7 @@ package requestflag
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -12,6 +13,23 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/urfave/cli/v3"
 )
+
+// parseFiniteFloat parses value as a float64 and rejects the non-finite
+// spellings accepted by strconv.ParseFloat ("inf", "-inf", "nan", "infinity",
+// in any case). They have no valid wire representation: JSON request bodies
+// fail late with "json: unsupported value" and multipart bodies would send
+// "+Inf"/"NaN". The returned error is the same *strconv.NumError reported for
+// malformed numeric input.
+func parseFiniteFloat(value string) (float64, error) {
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, err
+	}
+	if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return 0, &strconv.NumError{Func: "ParseFloat", Num: value, Err: strconv.ErrSyntax}
+	}
+	return parsed, nil
+}
 
 // formatForFlagSet converts a Go value parsed from YAML/JSON stdin data into a string
 // that flag.Set (and thus parseCLIArg) can parse correctly for each flag type.
@@ -570,7 +588,7 @@ func parseCLIArg[
 	case int64:
 		parsedValue, err = strconv.ParseInt(value, 0, 64)
 	case float64:
-		parsedValue, err = strconv.ParseFloat(value, 64)
+		parsedValue, err = parseFiniteFloat(value)
 	case bool:
 		parsedValue, err = strconv.ParseBool(value)
 	case DateTimeValue:
@@ -607,7 +625,7 @@ func parseCLIArg[
 		}
 	case *float64:
 		var v float64
-		v, err = strconv.ParseFloat(value, 64)
+		v, err = parseFiniteFloat(value)
 		if err == nil {
 			parsedValue = &v
 		}

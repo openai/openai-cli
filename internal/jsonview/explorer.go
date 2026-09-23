@@ -181,7 +181,10 @@ func (tv *TableView) loadMoreData() tea.Cmd {
 func (tv *TableView) appendItem(result gjson.Result, raw bool) {
 	tv.rowData = append(tv.rowData, result)
 	newRow := table.Row{formatValue(result, raw)}
-	if len(tv.columns) > 1 && result.IsObject() {
+	// columnKeys is only populated by the array-of-objects constructor, so it — not
+	// the column count — says whether this table is column-shaped. A stream whose
+	// items share a single key still has exactly one column.
+	if len(tv.columnKeys) > 0 && result.IsObject() {
 		newRow = make(table.Row, len(tv.columns))
 		values := result.Map()
 		for i, col := range tv.columns {

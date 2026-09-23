@@ -14,7 +14,7 @@ brew install openai/tools/openai
 
 ### Installing with Go
 
-To test or install the CLI locally, you need [Go](https://go.dev/doc/install) version 1.25 or later installed.
+To test or install the CLI locally, you need [Go](https://go.dev/doc/install) version 1.26 or later installed.
 
 ```sh
 go install 'github.com/openai/openai-cli/cmd/openai@latest'
@@ -241,6 +241,13 @@ To link to a local copy of the SDK:
 ```
 
 If you run the link script without any arguments, it will default to `../openai-go`.
+
+## Contributing
+
+Please share bug reports and feature requests through [GitHub issues](https://github.com/openai/openai-cli/issues).
+Pull requests are limited to repository collaborators; we do not accept pull requests from non-collaborators.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution policy and development guide.
+For security vulnerabilities, follow [SECURITY.md](SECURITY.md).
 
 ## License
 
