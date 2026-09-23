@@ -448,7 +448,12 @@ func (f *Flag[T]) GetValue() string {
 }
 
 func (f *Flag[T]) GetDefaultText() string {
-	return f.DefaultText
+	if f.DefaultText != "" {
+		return f.DefaultText
+	}
+	// Help can inspect a command before its flags have been parsed. Read the
+	// declared default without invoking parsing or validation.
+	return (&cliValue[T]{f.Default}).String()
 }
 
 // GetEnvVars returns the env vars for this flag

@@ -66,6 +66,9 @@ func TestMainHelpCommandRoutes(t *testing.T) {
 			}
 			if len(path) > 1 {
 				routes = append(routes, append([]string{"openai", path[0], "help"}, path[1:]...))
+				routes = append(routes, append([]string{"openai", path[0], "--debug", "help"}, path[1:]...))
+				routes = append(routes, append([]string{"openai", path[0], "--transform", "help", "help"}, path[1:]...))
+				routes = append(routes, append([]string{"openai", path[0], "help", "--"}, path[1:]...))
 			}
 			for _, args := range routes {
 				if got := runMainDispatch(t, "bash", args...); got != want {
@@ -145,16 +148,34 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 }
 
 func TestMainHelpFullReferenceRoutes(t *testing.T) {
-	// The framework annotates parsed flags differently from unparsed flags.
-	// Every route must expose the same options and reference details regardless.
+	// Full reference routes must also agree on default values, not just names.
+	var reference string
 	for _, args := range [][]string{
 		{"openai", "help", "--all", "images", "generate"},
+		{"openai", "help", "images", "generate", "--all"},
 		{"openai", "images", "help", "--all", "generate"},
 		{"openai", "--debug", "help", "--all", "images", "generate"},
+		{"openai", "images", "--debug", "help", "--all", "generate"},
+		{"openai", "images", "help", "--all", "--", "generate"},
 	} {
 		got := runMainDispatch(t, "bash", args...)
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("args %q: full reference failed: %+v", args, got)
+		}
+		if reference == "" {
+			reference = got.stdout
+		} else if got.stdout != reference {
+			t.Errorf("args %q: full help differs between routes", args)
+		}
+		for _, text := range []string{"--prompt string", "-n int", "(default: auto)", "(default: 1)", "(default: png)", "(default: 100)", "(default: 0)"} {
+			if !strings.Contains(got.stdout, text) {
+				t.Errorf("args %q: full help lost label/default %q", args, text)
+			}
+		}
+		for _, text := range []string{"--prompt dall-e-2", "-n dall-e-3", "--size gpt-image-2"} {
+			if strings.Contains(got.stdout, text) {
+				t.Errorf("args %q: misleading value label %q", args, text)
+			}
 		}
 		for _, flag := range cmd.Command.Command("images").Command("generate").VisibleFlags() {
 			name := flag.Names()[0]
@@ -340,6 +361,8 @@ func TestMainHelpRejectsUnknownTopics(t *testing.T) {
 		{"openai", "help", "imaginary"}, {"openai", "help", "images", "imaginary"},
 		{"openai", "images", "help", "imaginary"}, {"openai", "help", "--all", "images", "imaginary"},
 		{"openai", "help", "setup", "unexpected"},
+		{"openai", "images", "help", "--", "--help"},
+		{"openai", "images", "help", "--", "--all"},
 	} {
 		got := runMainDispatch(t, "bash", args...)
 		if got.code == 0 || got.stdout != "" || got.stderr == "" {

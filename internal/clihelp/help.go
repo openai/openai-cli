@@ -134,20 +134,26 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 				}
 				return out, true, nil
 			}
-			path, all := []string{}, false
+			path, all, literal := []string{}, false, false
 			for _, topic := range args[i+1:] {
-				switch topic {
-				case "--all":
-					all = true
-				case "--help", "-h", "--h":
-				default:
-					next := current.Command(topic)
-					if next == nil || next.Hidden || topic == "help" {
-						return nil, true, cli.Exit(fmt.Sprintf("Unknown help topic %q. Run %s help --all to see commands.", topic, root.Metadata["help-invocation"]), 3)
+				if !literal {
+					switch topic {
+					case "--":
+						literal = true
+						continue
+					case "--all":
+						all = true
+						continue
+					case "--help", "-h", "--h":
+						continue
 					}
-					current = next
-					path = append(path, topic)
 				}
+				next := current.Command(topic)
+				if next == nil || next.Hidden || topic == "help" {
+					return nil, true, cli.Exit(fmt.Sprintf("Unknown help topic %q. Run %s help --all to see commands.", topic, root.Metadata["help-invocation"]), 3)
+				}
+				current = next
+				path = append(path, topic)
 			}
 			if all {
 				useFullHelp(root, current)
@@ -164,11 +170,14 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 			continue
 		}
 		if strings.HasPrefix(arg, "-") {
-			// Only traverse known global flags before a command. Their values
+			// Traverse known root flags inherited by command groups. Their values
 			// may themselves say "help"; skip those values without parsing them.
-			if current == root && arg != "--" {
+			if arg != "--" && (current == root || len(current.Commands) > 0) {
 				name, _, assigned := strings.Cut(strings.TrimLeft(arg, "-"), "=")
 				if flag := rootFlag(root, name); flag != nil {
+					if local, ok := flag.(cli.LocalFlag); current != root && ok && local.IsLocal() {
+						return args, false, nil
+					}
 					if doc, ok := flag.(cli.DocGenerationFlag); ok {
 						if doc.TakesValue() && !assigned {
 							i++
@@ -253,11 +262,11 @@ func useFullHelp(root, target *cli.Command) {
 	if full, _ := target.Metadata["local-help-full"].(string); full != "" {
 		target.CustomHelpTemplate = full
 	} else if target == root {
-		root.CustomRootCommandHelpTemplate = cli.RootCommandHelpTemplate
+		root.CustomRootCommandHelpTemplate = fullHelpTemplate(root, cli.RootCommandHelpTemplate)
 	} else if len(target.Commands) > 0 {
-		target.CustomHelpTemplate = cli.SubcommandHelpTemplate
+		target.CustomHelpTemplate = fullHelpTemplate(target, cli.SubcommandHelpTemplate)
 	} else {
-		target.CustomHelpTemplate = cli.CommandHelpTemplate
+		target.CustomHelpTemplate = fullHelpTemplate(target, cli.CommandHelpTemplate)
 	}
 }
 
