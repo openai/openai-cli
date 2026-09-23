@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.16.11](https://github.com/openai/openai-cli/compare/v1.16.10...v1.16.11) (2026-09-23)
+
+
+### Bug Fixes
+
+* **autocomplete:** respect cursor position in zsh completion ([#231](https://github.com/openai/openai-cli/issues/231)) ([d04139a](https://github.com/openai/openai-cli/commit/d04139a9faa1697bcf5dab41d3f57b3274173088))
+
+## [1.16.10](https://github.com/openai/openai-cli/compare/v1.16.9...v1.16.10) (2026-09-23)
+
+
+### Bug Fixes
+
+* **completion:** resolve command aliases while traversing commands ([#221](https://github.com/openai/openai-cli/issues/221)) ([8c43b32](https://github.com/openai/openai-cli/commit/8c43b328961356f950ed1c9f2da9726916ac03f0))
+* **jsonview:** propagate lazy-loading failures ([#219](https://github.com/openai/openai-cli/issues/219)) ([ef82331](https://github.com/openai/openai-cli/commit/ef82331c2557390f9d24818f05e5b7f4b87b7ea7))
+
+## [1.16.9](https://github.com/openai/openai-cli/compare/v1.16.8...v1.16.9) (2026-09-23)
+
+
+### Bug Fixes
+
+* **cmd:** expand file references in nullable string flags ([#216](https://github.com/openai/openai-cli/issues/216)) ([9b46ed6](https://github.com/openai/openai-cli/commit/9b46ed60c9bc5affc2e2aec4df41e14347cfebcb))
+
+## [1.16.8](https://github.com/openai/openai-cli/compare/v1.16.7...v1.16.8) (2026-09-23)
+
+
+### Bug Fixes
+
+* **requestflag:** merge inner flags into untyped array literals ([#211](https://github.com/openai/openai-cli/issues/211)) ([808fb45](https://github.com/openai/openai-cli/commit/808fb45a8cd3797d7171bb2b0758bca01ef10b01))
+
+## [1.16.7](https://github.com/openai/openai-cli/compare/v1.16.6...v1.16.7) (2026-09-23)
+
+
+### Bug Fixes
+
+* **jsonview:** keep single-column stream tables column-shaped ([#207](https://github.com/openai/openai-cli/issues/207)) ([64c5f23](https://github.com/openai/openai-cli/commit/64c5f23479ac43638cb91d3f9beb72063ceb3ea7))
+
 ## [1.16.6](https://github.com/openai/openai-cli/compare/v1.16.5...v1.16.6) (2026-09-23)
 
 

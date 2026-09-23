@@ -109,6 +109,11 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 		}
 		v = v.Elem()
 	}
+	// Nullable string flags use pointers. Expand their values just like ordinary
+	// strings, retaining nil as JSON null and leaving other pointer types alone.
+	if v.Type() == reflect.TypeFor[*string]() && !v.IsNil() {
+		v = v.Elem()
+	}
 
 	switch v.Kind() {
 	case reflect.Map:

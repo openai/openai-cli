@@ -15,8 +15,15 @@ import (
 // Python, JavaScript, and Go all emit that form for small floats, such as
 // 1e-05 or 1e-7.
 func UnmarshalYAMLOrJSON(data []byte, v any) error {
+	// A YAML stream may start with a byte order mark, and JSON parsers may ignore
+	// one (RFC 8259, section 8.1). Windows tools often write it, but go-yaml
+	// decodes it as content (https://github.com/goccy/go-yaml/issues/906).
+	data = bytes.TrimPrefix(data, utf8BOM)
 	return yaml.Unmarshal(addJSONExponentFractions(data), v)
 }
+
+// utf8BOM is U+FEFF encoded as UTF-8.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
 // addJSONExponentFractions rewrites numbers such as 1e-05 in valid JSON as
 // 1.0e-05, which go-yaml decodes to the same float64. All other input,

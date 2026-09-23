@@ -26,6 +26,20 @@ jobs:
       - name: Run lints
         run: ./scripts/lint
 
+  macos-uploads:
+    timeout-minutes: 10
+    name: macOS upload cancellation
+    permissions:
+      contents: read
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-go
+      - name: Check upload cancellation and EOF
+        run: go test ./internal/binaryparam ./pkg/cmd -run 'Test(CancellableFIFO|FilesCreateCLICancelClosesStalledFIFO|FilesCreateCLIStreamsSparseFile|ImagesEditCLIStreamsMultipleFiles)' -count=1
+
   build-artifacts:
     timeout-minutes: 30
     name: build artifacts

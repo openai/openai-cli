@@ -139,7 +139,7 @@ func completionFlags(lineage []*cli.Command) []cli.Flag {
 
 func findChild(cmd *cli.Command, name string) *cli.Command {
 	for _, c := range cmd.Commands {
-		if !c.Hidden && c.Name == name {
+		if !c.Hidden && slices.Contains(c.Names(), name) {
 			return c
 		}
 	}

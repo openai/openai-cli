@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/openai/openai-cli/internal/binaryparam"
 )
 
 // fileUpload wraps an io.Reader with filename and content-type metadata for
@@ -122,8 +124,12 @@ func openFileUpload(path string) (fileUpload, error) {
 		contentType = "application/octet-stream"
 	}
 	if !hasTrustworthyFileSize(file, info) {
+		reader, err := binaryparam.CancellableFile(file, info)
+		if err != nil {
+			return fileUpload{}, errors.Join(err, file.Close())
+		}
 		return fileUpload{
-			Reader:      file,
+			Reader:      reader,
 			filename:    filepath.Base(path),
 			contentType: contentType,
 		}, nil

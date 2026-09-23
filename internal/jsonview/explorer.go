@@ -295,6 +295,7 @@ type JSONViewer struct {
 	height  int
 	rawMode bool
 	message string
+	loadErr error
 	help    help.Model
 }
 
@@ -306,8 +307,12 @@ func ExploreJSON(title string, json gjson.Result) error {
 	}
 
 	viewer := &JSONViewer{stack: []JSONView{view}, root: title, rawMode: false, help: help.New()}
+	return runExplorer(viewer)
+}
 
-	_, err = tea.NewProgram(viewer).Run()
+func runExplorer(viewer *JSONViewer, options ...tea.ProgramOption) error {
+	_, err := tea.NewProgram(viewer, options...).Run()
+	err = errors.Join(err, viewer.loadErr)
 	if viewer.message != "" {
 		_, msgErr := fmt.Println("\n" + viewer.message)
 		err = errors.Join(err, msgErr)
@@ -354,12 +359,7 @@ func ExploreJSONStream[T any](title string, it Iterator[T]) error {
 	}
 
 	viewer := &JSONViewer{stack: []JSONView{view}, root: title, rawMode: false, help: help.New()}
-	_, err = tea.NewProgram(viewer).Run()
-	if viewer.message != "" {
-		_, msgErr := fmt.Println("\n" + viewer.message)
-		err = errors.Join(err, msgErr)
-	}
-	return err
+	return runExplorer(viewer)
 }
 
 func marshalItemsToJSONArray(items []any) ([]byte, error) {
@@ -403,7 +403,11 @@ func (v *JSONViewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, view := range v.stack {
 			if view == msg.view {
 				msg.view.isLoading = false
-				if msg.err == nil && msg.result.Exists() {
+				if msg.err != nil {
+					v.loadErr = msg.err
+					return v, tea.Quit
+				}
+				if msg.result.Exists() {
 					msg.view.appendItem(msg.result, v.rawMode)
 				}
 				break
