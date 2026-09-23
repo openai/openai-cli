@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.11](https://github.com/openai/openai-cli/compare/v1.16.10...v1.16.11) (2026-09-23)
+
+
+### Bug Fixes
+
+* **autocomplete:** respect cursor position in zsh completion ([#231](https://github.com/openai/openai-cli/issues/231)) ([d04139a](https://github.com/openai/openai-cli/commit/d04139a9faa1697bcf5dab41d3f57b3274173088))
+
 ## [1.16.10](https://github.com/openai/openai-cli/compare/v1.16.9...v1.16.10) (2026-09-23)
 
 
