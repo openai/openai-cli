@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/help"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/help"
+	tea "charm.land/bubbletea/v2"
 	"github.com/tidwall/gjson"
 
 	"github.com/stretchr/testify/require"
@@ -54,7 +54,7 @@ func TestGetSelectedContent_EmptyRowData(t *testing.T) {
 
 			// Pressing "p" should print the container rather than panicking.
 			require.NotPanics(t, func() {
-				viewer.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+				viewer.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
 			})
 			require.Equal(t, empty, viewer.message)
 		})

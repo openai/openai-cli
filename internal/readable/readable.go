@@ -2,8 +2,6 @@
 package readable
 
 import (
-	"encoding/base64"
-	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -12,12 +10,11 @@ import (
 )
 
 // Write renders value in its original field order, without a pager or a table.
-// Ordinary strings are complete, including multiline text. Known encoded media
-// and numeric embedding vectors get a summary with an explicit JSON escape hatch.
+// Strings and array values are complete, including multiline text.
 // Terminal controls are escaped even when w is a redirected output stream.
 func Write(w io.Writer, value gjson.Result) error {
 	p := printer{w: w}
-	p.value(value, 0, "", "", "", "")
+	p.value(value, 0, "")
 	return p.err
 }
 
@@ -56,12 +53,8 @@ func (p *printer) text(depth int, prefix, text string) {
 	}
 }
 
-func (p *printer) value(value gjson.Result, depth int, prefix, parent, key, objectType string) {
+func (p *printer) value(value gjson.Result, depth int, prefix string) {
 	if p.err != nil {
-		return
-	}
-	if summary := encodedSummary(value, parent, key, objectType); summary != "" {
-		p.text(depth, prefix, summary)
 		return
 	}
 	if !value.IsObject() && !value.IsArray() {
@@ -91,9 +84,8 @@ func (p *printer) value(value gjson.Result, depth int, prefix, parent, key, obje
 		depth++
 	}
 	if value.IsObject() {
-		childObjectType := value.Get("type").String()
 		value.ForEach(func(childKey, child gjson.Result) bool {
-			p.value(child, depth, label(childKey.Str)+": ", key, childKey.Str, childObjectType)
+			p.value(child, depth, label(childKey.Str)+": ")
 			return p.err == nil
 		})
 		return
@@ -105,43 +97,10 @@ func (p *printer) value(value gjson.Result, depth int, prefix, parent, key, obje
 			p.write("\n")
 		}
 		index++
-		p.value(child, depth, strconv.Itoa(index)+". ", "", "", "")
+		p.value(child, depth, strconv.Itoa(index)+". ")
 		previousRecord = record
 		return p.err == nil
 	})
-}
-
-// Only these API fields contain encoded media by contract. Names such as data,
-// content, or text on their own are deliberately not evidence of binary content.
-func encodedSummary(value gjson.Result, parent, key, objectType string) string {
-	media := key == "b64_json" || parent == "audio" && key == "data" ||
-		objectType == "speech.audio.delta" && key == "audio" ||
-		objectType == "image_generation_call" && key == "result" ||
-		objectType == "response.image_generation_call.partial_image" && key == "partial_image_b64" ||
-		objectType == "response.audio.delta" && key == "delta"
-	if value.Type == gjson.String && media {
-		// Check the encoding without allocating decoded media. Unexpected text in
-		// these fields should remain visible rather than be silently summarized.
-		if value.Str != "" {
-			_, err := io.Copy(io.Discard, base64.NewDecoder(base64.StdEncoding, strings.NewReader(value.Str)))
-			if err == nil {
-				return fmt.Sprintf("(%d base64 characters; use --format json for full value)", len(value.Str))
-			}
-		}
-	}
-	if key != "embedding" || !value.IsArray() {
-		return ""
-	}
-	count, numeric := 0, true
-	value.ForEach(func(_, item gjson.Result) bool {
-		numeric = item.Type == gjson.Number
-		count++
-		return numeric
-	})
-	if numeric && count > 0 {
-		return fmt.Sprintf("(%d numbers; use --format json for full vector)", count)
-	}
-	return ""
 }
 
 // Canonical snake_case labels have a unique readable form. Quote every other

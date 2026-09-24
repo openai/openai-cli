@@ -134,6 +134,43 @@ func TestReadableFormatSelectsDefaultTransformerOnce(t *testing.T) {
 	}
 }
 
+func TestReadableSummariesPreserveMetadataAndExplicitData(t *testing.T) {
+	const raw = `{"created":9007199254740993,"data":[{"b64_json":"aW1hZ2U="}],"metadata":{"b64_json":"test","type":"response.audio.delta","delta":"note"},"tools":[{"parameters":{"const":{"embedding":[1,2]}}}]}`
+	for _, format := range []string{"auto", "text", "json", "jsonl", "raw", "yaml", "pretty", "explore"} {
+		t.Run(format, func(t *testing.T) {
+			var out bytes.Buffer
+			opts := ShowJSONOpts{
+				Operation: "(resource) images > (method) generate", OutputKind: OutputResponse,
+				Format: format, ExplicitFormat: true, Stdout: &out, Stderr: io.Discard,
+			}
+			require.NoError(t, ShowJSON(gjson.Parse(raw), opts))
+			require.Contains(t, out.String(), "test")
+			require.Contains(t, out.String(), "note")
+			require.Contains(t, out.String(), "9007199254740993")
+			if format == "auto" || format == "text" {
+				require.Contains(t, out.String(), "B64 JSON: (8 base64 characters; use --format json for full value)")
+				require.Contains(t, out.String(), "B64 JSON: test")
+				require.Contains(t, out.String(), "Embedding:\n          1. 1\n          2. 2\n")
+			} else {
+				require.Contains(t, out.String(), "aW1hZ2U=")
+				require.NotContains(t, out.String(), "base64 characters")
+			}
+		})
+	}
+	for _, test := range []struct{ format, path, want string }{
+		{"auto", "metadata.b64_json", "\"test\"\n"},
+		{"text", "data.0.b64_json", "aW1hZ2U=\n"},
+	} {
+		var out bytes.Buffer
+		err := ShowJSON(gjson.Parse(raw), ShowJSONOpts{
+			Operation: "(resource) images > (method) generate", OutputKind: OutputResponse,
+			Format: test.format, Transform: test.path, Stdout: &out,
+		})
+		require.NoError(t, err)
+		require.Equal(t, test.want, out.String())
+	}
+}
+
 func TestReadableRegistrationNormalizesFormatAndPreservesAction(t *testing.T) {
 	calls := 0
 	root := &cli.Command{Name: "test", Flags: []cli.Flag{&cli.StringFlag{Name: "format", Value: "auto", Action: func(context.Context, *cli.Command, string) error { calls++; return nil }}}, Action: func(_ context.Context, command *cli.Command) error {

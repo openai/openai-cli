@@ -25,7 +25,7 @@ func TestAudioTranscriptionsCreate(t *testing.T) {
 			"--known-speaker-name", "string",
 			"--known-speaker-reference", "string",
 			"--language", "language",
-			"--language", "string",
+			"--languages", "string",
 			"--prompt", "prompt",
 			"--response-format", "json",
 			"--stream=false",

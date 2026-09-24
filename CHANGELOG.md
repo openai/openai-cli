@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.18.1](https://github.com/openai/openai-cli/compare/v1.18.0...v1.18.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **api:** make transcription language flags independently addressable ([#260](https://github.com/openai/openai-cli/issues/260)) ([95b2a72](https://github.com/openai/openai-cli/commit/95b2a72568b6f4c4b84d6b6710d969539f19c3e3))
+* **cli:** sanitize automatic terminal download streams ([#262](https://github.com/openai/openai-cli/issues/262)) ([f4f1cec](https://github.com/openai/openai-cli/commit/f4f1cec5d5b530cf8845b1604bc43c03847d8877))
+
 ## [1.18.0](https://github.com/openai/openai-cli/compare/v1.17.0...v1.18.0) (2026-09-24)
 
 
