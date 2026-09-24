@@ -31,9 +31,16 @@ bash testdata/demos/record.sh readable-output \
 ```
 
 Both SHA arguments must be full 40-character commit IDs. Readable output uses
-main as its comparison base. The shared runner also supports a `helpful-errors`
-scenario when that feature's tape is present; its comparison base is the
-readable-output parent. Use `DEMO_API_BINARY` to select another prebuilt fixture.
+main as its comparison base. For helpful errors, use the readable-output parent
+as the before commit and run:
+
+```sh
+bash testdata/demos/record.sh helpful-errors \
+  /path/to/before/openai /path/to/after/openai \
+  "$BEFORE_SHA" "$AFTER_SHA" dist/demos/helpful-errors
+```
+
+Use `DEMO_API_BINARY` to select another prebuilt fixture.
 
 The runner checks actual exit status and expected fixture text for each scene.
 Readable scenes expect exit 0; helpful-error scenes expect exit 1. The local

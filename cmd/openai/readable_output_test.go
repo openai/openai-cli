@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -213,15 +212,20 @@ func TestMainReadableKeepsAPIErrorOnStderr(t *testing.T) {
 	for _, prefix := range [][]string{nil, {"--format", "text"}, {"--format-error", "jsonl"}} {
 		args := append(prefix, "models", "retrieve", "model_synthetic")
 		got := runReadableCommand(t, server, args...)
-		wantPrefix := fmt.Sprintf("GET %q: 400 Bad Request\n", server.URL+"/models/model_synthetic")
-		if got.code != 1 || got.stdout != "" || !strings.HasPrefix(got.stderr, wantPrefix) {
-			t.Fatalf("error routing or prefix changed: %+v", got)
+		if got.code != 1 || got.stdout != "" {
+			t.Fatalf("error routing changed: %+v", got)
+		}
+		if len(prefix) == 0 || prefix[0] == "--format" {
+			if !strings.HasPrefix(got.stderr, "Request failed (400 Bad Request).\n") || strings.Contains(got.stderr, "synthetic invalid request") {
+				t.Fatalf("expected a safe readable error summary: %+v", got)
+			}
+			continue
 		}
 		var want, actual any
 		if err := json.Unmarshal([]byte(apiError), &want); err != nil {
 			t.Fatal(err)
 		}
-		if err := json.Unmarshal([]byte(strings.TrimPrefix(got.stderr, wantPrefix)), &actual); err != nil || !reflect.DeepEqual(actual, want) {
+		if err := json.Unmarshal([]byte(got.stderr), &actual); err != nil || !reflect.DeepEqual(actual, want) {
 			t.Fatalf("API error JSON changed: stderr=%q error=%v", got.stderr, err)
 		}
 	}

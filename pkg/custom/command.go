@@ -18,6 +18,7 @@ func ConfigureCommand(root *cli.Command) {
 	}
 	root.Metadata[configuredCommandMetadata] = true
 	configureReadableOutput(root)
+	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, mtlsClientFlags()...)
 	previousBefore := root.Before
 	root.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {

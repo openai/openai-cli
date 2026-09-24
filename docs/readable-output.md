@@ -40,9 +40,10 @@ format retain their page envelope; other data formats retain item output.
 openai files retrieve --file-id file-example --transform filename --raw-output
 ```
 
-Binary downloads keep their byte or file behavior. API error details go to
-stderr with the existing HTTP summary and default JSON formatting. Readable
-success output does not enable a new error presenter.
+Binary downloads keep their byte or file behavior. Errors use readable summaries
+on stderr unless a data format is selected. `--format-error` overrides the error
+format independently; see [error output](../README.md#usage) for precedence and
+structured error details.
 
 ## Scope of this change
 
