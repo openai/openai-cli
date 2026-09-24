@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/openai/openai-cli/pkg/cmd"
 	"github.com/openai/openai-cli/pkg/custom"
@@ -53,6 +54,11 @@ func main() {
 		if errors.As(err, &apierr) {
 			fmt.Fprintf(os.Stderr, "%s %q: %d %s\n", apierr.Request.Method, apierr.Request.URL, apierr.Response.StatusCode, http.StatusText(apierr.Response.StatusCode))
 			format := app.String("format-error")
+			// Keep the existing error presentation until its separate presenter
+			// is installed; successful automatic output now uses readable text.
+			if format == "" || strings.EqualFold(format, "auto") {
+				format = "json"
+			}
 			json := gjson.Parse(apierr.RawJSON())
 			show_err := cmd.ShowJSON(json, cmd.ShowJSONOpts{
 				// Error output has no successful-operation transformer routing.
@@ -61,6 +67,8 @@ func main() {
 				OutputKind:     custom.OutputUnspecified,
 				ExplicitFormat: app.IsSet("format-error"),
 				Format:         format,
+				Stdout:         os.Stderr,
+				Stderr:         os.Stderr,
 				Title:          "Error",
 				Transform:      app.String("transform-error"),
 			})
