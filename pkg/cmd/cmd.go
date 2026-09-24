@@ -30,8 +30,7 @@ func init() {
 		Suggest:   true,
 		Version:   Version,
 		ErrWriter: &CommandErrorBuffer,
-		Before:    configureMTLS,
-		Flags: append([]cli.Flag{
+		Flags: []cli.Flag{
 			&cli.BoolFlag{
 				Name:  "debug",
 				Usage: "Enable debug logging",
@@ -99,7 +98,7 @@ func init() {
 				Name:    "webhook-secret",
 				Sources: cli.EnvVars("OPENAI_WEBHOOK_SECRET"),
 			},
-		}, mtlsClientFlags()...),
+		},
 		Commands: []*cli.Command{
 			{
 				Name:     "completions",
@@ -289,11 +288,41 @@ func init() {
 				},
 			},
 			{
+				Name:     "safety:cases",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&safetyCasesRetrieve,
+				},
+			},
+			{
 				Name:     "safety:alerts",
 				Category: "API RESOURCE",
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&safetyAlertsRetrieve,
+				},
+			},
+			{
+				Name:     "webhooks",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&webhooksCreate,
+					&webhooksRetrieve,
+					&webhooksUpdate,
+					&webhooksList,
+					&webhooksDelete,
+					&webhooksRotateSecret,
+					&webhooksTest,
+				},
+			},
+			{
+				Name:     "webhooks:event-types",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&webhooksEventTypesList,
 				},
 			},
 			{
@@ -554,6 +583,18 @@ func init() {
 				Commands: []*cli.Command{
 					&adminOrganizationDataRetentionRetrieve,
 					&adminOrganizationDataRetentionUpdate,
+				},
+			},
+			{
+				Name:     "admin:organization:external-storage",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&adminOrganizationExternalStorageCreate,
+					&adminOrganizationExternalStorageRetrieve,
+					&adminOrganizationExternalStorageList,
+					&adminOrganizationExternalStorageDelete,
+					&adminOrganizationExternalStorageValidate,
 				},
 			},
 			{
@@ -971,6 +1012,7 @@ func init() {
 		},
 		HideHelpCommand: true,
 	}
+	configureCustomCommand(Command)
 }
 
 func generateManpages(ctx context.Context, c *cli.Command) error {

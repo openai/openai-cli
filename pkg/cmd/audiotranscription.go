@@ -63,7 +63,7 @@ var audioTranscriptionsCreate = cli.Command{
 			BodyPath: "language",
 		},
 		&requestflag.Flag[[]string]{
-			Name:     "language",
+			Name:     "languages",
 			Usage:    "Possible languages of the input audio, in [ISO-639-1](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) format. Supported by `gpt-transcribe`.\n",
 			BodyPath: "languages",
 		},
@@ -136,6 +136,9 @@ func handleAudioTranscriptionsCreate(ctx context.Context, cmd *cli.Command) erro
 			maxItems = cmd.Value("max-items").(int64)
 		}
 		return ShowJSONIterator(stream, maxItems, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) audio.transcriptions > (method) create",
+			OutputKind:     outputStreamEvent,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),
@@ -152,6 +155,9 @@ func handleAudioTranscriptionsCreate(ctx context.Context, cmd *cli.Command) erro
 
 		obj := gjson.ParseBytes(res)
 		return ShowJSON(obj, ShowJSONOpts{
+			Context:        ctx,
+			Operation:      "(resource) audio.transcriptions > (method) create",
+			OutputKind:     outputResponse,
 			ExplicitFormat: explicitFormat,
 			Format:         format,
 			RawOutput:      cmd.Root().Bool("raw-output"),

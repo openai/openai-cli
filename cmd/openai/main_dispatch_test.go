@@ -38,6 +38,12 @@ func runMainDispatch(t *testing.T, style string, argv ...string) mainDispatchRes
 
 func runMainDispatchWithEnv(t *testing.T, style string, env []string, argv ...string) mainDispatchResult {
 	t.Helper()
+	return runMainDispatchWithStdin(t, style, env, nil, argv...)
+}
+
+// runMainDispatchWithStdin connects stdin to the given file when it is not nil.
+func runMainDispatchWithStdin(t *testing.T, style string, env []string, stdin *os.File, argv ...string) mainDispatchResult {
+	t.Helper()
 	binary, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -56,6 +62,9 @@ func runMainDispatchWithEnv(t *testing.T, style string, env []string, argv ...st
 	child.Env = append(child.Env, "OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "COMPLETION_STYLE="+style,
 		"OPENAI_BASE_URL=http://127.0.0.1:1")
 	child.Env = append(child.Env, env...)
+	if stdin != nil {
+		child.Stdin = stdin
+	}
 	var stdout, stderr bytes.Buffer
 	child.Stdout, child.Stderr = &stdout, &stderr
 	err = child.Run()
@@ -107,7 +116,7 @@ func TestMainDispatchOrdinaryArguments(t *testing.T) {
 
 func TestMainDispatchEmptyArguments(t *testing.T) {
 	want := runMainDispatch(t, "bash", "openai", "--help")
-	if want.code != 0 || want.stderr != "" || !strings.Contains(want.stdout, "CLI for the openai API") {
+	if want.code != 0 || want.stderr != "" || !strings.Contains(want.stdout, "OpenAI CLI") {
 		t.Fatalf("root help control failed: %+v", want)
 	}
 	for _, argv := range [][]string{nil, {"openai"}, {""}, {"__complete"}, {"openai", "", "--help"}} {

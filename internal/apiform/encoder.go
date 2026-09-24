@@ -3,14 +3,27 @@ package apiform
 import (
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/textproto"
 	"path"
 	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 )
+
+// formatFloat renders a float field value for a multipart part body. Non-finite
+// values (NaN, +Inf, -Inf) have no valid multipart representation; reject them
+// the way encoding/json rejects them ("json: unsupported value: +Inf") instead
+// of writing "+Inf"/"NaN" on the wire.
+func formatFloat(f float64, bitSize int) (string, error) {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return "", fmt.Errorf("apiform: unsupported value: %s", strconv.FormatFloat(f, 'g', -1, bitSize))
+	}
+	return strconv.FormatFloat(f, 'f', -1, bitSize), nil
+}
 
 // Marshal encodes a value as multipart form data using default settings
 func Marshal(value any, writer *multipart.Writer) error {
@@ -94,10 +107,18 @@ func (e *encoder) encodeValue(key string, val reflect.Value, writer *multipart.W
 		return writer.WriteField(key, strconv.FormatUint(val.Uint(), 10))
 
 	case reflect.Float32:
-		return writer.WriteField(key, strconv.FormatFloat(val.Float(), 'f', -1, 32))
+		strVal, err := formatFloat(val.Float(), 32)
+		if err != nil {
+			return err
+		}
+		return writer.WriteField(key, strVal)
 
 	case reflect.Float64:
-		return writer.WriteField(key, strconv.FormatFloat(val.Float(), 'f', -1, 64))
+		strVal, err := formatFloat(val.Float(), 64)
+		if err != nil {
+			return err
+		}
+		return writer.WriteField(key, strVal)
 
 	default:
 		return fmt.Errorf("unknown type: %s", t.String())
@@ -130,9 +151,17 @@ func (e *encoder) encodeArray(key string, val reflect.Value, writer *multipart.W
 			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 				strValue = strconv.FormatUint(item.Uint(), 10)
 			case reflect.Float32:
-				strValue = strconv.FormatFloat(item.Float(), 'f', -1, 32)
+				s, err := formatFloat(item.Float(), 32)
+				if err != nil {
+					return err
+				}
+				strValue = s
 			case reflect.Float64:
-				strValue = strconv.FormatFloat(item.Float(), 'f', -1, 64)
+				s, err := formatFloat(item.Float(), 64)
+				if err != nil {
+					return err
+				}
+				strValue = s
 			case reflect.Bool:
 				strValue = strconv.FormatBool(item.Bool())
 			default:
@@ -179,6 +208,32 @@ func escapeQuotes(s string) string {
 	return quoteEscaper.Replace(s)
 }
 
+func multipartBaseName(name string) string {
+	return multipartBaseNameForOS(name, runtime.GOOS)
+}
+
+func multipartBaseNameForOS(name, goos string) string {
+	windowsPath := isWindowsPath(name)
+	if windowsPath && len(name) >= 2 && name[1] == ':' {
+		name = name[2:]
+	}
+	if goos == "windows" || windowsPath {
+		name = strings.ReplaceAll(name, `\`, "/")
+	}
+	return path.Base(name)
+}
+
+func isWindowsPath(name string) bool {
+	if strings.HasPrefix(name, `\\`) {
+		return true
+	}
+	if len(name) < 2 || name[1] != ':' {
+		return false
+	}
+	drive := name[0]
+	return (drive >= 'A' && drive <= 'Z') || (drive >= 'a' && drive <= 'z')
+}
+
 func validateMIMEHeaderValue(value, component string) error {
 	for i := 0; i < len(value); i++ {
 		if (value[i] < ' ' && value[i] != '\t') || value[i] == '\x7f' {
@@ -202,7 +257,7 @@ func (e *encoder) encodeReader(key string, val reflect.Value, writer *multipart.
 	if named, ok := reader.(interface{ Filename() string }); ok {
 		filename = named.Filename()
 	} else if named, ok := reader.(interface{ Name() string }); ok {
-		filename = path.Base(named.Name())
+		filename = multipartBaseName(named.Name())
 	}
 
 	// Get content type if available

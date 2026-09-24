@@ -1,11 +1,28 @@
 # Contributing to the OpenAI CLI
 
+## Contribution policy
+
+We welcome bug reports, feature requests, minimal reproductions, and root-cause
+analysis through [GitHub issues](https://github.com/openai/openai-cli/issues).
+
+**Pull requests are limited to repository collaborators. We do not accept pull
+requests from non-collaborators**, including documentation or example changes.
+If you are not a collaborator, please open an issue instead of preparing a pull
+request. Include the affected version, expected and actual behavior, and a small,
+sanitized reproduction when applicable.
+
+Report suspected security vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md), rather than in issues or pull requests.
+
+The development and pull request instructions below are for maintainers and
+repository collaborators.
+
 Thank you for helping improve the OpenAI CLI. Read [README.md](README.md),
 [AGENTS.md](AGENTS.md), and [SECURITY.md](SECURITY.md) before making changes.
 
 ## Setting up the environment
 
-Use the Go version required by `go.mod`; the CLI currently requires Go 1.25 or
+Use the Go version required by `go.mod`; the CLI currently requires Go 1.26 or
 later. The integration tests also require Node.js 14.18 or later, Git, `curl`, `unzip`, and `lsof`. Review dependency origins and executable setup
 scripts before running:
 
