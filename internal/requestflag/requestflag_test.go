@@ -1239,3 +1239,77 @@ func TestApplyStdinDataToFlags(t *testing.T) {
 		assert.False(t, flag.IsSet())
 	})
 }
+
+func TestNonFiniteFloatFlagsRejected(t *testing.T) {
+	t.Parallel()
+
+	// strconv.ParseFloat accepts these spellings of infinity and NaN, but they
+	// have no valid wire representation: JSON encoding fails late with
+	// "json: unsupported value" and multipart encoding would put "+Inf"/"NaN"
+	// on the wire. Flag parsing must reject them up front.
+	inputs := []string{
+		"inf", "-inf", "+inf", "Inf", "-Inf", "+Inf", "INF", "-INFINITY",
+		"infinity", "-infinity", "Infinity", "InFiNiTy",
+		"nan", "-nan", "+nan", "NaN", "NAN", "nAn",
+	}
+
+	for _, input := range inputs {
+		t.Run("Flag[float64] rejects "+input, func(t *testing.T) {
+			t.Parallel()
+			cv := &cliValue[float64]{}
+			assert.ErrorContains(t, cv.Set(input), input)
+		})
+
+		t.Run("Flag[*float64] rejects "+input, func(t *testing.T) {
+			t.Parallel()
+			cv := &cliValue[*float64]{}
+			assert.ErrorContains(t, cv.Set(input), input)
+		})
+
+		t.Run("Flag[[]float64] rejects "+input, func(t *testing.T) {
+			t.Parallel()
+			cv := &cliValue[[]float64]{}
+			assert.ErrorContains(t, cv.Set(input), input)
+		})
+	}
+}
+
+func TestFiniteFloatFlagsStillAccepted(t *testing.T) {
+	t.Parallel()
+
+	assertJSONBody := func(t *testing.T, value any, expected string) {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{"foo": value})
+		assert.NoError(t, err)
+		assert.JSONEq(t, expected, string(body))
+	}
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"1.5", `{"foo":1.5}`},
+		{"-2.25", `{"foo":-2.25}`},
+		{"1e3", `{"foo":1000}`},
+		{"1E+2", `{"foo":100}`},
+		{"5e-3", `{"foo":0.005}`},
+		{"-0", `{"foo":0}`},
+		{"1.7976931348623157e308", `{"foo":1.7976931348623157e308}`},
+	}
+
+	for _, tt := range tests {
+		t.Run("Flag[float64] accepts "+tt.input, func(t *testing.T) {
+			t.Parallel()
+			cv := &cliValue[float64]{}
+			assert.NoError(t, cv.Set(tt.input))
+			assertJSONBody(t, cv.Get(), tt.want)
+		})
+
+		t.Run("Flag[*float64] accepts "+tt.input, func(t *testing.T) {
+			t.Parallel()
+			cv := &cliValue[*float64]{}
+			assert.NoError(t, cv.Set(tt.input))
+			assertJSONBody(t, cv.Get(), tt.want)
+		})
+	}
+}

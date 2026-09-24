@@ -119,6 +119,9 @@ func handleConversationsCreate(ctx context.Context, cmd *cli.Command) error {
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) conversations > (method) create",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -161,6 +164,9 @@ func handleConversationsRetrieve(ctx context.Context, cmd *cli.Command) error {
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) conversations > (method) retrieve",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -210,6 +216,9 @@ func handleConversationsUpdate(ctx context.Context, cmd *cli.Command) error {
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) conversations > (method) update",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
@@ -252,6 +261,9 @@ func handleConversationsDelete(ctx context.Context, cmd *cli.Command) error {
 	explicitFormat := cmd.Root().IsSet("format")
 	transform := cmd.Root().String("transform")
 	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) conversations > (method) delete",
+		OutputKind:     outputResponse,
 		ExplicitFormat: explicitFormat,
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),

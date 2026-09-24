@@ -3,6 +3,7 @@ package requestflag
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -12,6 +13,23 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/urfave/cli/v3"
 )
+
+// parseFiniteFloat parses value as a float64 and rejects the non-finite
+// spellings accepted by strconv.ParseFloat ("inf", "-inf", "nan", "infinity",
+// in any case). They have no valid wire representation: JSON request bodies
+// fail late with "json: unsupported value" and multipart bodies would send
+// "+Inf"/"NaN". The returned error is the same *strconv.NumError reported for
+// malformed numeric input.
+func parseFiniteFloat(value string) (float64, error) {
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, err
+	}
+	if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return 0, &strconv.NumError{Func: "ParseFloat", Num: value, Err: strconv.ErrSyntax}
+	}
+	return parsed, nil
+}
 
 // formatForFlagSet converts a Go value parsed from YAML/JSON stdin data into a string
 // that flag.Set (and thus parseCLIArg) can parse correctly for each flag type.
@@ -430,7 +448,15 @@ func (f *Flag[T]) GetValue() string {
 }
 
 func (f *Flag[T]) GetDefaultText() string {
-	return f.DefaultText
+	if f.DefaultText != "" {
+		return f.DefaultText
+	}
+	if f.hasUnsetNullableDefault() {
+		return ""
+	}
+	// Help can inspect a command before its flags have been parsed. Read the
+	// declared default without invoking parsing or validation.
+	return (&cliValue[T]{f.Default}).String()
 }
 
 // GetEnvVars returns the env vars for this flag
@@ -439,7 +465,16 @@ func (f *Flag[T]) GetEnvVars() []string {
 }
 
 func (f *Flag[T]) IsDefaultVisible() bool {
-	return !f.HideDefault
+	// Prevent the renderer from falling back to the parsed value when the
+	// default text is empty: an explicit null is still not the default.
+	return !f.HideDefault && !f.hasUnsetNullableDefault()
+}
+
+func (f *Flag[T]) hasUnsetNullableDefault() bool {
+	// An unset nullable flag is omitted. Const flags are always sent, while
+	// DefaultText explicitly supplies the help description of a default.
+	value := reflect.ValueOf(f.Default)
+	return !f.Const && f.DefaultText == "" && value.Kind() == reflect.Pointer && value.IsNil()
 }
 
 func (f *Flag[T]) TypeName() string {
@@ -570,7 +605,7 @@ func parseCLIArg[
 	case int64:
 		parsedValue, err = strconv.ParseInt(value, 0, 64)
 	case float64:
-		parsedValue, err = strconv.ParseFloat(value, 64)
+		parsedValue, err = parseFiniteFloat(value)
 	case bool:
 		parsedValue, err = strconv.ParseBool(value)
 	case DateTimeValue:
@@ -607,7 +642,7 @@ func parseCLIArg[
 		}
 	case *float64:
 		var v float64
-		v, err = strconv.ParseFloat(value, 64)
+		v, err = parseFiniteFloat(value)
 		if err == nil {
 			parsedValue = &v
 		}
@@ -946,22 +981,29 @@ func (c *cliValue[T]) SetInnerField(field string, val any) {
 	flagValReflect := reflect.ValueOf(flagVal)
 	switch flagValReflect.Kind() {
 	case reflect.Slice:
-		if flagValReflect.Type().Elem().Kind() != reflect.Map {
+		// An untyped outer flag holds a []any once it is set from a JSON or YAML array
+		// literal, so elements are dispatched by their dynamic type rather than by the
+		// static element kind.
+		switch flagValReflect.Type().Elem().Kind() {
+		case reflect.Map, reflect.Interface:
+		default:
 			return
 		}
 
 		sliceLen := flagValReflect.Len()
 		if sliceLen > 0 {
 			// Check if the last element already has the InnerField
-			lastElement := flagValReflect.Index(sliceLen - 1).Interface().(map[string]any)
-			if _, hasInnerField := lastElement[field]; !hasInnerField {
-				if lastElement == nil {
-					lastElement = make(map[string]any)
-					flagValReflect.Index(sliceLen - 1).Set(reflect.ValueOf(lastElement))
+			lastElement, isObject := flagValReflect.Index(sliceLen - 1).Interface().(map[string]any)
+			if isObject {
+				if _, hasInnerField := lastElement[field]; !hasInnerField {
+					if lastElement == nil {
+						lastElement = make(map[string]any)
+						flagValReflect.Index(sliceLen - 1).Set(reflect.ValueOf(lastElement))
+					}
+					// Last element doesn't have the field, set it
+					lastElement[field] = val
+					return
 				}
-				// Last element doesn't have the field, set it
-				lastElement[field] = val
-				return
 			}
 		}
 

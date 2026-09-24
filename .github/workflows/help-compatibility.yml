@@ -1,0 +1,39 @@
+name: Help compatibility
+
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+jobs:
+  help:
+    name: Help on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            shells: bash,zsh
+          - os: ubuntu-latest
+            shells: bash
+          - os: windows-latest
+            shells: cmd,powershell,pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          check-latest: true
+      - name: Test help
+        run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
+      - name: Test command dispatch and native shells
+        run: go test ./cmd/openai -run '^(TestMainHelp|TestMainDispatch|TestMainNativeShell)' -count=1 -v
+        env:
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
