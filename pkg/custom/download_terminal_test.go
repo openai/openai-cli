@@ -6,10 +6,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
 )
 
 func TestAutomaticDownloadEscapesWholeStream(t *testing.T) {
@@ -64,6 +66,38 @@ func TestAutomaticDownloadPreservesLateReadError(t *testing.T) {
 		if want := strings.Repeat("x", 4096) + `\u001b` + "�"; output.String() != want {
 			t.Errorf("output length = %d, want %d; suffix = %q", output.Len(), len(want), output.String()[4096:])
 		}
+	}
+}
+
+func TestAutomaticDownloadHonorsHTTPContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	first := strings.Repeat("x", 4096)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.WriteString(w, first); err != nil {
+			t.Errorf("write first chunk: %v", err)
+			return
+		}
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	stdout := &cancelingDownloadWriter{cancel: cancel}
+	_, err = writeAutomaticBinaryResponse(response, stdout)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("writeAutomaticBinaryResponse(canceled HTTP stream) = %v, want %v", err, context.Canceled)
+	}
+	if stdout.written != int64(len(first)) {
+		t.Errorf("writeAutomaticBinaryResponse(canceled HTTP stream) wrote %d bytes, want %d", stdout.written, len(first))
 	}
 }
 
