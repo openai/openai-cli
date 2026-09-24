@@ -433,16 +433,38 @@ func rebuildColonSeparatedArgs(root *cli.Command, args []string) []string {
 
 func commandTailStartsAt(cmd *cli.Command, args []string) bool {
 	matched := false
-	for _, arg := range args {
+	lineage := []*cli.Command{cmd}
+	flags := completionFlags(lineage)
+	for i := 0; i < len(args); {
+		arg := args[i]
 		if isFlag(arg) {
-			return matched
+			flag := findFlag(flags, arg)
+			if flag == nil {
+				// A final partial flag can still belong to the command path being
+				// completed. An unknown flag before more tokens cannot establish
+				// a valid boundary.
+				return matched && i == len(args)-1
+			}
+			if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() {
+				if i+1 >= len(args) {
+					return matched
+				}
+				i += 2
+			} else {
+				i++
+			}
+			continue
 		}
+
 		child := findChild(cmd, arg)
 		if child == nil {
 			return false
 		}
 		matched = true
 		cmd = child
+		lineage = append(lineage, child)
+		flags = completionFlags(lineage)
+		i++
 	}
 	return matched
 }
