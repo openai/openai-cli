@@ -95,7 +95,7 @@ fi
   echo "after binary: $demo_after"
   echo "data: fixed synthetic responses from local demo-api; fake key; no live OpenAI requests"
   echo "capture: real PTY, stdin/stdout/stderr verified as terminals, bash --noprofile --norc"
-  echo "render: terminal replay using asciinema + agg swash, Menlo 22px, Dracula, 90 columns x 24 rows, line height 1.2, maximum 20 fps"
+  echo "render: each scene replayed with asciinema + agg swash, then full GIF frames joined by ffmpeg; Menlo 22px, Dracula, 90 columns x 24 rows, line height 1.2, maximum 20 fps"
   echo "scope: no native Apple Terminal, PowerShell, or cmd.exe capture"
   echo "recipe: record.sh; comparison.tape is the preserved VHS recipe, not the renderer used"
   uname -sm
@@ -135,6 +135,8 @@ for demo_scene in before after explicit-json; do
       "$demo_output/$demo_scene.cast"; then demo_status=0; else demo_status=$?; fi
   echo "$demo_scene exit status: $demo_status (expected $demo_expected_status)" >> "$demo_output/metadata.txt"
   test "$demo_status" -eq "$demo_expected_status"
+  "$demo_agg" --quiet "${demo_render_options[@]}" \
+    "$demo_output/$demo_scene.cast" "$demo_output/$demo_scene.gif"
   "$demo_agg" --quiet "${demo_render_options[@]}" --select 100% \
     "$demo_output/$demo_scene.cast" "$demo_output/$demo_scene-frame.gif"
   "$demo_ffmpeg" -hide_banner -loglevel error -y \
@@ -157,8 +159,17 @@ ASCIINEMA_CONFIG_HOME="$demo_runtime/asciinema-config" \
 ASCIINEMA_STATE_HOME="$demo_runtime/asciinema-state" \
   "$demo_asciinema" cat "$demo_output/before.cast" "$demo_output/after.cast" \
     "$demo_output/explicit-json.cast" > "$demo_output/comparison.cast"
-"$demo_agg" --quiet "${demo_render_options[@]}" \
-  "$demo_output/comparison.cast" "$demo_output/comparison.gif"
+# Rendering a merged cast can retain partial glyphs across screen clears in
+# agg 1.9.0. Join the independently rendered replays, retaining their timing.
+# Fixed relative names also avoid escaping output paths in ffmpeg's file list.
+(
+  cd "$demo_output"
+  printf "file '%s.gif'\n" before after explicit-json > comparison-scenes.txt
+  "$demo_ffmpeg" -hide_banner -loglevel error -y \
+    -f concat -safe 1 -i comparison-scenes.txt \
+    -filter_complex '[0:v]split[a][b];[a]palettegen[p];[b][p]paletteuse' \
+    -vsync 0 -gifflags 0 -loop 0 -final_delay 350 comparison.gif
+)
 # Convert each scene separately so clearing the screen between scenes does not
 # erase earlier scenes from the combined plain-text transcript.
 cat "$demo_output/before.txt" "$demo_output/after.txt" \

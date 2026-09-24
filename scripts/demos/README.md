@@ -55,9 +55,16 @@ If Menlo is unavailable, supply it locally before recording so styling matches.
 Terminal color detection can add a delay; recorded output and timing are not
 rewritten.
 
+Each original scene is rendered separately with agg, then ffmpeg joins the
+full GIF frames while retaining the recorded timing and final pauses (within
+GIF timing precision). This avoids partial glyphs that agg 1.9.0 can retain
+across screen clears in a merged recording. The combined cast is preserved
+alongside the individual captures for provenance.
+
 The output folder contains `comparison.gif`, `before.png`, `after.png`,
-`explicit-json.png`, individual and combined `.cast` files, text transcripts,
-and the retained VHS tape. `metadata.txt` and `media.json` record commits,
+`explicit-json.png`, individual scene GIFs and their `comparison-scenes.txt`
+list, individual and combined `.cast` files, text transcripts, and the retained
+VHS tape. `metadata.txt` and `media.json` record commits,
 hashes, actual exit codes, OS, shell, tool versions, dimensions and duration.
 
 Inspect the GIF and screenshots for readable text, clipping, timing, correct
