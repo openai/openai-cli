@@ -5,8 +5,8 @@ and when stdout is piped or redirected. `--format auto` and `--format text`
 select this behavior explicitly. For example:
 
 ```sh
-openai files retrieve file-example
-openai files retrieve file-example | cat
+openai files retrieve --file-id file-example
+openai files retrieve --file-id file-example | cat
 ```
 
 Objects show labeled fields, nested values stay grouped, and list items and
@@ -25,7 +25,7 @@ The default for pipes has changed from JSON to readable text. Scripts that parse
 responses must select their format explicitly:
 
 ```sh
-openai --format json files retrieve file-example
+openai --format json files retrieve --file-id file-example
 openai --format jsonl models list | jq '.id'
 ```
 
@@ -37,7 +37,7 @@ format retain their page envelope; other data formats retain item output.
 `--transform` and `--raw-output` keep their extraction behavior:
 
 ```sh
-openai files retrieve file-example --transform filename --raw-output
+openai files retrieve --file-id file-example --transform filename --raw-output
 ```
 
 Binary downloads keep their byte or file behavior. API error details go to
