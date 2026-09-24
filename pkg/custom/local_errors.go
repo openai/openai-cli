@@ -146,7 +146,9 @@ func knownLocalError(command *cli.Command, message string) string {
 	switch {
 	case strings.HasPrefix(message, "flag provided but not defined: -"):
 		return "An option is not recognized. Check the command's available options with --help."
-	case strings.HasPrefix(message, "Unknown help topic "), strings.HasPrefix(message, "No help topic for '"):
+	case strings.HasPrefix(message, "No help topic for '"):
+		return unknownCommandErrorMessage(command)
+	case strings.HasPrefix(message, "Unknown help topic "):
 		return "Unknown help topic. Run openai help --all to see commands."
 	case strings.HasPrefix(message, "Failed to parse piped data as YAML/JSON:\n"):
 		return "Could not parse piped input as YAML or JSON. Check the input's syntax."
@@ -157,6 +159,28 @@ func knownLocalError(command *cli.Command, message string) string {
 		return "The request body is not supported for this binary endpoint. Check the command's input options with --help."
 	}
 	return ""
+}
+
+func unknownCommandErrorMessage(command *cli.Command) string {
+	// Reuse the matcher with parsed arguments, never a suggestion copied from
+	// the error string. It emits only names from the local command declarations.
+	if command != nil {
+		command = command.Root()
+	}
+	for command != nil && command.Args() != nil && command.Args().Present() {
+		name := command.Args().First()
+		if next := command.Command(name); next != nil {
+			command = next
+			continue
+		}
+		if command.Suggest {
+			if suggestion := suggestCommand(command.Commands, name); suggestion != "" {
+				return "Unknown help topic. " + suggestion
+			}
+		}
+		break
+	}
+	return "Unknown help topic. Run openai help --all to see commands."
 }
 
 func afterQuotedValue(message, prefix string) (string, bool) {
