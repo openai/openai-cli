@@ -191,6 +191,37 @@ func TestMainHelpFullReferenceRoutes(t *testing.T) {
 	}
 }
 
+func TestMainHelpFullReferenceNullableDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		path              []string
+		flag, wantDefault string
+	}{
+		{[]string{"beta:assistants", "create"}, "--description string", ""},
+		{[]string{"images", "generate"}, "--output-format string", "(default: png)"},
+	} {
+		t.Run(strings.Join(tc.path, "/"), func(t *testing.T) {
+			got := runMainDispatch(t, "bash", append([]string{"openai", "help", "--all"}, tc.path...)...)
+			if got.code != 0 || got.stderr != "" {
+				t.Fatalf("full reference failed: %+v", got)
+			}
+			_, details, found := strings.Cut(got.stdout, tc.flag)
+			if !found {
+				t.Fatalf("full reference lost %s", tc.flag)
+			}
+			// Keep wrapped prose and defaults, stopping at the next flag.
+			details, _, _ = strings.Cut(details, "\n   --")
+			details = strings.Join(strings.Fields(details), " ")
+			if tc.wantDefault == "" {
+				if strings.Contains(details, "(default:") {
+					t.Errorf("unset nullable flag advertises a default: %s%s", tc.flag, details)
+				}
+			} else if !strings.Contains(details, tc.wantDefault) {
+				t.Errorf("flag lost %q: %s%s", tc.wantDefault, tc.flag, details)
+			}
+		})
+	}
+}
+
 func TestMainHelpFullReferenceDoesNotPrintCredentials(t *testing.T) {
 	env := []string{
 		"OPENAI_API_KEY=fake-env-api-key", "OPENAI_ADMIN_KEY=fake-env-admin-key",
