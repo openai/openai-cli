@@ -467,6 +467,7 @@ func TestWriteAutomaticBinaryResponsePreservesDetectionAndFilenames(t *testing.T
 		wantStdout      bool
 		wantFilename    string
 		wantExtension   string
+		wantText        string
 	}{
 		{name: "empty text", content: nil, wantStdout: true},
 		{name: "plain text", content: []byte("plain text\n"), wantStdout: true},
@@ -480,11 +481,13 @@ func TestWriteAutomaticBinaryResponsePreservesDetectionAndFilenames(t *testing.T
 			name:       "valid UTF-8 with a control byte after the sniff boundary",
 			content:    append(bytes.Repeat([]byte("a"), 1024), 0),
 			wantStdout: true,
+			wantText:   strings.Repeat("a", 1024) + `\u0000`,
 		},
 		{
 			name:       "invalid UTF-8 after the bounded sniff boundary streams as text",
 			content:    append(bytes.Repeat([]byte("a"), 4096), 0xff),
 			wantStdout: true,
+			wantText:   strings.Repeat("a", 4096) + "�",
 		},
 		{
 			name:          "invalid UTF-8 in the sampled prefix",
@@ -524,8 +527,12 @@ func TestWriteAutomaticBinaryResponsePreservesDetectionAndFilenames(t *testing.T
 				if message != "" {
 					t.Errorf("writeAutomaticBinaryResponse(%q) message = %q, want empty", test.name, message)
 				}
-				if !bytes.Equal(stdout.Bytes(), test.content) {
-					t.Errorf("writeAutomaticBinaryResponse(%q) stdout = %q, want %q", test.name, stdout.Bytes(), test.content)
+				want := string(test.content)
+				if test.wantText != "" {
+					want = test.wantText
+				}
+				if stdout.String() != want {
+					t.Errorf("writeAutomaticBinaryResponse(%q) stdout = %q, want %q", test.name, stdout.Bytes(), want)
 				}
 				return
 			}

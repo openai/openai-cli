@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/help"
+	"charm.land/bubbles/v2/help"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
