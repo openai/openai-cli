@@ -12,10 +12,13 @@ generation inputs. Establish whether the generator owns a file before editing
 it. Fix recurring generated defects in the authoritative schema or generator
 when available instead of introducing broad manual changes.
 
-The CLI entrypoint, `internal/` packages, and selected files such as
-`pkg/cmd/flagoptions.go` and `pkg/cmd/mtls.go` contain handwritten behavior.
-Keep changes focused and preserve command compatibility, generated ownership,
-and the intentionally separate `api_reference/go.mod` module.
+Handwritten CLI behavior lives in `pkg/custom/`; API response selection and
+reshaping live in `pkg/transformers/`. Use cohesive `internal/` helpers for
+shared implementation, including text rendering and terminal escaping.
+Keep `cmd/openai/main.go` focused on startup and wiring. Reuse existing packages
+and explain the distinct responsibility of any new package. Preserve command
+compatibility, generated ownership, and the separate `api_reference/go.mod`
+module.
 
 ## Custom-code budget
 

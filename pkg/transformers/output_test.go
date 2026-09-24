@@ -8,7 +8,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestInitialTransformersPreserveResponses(t *testing.T) {
+func TestUnknownRoutesPreserveResponses(t *testing.T) {
 	for _, operation := range []string{"", "images.generate", "responses.list"} {
 		for _, kind := range []OutputKind{OutputUnspecified, OutputResponse, OutputPageItem, OutputStreamEvent} {
 			value := gjson.Parse("{ \"id\" : \"synthetic\", \"data\" : [1, 2] }")

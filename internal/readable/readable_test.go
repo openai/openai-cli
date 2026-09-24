@@ -38,7 +38,7 @@ func TestWriteEndpoints(t *testing.T) {
 			name:  "embedding",
 			input: `{"data":[{"object":"embedding","index":0,"embedding":[0.1,-2,3e-5]}],"model":"embedding-example","usage":{"prompt_tokens":3,"total_tokens":3}}`,
 			want: "Data:\n  1.\n    Object: embedding\n    Index: 0\n" +
-				"    Embedding: (3 numbers; use --format json for full vector)\n" +
+				"    Embedding:\n      1. 0.1\n      2. -2\n      3. 3e-5\n" +
 				"Model: embedding-example\nUsage:\n  Prompt tokens: 3\n  Total tokens: 3\n",
 		},
 		{
@@ -76,12 +76,12 @@ func TestWriteScalarsAndEmptyContainers(t *testing.T) {
 	}
 }
 
-func TestWriteOnlySummarizesKnownEncodedFields(t *testing.T) {
+func TestWritePreservesEncodedLookingFields(t *testing.T) {
 	t.Parallel()
 	input := `{"b64_json":"aW1hZ2U=","audio":{"data":"YXVkaW8=","transcript":"complete spoken text"},"data":"aW1hZ2U=","content":"YXVkaW8=","audio.data":"literal value","other":{"data":"YXVkaW8="},"unexpected":{"b64_json":"readable unexpected text"}}`
 	got := render(t, input)
-	want := "B64 JSON: (8 base64 characters; use --format json for full value)\n" +
-		"Audio:\n  Data: (8 base64 characters; use --format json for full value)\n  Transcript: complete spoken text\n" +
+	want := "B64 JSON: aW1hZ2U=\n" +
+		"Audio:\n  Data: YXVkaW8=\n  Transcript: complete spoken text\n" +
 		"Data: aW1hZ2U=\nContent: YXVkaW8=\n\"audio.data\": literal value\nOther:\n  Data: YXVkaW8=\n" +
 		"Unexpected:\n  B64 JSON: readable unexpected text\n"
 	if got != want {
@@ -89,7 +89,7 @@ func TestWriteOnlySummarizesKnownEncodedFields(t *testing.T) {
 	}
 }
 
-func TestWriteSummarizesOnlyTypedMediaFields(t *testing.T) {
+func TestWritePreservesEncodedLookingTypes(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ kind, field string }{
 		{"speech.audio.delta", "audio"},
@@ -101,8 +101,8 @@ func TestWriteSummarizesOnlyTypedMediaFields(t *testing.T) {
 			const encoded = "c3ludGhldGljLW1lZGlh"
 			input := `{"type":"` + tc.kind + `","` + tc.field + `":"` + encoded + `"}`
 			got := render(t, input)
-			if !strings.Contains(got, tc.kind) || !strings.Contains(got, "--format json") || strings.Contains(got, encoded) {
-				t.Fatalf("known media was not summarized: %q", got)
+			if !strings.Contains(got, tc.kind) || !strings.Contains(got, encoded) || strings.Contains(got, "--format json") {
+				t.Fatalf("renderer changed a field based on its name or type: %q", got)
 			}
 			for _, input := range []string{
 				`{"type":"unfamiliar","` + tc.field + `":"` + encoded + `"}`,
