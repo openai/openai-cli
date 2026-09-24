@@ -16,7 +16,7 @@ Run from the repository root. Build the fixture into the ignored output folder:
 
 ```sh
 mkdir -p dist/demos/bin
-go build -o dist/demos/bin/demo-api ./testdata/demos/main.go
+go build -o dist/demos/bin/demo-api ./scripts/demos/main.go
 ```
 
 Independently build a before CLI from the comparison base and an after CLI from
@@ -25,7 +25,7 @@ the recorder logs commit IDs and file hashes but cannot establish provenance.
 Then run:
 
 ```sh
-bash testdata/demos/record.sh readable-output \
+bash scripts/demos/record.sh readable-output \
   /path/to/before/openai /path/to/after/openai \
   "$BEFORE_SHA" "$AFTER_SHA" dist/demos/readable-output
 ```
@@ -35,7 +35,7 @@ main as its comparison base. For helpful errors, use the readable-output parent
 as the before commit and run:
 
 ```sh
-bash testdata/demos/record.sh helpful-errors \
+bash scripts/demos/record.sh helpful-errors \
   /path/to/before/openai /path/to/after/openai \
   "$BEFORE_SHA" "$AFTER_SHA" dist/demos/helpful-errors
 ```
