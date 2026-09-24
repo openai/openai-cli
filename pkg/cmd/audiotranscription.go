@@ -63,7 +63,7 @@ var audioTranscriptionsCreate = cli.Command{
 			BodyPath: "language",
 		},
 		&requestflag.Flag[[]string]{
-			Name:     "language",
+			Name:     "languages",
 			Usage:    "Possible languages of the input audio, in [ISO-639-1](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) format. Supported by `gpt-transcribe`.\n",
 			BodyPath: "languages",
 		},
