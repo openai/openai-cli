@@ -1,14 +1,19 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 const readableModelResponse = `{"id":"model_synthetic","object":"model","created":17,"owned_by":"synthetic","extra":{"note":"full API value"}}`
@@ -177,6 +182,88 @@ func TestMainReadableStreamPreservesIndividualEvents(t *testing.T) {
 		if !strings.Contains(got.stdout, label) {
 			t.Fatalf("missing event field %q in %q", label, got.stdout)
 		}
+	}
+}
+
+func TestMainReadableRawOutputStreamsBeforeNextEvent(t *testing.T) {
+	for _, tc := range []struct {
+		name, transform, first, second string
+	}{
+		{"objects", "", "Type: response.output_text.delta\nDelta: first\\u001b\nSequence number: 0\n", "\nType: response.output_text.delta\nDelta: second\nSequence number: 1\n"},
+		{"raw strings", "delta", "first\x1b\n", "second\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			release := make(chan struct{}, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				io.WriteString(w, "event: response.output_text.delta\ndata: "+
+					`{"type":"response.output_text.delta","delta":"first\u001b","sequence_number":0}`+"\n\n")
+				w.(http.Flusher).Flush()
+				select {
+				case <-release:
+				case <-r.Context().Done():
+					return
+				}
+				io.WriteString(w, "event: response.output_text.delta\ndata: "+
+					`{"type":"response.output_text.delta","delta":"second","sequence_number":1}`+"\n\n")
+			}))
+			defer server.Close()
+			// Always unblock the synthetic source, including when an assertion fails.
+			defer close(release)
+			binary, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			args := []string{"-test.run=^TestMainDispatchProcess$", "--", "openai", "--format", "text", "--raw-output"}
+			if tc.transform != "" {
+				args = append(args, "--transform", tc.transform)
+			}
+			args = append(args, "responses", "create", "--model", "fake-model", "--input", "synthetic input", "--stream=true")
+			child := exec.CommandContext(ctx, binary, args...)
+			child.Env = []string{"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "OPENAI_API_KEY=sk-fake-readable-test", "OPENAI_BASE_URL=" + server.URL, "FORCE_COLOR=0"}
+			var stderr bytes.Buffer
+			child.Stderr = &stderr
+			stdout, err := child.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := child.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				cancel()
+				if child.ProcessState == nil {
+					child.Wait()
+				}
+			}()
+			first := make([]byte, len(tc.first))
+			read := make(chan error, 1)
+			go func() { _, err := io.ReadFull(stdout, first); read <- err }()
+			select {
+			case err := <-read:
+				if err != nil {
+					t.Fatalf("first event did not reach stdout: %v", err)
+				}
+			case <-ctx.Done():
+				t.Fatal("first event was buffered while the next event was withheld")
+			}
+			if string(first) != tc.first {
+				t.Fatalf("first output = %q, want %q", first, tc.first)
+			}
+			release <- struct{}{}
+			rest, err := io.ReadAll(stdout)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := child.Wait(); err != nil || stderr.Len() != 0 {
+				t.Fatalf("process failed: %v; stderr=%q", err, stderr.String())
+			}
+			if string(rest) != tc.second {
+				t.Fatalf("remaining output = %q, want %q", rest, tc.second)
+			}
+		})
 	}
 }
 

@@ -134,7 +134,10 @@ func summarizeFields(ctx context.Context, value gjson.Result, fields []gjson.Res
 		if err := ctx.Err(); err != nil {
 			return gjson.Result{}, err
 		}
-		summary := encodedSummary(field, vectors)
+		summary, err := encodedSummary(ctx, field, vectors)
+		if err != nil {
+			return gjson.Result{}, err
+		}
 		if summary == "" {
 			continue
 		}
@@ -155,28 +158,52 @@ func summarizeFields(ctx context.Context, value gjson.Result, fields []gjson.Res
 	return gjson.Parse(out.String()), nil
 }
 
-func encodedSummary(value gjson.Result, vector bool) string {
+func encodedSummary(ctx context.Context, value gjson.Result, vector bool) (string, error) {
 	if !vector {
 		if value.Type == gjson.String && value.Str != "" {
 			// Validate without allocating decoded media. Unexpected text remains visible.
-			_, err := io.Copy(io.Discard, base64.NewDecoder(base64.StdEncoding, strings.NewReader(value.Str)))
+			reader := &base64SummaryReader{ctx: ctx, value: strings.NewReader(value.Str)}
+			_, err := io.Copy(io.Discard, base64.NewDecoder(base64.StdEncoding, reader))
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
 			if err == nil {
-				return fmt.Sprintf("(%d base64 characters; use --format json for full value)", len(value.Str))
+				return fmt.Sprintf("(%d base64 characters; use --format json for full value)", len(value.Str)), nil
 			}
 		}
-		return ""
+		return "", nil
 	}
 	if !value.IsArray() {
-		return ""
+		return "", nil
 	}
 	count, numeric := 0, true
+	var err error
 	value.ForEach(func(_, item gjson.Result) bool {
+		if err = ctx.Err(); err != nil {
+			return false
+		}
 		numeric = item.Type == gjson.Number
 		count++
 		return numeric
 	})
-	if numeric && count > 0 {
-		return fmt.Sprintf("(%d numbers; use --format json for full vector)", count)
+	if err != nil {
+		return "", err
 	}
-	return ""
+	if numeric && count > 0 {
+		return fmt.Sprintf("(%d numbers; use --format json for full vector)", count), nil
+	}
+	return "", nil
+}
+
+// Poll the source so even the decoder's internal newline filtering can stop.
+type base64SummaryReader struct {
+	ctx   context.Context
+	value *strings.Reader
+}
+
+func (r *base64SummaryReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.value.Read(p[:min(len(p), 32*1024)])
 }
