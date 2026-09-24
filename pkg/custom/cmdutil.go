@@ -21,6 +21,7 @@ import (
 	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/openai/openai-go/v3/option"
 
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/term"
 	"github.com/itchyny/json2yaml"
 	"github.com/muesli/reflow/wrap"
@@ -364,6 +365,35 @@ func shouldUseColors(w io.Writer) bool {
 	return isTerminal(w)
 }
 
+// prettyColorProfile picks the color profile for --format pretty output written
+// to w. Lipgloss v2 styles always render full color escapes, so the output must
+// be downsampled for its destination. This matches the lipgloss v1 behavior the
+// CLI had before: plain text when w is not a terminal or NO_COLOR is set, and
+// color on a terminal. CLICOLOR_FORCE is honored, and FORCE_COLOR works the same
+// way as it does for the json and jsonl formats.
+func prettyColorProfile(w io.Writer, environ []string) colorprofile.Profile {
+	lookup := func(name string) string {
+		value := ""
+		for _, kv := range environ {
+			if v, ok := strings.CutPrefix(kv, name+"="); ok {
+				value = v
+			}
+		}
+		return value
+	}
+	// Lipgloss v1 dropped all styling, including bold, under NO_COLOR, and
+	// NO_COLOR won over CLICOLOR_FORCE. colorprofile does neither, so check it
+	// here.
+	if lookup("FORCE_COLOR") == "0" || lookup("NO_COLOR") != "" {
+		return colorprofile.NoTTY
+	}
+	profile := colorprofile.Detect(w, environ)
+	if lookup("FORCE_COLOR") == "1" && profile < colorprofile.ANSI {
+		profile = max(colorprofile.Env(environ), colorprofile.ANSI256)
+	}
+	return profile
+}
+
 func formatJSON(res gjson.Result, opts ShowJSONOpts) ([]byte, error) {
 	return formatJSONForOutput(res, opts, opts.Stdout)
 }
@@ -388,7 +418,12 @@ func formatJSONForOutput(res gjson.Result, opts ShowJSONOpts, destination io.Wri
 		autoOpts.Transform = ""
 		return formatJSONForOutput(res, autoOpts, destination)
 	case "pretty":
-		return []byte(jsonview.RenderJSON(opts.Title, res) + "\n"), nil
+		var out bytes.Buffer
+		w := &colorprofile.Writer{Forward: &out, Profile: prettyColorProfile(destination, os.Environ())}
+		if _, err := w.WriteString(jsonview.RenderJSON(opts.Title, res) + "\n"); err != nil {
+			return nil, err
+		}
+		return out.Bytes(), nil
 	case "json":
 		prettyJSON := pretty.Pretty([]byte(res.Raw))
 		if shouldUseColors(destination) {
