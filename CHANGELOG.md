@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.18.0](https://github.com/openai/openai-cli/compare/v1.17.0...v1.18.0) (2026-09-24)
+
+
+### Features
+
+* **cli:** simplify help and API key setup guidance ([#246](https://github.com/openai/openai-cli/issues/246)) ([eeb5f08](https://github.com/openai/openai-cli/commit/eeb5f0811923892bd86041b3071e853ce8f2495e))
+
+
+### Bug Fixes
+
+* **output:** return immediately for zero max-items ([#220](https://github.com/openai/openai-cli/issues/220)) ([9d90763](https://github.com/openai/openai-cli/commit/9d9076315350a7453ecbd7224d627bebf7805aec))
+
 ## [1.17.0](https://github.com/openai/openai-cli/compare/v1.16.12...v1.17.0) (2026-09-24)
 
 
