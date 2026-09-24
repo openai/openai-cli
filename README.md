@@ -84,6 +84,11 @@ openai help --all                  # Every command and global option
 Add `--help` (or `-h`) to any command for its short guide. Help changes only
 what is displayed; command behavior, defaults, and output formats are unchanged.
 
+Successful JSON responses print readable text by default, including in pipes.
+Use `--format json` or `--format jsonl` in scripts that parse API data.
+See [reading command results](docs/readable-output.md) for extraction, binary
+output, and the scope of readable presentation.
+
 ### Environment variables
 
 | Environment variable | Required | Default value |
@@ -112,8 +117,8 @@ what is displayed; command behavior, defaults, and output formats are unchanged.
 - `--version`, `-v` - Show the CLI version
 - `--base-url` - Use a custom API backend URL
 - `--header`, `-H` - Add a literal request header as `Name: Value`; repeat for multiple headers
-- `--format` - Change the output format (`auto`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`)
-- `--format-error` - Change the output format for errors (`auto`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`)
+- `--format` - Change the output format (`auto`, `text`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`); `auto` selects readable text unless extracting data
+- `--format-error` - Change the output format for errors (`auto`, `text`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`); `auto` keeps JSON error details
 - `--transform` - Transform the data output using [GJSON syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md)
 - `--transform-error` - Transform the error output using [GJSON syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md)
 

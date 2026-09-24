@@ -317,10 +317,6 @@ func ExploreJSONWithOutput(title string, json gjson.Result, output io.Writer) er
 	return runExplorerWithOutput(viewer, output)
 }
 
-func runExplorer(viewer *JSONViewer, options ...tea.ProgramOption) error {
-	return runExplorerWithOutput(viewer, os.Stdout, options...)
-}
-
 func runExplorerWithOutput(viewer *JSONViewer, output io.Writer, options ...tea.ProgramOption) error {
 	if output == nil {
 		output = os.Stdout

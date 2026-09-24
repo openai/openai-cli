@@ -70,6 +70,6 @@ func TestRunExplorerReturnsLazyLoadError(t *testing.T) {
 	viewer.resize(80, 24)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err = runExplorer(viewer, tea.WithContext(ctx), tea.WithInput(strings.NewReader("j")), tea.WithOutput(io.Discard), tea.WithoutRenderer())
+	err = runExplorerWithOutput(viewer, io.Discard, tea.WithContext(ctx), tea.WithInput(strings.NewReader("j")), tea.WithoutRenderer())
 	require.ErrorIs(t, err, failure)
 }

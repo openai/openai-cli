@@ -33,6 +33,7 @@ func TestLargeResponsePayloads(t *testing.T) {
 		textPath              string
 		finalPath, finalValue string
 		stream                bool
+		readable              bool
 	}{
 		{
 			name: "responses JSON", command: "responses", path: "/responses",
@@ -40,6 +41,12 @@ func TestLargeResponsePayloads(t *testing.T) {
 			prefix:      `{"id":"resp_large","object":"response","status":"completed","output":[{"id":"msg_large","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"`,
 			suffix:      `","annotations":[]}]}]}`,
 			textPath:    "output.0.content.0.text",
+		},
+		{
+			name: "responses readable JSON", command: "responses", path: "/responses", readable: true,
+			contentType: "application/json",
+			prefix:      `{"id":"resp_large","object":"response","status":"completed","output":[{"id":"msg_large","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"`,
+			suffix:      `","annotations":[]}]}]}`,
 		},
 		{
 			name: "responses SSE", command: "responses", path: "/responses", stream: true,
@@ -78,7 +85,11 @@ func TestLargeResponsePayloads(t *testing.T) {
 			}))
 			defer server.Close()
 
-			args := []string{"--base-url", server.URL, "--format", "jsonl", tc.command, "create", "--model", "fake-model"}
+			args := []string{"--base-url", server.URL}
+			if !tc.readable {
+				args = append(args, "--format", "jsonl")
+			}
+			args = append(args, tc.command, "create", "--model", "fake-model")
 			if tc.command == "chat:completions" {
 				args = append(args, "--message", `{"role":"user","content":"synthetic input"}`)
 			} else {
@@ -95,6 +106,23 @@ func TestLargeResponsePayloads(t *testing.T) {
 			output, err := command.Output()
 			if err != nil {
 				t.Fatalf("CLI failed: %v\n%s", err, &stderr)
+			}
+			if tc.readable {
+				marker := []byte("Text: ")
+				start := bytes.Index(output, marker)
+				if start < 0 {
+					t.Fatal("readable response has no labeled text")
+				}
+				start += len(marker)
+				end := start + len(text)
+				if len(output) <= end || string(output[start:end]) != text || output[end] != '\n' {
+					t.Fatalf("readable text was not preserved: got %d output bytes, want %d text bytes", len(output), len(text))
+				}
+				if !bytes.Contains(output[:start], []byte("ID: resp_large\n")) ||
+					!bytes.Contains(output[end:], []byte("Annotations: (empty list)\n")) {
+					t.Fatal("readable response lost fields around the large text")
+				}
+				return
 			}
 
 			decoder := json.NewDecoder(bytes.NewReader(output))
