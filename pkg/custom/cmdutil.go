@@ -516,6 +516,9 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	}
 	opts.Format = resolvedOutputFormat(opts)
 	if opts.Format == "text" && !opts.RawOutput {
+		if stdout, ok := opts.Stdout.(*os.File); ok && stdout == os.Stdout {
+			return streamToStdout(func(*os.File) error { return showReadableIterator(iter, opts) })
+		}
 		return showReadableIterator(iter, opts)
 	}
 
