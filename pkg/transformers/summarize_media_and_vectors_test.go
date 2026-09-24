@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -123,4 +125,73 @@ func TestReadableSummariesMultipleValuesAndSubdocument(t *testing.T) {
 	cancel()
 	_, err := transform(ctx, gjson.Parse(raw))
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestReadableSummariesCancelDuringScan(t *testing.T) {
+	for _, test := range []struct {
+		name, resource, method, input string
+	}{
+		{"base64", "images", "generate", `{"data":[{"b64_json":` + strconv.Quote(strings.Repeat("QUJD", 32768)) + `}]}`},
+		// The decoder can consume many source chunks while filtering newlines
+		// within a single Read, so cancellation must reach its input reader.
+		{"base64 newlines", "images", "generate", `{"data":[{"b64_json":` + strconv.Quote(strings.Repeat("\r\n", 65536)+"YQ==") + `}]}`},
+		{"vector", "embeddings", "create", `{"data":[{"embedding":[` + strings.Repeat("0.25,", 32768) + `1]}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			// The entrypoint checks context before selecting and before scanning
+			// the field. Cancel only once the scan has polled several more times.
+			controlled := &cancelSummaryContext{Context: ctx, cancel: cancel, after: 8}
+			transform := Select(Route{fmt.Sprintf("(resource) %s > (method) %s", test.resource, test.method), OutputResponse})
+			got, err := transform(controlled, gjson.Parse(test.input))
+			require.ErrorIs(t, err, context.Canceled)
+			require.Equal(t, gjson.Result{}, got, "cancellation must not return partially transformed output")
+		})
+	}
+}
+
+// Cancel at a repeatable point during CPU work without timers or scheduling races.
+type cancelSummaryContext struct {
+	context.Context
+	cancel context.CancelFunc
+	after  int32
+	checks atomic.Int32
+}
+
+func (ctx *cancelSummaryContext) Err() error {
+	if ctx.checks.Add(1) == ctx.after {
+		ctx.cancel()
+	}
+	return ctx.Context.Err()
+}
+
+func TestReadableSummariesPreserveBase64Validation(t *testing.T) {
+	for _, test := range []struct {
+		name, value string
+		valid       bool
+	}{
+		{"padded", "YQ==", true},
+		{"unpadded full block", "YWJj", true},
+		{"newlines", "\r\nYQ==\r\n", true},
+		{"only newlines", "\r\n", true},
+		{"empty", "", false},
+		{"space", "Y Q==", false},
+		{"missing padding", "YQ", false},
+		{"extra padding", "YQ===", false},
+		{"trailing text", "YQ==!", false},
+		{"invalid after many chunks", strings.Repeat("QUJD", 32768) + "!", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := `{"data":[{"b64_json":` + strconv.Quote(test.value) + `}]}`
+			transform := Select(Route{"(resource) images > (method) generate", OutputResponse})
+			got, err := transform(t.Context(), gjson.Parse(input))
+			require.NoError(t, err)
+			if test.valid {
+				require.Equal(t, fmt.Sprintf("(%d base64 characters; use --format json for full value)", len(test.value)), got.Get("data.0.b64_json").String())
+			} else {
+				require.Equal(t, input, got.Raw)
+			}
+		})
+	}
 }

@@ -69,17 +69,59 @@ func TestReadableIteratorUsesInjectedWriterAndRetainsEveryRecord(t *testing.T) {
 }
 
 func TestReadableIteratorEmptyAndZeroLimit(t *testing.T) {
-	for _, format := range []string{"auto", "text"} {
+	for _, opts := range []ShowJSONOpts{{Format: "auto"}, {Format: "text"}, {Format: "text", RawOutput: true}} {
 		var out bytes.Buffer
-		require.NoError(t, ShowJSONIterator(&transformTestIterator{}, -1, ShowJSONOpts{Format: format, Stdout: &out}))
+		opts.Stdout = &out
+		require.NoError(t, ShowJSONIterator(&transformTestIterator{}, -1, opts))
 		require.Equal(t, "No results.\n", out.String())
 		source := &transformTestIterator{items: []any{"must not read"}}
-		require.NoError(t, ShowJSONIterator(source, 0, ShowJSONOpts{Format: format, Stdout: failOutputWriter{}}))
+		opts.Stdout = failOutputWriter{}
+		require.NoError(t, ShowJSONIterator(source, 0, opts))
 		require.Zero(t, source.calls)
 		failure := errors.New("upstream failed")
 		out.Reset()
-		require.ErrorIs(t, ShowJSONIterator(&transformTestIterator{err: failure}, -1, ShowJSONOpts{Format: format, Stdout: &out}), failure)
+		opts.Stdout = &out
+		require.ErrorIs(t, ShowJSONIterator(&transformTestIterator{err: failure}, -1, opts), failure)
 		require.Empty(t, out.String())
+	}
+}
+
+func TestReadableRawIteratorPreservesRecordsAndStopsOnOutputFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name, transform, want string
+		items                 []any
+	}{
+		{"objects", "", "ID: one\n\nID: two\n", []any{map[string]any{"id": "one"}, map[string]any{"id": "two"}}},
+		{"arrays", "", "1. one\n\n1. two\n", []any{[]string{"one"}, []string{"two"}}},
+		{"strings", "", "a\x1b\n\nsecond\n", []any{"a\x1b\n", "second"}},
+		{"extracted strings", "text", "a\x1b\n\nsecond\n", []any{map[string]any{"text": "a\x1b\n"}, map[string]any{"text": "second"}}},
+		{"mixed values", "", "first\x1b\n\nID: two\n\n3\nlast\n", []any{"first\x1b", map[string]any{"id": "two"}, 3, "last"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			opts := ShowJSONOpts{Format: "text", RawOutput: true, Transform: tc.transform, Stdout: &out}
+			require.NoError(t, ShowJSONIterator(&transformTestIterator{items: tc.items}, -1, opts))
+			require.Equal(t, tc.want, out.String())
+			failure := errors.New("synthetic writer failure")
+			for _, err := range []error{failure, nil} {
+				opts.Stdout = failOutputWriter{err}
+				want := err
+				if want == nil {
+					want = io.ErrShortWrite
+				}
+				source := &transformTestIterator{items: tc.items}
+				require.ErrorIs(t, ShowJSONIterator(source, -1, opts), want)
+				require.Equal(t, 1, source.calls)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			writer := &cancelOutputWriter{cancel: cancel}
+			opts.Context, opts.Stdout = ctx, writer
+			source := &transformTestIterator{items: tc.items}
+			require.ErrorIs(t, ShowJSONIterator(source, -1, opts), context.Canceled)
+			require.Equal(t, 1, writer.writes)
+			require.Equal(t, 1, source.calls)
+		})
 	}
 }
 

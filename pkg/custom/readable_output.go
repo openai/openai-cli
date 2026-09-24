@@ -7,6 +7,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-cli/internal/readable"
+	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
@@ -86,12 +87,25 @@ func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts)
 	out := outputWriter{ctx: opts.Context, out: opts.Stdout}
 	emitted := false
 	for iter.Next() {
+		value := applyJSONPath(iter.Current().Result, opts.Transform)
+		if opts.RawOutput && value.Type == gjson.String {
+			// Keep raw strings byte-for-byte in pipes and escape terminal
+			// controls using the same destination-aware formatter as ShowJSON.
+			formatted, err := formatJSON(iter.Current().Result, opts)
+			if err != nil {
+				return err
+			}
+			if _, err := out.Write(formatted); err != nil {
+				return err
+			}
+			emitted = true
+			continue
+		}
 		if emitted {
 			if _, err := io.WriteString(out, "\n"); err != nil {
 				return err
 			}
 		}
-		value := applyJSONPath(iter.Current().Result, opts.Transform)
 		if err := readable.Write(out, value); err != nil {
 			return err
 		}
