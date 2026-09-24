@@ -162,7 +162,7 @@ func TestZshCompletionRespectsCursor(t *testing.T) {
 	script, err := shellCompletions[CompletionStyleZsh](&cli.Command{}, "openai")
 	require.NoError(t, err)
 	// An empty prefix also matches the help command installed by the CLI library.
-	const allModelCommands = "list\nhelp:Shows a list of commands or help for one command\nh:Shows a list of commands or help for one command\n"
+	const allModelCommands = "list\nretrieve\nhelp:Shows a list of commands or help for one command\nh:Shows a list of commands or help for one command\n"
 
 	for _, test := range []struct {
 		name       string

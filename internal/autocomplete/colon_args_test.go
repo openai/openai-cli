@@ -11,7 +11,11 @@ func TestRebuildColonSeparatedArgs(t *testing.T) {
 	t.Parallel()
 
 	root := &cli.Command{
-		Flags: []cli.Flag{&cli.StringFlag{Name: "header"}},
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "header"},
+			&cli.BoolFlag{Name: "debug"},
+			&cli.StringFlag{Name: "timeout"},
+		},
 		Commands: []*cli.Command{
 			{Name: "config:get"},
 			{Name: "config:set"},
@@ -60,6 +64,18 @@ func TestRebuildColonSeparatedArgs(t *testing.T) {
 		"bash-split trailing colon before command": {
 			args: []string{"--header", "chat", ":", "completions", "create", "--mo"},
 			want: []string{"--header", "chat:", "completions", "create", "--mo"},
+		},
+		"bash-split header value before bool flag and command": {
+			args: []string{"--header", "X", ":", "completions", "--debug", "models", "retrieve", "--mo"},
+			want: []string{"--header", "X:completions", "--debug", "models", "retrieve", "--mo"},
+		},
+		"bash-split header value before value flag and command": {
+			args: []string{"--header", "X", ":", "completions", "--timeout", "30", "models", "retrieve", "--mo"},
+			want: []string{"--header", "X:completions", "--timeout", "30", "models", "retrieve", "--mo"},
+		},
+		"bash-split trailing colon before flag and command": {
+			args: []string{"--header", "chat", ":", "--debug", "completions", "create", "--mo"},
+			want: []string{"--header", "chat:", "--debug", "completions", "create", "--mo"},
 		},
 	}
 
