@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/help"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/help"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -86,7 +86,7 @@ func runOutputExplorer(t *testing.T, output io.Writer, options ...tea.ProgramOpt
 	viewer.resize(80, 24)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	programOptions := []tea.ProgramOption{tea.WithContext(ctx), tea.WithInput(strings.NewReader("p"))}
+	programOptions := []tea.ProgramOption{tea.WithContext(ctx), tea.WithInput(strings.NewReader("p")), tea.WithWindowSize(80, 24)}
 	programOptions = append(programOptions, options...)
 	return runExplorerWithOutput(viewer, output, programOptions...)
 }

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/help"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/help"
+	tea "charm.land/bubbletea/v2"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -22,7 +22,7 @@ func (it *explorerIterator) Current() any { return it.items[it.index-1] }
 func (it *explorerIterator) Err() error   { return nil }
 
 func explorerKey(v *JSONViewer, key string) tea.Cmd {
-	_, cmd := v.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+	_, cmd := v.Update(tea.KeyPressMsg{Code: []rune(key)[0], Text: key})
 	return cmd
 }
 
