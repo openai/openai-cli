@@ -387,10 +387,19 @@ func rebuildColonSeparatedArgs(root *cli.Command, args []string) []string {
 					if stringFlag, ok := (*flag).(*cli.StringFlag); ok {
 						takesFile = stringFlag.TakesFile
 					}
+					// A leading ':' file value is split by Bash as ":", "suffix".
+					// Reattach the suffix before scanning any later command tokens.
+					if takesFile && value == ":" && i < len(args) && args[i] != ":" {
+						value += args[i]
+						i++
+					}
 					for i < len(args) && args[i] == ":" {
 						value += ":"
 						i++
-						if i >= len(args) || (!takesFile && commandTailStartsAt(cmd, args[i:])) {
+						// A single command-looking token at the cursor can still be
+						// part of the flag value (for example X:models). Require
+						// additional tail context before treating it as a boundary.
+						if i >= len(args) || (!takesFile && len(args[i:]) > 1 && commandTailStartsAt(cmd, args[i:])) {
 							break
 						}
 						value += args[i]
