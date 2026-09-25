@@ -38,11 +38,47 @@ readable-output parent. Use `DEMO_API_BINARY` to select another prebuilt fixture
 The runner checks actual exit status and expected fixture text for each scene.
 Readable scenes expect exit 0; helpful-error scenes expect exit 1. The local
 fixture and temporary state are cleaned up on exit. The fixture binds only to
-loopback and serves fixed model data and error responses.
+loopback and serves fixed model data, file records and error responses.
+
+## List/get results
+
+The `list-get-results` scenario compares the same two file records on main and
+the feature branch. Both commands use `openai files list --max-items 2`. The
+records have distinct IDs, filenames and sizes, with seven fields each so the
+complete before output fits in the 90-column by 24-row capture. The after scene
+retains ID, filename, purpose, bytes and status, followed by
+`Summary; use --format json for full data.` for each record.
+
+Two more scenes retrieve the first file before and after the change. The last
+scene uses `openai --format json files retrieve file_training`, demonstrating
+that the original `object` and `created_at` fields are still available. All five
+scenes use the same fixture server and expect exit 0. The recorder checks both
+file IDs in the list scenes, the summary hint in the after scenes, and the
+creation timestamp in the before and explicit JSON scenes.
+
+Build the fixture as above, then capture the final feature binary using its
+actual full commit ID. For the September 2026 feature extraction, the pinned
+before binary and comparison commit are:
+
+```sh
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/record.sh list-get-results \
+  /Users/vguvvala/code/cli-work/batch-list-stream-models/baseline/openai \
+  /absolute/path/to/final-feature/openai \
+  c961755b21d579b5b5a2eb87a0e77123038da4a0 \
+  "$AFTER_SHA" \
+  /Users/vguvvala/code/cli-work/batch-list-stream-models/list-get/media
+```
+
+Keep the media outside Git. Inspect `before.png`, `after.png`,
+`before-retrieve.png`, `after-retrieve.png`, `explicit-json.png` and frames from
+`comparison.gif` before using them for review. The fixture and recipe are
+synthetic; the screenshots and GIF must come from actual binary execution.
+`list-get-results.tape` preserves the same commands for a separate VHS capture.
 
 ## Evidence and limits
 
-The three scenes show before, after and explicit JSON output. Each uses bash,
+The scenes show before, after and explicit JSON output. Each uses bash,
 90 columns by 24 rows, Menlo at 22 px, Dracula colors and a 3.5-second final pause.
 If Menlo is unavailable, supply it locally before recording so styling matches.
 Terminal color detection can add a delay; recorded output and timing are not

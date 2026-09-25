@@ -81,8 +81,7 @@ func (w outputWriter) result(n, size int, err error) (int, error) {
 	return n, w.ctx.Err()
 }
 
-// Render records as they arrive. Semantic stream projections and resource
-// summaries are separate features; every ordinary field remains visible here.
+// Render records as they arrive, preserving the iterator's order and limits.
 func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts) error {
 	out := outputWriter{ctx: opts.Context, out: opts.Stdout}
 	emitted := false
@@ -106,7 +105,7 @@ func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts)
 				return err
 			}
 		}
-		if err := readable.Write(out, value); err != nil {
+		if err := writeReadableResource(out, value, opts); err != nil {
 			return err
 		}
 		emitted = true
