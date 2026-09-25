@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,7 +21,7 @@ func TestResourceSummaryNoticePreservesFinalErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		err  error
-	}{{"notice write failure", writeErr}, {"short notice write", nil}} {
+	}{{"notice write failure", writeErr}, {"short notice write", nil}, {"closed notice pipe", syscall.EPIPE}} {
 		t.Run(tc.name, func(t *testing.T) {
 			source := &transformTestIterator{items: []any{item, item}, err: upstreamErr}
 			var output bytes.Buffer
@@ -38,24 +39,38 @@ func TestResourceSummaryNoticePreservesFinalErrors(t *testing.T) {
 			if want == nil {
 				want = io.ErrShortWrite
 			}
-			require.ErrorIs(t, err, want)
+			if errors.Is(tc.err, syscall.EPIPE) {
+				require.NotErrorIs(t, err, syscall.EPIPE, "a broken hint pipe must not make the page error suppressible")
+				require.False(t, isOutputBrokenPipe(err))
+			} else {
+				require.ErrorIs(t, err, want)
+			}
 			require.ErrorIs(t, err, upstreamErr)
 			require.Equal(t, 2, strings.Count(output.String(), "ID: file_summary\n"))
 		})
 	}
 
-	t.Run("canceled after records", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		source := &resourceSummaryEndIterator{transformTestIterator: transformTestIterator{items: []any{item, item}}, finish: cancel}
-		var output bytes.Buffer
-		err := ShowJSONIterator(source, -1, ShowJSONOpts{
-			Context: ctx, Operation: "(resource) files > (method) list", OutputKind: OutputPageItem, Stdout: &output,
+	for _, pageErr := range []error{nil, upstreamErr} {
+		name := "canceled after records"
+		if pageErr != nil {
+			name = "canceled after failed page"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			source := &resourceSummaryEndIterator{transformTestIterator: transformTestIterator{items: []any{item, item}, err: pageErr}, finish: cancel}
+			var output bytes.Buffer
+			err := ShowJSONIterator(source, -1, ShowJSONOpts{
+				Context: ctx, Operation: "(resource) files > (method) list", OutputKind: OutputPageItem, Stdout: &output,
+			})
+			require.ErrorIs(t, err, context.Canceled)
+			if pageErr != nil {
+				require.ErrorIs(t, err, pageErr)
+			}
+			require.Equal(t, 2, strings.Count(output.String(), "ID: file_summary\n"))
+			require.NotContains(t, output.String(), hint)
 		})
-		require.ErrorIs(t, err, context.Canceled)
-		require.Equal(t, 2, strings.Count(output.String(), "ID: file_summary\n"))
-		require.NotContains(t, output.String(), hint)
-	})
+	}
 }
 
 type resourceSummaryTestWriter func([]byte) (int, error)
