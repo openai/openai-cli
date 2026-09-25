@@ -4,6 +4,13 @@
 `main.go`. Commands run as `openai` on a PTY with a fake key and an isolated
 environment. No live OpenAI requests or uploads are made.
 
+`capture_and_render.sh` shares temporary setup, fixture lifecycle, PTY capture,
+rendering and media assembly across this recorder, image models and streaming
+text. Each recorder keeps its own scenes, rendering settings and assertions.
+Failures stop the recording; exit and interruption clean up its fixture and
+temporary state. Each run requires an empty output directory outside the
+repository so it cannot overwrite previous evidence.
+
 The tested replay tools are asciinema 3.2.1, agg 1.9.0 and ffmpeg 4.4.8. Install
 these tools independently and put `asciinema`, `agg`, `ffmpeg` and `ffprobe` on
 `PATH`. This is a terminal replay, not a native Apple Terminal, PowerShell or
@@ -27,7 +34,7 @@ Then run:
 ```sh
 bash scripts/demos/record.sh readable-output \
   /path/to/before/openai /path/to/after/openai \
-  "$BEFORE_SHA" "$AFTER_SHA" dist/demos/readable-output
+  "$BEFORE_SHA" "$AFTER_SHA" /path/to/evidence/readable-output
 ```
 
 Both SHA arguments must be full 40-character commit IDs. Readable output uses
@@ -37,7 +44,7 @@ as the before commit and run:
 ```sh
 bash scripts/demos/record.sh helpful-errors \
   /path/to/before/openai /path/to/after/openai \
-  "$BEFORE_SHA" "$AFTER_SHA" dist/demos/helpful-errors
+  "$BEFORE_SHA" "$AFTER_SHA" /path/to/evidence/helpful-errors
 ```
 
 Use `DEMO_API_BINARY` to select another prebuilt fixture.
@@ -104,8 +111,8 @@ VHS tape. `metadata.txt` and `media.json` record commits,
 hashes, actual exit codes, OS, shell, tool versions, dimensions and duration.
 
 Inspect the GIF and screenshots for readable text, clipping, timing, correct
-behavior and sensitive data before sharing. Keep all media and executables in
-ignored `dist/` or outside the repository. Regenerate evidence after changes
+behavior and sensitive data before sharing. Keep recorded media outside the
+repository; executables may use ignored `dist/`. Regenerate evidence after changes
 that affect the demonstrated behavior. Retain only the runner, fixture and
 recipes in Git.
 

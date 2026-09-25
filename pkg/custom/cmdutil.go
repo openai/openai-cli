@@ -232,8 +232,25 @@ type outputWriteError struct{ error }
 func (e *outputWriteError) Unwrap() error { return e.error }
 
 func isOutputBrokenPipe(err error) bool {
-	var outputErr *outputWriteError
-	return errors.As(err, &outputErr) && strings.Contains(outputErr.Error(), "broken pipe")
+	if outputErr, ok := err.(*outputWriteError); ok {
+		return strings.Contains(outputErr.Error(), "broken pipe")
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !isOutputBrokenPipe(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return isOutputBrokenPipe(wrapped.Unwrap())
+	}
+	return false
 }
 
 // WriteBinaryResponse writes a binary response to stdout or a file.
@@ -585,6 +602,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 		source:    source,
 		context:   opts.Context,
 		transform: selectOutputTransformer(opts, selectTransformer),
+		route:     transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind},
 		remaining: itemsToDisplay,
 	}
 	opts.Format = resolvedOutputFormat(opts)
@@ -597,8 +615,12 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 
 	if strings.ToLower(opts.Format) == "explore" {
 		if isTerminal(opts.Stdout) {
-			err := jsonview.ExploreJSONStreamWithOutput(opts.Title, iter, opts.Stdout)
-			return errors.Join(err, iter.Err())
+			out := terminalOutputWriter{outputWriter{ctx: opts.Context, out: opts.Stdout}, opts.Stdout.(*os.File)}
+			err := jsonview.ExploreJSONStreamWithOutput(opts.Title, iter, out)
+			if iterErr := iter.Err(); iterErr != nil && !errors.Is(err, iterErr) {
+				return errors.Join(err, iterErr)
+			}
+			return err
 		}
 		if opts.ExplicitFormat {
 			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stderr}).WriteString(warningExploreNotSupported); err != nil {
@@ -615,10 +637,10 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 		for iter.Next() {
 			formatted, err := formatJSON(iter.Current().Result, opts)
 			if err != nil {
-				return err
+				return errors.Join(err, iter.Err())
 			}
 			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stdout}).Write(formatted); err != nil {
-				return err
+				return errors.Join(err, iter.Err())
 			}
 		}
 		return iter.Err()
@@ -637,7 +659,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	for iter.Next() {
 		formatted, err := formatJSON(iter.Current().Result, opts)
 		if err != nil {
-			return err
+			return errors.Join(err, iter.Err())
 		}
 		output = append(output, formatted...)
 		numberOfNewlines += countTerminalLines(formatted, terminalWidth)
@@ -648,25 +670,27 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	}
 
 	if !usePager {
-		if _, err := (outputWriter{ctx: opts.Context, out: opts.Stdout}).Write(output); err != nil {
-			return err
-		}
-		return iter.Err()
+		return streamToStdout(func(stdout *os.File) error {
+			if _, err := (outputWriter{ctx: opts.Context, out: stdout}).Write(output); err != nil {
+				return errors.Join(err, iter.Err())
+			}
+			return iter.Err()
+		})
 	}
 
 	return streamOutput(opts.Title, func(pager *os.File) error {
 		if _, err := (outputWriter{ctx: opts.Context, out: pager}).Write(output); err != nil {
-			return err
+			return errors.Join(err, iter.Err())
 		}
 		pagerOpts := opts
 		pagerOpts.Stdout = pager
 		for iter.Next() {
 			formatted, err := formatJSONForOutput(iter.Current().Result, pagerOpts, opts.Stdout)
 			if err != nil {
-				return err
+				return errors.Join(err, iter.Err())
 			}
 			if _, err := (outputWriter{ctx: opts.Context, out: pager}).Write(formatted); err != nil {
-				return err
+				return errors.Join(err, iter.Err())
 			}
 		}
 		return iter.Err()

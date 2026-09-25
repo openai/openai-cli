@@ -63,16 +63,25 @@ type outputJSON struct{ gjson.Result }
 
 func (value outputJSON) RawJSON() string { return value.Raw }
 
+// streamResultError carries only fixed classifications from the stream
+// transformers, never API prose, so the command presenter can retain meaning.
+type streamResultError struct{ message string }
+
+func (e *streamResultError) Error() string { return e.message }
+
 // outputIterator shares one lazy transformation boundary across direct output,
 // the pager, and the explorer. Current never reruns a transformation.
 type outputIterator[T any] struct {
-	source    jsonview.Iterator[T]
-	context   context.Context
-	transform transformers.Transformer
-	remaining int64
-	current   outputJSON
-	err       error
-	done      bool
+	source     jsonview.Iterator[T]
+	context    context.Context
+	transform  transformers.Transformer
+	route      transformers.Route
+	remaining  int64
+	current    outputJSON
+	err        error
+	resultErr  error
+	done       bool
+	completion transformers.StreamCompletionState
 
 	// The explorer can return while its lazy Next call is still running.
 	// Publish only completed steps so Err never reads the source concurrently.
@@ -82,12 +91,18 @@ type outputIterator[T any] struct {
 
 func (it *outputIterator[T]) Next() bool {
 	defer func() {
-		err := errors.Join(it.err, it.source.Err())
+		sourceErr := it.source.Err()
+		if it.done && it.err == nil && it.resultErr == nil && sourceErr == nil {
+			if message := it.completion.CompletionError(it.route); message != "" {
+				it.resultErr = &streamResultError{message}
+			}
+		}
+		err := errors.Join(it.err, it.resultErr, sourceErr)
 		it.errorMu.Lock()
 		it.reportedErr = err
 		it.errorMu.Unlock()
 	}()
-	if it.done || it.err != nil || it.remaining == 0 {
+	if it.done || it.err != nil || it.resultErr != nil || it.remaining == 0 {
 		return false
 	}
 	if it.err = it.context.Err(); it.err != nil {
@@ -95,6 +110,7 @@ func (it *outputIterator[T]) Next() bool {
 	}
 	if !it.source.Next() {
 		it.done = true
+		it.err = it.context.Err()
 		return false
 	}
 	if it.err = it.context.Err(); it.err != nil {
@@ -112,6 +128,12 @@ func (it *outputIterator[T]) Next() bool {
 		}
 		value = gjson.ParseBytes(encoded)
 	}
+	// Ordinary result events can signal failure without becoming SDK errors.
+	// Keep that original event visible, then stop before consuming another one.
+	if message := transformers.StreamFailure(value, it.route); message != "" {
+		it.resultErr = &streamResultError{message}
+	}
+	it.completion.Observe(value, it.route)
 	value, it.err = transformOutput(it.context, value, it.transform)
 	if it.err != nil {
 		return false
