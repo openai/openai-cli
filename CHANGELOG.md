@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.2](https://github.com/openai/openai-cli/compare/v1.19.1...v1.19.2) (2026-09-25)
+
+
+### Chores
+
+* **api:** document files and uploads error responses ([#271](https://github.com/openai/openai-cli/issues/271)) ([2d394b4](https://github.com/openai/openai-cli/commit/2d394b4580a36c6b34b294b9837b3e05c12109ae))
+
 ## [1.19.1](https://github.com/openai/openai-cli/compare/v1.19.0...v1.19.1) (2026-09-25)
 
 
