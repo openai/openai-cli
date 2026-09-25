@@ -19,6 +19,8 @@ func ConfigureCommand(root *cli.Command) {
 	root.Metadata[configuredCommandMetadata] = true
 	registerImageModels(root)
 	configureReadableOutput(root)
+	configureReadableAudio(root)
+	configureReadableSpeech(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, mtlsClientFlags()...)
 	previousBefore := root.Before

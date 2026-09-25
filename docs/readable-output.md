@@ -56,5 +56,6 @@ This is the generic presentation foundation extracted from PR #238. Responses
 and Chat Completions still show their fields, rather than only the generated
 text. Resource-specific list/get summaries, empty-response confirmations,
 streamed-text assembly and deduplication, classification of failure events the
-SDK returns as normal results, native audio text/SSE handling, and image
-saving/previews are separate changes.
+SDK returns as normal results, and image saving/previews are separate changes.
+Audio text, subtitle and SSE handling is described in
+[reading audio results](readable-audio.md).

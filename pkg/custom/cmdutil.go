@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -49,6 +50,7 @@ func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 		option.WithHeader("X-Stainless-Package-Version", Version),
 		option.WithHeader("X-Stainless-Runtime", "cli"),
 		option.WithHeader("X-Stainless-CLI-Command", cmd.FullName()),
+		option.WithMiddleware(captureAudioText),
 	}
 	if cmd.IsSet("api-key") {
 		opts = append(opts, option.WithAPIKey(cmd.String("api-key")))
@@ -258,6 +260,9 @@ func isOutputBrokenPipe(err error) bool {
 // Takes in a stdout reference so we can test this function without overriding os.Stdout in tests.
 func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (string, error) {
 	defer response.Body.Close()
+	if handled, message, err := writeReadableSpeech(response, stdout, outfile); handled {
+		return message, err
+	}
 
 	switch outfile {
 	case "-", "/dev/stdout":
@@ -539,16 +544,46 @@ func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
 
 func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
+	if err := opts.Context.Err(); err != nil {
+		return err
+	}
+	if text, ok := audioTextResult(opts); ok {
+		if opts.Transform == "" && (strings.EqualFold(opts.Format, "raw") || opts.RawOutput) {
+			if opts.RawOutput && isTerminal(opts.Stdout) {
+				text = jsonview.SanitizeTerminalString(text)
+			}
+			_, err := (outputWriter{ctx: opts.Context, out: opts.Stdout}).WriteString(text)
+			return err
+		}
+		encoded, err := json.Marshal(text)
+		if err != nil {
+			return err
+		}
+		res = gjson.ParseBytes(encoded)
+	}
 	res, err := transformOutput(opts.Context, res, selectOutputTransformer(opts, selectTransformer))
 	if err != nil {
 		return err
 	}
 	opts.Format = resolvedOutputFormat(opts)
+	projectAudio := opts.Transform == "" && !opts.RawOutput
 	res = applyJSONPath(res, opts.Transform)
 
 	switch strings.ToLower(opts.Format) {
 	case "text":
 		if !opts.RawOutput || res.Type != gjson.String {
+			if projectAudio {
+				if event, ok := transformers.ProjectAudioResponse(res, transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}); ok {
+					writer := readable.NewStreamWriter(outputWriter{ctx: opts.Context, out: opts.Stdout})
+					if err := writer.Write(event); err != nil {
+						return err
+					}
+					if !writer.HasOutput() {
+						return readable.WriteText(outputWriter{ctx: opts.Context, out: opts.Stdout}, "")
+					}
+					return writer.Finish()
+				}
+			}
 			out := outputWriter{ctx: opts.Context, out: opts.Stdout}
 			omitted, err := writeReadableResource(out, res, opts)
 			if err != nil {

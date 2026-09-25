@@ -7,6 +7,9 @@ import "github.com/tidwall/gjson"
 // original event, including error details, for every presentation format.
 func StreamFailure(value gjson.Result, route Route) string {
 	api := textStreamAPI(route)
+	if api == "" {
+		api = audioStreamAPI(route)
+	}
 	if api == "" || !value.IsObject() {
 		return ""
 	}
