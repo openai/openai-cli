@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.1](https://github.com/openai/openai-cli/compare/v1.19.0...v1.19.1) (2026-09-25)
+
+
+### Chores
+
+* **api:** document Responses not-found errors ([#269](https://github.com/openai/openai-cli/issues/269)) ([f17c5ab](https://github.com/openai/openai-cli/commit/f17c5abf7bc11578fe8f5ca594ecd81643ce3738))
+
 ## [1.19.0](https://github.com/openai/openai-cli/compare/v1.18.2...v1.19.0) (2026-09-25)
 
 
