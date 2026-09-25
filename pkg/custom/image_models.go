@@ -3,7 +3,6 @@ package custom
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -66,10 +65,26 @@ type imageModelsReport struct {
 	Models   []imagemodels.Result `json:"models"`
 }
 
+// Keep discovery's local guidance identifiable without retaining API errors or
+// rejected arguments. Only failure categories and the local help invocation
+// contribute to its message.
+type imageModelsError struct {
+	results        []imagemodels.Result
+	invocation     string
+	extraArguments bool
+}
+
+func (e *imageModelsError) Error() string {
+	if e.extraArguments {
+		return fmt.Sprintf("use %s images models to see image model names; no additional arguments are needed", e.invocation)
+	}
+	return imageModelsFailureMessage(e.results, e.invocation)
+}
+
 func handleImagesModels(ctx context.Context, command *cli.Command) error {
 	invocation := imageModelsInvocation(command)
 	if command.Args().Present() {
-		return fmt.Errorf("use %s images models to see image model names; no additional arguments are needed", invocation)
+		return &imageModelsError{invocation: invocation, extraArguments: true}
 	}
 	root := command.Root()
 	human := root.String("transform") == "" && !root.Bool("raw-output") &&
@@ -120,7 +135,7 @@ func handleImagesModels(ctx context.Context, command *cli.Command) error {
 		return ctx.Err()
 	}
 	if report.Source == "live" && !report.Complete {
-		return errors.New(imageModelsFailureMessage(results, invocation))
+		return &imageModelsError{results: results, invocation: invocation}
 	}
 	return nil
 }

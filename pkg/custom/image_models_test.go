@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -99,6 +100,50 @@ func TestImageModelsStatusAndFailureGuidance(t *testing.T) {
 		message := imageModelsFailureMessage([]imagemodels.Result{{Status: imagemodels.StatusUnknown, Failure: failure}}, "openai")
 		if !strings.Contains(message, want) || !strings.Contains(message, "openai images models --offline") {
 			t.Errorf("failure %s: %s", failure, message)
+		}
+	}
+}
+
+func TestImageModelsErrorClassification(t *testing.T) {
+	const private = "synthetic-private-detail\x1b]52;c;synthetic-private-control\a"
+	for _, extraArguments := range []bool{false, true} {
+		diagnostic := &imageModelsError{
+			invocation: "openai", extraArguments: extraArguments,
+			results: []imagemodels.Result{
+				{Entry: imagemodels.Entry{ID: private}, Status: imagemodels.StatusUnknown, Failure: imagemodels.Failure(private), ShutdownDate: private},
+				{Status: imagemodels.StatusUnknown, Failure: imagemodels.FailureAuthentication},
+			},
+		}
+		wrapped := fmt.Errorf("%s: %w", private, diagnostic)
+		want := diagnostic.Error()
+		if got := localErrorMessage(nil, wrapped); got != want || strings.Contains(got, "synthetic-private-") {
+			t.Errorf("typed diagnostic = %q, want controlled guidance %q", got, want)
+		}
+		for _, arbitrary := range []error{errors.New(want), errors.New(want + private), errors.New(private)} {
+			if got := localErrorMessage(nil, arbitrary); got != "The command could not be completed. Check your arguments with --help." {
+				t.Errorf("untyped diagnostic became trusted: %q", got)
+			}
+		}
+		for _, format := range []string{"text", "json"} {
+			root := readableErrorTestCommand(t, "--format-error", format)
+			var out strings.Builder
+			if err := ShowCommandError(root, wrapped, &out); err != nil {
+				t.Fatal(err)
+			}
+			message := strings.TrimSpace(out.String())
+			if format == "json" {
+				var payload struct{ Message string }
+				if err := json.Unmarshal([]byte(message), &payload); err != nil {
+					t.Fatal(err)
+				}
+				message = payload.Message
+			}
+			if message != want {
+				t.Errorf("%s diagnostic = %q, want %q", format, message, want)
+			}
+		}
+		if got := localErrorMessage(nil, errors.Join(wrapped, context.Canceled)); got != "Request canceled." {
+			t.Errorf("cancellation lost precedence: %q", got)
 		}
 	}
 }

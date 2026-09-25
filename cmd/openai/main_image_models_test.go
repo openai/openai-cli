@@ -378,6 +378,139 @@ func TestMainImageModelsAuthenticationAndRateLimitStopChecks(t *testing.T) {
 	}
 }
 
+func TestMainImageModelsFailureGuidanceFormats(t *testing.T) {
+	for _, tc := range []struct {
+		status  int
+		failure imagemodels.Failure
+		want    string
+	}{
+		{http.StatusUnauthorized, imagemodels.FailureAuthentication, "did not accept authentication"},
+		{http.StatusTooManyRequests, imagemodels.FailureRateLimit, "rate-limited model checks"},
+		{http.StatusGatewayTimeout, imagemodels.FailureTimeout, "Some model checks timed out"},
+		{http.StatusInternalServerError, imagemodels.FailureServer, "API could not complete them"},
+		{http.StatusForbidden, imagemodels.FailureForbidden, "denied access"},
+		{http.StatusOK, imagemodels.FailureInvalidResponse, "unexpected model response"},
+		{http.StatusBadRequest, imagemodels.FailureRequest, "Some model checks could not be completed"},
+		{0, imagemodels.FailureNetwork, "Could not reach the API"},
+	} {
+		t.Run(string(tc.failure), func(t *testing.T) {
+			server, _ := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/gpt-image-2.5-sunburst") {
+					mainImageModelResponse(w, r.URL.Path, "null")
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, `{"error":{"message":"synthetic-private-body https://synthetic.invalid/?token=synthetic-private-token\u001b]52;c;synthetic-private-control\u0007","type":"synthetic-private-type","code":"synthetic-private-code","param":"synthetic-private-param"}}`)
+			})
+			if tc.status == 0 {
+				server.Close()
+			}
+			for _, format := range []struct {
+				name, errorFormat string
+				flags             []string
+			}{
+				{"default", "text", nil},
+				{"inherited JSON", "json", []string{"--format", "json"}},
+				{"text override", "text", []string{"--format", "json", "--format-error", "auto"}},
+				{"JSONL override", "jsonl", []string{"--format", "json", "--format-error", "jsonl"}},
+				{"raw override", "raw", []string{"--format", "json", "--format-error", "raw"}},
+				{"YAML override", "yaml", []string{"--format", "json", "--format-error", "yaml"}},
+				{"error extraction", "string", []string{"--format", "json", "--format-error", "json", "--transform-error", "message"}},
+			} {
+				t.Run(format.name, func(t *testing.T) {
+					args := append([]string{"openai", "--base-url", server.URL}, format.flags...)
+					args = append(args, "images", "models")
+					got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=synthetic-private-key"}, args...)
+					if got.code != 1 {
+						t.Fatalf("failed discovery exit=%d, want 1: %+v", got.code, got)
+					}
+					if len(format.flags) > 0 {
+						report := decodeMainImageModels(t, got.stdout)
+						if report.Complete || report.Source != "live" || len(report.Models) != 9 {
+							t.Fatalf("failure lost partial report: %+v", report)
+						}
+						for i, row := range report.Models {
+							if i == 0 && tc.status != 0 {
+								if row.Status != imagemodels.StatusVisible || row.Failure != "" {
+									t.Errorf("lost completed check: %+v", row)
+								}
+							} else if row.Status != imagemodels.StatusUnknown || row.Failure != tc.failure {
+								t.Errorf("lost failure category: %+v", row)
+							}
+						}
+					} else if !strings.Contains(got.stdout, "Could not check") || !strings.Contains(got.stdout, "gpt-image-2.5-sunburst") || json.Valid([]byte(got.stdout)) {
+						t.Errorf("default failure lost readable partial results: %q", got.stdout)
+					}
+					message := got.stderr
+					switch format.errorFormat {
+					case "text":
+						if json.Valid([]byte(message)) {
+							t.Errorf("expected readable stderr: %q", message)
+						}
+					case "string":
+						if err := json.Unmarshal([]byte(got.stderr), &message); err != nil {
+							t.Fatalf("error extraction failed: %v; %q", err, got.stderr)
+						}
+					default:
+						payload := decodeMainStructuredError(t, format.errorFormat, got.stderr)
+						message, _ = payload["message"].(string)
+						if len(payload) != 1 {
+							t.Errorf("discovery exposed API fields: %v", payload)
+						}
+					}
+					for _, want := range []string{tc.want, "openai images models --offline"} {
+						if !strings.Contains(message, want) {
+							t.Errorf("missing %q: %q", want, message)
+						}
+					}
+					if tc.failure == imagemodels.FailureAuthentication && !strings.Contains(message, "openai help setup") {
+						t.Errorf("missing setup guidance: %q", message)
+					}
+					for _, private := range []string{"synthetic-private-", "synthetic.invalid", "token=", "\x1b", "\a"} {
+						if strings.Contains(got.stdout+got.stderr+message, private) {
+							t.Errorf("discovery exposed untrusted detail %q", private)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestMainImageModelsExtraArgumentGuidance(t *testing.T) {
+	server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("unexpected request after rejected extra argument")
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	for _, format := range []string{"text", "json", "jsonl", "raw", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			got := runMainDispatch(t, "bash", "openai", "--base-url", server.URL, "--format-error", format,
+				"images", "models", "synthetic-private-argument\x1b]52;c;synthetic-private-control\a",
+				"https://synthetic.invalid/?token=synthetic-private-token", "Unexpected extra arguments: synthetic-private-value")
+			if got.code != 1 || got.stdout != "" {
+				t.Fatalf("extra arguments must fail before output: %+v", got)
+			}
+			message := got.stderr
+			if format != "text" {
+				payload := decodeMainStructuredError(t, format, got.stderr)
+				message, _ = payload["message"].(string)
+			}
+			if !strings.Contains(message, "openai images models") || !strings.Contains(message, "no additional arguments are needed") {
+				t.Errorf("missing extra-argument guidance: %q", message)
+			}
+			for _, private := range []string{"synthetic-private-", "synthetic.invalid", "token=", "\x1b", "\a"} {
+				if strings.Contains(got.stderr+message, private) {
+					t.Errorf("extra-argument guidance exposed %q", private)
+				}
+			}
+		})
+	}
+	if len(requests()) != 0 {
+		t.Errorf("extra arguments started model checks: %v", requests())
+	}
+}
+
 func TestMainImageModelsPreservesExistingModelListing(t *testing.T) {
 	const payload = `{"object":"list","data":[{"id":"synthetic-text-model","object":"model","created":1,"owned_by":"system","shutdown_date":null}]}`
 	server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
