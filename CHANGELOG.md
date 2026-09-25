@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.3](https://github.com/openai/openai-cli/compare/v1.20.2...v1.20.3) (2026-09-25)
+
+
+### Chores
+
+* **api:** document stored chat completion errors ([#282](https://github.com/openai/openai-cli/issues/282)) ([1287876](https://github.com/openai/openai-cli/commit/128787625657632fae69a191dfe4a373c5e10e75))
+
 ## [1.20.2](https://github.com/openai/openai-cli/compare/v1.20.1...v1.20.2) (2026-09-25)
 
 
