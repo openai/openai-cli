@@ -15,6 +15,7 @@ func TestRebuildColonSeparatedArgs(t *testing.T) {
 			&cli.StringFlag{Name: "header"},
 			&cli.BoolFlag{Name: "debug"},
 			&cli.StringFlag{Name: "timeout"},
+			&cli.StringFlag{Name: "file", TakesFile: true},
 		},
 		Commands: []*cli.Command{
 			{Name: "config:get"},
@@ -60,6 +61,10 @@ func TestRebuildColonSeparatedArgs(t *testing.T) {
 		"bash-split colon inside flag value": {
 			args: []string{"--header", "X", ":", "completions", "models", "retrieve", "--mo"},
 			want: []string{"--header", "X:completions", "models", "retrieve", "--mo"},
+		},
+		"bash-split colon inside file value": {
+			args: []string{"--file", "cert", ":", "models"},
+			want: []string{"--file", "cert:models"},
 		},
 		"bash-split trailing colon before command": {
 			args: []string{"--header", "chat", ":", "completions", "create", "--mo"},

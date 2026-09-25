@@ -383,10 +383,14 @@ func rebuildColonSeparatedArgs(root *cli.Command, args []string) []string {
 					// split value here, but stop at a colon when the following tokens form
 					// a valid command path. That preserves both `X:completions models ...`
 					// and a value ending in a colon, such as `chat: completions create ...`.
+					takesFile := false
+					if stringFlag, ok := (*flag).(*cli.StringFlag); ok {
+						takesFile = stringFlag.TakesFile
+					}
 					for i < len(args) && args[i] == ":" {
 						value += ":"
 						i++
-						if i >= len(args) || commandTailStartsAt(cmd, args[i:]) {
+						if i >= len(args) || (!takesFile && commandTailStartsAt(cmd, args[i:])) {
 							break
 						}
 						value += args[i]

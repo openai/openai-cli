@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -67,6 +68,13 @@ func TestShellCompletionProtocol(t *testing.T) {
 		{name: "root value", args: []string{"--format", "candidate-"}, code: 11},
 		{name: "nested local value", args: []string{"models", "list", "--max-items", "candidate-"}, code: 11},
 		{name: "file value", args: []string{"--file", "candidate-"}, code: 10, candidates: "candidate-fixture.txt\n"},
+		{
+			name:       "colon file value",
+			args:       []string{"--file", "cert:models"},
+			bashArgs:   []string{"--file", "cert", ":", "models"},
+			code:       10,
+			candidates: "cert:models-fixture.txt\n",
+		},
 		{name: "spaced preceding value", args: []string{"--format", "two words", "--file", "candidate-"}, code: 10, candidates: "candidate-fixture.txt\n"},
 		{name: "empty preceding value", args: []string{"--format", "", "--file", "candidate-"}, code: 10, candidates: "candidate-fixture.txt\n"},
 		{name: "explicit file prefix", args: []string{"--format", "@candidate-"}, code: 11, candidates: "@candidate-fixture.txt\n"},
@@ -103,8 +111,12 @@ func TestShellCompletionProtocol(t *testing.T) {
 				if bashErr != nil {
 					t.Skip("bash is not available")
 				}
+				if runtime.GOOS == "windows" && test.name == "colon file value" {
+					t.Skip("Windows filenames cannot contain colons")
+				}
 				dir := t.TempDir()
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "candidate-fixture.txt"), nil, 0o600))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "cert:models-fixture.txt"), nil, 0o600))
 				probe := `
 test_binary=$1
 shift
