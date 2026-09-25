@@ -1,6 +1,7 @@
 package custom
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -46,6 +49,12 @@ func TestLocalErrorMessageDoesNotExposeDiagnostics(t *testing.T) {
 		{"invalid alias", fmt.Errorf("invalid value %q for flag -H: %s", secret, secret), "Invalid value for --header."},
 		{"unknown invalid flag", fmt.Errorf("invalid value %q for flag -%s: invalid", secret, secret), "The command could not be completed."},
 		{"unknown flag", errors.New("flag provided but not defined: -" + secret), "An option is not recognized."},
+		{"extra arguments", errors.New("Unexpected extra arguments: [" + secret + "]"), "Unexpected extra arguments."},
+		{"missing completion shell", errors.New("no shell provided for completion command. available shells are [fish bash zsh pwsh]"), "Choose a shell"},
+		{"unknown completion shell", errors.New("unknown shell " + secret + ", available shells are [pwsh zsh fish bash]"), "Unsupported completion shell."},
+		{"invalid output format", errors.New("Invalid format: " + secret + ", valid formats are: " + strings.Join(OutputFormats, ", ")), "Invalid output format."},
+		{"format choices", errors.New("format must be one of: " + strings.Join(OutputFormats, ", ")), "Invalid output format."},
+		{"untrusted format choices", errors.New("format must be one of: " + secret), "The command could not be completed."},
 		{"unknown help topic", fmt.Errorf("Unknown help topic %q. Run %s help --all to see commands.", secret, secret), "Unknown help topic. Run openai help --all to see commands."},
 		{"invalid YAML", errors.New("Failed to parse piped data as YAML/JSON:\n" + secret), "Could not parse piped input as YAML or JSON."},
 		{"scalar request body", errors.New("Cannot merge flags with a body that is not a map: " + secret), "The request body must be a JSON or YAML object."},
@@ -201,5 +210,69 @@ func TestLocalErrorMessagePreservesProxyGuidance(t *testing.T) {
 			cause == context.DeadlineExceeded && !strings.HasPrefix(got, "The request timed out.") {
 			t.Errorf("context error should take precedence over proxy guidance: %q", got)
 		}
+	}
+}
+
+func TestLocalErrorMessagePagerFailures(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pager process fixtures require a POSIX shell")
+	}
+	const want = "The output pager failed. Check PAGER or use --format text to display the result without a pager."
+	dir := t.TempDir()
+	failedPager := filepath.Join(dir, "fake-sensitive-pager")
+	if err := os.WriteFile(failedPager, []byte("#!/bin/sh\ncat >/dev/null\nexit 7\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	invalidPager := filepath.Join(dir, "fake-sensitive-program")
+	if err := os.WriteFile(invalidPager, []byte("not an executable file\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, stream := range map[string]func(string, func(*os.File) error) error{
+		"pipe": streamToPagerWithPipe, "socket": streamOutputOSSpecific,
+	} {
+		for _, pager := range []string{"fake-sensitive-missing-pager", filepath.Join(dir, "fake-sensitive-missing-path"), invalidPager, failedPager} {
+			t.Run(name+"/"+filepath.Base(pager), func(t *testing.T) {
+				t.Setenv("PAGER", pager)
+				err := stream("test", func(*os.File) error { return nil })
+				if err == nil {
+					t.Fatal("expected pager failure")
+				}
+				var origin *pagerError
+				if !errors.As(err, &origin) || errors.Unwrap(origin) == nil {
+					t.Fatalf("pager failure lost its origin or cause: %T", err)
+				}
+				if got := localErrorMessage(nil, err); got != want || strings.Contains(got, "fake-sensitive-") {
+					t.Errorf("pager diagnostic = %q, want %q (cause type %T)", got, want, err)
+				}
+				root := readableErrorTestCommand(t, "--format-error", "json")
+				var output bytes.Buffer
+				if err := ShowCommandError(root, err, &output); err != nil {
+					t.Fatal(err)
+				}
+				var payload struct{ Message string }
+				if err := json.Unmarshal(output.Bytes(), &payload); err != nil || payload.Message != want {
+					t.Errorf("JSON pager diagnostic = %q, decode error %v", output.String(), err)
+				}
+			})
+		}
+		t.Run(name+"/upstream error takes precedence", func(t *testing.T) {
+			t.Setenv("PAGER", failedPager)
+			err := stream("test", func(*os.File) error { return context.Canceled })
+			if !errors.Is(err, context.Canceled) || localErrorMessage(nil, err) != "Request canceled." {
+				t.Errorf("upstream cancellation changed: %v", err)
+			}
+		})
+	}
+}
+
+func TestPagerErrorPreservesCause(t *testing.T) {
+	if got := wrapPagerError(nil); got != nil {
+		t.Errorf("wrapped nil = %v", got)
+	}
+	cause := &os.PathError{Op: "open", Path: "fake-sensitive-path", Err: os.ErrNotExist}
+	err := wrapPagerError(cause)
+	var pathError *os.PathError
+	if !errors.Is(err, os.ErrNotExist) || !errors.As(err, &pathError) || pathError != cause || err.Error() != cause.Error() {
+		t.Errorf("wrapped error lost its cause: %v", err)
 	}
 }

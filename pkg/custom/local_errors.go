@@ -23,6 +23,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var typeError *json.UnmarshalTypeError
 	var syntaxError *json.SyntaxError
 	var pathError *os.PathError
+	var pagerFailure *pagerError
 	switch {
 	case errors.Is(failure, context.Canceled):
 		return "Request canceled."
@@ -32,6 +33,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return "Could not decode JSON: a value has an unexpected type."
 	case errors.As(failure, &syntaxError):
 		return "Could not decode JSON: invalid JSON syntax."
+	case errors.As(failure, &pagerFailure):
+		return "The output pager failed. Check PAGER or use --format text to display the result without a pager."
 	case errors.As(failure, &pathError):
 		switch {
 		case errors.Is(pathError, os.ErrNotExist):
@@ -113,6 +116,9 @@ func knownLocalError(command *cli.Command, message string) string {
 		if rest, ok := strings.CutPrefix(tail, " for flag -"); ok {
 			name, _, found := strings.Cut(rest, ": ")
 			if flag := declaredErrorFlag(command, name); found && flag != "" {
+				if flag == "--format" || flag == "--format-error" {
+					return "Invalid output format. Choose one of: " + strings.Join(OutputFormats, ", ") + "."
+				}
 				return "Invalid value for " + flag + ". Check the expected type and supported values with --help."
 			}
 		}
@@ -144,6 +150,15 @@ func knownLocalError(command *cli.Command, message string) string {
 		}
 	}
 	switch {
+	case strings.HasPrefix(message, "Unexpected extra arguments: "):
+		return "Unexpected extra arguments. Check the command's accepted arguments with --help."
+	case strings.HasPrefix(message, "no shell provided for completion command. available shells are "):
+		return "Choose a shell for completion: openai @completion bash (or fish, pwsh, zsh)."
+	case strings.HasPrefix(message, "unknown shell ") && strings.Contains(message, ", available shells are "):
+		return "Unsupported completion shell. Choose bash, fish, pwsh, or zsh: openai @completion zsh."
+	case message == "format must be one of: "+strings.Join(OutputFormats, ", "),
+		strings.HasPrefix(message, "Invalid format: ") && strings.HasSuffix(message, ", valid formats are: "+strings.Join(OutputFormats, ", ")):
+		return "Invalid output format. Choose one of: " + strings.Join(OutputFormats, ", ") + "."
 	case strings.HasPrefix(message, "flag provided but not defined: -"):
 		return "An option is not recognized. Check the command's available options with --help."
 	case strings.HasPrefix(message, "No help topic for '"):

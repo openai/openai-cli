@@ -18,11 +18,11 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// APIErrorValue preserves API error data when available. Proxies and gateways
+// apiErrorValue preserves API error data when available. Proxies and gateways
 // can return HTML, plain text, or an empty body; these still need a structured
 // diagnostic. The fallback uses only the HTTP status, never response contents,
 // request URLs, or credentials.
-func APIErrorValue(apierr *openai.Error) gjson.Result {
+func apiErrorValue(apierr *openai.Error) gjson.Result {
 	raw := apierr.RawJSON()
 	if gjson.Valid(raw) {
 		value := gjson.Parse(raw)
@@ -43,9 +43,9 @@ func APIErrorValue(apierr *openai.Error) gjson.Result {
 	return gjson.ParseBytes(data)
 }
 
-// ErrorOutputFormat resolves the requested error format, inheriting an explicit
+// errorOutputFormat resolves the requested error format, inheriting an explicit
 // machine-readable output format unless --format-error overrides it.
-func ErrorOutputFormat(root *cli.Command) string {
+func errorOutputFormat(root *cli.Command) string {
 	format := root.String("format-error")
 	if !root.IsSet("format-error") && root.IsSet("format") {
 		switch strings.ToLower(root.String("format")) {
@@ -69,7 +69,7 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 		// Completion uses empty ExitCoder messages for its protocol statuses.
 		return nil
 	}
-	format := ErrorOutputFormat(root)
+	format := errorOutputFormat(root)
 	// A rejected format can still be present in the parsed flag state. Present
 	// its validation error using text, rather than failing to render it again.
 	if !slices.Contains(OutputFormats, format) {
@@ -88,7 +88,7 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 	}
 	var value gjson.Result
 	if isAPI {
-		value = APIErrorValue(apierr)
+		value = apiErrorValue(apierr)
 	} else {
 		// A string-only payload cannot fail encoding. Do not fabricate status
 		// codes for decoding or transport failures that discarded the response.

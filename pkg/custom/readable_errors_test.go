@@ -121,7 +121,7 @@ func TestReadableErrorFormatRouting(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := readableErrorTestCommand(t, test.args...)
-			require.Equal(t, test.format, ErrorOutputFormat(root))
+			require.Equal(t, test.format, errorOutputFormat(root))
 			var out bytes.Buffer
 			require.NoError(t, ShowCommandError(root, &openai.Error{StatusCode: http.StatusBadRequest}, &out))
 			if test.summary {
