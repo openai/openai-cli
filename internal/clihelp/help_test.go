@@ -77,6 +77,26 @@ func TestUnknownHelpTopicKeepsExitCode(t *testing.T) {
 	}
 }
 
+func TestNestedHelpParsesFlagsBeforeUnknownTopic(t *testing.T) {
+	root := &cli.Command{Name: "openai", HideHelpCommand: true,
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "root-only", Local: true},
+			&cli.StringFlag{Name: "format-error"},
+		},
+		Commands:       []*cli.Command{{Name: "guide", Commands: []*cli.Command{{Name: "size"}}}},
+		ExitErrHandler: func(context.Context, *cli.Command, error) {},
+	}
+	args, _, err := Configure(root, []string{"openai", "--root-only", "synthetic-value", "guide", "help", "--format-error", "json", "missing"})
+	if err != nil {
+		t.Fatalf("topic resolution must wait for parsing: %v", err)
+	}
+	err = root.Run(t.Context(), args)
+	var exit cli.ExitCoder
+	if !errors.As(err, &exit) || exit.ExitCode() != 3 || root.String("format-error") != "json" || root.String("root-only") != "synthetic-value" {
+		t.Fatalf("normalized help lost options or exit code: args=%q err=%v", args, err)
+	}
+}
+
 func TestHelpDoesNotInterpretRequestValues(t *testing.T) {
 	for _, args := range [][]string{
 		{"openai", "images", "generate", "help"},

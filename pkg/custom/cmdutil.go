@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/jsonview"
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/openai/openai-go/v3/option"
 
@@ -30,7 +31,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-var OutputFormats = []string{"auto", "explore", "json", "jsonl", "pretty", "raw", "yaml"}
+var OutputFormats = []string{"auto", "text", "explore", "json", "jsonl", "pretty", "raw", "yaml"}
 
 // ValidateBaseURL checks that a base URL is correctly prefixed with a protocol scheme and produces a better
 // error message than the person would see otherwise if it doesn't.
@@ -132,10 +133,23 @@ func streamOutput(label string, generateOutput func(w *os.File) error) error {
 	return streamOutputOSSpecific(label, generateOutput)
 }
 
+// pagerError distinguishes pager setup and process failures from the request,
+// formatter, or output callback. Keep the cause available to errors.Is/As.
+type pagerError struct{ error }
+
+func (e *pagerError) Unwrap() error { return e.error }
+
+func wrapPagerError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &pagerError{err}
+}
+
 func streamToPagerWithPipe(label string, generateOutput func(w *os.File) error) error {
 	r, w, err := os.Pipe()
 	if err != nil {
-		return err
+		return wrapPagerError(err)
 	}
 	defer r.Close()
 	defer w.Close()
@@ -146,7 +160,7 @@ func streamToPagerWithPipe(label string, generateOutput func(w *os.File) error) 
 	}
 
 	if _, err := exec.LookPath(pagerProgram); err != nil {
-		return err
+		return wrapPagerError(err)
 	}
 
 	cmd := exec.Command(pagerProgram)
@@ -159,11 +173,11 @@ func streamToPagerWithPipe(label string, generateOutput func(w *os.File) error) 
 	)
 
 	if err := cmd.Start(); err != nil {
-		return err
+		return wrapPagerError(err)
 	}
 
 	if err := r.Close(); err != nil {
-		return err
+		return wrapPagerError(err)
 	}
 
 	// If we would be streaming to a terminal and aren't forcing color one way
@@ -180,7 +194,7 @@ func streamToPagerWithPipe(label string, generateOutput func(w *os.File) error) 
 	if outputErr != nil && !isOutputBrokenPipe(outputErr) {
 		return outputErr
 	}
-	return waitErr
+	return wrapPagerError(waitErr)
 }
 
 func streamToStdout(generateOutput func(w *os.File) error) error {
@@ -401,6 +415,7 @@ func formatJSON(res gjson.Result, opts ShowJSONOpts) ([]byte, error) {
 // formatJSONForOutput keeps the final destination available when a pager sits between
 // formatted output and the terminal.
 func formatJSONForOutput(res gjson.Result, opts ShowJSONOpts, destination io.Writer) ([]byte, error) {
+	opts.Format = resolvedOutputFormat(opts)
 	res = applyJSONPath(res, opts.Transform)
 	// Modeled after `jq -r` (`--raw-output`): if the result is a string, print it without JSON quotes so that
 	// it's easier to pipe into other programs.
@@ -412,11 +427,10 @@ func formatJSONForOutput(res gjson.Result, opts ShowJSONOpts, destination io.Wri
 		return []byte(value + "\n"), nil
 	}
 	switch strings.ToLower(opts.Format) {
-	case "auto":
-		autoOpts := opts
-		autoOpts.Format = "json"
-		autoOpts.Transform = ""
-		return formatJSONForOutput(res, autoOpts, destination)
+	case "text":
+		var text bytes.Buffer
+		err := readable.Write(&text, res)
+		return text.Bytes(), err
 	case "pretty":
 		var out bytes.Buffer
 		w := &colorprofile.Writer{Forward: &out, Profile: prettyColorProfile(destination, os.Environ())}
@@ -448,11 +462,7 @@ func formatJSONForOutput(res gjson.Result, opts ShowJSONOpts, destination io.Wri
 		if err := json2yaml.Convert(&yaml, input); err != nil {
 			return nil, err
 		}
-		_, err := opts.Stdout.Write([]byte(yaml.String()))
-		if err != nil {
-			return nil, &outputWriteError{err}
-		}
-		return nil, err
+		return []byte(yaml.String()), nil
 	default:
 		return nil, fmt.Errorf("Invalid format: %s, valid formats are: %s", opts.Format, strings.Join(OutputFormats, ", "))
 	}
@@ -466,10 +476,10 @@ type ShowJSONOpts struct {
 	Operation      string          // generated operation identifier; empty for error presentation
 	OutputKind     OutputKind      // response, page item, or stream event; unspecified for errors
 	ExplicitFormat bool            // true if the user explicitly passed --format
-	Format         string          // output format (auto, explore, json, jsonl, pretty, raw, yaml)
+	Format         string          // output format (auto, text, explore, json, jsonl, pretty, raw, yaml)
 	RawOutput      bool            // like jq -r: print strings without JSON quotes
 	Stderr         io.Writer       // stderr for warnings; injectable for testing; defaults to os.Stderr
-	Stdout         *os.File        // stdout (or pager); injectable for testing; defaults to os.Stdout
+	Stdout         io.Writer       // output destination; defaults to os.Stdout
 	Title          string          // display title
 	Transform      string          // GJSON path to extract before displaying
 }
@@ -497,18 +507,23 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	if err != nil {
 		return err
 	}
+	opts.Format = resolvedOutputFormat(opts)
 	res = applyJSONPath(res, opts.Transform)
 	opts.Transform = ""
 
 	switch strings.ToLower(opts.Format) {
-	case "auto":
-		opts.Format = "json"
+	case "text":
+		if !opts.RawOutput || res.Type != gjson.String {
+			return readable.Write(outputWriter{ctx: opts.Context, out: opts.Stdout}, res)
+		}
 	case "explore":
 		if isTerminal(opts.Stdout) {
-			return jsonview.ExploreJSON(opts.Title, res)
+			return jsonview.ExploreJSONWithOutput(opts.Title, res, opts.Stdout)
 		}
 		if opts.ExplicitFormat {
-			fmt.Fprint(opts.Stderr, warningExploreNotSupported)
+			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stderr}).WriteString(warningExploreNotSupported); err != nil {
+				return err
+			}
 		}
 		opts.Format = "json"
 	}
@@ -516,7 +531,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	if err != nil {
 		return err
 	}
-	_, err = opts.Stdout.Write(formatted)
+	_, err = (outputWriter{ctx: opts.Context, out: opts.Stdout}).Write(formatted)
 	return err
 }
 
@@ -545,16 +560,41 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 		transform: selectOutputTransformer(opts, selectTransformer),
 		remaining: itemsToDisplay,
 	}
+	opts.Format = resolvedOutputFormat(opts)
+	if opts.Format == "text" {
+		if stdout, ok := opts.Stdout.(*os.File); ok && stdout == os.Stdout {
+			return streamToStdout(func(*os.File) error { return showReadableIterator(iter, opts) })
+		}
+		return showReadableIterator(iter, opts)
+	}
 
 	if strings.ToLower(opts.Format) == "explore" {
 		if isTerminal(opts.Stdout) {
-			err := jsonview.ExploreJSONStream(opts.Title, iter)
+			err := jsonview.ExploreJSONStreamWithOutput(opts.Title, iter, opts.Stdout)
 			return errors.Join(err, iter.Err())
 		}
 		if opts.ExplicitFormat {
-			fmt.Fprint(opts.Stderr, warningExploreNotSupported)
+			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stderr}).WriteString(warningExploreNotSupported); err != nil {
+				return err
+			}
 		}
 		opts.Format = "json"
+	}
+
+	// The existing pager writes to process stdout. Other injected destinations
+	// must stay on their own writer, including error output on stderr.
+	stdout, processStdout := opts.Stdout.(*os.File)
+	if !processStdout || stdout != os.Stdout {
+		for iter.Next() {
+			formatted, err := formatJSON(iter.Current().Result, opts)
+			if err != nil {
+				return err
+			}
+			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stdout}).Write(formatted); err != nil {
+				return err
+			}
+		}
+		return iter.Err()
 	}
 
 	terminalWidth, terminalHeight, err := term.GetSize(os.Stdout.Fd())
@@ -581,15 +621,15 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	}
 
 	if !usePager {
-		if _, err := opts.Stdout.Write(output); err != nil {
+		if _, err := (outputWriter{ctx: opts.Context, out: opts.Stdout}).Write(output); err != nil {
 			return err
 		}
 		return iter.Err()
 	}
 
 	return streamOutput(opts.Title, func(pager *os.File) error {
-		if _, err := pager.Write(output); err != nil {
-			return &outputWriteError{err}
+		if _, err := (outputWriter{ctx: opts.Context, out: pager}).Write(output); err != nil {
+			return err
 		}
 		pagerOpts := opts
 		pagerOpts.Stdout = pager
@@ -598,8 +638,8 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 			if err != nil {
 				return err
 			}
-			if _, err := pager.Write(formatted); err != nil {
-				return &outputWriteError{err}
+			if _, err := (outputWriter{ctx: opts.Context, out: pager}).Write(formatted); err != nil {
+				return err
 			}
 		}
 		return iter.Err()

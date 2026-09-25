@@ -4,13 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 
 	"github.com/openai/openai-cli/pkg/cmd"
 	"github.com/openai/openai-cli/pkg/custom"
-	"github.com/openai/openai-go/v3"
-	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
@@ -36,6 +33,7 @@ func main() {
 		return ctx, nil
 	}
 	args, _, err := custom.ConfigureHelp(app, os.Args)
+	custom.ConfigureCommandErrors(app)
 
 	ctx := context.Background()
 	if err == nil {
@@ -44,36 +42,13 @@ func main() {
 	if err != nil {
 		exitCode := 1
 
-		// Check if error has a custom exit code
-		if exitErr, ok := err.(cli.ExitCoder); ok {
+		// Preserve custom exit codes through command-context wrappers.
+		var exitErr cli.ExitCoder
+		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		}
-
-		var apierr *openai.Error
-		if errors.As(err, &apierr) {
-			fmt.Fprintf(os.Stderr, "%s %q: %d %s\n", apierr.Request.Method, apierr.Request.URL, apierr.Response.StatusCode, http.StatusText(apierr.Response.StatusCode))
-			format := app.String("format-error")
-			json := gjson.Parse(apierr.RawJSON())
-			show_err := cmd.ShowJSON(json, cmd.ShowJSONOpts{
-				// Error output has no successful-operation transformer routing.
-				Context:        ctx,
-				Operation:      "",
-				OutputKind:     custom.OutputUnspecified,
-				ExplicitFormat: app.IsSet("format-error"),
-				Format:         format,
-				Title:          "Error",
-				Transform:      app.String("transform-error"),
-			})
-			if show_err != nil {
-				// Just print the original error:
-				fmt.Fprintf(os.Stderr, "%s\n", err.Error())
-			}
-		} else {
-			if cmd.CommandErrorBuffer.Len() > 0 {
-				os.Stderr.Write(cmd.CommandErrorBuffer.Bytes())
-			} else {
-				fmt.Fprintf(os.Stderr, "%s\n", err.Error())
-			}
+		if showErr := custom.ShowCommandError(app, err, os.Stderr); showErr != nil {
+			fmt.Fprintln(os.Stderr, "Could not display the error.")
 		}
 		os.Exit(exitCode)
 	}

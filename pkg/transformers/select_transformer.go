@@ -1,5 +1,5 @@
-// Package transformers contains SDK-owned response transformations. Presentation,
-// output formats, and terminal sanitization belong to pkg/custom.
+// Package transformers contains SDK-owned response transformations. Presentation
+// and output formats belong to pkg/custom and its internal rendering helpers.
 package transformers
 
 import (
@@ -34,7 +34,7 @@ func Identity(_ context.Context, value gjson.Result) (gjson.Result, error) {
 }
 
 // Select is the SDK-owned hook for command-specific default transformations.
-// The initial migration deliberately preserves every command's existing output.
-func Select(_ Route) Transformer {
-	return Identity
+// Only known API fields are summarized; unfamiliar routes preserve their values.
+func Select(route Route) Transformer {
+	return selectReadableTransformer(route)
 }
