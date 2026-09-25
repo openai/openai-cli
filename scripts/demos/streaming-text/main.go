@@ -1,0 +1,95 @@
+// streaming-demo-api serves a fixed, delayed synthetic Responses event stream.
+package main
+
+import (
+	"context"
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+)
+
+//go:embed events.json
+var fixture []byte
+
+func main() {
+	if len(os.Args) != 3 {
+		fmt.Fprintln(os.Stderr, "usage: streaming-demo-api ADDRESS_FILE REQUEST_LOG")
+		os.Exit(2)
+	}
+	var events []json.RawMessage
+	if err := json.Unmarshal(fixture, &events); err != nil {
+		panic(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	requests, err := os.OpenFile(os.Args[2], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		panic(err)
+	}
+	defer requests.Close()
+	var logMu sync.Mutex
+	server := &http.Server{ReadHeaderTimeout: 5 * time.Second}
+	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/responses" || r.Header.Get("Authorization") != "Bearer synthetic-demo-key" {
+			http.Error(w, "only the synthetic demo request is accepted", http.StatusNotFound)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body) != 3 ||
+			body["model"] != "demo-model" || body["input"] != "Say hello" || body["stream"] != true {
+			http.Error(w, "unexpected synthetic request body", http.StatusBadRequest)
+			return
+		}
+		// Log only this validated synthetic request, never request headers.
+		logMu.Lock()
+		err := json.NewEncoder(requests).Encode(map[string]any{"method": r.Method, "path": r.URL.Path, "body": body})
+		logMu.Unlock()
+		if err != nil {
+			http.Error(w, "could not record synthetic request", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		for _, event := range events {
+			timer := time.NewTimer(650 * time.Millisecond)
+			select {
+			case <-r.Context().Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			data, err := json.Marshal(event)
+			if err != nil {
+				return
+			}
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	go func() {
+		<-ctx.Done()
+		shutdown, done := context.WithTimeout(context.Background(), 2*time.Second)
+		defer done()
+		_ = server.Shutdown(shutdown)
+	}()
+	if err := os.WriteFile(os.Args[1], []byte("http://"+listener.Addr().String()+"/v1"), 0600); err != nil {
+		panic(err)
+	}
+	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		panic(err)
+	}
+}

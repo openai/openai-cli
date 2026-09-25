@@ -2,6 +2,7 @@ package jsonview
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -418,13 +419,28 @@ func ExploreJSONStreamWithOutput[T any](title string, it Iterator[T], output io.
 		items = append(items, anyIt.Current())
 	}
 
-	if err := anyIt.Err(); err != nil {
-		return err
+	preloadErr := anyIt.Err()
+	if preloadErr != nil && (len(items) == 0 || errors.Is(preloadErr, context.Canceled) || errors.Is(preloadErr, context.DeadlineExceeded)) {
+		return preloadErr
 	}
 
 	arrayJSONBytes, err := marshalItemsToJSONArray(items)
 	if err != nil {
-		return err
+		return errors.Join(err, preloadErr)
+	}
+	if preloadErr != nil {
+		// Preserve already-loaded records when a stream fails before the UI can
+		// open. Compact first so escaping terminal controls keeps valid JSON.
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, arrayJSONBytes); err != nil {
+			return errors.Join(err, preloadErr)
+		}
+		text := SanitizeTerminalString(compact.String()) + "\n"
+		n, err := io.WriteString(output, text)
+		if err == nil && n != len(text) {
+			err = io.ErrShortWrite
+		}
+		return errors.Join(preloadErr, err)
 	}
 
 	arrayJSON := gjson.ParseBytes(arrayJSONBytes)

@@ -2,9 +2,12 @@ package custom
 
 import (
 	"context"
+	"errors"
 	"io"
+	"os"
 	"strings"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/tidwall/gjson"
@@ -55,6 +58,18 @@ type outputWriter struct {
 	out io.Writer
 }
 
+// Preserve terminal detection when the interactive viewer uses guarded output.
+type terminalOutputWriter struct {
+	outputWriter
+	file *os.File
+}
+
+var _ term.File = terminalOutputWriter{}
+
+func (w terminalOutputWriter) Fd() uintptr                { return w.file.Fd() }
+func (w terminalOutputWriter) Read(p []byte) (int, error) { return w.file.Read(p) }
+func (w terminalOutputWriter) Close() error               { return w.file.Close() }
+
 func (w outputWriter) Write(data []byte) (int, error) {
 	if err := w.ctx.Err(); err != nil {
 		return 0, err
@@ -81,9 +96,11 @@ func (w outputWriter) result(n, size int, err error) (int, error) {
 	return n, w.ctx.Err()
 }
 
-// Render records as they arrive. Semantic stream projections and resource
-// summaries are separate features; every ordinary field remains visible here.
+// Render records as they arrive, keeping stream state separate from list records.
 func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts) error {
+	if opts.OutputKind == OutputStreamEvent && opts.Transform == "" && !opts.RawOutput {
+		return showReadableStream(iter, opts)
+	}
 	out := outputWriter{ctx: opts.Context, out: opts.Stdout}
 	emitted := false
 	for iter.Next() {
@@ -93,21 +110,21 @@ func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts)
 			// controls using the same destination-aware formatter as ShowJSON.
 			formatted, err := formatJSON(iter.Current().Result, opts)
 			if err != nil {
-				return err
+				return errors.Join(err, iter.Err())
 			}
 			if _, err := out.Write(formatted); err != nil {
-				return err
+				return errors.Join(err, iter.Err())
 			}
 			emitted = true
 			continue
 		}
 		if emitted {
 			if _, err := io.WriteString(out, "\n"); err != nil {
-				return err
+				return errors.Join(err, iter.Err())
 			}
 		}
 		if err := readable.Write(out, value); err != nil {
-			return err
+			return errors.Join(err, iter.Err())
 		}
 		emitted = true
 	}

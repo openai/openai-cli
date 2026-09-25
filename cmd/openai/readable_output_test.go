@@ -161,7 +161,7 @@ func TestMainReadableListPreservesItemsAndRawPage(t *testing.T) {
 	}
 }
 
-func TestMainReadableStreamPreservesIndividualEvents(t *testing.T) {
+func TestMainReadableStreamAssemblesIndividualEvents(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/responses" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -173,16 +173,13 @@ func TestMainReadableStreamPreservesIndividualEvents(t *testing.T) {
 			`{"type":"response.output_text.delta","delta":"Synthetic answer","output_index":0,"content_index":0,"sequence_number":0}`+"\n\n")
 		io.WriteString(w, "event: response.output_text.done\ndata: "+
 			`{"type":"response.output_text.done","text":"Synthetic answer","output_index":0,"content_index":0,"sequence_number":1}`+"\n\n")
+		io.WriteString(w, "event: response.completed\ndata: "+
+			`{"type":"response.completed","response":{"status":"completed","output":[]}}`+"\n\n")
 	}))
 	defer server.Close()
 	got := runReadableCommand(t, server, "responses", "create", "--model", "fake-model", "--input", "synthetic input", "--stream=true")
-	if got.code != 0 || got.stderr != "" || strings.Count(got.stdout, "Synthetic answer\n") != 2 {
-		t.Fatalf("stream events were lost or combined: %+v", got)
-	}
-	for _, label := range []string{"Type: response.output_text.delta\n", "Delta: Synthetic answer\n", "Type: response.output_text.done\n", "Text: Synthetic answer\n", "Sequence number: 1\n"} {
-		if !strings.Contains(got.stdout, label) {
-			t.Fatalf("missing event field %q in %q", label, got.stdout)
-		}
+	if got.code != 0 || got.stderr != "" || got.stdout != "Synthetic answer\n" {
+		t.Fatalf("streamed text duplicated or lost: %+v", got)
 	}
 }
 
@@ -207,6 +204,8 @@ func TestMainReadableRawOutputStreamsBeforeNextEvent(t *testing.T) {
 				}
 				io.WriteString(w, "event: response.output_text.delta\ndata: "+
 					`{"type":"response.output_text.delta","delta":"second","sequence_number":1}`+"\n\n")
+				io.WriteString(w, "event: response.completed\ndata: "+
+					`{"type":"response.completed","response":{"status":"completed","output":[]}}`+"\n\n")
 			}))
 			defer server.Close()
 			// Always unblock the synthetic source, including when an assertion fails.
@@ -261,8 +260,9 @@ func TestMainReadableRawOutputStreamsBeforeNextEvent(t *testing.T) {
 			if err := child.Wait(); err != nil || stderr.Len() != 0 {
 				t.Fatalf("process failed: %v; stderr=%q", err, stderr.String())
 			}
-			if string(rest) != tc.second {
-				t.Fatalf("remaining output = %q, want %q", rest, tc.second)
+			want := tc.second + "\nType: response.completed\nResponse:\n  Status: completed\n  Output: (empty list)\n"
+			if string(rest) != want {
+				t.Fatalf("remaining output = %q, want %q", rest, want)
 			}
 		})
 	}
