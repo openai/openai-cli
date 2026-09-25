@@ -2,6 +2,7 @@ package custom
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 
@@ -81,11 +82,11 @@ func (w outputWriter) result(n, size int, err error) (int, error) {
 	return n, w.ctx.Err()
 }
 
-// Render records as they arrive. Semantic stream projections and resource
-// summaries are separate features; every ordinary field remains visible here.
+// Render records as they arrive, preserving the iterator's order and limits.
 func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts) error {
 	out := outputWriter{ctx: opts.Context, out: opts.Stdout}
 	emitted := false
+	omitted := false
 	for iter.Next() {
 		value := applyJSONPath(iter.Current().Result, opts.Transform)
 		if opts.RawOutput && value.Type == gjson.String {
@@ -106,10 +107,23 @@ func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts)
 				return err
 			}
 		}
-		if err := readable.Write(out, value); err != nil {
+		hidden, err := writeReadableResource(out, value, opts)
+		if err != nil {
 			return err
 		}
+		omitted = omitted || hidden
 		emitted = true
+	}
+	if omitted {
+		if err := readable.WriteText(out, resourceSummaryHint); err != nil {
+			iterErr := iter.Err()
+			// Closing stdout may suppress an output-only broken pipe, but must
+			// never turn a failed page fetch into a successful command.
+			if iterErr != nil && isOutputBrokenPipe(err) {
+				return iterErr
+			}
+			return errors.Join(err, iterErr)
+		}
 	}
 	if err := iter.Err(); err != nil {
 		return err

@@ -269,11 +269,23 @@ func TestMainImageModelsInterruptPreservesCompletedResults(t *testing.T) {
 		t.Skip("os.Process.Signal does not send os.Interrupt on Windows")
 	}
 	ready := make(chan struct{})
+	initialRequests := make(chan struct{}, 2)
 	server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/models/gpt-image-2.5-sunburst":
+			// Let both other workers reach the server before completing this
+			// response. An allocated lookup may not have sent its request yet.
+			for range 2 {
+				select {
+				case <-initialRequests:
+				case <-r.Context().Done():
+					return
+				}
+			}
 			mainImageModelResponse(w, r.URL.Path, "null")
 			return
+		case "/models/gpt-image-2.5-flare", "/models/gpt-image-2":
+			initialRequests <- struct{}{}
 		case "/models/gpt-image-1.5":
 			// The fourth lookup proves the first response was fully processed:
 			// the two other workers are still blocked on their initial requests.
@@ -340,7 +352,7 @@ func TestMainImageModelsInterruptPreservesCompletedResults(t *testing.T) {
 		t.Errorf("missing incomplete-check guidance: %q", stderr.String())
 	}
 	if routes := requests(); len(routes) != 4 {
-		t.Errorf("discovery continued scheduling after interrupt: %v", routes)
+		t.Errorf("expected exactly four requests around interrupt: %v", routes)
 	}
 }
 
