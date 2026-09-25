@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/openai/openai-cli/internal/jsonview"
@@ -23,9 +24,11 @@ const (
 type transformerSelector func(transformers.Route) transformers.Transformer
 
 func selectOutputTransformer(opts ShowJSONOpts, selectTransformer transformerSelector) transformers.Transformer {
-	// Explicit presentation choices operate on the original API response.
+	// Explicit data formats operate on the original API response. Auto and text
+	// use the default transformation before readable presentation.
 	// Missing or non-success routing metadata also uses identity, including errors.
-	if opts.ExplicitFormat || opts.Transform != "" || opts.RawOutput || opts.Operation == "" {
+	format := strings.ToLower(opts.Format)
+	if opts.ExplicitFormat && format != "auto" && format != "text" || opts.Transform != "" || opts.RawOutput || opts.Operation == "" {
 		return transformers.Identity
 	}
 	switch opts.OutputKind {

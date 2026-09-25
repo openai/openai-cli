@@ -80,13 +80,14 @@ func TestShowJSONExplicitOutputAndErrorsBypassDefaults(t *testing.T) {
 			if test.name != "unspecified output" {
 				opts.OutputKind = OutputResponse
 			}
-			opts.Stdout = outputFile(t)
+			file := outputFile(t)
+			opts.Stdout = file
 			err := showJSON(gjson.Parse(`{"id":"original"}`), opts, func(transformers.Route) transformers.Transformer {
 				t.Fatal("explicit output or error presentation selected a default transformer")
 				return transformers.Identity
 			})
 			require.NoError(t, err)
-			require.Equal(t, test.want, readOutput(t, opts.Stdout))
+			require.Equal(t, test.want, readOutput(t, file))
 		})
 	}
 	for _, opts := range []ShowJSONOpts{

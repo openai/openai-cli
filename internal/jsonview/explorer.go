@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"io"
 	"math"
 	"os"
 	"strings"
+	"sync"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -315,24 +317,78 @@ type JSONViewer struct {
 
 // ExploreJSON explores a single JSON value known ahead of time
 func ExploreJSON(title string, json gjson.Result) error {
+	return ExploreJSONWithOutput(title, json, os.Stdout)
+}
+
+// ExploreJSONWithOutput sends the explorer and its selected value to output.
+func ExploreJSONWithOutput(title string, json gjson.Result, output io.Writer) error {
 	view, err := newView("", json, false)
 	if err != nil {
 		return err
 	}
 
 	viewer := &JSONViewer{stack: []JSONView{view}, root: title, rawMode: false, help: help.New()}
-	return runExplorer(viewer)
+	return runExplorerWithOutput(viewer, output)
 }
 
-func runExplorer(viewer *JSONViewer, options ...tea.ProgramOption) error {
+func runExplorerWithOutput(viewer *JSONViewer, output io.Writer, options ...tea.ProgramOption) error {
+	if output == nil {
+		output = os.Stdout
+	}
+	tracked := &explorerOutput{writer: output}
+	options = append(options, tea.WithOutput(tracked.terminalOutput()))
 	_, err := tea.NewProgram(viewer, options...).Run()
-	err = errors.Join(err, viewer.loadErr)
+	err = errors.Join(err, viewer.loadErr, tracked.Err())
 	if viewer.message != "" {
-		_, msgErr := fmt.Println("\n" + viewer.message)
+		message := "\n" + viewer.message + "\n"
+		_, msgErr := io.WriteString(tracked, message)
 		err = errors.Join(err, msgErr)
 	}
 	return err
 }
+
+// Bubble Tea ignores rendering write errors, so retain the first failure and
+// return it after the program has restored the terminal.
+type explorerOutput struct {
+	writer io.Writer
+	mu     sync.Mutex
+	err    error
+}
+
+func (w *explorerOutput) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.writer.Write(p)
+	if err == nil && n != len(p) {
+		err = io.ErrShortWrite
+	}
+	if w.err == nil {
+		w.err = err
+	}
+	return n, err
+}
+
+func (w *explorerOutput) Err() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.err
+}
+
+func (w *explorerOutput) terminalOutput() io.Writer {
+	if file, ok := w.writer.(term.File); ok {
+		return explorerFileOutput{File: file, output: w}
+	}
+	return w
+}
+
+// Preserve Bubble Tea's terminal detection without giving ordinary writers a
+// synthetic file descriptor.
+type explorerFileOutput struct {
+	term.File
+	output *explorerOutput
+}
+
+func (w explorerFileOutput) Write(p []byte) (int, error) { return w.output.Write(p) }
 
 type hasRawJSON interface {
 	RawJSON() string
@@ -340,11 +396,21 @@ type hasRawJSON interface {
 
 // ExploreJSONStream explores JSON data loaded incrementally via an iterator
 func ExploreJSONStream[T any](title string, it Iterator[T]) error {
+	return ExploreJSONStreamWithOutput(title, it, os.Stdout)
+}
+
+// ExploreJSONStreamWithOutput sends the explorer and its selected value to output.
+func ExploreJSONStreamWithOutput[T any](title string, it Iterator[T], output io.Writer) error {
 	anyIt := genericToAnyIterator(it)
+	if output == nil {
+		output = os.Stdout
+	}
 
 	preloadCount := 20
-	if termHeight, _, err := term.GetSize(os.Stdout.Fd()); err == nil {
-		preloadCount = termHeight
+	if file, ok := output.(interface{ Fd() uintptr }); ok {
+		if termHeight, _, err := term.GetSize(file.Fd()); err == nil {
+			preloadCount = termHeight
+		}
 	}
 
 	items := make([]any, 0, preloadCount)
@@ -373,7 +439,7 @@ func ExploreJSONStream[T any](title string, it Iterator[T]) error {
 	}
 
 	viewer := &JSONViewer{stack: []JSONView{view}, root: title, rawMode: false, help: help.New()}
-	return runExplorer(viewer)
+	return runExplorerWithOutput(viewer, output)
 }
 
 func marshalItemsToJSONArray(items []any) ([]byte, error) {

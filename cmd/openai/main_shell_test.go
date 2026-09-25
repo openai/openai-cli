@@ -158,7 +158,7 @@ func TestMainNativeShell(t *testing.T) {
 				}))
 				defer server.Close()
 				got := runNativeShell(t, shell, work, home, server.URL, shell.setKey+command)
-				if got.code != 0 || got.stderr != "" || requests.Load() != 1 || !strings.Contains(got.stdout, "c3ludGhldGlj") {
+				if got.code != 0 || got.stderr != "" || requests.Load() != 1 || !strings.Contains(got.stdout, "12 base64 characters; use --format json for full value") {
 					t.Fatalf("copied image example failed: code=%d requests=%d stderr=%q", got.code, requests.Load(), got.stderr)
 				}
 				if strings.Contains(got.stdout+got.stderr, "fake-native-shell-key") {
