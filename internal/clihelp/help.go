@@ -116,50 +116,30 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 		return args, false, nil
 	}
 	current := root
+	commandStart := -1
 	for i := 1; i < len(args); i++ {
 		arg := args[i]
 		// On a leaf, "help" can be a filename or another positional operand.
 		// Only resource groups accept the help-command shorthand.
 		if arg == "help" && len(current.Commands) > 0 {
-			if current == root {
-				// Let the framework dispatch root help and its setup guide, including
-				// options before or after the topic. Normalize only nested shorthand.
-				out := append([]string(nil), args[:i+1]...)
-				literal := false
-				for _, topic := range args[i+1:] {
-					literal = literal || topic == "--"
-					if literal || topic != "--help" && topic != "-h" && topic != "--h" {
-						out = append(out, topic)
-					}
-				}
-				return out, true, nil
+			// Use the parsed help action for both spellings. It resolves topics
+			// after global flags are parsed, so failures honor error formatting.
+			// Keep root-only flags before help. Move its token before the
+			// resource path; inherited flags and their values retain order.
+			helpAt := i
+			if commandStart >= 0 {
+				helpAt = commandStart
 			}
-			path, all, literal := []string{}, false, false
+			out := append(append([]string(nil), args[:helpAt]...), "help")
+			out = append(out, args[helpAt:i]...)
+			literal := false
 			for _, topic := range args[i+1:] {
-				if !literal {
-					switch topic {
-					case "--":
-						literal = true
-						continue
-					case "--all":
-						all = true
-						continue
-					case "--help", "-h", "--h":
-						continue
-					}
+				literal = literal || topic == "--"
+				if literal || topic != "--help" && topic != "-h" && topic != "--h" {
+					out = append(out, topic)
 				}
-				next := current.Command(topic)
-				if next == nil || next.Hidden || topic == "help" {
-					return nil, true, cli.Exit(fmt.Sprintf("Unknown help topic %q. Run %s help --all to see commands.", topic, root.Metadata["help-invocation"]), 3)
-				}
-				current = next
-				path = append(path, topic)
 			}
-			if all {
-				useFullHelp(root, current)
-			}
-			out := append(append([]string(nil), args[:i]...), path...)
-			return append(out, "--help"), true, nil
+			return out, true, nil
 		}
 		// Flags and values remain entirely under the framework parser. In
 		// particular, --prompt "help" must never turn a request into help.
@@ -197,6 +177,9 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 		next := current.Command(arg)
 		if next == nil {
 			return args, false, nil
+		}
+		if current == root {
+			commandStart = i
 		}
 		current = next
 	}

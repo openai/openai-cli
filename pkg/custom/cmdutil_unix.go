@@ -55,9 +55,9 @@ func streamOutputOSSpecific(label string, generateOutput func(w *os.File) error)
 		return outputErr
 	}
 	if wstatus.ExitStatus() != 0 {
-		return fmt.Errorf("Pager exited with non-zero exit status: %d", wstatus.ExitStatus())
+		return wrapPagerError(fmt.Errorf("Pager exited with non-zero exit status: %d", wstatus.ExitStatus()))
 	}
-	return err
+	return wrapPagerError(err)
 }
 
 func openSocketPairPager(label string) (*os.File, int, error) {
