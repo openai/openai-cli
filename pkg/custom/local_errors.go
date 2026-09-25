@@ -25,6 +25,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var pathError *os.PathError
 	var pagerFailure *pagerError
 	var streamFailure *streamResultError
+	var imageModelsFailure *imageModelsError
 	switch {
 	case errors.Is(failure, context.Canceled):
 		return "Request canceled."
@@ -38,6 +39,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return "Could not decode JSON: invalid JSON syntax."
 	case errors.As(failure, &pagerFailure):
 		return "The output pager failed. Check PAGER or use --format text to display the result without a pager."
+	case errors.As(failure, &imageModelsFailure):
+		return imageModelsFailure.Error()
 	case errors.As(failure, &pathError):
 		switch {
 		case errors.Is(pathError, os.ErrNotExist):

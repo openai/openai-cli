@@ -17,6 +17,7 @@ func ConfigureCommand(root *cli.Command) {
 		return
 	}
 	root.Metadata[configuredCommandMetadata] = true
+	registerImageModels(root)
 	configureReadableOutput(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, mtlsClientFlags()...)
