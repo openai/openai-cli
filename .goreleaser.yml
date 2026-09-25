@@ -93,9 +93,12 @@ homebrew_casks:
       owner: openai
       name: homebrew-tools
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-      branch: "openai-{{ .Version }}"
+      # Keep newer releases on the same pending Homebrew PR.
+      branch: "openai-update"
       pull_request:
         enabled: true
+    # GoReleaser leaves an existing PR's title unchanged when updating its branch.
+    commit_msg_template: "Brew cask update for openai"
     homepage: https://developers.openai.com/api/docs
     description: The official CLI for the OpenAI API.
     license: Apache-2.0
