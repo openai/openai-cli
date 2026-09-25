@@ -132,6 +132,15 @@ for demo_scene in before after explicit-jsonl; do
     "$demo_asciinema" convert --overwrite -f txt \
       "$demo_output/$demo_scene.cast" "$demo_output/$demo_scene.txt"
 done
+# Finish the request log before validating it or reporting a successful recording.
+kill "$demo_server_pid"
+if wait "$demo_server_pid"; then
+  demo_server_pid=""
+else
+  demo_server_pid=""
+  echo 'Demo API failed during shutdown; recording is incomplete.' >&2
+  exit 1
+fi
 "$demo_python" "$demo_source/validate.py" "$demo_output" "$demo_source/events.json" \
   > "$demo_output/validation.txt"
 ASCIINEMA_CONFIG_HOME="$demo_runtime/asciinema-config" \

@@ -32,7 +32,8 @@ DEMO_API_BINARY=/path/to/evidence/bin/streaming-demo-api \
     "$BEFORE_SHA" "$AFTER_SHA" /path/to/evidence/demo
 ```
 
-The runner records and checks all three exit statuses, verifies identical
+The runner records and checks all three exit statuses, waits for successful
+fixture shutdown and request-log close, verifies identical
 request contents and counts, compares explicit JSONL events with `events.json`,
 checks text deduplication and usage, and verifies from cast timestamps that the
 after scene displays each text delta before completion. It preserves individual
