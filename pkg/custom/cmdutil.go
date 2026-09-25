@@ -133,6 +133,29 @@ func streamOutput(label string, generateOutput func(w *os.File) error) error {
 	return streamOutputOSSpecific(label, generateOutput)
 }
 
+// pagerCommand splits PAGER into an executable and its arguments. $PAGER is written
+// as a command line by the tools this CLI is used beside (git, gh, man), so
+// "less -R" has to reach less rather than be resolved as a single executable name.
+// When the first word does not resolve, the whole value is kept, so a configuration
+// that works today keeps working, including an executable path that contains spaces.
+func pagerCommand() []string {
+	pager := strings.TrimSpace(os.Getenv("PAGER"))
+	if pager == "" {
+		return []string{"less"}
+	}
+	// Prefer a complete executable path before treating spaces as argument
+	// separators; a path containing spaces may itself be executable.
+	if _, err := exec.LookPath(pager); err == nil {
+		return []string{pager}
+	}
+	if command := strings.Fields(pager); len(command) > 1 {
+		if _, err := exec.LookPath(command[0]); err == nil {
+			return command
+		}
+	}
+	return []string{pager}
+}
+
 // pagerError distinguishes pager setup and process failures from the request,
 // formatter, or output callback. Keep the cause available to errors.Is/As.
 type pagerError struct{ error }
@@ -154,16 +177,12 @@ func streamToPagerWithPipe(label string, generateOutput func(w *os.File) error) 
 	defer r.Close()
 	defer w.Close()
 
-	pagerProgram := os.Getenv("PAGER")
-	if pagerProgram == "" {
-		pagerProgram = "less"
-	}
-
-	if _, err := exec.LookPath(pagerProgram); err != nil {
+	command := pagerCommand()
+	if _, err := exec.LookPath(command[0]); err != nil {
 		return wrapPagerError(err)
 	}
 
-	cmd := exec.Command(pagerProgram)
+	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Stdin = r
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

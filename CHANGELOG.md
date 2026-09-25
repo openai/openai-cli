@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.0](https://github.com/openai/openai-cli/compare/v1.19.2...v1.20.0) (2026-09-25)
+
+
+### Features
+
+* **cli:** make errors easier to understand ([#266](https://github.com/openai/openai-cli/issues/266)) ([37fe587](https://github.com/openai/openai-cli/commit/37fe587ddf9e9c160f8d6c52e5f2b879f5623960))
+
 ## [1.19.2](https://github.com/openai/openai-cli/compare/v1.19.1...v1.19.2) (2026-09-25)
 
 
