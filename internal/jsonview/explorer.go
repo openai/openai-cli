@@ -294,15 +294,20 @@ func (tv *TextView) Update(msg tea.Msg, raw bool) tea.Cmd {
 }
 
 func (tv *TextView) Resize(width, height int) {
-	h := height - heightOffset
+	h := max(0, height-heightOffset)
+	rewrap := !tv.ready || tv.viewport.Width() != width
 	if !tv.ready {
 		tv.viewport = viewport.New(viewport.WithWidth(width), viewport.WithHeight(h))
-		tv.viewport.SetContent(wordwrap.String(SanitizeTerminalString(tv.data.Str), width))
 		tv.ready = true
-		return
+	} else {
+		tv.viewport.SetWidth(width)
+		tv.viewport.SetHeight(h)
 	}
-	tv.viewport.SetWidth(width)
-	tv.viewport.SetHeight(h)
+	if rewrap {
+		tv.viewport.SetContent(wordwrap.String(SanitizeTerminalString(tv.data.Str), width))
+		// A zero-height viewport can scroll one line past the content.
+		tv.viewport.SetYOffset(min(tv.viewport.YOffset(), tv.viewport.TotalLineCount()-1))
+	}
 }
 
 type JSONViewer struct {
