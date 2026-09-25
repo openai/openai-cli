@@ -6,48 +6,13 @@ if [ "$#" -ne 6 ]; then
   exit 2
 fi
 demo_feature="$1"
-demo_before="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
-demo_after="$(cd "$(dirname "$3")" && pwd)/$(basename "$3")"
-demo_before_sha="$4"
-demo_after_sha="$5"
-demo_output="$6"
 demo_source="$(cd "$(dirname "$0")" && pwd)"
 demo_root="$(cd "$demo_source/../.." && pwd)"
-demo_api_binary="${DEMO_API_BINARY:-$demo_root/dist/demos/bin/demo-api}"
+source "$demo_source/capture_and_render.sh"
 case "$demo_feature" in readable-output|helpful-errors|list-get-results) ;; *) exit 2;; esac
-[[ "$demo_before_sha" =~ ^[0-9a-f]{40}$ ]]
-[[ "$demo_after_sha" =~ ^[0-9a-f]{40}$ ]]
-test -x "$demo_before"
-test -x "$demo_after"
-test -x "$demo_api_binary"
-demo_asciinema="$(command -v asciinema)"
-demo_agg="$(command -v agg)"
-demo_ffmpeg="$(command -v ffmpeg)"
-demo_ffprobe="$(command -v ffprobe)"
-mkdir -p "$demo_output"
-demo_output="$(cd "$demo_output" && pwd)"
-demo_runtime="$(mktemp -d "${TMPDIR:-/tmp}/cli-demo.XXXXXX")"
-demo_server_pid=""
-cleanup_demo() {
-  if [ -n "$demo_server_pid" ]; then
-    kill "$demo_server_pid" 2>/dev/null || true
-    wait "$demo_server_pid" 2>/dev/null || true
-  fi
-  rm -rf "$demo_runtime"
-}
-trap cleanup_demo EXIT
-mkdir -p "$demo_runtime/before" "$demo_runtime/after" \
-  "$demo_runtime/asciinema-config" "$demo_runtime/asciinema-state"
-ln -s "$demo_before" "$demo_runtime/before/openai"
-ln -s "$demo_after" "$demo_runtime/after/openai"
-"$demo_api_binary" "$demo_runtime/address" &
-demo_server_pid=$!
-for ((demo_attempt=0; demo_attempt<100; demo_attempt++)); do
-  [ -s "$demo_runtime/address" ] && break
-  sleep 0.05
-done
-test -s "$demo_runtime/address"
-demo_api_url="$(cat "$demo_runtime/address")"
+demo_prepare_capture "$demo_root" "$2" "$3" "$4" "$5" "$6" \
+  "${DEMO_API_BINARY:-$demo_root/dist/demos/bin/demo-api}"
+demo_start_api
 # Retain the original VHS recipe for later use in a permitted environment.
 cp "$demo_source/$demo_feature.tape" "$demo_output/comparison.tape"
 
@@ -112,19 +77,11 @@ fi
   echo "render: each scene replayed with asciinema + agg swash, then full GIF frames joined by ffmpeg; Menlo 22px, Dracula, 90 columns x 24 rows, line height 1.2, maximum 20 fps"
   echo "scope: no native Apple Terminal, PowerShell, or cmd.exe capture"
   echo "recipe: record.sh; comparison.tape is the preserved VHS recipe, not the renderer used"
-  uname -sm
-  if command -v sw_vers >/dev/null; then sw_vers; fi
-  /bin/bash --version | sed -n '1p'
-  echo "asciinema path: $demo_asciinema"
-  "$demo_asciinema" --version
-  echo "agg path: $demo_agg"
-  "$demo_agg" --version
-  echo "ffmpeg path: $demo_ffmpeg"
-  "$demo_ffmpeg" -version | sed -n '1p'
-  shasum -a 256 "$demo_before" "$demo_after" "$demo_api_binary" \
-    "$demo_asciinema" "$demo_agg" "$demo_source/record.sh" "$demo_source/main.go"
+  demo_capture_metadata
+  shasum -a 256 "$demo_source/record.sh" "$demo_source/main.go"
 } > "$demo_output/metadata.txt"
 
+demo_window_size=90x24
 demo_render_options=(--font-family Menlo --font-size 22 --line-height 1.2 \
   --theme dracula --fps-cap 20 --last-frame-duration 3.5)
 for demo_scene in "${demo_scenes[@]}"; do
@@ -142,30 +99,8 @@ for demo_scene in "${demo_scenes[@]}"; do
     demo_scene_request=files-retrieve
     demo_label='Explicit JSON | full data for the same file'
   fi
-  # The CLI runs directly on the PTY. No personal environment or shell hooks are inherited.
-  if env -i PATH="$demo_command_dir:/usr/bin:/bin" LANG=en_US.UTF-8 \
-    TERM=xterm-256color SHELL=/bin/bash \
-    ASCIINEMA_CONFIG_HOME="$demo_runtime/asciinema-config" \
-    ASCIINEMA_STATE_HOME="$demo_runtime/asciinema-state" \
-    OPENAI_API_KEY=synthetic-demo-key OPENAI_BASE_URL="$demo_api_url" \
-    DEMO_SCENE_SCRIPT="$demo_runtime/scene.sh" DEMO_SCENE_LABEL="$demo_label" \
-    DEMO_MODEL="$demo_model" DEMO_FORMAT="$demo_format" DEMO_REQUEST="$demo_scene_request" \
-    "$demo_asciinema" rec --headless --return --overwrite --quiet \
-      --window-size 90x24 --capture-env SHELL,TERM --output-format asciicast-v2 \
-      --title "$demo_label" --command '/bin/bash --noprofile --norc "$DEMO_SCENE_SCRIPT"' \
-      "$demo_output/$demo_scene.cast"; then demo_status=0; else demo_status=$?; fi
-  echo "$demo_scene exit status: $demo_status (expected $demo_expected_status)" >> "$demo_output/metadata.txt"
-  test "$demo_status" -eq "$demo_expected_status"
-  "$demo_agg" --quiet "${demo_render_options[@]}" \
-    "$demo_output/$demo_scene.cast" "$demo_output/$demo_scene.gif"
-  "$demo_agg" --quiet "${demo_render_options[@]}" --select 100% \
-    "$demo_output/$demo_scene.cast" "$demo_output/$demo_scene-frame.gif"
-  "$demo_ffmpeg" -hide_banner -loglevel error -y \
-    -i "$demo_output/$demo_scene-frame.gif" -frames:v 1 "$demo_output/$demo_scene.png"
-  ASCIINEMA_CONFIG_HOME="$demo_runtime/asciinema-config" \
-  ASCIINEMA_STATE_HOME="$demo_runtime/asciinema-state" \
-    "$demo_asciinema" convert --overwrite -f txt \
-      "$demo_output/$demo_scene.cast" "$demo_output/$demo_scene.txt"
+  demo_capture_scene "$demo_scene" "$demo_expected_status" "$demo_command_dir" "$demo_api_url" "$demo_label" \
+    "DEMO_MODEL=$demo_model" "DEMO_FORMAT=$demo_format" "DEMO_REQUEST=$demo_scene_request"
   demo_expected_text=demo-project
   if [ "$demo_feature" = helpful-errors ]; then
     demo_expected_text=invalid_api_key
@@ -194,30 +129,6 @@ for demo_scene in "${demo_scenes[@]}"; do
     esac
   fi
 done
-demo_casts=()
-demo_transcripts=()
-for demo_scene in "${demo_scenes[@]}"; do
-  demo_casts+=("$demo_output/$demo_scene.cast")
-  demo_transcripts+=("$demo_output/$demo_scene.txt")
-done
-ASCIINEMA_CONFIG_HOME="$demo_runtime/asciinema-config" \
-ASCIINEMA_STATE_HOME="$demo_runtime/asciinema-state" \
-  "$demo_asciinema" cat "${demo_casts[@]}" > "$demo_output/comparison.cast"
-# Rendering a merged cast can retain partial glyphs across screen clears in
-# agg 1.9.0. Join the independently rendered replays, retaining their timing.
-# Fixed relative names also avoid escaping output paths in ffmpeg's file list.
-(
-  cd "$demo_output"
-  printf "file '%s.gif'\n" "${demo_scenes[@]}" > comparison-scenes.txt
-  "$demo_ffmpeg" -hide_banner -loglevel error -y \
-    -f concat -safe 1 -i comparison-scenes.txt \
-    -filter_complex '[0:v]split[a][b];[a]palettegen[p];[b][p]paletteuse' \
-    -vsync 0 -gifflags 0 -loop 0 -final_delay 350 comparison.gif
-)
-# Convert each scene separately so clearing the screen between scenes does not
-# erase earlier scenes from the combined plain-text transcript.
-cat "${demo_transcripts[@]}" > "$demo_output/comparison.txt"
-"$demo_ffprobe" -v error -select_streams v:0 \
-  -show_entries stream=width,height,nb_frames,duration -of json \
-  "$demo_output/comparison.gif" > "$demo_output/media.json"
+demo_stop_api
+demo_assemble_capture 350 "${demo_scenes[@]}"
 printf 'Recorded %s terminal replay in %s\n' "$demo_feature" "$demo_output"

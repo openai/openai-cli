@@ -22,8 +22,8 @@ go build -o /path/to/evidence/bin/streaming-demo-api ./scripts/demos/streaming-t
 
 Build the before and after binaries from their identified commits. Verify that
 the binaries match those revisions before recording; commit labels and recorded
-hashes alone do not establish that correspondence. Then use a fresh output
-directory:
+hashes alone do not establish that correspondence. Then use an empty output
+directory outside the repository:
 
 ```sh
 DEMO_API_BINARY=/path/to/evidence/bin/streaming-demo-api \
@@ -43,6 +43,11 @@ Each scene is rendered separately, then ffmpeg joins the original frames and
 timing to avoid agg artifacts across screen clears. Rendering uses agg's resvg
 backend and the larger text size so command spaces and flag hyphens stay
 legible in the displayed comparison.
+
+`../capture_and_render.sh` owns setup, fixture lifecycle, PTY capture, rendering
+and assembly. The streaming scene, SSE fixture, tool pins and `validate.py`
+checks stay here. Failures stop recording; exit and interruption clean up the
+fixture and temporary state.
 
 Inspect `before.png`, `after.png`, `explicit-jsonl.png` and representative GIF
 frames before sharing. Check clipping, readable text, pauses, actual streaming,

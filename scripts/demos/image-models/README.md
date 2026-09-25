@@ -36,9 +36,11 @@ Both commits must be full 40-character IDs. Use main
 `37fe587ddf9e9c160f8d6c52e5f2b879f5623960` for this feature's before build;
 PR #238 is a behavior reference, not the comparison baseline.
 Use `DEMO_API_BINARY` to select a different build location for the fixture.
-The runner deliberately requires media outside the repository. It does not
-upload anything. Its temporary symlinks, shell state and local server are
-cleaned up on exit.
+The runner requires an empty output directory outside the repository and does
+not upload anything. It uses `../capture_and_render.sh` for setup, fixture
+lifecycle, capture and rendering. Image-model scenes and assertions stay here.
+Its temporary symlinks, shell state and local server are cleaned up on exit
+or interruption.
 
 Each command runs under `env -i` with a temporary PATH exposing the chosen
 binary as `openai`, a fake API key, and a loopback URL. The offline scene removes
