@@ -40,14 +40,21 @@ format retain their page envelope; other data formats retain item output.
 openai files retrieve --file-id file-example --transform filename --raw-output
 ```
 
-Binary downloads keep their byte or file behavior. API error details go to
-stderr with the existing HTTP summary and default JSON formatting. Readable
-success output does not enable a new error presenter.
+Binary downloads keep their byte or file behavior. Errors use readable summaries
+on stderr unless a data format is selected. `--format-error` overrides the error
+format independently; see [error output](../README.md#usage) for precedence and
+structured error details.
+
+If the SDK returns an error event after a stream starts, stderr explains that
+output may be incomplete. Explicit error formats preserve the event JSON;
+`--transform-error error.code` extracts its error code. Already printed output
+stays on stdout and the command exits unsuccessfully.
 
 ## Scope of this change
 
 This is the generic presentation foundation extracted from PR #238. Responses
 and Chat Completions still show their fields, rather than only the generated
 text. Resource-specific list/get summaries, empty-response confirmations,
-streamed-text assembly and deduplication, stream failure classification, native
-audio text/SSE handling, and image saving/previews are separate changes.
+streamed-text assembly and deduplication, classification of failure events the
+SDK returns as normal results, native audio text/SSE handling, and image
+saving/previews are separate changes.

@@ -89,6 +89,17 @@ Use `--format json` or `--format jsonl` in scripts that parse API data.
 See [reading command results](docs/readable-output.md) for extraction, binary
 output, and the scope of readable presentation.
 
+Errors print actionable summaries to stderr by default. Use `--format-error json`
+for original API error details, including unknown fields and SDK-reported stream
+error events. For those events, extraction paths include the `error` envelope,
+for example `--transform-error error.code`. Explicit `--format`
+values `json`, `jsonl`, `raw`, and `yaml` also apply to errors unless overridden
+by `--format-error`; an explicit `--format-error auto` or `text` restores summaries.
+`--transform-error` extracts error data independently of successful output.
+Malformed or empty error bodies receive a safe diagnostic; HTTP status is included
+only when the SDK retains it. Summaries omit rejected values and request URLs;
+explicit API error details can contain server-supplied sensitive data.
+
 ### Environment variables
 
 | Environment variable | Required | Default value |
@@ -118,7 +129,7 @@ output, and the scope of readable presentation.
 - `--base-url` - Use a custom API backend URL
 - `--header`, `-H` - Add a literal request header as `Name: Value`; repeat for multiple headers
 - `--format` - Change the output format (`auto`, `text`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`); `auto` selects readable text unless extracting data
-- `--format-error` - Change the output format for errors (`auto`, `text`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`); `auto` keeps JSON error details
+- `--format-error` - Change the stderr error format (`auto`, `text`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`); `auto` selects readable summaries unless extracting error data
 - `--transform` - Transform the data output using [GJSON syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md)
 - `--transform-error` - Transform the error output using [GJSON syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md)
 

@@ -101,7 +101,8 @@ func TestNullableFileReferencesEndToEnd(t *testing.T) {
 			}
 			if tt.wantErr {
 				require.Error(t, err)
-				require.Contains(t, stderr.String(), ".missing")
+				require.Contains(t, stderr.String(), "A local file could not be found.")
+				require.NotContains(t, stderr.String(), path)
 				require.Nil(t, body)
 				return
 			}
