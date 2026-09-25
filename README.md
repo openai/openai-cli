@@ -90,7 +90,9 @@ See [reading command results](docs/readable-output.md) for extraction, binary
 output, and the scope of readable presentation.
 
 Errors print actionable summaries to stderr by default. Use `--format-error json`
-for original API error details, including unknown fields. Explicit `--format`
+for original API error details, including unknown fields and SDK-reported stream
+error events. For those events, extraction paths include the `error` envelope,
+for example `--transform-error error.code`. Explicit `--format`
 values `json`, `jsonl`, `raw`, and `yaml` also apply to errors unless overridden
 by `--format-error`; an explicit `--format-error auto` or `text` restores summaries.
 `--transform-error` extracts error data independently of successful output.

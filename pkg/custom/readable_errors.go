@@ -14,6 +14,7 @@ import (
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
@@ -77,10 +78,14 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 	}
 	var apierr *openai.Error
 	isAPI := errors.As(failure, &apierr)
+	var streamerr *ssestream.StreamError
+	isStream := !errors.Is(failure, context.Canceled) && errors.As(failure, &streamerr)
 	if format == "text" && root.String("transform-error") == "" {
 		message := ""
 		if isAPI && !errors.Is(failure, context.Canceled) {
 			message = readableAPIErrorMessage(root, failure, apierr)
+		} else if isStream {
+			message = readableStreamErrorMessage
 		} else {
 			message = localErrorMessage(root, failure)
 		}
@@ -89,12 +94,22 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 	var value gjson.Result
 	if isAPI {
 		value = apiErrorValue(apierr)
-	} else {
+	} else if isStream && gjson.ValidBytes(streamerr.Event.Data) {
+		// A stream can fail after HTTP 200. Preserve its whole event payload,
+		// including the error envelope and unknown fields, without inventing
+		// an HTTP failure status. Extraction paths are relative to this event.
+		value = gjson.ParseBytes(streamerr.Event.Data)
+	}
+	if value.Type == gjson.Null {
 		// A string-only payload cannot fail encoding. Do not fabricate status
 		// codes for decoding or transport failures that discarded the response.
+		message := readableStreamErrorMessage
+		if !isStream {
+			message = localErrorMessage(root, failure)
+		}
 		data, _ := json.Marshal(struct {
 			Message string `json:"message"`
-		}{localErrorMessage(root, failure)})
+		}{message})
 		value = gjson.ParseBytes(data)
 	}
 	return ShowJSON(value, ShowJSONOpts{
@@ -103,6 +118,8 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 		Stdout: out, Stderr: out, Title: "Error", Transform: root.String("transform-error"),
 	})
 }
+
+const readableStreamErrorMessage = "The response stream failed. Output may be incomplete.\nFor API error details, add --format-error json."
 
 func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Error) string {
 	invocation := errorHelpInvocation(root)

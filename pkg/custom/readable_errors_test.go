@@ -15,6 +15,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -145,8 +146,9 @@ func TestCommandErrorPreservesWriterFailures(t *testing.T) {
 	cause := errors.New("synthetic writer failure")
 	apierr := &openai.Error{StatusCode: http.StatusBadRequest}
 	require.NoError(t, json.Unmarshal([]byte(`{"message":"synthetic response","code":"invalid_value"}`), apierr))
+	streamerr := &ssestream.StreamError{Event: ssestream.Event{Data: []byte(`{"error":{"message":"synthetic stream failure"}}`)}}
 	for _, format := range []string{"auto", "text", "json", "jsonl", "raw", "yaml", "pretty", "explore"} {
-		for _, failure := range []error{apierr, errors.New("synthetic local failure")} {
+		for _, failure := range []error{apierr, streamerr, errors.New("synthetic local failure")} {
 			t.Run(format+fmt.Sprintf("/%T", failure), func(t *testing.T) {
 				root := readableErrorTestCommand(t, "--format-error", format)
 				require.ErrorIs(t, ShowCommandError(root, failure, errorSink{cause}), cause)
@@ -241,6 +243,49 @@ func TestReadableParameterFlagUsesExactCommandPaths(t *testing.T) {
 			name, path := readableParameterFlag(command, test.param)
 			require.Equal(t, test.flag, name)
 			require.Equal(t, test.path, path)
+		})
+	}
+}
+
+func TestReadableStreamErrorSummaryAndCancellation(t *testing.T) {
+	streamerr := &ssestream.StreamError{
+		Message: "synthetic-private-prompt",
+		Event:   ssestream.Event{Data: []byte(`{"error":{"message":"synthetic-private-prompt","code":"synthetic-private-code"}}`)},
+	}
+	for _, test := range []struct {
+		name    string
+		failure error
+		flags   []string
+		want    string
+	}{
+		{"wrapped stream", fmt.Errorf("synthetic-private-wrapper: %w", streamerr), nil, "The response stream failed. Output may be incomplete."},
+		{"canceled stream", errors.Join(streamerr, context.Canceled), nil, "Request canceled.\n"},
+		{"canceled structured stream", errors.Join(streamerr, context.Canceled), []string{"--format-error", "json"}, "Request canceled."},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var out bytes.Buffer
+			require.NoError(t, ShowCommandError(readableErrorTestCommand(t, test.flags...), test.failure, &out))
+			require.Contains(t, out.String(), test.want)
+			assertReadableErrorContainsNoPrivateDetails(t, out.String())
+			require.NotContains(t, out.String(), "status_code")
+			if test.name == "wrapped stream" {
+				require.Contains(t, out.String(), "--format-error json")
+			}
+		})
+	}
+}
+
+func TestStructuredStreamErrorWithoutJSONData(t *testing.T) {
+	for _, data := range []string{"", "null", "synthetic-private-data", `{"error":`} {
+		t.Run(data, func(t *testing.T) {
+			var out bytes.Buffer
+			failure := &ssestream.StreamError{Message: "synthetic-private-prompt", Event: ssestream.Event{Data: []byte(data)}}
+			require.NoError(t, ShowCommandError(readableErrorTestCommand(t, "--format-error", "json"), failure, &out))
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(out.Bytes(), &payload))
+			require.Contains(t, payload["message"], "The response stream failed. Output may be incomplete.")
+			require.NotContains(t, payload, "status_code")
+			assertReadableErrorContainsNoPrivateDetails(t, out.String())
 		})
 	}
 }

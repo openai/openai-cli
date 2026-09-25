@@ -211,3 +211,66 @@ func runMainCommandAPIErrorResponse(t *testing.T, status int, contentType, body 
 	}
 	return result
 }
+
+func TestMainStreamErrorsPreserveEventDetails(t *testing.T) {
+	const event = `{"error":{"message":"synthetic private stream detail","code":"server_error","future_field":{"sequence":9007199254740993}},"event_extension":"preserved"}`
+	for _, partial := range []bool{false, true} {
+		for _, test := range []struct {
+			name, format, extracted string
+			flags                   []string
+		}{
+			{"default", "text", "", nil},
+			{"explicit JSON", "json", "", []string{"--format-error", "json"}},
+			{"inherited JSON", "json", "", []string{"--format", "json"}},
+			{"JSONL", "jsonl", "", []string{"--format-error", "jsonl"}},
+			{"raw", "raw", "", []string{"--format-error", "raw"}},
+			{"YAML", "yaml", "", []string{"--format-error", "yaml"}},
+			{"text override", "text", "", []string{"--format", "json", "--format-error", "auto"}},
+			{"error extraction", "json", "9007199254740993", []string{"--transform-error", "error.future_field.sequence"}},
+			{"independent extraction", "json", `"server_error"`, []string{"--transform", "delta", "--raw-output", "--format-error", "json", "--transform-error", "error.code"}},
+		} {
+			t.Run(fmt.Sprintf("partial=%t/%s", partial, test.name), func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					w.Header().Set("Content-Type", "text/event-stream")
+					if partial {
+						fmt.Fprint(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"synthetic first chunk\",\"sequence_number\":1}\n\n")
+						w.(http.Flusher).Flush()
+					}
+					fmt.Fprintf(w, "event: error\ndata: %s\n\n", event)
+				}))
+				t.Cleanup(server.Close)
+				args := append([]string{"openai", "--base-url", server.URL}, test.flags...)
+				args = append(args, "responses", "create", "--model", "synthetic-model", "--input", "synthetic input", "--stream", "true")
+				result := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=synthetic-stream-key"}, args...)
+				if result.code != 1 || requests.Load() != 1 {
+					t.Fatalf("exit=%d requests=%d, want 1 each; stderr=%q", result.code, requests.Load(), result.stderr)
+				}
+				if partial != strings.Contains(result.stdout, "synthetic first chunk") || strings.Contains(result.stdout, "synthetic private stream detail") {
+					t.Errorf("partial stream output changed: %q", result.stdout)
+				}
+				if !partial && result.stdout != "" {
+					t.Errorf("stream with no successful events wrote stdout: %q", result.stdout)
+				}
+				if strings.Contains(result.stderr, "synthetic-stream-key") {
+					t.Error("error included the request key")
+				}
+				switch {
+				case test.format == "text":
+					if !strings.Contains(result.stderr, "The response stream failed. Output may be incomplete.") || strings.Contains(result.stderr, "synthetic private stream detail") || strings.Contains(result.stderr, "200") {
+						t.Errorf("missing safe stream failure summary: %q", result.stderr)
+					}
+				case test.extracted != "":
+					if strings.TrimSpace(result.stderr) != test.extracted {
+						t.Errorf("extracted=%q, want %q", result.stderr, test.extracted)
+					}
+				default:
+					if got, want := decodeMainErrorObject(t, test.format, result.stderr), decodeMainErrorObject(t, "json", event); !reflect.DeepEqual(got, want) {
+						t.Errorf("event details changed: got %#v; want %#v", got, want)
+					}
+				}
+			})
+		}
+	}
+}
