@@ -55,7 +55,16 @@ ____APPNAME___bash_autocomplete() {
       done < <(compgen -f -- "$file_part")
     else
       case $exit_code in
-      10) mapfile -t COMPREPLY < <(compgen -f -- "$last_token") ;; # file completion
+      10)
+        mapfile -t COMPREPLY < <(compgen -f -- "$last_token")
+        # Readline only replaces the suffix after its last colon word break.
+        # Keep the full path for lookup, but omit the prefix it already retains.
+        local retained_prefix="${last_token%"$cur"}"
+        local index
+        for index in "${!COMPREPLY[@]}"; do
+          COMPREPLY[$index]="${COMPREPLY[$index]#"$retained_prefix"}"
+        done
+        ;;
       11) COMPREPLY=() ;;                                   # no completion
       0) mapfile -t COMPREPLY <<<"$completions" ;;          # use returned completions
       esac
