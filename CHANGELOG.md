@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.22.0](https://github.com/openai/openai-cli/compare/v1.21.0...v1.22.0) (2026-09-25)
+
+
+### Features
+
+* **cli:** stream readable response text ([#279](https://github.com/openai/openai-cli/issues/279)) ([08ed41e](https://github.com/openai/openai-cli/commit/08ed41ee132f969986debe716f0ab0872f579a5e))
+
+
+### Chores
+
+* **api:** clarify documented API error responses ([#287](https://github.com/openai/openai-cli/issues/287)) ([c6a5af5](https://github.com/openai/openai-cli/commit/c6a5af52883bee58f6cd401b41e230f150b9007e))
+
 ## [1.21.0](https://github.com/openai/openai-cli/compare/v1.20.4...v1.21.0) (2026-09-25)
 
 
