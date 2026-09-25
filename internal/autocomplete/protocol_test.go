@@ -87,6 +87,20 @@ func TestShellCompletionProtocol(t *testing.T) {
 			output:     "--model\n",
 			candidates: "--model\n",
 		},
+		{
+			name:     "bash command-like header value at cursor",
+			args:     []string{"--header", "X:models"},
+			bashArgs: []string{"--header", "X", ":", "models"},
+			code:     11,
+		},
+		{
+			name:       "bash leading-colon file before flag completion",
+			args:       []string{"--file", ":candidate", "models", "retrieve", "--mo"},
+			bashArgs:   []string{"--file", ":", "candidate", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

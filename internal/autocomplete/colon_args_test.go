@@ -66,6 +66,14 @@ func TestRebuildColonSeparatedArgs(t *testing.T) {
 			args: []string{"--file", "cert", ":", "models"},
 			want: []string{"--file", "cert:models"},
 		},
+		"bash-split command-like header value at cursor": {
+			args: []string{"--header", "X", ":", "models"},
+			want: []string{"--header", "X:models"},
+		},
+		"bash-split leading-colon file before command": {
+			args: []string{"--file", ":", "candidate", "models", "retrieve", "--mo"},
+			want: []string{"--file", ":candidate", "models", "retrieve", "--mo"},
+		},
 		"bash-split trailing colon before command": {
 			args: []string{"--header", "chat", ":", "completions", "create", "--mo"},
 			want: []string{"--header", "chat:", "completions", "create", "--mo"},
