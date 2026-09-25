@@ -63,6 +63,12 @@ type outputJSON struct{ gjson.Result }
 
 func (value outputJSON) RawJSON() string { return value.Raw }
 
+// streamResultError carries only fixed classifications from the stream
+// transformers, never API prose, so the command presenter can retain meaning.
+type streamResultError struct{ message string }
+
+func (e *streamResultError) Error() string { return e.message }
+
 // outputIterator shares one lazy transformation boundary across direct output,
 // the pager, and the explorer. Current never reruns a transformation.
 type outputIterator[T any] struct {
@@ -88,7 +94,7 @@ func (it *outputIterator[T]) Next() bool {
 		sourceErr := it.source.Err()
 		if it.done && it.err == nil && it.resultErr == nil && sourceErr == nil {
 			if message := it.completion.CompletionError(it.route); message != "" {
-				it.resultErr = errors.New(message)
+				it.resultErr = &streamResultError{message}
 			}
 		}
 		err := errors.Join(it.err, it.resultErr, sourceErr)
@@ -125,7 +131,7 @@ func (it *outputIterator[T]) Next() bool {
 	// Ordinary result events can signal failure without becoming SDK errors.
 	// Keep that original event visible, then stop before consuming another one.
 	if message := transformers.StreamFailure(value, it.route); message != "" {
-		it.resultErr = errors.New(message)
+		it.resultErr = &streamResultError{message}
 	}
 	it.completion.Observe(value, it.route)
 	value, it.err = transformOutput(it.context, value, it.transform)

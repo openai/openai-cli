@@ -24,11 +24,14 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var syntaxError *json.SyntaxError
 	var pathError *os.PathError
 	var pagerFailure *pagerError
+	var streamFailure *streamResultError
 	switch {
 	case errors.Is(failure, context.Canceled):
 		return "Request canceled."
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
 		return "The request timed out. The API may have received it; check its status before repeating it."
+	case errors.As(failure, &streamFailure):
+		return streamFailure.message + "\nOutput may be incomplete."
 	case errors.As(failure, &typeError):
 		return "Could not decode JSON: a value has an unexpected type."
 	case errors.As(failure, &syntaxError):

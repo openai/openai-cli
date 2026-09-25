@@ -3,6 +3,7 @@ package custom
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -59,6 +60,45 @@ func TestTextStreamFailureSurvivesOutputErrorsAcrossFormats(t *testing.T) {
 				require.False(t, isOutputBrokenPipe(err))
 				require.Equal(t, 1, iter.calls)
 			}()
+		}
+	}
+}
+
+func TestTextStreamFailurePresentationWithJoinedCauses(t *testing.T) {
+	const private = "synthetic-private-diagnostic https://secret.invalid/?token=fake\x1b[2J"
+	iter := streamItems(`{"type":"response.failed","response":{"error":{"message":"synthetic-private-response"}}}`)
+	failure := ShowJSONIterator(iter, -1, ShowJSONOpts{
+		Operation: responseStreamOperation, OutputKind: OutputStreamEvent,
+		Stdout: failOutputWriter{errors.New(private)},
+	})
+	require.Error(t, failure)
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"joined output failure", failure, "the streamed response failed\nOutput may be incomplete."},
+		{"wrapped failure", fmt.Errorf("%s: %w", private, failure), "the streamed response failed\nOutput may be incomplete."},
+		{"canceled", errors.Join(failure, context.Canceled), "Request canceled."},
+		{"deadline", errors.Join(failure, context.DeadlineExceeded), "The request timed out. The API may have received it; check its status before repeating it."},
+		{"untyped lookalike", errors.New("the streamed response failed\n" + private), "The command could not be completed. Check your arguments with --help."},
+	} {
+		for _, format := range []string{"text", "json"} {
+			t.Run(tc.name+"/"+format, func(t *testing.T) {
+				root := readableErrorTestCommand(t, "--format-error", format)
+				var diagnostic bytes.Buffer
+				require.NoError(t, ShowCommandError(root, tc.err, &diagnostic))
+				message := strings.TrimSpace(diagnostic.String())
+				if format == "json" {
+					var payload struct {
+						Message string `json:"message"`
+					}
+					require.NoError(t, json.Unmarshal(diagnostic.Bytes(), &payload))
+					message = payload.Message
+				}
+				require.Equal(t, tc.want, message)
+				assertReadableErrorContainsNoPrivateDetails(t, diagnostic.String())
+			})
 		}
 	}
 }

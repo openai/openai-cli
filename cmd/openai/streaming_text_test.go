@@ -381,6 +381,50 @@ func TestMainStreamingInterruptedTransportPreservesPartialOutput(t *testing.T) {
 	}
 }
 
+func TestMainStreamingFailureDiagnostics(t *testing.T) {
+	const partial = `{"type":"response.output_text.delta","item_id":"msg_diagnostic","output_index":0,"content_index":0,"delta":"Partial answer"}`
+	for _, tc := range []struct {
+		name, last, message string
+	}{
+		{"failed", `{"type":"response.failed","response":{"status":"failed","error":{"message":"synthetic-private-detail https://secret.invalid/?token=fake\u001b[2J"}}}`, "the streamed response failed"},
+		{"incomplete", `{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"synthetic-private-detail"}}}`, "the streamed response is incomplete"},
+		{"cancelled", `{"type":"response.cancelled","response":{"status":"cancelled","error":{"message":"synthetic-private-detail"}}}`, "the streamed response was cancelled"},
+		{"early EOF", "", "the stream ended before the response completed"},
+	} {
+		for _, format := range []string{"text", "json"} {
+			t.Run(tc.name+"/"+format, func(t *testing.T) {
+				events := []string{partial}
+				if tc.last != "" {
+					events = append(events, tc.last)
+				}
+				server := streamingTextServer(t, events)
+				got := runReadableCommand(t, server, streamingTextArgs("responses", "--format", format)...)
+				if got.code != 1 || !strings.Contains(got.stdout, "Partial answer") {
+					t.Fatalf("stream failure lost partial output or status: %+v", got)
+				}
+				message := strings.TrimSpace(got.stderr)
+				if format == "json" {
+					var diagnostic struct {
+						Message string `json:"message"`
+					}
+					if err := json.Unmarshal([]byte(got.stderr), &diagnostic); err != nil {
+						t.Fatalf("invalid structured diagnostic: %q: %v", got.stderr, err)
+					}
+					message = diagnostic.Message
+				}
+				if message != tc.message+"\nOutput may be incomplete." {
+					t.Errorf("stream diagnostic = %q, want specific safe failure", message)
+				}
+				for _, private := range []string{"synthetic-private-detail", "secret.invalid", "token=", "\x1b"} {
+					if strings.Contains(got.stderr, private) {
+						t.Errorf("diagnostic exposed API data: %q", got.stderr)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestMainStreamingTextDistinguishesEarlyEOFAndEmptyCompletion(t *testing.T) {
 	for _, tc := range []struct {
 		name, command string
