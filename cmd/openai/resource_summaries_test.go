@@ -176,6 +176,8 @@ func TestMainResourceSummaryEmptyList(t *testing.T) {
 
 func TestMainResourceSummaryUnknownFieldsAndShapesFallBack(t *testing.T) {
 	for _, body := range []string{
+		`{"id":"model_synthetic","object":"model","created":17`,
+		`{"id":"model_synthetic","object":"model" "created":17}`,
 		`{"id":"model_synthetic","object":"model","created":17,"future_field":null}`,
 		`{"id":"model_synthetic","object":"model","created":17,"future_field":{"note":"retained"}}`,
 		`{"id":"model_synthetic","object":"model","created":17,"created":18}`,

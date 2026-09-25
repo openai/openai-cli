@@ -59,9 +59,18 @@ func SummarizeResource(ctx context.Context, value gjson.Result, route Route) (gj
 }
 
 // Only declared fields may be hidden. New fields (even null), duplicate keys,
-// and unfamiliar record shapes fall back to full rendering. Retained JSON is
-// copied verbatim so large numbers and nested actions/errors stay intact.
+// malformed JSON, and unfamiliar record shapes fall back to full rendering.
+// Retained JSON is copied verbatim so large numbers and nested actions/errors stay intact.
 func summarizeResourceFields(ctx context.Context, value gjson.Result, fields, omitted []string) (gjson.Result, bool, error) {
+	// GJSON can read partial objects, including results preserved by the SDK.
+	// Do not present a partial record as a complete resource summary.
+	validJSON := gjson.Valid(value.Raw)
+	if err := ctx.Err(); err != nil {
+		return gjson.Result{}, false, err
+	}
+	if !validJSON {
+		return gjson.Result{}, false, nil
+	}
 	allowed := make(map[string]bool, len(fields)+len(omitted))
 	for _, field := range fields {
 		allowed[field] = true

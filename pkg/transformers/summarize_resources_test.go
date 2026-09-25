@@ -132,6 +132,26 @@ func TestSummaryEmptyAndMissingFields(t *testing.T) {
 	require.Equal(t, `{"id":"file_example","bytes":0,"status_details":false}`, got.Raw)
 }
 
+func TestSummaryMalformedJSONFallsBack(t *testing.T) {
+	for _, input := range []string{
+		`{"id":"file_example","object":"file","created_at":17`,
+		`{"id":"file_example","object":"file" "created_at":17}`,
+		`{"id":"file_example","object":"file","created_at":wat}`,
+		`{"id":"file_example","object":"file","filename":"invalid\x1b"}`,
+		`{"id":"file_example","object":"file","status_details":{"message":"incomplete"}`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			value := gjson.Parse(input)
+			require.False(t, gjson.Valid(value.Raw))
+			got, omitted, err := SummarizeResource(t.Context(), value, Route{"(resource) files > (method) retrieve", OutputResponse})
+			require.NoError(t, err)
+			require.False(t, got.Exists(), "malformed records must retain full output")
+			require.False(t, omitted)
+			require.Equal(t, input, value.Raw)
+		})
+	}
+}
+
 func TestSummaryLargeActionAndCancellation(t *testing.T) {
 	route := Route{"(resource) beta.threads.runs > (method) retrieve", OutputResponse}
 	// A large synthetic tool argument remains intact without a new output limit.
