@@ -146,6 +146,15 @@ for demo_scene in before after offline partial; do
     exit 1
   fi
 done
+# Finish the request log before copying it or reporting a successful recording.
+kill "$demo_server_pid"
+if wait "$demo_server_pid"; then
+  demo_server_pid=""
+else
+  demo_server_pid=""
+  echo 'Demo API failed during shutdown; recording is incomplete.' >&2
+  exit 1
+fi
 cp "$demo_runtime/requests.txt" "$demo_output/requests.txt"
 ASCIINEMA_CONFIG_HOME="$demo_runtime/asciinema-config" ASCIINEMA_STATE_HOME="$demo_runtime/asciinema-state" \
   "$demo_asciinema" cat "$demo_output/before.cast" "$demo_output/after.cast" > "$demo_output/comparison.cast"

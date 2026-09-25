@@ -72,6 +72,9 @@ and duration. `requests.txt` retains the synthetic metadata request log.
 
 The runner checks exit statuses (before/partial: 1; after/offline: 0), request
 counts (before/offline: zero; after/partial: twelve), and expected output text.
+It waits for the fixture to shut down and close its request log successfully
+before copying the log and reporting success. Shutdown or close failures fail
+the recording.
 Inspect the resulting PNGs and GIF frames for readable text, clipping, timing
 and sensitive data before sharing. Regenerate media after changes to the
 demonstrated behavior. Keep binaries and media out of Git.

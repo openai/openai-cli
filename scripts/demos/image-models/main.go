@@ -24,7 +24,11 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer requests.Close()
+	defer func() {
+		if err := requests.Close(); err != nil {
+			panic(fmt.Errorf("close demo request log: %w", err))
+		}
+	}()
 	requestLog := log.New(requests, "", 0)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -36,17 +40,24 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	shutdownDone := make(chan error, 1)
 	go func() {
 		<-ctx.Done()
 		shutdown, done := context.WithTimeout(context.Background(), 2*time.Second)
 		defer done()
-		_ = server.Shutdown(shutdown)
+		shutdownDone <- server.Shutdown(shutdown)
 	}()
 	if err := os.WriteFile(os.Args[1], []byte("http://"+listener.Addr().String()), 0600); err != nil {
 		panic(err)
 	}
-	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+	err = server.Serve(listener)
+	cancel()
+	shutdownErr := <-shutdownDone
+	if err != nil && err != http.ErrServerClosed {
 		panic(err)
+	}
+	if shutdownErr != nil {
+		panic(fmt.Errorf("shut down demo API: %w", shutdownErr))
 	}
 }
 
