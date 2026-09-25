@@ -375,21 +375,37 @@ func TestMainResourceSummaryPreservesLargeActionArguments(t *testing.T) {
 }
 
 func TestMainResourceSummaryPreservesPartialPageOnFailure(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Query().Get("after") == "" {
-			io.WriteString(w, resourceFilePage([]string{"file_first"}, true))
-			return
-		}
-		w.WriteHeader(http.StatusBadRequest)
-		io.WriteString(w, `{"error":{"message":"synthetic second-page failure","type":"invalid_request_error"}}`)
-	}))
-	defer server.Close()
-	got := runReadableCommand(t, server, "files", "list")
-	if got.code != 1 || !strings.Contains(got.stderr, "synthetic second-page failure") || requests.Load() != 2 || strings.Count(got.stdout, "ID: file_first\n") != 1 || !strings.Contains(got.stdout, resourceSummaryHint) || strings.Contains(got.stdout, "Created at:") {
-		t.Fatalf("partial output or pagination failure changed: %+v requests=%d", got, requests.Load())
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Query().Get("after") == "" {
+					io.WriteString(w, resourceFilePage([]string{"file_first"}, true))
+					return
+				}
+				w.WriteHeader(http.StatusBadRequest)
+				io.WriteString(w, `{"error":{"message":"synthetic second-page failure","type":"invalid_request_error"}}`)
+			}))
+			defer server.Close()
+			args := []string{"files", "list"}
+			if format == "json" {
+				args = append([]string{"--format-error", "json"}, args...)
+			}
+			got := runReadableCommand(t, server, args...)
+			if got.code != 1 || requests.Load() != 2 || strings.Count(got.stdout, "ID: file_first\n") != 1 || !strings.Contains(got.stdout, resourceSummaryHint) || strings.Contains(got.stdout, "Created at:") {
+				t.Fatalf("partial output or pagination failure changed: %+v requests=%d", got, requests.Load())
+			}
+			if format == "json" {
+				var failure map[string]any
+				if err := json.Unmarshal([]byte(got.stderr), &failure); err != nil || failure["message"] != "synthetic second-page failure" || failure["type"] != "invalid_request_error" {
+					t.Fatalf("explicit API error details lost: %q (%v)", got.stderr, err)
+				}
+			} else if !strings.Contains(got.stderr, "The API rejected the request.") || !strings.Contains(got.stderr, "--format-error json") || strings.Contains(got.stderr, "synthetic second-page failure") {
+				t.Fatalf("expected safe guidance with explicit error-details option: %q", got.stderr)
+			}
+		})
 	}
 }
 
