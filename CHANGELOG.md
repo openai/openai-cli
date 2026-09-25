@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.2](https://github.com/openai/openai-cli/compare/v1.20.1...v1.20.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* reuse pending Homebrew cask update PR ([#280](https://github.com/openai/openai-cli/issues/280)) ([da8b100](https://github.com/openai/openai-cli/commit/da8b1002abd6abea84269d535ebc958e1b5b4bdd))
+
 ## [1.20.1](https://github.com/openai/openai-cli/compare/v1.20.0...v1.20.1) (2026-09-25)
 
 
