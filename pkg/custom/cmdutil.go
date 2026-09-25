@@ -643,10 +643,12 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	}
 
 	if !usePager {
-		if _, err := (outputWriter{ctx: opts.Context, out: opts.Stdout}).Write(output); err != nil {
-			return errors.Join(err, iter.Err())
-		}
-		return iter.Err()
+		return streamToStdout(func(stdout *os.File) error {
+			if _, err := (outputWriter{ctx: opts.Context, out: stdout}).Write(output); err != nil {
+				return errors.Join(err, iter.Err())
+			}
+			return iter.Err()
+		})
 	}
 
 	return streamOutput(opts.Title, func(pager *os.File) error {
