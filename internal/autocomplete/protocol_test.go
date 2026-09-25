@@ -73,7 +73,7 @@ func TestShellCompletionProtocol(t *testing.T) {
 			args:       []string{"--file", "cert:models"},
 			bashArgs:   []string{"--file", "cert", ":", "models"},
 			code:       10,
-			candidates: "cert:models-fixture.txt\n",
+			candidates: "models-fixture.txt\n",
 		},
 		{name: "spaced preceding value", args: []string{"--format", "two words", "--file", "candidate-"}, code: 10, candidates: "candidate-fixture.txt\n"},
 		{name: "empty preceding value", args: []string{"--format", "", "--file", "candidate-"}, code: 10, candidates: "candidate-fixture.txt\n"},
