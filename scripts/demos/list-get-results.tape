@@ -17,7 +17,7 @@ Type `export PATH="$DEMO_BEFORE_DIR:$PATH"; clear`
 Enter
 Sleep 300ms
 Show
-Type "# Before: main | two synthetic files"
+Type "# Before: pager cleanup parent | two synthetic files"
 Enter
 Type "openai files list --max-items 2"
 Enter
@@ -43,7 +43,7 @@ Type `export PATH="$DEMO_BEFORE_DIR:$PATH"; clear`
 Enter
 Sleep 300ms
 Show
-Type "# Before: main | retrieve the first file"
+Type "# Before: pager cleanup parent | retrieve the first file"
 Enter
 Type "openai files retrieve file_training"
 Enter

@@ -532,7 +532,15 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	switch strings.ToLower(opts.Format) {
 	case "text":
 		if !opts.RawOutput || res.Type != gjson.String {
-			return writeReadableResource(outputWriter{ctx: opts.Context, out: opts.Stdout}, res, opts)
+			out := outputWriter{ctx: opts.Context, out: opts.Stdout}
+			omitted, err := writeReadableResource(out, res, opts)
+			if err != nil {
+				return err
+			}
+			if omitted {
+				return readable.WriteText(out, resourceSummaryHint)
+			}
+			return nil
 		}
 	case "explore":
 		if isTerminal(opts.Stdout) {

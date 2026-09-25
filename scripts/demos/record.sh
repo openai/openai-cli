@@ -96,7 +96,7 @@ else
   demo_model=""
   demo_request=files-list
   demo_expected_status=0
-  demo_before_label='Before: main | two synthetic files'
+  demo_before_label='Before: pager cleanup parent | two synthetic files'
   demo_after_label='After: list/get summaries | same two files'
   demo_json_format=json
   demo_scenes=(before after before-retrieve after-retrieve explicit-json)
@@ -134,7 +134,7 @@ for demo_scene in "${demo_scenes[@]}"; do
   case "$demo_scene" in
     before) demo_command_dir="$demo_runtime/before"; demo_label="$demo_before_label";;
     after) demo_label="$demo_after_label";;
-    before-retrieve) demo_command_dir="$demo_runtime/before"; demo_scene_request=files-retrieve; demo_label='Before: main | retrieve the first file';;
+    before-retrieve) demo_command_dir="$demo_runtime/before"; demo_scene_request=files-retrieve; demo_label='Before: pager cleanup parent | retrieve the first file';;
     after-retrieve) demo_scene_request=files-retrieve; demo_label='After: list/get summaries | same file';;
     explicit-json) demo_format="$demo_json_format"; demo_label='explicit JSON | same synthetic API response';;
   esac
@@ -184,7 +184,7 @@ for demo_scene in "${demo_scenes[@]}"; do
     case "$demo_scene" in
       before|before-retrieve) /usr/bin/grep -Fq 'Created at: 1704067200' "$demo_output/$demo_scene.txt";;
       after|after-retrieve)
-        /usr/bin/grep -Fq 'Summary; use --format json for full data.' "$demo_output/$demo_scene.txt"
+        test "$(/usr/bin/grep -Fc 'Summary; use --format json for full data.' "$demo_output/$demo_scene.txt")" -eq 1
         if /usr/bin/grep -Fq 'Created at:' "$demo_output/$demo_scene.txt"; then
           echo "Unexpected $demo_scene output: creation timestamp was not summarized" >&2
           exit 1

@@ -8,26 +8,22 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+const resourceSummaryHint = "Summary; use --format json for full data."
+
 // Resource projections apply only to readable results without field extraction.
-// Keep the explanatory hint out of API values and machine-readable formats.
-func writeReadableResource(out io.Writer, value gjson.Result, opts ShowJSONOpts) error {
+// Report omissions so each response or list can explain them once.
+func writeReadableResource(out io.Writer, value gjson.Result, opts ShowJSONOpts) (bool, error) {
 	omitted := false
 	if opts.Transform == "" && !opts.RawOutput {
 		summary, hidden, err := transformers.SummarizeResource(opts.Context, value, transformers.Route{
 			Operation: opts.Operation, OutputKind: opts.OutputKind,
 		})
 		if err != nil {
-			return err
+			return false, err
 		}
 		if summary.Exists() {
 			value, omitted = summary, hidden
 		}
 	}
-	if err := readable.Write(out, value); err != nil {
-		return err
-	}
-	if omitted {
-		return readable.WriteText(out, "Summary; use --format json for full data.")
-	}
-	return nil
+	return omitted, readable.Write(out, value)
 }

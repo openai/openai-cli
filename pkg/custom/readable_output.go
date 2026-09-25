@@ -2,6 +2,7 @@ package custom
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 
@@ -85,6 +86,7 @@ func (w outputWriter) result(n, size int, err error) (int, error) {
 func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts) error {
 	out := outputWriter{ctx: opts.Context, out: opts.Stdout}
 	emitted := false
+	omitted := false
 	for iter.Next() {
 		value := applyJSONPath(iter.Current().Result, opts.Transform)
 		if opts.RawOutput && value.Type == gjson.String {
@@ -105,10 +107,17 @@ func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts)
 				return err
 			}
 		}
-		if err := writeReadableResource(out, value, opts); err != nil {
+		hidden, err := writeReadableResource(out, value, opts)
+		if err != nil {
 			return err
 		}
+		omitted = omitted || hidden
 		emitted = true
+	}
+	if omitted {
+		if err := readable.WriteText(out, resourceSummaryHint); err != nil {
+			return errors.Join(err, iter.Err())
+		}
 	}
 	if err := iter.Err(); err != nil {
 		return err

@@ -61,6 +61,9 @@ func TestMainResourceSummariesRetainActionFields(t *testing.T) {
 			if got.code != 0 || got.stderr != "" || requests.Load() != 1 {
 				t.Fatalf("result=%+v requests=%d", got, requests.Load())
 			}
+			if strings.Count(got.stdout, resourceSummaryHint) != 1 {
+				t.Fatalf("retrieve must explain omissions once: %q", got.stdout)
+			}
 			for _, want := range append(tc.want, resourceSummaryHint) {
 				if !strings.Contains(got.stdout, want+"\n") {
 					t.Errorf("missing %q in %q", want, got.stdout)
@@ -141,8 +144,57 @@ func TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits(t *testi
 			if !slices.Equal(ids, tc.ids) || strings.Contains(got.stdout, "Created at:") {
 				t.Fatalf("summary records changed: ids=%q want=%q output=%q", ids, tc.ids, got.stdout)
 			}
-			if len(ids) == 0 && got.stdout != "" || len(ids) > 0 && !strings.Contains(got.stdout, resourceSummaryHint) {
+			if len(ids) == 0 && got.stdout != "" || len(ids) > 0 && (strings.Count(got.stdout, resourceSummaryHint) != 1 || !strings.HasSuffix(got.stdout, resourceSummaryHint+"\n")) {
 				t.Fatalf("incorrect summary notice or zero limit output: %q", got.stdout)
+			}
+		})
+	}
+}
+
+func TestMainResourceSummaryListNoticeForMixedRecords(t *testing.T) {
+	const summary = `{"id":"file_summary","object":"file","created_at":17,"filename":"summary.txt"}`
+	const fallback = `{"id":"file_fallback","object":"file","created_at":17,"future_field":"keep me"}`
+	for _, tc := range []struct {
+		name  string
+		items []string
+		hints int
+	}{
+		{"fallback only", []string{fallback, fallback}, 0},
+		{"summary then fallback", []string{summary, fallback}, 1},
+		{"fallback then summary", []string{fallback, summary}, 1},
+		{"mixed repeated summaries", []string{fallback, summary, summary, fallback}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"object":"list","data":[%s],"has_more":false}`, strings.Join(tc.items, ","))
+			}))
+			defer server.Close()
+			got := runReadableCommand(t, server, "files", "list")
+			if got.code != 0 || got.stderr != "" || strings.Count(got.stdout, resourceSummaryHint) != tc.hints {
+				t.Fatalf("incorrect list notice: %+v", got)
+			}
+			if tc.hints > 0 && !strings.HasSuffix(got.stdout, resourceSummaryHint+"\n") {
+				t.Fatalf("notice must follow all records: %q", got.stdout)
+			}
+			var ids []string
+			for _, line := range strings.Split(got.stdout, "\n") {
+				if id, ok := strings.CutPrefix(line, "ID: "); ok {
+					ids = append(ids, id)
+				}
+			}
+			var wantIDs []string
+			fallbacks := 0
+			for _, item := range tc.items {
+				if item == fallback {
+					wantIDs = append(wantIDs, "file_fallback")
+					fallbacks++
+				} else {
+					wantIDs = append(wantIDs, "file_summary")
+				}
+			}
+			if !slices.Equal(ids, wantIDs) || strings.Count(got.stdout, "Created at: 17\n") != fallbacks || strings.Count(got.stdout, "Future field: keep me\n") != fallbacks {
+				t.Fatalf("mixed records lost data or order: %q", got.stdout)
 			}
 		})
 	}
@@ -384,7 +436,7 @@ func TestMainResourceSummaryPreservesPartialPageOnFailure(t *testing.T) {
 				requests.Add(1)
 				w.Header().Set("Content-Type", "application/json")
 				if r.URL.Query().Get("after") == "" {
-					io.WriteString(w, resourceFilePage([]string{"file_first"}, true))
+					io.WriteString(w, resourceFilePage([]string{"file_first", "file_second"}, true))
 					return
 				}
 				w.WriteHeader(http.StatusBadRequest)
@@ -396,7 +448,7 @@ func TestMainResourceSummaryPreservesPartialPageOnFailure(t *testing.T) {
 				args = append([]string{"--format-error", "json"}, args...)
 			}
 			got := runReadableCommand(t, server, args...)
-			if got.code != 1 || requests.Load() != 2 || strings.Count(got.stdout, "ID: file_first\n") != 1 || !strings.Contains(got.stdout, resourceSummaryHint) || strings.Contains(got.stdout, "Created at:") {
+			if got.code != 1 || requests.Load() != 2 || strings.Count(got.stdout, "ID: file_first\n") != 1 || strings.Count(got.stdout, "ID: file_second\n") != 1 || strings.Count(got.stdout, resourceSummaryHint) != 1 || !strings.HasSuffix(got.stdout, resourceSummaryHint+"\n") || strings.Contains(got.stdout, "Created at:") {
 				t.Fatalf("partial output or pagination failure changed: %+v requests=%d", got, requests.Load())
 			}
 			if format == "json" {

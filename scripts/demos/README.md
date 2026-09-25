@@ -49,32 +49,32 @@ loopback and serves fixed model data, file records and error responses.
 
 ## List/get results
 
-The `list-get-results` scenario compares the same two file records on main and
+The `list-get-results` scenario compares the same two file records on the pager parent and
 the feature branch. Both commands use `openai files list --max-items 2`. The
 records have distinct IDs, filenames and sizes, with seven fields each so the
 complete before output fits in the 90-column by 24-row capture. The after scene
 retains ID, filename, purpose, bytes and status, followed by
-`Summary; use --format json for full data.` for each record.
+one `Summary; use --format json for full data.` notice after the list.
 
 Two more scenes retrieve the first file before and after the change. The last
 scene uses `openai --format json files retrieve file_training`, demonstrating
 that the original `object` and `created_at` fields are still available. All five
 scenes use the same fixture server and expect exit 0. The recorder checks both
-file IDs in the list scenes, the summary hint in the after scenes, and the
+file IDs in the list scenes, exactly one summary hint in each after scene, and the
 creation timestamp in the before and explicit JSON scenes.
 
 Build the fixture as above, then capture the final feature binary using its
 actual full commit ID. For the September 2026 feature extraction, the pinned
-before binary and comparison commit are:
+before commit is the pager cleanup parent `ef4fd8b6baf818781ff5c5705f7e048e0efbe322`.
+Build its binary independently, then supply both verified binary paths:
 
 ```sh
 PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
   bash scripts/demos/record.sh list-get-results \
-  /Users/vguvvala/code/cli-work/batch-list-stream-models/baseline/openai \
-  /absolute/path/to/final-feature/openai \
-  c961755b21d579b5b5a2eb87a0e77123038da4a0 \
+  "$BEFORE_BINARY" "$AFTER_BINARY" \
+  ef4fd8b6baf818781ff5c5705f7e048e0efbe322 \
   "$AFTER_SHA" \
-  /Users/vguvvala/code/cli-work/batch-list-stream-models/list-get/media
+  /absolute/path/to/list-get/media
 ```
 
 Keep the media outside Git. Inspect `before.png`, `after.png`,
