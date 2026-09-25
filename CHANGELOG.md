@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.20.1](https://github.com/openai/openai-cli/compare/v1.20.0...v1.20.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **cmd:** split PAGER into program and arguments ([#208](https://github.com/openai/openai-cli/issues/208)) ([d3ce908](https://github.com/openai/openai-cli/commit/d3ce908972df2c5d17aea8470b3500cd90494c10))
+* **jsonview:** reflow text when the terminal width changes ([#217](https://github.com/openai/openai-cli/issues/217)) ([ff05317](https://github.com/openai/openai-cli/commit/ff05317def9f595de6dd7b81790dcd9d0b7141c3))
+
+
+### Chores
+
+* **api:** document batch error responses ([#275](https://github.com/openai/openai-cli/issues/275)) ([ebcd64e](https://github.com/openai/openai-cli/commit/ebcd64eb96eb2cac972b6ae12542861b7c07cd2b))
+
 ## [1.20.0](https://github.com/openai/openai-cli/compare/v1.19.2...v1.20.0) (2026-09-25)
 
 
