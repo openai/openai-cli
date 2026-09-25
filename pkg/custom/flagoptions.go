@@ -346,7 +346,11 @@ func FlagOptions(
 	// This parameter is true if stdin is already in use to pass a binary parameter by using the special value
 	// "-". In this case, we won't attempt to read it as a JSON/YAML blob for options setting.
 	ignoreStdin bool,
+	observeJSON ...func([]byte),
 ) (options []option.RequestOption, err error) {
+	if prepared, ok, err := consumeImageGenerationRequest(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin); ok {
+		return prepared, err
+	}
 	// Validate literal headers before reading any request input. Flag validators
 	// include the supplied value in errors, which can expose credentials.
 	headers, err := requestHeaders(cmd)
@@ -576,6 +580,9 @@ func FlagOptions(
 			return nil, err
 		}
 		options = append(options, option.WithRequestBody("application/json", bodyBytes))
+		for _, observe := range observeJSON {
+			observe(bodyBytes)
+		}
 
 	case ApplicationOctetStream:
 		// If there is a body root parameter, that will handle setting the request body, we don't need to do it here.

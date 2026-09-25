@@ -130,7 +130,7 @@ func TestMainNativeShell(t *testing.T) {
 				short := runNativeShell(t, shell, work, home, "not-a-url", shell.binary+" images generate --help")
 				var command string
 				for line := range strings.SplitSeq(short.stdout, "\n") {
-					if strings.Contains(line, " images generate --model ") {
+					if strings.Contains(line, " images generate --prompt ") {
 						command = strings.TrimSpace(line)
 						break
 					}
@@ -139,6 +139,7 @@ func TestMainNativeShell(t *testing.T) {
 					t.Fatalf("short help lacks an image example: %+v", short)
 				}
 				var requests atomic.Int32
+				payload := imageGenerationPNG(t)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					requests.Add(1)
 					if r.Method != http.MethodPost || r.URL.Path != "/images/generations" {
@@ -147,20 +148,21 @@ func TestMainNativeShell(t *testing.T) {
 					var body struct{ Model, Prompt string }
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 						t.Errorf("decode synthetic request: %v", err)
-					} else if body.Model != "gpt-image-1.5" || body.Prompt != "A tiny orange robot" {
+					} else if body.Model != "gpt-image-2.5-sunburst" || body.Prompt != "A tiny orange robot" {
 						t.Errorf("copied example changed its arguments: %+v", body)
 					}
 					if r.Header.Get("Authorization") != "Bearer fake-native-shell-key" {
 						t.Error("shell environment did not supply the synthetic key")
 					}
 					w.Header().Set("Content-Type", "application/json")
-					io.WriteString(w, `{"created":1,"data":[{"b64_json":"c3ludGhldGlj"}]}`)
+					io.WriteString(w, imageGenerationResponse(payload))
 				}))
 				defer server.Close()
 				got := runNativeShell(t, shell, work, home, server.URL, shell.setKey+command)
-				if got.code != 0 || got.stderr != "" || requests.Load() != 1 || !strings.Contains(got.stdout, "12 base64 characters; use --format json for full value") {
+				if got.code != 0 || got.stderr != "" || requests.Load() != 1 || !strings.Contains(got.stdout, "Saved image:") {
 					t.Fatalf("copied image example failed: code=%d requests=%d stderr=%q", got.code, requests.Load(), got.stderr)
 				}
+				assertImageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"), got.stdout, 1, payload)
 				if strings.Contains(got.stdout+got.stderr, "fake-native-shell-key") {
 					t.Error("output printed the synthetic credential")
 				}

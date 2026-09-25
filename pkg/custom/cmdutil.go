@@ -547,6 +547,11 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	if err := opts.Context.Err(); err != nil {
 		return err
 	}
+	if presentation, ok := savedImagePresentation(opts, OutputResponse); ok {
+		return presentation.output(func(out io.Writer) error {
+			return presentation.plan.save(opts.Context, []byte(res.Raw), out)
+		})
+	}
 	if text, ok := audioTextResult(opts); ok {
 		if opts.Transform == "" && (strings.EqualFold(opts.Format, "raw") || opts.RawOutput) {
 			if opts.RawOutput && isTerminal(opts.Stdout) {
@@ -630,6 +635,11 @@ func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, op
 
 func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
+	if presentation, ok := savedImagePresentation(opts, OutputStreamEvent); ok {
+		return presentation.output(func(out io.Writer) error {
+			return saveFinalImageStream(opts.Context, source, presentation.plan, out)
+		})
+	}
 	if itemsToDisplay == 0 {
 		return source.Err()
 	}
