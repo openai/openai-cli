@@ -133,10 +133,23 @@ func streamOutput(label string, generateOutput func(w *os.File) error) error {
 	return streamOutputOSSpecific(label, generateOutput)
 }
 
+// pagerError distinguishes pager setup and process failures from the request,
+// formatter, or output callback. Keep the cause available to errors.Is/As.
+type pagerError struct{ error }
+
+func (e *pagerError) Unwrap() error { return e.error }
+
+func wrapPagerError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &pagerError{err}
+}
+
 func streamToPagerWithPipe(label string, generateOutput func(w *os.File) error) error {
 	r, w, err := os.Pipe()
 	if err != nil {
-		return err
+		return wrapPagerError(err)
 	}
 	defer r.Close()
 	defer w.Close()
@@ -147,7 +160,7 @@ func streamToPagerWithPipe(label string, generateOutput func(w *os.File) error) 
 	}
 
 	if _, err := exec.LookPath(pagerProgram); err != nil {
-		return err
+		return wrapPagerError(err)
 	}
 
 	cmd := exec.Command(pagerProgram)
@@ -160,11 +173,11 @@ func streamToPagerWithPipe(label string, generateOutput func(w *os.File) error) 
 	)
 
 	if err := cmd.Start(); err != nil {
-		return err
+		return wrapPagerError(err)
 	}
 
 	if err := r.Close(); err != nil {
-		return err
+		return wrapPagerError(err)
 	}
 
 	// If we would be streaming to a terminal and aren't forcing color one way
@@ -181,7 +194,7 @@ func streamToPagerWithPipe(label string, generateOutput func(w *os.File) error) 
 	if outputErr != nil && !isOutputBrokenPipe(outputErr) {
 		return outputErr
 	}
-	return waitErr
+	return wrapPagerError(waitErr)
 }
 
 func streamToStdout(generateOutput func(w *os.File) error) error {
