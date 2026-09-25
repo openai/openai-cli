@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.0](https://github.com/openai/openai-cli/compare/v1.22.0...v1.23.0) (2026-09-25)
+
+
+### Features
+
+* **cli:** show readable audio results and transcript streams ([#289](https://github.com/openai/openai-cli/issues/289)) ([111173a](https://github.com/openai/openai-cli/commit/111173a6a5f2b70372402f23a90ca728b2e8d747))
+
 ## [1.22.0](https://github.com/openai/openai-cli/compare/v1.21.0...v1.22.0) (2026-09-25)
 
 
