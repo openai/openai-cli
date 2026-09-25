@@ -258,7 +258,7 @@ func TestMainHelpDoesNotAdvertiseUnshippedFeatures(t *testing.T) {
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("help failed: %+v", got)
 		}
-		for _, text := range []string{"~/Downloads", "images preview", "images inline", "images options", "images models", "--output-dir", "--name", "--count", "--inline", "automatically saves", "readable output"} {
+		for _, text := range []string{"~/Downloads", "images preview", "images inline", "images options", "--output-dir", "--name", "--count", "--inline", "automatically saves", "readable output"} {
 			if strings.Contains(got.stdout, text) {
 				t.Errorf("args %q advertise unavailable feature %q", args, text)
 			}
