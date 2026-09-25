@@ -83,7 +83,7 @@ SCENE
   echo "after binary: $demo_after"
   echo "data: four fixed synthetic SSE events, 650 ms apart; fake key; loopback only"
   echo "capture: real PTY, stdin/stdout/stderr checked, isolated environment, bash --noprofile --norc"
-  echo "render: asciinema 3.2.1 + agg 1.9.0; Menlo 18px, Dracula, 108 columns x 40 rows, line height 1.2, 20 fps cap"
+  echo "render: asciinema 3.2.1 + agg 1.9.0 resvg; Menlo 22px, Dracula, 90 columns x 40 rows, line height 1.2, 20 fps cap"
   echo "scope: terminal replay, no native Apple Terminal, PowerShell, or cmd.exe capture"
   echo "recipe: record.sh; comparison.tape is the alternative VHS recipe, not the renderer used"
   uname -sm
@@ -98,7 +98,7 @@ SCENE
     "$demo_source/main.go" "$demo_source/events.json" "$demo_source/validate.py"
 } > "$demo_output/metadata.txt"
 
-demo_render_options=(--font-family Menlo --font-size 18 --line-height 1.2 \
+demo_render_options=(--renderer resvg --font-family Menlo --font-size 22 --line-height 1.2 \
   --theme dracula --fps-cap 20 --last-frame-duration 2)
 for demo_scene in before after explicit-jsonl; do
   demo_command_dir="$demo_runtime/after"
@@ -116,7 +116,7 @@ for demo_scene in before after explicit-jsonl; do
     DEMO_SCENE_SCRIPT="$demo_runtime/scene.sh" DEMO_SCENE_LABEL="$demo_label" \
     DEMO_FORMAT="$demo_format" \
     "$demo_asciinema" rec --headless --return --overwrite --quiet \
-      --window-size 108x40 --capture-env SHELL,TERM --output-format asciicast-v2 \
+      --window-size 90x40 --capture-env SHELL,TERM --output-format asciicast-v2 \
       --title "$demo_label" --command '/bin/bash --noprofile --norc "$DEMO_SCENE_SCRIPT"' \
       "$demo_output/$demo_scene.cast"; then demo_status=0; else demo_status=$?; fi
   echo "$demo_scene exit status: $demo_status (expected 0)" >> "$demo_output/metadata.txt"

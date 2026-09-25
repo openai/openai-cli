@@ -9,7 +9,7 @@ usage. The explicit JSONL scene must retain every original event.
 The recorder uses asciinema 3.2.1, agg 1.9.0, ffmpeg, ffprobe and Python 3. Put
 those tools on `PATH`. Its output is a terminal replay, not a native Apple
 Terminal, PowerShell or cmd.exe capture. All scenes use a real PTY with an
-isolated environment, a fake key, 108 columns by 40 rows, Menlo 18px, Dracula
+isolated environment, a fake key, 90 columns by 40 rows, Menlo 22px, Dracula
 colors and identical synthetic requests. The fixture listens only on loopback
 and rejects other routes, request bodies and credentials.
 
@@ -39,7 +39,9 @@ after scene displays each text delta before completion. It preserves individual
 and combined casts, text transcripts, screenshots, GIFs, the fixture, commit
 labels, binary and source hashes, tool versions, media dimensions and timings.
 Each scene is rendered separately, then ffmpeg joins the original frames and
-timing to avoid agg artifacts across screen clears.
+timing to avoid agg artifacts across screen clears. Rendering uses agg's resvg
+backend and the larger text size so command spaces and flag hyphens stay
+legible in the displayed comparison.
 
 Inspect `before.png`, `after.png`, `explicit-jsonl.png` and representative GIF
 frames before sharing. Check clipping, readable text, pauses, actual streaming,

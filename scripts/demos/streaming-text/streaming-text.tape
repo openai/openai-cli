@@ -4,9 +4,9 @@ Output comparison.gif
 Output comparison.ascii
 Set Shell "bash"
 Set FontFamily "Menlo"
-Set FontSize 18
-Set Width 1190
-Set Height 910
+Set FontSize 22
+Set Width 1220
+Set Height 1100
 Set Padding 20
 Set TypingSpeed 25ms
 Set Theme "Dracula"
