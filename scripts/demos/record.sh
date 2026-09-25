@@ -14,7 +14,7 @@ demo_output="$6"
 demo_source="$(cd "$(dirname "$0")" && pwd)"
 demo_root="$(cd "$demo_source/../.." && pwd)"
 demo_api_binary="${DEMO_API_BINARY:-$demo_root/dist/demos/bin/demo-api}"
-case "$demo_feature" in readable-output|helpful-errors) ;; *) exit 2;; esac
+case "$demo_feature" in readable-output|helpful-errors|list-get-results) ;; *) exit 2;; esac
 [[ "$demo_before_sha" =~ ^[0-9a-f]{40}$ ]]
 [[ "$demo_after_sha" =~ ^[0-9a-f]{40}$ ]]
 test -x "$demo_before"
@@ -59,7 +59,11 @@ printf '\033[2J\033[H\033[?25l'
 printf '%s\n' 'Terminal replay | asciinema + agg'
 printf '%s\n\n' "$DEMO_SCENE_LABEL"
 sleep 0.5
-demo_args=(models retrieve --model "$DEMO_MODEL")
+case "$DEMO_REQUEST" in
+  files-list) demo_args=(files list --max-items 2);;
+  files-retrieve) demo_args=(files retrieve file_training);;
+  *) demo_args=(models retrieve --model "$DEMO_MODEL");;
+esac
 case "$DEMO_FORMAT" in
   json) demo_args=(--format json "${demo_args[@]}");;
   error-json) demo_args=(--format-error json "${demo_args[@]}");;
@@ -74,18 +78,28 @@ sleep 3.5
 exit "$demo_status"
 SCENE
 
+demo_scenes=(before after explicit-json)
+demo_request=model
 if [ "$demo_feature" = readable-output ]; then
   demo_model=demo-chat
   demo_expected_status=0
   demo_before_label='before: main | synthetic local response'
   demo_after_label='after: readable output | same synthetic response'
   demo_json_format=json
-else
+elif [ "$demo_feature" = helpful-errors ]; then
   demo_model=demo-auth
   demo_expected_status=1
   demo_before_label='before: readable-output parent | synthetic 401 error'
   demo_after_label='after: helpful errors | same synthetic 401 error'
   demo_json_format=error-json
+else
+  demo_model=""
+  demo_request=files-list
+  demo_expected_status=0
+  demo_before_label='Before: pager cleanup parent | two synthetic files'
+  demo_after_label='After: list/get summaries | same two files'
+  demo_json_format=json
+  demo_scenes=(before after before-retrieve after-retrieve explicit-json)
 fi
 {
   echo "feature: $demo_feature"
@@ -113,14 +127,21 @@ fi
 
 demo_render_options=(--font-family Menlo --font-size 22 --line-height 1.2 \
   --theme dracula --fps-cap 20 --last-frame-duration 3.5)
-for demo_scene in before after explicit-json; do
+for demo_scene in "${demo_scenes[@]}"; do
   demo_command_dir="$demo_runtime/after"
   demo_format=default
+  demo_scene_request="$demo_request"
   case "$demo_scene" in
     before) demo_command_dir="$demo_runtime/before"; demo_label="$demo_before_label";;
     after) demo_label="$demo_after_label";;
+    before-retrieve) demo_command_dir="$demo_runtime/before"; demo_scene_request=files-retrieve; demo_label='Before: pager cleanup parent | retrieve the first file';;
+    after-retrieve) demo_scene_request=files-retrieve; demo_label='After: list/get summaries | same file';;
     explicit-json) demo_format="$demo_json_format"; demo_label='explicit JSON | same synthetic API response';;
   esac
+  if [ "$demo_feature" = list-get-results ] && [ "$demo_scene" = explicit-json ]; then
+    demo_scene_request=files-retrieve
+    demo_label='Explicit JSON | full data for the same file'
+  fi
   # The CLI runs directly on the PTY. No personal environment or shell hooks are inherited.
   if env -i PATH="$demo_command_dir:/usr/bin:/bin" LANG=en_US.UTF-8 \
     TERM=xterm-256color SHELL=/bin/bash \
@@ -128,7 +149,7 @@ for demo_scene in before after explicit-json; do
     ASCIINEMA_STATE_HOME="$demo_runtime/asciinema-state" \
     OPENAI_API_KEY=synthetic-demo-key OPENAI_BASE_URL="$demo_api_url" \
     DEMO_SCENE_SCRIPT="$demo_runtime/scene.sh" DEMO_SCENE_LABEL="$demo_label" \
-    DEMO_MODEL="$demo_model" DEMO_FORMAT="$demo_format" \
+    DEMO_MODEL="$demo_model" DEMO_FORMAT="$demo_format" DEMO_REQUEST="$demo_scene_request" \
     "$demo_asciinema" rec --headless --return --overwrite --quiet \
       --window-size 90x24 --capture-env SHELL,TERM --output-format asciicast-v2 \
       --title "$demo_label" --command '/bin/bash --noprofile --norc "$DEMO_SCENE_SCRIPT"' \
@@ -149,22 +170,45 @@ for demo_scene in before after explicit-json; do
   if [ "$demo_feature" = helpful-errors ]; then
     demo_expected_text=invalid_api_key
     [ "$demo_scene" != after ] || demo_expected_text='help setup'
+  elif [ "$demo_feature" = list-get-results ]; then
+    demo_expected_text=file_training
   fi
   if ! /usr/bin/grep -Fq "$demo_expected_text" "$demo_output/$demo_scene.txt"; then
     echo "Unexpected $demo_scene output: missing $demo_expected_text" >&2
     exit 1
   fi
+  if [ "$demo_feature" = list-get-results ]; then
+    case "$demo_scene" in
+      before|after) /usr/bin/grep -Fq file_reference "$demo_output/$demo_scene.txt";;
+    esac
+    case "$demo_scene" in
+      before|before-retrieve) /usr/bin/grep -Fq 'Created at: 1704067200' "$demo_output/$demo_scene.txt";;
+      after|after-retrieve)
+        test "$(/usr/bin/grep -Fc 'Summary; use --format json for full data.' "$demo_output/$demo_scene.txt")" -eq 1
+        if /usr/bin/grep -Fq 'Created at:' "$demo_output/$demo_scene.txt"; then
+          echo "Unexpected $demo_scene output: creation timestamp was not summarized" >&2
+          exit 1
+        fi
+        ;;
+      explicit-json) /usr/bin/grep -Fq '"created_at": 1704067200' "$demo_output/$demo_scene.txt";;
+    esac
+  fi
+done
+demo_casts=()
+demo_transcripts=()
+for demo_scene in "${demo_scenes[@]}"; do
+  demo_casts+=("$demo_output/$demo_scene.cast")
+  demo_transcripts+=("$demo_output/$demo_scene.txt")
 done
 ASCIINEMA_CONFIG_HOME="$demo_runtime/asciinema-config" \
 ASCIINEMA_STATE_HOME="$demo_runtime/asciinema-state" \
-  "$demo_asciinema" cat "$demo_output/before.cast" "$demo_output/after.cast" \
-    "$demo_output/explicit-json.cast" > "$demo_output/comparison.cast"
+  "$demo_asciinema" cat "${demo_casts[@]}" > "$demo_output/comparison.cast"
 # Rendering a merged cast can retain partial glyphs across screen clears in
 # agg 1.9.0. Join the independently rendered replays, retaining their timing.
 # Fixed relative names also avoid escaping output paths in ffmpeg's file list.
 (
   cd "$demo_output"
-  printf "file '%s.gif'\n" before after explicit-json > comparison-scenes.txt
+  printf "file '%s.gif'\n" "${demo_scenes[@]}" > comparison-scenes.txt
   "$demo_ffmpeg" -hide_banner -loglevel error -y \
     -f concat -safe 1 -i comparison-scenes.txt \
     -filter_complex '[0:v]split[a][b];[a]palettegen[p];[b][p]paletteuse' \
@@ -172,8 +216,7 @@ ASCIINEMA_STATE_HOME="$demo_runtime/asciinema-state" \
 )
 # Convert each scene separately so clearing the screen between scenes does not
 # erase earlier scenes from the combined plain-text transcript.
-cat "$demo_output/before.txt" "$demo_output/after.txt" \
-  "$demo_output/explicit-json.txt" > "$demo_output/comparison.txt"
+cat "${demo_transcripts[@]}" > "$demo_output/comparison.txt"
 "$demo_ffprobe" -v error -select_streams v:0 \
   -show_entries stream=width,height,nb_frames,duration -of json \
   "$demo_output/comparison.gif" > "$demo_output/media.json"

@@ -45,8 +45,16 @@ func serve(w http.ResponseWriter, r *http.Request) {
 	model := func(id string) map[string]any {
 		return map[string]any{"id": id, "object": "model", "created": 1704067200, "owned_by": "demo-project"}
 	}
+	files := []map[string]any{
+		{"id": "file_training", "object": "file", "created_at": 1704067200, "filename": "training.jsonl", "purpose": "fine-tune", "bytes": 8192, "status": "processed"},
+		{"id": "file_reference", "object": "file", "created_at": 1704067100, "filename": "reference.pdf", "purpose": "assistants", "bytes": 4096, "status": "processed"},
+	}
 	var response any
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/files":
+		response = map[string]any{"object": "list", "data": files, "has_more": false, "first_id": "file_training", "last_id": "file_reference"}
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/files/file_training":
+		response = files[0]
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/models":
 		response = map[string]any{"object": "list", "data": []any{model("demo-chat"), model("demo-image")}}
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/models/demo-auth":

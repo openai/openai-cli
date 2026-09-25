@@ -103,6 +103,7 @@ func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts)
 	}
 	out := outputWriter{ctx: opts.Context, out: opts.Stdout}
 	emitted := false
+	omitted := false
 	for iter.Next() {
 		value := applyJSONPath(iter.Current().Result, opts.Transform)
 		if opts.RawOutput && value.Type == gjson.String {
@@ -123,10 +124,23 @@ func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts)
 				return errors.Join(err, iter.Err())
 			}
 		}
-		if err := readable.Write(out, value); err != nil {
+		hidden, err := writeReadableResource(out, value, opts)
+		if err != nil {
 			return errors.Join(err, iter.Err())
 		}
+		omitted = omitted || hidden
 		emitted = true
+	}
+	if omitted {
+		if err := readable.WriteText(out, resourceSummaryHint); err != nil {
+			iterErr := iter.Err()
+			// Closing stdout may suppress an output-only broken pipe, but must
+			// never turn a failed page fetch into a successful command.
+			if iterErr != nil && isOutputBrokenPipe(err) {
+				return iterErr
+			}
+			return errors.Join(err, iterErr)
+		}
 	}
 	if err := iter.Err(); err != nil {
 		return err
