@@ -268,7 +268,9 @@ func TestImageModelsDataFormatsAndExtraction(t *testing.T) {
 }
 
 func imageModelsOutputCommand(out, stderr io.Writer, report imageModelsReport) *cli.Command {
-	return &cli.Command{Name: "openai", Writer: out, ErrWriter: stderr, Flags: []cli.Flag{
+	return &cli.Command{Name: "openai", Writer: out, Flags: []cli.Flag{
 		&cli.StringFlag{Name: "format", Value: "auto"}, &cli.StringFlag{Name: "transform"}, &cli.BoolFlag{Name: "raw-output"},
-	}, Action: func(_ context.Context, command *cli.Command) error { return writeImageModelsData(command, report) }}
+	}, Action: func(_ context.Context, command *cli.Command) error {
+		return writeImageModelsData(command, report, stderr)
+	}}
 }

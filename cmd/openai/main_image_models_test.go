@@ -150,6 +150,41 @@ func TestMainImageModelsPreservesMachineFormatsAndExtraction(t *testing.T) {
 	}
 }
 
+func TestMainImageModelsExploreFallbackWarning(t *testing.T) {
+	server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("offline discovery made an API request")
+		http.Error(w, "synthetic unexpected request", http.StatusBadRequest)
+	})
+	for _, format := range []string{"explore", "json", "auto"} {
+		t.Run(format, func(t *testing.T) {
+			got := runMainDispatchWithEnv(t, "bash", nil,
+				"openai", "--base-url", server.URL, "--format", format, "images", "models", "--offline")
+			if got.code != 0 {
+				t.Fatalf("offline discovery failed: %+v", got)
+			}
+			wantWarning := ""
+			if format == "explore" {
+				wantWarning = "Warning: Output format 'explore' not supported for non-terminal output; falling back to 'json'\n"
+			}
+			if got.stderr != wantWarning {
+				t.Errorf("stderr = %q; want %q", got.stderr, wantWarning)
+			}
+			if format != "auto" {
+				report := decodeMainImageModels(t, got.stdout)
+				if report.Source != "offline" || report.Complete {
+					t.Fatalf("incorrect offline report: %+v", report)
+				}
+				assertMainImageModelsRows(t, report, false, imagemodels.StatusNotChecked)
+			} else if !strings.Contains(got.stdout, "Known image models") {
+				t.Fatalf("automatic output lost its readable format: %q", got.stdout)
+			}
+		})
+	}
+	if len(requests()) != 0 {
+		t.Fatal("offline discovery made API requests")
+	}
+}
+
 func TestMainImageModelsKeepsPartialResultsOnTimeoutResponse(t *testing.T) {
 	server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/gpt-image-2.5-flare") {

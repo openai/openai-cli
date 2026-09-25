@@ -127,7 +127,8 @@ func handleImagesModels(ctx context.Context, command *cli.Command) error {
 			return err
 		}
 	} else {
-		if err := writeImageModelsData(command, report); err != nil {
+		// Presentation warnings use ShowJSON's stderr default, not the command error buffer.
+		if err := writeImageModelsData(command, report, nil); err != nil {
 			return err
 		}
 	}
@@ -140,7 +141,7 @@ func handleImagesModels(ctx context.Context, command *cli.Command) error {
 	return nil
 }
 
-func writeImageModelsData(command *cli.Command, report imageModelsReport) error {
+func writeImageModelsData(command *cli.Command, report imageModelsReport, stderr io.Writer) error {
 	root := command.Root()
 	payload, err := json.Marshal(report)
 	if err != nil {
@@ -153,7 +154,7 @@ func writeImageModelsData(command *cli.Command, report imageModelsReport) error 
 	}
 	// The report includes completed checks even after discovery is canceled.
 	// Presentation therefore uses its own context instead of the canceled lookup.
-	opts.Stdout, opts.Stderr = root.Writer, root.ErrWriter
+	opts.Stdout, opts.Stderr = root.Writer, stderr
 	return ShowJSON(obj, opts)
 }
 
