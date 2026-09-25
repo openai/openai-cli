@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.4](https://github.com/openai/openai-cli/compare/v1.20.3...v1.20.4) (2026-09-25)
+
+
+### Chores
+
+* **api:** document fine-tuning and model errors ([#284](https://github.com/openai/openai-cli/issues/284)) ([ed97a81](https://github.com/openai/openai-cli/commit/ed97a81dc85125ce8efc735e25773a47c11529f1))
+
 ## [1.20.3](https://github.com/openai/openai-cli/compare/v1.20.2...v1.20.3) (2026-09-25)
 
 
