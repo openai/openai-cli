@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/openai/openai-cli/compare/v1.20.4...v1.21.0) (2026-09-25)
+
+
+### Features
+
+* **cli:** show focused list and retrieve results ([#278](https://github.com/openai/openai-cli/issues/278)) ([4a16021](https://github.com/openai/openai-cli/commit/4a160213f95f7c8eaa46217f234bbdcbe1cc197e))
+
 ## [1.20.4](https://github.com/openai/openai-cli/compare/v1.20.3...v1.20.4) (2026-09-25)
 
 
