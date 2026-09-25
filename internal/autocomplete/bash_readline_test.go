@@ -51,16 +51,22 @@ func TestBashReadlineInsertsColonFilenameOnce(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, test := range []struct {
-		name, filename, input string
-		keepColonInWord       bool
+		name, flag, filename, input, want string
+		keepColonInWord, keepAtInWord     bool
 	}{
-		{"review example", "cert:models-fixture.txt", "cert:models", false},
-		{"multiple colons", "cert:part:models-fixture.txt", "cert:part:models", false},
-		{"space in filename", "cert:models fixture.txt", "cert:models", false},
-		{"literal pattern prefix", "[cert]:models-fixture.txt", "[cert]:models", false},
-		{"colon in directory", "cert:directory/models.txt", "cert:directory/mod", false},
-		{"ordinary filename", "candidate-fixture.txt", "candidate-", false},
-		{"colon removed from word breaks", "cert:models-fixture.txt", "cert:models", true},
+		{"review example", "--file", "cert:models-fixture.txt", "cert:models", "cert:models-fixture.txt", false, false},
+		{"multiple colons", "--file", "cert:part:models-fixture.txt", "cert:part:models", "cert:part:models-fixture.txt", false, false},
+		{"space in filename", "--file", "cert:models fixture.txt", "cert:models", "cert:models fixture.txt", false, false},
+		{"literal pattern prefix", "--file", "[cert]:models-fixture.txt", "[cert]:models", "[cert]:models-fixture.txt", false, false},
+		{"colon in directory", "--file", "cert:directory/models.txt", "cert:directory/mod", "cert:directory/models.txt", false, false},
+		{"ordinary filename", "--file", "candidate-fixture.txt", "candidate-", "candidate-fixture.txt", false, false},
+		{"colon removed from word breaks", "--file", "cert:models-fixture.txt", "cert:models", "cert:models-fixture.txt", true, false},
+		{"at prefix retained", "--format", "candidate-fixture.txt", "@candidate-", "@candidate-fixture.txt", false, true},
+		{"file URL prefix retained", "--format", "candidate-fixture.txt", "@file://candidate-", "@file://candidate-fixture.txt", false, true},
+		{"data URL prefix retained", "--format", "candidate-fixture.txt", "@data://candidate-", "@data://candidate-fixture.txt", false, true},
+		{"embedded at prefix retained", "--format", "candidate-fixture.txt", "field@candidate-", "field@candidate-fixture.txt", false, true},
+		{"embedded file URL prefix retained", "--format", "candidate-fixture.txt", "field@file://candidate-", "field@file://candidate-fixture.txt", false, true},
+		{"embedded data URL prefix retained", "--format", "candidate-fixture.txt", "field@data://candidate-", "field@data://candidate-fixture.txt", false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			directory := t.TempDir()
@@ -98,6 +104,9 @@ source "$OPENAI_CLI_TEST_COMPLETION"
 			if test.keepColonInWord {
 				rc += "COMP_WORDBREAKS=${COMP_WORDBREAKS//:}\n"
 			}
+			if test.keepAtInWord {
+				rc += "COMP_WORDBREAKS=${COMP_WORDBREAKS//@}\n"
+			}
 			require.NoError(t, os.WriteFile(rcFile, []byte(rc), 0o600))
 			args := []string{"-q", "/dev/null", bash, "--noprofile", "--rcfile", rcFile, "-i"}
 			if runtime.GOOS == "linux" {
@@ -122,7 +131,7 @@ source "$OPENAI_CLI_TEST_COMPLETION"
 			require.NoError(t, command.Start())
 			select {
 			case <-output.ready:
-				_, err = fmt.Fprintf(input, "openai --file %s\t\n", test.input)
+				_, err = fmt.Fprintf(input, "openai %s %s\t\n", test.flag, test.input)
 				if err != nil {
 					cancel()
 				}
@@ -134,7 +143,7 @@ source "$OPENAI_CLI_TEST_COMPLETION"
 			require.NoError(t, waitErr, output.buffer.String())
 			inserted, err := os.ReadFile(resultFile)
 			require.NoError(t, err, output.buffer.String())
-			require.Equal(t, "--file\x00"+test.filename+"\x00", string(inserted), output.buffer.String())
+			require.Equal(t, test.flag+"\x00"+test.want+"\x00", string(inserted), output.buffer.String())
 		})
 	}
 }

@@ -26,6 +26,7 @@ ____APPNAME___bash_autocomplete() {
     done
 
     # Check for custom file completion patterns
+    local retained_prefix="${last_token%"$cur"}"
     local prefix=""
     local file_part="$last_token"
     local force_file_completion=false
@@ -51,7 +52,8 @@ ____APPNAME___bash_autocomplete() {
       local file
       COMPREPLY=()
       while IFS= read -r file; do
-        COMPREPLY+=("$prefix$file")
+        local candidate="$prefix$file"
+        COMPREPLY+=("${candidate#"$retained_prefix"}")
       done < <(compgen -f -- "$file_part")
     else
       case $exit_code in
@@ -59,7 +61,6 @@ ____APPNAME___bash_autocomplete() {
         mapfile -t COMPREPLY < <(compgen -f -- "$last_token")
         # Readline only replaces the suffix after its last colon word break.
         # Keep the full path for lookup, but omit the prefix it already retains.
-        local retained_prefix="${last_token%"$cur"}"
         local index
         for index in "${!COMPREPLY[@]}"; do
           COMPREPLY[$index]="${COMPREPLY[$index]#"$retained_prefix"}"
