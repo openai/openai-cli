@@ -2,11 +2,17 @@ package custom
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/openai/openai-cli/internal/imagemodels"
@@ -162,6 +168,51 @@ func TestImageModelsWriteErrors(t *testing.T) {
 		if got := writeImageModels(imageModelsFailWriter{failure}, imageModelsReport{}, false, "openai"); !errors.Is(got, expected) {
 			t.Fatalf("error=%v; want %v", got, expected)
 		}
+	}
+}
+
+func TestImageModelsUsesConfiguredMTLSClient(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "synthetic-models-key")
+	pki := newMTLSTestPKI(t)
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(pki.rootPEM) {
+		t.Fatal("could not configure synthetic client CA")
+	}
+	var requests atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.VerifiedChains[0]) != 3 {
+			t.Error("model check lost the configured client certificate chain")
+		}
+		if r.Header.Get("Authorization") != "Bearer synthetic-models-key" || r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/v1/models/") {
+			t.Error("model check changed the configured credentials, method or base path")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"id":%q,"object":"model"}`, strings.TrimPrefix(r.URL.Path, "/v1/models/"))
+	}))
+	server.Config.ErrorLog = log.New(io.Discard, "", 0)
+	server.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientCAs, MinVersion: tls.VersionTLS12}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	configureTestServerTrust(t, server)
+	certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+	var out, stderr strings.Builder
+	root := &cli.Command{
+		Name: "openai", Writer: &out, ErrWriter: &stderr,
+		Flags:    []cli.Flag{&cli.StringFlag{Name: "base-url"}, &cli.StringFlag{Name: "format", Value: "json"}},
+		Commands: []*cli.Command{{Name: "images"}},
+	}
+	ConfigureCommand(root)
+	if err := root.Run(t.Context(), []string{"openai", "--base-url", server.URL + "/v1/",
+		"--mtls-client-cert-file", certFile, "--mtls-client-key-file", keyFile, "images", "models"}); err != nil {
+		t.Fatal(err)
+	}
+	var report imageModelsReport
+	if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
+		t.Fatal(err)
+	}
+	if requests.Load() != 9 || !report.Complete || len(report.Models) != 9 || stderr.Len() != 0 {
+		t.Fatalf("mTLS discovery did not complete all model checks: requests=%d; report=%+v; stderr=%q", requests.Load(), report, stderr.String())
 	}
 }
 

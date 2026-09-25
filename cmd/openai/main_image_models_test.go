@@ -167,6 +167,47 @@ func TestMainImageModelsKeepsPartialResultsOnTimeoutResponse(t *testing.T) {
 	assertMainImageModelsRoutes(t, requests(), false)
 }
 
+func TestMainImageModelsRejectsMalformedMetadata(t *testing.T) {
+	for _, body := range []string{
+		`{"id":"gpt-image-2.5-flare","object":"file"}`,
+		`{"id":"gpt-image-2.5-flare","object":null}`,
+		`{"id":"gpt-image-2.5-flare","object":42}`,
+		`{"id":"gpt-image-2.5-flare","object":[]}`,
+		`{"id":"gpt-image-2.5-flare","object":"model"`,
+		`{"id":"gpt-image-2.5-flare" "object":"model"}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/gpt-image-2.5-flare") {
+					w.Header().Set("Content-Type", "application/json")
+					fmt.Fprint(w, body)
+					return
+				}
+				mainImageModelResponse(w, r.URL.Path, "null")
+			})
+			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=synthetic-models-key"},
+				"openai", "--base-url", server.URL, "--format", "json", "images", "models")
+			if got.code != 1 || !strings.Contains(got.stderr, "unexpected model response") {
+				t.Fatalf("invalid resource metadata claimed success: %+v", got)
+			}
+			report := decodeMainImageModels(t, got.stdout)
+			if report.Complete {
+				t.Fatal("invalid resource metadata claimed complete checks")
+			}
+			for _, row := range report.Models {
+				if row.ID == "gpt-image-2.5-flare" {
+					if row.Status != imagemodels.StatusUnknown || row.Failure != imagemodels.FailureInvalidResponse {
+						t.Errorf("invalid metadata claimed visibility: %+v", row)
+					}
+				} else if row.Status != imagemodels.StatusVisible || row.Failure != "" {
+					t.Errorf("completed model check lost: %+v", row)
+				}
+			}
+			assertMainImageModelsRoutes(t, requests(), false)
+		})
+	}
+}
+
 func TestMainImageModelsRequestDeadlineCancelsHTTP(t *testing.T) {
 	canceled := make(chan struct{}, 1)
 	server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {

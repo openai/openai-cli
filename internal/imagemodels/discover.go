@@ -125,6 +125,12 @@ func classify(entry Entry, model *openai.Model, err error, now time.Time) Result
 		result.Failure = FailureInvalidResponse
 		return result
 	}
+	// Retain support for metadata without a discriminator. When supplied, it must
+	// identify model metadata; a matching ID alone cannot validate another object.
+	if model.JSON.Object.Raw() != "" && (!model.JSON.Object.Valid() || model.Object != "model") {
+		result.Failure = FailureInvalidResponse
+		return result
+	}
 	dateRaw := model.JSON.ShutdownDate.Raw()
 	if dateRaw != "" && dateRaw != "null" && !model.JSON.ShutdownDate.Valid() {
 		result.Failure = FailureInvalidResponse

@@ -409,6 +409,12 @@ func TestDiscoverMalformedMetadata(t *testing.T) {
 		``, `null`, `[]`, `"unexpected"`, `{`, `{}`, `{"id":123}`,
 		fmt.Sprintf(`{"id":%q,"shutdown_date":42}`, entry.ID),
 		fmt.Sprintf(`{"id":%q,"shutdown_date":{}}`, entry.ID),
+		fmt.Sprintf(`{"id":%q,"object":"file"}`, entry.ID),
+		fmt.Sprintf(`{"id":%q,"object":null}`, entry.ID),
+		fmt.Sprintf(`{"id":%q,"object":42}`, entry.ID),
+		fmt.Sprintf(`{"id":%q,"object":[]}`, entry.ID),
+		fmt.Sprintf(`{"id":%q,"object":"model"`, entry.ID),
+		fmt.Sprintf(`{"id":%q "object":"model"}`, entry.ID),
 	} {
 		t.Run(body, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

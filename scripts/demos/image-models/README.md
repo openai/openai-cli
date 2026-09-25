@@ -33,7 +33,7 @@ bash scripts/demos/image-models/record.sh \
 ```
 
 Both commits must be full 40-character IDs. Use main
-`c961755b21d579b5b5a2eb87a0e77123038da4a0` for this feature's before build;
+`37fe587ddf9e9c160f8d6c52e5f2b879f5623960` for this feature's before build;
 PR #238 is a behavior reference, not the comparison baseline.
 Use `DEMO_API_BINARY` to select a different build location for the fixture.
 The runner deliberately requires media outside the repository. It does not
