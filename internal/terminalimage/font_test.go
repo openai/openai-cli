@@ -110,6 +110,16 @@ func TestImageFontRetainsScrollbackAndTextSettings(t *testing.T) {
 		require.NoError(t, err)
 		require.NotZero(t, glyph, "current font must retain text and both images")
 	}
+	files, err := os.ReadDir(filepath.Join(directory, "fonts"))
+	require.NoError(t, err)
+	registered := map[string]bool{}
+	for _, path := range bridge.registered {
+		registered[filepath.Base(path)] = true
+	}
+	require.Len(t, files, len(registered), "only typography fonts used for display should be generated")
+	for _, file := range files {
+		require.True(t, registered[file.Name()])
+	}
 }
 
 func TestImageFontFailureDoesNotPrintOrCommitImage(t *testing.T) {

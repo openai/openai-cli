@@ -13,8 +13,16 @@ import (
 func TestLookupFontPSFindsCurrentAndImmutableVariant(t *testing.T) {
 	g := initialized(t)
 	state := g.State()
-	path, err := g.LookupFontPS(t.Context(), state.PostScript)
-	if err != nil || path != state.FontPath {
+	revision, err := g.Initialize(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	display, err := g.FontForTypography(t.Context(), revision, typographySource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := g.LookupFontPS(t.Context(), display.PostScript)
+	if err != nil || path != display.FontPath {
 		t.Fatalf("current font lookup: path=%q error=%v", path, err)
 	}
 	token := "abcdef0123456789abcdef0123456789"
@@ -73,7 +81,7 @@ func TestLookupFontPSMissingOrUnsafeFiles(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		return // Symlinks require privileges on some Windows configurations.
 	}
-	if err := os.Symlink(g.State().FontPath, path); err != nil {
+	if err := os.Symlink(filepath.Join(g.directory, "state.json"), path); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := g.LookupFontPS(t.Context(), name); err == nil {
@@ -94,10 +102,10 @@ func TestLookupFontPSHonorsGalleryLifetime(t *testing.T) {
 	g := initialized(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := g.LookupFontPS(ctx, g.State().PostScript); !errors.Is(err, context.Canceled) {
+	if _, err := g.LookupFontPS(ctx, g.state.PostScript); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation lost: %v", err)
 	}
-	name := g.State().PostScript
+	name := g.state.PostScript
 	if err := g.Close(); err != nil {
 		t.Fatal(err)
 	}

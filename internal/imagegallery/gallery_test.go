@@ -59,10 +59,15 @@ func TestGalleryImmutableRevisionsAndDedup(t *testing.T) {
 	if g.State().ImageCount != 0 {
 		t.Fatal("prepare changed committed state")
 	}
+	source := typographySource(t)
+	firstFont, err := g.FontForTypography(ctx, first, source)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err = g.Commit(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	oldFont, err := os.ReadFile(first.FontPath)
+	oldFont, err := os.ReadFile(firstFont.FontPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,8 +76,12 @@ func TestGalleryImmutableRevisionsAndDedup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.PostScript == second.PostScript || first.FontPath == second.FontPath {
-		t.Fatal("font identity reused")
+	secondFont, err := g.FontForTypography(ctx, second, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.state.PostScript == second.state.PostScript || firstFont.FontPath == secondFont.FontPath {
+		t.Fatal("revision or font identity reused")
 	}
 	if err = g.Commit(ctx, second); err != nil {
 		t.Fatal(err)
@@ -83,7 +92,7 @@ func TestGalleryImmutableRevisionsAndDedup(t *testing.T) {
 	if g.state.Images[1].Start != oldEntry.Start+rune(oldEntry.Columns*oldEntry.Rows) {
 		t.Fatal("image characters overlap")
 	}
-	saved, _ := os.ReadFile(first.FontPath)
+	saved, _ := os.ReadFile(firstFont.FontPath)
 	if !bytes.Equal(saved, oldFont) {
 		t.Fatal("old font changed")
 	}
@@ -91,7 +100,7 @@ func TestGalleryImmutableRevisionsAndDedup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !duplicate.Existing || duplicate.Text != first.Text || duplicate.Columns != first.Columns || duplicate.FontPath != second.FontPath {
+	if !duplicate.Existing || duplicate.Text != first.Text || duplicate.Columns != first.Columns || duplicate.state.PostScript != second.state.PostScript {
 		t.Fatal("duplicate consumed new glyphs or lost old geometry")
 	}
 	if err = g.Commit(ctx, duplicate); err != nil {
@@ -113,7 +122,7 @@ func TestGalleryImmutableRevisionsAndDedup(t *testing.T) {
 	if reopened.State().ImageCount != 2 {
 		t.Fatal("state did not survive reopen")
 	}
-	for _, path := range []string{directory, filepath.Join(directory, "fonts"), filepath.Join(directory, "images"), filepath.Join(directory, "state.json"), first.FontPath} {
+	for _, path := range []string{directory, filepath.Join(directory, "fonts"), filepath.Join(directory, "images"), filepath.Join(directory, "state.json"), firstFont.FontPath} {
 		info, err := os.Stat(path)
 		if err != nil {
 			t.Fatal(err)
@@ -132,6 +141,10 @@ func TestGalleryFailedActivationRetainsArtifactsWithoutCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	abandonedFont, err := g.FontForTypography(t.Context(), abandoned, typographySource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if g.State() != before {
 		t.Fatal("failed activation changed state")
 	}
@@ -139,7 +152,7 @@ func TestGalleryFailedActivationRetainsArtifactsWithoutCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 2 {
+	if len(files) != 1 {
 		t.Fatal("uncommitted font missing from cleanup list")
 	}
 	replacement, err := g.Prepare(context.Background(), path, 4)
@@ -152,7 +165,7 @@ func TestGalleryFailedActivationRetainsArtifactsWithoutCommit(t *testing.T) {
 	if err = g.Commit(context.Background(), replacement); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = os.Stat(abandoned.FontPath); err != nil {
+	if _, err = os.Stat(abandonedFont.FontPath); err != nil {
 		t.Fatal("potentially registered abandoned font removed")
 	}
 }
@@ -208,19 +221,26 @@ func TestGalleryRejectsSymlinkStorage(t *testing.T) {
 		t.Fatal("accepted symlink gallery")
 	}
 	g := initialized(t)
-	font := g.State().FontPath
-	if err := os.Remove(font); err != nil {
+	revision, err := g.Prepare(t.Context(), fixture(color.NRGBA{R: 255, A: 255}), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(t.Context(), revision); err != nil {
+		t.Fatal(err)
+	}
+	cached := filepath.Join(g.directory, "images", g.state.Images[0].Hash+".png")
+	if err := os.Remove(cached); err != nil {
 		t.Fatal(err)
 	}
 	outside := filepath.Join(directory, "outside")
 	if err := os.WriteFile(outside, []byte("do not remove"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, font); err != nil {
+	if err := os.Symlink(outside, cached); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.validate(); err == nil {
-		t.Fatal("followed symlink font")
+		t.Fatal("followed symlink image")
 	}
 
 	if data, _ := os.ReadFile(outside); string(data) != "do not remove" {
@@ -256,7 +276,11 @@ func TestGalleryRejectsCorruptCacheAndAllocations(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := fixture(color.NRGBA{0, 0, 255, 255})
-	if _, err = g.Prepare(context.Background(), other, 4); err == nil || !strings.Contains(err.Error(), "hash") {
+	revision, err := g.Prepare(context.Background(), other, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = g.FontForTypography(t.Context(), revision, typographySource(t)); err == nil || !strings.Contains(err.Error(), "hash") {
 		t.Fatalf("accepted corrupt cache: %v", err)
 	}
 	g.state.Images[0].Start++
