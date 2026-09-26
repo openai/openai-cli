@@ -13,12 +13,15 @@ import (
 
 func TestGalleryRedisplayAtNewWidthKeepsScrollback(t *testing.T) {
 	g := initialized(t)
+	typography := typographySource(t)
 	source := fixture(color.NRGBA{R: 210, G: 40, B: 80, A: 128})
 	first, err := g.Prepare(t.Context(), source, 8)
 	require.NoError(t, err)
+	firstFont, err := g.FontForTypography(t.Context(), first, typography)
+	require.NoError(t, err)
 	require.NoError(t, g.Commit(t.Context(), first))
 	earlier := g.state.Images[0]
-	font, err := os.ReadFile(first.FontPath)
+	font, err := os.ReadFile(firstFont.FontPath)
 	require.NoError(t, err)
 	cached := filepath.Join(g.directory, "images", earlier.Hash+".png")
 	originalPNG, err := os.ReadFile(cached)
@@ -28,13 +31,15 @@ func TestGalleryRedisplayAtNewWidthKeepsScrollback(t *testing.T) {
 	require.False(t, resized.Existing)
 	require.Equal(t, 4, resized.Columns)
 	require.Equal(t, 1, g.State().ImageCount, "prepare must not publish before font activation")
-	require.NotEqual(t, first.FontPath, resized.FontPath)
+	resizedFont, err := g.FontForTypography(t.Context(), resized, typography)
+	require.NoError(t, err)
+	require.NotEqual(t, firstFont.FontPath, resizedFont.FontPath)
 	require.NotEqual(t, first.Text, resized.Text)
 	require.NoError(t, g.Commit(t.Context(), resized))
 	require.Equal(t, earlier, g.state.Images[0])
 	require.Equal(t, first.Text, textFor(g.state.Images[0]))
 	require.Equal(t, earlier.Start+rune(earlier.Columns*earlier.Rows), g.state.Images[1].Start)
-	after, err := os.ReadFile(first.FontPath)
+	after, err := os.ReadFile(firstFont.FontPath)
 	require.NoError(t, err)
 	require.Equal(t, font, after)
 	after, err = os.ReadFile(cached)
@@ -50,7 +55,10 @@ func TestGalleryRedisplayAtNewWidthKeepsScrollback(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, repeated.Existing)
 		require.Equal(t, width, repeated.Columns)
-		require.Equal(t, resized.FontPath, repeated.FontPath)
+		repeatedFont, err := g.FontForTypography(t.Context(), repeated, typography)
+		require.NoError(t, err)
+		require.True(t, repeatedFont.Existing)
+		require.Equal(t, resizedFont.FontPath, repeatedFont.FontPath)
 		if width == 8 {
 			require.Equal(t, first.Text, repeated.Text)
 		} else {
@@ -69,6 +77,10 @@ func TestGalleryRedisplayAtNewWidthKeepsScrollback(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, repeated.Existing)
 	require.Equal(t, resized.Text, repeated.Text)
+	repeatedFont, err := reopened.FontForTypography(t.Context(), repeated, typography)
+	require.NoError(t, err)
+	require.True(t, repeatedFont.Existing)
+	require.Equal(t, resizedFont.FontPath, repeatedFont.FontPath)
 }
 
 func TestGalleryDuplicateWidthAllocationRejected(t *testing.T) {
@@ -102,7 +114,7 @@ func TestGalleryResizeAtCapacityKeepsExistingPlacement(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, g.Commit(t.Context(), first))
 	// Fill accounting without generating a 6400-glyph fixture. Existing entries
-	// and the committed font remain untouched by a failed new placement.
+	// remain untouched by a failed new placement.
 	remaining := imagefont.MaxGlyphs - g.State().UsedGlyphs
 	g.state.Images = append(g.state.Images, entry{Columns: remaining, Rows: 1})
 	before := g.State()

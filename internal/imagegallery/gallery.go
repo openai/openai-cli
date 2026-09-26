@@ -1,5 +1,5 @@
-// Package imagegallery stores private, immutable font revisions for terminal
-// image scrollback. It never registers fonts or controls the terminal.
+// Package imagegallery stores private revision metadata and immutable typography
+// fonts for terminal image scrollback. It never registers fonts or controls the terminal.
 package imagegallery
 
 import (
@@ -31,9 +31,9 @@ var (
 
 // State is a copy of the currently committed gallery metadata.
 type State struct {
-	Initialized                                   bool
-	ID, ProfileName, FontPath, PostScript, Family string
-	Revision, ImageCount, UsedGlyphs, MaxColumns  int
+	Initialized                                  bool
+	ID, ProfileName                              string
+	Revision, ImageCount, UsedGlyphs, MaxColumns int
 }
 
 type entry struct {
@@ -43,24 +43,25 @@ type entry struct {
 	Start   rune   `json:"start"`
 }
 type diskState struct {
-	Version    int     `json:"version"`
-	ID         string  `json:"id"`
-	Revision   int     `json:"revision"`
+	Version  int    `json:"version"`
+	ID       string `json:"id"`
+	Revision int    `json:"revision"`
+	// Keep the version-1 identity fields for existing galleries and typography
+	// cache keys. They no longer imply that a cumulative font file was generated.
 	Font       string  `json:"font"`
 	PostScript string  `json:"postscript"`
 	Family     string  `json:"family"`
 	Images     []entry `json:"images"`
 }
 
-// Revision is prepared before its font is registered and activated. Commit it
-// only after those operations succeed. Font files survive failed activation.
+// Revision allocates immutable image characters without generating a font.
+// Commit it after its typography fonts are registered and activated.
 type Revision struct {
-	FontPath, PostScript, Family, Text string
-	ProfileName                        string
-	Columns, Rows                      int
-	Existing                           bool
-	state                              diskState
-	owner                              *Gallery
+	Text          string
+	Columns, Rows int
+	Existing      bool
+	state         diskState
+	owner         *Gallery
 }
 
 // Gallery holds an exclusive filesystem lock until Close. It is not safe for
@@ -143,10 +144,10 @@ func (g *Gallery) State() State {
 		used += image.Columns * image.Rows
 		columns = max(columns, image.Columns)
 	}
-	return State{Initialized: true, ID: g.state.ID, ProfileName: "OpenAI Images " + g.state.ID[:8], FontPath: filepath.Join(g.directory, "fonts", g.state.Font), PostScript: g.state.PostScript, Family: g.state.Family, Revision: g.state.Revision, ImageCount: len(g.state.Images), UsedGlyphs: used, MaxColumns: columns}
+	return State{Initialized: true, ID: g.state.ID, ProfileName: "OpenAI Images " + g.state.ID[:8], Revision: g.state.Revision, ImageCount: len(g.state.Images), UsedGlyphs: used, MaxColumns: columns}
 }
 
-// Initialize prepares a base font without changing committed metadata.
+// Initialize prepares the gallery identity without changing committed metadata.
 func (g *Gallery) Initialize(ctx context.Context) (*Revision, error) {
 	if err := g.check(ctx); err != nil {
 		return nil, err
@@ -158,10 +159,10 @@ func (g *Gallery) Initialize(ctx context.Context) (*Revision, error) {
 	if err != nil {
 		return nil, err
 	}
-	return g.build(ctx, diskState{Version: 1, ID: id, Images: []entry{}}, nil, nil)
+	return g.prepareRevision(ctx, diskState{Version: 1, ID: id, Images: []entry{}}, nil)
 }
 
-// Prepare caches a reduced PNG and builds a new immutable cumulative font.
+// Prepare caches a reduced PNG and allocates an immutable image placement.
 // Existing placements retain their codepoints. Showing the same image at a
 // different width allocates a new placement while reusing its cached PNG.
 // The source image is not modified.
@@ -210,23 +211,13 @@ func (g *Gallery) Prepare(ctx context.Context, img image.Image, columns int) (*R
 	next := g.state
 	next.Revision++
 	next.Images = append(append([]entry(nil), g.state.Images...), added)
-	frames := make([]imagefont.Frame, 0, len(next.Images))
-	for _, saved := range next.Images {
-		var decoded image.Image
-		if saved.Hash == hash {
-			decoded = normalized
-		} else {
-			decoded, err = g.cachedImage(saved)
-			if err != nil {
-				return nil, err
-			}
-		}
-		frames = append(frames, imagefont.Frame{Image: decoded, Columns: saved.Columns, Rows: saved.Rows, CodepointStart: saved.Start})
-	}
-	return g.build(ctx, next, frames, &added)
+	return g.prepareRevision(ctx, next, &added)
 }
 
-func (g *Gallery) build(ctx context.Context, next diskState, frames []imagefont.Frame, selected *entry) (*Revision, error) {
+func (g *Gallery) prepareRevision(ctx context.Context, next diskState, selected *entry) (*Revision, error) {
+	if err := g.check(ctx); err != nil {
+		return nil, err
+	}
 	token, err := randomID()
 	if err != nil {
 		return nil, err
@@ -234,15 +225,7 @@ func (g *Gallery) build(ctx context.Context, next diskState, frames []imagefont.
 	next.Font = "revision-" + token + ".ttf"
 	next.Family = "OpenAI Image Gallery " + next.ID[:8] + " " + token[:8]
 	next.PostScript = "OpenAIImages-" + next.ID[:8] + "-" + token + "-Regular"
-	encoded, err := imagefont.Encode(ctx, frames, imagefont.Options{Family: next.Family, PostScript: next.PostScript})
-	if err != nil {
-		return nil, err
-	}
-	path := filepath.Join(g.directory, "fonts", next.Font)
-	if err = writeNew(path, encoded.Data); err != nil {
-		return nil, err
-	}
-	revision := &Revision{FontPath: path, PostScript: next.PostScript, Family: next.Family, ProfileName: "OpenAI Images " + next.ID[:8], state: next, owner: g}
+	revision := &Revision{state: next, owner: g}
 	if selected != nil {
 		revision.Text = textFor(*selected)
 		revision.Columns = selected.Columns
@@ -253,8 +236,7 @@ func (g *Gallery) build(ctx context.Context, next diskState, frames []imagefont.
 }
 
 func (g *Gallery) existing(selected *entry) *Revision {
-	state := g.State()
-	revision := &Revision{FontPath: state.FontPath, PostScript: state.PostScript, Family: state.Family, ProfileName: state.ProfileName, Existing: true, state: g.state, owner: g}
+	revision := &Revision{Existing: true, state: g.state, owner: g}
 	if selected != nil {
 		revision.Text = textFor(*selected)
 		revision.Columns = selected.Columns
@@ -322,9 +304,6 @@ func (g *Gallery) validate() error {
 	token := strings.TrimSuffix(strings.TrimPrefix(s.Font, "revision-"), ".ttf")
 	if s.PostScript != "OpenAIImages-"+s.ID[:8]+"-"+token+"-Regular" || s.Family != "OpenAI Image Gallery "+s.ID[:8]+" "+token[:8] {
 		return errors.New("invalid image gallery font identity")
-	}
-	if err := checkPrivate(filepath.Join(g.directory, "fonts", s.Font), false); err != nil {
-		return err
 	}
 	next := imagefont.FirstCodepoint
 	type placement struct {

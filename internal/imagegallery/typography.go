@@ -39,7 +39,7 @@ func (g *Gallery) FontForTypography(ctx context.Context, revision *Revision, sou
 		Revision   string
 		Source     imagefont.PreserveOptions
 		Companions []imagefont.PreserveOptions
-	}{3, revision.PostScript, source, companions})
+	}{3, revision.state.PostScript, source, companions})
 	if err != nil {
 		return TypographyFont{}, errors.New("invalid image typography")
 	}

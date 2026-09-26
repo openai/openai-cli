@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func cleanupFixture(t *testing.T, bind bool) (string, string, State) {
+func cleanupFixture(t *testing.T, bind bool) (string, string, DisplayFont) {
 	t.Helper()
 	root := t.TempDir()
 	require.NoError(t, os.Chmod(root, 0700))
@@ -24,19 +24,21 @@ func cleanupFixture(t *testing.T, bind bool) (string, string, State) {
 	require.NoError(t, gallery.Commit(t.Context(), initial))
 	revision, err := gallery.Prepare(t.Context(), image.NewRGBA(image.Rect(0, 0, 2, 2)), 1)
 	require.NoError(t, err)
+	display, err := gallery.FontForTypography(t.Context(), revision, typographySource(t))
+	require.NoError(t, err)
 	require.NoError(t, gallery.Commit(t.Context(), revision))
 	if bind {
 		require.NoError(t, gallery.BindTTY(t.Context(), "/dev/ttys001"))
 	}
-	state := gallery.State()
 	require.NoError(t, gallery.Close())
-	return root, directory, state
+	return root, directory, display.DisplayFont
 }
 
 func TestCleanupClosedReclaimsAllArtifactsAfterUnregistering(t *testing.T) {
 	root, directory, _ := cleanupFixture(t, true)
 	fonts, err := os.ReadDir(filepath.Join(directory, "fonts"))
 	require.NoError(t, err)
+	require.NotEmpty(t, fonts)
 	var unregistered []string
 	inventory := func(ctx context.Context) ([]string, []string, error) {
 		// Collection occurs under the same lock used by renderers.
