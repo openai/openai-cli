@@ -20,6 +20,7 @@ func ConfigureCommand(root *cli.Command) {
 	registerImageModels(root)
 	configureReadableOutput(root)
 	configureImageSaving(root)
+	registerImagePreviewCommands(root)
 	configureReadableAudio(root)
 	configureReadableSpeech(root)
 	ConfigureCommandErrors(root)

@@ -172,7 +172,9 @@ func (g *Gallery) Initialize(ctx context.Context) (*Revision, error) {
 }
 
 // Prepare caches a reduced PNG and allocates an immutable image placement.
-// Existing images retain their codepoints. The source image is not modified.
+// Existing placements retain their codepoints. Showing the same image at a
+// different width allocates a new placement while reusing its cached PNG.
+// The source image is not modified.
 func (g *Gallery) Prepare(ctx context.Context, img image.Image, columns int) (*Revision, error) {
 	if err := g.check(ctx); err != nil {
 		return nil, err
@@ -193,7 +195,7 @@ func (g *Gallery) Prepare(ctx context.Context, img image.Image, columns int) (*R
 	digest := sha256.Sum256(data)
 	hash := hex.EncodeToString(digest[:])
 	for i := range g.state.Images {
-		if g.state.Images[i].Hash == hash {
+		if g.state.Images[i].Hash == hash && g.state.Images[i].Columns == columns {
 			revision := g.existing(&g.state.Images[i])
 			if g.attempt != nil {
 				if err := g.reserveAttempt(ctx, revision, ""); err != nil {
@@ -325,17 +327,22 @@ func (g *Gallery) validate() error {
 		return errors.New("invalid image gallery font identity")
 	}
 	next := imagefont.FirstCodepoint
-	seen := map[string]bool{}
+	type placement struct {
+		hash    string
+		columns int
+	}
+	seen := map[placement]bool{}
 	for _, item := range s.Images {
 		count := item.Columns * item.Rows
-		if !isHex(item.Hash, 64) || seen[item.Hash] || item.Columns < 1 || item.Columns > 64 || item.Rows < 1 || item.Rows > 32 || item.Start != next || count > int(imagefont.LastCodepoint-next)+1 {
+		key := placement{item.Hash, item.Columns}
+		if !isHex(item.Hash, 64) || seen[key] || item.Columns < 1 || item.Columns > 64 || item.Rows < 1 || item.Rows > 32 || item.Start != next || count > int(imagefont.LastCodepoint-next)+1 {
 			return errors.New("invalid image gallery character allocation")
 		}
 		if err := checkPrivate(filepath.Join(g.directory, "images", item.Hash+".png"), false); err != nil {
 
 			return err
 		}
-		seen[item.Hash] = true
+		seen[key] = true
 		next += rune(count)
 	}
 	return nil

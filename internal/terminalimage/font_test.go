@@ -157,18 +157,41 @@ func TestImageFontOutputFailureDoesNotFallBack(t *testing.T) {
 	require.False(t, errors.As(err, &fontErr))
 }
 
-func TestImageFontDetectsNarrowWindowBeforeActivation(t *testing.T) {
+func TestImageFontRedisplaysForNarrowerWindow(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "gallery")
 	bridge := newTestFontBridge()
 	var output bytes.Buffer
 	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
 	require.NoError(t, displayImageFont(t.Context(), &output, img, 32, directory, "/dev/ttys001", testFontViewport, bridge.services(t)))
 	selected := bridge.status.FontName
+	fonts, err := os.ReadDir(filepath.Join(directory, "fonts"))
+	require.NoError(t, err)
+	originals := map[string][]byte{}
+	for _, font := range fonts {
+		data, err := os.ReadFile(filepath.Join(directory, "fonts", font.Name()))
+		require.NoError(t, err)
+		originals[font.Name()] = data
+	}
 	output.Reset()
-	err := displayImageFont(t.Context(), &output, img, 32, directory, "/dev/ttys001", func() fontViewport {
+	err = displayImageFont(t.Context(), &output, img, 32, directory, "/dev/ttys001", func() fontViewport {
 		return fontViewport{Columns: 20, Rows: 24, PixelWidth: 140, PixelHeight: 336}
 	}, bridge.services(t))
-	require.ErrorContains(t, err, "widen Terminal")
+	require.NoError(t, err)
+	require.NotEqual(t, selected, bridge.status.FontName)
+	for _, row := range strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n") {
+		require.Len(t, []rune(row), 19)
+	}
+	for name, before := range originals {
+		after, err := os.ReadFile(filepath.Join(directory, "fonts", name))
+		require.NoError(t, err)
+		require.Equal(t, before, after)
+	}
+	selected = bridge.status.FontName
+	output.Reset()
+	err = displayImageFont(t.Context(), &output, img, 32, directory, "/dev/ttys001", func() fontViewport {
+		return fontViewport{Columns: 1, Rows: 24, PixelWidth: 7, PixelHeight: 336}
+	}, bridge.services(t))
+	require.Error(t, err)
 	require.Empty(t, output.String())
 	require.Equal(t, selected, bridge.status.FontName)
 }
