@@ -1,14 +1,22 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"github.com/charmbracelet/x/term"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -66,4 +74,46 @@ func TestMainInlineImageInvalidModeBeforeRequest(t *testing.T) {
 		require.Empty(t, strings.TrimSpace(got.stdout))
 	}
 	require.Zero(t, calls.Load())
+}
+
+func TestMainInlineSavedImageWarningsOnTerminal(t *testing.T) {
+	if !term.IsTerminal(os.Stdout.Fd()) {
+		t.Skip("requires actual terminal stdout")
+	}
+	var tall bytes.Buffer
+	require.NoError(t, png.Encode(&tall, image.NewNRGBA(image.Rect(0, 0, 1, 16384))))
+	for _, tc := range []struct {
+		name       string
+		payload    []byte
+		diagnostic string
+	}{
+		{"invalid optional preview", append([]byte("\x89PNG\r\n\x1a\n"), []byte("synthetic invalid preview")...), "No need to generate again"},
+		{"too tall", tall.Bytes(), "too tall"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, imageGenerationResponse(tc.payload))
+			}))
+			defer server.Close()
+			binary, err := os.Executable()
+			require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			child := exec.CommandContext(ctx, binary, "-test.run=^TestMainDispatchProcess$", "--", "openai", "images", "generate", "--prompt", "synthetic preview warning")
+			home := t.TempDir()
+			child.Env = append(imageGenerationEnv(server, home), "OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "TERM=xterm-256color", "TERM_PROGRAM=synthetic-test-pty", "CI=false")
+			var diagnostic bytes.Buffer
+			child.Stdout = os.Stdout
+			child.Stderr = &diagnostic
+			require.NoError(t, child.Run(), diagnostic.String())
+			require.NoError(t, ctx.Err())
+			require.Contains(t, diagnostic.String(), tc.diagnostic)
+			files := imageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"))
+			require.Len(t, files, 1)
+			saved, err := os.ReadFile(files[0])
+			require.NoError(t, err)
+			require.Equal(t, tc.payload, saved)
+		})
+	}
 }

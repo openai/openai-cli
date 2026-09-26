@@ -134,7 +134,9 @@ func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
 		}
 		if plan != nil {
 			plan.inline = inline
-			plan.diagnostics = command.Root().ErrWriter
+			// The generated root ErrWriter buffers failures for main. Preview
+			// warnings accompany a successful save and must reach stderr now.
+			plan.diagnostics = os.Stderr
 		}
 		restore, err := selectImageGenerationStream(command, streaming)
 		if err != nil {

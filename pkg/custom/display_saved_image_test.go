@@ -3,9 +3,11 @@ package custom
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -105,4 +107,20 @@ func TestSavedImagePreviewTerminal(t *testing.T) {
 	diagnostic.Reset()
 	require.NoError(t, displaySavedImage(t.Context(), file, os.Stdout, &diagnostic, "auto"))
 	require.Contains(t, diagnostic.String(), "too tall")
+	diagnostic.Reset()
+	require.ErrorIs(t, displayDecodedSavedImage(t.Context(), tall, os.Stdout, &diagnostic, "blocks"), errImagePreviewUnavailable)
+	require.Contains(t, diagnostic.String(), "too tall")
 }
+
+func TestReportImagePreviewUnavailableRetainsOutputFailure(t *testing.T) {
+	var out bytes.Buffer
+	require.ErrorIs(t, reportImagePreviewUnavailable(&out, "Image too tall"), errImagePreviewUnavailable)
+	require.Equal(t, "Image too tall\n", out.String())
+	failure := errors.New("synthetic diagnostic failure")
+	require.ErrorIs(t, reportImagePreviewUnavailable(savedPreviewFailWriter{failure}, "unavailable"), failure)
+	require.ErrorIs(t, reportImagePreviewUnavailable(savedPreviewFailWriter{}, "unavailable"), io.ErrShortWrite)
+}
+
+type savedPreviewFailWriter struct{ err error }
+
+func (w savedPreviewFailWriter) Write([]byte) (int, error) { return 0, w.err }
