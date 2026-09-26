@@ -173,3 +173,20 @@ func TestImageFontRemoteSessionsStayUnsupported(t *testing.T) {
 	}
 	require.Error(t, Write(t.Context(), &strings.Builder{}, image.NewRGBA(image.Rect(0, 0, 1, 1)), "font", 32))
 }
+
+func TestImageFontHonorsDisabledCI(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+	for _, name := range []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "TMUX", "STY", "ZELLIJ"} {
+		t.Setenv(name, "")
+	}
+	for _, value := range []string{"", "0", "false", "FALSE"} {
+		t.Run("disabled_"+value, func(t *testing.T) {
+			t.Setenv("CI", value)
+			require.Equal(t, imagefontmac.Supported(), FontSupported())
+		})
+	}
+	for _, value := range []string{"1", "true", "synthetic"} {
+		t.Setenv("CI", value)
+		require.False(t, FontSupported())
+	}
+}
