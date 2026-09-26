@@ -24,7 +24,11 @@ func FontSupported() bool {
 	if !imagefontmac.Supported() || os.Getenv("TERM_PROGRAM") != "Apple_Terminal" {
 		return false
 	}
-	for _, name := range []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "TMUX", "STY", "ZELLIJ", "CI"} {
+	ci := strings.ToLower(os.Getenv("CI"))
+	if ci != "" && ci != "0" && ci != "false" {
+		return false
+	}
+	for _, name := range []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "TMUX", "STY", "ZELLIJ"} {
 		if os.Getenv(name) != "" {
 			return false
 		}
