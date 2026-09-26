@@ -23,6 +23,18 @@ function resolveInstalledSourceFont(requested, size) {
     return sourceFontMatchesName(font, requested) ? font : null;
 }
 
+function sourceFontSizeFailure() {
+    var error = new Error("font export limit");
+    error.reason = "size";
+    throw error;
+}
+
+function sourceFontText(value) {
+    var text = ObjC.unwrap(ObjC.castRefToObject(value));
+    if (typeof text !== "string" || text.length > 255) { sourceFontSizeFailure(); }
+    return text;
+}
+
 function run(argv) {
     function failure(reason) { return JSON.stringify({ok: false, reason: reason}); }
     if (argv.length !== 2) { return failure("arguments"); }
@@ -41,7 +53,7 @@ function run(argv) {
             bundled = Boolean(font);
         }
         if (!font) { return failure("missing"); }
-        var actual = ObjC.unwrap(ObjC.castRefToObject($.CTFontCopyPostScriptName(font)));
+        var actual = sourceFontText($.CTFontCopyPostScriptName(font));
         // Use this same NSFont object for table and metric reads. Recreating it
         // through a PostScript-name lookup can lose private system UI faces.
         var matchedName = actual === requested ? "" : requested;
@@ -55,21 +67,31 @@ function run(argv) {
             }
             return JSON.stringify({ok: true, matched_name: matchedName, font: {postscript: actual, tables: originTables}});
         }
+        // Match the encoder's 64 MiB decoded-table limit for each face. The
+        // selected face and its three styles may use 256 MiB together.
+        var faceLimit = 64 * 1024 * 1024, familyBytes = 0;
         function exportFont(face) {
-            var available = $.CTFontCopyAvailableTables(face, 0), tables = {};
-            for (var i = 0; i < Number($.CFArrayGetCount(available)); i++) {
+            var available = $.CTFontCopyAvailableTables(face, 0), tables = {}, pending = [];
+            var count = Number($.CFArrayGetCount(available)), faceBytes = 0;
+            if (!isFinite(count) || count < 1 || Math.floor(count) !== count || count > 65535) { sourceFontSizeFailure(); }
+            for (var i = 0; i < count; i++) {
                 var tag = Number($.CFArrayGetValueAtIndex(available, i));
                 var name = String.fromCharCode((tag >>> 24) & 255, (tag >>> 16) & 255, (tag >>> 8) & 255, tag & 255);
                 var data = ObjC.castRefToObject($.CTFontCopyTable(face, tag, 0));
                 if (!data) { throw new Error("tables"); }
-                tables[name] = ObjC.unwrap(data.base64EncodedStringWithOptions(0));
+                var length = Number(data.length);
+                if (!isFinite(length) || length < 0 || Math.floor(length) !== length || length > faceLimit - faceBytes) { sourceFontSizeFailure(); }
+                faceBytes += length;
+                pending.push({name: name, data: data});
             }
+            if (faceBytes > 4 * faceLimit - familyBytes) { sourceFontSizeFailure(); }
+            familyBytes += faceBytes;
             var nativeFont = face; // Already an NSFont object, not a CF Ref.
             var character = Ref("unsigned short"), glyph = Ref("unsigned short");
             character[0] = 87; // Terminal uses the advance of W for its cell width.
             if (!$.CTFontGetGlyphsForCharacters(face, character, glyph, 1)) { throw new Error("glyph"); }
             var exportedFace = {
-                postscript: ObjC.unwrap(ObjC.castRefToObject($.CTFontCopyPostScriptName(face))),
+                postscript: sourceFontText($.CTFontCopyPostScriptName(face)),
                 style: ["Regular", "Italic", "Bold", "BoldItalic"][Number($.CTFontGetSymbolicTraits(face)) & 3],
                 family_class: Number($.CTFontGetSymbolicTraits(face)) >>> 28,
                 tables: tables,
@@ -82,29 +104,38 @@ function run(argv) {
             var variation = ObjC.castRefToObject($.CTFontCopyVariation(face));
             if (variation && Number(variation.count) > 0) {
                 var axes = variation.allKeys, coordinates = {};
-                for (var axis = 0; axis < Number(axes.count); axis++) {
+                var axisCount = Number(axes.count);
+                if (!isFinite(axisCount) || Math.floor(axisCount) !== axisCount || axisCount < 0 || axisCount > 65535) { sourceFontSizeFailure(); }
+                for (var axis = 0; axis < axisCount; axis++) {
                     var key = axes.objectAtIndex(axis);
-                    coordinates[String(ObjC.unwrap(key))] = Number(ObjC.unwrap(variation.objectForKey(key)));
+                    var tagName = String(ObjC.unwrap(key)), coordinate = Number(ObjC.unwrap(variation.objectForKey(key)));
+                    if (!/^[0-9]{1,10}$/.test(tagName) || Number(tagName) > 0xffffffff || !isFinite(coordinate)) { throw new Error("variation"); }
+                    coordinates[tagName] = coordinate;
                 }
                 if (Object.keys(coordinates).length > 0) { exportedFace.variations = coordinates; }
             }
             if (bundled) {
                 // Different bundled outlines can share a PostScript name. The
                 // full face name identifies the same file/instance next time.
-                exportedFace.lookup_name = ObjC.unwrap(ObjC.castRefToObject($.CTFontCopyFullName(face)));
+                exportedFace.lookup_name = sourceFontText($.CTFontCopyFullName(face));
             }
+            // Check all table lengths and metadata before creating base64 copies.
+            pending.forEach(function(table) {
+                tables[table.name] = ObjC.unwrap(table.data.base64EncodedStringWithOptions(0));
+            });
             return exportedFace;
         }
-        var exported = exportFont(font);
+        var familyFaces = [font];
         if (actual.indexOf("OpenAIImages-") !== 0) {
             var family = ObjC.unwrap(ObjC.castRefToObject($.CTFontCopyFamilyName(font)));
             var seen = {};
             seen[actual] = true;
-            exported.companions = [];
             var mask = Number($.kCTFontBoldTrait) | Number($.kCTFontItalicTrait);
             if (bundled) {
-                terminalBundledCompanions(font, size).forEach(function(face) {
-                    exported.companions.push(exportFont(face));
+                var companions = terminalBundledCompanions(font, size);
+                if (companions.length > 3) { sourceFontSizeFailure(); }
+                companions.forEach(function(face) {
+                    familyFaces.push(face);
                 });
             }
             for (var traits = 0; !bundled && traits <= mask; traits++) {
@@ -120,13 +151,17 @@ function run(argv) {
                     ObjC.unwrap(ObjC.castRefToObject($.CTFontCopyFamilyName(companion))) !== family ||
                     (Number($.CTFontGetSymbolicTraits(companion)) & mask) !== traits) { continue; }
                 seen[companionName] = true;
-                exported.companions.push(exportFont(companion));
+                if (familyFaces.length >= 4) { sourceFontSizeFailure(); }
+                familyFaces.push(companion);
             }
         }
+        var exported = exportFont(font);
+        exported.companions = familyFaces.slice(1).map(exportFont);
         return JSON.stringify({ok: true, matched_name: matchedName, font: exported});
     } catch (error) {
         // Do not return native diagnostics, private font paths, or metadata.
         if (error && error.reason === "ambiguous") { return failure("ambiguous"); }
+        if (error && error.reason === "size") { return failure("size"); }
         return failure("native");
     }
 }

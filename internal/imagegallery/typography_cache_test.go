@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/openai/openai-cli/internal/imagefont"
@@ -15,20 +16,29 @@ import (
 	"golang.org/x/image/font/sfnt"
 )
 
-func TestTypographyRebuildsVersionThreeCacheWithoutChangingScrollback(t *testing.T) {
+func TestTypographyRebuildsOldCachesWithoutChangingScrollback(t *testing.T) {
+	for _, version := range []int{3, 4} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) {
+			testTypographyCacheUpgrade(t, version)
+		})
+	}
+}
+
+func testTypographyCacheUpgrade(t *testing.T, version int) {
+	t.Helper()
 	g := initialized(t)
 	img := fixture(color.NRGBA{R: 200, A: 255})
 	source := typographySource(t)
 	revision, err := g.Prepare(t.Context(), img, 4)
 	require.NoError(t, err)
-	// Seed the historical v3 identity exactly as published. An already committed
+	// Seed the historical cache identity exactly as published. An already committed
 	// image must receive the corrected encoder even when its old cache exists.
 	identity, err := json.Marshal(struct {
 		Version    int
 		Revision   string
 		Source     imagefont.PreserveOptions
 		Companions []imagefont.PreserveOptions
-	}{3, revision.state.PostScript, source, nil})
+	}{version, revision.state.PostScript, source, nil})
 	require.NoError(t, err)
 	digest := sha256.Sum256(identity)
 	token := hex.EncodeToString(digest[:16])

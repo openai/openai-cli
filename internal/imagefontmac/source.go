@@ -56,7 +56,7 @@ var ownedSourceName = regexp.MustCompile(`^OpenAIImages-[0-9a-f]{8}-[0-9a-f]{32}
 // image font, its OAIp lineage identifies the original installed face instead.
 // Companions includes available real bold/italic faces from the same family.
 func Source(ctx context.Context, postScript string, size int) (SourceFont, error) {
-	return source(ctx, postScript, size, Supported, run)
+	return source(ctx, postScript, size, Supported, runSource)
 }
 
 func source(ctx context.Context, postScript string, size int, supported func() bool, execute runner) (SourceFont, error) {
@@ -107,7 +107,13 @@ func readSource(ctx context.Context, postScript string, size int, supported func
 		return SourceFont{}, ctx.Err()
 	}
 	if err != nil {
+		if errors.Is(err, errSourceOutputLimit) {
+			return SourceFont{}, errSourceOutputLimit
+		}
 		return SourceFont{}, errors.New("read installed font: native bridge failed")
+	}
+	if len(output) > maxSourceOutputBytes {
+		return SourceFont{}, errSourceOutputLimit
 	}
 	var result struct {
 		OK          bool       `json:"ok"`
@@ -119,6 +125,9 @@ func readSource(ctx context.Context, postScript string, size int, supported func
 		return SourceFont{}, errors.New("installed-font bridge returned an invalid result")
 	}
 	if !result.OK {
+		if result.Reason == "size" {
+			return SourceFont{}, errors.New("installed font exceeds the supported export limits (64 MiB per face, four faces)")
+		}
 		if result.Reason == "missing" {
 			return SourceFont{}, fmt.Errorf("the requested font %q is not available to this command; no fallback font was selected", postScript)
 		}
@@ -147,7 +156,7 @@ func readSource(ctx context.Context, postScript string, size int, supported func
 		}
 		return font, nil
 	}
-	valid := validSource(font) && len(font.Companions) <= 3
+	valid := validSource(font) && len(font.Companions) < maxSourceFaces
 	seen := map[string]bool{font.PostScript: true}
 	styles := map[string]bool{font.Style: true}
 	for _, companion := range font.Companions {
@@ -178,10 +187,18 @@ func validSource(font SourceFont) bool {
 			return false
 		}
 	}
-	for tag := range font.Tables {
+	remaining := maxSourceFaceBytes
+	if len(font.Tables) > 65535 || len(font.Variations) > 65535 {
+		return false
+	}
+	for tag, data := range font.Tables {
 		if len(tag) != 4 {
 			return false
 		}
+		if len(data) > remaining {
+			return false
+		}
+		remaining -= len(data)
 	}
 	return true
 }
