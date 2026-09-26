@@ -2,11 +2,9 @@ package custom
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/openai/openai-cli/internal/apiform"
-	"github.com/openai/openai-cli/internal/requestflag"
-	"github.com/urfave/cli/v3"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,8 +12,50 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openai/openai-cli/internal/apiform"
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v3"
 )
+
+func TestImageMultipartScalarInspectionPreservesText(t *testing.T) {
+	for _, tc := range []struct {
+		name, field, text, inspectedJSON string
+	}{
+		{"count", "n", "2", "2"},
+		{"count whitespace", "n", " 2\r\n", "2"},
+		{"partial count", "partial_images", "2", "2"},
+		{"stream true", "stream", "true", "true"},
+		{"stream false", "stream", "false", "false"},
+		{"null", "n", "null", "null"},
+		{"invalid number", "n", "2oops", `"2oops"`},
+		{"quoted number", "n", `"2"`, `"\"2\""`},
+		{"array", "n", "[2]", `"[2]"`},
+		{"prompt", "prompt", "2", `"2"`},
+		{"model", "model", "null", `"null"`},
+	} {
+		for _, fromFile := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/file=%v", tc.name, fromFile), func(t *testing.T) {
+				var value any = tc.text
+				if fromFile {
+					value = strings.NewReader(tc.text)
+				}
+				inspected, replay, err := inspectImageMultipartSetting(t.Context(), tc.field, value)
+				require.NoError(t, err)
+				encoded, err := json.Marshal(inspected)
+				require.NoError(t, err)
+				require.JSONEq(t, tc.inspectedJSON, string(encoded))
+				if fromFile {
+					data, err := io.ReadAll(replay.(io.Reader))
+					require.NoError(t, err)
+					require.Equal(t, tc.text, string(data))
+				} else {
+					require.Equal(t, tc.text, replay)
+				}
+			})
+		}
+	}
+}
 
 func TestImageMultipartScalarInspectionPreservesFileMetadataAndOwnership(t *testing.T) {
 	source := &recordingReadCloser{reader: strings.NewReader("A purple sky\r\n")}

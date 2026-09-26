@@ -67,6 +67,9 @@ func prepareImageMultipartBody(command *cli.Command, body map[string]any) error 
 // retaining multipart filenames/content types. Source image and mask readers
 // never enter this path and stay streamed. There is no new file-size limit.
 func inspectImageMultipartSetting(ctx context.Context, name string, value any) (any, any, error) {
+	if text, ok := value.(string); ok {
+		return inspectImageMultipartScalar(name, text), value, nil
+	}
 	reader, ok := value.(io.Reader)
 	if !ok {
 		return value, value, nil
@@ -99,14 +102,19 @@ func inspectImageMultipartSetting(ctx context.Context, name string, value any) (
 		// Reader errors may quote file contents. Keep only the known option name.
 		return nil, replay, imageSavingFailure(fmt.Sprintf("could not read --%s from its file", strings.ReplaceAll(name, "_", "-")), errors.Join(readErr, closeErr))
 	}
-	var inspected any = string(data)
+	return inspectImageMultipartScalar(name, string(data)), replay, nil
+}
+
+// Multipart scalar text has the same meaning whether supplied by stdin or a
+// file. Normalize only the inspection view; replay keeps the original bytes.
+func inspectImageMultipartScalar(name, text string) any {
 	if name == "n" || name == "partial_images" || name == "stream" {
-		parsed := gjson.ParseBytes(data)
-		if gjson.ValidBytes(data) && (parsed.Type == gjson.Number || parsed.Type == gjson.True || parsed.Type == gjson.False || parsed.Type == gjson.Null) {
-			inspected = json.RawMessage(data)
+		parsed := gjson.Parse(text)
+		if gjson.Valid(text) && (parsed.Type == gjson.Number || parsed.Type == gjson.True || parsed.Type == gjson.False || parsed.Type == gjson.Null) {
+			return json.RawMessage(text)
 		}
 	}
-	return inspected, replay, nil
+	return text
 }
 
 type imageSettingReader struct {
