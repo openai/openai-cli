@@ -115,6 +115,9 @@ func TestImagePreferencePermissionFailuresKeepFile(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows ACLs differ from Unix mode bits")
 	}
+	if os.Geteuid() == 0 {
+		t.Skip("root can bypass the Unix permissions exercised by this test")
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "image-preferences.json")
 	require.NoError(t, Save(t.Context(), path, false))
