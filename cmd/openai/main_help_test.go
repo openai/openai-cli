@@ -258,14 +258,14 @@ func TestMainHelpDoesNotAdvertiseUnshippedFeatures(t *testing.T) {
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("help failed: %+v", got)
 		}
-		for _, text := range []string{"~/Downloads", "images preview", "images inline", "images options", "--output-dir", "--name", "--count", "--inline", "automatically saves", "readable output"} {
+		for _, text := range []string{"images preview", "images inline", "images options", "--inline", "readable output"} {
 			if strings.Contains(got.stdout, text) {
 				t.Errorf("args %q advertise unavailable feature %q", args, text)
 			}
 		}
 	}
 	imageHelp := runMainDispatch(t, "bash", "openai", "images", "generate", "--help")
-	for _, text := range []string{"--model", "--prompt", "JSON"} {
+	for _, text := range []string{"--model", "--prompt", "JSON", "~/Downloads/gpt-images/", "--output-dir", "--name", "--count", "gpt-image-2.5-sunburst"} {
 		if !strings.Contains(imageHelp.stdout, text) {
 			t.Errorf("image help does not explain the existing command's %q: %s", text, imageHelp.stdout)
 		}
@@ -353,7 +353,7 @@ func TestMainHelpWordsRemainRequestValues(t *testing.T) {
 					io.WriteString(w, `{"created":1,"data":[]}`)
 				}))
 				defer server.Close()
-				args := []string{"openai", "--base-url", server.URL, "--api-key", "sk-test", "images", "generate", "--model", "gpt-image-1"}
+				args := []string{"openai", "--base-url", server.URL, "--api-key", "sk-test", "--format", "json", "images", "generate", "--model", "gpt-image-1"}
 				if equals {
 					args = append(args, "--prompt="+value)
 				} else {

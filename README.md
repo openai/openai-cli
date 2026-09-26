@@ -89,6 +89,16 @@ Use `--format json` or `--format jsonl` in scripts that parse API data.
 See [reading command results](docs/readable-output.md) for extraction, binary
 output, and the scope of readable presentation.
 
+`openai images generate --prompt "A tiny orange robot"` saves images to
+`~/Downloads/gpt-images/` and prints their paths, including in pipes. The CLI
+uses `gpt-image-2.5-sunburst` when saving without an explicit model or legacy
+response format. Use `--model` for another exact ID, `--name` for a filename,
+or `--output-dir` for an existing directory. Existing files are kept.
+`--format json` returns API data without saving or applying the CLI preset.
+`images edit` and `images create-variation` also save new results while keeping
+their source files. See [image generation and saving](docs/image-generation-saving.md)
+for commands and defaults.
+
 Errors print actionable summaries to stderr by default. Use `--format-error json`
 for original API error details, including unknown fields and SDK-reported stream
 error events. For those events, extraction paths include the `error` envelope,

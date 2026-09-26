@@ -6,9 +6,13 @@ import "github.com/tidwall/gjson"
 // It detects clean EOF after an unfinished result even when transport framing
 // reports no error. Empty streams and wholly unfamiliar events remain unchanged.
 type StreamCompletionState struct {
-	responseStarted  bool
-	responseFinished bool
-	choices          map[string]bool
+	responseStarted    bool
+	responseFinished   bool
+	choices            map[string]bool
+	transcriptStarted  bool
+	transcriptFinished bool
+	speechStarted      bool
+	speechFinished     bool
 }
 
 func (s *StreamCompletionState) Observe(value gjson.Result, route Route) {
@@ -45,6 +49,27 @@ func (s *StreamCompletionState) Observe(value gjson.Result, route Route) {
 			return true
 		})
 	}
+	if audioStreamAPI(route) == "" || !gjson.Valid(value.Raw) {
+		return
+	}
+	switch audioStreamAPI(route) {
+	case "transcriptions":
+		switch value.Get("type").String() {
+		case "transcript.text.delta", "transcript.text.segment":
+			s.transcriptStarted = true
+		case "transcript.text.done":
+			if value.Get("text").Type == gjson.String {
+				s.transcriptFinished = true
+			}
+		}
+	case "speech":
+		switch value.Get("type").String() {
+		case "speech.audio.delta":
+			s.speechStarted = true
+		case "speech.audio.done":
+			s.speechFinished = true
+		}
+	}
 }
 
 func (s *StreamCompletionState) CompletionError(route Route) string {
@@ -58,6 +83,16 @@ func (s *StreamCompletionState) CompletionError(route Route) string {
 			if !finished {
 				return "the stream ended before all completion choices finished"
 			}
+		}
+	}
+	switch audioStreamAPI(route) {
+	case "transcriptions":
+		if s.transcriptStarted && !s.transcriptFinished {
+			return "the stream ended before the transcription completed"
+		}
+	case "speech":
+		if s.speechStarted && !s.speechFinished {
+			return "the stream ended before the speech audio completed"
 		}
 	}
 	return ""

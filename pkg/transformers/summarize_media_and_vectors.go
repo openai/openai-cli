@@ -27,6 +27,8 @@ func selectReadableTransformer(route Route) Transformer {
 	case Route{"(resource) embeddings > (method) create", OutputResponse}:
 		fields = func(value gjson.Result) []gjson.Result { return arrayFields(value, "data", "embedding") }
 		vectors = true
+	case Route{"(resource) audio.speech > (method) create", OutputStreamEvent}:
+		fields = speechEventFields
 	case Route{"(resource) chat.completions > (method) create", OutputResponse},
 		Route{"(resource) chat.completions > (method) retrieve", OutputResponse},
 		Route{"(resource) chat.completions > (method) update", OutputResponse},

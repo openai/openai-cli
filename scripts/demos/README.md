@@ -127,3 +127,70 @@ Official documentation: [asciinema recording](https://docs.asciinema.org/manual/
 [agg rendering](https://docs.asciinema.org/manual/agg/usage/),
 [VHS](https://github.com/charmbracelet/vhs), and
 [ffmpeg](https://ffmpeg.org/documentation.html).
+
+### Image defaults and saving
+
+Build the comparison binaries from main and the proposed feature
+commit in separate checkouts, then build the synthetic fixture:
+
+```sh
+go build -o dist/demos/bin/demo-api ./scripts/demos/main.go
+PATH="$HOME/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/record-image-saving.sh \
+  /path/to/before/openai /path/to/after/openai \
+  BEFORE_COMMIT AFTER_COMMIT /path/outside/repository/image-saving-demo
+```
+
+The runner reuses `capture_and_render.sh` for setup, fixture lifecycle, capture
+and rendering. Image scenes and assertions remain in `record-image-saving.sh`.
+Use an empty output directory outside the repository; fixture shutdown must
+succeed before output validation and media assembly.
+
+It uses asciinema 3.2.1 and agg 1.9.0, real binaries in a PTY, isolated
+synthetic home directories, and a loopback API. It records the same prompt
+before and after, then explicit JSON. It verifies request defaults, unchanged
+saved PNG bytes, complete paths and the absence of files in API-output mode.
+Inspect the screenshots and GIF before sharing them. This is a terminal-text
+replay, not native image-renderer validation. `image-saving.tape` is the reusable
+VHS alternative; it was not used for the macOS replay.
+
+### Image-saving recovery
+
+`record-image-saving-recovery.sh` reuses the same image fixture and capture
+helper. It compares `--stream=true --max-items -1` before and after the fix,
+then a two-image response with an invalid second image and closed stdout
+(`| true`). The recovery scenes preserve one saved file and exit 1; only the
+after scene explains that saved paths could not be printed.
+
+Build `demo-api` as above, then run:
+
+```sh
+bash scripts/demos/record-image-saving-recovery.sh \
+  /path/to/before/openai /path/to/after/openai \
+  BEFORE_COMMIT AFTER_COMMIT /path/outside/repository/image-saving-recovery
+```
+
+The runner checks real exit codes, exact request bodies, saved PNG bytes and
+recovery text. Inspect `comparison.gif`, `before.png`, `after.png`,
+`before-recovery.png` and `after-recovery.png`. The local fixture only accepts
+fixed synthetic inputs. `image-saving-recovery.tape` is the VHS alternative.
+
+### Image edits and variations
+
+`record-image-edit-saving.sh` compares edits and variations, then explicit JSON.
+It reuses `main.go` and `capture_and_render.sh`. Build the fixture as above and
+pass independently built comparison binaries:
+
+```sh
+bash scripts/demos/record-image-edit-saving.sh \
+  /path/to/before/openai /path/to/after/openai \
+  BEFORE_COMMIT AFTER_COMMIT /path/outside/repository/image-edit-saving
+```
+
+The fixture validates fixed multipart settings and exact source/mask bytes.
+Edit responses are identical; variation responds with a synthetic URL before,
+and base64 after the saving path requests `b64_json`. No URL is downloaded.
+The recorder checks saved filenames, full printed paths, original image bytes
+and explicit JSON bypass. It retains source files, saved PNGs, request hashes,
+transcripts and the alternative `image-edit-saving.tape` VHS recipe.
+Inspect all five screenshots and `comparison.gif` before sharing.

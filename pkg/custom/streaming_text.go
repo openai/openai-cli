@@ -17,6 +17,9 @@ func showReadableStream(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts) e
 	for iter.Next() {
 		value := iter.Current().Result
 		event, projected := transformers.ProjectTextStream(value, route)
+		if !projected {
+			event, projected = transformers.ProjectAudioStream(value, route)
+		}
 		var err error
 		if projected {
 			err = writer.Write(event)

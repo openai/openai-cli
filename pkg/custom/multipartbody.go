@@ -134,6 +134,7 @@ func (b *multipartRequestBody) cleanup() error {
 func multipartRequestOptions(
 	bodyMap map[string]any,
 	encodingFormat apiform.FormFormat,
+	observeBody ...func(io.Closer),
 ) ([]option.RequestOption, error) {
 	info := inspectMultipartBody(bodyMap)
 	if !info.hasUpload {
@@ -153,6 +154,9 @@ func multipartRequestOptions(
 	body, err := newMultipartRequestBodyWithBoundary(bodyMap, encodingFormat, boundary)
 	if err != nil {
 		return nil, errors.Join(err, closeFileUploads(bodyMap))
+	}
+	for _, observe := range observeBody {
+		observe(body)
 	}
 	return []option.RequestOption{
 		option.WithRequestBody(body.ContentType(), body),
