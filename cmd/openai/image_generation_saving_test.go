@@ -268,6 +268,9 @@ func TestMainImageGenerationRejectsInvalidOptionsBeforeRequest(t *testing.T) {
 		{"--raw-output", "--name", "synthetic"},
 		{"--response-format", "url", "--name", "synthetic"},
 		{"--format", "json", "--partial-images", "2"},
+		{"--stream=true", "--max-items", "0"},
+		{"--stream=true", "--max-items", "1"},
+		{"--partial-images", "2", "--max-items", "1"},
 	} {
 		t.Run(strings.Join(flags, " "), func(t *testing.T) {
 			got := runImageGeneration(t, server, t.TempDir(), "", append([]string{"images", "generate", "--prompt", "synthetic prompt"}, flags...)...)
@@ -437,7 +440,7 @@ func TestMainImageGenerationPartialFailureKeepsSavedImage(t *testing.T) {
 
 func TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse(t *testing.T) {
 	payload := imageGenerationPNG(t)
-	for _, flags := range [][]string{{"--stream=true"}, {"--partial-images", "2"}} {
+	for _, flags := range [][]string{{"--stream=true"}, {"--partial-images", "2"}, {"--stream=true", "--max-items", "-1"}, {"--partial-images", "2", "--max-items", "-1"}, {"--stream=true", "--max-items", "-2"}} {
 		t.Run(strings.Join(flags, " "), func(t *testing.T) {
 			closed := make(chan struct{})
 			stop := make(chan struct{})
@@ -550,8 +553,12 @@ func TestMainImageGenerationClosedStdoutKeepsSavedImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, partialFailure := range []bool{false, true} {
-		t.Run(fmt.Sprintf("partial-failure=%v", partialFailure), func(t *testing.T) {
+	for _, tc := range []struct {
+		partialFailure bool
+		format         string
+	}{{false, "text"}, {true, "text"}, {false, "json"}, {true, "json"}} {
+		partialFailure := tc.partialFailure
+		t.Run(fmt.Sprintf("partial-failure=%v/format=%s", partialFailure, tc.format), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				if partialFailure {
@@ -570,7 +577,7 @@ func TestMainImageGenerationClosedStdoutKeepsSavedImage(t *testing.T) {
 			dir := t.TempDir()
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
-			child := exec.CommandContext(ctx, binary, "-test.run=^TestMainDispatchProcess$", "--", "openai", "images", "generate", "--prompt", "synthetic image", "--output-dir", dir)
+			child := exec.CommandContext(ctx, binary, "-test.run=^TestMainDispatchProcess$", "--", "openai", "images", "generate", "--prompt", "synthetic image", "--output-dir", dir, "--format-error", tc.format)
 			child.Env = append(imageGenerationEnv(server, t.TempDir()), "OPENAI_CLI_MAIN_DISPATCH_PROCESS=1")
 			var stderr bytes.Buffer
 			child.Stdout, child.Stderr = writer, &stderr
@@ -579,6 +586,13 @@ func TestMainImageGenerationClosedStdoutKeepsSavedImage(t *testing.T) {
 			}
 			if ctx.Err() != nil || strings.Contains(stderr.String(), "invalid-private-base64") || strings.Contains(stderr.String(), base64.StdEncoding.EncodeToString(payload)) {
 				t.Fatalf("closed output stalled or exposed image data: %q", stderr.String())
+			}
+			diagnostic := stderr.String()
+			if !strings.Contains(diagnostic, "Check the output folder before generating again") || strings.Contains(diagnostic, "listed files") {
+				t.Fatalf("missing or misleading saved-file recovery advice: %q", diagnostic)
+			}
+			if partialFailure && (!strings.Contains(diagnostic, "could not save the entire response") || !strings.Contains(diagnostic, "print all saved paths")) {
+				t.Fatalf("one batch/output failure hid the other: %q", diagnostic)
 			}
 			paths := imageGenerationFiles(t, dir)
 			if len(paths) != 1 {

@@ -107,8 +107,8 @@ func prepareImageGeneration(ctx context.Context, command *cli.Command, body gjso
 		}
 		streaming = true
 	}
-	if streaming && command.IsSet("max-items") {
-		return nil, false, imageSavingFailure("--max-items could stop before the final image; omit it when saving or use --format json for API events.", nil)
+	if streaming && command.IsSet("max-items") && command.Value("max-items").(int64) >= 0 {
+		return nil, false, imageSavingFailure("--max-items could stop before the final image; use -1 or omit it when saving, or use --format json for API events.", nil)
 	}
 	name := command.String("name")
 	var stem string
@@ -174,7 +174,11 @@ func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writ
 		// Quoting keeps paths useful without allowing terminal control injection.
 		// Still report completed paths if cancellation occurred on a later image.
 		if _, err := fmt.Fprintf(out, "Saved image: %q\n", path); err != nil {
-			return errors.Join(saveErr, imageSavingFailure("Images were saved, but their paths could not be printed. Check the output folder before generating again.", err))
+			message := "Images were saved, but their paths could not be printed. Check the output folder before generating again."
+			if saveErr != nil {
+				message = fmt.Sprintf("Saved %d image(s), but could not save the entire response or print all saved paths. Check the output folder before generating again.", len(paths))
+			}
+			return imageSavingFailure(message, errors.Join(saveErr, err))
 		}
 	}
 	return saveErr
