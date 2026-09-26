@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 
 	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-cli/pkg/transformers"
@@ -20,6 +21,8 @@ func saveFinalImageStream[T any](ctx context.Context, source jsonview.Iterator[T
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	var seen [3]bool
+	progressUnavailable := false
 	for source.Next() {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -37,6 +40,24 @@ func saveFinalImageStream[T any](ctx context.Context, source jsonview.Iterator[T
 		}
 		event := gjson.Parse(raw)
 		switch event.Get("type").String() {
+		case "image_generation.partial_image", "image_edit.partial_image":
+			index := event.Get("partial_image_index")
+			if progressUnavailable || plan.partialImages < 1 || plan.partialImages > 3 ||
+				index.Type != gjson.Number || index.Float() != float64(index.Int()) ||
+				index.Int() < 0 || index.Int() >= plan.partialImages || seen[index.Int()] {
+				continue
+			}
+			protocol := imageProgressProtocol(plan.inline, isTerminal(out), os.Getenv)
+			if protocol == "" {
+				continue
+			}
+			// Count attempts too: repeated malformed events must not flood output.
+			seen[index.Int()] = true
+			var err error
+			progressUnavailable, err = plan.displayImageProgress(ctx, event, out, protocol)
+			if err != nil {
+				return imageSavingFailure("The image preview could not finish before a final image was received. Check API usage before trying again.", err)
+			}
 		case "image_generation.completed", "image_edit.completed":
 			response, err := transformers.CompletedImageResult(ctx, event)
 			if err != nil {

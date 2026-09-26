@@ -31,6 +31,7 @@ Optional:
   --count 2                    Make two images (alias for -n)
   --inline off                 Save without a terminal preview
   --inline on                  Allow a sharp preview in local Apple Terminal
+  --partial-images 2           Preview progress, then save the final image
   --model gpt-image-2.5-flare    Choose an exact model ID
   --output-format webp         Choose PNG, JPEG or WebP
 
@@ -58,8 +59,11 @@ They cannot be combined with --name or --output-dir. --format auto and text save
 --output-format selects the image file format, separately from --format.
 
 --stream true saves only the final image. Positive --partial-images enables
-streaming when saving; intermediate images are ignored. Streaming supports one
-final image. Use --format json --stream true for complete API events.
+streaming when saving; 1 to 3 progress previews are shown where supported.
+Progress images stay in memory and are never saved. Apple Terminal uses color
+blocks for progress, retaining the sharp-preview option for the final image.
+Streaming supports one final image. Use --format json --stream true for complete
+API events.
 Interactive terminals show an inline preview when supported. --inline off disables
 it. --inline on allows a local Apple Terminal image font while keeping ordinary
 text styling. Preview failures keep saved files. Pipes and CI never show previews.`
@@ -70,6 +74,7 @@ type imageOutputPlan struct {
 	defaults        map[string]any
 	inline          string
 	diagnostics     io.Writer
+	partialImages   int64
 }
 
 // A private classification carries locally authored guidance through the shared
@@ -142,7 +147,7 @@ func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Re
 	if err := imageoutput.CheckName(ctx, directory, stem); err != nil {
 		return nil, false, imageSavingFailure("Could not use this image filename. Try a shorter --name or another --output-dir.", err)
 	}
-	plan := &imageOutputPlan{directory: directory, name: name, defaults: make(map[string]any)}
+	plan := &imageOutputPlan{directory: directory, name: name, defaults: make(map[string]any), partialImages: partials}
 	set := func(field string, value any) {
 		plan.defaults[field] = value
 		plan.options = append(plan.options, option.WithJSONSet(field, value))

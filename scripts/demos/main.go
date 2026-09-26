@@ -107,16 +107,19 @@ func serveImageGeneration(w http.ResponseWriter, r *http.Request) {
 		"background": "auto", "moderation": "auto", "partial_images": float64(0), "stream": false,
 	}
 	streamPreset := make(map[string]any, len(preset))
+	progressPreset := make(map[string]any, len(preset))
 	batchPreset := make(map[string]any, len(preset))
 	for key, value := range preset {
 		streamPreset[key], batchPreset[key] = value, value
+		progressPreset[key] = value
 	}
 	streamPreset["stream"] = true
+	progressPreset["stream"], progressPreset["partial_images"] = true, float64(2)
 	batchPreset["n"] = float64(2)
 	if r.Header.Get("Authorization") != "Bearer synthetic-demo-key" ||
 		json.NewDecoder(r.Body).Decode(&request) != nil ||
 		(!reflect.DeepEqual(request, promptOnly) && !reflect.DeepEqual(request, preset) &&
-			!reflect.DeepEqual(request, streamPreset) && !reflect.DeepEqual(request, batchPreset)) {
+			!reflect.DeepEqual(request, streamPreset) && !reflect.DeepEqual(request, batchPreset) && !reflect.DeepEqual(request, progressPreset)) {
 		http.Error(w, `{"error":{"message":"Expected the fixed synthetic image demo request.","type":"invalid_request_error"}}`, http.StatusBadRequest)
 		return
 	}
@@ -137,6 +140,23 @@ func serveImageGeneration(w http.ResponseWriter, r *http.Request) {
 	if os.Getenv("DEMO_IMAGE_PREVIEW_FIXTURE") == "robot" {
 		image = syntheticRobotPNG()
 	}
+	if reflect.DeepEqual(request, progressPreset) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for stage := 0; stage < 3; stage++ {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(time.Second):
+			}
+			kind := "partial_image"
+			if stage == 2 {
+				kind = "completed"
+			}
+			fmt.Fprintf(w, "data: {\"type\":%q,\"partial_image_index\":%d,\"b64_json\":%q}\n\n", "image_generation."+kind, stage, syntheticProgressPNG(stage))
+			w.(http.Flusher).Flush()
+		}
+		return
+	}
 	if reflect.DeepEqual(request, streamPreset) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprintf(w, "event: image_generation.completed\ndata: {\"type\":\"image_generation.completed\",\"b64_json\":%q}\n\n", image)
@@ -154,6 +174,39 @@ func serveImageGeneration(w http.ResponseWriter, r *http.Request) {
 			"b64_json": image,
 		}},
 	})
+}
+
+// Short, wide pictures keep both partials and the final visible in one frame.
+// Each stage adds deterministic detail to a locally drawn robot.
+func syntheticProgressPNG(stage int) string {
+	picture := image.NewRGBA(image.Rect(0, 0, 64, 12))
+	fill := func(rect image.Rectangle, c color.RGBA) {
+		draw.Draw(picture, rect, &image.Uniform{C: c}, image.Point{}, draw.Src)
+	}
+	fill(picture.Bounds(), color.RGBA{32, 48, 72, 255})
+	fill(image.Rect(0, 10, 64, 12), color.RGBA{64, 88, 88, 255})
+	orange := color.RGBA{160, 112, 64, 255}
+	if stage > 0 {
+		orange = color.RGBA{255, 152, 32, 255}
+	}
+	fill(image.Rect(27, 1, 37, 6), orange)
+	fill(image.Rect(29, 7, 35, 10), orange)
+	if stage > 0 {
+		fill(image.Rect(28, 2, 36, 5), color.RGBA{8, 16, 24, 255})
+		fill(image.Rect(26, 7, 28, 10), orange)
+		fill(image.Rect(36, 7, 38, 10), orange)
+	}
+	if stage > 1 {
+		fill(image.Rect(29, 3, 31, 4), color.RGBA{255, 255, 224, 255})
+		fill(image.Rect(33, 3, 35, 4), color.RGBA{255, 255, 224, 255})
+		fill(image.Rect(29, 10, 31, 12), orange)
+		fill(image.Rect(33, 10, 35, 12), orange)
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, picture); err != nil {
+		panic(err)
+	}
+	return base64.StdEncoding.EncodeToString(encoded.Bytes())
 }
 
 // A deterministic test picture makes color fallback visible in recordings.

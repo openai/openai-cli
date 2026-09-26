@@ -30,6 +30,12 @@ func ReadSavedMatching(ctx context.Context, path string, expected [sha256.Size]b
 	return readSaved(ctx, path, &expected)
 }
 
+// DecodePreview decodes temporary image bytes using the same optional-preview
+// limits as saved images. It never writes a file or limits the API response.
+func DecodePreview(ctx context.Context, source io.Reader) (image.Image, error) {
+	return decodePreview(ctx, source, nil)
+}
+
 func readSaved(ctx context.Context, path string, expected *[sha256.Size]byte) (image.Image, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -56,9 +62,16 @@ func readSavedFile(ctx context.Context, file *os.File, expected *[sha256.Size]by
 	if !info.Mode().IsRegular() || info.Size() > 64<<20 {
 		return nil, errors.New("image is not a regular file or exceeds the 64 MiB preview limit")
 	}
+	return decodePreview(ctx, file, expected)
+}
+
+func decodePreview(ctx context.Context, source io.Reader, expected *[sha256.Size]byte) (image.Image, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Another process can rewrite even an already-open regular file. Inspect and
 	// decode the same bytes so the dimension check applies to the decoded image.
-	reader := io.LimitReader(file, (64<<20)+1)
+	reader := io.LimitReader(source, (64<<20)+1)
 	digest := sha256.New()
 	if expected != nil {
 		reader = io.TeeReader(reader, digest)
