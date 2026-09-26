@@ -11,15 +11,16 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/imageoutput"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/terminalimage"
 )
 
 var errImagePreviewUnavailable = errors.New("image cannot be displayed in this terminal")
 
-// displaySavedImage is shared by automatic previews and the local preview
-// command. It never opens a viewer, reads stdin, or changes the saved file.
-func displaySavedImage(ctx context.Context, path string, out, diagnostics io.Writer, mode string) error {
+// displaySavedImage previews only bytes from the completed save operation. It
+// never opens a viewer, reads stdin, or changes the saved file.
+func displaySavedImage(ctx context.Context, saved imageoutput.SavedImage, out, diagnostics io.Writer, mode string) error {
 	protocol := savedImageProtocol(mode, isTerminal(out), os.Getenv)
 	if protocol == "" {
 		return nil
@@ -30,10 +31,13 @@ func displaySavedImage(ctx context.Context, path string, out, diagnostics io.Wri
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	img, err := terminalimage.ReadSaved(ctx, path)
+	img, err := terminalimage.ReadSavedMatching(ctx, saved.Path, saved.SHA256)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if errors.Is(err, terminalimage.ErrSavedImageChanged) {
+			return readable.WriteText(diagnostics, "Inline preview skipped: the saved file changed before it could be displayed. Check the output file.")
 		}
 		return readable.WriteText(diagnostics, "Inline preview unavailable. The image is saved; open the saved file to view it. No need to generate again.")
 	}

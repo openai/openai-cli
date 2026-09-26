@@ -78,6 +78,8 @@ for every request setting.
 After saving and printing the paths, interactive terminals can show the finished
 images. The original saved bytes are unchanged. Saving to a pipe still prints
 paths, without graphics, font changes or preview caches.
+If another program changes a saved image before it is displayed, the CLI skips
+that preview and warns you to check the output file.
 
 ```sh
 openai images generate --prompt "A tiny orange robot" --inline off

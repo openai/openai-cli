@@ -3,6 +3,7 @@ package custom
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"image"
@@ -14,6 +15,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/imageoutput"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/stretchr/testify/require"
 )
@@ -63,7 +65,7 @@ func TestSavedImagePreviewSkipsNonTerminalWithoutReadingFile(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
 	for _, mode := range []string{"auto", "on", "off"} {
 		var out, diagnostic bytes.Buffer
-		require.NoError(t, displaySavedImage(t.Context(), "/not-a-real-image", &out, &diagnostic, mode))
+		require.NoError(t, displaySavedImage(t.Context(), imageoutput.SavedImage{Path: "/not-a-real-image"}, &out, &diagnostic, mode))
 		require.Empty(t, out.String())
 		require.Empty(t, diagnostic.String())
 	}
@@ -89,7 +91,7 @@ func TestSavedImagePreviewTerminal(t *testing.T) {
 		t.Run(program, func(t *testing.T) {
 			t.Setenv("TERM_PROGRAM", program)
 			var diagnostic bytes.Buffer
-			require.NoError(t, displaySavedImage(t.Context(), file, os.Stdout, &diagnostic, "auto"))
+			require.NoError(t, displaySavedImage(t.Context(), imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &diagnostic, "auto"))
 			require.Empty(t, diagnostic.String())
 			unchanged, err := os.ReadFile(file)
 			require.NoError(t, err)
@@ -98,16 +100,16 @@ func TestSavedImagePreviewTerminal(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	require.ErrorIs(t, displaySavedImage(ctx, file, os.Stdout, &bytes.Buffer{}, "auto"), context.Canceled)
+	require.ErrorIs(t, displaySavedImage(ctx, imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &bytes.Buffer{}, "auto"), context.Canceled)
 	var diagnostic bytes.Buffer
-	require.NoError(t, displaySavedImage(t.Context(), "/not-a-real-file", os.Stdout, &diagnostic, "auto"))
+	require.NoError(t, displaySavedImage(t.Context(), imageoutput.SavedImage{Path: "/not-a-real-file"}, os.Stdout, &diagnostic, "auto"))
 	require.Contains(t, diagnostic.String(), "No need to generate again")
 	tall := image.NewNRGBA(image.Rect(0, 0, 1, 16384))
 	encoded.Reset()
 	require.NoError(t, png.Encode(&encoded, tall))
 	require.NoError(t, os.WriteFile(file, encoded.Bytes(), 0o600))
 	diagnostic.Reset()
-	require.NoError(t, displaySavedImage(t.Context(), file, os.Stdout, &diagnostic, "auto"))
+	require.NoError(t, displaySavedImage(t.Context(), imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &diagnostic, "auto"))
 	require.Contains(t, diagnostic.String(), "too tall")
 	diagnostic.Reset()
 	require.ErrorIs(t, displayDecodedSavedImage(t.Context(), tall, os.Stdout, &diagnostic, "blocks"), errImagePreviewUnavailable)
