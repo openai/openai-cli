@@ -32,14 +32,14 @@ func (g *Gallery) FontForTypography(ctx context.Context, revision *Revision, sou
 	}
 	// JSON sorts map keys. Both source bytes and exact layout participate in
 	// the identity, so font updates and different tabs cannot reuse stale tiles.
-	// Version 4 includes the corrected Unicode mappings and glyph-count tables.
+	// Version 5 also checks glyph-count-dependent AAT lookups.
 	// Rebuild older cached fonts while retaining their files and scrollback slots.
 	identity, err := json.Marshal(struct {
 		Version    int
 		Revision   string
 		Source     imagefont.PreserveOptions
 		Companions []imagefont.PreserveOptions
-	}{4, revision.state.PostScript, source, companions})
+	}{5, revision.state.PostScript, source, companions})
 	if err != nil {
 		return TypographyFont{}, errors.New("invalid image typography")
 	}
