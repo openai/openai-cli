@@ -65,3 +65,19 @@ func TestReadSavedOptionalPreviewLimits(t *testing.T) {
 	_, err = ReadSaved(ctx, file)
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+func TestReadSavedFileRejectsNonRegularDescriptor(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reader.Close() })
+	require.NoError(t, writer.Close())
+	_, err = readSavedFile(t.Context(), reader)
+	require.ErrorContains(t, err, "not a regular file")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = readSavedFile(ctx, reader)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, reader.Close())
+	_, err = readSavedFile(t.Context(), reader)
+	require.ErrorIs(t, err, os.ErrClosed)
+}

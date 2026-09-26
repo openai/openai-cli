@@ -18,18 +18,28 @@ func ReadSaved(ctx context.Context, path string) (image.Image, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	info, err := os.Stat(path)
+	// A pathname can change from a regular image to a FIFO before it is opened.
+	// Open without waiting for a writer, then check the descriptor we will read.
+	file, err := openSavedImage(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return readSavedFile(ctx, file)
+}
+
+// readSavedFile validates and decodes the same descriptor. Its caller owns file.
+func readSavedFile(ctx context.Context, file *os.File) (image.Image, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
 	if err != nil {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() || info.Size() > 64<<20 {
 		return nil, errors.New("image is not a regular file or exceeds the 64 MiB preview limit")
 	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
 	config, format, err := image.DecodeConfig(contextReader{ctx, io.LimitReader(file, 64<<20)})
 	if err != nil {
 		return nil, err
