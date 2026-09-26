@@ -97,8 +97,8 @@ tab. It registers a generated font containing image strips, preserving ordinary
 text metrics, point size and profile settings. macOS may request Terminal
 Automation permission. Without this opt-in, Apple Terminal uses color blocks.
 Each tab has an immutable image gallery; a full gallery keeps earlier previews
-and uses a fallback. Open another tab for more sharp previews. Setup and repair
-commands are separate work.
+and uses a fallback. Open another tab for more sharp previews. The setup and repair commands below
+prepare or restore this same per-tab font.
 
 Failed preparation removes only the new cache files it created. If font
 registration may have succeeded, the CLI retains that attempt and falls back
@@ -116,3 +116,49 @@ terminal at a width of at least one cell. Larger or unusually tall images remain
 saved in full; the CLI explains why they could not be displayed. Preview decoding
 and font failures keep the saved files. Follow the printed path instead of
 paying to generate the image again. No separate viewer is opened.
+
+## Apple Terminal setup and repair
+
+These local commands make no API request and generate no new image:
+
+```sh
+openai images inline status          # read the current tab and cache
+openai images inline setup           # prepare this tab, without a sample image
+openai images inline repair          # restore its existing cached previews
+openai images generate --prompt "A tiny orange robot" --inline on
+```
+
+Setup and repair require a local Apple Terminal tab on macOS, with output sent
+directly to the terminal. SSH, terminal multiplexers and CI are unsupported.
+Status reports that limitation on other hosts. Reading the exact Terminal tab
+may request macOS Automation permission, including for status. Status does not
+register fonts, change settings, write cache files or recover pending attempts;
+it reports a snapshot, not a visual rendering test. It requires terminal output
+to identify the Apple Terminal tab. These commands accept no positional arguments
+and support readable `--format auto` or `--format text`; data formats,
+`--transform` and `--raw-output` are rejected before native work.
+
+Setup prepares an image-capable copy of the selected text face. Repair uses the
+same transaction to restore registration after a logout or rebuild the current
+gallery after a supported font or size change. Both retain the selected text
+face, point size, profile settings, original saved images, old preview fonts and
+existing image character assignments. Neither adds sample glyphs nor changes
+future automatic-preview preferences. Continue to use `--inline on` for sharp
+Apple Terminal previews; the default `auto` still uses the color approximation.
+Failed or canceled activation attempts conditional rollback without overwriting
+concurrent user changes. Fonts whose registration may have succeeded are retained.
+
+If the selected cached font file is missing, select your original text font and
+size in Terminal, then run repair. If the image cache and allocation metadata
+are intact, repair can rebuild from them. Missing metadata or thumbnails cannot
+reconstruct earlier previews safely: retain the remaining cache and saved
+originals, and use a new Terminal tab. A changed session identity cannot take
+over another gallery's image font. Widen the window when status or repair reports
+that existing image rows no longer fit.
+
+This adds explicit recovery only. The earlier combined prototype's sample/test
+and destructive reset commands, gallery-capacity increases, cache-size redesign
+and automatic scrollback reflow are not included. No reset or removal of committed previews is
+performed by these commands. The existing transaction may clean up temporary
+attempt files only when they are proven not to have reached native registration. Native Apple Terminal visual validation remains
+separate from automated tests with a fake native bridge.
