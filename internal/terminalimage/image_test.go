@@ -95,9 +95,13 @@ func TestWriteErrorsAndCancellation(t *testing.T) {
 				return len(data), nil
 			})
 			require.ErrorIs(t, Write(ctx, writer, img, protocol, 50), context.Canceled)
-			require.Equal(t, 1, writes)
+			wantWrites := 1
+			if protocol == "iterm" {
+				wantWrites++ // Close the streamed OSC after header cancellation.
+			}
+			require.Equal(t, wantWrites, writes)
 			require.ErrorIs(t, Write(ctx, writer, img, protocol, 50), context.Canceled)
-			require.Equal(t, 1, writes, "canceled context must not write")
+			require.Equal(t, wantWrites, writes, "canceled context must not write")
 		})
 	}
 	var output bytes.Buffer

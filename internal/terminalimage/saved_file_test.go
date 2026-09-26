@@ -3,6 +3,7 @@ package terminalimage
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"hash/crc32"
 	"image"
@@ -49,11 +50,15 @@ func TestReadSavedOptionalPreviewLimits(t *testing.T) {
 	require.NoError(t, os.WriteFile(file, header, 0o600))
 	_, err := ReadSaved(t.Context(), file)
 	require.ErrorContains(t, err, "16 megapixel")
+	_, err = ReadSavedMatching(t.Context(), file, sha256.Sum256(header))
+	require.ErrorContains(t, err, "16 megapixel")
 	f, err := os.OpenFile(file, os.O_WRONLY, 0)
 	require.NoError(t, err)
 	require.NoError(t, f.Truncate((64<<20)+1))
 	require.NoError(t, f.Close())
 	_, err = ReadSaved(t.Context(), file)
+	require.ErrorContains(t, err, "64 MiB")
+	_, err = ReadSavedMatching(t.Context(), file, sha256.Sum256(header))
 	require.ErrorContains(t, err, "64 MiB")
 	_, err = ReadSaved(t.Context(), dir)
 	require.Error(t, err)
@@ -64,6 +69,8 @@ func TestReadSavedOptionalPreviewLimits(t *testing.T) {
 	cancel()
 	_, err = ReadSaved(ctx, file)
 	require.ErrorIs(t, err, context.Canceled)
+	_, err = ReadSavedMatching(ctx, file, sha256.Sum256(header))
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestReadSavedFileRejectsNonRegularDescriptor(t *testing.T) {
@@ -71,13 +78,13 @@ func TestReadSavedFileRejectsNonRegularDescriptor(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Close() })
 	require.NoError(t, writer.Close())
-	_, err = readSavedFile(t.Context(), reader)
+	_, err = readSavedFile(t.Context(), reader, nil)
 	require.ErrorContains(t, err, "not a regular file")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = readSavedFile(ctx, reader)
+	_, err = readSavedFile(ctx, reader, nil)
 	require.ErrorIs(t, err, context.Canceled)
 	require.NoError(t, reader.Close())
-	_, err = readSavedFile(t.Context(), reader)
+	_, err = readSavedFile(t.Context(), reader, nil)
 	require.ErrorIs(t, err, os.ErrClosed)
 }

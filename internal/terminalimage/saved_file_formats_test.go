@@ -2,6 +2,7 @@ package terminalimage
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"image"
 	"image/color"
@@ -34,6 +35,9 @@ func TestReadSavedDecodesSupportedFormats(t *testing.T) {
 			decoded, err := ReadSaved(t.Context(), path)
 			require.NoError(t, err)
 			require.Equal(t, image.Rect(0, 0, 2, 2), decoded.Bounds())
+			verified, err := ReadSavedMatching(t.Context(), path, sha256.Sum256(tc.data))
+			require.NoError(t, err)
+			require.Equal(t, decoded, verified)
 			original, err := os.ReadFile(path)
 			require.NoError(t, err)
 			require.Equal(t, tc.data, original)

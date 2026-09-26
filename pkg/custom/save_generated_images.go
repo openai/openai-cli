@@ -186,23 +186,23 @@ func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Re
 }
 
 func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writer) error {
-	paths, saveErr := imageoutput.SaveResponse(ctx, response, p.directory, p.name)
+	saved, saveErr := imageoutput.SaveResponse(ctx, response, p.directory, p.name)
 	previewOutput := out
 	out = outputWriter{ctx: context.WithoutCancel(ctx), out: out}
 	if saveErr != nil {
 		message := "The API responded, but no images could be saved. Check the image data and output folder before trying again."
-		if len(paths) > 0 {
-			message = fmt.Sprintf("Saved %d image(s), but could not save the entire response. The listed files are kept; do not generate those images again.", len(paths))
+		if len(saved) > 0 {
+			message = fmt.Sprintf("Saved %d image(s), but could not save the entire response. The listed files are kept; do not generate those images again.", len(saved))
 		}
 		saveErr = imageSavingFailure(message, saveErr)
 	}
-	for _, path := range paths {
+	for _, file := range saved {
 		// Quoting keeps paths useful without allowing terminal control injection.
 		// Still report completed paths if cancellation occurred on a later image.
-		if _, err := fmt.Fprintf(out, "Saved image: %q\n", path); err != nil {
+		if _, err := fmt.Fprintf(out, "Saved image: %q\n", file.Path); err != nil {
 			message := "Images were saved, but their paths could not be printed. Check the output folder before generating again."
 			if saveErr != nil {
-				message = fmt.Sprintf("Saved %d image(s), but could not save the entire response or print all saved paths. Check the output folder before generating again.", len(paths))
+				message = fmt.Sprintf("Saved %d image(s), but could not save the entire response or print all saved paths. Check the output folder before generating again.", len(saved))
 			}
 			return imageSavingFailure(message, errors.Join(saveErr, err))
 		}
@@ -210,8 +210,8 @@ func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writ
 	if saveErr != nil {
 		return saveErr
 	}
-	for _, path := range paths {
-		if err := displaySavedImage(ctx, path, previewOutput, p.diagnostics, p.inline); err != nil {
+	for _, file := range saved {
+		if err := displaySavedImage(ctx, file, previewOutput, p.diagnostics, p.inline); err != nil {
 			return imageSavingFailure("Images were saved, but the preview could not finish. Use the saved files; no need to generate again.", err)
 		}
 	}

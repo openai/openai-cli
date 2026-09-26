@@ -42,6 +42,8 @@ func TestReadSavedFIFOProcess(t *testing.T) {
 	for _, name := range []string{path, link, os.DevNull} {
 		_, err := ReadSaved(t.Context(), name)
 		require.ErrorContains(t, err, "not a regular file")
+		_, err = ReadSavedMatching(t.Context(), name, [32]byte{})
+		require.ErrorContains(t, err, "not a regular file")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -56,7 +58,7 @@ func TestReadSavedFIFOProcess(t *testing.T) {
 	var encoded bytes.Buffer
 	require.NoError(t, png.Encode(&encoded, image.NewNRGBA(image.Rect(0, 0, 2, 3))))
 	require.NoError(t, os.WriteFile(path, encoded.Bytes(), 0600))
-	_, err = readSavedFile(t.Context(), file)
+	_, err = readSavedFile(t.Context(), file, nil)
 	require.ErrorContains(t, err, "not a regular file", "a replacement regular path must not authorize reading the original FIFO descriptor")
 }
 
@@ -77,7 +79,7 @@ func TestReadSavedFileUsesOpenedImageAfterPathReplacement(t *testing.T) {
 	original := filepath.Join(directory, "original.png")
 	require.NoError(t, os.Rename(path, original))
 	require.NoError(t, unix.Mkfifo(path, 0600))
-	decoded, err = readSavedFile(t.Context(), file)
+	decoded, err = readSavedFile(t.Context(), file, nil)
 	require.NoError(t, err, "a replacement FIFO path must not replace validation of the opened regular image")
 	require.Equal(t, image.Rect(0, 0, 2, 3), decoded.Bounds())
 	unchanged, err := os.ReadFile(original)

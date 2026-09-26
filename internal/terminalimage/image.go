@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/ansi/iterm2"
 	"github.com/charmbracelet/x/ansi/kitty"
 	"github.com/openai/openai-cli/internal/imagefont"
 	"golang.org/x/image/draw"
@@ -36,19 +35,7 @@ func Write(ctx context.Context, w io.Writer, img image.Image, protocol string, c
 		// the placement using its actual cell size; the caller adds a newline.
 		return writeKittyImage(ctx, destination, img, columns)
 	case "iterm":
-		var encoded bytes.Buffer
-		if err := imagefont.EncodePNG(ctx, &png.Encoder{}, &encoded, img); err != nil {
-			return err
-		}
-		width := iterm2.Auto
-		if columns > 0 {
-			width = iterm2.Cells(columns)
-		}
-		_, err := io.WriteString(destination, ansi.ITerm2(iterm2.File{
-			Inline: true, Width: width, Height: iterm2.Auto,
-			Content: []byte(base64.StdEncoding.EncodeToString(encoded.Bytes())),
-		}))
-		return err
+		return writeITermImage(ctx, w, img, columns)
 	case "blocks":
 		if columns < 1 {
 			columns = 80
