@@ -221,6 +221,10 @@ func (tv *TableView) Resize(width, height int) {
 	}
 	tv.table.SetWidth(contentWidth)
 	tv.table.SetHeight(min(height-heightOffset, tableMinHeight+len(tv.table.Rows())))
+	if tv.table.Height() > 0 {
+		// Reveal the cursor once the resized viewport has room for rows again.
+		tv.table.MoveDown(0)
+	}
 }
 
 func (tv *TableView) updateColumnWidths(width int) {
@@ -626,6 +630,7 @@ func (v *JSONViewer) toggleRaw() (tea.Model, tea.Cmd) {
 
 	for i, view := range v.stack {
 		if tv, ok := view.(*TableView); ok && tv.data.IsArray() {
+			cursor := tv.table.Cursor()
 			// rowData includes completed lazy loads. Rebuild only the presentation,
 			// retaining the view identity and any pending iterator command.
 			var rendered *TableView
@@ -635,11 +640,15 @@ func (v *JSONViewer) toggleRaw() (tea.Model, tea.Cmd) {
 				rendered = newArrayTableView(tv.path, tv.data, tv.rowData, v.rawMode)
 			}
 			tv.table, tv.columns, tv.columnKeys = rendered.table, rendered.columns, rendered.columnKeys
+			tv.table.SetCursor(cursor)
 			continue
 		}
 		viewWithRaw, err := newView(view.GetPath(), view.GetData(), v.rawMode)
 		if err != nil {
 			return v, tea.Printf("Error: %s", err)
+		}
+		if previous, ok := view.(*TableView); ok {
+			viewWithRaw.(*TableView).table.SetCursor(previous.table.Cursor())
 		}
 		v.stack[i] = viewWithRaw
 	}
