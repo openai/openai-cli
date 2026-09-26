@@ -93,7 +93,7 @@ func TestTypographyKeepsScrollbackAndReusesImmutableFonts(t *testing.T) {
 	if err := g.Commit(t.Context(), second); err != nil {
 		t.Fatal(err)
 	}
-	duplicate, err := g.Prepare(t.Context(), red, 32)
+	duplicate, err := g.Prepare(t.Context(), red, 4)
 	if err != nil {
 		t.Fatal(err)
 	}

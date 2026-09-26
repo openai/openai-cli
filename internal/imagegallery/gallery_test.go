@@ -87,7 +87,7 @@ func TestGalleryImmutableRevisionsAndDedup(t *testing.T) {
 	if !bytes.Equal(saved, oldFont) {
 		t.Fatal("old font changed")
 	}
-	duplicate, err := g.Prepare(ctx, red, 32)
+	duplicate, err := g.Prepare(ctx, red, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
