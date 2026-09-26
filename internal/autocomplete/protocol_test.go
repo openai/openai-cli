@@ -27,6 +27,7 @@ func TestShellCompletionProtocolHelper(t *testing.T) {
 			&cli.StringFlag{Name: "format"},
 			&cli.StringFlag{Name: "file", TakesFile: true},
 			&cli.StringFlag{Name: "header"},
+			&cli.BoolFlag{Name: "debug"},
 		},
 		Commands: []*cli.Command{
 			{Name: "models", Commands: []*cli.Command{
@@ -128,6 +129,13 @@ func TestShellCompletionProtocol(t *testing.T) {
 			name:       "bash inline header ending colon before command",
 			args:       []string{"--header=X:", "models", "retrieve", "--mo"},
 			bashArgs:   []string{"--header=X", ":", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
+		{
+			name:       "bash standalone equals before following flag",
+			args:       []string{"--header", "=", "--debug", "models", "retrieve", "--mo"},
 			code:       0,
 			output:     "--model\n",
 			candidates: "--model\n",

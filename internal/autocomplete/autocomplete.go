@@ -396,12 +396,21 @@ func rebuildColonSeparatedArgs(root *cli.Command, args []string) []string {
 						i++
 					} else if i+1 < len(args) {
 						i++
-						// `=` itself can be a Bash word break for an inline value.
-						if args[i] == "=" && i+1 < len(args) {
+						if args[i] == "=" {
+							// Bash splits both `--flag=value` and a literal `--flag =`
+							// at '='. Keep '=' as the value when what follows is already
+							// a flag/command tail; otherwise the next token is the inline
+							// value and can be rebuilt below (including colon splits).
+							value = "="
+							i++
+							if i < len(args) && !isFlag(args[i]) && !commandTailStartsAt(cmd, args[i:]) {
+								value = args[i]
+								i++
+							}
+						} else {
+							value = args[i]
 							i++
 						}
-						value = args[i]
-						i++
 					} else {
 						i++
 						continue
