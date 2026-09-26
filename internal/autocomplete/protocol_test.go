@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -25,10 +26,13 @@ func TestShellCompletionProtocolHelper(t *testing.T) {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "format"},
 			&cli.StringFlag{Name: "file", TakesFile: true},
+			&cli.StringFlag{Name: "header"},
+			&cli.BoolFlag{Name: "debug"},
 		},
 		Commands: []*cli.Command{
 			{Name: "models", Commands: []*cli.Command{
 				{Name: "list", Flags: []cli.Flag{&cli.IntFlag{Name: "max-items"}}},
+				{Name: "retrieve", Flags: []cli.Flag{&cli.StringFlag{Name: "model"}}},
 			}},
 			{Name: "__complete", Hidden: true, SkipFlagParsing: true, Action: ExecuteShellCompletion},
 		},
@@ -57,17 +61,85 @@ func TestShellCompletionProtocol(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		args       []string
+		bashArgs   []string
 		code       int
 		output     string
 		candidates string
 	}{
-		{"root value", []string{"--format", "candidate-"}, 11, "", ""},
-		{"nested local value", []string{"models", "list", "--max-items", "candidate-"}, 11, "", ""},
-		{"file value", []string{"--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
-		{"spaced preceding value", []string{"--format", "two words", "--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
-		{"empty preceding value", []string{"--format", "", "--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
-		{"explicit file prefix", []string{"--format", "@candidate-"}, 11, "", "@candidate-fixture.txt\n"},
-		{"command prefix", []string{"mo"}, 0, "models\n", "models\n"},
+		{name: "root value", args: []string{"--format", "candidate-"}, code: 11},
+		{name: "nested local value", args: []string{"models", "list", "--max-items", "candidate-"}, code: 11},
+		{name: "file value", args: []string{"--file", "candidate-"}, code: 10, candidates: "candidate-fixture.txt\n"},
+		{
+			name:       "colon file value",
+			args:       []string{"--file", "cert:models"},
+			bashArgs:   []string{"--file", "cert", ":", "models"},
+			code:       10,
+			candidates: "models-fixture.txt\n",
+		},
+		{name: "spaced preceding value", args: []string{"--format", "two words", "--file", "candidate-"}, code: 10, candidates: "candidate-fixture.txt\n"},
+		{name: "empty preceding value", args: []string{"--format", "", "--file", "candidate-"}, code: 10, candidates: "candidate-fixture.txt\n"},
+		{name: "explicit file prefix", args: []string{"--format", "@candidate-"}, code: 11, candidates: "@candidate-fixture.txt\n"},
+		{name: "command prefix", args: []string{"mo"}, code: 0, output: "models\n", candidates: "models\n"},
+		{
+			name:       "bash colon-split header value",
+			args:       []string{"--header", "X:completions", "models", "retrieve", "--mo"},
+			bashArgs:   []string{"--header", "X", ":", "completions", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
+		{
+			name:     "bash command-like header value at cursor",
+			args:     []string{"--header", "X:models"},
+			bashArgs: []string{"--header", "X", ":", "models"},
+			code:     11,
+		},
+		{
+			name:       "bash leading-colon file before flag completion",
+			args:       []string{"--file", ":candidate", "models", "retrieve", "--mo"},
+			bashArgs:   []string{"--file", ":", "candidate", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
+		{
+			name:       "bash inline header with unsplit colon",
+			args:       []string{"--header=X:models", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
+		{
+			name:       "bash inline header with split colon",
+			args:       []string{"--header=X:models", "models", "retrieve", "--mo"},
+			bashArgs:   []string{"--header=X", ":", "models", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
+		{
+			name:       "bash inline header with split equals",
+			args:       []string{"--header=X:models", "models", "retrieve", "--mo"},
+			bashArgs:   []string{"--header", "=", "X:models", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
+		{
+			name:       "bash inline header ending colon before command",
+			args:       []string{"--header=X:", "models", "retrieve", "--mo"},
+			bashArgs:   []string{"--header=X", ":", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
+		{
+			name:       "bash standalone equals before following flag",
+			args:       []string{"--header", "=", "--debug", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -92,8 +164,12 @@ func TestShellCompletionProtocol(t *testing.T) {
 				if bashErr != nil {
 					t.Skip("bash is not available")
 				}
+				if runtime.GOOS == "windows" && test.name == "colon file value" {
+					t.Skip("Windows filenames cannot contain colons")
+				}
 				dir := t.TempDir()
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "candidate-fixture.txt"), nil, 0o600))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "cert:models-fixture.txt"), nil, 0o600))
 				probe := `
 test_binary=$1
 shift
@@ -117,7 +193,11 @@ for candidate in "${COMPREPLY[@]}"; do
   printf '%s\n' "$candidate"
 done
 `
-				args := append([]string{"-c", probe, "completion-probe", binary}, test.args...)
+				bashArgs := test.args
+				if test.bashArgs != nil {
+					bashArgs = test.bashArgs
+				}
+				args := append([]string{"-c", probe, "completion-probe", binary}, bashArgs...)
 				command := exec.Command(bash, args...)
 				command.Dir, command.Env = dir, env
 				stdout.Reset()
@@ -128,7 +208,7 @@ done
 				require.Equal(t, test.candidates, stdout.String())
 				argv, err := os.ReadFile(filepath.Join(dir, "helper.argv"))
 				require.NoError(t, err)
-				wantArgs := append([]string{"__complete", "--"}, test.args...)
+				wantArgs := append([]string{"__complete", "--"}, bashArgs...)
 				require.Equal(t, strings.Join(wantArgs, "\x00")+"\x00", string(argv))
 			})
 		})
@@ -147,7 +227,7 @@ func TestZshCompletionRespectsCursor(t *testing.T) {
 	script, err := shellCompletions[CompletionStyleZsh](&cli.Command{}, "openai")
 	require.NoError(t, err)
 	// An empty prefix also matches the help command installed by the CLI library.
-	const allModelCommands = "list\nhelp:Shows a list of commands or help for one command\nh:Shows a list of commands or help for one command\n"
+	const allModelCommands = "list\nretrieve\nhelp:Shows a list of commands or help for one command\nh:Shows a list of commands or help for one command\n"
 
 	for _, test := range []struct {
 		name       string

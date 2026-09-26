@@ -16,19 +16,19 @@ ____APPNAME___bash_autocomplete() {
 
     local last_token="$cur"
 
-    # If the last token has been split apart by a ':', join it back together.
-    # Ex: 'a:b' will be represented in COMP_WORDS as 'a', ':', 'b'
-    if [[ $COMP_CWORD -ge 2 ]]; then
-      local prev2="${COMP_WORDS[COMP_CWORD - 2]}"
-      local prev1="${COMP_WORDS[COMP_CWORD - 1]}"
-      if [[ "$prev2" =~ ^@(file|data)$ && "$prev1" == ":" && "$cur" =~ ^// ]]; then
-        last_token="$prev2:$cur"
-      fi
-    fi
+    # Bash includes ':' in COMP_WORDBREAKS. Rebuild the current shell word so
+    # file completion receives the full prefix (for example 'cert:models')
+    # rather than only the suffix after the last colon.
+    local token_index=$COMP_CWORD
+    while [[ $token_index -ge 2 && "${COMP_WORDS[token_index - 1]}" == ":" ]]; do
+      last_token="${COMP_WORDS[token_index - 2]}:$last_token"
+      token_index=$((token_index - 2))
+    done
 
     # Check for custom file completion patterns
+    local retained_prefix="${last_token%"$cur"}"
     local prefix=""
-    local file_part="$cur"
+    local file_part="$last_token"
     local force_file_completion=false
     if [[ "$last_token" =~ (.*)@(file://|data://)?(.*)$ ]]; then
       local before_at="${BASH_REMATCH[1]}"
@@ -38,7 +38,15 @@ ____APPNAME___bash_autocomplete() {
       if [[ "$protocol" == "" ]]; then
         prefix="$before_at@"
       else
-        if [[ "$before_at" == "" ]]; then
+        # With ':' as a Readline word break, Bash retains the protocol prefix
+        # and expects only the //... replacement suffix. Once another colon is
+        # present in the filename, retained_prefix records exactly what is
+        # already on the line, so build the full logical candidate and strip it.
+        # If ':' was removed from COMP_WORDBREAKS, Readline replaces the whole
+        # word and therefore also needs the full logical candidate.
+        if [[ "$retained_prefix" != "" || "$COMP_WORDBREAKS" != *:* ]]; then
+          prefix="$before_at@$protocol"
+        elif [[ "$before_at" == "" ]]; then
           prefix="//"
         else
           prefix="$before_at@$protocol"
@@ -52,11 +60,20 @@ ____APPNAME___bash_autocomplete() {
       local file
       COMPREPLY=()
       while IFS= read -r file; do
-        COMPREPLY+=("$prefix$file")
+        local candidate="$prefix$file"
+        COMPREPLY+=("${candidate#"$retained_prefix"}")
       done < <(compgen -f -- "$file_part")
     else
       case $exit_code in
-      10) mapfile -t COMPREPLY < <(compgen -f -- "$cur") ;; # file completion
+      10)
+        mapfile -t COMPREPLY < <(compgen -f -- "$last_token")
+        # Readline only replaces the suffix after its last colon word break.
+        # Keep the full path for lookup, but omit the prefix it already retains.
+        local index
+        for index in "${!COMPREPLY[@]}"; do
+          COMPREPLY[$index]="${COMPREPLY[$index]#"$retained_prefix"}"
+        done
+        ;;
       11) COMPREPLY=() ;;                                   # no completion
       0) mapfile -t COMPREPLY <<<"$completions" ;;          # use returned completions
       esac
