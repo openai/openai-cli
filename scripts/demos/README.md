@@ -194,3 +194,28 @@ The recorder checks saved filenames, full printed paths, original image bytes
 and explicit JSON bypass. It retains source files, saved PNGs, request hashes,
 transcripts and the alternative `image-edit-saving.tape` VHS recipe.
 Inspect all five screenshots and `comparison.gif` before sharing.
+
+### Preview setup and repair commands
+
+`record-image-preview-repair.sh` records the real command interface in a PTY:
+main lacks `images inline status`; the feature reports unsupported-terminal
+status and shows `repair --help`. It uses an isolated home, fake key and unused
+loopback endpoint. No API server is started, no images are generated, and no
+native font activation is simulated. The shared capture helper requires the
+usual `demo-api` executable for its tool inventory, though this recorder never
+starts it.
+
+```sh
+go build -o dist/demos/bin/demo-api ./scripts/demos/main.go
+PATH="$HOME/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/record-image-preview-repair.sh \
+  /path/to/before/openai /path/to/after/openai \
+  BEFORE_COMMIT AFTER_COMMIT /path/outside/repository/preview-repair-demo
+```
+
+Use separate binaries built from the labeled main and feature commits. Inspect
+`before.png`, `after.png` and `comparison.gif`. Metadata records exact commits,
+binary/tool hashes and platform; validation confirms no gallery or saved-image
+files were created. Native Apple Terminal activation and appearance require a
+separate permitted macOS test. Fake native-bridge unit tests exercise recovery,
+retained glyphs/fonts, cancellation and rollback without controlling Terminal.

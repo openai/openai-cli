@@ -2,14 +2,11 @@ package terminalimage
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"image"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,34 +50,14 @@ func (e *FontError) Error() string { return e.Err.Error() }
 func (e *FontError) Unwrap() error { return e.Err }
 
 func writeImageFont(ctx context.Context, out io.Writer, img image.Image, columns int) error {
-	sessionID := os.Getenv("TERM_SESSION_ID")
-	if strings.TrimSpace(sessionID) == "" {
+	if strings.TrimSpace(os.Getenv("TERM_SESSION_ID")) == "" {
 		return &FontError{errors.New("sharp previews require TERM_SESSION_ID; open a new Apple Terminal tab and retry the saved image")}
 	}
-	file, ok := out.(*os.File)
-	if !ok || !FontSupported() {
-		return &FontError{errors.New("sharp image fonts require a local Apple Terminal tab")}
-	}
-	command := exec.CommandContext(ctx, "/usr/bin/tty")
-	command.Stdin = file
-	command.Env = []string{}
-	data, err := command.Output()
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	if err != nil {
-		return &FontError{errors.New("cannot identify this Apple Terminal tab")}
-	}
-	tty := strings.TrimSpace(string(data))
-	cache, err := os.UserCacheDir()
+	file, directory, tty, err := currentFontSession(ctx, out)
 	if err != nil {
 		return &FontError{err}
 	}
-	// Each tab retains its own immutable glyph assignments. Reusing the same
-	// font slot would replace images already visible in that tab's scrollback.
-	session := sha256.Sum256([]byte(sessionID + "\x00" + tty))
-	directory := filepath.Join(cache, "openai", "image-terminal", fmt.Sprintf("%x", session[:16]))
-	services := fontServices{imagefontmac.Snapshot, imagefontmac.Source, imagefontmac.Register, imagefontmac.Preserve, imagefontmac.Restore, imagefontmac.InspectProfile}
+	services := nativeFontServices()
 	if err := displayImageFont(ctx, out, img, columns, directory, tty, func() fontViewport {
 		return readFontViewport(file.Fd())
 	}, services); err != nil {
@@ -100,51 +77,18 @@ func displayImageFont(ctx context.Context, out io.Writer, img image.Image, colum
 			err = &FontError{err}
 		}
 	}()
-	gallery, err := imagegallery.Open(ctx, directory)
+	gallery, err := openFontGallery(ctx, directory, tty)
 	if err != nil {
 		return err
 	}
 	defer gallery.Close()
-	if err := gallery.BindTTY(ctx, tty); err != nil {
-		return err
-	}
-	initial, err := gallery.Initialize(ctx)
-	if err != nil {
-		return err
-	}
-	// Commit the empty gallery before native calls so a denied Automation
-	// request can be retried without leaving orphaned cache state.
-	if err := gallery.Commit(ctx, initial); err != nil {
-		return err
-	}
-	state := gallery.State()
-	before, err := services.snapshot(ctx, state.ProfileName, tty)
-	if err != nil {
-		return err
-	}
-	if before.FontSize != float64(int(before.FontSize)) {
-		return errors.New("sharp previews require a whole-number Terminal font size")
-	}
-	// Restore an existing immutable font registration after a logout before
-	// asking CoreText to resolve its original text face.
-	if path, err := gallery.LookupFontPS(ctx, before.FontName); err != nil {
-		return err
-	} else if path != "" {
-		if err := registerFont(ctx, services, path, true); err != nil {
-			return err
-		}
-	} else if strings.HasPrefix(before.FontName, "OpenAIImages-") || strings.HasPrefix(before.FontName, "OpenAI Local ") || strings.HasPrefix(before.FontName, "OpenAI Image Gallery ") {
-		// Another gallery (or an unresolved generated family alias) may already
-		// own these codepoints in scrollback. Never replace it with a fresh font.
-		return errors.New("this tab's image font cannot be matched to the current session; open a new Terminal tab to keep earlier previews intact")
-	}
-	source, err := services.source(ctx, before.FontName, int(before.FontSize))
+	before, source, err := currentFontSource(ctx, gallery, tty, services)
 	if err != nil {
 		return err
 	}
 	size := viewport()
-	geometry, err := preservedGeometry(size, int(before.FontSize), source)
-	if err != nil {
+	// Reject unsupported text geometry before decoding or caching the image.
+	if _, err := preservedGeometry(size, int(before.FontSize), source); err != nil {
 		return err
 	}
 	if columns < 1 {
@@ -164,31 +108,100 @@ func displayImageFont(ctx context.Context, out io.Writer, img image.Image, colum
 		}
 		return err
 	}
-	if size.Columns > 0 && revision.Columns >= size.Columns {
-		return fmt.Errorf("widen Terminal to at least %d columns to display this cached image", revision.Columns+1)
+	display, err := activateImageFont(ctx, gallery, revision, revision.Columns, tty, before, source, size, viewport, services)
+	if err != nil {
+		return err
+	}
+	writing = true
+	_, err = io.WriteString(contextWriter{ctx, out}, display.Text)
+	return err
+}
+
+// openFontGallery keeps the renderer and explicit repair on the same ownership
+// and pending-attempt transaction. No closed-session cleanup is performed here.
+func openFontGallery(ctx context.Context, directory, tty string) (*imagegallery.Gallery, error) {
+	gallery, err := imagegallery.Open(ctx, directory)
+	if err != nil {
+		return nil, err
+	}
+	fail := func(err error) (*imagegallery.Gallery, error) { _ = gallery.Close(); return nil, err }
+	if err := gallery.BindTTY(ctx, tty); err != nil {
+		return fail(err)
+	}
+	initial, err := gallery.Initialize(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	// Retain a stable identity even when Automation permission is denied.
+	if err := gallery.Commit(ctx, initial); err != nil {
+		return fail(err)
+	}
+	return gallery, nil
+}
+
+func currentFontSource(ctx context.Context, gallery *imagegallery.Gallery, tty string, services fontServices) (imagefontmac.ProfileStatus, imagefontmac.SourceFont, error) {
+	before, err := services.snapshot(ctx, gallery.State().ProfileName, tty)
+	fail := func(err error) (imagefontmac.ProfileStatus, imagefontmac.SourceFont, error) {
+		return before, imagefontmac.SourceFont{}, err
+	}
+	if err != nil {
+		return fail(err)
+	}
+	if before.FontSize != float64(int(before.FontSize)) {
+		return fail(errors.New("sharp previews require a whole-number Terminal font size"))
+	}
+	// Restore login-session registration before resolving the original text face.
+	if path, err := gallery.LookupFontPS(ctx, before.FontName); err != nil {
+		return fail(err)
+	} else if path != "" {
+		if err := registerFont(ctx, services, path, true); err != nil {
+			return fail(err)
+		}
+	} else if isImageFont(before.FontName) {
+		return fail(errors.New("this tab's image font cannot be matched to the current session; open a new Terminal tab to keep earlier previews intact"))
+	}
+	source, err := services.source(ctx, before.FontName, int(before.FontSize))
+	return before, source, err
+}
+
+func isImageFont(name string) bool {
+	return strings.HasPrefix(name, "OpenAIImages-") || strings.HasPrefix(name, "OpenAI Local ") || strings.HasPrefix(name, "OpenAI Image Gallery ")
+}
+
+// activateImageFont commits only after native inspection confirms unchanged
+// text settings. Failed or canceled activation gets conditional rollback, while
+// registered fonts remain retained for any uncertain native result.
+func activateImageFont(ctx context.Context, gallery *imagegallery.Gallery, revision *imagegallery.Revision, columns int, tty string, before imagefontmac.ProfileStatus, source imagefontmac.SourceFont, size fontViewport, viewport func() fontViewport, services fontServices) (_ imagegallery.TypographyFont, err error) {
+	state := gallery.State()
+	geometry, err := preservedGeometry(size, int(before.FontSize), source)
+	if err != nil {
+		return imagegallery.TypographyFont{}, err
+	}
+	if size.Columns > 0 && columns >= size.Columns {
+		return imagegallery.TypographyFont{}, fmt.Errorf("widen Terminal to at least %d columns to display this cached image", columns+1)
 	}
 	companions := make([]imagefont.PreserveOptions, 0, len(source.Companions))
 	for _, face := range source.Companions {
 		companion, err := preservedGeometry(size, int(before.FontSize), face)
 		if err != nil {
-			return err
+			return imagegallery.TypographyFont{}, err
 		}
 		companions = append(companions, companion)
 	}
 	display, err := gallery.FontForTypography(ctx, revision, geometry, companions...)
 	if err != nil {
-		return err
+		return imagegallery.TypographyFont{}, err
 	}
 	if err := gallery.MarkRegistering(ctx, revision); err != nil {
-		return err
+		return imagegallery.TypographyFont{}, err
 	}
 	for _, font := range append(display.Related, display.DisplayFont) {
 		if err := registerFont(ctx, services, font.FontPath, font.Existing); err != nil {
-			return err
+			return imagegallery.TypographyFont{}, err
 		}
 	}
 	defer func() {
-		if err != nil && !writing {
+		if err != nil {
 			// Activation may succeed even if its reply is lost to cancellation.
 			// Give conditional rollback an independent, bounded opportunity.
 			restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -197,26 +210,24 @@ func displayImageFont(ctx context.Context, out io.Writer, img image.Image, colum
 		}
 	}()
 	if err := services.preserve(ctx, state.ProfileName, tty, display.PostScript, before); err != nil {
-		return err
+		return imagegallery.TypographyFont{}, err
 	}
 	after, err := services.inspect(ctx, state.ProfileName, tty)
 	if err != nil {
-		return err
+		return imagegallery.TypographyFont{}, err
 	}
 	current := viewport()
 	final, err := preservedGeometry(current, int(after.FontSize), source)
 	if err != nil || after.FontSize != before.FontSize || after.FontName != display.PostScript || after.ProfileID != before.ProfileID || after.ProfileName != before.ProfileName || final.CellWidth != geometry.CellWidth || final.CellHeight != geometry.CellHeight {
-		return errors.New("Terminal font or spacing changed while preparing the image")
+		return imagegallery.TypographyFont{}, errors.New("Terminal font or spacing changed while preparing the image")
 	}
-	if current.Columns > 0 && revision.Columns >= current.Columns {
-		return errors.New("Terminal became too narrow while preparing the image")
+	if current.Columns > 0 && columns >= current.Columns {
+		return imagegallery.TypographyFont{}, errors.New("Terminal became too narrow while preparing the image")
 	}
 	if err := gallery.Commit(ctx, revision); err != nil {
-		return err
+		return imagegallery.TypographyFont{}, err
 	}
-	writing = true
-	_, err = io.WriteString(contextWriter{ctx, out}, display.Text)
-	return err
+	return display, nil
 }
 
 func registerFont(ctx context.Context, services fontServices, path string, existing bool) error {

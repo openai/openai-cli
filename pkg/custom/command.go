@@ -18,6 +18,7 @@ func ConfigureCommand(root *cli.Command) {
 	}
 	root.Metadata[configuredCommandMetadata] = true
 	registerImageModels(root)
+	registerImagePreviewSetup(root)
 	configureReadableOutput(root)
 	configureImageSaving(root)
 	configureReadableAudio(root)

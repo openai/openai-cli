@@ -103,22 +103,7 @@ func Open(ctx context.Context, directory string) (*Gallery, error) {
 			return nil, err
 		}
 	}
-	path := filepath.Join(absolute, "state.json")
-	data, err := readPrivate(path, 1<<20)
-	if err == nil {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		if err = decoder.Decode(&g.state); err != nil {
-			return nil, fmt.Errorf("invalid image gallery state: %w", err)
-		}
-		var extra any
-		if err = decoder.Decode(&extra); err != io.EOF {
-			return nil, errors.New("invalid image gallery state: trailing data")
-		}
-		if err = g.validate(); err != nil {
-			return nil, err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err = g.readState(); err != nil {
 		return nil, err
 	}
 
@@ -314,6 +299,53 @@ func (g *Gallery) check(ctx context.Context) error {
 	}
 	return ctx.Err()
 }
+
+// readState shares strict metadata validation with read-only inspection.
+func (g *Gallery) readState() error {
+	path := filepath.Join(g.directory, "state.json")
+	data, err := readPrivate(path, 1<<20)
+	if err == nil {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if err = decoder.Decode(&g.state); err != nil {
+			return fmt.Errorf("invalid image gallery state: %w", err)
+		}
+		var extra any
+		if err = decoder.Decode(&extra); err != io.EOF {
+			return errors.New("invalid image gallery state: trailing data")
+		}
+		if err = g.validate(); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	} else {
+		return g.checkUninitialized()
+	}
+
+	return nil
+}
+
+// Files without their glyph-allocation metadata cannot be assigned a fresh
+// identity safely, even if the user has selected an ordinary text font again.
+func (g *Gallery) checkUninitialized() error {
+	for _, name := range []string{"fonts", "images", ".pending"} {
+		items, err := os.ReadDir(filepath.Join(g.directory, name))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if len(items) != 0 {
+			return errors.New("preview cache metadata is missing but earlier artifacts remain; retain these files and open a new Terminal tab")
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(g.directory, ".pending.json")); err == nil {
+		return errors.New("preview cache metadata is missing but a pending attempt remains; retain these files and open a new Terminal tab")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func (g *Gallery) validate() error {
 	s := g.state
 	if s.Version != 1 || !isHex(s.ID, 32) || s.Revision < 0 || !isFontName(s.Font) || s.PostScript == "" || s.Family == "" || len(s.Images) > imagefont.MaxGlyphs || s.CompletedAttempt != "" && !isHex(s.CompletedAttempt, 32) {

@@ -9,10 +9,15 @@ import (
 // The file is deliberately never unlinked: removing a lock path allows another
 // process to lock a different inode while an existing holder still runs.
 func acquireLock(path string) (*os.File, error) {
+	return openLock(path, os.O_CREATE|os.O_RDWR)
+}
+
+// Inspection opens the existing stable lock without creating or writing it.
+func openLock(path string, flags int) (*os.File, error) {
 	if err := checkPrivate(path, false); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	file, err := os.OpenFile(path, flags, 0600)
 	if err != nil {
 		return nil, err
 	}
