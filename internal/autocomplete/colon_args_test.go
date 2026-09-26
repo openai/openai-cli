@@ -107,6 +107,14 @@ func TestRebuildColonSeparatedArgs(t *testing.T) {
 			args: []string{"--header=X", ":", "models", "retrieve", "--mo"},
 			want: []string{"--header", "X:", "models", "retrieve", "--mo"},
 		},
+		"standalone equals value before following flag": {
+			args: []string{"--header", "=", "--debug", "models", "retrieve", "--mo"},
+			want: []string{"--header", "=", "--debug", "models", "retrieve", "--mo"},
+		},
+		"standalone equals value before command": {
+			args: []string{"--header", "=", "models", "retrieve", "--mo"},
+			want: []string{"--header", "=", "models", "retrieve", "--mo"},
+		},
 	}
 
 	for name, test := range tests {
