@@ -92,9 +92,10 @@ func loadSnapshot(ctx context.Context, root *os.Root, name string) (string, erro
 	return "off", nil
 }
 
-// Save replaces this single setting atomically. Concurrent on/off commands have
-// last-completed-write semantics, and readers never observe a partial JSON file.
-// Unknown schemas and unrelated fields are preserved by refusing to overwrite.
+// Save serializes cooperating writers from validation through atomic replacement.
+// Readers never observe partial JSON. All CLI versions writing this file must
+// retain the same sibling lock, including when introducing a new schema.
+// The advisory lock cannot coordinate external writers that ignore it.
 func Save(ctx context.Context, path string, inline bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -104,6 +105,11 @@ func Save(ctx context.Context, path string, inline bool) error {
 		return err
 	}
 	defer root.Close()
+	lock, err := lockPreferences(ctx, root, name)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	if _, err := load(ctx, root, name); err != nil {
 		return err
 	}

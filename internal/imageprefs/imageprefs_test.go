@@ -30,7 +30,7 @@ func TestImagePreferenceDefaultAndReplacement(t *testing.T) {
 		require.Equal(t, want, mode)
 		entries, err := os.ReadDir(filepath.Dir(path))
 		require.NoError(t, err)
-		require.Len(t, entries, 1)
+		require.Len(t, entries, 2, "only preferences and the persistent writer lock should remain")
 	}
 	if runtime.GOOS != "windows" {
 		file, err := os.Stat(path)
@@ -77,7 +77,7 @@ func TestImagePreferenceConcurrentWritesAndCancellation(t *testing.T) {
 	require.Contains(t, []string{"on", "off"}, mode)
 	entries, err := os.ReadDir(filepath.Dir(path))
 	require.NoError(t, err)
-	require.Len(t, entries, 1)
+	require.Len(t, entries, 2, "only preferences and the persistent writer lock should remain")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.ErrorIs(t, Save(ctx, path, true), context.Canceled)
