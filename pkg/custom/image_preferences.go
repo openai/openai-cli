@@ -58,7 +58,7 @@ func imageInlinePreferenceCommands() []*cli.Command {
 				if err := imageprefs.Save(ctx, path, mode == "on"); err != nil {
 					return imageSavingFailure(fmt.Sprintf("Could not save the inline preference. Existing settings were kept. Check permissions and the settings in %q; move an invalid file aside before trying again.", path), err)
 				}
-				message := "Automatic image previews " + mode + ".\nOverride once with --inline auto, on or off. Saved images can still be viewed with openai images preview FILE."
+				message := "Automatic image previews " + mode + ".\nOverride once: --inline auto|on|off\nView a saved image: openai images preview FILE"
 				if mode == "on" {
 					message += "\nOn also permits image-font activation in local Apple Terminal."
 				}
