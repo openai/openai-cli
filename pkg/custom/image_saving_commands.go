@@ -44,6 +44,7 @@ func configureImageSaving(root *cli.Command) {
 func registerImageSavingFlags(command *cli.Command) {
 	command.Flags = append(command.Flags,
 		&cli.StringFlag{Name: "output-dir", Usage: "Save images in an existing `DIRECTORY`", DefaultText: "~/Downloads/gpt-images/"},
+		&cli.StringFlag{Name: "inline", Value: "auto", Usage: "Show a saved-image preview: auto, on or off; on allows a local Apple Terminal image font"},
 		&cli.StringFlag{Name: "name", Usage: "Save with this filename `STEM` (an image extension is optional); existing files are kept"},
 	)
 	model := defaultSavedImageModel
@@ -85,6 +86,10 @@ type imagePresentation struct {
 // handler still owns SDK dispatch and response/stream lifetime.
 func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
 	return func(ctx context.Context, command *cli.Command) error {
+		inline := command.String("inline")
+		if inline != "auto" && inline != "on" && inline != "off" {
+			return imageSavingFailure("--inline must be auto, on or off.", nil)
+		}
 		if command.Metadata == nil {
 			command.Metadata = make(map[string]any)
 		}
@@ -126,6 +131,12 @@ func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
 		}
 		if err != nil {
 			return err
+		}
+		if plan != nil {
+			plan.inline = inline
+			// The generated root ErrWriter buffers failures for main. Preview
+			// warnings accompany a successful save and must reach stderr now.
+			plan.diagnostics = os.Stderr
 		}
 		restore, err := selectImageGenerationStream(command, streaming)
 		if err != nil {

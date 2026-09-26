@@ -25,7 +25,7 @@ import (
 func TestSaveResponseFormatsAndUniqueNames(t *testing.T) {
 	directory := t.TempDir()
 	fixtures := imageFixtures(t)
-	var allPaths []string
+	var allPaths []SavedImage
 	for repeat := 0; repeat < 2; repeat++ {
 		paths, err := SaveResponse(context.Background(), imageResponse(t, fixtures...), directory)
 		if err != nil {
@@ -34,7 +34,11 @@ func TestSaveResponseFormatsAndUniqueNames(t *testing.T) {
 		if len(paths) != len(fixtures) {
 			t.Fatalf("saved %d images; want %d", len(paths), len(fixtures))
 		}
-		for i, path := range paths {
+		for i, saved := range paths {
+			path := saved.Path
+			if saved.SHA256 != sha256.Sum256(fixtures[i]) {
+				t.Fatalf("image %d digest differs from the response bytes", i)
+			}
 			if filepath.Dir(path) != directory || filepath.Ext(path) != []string{".png", ".jpeg", ".webp"}[i] {
 				t.Fatalf("wrong output path: %q", path)
 			}
@@ -53,7 +57,8 @@ func TestSaveResponseFormatsAndUniqueNames(t *testing.T) {
 		allPaths = append(allPaths, paths...)
 	}
 	unique := make(map[string]bool)
-	for _, path := range allPaths {
+	for _, saved := range allPaths {
+		path := saved.Path
 		if unique[path] {
 			t.Fatalf("reused image filename: %s", path)
 		}
@@ -70,7 +75,7 @@ func TestSaveResponseNormalizesExactlyOneExtension(t *testing.T) {
 		"robot.PNG": "robot.png", "robot.jpeg": "robot.png", "robot.png.jpeg": "robot.png.png",
 	} {
 		paths, err := SaveResponse(t.Context(), imageResponse(t, imageFixtures(t)[0]), t.TempDir(), input)
-		if err != nil || len(paths) != 1 || filepath.Base(paths[0]) != want {
+		if err != nil || len(paths) != 1 || filepath.Base(paths[0].Path) != want {
 			t.Errorf("SaveResponse name %q = %v, %v; want %q", input, paths, err, want)
 		}
 	}
@@ -88,7 +93,11 @@ func TestSaveResponseSalvagesImagesAfterMalformedItems(t *testing.T) {
 	if !errors.Is(err, io.ErrUnexpectedEOF) || !strings.Contains(err.Error(), "image 3 has no base64") {
 		t.Fatalf("partial result lost individual causes: %v", err)
 	}
-	for i, path := range paths {
+	for i, saved := range paths {
+		path := saved.Path
+		if saved.SHA256 != sha256.Sum256(fixtures[i]) {
+			t.Fatalf("completed file %d digest differs from the response bytes", i)
+		}
 		contents, err := os.ReadFile(path)
 		if err != nil || !bytes.Equal(contents, fixtures[i]) {
 			t.Errorf("completed file %d differs: %v", i, err)
@@ -116,7 +125,8 @@ func TestSaveResponseSalvagesAroundMalformedItemShapes(t *testing.T) {
 	if !errors.As(err, &typeError) {
 		t.Fatalf("malformed item's cause was lost: %v", err)
 	}
-	for _, path := range paths {
+	for _, saved := range paths {
+		path := saved.Path
 		contents, err := os.ReadFile(path)
 		if err != nil || !bytes.Equal(contents, fixture) {
 			t.Fatalf("recovered image changed: %v", err)
@@ -132,10 +142,10 @@ func TestSaveResponseReadableDefaultName(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		stamp := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(paths[0]), "image-"), ".png")
+		stamp := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(paths[0].Path), "image-"), ".png")
 		parsed, err := time.ParseInLocation("2006-01-02-150405", stamp, time.Local)
 		if err != nil || parsed.Before(before) || parsed.After(time.Now()) {
-			t.Fatalf("default filename does not contain current local date/time: %q, %v", paths[0], err)
+			t.Fatalf("default filename does not contain current local date/time: %q, %v", paths[0].Path, err)
 		}
 	}
 }
@@ -155,7 +165,8 @@ func TestSaveResponseNamedCollisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, path := range paths {
+	for i, saved := range paths {
+		path := saved.Path
 		if want := fmt.Sprintf("orange-robot-%d.png", i+3); filepath.Base(path) != want {
 			t.Fatalf("filename = %q; want %q", path, want)
 		}
@@ -183,7 +194,7 @@ func TestSaveResponseNamedCollisionDoesNotFollowSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	paths, err := SaveResponse(context.Background(), imageResponse(t, imageFixtures(t)[0]), directory, "robot")
-	if err != nil || len(paths) != 1 || filepath.Base(paths[0]) != "robot-2.png" {
+	if err != nil || len(paths) != 1 || filepath.Base(paths[0].Path) != "robot-2.png" {
 		t.Fatalf("symlink collision = %v, %v", paths, err)
 	}
 	contents, err := os.ReadFile(target)
@@ -201,7 +212,7 @@ func TestSaveResponseConcurrentNames(t *testing.T) {
 	raw := imageResponse(t, fixture)
 	const count = 16
 	type result struct {
-		paths []string
+		paths []SavedImage
 		err   error
 	}
 	results := make(chan result, count)
@@ -224,7 +235,7 @@ func TestSaveResponseConcurrentNames(t *testing.T) {
 		if result.err != nil || len(result.paths) != 1 {
 			t.Fatalf("concurrent save = %v, %v", result.paths, result.err)
 		}
-		path := result.paths[0]
+		path := result.paths[0].Path
 		if names[filepath.Base(path)] {
 			t.Fatalf("concurrent save reused %q", path)
 		}
@@ -252,7 +263,7 @@ func TestSaveResponseNamedPartialSuccessAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	valid := base64.StdEncoding.EncodeToString(imageFixtures(t)[0])
-	if paths, err := SaveResponse(context.Background(), encodedResponse(t, valid, valid+"!"), directory, "robot"); err == nil || len(paths) != 1 || filepath.Base(paths[0]) != "robot-2.png" {
+	if paths, err := SaveResponse(context.Background(), encodedResponse(t, valid, valid+"!"), directory, "robot"); err == nil || len(paths) != 1 || filepath.Base(paths[0].Path) != "robot-2.png" {
 		t.Fatalf("invalid batch = %v, %v", paths, err)
 	}
 	for _, names := range [][]string{{"../outside"}, {"one", "two"}} {
@@ -269,7 +280,7 @@ func TestSaveResponseNamedPartialSuccessAndValidation(t *testing.T) {
 		t.Fatalf("cleanup changed existing image: %q, %v", contents, err)
 	}
 	paths, err := SaveResponse(context.Background(), encodedResponse(t, valid), directory, "robot")
-	if err != nil || len(paths) != 1 || filepath.Base(paths[0]) != "robot-3.png" {
+	if err != nil || len(paths) != 1 || filepath.Base(paths[0].Path) != "robot-3.png" {
 		t.Fatalf("cleaned filename was not available for retry: %v, %v", paths, err)
 	}
 }
@@ -313,7 +324,8 @@ func TestSaveResponseRejectsInvalidDataAndCleansUp(t *testing.T) {
 			if readErr != nil || len(entries) != 1+wantSaved {
 				t.Fatalf("incomplete output was not cleaned up or completed output was lost: %v, %v", entries, readErr)
 			}
-			for _, path := range paths {
+			for _, saved := range paths {
+				path := saved.Path
 				contents, readErr := os.ReadFile(path)
 				if readErr != nil || !bytes.Equal(contents, imageFixtures(t)[0]) {
 					t.Fatalf("completed image changed: %q, %v", contents, readErr)
@@ -358,7 +370,7 @@ func TestSaveResponseCancellation(t *testing.T) {
 		if !errors.Is(err, context.Canceled) || len(paths) != 1 {
 			t.Fatalf("partial-write cancellation = %v, %v", paths, err)
 		}
-		contents, readErr := os.ReadFile(paths[0])
+		contents, readErr := os.ReadFile(paths[0].Path)
 		if readErr != nil || !bytes.Equal(contents, fixture) {
 			t.Fatalf("cancellation lost the completed image: %v", readErr)
 		}
@@ -379,7 +391,10 @@ func TestSaveResponseLargeBase64(t *testing.T) {
 	if err != nil || len(paths) != 1 {
 		t.Fatalf("large image save = %v, %v", paths, err)
 	}
-	file, err := os.Open(paths[0])
+	if paths[0].SHA256 != wantHash {
+		t.Fatal("large saved image digest differs from the response bytes")
+	}
+	file, err := os.Open(paths[0].Path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +536,8 @@ func TestSaveResponseLongNamesKeepRoomForBatchAndCollisions(t *testing.T) {
 				if err != nil || len(paths) != 2 {
 					t.Fatalf("long named batch failed: %v, %v", paths, err)
 				}
-				for n, path := range paths {
+				for n, saved := range paths {
+					path := saved.Path
 					if filepath.Base(path) != fmt.Sprintf("%s-%d%s", stem, n+10, extension) {
 						t.Fatalf("filename changed: %q", path)
 					}
@@ -536,7 +552,7 @@ func TestSaveResponseLongNamesKeepRoomForBatchAndCollisions(t *testing.T) {
 				}
 				for _, entry := range entries {
 					path := filepath.Join(directory, entry.Name())
-					if path == paths[0] || path == paths[1] {
+					if path == paths[0].Path || path == paths[1].Path {
 						continue
 					}
 					data, err := os.ReadFile(path)

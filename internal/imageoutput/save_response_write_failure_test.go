@@ -48,7 +48,8 @@ func TestSaveResponseWriteFailure(t *testing.T) {
 	if !errors.Is(err, syscall.EFBIG) || len(paths) != 2 || !strings.Contains(err.Error(), "saved 2 of 3 images") {
 		t.Fatalf("partial write failure = %v, %v", paths, err)
 	}
-	for i, path := range paths {
+	for i, saved := range paths {
+		path := saved.Path
 		got, err := os.ReadFile(path)
 		if err != nil || !bytes.Equal(got, fixtures[i]) {
 			t.Fatalf("completed image %d was changed: %v", i, err)
