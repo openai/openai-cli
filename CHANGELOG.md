@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.0](https://github.com/openai/openai-cli/compare/v1.23.0...v1.24.0) (2026-09-26)
+
+
+### Features
+
+* save generated images with defaults ([#291](https://github.com/openai/openai-cli/issues/291)) ([0e7ec75](https://github.com/openai/openai-cli/commit/0e7ec75a121c12f1c260f9224c4eb4429635bbd5))
+
 ## [1.23.0](https://github.com/openai/openai-cli/compare/v1.22.0...v1.23.0) (2026-09-25)
 
 
