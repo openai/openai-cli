@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.0](https://github.com/openai/openai-cli/compare/v1.24.0...v1.25.0) (2026-09-26)
+
+
+### Features
+
+* save image edits and variations ([#294](https://github.com/openai/openai-cli/issues/294)) ([5213c3d](https://github.com/openai/openai-cli/commit/5213c3d3cb76492903773d12f8a26b99181f6943))
+
 ## [1.24.0](https://github.com/openai/openai-cli/compare/v1.23.0...v1.24.0) (2026-09-26)
 
 
