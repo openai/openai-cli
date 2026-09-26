@@ -101,6 +101,37 @@ func TestShellCompletionProtocol(t *testing.T) {
 			output:     "--model\n",
 			candidates: "--model\n",
 		},
+		{
+			name:       "bash inline header with unsplit colon",
+			args:       []string{"--header=X:models", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
+		{
+			name:       "bash inline header with split colon",
+			args:       []string{"--header=X:models", "models", "retrieve", "--mo"},
+			bashArgs:   []string{"--header=X", ":", "models", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
+		{
+			name:       "bash inline header with split equals",
+			args:       []string{"--header=X:models", "models", "retrieve", "--mo"},
+			bashArgs:   []string{"--header", "=", "X:models", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
+		{
+			name:       "bash inline header ending colon before command",
+			args:       []string{"--header=X:", "models", "retrieve", "--mo"},
+			bashArgs:   []string{"--header=X", ":", "models", "retrieve", "--mo"},
+			code:       0,
+			output:     "--model\n",
+			candidates: "--model\n",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

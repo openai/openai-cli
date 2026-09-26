@@ -67,6 +67,9 @@ func TestBashReadlineInsertsColonFilenameOnce(t *testing.T) {
 		{"embedded at prefix retained", "--format", "candidate-fixture.txt", "field@candidate-", "field@candidate-fixture.txt", false, true},
 		{"embedded file URL prefix retained", "--format", "candidate-fixture.txt", "field@file://candidate-", "field@file://candidate-fixture.txt", false, true},
 		{"embedded data URL prefix retained", "--format", "candidate-fixture.txt", "field@data://candidate-", "field@data://candidate-fixture.txt", false, true},
+		{"file URL with colon retained", "--format", "cert:models-fixture.txt", "@file://cert:models", "@file://cert:models-fixture.txt", false, true},
+		{"data URL with colon retained", "--format", "cert:models-fixture.txt", "@data://cert:models", "@data://cert:models-fixture.txt", false, true},
+		{"file URL with colon kept in word", "--format", "cert:models-fixture.txt", "@file://cert:models", "@file://cert:models-fixture.txt", true, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			directory := t.TempDir()

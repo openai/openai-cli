@@ -38,7 +38,15 @@ ____APPNAME___bash_autocomplete() {
       if [[ "$protocol" == "" ]]; then
         prefix="$before_at@"
       else
-        if [[ "$before_at" == "" ]]; then
+        # With ':' as a Readline word break, Bash retains the protocol prefix
+        # and expects only the //... replacement suffix. Once another colon is
+        # present in the filename, retained_prefix records exactly what is
+        # already on the line, so build the full logical candidate and strip it.
+        # If ':' was removed from COMP_WORDBREAKS, Readline replaces the whole
+        # word and therefore also needs the full logical candidate.
+        if [[ "$retained_prefix" != "" || "$COMP_WORDBREAKS" != *:* ]]; then
+          prefix="$before_at@$protocol"
+        elif [[ "$before_at" == "" ]]; then
           prefix="//"
         else
           prefix="$before_at@$protocol"

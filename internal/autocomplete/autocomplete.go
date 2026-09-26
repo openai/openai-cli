@@ -369,14 +369,41 @@ func rebuildColonSeparatedArgs(root *cli.Command, args []string) []string {
 	for i < len(args) {
 		current := args[i]
 
-		// A value-taking flag owns the next shell word. Do not let a trailing colon
-		// in that value absorb the command that follows it.
+		// A value-taking flag owns its shell word. Bash may keep an inline
+		// `--flag=value` together, or split `=` and `:` according to a customized
+		// COMP_WORDBREAKS. Normalize all of those shapes to separate flag/value
+		// arguments before command reconstruction.
 		if isFlag(current) {
-			result = append(result, current)
-			if flag := findFlag(flags, current); flag != nil {
-				if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && i+1 < len(args) {
-					value := args[i+1]
-					i += 2
+			flagArg := current
+			value := ""
+			hasInlineValue := false
+			if before, after, ok := strings.Cut(current, "="); ok {
+				if candidate := findFlag(flags, before); candidate != nil {
+					if docFlag, ok := (*candidate).(cli.DocGenerationFlag); ok && docFlag.TakesValue() {
+						flagArg = before
+						value = after
+						hasInlineValue = true
+					}
+				}
+			}
+
+			result = append(result, flagArg)
+			if flag := findFlag(flags, flagArg); flag != nil {
+				if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() {
+					if hasInlineValue {
+						i++
+					} else if i+1 < len(args) {
+						i++
+						// `=` itself can be a Bash word break for an inline value.
+						if args[i] == "=" && i+1 < len(args) {
+							i++
+						}
+						value = args[i]
+						i++
+					} else {
+						i++
+						continue
+					}
 
 					// Bash includes ':' in COMP_WORDBREAKS, so a single flag value such as
 					// `X:completions` can arrive as `X`, `:`, `completions`. Rebuild the

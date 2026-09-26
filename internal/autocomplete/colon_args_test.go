@@ -90,6 +90,23 @@ func TestRebuildColonSeparatedArgs(t *testing.T) {
 			args: []string{"--header", "chat", ":", "--debug", "completions", "create", "--mo"},
 			want: []string{"--header", "chat:", "--debug", "completions", "create", "--mo"},
 		},
+
+		"inline header with unsplit colon": {
+			args: []string{"--header=X:models", "models", "retrieve", "--mo"},
+			want: []string{"--header", "X:models", "models", "retrieve", "--mo"},
+		},
+		"inline header with split colon": {
+			args: []string{"--header=X", ":", "models", "models", "retrieve", "--mo"},
+			want: []string{"--header", "X:models", "models", "retrieve", "--mo"},
+		},
+		"inline header with split equals": {
+			args: []string{"--header", "=", "X:models", "models", "retrieve", "--mo"},
+			want: []string{"--header", "X:models", "models", "retrieve", "--mo"},
+		},
+		"inline header ending colon split before command": {
+			args: []string{"--header=X", ":", "models", "retrieve", "--mo"},
+			want: []string{"--header", "X:", "models", "retrieve", "--mo"},
+		},
 	}
 
 	for name, test := range tests {
