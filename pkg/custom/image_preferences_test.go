@@ -160,9 +160,7 @@ func TestImagePreviewRegistrationPreservesInlineCommands(t *testing.T) {
 					shared = &cli.Command{Name: "inline", Usage: "Manage image previews"}
 					images.Commands = append(images.Commands, shared)
 				}
-				for _, name := range []string{"setup", "repair", "status"} {
-					shared.Commands = append(shared.Commands, &cli.Command{Name: name})
-				}
+				shared.Commands = append(shared.Commands, &cli.Command{Name: "existing"})
 			}
 			if order == "saved first" {
 				ConfigureCommand(root)
@@ -180,9 +178,12 @@ func TestImagePreviewRegistrationPreservesInlineCommands(t *testing.T) {
 			require.Equal(t, 1, counts["inline"])
 			require.Equal(t, 1, counts["preview"])
 			require.Equal(t, 1, counts["generate"])
-			require.Len(t, shared.Commands, 5)
-			for _, name := range []string{"on", "off", "setup", "repair", "status"} {
-				require.NotNil(t, shared.Command(name), name)
+			children := map[string]int{}
+			for _, command := range shared.Commands {
+				children[command.Name]++
+			}
+			for _, name := range []string{"on", "off", "existing"} {
+				require.Equal(t, 1, children[name], name)
 			}
 		})
 	}
