@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
@@ -133,7 +134,19 @@ func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
 			return err
 		}
 		if plan != nil {
-			plan.inline = inline
+			mode, preferenceErr := imageInlineMode(ctx, command, isTerminal(imageCommandWriter(command)))
+			if preferenceErr != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				// The generated ErrWriter is a command-error buffer, not a
+				// presentation sink. Successful saves must show this warning.
+				if err := readable.WriteText(os.Stderr, "Could not read the inline preference; automatic previews are off for this command. Use --inline auto, on or off to override it, or check your image-preferences.json settings."); err != nil {
+					return err
+				}
+				mode = "off"
+			}
+			plan.inline = mode
 			plan.diagnostics = command.Root().ErrWriter
 		}
 		restore, err := selectImageGenerationStream(command, streaming)
