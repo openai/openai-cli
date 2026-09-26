@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.27.0](https://github.com/openai/openai-cli/compare/v1.26.0...v1.27.0) (2026-09-26)
+
+
+### Features
+
+* preview saved images and remember inline settings ([#297](https://github.com/openai/openai-cli/issues/297)) ([53518d7](https://github.com/openai/openai-cli/commit/53518d783e9b0a3cc79ea107956f609fa63972c0))
+
 ## [1.26.0](https://github.com/openai/openai-cli/compare/v1.25.2...v1.26.0) (2026-09-26)
 
 
