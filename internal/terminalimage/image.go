@@ -33,7 +33,7 @@ func Write(ctx context.Context, w io.Writer, img image.Image, protocol string, c
 	case "kitty":
 		// Keep native cursor movement enabled (C=0): the terminal advances over
 		// the placement using its actual cell size; the caller adds a newline.
-		return writeKittyImage(ctx, destination, img, columns)
+		return writeKittyImage(ctx, w, img, columns)
 	case "iterm":
 		return writeITermImage(ctx, w, img, columns)
 	case "blocks":
@@ -91,6 +91,7 @@ func writeKittyImage(ctx context.Context, out io.Writer, img image.Image, column
 		return err
 	}
 	options := (&kitty.Options{Action: kitty.TransmitAndPut, Transmission: kitty.Direct, Format: kitty.PNG, Quite: 2, Columns: columns}).Options()
+	destination := contextWriter{ctx, out}
 	const rawChunk = kitty.MaxChunkSize / 4 * 3
 	first := true
 	for encoded.Len() > 0 {
@@ -109,7 +110,14 @@ func writeKittyImage(ctx context.Context, out io.Writer, img image.Image, column
 		} else {
 			opts = append(opts, "m=0")
 		}
-		if _, err := io.WriteString(out, ansi.KittyGraphics(payload, opts...)); err != nil {
+		frame := ansi.KittyGraphics(payload, opts...)
+		if n, err := io.WriteString(destination, frame); err != nil {
+			if n > 0 && n < len(frame) {
+				// Each chunk owns one APC. A partial write can leave it open;
+				// attempt only ST after cancellation, retaining both errors.
+				_, cleanupErr := io.WriteString(contextWriter{context.WithoutCancel(ctx), out}, "\x1b\\")
+				return errors.Join(err, cleanupErr)
+			}
 			return err
 		}
 		first = false
