@@ -63,6 +63,7 @@ No image preview or viewer is opened.`
 type imageOutputPlan struct {
 	directory, name string
 	options         []option.RequestOption
+	defaults        map[string]any
 }
 
 // A private classification carries locally authored guidance through the shared
@@ -76,7 +77,7 @@ func (e *imageSavingError) Error() string                  { return e.message }
 func (e *imageSavingError) Unwrap() error                  { return e.cause }
 func imageSavingFailure(message string, cause error) error { return &imageSavingError{message, cause} }
 
-func prepareImageGeneration(ctx context.Context, command *cli.Command, body gjson.Result) (*imageOutputPlan, bool, error) {
+func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Result) (*imageOutputPlan, bool, error) {
 	streaming := body.Get("stream").Type == gjson.True
 	if err := validateImageGenerationSettings(body); err != nil {
 		return nil, false, imageSavingFailure(err.Error(), err)
@@ -135,9 +136,24 @@ func prepareImageGeneration(ctx context.Context, command *cli.Command, body gjso
 	if err := imageoutput.CheckName(ctx, directory, stem); err != nil {
 		return nil, false, imageSavingFailure("Could not use this image filename. Try a shorter --name or another --output-dir.", err)
 	}
-	plan := &imageOutputPlan{directory: directory, name: name}
-	set := func(field string, value any) { plan.options = append(plan.options, option.WithJSONSet(field, value)) }
+	plan := &imageOutputPlan{directory: directory, name: name, defaults: make(map[string]any)}
+	set := func(field string, value any) {
+		plan.defaults[field] = value
+		plan.options = append(plan.options, option.WithJSONSet(field, value))
+	}
 	model := body.Get("model")
+	if command.Name == "create-variation" {
+		if !model.Exists() {
+			set("model", "dall-e-2")
+		}
+		if !body.Get("response_format").Exists() {
+			set("response_format", "b64_json")
+		}
+		if !command.IsSet("name") {
+			plan.name = "image-variation"
+		}
+		return plan, false, nil
+	}
 	if !model.Exists() && !body.Get("response_format").Exists() {
 		set("model", defaultSavedImageModel)
 		for _, preset := range []struct {
@@ -147,6 +163,9 @@ func prepareImageGeneration(ctx context.Context, command *cli.Command, body gjso
 			{"n", 1}, {"size", "auto"}, {"quality", "auto"}, {"output_format", "png"},
 			{"background", "auto"}, {"moderation", "auto"}, {"partial_images", 0}, {"stream", false},
 		} {
+			if preset.field == "moderation" && command.Name == "edit" {
+				continue
+			}
 			if !body.Get(preset.field).Exists() {
 				set(preset.field, preset.value)
 			}

@@ -37,14 +37,14 @@ func saveFinalImageStream[T any](ctx context.Context, source jsonview.Iterator[T
 		}
 		event := gjson.Parse(raw)
 		switch event.Get("type").String() {
-		case "image_generation.completed":
-			response, err := transformers.ImageGenerationResult(ctx, event)
+		case "image_generation.completed", "image_edit.completed":
+			response, err := transformers.CompletedImageResult(ctx, event)
 			if err != nil {
 				return imageSavingFailure("The completed image event could not be saved. Check API usage before trying again.", err)
 			}
 			return plan.save(ctx, []byte(response.Raw), out)
-		case "error", "image_generation.failed":
-			return imageSavingFailure("Image generation failed before a final image was received. Check API usage before trying again.", nil)
+		case "error", "image_generation.failed", "image_edit.failed":
+			return imageSavingFailure("Image processing failed before a final image was received. Check API usage before trying again.", nil)
 		}
 	}
 	if err := ctx.Err(); err != nil {

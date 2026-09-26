@@ -15,24 +15,42 @@ import (
 )
 
 const imageGenerationOperation = "(resource) images > (method) generate"
-const imageGenerationRequestMetadata = "openai-image-generation-request"
+const imageSavingRequestMetadata = "openai-image-saving-request"
 
-// Decorate only generation after the generated tree is assembled. Editing,
-// variations, model discovery and rendering have separate owners.
-func configureImageGeneration(root *cli.Command) {
+// Decorate the generated image commands with shared saving behavior.
+// Model discovery and terminal rendering have separate owners.
+func configureImageSaving(root *cli.Command) {
 	images := root.Command("images")
 	if images == nil {
 		return
 	}
-	generate := images.Command("generate")
-	if generate == nil {
-		return
+	for _, name := range []string{"generate", "edit", "create-variation"} {
+		command := images.Command(name)
+		if command == nil {
+			continue
+		}
+		registerImageSavingFlags(command)
+		if name == "generate" {
+			command.Description = imageGenerationSavingHelp
+			command.CustomHelpTemplate = imageGenerationQuickHelp
+		} else {
+			command.Description = imageUploadSavingHelp
+			command.CustomHelpTemplate = imageUploadQuickHelp
+		}
+		command.Action = imageSavingWorkflow(command.Action)
 	}
-	generate.Flags = append(generate.Flags,
+}
+
+func registerImageSavingFlags(command *cli.Command) {
+	command.Flags = append(command.Flags,
 		&cli.StringFlag{Name: "output-dir", Usage: "Save images in an existing `DIRECTORY`", DefaultText: "~/Downloads/gpt-images/"},
 		&cli.StringFlag{Name: "name", Usage: "Save with this filename `STEM` (an image extension is optional); existing files are kept"},
 	)
-	for _, flag := range generate.Flags {
+	model := defaultSavedImageModel
+	if command.Name == "create-variation" {
+		model = "dall-e-2"
+	}
+	for _, flag := range command.Flags {
 		switch flag := flag.(type) {
 		case *requestflag.Flag[*int64]:
 			if flag.Name == "n" {
@@ -40,23 +58,21 @@ func configureImageGeneration(root *cli.Command) {
 			}
 		case *requestflag.Flag[*string]:
 			if flag.Name == "model" {
-				flag.Usage = "CLI saving default: " + defaultSavedImageModel + ". Explicit models retain API defaults. API behavior: " + flag.Usage
+				flag.Usage = "CLI saving default: " + model + ". Explicit models retain API defaults. API behavior: " + flag.Usage
 				flag.HideDefault = true
 			}
 			if flag.Name == "response-format" {
-				flag.Usage = "CLI saving requests b64_json for an explicit DALL-E model when omitted; url disables saving. API behavior: " + flag.Usage
+				flag.Usage = "CLI saving requests b64_json for DALL-E when omitted; url disables saving. API behavior: " + flag.Usage
 				flag.HideDefault = true
 			}
 		}
 	}
-	generate.Description = imageGenerationSavingHelp
-	generate.CustomHelpTemplate = imageGenerationQuickHelp
-	generate.Action = imageGenerationWorkflow(generate.Action)
 }
 
-type preparedImageGenerationRequest struct {
+type preparedImageSavingRequest struct {
 	options  []option.RequestOption
 	consumed bool
+	bodyType BodyContentType
 }
 
 type imagePresentationKey struct{}
@@ -67,21 +83,47 @@ type imagePresentation struct {
 
 // Prepare once so stdin and @file values are not consumed twice. The generated
 // handler still owns SDK dispatch and response/stream lifetime.
-func imageGenerationWorkflow(next cli.ActionFunc) cli.ActionFunc {
+func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
 	return func(ctx context.Context, command *cli.Command) error {
 		if command.Metadata == nil {
 			command.Metadata = make(map[string]any)
 		}
-		if _, exists := command.Metadata[imageGenerationRequestMetadata]; exists {
+		if _, exists := command.Metadata[imageSavingRequestMetadata]; exists {
 			return errors.New("image request is already being prepared")
 		}
-		var body gjson.Result
-		options, err := FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, ApplicationJSON, false,
-			func(raw []byte) { body = gjson.ParseBytes(raw) })
-		if err != nil {
-			return err
+		var options []option.RequestOption
+		var plan *imageOutputPlan
+		var streaming bool
+		var err error
+		bodyType := ApplicationJSON
+		if command.Name != "generate" {
+			if command.Args().Len() != 0 {
+				return imageSavingFailure("Unexpected extra arguments. Put source filenames after --image; use --help for usage.", nil)
+			}
+			bodyType = MultipartFormEncoded
+			state := &imageMultipartPreparation{context: ctx}
+			// Prepared uploads still need an owner if the generated action fails
+			// before dispatch. Close is idempotent after the SDK has used the body.
+			defer func() {
+				if state.body != nil {
+					_ = state.body.Close()
+				}
+			}()
+			command.Metadata[imageMultipartMetadata] = state
+			defer delete(command.Metadata, imageMultipartMetadata)
+			options, err = FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, bodyType, false)
+			plan, streaming = state.plan, state.streaming
+		} else {
+			var body gjson.Result
+			options, err = FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, bodyType, false,
+				func(raw []byte) { body = gjson.ParseBytes(raw) })
+			if err == nil {
+				plan, streaming, err = prepareImageSaving(ctx, command, body)
+			}
+			if err == nil && plan != nil {
+				options = append(options, plan.options...)
+			}
 		}
-		plan, streaming, err := prepareImageGeneration(ctx, command, body)
 		if err != nil {
 			return err
 		}
@@ -90,22 +132,19 @@ func imageGenerationWorkflow(next cli.ActionFunc) cli.ActionFunc {
 			return err
 		}
 		defer restore()
-		if plan != nil {
-			options = append(options, plan.options...)
-		}
-		command.Metadata[imageGenerationRequestMetadata] = &preparedImageGenerationRequest{options: options}
-		defer delete(command.Metadata, imageGenerationRequestMetadata)
+		command.Metadata[imageSavingRequestMetadata] = &preparedImageSavingRequest{options: options, bodyType: bodyType}
+		defer delete(command.Metadata, imageSavingRequestMetadata)
 		ctx = context.WithValue(ctx, imagePresentationKey{}, imagePresentation{plan, command.Root().Writer})
 		return next(ctx, command)
 	}
 }
 
-func consumeImageGenerationRequest(command *cli.Command, nested apiquery.NestedQueryFormat, array apiquery.ArrayQueryFormat, body BodyContentType, ignoreStdin bool) ([]option.RequestOption, bool, error) {
-	prepared, ok := command.Metadata[imageGenerationRequestMetadata].(*preparedImageGenerationRequest)
+func consumeImageSavingRequest(command *cli.Command, nested apiquery.NestedQueryFormat, array apiquery.ArrayQueryFormat, body BodyContentType, ignoreStdin bool) ([]option.RequestOption, bool, error) {
+	prepared, ok := command.Metadata[imageSavingRequestMetadata].(*preparedImageSavingRequest)
 	if !ok {
 		return nil, false, nil
 	}
-	if prepared.consumed || nested != apiquery.NestedQueryFormatBrackets || array != apiquery.ArrayQueryFormatBrackets || body != ApplicationJSON || ignoreStdin {
+	if prepared.consumed || nested != apiquery.NestedQueryFormatBrackets || array != apiquery.ArrayQueryFormatBrackets || body != prepared.bodyType || ignoreStdin {
 		return nil, true, errors.New("image request preparation does not match the generated action")
 	}
 	prepared.consumed = true
@@ -138,7 +177,12 @@ func selectImageGenerationStream(command *cli.Command, streaming bool) (func(), 
 }
 
 func savedImagePresentation(opts ShowJSONOpts, kind OutputKind) (imagePresentation, bool) {
-	if opts.Operation != imageGenerationOperation || opts.OutputKind != kind {
+	if opts.OutputKind != kind || opts.Context == nil {
+		return imagePresentation{}, false
+	}
+	switch opts.Operation {
+	case imageGenerationOperation, "(resource) images > (method) edit", "(resource) images > (method) create_variation":
+	default:
 		return imagePresentation{}, false
 	}
 	presentation, ok := opts.Context.Value(imagePresentationKey{}).(imagePresentation)

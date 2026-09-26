@@ -44,6 +44,31 @@ final image, and `--max-items` cannot truncate a saving stream. For API events,
 use an explicit data format and `--stream true`. An incomplete stream fails
 without claiming that an image was saved. No preview or viewer opens.
 
-Editing, variations, model-discovery default markers, local previews and
-terminal rendering are separate features. See `openai help --all images generate`
-for the complete request settings.
+## Editing and variations
+
+```sh
+openai images edit --image photo.png --prompt "Make the sky purple"
+openai images edit --image first.png --image second.png --mask mask.png --prompt "Add a purple sky"
+openai images edit --image photo.png --prompt "Make the sky purple" --name result --count 2
+openai images edit --image photo.png --prompt "Make the sky purple" --stream true
+openai images create-variation --image photo.png
+openai --format json images edit --image photo.png --prompt "Make the sky purple"
+```
+
+These existing commands now use the same saving folder, filename overrides,
+collision protection and explicit-format opt-outs as generation. Source images
+and masks are uploaded without being rewritten; saved results are new files.
+Editing names come from the prompt. Variations use `image-variation`.
+
+Saving edits uses the generation preset above without `moderation`, which the
+edit endpoint does not accept. Variations default to `dall-e-2` and `b64_json`;
+the endpoint requires a square PNG under 4 MB. Explicit models and nulls keep
+the existing request semantics. In multipart requests, explicit null fields
+retain their existing empty form-part encoding rather than acquiring defaults.
+
+Streamed edits save only the final image and ignore intermediate previews.
+Variations do not support streaming. Explicit `--format json` preserves the
+original responses or edit events and makes no saved files. Model-discovery
+default markers, local previews and terminal rendering remain separate work.
+Use `openai help --all images edit` or `openai help --all images create-variation`
+for every request setting.

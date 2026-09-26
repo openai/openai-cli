@@ -348,7 +348,7 @@ func FlagOptions(
 	ignoreStdin bool,
 	observeJSON ...func([]byte),
 ) (options []option.RequestOption, err error) {
-	if prepared, ok, err := consumeImageGenerationRequest(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin); ok {
+	if prepared, ok, err := consumeImageSavingRequest(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin); ok {
 		return prepared, err
 	}
 	// Validate literal headers before reading any request input. Flag validators
@@ -566,8 +566,17 @@ func FlagOptions(
 		if !ok {
 			return nil, fmt.Errorf("Cannot send a non-map value to a form-encoded endpoint: %v\n", requestContents.Body)
 		}
+		if err := prepareImageMultipartBody(cmd, bodyMap); err != nil {
+			return nil, err
+		}
 		encodingFormat := apiform.FormatBrackets
-		multipartOptions, err := multipartRequestOptions(bodyMap, encodingFormat)
+		// Saving prepares uploads before the generated action takes over. Keep
+		// an idempotent closer for failures between preparation and dispatch.
+		var observers []func(io.Closer)
+		if state, ok := cmd.Metadata[imageMultipartMetadata].(*imageMultipartPreparation); ok {
+			observers = append(observers, func(body io.Closer) { state.body = body })
+		}
+		multipartOptions, err := multipartRequestOptions(bodyMap, encodingFormat, observers...)
 		if err != nil {
 			return nil, err
 		}
