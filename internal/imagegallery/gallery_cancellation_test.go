@@ -2,6 +2,7 @@ package imagegallery
 
 import (
 	"context"
+	"image"
 	"image/color"
 	"os"
 	"path/filepath"
@@ -25,15 +26,28 @@ func (ctx *cancelAfterChecks) Err() error {
 	return ctx.Context.Err()
 }
 
-func TestGalleryNormalizationChecksCancellationDuringEncoding(t *testing.T) {
+type cancelNormalizationImage struct {
+	image.Image
+	cancel  context.CancelFunc
+	samples int
+}
+
+func (img *cancelNormalizationImage) At(x, y int) color.Color {
+	img.samples++
+	if img.samples == 1 {
+		img.cancel()
+	}
+	return img.Image.At(x, y)
+}
+
+func TestGalleryNormalizationStopsDuringPixelProcessing(t *testing.T) {
 	base, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	// Normalization checks before and after scaling. Cancel at the next check,
-	// which must occur while the PNG encoder writes its output.
-	ctx := &cancelAfterChecks{base, cancel, 3}
-	_, data, err := normalize(ctx, fixture(color.NRGBA{R: 200, A: 255}))
+	img := &cancelNormalizationImage{Image: image.NewNRGBA(image.Rect(0, 0, 512, 512)), cancel: cancel}
+	_, data, err := normalize(base, img)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, data)
+	require.LessOrEqual(t, img.samples, 2048, "cancellation must stop the pixel scan early")
 }
 
 func TestGalleryEncodingCancellationLeavesCacheUnchanged(t *testing.T) {
@@ -41,10 +55,10 @@ func TestGalleryEncodingCancellationLeavesCacheUnchanged(t *testing.T) {
 	state := g.State()
 	base, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	// Prepare adds its initial gallery check to normalize's two checkpoints.
-	ctx := &cancelAfterChecks{base, cancel, 4}
-	_, err := g.Prepare(ctx, fixture(color.NRGBA{R: 200, A: 255}), 4)
+	img := &cancelNormalizationImage{Image: image.NewNRGBA(image.Rect(0, 0, 512, 512)), cancel: cancel}
+	_, err := g.Prepare(base, img, 4)
 	require.ErrorIs(t, err, context.Canceled)
+	require.LessOrEqual(t, img.samples, 2048)
 	require.Equal(t, state, g.State())
 	for _, name := range []string{"images", "fonts"} {
 		files, err := os.ReadDir(filepath.Join(g.directory, name))

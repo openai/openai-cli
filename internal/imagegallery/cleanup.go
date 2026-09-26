@@ -174,7 +174,7 @@ func (g *Gallery) cleanupClosed(ctx context.Context, current TerminalSession, in
 	// Keep every file when unregistration fails so the next invocation can
 	// retry using the original URLs. Remove the large artifacts before the
 	// ownership marker; the lock itself must never be unlinked.
-	for _, name := range []string{"fonts", "images", "state.json", ".tty"} {
+	for _, name := range []string{"fonts", "images", "state.json", ".pending", ".pending.json", ".tty"} {
 		if err := os.RemoveAll(filepath.Join(g.directory, name)); err != nil {
 			return err
 		}

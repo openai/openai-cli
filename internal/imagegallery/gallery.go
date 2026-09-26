@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/imagefont"
-	"golang.org/x/image/draw"
 )
 
 var (
@@ -48,10 +47,11 @@ type diskState struct {
 	Revision int    `json:"revision"`
 	// Keep the version-1 identity fields for existing galleries and typography
 	// cache keys. They no longer imply that a cumulative font file was generated.
-	Font       string  `json:"font"`
-	PostScript string  `json:"postscript"`
-	Family     string  `json:"family"`
-	Images     []entry `json:"images"`
+	Font             string  `json:"font"`
+	PostScript       string  `json:"postscript"`
+	Family           string  `json:"family"`
+	Images           []entry `json:"images"`
+	CompletedAttempt string  `json:"completed_attempt,omitempty"`
 }
 
 // Revision allocates immutable image characters without generating a font.
@@ -62,6 +62,7 @@ type Revision struct {
 	Existing      bool
 	state         diskState
 	owner         *Gallery
+	attemptID     string
 }
 
 // Gallery holds an exclusive filesystem lock until Close. It is not safe for
@@ -71,6 +72,7 @@ type Gallery struct {
 	lock      *os.File
 	state     diskState
 	pending   *Revision
+	attempt   *pendingAttempt
 	closed    bool
 }
 
@@ -120,6 +122,9 @@ func Open(ctx context.Context, directory string) (*Gallery, error) {
 		return nil, err
 	}
 
+	if err = g.recoverPending(); err != nil {
+		return nil, err
+	}
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -132,7 +137,11 @@ func (g *Gallery) Close() error {
 		return nil
 	}
 	g.closed = true
-	return errors.Join(unlockFile(g.lock), g.lock.Close())
+	var pendingErr error
+	if g.attempt != nil && (!g.attempt.Registering || g.attempt.ID == g.state.CompletedAttempt) {
+		pendingErr = g.discardPending(g.attempt.ID == g.state.CompletedAttempt)
+	}
+	return errors.Join(pendingErr, unlockFile(g.lock), g.lock.Close())
 }
 
 func (g *Gallery) State() State {
@@ -185,7 +194,13 @@ func (g *Gallery) Prepare(ctx context.Context, img image.Image, columns int) (*R
 	hash := hex.EncodeToString(digest[:])
 	for i := range g.state.Images {
 		if g.state.Images[i].Hash == hash {
-			return g.existing(&g.state.Images[i]), nil
+			revision := g.existing(&g.state.Images[i])
+			if g.attempt != nil {
+				if err := g.reserveAttempt(ctx, revision, ""); err != nil {
+					return nil, err
+				}
+			}
+			return revision, nil
 		}
 	}
 	rows := min(32, max(1, int(math.Ceil(float64(columns)*float64(normalized.Bounds().Dy())/(2*float64(normalized.Bounds().Dx()))))))
@@ -194,8 +209,18 @@ func (g *Gallery) Prepare(ctx context.Context, img image.Image, columns int) (*R
 		return nil, ErrFull
 	}
 	added := entry{Hash: hash, Columns: columns, Rows: rows, Start: imagefont.FirstCodepoint + rune(used)}
+	next := g.state
+	next.Revision++
+	next.Images = append(append([]entry(nil), g.state.Images...), added)
+	revision, err := g.prepareRevision(ctx, next, &added)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.reserveAttempt(ctx, revision, ""); err != nil {
+		return nil, err
+	}
 	cache := filepath.Join(g.directory, "images", hash+".png")
-	if err = writeNew(ctx, cache, data); errors.Is(err, os.ErrExist) {
+	if err = g.writeArtifact(ctx, cache, data); errors.Is(err, os.ErrExist) {
 		old, readErr := readPrivate(cache, 16<<20)
 		if readErr != nil {
 			return nil, readErr
@@ -206,10 +231,7 @@ func (g *Gallery) Prepare(ctx context.Context, img image.Image, columns int) (*R
 	} else if err != nil {
 		return nil, err
 	}
-	next := g.state
-	next.Revision++
-	next.Images = append(append([]entry(nil), g.state.Images...), added)
-	return g.prepareRevision(ctx, next, &added)
+	return revision, nil
 }
 
 func (g *Gallery) prepareRevision(ctx context.Context, next diskState, selected *entry) (*Revision, error) {
@@ -261,41 +283,28 @@ func (g *Gallery) Commit(ctx context.Context, revision *Revision) error {
 	if revision == nil || revision.owner != g || g.pending != revision {
 		return errors.New("image gallery revision is stale or belongs to another gallery")
 	}
-	if revision.Existing {
+	if revision.Existing && revision.attemptID == "" {
 		g.pending = nil
 		return nil
 	}
-	data, err := json.MarshalIndent(revision.state, "", "  ")
+	next := revision.state
+	if revision.attemptID != "" {
+		next.CompletedAttempt = revision.attemptID
+	}
+	data, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
+	if err := replaceMetadata(ctx, g.directory, "state.json", data); err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(g.directory, ".state-*")
-	if err != nil {
-		return err
-	}
-	name := file.Name()
-	defer os.Remove(name)
-	if _, err = file.Write(append(data, '\n')); err == nil {
-		err = file.Sync()
-	}
-	closeErr := file.Close()
-	if err != nil {
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if err = ctx.Err(); err != nil {
-		return err
-	}
-	if err = os.Rename(name, filepath.Join(g.directory, "state.json")); err != nil {
-		return err
-	}
-	g.state = revision.state
+	g.state = next
 	g.pending = nil
+	if revision.attemptID != "" {
+		// The durable receipt lets reopening finish cleanup after a crash or
+		// transient removal failure, without discarding the committed artifacts.
+		_ = g.discardPending(true)
+	}
 	return nil
 }
 
@@ -307,7 +316,7 @@ func (g *Gallery) check(ctx context.Context) error {
 }
 func (g *Gallery) validate() error {
 	s := g.state
-	if s.Version != 1 || !isHex(s.ID, 32) || s.Revision < 0 || !isFontName(s.Font) || s.PostScript == "" || s.Family == "" || len(s.Images) > imagefont.MaxGlyphs {
+	if s.Version != 1 || !isHex(s.ID, 32) || s.Revision < 0 || !isFontName(s.Font) || s.PostScript == "" || s.Family == "" || len(s.Images) > imagefont.MaxGlyphs || s.CompletedAttempt != "" && !isHex(s.CompletedAttempt, 32) {
 		return errors.New("invalid image gallery metadata")
 	}
 	// Stored identities are generated from these exact safe components.
@@ -370,12 +379,11 @@ func normalize(ctx context.Context, decoded image.Image) (image.Image, []byte, e
 	ratio := min(1.0, 1024.0/float64(max(bounds.Dx(), bounds.Dy())))
 	width, height := max(1, int(math.Round(float64(bounds.Dx())*ratio))), max(1, int(math.Round(float64(bounds.Dy())*ratio)))
 	normalized := image.NewNRGBA(image.Rect(0, 0, width, height))
-	draw.CatmullRom.Scale(normalized, normalized.Bounds(), decoded, bounds, draw.Src, nil)
-	if err := ctx.Err(); err != nil {
+	if err := imagefont.ScaleBitmap(ctx, normalized, normalized.Bounds(), decoded, bounds); err != nil {
 		return nil, nil, err
 	}
 	var buffer bytes.Buffer
-	if err := png.Encode(contextWriter{ctx, &buffer}, normalized); err != nil {
+	if err := imagefont.EncodePNG(ctx, &png.Encoder{}, &buffer, normalized); err != nil {
 		return nil, nil, err
 	}
 	if err := ctx.Err(); err != nil {

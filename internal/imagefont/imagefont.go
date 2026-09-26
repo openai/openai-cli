@@ -12,8 +12,6 @@ import (
 	"math"
 	"sort"
 	"strings"
-
-	"golang.org/x/image/draw"
 )
 
 const (
@@ -200,15 +198,20 @@ func prepareGeometry(frames []Frame, tileWidth, tileHeight int) ([]preparedFrame
 	return prepared, nil
 }
 
-func fit(src image.Image, width, height int) *image.NRGBA {
+func fit(ctx context.Context, src image.Image, width, height int) (*image.NRGBA, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	dst := image.NewNRGBA(image.Rect(0, 0, width, height))
 	bounds := src.Bounds()
 	scale := min(float64(width)/float64(bounds.Dx()), float64(height)/float64(bounds.Dy()))
 	w := min(width, max(1, int(math.Round(float64(bounds.Dx())*scale))))
 	h := min(height, max(1, int(math.Round(float64(bounds.Dy())*scale))))
 	x, y := (width-w)/2, (height-h)/2
-	draw.CatmullRom.Scale(dst, image.Rect(x, y, x+w, y+h), src, bounds, draw.Src, nil)
-	return dst
+	if err := ScaleBitmap(ctx, dst, image.Rect(x, y, x+w, y+h), src, bounds); err != nil {
+		return nil, err
+	}
+	return dst, nil
 }
 
 func sbix(ctx context.Context, frames []preparedFrame, glyphCount int) ([]byte, error) {
@@ -247,7 +250,10 @@ func encodeStrike(ctx context.Context, frames []preparedFrame, glyphCount, ppem 
 		}
 		tileWidth := frame.WidthPixels / frame.Columns * (ppem / 32)
 		tileHeight := frame.HeightPixels / frame.Rows * (ppem / 32)
-		img := fit(frame.image, frame.Columns*tileWidth, frame.Rows*tileHeight)
+		img, err := fit(ctx, frame.image, frame.Columns*tileWidth, frame.Rows*tileHeight)
+		if err != nil {
+			return nil, err
+		}
 		for tile := 0; tile < frame.Columns*frame.Rows; tile++ {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -257,7 +263,7 @@ func encodeStrike(ctx context.Context, frames []preparedFrame, glyphCount, ppem 
 			glyphs.i16(0)
 			glyphs.i16(int16(-ppem / 4))
 			glyphs.WriteString("png ")
-			if err := encoder.Encode(&glyphs, img.SubImage(image.Rect(x, y, x+tileWidth, y+tileHeight))); err != nil {
+			if err := EncodePNG(ctx, &encoder, &glyphs, img.SubImage(image.Rect(x, y, x+tileWidth, y+tileHeight))); err != nil {
 				return nil, fmt.Errorf("encode image font tile: %w", err)
 			}
 		}

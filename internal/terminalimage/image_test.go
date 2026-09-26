@@ -131,20 +131,22 @@ func (m *cancelOnSampleImage) At(x, y int) color.Color {
 	return m.Image.At(x, y)
 }
 
-func TestWriteKittyStopsAfterCanceledPNGPreparation(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
-	for y := 0; y < 64; y++ {
-		for x := 0; x < 64; x++ {
+func TestWriteNativeStopsDuringPNGPreparation(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 512, 512))
+	for y := 0; y < 512; y++ {
+		for x := 0; x < 512; x++ {
 			img.SetRGBA(x, y, color.RGBA{R: byte(x), G: byte(y), A: 255})
 		}
 	}
-	source := &cancelOnSampleImage{Image: img, cancel: cancel}
-	var out bytes.Buffer
-	require.ErrorIs(t, Write(ctx, &out, source, "kitty", 32), context.Canceled)
-	require.Empty(t, out.String())
-	// png checks opacity before its first write. Cancellation must prevent a
-	// second full scan to encode pixels after that bounded preparation step.
-	require.LessOrEqual(t, source.calls, 64*64)
+	for _, protocol := range []string{"kitty", "iterm"} {
+		t.Run(protocol, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			source := &cancelOnSampleImage{Image: img, cancel: cancel}
+			var out bytes.Buffer
+			require.ErrorIs(t, Write(ctx, &out, source, protocol, 32), context.Canceled)
+			require.Empty(t, out.String())
+			require.LessOrEqual(t, source.calls, 2048, "stop during the first pixel scan")
+		})
+	}
 }
