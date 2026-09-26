@@ -15,6 +15,8 @@ import (
 	"github.com/openai/openai-cli/internal/terminalimage"
 )
 
+var errImagePreviewUnavailable = errors.New("image cannot be displayed in this terminal")
+
 // displaySavedImage is shared by automatic previews and the local preview
 // command. It never opens a viewer, reads stdin, or changes the saved file.
 func displaySavedImage(ctx context.Context, path string, out, diagnostics io.Writer, mode string) error {
@@ -35,7 +37,11 @@ func displaySavedImage(ctx context.Context, path string, out, diagnostics io.Wri
 		}
 		return readable.WriteText(diagnostics, "Inline preview unavailable. The image is saved; open the saved file to view it. No need to generate again.")
 	}
-	return displayDecodedSavedImage(ctx, img, out, diagnostics, protocol)
+	err = displayDecodedSavedImage(ctx, img, out, diagnostics, protocol)
+	if errors.Is(err, errImagePreviewUnavailable) {
+		return nil
+	}
+	return err
 }
 
 // displayDecodedSavedImage shares geometry, rendering and font recovery with
@@ -50,13 +56,13 @@ func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnos
 	}
 	width, height, err := term.GetSize(file.Fd())
 	if err != nil || width < 2 || height < 2 {
-		return nil
+		return reportImagePreviewUnavailable(diagnostics, "Inline preview unavailable: widen the terminal and retry the saved image.")
 	}
 	columns := min(64, width-1)
 	// Fit tall previews as well as wide ones. Native protocols retain all pixels.
 	columns = min(columns, (height-2)*2*img.Bounds().Dx()/img.Bounds().Dy())
 	if columns < 1 {
-		return readable.WriteText(diagnostics, "Inline preview unavailable: the image is too tall for this terminal. Open the saved file to view it.")
+		return reportImagePreviewUnavailable(diagnostics, "Inline preview unavailable: the image is too tall for this terminal. Open the saved file to view it.")
 	}
 	if protocol == "font" {
 		columns = min(columns, 32)
@@ -80,7 +86,7 @@ func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnos
 			}
 			err = terminalimage.Write(ctx, out, img, "blocks", columns)
 		} else {
-			return nil
+			return errImagePreviewUnavailable
 		}
 	}
 	if err != nil {
@@ -128,4 +134,11 @@ func savedImageBlockColor(getenv func(string) string) bool {
 	}
 	color := strings.ToLower(getenv("COLORTERM"))
 	return strings.Contains(getenv("TERM"), "256color") || color == "truecolor" || color == "24bit" || getenv("TERM_PROGRAM") == "Apple_Terminal"
+}
+
+func reportImagePreviewUnavailable(out io.Writer, message string) error {
+	if err := readable.WriteText(out, message); err != nil {
+		return err
+	}
+	return errImagePreviewUnavailable
 }

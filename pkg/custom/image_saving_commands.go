@@ -147,7 +147,7 @@ func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
 				mode = "off"
 			}
 			plan.inline = mode
-			plan.diagnostics = command.Root().ErrWriter
+			plan.diagnostics = os.Stderr
 		}
 		restore, err := selectImageGenerationStream(command, streaming)
 		if err != nil {

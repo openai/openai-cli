@@ -42,6 +42,8 @@ return API data without saving or CLI defaults. They cannot be combined with
 For edits, --stream true saves only the final image. Positive --partial-images
 automatically enables streaming; intermediate images are ignored, not saved.
 Streaming supports one final image. --format json --stream true returns API
-events. Variations do not support streaming. Interactive terminals show an inline preview when supported. --inline off disables
+events. Variations do not support streaming.
+
+Interactive terminals show an inline preview when supported. --inline off disables
 it. --inline on allows a local Apple Terminal image font. Pipes and CI never
 show previews.`

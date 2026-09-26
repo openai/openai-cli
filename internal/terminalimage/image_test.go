@@ -116,3 +116,35 @@ func TestWriteColorBlocks(t *testing.T) {
 	require.NoError(t, Write(t.Context(), &output, img, "blocks", 2))
 	require.Equal(t, strings.Repeat("\x1b[38;5;196;48;5;21m▀", 2)+"\x1b[0m", output.String())
 }
+
+type cancelOnSampleImage struct {
+	image.Image
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (m *cancelOnSampleImage) At(x, y int) color.Color {
+	m.calls++
+	if m.calls == 1 {
+		m.cancel()
+	}
+	return m.Image.At(x, y)
+}
+
+func TestWriteKittyStopsAfterCanceledPNGPreparation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			img.SetRGBA(x, y, color.RGBA{R: byte(x), G: byte(y), A: 255})
+		}
+	}
+	source := &cancelOnSampleImage{Image: img, cancel: cancel}
+	var out bytes.Buffer
+	require.ErrorIs(t, Write(ctx, &out, source, "kitty", 32), context.Canceled)
+	require.Empty(t, out.String())
+	// png checks opacity before its first write. Cancellation must prevent a
+	// second full scan to encode pixels after that bounded preparation step.
+	require.LessOrEqual(t, source.calls, 64*64)
+}
