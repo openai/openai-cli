@@ -53,6 +53,10 @@ func (e *FontError) Error() string { return e.Err.Error() }
 func (e *FontError) Unwrap() error { return e.Err }
 
 func writeImageFont(ctx context.Context, out io.Writer, img image.Image, columns int) error {
+	sessionID := os.Getenv("TERM_SESSION_ID")
+	if strings.TrimSpace(sessionID) == "" {
+		return &FontError{errors.New("sharp previews require TERM_SESSION_ID; open a new Apple Terminal tab and retry the saved image")}
+	}
 	file, ok := out.(*os.File)
 	if !ok || !FontSupported() {
 		return &FontError{errors.New("sharp image fonts require a local Apple Terminal tab")}
@@ -74,15 +78,19 @@ func writeImageFont(ctx context.Context, out io.Writer, img image.Image, columns
 	}
 	// Each tab retains its own immutable glyph assignments. Reusing the same
 	// font slot would replace images already visible in that tab's scrollback.
-	session := sha256.Sum256([]byte(os.Getenv("TERM_SESSION_ID") + "\x00" + tty))
+	session := sha256.Sum256([]byte(sessionID + "\x00" + tty))
 	directory := filepath.Join(cache, "openai", "image-terminal", fmt.Sprintf("%x", session[:16]))
-	// Cleanup is conservative and best-effort: an unavailable tab inventory or
-	// an old cache failure must not prevent the current tab's preview.
-	_ = cleanupClosedFontGalleries(ctx, directory, tty)
 	services := fontServices{imagefontmac.Snapshot, imagefontmac.Source, imagefontmac.Register, imagefontmac.Preserve, imagefontmac.Restore, imagefontmac.InspectProfile}
-	return displayImageFont(ctx, out, img, columns, directory, tty, func() fontViewport {
+	if err := displayImageFont(ctx, out, img, columns, directory, tty, func() fontViewport {
 		return readFontViewport(file.Fd())
-	}, services)
+	}, services); err != nil {
+		return err
+	}
+	// Clean up only after the selected font has been validated and rendered.
+	// A changed session identity must never discard the previous gallery.
+	// Cleanup remains best-effort and cannot fail a completed preview.
+	_ = cleanupClosedFontGalleries(ctx, directory, tty)
+	return nil
 }
 
 func displayImageFont(ctx context.Context, out io.Writer, img image.Image, columns int, directory, tty string, viewport func() fontViewport, services fontServices) (err error) {
@@ -125,6 +133,10 @@ func displayImageFont(ctx context.Context, out io.Writer, img image.Image, colum
 		if err := registerFont(ctx, services, path, true); err != nil {
 			return err
 		}
+	} else if strings.HasPrefix(before.FontName, "OpenAIImages-") || strings.HasPrefix(before.FontName, "OpenAI Local ") || strings.HasPrefix(before.FontName, "OpenAI Image Gallery ") {
+		// Another gallery (or an unresolved generated family alias) may already
+		// own these codepoints in scrollback. Never replace it with a fresh font.
+		return errors.New("this tab's image font cannot be matched to the current session; open a new Terminal tab to keep earlier previews intact")
 	}
 	source, err := services.source(ctx, before.FontName, int(before.FontSize))
 	if err != nil {
