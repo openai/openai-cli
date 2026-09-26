@@ -179,6 +179,9 @@ func displayImageFont(ctx context.Context, out io.Writer, img image.Image, colum
 	if err != nil {
 		return err
 	}
+	if err := gallery.MarkRegistering(ctx, revision); err != nil {
+		return err
+	}
 	for _, font := range append(display.Related, display.DisplayFont) {
 		if err := registerFont(ctx, services, font.FontPath, font.Existing); err != nil {
 			return err

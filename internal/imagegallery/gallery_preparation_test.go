@@ -73,6 +73,7 @@ func TestGalleryLegacyRevisionKeepsTypographyAndScrollback(t *testing.T) {
 			firstData, err := os.ReadFile(firstFont.FontPath)
 			require.NoError(t, err)
 			require.NoError(t, g.Commit(t.Context(), first))
+			legacyState.CompletedAttempt = g.state.CompletedAttempt
 			directory := g.directory
 			statePath := filepath.Join(directory, "state.json")
 			stateData, err := os.ReadFile(statePath)

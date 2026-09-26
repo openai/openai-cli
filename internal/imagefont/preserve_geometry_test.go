@@ -9,6 +9,8 @@ import (
 	"image/png"
 	"strconv"
 	"testing"
+
+	"golang.org/x/image/draw"
 )
 
 func TestPreservingStrikesAtOriginalPointSizes(t *testing.T) {
@@ -44,7 +46,8 @@ func TestPreservingStrikesAtOriginalPointSizes(t *testing.T) {
 						t.Fatalf("original text glyph %d gained a bitmap", glyph)
 					}
 				}
-				expected := fit(src, columns*cellWidth*scale, rows*cellHeight*scale)
+				expected := image.NewNRGBA(image.Rect(0, 0, columns*cellWidth*scale, rows*cellHeight*scale))
+				draw.CatmullRom.Scale(expected, expected.Bounds(), src, src.Bounds(), draw.Src, nil)
 				for tile := 0; tile < columns*rows; tile++ {
 					glyph := originalGlyphs + tile
 					payload := strike[readOffset(glyph):readOffset(glyph+1)]

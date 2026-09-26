@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/iterm2"
 	"github.com/charmbracelet/x/ansi/kitty"
+	"github.com/openai/openai-cli/internal/imagefont"
 	"golang.org/x/image/draw"
 )
 
@@ -36,7 +37,7 @@ func Write(ctx context.Context, w io.Writer, img image.Image, protocol string, c
 		return writeKittyImage(ctx, destination, img, columns)
 	case "iterm":
 		var encoded bytes.Buffer
-		if err := png.Encode(contextWriter{ctx, &encoded}, img); err != nil {
+		if err := imagefont.EncodePNG(ctx, &png.Encoder{}, &encoded, img); err != nil {
 			return err
 		}
 		width := iterm2.Auto
@@ -99,7 +100,7 @@ func (w contextWriter) Write(data []byte) (int, error) {
 // without checking cancellation. Reuse Charm's options/framing after encoding.
 func writeKittyImage(ctx context.Context, out io.Writer, img image.Image, columns int) error {
 	var encoded bytes.Buffer
-	if err := png.Encode(contextWriter{ctx, &encoded}, img); err != nil {
+	if err := imagefont.EncodePNG(ctx, &png.Encoder{}, &encoded, img); err != nil {
 		return err
 	}
 	options := (&kitty.Options{Action: kitty.TransmitAndPut, Transmission: kitty.Direct, Format: kitty.PNG, Quite: 2, Columns: columns}).Options()

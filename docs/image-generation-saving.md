@@ -99,6 +99,11 @@ Each tab has an immutable image gallery; a full gallery keeps earlier previews
 and uses a fallback. Open another tab for more sharp previews. Setup and repair
 commands are separate work.
 
+Failed preparation removes only the new cache files it created. If font
+registration may have succeeded, the CLI retains that attempt and falls back
+for different images or font settings. Retry the same saved image and settings,
+or open a new tab. Earlier previews and saved originals are retained.
+
 Pipes, CI and `TERM=dumb` never render previews, even with `--inline on`.
 Multiplexers use a color-block fallback when supported; they do not receive
 native graphics or Apple font activation. Apple image fonts are unavailable over

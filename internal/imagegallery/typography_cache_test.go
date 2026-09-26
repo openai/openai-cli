@@ -96,5 +96,11 @@ func testTypographyCacheUpgrade(t *testing.T, version int) {
 	require.Equal(t, state, g.State())
 	unchanged, err := os.ReadFile(filepath.Join(g.directory, "state.json"))
 	require.NoError(t, err)
-	require.Equal(t, stateData, unchanged)
+	var beforeState, afterState diskState
+	require.NoError(t, json.Unmarshal(stateData, &beforeState))
+	require.NoError(t, json.Unmarshal(unchanged, &afterState))
+	require.NotEmpty(t, afterState.CompletedAttempt)
+	// Rebuilding typography records completion without changing glyph assignments.
+	afterState.CompletedAttempt = beforeState.CompletedAttempt
+	require.Equal(t, beforeState, afterState)
 }

@@ -45,6 +45,11 @@ func (g *Gallery) FontForTypography(ctx context.Context, revision *Revision, sou
 	}
 	digest := sha256.Sum256(identity)
 	token := hex.EncodeToString(digest[:16])
+	if g.attempt != nil {
+		if err := g.reserveAttempt(ctx, revision, token); err != nil {
+			return TypographyFont{}, err
+		}
+	}
 	text := strings.Map(func(r rune) rune {
 		if r >= imagefont.FirstCodepoint && r <= imagefont.LastCodepoint {
 			return 0xf0000 + r - imagefont.FirstCodepoint
@@ -77,13 +82,16 @@ func (g *Gallery) FontForTypography(ctx context.Context, revision *Revision, sou
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return TypographyFont{}, err
 		}
+		if err := g.reserveAttempt(ctx, revision, token); err != nil {
+			return TypographyFont{}, err
+		}
 		encoded, err := imagefont.EncodePreserving(ctx, frames, imagefont.Options{
 			Family: "OpenAI Local " + revision.state.ID[:8] + " " + token[:8], PostScript: postScript,
 		}, face)
 		if err != nil {
 			return TypographyFont{}, fmt.Errorf("preserve Terminal font %q: %w", face.SourcePostScript, err)
 		}
-		if err := writeNew(ctx, path, encoded.Data); err != nil {
+		if err := g.writeArtifact(ctx, path, encoded.Data); err != nil {
 			return TypographyFont{}, err
 		}
 		fonts = append(fonts, DisplayFont{path, postScript, false})

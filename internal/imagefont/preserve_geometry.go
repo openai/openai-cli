@@ -129,7 +129,10 @@ func encodePreservingStrike(ctx context.Context, frames []preparedFrame, glyphCo
 		}
 		tileWidth := frame.WidthPixels / frame.Columns * (scale / 2)
 		tileHeight := frame.HeightPixels / frame.Rows * (scale / 2)
-		img := fit(frame.image, frame.Columns*tileWidth, frame.Rows*tileHeight)
+		img, err := fit(ctx, frame.image, frame.Columns*tileWidth, frame.Rows*tileHeight)
+		if err != nil {
+			return nil, err
+		}
 		for tile := 0; tile < count; tile++ {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -145,7 +148,7 @@ func encodePreservingStrike(ctx context.Context, frames []preparedFrame, glyphCo
 			glyphs.i16(0)
 			glyphs.i16(int16(-baseline * scale))
 			glyphs.WriteString("png ")
-			if err := encoder.Encode(&glyphs, img.SubImage(image.Rect(0, y, frame.Columns*tileWidth, y+tileHeight))); err != nil {
+			if err := EncodePNG(ctx, &encoder, &glyphs, img.SubImage(image.Rect(0, y, frame.Columns*tileWidth, y+tileHeight))); err != nil {
 				return nil, fmt.Errorf("encode preserved image row: %w", err)
 			}
 		}
