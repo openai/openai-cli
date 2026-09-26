@@ -125,6 +125,12 @@ func EncodePreserving(ctx context.Context, frames []Frame, options Options, sour
 	if count > 65535 {
 		return Font{}, fmt.Errorf("source font and image gallery exceed the TrueType glyph limit")
 	}
+	if zapf, exists := tables["Zapf"]; exists {
+		tables["Zapf"], err = extendPreservedZapf(zapf, oldCount, count)
+		if err != nil {
+			return Font{}, err
+		}
+	}
 	if len(tables["fvar"]) > 0 {
 		axisCount := int(binary.BigEndian.Uint16(tables["fvar"][8:]))
 		widthGlyph, hasWidth := mapping['W']
@@ -224,6 +230,17 @@ func preserveSource(source map[string][]byte) (map[string][]byte, int, map[uint3
 			return bad("this outline or existing bitmap format is not supported")
 		}
 	}
+	// vmtx also has one metric per glyph. Decline these layouts until image
+	// glyphs have vertical metrics, rather than copying a now-truncated table
+	// or discarding the source font's useful vertical spacing information.
+	for _, key := range []string{"vhea", "vmtx"} {
+		if _, exists := source[key]; exists {
+			return bad("vertical metrics are not supported")
+		}
+	}
+	if err := checkPreservedAATGlyphCoverage(source); err != nil {
+		return nil, 0, nil, err
+	}
 	cff := len(source["CFF "]) > 0
 	variable := len(source["fvar"]) > 0
 	if variable != (len(source["gvar"]) > 0) || variable && cff {
@@ -309,6 +326,12 @@ func preserveSource(source map[string][]byte) (map[string][]byte, int, map[uint3
 		if total > 64*1024*1024 {
 			return bad("source font exceeds 64 MiB")
 		}
+		// These optional caches contain one entry per original glyph. Let the
+		// scaler use the preserved outlines, hinting and hmtx instead of copying
+		// arrays that would be too short after appending image glyphs.
+		if tag == "LTSH" || tag == "hdmx" {
+			continue
+		}
 		tables[tag] = append([]byte(nil), data...)
 	}
 	return tables, count, mapping, nil
@@ -325,8 +348,11 @@ func readPreservedCmap(data []byte, glyphCount int) (map[uint32]uint32, error) {
 	if n > (len(data)-4)/8 {
 		return fail()
 	}
-	var chosen []byte
-	priority := 0
+	// Unicode subtables can cover different characters. Retain their combined
+	// coverage only when every mapped character has an unambiguous glyph ID.
+	mapping := make(map[uint32]uint32)
+	seen := make(map[uint32]bool)
+	found := false
 	for i := 0; i < n; i++ {
 		p := 4 + i*8
 		platform := binary.BigEndian.Uint16(data[p:])
@@ -334,32 +360,56 @@ func readPreservedCmap(data []byte, glyphCount int) (map[uint32]uint32, error) {
 		if platform != 0 && !(platform == 3 && (enc == 1 || enc == 10)) {
 			continue
 		}
-		off := uint64(binary.BigEndian.Uint32(data[p+4:]))
-		if off+2 > uint64(len(data)) {
+		off := binary.BigEndian.Uint32(data[p+4:])
+		if uint64(off) < uint64(4+n*8) || uint64(off)+2 > uint64(len(data)) {
 			return fail()
 		}
+		if seen[off] {
+			continue
+		}
+		seen[off] = true
 		sub := data[int(off):]
 		format := binary.BigEndian.Uint16(sub)
-		score := 0
-		if format == 4 {
-			score = 1
+		if format == 14 {
+			// Variation selectors supplement the base Unicode cmap and are kept
+			// verbatim by preservedCmap, since original glyph indices are stable.
+			if len(sub) < 10 {
+				return fail()
+			}
+			length := uint64(binary.BigEndian.Uint32(sub[2:]))
+			if length < 10 || length > uint64(len(sub)) || uint64(binary.BigEndian.Uint32(sub[6:])) > (length-10)/11 {
+				return fail()
+			}
+			continue
 		}
-		if format == 12 || format == 13 {
-			score = 2
+		part, err := readPreservedCmapSubtable(sub, glyphCount)
+		if err != nil {
+			return nil, err
 		}
-		if score > priority {
-			chosen = sub
-			priority = score
+		for cp, gid := range part {
+			if previous, exists := mapping[cp]; exists && previous != gid {
+				return nil, fmt.Errorf("cannot preserve this font: conflicting Unicode cmap mappings")
+			}
+			mapping[cp] = gid
 		}
+		found = true
 	}
-	if chosen == nil {
+	if !found {
 		return fail()
 	}
+	return mapping, nil
+}
+
+func readPreservedCmapSubtable(chosen []byte, glyphCount int) (map[uint32]uint32, error) {
+	fail := func() (map[uint32]uint32, error) {
+		return nil, fmt.Errorf("cannot preserve this font: invalid or unsupported Unicode cmap")
+	}
+	if len(chosen) < 16 {
+		return fail()
+	}
+	format := binary.BigEndian.Uint16(chosen)
 	mapping := make(map[uint32]uint32)
-	if priority == 2 {
-		if len(chosen) < 16 {
-			return fail()
-		}
+	if format == 12 || format == 13 {
 		length := uint64(binary.BigEndian.Uint32(chosen[4:]))
 		if length < 16 || length > uint64(len(chosen)) {
 			return fail()
@@ -370,7 +420,7 @@ func readPreservedCmap(data []byte, glyphCount int) (map[uint32]uint32, error) {
 			return fail()
 		}
 		var last uint32
-		constant := binary.BigEndian.Uint16(chosen) == 13
+		constant := format == 13
 		for i := 0; i < int(groups); i++ {
 			p := 16 + i*12
 			start, end, gid := binary.BigEndian.Uint32(chosen[p:]), binary.BigEndian.Uint32(chosen[p+4:]), binary.BigEndian.Uint32(chosen[p+8:])
@@ -395,17 +445,15 @@ func readPreservedCmap(data []byte, glyphCount int) (map[uint32]uint32, error) {
 			}
 			last = end
 		}
-	} else {
-		if len(chosen) < 16 {
-			return fail()
-		}
+	} else if format == 4 {
 		length := int(binary.BigEndian.Uint16(chosen[2:]))
 		if length < 16 || length > len(chosen) {
 			return fail()
 		}
 		chosen = chosen[:length]
-		segments := int(binary.BigEndian.Uint16(chosen[6:])) / 2
-		if segments == 0 || 16+segments*8 > length {
+		segmentBytes := int(binary.BigEndian.Uint16(chosen[6:]))
+		segments := segmentBytes / 2
+		if segmentBytes%2 != 0 || segments == 0 || 16+segments*8 > length {
 			return fail()
 		}
 		var previous uint32
@@ -415,7 +463,7 @@ func readPreservedCmap(data []byte, glyphCount int) (map[uint32]uint32, error) {
 			delta := binary.BigEndian.Uint16(chosen[16+segments*4+i*2:])
 			rangePos := 16 + segments*6 + i*2
 			distance := int(binary.BigEndian.Uint16(chosen[rangePos:]))
-			if start > end || (i > 0 && start <= previous) {
+			if start > end || (i > 0 && start <= previous) || distance%2 != 0 {
 				return fail()
 			}
 			for cp := start; cp <= end; cp++ {
@@ -427,7 +475,7 @@ func readPreservedCmap(data []byte, glyphCount int) (map[uint32]uint32, error) {
 					gid = uint16(cp) + delta
 				} else {
 					p := rangePos + distance + int(cp-start)*2
-					if p+2 > len(chosen) {
+					if p < 16+segments*8 || p+2 > len(chosen) {
 						return fail()
 					}
 					gid = binary.BigEndian.Uint16(chosen[p:])
@@ -444,6 +492,9 @@ func readPreservedCmap(data []byte, glyphCount int) (map[uint32]uint32, error) {
 			}
 			previous = end
 		}
+	} else {
+		// Rewriting an unsupported Unicode subtable would discard its coverage.
+		return fail()
 	}
 	return mapping, nil
 }

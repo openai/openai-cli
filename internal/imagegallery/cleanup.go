@@ -40,7 +40,7 @@ func (g *Gallery) BindTTY(ctx context.Context, tty string) error {
 	if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return writeNew(path, []byte(tty))
+	return writeNew(ctx, path, []byte(tty))
 }
 
 // CleanupClosed reclaims galleries only after inventory returns a complete,

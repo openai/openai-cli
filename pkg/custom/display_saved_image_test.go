@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -13,6 +14,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -119,6 +121,61 @@ func TestReportImagePreviewUnavailableRetainsOutputFailure(t *testing.T) {
 	failure := errors.New("synthetic diagnostic failure")
 	require.ErrorIs(t, reportImagePreviewUnavailable(savedPreviewFailWriter{failure}, "unavailable"), failure)
 	require.ErrorIs(t, reportImagePreviewUnavailable(savedPreviewFailWriter{}, "unavailable"), io.ErrShortWrite)
+}
+
+func TestReportImageFontUnavailableOmitsFilesystemPaths(t *testing.T) {
+	pathErr := &os.PathError{Op: "open", Path: "/Users/synthetic/Library/Caches/openai/private-gallery/font.ttf", Err: os.ErrPermission}
+	linkErr := &os.LinkError{Op: "rename", Old: "/Users/synthetic/private-old/font.ttf", New: "/Users/synthetic/private-new/font.ttf", Err: os.ErrPermission}
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"path", pathErr},
+		{"link", linkErr},
+		{"wrapped path", fmt.Errorf("cache at /Users/synthetic: %w", pathErr)},
+		{"wrapped link", fmt.Errorf("install: %w", linkErr)},
+		{"nested path", &os.PathError{Op: "write", Path: "/Users/synthetic/another-gallery/font.ttf", Err: linkErr}},
+		{"joined paths", errors.Join(pathErr, linkErr)},
+		{"wrapped join", fmt.Errorf("prepare: %w", errors.Join(errors.New("restore failed"), pathErr, linkErr))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			require.NoError(t, reportImageFontUnavailable(&out, &terminalimage.FontError{Err: tc.err}))
+			require.Equal(t, "Sharp inline preview unavailable: image font files could not be accessed; open the saved file to view it. The image is saved; no need to generate again.\n", out.String())
+		})
+	}
+}
+
+func TestReportImageFontUnavailablePreservesGuidance(t *testing.T) {
+	for _, message := range []string{
+		"sharp previews require TERM_SESSION_ID; open a new Apple Terminal tab and retry the saved image",
+		"this tab's image font is full; open a new Terminal tab to continue displaying sharp images",
+		"Terminal font or spacing changed while preparing the image",
+	} {
+		var out bytes.Buffer
+		require.NoError(t, reportImageFontUnavailable(&out, &terminalimage.FontError{Err: errors.New(message)}))
+		require.Equal(t, "Sharp inline preview unavailable: "+message+". The image is saved; no need to generate again.\n", out.String())
+	}
+}
+
+func TestReportImageFontUnavailableEscapesControls(t *testing.T) {
+	var out bytes.Buffer
+	require.NoError(t, reportImageFontUnavailable(&out, &terminalimage.FontError{Err: errors.New("font \x1b[31m\u202ename")}))
+	require.NotContains(t, out.String(), "\x1b")
+	require.NotContains(t, out.String(), "\u202e")
+	require.Contains(t, out.String(), `\u202ename`)
+}
+
+func TestReportImageFontUnavailableRetainsOutputFailure(t *testing.T) {
+	failure := errors.New("synthetic diagnostic failure")
+	for _, cause := range []error{
+		errors.New("open a new Terminal tab"),
+		&os.PathError{Op: "open", Path: "/Users/synthetic/private-gallery/font.ttf", Err: os.ErrPermission},
+	} {
+		fontErr := &terminalimage.FontError{Err: cause}
+		require.ErrorIs(t, reportImageFontUnavailable(savedPreviewFailWriter{failure}, fontErr), failure)
+		require.ErrorIs(t, reportImageFontUnavailable(savedPreviewFailWriter{}, fontErr), io.ErrShortWrite)
+	}
 }
 
 type savedPreviewFailWriter struct{ err error }

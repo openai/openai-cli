@@ -203,6 +203,74 @@ func TestEncodePreservingEmptyFontAndCancellation(t *testing.T) {
 	}
 }
 
+func TestEncodePreservingOmitsGlyphCountDependentCaches(t *testing.T) {
+	source := preservationSource(t)
+	// These optional caches have one entry per original glyph. Retaining them
+	// after increasing maxp.numGlyphs leaves them truncated for the new glyphs.
+	var ltsh, hdmx buffer
+	ltsh.u16(0)
+	ltsh.u16(baseGlyphCount)
+	ltsh.Write(bytes.Repeat([]byte{1}, baseGlyphCount))
+	recordSize := (2 + baseGlyphCount + 3) &^ 3
+	hdmx.u16(0)
+	hdmx.u16(2)
+	hdmx.u32(uint32(recordSize))
+	for _, size := range []byte{12, 16} {
+		hdmx.Write([]byte{size, size / 2})
+		hdmx.Write(bytes.Repeat([]byte{size / 2}, baseGlyphCount))
+		hdmx.zeros(recordSize - 2 - baseGlyphCount)
+	}
+	source.Tables["LTSH"], source.Tables["hdmx"] = ltsh.Bytes(), hdmx.Bytes()
+	result, err := EncodePreserving(context.Background(), preservationFrames(), testOptions, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := fontTables(t, result.Data)
+	for _, tag := range []string{"LTSH", "hdmx"} {
+		if _, exists := got[tag]; exists {
+			t.Errorf("retained stale %s cache", tag)
+		}
+		if len(source.Tables[tag]) == 0 {
+			t.Errorf("removed caller's %s table", tag)
+		}
+	}
+	if !bytes.Equal(got["hmtx"][:len(source.Tables["hmtx"])], source.Tables["hmtx"]) {
+		t.Fatal("original horizontal metrics changed")
+	}
+}
+
+func TestEncodePreservingRejectsVerticalMetrics(t *testing.T) {
+	var header, metrics buffer
+	header.u32(0x00010000)
+	header.zeros(30)
+	header.u16(1)
+	metrics.u16(1000)
+	metrics.u16(20)
+	metrics.zeros((baseGlyphCount - 1) * 2)
+	for name, tables := range map[string]map[string][]byte{
+		"complete":        {"vhea": header.Bytes(), "vmtx": metrics.Bytes()},
+		"missing header":  {"vmtx": metrics.Bytes()},
+		"missing metrics": {"vhea": header.Bytes()},
+		"truncated":       {"vhea": {0}, "vmtx": {0}},
+		"empty":           {"vhea": nil, "vmtx": nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := preservationSource(t)
+			for tag, data := range tables {
+				source.Tables[tag] = bytes.Clone(data)
+			}
+			if _, err := EncodePreserving(context.Background(), preservationFrames(), testOptions, source); err == nil || !strings.Contains(err.Error(), "vertical metrics") {
+				t.Fatalf("unsupported vertical metrics accepted: %v", err)
+			}
+			for tag, want := range tables {
+				if got, exists := source.Tables[tag]; !exists || !bytes.Equal(got, want) {
+					t.Fatalf("source %s changed", tag)
+				}
+			}
+		})
+	}
+}
+
 func TestEncodePreservingRejectsUnsupportedAndMalformedSource(t *testing.T) {
 	for _, tag := range []string{"CFF ", "CFF2", "fvar", "gvar", "sbix", "COLR"} {
 		t.Run(tag, func(t *testing.T) {

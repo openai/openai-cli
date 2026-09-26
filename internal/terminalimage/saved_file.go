@@ -1,6 +1,7 @@
 package terminalimage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"image"
@@ -28,7 +29,7 @@ func ReadSaved(ctx context.Context, path string) (image.Image, error) {
 	return readSavedFile(ctx, file)
 }
 
-// readSavedFile validates and decodes the same descriptor. Its caller owns file.
+// readSavedFile validates and decodes one bounded snapshot. Its caller owns file.
 func readSavedFile(ctx context.Context, file *os.File) (image.Image, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -40,7 +41,16 @@ func readSavedFile(ctx context.Context, file *os.File) (image.Image, error) {
 	if !info.Mode().IsRegular() || info.Size() > 64<<20 {
 		return nil, errors.New("image is not a regular file or exceeds the 64 MiB preview limit")
 	}
-	config, format, err := image.DecodeConfig(contextReader{ctx, io.LimitReader(file, 64<<20)})
+	// Another process can rewrite even an already-open regular file. Inspect and
+	// decode the same bytes so the dimension check applies to the decoded image.
+	data, err := io.ReadAll(contextReader{ctx, io.LimitReader(file, (64<<20)+1)})
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 64<<20 {
+		return nil, errors.New("image exceeds the 64 MiB preview limit")
+	}
+	config, format, err := image.DecodeConfig(contextReader{ctx, bytes.NewReader(data)})
 	if err != nil {
 		return nil, err
 	}
@@ -50,10 +60,7 @@ func readSavedFile(ctx context.Context, file *os.File) (image.Image, error) {
 	if config.Width < 1 || config.Height < 1 || int64(config.Width)*int64(config.Height) > 16<<20 {
 		return nil, errors.New("image exceeds the 16 megapixel preview limit")
 	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, err
-	}
-	result, _, err := image.Decode(contextReader{ctx, io.LimitReader(file, 64<<20)})
+	result, _, err := image.Decode(contextReader{ctx, bytes.NewReader(data)})
 	if err != nil {
 		return nil, err
 	}
@@ -70,5 +77,8 @@ func (r contextReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	n, err := r.reader.Read(p)
-	return n, errors.Join(err, r.ctx.Err())
+	if canceled := r.ctx.Err(); canceled != nil {
+		return n, errors.Join(err, canceled)
+	}
+	return n, err
 }
