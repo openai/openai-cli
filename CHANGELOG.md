@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.25.2](https://github.com/openai/openai-cli/compare/v1.25.1...v1.25.2) (2026-09-26)
+
+
+### Bug Fixes
+
+* **completion:** hide internal commands without arguments ([#299](https://github.com/openai/openai-cli/issues/299)) ([f5a62e8](https://github.com/openai/openai-cli/commit/f5a62e8c45c222a605eee9097f3b5715a6b804ca))
+
+## [1.25.1](https://github.com/openai/openai-cli/compare/v1.25.0...v1.25.1) (2026-09-26)
+
+
+### Bug Fixes
+
+* **jsonview:** retain the selected row when toggling raw JSON ([#218](https://github.com/openai/openai-cli/issues/218)) ([f003d12](https://github.com/openai/openai-cli/commit/f003d1216b7a246d630fb1dcce1a8617effb0ed7))
+
 ## [1.25.0](https://github.com/openai/openai-cli/compare/v1.24.0...v1.25.0) (2026-09-26)
 
 
