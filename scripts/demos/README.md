@@ -174,3 +174,23 @@ The runner checks real exit codes, exact request bodies, saved PNG bytes and
 recovery text. Inspect `comparison.gif`, `before.png`, `after.png`,
 `before-recovery.png` and `after-recovery.png`. The local fixture only accepts
 fixed synthetic inputs. `image-saving-recovery.tape` is the VHS alternative.
+
+### Image edits and variations
+
+`record-image-edit-saving.sh` compares edits and variations, then explicit JSON.
+It reuses `main.go` and `capture_and_render.sh`. Build the fixture as above and
+pass independently built comparison binaries:
+
+```sh
+bash scripts/demos/record-image-edit-saving.sh \
+  /path/to/before/openai /path/to/after/openai \
+  BEFORE_COMMIT AFTER_COMMIT /path/outside/repository/image-edit-saving
+```
+
+The fixture validates fixed multipart settings and exact source/mask bytes.
+Edit responses are identical; variation responds with a synthetic URL before,
+and base64 after the saving path requests `b64_json`. No URL is downloaded.
+The recorder checks saved filenames, full printed paths, original image bytes
+and explicit JSON bypass. It retains source files, saved PNGs, request hashes,
+transcripts and the alternative `image-edit-saving.tape` VHS recipe.
+Inspect all five screenshots and `comparison.gif` before sharing.
