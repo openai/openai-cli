@@ -37,8 +37,17 @@ func registerImagePreviewCommands(root *cli.Command) {
 	images.Commands = append(images.Commands,
 		&cli.Command{Name: "preview", Usage: "Display a saved image without generating another one.", UsageText: "openai images preview [--inline auto|on] FILE", Description: imagePreviewHelp, CustomHelpTemplate: imagePreviewHelp,
 			Flags: []cli.Flag{&cli.StringFlag{Name: "inline", Value: "auto", Usage: "Preview using auto or on; on permits a local Apple Terminal image font"}}, Action: handleImagesPreview},
-		&cli.Command{Name: "inline", Usage: "Turn automatic image previews on or off.", Commands: imageInlinePreferenceCommands()},
 	)
+	inline := images.Command("inline")
+	if inline == nil {
+		inline = &cli.Command{Name: "inline", Usage: "Turn automatic image previews on or off."}
+		images.Commands = append(images.Commands, inline)
+	}
+	for _, command := range imageInlinePreferenceCommands() {
+		if inline.Command(command.Name) == nil {
+			inline.Commands = append(inline.Commands, command)
+		}
+	}
 }
 
 func handleImagesPreview(ctx context.Context, command *cli.Command) error {

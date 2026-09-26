@@ -147,3 +147,43 @@ func TestImagePreviewCommandsRegisterOnceAndRejectFormats(t *testing.T) {
 		})
 	}
 }
+
+func TestImagePreviewRegistrationPreservesInlineCommands(t *testing.T) {
+	for _, order := range []string{"saved first", "other commands first"} {
+		t.Run(order, func(t *testing.T) {
+			images := &cli.Command{Name: "images", Commands: []*cli.Command{{Name: "generate"}}}
+			root := &cli.Command{Name: "openai", Commands: []*cli.Command{images}}
+			var shared *cli.Command
+			addOtherCommands := func() {
+				shared = images.Command("inline")
+				if shared == nil {
+					shared = &cli.Command{Name: "inline", Usage: "Manage image previews"}
+					images.Commands = append(images.Commands, shared)
+				}
+				for _, name := range []string{"setup", "repair", "status"} {
+					shared.Commands = append(shared.Commands, &cli.Command{Name: name})
+				}
+			}
+			if order == "saved first" {
+				ConfigureCommand(root)
+				addOtherCommands()
+			} else {
+				addOtherCommands()
+				ConfigureCommand(root)
+			}
+			ConfigureCommand(root)
+			require.Same(t, shared, images.Command("inline"))
+			counts := map[string]int{}
+			for _, command := range images.Commands {
+				counts[command.Name]++
+			}
+			require.Equal(t, 1, counts["inline"])
+			require.Equal(t, 1, counts["preview"])
+			require.Equal(t, 1, counts["generate"])
+			require.Len(t, shared.Commands, 5)
+			for _, name := range []string{"on", "off", "setup", "repair", "status"} {
+				require.NotNil(t, shared.Command(name), name)
+			}
+		})
+	}
+}
