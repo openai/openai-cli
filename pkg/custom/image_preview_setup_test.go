@@ -28,8 +28,7 @@ func TestPreviewSetupRegistrationComposesInlineCommands(t *testing.T) {
 				images.Commands = append(images.Commands, &cli.Command{Name: "inline", Commands: []*cli.Command{{Name: "on"}, {Name: "off"}}})
 			}
 			root := &cli.Command{Name: "openai", Commands: []*cli.Command{images}}
-			ConfigureCommand(root)
-			ConfigureCommand(root)
+			registerImagePreviewSetup(root)
 			count := 0
 			for _, command := range images.Commands {
 				if command.Name == "inline" {
@@ -55,6 +54,23 @@ func TestPreviewSetupRegistrationComposesInlineCommands(t *testing.T) {
 	}
 	root := &cli.Command{Name: "openai"}
 	require.NotPanics(t, func() { registerImagePreviewSetup(root) })
+}
+
+func TestPreviewSetupConfigureCommandRunsOnce(t *testing.T) {
+	root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "images"}}}
+	ConfigureCommand(root)
+	ConfigureCommand(root)
+	inline := root.Command("images").Command("inline")
+	require.NotNil(t, inline)
+	for _, name := range []string{"setup", "repair", "status"} {
+		count := 0
+		for _, command := range inline.Commands {
+			if command.Name == name {
+				count++
+			}
+		}
+		require.Equal(t, 1, count, name)
+	}
 }
 
 func TestPreviewSetupRejectsInvalidOutputBeforeNativeCalls(t *testing.T) {
@@ -134,7 +150,10 @@ func TestPreviewSetupHelpIsLocalAndStatesLimits(t *testing.T) {
 			var out bytes.Buffer
 			root := &cli.Command{Name: "openai", Writer: &out, ErrWriter: io.Discard, Commands: []*cli.Command{{Name: "images"}}}
 			registerImagePreviewSetup(root)
-			require.NoError(t, root.Run(t.Context(), []string{"openai", "images", "inline", name, "--help"}))
+			args, help, err := ConfigureHelp(root, []string{"openai", "images", "inline", name, "--help"})
+			require.NoError(t, err)
+			require.True(t, help)
+			require.NoError(t, root.Run(t.Context(), args))
 			for _, want := range []string{"Automation permission", "--inline on", "preferences are unchanged", "No cache reset or removal of committed previews"} {
 				require.Contains(t, out.String(), want)
 			}

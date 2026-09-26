@@ -13,6 +13,24 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+const imagePreviewSetupHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}{{.Usage}}
+  {{$bin}} images inline {{.Name}}
+
+Local Apple Terminal on macOS only; no SSH or terminal multiplexers.
+Reading the tab may request macOS Automation permission, including status.
+Status is read-only; it does not register fonts or change settings.
+Setup and repair keep the text font, size, profile and cached image mappings.
+They add no sample image. Automatic preview preferences are unchanged.
+Use --inline on when generating an image for sharp Apple Terminal previews.
+
+Missing selected font: select your original font and size, then run repair.
+Missing metadata or thumbnails: retain the files and use a new Terminal tab.
+No cache reset or removal of committed previews is performed.
+No API requests. Readable output only: --format auto or text.
+
+Full help: {{$bin}} help --all images inline {{.Name}}
+`
+
 func registerImagePreviewSetup(root *cli.Command) {
 	images := root.Command("images")
 	if images == nil {
@@ -33,8 +51,9 @@ func registerImagePreviewSetup(root *cli.Command) {
 	} {
 		inline.Commands = append(inline.Commands, &cli.Command{
 			Name: item.name, Usage: item.usage, HideHelpCommand: true,
-			Description: "For a local Apple Terminal tab on macOS. Reading this tab may request Automation permission. Setup and repair preserve the selected text font, size and profile, retain cached images and add no sample image. Use --inline on when generating an image; automatic preview preferences are unchanged. Status reads the tab and cache without registering fonts or changing settings. Missing cache metadata cannot restore old scrollback; use a new tab. No cache reset or removal of committed previews is performed.",
-			Action:      imagePreviewSetupAction(item.run),
+			CustomHelpTemplate: imagePreviewSetupHelp,
+			Description:        "For a local Apple Terminal tab on macOS. Reading this tab may request Automation permission. Setup and repair preserve the selected text font, size and profile, retain cached images and add no sample image. Use --inline on when generating an image; automatic preview preferences are unchanged. Status reads the tab and cache without registering fonts or changing settings. Missing cache metadata cannot restore old scrollback; use a new tab. No cache reset or removal of committed previews is performed.",
+			Action:             imagePreviewSetupAction(item.run),
 		})
 	}
 }
