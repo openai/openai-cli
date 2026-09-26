@@ -29,11 +29,13 @@ Optional:
   --name robot                 Choose a filename (extension is automatic)
   --output-dir "~/Downloads"    Save in an existing folder
   --count 2                    Make two images (alias for -n)
+  --inline off                 Save without a terminal preview
+  --inline on                  Allow a sharp preview in local Apple Terminal
   --model gpt-image-2.5-flare    Choose an exact model ID
   --output-format webp         Choose PNG, JPEG or WebP
 
 Scripts: --format json returns API JSON without saving or CLI defaults.
-Redirected output still saves images. No image preview is opened.
+Redirected output still saves images, without previews.
 Full help: {{$bin}} help --all images generate
 Key setup: {{$bin}} help setup
 `
@@ -58,12 +60,16 @@ They cannot be combined with --name or --output-dir. --format auto and text save
 --stream true saves only the final image. Positive --partial-images enables
 streaming when saving; intermediate images are ignored. Streaming supports one
 final image. Use --format json --stream true for complete API events.
-No image preview or viewer is opened.`
+Interactive terminals show an inline preview when supported. --inline off disables
+it. --inline on allows a local Apple Terminal image font while keeping ordinary
+text styling. Preview failures keep saved files. Pipes and CI never show previews.`
 
 type imageOutputPlan struct {
 	directory, name string
 	options         []option.RequestOption
 	defaults        map[string]any
+	inline          string
+	diagnostics     io.Writer
 }
 
 // A private classification carries locally authored guidance through the shared
@@ -181,6 +187,7 @@ func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Re
 
 func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writer) error {
 	paths, saveErr := imageoutput.SaveResponse(ctx, response, p.directory, p.name)
+	previewOutput := out
 	out = outputWriter{ctx: context.WithoutCancel(ctx), out: out}
 	if saveErr != nil {
 		message := "The API responded, but no images could be saved. Check the image data and output folder before trying again."
@@ -200,5 +207,13 @@ func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writ
 			return imageSavingFailure(message, errors.Join(saveErr, err))
 		}
 	}
-	return saveErr
+	if saveErr != nil {
+		return saveErr
+	}
+	for _, path := range paths {
+		if err := displaySavedImage(ctx, path, previewOutput, p.diagnostics, p.inline); err != nil {
+			return imageSavingFailure("Images were saved, but the preview could not finish. Use the saved files; no need to generate again.", err)
+		}
+	}
+	return nil
 }

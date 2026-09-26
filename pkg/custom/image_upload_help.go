@@ -10,12 +10,14 @@ Repeat --image for multiple source files. --mask selects a mask file.
 
 Uses dall-e-2. Requires a square PNG under 4 MB.
 {{end}}Saves new images to ~/Downloads/gpt-images/. Source files are kept.
-Model access varies by key. No preview or viewer is opened.
+Model access varies by key. Interactive terminals can show a preview.
 
 Optional:
   --name result                 Choose a filename (extension is automatic)
   --output-dir "~/Downloads"    Save in an existing folder
   --count 2                    Make two images (alias for -n)
+  --inline off                 Save without a terminal preview
+  --inline on                  Allow a sharp preview in local Apple Terminal
 
 Scripts: --format json returns API data without saving or CLI defaults.
 Full help: {{$bin}} help --all images {{.Name}}
@@ -40,4 +42,6 @@ return API data without saving or CLI defaults. They cannot be combined with
 For edits, --stream true saves only the final image. Positive --partial-images
 automatically enables streaming; intermediate images are ignored, not saved.
 Streaming supports one final image. --format json --stream true returns API
-events. Variations do not support streaming. No preview or viewer is opened.`
+events. Variations do not support streaming. Interactive terminals show an inline preview when supported. --inline off disables
+it. --inline on allows a local Apple Terminal image font. Pipes and CI never
+show previews.`
