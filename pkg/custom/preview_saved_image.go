@@ -1,11 +1,14 @@
 package custom
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/urfave/cli/v3"
@@ -70,5 +73,16 @@ func handleImagesPreview(ctx context.Context, command *cli.Command) error {
 	if _, err := fmt.Fprintf(out, "Image: %q\n", path); err != nil {
 		return err
 	}
-	return displayDecodedSavedImage(ctx, img, out, os.Stderr, protocol)
+	// Automatic previews emit best-effort warnings. An explicit preview must
+	// route a failed render through the requested error format instead.
+	var diagnostic bytes.Buffer
+	err = displayDecodedSavedImage(ctx, img, out, &diagnostic, protocol)
+	if errors.Is(err, errImagePreviewUnavailable) {
+		return imageSavingFailure(strings.TrimSpace(diagnostic.String()), err)
+	}
+	if err != nil {
+		return imageSavingFailure("Could not display the preview. The original file is unchanged.", err)
+	}
+	_, err = diagnostic.WriteTo(os.Stderr)
+	return err
 }

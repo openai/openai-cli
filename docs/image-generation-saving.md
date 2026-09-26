@@ -69,7 +69,7 @@ retain their existing empty form-part encoding rather than acquiring defaults.
 Streamed edits save only the final image and ignore intermediate previews.
 Variations do not support streaming. Explicit `--format json` preserves the
 original responses or edit events and makes no saved files. Model-discovery
-default markers and redisplaying saved files remain separate work.
+default markers remain separate work.
 Use `openai help --all images edit` or `openai help --all images create-variation`
 for every request setting.
 
@@ -84,7 +84,8 @@ openai images generate --prompt "A tiny orange robot" --inline off
 openai images generate --prompt "A tiny orange robot" --inline on
 ```
 
-`--inline auto` is the default on generation, edits and variations. Kitty and
+Without a saved preference, `--inline auto` is the default on generation, edits
+and variations. Kitty and
 Ghostty use the Kitty graphics protocol; iTerm2 and WezTerm use the iTerm protocol.
 Other color terminals show a labeled color-block approximation. `NO_COLOR` or
 `CLICOLOR=0` disables that approximation, while native image graphics remain
@@ -109,3 +110,43 @@ terminal at a width of at least one cell. Larger or unusually tall images remain
 saved in full; the CLI explains why they could not be displayed. Preview decoding
 and font failures keep the saved files. Follow the printed path instead of
 paying to generate the image again. No separate viewer is opened.
+
+## Saved images and preferences
+
+```sh
+openai images preview "path/to/image.png"
+openai images preview --inline on "path/to/image.png"
+openai images inline off
+openai images inline on
+openai images generate --prompt "A tiny orange robot" --inline auto
+```
+
+`images preview` displays an existing PNG, JPEG or WebP using the same renderer.
+It needs no API key, makes no request, does not read stdin, and leaves the
+original untouched. It works even when automatic previews are off. Explicit
+preview defaults to `auto`; `--inline on` also permits Apple Terminal image-font
+activation. Unsupported formats, output redirection, and images that cannot fit
+the terminal return an error. `--format-error` and `--transform-error` still
+control those errors. Local image commands accept `--format auto` or `text`,
+but reject data formats, `--transform` and `--raw-output`.
+
+Resize the window and run preview again to fit its current dimensions. A new
+Apple Terminal preview width receives new glyph assignments; earlier mappings
+and saved originals stay unchanged. Existing text rows can still wrap when the
+window narrows. Each new width uses gallery capacity. A full gallery retains
+earlier previews and falls back as described above; it never evicts them.
+
+`images inline on|off` remembers the automatic preview setting across runs.
+Turning it on also permits image-font activation in local Apple Terminal.
+An explicit `--inline auto`, `on` or `off` overrides the saved setting for that
+command. Turning previews off does not disable saving or explicit local preview.
+
+The only setting file is `openai/image-preferences.json` inside the operating
+system's user configuration directory: `~/Library/Application Support` on
+macOS, `%AppData%` on Windows, and `$XDG_CONFIG_HOME` (or `~/.config`) on Linux.
+Writes replace it atomically. Invalid, unknown or unreadable settings are kept;
+automatic saving prints a warning and skips the preview. Use an explicit
+`--inline` value to override them once, or move an invalid setting file aside
+before saving a new preference. Other CLI settings and preview caches are not
+rewritten. Existing global API configuration validation still runs for these
+local commands, so stale base URL or mTLS settings may need correcting first.
