@@ -352,6 +352,69 @@ func TestMainImageGenerationFilenamesAndDirectoryValidation(t *testing.T) {
 	})
 }
 
+func TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest(t *testing.T) {
+	stem := strings.Repeat("x", 250)
+	encoded := base64.StdEncoding.EncodeToString(imageGenerationPNG(t))
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("existing image=%t", existing), func(t *testing.T) {
+			dir := t.TempDir()
+			probeName := func(name string) error {
+				path := filepath.Join(dir, name)
+				file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+				if err != nil {
+					return err
+				}
+				closeErr := file.Close()
+				removeErr := os.Remove(path)
+				if closeErr != nil || removeErr != nil {
+					t.Fatalf("filename probe cleanup failed: close=%v remove=%v", closeErr, removeErr)
+				}
+				return nil
+			}
+			if err := probeName(stem + ".jpeg"); err != nil {
+				t.Skipf("filesystem cannot create the ordinary 255-byte filename needed for this regression: %v", err)
+			}
+			if err := probeName(stem + "-9223372036854775807.jpeg"); err == nil {
+				t.Skip("filesystem supports this name with the longest collision suffix; the filename-limit regression does not apply")
+			}
+
+			originalPath := filepath.Join(dir, stem+".png")
+			original := []byte("synthetic existing image must be preserved")
+			if existing {
+				if err := os.WriteFile(originalPath, original, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"data":[{"b64_json":%q},{"b64_json":%q}]}`, encoded, encoded)
+			}))
+			defer server.Close()
+			got := runImageGeneration(t, server, t.TempDir(), "", "images", "generate", "--prompt", "synthetic prompt", "--output-dir", dir, "--name", stem, "--count", "2")
+			if got.code == 0 || got.stdout != "" || got.stderr == "" {
+				t.Errorf("name without suffix room was not rejected before saving: %+v", got)
+			}
+			if count := requests.Load(); count != 0 {
+				t.Errorf("name without suffix room reached the API: %d requests", count)
+			}
+			files := imageGenerationFiles(t, dir)
+			if existing {
+				if len(files) != 1 || files[0] != originalPath {
+					t.Errorf("rejected name created new files beside the existing image: %q", files)
+				}
+				data, err := os.ReadFile(originalPath)
+				if err != nil || !bytes.Equal(data, original) {
+					t.Errorf("existing image changed: data=%q error=%v", data, err)
+				}
+			} else if len(files) != 0 {
+				t.Errorf("rejected name created files: %q", files)
+			}
+		})
+	}
+}
+
 func TestMainImageGenerationPartialFailureKeepsSavedImage(t *testing.T) {
 	payload := imageGenerationPNG(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

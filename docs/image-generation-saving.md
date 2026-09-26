@@ -22,7 +22,10 @@ The default folder, `~/Downloads/gpt-images/`, is created when needed.
 `--output-dir` must already exist and be writable. Prompt-derived names use up
 to eight words and 80 UTF-8 bytes; prompts without usable text use a timestamp.
 `--name` accepts a filename, with an optional image extension, but no path.
-Existing filenames get suffixes such as `-2`. PNG, JPEG and WebP container
+Existing filenames get suffixes such as `-2`. Before requesting images, the CLI
+checks that the name leaves room for numbering and the longest image extension
+on the output filesystem. If it is too long, choose a shorter `--name`;
+explicit names are not truncated. PNG, JPEG and WebP container
 signatures determine extensions; image bytes are preserved without re-encoding.
 Every completed path is printed. A failed batch keeps completed files and
 removes only its incomplete files. Check the output folder before regenerating.

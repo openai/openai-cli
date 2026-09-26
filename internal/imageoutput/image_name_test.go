@@ -118,7 +118,7 @@ func TestCheckNameCancellationRemovesProbe(t *testing.T) {
 	checks := 0
 	checking := checkingContext{Context: ctx, check: func() {
 		checks++
-		if checks == 3 {
+		if checks == 2 {
 			cancel()
 		}
 	}}
@@ -126,4 +126,77 @@ func TestCheckNameCancellationRemovesProbe(t *testing.T) {
 		t.Fatalf("name check cancellation = %v", err)
 	}
 	assertEmptyDirectory(t, directory)
+}
+
+func TestCheckNameReservesNumberedSuffix(t *testing.T) {
+	for _, stem := range []string{strings.Repeat("x", 250), strings.Repeat("猫", 250)} {
+		t.Run(fmt.Sprintf("%d bytes", len(stem)), func(t *testing.T) {
+			directory := t.TempDir()
+			plain := filepath.Join(directory, stem+".jpeg")
+			if err := os.WriteFile(plain, []byte("existing image"), 0600); err != nil {
+				t.Skipf("filesystem cannot store the unsuffixed example: %v", err)
+			}
+			// Establish that this filesystem rejects the added suffix. Unicode
+			// limits vary between filesystems, so do not assume a byte limit.
+			reserved := filepath.Join(directory, stem+"-9223372036854775807.jpeg")
+			if err := os.WriteFile(reserved, nil, 0600); err == nil {
+				t.Skip("filesystem accepts the example including its suffix")
+			}
+			if err := os.Remove(plain); err != nil {
+				t.Fatal(err)
+			}
+			if err := CheckName(t.Context(), directory, stem); err == nil {
+				t.Fatal("name without room for collision suffix passed preflight")
+			}
+			assertEmptyDirectory(t, directory)
+		})
+	}
+}
+
+func TestCheckNameKeepsReservedProbeCollisions(t *testing.T) {
+	for _, kind := range []string{"file", "directory", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			if kind == "symlink" && runtime.GOOS == "windows" {
+				t.Skip("creating Windows symlinks can require elevated privileges")
+			}
+			directory := t.TempDir()
+			stem := strings.Repeat("x", 230)
+			probe := filepath.Join(directory, stem+"-9223372036854775807.jpeg")
+			switch kind {
+			case "file":
+				if err := os.WriteFile(probe, []byte("keep existing image"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "directory":
+				if err := os.Mkdir(probe, 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				if err := os.Symlink("missing-target", probe); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := os.Lstat(probe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := CheckName(t.Context(), directory, stem); err != nil {
+				t.Fatalf("existing longest name proves the name fits: %v", err)
+			}
+			after, err := os.Lstat(probe)
+			if err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() {
+				t.Fatalf("preflight changed the existing %s: %v", kind, err)
+			}
+			if kind == "file" {
+				data, err := os.ReadFile(probe)
+				if err != nil || string(data) != "keep existing image" {
+					t.Fatalf("preflight changed existing contents: %q, %v", data, err)
+				}
+			}
+			entries, err := os.ReadDir(directory)
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("preflight left a probe: %v, %v", entries, err)
+			}
+		})
+	}
 }

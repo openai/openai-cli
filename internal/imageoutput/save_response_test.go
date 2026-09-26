@@ -496,3 +496,55 @@ func encodedResponse(t *testing.T, images ...string) []byte {
 	}
 	return raw
 }
+
+func TestSaveResponseLongNamesKeepRoomForBatchAndCollisions(t *testing.T) {
+	fixtures := imageFixtures(t)
+	for _, stem := range []string{strings.Repeat("x", 230), strings.Repeat("é", 115)} {
+		for i, extension := range []string{".png", ".jpeg", ".webp"} {
+			t.Run(fmt.Sprintf("%s/%s", stem[:2], extension), func(t *testing.T) {
+				directory := t.TempDir()
+				if err := CheckName(t.Context(), directory, stem); err != nil {
+					t.Fatal(err)
+				}
+				// Existing images include the single-digit boundary. The new
+				// two-image batch must keep both names and the original bytes.
+				for n := 1; n <= 9; n++ {
+					name := stem
+					if n > 1 {
+						name = fmt.Sprintf("%s-%d", stem, n)
+					}
+					if err := os.WriteFile(filepath.Join(directory, name+extension), []byte("keep"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				paths, err := SaveResponse(t.Context(), imageResponse(t, fixtures[i], fixtures[i]), directory, stem)
+				if err != nil || len(paths) != 2 {
+					t.Fatalf("long named batch failed: %v, %v", paths, err)
+				}
+				for n, path := range paths {
+					if filepath.Base(path) != fmt.Sprintf("%s-%d%s", stem, n+10, extension) {
+						t.Fatalf("filename changed: %q", path)
+					}
+					data, err := os.ReadFile(path)
+					if err != nil || !bytes.Equal(data, fixtures[i]) {
+						t.Fatalf("saved bytes changed: %v", err)
+					}
+				}
+				entries, err := os.ReadDir(directory)
+				if err != nil || len(entries) != 11 {
+					t.Fatalf("unexpected saved files: %v, %v", entries, err)
+				}
+				for _, entry := range entries {
+					path := filepath.Join(directory, entry.Name())
+					if path == paths[0] || path == paths[1] {
+						continue
+					}
+					data, err := os.ReadFile(path)
+					if err != nil || string(data) != "keep" {
+						t.Fatalf("existing image changed: %q, %v", path, err)
+					}
+				}
+			})
+		}
+	}
+}

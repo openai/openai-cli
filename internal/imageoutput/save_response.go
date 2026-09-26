@@ -143,7 +143,7 @@ func saveImage(ctx context.Context, encoded, directory, stem string) (path strin
 }
 
 func createImageFile(ctx context.Context, directory, stem, extension string) (*os.File, error) {
-	for sequence := 1; ; sequence++ {
+	for sequence := int64(1); ; sequence++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -156,6 +156,9 @@ func createImageFile(ctx context.Context, directory, stem, extension string) (*o
 		path := filepath.Join(directory, name+extension)
 		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if errors.Is(err, os.ErrExist) {
+			if sequence == maxImageSequence {
+				return nil, errors.New("no unused image filename remains")
+			}
 			continue
 		}
 		if err != nil {
