@@ -33,10 +33,7 @@ func Write(ctx context.Context, w io.Writer, img image.Image, protocol string, c
 	case "kitty":
 		// Keep native cursor movement enabled (C=0): the terminal advances over
 		// the placement using its actual cell size; the caller adds a newline.
-		return kitty.EncodeGraphics(destination, img, &kitty.Options{
-			Action: kitty.TransmitAndPut, Transmission: kitty.Direct,
-			Format: kitty.PNG, Chunk: true, Quite: 2, Columns: columns,
-		})
+		return writeKittyImage(ctx, destination, img, columns)
 	case "iterm":
 		var encoded bytes.Buffer
 		if err := png.Encode(contextWriter{ctx, &encoded}, img); err != nil {
@@ -96,4 +93,38 @@ func (w contextWriter) Write(data []byte) (int, error) {
 		err = io.ErrShortWrite
 	}
 	return n, errors.Join(err, w.context.Err())
+}
+
+// Encode into a checked writer: kitty.EncodeGraphics buffers the entire PNG
+// without checking cancellation. Reuse Charm's options/framing after encoding.
+func writeKittyImage(ctx context.Context, out io.Writer, img image.Image, columns int) error {
+	var encoded bytes.Buffer
+	if err := png.Encode(contextWriter{ctx, &encoded}, img); err != nil {
+		return err
+	}
+	options := (&kitty.Options{Action: kitty.TransmitAndPut, Transmission: kitty.Direct, Format: kitty.PNG, Quite: 2, Columns: columns}).Options()
+	const rawChunk = kitty.MaxChunkSize / 4 * 3
+	first := true
+	for encoded.Len() > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		data := encoded.Next(rawChunk)
+		payload := make([]byte, base64.StdEncoding.EncodedLen(len(data)))
+		base64.StdEncoding.Encode(payload, data)
+		opts := []string{"q=2"}
+		if first {
+			opts = append([]string(nil), options...)
+		}
+		if encoded.Len() > 0 {
+			opts = append(opts, "m=1")
+		} else {
+			opts = append(opts, "m=0")
+		}
+		if _, err := io.WriteString(out, ansi.KittyGraphics(payload, opts...)); err != nil {
+			return err
+		}
+		first = false
+	}
+	return ctx.Err()
 }

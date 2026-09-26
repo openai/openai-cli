@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"os"
 	"runtime"
@@ -34,14 +35,29 @@ func displaySavedImage(ctx context.Context, path string, out, diagnostics io.Wri
 		}
 		return readable.WriteText(diagnostics, "Inline preview unavailable. The image is saved; open the saved file to view it. No need to generate again.")
 	}
-	file := out.(*os.File) // Selection requires an actual terminal file.
+	return displayDecodedSavedImage(ctx, img, out, diagnostics, protocol)
+}
+
+// displayDecodedSavedImage shares geometry, rendering and font recovery with
+// local preview, whose caller reports invalid input before reaching this point.
+func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnostics io.Writer, protocol string) error {
+	file, ok := out.(*os.File)
+	if !ok || !isTerminal(out) {
+		return errors.New("inline previews require a terminal")
+	}
+	if diagnostics == nil {
+		diagnostics = os.Stderr
+	}
 	width, height, err := term.GetSize(file.Fd())
 	if err != nil || width < 2 || height < 2 {
 		return nil
 	}
 	columns := min(64, width-1)
 	// Fit tall previews as well as wide ones. Native protocols retain all pixels.
-	columns = min(columns, max(1, (height-2)*2*img.Bounds().Dx()/img.Bounds().Dy()))
+	columns = min(columns, (height-2)*2*img.Bounds().Dx()/img.Bounds().Dy())
+	if columns < 1 {
+		return readable.WriteText(diagnostics, "Inline preview unavailable: the image is too tall for this terminal. Open the saved file to view it.")
+	}
 	if protocol == "font" {
 		columns = min(columns, 32)
 	}
