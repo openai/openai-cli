@@ -124,3 +124,40 @@ func TestReportImagePreviewUnavailableRetainsOutputFailure(t *testing.T) {
 type savedPreviewFailWriter struct{ err error }
 
 func (w savedPreviewFailWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestSavedImagePreviewColumns(t *testing.T) {
+	for _, tc := range []struct {
+		name                        string
+		imageWidth, imageHeight     int
+		terminalWidth, terminalRows int
+		want                        int
+	}{
+		{"square in tall terminal", 1024, 1024, 120, 40, 64},
+		{"square in short terminal", 1024, 1024, 120, 24, 44},
+		{"landscape", 1536, 1024, 120, 24, 64},
+		{"portrait rounds down", 1024, 1536, 120, 24, 29},
+		{"narrow terminal", 1024, 1024, 20, 40, 19},
+		{"maximum wide image", 16 << 20, 1, 120, 100, 64},
+		{"maximum wide image and terminal", 16 << 20, 1, 65535, 65535, 64},
+		{"maximum tall image", 1, 16 << 20, 120, 100, 0},
+		{"maximum tall image and terminal", 1, 16 << 20, 65535, 65535, 0},
+		{"one column fits", 1, 196, 120, 100, 1},
+		{"one column is too tall", 1, 197, 120, 100, 0},
+		{"two row terminal", 1, 1, 120, 2, 0},
+		{"one column terminal", 1, 1, 1, 40, 0},
+		{"empty image", 0, 0, 120, 40, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, savedImagePreviewColumns(image.Rect(0, 0, tc.imageWidth, tc.imageHeight), tc.terminalWidth, tc.terminalRows))
+		})
+	}
+}
+
+func TestSavedImagePreviewColumnsAvoids32BitOverflow(t *testing.T) {
+	// Exercise the previous expression at its 32-bit runtime width on every
+	// host. This valid 16-megapixel image was incorrectly classified as too tall.
+	imageWidth, imageHeight, rows := int32(16<<20), int32(1), int32(100)
+	previous := min(int32(64), (rows-2)*2*imageWidth/imageHeight)
+	require.Negative(t, previous)
+	require.Equal(t, 64, savedImagePreviewColumns(image.Rect(0, 0, int(imageWidth), int(imageHeight)), 120, int(rows)))
+}

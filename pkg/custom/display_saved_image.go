@@ -58,9 +58,8 @@ func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnos
 	if err != nil || width < 2 || height < 2 {
 		return reportImagePreviewUnavailable(diagnostics, "Inline preview unavailable: widen the terminal and retry the saved image.")
 	}
-	columns := min(64, width-1)
 	// Fit tall previews as well as wide ones. Native protocols retain all pixels.
-	columns = min(columns, (height-2)*2*img.Bounds().Dx()/img.Bounds().Dy())
+	columns := savedImagePreviewColumns(img.Bounds(), width, height)
 	if columns < 1 {
 		return reportImagePreviewUnavailable(diagnostics, "Inline preview unavailable: the image is too tall for this terminal. Open the saved file to view it.")
 	}
@@ -94,6 +93,16 @@ func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnos
 	}
 	_, err = fmt.Fprintln(out)
 	return err
+}
+
+func savedImagePreviewColumns(bounds image.Rectangle, width, height int) int {
+	if bounds.Empty() || width < 2 || height < 2 {
+		return 0
+	}
+	// ReadSaved bounds image dimensions and terminal sizes are bounded too, but
+	// multiplying them can overflow a 32-bit int. Clamp before converting back.
+	columns := min(int64(64), int64(width)-1)
+	return int(min(columns, (int64(height)-2)*2*int64(bounds.Dx())/int64(bounds.Dy())))
 }
 
 func savedImageProtocol(mode string, terminal bool, getenv func(string) string) string {
