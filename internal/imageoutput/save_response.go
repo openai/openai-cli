@@ -4,6 +4,7 @@ package imageoutput
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -38,11 +39,18 @@ type responseJSONError struct{ cause error }
 func (e responseJSONError) Error() string { return "invalid image response JSON" }
 func (e responseJSONError) Unwrap() error { return e.cause }
 
-// SaveResponse saves every base64 image, returning completed absolute paths in
+// SavedImage identifies the bytes successfully written by the save operation.
+// SHA256 lets an optional preview verify a reopened file before decoding it.
+type SavedImage struct {
+	Path   string
+	SHA256 [sha256.Size]byte
+}
+
+// SaveResponse saves every base64 image, returning completed files in
 // response order even if siblings fail. Only incomplete files are removed.
 // Cancellation stops the batch. URL responses are not downloaded. An omitted
 // name uses local date/time; collisions receive -2, -3, and subsequent suffixes.
-func SaveResponse(ctx context.Context, raw []byte, directory string, name ...string) (paths []string, err error) {
+func SaveResponse(ctx context.Context, raw []byte, directory string, name ...string) (saved []SavedImage, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -71,7 +79,7 @@ func SaveResponse(ctx context.Context, raw []byte, directory string, name ...str
 	}
 	defer func() {
 		if err != nil {
-			err = fmt.Errorf("saved %d of %d images; could not finish saving: %w", len(paths), len(response.Data), err)
+			err = fmt.Errorf("saved %d of %d images; could not finish saving: %w", len(saved), len(response.Data), err)
 		}
 	}()
 	directory, err = ResolveDirectory(directory)
@@ -81,7 +89,7 @@ func SaveResponse(ctx context.Context, raw []byte, directory string, name ...str
 	var failures []error
 	for i, item := range response.Data {
 		if err := ctx.Err(); err != nil {
-			return paths, errors.Join(append(failures, err)...)
+			return saved, errors.Join(append(failures, err)...)
 		}
 		if item.err != nil {
 			failures = append(failures, fmt.Errorf("read image %d: %w", i+1, responseJSONError{item.err}))
@@ -91,33 +99,33 @@ func SaveResponse(ctx context.Context, raw []byte, directory string, name ...str
 			failures = append(failures, fmt.Errorf("image %d has no base64 image data; URL responses cannot be saved", i+1))
 			continue
 		}
-		path, saveErr := saveImage(ctx, item.Base64, directory, stem)
+		file, saveErr := saveImage(ctx, item.Base64, directory, stem)
 		if saveErr != nil {
 			failures = append(failures, fmt.Errorf("save image %d: %w", i+1, saveErr))
 			if errors.Is(saveErr, context.Canceled) || errors.Is(saveErr, context.DeadlineExceeded) {
-				return paths, errors.Join(failures...)
+				return saved, errors.Join(failures...)
 			}
 			continue
 		}
-		paths = append(paths, path)
+		saved = append(saved, file)
 	}
-	return paths, errors.Join(failures...)
+	return saved, errors.Join(failures...)
 }
 
-func saveImage(ctx context.Context, encoded, directory, stem string) (path string, err error) {
+func saveImage(ctx context.Context, encoded, directory, stem string) (saved SavedImage, err error) {
 	reader := contextReader{ctx, base64.NewDecoder(base64.StdEncoding.Strict(), strings.NewReader(encoded))}
 	var header [16]byte
 	n, readErr := io.ReadFull(reader, header[:])
 	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
-		return "", fmt.Errorf("decode base64 image: %w", readErr)
+		return saved, fmt.Errorf("decode base64 image: %w", readErr)
 	}
 	extension := imageExtension(header[:n])
 	if extension == "" {
-		return "", errors.New("unsupported image data; expected PNG, JPEG, or WebP")
+		return saved, errors.New("unsupported image data; expected PNG, JPEG, or WebP")
 	}
 	file, err := createImageFile(ctx, directory, stem, extension)
 	if err != nil {
-		return "", err
+		return saved, err
 	}
 	defer func() {
 		info, statErr := file.Stat()
@@ -130,16 +138,23 @@ func saveImage(ctx context.Context, encoded, directory, stem string) (path strin
 			} else if removeErr := removeOwnedFile(file.Name(), info); removeErr != nil {
 				err = errors.Join(err, imagePathError("remove incomplete image file", file.Name(), removeErr))
 			}
-			path = ""
+			saved = SavedImage{}
 		}
 	}()
-	if _, err := file.Write(header[:n]); err != nil {
-		return "", imagePathError("write image file", file.Name(), err)
+	// Hash the response bytes as they are written, without reopening the path or
+	// retaining another copy. A replacement or in-place rewrite cannot change
+	// the expected content used by a later optional preview.
+	digest := sha256.New()
+	writer := io.MultiWriter(file, digest)
+	if _, err := writer.Write(header[:n]); err != nil {
+		return saved, imagePathError("write image file", file.Name(), err)
 	}
-	if _, err := io.Copy(file, reader); err != nil {
-		return "", imagePathError("decode or write image file", file.Name(), err)
+	if _, err := io.Copy(writer, reader); err != nil {
+		return saved, imagePathError("decode or write image file", file.Name(), err)
 	}
-	return file.Name(), ctx.Err()
+	saved.Path = file.Name()
+	copy(saved.SHA256[:], digest.Sum(nil))
+	return saved, ctx.Err()
 }
 
 func createImageFile(ctx context.Context, directory, stem, extension string) (*os.File, error) {
