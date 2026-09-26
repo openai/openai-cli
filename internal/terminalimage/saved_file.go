@@ -30,9 +30,12 @@ func ReadSaved(ctx context.Context, path string) (image.Image, error) {
 		return nil, err
 	}
 	defer file.Close()
-	config, _, err := image.DecodeConfig(contextReader{ctx, io.LimitReader(file, 64<<20)})
+	config, format, err := image.DecodeConfig(contextReader{ctx, io.LimitReader(file, 64<<20)})
 	if err != nil {
 		return nil, err
+	}
+	if format != "png" && format != "jpeg" && format != "webp" {
+		return nil, image.ErrFormat
 	}
 	if config.Width < 1 || config.Height < 1 || int64(config.Width)*int64(config.Height) > 16<<20 {
 		return nil, errors.New("image exceeds the 16 megapixel preview limit")
