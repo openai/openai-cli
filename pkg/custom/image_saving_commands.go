@@ -100,6 +100,7 @@ func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
 		var options []option.RequestOption
 		var plan *imageOutputPlan
 		var streaming bool
+		var warnPreference bool
 		var err error
 		bodyType := ApplicationJSON
 		if command.Name != "generate" {
@@ -139,11 +140,7 @@ func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				// The generated ErrWriter is a command-error buffer, not a
-				// presentation sink. Successful saves must show this warning.
-				if err := readable.WriteText(os.Stderr, "Could not read the inline preference; automatic previews are off for this command. Use --inline auto, on or off to override it, or check your image-preferences.json settings."); err != nil {
-					return err
-				}
+				warnPreference = true
 				mode = "off"
 			}
 			plan.inline = mode
@@ -157,7 +154,15 @@ func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
 		command.Metadata[imageSavingRequestMetadata] = &preparedImageSavingRequest{options: options, bodyType: bodyType}
 		defer delete(command.Metadata, imageSavingRequestMetadata)
 		ctx = context.WithValue(ctx, imagePresentationKey{}, imagePresentation{plan, command.Root().Writer})
-		return next(ctx, command)
+		if err := next(ctx, command); err != nil {
+			return err
+		}
+		if warnPreference {
+			// Wait until presentation succeeds so this plain-text warning cannot
+			// mix with a structured command error. ErrWriter buffers failures.
+			return readable.WriteText(outputWriter{ctx: ctx, out: os.Stderr}, "Could not read the inline preference; automatic previews are off for this command. Use --inline auto, on or off to override it, or check your image-preferences.json settings.")
+		}
+		return nil
 	}
 }
 

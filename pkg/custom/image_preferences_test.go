@@ -3,6 +3,7 @@ package custom
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,6 +60,78 @@ func TestImageInlinePreferencePrecedence(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestImageInlinePreferenceWarningTerminal(t *testing.T) {
+	if !isTerminal(os.Stdout) {
+		t.Skip("requires actual terminal stdout")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("APPDATA", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	path, err := imageInlinePreferencePath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+	require.NoError(t, os.WriteFile(path, []byte("invalid-private-settings"), 0600))
+	failure := errors.New("synthetic presentation failure")
+	for _, scenario := range []string{"success", "action failure", "action cancellation", "canceled after success", "warning output failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			diagnostic, err := os.CreateTemp(t.TempDir(), "diagnostic")
+			require.NoError(t, err)
+			defer func() { _ = diagnostic.Close() }()
+			original := os.Stderr
+			os.Stderr = diagnostic
+			defer func() { os.Stderr = original }()
+			if scenario == "warning output failure" {
+				require.NoError(t, diagnostic.Close())
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			called := false
+			command := &cli.Command{Name: "generate", Reader: strings.NewReader(""), Writer: os.Stdout,
+				Action: imageSavingWorkflow(func(ctx context.Context, command *cli.Command) error {
+					called = true
+					before, err := os.ReadFile(diagnostic.Name())
+					require.NoError(t, err)
+					require.Empty(t, before, "preference warning must wait for successful presentation")
+					presentation := ctx.Value(imagePresentationKey{}).(imagePresentation)
+					require.Equal(t, "off", presentation.plan.inline)
+					switch scenario {
+					case "action failure":
+						return failure
+					case "action cancellation":
+						cancel()
+						return ctx.Err()
+					case "canceled after success":
+						cancel()
+					}
+					return nil
+				}),
+			}
+			registerImageSavingFlags(command)
+			err = command.Run(ctx, []string{"generate", "--output-dir", t.TempDir()})
+			require.True(t, called, "warning output must not prevent the action")
+			switch scenario {
+			case "success":
+				require.NoError(t, err)
+			case "action failure":
+				require.ErrorIs(t, err, failure)
+			case "action cancellation", "canceled after success":
+				require.ErrorIs(t, err, context.Canceled)
+			case "warning output failure":
+				require.ErrorIs(t, err, os.ErrClosed)
+			}
+			after, err := os.ReadFile(diagnostic.Name())
+			require.NoError(t, err)
+			if scenario == "success" {
+				require.Contains(t, string(after), "Could not read the inline preference")
+				require.NotContains(t, string(after), "invalid-private-settings")
+			} else {
+				require.Empty(t, after)
+			}
+		})
 	}
 }
 

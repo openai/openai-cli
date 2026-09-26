@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/goccy/go-yaml"
 	"github.com/openai/openai-cli/internal/imageprefs"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +33,83 @@ func localImageTestEnvironment(t *testing.T, endpoint string) ([]string, string)
 	require.NoError(t, err)
 	env := []string{"HOME=" + home, "USERPROFILE=" + home, "APPDATA=" + home, "XDG_CONFIG_HOME=" + home, "OPENAI_BASE_URL=" + endpoint, "OPENAI_API_KEY=", "TERM=xterm-256color", "TERM_PROGRAM=unknown", "CI=", "NO_COLOR=", "CLICOLOR=", "TMUX=", "STY=", "ZELLIJ=", "SSH_CONNECTION=", "SSH_CLIENT=", "SSH_TTY="}
 	return env, filepath.Join(config, "openai", "image-preferences.json")
+}
+
+func TestMainImageInlinePreferenceFailureTerminal(t *testing.T) {
+	if !term.IsTerminal(os.Stdout.Fd()) {
+		t.Skip("requires actual terminal stdout")
+	}
+	const message = "synthetic image request rejected"
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"`+message+`","type":"invalid_request_error","code":"synthetic_code"}}`)
+	}))
+	defer server.Close()
+	for _, preference := range []string{"invalid", "unreadable"} {
+		t.Run(preference, func(t *testing.T) {
+			env, prefs := localImageTestEnvironment(t, server.URL)
+			directory := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Dir(prefs), 0700))
+			if preference == "invalid" {
+				require.NoError(t, os.WriteFile(prefs, []byte("invalid-private-settings"), 0600))
+			} else {
+				// A directory is unreadable as a preference file, even for root.
+				require.NoError(t, os.Mkdir(prefs, 0700))
+			}
+			for _, tc := range []struct {
+				name, format string
+				extract      bool
+			}{
+				{"json", "json", false}, {"yaml", "yaml", false}, {"text", "text", false},
+				{"json extraction", "json", true}, {"yaml extraction", "yaml", true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					binary, err := os.Executable()
+					require.NoError(t, err)
+					args := []string{"-test.run=^TestMainDispatchProcess$", "--", "openai", "--format-error", tc.format}
+					if tc.extract {
+						args = append(args, "--transform-error", "message")
+					}
+					args = append(args, "images", "generate", "--prompt", "synthetic preference failure", "--output-dir", directory)
+					ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+					defer cancel()
+					child := exec.CommandContext(ctx, binary, args...)
+					child.Env = append([]string{"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1"}, env...)
+					child.Stdout = os.Stdout
+					var diagnostic bytes.Buffer
+					child.Stderr = &diagnostic
+					var exit *exec.ExitError
+					require.ErrorAs(t, child.Run(), &exit)
+					require.Equal(t, 1, exit.ExitCode())
+					require.NoError(t, ctx.Err())
+					output := diagnostic.String()
+					if tc.extract {
+						var got string
+						if tc.format == "yaml" {
+							require.NoError(t, yaml.Unmarshal([]byte(output), &got))
+						} else {
+							require.NoError(t, json.Unmarshal([]byte(output), &got))
+						}
+						require.Equal(t, message, got)
+					} else if tc.format == "text" {
+						require.Contains(t, output, "The API rejected the request")
+					} else {
+						payload := decodeMainStructuredError(t, tc.format, output)
+						require.Equal(t, message, payload["message"])
+						require.Equal(t, "synthetic_code", payload["code"])
+					}
+					require.NotContains(t, output, "Could not read the inline preference")
+					require.NotContains(t, output, "invalid-private-settings")
+					require.NotContains(t, output, prefs)
+				})
+			}
+			require.Empty(t, imageGenerationFiles(t, directory))
+		})
+	}
+	require.Equal(t, int32(10), requests.Load())
 }
 
 func TestMainImageInlinePreferenceCommandsAreLocal(t *testing.T) {
