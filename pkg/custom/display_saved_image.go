@@ -76,7 +76,7 @@ func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnos
 	if errors.As(err, &fontErr) && ctx.Err() == nil {
 		// A FontError guarantees no image glyphs were written. A block fallback is
 		// safe and does not replace this tab's earlier immutable glyph assignments.
-		if writeErr := readable.WriteText(diagnostics, fmt.Sprintf("Sharp inline preview unavailable: %s. The image is saved; no need to generate again.", fontErr.Error())); writeErr != nil {
+		if writeErr := reportImageFontUnavailable(diagnostics, fontErr); writeErr != nil {
 			return writeErr
 		}
 		if savedImageBlockColor(os.Getenv) {
@@ -93,6 +93,18 @@ func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnos
 	}
 	_, err = fmt.Fprintln(out)
 	return err
+}
+
+func reportImageFontUnavailable(out io.Writer, err error) error {
+	message := err.Error()
+	var pathErr *os.PathError
+	var linkErr *os.LinkError
+	if errors.As(err, &pathErr) || errors.As(err, &linkErr) {
+		// Wrapped or joined filesystem errors can expose several cache paths.
+		// Keep those details out of diagnostics, including any wrapper text.
+		message = "image font files could not be accessed; open the saved file to view it"
+	}
+	return readable.WriteText(out, fmt.Sprintf("Sharp inline preview unavailable: %s. The image is saved; no need to generate again.", message))
 }
 
 func savedImagePreviewColumns(bounds image.Rectangle, width, height int) int {

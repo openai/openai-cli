@@ -32,14 +32,14 @@ func (g *Gallery) FontForTypography(ctx context.Context, revision *Revision, sou
 	}
 	// JSON sorts map keys. Both source bytes and exact layout participate in
 	// the identity, so font updates and different tabs cannot reuse stale tiles.
-	// Version 3 draws each image row as a single bitmap. Old immutable tile
-	// fonts must not mask that renderer update when the same image is previewed.
+	// Version 4 includes the corrected Unicode mappings and glyph-count tables.
+	// Rebuild older cached fonts while retaining their files and scrollback slots.
 	identity, err := json.Marshal(struct {
 		Version    int
 		Revision   string
 		Source     imagefont.PreserveOptions
 		Companions []imagefont.PreserveOptions
-	}{3, revision.state.PostScript, source, companions})
+	}{4, revision.state.PostScript, source, companions})
 	if err != nil {
 		return TypographyFont{}, errors.New("invalid image typography")
 	}
@@ -64,6 +64,9 @@ func (g *Gallery) FontForTypography(ctx context.Context, revision *Revision, sou
 	}
 	fonts := make([]DisplayFont, 0, 1+len(companions))
 	for _, face := range append([]imagefont.PreserveOptions{source}, companions...) {
+		if err := ctx.Err(); err != nil {
+			return TypographyFont{}, err
+		}
 		faceDigest := sha256.Sum256([]byte(token + ":" + face.SourcePostScript))
 		faceToken := hex.EncodeToString(faceDigest[:16])
 		path := filepath.Join(g.directory, "fonts", "revision-"+faceToken+".ttf")
@@ -80,7 +83,7 @@ func (g *Gallery) FontForTypography(ctx context.Context, revision *Revision, sou
 		if err != nil {
 			return TypographyFont{}, fmt.Errorf("preserve Terminal font %q: %w", face.SourcePostScript, err)
 		}
-		if err := writeNew(path, encoded.Data); err != nil {
+		if err := writeNew(ctx, path, encoded.Data); err != nil {
 			return TypographyFont{}, err
 		}
 		fonts = append(fonts, DisplayFont{path, postScript, false})

@@ -197,7 +197,7 @@ func (g *Gallery) Prepare(ctx context.Context, img image.Image, columns int) (*R
 	}
 	added := entry{Hash: hash, Columns: columns, Rows: rows, Start: imagefont.FirstCodepoint + rune(used)}
 	cache := filepath.Join(g.directory, "images", hash+".png")
-	if err = writeNew(cache, data); errors.Is(err, os.ErrExist) {
+	if err = writeNew(ctx, cache, data); errors.Is(err, os.ErrExist) {
 		old, readErr := readPrivate(cache, 16<<20)
 		if readErr != nil {
 			return nil, readErr
@@ -218,10 +218,19 @@ func (g *Gallery) prepareRevision(ctx context.Context, next diskState, selected 
 	if err := g.check(ctx); err != nil {
 		return nil, err
 	}
-	token, err := randomID()
+	// Retries must reuse pending font identities, including after reopening the
+	// gallery. Registration or activation can have succeeded despite an error;
+	// those immutable files may still be active and cannot safely be discarded.
+	identity, err := json.Marshal(struct {
+		ID       string
+		Revision int
+		Images   []entry
+	}{next.ID, next.Revision, next.Images})
 	if err != nil {
 		return nil, err
 	}
+	digest := sha256.Sum256(identity)
+	token := hex.EncodeToString(digest[:16])
 	next.Font = "revision-" + token + ".ttf"
 	next.Family = "OpenAI Image Gallery " + next.ID[:8] + " " + token[:8]
 	next.PostScript = "OpenAIImages-" + next.ID[:8] + "-" + token + "-Regular"
@@ -260,6 +269,9 @@ func (g *Gallery) Commit(ctx context.Context, revision *Revision) error {
 	}
 	data, err := json.MarshalIndent(revision.state, "", "  ")
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	file, err := os.CreateTemp(g.directory, ".state-*")
@@ -370,11 +382,27 @@ func normalize(ctx context.Context, decoded image.Image) (image.Image, []byte, e
 		return nil, nil, err
 	}
 	var buffer bytes.Buffer
-	if err := png.Encode(&buffer, normalized); err != nil {
+	if err := png.Encode(contextWriter{ctx, &buffer}, normalized); err != nil {
+		return nil, nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
 	return normalized, buffer.Bytes(), nil
 }
+
+type contextWriter struct {
+	ctx context.Context
+	out io.Writer
+}
+
+func (writer contextWriter) Write(data []byte) (int, error) {
+	if err := writer.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return writer.out.Write(data)
+}
+
 func privateDirectory(path string) error {
 	err := os.MkdirAll(path, 0700)
 	if err != nil {
@@ -413,15 +441,21 @@ func readPrivate(path string, limit int64) ([]byte, error) {
 	}
 	return data, nil
 }
-func writeNew(path string, data []byte) error {
+func writeNew(ctx context.Context, path string, data []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
-	if _, err = file.Write(data); err == nil {
+	if _, err = (contextWriter{ctx, file}).Write(data); err == nil {
 		err = file.Sync()
 	}
 	closeErr := file.Close()
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		_ = os.Remove(path)
 		return err

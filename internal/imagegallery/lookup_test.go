@@ -27,7 +27,7 @@ func TestLookupFontPSFindsCurrentAndImmutableVariant(t *testing.T) {
 	}
 	token := "abcdef0123456789abcdef0123456789"
 	variant := filepath.Join(g.directory, "fonts", "revision-"+token+".ttf")
-	if err := writeNew(variant, []byte("synthetic immutable font")); err != nil {
+	if err := writeNew(t.Context(), variant, []byte("synthetic immutable font")); err != nil {
 		t.Fatal(err)
 	}
 	before := g.State()
