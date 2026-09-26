@@ -93,9 +93,17 @@ func serveImageGeneration(w http.ResponseWriter, r *http.Request) {
 		"n": float64(1), "size": "auto", "quality": "auto", "output_format": "png",
 		"background": "auto", "moderation": "auto", "partial_images": float64(0), "stream": false,
 	}
+	streamPreset := make(map[string]any, len(preset))
+	batchPreset := make(map[string]any, len(preset))
+	for key, value := range preset {
+		streamPreset[key], batchPreset[key] = value, value
+	}
+	streamPreset["stream"] = true
+	batchPreset["n"] = float64(2)
 	if r.Header.Get("Authorization") != "Bearer synthetic-demo-key" ||
 		json.NewDecoder(r.Body).Decode(&request) != nil ||
-		(!reflect.DeepEqual(request, promptOnly) && !reflect.DeepEqual(request, preset)) {
+		(!reflect.DeepEqual(request, promptOnly) && !reflect.DeepEqual(request, preset) &&
+			!reflect.DeepEqual(request, streamPreset) && !reflect.DeepEqual(request, batchPreset)) {
 		http.Error(w, `{"error":{"message":"Expected the fixed synthetic image demo request.","type":"invalid_request_error"}}`, http.StatusBadRequest)
 		return
 	}
@@ -112,10 +120,22 @@ func serveImageGeneration(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	const image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP438AAAAQBAYDFKhhdAAAAAElFTkSuQmCC"
+	if reflect.DeepEqual(request, streamPreset) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "event: image_generation.completed\ndata: {\"type\":\"image_generation.completed\",\"b64_json\":%q}\n\n", image)
+		return
+	}
+	if reflect.DeepEqual(request, batchPreset) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{
+			map[string]any{"b64_json": image}, map[string]any{"b64_json": "invalid-synthetic-base64"},
+		}})
+		return
+	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"created": 1704067200,
 		"data": []any{map[string]any{
-			"b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP438AAAAQBAYDFKhhdAAAAAElFTkSuQmCC",
+			"b64_json": image,
 		}},
 	})
 }
