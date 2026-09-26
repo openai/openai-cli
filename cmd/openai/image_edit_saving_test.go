@@ -463,6 +463,7 @@ func TestMainImageEditInterruptClosesStreamWithoutSavingPartial(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("edit did not stop on interrupt")
 	}
+	require.NoError(t, ctx.Err())
 	require.Empty(t, stdout.String())
 	require.Empty(t, imageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images")))
 	original, err := os.ReadFile(source)
