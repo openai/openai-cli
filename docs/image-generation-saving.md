@@ -42,7 +42,7 @@ selects streaming when saving; intermediate images are ignored. An explicit
 false or null stream conflicts with positive partials. Streaming supports one
 final image, and `--max-items` cannot truncate a saving stream. For API events,
 use an explicit data format and `--stream true`. An incomplete stream fails
-without claiming that an image was saved. No preview or viewer opens.
+without claiming that an image was saved. Only final saved images are previewed.
 
 ## Editing and variations
 
@@ -69,6 +69,43 @@ retain their existing empty form-part encoding rather than acquiring defaults.
 Streamed edits save only the final image and ignore intermediate previews.
 Variations do not support streaming. Explicit `--format json` preserves the
 original responses or edit events and makes no saved files. Model-discovery
-default markers, local previews and terminal rendering remain separate work.
+default markers and redisplaying saved files remain separate work.
 Use `openai help --all images edit` or `openai help --all images create-variation`
 for every request setting.
+
+## Inline previews
+
+After saving and printing the paths, interactive terminals can show the finished
+images. The original saved bytes are unchanged. Saving to a pipe still prints
+paths, without graphics, font changes or preview caches.
+
+```sh
+openai images generate --prompt "A tiny orange robot" --inline off
+openai images generate --prompt "A tiny orange robot" --inline on
+```
+
+`--inline auto` is the default on generation, edits and variations. Kitty and
+Ghostty use the Kitty graphics protocol; iTerm2 and WezTerm use the iTerm protocol.
+Other color terminals show a labeled color-block approximation. `NO_COLOR` or
+`CLICOLOR=0` disables that approximation, while native image graphics remain
+available. Basic terminals keep the saved path without a preview.
+
+`--inline on` explicitly allows the image-font path in a local Apple Terminal
+tab. It registers a generated font containing image strips, preserving ordinary
+text metrics, point size and profile settings. macOS may request Terminal
+Automation permission. Without this opt-in, Apple Terminal uses color blocks.
+Each tab has an immutable image gallery; a full gallery keeps earlier previews
+and uses a fallback. Open another tab for more sharp previews. Setup and repair
+commands are separate work.
+
+Pipes, CI and `TERM=dumb` never render previews, even with `--inline on`.
+Multiplexers use a color-block fallback when supported; they do not receive
+native graphics or Apple font activation. Apple image fonts are unavailable over
+SSH. Native Kitty rendering can work over SSH when the terminal identity is
+forwarded. Explicit API formats and other saving opt-outs never render graphics.
+
+Optional previews are limited to 64 MiB and 16 megapixels, and must fit the
+terminal at a width of at least one cell. Larger or unusually tall images remain
+saved in full; the CLI explains why they could not be displayed. Preview decoding
+and font failures keep the saved files. Follow the printed path instead of
+paying to generate the image again. No separate viewer is opened.
