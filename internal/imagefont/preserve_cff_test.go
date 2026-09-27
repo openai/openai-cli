@@ -14,9 +14,13 @@ import (
 )
 
 func cffFixture() []byte {
+	return cffFixtureWithStrings(nil)
+}
+
+func cffFixtureWithStrings(customStrings [][]byte) []byte {
 	integer := func(value int) []byte { var b buffer; b.WriteByte(29); b.u32(uint32(value)); return b.Bytes() }
 	name := encodeCFFIndex([][]byte{[]byte("TestCFF")})
-	strings := encodeCFFIndex(nil)
+	strings := encodeCFFIndex(customStrings)
 	globals := encodeCFFIndex([][]byte{{11}})
 	chars := encodeCFFIndex([][]byte{{14}, {139, 139, 21, 14}})
 	charset := []byte{0, 0, 34}

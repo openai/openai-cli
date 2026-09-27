@@ -18,6 +18,7 @@ const (
 	FirstCodepoint = '\ue000'
 	LastCodepoint  = '\uf8ff'
 	MaxGlyphs      = int(LastCodepoint-FirstCodepoint) + 1
+	MaxFrameRows   = 32
 )
 
 // Frame supplies one image and its immutable character range. Reusing its
@@ -163,11 +164,11 @@ func prepareGeometry(frames []Frame, tileWidth, tileHeight int) ([]preparedFrame
 		if f.Columns == 0 {
 			f.Columns = 32
 		}
-		if f.Columns < 1 || f.Columns > 64 || f.Rows < 0 || f.Rows > 32 {
+		if f.Columns < 1 || f.Columns > 64 || f.Rows < 0 || f.Rows > MaxFrameRows {
 			return nil, fmt.Errorf("frame %d requires 1 to 64 columns and 1 to 32 rows", i+1)
 		}
 		if f.Rows == 0 {
-			f.Rows = min(32, max(1, int(math.Ceil(float64(f.Columns*tileWidth)*float64(h)/float64(tileHeight*w)))))
+			f.Rows = min(MaxFrameRows, max(1, int(math.Ceil(float64(f.Columns*tileWidth)*float64(h)/float64(tileHeight*w)))))
 		}
 		if f.CodepointStart == 0 {
 			f.CodepointStart = next

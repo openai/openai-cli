@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.0](https://github.com/openai/openai-cli/compare/v1.27.0...v1.28.0) (2026-09-27)
+
+
+### Features
+
+* **images:** show progress previews while saving ([#302](https://github.com/openai/openai-cli/issues/302)) ([19f85a1](https://github.com/openai/openai-cli/commit/19f85a117e8ee198f139dd19e329e08cd3d248a9))
+
 ## [1.27.0](https://github.com/openai/openai-cli/compare/v1.26.0...v1.27.0) (2026-09-26)
 
 

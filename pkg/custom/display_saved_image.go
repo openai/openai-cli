@@ -63,12 +63,13 @@ func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnos
 		return reportImagePreviewUnavailable(diagnostics, "Inline preview unavailable: widen the terminal and retry the saved image.")
 	}
 	// Fit tall previews as well as wide ones. Native protocols retain all pixels.
-	columns := savedImagePreviewColumns(img.Bounds(), width, height)
+	cellWidth, cellHeight := terminalimage.CellSize(file.Fd())
+	columns := savedImagePreviewColumns(img.Bounds(), width, height, cellWidth, cellHeight)
+	if protocol == "font" {
+		columns = terminalimage.FontPreviewColumns(img.Bounds(), columns, height)
+	}
 	if columns < 1 {
 		return reportImagePreviewUnavailable(diagnostics, "Inline preview unavailable: the image is too tall for this terminal. Open the saved file to view it.")
-	}
-	if protocol == "font" {
-		columns = min(columns, 32)
 	}
 	if protocol == "blocks" {
 		if err := readable.WriteText(out, "Inline preview (color approximation):"); err != nil {
@@ -84,6 +85,17 @@ func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnos
 			return writeErr
 		}
 		if savedImageBlockColor(os.Getenv) {
+			// Font preparation can outlive a window resize. Recheck the current
+			// viewport before emitting the optional block fallback.
+			width, height, sizeErr := term.GetSize(file.Fd())
+			if sizeErr != nil {
+				return errImagePreviewUnavailable
+			}
+			cellWidth, cellHeight := terminalimage.CellSize(file.Fd())
+			columns = min(columns, savedImagePreviewColumns(img.Bounds(), width, height, cellWidth, cellHeight))
+			if columns < 1 {
+				return errImagePreviewUnavailable
+			}
 			if err := readable.WriteText(out, "Inline preview (color approximation):"); err != nil {
 				return err
 			}
@@ -111,14 +123,17 @@ func reportImageFontUnavailable(out io.Writer, err error) error {
 	return readable.WriteText(out, fmt.Sprintf("Sharp inline preview unavailable: %s. The image is saved; no need to generate again.", message))
 }
 
-func savedImagePreviewColumns(bounds image.Rectangle, width, height int) int {
-	if bounds.Empty() || width < 2 || height < 2 {
+func savedImagePreviewColumns(bounds image.Rectangle, width, height, cellWidth, cellHeight int) int {
+	if bounds.Empty() || width < 2 || height < 2 || cellWidth < 1 || cellHeight < 1 {
 		return 0
 	}
-	// ReadSaved bounds image dimensions and terminal sizes are bounded too, but
-	// multiplying them can overflow a 32-bit int. Clamp before converting back.
+	// The renderer preserves image proportions using actual cell geometry when
+	// available. Apply the same geometry here so native images fit vertically.
+	// Keep exact fits exact. Decoded images and native window fields are bounded;
+	// multiplying in int64 also avoids overflowing on 32-bit platforms.
 	columns := min(int64(64), int64(width)-1)
-	return int(min(columns, (int64(height)-2)*2*int64(bounds.Dx())/int64(bounds.Dy())))
+	fit := (int64(height) - 2) * int64(cellHeight) * int64(bounds.Dx()) / (int64(cellWidth) * int64(bounds.Dy()))
+	return int(min(columns, fit))
 }
 
 func savedImageProtocol(mode string, terminal bool, getenv func(string) string) string {

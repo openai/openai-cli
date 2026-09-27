@@ -38,11 +38,11 @@ returned as API data and are never downloaded. `--output-format` chooses the
 image encoding; it is separate from the CLI's `--format`.
 
 `--stream true` saves only the completed image. Positive `--partial-images`
-selects streaming when saving; intermediate images are ignored. An explicit
+selects streaming when saving and shows temporary progress previews. An explicit
 false or null stream conflicts with positive partials. Streaming supports one
 final image, and `--max-items` cannot truncate a saving stream. For API events,
 use an explicit data format and `--stream true`. An incomplete stream fails
-without claiming that an image was saved. Only final saved images are previewed.
+without claiming that an image was saved.
 
 ## Editing and variations
 
@@ -66,7 +66,8 @@ the endpoint requires a square PNG under 4 MB. Explicit models and nulls keep
 the existing request semantics. In multipart requests, explicit null fields
 retain their existing empty form-part encoding rather than acquiring defaults.
 
-Streamed edits save only the final image and ignore intermediate previews.
+Streamed edits save only the final image. `--partial-images 1`, `2` or `3`
+enables streaming and displays progress previews where supported.
 Variations do not support streaming. Explicit `--format json` preserves the
 original responses or edit events and makes no saved files. Model-discovery
 default markers remain separate work.
@@ -74,6 +75,62 @@ Use `openai help --all images edit` or `openai help --all images create-variatio
 for every request setting.
 
 ## Inline previews
+
+Request progress while an image is generated or edited:
+
+```sh
+openai images generate --prompt "A tiny orange robot" --partial-images 2
+openai images edit --image "photo.png" --prompt "Make the sky purple" --partial-images 2
+# Allow sharp progress and final previews in a local Apple Terminal tab.
+openai images generate --prompt "A tiny orange robot" --partial-images 2 --inline on
+```
+
+The existing `--partial-images` flag now displays up to the requested number of
+intermediate images. Only the completed image is saved to the output folder.
+Progress images decode in memory. Duplicate or out-of-range preview indexes are
+ignored. An unavailable progress preview prints one notice beside the progress
+on stdout and the CLI continues waiting for the final image. Stderr remains
+available for structured errors. Cancellation, stream errors, output failures
+and failed font restoration still stop the command.
+
+Progress uses the same terminal capability as the final preview. Kitty/iTerm
+use native graphics. In local Apple Terminal, `--inline on` or a saved
+`openai images inline on` preference allows sharp image-font previews, preserving
+ordinary text and the tab's font size and profile. `auto` retains the color
+approximation.
+
+Sharp progress previews keep private cached images and immutable font entries
+so later previews do not replace pictures already in scrollback. These are
+preview caches, not generated files in the output folder. Before adding a new
+progress entry, the CLI leaves capacity for a final image in the current font.
+If sharp preparation fails or would consume that capacity, one notice is shown
+and the CLI waits for the final image instead of substituting blocky progress.
+Font changes or another command can still affect final-preview availability;
+the final image is saved even when its optional preview is unavailable.
+
+`--inline off`, pipes and CI skip progress rendering and decoding. The API may
+return fewer partial images than requested, including a final image without any
+partials.
+
+Color-block previews are intentionally low resolution and use a 256-color
+palette. Their size and proportions use the terminal's reported cell dimensions
+when available. If that metadata is missing or ambiguous, the renderer estimates
+cells as twice as tall as wide; unusual font spacing can still affect the
+approximation. Native Kitty/iTerm previews retain full image pixels and let the
+terminal preserve their aspect ratio. None of these display choices resizes the
+saved original.
+
+Sharp font previews also fit their allocated character rows within the window.
+The CLI checks again after preparing the font and recalculates any final-image
+fallback after a resize. An older preview already in scrollback may still wrap
+when the window becomes narrower; existing character mappings are not replaced.
+
+Streaming supports one final image. Positive partial counts enable streaming
+when saving unless `stream` is explicitly false or null, which is rejected.
+Explicit API formats retain API events and require `--stream true`. Use
+`--max-items -1` or omit it when saving so an event limit cannot hide the final
+image. The 64 MiB/16 megapixel preview bounds apply only to rendering; they do
+not limit final-image saving or API output.
 
 After saving and printing the paths, interactive terminals can show the finished
 images. The original saved bytes are unchanged. Saving to a pipe still prints
@@ -117,6 +174,24 @@ terminal at a width of at least one cell. Larger or unusually tall images remain
 saved in full; the CLI explains why they could not be displayed. Preview decoding
 and font failures keep the saved files. Follow the printed path instead of
 paying to generate the image again. No separate viewer is opened.
+
+## Progress regression recording
+
+The terminal-only tests use a synthetic loopback SSE server and a sized PTY.
+An observer releases the final response only after both partial previews arrive.
+Build and run them without API credentials:
+
+```sh
+go test -c -o /tmp/image-progress-custom.test ./pkg/custom
+go test -c -o /tmp/image-progress-main.test ./cmd/openai
+python3 scripts/check-image-progress.py /tmp/image-progress-custom.test /tmp/image-progress-main.test /tmp/image-progress-evidence
+```
+
+`scripts/demos/record-image-progress.sh` records a before/after comparison using
+the shared fixture server and capture lifecycle. Its five arguments are the
+before binary, after binary, their full commit IDs, and an empty output directory
+outside the repository. Set `DEMO_API_BINARY` to a binary built from
+`./scripts/demos`. Generated PNGs, GIFs and terminal captures stay outside Git.
 
 ## Saved images and preferences
 

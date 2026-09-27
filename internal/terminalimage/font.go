@@ -46,13 +46,20 @@ type fontServices struct {
 }
 
 // FontError means preparing a sharp preview failed before any image characters
-// were written. The caller can still display a fallback without duplicating output.
+// were written, and any attempted rollback succeeded. Other failures must not
+// silently fall back or continue past uncertain terminal state.
 type FontError struct{ Err error }
 
 func (e *FontError) Error() string { return e.Err.Error() }
 func (e *FontError) Unwrap() error { return e.Err }
 
+const maxFontPreviewColumns = 32
+
 func writeImageFont(ctx context.Context, out io.Writer, img image.Image, columns int) error {
+	return writeImageFontReserved(ctx, out, img, columns, 0)
+}
+
+func writeImageFontReserved(ctx context.Context, out io.Writer, img image.Image, columns, reserveGlyphs int) error {
 	sessionID := os.Getenv("TERM_SESSION_ID")
 	if strings.TrimSpace(sessionID) == "" {
 		return &FontError{errors.New("sharp previews require TERM_SESSION_ID; open a new Apple Terminal tab and retry the saved image")}
@@ -81,9 +88,9 @@ func writeImageFont(ctx context.Context, out io.Writer, img image.Image, columns
 	session := sha256.Sum256([]byte(sessionID + "\x00" + tty))
 	directory := filepath.Join(cache, "openai", "image-terminal", fmt.Sprintf("%x", session[:16]))
 	services := fontServices{imagefontmac.Snapshot, imagefontmac.Source, imagefontmac.Register, imagefontmac.Preserve, imagefontmac.Restore, imagefontmac.InspectProfile}
-	if err := displayImageFont(ctx, out, img, columns, directory, tty, func() fontViewport {
+	if err := displayImageFontReserved(ctx, out, img, columns, directory, tty, func() fontViewport {
 		return readFontViewport(file.Fd())
-	}, services); err != nil {
+	}, services, reserveGlyphs); err != nil {
 		return err
 	}
 	// Clean up only after the selected font has been validated and rendered.
@@ -94,9 +101,13 @@ func writeImageFont(ctx context.Context, out io.Writer, img image.Image, columns
 }
 
 func displayImageFont(ctx context.Context, out io.Writer, img image.Image, columns int, directory, tty string, viewport func() fontViewport, services fontServices) (err error) {
-	writing := false
+	return displayImageFontReserved(ctx, out, img, columns, directory, tty, viewport, services, 0)
+}
+
+func displayImageFontReserved(ctx context.Context, out io.Writer, img image.Image, columns int, directory, tty string, viewport func() fontViewport, services fontServices, reserveGlyphs int) (err error) {
+	writing, rollbackFailed := false, false
 	defer func() {
-		if err != nil && !writing {
+		if err != nil && !writing && !rollbackFailed {
 			err = &FontError{err}
 		}
 	}()
@@ -148,24 +159,20 @@ func displayImageFont(ctx context.Context, out io.Writer, img image.Image, colum
 		return err
 	}
 	if columns < 1 {
-		columns = 32
+		columns = maxFontPreviewColumns
 	}
-	columns = min(columns, 32)
+	columns = min(columns, maxFontPreviewColumns)
 	if size.Columns > 0 {
 		columns = min(columns, size.Columns-1)
 	}
 	if columns < 1 {
 		return errors.New("widen Terminal before displaying the image")
 	}
-	revision, err := gallery.Prepare(ctx, img, columns)
-	if err != nil {
-		if errors.Is(err, imagegallery.ErrFull) {
-			return errors.New("this tab's image font is full; open a new Terminal tab to continue displaying sharp images")
+	if size.Rows > 0 {
+		columns = FontPreviewColumns(img.Bounds(), columns, size.Rows)
+		if columns < 1 {
+			return errors.New("enlarge Terminal before displaying the image")
 		}
-		return err
-	}
-	if size.Columns > 0 && revision.Columns >= size.Columns {
-		return fmt.Errorf("widen Terminal to at least %d columns to display this cached image", revision.Columns+1)
 	}
 	companions := make([]imagefont.PreserveOptions, 0, len(source.Companions))
 	for _, face := range source.Companions {
@@ -174,6 +181,34 @@ func displayImageFont(ctx context.Context, out io.Writer, img image.Image, colum
 			return err
 		}
 		companions = append(companions, companion)
+	}
+	limit := imagefont.MaxGlyphs
+	if reserveGlyphs > 0 {
+		for _, face := range append([]imagefont.PreserveOptions{geometry}, companions...) {
+			capacity, err := imagefont.PreservedGlyphCapacity(face)
+			if err != nil {
+				return err
+			}
+			limit = min(limit, max(0, capacity-reserveGlyphs))
+		}
+	}
+	revision, err := gallery.PrepareWithLimit(ctx, img, columns, limit)
+	if err != nil {
+		if errors.Is(err, imagegallery.ErrFull) {
+			if reserveGlyphs > 0 {
+				return errors.New("sharp progress preview skipped to leave room for the final image")
+			}
+			return errors.New("this tab's image font is full; open a new Terminal tab to continue displaying sharp images")
+		}
+		return err
+	}
+	if size.Columns > 0 && revision.Columns >= size.Columns {
+		return fmt.Errorf("widen Terminal to at least %d columns to display this cached image", revision.Columns+1)
+	}
+	// Cache normalization can round the source aspect ratio. Check the actual
+	// placement too, including replayed images whose glyph rows are immutable.
+	if size.Rows > 0 && revision.Rows > size.Rows-2 {
+		return errors.New("enlarge Terminal to fit this image's cached rows")
 	}
 	display, err := gallery.FontForTypography(ctx, revision, geometry, companions...)
 	if err != nil {
@@ -193,7 +228,9 @@ func displayImageFont(ctx context.Context, out io.Writer, img image.Image, colum
 			// Give conditional rollback an independent, bounded opportunity.
 			restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
-			err = errors.Join(err, services.restore(restoreCtx, state.ProfileName, tty, display.PostScript, before))
+			restoreErr := services.restore(restoreCtx, state.ProfileName, tty, display.PostScript, before)
+			rollbackFailed = restoreErr != nil
+			err = errors.Join(err, restoreErr)
 		}
 	}()
 	if err := services.preserve(ctx, state.ProfileName, tty, display.PostScript, before); err != nil {
@@ -210,6 +247,9 @@ func displayImageFont(ctx context.Context, out io.Writer, img image.Image, colum
 	}
 	if current.Columns > 0 && revision.Columns >= current.Columns {
 		return errors.New("Terminal became too narrow while preparing the image")
+	}
+	if current.Rows > 0 && revision.Rows > current.Rows-2 {
+		return errors.New("Terminal became too short while preparing the image")
 	}
 	if err := gallery.Commit(ctx, revision); err != nil {
 		return err

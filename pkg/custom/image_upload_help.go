@@ -18,6 +18,8 @@ Optional:
   --count 2                    Make two images (alias for -n)
   --inline off                 Save without a terminal preview
   --inline on                  Allow a sharp preview in local Apple Terminal
+{{if eq .Name "edit"}}  --partial-images 2           Preview progress, then save the final image
+{{end}}
 
 Scripts: --format json returns API data without saving or CLI defaults.
 Full help: {{$bin}} help --all images {{.Name}}
@@ -40,7 +42,11 @@ return API data without saving or CLI defaults. They cannot be combined with
 --name or --output-dir. --format auto and text save. No URL is downloaded.
 
 For edits, --stream true saves only the final image. Positive --partial-images
-automatically enables streaming; intermediate images are ignored, not saved.
+automatically enables streaming and shows 1 to 3 progress previews where supported.
+Only the final image is saved to the output folder. Apple Terminal's auto mode
+uses color blocks. --inline on or a saved on preference enables sharp progress
+and final previews; this may request Terminal Automation and keeps private
+preview caches for scrollback. Unavailable sharp progress is skipped.
 Streaming supports one final image. --format json --stream true returns API
 events. Variations do not support streaming.
 

@@ -35,6 +35,43 @@ type PreserveOptions struct {
 	LegacyAliases bool
 }
 
+// PreservedGlyphCapacity reports the aggregate image-cell budget for this text
+// face and geometry. Callers can reserve cells before adding optional previews.
+// Encoding still validates individual frame dimensions and all source tables.
+func PreservedGlyphCapacity(source PreserveOptions) (int, error) {
+	if _, err := preparePreservingFrames(nil, source.CellWidth, source.CellHeight, source.PointSize); err != nil {
+		return 0, err
+	}
+	maxp := source.Tables["maxp"]
+	if len(maxp) < 6 || binary.BigEndian.Uint16(maxp[4:]) == 0 {
+		return 0, fmt.Errorf("invalid source font glyph count")
+	}
+	glyphCount := int(binary.BigEndian.Uint16(maxp[4:]))
+	mapping, err := readPreservedCmap(source.Tables["cmap"], glyphCount)
+	if err != nil {
+		return 0, err
+	}
+	fontCells := 65535 - glyphCount
+	// Gallery characters form a contiguous prefix. Stop before the first
+	// original mapping, including coverage from secondary Unicode subtables.
+	for cp := FirstSupplementaryCodepoint; cp <= LastSupplementaryCodepoint; cp++ {
+		if _, occupied := mapping[uint32(cp)]; occupied {
+			fontCells = min(fontCells, int(cp-FirstSupplementaryCodepoint))
+			break
+		}
+	}
+	if cff, ok := source.Tables["CFF "]; ok {
+		font, err := readPreservedCFF(cff, glyphCount)
+		if err != nil {
+			return 0, err
+		}
+		// Each added CFF glyph also needs a custom string for its name.
+		fontCells = min(fontCells, cffCustomStringLimit-len(font.strings))
+	}
+	pixelsPerCell := int64(source.CellWidth) * int64(source.CellHeight) * maxPreservedBitmapScale * maxPreservedBitmapScale
+	return min(MaxGlyphs, fontCells, int(maxPreservedBitmapPixels/pixelsPerCell)), nil
+}
+
 // EncodePreserving creates a private, uniquely named copy of an outline
 // face, with extra bitmap glyphs. Source font files are never modified. Images
 // occupy a supplementary private-use range, preserving existing BMP icons.

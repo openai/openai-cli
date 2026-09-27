@@ -12,6 +12,8 @@ import (
 const (
 	FirstSupplementaryCodepoint = '\U000f0000'
 	LastSupplementaryCodepoint  = FirstSupplementaryCodepoint + rune(MaxGlyphs) - 1
+	maxPreservedBitmapPixels    = 64 * 1024 * 1024
+	maxPreservedBitmapScale     = 4
 )
 
 // Preserved fonts use an exact strike for the selected point size. A 2× strike
@@ -40,11 +42,11 @@ func preparePreservingFrames(frames []Frame, cellWidth, cellHeight, pointSize in
 		if f.Columns == 0 {
 			f.Columns = 32
 		}
-		if f.Columns < 1 || f.Columns > 64 || f.Rows < 0 || f.Rows > 32 {
+		if f.Columns < 1 || f.Columns > 64 || f.Rows < 0 || f.Rows > MaxFrameRows {
 			return nil, fmt.Errorf("frame %d requires 1 to 64 columns and 1 to 32 rows", i+1)
 		}
 		if f.Rows == 0 {
-			f.Rows = min(32, max(1, int(math.Ceil(float64(f.Columns*cellWidth)*float64(h)/float64(cellHeight*w)))))
+			f.Rows = min(MaxFrameRows, max(1, int(math.Ceil(float64(f.Columns*cellWidth)*float64(h)/float64(cellHeight*w)))))
 		}
 		if f.CodepointStart == 0 {
 			f.CodepointStart = next
@@ -55,9 +57,9 @@ func preparePreservingFrames(frames []Frame, cellWidth, cellHeight, pointSize in
 		}
 		width, height := f.Columns*cellWidth*2, f.Rows*cellHeight*2
 		// Check the larger strike before allocating or reading source pixels.
-		pixels := int64(width*2) * int64(height*2)
+		pixels := int64(f.Columns) * int64(f.Rows) * int64(cellWidth) * int64(cellHeight) * maxPreservedBitmapScale * maxPreservedBitmapScale
 		totalPixels += pixels
-		if width*2 > 16384 || height*2 > 16384 || pixels > 32*1024*1024 || totalPixels > 64*1024*1024 {
+		if width*2 > 16384 || height*2 > 16384 || pixels > 32*1024*1024 || totalPixels > maxPreservedBitmapPixels {
 			return nil, fmt.Errorf("image previews exceed the bitmap budget at this font size; use fewer image cells")
 		}
 		var text strings.Builder
