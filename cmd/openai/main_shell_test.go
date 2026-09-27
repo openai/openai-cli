@@ -145,11 +145,17 @@ func TestMainNativeShell(t *testing.T) {
 					if r.Method != http.MethodPost || r.URL.Path != "/images/generations" {
 						t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 					}
-					var body struct{ Model, Prompt string }
+					var body struct {
+						Model, Prompt string
+						Inline        json.RawMessage
+					}
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 						t.Errorf("decode synthetic request: %v", err)
 					} else if body.Model != "gpt-image-2.5-sunburst" || body.Prompt != "A tiny orange robot" {
 						t.Errorf("copied example changed its arguments: %+v", body)
+					}
+					if body.Inline != nil {
+						t.Error("local inline flag leaked into the API request")
 					}
 					if r.Header.Get("Authorization") != "Bearer fake-native-shell-key" {
 						t.Error("shell environment did not supply the synthetic key")
@@ -165,6 +171,51 @@ func TestMainNativeShell(t *testing.T) {
 				assertImageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"), got.stdout, 1, payload)
 				if strings.Contains(got.stdout+got.stderr, "fake-native-shell-key") {
 					t.Error("output printed the synthetic credential")
+				}
+				t.Run("explicit inline off preserves remembered on", func(t *testing.T) {
+					home := t.TempDir()
+					got := runNativeShell(t, shell, work, home, server.URL, shell.binary+" images inline on")
+					if got.code != 0 || got.stderr != "" {
+						t.Fatalf("remember inline on: %+v", got)
+					}
+					assertNativeShellImagePreference(t, home, true)
+					got = runNativeShell(t, shell, work, home, server.URL, shell.setKey+command+" --inline off")
+					if got.code != 0 || got.stderr != "" || requests.Load() != 2 || !strings.Contains(got.stdout, "Saved image:") {
+						t.Fatalf("explicit inline off failed: code=%d requests=%d stderr=%q", got.code, requests.Load(), got.stderr)
+					}
+					assertImageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"), got.stdout, 1, payload)
+					assertNativeShellImagePreference(t, home, true)
+				})
+			})
+			t.Run("local image commands", func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					http.Error(w, "unexpected API request", http.StatusInternalServerError)
+				}))
+				defer server.Close()
+				for _, mode := range []string{"off", "on", "off"} {
+					got := runNativeShell(t, shell, work, home, server.URL, shell.binary+" images inline "+mode)
+					if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "Automatic image previews "+mode+".") {
+						t.Fatalf("remember inline %s: %+v", mode, got)
+					}
+					assertNativeShellImagePreference(t, home, mode == "on")
+				}
+				payload := imageGenerationPNG(t)
+				path := filepath.Join(work, "saved preview.png")
+				if err := os.WriteFile(path, payload, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				got := runNativeShell(t, shell, work, home, server.URL, shell.binary+` images preview "saved preview.png"`)
+				if got.code == 0 || got.stdout != "" || !strings.Contains(got.stderr, "Image previews require a terminal") {
+					t.Fatalf("piped preview should fail clearly: %+v", got)
+				}
+				data, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(data, payload) {
+					t.Fatalf("preview changed the saved image: %v", err)
+				}
+				if requests.Load() != 0 {
+					t.Fatalf("local image commands made %d API requests", requests.Load())
 				}
 			})
 			t.Run("redirect", func(t *testing.T) {
@@ -237,12 +288,13 @@ func runNativeShell(t *testing.T, shell nativeShell, work, home, baseURL, script
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
 		name = strings.ToUpper(name)
-		if strings.HasPrefix(name, "OPENAI_") || slices.Contains([]string{"HOME", "USERPROFILE", "ZDOTDIR", "BASH_ENV", "ENV", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "PAGER", "TERM", "NO_COLOR"}, name) {
+		if strings.HasPrefix(name, "OPENAI_") || slices.Contains([]string{"HOME", "USERPROFILE", "APPDATA", "XDG_CONFIG_HOME", "ZDOTDIR", "BASH_ENV", "ENV", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "PAGER", "TERM", "NO_COLOR"}, name) {
 			continue
 		}
 		child.Env = append(child.Env, entry)
 	}
 	child.Env = append(child.Env, "HOME="+home, "USERPROFILE="+home, "ZDOTDIR="+home,
+		"APPDATA="+home, "XDG_CONFIG_HOME="+home,
 		"OPENAI_BASE_URL="+baseURL, "NO_COLOR=1", "TERM=dumb", "PAGER=cat")
 	var stdout, stderr bytes.Buffer
 	child.Stdout, child.Stderr = &stdout, &stderr
@@ -257,4 +309,23 @@ func runNativeShell(t *testing.T, shell nativeShell, work, home, baseURL, script
 		t.Fatal(err)
 	}
 	return mainDispatchResult{code, stdout.String(), stderr.String()}
+}
+
+func assertNativeShellImagePreference(t *testing.T, home string, inline bool) {
+	t.Helper()
+	config := home
+	if runtime.GOOS == "darwin" {
+		config = filepath.Join(home, "Library", "Application Support")
+	}
+	data, err := os.ReadFile(filepath.Join(config, "openai", "image-preferences.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prefs struct {
+		Version int
+		Inline  *bool
+	}
+	if err := json.Unmarshal(data, &prefs); err != nil || prefs.Version != 1 || prefs.Inline == nil || *prefs.Inline != inline {
+		t.Fatalf("saved preference = %s, want version 1 with inline %t (decode error: %v)", data, inline, err)
+	}
 }

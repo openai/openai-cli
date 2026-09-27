@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
@@ -99,6 +100,7 @@ func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
 		var options []option.RequestOption
 		var plan *imageOutputPlan
 		var streaming bool
+		var warnPreference bool
 		var err error
 		bodyType := ApplicationJSON
 		if command.Name != "generate" {
@@ -133,9 +135,15 @@ func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
 			return err
 		}
 		if plan != nil {
-			plan.inline = inline
-			// The generated root ErrWriter buffers failures for main. Preview
-			// warnings accompany a successful save and must reach stderr now.
+			mode, preferenceErr := imageInlineMode(ctx, command, isTerminal(imageCommandWriter(command)))
+			if preferenceErr != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				warnPreference = true
+				mode = "off"
+			}
+			plan.inline = mode
 			plan.diagnostics = os.Stderr
 		}
 		restore, err := selectImageGenerationStream(command, streaming)
@@ -146,7 +154,15 @@ func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
 		command.Metadata[imageSavingRequestMetadata] = &preparedImageSavingRequest{options: options, bodyType: bodyType}
 		defer delete(command.Metadata, imageSavingRequestMetadata)
 		ctx = context.WithValue(ctx, imagePresentationKey{}, imagePresentation{plan, command.Root().Writer})
-		return next(ctx, command)
+		if err := next(ctx, command); err != nil {
+			return err
+		}
+		if warnPreference {
+			// Wait until presentation succeeds so this plain-text warning cannot
+			// mix with a structured command error. ErrWriter buffers failures.
+			return readable.WriteText(outputWriter{ctx: ctx, out: os.Stderr}, "Could not read the inline preference; automatic previews are off for this command. Use --inline auto, on or off to override it, or check your image-preferences.json settings.")
+		}
+		return nil
 	}
 }
 
