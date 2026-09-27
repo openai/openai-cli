@@ -49,7 +49,7 @@ for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS')
             if binary == 'main':
                 current = captured.decode('utf-8', errors='replace').rsplit('MAIN-PROGRESS-CASE ', 1)[-1]
                 name = current.split('\r\n', 1)[0]
-                if len(re.findall(r'Progress preview [12] of 2:', current)) == 2 and name in ('generate','edit','stdin','iterm','failure'):
+                if len(re.findall(r'Progress preview [12] of 2:', current)) == 2 and name in ('generate','edit','stdin','iterm','explicit-on','failure'):
                     (pathlib.Path(gates.name) / name).touch()
         elif child.poll() is not None:
             break
@@ -58,7 +58,7 @@ for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS')
     (root / (binary + '-pty.raw')).write_bytes(captured)
     text = captured.decode('utf-8')
     assert code == 0 and '--- SKIP' not in text, text
-    expected = {'kitty':2,'iterm':2,'apple':2,'off':0,'ci':0,'no-color':0,'malformed':0,'malformed-error':0,'malformed-cancel':0,'invalid-index':0,'stream-error':2,'cancel':2} if binary == 'custom' else {'generate':2,'edit':2,'stdin':2,'iterm':2,'off':0,'ci':0,'api':0,'malformed':0,'malformed-error-json':0,'failure':2,'final-first':0}
+    expected = {'kitty':2,'iterm':2,'apple':2,'off':0,'ci':0,'no-color':0,'malformed':0,'malformed-error':0,'malformed-cancel':0,'invalid-index':0,'stream-error':2,'cancel':2} if binary == 'custom' else {'generate':2,'edit':2,'stdin':2,'iterm':2,'off':0,'persisted-off':0,'explicit-on':2,'ci':0,'api':0,'malformed':0,'malformed-error-json':0,'failure':2,'final-first':0}
     for name, count in expected.items():
         start = text.index(prefix + '-CASE ' + name + '\r\n')
         end = text.index(prefix + '-END ' + name + '\r\n', start)
@@ -73,6 +73,10 @@ for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS')
             assert '"image_generation.completed"' in section and 'Saved image:' not in section
         if binary == 'custom' and name == 'apple':
             assert '▀' in section and '\x1b_G' not in section and '\x1b]1337;' not in section
+        if binary == 'main' and name == 'persisted-off':
+            assert '\x1b_G' not in section and '\x1b]1337;' not in section and '▀' not in section
+        if binary == 'main' and name == 'explicit-on':
+            assert section.count('\x1b_G') == 3, (name, 'expected two previews and the final image')
     assert '\x1b_G' in text and '\x1b]1337;' in text
     results[binary] = {'passed': len(expected), 'exit_code':code, 'bytes':len(captured), 'skipped':False}
 (root / 'pty-results.json').write_text(json.dumps(results, indent=2) + '\n')

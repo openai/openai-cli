@@ -30,7 +30,7 @@ func TestMainImageProgressTerminal(t *testing.T) {
 	}
 	gateDirectory := os.Getenv("OPENAI_CLI_PROGRESS_GATE_DIR")
 	require.NotEmpty(t, gateDirectory, "requires the PTY observer gate")
-	for _, scenario := range []string{"generate", "edit", "stdin", "iterm", "off", "ci", "api", "malformed", "malformed-error-json", "failure", "final-first"} {
+	for _, scenario := range []string{"generate", "edit", "stdin", "iterm", "off", "persisted-off", "explicit-on", "ci", "api", "malformed", "malformed-error-json", "failure", "final-first"} {
 		t.Run(scenario, func(t *testing.T) {
 			payload := imageGenerationPNG(t)
 			encoded := base64.StdEncoding.EncodeToString(payload)
@@ -67,7 +67,7 @@ func TestMainImageProgressTerminal(t *testing.T) {
 					fmt.Fprintf(w, "data: {\"type\":%q,\"partial_image_index\":1,\"b64_json\":%q}\n\n", kind+".partial_image", encoded)
 					w.(http.Flusher).Flush()
 				}
-				if scenario == "generate" || scenario == "edit" || scenario == "stdin" || scenario == "iterm" || scenario == "failure" {
+				if scenario == "generate" || scenario == "edit" || scenario == "stdin" || scenario == "iterm" || scenario == "explicit-on" || scenario == "failure" {
 					deadline := time.NewTimer(5 * time.Second)
 					defer deadline.Stop()
 					poll := time.NewTicker(10 * time.Millisecond)
@@ -106,7 +106,7 @@ func TestMainImageProgressTerminal(t *testing.T) {
 			home := t.TempDir()
 			temporary := filepath.Join(home, "temporary")
 			require.NoError(t, os.Mkdir(temporary, 0700))
-			env := append(imageGenerationEnv(server, home), "OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "TERM_PROGRAM=kitty", "TERM=xterm-256color", "CI=false", "TMPDIR="+temporary, "TMP="+temporary, "TEMP="+temporary)
+			env := append(imageGenerationEnv(server, home), "APPDATA="+home, "XDG_CONFIG_HOME="+home, "OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "TERM_PROGRAM=kitty", "TERM=xterm-256color", "CI=false", "TMPDIR="+temporary, "TMP="+temporary, "TEMP="+temporary)
 			args := []string{"images", "generate", "--prompt", "synthetic progress", "--partial-images", "2", "--max-items", "-1"}
 			var input io.Reader
 			if scenario == "edit" {
@@ -119,6 +119,9 @@ func TestMainImageProgressTerminal(t *testing.T) {
 			}
 			if scenario == "off" {
 				args = append(args, "--inline", "off")
+			}
+			if scenario == "explicit-on" {
+				args = append(args, "--inline", "on")
 			}
 			if scenario == "ci" {
 				env = append(env, "CI=true")
@@ -137,6 +140,15 @@ func TestMainImageProgressTerminal(t *testing.T) {
 			require.NoError(t, err)
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
+			if scenario == "persisted-off" || scenario == "explicit-on" {
+				// Set the preference through the public command, then verify that
+				// generation honors it unless this command explicitly overrides it.
+				setup := exec.CommandContext(ctx, binary, "-test.run=^TestMainDispatchProcess$", "--", "openai", "images", "inline", "off")
+				setup.Env = env
+				output, err := setup.CombinedOutput()
+				require.NoError(t, err, string(output))
+				require.Contains(t, string(output), "Automatic image previews off.")
+			}
 			child := exec.CommandContext(ctx, binary, append([]string{"-test.run=^TestMainDispatchProcess$", "--", "openai"}, args...)...)
 			child.Env, child.Stdout, child.Stdin = env, os.Stdout, input
 			var diagnostic bytes.Buffer

@@ -98,6 +98,14 @@ does not change the tab's font or create progress font caches. `--inline off`,
 pipes and CI skip progress rendering and decoding. The API may return fewer
 partial images than requested, including a final image without any partials.
 
+Color-block previews are intentionally low resolution and use a 256-color
+palette. Their size and proportions use the terminal's reported cell dimensions
+when available. If that metadata is missing or ambiguous, the renderer estimates
+cells as twice as tall as wide; unusual font spacing can still affect the
+approximation. Native Kitty/iTerm previews retain full image pixels and let the
+terminal preserve their aspect ratio. None of these display choices resizes the
+saved original.
+
 Streaming supports one final image. Positive partial counts enable streaming
 when saving unless `stream` is explicitly false or null, which is rejected.
 Explicit API formats retain API events and require `--stream true`. Use

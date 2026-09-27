@@ -11,6 +11,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -37,34 +38,52 @@ func Write(ctx context.Context, w io.Writer, img image.Image, protocol string, c
 	case "iterm":
 		return writeITermImage(ctx, w, img, columns)
 	case "blocks":
-		if columns < 1 {
-			columns = 80
+		cellWidth, cellHeight := 1, 2
+		if file, ok := w.(*os.File); ok {
+			cellWidth, cellHeight = CellSize(file.Fd())
 		}
-		height := max(1, img.Bounds().Dy()*columns/img.Bounds().Dx())
-		preview := image.NewRGBA(image.Rect(0, 0, columns, height))
-		draw.Draw(preview, preview.Bounds(), image.NewUniform(color.RGBA{24, 24, 24, 255}), image.Point{}, draw.Src)
-		draw.ApproxBiLinear.Scale(preview, preview.Bounds(), img, img.Bounds(), draw.Over, nil)
-		for y := 0; y < height; y += 2 {
-			var row strings.Builder
-			for x := 0; x < columns; x++ {
-				top := ansi.Convert256(preview.At(x, y))
-				bottom := ansi.Convert256(preview.At(x, min(y+1, height-1)))
-				fmt.Fprintf(&row, "\x1b[38;5;%d;48;5;%dm▀", top, bottom)
-			}
-			row.WriteString("\x1b[0m")
-			if y+2 < height {
-				row.WriteByte('\n')
-			}
-			if _, err := io.WriteString(destination, row.String()); err != nil {
-				return err
-			}
-		}
-		return nil
+		return writeColorBlocks(destination, img, columns, cellWidth, cellHeight)
 	case "font":
 		return writeImageFont(ctx, w, img, columns)
 	default:
 		return errors.New("unsupported terminal image protocol")
 	}
+}
+
+func writeColorBlocks(out io.Writer, img image.Image, columns, cellWidth, cellHeight int) error {
+	if columns < 1 {
+		columns = 80
+	}
+	// Each character represents two vertical samples. Account for physical cell
+	// proportions so square source pixels are not stretched by font/line spacing.
+	// Keep the ratio integral so exact half-cell boundaries do not shift through
+	// floating-point rounding. Caller-bounded image/cell dimensions fit in int64.
+	numerator := int64(img.Bounds().Dy()) * int64(columns) * 2 * int64(cellWidth)
+	denominator := int64(img.Bounds().Dx()) * int64(cellHeight)
+	height := max(1, int((numerator+denominator/2)/denominator))
+	preview := image.NewRGBA(image.Rect(0, 0, columns, height))
+	background := color.RGBA{24, 24, 24, 255}
+	draw.Draw(preview, preview.Bounds(), image.NewUniform(background), image.Point{}, draw.Src)
+	draw.ApproxBiLinear.Scale(preview, preview.Bounds(), img, img.Bounds(), draw.Over, nil)
+	for y := 0; y < height; y += 2 {
+		var row strings.Builder
+		for x := 0; x < columns; x++ {
+			top := ansi.Convert256(preview.At(x, y))
+			bottom := ansi.Convert256(background)
+			if y+1 < height {
+				bottom = ansi.Convert256(preview.At(x, y+1))
+			}
+			fmt.Fprintf(&row, "\x1b[38;5;%d;48;5;%dm▀", top, bottom)
+		}
+		row.WriteString("\x1b[0m")
+		if y+2 < height {
+			row.WriteByte('\n')
+		}
+		if _, err := io.WriteString(out, row.String()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type contextWriter struct {

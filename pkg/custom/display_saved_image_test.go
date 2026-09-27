@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -207,7 +208,7 @@ func TestSavedImagePreviewColumns(t *testing.T) {
 		{"empty image", 0, 0, 120, 40, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, savedImagePreviewColumns(image.Rect(0, 0, tc.imageWidth, tc.imageHeight), tc.terminalWidth, tc.terminalRows))
+			require.Equal(t, tc.want, savedImagePreviewColumns(image.Rect(0, 0, tc.imageWidth, tc.imageHeight), tc.terminalWidth, tc.terminalRows, 1, 2))
 		})
 	}
 }
@@ -218,5 +219,39 @@ func TestSavedImagePreviewColumnsAvoids32BitOverflow(t *testing.T) {
 	imageWidth, imageHeight, rows := int32(16<<20), int32(1), int32(100)
 	previous := min(int32(64), (rows-2)*2*imageWidth/imageHeight)
 	require.Negative(t, previous)
-	require.Equal(t, 64, savedImagePreviewColumns(image.Rect(0, 0, int(imageWidth), int(imageHeight)), 120, int(rows)))
+	require.Equal(t, 64, savedImagePreviewColumns(image.Rect(0, 0, int(imageWidth), int(imageHeight)), 120, int(rows), 1, 2))
+}
+
+func TestSavedImagePreviewFitsMeasuredCells(t *testing.T) {
+	for _, tc := range []struct {
+		name                                                              string
+		imageWidth, imageHeight, width, rows, cellWidth, cellHeight, want int
+	}{
+		{"wide cells square", 1024, 1024, 120, 24, 10, 16, 35},
+		{"tall cells square", 1024, 1024, 120, 24, 8, 20, 55},
+		{"wide cells portrait", 1024, 1536, 120, 24, 10, 16, 23},
+		{"tall cells portrait", 1024, 1536, 120, 24, 8, 20, 36},
+		{"wide cells landscape", 1536, 1024, 120, 24, 10, 16, 52},
+		{"tall cells landscape", 1536, 1024, 120, 24, 8, 20, 64},
+		{"narrow square", 1024, 1024, 9, 24, 10, 16, 8},
+		{"short terminal", 1024, 1024, 120, 3, 10, 16, 1},
+		{"exact one-column fit", 10, 352, 120, 24, 10, 16, 1},
+		{"just too tall", 10, 353, 120, 24, 10, 16, 0},
+		{"exact fit with nonterminating cell ratio", 7, 450, 120, 32, 7, 15, 1},
+		{"just too tall with nonterminating cell ratio", 7, 451, 120, 32, 7, 15, 0},
+		{"extreme wide", 16 << 20, 1, 65535, 65535, 8, 20, 64},
+		{"maximum image and window products", 16 << 20, 1, 65535, 65535, 65535, 65535, 64},
+		{"extreme tall", 1, 16 << 20, 65535, 65535, 10, 16, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := savedImagePreviewColumns(image.Rect(0, 0, tc.imageWidth, tc.imageHeight), tc.width, tc.rows, tc.cellWidth, tc.cellHeight)
+			require.Equal(t, tc.want, got)
+			if got > 0 {
+				// Native images retain source proportions. Their physical height
+				// must fit, including fractional rows rounded by the terminal.
+				height := float64(got*tc.cellWidth) * float64(tc.imageHeight) / float64(tc.imageWidth)
+				require.LessOrEqual(t, math.Ceil(height/float64(tc.cellHeight)), float64(tc.rows-2))
+			}
+		})
+	}
 }

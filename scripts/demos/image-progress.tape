@@ -3,8 +3,8 @@
 Output image-progress.gif
 Set Shell bash
 Set FontSize 20
-Set Width 1280
-Set Height 1000
+Set Width 1000
+Set Height 1600
 Set TypingSpeed 35ms
 Set Env TERM "xterm-256color"
 Set Env TERM_PROGRAM ""

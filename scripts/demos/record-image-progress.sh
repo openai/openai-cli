@@ -39,14 +39,15 @@ SCENE
   echo 'feature: show streaming image progress, save only the final image'
   echo "before: $demo_before_sha"
   echo "after: $demo_after_sha"
-  echo 'data: three locally drawn 64x12 robot stages; loopback API and fake key only'
+  echo 'data: three locally drawn 128x64 robot stages; same proportions throughout; loopback API and fake key only'
   echo 'capture: real PTY, isolated HOME; TERM=xterm-256color; bash without startup files'
   echo 'scope: ANSI colored-character fallback, not native Kitty/iTerm/Apple font validation'
   echo 'retention: temporary output folders are cleaned; final PNG retained below'
   demo_capture_metadata
 } > "$demo_output/metadata.txt"
-demo_window_size=94x36
-demo_render_options=(--renderer resvg --font-family Menlo --font-size 20 --line-height 1.2 \
+demo_window_size=80x64
+# swash fills block characters across each cell; resvg leaves font-metric seams.
+demo_render_options=(--renderer swash --font-family Menlo --font-size 20 --line-height 1.2 \
   --theme dracula --fps-cap 20 --last-frame-duration 2)
 for demo_scene in before after disabled; do
   demo_command_dir="$demo_runtime/after"
