@@ -103,7 +103,7 @@ func setupImageFont(ctx context.Context, out io.Writer, directory, tty string, r
 		return err
 	}
 	state := gallery.State()
-	if _, err = activateImageFont(ctx, gallery, revision, state.MaxColumns, tty, before, source, viewport(), viewport, services); err != nil {
+	if _, _, err = activateImageFont(ctx, gallery, revision, state.MaxColumns, tty, before, source, viewport(), viewport, services); err != nil {
 		return err
 	}
 	return readable.WriteText(contextWriter{ctx, out}, fmt.Sprintf("Prepared this tab for sharp previews; kept %s at %g pt and %d cached images.\nUse --inline on when generating an image. Automatic preview preferences are unchanged.", source.PostScript, before.FontSize, state.ImageCount))

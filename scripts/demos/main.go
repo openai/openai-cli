@@ -107,16 +107,19 @@ func serveImageGeneration(w http.ResponseWriter, r *http.Request) {
 		"background": "auto", "moderation": "auto", "partial_images": float64(0), "stream": false,
 	}
 	streamPreset := make(map[string]any, len(preset))
+	progressPreset := make(map[string]any, len(preset))
 	batchPreset := make(map[string]any, len(preset))
 	for key, value := range preset {
 		streamPreset[key], batchPreset[key] = value, value
+		progressPreset[key] = value
 	}
 	streamPreset["stream"] = true
+	progressPreset["stream"], progressPreset["partial_images"] = true, float64(2)
 	batchPreset["n"] = float64(2)
 	if r.Header.Get("Authorization") != "Bearer synthetic-demo-key" ||
 		json.NewDecoder(r.Body).Decode(&request) != nil ||
 		(!reflect.DeepEqual(request, promptOnly) && !reflect.DeepEqual(request, preset) &&
-			!reflect.DeepEqual(request, streamPreset) && !reflect.DeepEqual(request, batchPreset)) {
+			!reflect.DeepEqual(request, streamPreset) && !reflect.DeepEqual(request, batchPreset) && !reflect.DeepEqual(request, progressPreset)) {
 		http.Error(w, `{"error":{"message":"Expected the fixed synthetic image demo request.","type":"invalid_request_error"}}`, http.StatusBadRequest)
 		return
 	}
@@ -136,6 +139,23 @@ func serveImageGeneration(w http.ResponseWriter, r *http.Request) {
 	image := syntheticImagePNG
 	if os.Getenv("DEMO_IMAGE_PREVIEW_FIXTURE") == "robot" {
 		image = syntheticRobotPNG()
+	}
+	if reflect.DeepEqual(request, progressPreset) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for stage := 0; stage < 3; stage++ {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(time.Second):
+			}
+			kind := "partial_image"
+			if stage == 2 {
+				kind = "completed"
+			}
+			fmt.Fprintf(w, "data: {\"type\":%q,\"partial_image_index\":%d,\"b64_json\":%q}\n\n", "image_generation."+kind, stage, syntheticProgressPNG(stage))
+			w.(http.Flusher).Flush()
+		}
+		return
 	}
 	if reflect.DeepEqual(request, streamPreset) {
 		w.Header().Set("Content-Type", "text/event-stream")

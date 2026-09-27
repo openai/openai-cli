@@ -21,6 +21,7 @@ func ConfigureCommand(root *cli.Command) {
 	registerImagePreviewSetup(root)
 	configureReadableOutput(root)
 	configureImageSaving(root)
+	registerImagePreviewCommands(root)
 	configureReadableAudio(root)
 	configureReadableSpeech(root)
 	ConfigureCommandErrors(root)

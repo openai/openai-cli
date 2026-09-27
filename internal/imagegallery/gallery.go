@@ -157,10 +157,22 @@ func (g *Gallery) Initialize(ctx context.Context) (*Revision, error) {
 }
 
 // Prepare caches a reduced PNG and allocates an immutable image placement.
-// Existing images retain their codepoints. The source image is not modified.
+// Existing placements retain their codepoints. Showing the same image at a
+// different width allocates a new placement while reusing its cached PNG.
+// The source image is not modified.
 func (g *Gallery) Prepare(ctx context.Context, img image.Image, columns int) (*Revision, error) {
+	return g.PrepareWithLimit(ctx, img, columns, imagefont.MaxGlyphs)
+}
+
+// PrepareWithLimit retains room for later images by limiting new allocations.
+// Replaying an existing placement consumes no capacity and remains permitted.
+// The limit is checked under the gallery lock before writing any new artifacts.
+func (g *Gallery) PrepareWithLimit(ctx context.Context, img image.Image, columns, glyphLimit int) (*Revision, error) {
 	if err := g.check(ctx); err != nil {
 		return nil, err
+	}
+	if glyphLimit < 0 || glyphLimit > imagefont.MaxGlyphs {
+		return nil, errors.New("invalid image gallery glyph limit")
 	}
 	if g.state.ID == "" {
 		return nil, errors.New("initialize and commit the image gallery before adding images")
@@ -178,7 +190,7 @@ func (g *Gallery) Prepare(ctx context.Context, img image.Image, columns int) (*R
 	digest := sha256.Sum256(data)
 	hash := hex.EncodeToString(digest[:])
 	for i := range g.state.Images {
-		if g.state.Images[i].Hash == hash {
+		if g.state.Images[i].Hash == hash && g.state.Images[i].Columns == columns {
 			revision := g.existing(&g.state.Images[i])
 			if g.attempt != nil {
 				if err := g.reserveAttempt(ctx, revision, ""); err != nil {
@@ -188,9 +200,9 @@ func (g *Gallery) Prepare(ctx context.Context, img image.Image, columns int) (*R
 			return revision, nil
 		}
 	}
-	rows := min(32, max(1, int(math.Ceil(float64(columns)*float64(normalized.Bounds().Dy())/(2*float64(normalized.Bounds().Dx()))))))
+	rows := min(imagefont.MaxFrameRows, max(1, int(math.Ceil(float64(columns)*float64(normalized.Bounds().Dy())/(2*float64(normalized.Bounds().Dx()))))))
 	used := g.State().UsedGlyphs
-	if columns*rows > imagefont.MaxGlyphs-used {
+	if columns*rows > glyphLimit-used {
 		return nil, ErrFull
 	}
 	added := entry{Hash: hash, Columns: columns, Rows: rows, Start: imagefont.FirstCodepoint + rune(used)}
@@ -357,17 +369,22 @@ func (g *Gallery) validate() error {
 		return errors.New("invalid image gallery font identity")
 	}
 	next := imagefont.FirstCodepoint
-	seen := map[string]bool{}
+	type placement struct {
+		hash    string
+		columns int
+	}
+	seen := map[placement]bool{}
 	for _, item := range s.Images {
 		count := item.Columns * item.Rows
-		if !isHex(item.Hash, 64) || seen[item.Hash] || item.Columns < 1 || item.Columns > 64 || item.Rows < 1 || item.Rows > 32 || item.Start != next || count > int(imagefont.LastCodepoint-next)+1 {
+		key := placement{item.Hash, item.Columns}
+		if !isHex(item.Hash, 64) || seen[key] || item.Columns < 1 || item.Columns > 64 || item.Rows < 1 || item.Rows > imagefont.MaxFrameRows || item.Start != next || count > int(imagefont.LastCodepoint-next)+1 {
 			return errors.New("invalid image gallery character allocation")
 		}
 		if err := checkPrivate(filepath.Join(g.directory, "images", item.Hash+".png"), false); err != nil {
 
 			return err
 		}
-		seen[item.Hash] = true
+		seen[key] = true
 		next += rune(count)
 	}
 	return nil

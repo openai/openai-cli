@@ -99,6 +99,11 @@ or `--output-dir` for an existing directory. Existing files are kept.
 their source files. See [image generation and saving](docs/image-generation-saving.md)
 for commands and defaults.
 
+`openai images preview "path/to/image.png"` redisplays a saved image without an
+API request. Use `openai images inline on` or `off` to remember whether future
+saved images appear automatically. Per-command `--inline auto`, `on` or `off`
+overrides that setting. `on` also permits an image font in local Apple Terminal.
+
 Errors print actionable summaries to stderr by default. Use `--format-error json`
 for original API error details, including unknown fields and SDK-reported stream
 error events. For those events, extraction paths include the `error` envelope,

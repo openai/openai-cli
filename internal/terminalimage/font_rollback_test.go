@@ -15,7 +15,7 @@ import (
 )
 
 func TestImageFontRestoresOriginalAfterActivationFailure(t *testing.T) {
-	for _, failure := range []string{"cancelled activation", "lost activation reply", "inspection", "geometry", "width", "commit", "cancelled commit"} {
+	for _, failure := range []string{"cancelled activation", "lost activation reply", "inspection", "geometry", "width", "height", "commit", "cancelled commit"} {
 		t.Run(failure, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "gallery")
 			bridge := newTestFontBridge()
@@ -59,6 +59,8 @@ func TestImageFontRestoresOriginalAfterActivationFailure(t *testing.T) {
 						size.PixelHeight += 24
 					case "width":
 						size.Columns, size.PixelWidth = 20, 140
+					case "height":
+						size.Rows, size.PixelHeight = 17, 238
 					case "commit":
 						require.NoError(t, os.Rename(filepath.Join(directory, "state.json"), filepath.Join(directory, "state.saved")))
 						require.NoError(t, os.Mkdir(filepath.Join(directory, "state.json"), 0700))

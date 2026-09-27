@@ -10,11 +10,15 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/imageoutput"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/stretchr/testify/require"
@@ -207,7 +211,7 @@ func TestSavedImagePreviewColumns(t *testing.T) {
 		{"empty image", 0, 0, 120, 40, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, savedImagePreviewColumns(image.Rect(0, 0, tc.imageWidth, tc.imageHeight), tc.terminalWidth, tc.terminalRows))
+			require.Equal(t, tc.want, savedImagePreviewColumns(image.Rect(0, 0, tc.imageWidth, tc.imageHeight), tc.terminalWidth, tc.terminalRows, 1, 2))
 		})
 	}
 }
@@ -218,5 +222,108 @@ func TestSavedImagePreviewColumnsAvoids32BitOverflow(t *testing.T) {
 	imageWidth, imageHeight, rows := int32(16<<20), int32(1), int32(100)
 	previous := min(int32(64), (rows-2)*2*imageWidth/imageHeight)
 	require.Negative(t, previous)
-	require.Equal(t, 64, savedImagePreviewColumns(image.Rect(0, 0, int(imageWidth), int(imageHeight)), 120, int(rows)))
+	require.Equal(t, 64, savedImagePreviewColumns(image.Rect(0, 0, int(imageWidth), int(imageHeight)), 120, int(rows), 1, 2))
 }
+
+func TestSavedImagePreviewFitsMeasuredCells(t *testing.T) {
+	for _, tc := range []struct {
+		name                                                              string
+		imageWidth, imageHeight, width, rows, cellWidth, cellHeight, want int
+	}{
+		{"wide cells square", 1024, 1024, 120, 24, 10, 16, 35},
+		{"tall cells square", 1024, 1024, 120, 24, 8, 20, 55},
+		{"wide cells portrait", 1024, 1536, 120, 24, 10, 16, 23},
+		{"tall cells portrait", 1024, 1536, 120, 24, 8, 20, 36},
+		{"wide cells landscape", 1536, 1024, 120, 24, 10, 16, 52},
+		{"tall cells landscape", 1536, 1024, 120, 24, 8, 20, 64},
+		{"narrow square", 1024, 1024, 9, 24, 10, 16, 8},
+		{"short terminal", 1024, 1024, 120, 3, 10, 16, 1},
+		{"exact one-column fit", 10, 352, 120, 24, 10, 16, 1},
+		{"just too tall", 10, 353, 120, 24, 10, 16, 0},
+		{"exact fit with nonterminating cell ratio", 7, 450, 120, 32, 7, 15, 1},
+		{"just too tall with nonterminating cell ratio", 7, 451, 120, 32, 7, 15, 0},
+		{"extreme wide", 16 << 20, 1, 65535, 65535, 8, 20, 64},
+		{"maximum image and window products", 16 << 20, 1, 65535, 65535, 65535, 65535, 64},
+		{"extreme tall", 1, 16 << 20, 65535, 65535, 10, 16, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := savedImagePreviewColumns(image.Rect(0, 0, tc.imageWidth, tc.imageHeight), tc.width, tc.rows, tc.cellWidth, tc.cellHeight)
+			require.Equal(t, tc.want, got)
+			if got > 0 {
+				// Native images retain source proportions. Their physical height
+				// must fit, including fractional rows rounded by the terminal.
+				height := float64(got*tc.cellWidth) * float64(tc.imageHeight) / float64(tc.imageWidth)
+				require.LessOrEqual(t, math.Ceil(height/float64(tc.cellHeight)), float64(tc.rows-2))
+			}
+		})
+	}
+}
+
+func TestFontPreviewFitsPhysicalImageAndAllocatedRows(t *testing.T) {
+	for _, tc := range []struct {
+		name                                                                        string
+		imageWidth, imageHeight, width, rows, cellWidth, cellHeight, physical, font int
+	}{
+		{"tall cells portrait", 300, 900, 80, 24, 8, 20, 18, 14},
+		{"slightly tall cells portrait", 1024, 2048, 80, 24, 8, 17, 23, 22},
+		{"wide cells portrait", 300, 900, 80, 24, 10, 16, 11, 11},
+		{"square capped to font width", 1024, 1024, 80, 24, 8, 20, 55, 32},
+		{"narrow portrait", 300, 900, 9, 24, 8, 20, 8, 8},
+		{"exact one-column allocation", 1, 44, 80, 24, 8, 20, 1, 1},
+		{"one allocated column is too tall", 1, 45, 80, 24, 8, 20, 1, 0},
+		{"font row cap fits", 1, 66, 80, 34, 8, 20, 1, 1},
+		{"two-row terminal", 1, 1, 80, 2, 8, 20, 0, 0},
+		{"one-column terminal", 1, 1, 1, 24, 8, 20, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bounds := image.Rect(0, 0, tc.imageWidth, tc.imageHeight)
+			physical := savedImagePreviewColumns(bounds, tc.width, tc.rows, tc.cellWidth, tc.cellHeight)
+			require.Equal(t, tc.physical, physical)
+			columns := terminalimage.FontPreviewColumns(bounds, physical, tc.rows)
+			require.Equal(t, tc.font, columns)
+			if columns > 0 {
+				allocated := min(32, int(math.Ceil(float64(columns)*float64(tc.imageHeight)/(2*float64(tc.imageWidth)))))
+				require.LessOrEqual(t, allocated, tc.rows-2)
+			}
+		})
+	}
+}
+
+// The external sized-PTY check counts emitted rows between these markers.
+// Missing TERM_SESSION_ID guarantees no native font automation can run.
+func TestSavedImageFallbackResizeTerminal(t *testing.T) {
+	if !isTerminal(os.Stdout) || runtime.GOOS == "windows" {
+		t.Skip("requires a Unix terminal stdout")
+	}
+	stty, err := exec.LookPath("stty")
+	if err != nil {
+		t.Skip("requires stty for controlled PTY resizing")
+	}
+	width, height, err := term.GetSize(os.Stdout.Fd())
+	require.NoError(t, err)
+	resize := func(columns, rows int) error {
+		command := exec.Command(stty, "columns", strconv.Itoa(columns), "rows", strconv.Itoa(rows))
+		command.Stdin = os.Stdout
+		return command.Run()
+	}
+	t.Cleanup(func() { require.NoError(t, resize(width, height)) })
+	require.NoError(t, resize(80, 24))
+	t.Setenv("TERM_SESSION_ID", "")
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("CLICOLOR", "")
+	var diagnostic bytes.Buffer
+	notice := previewNoticeWriter(func(data []byte) (int, error) {
+		require.NoError(t, resize(80, 3))
+		return diagnostic.Write(data)
+	})
+	fmt.Fprintln(os.Stdout, "FONT-FALLBACK-RESIZE BEGIN")
+	err = displayDecodedSavedImage(t.Context(), image.NewRGBA(image.Rect(0, 0, 16, 16)), os.Stdout, notice, "font")
+	fmt.Fprintln(os.Stdout, "FONT-FALLBACK-RESIZE END")
+	require.NoError(t, err)
+	require.Contains(t, diagnostic.String(), "Sharp inline preview unavailable:")
+}
+
+type previewNoticeWriter func([]byte) (int, error)
+
+func (w previewNoticeWriter) Write(data []byte) (int, error) { return w(data) }

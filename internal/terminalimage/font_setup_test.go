@@ -15,6 +15,7 @@ import (
 	"github.com/openai/openai-cli/internal/imagefontmac"
 	"github.com/openai/openai-cli/internal/imagegallery"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/image/font/gofont/gomono"
 	"golang.org/x/image/font/sfnt"
 )
 
@@ -313,4 +314,134 @@ func TestFontSessionRejectsMissingIdentityAndRedirectedOutput(t *testing.T) {
 	require.ErrorContains(t, FontStatus(t.Context(), file), "without redirecting output")
 	var out bytes.Buffer
 	require.ErrorContains(t, SetupFont(t.Context(), &out), "local Apple Terminal")
+}
+
+func TestRepairRetainsMultiWidthProgressAndFinalReserve(t *testing.T) {
+	const reserve, used = 1024, 48
+	const occupied = rune(0xf0000 + reserve + used)
+	originalFont, err := sfnt.Parse(gomono.TTF)
+	require.NoError(t, err)
+	icon, err := originalFont.GlyphIndex(nil, 'A')
+	require.NoError(t, err)
+	for _, companion := range []bool{false, true} {
+		t.Run(map[bool]string{false: "source", true: "companion"}[companion], func(t *testing.T) {
+			directory := filepath.Join(t.TempDir(), "gallery")
+			bridge := newTestFontBridge()
+			services := bridge.services(t)
+			modified := testFontSource()
+			modified.Tables["cmap"] = testProgressOccupiedCmap(modified.Tables["cmap"], occupied, icon, false)
+			source := modified
+			if companion {
+				modified.PostScript = "GoMonoCompanion"
+				source = testFontSource()
+				source.Companions = []imagefontmac.SourceFont{modified}
+			}
+			services.source = func(context.Context, string, int) (imagefontmac.SourceFont, error) { return source, nil }
+			img := image.NewRGBA(image.Rect(0, 0, 16, 16))
+			img.Set(0, 0, color.RGBA{R: 255, A: 255})
+			var previousText strings.Builder
+			for _, columns := range []int{4, 8, 4} {
+				if previousText.Len() > 0 && columns == 4 {
+					img.Set(0, 0, color.RGBA{B: 255, A: 255})
+				}
+				require.NoError(t, displayImageFontReserved(t.Context(), &previousText, img, columns, directory, "/dev/ttys001", testFontViewport, services, reserve))
+			}
+			before, err := imagegallery.Inspect(t.Context(), directory, "/dev/ttys001", bridge.status.FontName)
+			require.NoError(t, err)
+			require.Equal(t, used, before.UsedGlyphs)
+			require.Equal(t, 3, before.ImageCount)
+			retained := fontCacheFiles(t, directory)
+			bridge.status.FontName, bridge.status.FontSize = "GoMono", 13
+			require.NoError(t, setupImageFont(t.Context(), io.Discard, directory, "/dev/ttys001", true, testFontViewport, services))
+			after, err := imagegallery.Inspect(t.Context(), directory, "/dev/ttys001", bridge.status.FontName)
+			require.NoError(t, err)
+			require.Equal(t, before.State, after.State)
+			require.NotEqual(t, before.FontPath, after.FontPath)
+			filesAfterRepair := fontCacheFiles(t, directory)
+			img.Set(0, 0, color.RGBA{G: 255, A: 255})
+			var out bytes.Buffer
+			err = displayImageFontReserved(t.Context(), &out, img, 4, directory, "/dev/ttys001", testFontViewport, services, reserve)
+			var unavailable *FontError
+			require.ErrorAs(t, err, &unavailable)
+			require.ErrorContains(t, err, "leave room for the final image")
+			require.Empty(t, out.String())
+			require.Equal(t, filesAfterRepair, fontCacheFiles(t, directory))
+			registeredBeforeFinal := len(bridge.registered)
+			require.NoError(t, displayImageFont(t.Context(), &out, img, 32, directory, "/dev/ttys001", testFontViewport, services))
+			foundIcon := false
+			for _, path := range bridge.registered[registeredBeforeFinal:] {
+				if _, existing := filesAfterRepair[strings.TrimPrefix(path, directory)]; existing {
+					continue // The selected font is re-registered before source lookup.
+				}
+				data, err := os.ReadFile(path)
+				require.NoError(t, err)
+				font, err := sfnt.Parse(data)
+				require.NoError(t, err)
+				got, err := font.GlyphIndex(nil, occupied)
+				require.NoError(t, err)
+				if got != 0 {
+					require.Equal(t, icon, got)
+					foundIcon = true
+				}
+				for _, r := range strings.ReplaceAll(previousText.String()+out.String()+"ABC abc 123", "\n", "") {
+					glyph, err := font.GlyphIndex(nil, r)
+					require.NoError(t, err)
+					require.NotZero(t, glyph)
+				}
+			}
+			require.True(t, foundIcon)
+			final, err := imagegallery.Inspect(t.Context(), directory, "/dev/ttys001", bridge.status.FontName)
+			require.NoError(t, err)
+			require.Equal(t, used+512, final.UsedGlyphs)
+			require.Equal(t, 4, final.ImageCount)
+			require.Equal(t, 13.0, bridge.status.FontSize)
+			require.Equal(t, "Synthetic profile", bridge.status.ProfileName)
+			for name, before := range retained {
+				if name != "/state.json" {
+					require.Equal(t, before, fontCacheFiles(t, directory)[name], name)
+				}
+			}
+		})
+	}
+}
+
+func TestRepairRefusesUncertainNewImageAndRetainsExactRetry(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "gallery")
+	bridge := newTestFontBridge()
+	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	img.Set(0, 0, color.RGBA{R: 255, A: 255})
+	require.NoError(t, displayImageFont(t.Context(), io.Discard, img, 4, directory, "/dev/ttys001", testFontViewport, bridge.services(t)))
+	original := bridge.status
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	services := bridge.services(t)
+	preserve := services.preserve
+	services.preserve = func(ctx context.Context, p, tty, font string, expected imagefontmac.ProfileStatus) error {
+		require.NoError(t, preserve(ctx, p, tty, font, expected))
+		cancel()
+		return ctx.Err()
+	}
+	img.Set(0, 0, color.RGBA{B: 255, A: 255})
+	var out bytes.Buffer
+	require.ErrorIs(t, displayImageFont(ctx, &out, img, 8, directory, "/dev/ttys001", testFontViewport, services), context.Canceled)
+	require.Empty(t, out.String())
+	require.Equal(t, original, bridge.status)
+	retained := fontCacheFiles(t, directory)
+	require.FileExists(t, filepath.Join(directory, ".pending.json"))
+	require.ErrorIs(t, setupImageFont(t.Context(), &out, directory, "/dev/ttys001", true, testFontViewport, bridge.services(t)), imagegallery.ErrPending)
+	require.Empty(t, out.String())
+	require.Equal(t, original, bridge.status)
+	require.Equal(t, retained, fontCacheFiles(t, directory), "repair must not erase an uncertain new-image attempt")
+	require.NoError(t, displayImageFont(t.Context(), &out, img, 8, directory, "/dev/ttys001", testFontViewport, bridge.services(t)))
+	require.NotEmpty(t, out.String())
+	final, err := imagegallery.Inspect(t.Context(), directory, "/dev/ttys001", bridge.status.FontName)
+	require.NoError(t, err)
+	require.Equal(t, 2, final.ImageCount)
+	require.Equal(t, 8+32, final.UsedGlyphs)
+	require.NoFileExists(t, filepath.Join(directory, ".pending.json"))
+	for name, before := range retained {
+		if strings.HasPrefix(name, "/fonts/") || strings.HasPrefix(name, "/images/") {
+			require.Equal(t, before, fontCacheFiles(t, directory)[name], name)
+		}
+	}
 }

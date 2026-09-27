@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"strings"
 
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/terminalimage"
@@ -25,6 +24,7 @@ Use --inline on when generating an image for sharp Apple Terminal previews.
 
 Missing selected font: select your original font and size, then run repair.
 Missing metadata or thumbnails: retain the files and use a new Terminal tab.
+Interrupted preview: retry that saved image with the same font settings.
 No cache reset or removal of committed previews is performed.
 No API requests. Readable output only: --format auto or text.
 
@@ -63,17 +63,10 @@ func imagePreviewSetupAction(run func(context.Context, io.Writer) error) cli.Act
 		if command.Args().Present() {
 			return imageSavingFailure("This local image command takes no arguments; use --help for examples.", nil)
 		}
-		root := command.Root()
-		if format := strings.ToLower(root.String("format")); format != "" && format != "auto" && format != "text" {
-			return imageSavingFailure("This local image command uses readable output; use --format auto or text.", nil)
+		if err := validateLocalImageOutput(command); err != nil {
+			return err
 		}
-		if root.String("transform") != "" || root.Bool("raw-output") {
-			return imageSavingFailure("This local image command cannot use --transform or --raw-output.", nil)
-		}
-		out := root.Writer
-		if out == nil {
-			out = os.Stdout
-		}
+		out := imageCommandWriter(command)
 		interruptContext, stop := signal.NotifyContext(ctx, os.Interrupt)
 		defer stop()
 		if err := run(interruptContext, out); err != nil {

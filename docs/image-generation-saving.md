@@ -38,11 +38,11 @@ returned as API data and are never downloaded. `--output-format` chooses the
 image encoding; it is separate from the CLI's `--format`.
 
 `--stream true` saves only the completed image. Positive `--partial-images`
-selects streaming when saving; intermediate images are ignored. An explicit
+selects streaming when saving and shows temporary progress previews. An explicit
 false or null stream conflicts with positive partials. Streaming supports one
 final image, and `--max-items` cannot truncate a saving stream. For API events,
 use an explicit data format and `--stream true`. An incomplete stream fails
-without claiming that an image was saved. Only final saved images are previewed.
+without claiming that an image was saved.
 
 ## Editing and variations
 
@@ -66,14 +66,71 @@ the endpoint requires a square PNG under 4 MB. Explicit models and nulls keep
 the existing request semantics. In multipart requests, explicit null fields
 retain their existing empty form-part encoding rather than acquiring defaults.
 
-Streamed edits save only the final image and ignore intermediate previews.
+Streamed edits save only the final image. `--partial-images 1`, `2` or `3`
+enables streaming and displays progress previews where supported.
 Variations do not support streaming. Explicit `--format json` preserves the
 original responses or edit events and makes no saved files. Model-discovery
-default markers and redisplaying saved files remain separate work.
+default markers remain separate work.
 Use `openai help --all images edit` or `openai help --all images create-variation`
 for every request setting.
 
 ## Inline previews
+
+Request progress while an image is generated or edited:
+
+```sh
+openai images generate --prompt "A tiny orange robot" --partial-images 2
+openai images edit --image "photo.png" --prompt "Make the sky purple" --partial-images 2
+# Allow sharp progress and final previews in a local Apple Terminal tab.
+openai images generate --prompt "A tiny orange robot" --partial-images 2 --inline on
+```
+
+The existing `--partial-images` flag now displays up to the requested number of
+intermediate images. Only the completed image is saved to the output folder.
+Progress images decode in memory. Duplicate or out-of-range preview indexes are
+ignored. An unavailable progress preview prints one notice beside the progress
+on stdout and the CLI continues waiting for the final image. Stderr remains
+available for structured errors. Cancellation, stream errors, output failures
+and failed font restoration still stop the command.
+
+Progress uses the same terminal capability as the final preview. Kitty/iTerm
+use native graphics. In local Apple Terminal, `--inline on` or a saved
+`openai images inline on` preference allows sharp image-font previews, preserving
+ordinary text and the tab's font size and profile. `auto` retains the color
+approximation.
+
+Sharp progress previews keep private cached images and immutable font entries
+so later previews do not replace pictures already in scrollback. These are
+preview caches, not generated files in the output folder. Before adding a new
+progress entry, the CLI leaves capacity for a final image in the current font.
+If sharp preparation fails or would consume that capacity, one notice is shown
+and the CLI waits for the final image instead of substituting blocky progress.
+Font changes or another command can still affect final-preview availability;
+the final image is saved even when its optional preview is unavailable.
+
+`--inline off`, pipes and CI skip progress rendering and decoding. The API may
+return fewer partial images than requested, including a final image without any
+partials.
+
+Color-block previews are intentionally low resolution and use a 256-color
+palette. Their size and proportions use the terminal's reported cell dimensions
+when available. If that metadata is missing or ambiguous, the renderer estimates
+cells as twice as tall as wide; unusual font spacing can still affect the
+approximation. Native Kitty/iTerm previews retain full image pixels and let the
+terminal preserve their aspect ratio. None of these display choices resizes the
+saved original.
+
+Sharp font previews also fit their allocated character rows within the window.
+The CLI checks again after preparing the font and recalculates any final-image
+fallback after a resize. An older preview already in scrollback may still wrap
+when the window becomes narrower; existing character mappings are not replaced.
+
+Streaming supports one final image. Positive partial counts enable streaming
+when saving unless `stream` is explicitly false or null, which is rejected.
+Explicit API formats retain API events and require `--stream true`. Use
+`--max-items -1` or omit it when saving so an event limit cannot hide the final
+image. The 64 MiB/16 megapixel preview bounds apply only to rendering; they do
+not limit final-image saving or API output.
 
 After saving and printing the paths, interactive terminals can show the finished
 images. The original saved bytes are unchanged. Saving to a pipe still prints
@@ -86,7 +143,8 @@ openai images generate --prompt "A tiny orange robot" --inline off
 openai images generate --prompt "A tiny orange robot" --inline on
 ```
 
-`--inline auto` is the default on generation, edits and variations. Kitty and
+Without a saved preference, `--inline auto` is the default on generation, edits
+and variations. Kitty and
 Ghostty use the Kitty graphics protocol; iTerm2 and WezTerm use the iTerm protocol.
 Other color terminals show a labeled color-block approximation. `NO_COLOR` or
 `CLICOLOR=0` disables that approximation, while native image graphics remain
@@ -143,8 +201,9 @@ same transaction to restore registration after a logout or rebuild the current
 gallery after a supported font or size change. Both retain the selected text
 face, point size, profile settings, original saved images, old preview fonts and
 existing image character assignments. Neither adds sample glyphs nor changes
-future automatic-preview preferences. Continue to use `--inline on` for sharp
-Apple Terminal previews; the default `auto` still uses the color approximation.
+future automatic-preview preferences. Use `--inline on` or a saved `inline on`
+preference for sharp Apple Terminal previews. Explicit `--inline auto` overrides
+the saved preference and uses the color approximation.
 Failed or canceled activation attempts conditional rollback without overwriting
 concurrent user changes. Fonts whose registration may have succeeded are retained.
 
@@ -156,9 +215,71 @@ originals, and use a new Terminal tab. A changed session identity cannot take
 over another gallery's image font. Widen the window when status or repair reports
 that existing image rows no longer fit.
 
+If a new preview was interrupted after font registration, repair may refuse
+because its image assignments are still pending. Retry the same saved image
+with the same font settings, or use a new tab. Repair does not discard the pending
+font or reconstruct which characters reached the terminal.
+
 This adds explicit recovery only. The earlier combined prototype's sample/test
 and destructive reset commands, gallery-capacity increases, cache-size redesign
 and automatic scrollback reflow are not included. No reset or removal of committed previews is
 performed by these commands. The existing transaction may clean up temporary
 attempt files only when they are proven not to have reached native registration. Native Apple Terminal visual validation remains
 separate from automated tests with a fake native bridge.
+## Progress regression recording
+
+The terminal-only tests use a synthetic loopback SSE server and a sized PTY.
+An observer releases the final response only after both partial previews arrive.
+Build and run them without API credentials:
+
+```sh
+go test -c -o /tmp/image-progress-custom.test ./pkg/custom
+go test -c -o /tmp/image-progress-main.test ./cmd/openai
+python3 scripts/check-image-progress.py /tmp/image-progress-custom.test /tmp/image-progress-main.test /tmp/image-progress-evidence
+```
+
+`scripts/demos/record-image-progress.sh` records a before/after comparison using
+the shared fixture server and capture lifecycle. Its five arguments are the
+before binary, after binary, their full commit IDs, and an empty output directory
+outside the repository. Set `DEMO_API_BINARY` to a binary built from
+`./scripts/demos`. Generated PNGs, GIFs and terminal captures stay outside Git.
+
+## Saved images and preferences
+
+```sh
+openai images preview "path/to/image.png"
+openai images preview --inline on "path/to/image.png"
+openai images inline off
+openai images inline on
+openai images generate --prompt "A tiny orange robot" --inline auto
+```
+
+`images preview` displays an existing PNG, JPEG or WebP using the same renderer.
+It needs no API key, makes no request, does not read stdin, and leaves the
+original untouched. It works even when automatic previews are off. Explicit
+preview defaults to `auto`; `--inline on` also permits Apple Terminal image-font
+activation. Unsupported formats, output redirection, and images that cannot fit
+the terminal return an error. `--format-error` and `--transform-error` still
+control those errors. Local image commands accept `--format auto` or `text`,
+but reject data formats, `--transform` and `--raw-output`.
+
+Resize the window and run preview again to fit its current dimensions. A new
+Apple Terminal preview width receives new glyph assignments; earlier mappings
+and saved originals stay unchanged. Existing text rows can still wrap when the
+window narrows. Each new width uses gallery capacity. A full gallery retains
+earlier previews and falls back as described above; it never evicts them.
+
+`images inline on|off` remembers the automatic preview setting across runs.
+Turning it on also permits image-font activation in local Apple Terminal.
+An explicit `--inline auto`, `on` or `off` overrides the saved setting for that
+command. Turning previews off does not disable saving or explicit local preview.
+
+The only setting file is `openai/image-preferences.json` inside the operating
+system's user configuration directory: `~/Library/Application Support` on
+macOS, `%AppData%` on Windows, and `$XDG_CONFIG_HOME` (or `~/.config`) on Linux.
+Writes replace it atomically. Invalid, unknown or unreadable settings are kept;
+automatic saving prints a warning and skips the preview. Use an explicit
+`--inline` value to override them once, or move an invalid setting file aside
+before saving a new preference. Other CLI settings and preview caches are not
+rewritten. Existing global API configuration validation still runs for these
+local commands, so stale base URL or mTLS settings may need correcting first.
