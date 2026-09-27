@@ -509,7 +509,11 @@ func commandTailStartsAt(cmd *cli.Command, args []string) bool {
 
 		child := findChild(cmd, arg)
 		if child == nil {
-			return false
+			// Once at least one command component matched, the final token may be
+			// the partial command Readline is currently completing. Treat that as
+			// a command boundary so an empty inline flag value does not consume
+			// the preceding command token as its value.
+			return matched && i == len(args)-1 && hasCommandPrefix(cmd, arg)
 		}
 		matched = true
 		cmd = child

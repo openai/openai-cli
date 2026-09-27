@@ -72,6 +72,7 @@ func TestBashReadlineInsertsColonFilenameOnce(t *testing.T) {
 		{"file URL with colon kept in word", "--format", "cert:models-fixture.txt", "@file://cert:models", "@file://cert:models-fixture.txt", true, true},
 		{"empty inline value keeps following flag", "--header=", "unused.txt", "--debug models retrieve --mo", "--debug\x00models\x00retrieve\x00--model", false, false},
 		{"literal equals value keeps following flag", "--header", "unused.txt", "= --debug models retrieve --mo", "=\x00--debug\x00models\x00retrieve\x00--model", false, false},
+		{"empty inline value keeps partial command", "--transform=", "unused.txt", "models li", "models\x00list", false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			directory := t.TempDir()

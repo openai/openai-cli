@@ -27,6 +27,7 @@ func TestShellCompletionProtocolHelper(t *testing.T) {
 			&cli.StringFlag{Name: "format"},
 			&cli.StringFlag{Name: "file", TakesFile: true},
 			&cli.StringFlag{Name: "header"},
+			&cli.StringFlag{Name: "transform"},
 			&cli.BoolFlag{Name: "debug"},
 		},
 		Commands: []*cli.Command{
@@ -139,6 +140,14 @@ func TestShellCompletionProtocol(t *testing.T) {
 			code:       0,
 			output:     "--model\n",
 			candidates: "--model\n",
+		},
+		{
+			name:       "bash empty inline value before partial command",
+			args:       []string{"--transform=", "models", "li"},
+			bashArgs:   []string{"--transform", "=", "models", "li"},
+			code:       0,
+			output:     "list\n",
+			candidates: "list\n",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -115,6 +115,10 @@ func TestRebuildColonSeparatedArgs(t *testing.T) {
 			args: []string{"--header", "=", "models", "retrieve", "--mo"},
 			want: []string{"--header", "=", "models", "retrieve", "--mo"},
 		},
+		"empty inline value before partial command": {
+			args: []string{"--header", "=", "models", "ret"},
+			want: []string{"--header", "=", "models", "ret"},
+		},
 	}
 
 	for name, test := range tests {
