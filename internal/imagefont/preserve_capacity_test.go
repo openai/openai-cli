@@ -1,7 +1,9 @@
 package imagefont
 
 import (
+	"bytes"
 	"encoding/binary"
+	"strconv"
 	"testing"
 )
 
@@ -43,6 +45,75 @@ func TestPreservedGlyphCapacityRejectsUnknownSourceBounds(t *testing.T) {
 			}
 			if _, err := PreservedGlyphCapacity(source); err == nil {
 				t.Fatal("unknown font capacity accepted")
+			}
+		})
+	}
+}
+
+func TestPreservedGlyphCapacityIncludesCFFStrings(t *testing.T) {
+	for _, tc := range []struct {
+		name                                   string
+		remaining, cellWidth, cellHeight, want int
+	}{
+		{"last image glyph names", 4, 8, 16, 4},
+		{"progress and final boundary", 1032, 8, 16, 1032},
+		{"exhausted image glyph names", 0, 8, 16, 0},
+		{"private characters remain limiting", 8000, 8, 16, MaxGlyphs},
+		{"bitmap budget remains limiting", 2048, 64, 64, 1024},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			customStrings := make([][]byte, cffCustomStringLimit-tc.remaining)
+			for i := range customStrings {
+				customStrings[i] = []byte("source metadata " + strconv.Itoa(i))
+			}
+			cff := cffFixtureWithStrings(customStrings)
+			before := bytes.Clone(cff)
+			source := PreserveOptions{
+				Tables:    map[string][]byte{"CFF ": cff, "maxp": {0, 0, 0x50, 0, 0, 2}},
+				PointSize: 12, CellWidth: tc.cellWidth, CellHeight: tc.cellHeight,
+			}
+			capacity, err := PreservedGlyphCapacity(source)
+			if err != nil || capacity != tc.want {
+				t.Fatalf("capacity = %d, error = %v; want %d", capacity, err, tc.want)
+			}
+			if !bytes.Equal(cff, before) {
+				t.Fatal("capacity inspection changed source font bytes")
+			}
+			if tc.want == tc.remaining {
+				// The advertised last available cell must be encodable, and the
+				// next cell must fail the same CFF format limit used for admission.
+				extended, err := extendPreservedCFF(cff, 2, 2+capacity, "TestCapacity")
+				if err != nil {
+					t.Fatalf("declared capacity could not be encoded: %v", err)
+				}
+				if _, err := readPreservedCFF(extended, 2+capacity); err != nil {
+					t.Fatalf("extended font is invalid: %v", err)
+				}
+				if _, err := extendPreservedCFF(cff, 2, 3+capacity, "TestCapacity"); err == nil {
+					t.Fatal("encoder accepted a cell beyond the declared CFF limit")
+				}
+			}
+		})
+	}
+}
+
+func TestPreservedGlyphCapacityRejectsInvalidCFF(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		cff        []byte
+		glyphCount byte
+	}{
+		{"empty table", nil, 2},
+		{"truncated index", cffFixture()[:7], 2},
+		{"inconsistent glyph count", cffFixture(), 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := PreserveOptions{
+				Tables:    map[string][]byte{"CFF ": tc.cff, "maxp": {0, 0, 0x50, 0, 0, tc.glyphCount}},
+				PointSize: 12, CellWidth: 8, CellHeight: 16,
+			}
+			if _, err := PreservedGlyphCapacity(source); err == nil {
+				t.Fatal("invalid CFF capacity accepted")
 			}
 		})
 	}

@@ -46,7 +46,16 @@ func PreservedGlyphCapacity(source PreserveOptions) (int, error) {
 	if len(maxp) < 6 || binary.BigEndian.Uint16(maxp[4:]) == 0 {
 		return 0, fmt.Errorf("invalid source font glyph count")
 	}
-	fontCells := 65535 - int(binary.BigEndian.Uint16(maxp[4:]))
+	glyphCount := int(binary.BigEndian.Uint16(maxp[4:]))
+	fontCells := 65535 - glyphCount
+	if cff, ok := source.Tables["CFF "]; ok {
+		font, err := readPreservedCFF(cff, glyphCount)
+		if err != nil {
+			return 0, err
+		}
+		// Each added CFF glyph also needs a custom string for its name.
+		fontCells = min(fontCells, cffCustomStringLimit-len(font.strings))
+	}
 	pixelsPerCell := int64(source.CellWidth) * int64(source.CellHeight) * maxPreservedBitmapScale * maxPreservedBitmapScale
 	return min(MaxGlyphs, fontCells, int(maxPreservedBitmapPixels/pixelsPerCell)), nil
 }

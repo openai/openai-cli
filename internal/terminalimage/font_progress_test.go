@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -222,4 +223,125 @@ func TestWriteProgressKeepsNativeProtocolsAndBlockFallback(t *testing.T) {
 		require.NoError(t, WriteProgress(t.Context(), &after, img, protocol, 4))
 		require.Equal(t, before.Bytes(), after.Bytes())
 	}
+}
+
+func TestSharpProgressReservesCFFCapacityForFinal(t *testing.T) {
+	for _, face := range []string{"primary", "companion"} {
+		t.Run(face, func(t *testing.T) {
+			const reserve = 32 * imagefont.MaxFrameRows
+			cff := testProgressCFFSource(reserve + 8)
+			originalCFF := bytes.Clone(cff.Tables["CFF "])
+			source := cff
+			if face == "companion" {
+				source = testFontSource()
+				source.Companions = []imagefontmac.SourceFont{cff}
+			}
+			bridge := newTestFontBridge()
+			bridge.status.FontName = source.PostScript
+			services := bridge.services(t)
+			services.source = func(context.Context, string, int) (imagefontmac.SourceFont, error) { return source, nil }
+			viewport := func() fontViewport { return fontViewport{80, 40, 560, 560} }
+			directory := filepath.Join(t.TempDir(), "gallery")
+			partial := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+			var out bytes.Buffer
+			require.NoError(t, displayImageFontReserved(t.Context(), &out, partial, 4, directory, "/dev/ttys001", viewport, services, reserve))
+			require.NotEmpty(t, out.String())
+			retained := map[string][]byte{}
+			for _, path := range bridge.registered {
+				data, err := os.ReadFile(path)
+				require.NoError(t, err)
+				retained[path] = data
+			}
+			stateBefore, err := os.ReadFile(filepath.Join(directory, "state.json"))
+			require.NoError(t, err)
+			registered := len(bridge.registered)
+			partial.SetNRGBA(0, 0, color.NRGBA{R: 1, A: 255})
+			out.Reset()
+			err = displayImageFontReserved(t.Context(), &out, partial, 4, directory, "/dev/ttys001", viewport, services, reserve)
+			var fontErr *FontError
+			require.ErrorAs(t, err, &fontErr)
+			require.Contains(t, err.Error(), "leave room for the final image")
+			require.Empty(t, out.String())
+			// Re-registering the currently selected immutable font is safe;
+			// the rejected partial must not create or register a new one.
+			for _, path := range bridge.registered[registered:] {
+				_, existed := retained[path]
+				require.True(t, existed)
+			}
+			stateAfter, err := os.ReadFile(filepath.Join(directory, "state.json"))
+			require.NoError(t, err)
+			require.Equal(t, stateBefore, stateAfter)
+			_, err = os.Stat(filepath.Join(directory, ".pending.json"))
+			require.ErrorIs(t, err, os.ErrNotExist)
+			// The final adds all 1,024 reserved cells. Its cumulative CFF reaches
+			// the SID boundary exactly, and must still preserve the earlier font.
+			require.NoError(t, displayImageFont(t.Context(), &out, image.NewNRGBA(image.Rect(0, 0, 32, 64)), 32, directory, "/dev/ttys001", viewport, services))
+			require.Len(t, strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n"), 32)
+			gallery, err := imagegallery.Open(t.Context(), directory)
+			require.NoError(t, err)
+			require.Equal(t, reserve+8, gallery.State().UsedGlyphs)
+			require.Equal(t, 2, gallery.State().ImageCount)
+			require.NoError(t, gallery.Close())
+			require.Equal(t, originalCFF, cff.Tables["CFF "])
+			for path, before := range retained {
+				after, err := os.ReadFile(path)
+				require.NoError(t, err)
+				require.Equal(t, before, after)
+			}
+		})
+	}
+}
+
+// Keep Go Mono's metrics and cmap, but use synthetic empty Type 2 outlines.
+// Many unused custom names exercise CFF's SID limit independently of maxp.
+func testProgressCFFSource(remaining int) imagefontmac.SourceFont {
+	index := func(objects [][]byte) []byte {
+		data := binary.BigEndian.AppendUint16(nil, uint16(len(objects)))
+		if len(objects) == 0 {
+			return data
+		}
+		data = append(data, 4)
+		offset := uint32(1)
+		for _, object := range objects {
+			data = binary.BigEndian.AppendUint32(data, offset)
+			offset += uint32(len(object))
+		}
+		data = binary.BigEndian.AppendUint32(data, offset)
+		for _, object := range objects {
+			data = append(data, object...)
+		}
+		return data
+	}
+	source := testFontSource()
+	source.PostScript = "SyntheticCFF"
+	count := int(binary.BigEndian.Uint16(source.Tables["maxp"][4:]))
+	names := make([][]byte, 65000-391-remaining)
+	for i := range names {
+		names[i] = []byte("g" + strconv.Itoa(i))
+	}
+	chars := make([][]byte, count)
+	charset := []byte{0}
+	for i := range chars {
+		chars[i] = []byte{14} // Type 2 endchar.
+		if i > 0 {
+			charset = binary.BigEndian.AppendUint16(charset, uint16(391+i-1))
+		}
+	}
+	nameIndex, stringIndex, charIndex := index([][]byte{[]byte(source.PostScript)}), index(names), index(chars)
+	dict := func(base int) []byte {
+		data := binary.BigEndian.AppendUint32([]byte{29}, uint32(base))
+		data = append(data, 15, 29)
+		data = binary.BigEndian.AppendUint32(data, uint32(base+len(charset)))
+		return append(data, 17)
+	}
+	base := 4 + len(nameIndex) + len(index([][]byte{dict(0)})) + len(stringIndex) + 2
+	var cff []byte
+	for _, part := range [][]byte{{1, 0, 4, 4}, nameIndex, index([][]byte{dict(base)}), stringIndex, {0, 0}, charset, charIndex} {
+		cff = append(cff, part...)
+	}
+	source.Tables["CFF "] = cff
+	source.Tables["maxp"] = binary.BigEndian.AppendUint16([]byte{0, 0, 0x50, 0}, uint16(count))
+	delete(source.Tables, "glyf")
+	delete(source.Tables, "loca")
+	return source
 }
