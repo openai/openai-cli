@@ -57,7 +57,7 @@ func inspectImageFont(ctx context.Context, out io.Writer, directory, tty string,
 		if cache.FontPath == "" {
 			message += "The selected font is not this tab's preview font. Run openai images inline repair to use this font and size.\n"
 		} else {
-			message += "This tab's cached preview font is selected. After a restart or font/size change, run openai images inline repair.\n"
+			message += "This tab's cached preview font is selected. Run openai images inline repair to reapply it without displaying another image.\n"
 		}
 		if size.Columns > 0 && cache.MaxColumns >= size.Columns {
 			message += fmt.Sprintf("Widen Terminal to at least %d columns for all cached previews.\n", cache.MaxColumns+1)

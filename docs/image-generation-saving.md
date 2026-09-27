@@ -177,7 +177,15 @@ paying to generate the image again. No separate viewer is opened.
 
 ## Apple Terminal setup and repair
 
-These local commands make no API request and generate no new image:
+Apple Terminal's sharp previews use a font containing image pixels. Changing
+the tab's text font can make earlier previews stop displaying correctly, even
+though the saved image files are unchanged. Repair rebuilds the image font from
+the retained preview cache using the selected text font and size.
+
+Normal `openai images preview --inline on FILE` already prepares and repairs the font
+as part of displaying an image. These optional commands let you do that work
+without supplying a file or printing another image. Status only inspects the tab
+and cache. None calls the API or generates an image:
 
 ```sh
 openai images inline status          # read the current tab and cache
@@ -196,9 +204,9 @@ to identify the Apple Terminal tab. These commands accept no positional argument
 and support readable `--format auto` or `--format text`; data formats,
 `--transform` and `--raw-output` are rejected before native work.
 
-Setup prepares an image-capable copy of the selected text face. Repair uses the
-same transaction to restore registration after a logout or rebuild the current
-gallery after a supported font or size change. Both retain the selected text
+Setup prepares an image-capable copy of the selected text face in advance;
+it is not required before normal previewing. Repair uses the same transaction
+but requires an existing cache. Both retain the selected text
 face, point size, profile settings, original saved images, old preview fonts and
 existing image character assignments. Neither adds sample glyphs nor changes
 future automatic-preview preferences. Use `--inline on` or a saved `inline on`
@@ -219,6 +227,10 @@ If a new preview was interrupted after font registration, repair may refuse
 because its image assignments are still pending. Retry the same saved image
 with the same font settings, or use a new tab. Repair does not discard the pending
 font or reconstruct which characters reached the terminal.
+
+Repair identifies the cache using the current Terminal session ID and TTY.
+It can restore lost font registration only while that identity and cache remain
+available. It does not find or take over a previous tab's cache after a restart.
 
 This adds explicit recovery only. The earlier combined prototype's sample/test
 and destructive reset commands, gallery-capacity increases, cache-size redesign

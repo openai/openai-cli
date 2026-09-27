@@ -15,6 +15,8 @@ import (
 const imagePreviewSetupHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}{{.Usage}}
   {{$bin}} images inline {{.Name}}
 
+Setup is optional; sharp previews already prepare the font automatically.
+Repair reapplies this tab's cached image font without showing another image.
 Local Apple Terminal on macOS only; no SSH or terminal multiplexers.
 Reading the tab may request macOS Automation permission, including status.
 Status is read-only; it does not register fonts or change settings.
@@ -46,13 +48,13 @@ func registerImagePreviewSetup(root *cli.Command) {
 		run         func(context.Context, io.Writer) error
 	}{
 		{"setup", "Prepare this Apple Terminal tab for sharp previews", terminalimage.SetupFont},
-		{"repair", "Restore this tab's cached previews after a restart or font change", terminalimage.RepairFont},
+		{"repair", "Reapply this tab's cached image font after a font or size change", terminalimage.RepairFont},
 		{"status", "Check this tab and its preview cache without changing settings", terminalimage.FontStatus},
 	} {
 		inline.Commands = append(inline.Commands, &cli.Command{
 			Name: item.name, Usage: item.usage, HideHelpCommand: true,
 			CustomHelpTemplate: imagePreviewSetupHelp,
-			Description:        "For a local Apple Terminal tab on macOS. Reading this tab may request Automation permission. Setup and repair preserve the selected text font, size and profile, retain cached images and add no sample image. Use --inline on when generating an image; automatic preview preferences are unchanged. Status reads the tab and cache without registering fonts or changing settings. Missing cache metadata cannot restore old scrollback; use a new tab. No cache reset or removal of committed previews is performed.",
+			Description:        "Optional controls for a local Apple Terminal tab on macOS. Sharp previews already prepare the font automatically. Setup does that work in advance; repair reapplies this tab's cached image font without requiring an image file or printing another preview. Reading this tab may request Automation permission. Setup and repair preserve the selected text font, size and profile, retain cached images and add no sample image. Use --inline on when generating an image; automatic preview preferences are unchanged. Status reads the tab and cache without registering fonts or changing settings. Missing cache metadata cannot restore old scrollback; use a new tab. No cache reset or removal of committed previews is performed.",
 			Action:             imagePreviewSetupAction(item.run),
 		})
 	}
