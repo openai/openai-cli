@@ -345,3 +345,126 @@ func testProgressCFFSource(remaining int) imagefontmac.SourceFont {
 	delete(source.Tables, "loca")
 	return source
 }
+
+func TestSharpProgressReservesUnoccupiedCharactersForFinal(t *testing.T) {
+	const occupied = rune(0xf0300)
+	originalFont, err := sfnt.Parse(gomono.TTF)
+	require.NoError(t, err)
+	iconGlyph, err := originalFont.GlyphIndex(nil, 'A')
+	require.NoError(t, err)
+	for _, face := range []string{"primary", "companion"} {
+		for _, record := range []string{"first", "secondary"} {
+			t.Run(face+"/"+record, func(t *testing.T) {
+				modified := testFontSource()
+				modified.Tables["cmap"] = testProgressOccupiedCmap(modified.Tables["cmap"], occupied, iconGlyph, record == "first")
+				originalCmap := bytes.Clone(modified.Tables["cmap"])
+				source := modified
+				if face == "companion" {
+					modified.PostScript = "GoMonoCompanion"
+					source = testFontSource()
+					source.Companions = []imagefontmac.SourceFont{modified}
+				}
+				bridge := newTestFontBridge()
+				services := bridge.services(t)
+				services.source = func(context.Context, string, int) (imagefontmac.SourceFont, error) { return source, nil }
+				directory := filepath.Join(t.TempDir(), "gallery")
+				var out bytes.Buffer
+				require.NoError(t, displayImageFont(t.Context(), &out, image.NewNRGBA(image.Rect(0, 0, 16, 16)), 4, directory, "/dev/ttys001", testFontViewport, services))
+				earlierText := out.String()
+				retained := map[string][]byte{}
+				for _, path := range bridge.registered {
+					data, err := os.ReadFile(path)
+					require.NoError(t, err)
+					retained[path] = data
+				}
+				stateBefore, err := os.ReadFile(filepath.Join(directory, "state.json"))
+				require.NoError(t, err)
+				registered := len(bridge.registered)
+				partial := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+				partial.SetNRGBA(0, 0, color.NRGBA{R: 1, A: 255})
+				out.Reset()
+				// The partial alone fits below U+F0300, but consuming its 512
+				// cells would make the next 512-cell final overlap that icon.
+				err = displayImageFontReserved(t.Context(), &out, partial, 32, directory, "/dev/ttys001", testFontViewport, services, 32*imagefont.MaxFrameRows)
+				var fontErr *FontError
+				require.ErrorAs(t, err, &fontErr)
+				require.Contains(t, err.Error(), "leave room for the final image")
+				require.Empty(t, out.String())
+				for _, path := range bridge.registered[registered:] {
+					_, existed := retained[path]
+					require.True(t, existed, "skipped partial must not register a new font")
+				}
+				stateAfter, err := os.ReadFile(filepath.Join(directory, "state.json"))
+				require.NoError(t, err)
+				require.Equal(t, stateBefore, stateAfter)
+				_, err = os.Stat(filepath.Join(directory, ".pending.json"))
+				require.ErrorIs(t, err, os.ErrNotExist)
+				registered = len(bridge.registered)
+				final := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+				final.SetNRGBA(0, 0, color.NRGBA{R: 2, A: 255})
+				require.NoError(t, displayImageFont(t.Context(), &out, final, 32, directory, "/dev/ttys001", testFontViewport, services))
+				require.Len(t, strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n"), 16)
+				foundOriginalIcon := false
+				for _, path := range bridge.registered[registered:] {
+					if _, existed := retained[path]; existed {
+						continue // Re-registering the previous font adds no new glyphs.
+					}
+					data, err := os.ReadFile(path)
+					require.NoError(t, err)
+					font, err := sfnt.Parse(data)
+					require.NoError(t, err)
+					got, err := font.GlyphIndex(nil, occupied)
+					require.NoError(t, err)
+					if got != 0 {
+						require.Equal(t, iconGlyph, got)
+						foundOriginalIcon = true
+					}
+					for _, r := range strings.ReplaceAll(earlierText+out.String(), "\n", "") {
+						glyph, err := font.GlyphIndex(nil, r)
+						require.NoError(t, err)
+						require.NotZero(t, glyph)
+					}
+				}
+				require.True(t, foundOriginalIcon, "original private character must survive final rendering")
+				gallery, err := imagegallery.Open(t.Context(), directory)
+				require.NoError(t, err)
+				require.Equal(t, 8+512, gallery.State().UsedGlyphs)
+				require.Equal(t, 2, gallery.State().ImageCount)
+				require.NoError(t, gallery.Close())
+				require.Equal(t, originalCmap, modified.Tables["cmap"])
+				for path, before := range retained {
+					after, err := os.ReadFile(path)
+					require.NoError(t, err)
+					require.Equal(t, before, after)
+				}
+			})
+		}
+	}
+}
+
+// Add a separate Unicode format-12 record without changing the original tables.
+// Its position tests that source coverage includes secondary Unicode records.
+func testProgressOccupiedCmap(original []byte, character rune, glyph sfnt.GlyphIndex, first bool) []byte {
+	count := int(binary.BigEndian.Uint16(original[2:]))
+	data := make([]byte, 4+8*(count+1))
+	binary.BigEndian.PutUint16(data[2:], uint16(count+1))
+	for i := range count {
+		at := i
+		if first {
+			at++
+		}
+		copy(data[4+8*at:12+8*at], original[4+8*i:12+8*i])
+		binary.BigEndian.PutUint32(data[8+8*at:], binary.BigEndian.Uint32(original[8+8*i:])+8)
+	}
+	data = append(data, original[4+8*count:]...)
+	at := count
+	if first {
+		at = 0
+	}
+	binary.BigEndian.PutUint16(data[6+8*at:], 4) // Unicode, full repertoire.
+	binary.BigEndian.PutUint32(data[8+8*at:], uint32(len(data)))
+	data = append(data, 0, 12, 0, 0, 0, 0, 0, 28, 0, 0, 0, 0, 0, 0, 0, 1)
+	data = binary.BigEndian.AppendUint32(data, uint32(character))
+	data = binary.BigEndian.AppendUint32(data, uint32(character))
+	return binary.BigEndian.AppendUint32(data, uint32(glyph))
+}

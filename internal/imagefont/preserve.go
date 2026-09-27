@@ -47,7 +47,19 @@ func PreservedGlyphCapacity(source PreserveOptions) (int, error) {
 		return 0, fmt.Errorf("invalid source font glyph count")
 	}
 	glyphCount := int(binary.BigEndian.Uint16(maxp[4:]))
+	mapping, err := readPreservedCmap(source.Tables["cmap"], glyphCount)
+	if err != nil {
+		return 0, err
+	}
 	fontCells := 65535 - glyphCount
+	// Gallery characters form a contiguous prefix. Stop before the first
+	// original mapping, including coverage from secondary Unicode subtables.
+	for cp := FirstSupplementaryCodepoint; cp <= LastSupplementaryCodepoint; cp++ {
+		if _, occupied := mapping[uint32(cp)]; occupied {
+			fontCells = min(fontCells, int(cp-FirstSupplementaryCodepoint))
+			break
+		}
+	}
 	if cff, ok := source.Tables["CFF "]; ok {
 		font, err := readPreservedCFF(cff, glyphCount)
 		if err != nil {
