@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ import (
 
 // Run this group under a sized PTY with OPENAI_CLI_PROGRESS_GATE_DIR set to a
 // scratch directory. The observer creates <scenario> after seeing both partial
-// labels; the fixture waits for that signal before sending the final response.
+// labels or the sharp-preview skip notice; the fixture waits before completion.
 // It uses real CLI subprocesses and synthetic API responses, never native fonts.
 func TestMainImageProgressTerminal(t *testing.T) {
 	if !term.IsTerminal(os.Stdout.Fd()) {
@@ -30,8 +31,11 @@ func TestMainImageProgressTerminal(t *testing.T) {
 	}
 	gateDirectory := os.Getenv("OPENAI_CLI_PROGRESS_GATE_DIR")
 	require.NotEmpty(t, gateDirectory, "requires the PTY observer gate")
-	for _, scenario := range []string{"generate", "edit", "stdin", "iterm", "off", "persisted-off", "explicit-on", "ci", "api", "malformed", "malformed-error-json", "failure", "final-first"} {
+	for _, scenario := range []string{"generate", "edit", "stdin", "iterm", "off", "persisted-off", "explicit-on", "apple-auto", "apple-on", "apple-persisted-on", "apple-no-color", "apple-error-json", "ci", "api", "malformed", "malformed-error-json", "failure", "final-first"} {
 		t.Run(scenario, func(t *testing.T) {
+			apple := strings.HasPrefix(scenario, "apple-")
+			fontRequested := apple && scenario != "apple-auto"
+			streamFails := scenario == "failure" || scenario == "malformed-error-json" || scenario == "apple-error-json"
 			payload := imageGenerationPNG(t)
 			encoded := base64.StdEncoding.EncodeToString(payload)
 			closed := make(chan struct{})
@@ -67,7 +71,7 @@ func TestMainImageProgressTerminal(t *testing.T) {
 					fmt.Fprintf(w, "data: {\"type\":%q,\"partial_image_index\":1,\"b64_json\":%q}\n\n", kind+".partial_image", encoded)
 					w.(http.Flusher).Flush()
 				}
-				if scenario == "generate" || scenario == "edit" || scenario == "stdin" || scenario == "iterm" || scenario == "explicit-on" || scenario == "failure" {
+				if scenario == "generate" || scenario == "edit" || scenario == "stdin" || scenario == "iterm" || scenario == "explicit-on" || scenario == "failure" || (apple && (runtime.GOOS == "darwin" || scenario != "apple-no-color")) {
 					deadline := time.NewTimer(5 * time.Second)
 					defer deadline.Stop()
 					poll := time.NewTicker(10 * time.Millisecond)
@@ -82,13 +86,13 @@ func TestMainImageProgressTerminal(t *testing.T) {
 						case <-r.Context().Done():
 							return
 						case <-deadline.C:
-							t.Error("partial images did not reach the PTY before the final response")
+							t.Error("progress output did not reach the PTY before the final response")
 							break waitForObserver
 						}
 					}
 				}
 				fmt.Fprintln(os.Stdout, "PROGRESS-FINAL-SEND", scenario)
-				if scenario == "failure" || scenario == "malformed-error-json" {
+				if streamFails {
 					io.WriteString(w, "data: {\"type\":\"error\",\"message\":\"synthetic-private-api-error\"}\n\n")
 					return
 				}
@@ -123,6 +127,18 @@ func TestMainImageProgressTerminal(t *testing.T) {
 			if scenario == "explicit-on" {
 				args = append(args, "--inline", "on")
 			}
+			if apple {
+				// An empty session ID makes font setup stop before any native API
+				// or font-cache write. The separate fake bridge fixture covers font
+				// generation and activation flow, not native graphical appearance.
+				env = append(env, "TERM_PROGRAM=Apple_Terminal", "TERM_SESSION_ID=")
+				if fontRequested && scenario != "apple-persisted-on" {
+					args = append(args, "--inline", "on")
+				}
+				if scenario == "apple-no-color" {
+					env = append(env, "NO_COLOR=1")
+				}
+			}
 			if scenario == "ci" {
 				env = append(env, "CI=true")
 			}
@@ -133,21 +149,25 @@ func TestMainImageProgressTerminal(t *testing.T) {
 				args = append([]string{"--format", "json"}, args...)
 				args = append(args, "--stream", "true")
 			}
-			if scenario == "malformed-error-json" {
+			if scenario == "malformed-error-json" || scenario == "apple-error-json" {
 				args = append([]string{"--format-error", "json"}, args...)
 			}
 			binary, err := os.Executable()
 			require.NoError(t, err)
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
-			if scenario == "persisted-off" || scenario == "explicit-on" {
+			if scenario == "persisted-off" || scenario == "explicit-on" || scenario == "apple-persisted-on" {
 				// Set the preference through the public command, then verify that
 				// generation honors it unless this command explicitly overrides it.
-				setup := exec.CommandContext(ctx, binary, "-test.run=^TestMainDispatchProcess$", "--", "openai", "images", "inline", "off")
+				mode := "off"
+				if scenario == "apple-persisted-on" {
+					mode = "on"
+				}
+				setup := exec.CommandContext(ctx, binary, "-test.run=^TestMainDispatchProcess$", "--", "openai", "images", "inline", mode)
 				setup.Env = env
 				output, err := setup.CombinedOutput()
 				require.NoError(t, err, string(output))
-				require.Contains(t, string(output), "Automatic image previews off.")
+				require.Contains(t, string(output), "Automatic image previews "+mode+".")
 			}
 			child := exec.CommandContext(ctx, binary, append([]string{"-test.run=^TestMainDispatchProcess$", "--", "openai"}, args...)...)
 			child.Env, child.Stdout, child.Stdin = env, os.Stdout, input
@@ -157,21 +177,27 @@ func TestMainImageProgressTerminal(t *testing.T) {
 			err = child.Run()
 			fmt.Fprintln(os.Stdout, "MAIN-PROGRESS-END", scenario)
 			require.NoError(t, ctx.Err())
-			if scenario == "failure" || scenario == "malformed-error-json" {
+			if streamFails {
 				require.Error(t, err)
 				require.Contains(t, diagnostic.String(), "before trying again")
-				if scenario == "malformed-error-json" {
+				if scenario == "malformed-error-json" || scenario == "apple-error-json" {
 					require.True(t, json.Valid(diagnostic.Bytes()), diagnostic.String())
 				}
 			} else {
 				require.NoError(t, err, diagnostic.String())
 			}
-			if scenario != "failure" && scenario != "malformed-error-json" {
-				require.Empty(t, diagnostic.String())
+			if !streamFails {
+				if fontRequested && runtime.GOOS == "darwin" {
+					// The final image is saved before its separate optional preview.
+					require.Contains(t, diagnostic.String(), "Sharp inline preview unavailable:")
+					require.Contains(t, diagnostic.String(), "The image is saved")
+				} else {
+					require.Empty(t, diagnostic.String())
+				}
 			}
 			require.NotContains(t, diagnostic.String(), "synthetic-private")
 			files := imageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"))
-			if scenario == "failure" || scenario == "malformed-error-json" || scenario == "api" {
+			if streamFails || scenario == "api" {
 				require.Empty(t, files)
 			} else {
 				require.Len(t, files, 1)

@@ -50,6 +50,22 @@ func Write(ctx context.Context, w io.Writer, img image.Image, protocol string, c
 	}
 }
 
+// WriteProgress uses the same renderer as a final image, while leaving capacity
+// for one final font preview. Sharp progress keeps immutable private cache files
+// because changing their glyphs would change earlier terminal scrollback.
+func WriteProgress(ctx context.Context, w io.Writer, img image.Image, protocol string, columns int) error {
+	if protocol != "font" {
+		return Write(ctx, w, img, protocol, columns)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if img == nil || img.Bounds().Empty() {
+		return errors.New("cannot display an empty image")
+	}
+	return writeImageFontReserved(ctx, w, img, columns, maxFontPreviewColumns*imagefont.MaxFrameRows)
+}
+
 func writeColorBlocks(out io.Writer, img image.Image, columns, cellWidth, cellHeight int) error {
 	if columns < 1 {
 		columns = 80

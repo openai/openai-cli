@@ -22,7 +22,7 @@ import (
 func TestImageProgressProtocolPreservesFinalFontOptIn(t *testing.T) {
 	for _, mode := range []string{"auto", "on", "off"} {
 		for _, program := range []string{"Apple_Terminal", "kitty", "iTerm.app", "other"} {
-			for _, disabled := range []string{"", "CI", "NO_COLOR", "CLICOLOR"} {
+			for _, disabled := range []string{"", "CI", "NO_COLOR", "CLICOLOR", "SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "TMUX", "STY", "ZELLIJ"} {
 				env := map[string]string{"TERM_PROGRAM": program, "TERM": "xterm-256color"}
 				if disabled != "" {
 					env[disabled] = "1"
@@ -32,23 +32,17 @@ func TestImageProgressProtocolPreservesFinalFontOptIn(t *testing.T) {
 				}
 				getenv := func(k string) string { return env[k] }
 				progress := imageProgressProtocol(mode, true, getenv)
-				require.NotEqual(t, "font", progress, "temporary previews must never register or cache fonts")
 				require.Empty(t, imageProgressProtocol(mode, false, getenv))
 				final := savedImageProtocol(mode, true, getenv)
-				if final == "font" {
-					want := "blocks"
-					if disabled == "NO_COLOR" || disabled == "CLICOLOR" {
-						want = ""
-					}
-					require.Equal(t, want, progress)
-				} else {
-					require.Equal(t, final, progress)
+				require.Equal(t, final, progress)
+				if disabled == "SSH_CONNECTION" || disabled == "SSH_CLIENT" || disabled == "SSH_TTY" || disabled == "TMUX" || disabled == "STY" || disabled == "ZELLIJ" {
+					require.NotEqual(t, "font", progress)
 				}
 			}
 		}
 	}
 	if runtime.GOOS == "darwin" {
-		require.Equal(t, "font", savedImageProtocol("on", true, func(k string) string {
+		require.Equal(t, "font", imageProgressProtocol("on", true, func(k string) string {
 			if k == "TERM_PROGRAM" {
 				return "Apple_Terminal"
 			}
@@ -120,11 +114,11 @@ func TestImageProgressTerminal(t *testing.T) {
 	if !isTerminal(os.Stdout) {
 		t.Skip("requires actual terminal stdout")
 	}
-	for _, key := range []string{"CI", "TMUX", "STY", "ZELLIJ", "SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "NO_COLOR", "CLICOLOR"} {
+	for _, key := range []string{"CI", "TMUX", "STY", "ZELLIJ", "SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "NO_COLOR", "CLICOLOR", "TERM_SESSION_ID"} {
 		t.Setenv(key, "")
 	}
 	t.Setenv("TERM", "xterm-256color")
-	for _, scenario := range []string{"kitty", "iterm", "apple", "off", "ci", "no-color", "malformed", "malformed-error", "malformed-cancel", "invalid-index", "stream-error", "cancel"} {
+	for _, scenario := range []string{"kitty", "iterm", "apple", "apple-auto", "off", "ci", "no-color", "auto-no-color", "malformed", "malformed-error", "malformed-cancel", "invalid-index", "stream-error", "cancel"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Setenv("TERM_PROGRAM", "kitty")
 			home := t.TempDir()
@@ -137,6 +131,9 @@ func TestImageProgressTerminal(t *testing.T) {
 				t.Setenv("TERM_PROGRAM", "iTerm.app")
 			case "apple":
 				t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+			case "apple-auto":
+				t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+				plan.inline = "auto"
 			case "off":
 				plan.inline = "off"
 			case "ci":
@@ -144,10 +141,14 @@ func TestImageProgressTerminal(t *testing.T) {
 			case "no-color":
 				t.Setenv("TERM_PROGRAM", "Apple_Terminal")
 				t.Setenv("NO_COLOR", "1")
+			case "auto-no-color":
+				t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+				t.Setenv("NO_COLOR", "1")
+				plan.inline = "auto"
 			}
 			first := progressTestEvent(t, "image_generation.partial_image", 0)
 			second := progressTestEvent(t, "image_edit.partial_image", 1)
-			if scenario == "malformed" || scenario == "malformed-error" || scenario == "malformed-cancel" || scenario == "off" || scenario == "ci" || scenario == "no-color" {
+			if scenario == "malformed" || scenario == "malformed-error" || scenario == "malformed-cancel" || scenario == "off" || scenario == "ci" || scenario == "auto-no-color" {
 				first = gjson.Parse(`{"type":"image_generation.partial_image","partial_image_index":0,"b64_json":"private-invalid"}`)
 			}
 			if scenario == "invalid-index" {
@@ -159,8 +160,8 @@ func TestImageProgressTerminal(t *testing.T) {
 			stream := &progressTestStream{savedImageTestStream: savedImageTestStream{events: []outputJSON{{first}, {first}, {second}, {progressTestEvent(t, "image_generation.completed", 0)}}}}
 			stream.beforeNext = func(index int) {
 				if index == 3 {
-					// Final font policy is covered separately. Keep this synthetic
-					// PTY from invoking native font APIs; partials must leave no cache.
+					// TERM_SESSION_ID is empty, so opted-in font attempts stop before
+					// native calls or cache writes. Final font policy is tested separately.
 					plan.inline = "off"
 					files, err := os.ReadDir(home)
 					require.NoError(t, err)

@@ -81,22 +81,36 @@ Request progress while an image is generated or edited:
 ```sh
 openai images generate --prompt "A tiny orange robot" --partial-images 2
 openai images edit --image "photo.png" --prompt "Make the sky purple" --partial-images 2
+# Allow sharp progress and final previews in a local Apple Terminal tab.
+openai images generate --prompt "A tiny orange robot" --partial-images 2 --inline on
 ```
 
 The existing `--partial-images` flag now displays up to the requested number of
-intermediate images. Only the completed image is saved. Progress images decode
-in memory without temporary files. Duplicate or out-of-range preview indexes are
+intermediate images. Only the completed image is saved to the output folder.
+Progress images decode in memory. Duplicate or out-of-range preview indexes are
 ignored. An unavailable progress preview prints one notice beside the progress
 on stdout and the CLI continues waiting for the final image. Stderr remains
-available for structured errors. Cancellation, stream errors and output failures
-still stop the command.
+available for structured errors. Cancellation, stream errors, output failures
+and failed font restoration still stop the command.
 
-Progress uses native Kitty/iTerm graphics or the color approximation. Apple
-Terminal uses color blocks for progress even with `--inline on`, preserving
-gallery space for the saved final image and its optional sharp preview. This
-does not change the tab's font or create progress font caches. `--inline off`,
-pipes and CI skip progress rendering and decoding. The API may return fewer
-partial images than requested, including a final image without any partials.
+Progress uses the same terminal capability as the final preview. Kitty/iTerm
+use native graphics. In local Apple Terminal, `--inline on` or a saved
+`openai images inline on` preference allows sharp image-font previews, preserving
+ordinary text and the tab's font size and profile. `auto` retains the color
+approximation.
+
+Sharp progress previews keep private cached images and immutable font entries
+so later previews do not replace pictures already in scrollback. These are
+preview caches, not generated files in the output folder. Before adding a new
+progress entry, the CLI leaves capacity for a final image in the current font.
+If sharp preparation fails or would consume that capacity, one notice is shown
+and the CLI waits for the final image instead of substituting blocky progress.
+Font changes or another command can still affect final-preview availability;
+the final image is saved even when its optional preview is unavailable.
+
+`--inline off`, pipes and CI skip progress rendering and decoding. The API may
+return fewer partial images than requested, including a final image without any
+partials.
 
 Color-block previews are intentionally low resolution and use a 256-color
 palette. Their size and proportions use the terminal's reported cell dimensions

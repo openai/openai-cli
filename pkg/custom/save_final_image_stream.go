@@ -13,7 +13,7 @@ import (
 )
 
 // Close the SDK stream even when stopping at completion before EOF. Never save
-// intermediate image bytes or wait for a redundant event after completion.
+// intermediate images to the output folder or wait for a redundant completion.
 func saveFinalImageStream[T any](ctx context.Context, source jsonview.Iterator[T], plan *imageOutputPlan, out io.Writer) error {
 	if closer, ok := any(source).(io.Closer); ok {
 		defer closer.Close()

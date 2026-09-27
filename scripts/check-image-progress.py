@@ -22,6 +22,9 @@ root = pathlib.Path(destination).resolve()
 root.mkdir(parents=True, exist_ok=True)
 binaries = {'custom': str(pathlib.Path(custom_binary).resolve()), 'main': str(pathlib.Path(main_binary).resolve())}
 results = {}
+apple_font_names = {'apple-on', 'apple-persisted-on', 'apple-no-color', 'apple-error-json'}
+gated_names = {'generate', 'edit', 'stdin', 'iterm', 'explicit-on', 'failure', 'apple-auto'} | apple_font_names
+darwin = sys.platform == 'darwin'
 gates = tempfile.TemporaryDirectory(prefix='image-progress-gates-')
 for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS'), ('main', 'TestMainImageProgressTerminal', 'MAIN-PROGRESS')]:
     master, slave = pty.openpty()
@@ -49,7 +52,9 @@ for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS')
             if binary == 'main':
                 current = captured.decode('utf-8', errors='replace').rsplit('MAIN-PROGRESS-CASE ', 1)[-1]
                 name = current.split('\r\n', 1)[0]
-                if len(re.findall(r'Progress preview [12] of 2:', current)) == 2 and name in ('generate','edit','stdin','iterm','explicit-on','failure'):
+                shown = len(re.findall(r'Progress preview [12] of 2:', current)) == 2
+                skipped = darwin and name in apple_font_names and 'Sharp progress preview unavailable;' in current
+                if (shown or skipped) and name in gated_names:
                     (pathlib.Path(gates.name) / name).touch()
         elif child.poll() is not None:
             break
@@ -58,21 +63,40 @@ for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS')
     (root / (binary + '-pty.raw')).write_bytes(captured)
     text = captured.decode('utf-8')
     assert code == 0 and '--- SKIP' not in text, text
-    expected = {'kitty':2,'iterm':2,'apple':2,'off':0,'ci':0,'no-color':0,'malformed':0,'malformed-error':0,'malformed-cancel':0,'invalid-index':0,'stream-error':2,'cancel':2} if binary == 'custom' else {'generate':2,'edit':2,'stdin':2,'iterm':2,'off':0,'persisted-off':0,'explicit-on':2,'ci':0,'api':0,'malformed':0,'malformed-error-json':0,'failure':2,'final-first':0}
+    expected = {
+        'kitty':2, 'iterm':2, 'apple':1 if darwin else 2, 'apple-auto':2,
+        'off':0, 'ci':0, 'no-color':1 if darwin else 0, 'auto-no-color':0,
+        'malformed':0, 'malformed-error':0, 'malformed-cancel':0,
+        'invalid-index':0, 'stream-error':2, 'cancel':2,
+    } if binary == 'custom' else {
+        'generate':2, 'edit':2, 'stdin':2, 'iterm':2, 'off':0, 'persisted-off':0,
+        'explicit-on':2, 'apple-auto':2, 'apple-on':1 if darwin else 2,
+        'apple-persisted-on':1 if darwin else 2, 'apple-no-color':1 if darwin else 0,
+        'apple-error-json':1 if darwin else 2, 'ci':0, 'api':0, 'malformed':0,
+        'malformed-error-json':0, 'failure':2, 'final-first':0,
+    }
     for name, count in expected.items():
         start = text.index(prefix + '-CASE ' + name + '\r\n')
         end = text.index(prefix + '-END ' + name + '\r\n', start)
         section = text[start:end]
         assert len(re.findall(r'Progress preview [12] of 2:', section)) == count, (binary,name,section)
         assert section.count('Progress preview unavailable;') == (1 if name.startswith('malformed') else 0), (binary,name,section)
+        font_skip = darwin and ((binary == 'custom' and name in ('apple', 'no-color')) or (binary == 'main' and name in apple_font_names))
+        assert section.count('Sharp progress preview unavailable;') == int(font_skip), (binary,name,section)
         if binary == 'main' and count:
             final_send = section.index('PROGRESS-FINAL-SEND ' + name)
             assert section.rindex('Progress preview ') < final_send, (name,'buffered progress')
+            if font_skip:
+                progress = section[:final_send]
+                assert '▀' not in progress and 'Saved image:' not in progress and 'The image is saved' not in progress
+                assert 'Sharp progress preview unavailable;' in progress
         if binary == 'main' and name == 'api':
             assert len(re.findall(r'"partial_image_index":\s*0', section)) == 2
             assert '"image_generation.completed"' in section and 'Saved image:' not in section
-        if binary == 'custom' and name == 'apple':
+        if binary == 'custom' and name == 'apple-auto':
             assert '▀' in section and '\x1b_G' not in section and '\x1b]1337;' not in section
+        if binary == 'custom' and font_skip:
+            assert '▀' not in section and '\x1b_G' not in section and '\x1b]1337;' not in section
         if binary == 'main' and name == 'persisted-off':
             assert '\x1b_G' not in section and '\x1b]1337;' not in section and '▀' not in section
         if binary == 'main' and name == 'explicit-on':
