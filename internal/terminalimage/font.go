@@ -168,6 +168,12 @@ func displayImageFontReserved(ctx context.Context, out io.Writer, img image.Imag
 	if columns < 1 {
 		return errors.New("widen Terminal before displaying the image")
 	}
+	if size.Rows > 0 {
+		columns = FontPreviewColumns(img.Bounds(), columns, size.Rows)
+		if columns < 1 {
+			return errors.New("enlarge Terminal before displaying the image")
+		}
+	}
 	companions := make([]imagefont.PreserveOptions, 0, len(source.Companions))
 	for _, face := range source.Companions {
 		companion, err := preservedGeometry(size, int(before.FontSize), face)
@@ -198,6 +204,11 @@ func displayImageFontReserved(ctx context.Context, out io.Writer, img image.Imag
 	}
 	if size.Columns > 0 && revision.Columns >= size.Columns {
 		return fmt.Errorf("widen Terminal to at least %d columns to display this cached image", revision.Columns+1)
+	}
+	// Cache normalization can round the source aspect ratio. Check the actual
+	// placement too, including replayed images whose glyph rows are immutable.
+	if size.Rows > 0 && revision.Rows > size.Rows-2 {
+		return errors.New("enlarge Terminal to fit this image's cached rows")
 	}
 	display, err := gallery.FontForTypography(ctx, revision, geometry, companions...)
 	if err != nil {
@@ -236,6 +247,9 @@ func displayImageFontReserved(ctx context.Context, out io.Writer, img image.Imag
 	}
 	if current.Columns > 0 && revision.Columns >= current.Columns {
 		return errors.New("Terminal became too narrow while preparing the image")
+	}
+	if current.Rows > 0 && revision.Rows > current.Rows-2 {
+		return errors.New("Terminal became too short while preparing the image")
 	}
 	if err := gallery.Commit(ctx, revision); err != nil {
 		return err

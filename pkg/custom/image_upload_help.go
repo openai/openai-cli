@@ -43,7 +43,10 @@ return API data without saving or CLI defaults. They cannot be combined with
 
 For edits, --stream true saves only the final image. Positive --partial-images
 automatically enables streaming and shows 1 to 3 progress previews where supported.
-Progress images stay in memory; Apple Terminal uses color blocks for progress.
+Only the final image is saved to the output folder. Apple Terminal's auto mode
+uses color blocks. --inline on or a saved on preference enables sharp progress
+and final previews; this may request Terminal Automation and keeps private
+preview caches for scrollback. Unavailable sharp progress is skipped.
 Streaming supports one final image. --format json --stream true returns API
 events. Variations do not support streaming.
 

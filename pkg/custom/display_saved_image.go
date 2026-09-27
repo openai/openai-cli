@@ -65,11 +65,11 @@ func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnos
 	// Fit tall previews as well as wide ones. Native protocols retain all pixels.
 	cellWidth, cellHeight := terminalimage.CellSize(file.Fd())
 	columns := savedImagePreviewColumns(img.Bounds(), width, height, cellWidth, cellHeight)
+	if protocol == "font" {
+		columns = terminalimage.FontPreviewColumns(img.Bounds(), columns, height)
+	}
 	if columns < 1 {
 		return reportImagePreviewUnavailable(diagnostics, "Inline preview unavailable: the image is too tall for this terminal. Open the saved file to view it.")
-	}
-	if protocol == "font" {
-		columns = min(columns, 32)
 	}
 	if protocol == "blocks" {
 		if err := readable.WriteText(out, "Inline preview (color approximation):"); err != nil {
@@ -85,6 +85,17 @@ func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnos
 			return writeErr
 		}
 		if savedImageBlockColor(os.Getenv) {
+			// Font preparation can outlive a window resize. Recheck the current
+			// viewport before emitting the optional block fallback.
+			width, height, sizeErr := term.GetSize(file.Fd())
+			if sizeErr != nil {
+				return errImagePreviewUnavailable
+			}
+			cellWidth, cellHeight := terminalimage.CellSize(file.Fd())
+			columns = min(columns, savedImagePreviewColumns(img.Bounds(), width, height, cellWidth, cellHeight))
+			if columns < 1 {
+				return errImagePreviewUnavailable
+			}
 			if err := readable.WriteText(out, "Inline preview (color approximation):"); err != nil {
 				return err
 			}

@@ -57,11 +57,11 @@ func (p *imageOutputPlan) displayImageProgress(ctx context.Context, event gjson.
 	}
 	cellWidth, cellHeight := terminalimage.CellSize(file.Fd())
 	columns := savedImagePreviewColumns(img.Bounds(), width, height, cellWidth, cellHeight)
+	if protocol == "font" {
+		columns = terminalimage.FontPreviewColumns(img.Bounds(), columns, height)
+	}
 	if columns < 1 {
 		return warn(unavailableMessage)
-	}
-	if protocol == "font" {
-		columns = min(columns, 32)
 	}
 	if protocol == "blocks" {
 		if err := readable.WriteText(outputWriter{ctx: ctx, out: out}, "Inline preview (color approximation):"); err != nil {

@@ -12,10 +12,13 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/imageoutput"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/stretchr/testify/require"
@@ -255,3 +258,72 @@ func TestSavedImagePreviewFitsMeasuredCells(t *testing.T) {
 		})
 	}
 }
+
+func TestFontPreviewFitsPhysicalImageAndAllocatedRows(t *testing.T) {
+	for _, tc := range []struct {
+		name                                                                        string
+		imageWidth, imageHeight, width, rows, cellWidth, cellHeight, physical, font int
+	}{
+		{"tall cells portrait", 300, 900, 80, 24, 8, 20, 18, 14},
+		{"slightly tall cells portrait", 1024, 2048, 80, 24, 8, 17, 23, 22},
+		{"wide cells portrait", 300, 900, 80, 24, 10, 16, 11, 11},
+		{"square capped to font width", 1024, 1024, 80, 24, 8, 20, 55, 32},
+		{"narrow portrait", 300, 900, 9, 24, 8, 20, 8, 8},
+		{"exact one-column allocation", 1, 44, 80, 24, 8, 20, 1, 1},
+		{"one allocated column is too tall", 1, 45, 80, 24, 8, 20, 1, 0},
+		{"font row cap fits", 1, 66, 80, 34, 8, 20, 1, 1},
+		{"two-row terminal", 1, 1, 80, 2, 8, 20, 0, 0},
+		{"one-column terminal", 1, 1, 1, 24, 8, 20, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bounds := image.Rect(0, 0, tc.imageWidth, tc.imageHeight)
+			physical := savedImagePreviewColumns(bounds, tc.width, tc.rows, tc.cellWidth, tc.cellHeight)
+			require.Equal(t, tc.physical, physical)
+			columns := terminalimage.FontPreviewColumns(bounds, physical, tc.rows)
+			require.Equal(t, tc.font, columns)
+			if columns > 0 {
+				allocated := min(32, int(math.Ceil(float64(columns)*float64(tc.imageHeight)/(2*float64(tc.imageWidth)))))
+				require.LessOrEqual(t, allocated, tc.rows-2)
+			}
+		})
+	}
+}
+
+// The external sized-PTY check counts emitted rows between these markers.
+// Missing TERM_SESSION_ID guarantees no native font automation can run.
+func TestSavedImageFallbackResizeTerminal(t *testing.T) {
+	if !isTerminal(os.Stdout) || runtime.GOOS == "windows" {
+		t.Skip("requires a Unix terminal stdout")
+	}
+	stty, err := exec.LookPath("stty")
+	if err != nil {
+		t.Skip("requires stty for controlled PTY resizing")
+	}
+	width, height, err := term.GetSize(os.Stdout.Fd())
+	require.NoError(t, err)
+	resize := func(columns, rows int) error {
+		command := exec.Command(stty, "columns", strconv.Itoa(columns), "rows", strconv.Itoa(rows))
+		command.Stdin = os.Stdout
+		return command.Run()
+	}
+	t.Cleanup(func() { require.NoError(t, resize(width, height)) })
+	require.NoError(t, resize(80, 24))
+	t.Setenv("TERM_SESSION_ID", "")
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("CLICOLOR", "")
+	var diagnostic bytes.Buffer
+	notice := previewNoticeWriter(func(data []byte) (int, error) {
+		require.NoError(t, resize(80, 3))
+		return diagnostic.Write(data)
+	})
+	fmt.Fprintln(os.Stdout, "FONT-FALLBACK-RESIZE BEGIN")
+	err = displayDecodedSavedImage(t.Context(), image.NewRGBA(image.Rect(0, 0, 16, 16)), os.Stdout, notice, "font")
+	fmt.Fprintln(os.Stdout, "FONT-FALLBACK-RESIZE END")
+	require.NoError(t, err)
+	require.Contains(t, diagnostic.String(), "Sharp inline preview unavailable:")
+}
+
+type previewNoticeWriter func([]byte) (int, error)
+
+func (w previewNoticeWriter) Write(data []byte) (int, error) { return w(data) }

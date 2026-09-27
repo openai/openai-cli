@@ -60,8 +60,10 @@ They cannot be combined with --name or --output-dir. --format auto and text save
 
 --stream true saves only the final image. Positive --partial-images enables
 streaming when saving; 1 to 3 progress previews are shown where supported.
-Progress images stay in memory and are never saved. Apple Terminal uses color
-blocks for progress, retaining the sharp-preview option for the final image.
+Only the final image is saved to the output folder. Apple Terminal's auto mode
+uses color blocks. --inline on or a saved on preference enables sharp progress
+and final previews; this may request Terminal Automation and keeps private
+preview caches for scrollback. Unavailable sharp progress is skipped.
 Streaming supports one final image. Use --format json --stream true for complete
 API events.
 Interactive terminals show an inline preview when supported. --inline off disables

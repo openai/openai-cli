@@ -21,6 +21,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMainImageProgressHelpExplainsAppleModes(t *testing.T) {
+	for _, operation := range []string{"generate", "edit"} {
+		t.Run(operation, func(t *testing.T) {
+			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=not a URL"}, "openai", "help", "--all", "images", operation)
+			require.Zero(t, got.code, got.stderr)
+			require.Empty(t, got.stderr)
+			text := strings.Join(strings.Fields(got.stdout), " ")
+			for _, guidance := range []string{
+				"Only the final image is saved to the output folder.",
+				"Apple Terminal's auto mode uses color blocks.",
+				"--inline on or a saved on preference enables sharp progress",
+				"may request Terminal Automation",
+				"private preview caches for scrollback",
+			} {
+				require.Contains(t, text, guidance)
+			}
+			require.NotContains(t, text, "Progress images stay in memory")
+		})
+	}
+}
+
 // Run this group under a sized PTY with OPENAI_CLI_PROGRESS_GATE_DIR set to a
 // scratch directory. The observer creates <scenario> after seeing both partial
 // labels or the sharp-preview skip notice; the fixture waits before completion.

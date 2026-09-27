@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"os"
@@ -222,4 +223,68 @@ func TestImageFontHonorsDisabledCI(t *testing.T) {
 		t.Setenv("CI", value)
 		require.False(t, FontSupported())
 	}
+}
+
+func TestImageFontFitsAllocatedRowsAfterHeightChange(t *testing.T) {
+	for _, reserve := range []int{0, 1024} {
+		t.Run(fmt.Sprint(reserve), func(t *testing.T) {
+			directory := filepath.Join(t.TempDir(), "gallery")
+			bridge := newTestFontBridge()
+			services := bridge.services(t)
+			services.source = func(context.Context, string, int) (imagefontmac.SourceFont, error) {
+				source := testFontSource()
+				source.Advance, source.Ascent, source.Descent, source.LineHeight = 8, 16, 4, 20
+				return source, nil
+			}
+			img := image.NewRGBA(image.Rect(0, 0, 300, 900))
+			var output bytes.Buffer
+			viewport := func() fontViewport { return fontViewport{80, 50, 640, 1000} }
+			require.NoError(t, displayImageFontReserved(t.Context(), &output, img, 32, directory, "/dev/ttys001", viewport, services, reserve))
+			firstText := output.String()
+			firstFont := bridge.registered[len(bridge.registered)-1]
+			originalBytes, err := os.ReadFile(firstFont)
+			require.NoError(t, err)
+			output.Reset()
+			viewport = func() fontViewport { return fontViewport{80, 24, 640, 480} }
+			require.NoError(t, displayImageFontReserved(t.Context(), &output, img, 18, directory, "/dev/ttys001", viewport, services, reserve))
+			rows := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
+			require.Len(t, rows, 21)
+			for _, row := range rows {
+				require.Len(t, []rune(row), 14)
+			}
+			afterBytes, err := os.ReadFile(firstFont)
+			require.NoError(t, err)
+			require.Equal(t, originalBytes, afterBytes)
+			newBytes, err := os.ReadFile(bridge.registered[len(bridge.registered)-1])
+			require.NoError(t, err)
+			parsed, err := sfnt.Parse(newBytes)
+			require.NoError(t, err)
+			for _, char := range strings.ReplaceAll(firstText, "\n", "") {
+				glyph, err := parsed.GlyphIndex(nil, char)
+				require.NoError(t, err)
+				require.NotZero(t, glyph, "earlier preview must remain in the new font")
+			}
+		})
+	}
+}
+
+func TestImageFontChecksActualRowsAfterCacheRounding(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "gallery")
+	bridge := newTestFontBridge()
+	original := bridge.status
+	var output bytes.Buffer
+	// Cache normalization rounds 1000x3000 to 341x1024. Fourteen columns
+	// then allocate 22 rows, although the source aspect ratio predicts 21.
+	viewport := func() fontViewport { return fontViewport{80, 23, 560, 322} }
+	err := displayImageFont(t.Context(), &output, image.NewRGBA(image.Rect(0, 0, 1000, 3000)), 14, directory, "/dev/ttys001", viewport, bridge.services(t))
+	var fontErr *FontError
+	require.ErrorAs(t, err, &fontErr)
+	require.Contains(t, err.Error(), "cached rows")
+	require.Empty(t, output.String())
+	require.Empty(t, bridge.registered)
+	require.Equal(t, original, bridge.status)
+	gallery, err := imagegallery.Open(t.Context(), directory)
+	require.NoError(t, err)
+	require.Zero(t, gallery.State().ImageCount)
+	require.NoError(t, gallery.Close())
 }

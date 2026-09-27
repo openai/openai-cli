@@ -2,6 +2,7 @@ package terminalimage
 
 import (
 	"errors"
+	"image"
 	"math"
 
 	"github.com/openai/openai-cli/internal/imagefont"
@@ -88,4 +89,19 @@ func uniqueFontCell(count, extent, minimum, maximum int) int {
 		match = cell
 	}
 	return match
+}
+
+// FontPreviewColumns also fits the gallery's immutable row allocation. Gallery
+// placements assume cells twice as tall as wide, regardless of the font;
+// the bitmap itself still preserves proportions within those allocated cells.
+func FontPreviewColumns(bounds image.Rectangle, columns, rows int) int {
+	if bounds.Empty() || columns < 1 || rows < 3 {
+		return 0
+	}
+	columns = min(columns, maxFontPreviewColumns)
+	if rows-2 >= imagefont.MaxFrameRows {
+		return columns
+	}
+	fit := (int64(rows) - 2) * 2 * int64(bounds.Dx()) / int64(bounds.Dy())
+	return int(min(int64(columns), fit))
 }

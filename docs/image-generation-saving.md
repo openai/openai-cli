@@ -120,6 +120,11 @@ approximation. Native Kitty/iTerm previews retain full image pixels and let the
 terminal preserve their aspect ratio. None of these display choices resizes the
 saved original.
 
+Sharp font previews also fit their allocated character rows within the window.
+The CLI checks again after preparing the font and recalculates any final-image
+fallback after a resize. An older preview already in scrollback may still wrap
+when the window becomes narrower; existing character mappings are not replaced.
+
 Streaming supports one final image. Positive partial counts enable streaming
 when saving unless `stream` is explicitly false or null, which is rejected.
 Explicit API formats retain API events and require `--stream true`. Use

@@ -20,13 +20,13 @@ if len(sys.argv) != 4:
 custom_binary, main_binary, destination = sys.argv[1:]
 root = pathlib.Path(destination).resolve()
 root.mkdir(parents=True, exist_ok=True)
-binaries = {'custom': str(pathlib.Path(custom_binary).resolve()), 'main': str(pathlib.Path(main_binary).resolve())}
+binaries = {'custom': str(pathlib.Path(custom_binary).resolve()), 'main': str(pathlib.Path(main_binary).resolve()), 'resize': str(pathlib.Path(custom_binary).resolve())}
 results = {}
 apple_font_names = {'apple-on', 'apple-persisted-on', 'apple-no-color', 'apple-error-json'}
 gated_names = {'generate', 'edit', 'stdin', 'iterm', 'explicit-on', 'failure', 'apple-auto'} | apple_font_names
 darwin = sys.platform == 'darwin'
 gates = tempfile.TemporaryDirectory(prefix='image-progress-gates-')
-for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS'), ('main', 'TestMainImageProgressTerminal', 'MAIN-PROGRESS')]:
+for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS'), ('main', 'TestMainImageProgressTerminal', 'MAIN-PROGRESS'), ('resize', 'TestSavedImageFallbackResizeTerminal', 'FONT-FALLBACK-RESIZE')]:
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 45, 120, 0, 0))
     env = {k: v for k, v in os.environ.items() if not k.startswith('OPENAI_')}
@@ -63,6 +63,12 @@ for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS')
     (root / (binary + '-pty.raw')).write_bytes(captured)
     text = captured.decode('utf-8')
     assert code == 0 and '--- SKIP' not in text, text
+    if binary == 'resize':
+        section = text.split(prefix + ' BEGIN\r\n', 1)[1].split(prefix + ' END\r\n', 1)[0]
+        rows = [line for line in section.splitlines() if '▀' in line]
+        assert len(rows) == 1 and rows[0].count('▀') == 2, section
+        results[binary] = {'passed': 1, 'exit_code': code, 'bytes': len(captured), 'skipped': False}
+        continue
     expected = {
         'kitty':2, 'iterm':2, 'apple':1 if darwin else 2, 'apple-auto':2,
         'off':0, 'ci':0, 'no-color':1 if darwin else 0, 'auto-no-color':0,
