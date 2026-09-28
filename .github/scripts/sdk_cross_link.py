@@ -160,10 +160,18 @@ def wait_for_artifact(api, context, timeout=300, sleep=time.sleep, clock=time.mo
                 continue
             run_id = artifact["workflow_run"]["id"]
             run = api.get(f"repos/{REPOSITORY}/actions/runs/{run_id}")
-            if not trusted_run(run, context) or run["status"] != "completed" or run["conclusion"] != "success":
+            if not trusted_run(run, context):
                 continue
             data = api.get(f"repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip", binary=True)
-            return unpack_artifact(data, context, run_id)
+            manifest, archive = unpack_artifact(data, context, run_id)
+            attempt = manifest["run_attempt"]
+            if type(attempt) is not int or attempt < 1:
+                raise RuntimeError("Invalid Go source workflow attempt")
+            original = api.get(f"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}")
+            if (not trusted_run(original, context) or original["run_attempt"] != attempt or
+                    original["status"] != "completed" or original["conclusion"] != "success"):
+                continue
+            return manifest, archive
         if clock() >= deadline:
             raise RuntimeError("Timed out waiting for the trusted Go source; inspect the Prepare Go SDK workflow")
         sleep(5)

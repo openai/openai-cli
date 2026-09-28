@@ -633,3 +633,50 @@ func TestCodeQLAnalysisCannotPublish(t *testing.T) {
 		t.Fatal("publisher must invoke only trusted tooling in isolated Python mode")
 	}
 }
+
+func TestSDKSnapshotSurvivesFailedProducerRerun(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python is required for the SDK source consumer")
+	}
+	// Exercise the consumer with a real manifest ZIP and fake GitHub responses.
+	// The latest attempt failed, but the artifact's original attempt succeeded.
+	code := `
+import importlib.util, io, json, zipfile
+spec = importlib.util.spec_from_file_location("link", "../../.github/scripts/sdk_cross_link.py")
+link = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(link)
+context = dict(repository_id=link.REPOSITORY_ID, pr=1, head_sha="a"*40, branch="feature", updated_at="now")
+run = dict(event="pull_request_target", path=link.WORKFLOW, repository={"id":link.REPOSITORY_ID},
+           head_repository={"id":link.REPOSITORY_ID}, head_branch="feature", head_sha="a"*40,
+           status="completed", conclusion="failure", run_attempt=2)
+manifest = dict(schema=1, context=context, run_id=7, run_attempt=1, go_repository=link.GO_REPOSITORY, mode="released")
+buffer = io.BytesIO()
+with zipfile.ZipFile(buffer, "w") as archive:
+    archive.writestr("manifest.json", json.dumps(manifest))
+class API:
+    original_success = True
+    def get(self, route, binary=False):
+        if "/actions/artifacts?" in route:
+            return {"artifacts":[dict(id=8, name=link.artifact_name(context), expired=False, workflow_run={"id":7})]}
+        if route.endswith("/zip"):
+            return buffer.getvalue()
+        if route.endswith("/attempts/1"):
+            return dict(run, run_attempt=1, conclusion="success" if self.original_success else "failure")
+        assert route.endswith("/runs/7"), route
+        return run
+api = API()
+assert link.wait_for_artifact(api, context)[0] == manifest
+api.original_success = False
+try:
+    link.wait_for_artifact(api, context, timeout=0)
+except RuntimeError:
+    pass
+else:
+    raise AssertionError("accepted an artifact from an unsuccessful original attempt")
+`
+	command := exec.Command(python, "-I", "-B", "-c", code)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("snapshot attempt validation: %v\n%s", err, output)
+	}
+}
