@@ -10,7 +10,7 @@ Replace photo.png with your image's path and the prompt with your changes.
 Replace photo.png with your image's path: a square PNG under 4 MB.
 {{end}}Saves to ~/Downloads/gpt-images/. Keeps your original.
 
-All options: {{$bin}} help --all images {{.Name}}
+Full help: {{$bin}} help --all images {{.Name}}
 `
 
 const imageUploadSavingHelp = `Edited images and variations save automatically to

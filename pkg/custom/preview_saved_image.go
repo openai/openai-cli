@@ -25,7 +25,7 @@ const imagePreviewHelp = `{{$bin := or (index .Root.Metadata "help-invocation") 
 Replace photo.png with your saved image's path.
 No API call or key needed. Keeps your original.
 
-All options: {{$bin}} help --all images preview
+Full help: {{$bin}} help --all images preview
 `
 
 func registerImagePreviewCommands(root *cli.Command) {

@@ -23,7 +23,7 @@ const imageGenerationQuickHelp = `{{$bin := or (index .Root.Metadata "help-invoc
 Replace the prompt with the image you want.
 Saves to ~/Downloads/gpt-images/.
 
-All options: {{$bin}} help --all images generate
+Full help: {{$bin}} help --all images generate
 Key setup: {{$bin}} help setup
 `
 

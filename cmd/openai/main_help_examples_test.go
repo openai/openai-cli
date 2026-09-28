@@ -97,7 +97,7 @@ func TestMainHelpImagePagesStayBrief(t *testing.T) {
 			if strings.Count(got.stdout, "  openai images "+operation+" ") != 1 {
 				t.Errorf("expected one complete example: %s", got.stdout)
 			}
-			if !strings.Contains(got.stdout, "openai help --all images "+operation) {
+			if !strings.Contains(got.stdout, "Full help: openai help --all images "+operation) {
 				t.Errorf("full help is not discoverable: %s", got.stdout)
 			}
 		})
