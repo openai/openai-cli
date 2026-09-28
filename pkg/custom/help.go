@@ -23,8 +23,8 @@ func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 
 func configureHelpGroups(root *cli.Command) {
 	groups := []clihelp.FlagGroup{
-		{Title: "Response output", Names: []string{"format", "format-error", "transform", "transform-error", "raw-output"}},
-		{Title: "Request configuration", Names: []string{"api-key", "admin-api-key", "webhook-secret", "organization", "project", "base-url", "header", "mtls-client-cert-file", "mtls-client-key-file", "debug"}},
+		{Title: "Response output", Names: []string{"format", "format-error", "transform", "transform-error", "raw-output"}, Owner: root},
+		{Title: "Request configuration", Names: []string{"api-key", "admin-api-key", "webhook-secret", "organization", "project", "base-url", "header", "mtls-client-cert-file", "mtls-client-key-file", "debug"}, Owner: root},
 	}
 	var visit func(*cli.Command, bool)
 	visit = func(command *cli.Command, image bool) {

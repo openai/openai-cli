@@ -2,6 +2,7 @@ package clihelp
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/urfave/cli/v3"
@@ -12,6 +13,8 @@ import (
 type FlagGroup struct {
 	Title string
 	Names []string
+	// Owner restricts a group to flags declared by this command. Nil matches by name.
+	Owner *cli.Command
 }
 
 // Keep the framework's command reference and its complete flag descriptions.
@@ -49,6 +52,9 @@ func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
 			group = category.GetCategory()
 		} else {
 			for _, section := range groups {
+				if section.Owner != nil && !slices.Contains(section.Owner.Flags, flag) {
+					continue
+				}
 				for _, name := range section.Names {
 					for _, alias := range flag.Names() {
 						if alias == name {

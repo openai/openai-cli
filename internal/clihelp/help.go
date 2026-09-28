@@ -263,12 +263,17 @@ func Invocation(fallback string, args []string) string {
 	if base := strings.TrimSuffix(filepath.Base(name), ".exe"); base != fallback {
 		return fallback
 	}
-	// go run builds an executable in a temporary go-build directory. That
-	// executable disappears; repeat the user's source invocation instead.
-	if filepath.Base(filepath.Dir(name)) == "exe" && strings.HasPrefix(filepath.Base(filepath.Dir(filepath.Dir(name))), "b") && strings.Contains(filepath.ToSlash(name), "/go-build") {
+	// go run uses either a temporary executable or a cached executable under
+	// <two hex digits>/<64 hex digits>-d. Neither path is a stable invocation.
+	dir := filepath.Dir(name)
+	cacheKey, cachedGoRun := strings.CutSuffix(filepath.Base(dir), "-d")
+	cachedGoRun = cachedGoRun && len(cacheKey) == 64 && strings.Trim(cacheKey, "0123456789abcdef") == "" && filepath.Base(filepath.Dir(dir)) == cacheKey[:2]
+	temporaryGoRun := filepath.Base(dir) == "exe" && strings.HasPrefix(filepath.Base(filepath.Dir(dir)), "b") && strings.Contains(filepath.ToSlash(name), "/go-build")
+	if temporaryGoRun || cachedGoRun {
 		if _, err := os.Stat("cmd/" + fallback + "/main.go"); err == nil {
 			return "go run ./cmd/" + fallback
 		}
+		return fallback
 	}
 	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return fallback

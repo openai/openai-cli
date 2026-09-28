@@ -191,6 +191,25 @@ func TestMainHelpFullReferenceRoutes(t *testing.T) {
 	}
 }
 
+func TestMainHelpKeepsAPIProjectInCommandOptions(t *testing.T) {
+	got := runMainDispatch(t, "bash", "openai", "help", "--all", "admin:organization:invites", "create")
+	if got.code != 0 || got.stderr != "" {
+		t.Fatalf("full help failed: %+v", got)
+	}
+	local, global, ok := strings.Cut(got.stdout, "GLOBAL OPTIONS:")
+	if !ok || !strings.Contains(local, "--project any") || !strings.Contains(local, "membership is granted") {
+		t.Fatalf("API project input is missing: %s", got.stdout)
+	}
+	for _, heading := range []string{"Request configuration", "Response output"} {
+		if strings.Contains(local, heading) || !strings.Contains(global, heading) {
+			t.Errorf("%q should group only global flags: %s", heading, got.stdout)
+		}
+	}
+	if !strings.Contains(global, "--base-url") || !strings.Contains(global, "--format string") {
+		t.Errorf("global configuration is missing: %s", global)
+	}
+}
+
 func TestMainHelpFullReferenceNullableDefaults(t *testing.T) {
 	for _, tc := range []struct {
 		path              []string
