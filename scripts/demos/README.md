@@ -128,6 +128,37 @@ Official documentation: [asciinema recording](https://docs.asciinema.org/manual/
 [VHS](https://github.com/charmbracelet/vhs), and
 [ffmpeg](https://ffmpeg.org/documentation.html).
 
+### Help pages
+
+`record-help.sh` compares the same help command on two real binaries. Build the
+existing request-counting fixture, then pass the comparison commits and command
+path:
+
+```sh
+go build -o dist/demos/bin/image-model-demo-api ./scripts/demos/image-models/main.go
+bash scripts/demos/record-help.sh \
+  /path/to/before/openai /path/to/after/openai \
+  BEFORE_COMMIT AFTER_COMMIT /path/outside/repository/help-demo images edit
+```
+
+This records `openai images edit --help`. Omit the command path for root help;
+put `--all` before the path to record `openai help --all images edit`. Use each
+PR's immediate parent as the before build. Both commit arguments must be full
+40-character IDs; independently verify that the binaries match them.
+
+The runner reuses `capture_and_render.sh`, removes the API key inside both
+scenes, and points the CLI at a rejecting loopback fixture. Any API request
+fails the recording. It forwards command names only, never request options.
+`DEMO_API_BINARY` can select a separately built fixture. Put asciinema, agg,
+ffmpeg and ffprobe on PATH. No live requests or paid generation are needed.
+
+Both scenes use 90 columns, 48 rows and Menlo at 18 px. Set `DEMO_ROWS` higher
+for longer pages, and inspect both screenshots for clipped content before
+sharing. `comparison.gif`, `before.png` and `after.png` are replay media, not
+native terminal validation. The output also preserves transcripts, captures,
+the exact scene, tool versions, hashes, commit IDs and the empty request log.
+Keep this output outside Git; rerun after changing the demonstrated help.
+
 ### Image defaults and saving
 
 Build the comparison binaries from main and the proposed feature

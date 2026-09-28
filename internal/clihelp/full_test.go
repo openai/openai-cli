@@ -120,3 +120,37 @@ func TestFullHelpPreservesCategoriesGlobalOptionsAndDescriptions(t *testing.T) {
 		})
 	}
 }
+
+func TestFullHelpGroupingKeepsEachFlagAndItsDetails(t *testing.T) {
+	flags := []cli.Flag{
+		&cli.StringFlag{Name: "optional", Usage: "A future setting must remain visible."},
+		&cli.StringFlag{Name: "prompt", Required: true, Usage: "Required text.\nKeep the important limit."},
+		&cli.StringFlag{Name: "image", Aliases: []string{"i"}, Usage: "Path to your file."},
+		&cli.IntFlag{Name: "categorized", Category: "Existing category", Usage: "Original category.", Value: 12},
+	}
+	command := &cli.Command{Name: "edit", Flags: flags, Metadata: map[string]any{
+		"help-flag-groups": []FlagGroup{{Title: "Source images", Names: []string{"i"}}},
+	}}
+	for _, flag := range flags {
+		if err := flag.PreParse(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, width := range []int{40, 80, 120} {
+		got := fullFlagGroups(command, flags, width)
+		if strings.Index(got, "Required inputs") > strings.Index(got, "Source images") {
+			t.Fatalf("required inputs were not first: %s", got)
+		}
+		for _, section := range []string{"Required inputs", "Source images", "Other options", "Existing category"} {
+			if strings.Count(got, section) != 1 {
+				t.Errorf("section %q duplicated or missing: %s", section, got)
+			}
+		}
+		for _, flag := range flags {
+			heading, details, _ := strings.Cut(fullFlag(flag), "\t")
+			if strings.Count(got, heading) != 1 || !strings.Contains(strings.Join(strings.Fields(got), " "), strings.Join(strings.Fields(details), " ")) {
+				t.Errorf("grouping lost flag %q or its details: %s", heading, got)
+			}
+		}
+	}
+}

@@ -106,14 +106,14 @@ func TestBriefHelpKeepsExplicitFeatureTemplates(t *testing.T) {
 	}
 }
 
-func TestBriefImageExampleUsesExplicitModelAndCurrentOutput(t *testing.T) {
+func TestBriefImageExampleUsesMinimalInput(t *testing.T) {
 	got := briefHelp(&cli.Command{Name: "generate"}, "./openai", "images generate")
-	for _, text := range []string{`./openai images generate --model `, `--prompt "A tiny orange robot"`, "JSON", "data or a URL"} {
+	for _, text := range []string{`./openai images generate --prompt "A tiny orange robot"`, "Full help:"} {
 		if !strings.Contains(got, text) {
 			t.Errorf("image help lacks %q: %s", text, got)
 		}
 	}
-	for _, text := range []string{"Downloads", "--output-dir", "images preview", "--inline", "default model"} {
+	for _, text := range []string{"JSON containing image data", "--model gpt-image-1.5"} {
 		if strings.Contains(got, text) {
 			t.Errorf("image help advertises an unshipped behavior: %q", text)
 		}

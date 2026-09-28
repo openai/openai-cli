@@ -14,19 +14,25 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const imagePreviewHelp = `View an image you already saved
-  openai images preview "path/to/image.png"
-
-PNG, JPEG and WebP. No API call or key is needed. The original is unchanged.
+const imagePreviewDetails = `PNG, JPEG and WebP. No API call or key is needed. The original is unchanged.
 Preview size uses the current terminal window. Resize, then run it again.
 Automatic preview preferences do not affect this command.
+`
 
-  --inline auto    Use native graphics or a color approximation (default)
-  --inline on      Also allow image-font activation in local Apple Terminal
+const imagePreviewHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}View an image you already saved
+  {{$bin}} images preview "photo.png"
+
+Required: photo.png is the path to your saved image. Quote paths with spaces.
+
+` + imagePreviewDetails + `
+
+Optional, allow a sharp preview in local Apple Terminal:
+  {{$bin}} images preview --inline on "photo.png"
+Without this option, use native graphics or a color approximation.
 
 Pipes, CI and terminals without supported graphics or color cannot display previews.
 Preview limits: 64 MiB and 16 megapixels. Larger originals are still kept.
-Full help: openai help --all images preview
+Full help: {{$bin}} help --all images preview
 `
 
 func registerImagePreviewCommands(root *cli.Command) {
@@ -35,7 +41,7 @@ func registerImagePreviewCommands(root *cli.Command) {
 		return
 	}
 	images.Commands = append(images.Commands,
-		&cli.Command{Name: "preview", Usage: "Display a saved image without generating another one.", UsageText: "openai images preview [--inline auto|on] FILE", Description: imagePreviewHelp, CustomHelpTemplate: imagePreviewHelp,
+		&cli.Command{Name: "preview", Usage: "Display a saved image without generating another one.", UsageText: "openai images preview [--inline auto|on] FILE", Description: imagePreviewDetails + "\nPipes, CI and terminals without supported graphics or color cannot display previews.\nPreview limits: 64 MiB and 16 megapixels. Larger originals are still kept.", CustomHelpTemplate: imagePreviewHelp,
 			Flags: []cli.Flag{&cli.StringFlag{Name: "inline", Value: "auto", Usage: "Preview using auto or on; on permits a local Apple Terminal image font"}}, Action: handleImagesPreview},
 	)
 	inline := images.Command("inline")

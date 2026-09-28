@@ -25,15 +25,13 @@ Model: ` + defaultSavedImageModel + `. Model access varies by key.
 Saves to ~/Downloads/gpt-images/ and creates the folder automatically.
 Names come from your prompt. Existing files are kept. Every saved path is printed.
 
-Optional:
-  --name robot                 Choose a filename (extension is automatic)
-  --output-dir "~/Downloads"    Save in an existing folder
-  --count 2                    Make two images (alias for -n)
-  --inline off                 Save without a terminal preview
-  --inline on                  Allow a sharp preview in local Apple Terminal
-  --partial-images 2           Preview progress, then save the final image
-  --model gpt-image-2.5-flare    Choose an exact model ID
-  --output-format webp         Choose PNG, JPEG or WebP
+Required input: --prompt describes the image you want.
+Optional example, make two images:
+  {{$bin}} images generate --prompt "A tiny orange robot" --count 2
+
+Optional settings include --model, --size, --quality and --output-format.
+Use --name to choose a filename; --output-dir chooses an existing folder.
+Use --inline off to save without a preview. See full help for all settings.
 
 Scripts: --format json returns API JSON without saving or CLI defaults.
 Redirected output still saves images, without previews.

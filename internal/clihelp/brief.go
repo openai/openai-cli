@@ -10,23 +10,37 @@ import (
 // Help is derived from the command definitions so regenerated flags remain
 // available. Only the presentation changes; flag objects are never rewritten.
 func configureCommandHelp(command *cli.Command, invocation, path string) {
+	configureCommandHelpAtWidth(command, invocation, path, helpWidth(command))
+}
+
+func configureCommandHelpAtWidth(command *cli.Command, invocation, path string, width int) {
 	if path != "" && command.CustomHelpTemplate == "" && !command.Hidden {
 		if command.Metadata == nil {
 			command.Metadata = map[string]any{}
 		}
-		command.Metadata["brief-help"] = briefHelp(command, invocation, path)
+		command.Metadata["brief-help"] = briefHelpAtWidth(command, invocation, path, width)
 		command.CustomHelpTemplate = `{{index .Metadata "brief-help"}}`
 	}
 	for _, child := range command.Commands {
-		configureCommandHelp(child, invocation, strings.TrimSpace(path+" "+child.Name))
+		configureCommandHelpAtWidth(child, invocation, strings.TrimSpace(path+" "+child.Name), width)
 	}
 }
 
 func briefHelp(command *cli.Command, invocation, path string) string {
+	return briefHelpAtWidth(command, invocation, path, helpWidth(command))
+}
+
+func briefHelpAtWidth(command *cli.Command, invocation, path string, width int) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "%s %s\n", invocation, path)
 	if command.Usage != "" {
-		fmt.Fprintln(&out, shortDescription(command.Usage))
+		out.WriteString(wrapDescription(shortDescription(command.Usage), "", width))
+	}
+	if example := examples[path]; example != "" {
+		fmt.Fprintf(&out, "\nEXAMPLE\n  %s %s\n", invocation, example)
+		if path == "files create" {
+			out.WriteString(wrapDescription("example.txt is the path to your existing file. Replace it with your file's path.", "", width))
+		}
 	}
 	children := command.VisibleCommands()
 	if len(children) > 0 {
@@ -36,16 +50,10 @@ func briefHelp(command *cli.Command, invocation, path string) string {
 				fmt.Fprintf(&out, "  + %d more in full help\n", len(children)-i)
 				break
 			}
-			fmt.Fprintf(&out, "  %-20s %s\n", child.Name, shortDescription(child.Usage))
+			writeHelpEntry(&out, child.Name, shortDescription(child.Usage), width)
 		}
 		fmt.Fprintf(&out, "\nCommand help: %s %s COMMAND --help\n", invocation, path)
 	} else {
-		if example := examples[path]; example != "" {
-			fmt.Fprintf(&out, "\nEXAMPLE\n  %s %s\n", invocation, example)
-		}
-		if path == "images generate" {
-			out.WriteString("Returns JSON containing image data or a URL. Model access varies by key.\n")
-		}
 		var required, optional []cli.Flag
 		for _, flag := range command.Flags {
 			if visible, ok := flag.(cli.VisibleFlag); ok && !visible.IsVisible() {
@@ -60,7 +68,7 @@ func briefHelp(command *cli.Command, invocation, path string) string {
 		if len(required) > 0 {
 			out.WriteString("\nREQUIRED INPUTS\n")
 			for _, flag := range required {
-				writeBriefFlag(&out, flag)
+				writeBriefFlag(&out, flag, width)
 			}
 		}
 		if len(optional) > 0 {
@@ -70,7 +78,7 @@ func briefHelp(command *cli.Command, invocation, path string) string {
 			for _, name := range []string{"model", "input", "size", "quality", "limit"} {
 				for i, flag := range optional {
 					if flag.Names()[0] == name && len(shown) < 3 {
-						writeBriefFlag(&out, flag)
+						writeBriefFlag(&out, flag, width)
 						shown[i] = true
 					}
 				}
@@ -80,7 +88,7 @@ func briefHelp(command *cli.Command, invocation, path string) string {
 					break
 				}
 				if !shown[i] {
-					writeBriefFlag(&out, flag)
+					writeBriefFlag(&out, flag, width)
 					shown[i] = true
 				}
 			}
@@ -92,11 +100,15 @@ func briefHelp(command *cli.Command, invocation, path string) string {
 }
 
 var examples = map[string]string{
-	"models list":      "models list",
-	"models retrieve":  "models retrieve --model gpt-5.5",
-	"responses create": `responses create --model gpt-5.5 --input "Say hello"`,
-	"files create":     `files create --file ./example.txt --purpose assistants`,
-	"images generate":  `images generate --model gpt-image-1.5 --prompt "A tiny orange robot"`,
+	"images":            `images generate --prompt "A tiny orange robot"`,
+	"models list":       "models list",
+	"models retrieve":   "models retrieve --model gpt-5.5",
+	"responses create":  `responses create --model gpt-5.5 --input "Say hello"`,
+	"files create":      `files create --file ./example.txt --purpose assistants`,
+	"images generate":   `images generate --prompt "A tiny orange robot"`,
+	"images inline":     "images inline on",
+	"images inline on":  "images inline on",
+	"images inline off": "images inline off",
 }
 
 func isRequired(flag cli.Flag) bool {
@@ -107,7 +119,7 @@ func isRequired(flag cli.Flag) bool {
 	return ok && required.IsRequired()
 }
 
-func writeBriefFlag(out *strings.Builder, flag cli.Flag) {
+func writeBriefFlag(out *strings.Builder, flag cli.Flag, width int) {
 	name := flag.Names()[0]
 	if len(name) == 1 {
 		name = "-" + name
@@ -135,7 +147,7 @@ func writeBriefFlag(out *strings.Builder, flag cli.Flag) {
 			usage = "Text or other input to send to the model."
 		}
 	}
-	fmt.Fprintf(out, "  %-24s %s\n", name, usage)
+	writeHelpEntry(out, name, usage, width)
 }
 
 func shortDescription(text string) string {
@@ -143,9 +155,6 @@ func shortDescription(text string) string {
 	text = strings.ReplaceAll(text, "`", "")
 	if end := strings.Index(text, ". "); end >= 0 {
 		text = text[:end+1]
-	}
-	if chars := []rune(text); len(chars) > 72 {
-		text = string(chars[:69]) + "..."
 	}
 	return text
 }

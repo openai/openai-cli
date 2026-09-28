@@ -1,31 +1,83 @@
 package clihelp
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/urfave/cli/v3"
 )
 
-// Keep the framework's full reference layout and metadata. Only flag headings
-// need a different renderer: API prose uses backticks for examples, whereas
-// urfave treats the first backticked phrase as an argument placeholder.
+// FlagGroup is presentation metadata supplied by handwritten features. It never
+// changes parser order, categories, flag aliases or request defaults.
+type FlagGroup struct {
+	Title string
+	Names []string
+}
+
+// Keep the framework's command reference and its complete flag descriptions.
+// Only the option layout changes, using headings rather than a wide flag table.
 func fullHelpTemplate(command *cli.Command, source string) string {
 	if command.Metadata == nil {
 		command.Metadata = map[string]any{}
 	}
-	command.Metadata["full-help-flag"] = fullFlag
+	command.Metadata["full-help-flags"] = func(flags []cli.Flag) string {
+		return fullFlagGroups(command, flags, helpWidth(command))
+	}
+	command.Metadata["full-help-description"] = func(text string) string {
+		return strings.TrimSuffix(wrapDescription(text, "   ", helpWidth(command)), "\n")
+	}
 	return strings.NewReplacer(
-		`{{template "visibleFlagCategoryTemplate" .}}`, `{{range .VisibleFlagCategories}}
-   {{if .Name}}{{.Name}}
-
-   {{end}}{{$flglen := len .Flags}}{{range $i, $e := .Flags}}{{if eq (subtract $flglen $i) 1}}{{call (index $.Metadata "full-help-flag") $e}}
-{{else}}{{call (index $.Metadata "full-help-flag") $e}}
-   {{end}}{{end}}{{end}}`,
-		`{{template "visibleFlagTemplate" .}}`, `{{range $i, $e := .VisibleFlags}}
-   {{wrap (call (index $.Metadata "full-help-flag") $e) 6}}{{end}}`,
-		`{{template "visiblePersistentFlagTemplate" .}}`, `{{range $i, $e := .VisiblePersistentFlags}}
-   {{wrap (call (index $.Metadata "full-help-flag") $e) 6}}{{end}}`,
+		`{{template "visibleFlagCategoryTemplate" .}}`, `{{call (index .Metadata "full-help-flags") .VisibleFlags}}`,
+		`{{template "visibleFlagTemplate" .}}`, `{{call (index .Metadata "full-help-flags") .VisibleFlags}}`,
+		`{{template "visiblePersistentFlagTemplate" .}}`, `{{call (index .Metadata "full-help-flags") .VisiblePersistentFlags}}`,
+		`   {{template "descriptionTemplate" .}}`, `{{call (index .Metadata "full-help-description") .Description}}`,
 	).Replace(source)
+}
+
+func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
+	groups := []FlagGroup{{Title: "Required inputs"}}
+	if configured, ok := command.Metadata["help-flag-groups"].([]FlagGroup); ok {
+		groups = append(groups, configured...)
+	}
+	groups = append(groups, FlagGroup{Title: "Other options"})
+	grouped := make(map[string][]cli.Flag)
+	for _, flag := range flags {
+		group := "Other options"
+		if isRequired(flag) {
+			group = "Required inputs"
+		} else if category, ok := flag.(cli.CategorizableFlag); ok && category.GetCategory() != "" {
+			group = category.GetCategory()
+		} else {
+			for _, section := range groups {
+				for _, name := range section.Names {
+					for _, alias := range flag.Names() {
+						if alias == name {
+							group = section.Title
+						}
+					}
+				}
+			}
+		}
+		if _, exists := grouped[group]; !exists {
+			groups = append(groups, FlagGroup{Title: group})
+		}
+		grouped[group] = append(grouped[group], flag)
+	}
+	var out strings.Builder
+	for _, group := range groups {
+		flags := grouped[group.Title]
+		if len(flags) == 0 {
+			continue
+		}
+		fmt.Fprintf(&out, "\n\n   %s\n", group.Title)
+		for _, flag := range flags {
+			heading, description, _ := strings.Cut(fullFlag(flag), "\t")
+			fmt.Fprintf(&out, "\n   %s\n", heading)
+			out.WriteString(strings.TrimSuffix(wrapDescription(description, "      ", width), "\n"))
+		}
+		delete(grouped, group.Title)
+	}
+	return out.String()
 }
 
 func fullFlag(flag cli.Flag) string {
