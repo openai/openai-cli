@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   help:
@@ -31,6 +32,9 @@ jobs:
         with:
           go-version-file: .go-version
           check-latest: true
+      - uses: ./.github/actions/link-go-sdk
+        with:
+          github-token: ${{ github.token }}
       - name: Test help
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
       - name: Test command dispatch and native shells

@@ -1,12 +1,21 @@
-"""Prepare private Go source in trusted CI without executing candidate code."""
+"""Fetch private Go source in trusted CI; consume it in ordinary PR jobs.
+
+The producer never extracts or executes either candidate. Only the consumer
+runs Go, and it runs without the App credential or credential environment.
+"""
 
 import argparse
 import hashlib
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
+import shutil
+import subprocess
+import tarfile
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,6 +25,8 @@ import zipfile
 REPOSITORY = "openai/openai-cli-internal"
 REPOSITORY_ID = 1253662577
 GO_REPOSITORY = "openai/openai-go-internal"
+MODULE = "github.com/openai/openai-go/v3"
+WORKFLOW = ".github/workflows/sdk-cross-link.yml"
 SHA = re.compile(r"[0-9a-f]{40}")
 
 
@@ -116,6 +127,15 @@ def produce(event, cli, sdk, destination, run_id, attempt):
     return artifact_name(context)
 
 
+def trusted_run(run, context):
+    # REST run metadata identifies the PR head, even though pull_request_target
+    # executes the base workflow. Bind both that head and the artifact manifest.
+    return (run["event"] == "pull_request_target" and run["path"] == WORKFLOW and
+            run["repository"]["id"] == REPOSITORY_ID and
+            run["head_repository"]["id"] == REPOSITORY_ID and
+            run["head_branch"] == context["branch"] and run["head_sha"] == context["head_sha"])
+
+
 def existing_snapshot(api, context, run_id):
     # A rerun retains the run ID and immutable artifacts from earlier attempts.
     # Reuse that source instead of moving the Go revision or colliding on upload.
@@ -126,6 +146,27 @@ def existing_snapshot(api, context, run_id):
             unpack_artifact(data, context, run_id)
             return True
     return False
+
+
+def wait_for_artifact(api, context, timeout=300, sleep=time.sleep, clock=time.monotonic):
+    deadline = clock() + timeout
+    name = artifact_name(context)
+    while True:
+        artifacts = api.get(f"repos/{REPOSITORY}/actions/artifacts?name={name}&per_page=100")
+        # The first successful producer for this event fixes the snapshot for
+        # every consumer, even if the producer is subsequently rerun.
+        for artifact in sorted(artifacts["artifacts"], key=lambda item: item["id"]):
+            if artifact["name"] != name or artifact["expired"]:
+                continue
+            run_id = artifact["workflow_run"]["id"]
+            run = api.get(f"repos/{REPOSITORY}/actions/runs/{run_id}")
+            if not trusted_run(run, context) or run["status"] != "completed" or run["conclusion"] != "success":
+                continue
+            data = api.get(f"repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip", binary=True)
+            return unpack_artifact(data, context, run_id)
+        if clock() >= deadline:
+            raise RuntimeError("Timed out waiting for the trusted Go source; inspect the Prepare Go SDK workflow")
+        sleep(5)
 
 
 def unpack_artifact(data, context, run_id):
@@ -148,26 +189,82 @@ def unpack_artifact(data, context, run_id):
         return manifest, archive
 
 
+def extract_source(data, destination):
+    """Extract regular source files under a fresh directory on every platform."""
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+        seen = set()
+        root = None
+        for member in archive:
+            path = PurePosixPath(member.name)
+            if (path.is_absolute() or ".." in path.parts or "\\" in member.name or
+                    ":" in member.name or not path.parts or
+                    not (member.isdir() or member.isfile())):
+                raise RuntimeError("Unsafe Go source archive entry")
+            if root is None:
+                root = path.parts[0]
+            if path.parts[0] != root:
+                raise RuntimeError("Go source archive has multiple roots")
+            relative = Path(*path.parts[1:])
+            key = relative.as_posix().casefold()
+            if key in seen:
+                raise RuntimeError("Duplicate Go source archive entry")
+            seen.add(key)
+            target = destination / relative
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.extractfile(member) as source, target.open("xb") as output:
+                    shutil.copyfileobj(source, output)
+    if not (destination / "go.mod").is_file():
+        raise RuntimeError("Go source archive has no module")
+
+
+def link_source(source, workspace):
+    env = {key: value for key, value in os.environ.items() if key not in ("GH_TOKEN", "SDK_TOKEN")}
+    module = subprocess.run(["go", "mod", "edit", "-json"], cwd=source, env=env,
+                            check=True, capture_output=True, text=True)
+    if json.loads(module.stdout)["Module"]["Path"] != MODULE:
+        raise RuntimeError("Unexpected Go SDK module path")
+    subprocess.run(["go", "mod", "edit", f"-replace={MODULE}={source}"],
+                   cwd=workspace, env=env, check=True)
+    subprocess.run(["go", "mod", "tidy"], cwd=workspace, env=env, check=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["produce"])
-    parser.parse_args()
-    if os.environ["GITHUB_EVENT_NAME"] != "pull_request_target":
+    parser.add_argument("mode", choices=["produce", "consume"])
+    args = parser.parse_args()
+    expected_event = "pull_request_target" if args.mode == "produce" else "pull_request"
+    if os.environ["GITHUB_EVENT_NAME"] != expected_event:
         raise RuntimeError("Unexpected workflow event")
-    if os.environ["GITHUB_REF"] != "refs/heads/main":
-        raise RuntimeError("Producer must run from main")
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     context = identity(event)
     api = GitHub(os.environ.get("GH_TOKEN"))
-    run_id = int(os.environ["GITHUB_RUN_ID"])
-    reused = existing_snapshot(api, context, run_id)
-    name = artifact_name(context) if reused else produce(
-        event, api, GitHub(os.environ.get("SDK_TOKEN")),
-        Path(os.environ["RUNNER_TEMP"]) / "go-sdk-artifact",
-        run_id, int(os.environ["GITHUB_RUN_ATTEMPT"]))
-    with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-        output.write(f"artifact-name={name}\n")
-        output.write(f"upload={'false' if reused else 'true'}\n")
+    if args.mode == "produce":
+        if os.environ["GITHUB_REF"] != "refs/heads/main":
+            raise RuntimeError("Producer must run from main")
+        run_id = int(os.environ["GITHUB_RUN_ID"])
+        reused = existing_snapshot(api, context, run_id)
+        name = artifact_name(context) if reused else produce(
+            event, api, GitHub(os.environ.get("SDK_TOKEN")),
+            Path(os.environ["RUNNER_TEMP"]) / "go-sdk-artifact",
+            run_id, int(os.environ["GITHUB_RUN_ATTEMPT"]))
+        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+            output.write(f"artifact-name={name}\n")
+            output.write(f"upload={'false' if reused else 'true'}\n")
+        return
+    manifest, archive = wait_for_artifact(api, context)
+    if archive is None:
+        summary = "No matching Go SDK branch; using the committed released dependency."
+    else:
+        source = Path(tempfile.mkdtemp(prefix="go-sdk-", dir=os.environ["RUNNER_TEMP"]))
+        extract_source(archive, source)
+        link_source(source, Path(os.environ["GITHUB_WORKSPACE"]))
+        summary = f"Cross-linked Go SDK commit: {manifest['go_sha']}"
+    print(summary)
+    with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+        output.write(summary + "\n")
 
 
 if __name__ == "__main__":

@@ -101,9 +101,12 @@ func TestWorkflowPermissionsRemainLeastPrivileged(t *testing.T) {
 	}
 
 	ciJobs := readWorkflow(t, "ci.yml").Jobs
-	for _, name := range []string{"lint", "build-artifacts", "test"} {
-		if !reflect.DeepEqual(ciJobs[name].Permissions, map[string]string{"contents": "read"}) {
+	for _, name := range []string{"lint", "macos-uploads", "build-artifacts", "test"} {
+		if !reflect.DeepEqual(ciJobs[name].Permissions, map[string]string{"contents": "read", "actions": "read"}) {
 			t.Errorf("CI job %s permissions changed: %v", name, ciJobs[name].Permissions)
+		}
+		if ciJobs[name].Environment != "" {
+			t.Errorf("CI job %s must not receive protected environment credentials", name)
 		}
 	}
 	if ciJobs["build"].Permissions == nil || len(ciJobs["build"].Permissions) != 0 {

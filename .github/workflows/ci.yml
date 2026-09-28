@@ -11,10 +11,11 @@ on:
 
 jobs:
   lint:
-    timeout-minutes: 10
+    timeout-minutes: 15
     name: lint
     permissions:
       contents: read
+      actions: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -22,21 +23,26 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
+        with:
+          github-token: ${{ github.token }}
 
       - name: Run lints
         run: ./scripts/lint
 
   macos-uploads:
-    timeout-minutes: 10
+    timeout-minutes: 15
     name: macOS upload cancellation
     permissions:
       contents: read
+      actions: read
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-go
+        with:
+          github-token: ${{ github.token }}
       - name: Check upload cancellation and EOF
         run: go test ./internal/binaryparam ./pkg/cmd -run 'Test(CancellableFIFO|FilesCreateCLICancelClosesStalledFIFO|FilesCreateCLIStreamsSparseFile|ImagesEditCLIStreamsMultipleFiles)' -count=1
 
@@ -45,6 +51,7 @@ jobs:
     name: build artifacts
     permissions:
       contents: read
+      actions: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -52,6 +59,8 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
+        with:
+          github-token: ${{ github.token }}
 
       - name: Test vulnerability scan coverage
         run: ./scripts/govulncheck-test
@@ -122,10 +131,11 @@ jobs:
           fi
 
   test:
-    timeout-minutes: 10
+    timeout-minutes: 15
     name: test
     permissions:
       contents: read
+      actions: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -133,6 +143,8 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup-go
+        with:
+          github-token: ${{ github.token }}
 
       - name: Verify mock tooling security
         run: node scripts/mock-tools/security.test.js
