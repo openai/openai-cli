@@ -44,7 +44,7 @@ jobs:
           merge-multiple: true
       - name: Restore candidate checkout
         shell: bash
-        run: tar -xzf - -C "$GITHUB_WORKSPACE" < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
 
       - name: Set up Go for internal cross-linking
         if: matrix.language == 'go' && github.repository == 'openai/openai-cli-internal' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.id == github.event.repository.id && github.event.pull_request.base.ref == 'main'

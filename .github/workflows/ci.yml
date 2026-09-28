@@ -31,7 +31,7 @@ jobs:
           merge-multiple: true
       - name: Restore candidate checkout
         shell: bash
-        run: tar -xzf - -C "$GITHUB_WORKSPACE" < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
 
       - uses: ./.github/actions/setup-go
 
@@ -53,7 +53,7 @@ jobs:
           merge-multiple: true
       - name: Restore candidate checkout
         shell: bash
-        run: tar -xzf - -C "$GITHUB_WORKSPACE" < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-go
       - name: Check upload cancellation and EOF
         run: go test ./internal/binaryparam ./pkg/cmd -run 'Test(CancellableFIFO|FilesCreateCLICancelClosesStalledFIFO|FilesCreateCLIStreamsSparseFile|ImagesEditCLIStreamsMultipleFiles)' -count=1
@@ -73,7 +73,7 @@ jobs:
           merge-multiple: true
       - name: Restore candidate checkout
         shell: bash
-        run: tar -xzf - -C "$GITHUB_WORKSPACE" < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
 
       - uses: ./.github/actions/setup-go
 
@@ -159,7 +159,7 @@ jobs:
           merge-multiple: true
       - name: Restore candidate checkout
         shell: bash
-        run: tar -xzf - -C "$GITHUB_WORKSPACE" < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
 
       - uses: ./.github/actions/setup-go
 

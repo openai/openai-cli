@@ -39,7 +39,7 @@ jobs:
           merge-multiple: true
       - name: Restore candidate checkout
         shell: bash
-        run: tar -xzf - -C "$GITHUB_WORKSPACE" < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: .go-version
