@@ -30,6 +30,9 @@ class PublisherTest(unittest.TestCase):
             "git/ref/pull/3/merge": {"ref": "refs/pull/3/merge", "object": {"sha": MERGE}},
             "git/commits/" + MERGE: {"parents": [{"sha": BASE}, {"sha": HEAD}]},
         }
+        self.responses["actions/runs/42/attempts/2/jobs?per_page=100&page=1"] = {"jobs": [
+            dict(name=f"CodeQL analysis ({language})", run_id=42, run_attempt=2,
+                 head_sha=HEAD, status="completed", conclusion="success") for language in publisher.CATEGORIES]}
         self.target = {"sha": MERGE, "ref": "refs/pull/3/merge"}
         self.writes = []
 
@@ -187,6 +190,51 @@ class PublisherTest(unittest.TestCase):
         with self.assertRaises(publisher.StaleRun):
             publisher.report(get, "test/cli", 1, dict(id=42, run_attempt=2))
         self.assertEqual(self.writes, [])
+
+    def partial_rerun(self):
+        actions = dict(name="CodeQL analysis (actions)", run_id=42, run_attempt=1,
+                       head_sha=HEAD, status="completed", conclusion="success")
+        go = dict(actions, name="CodeQL analysis (go)", run_attempt=2)
+        self.responses["actions/runs/42/attempts/2/jobs?per_page=100&page=1"] = {"jobs": [go]}
+        self.responses["actions/runs/42/attempts/1/jobs?per_page=100&page=1"] = {"jobs": [
+            actions, dict(go, run_attempt=1, conclusion="failure")]}
+        self.responses["actions/runs/42/artifacts?per_page=100&page=1"] = {"artifacts": [
+            dict(id=0, name="codeql-sarif-42-1-actions", expired=False),
+            dict(id=1, name="codeql-sarif-42-2-go", expired=False)]}
+        self.responses["actions/artifacts/0/zip"] = self.archive("actions", mutate=lambda c, r: c.update(run_attempt=1))
+        self.responses["actions/artifacts/1/zip"] = self.archive("go")
+        return actions, go
+
+    def test_partial_rerun_reuses_only_successful_language_execution(self):
+        actions, go = self.partial_rerun()
+        publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
+        self.assertEqual([p.get("state", "sarif") for p in self.writes],
+                         ["pending", "pending", "sarif", "sarif", "success", "success"])
+        # Some job listings retain successful jobs with their original attempt.
+        self.responses["actions/runs/42/attempts/2/jobs?per_page=100&page=1"]["jobs"].append(actions)
+        self.writes.clear()
+        publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
+        self.assertEqual([p["state"] for p in self.writes[-2:]], ["success", "success"])
+
+    def test_partial_rerun_rejects_failed_or_different_source_job(self):
+        for mutation in [lambda job: job.update(conclusion="failure"),
+                         lambda job: job.update(head_sha=BASE),
+                         lambda job: job.update(run_id=9)]:
+            self.setUp()
+            actions, _ = self.partial_rerun()
+            mutation(actions)
+            with self.assertRaises(RuntimeError):
+                publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
+            self.assertEqual([p["state"] for p in self.writes], ["pending", "pending", "failure", "failure"])
+
+    def test_new_successful_job_cannot_fall_back_to_older_artifact(self):
+        actions, _ = self.partial_rerun()
+        self.responses["actions/runs/42/attempts/2/jobs?per_page=100&page=1"]["jobs"].append(
+            dict(actions, run_attempt=2))
+        with self.assertRaises(RuntimeError):
+            publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
+        self.assertNotIn("success", [p.get("state") for p in self.writes])
+        self.assertFalse(any("sarif" in p for p in self.writes))
 
 
 if __name__ == "__main__":

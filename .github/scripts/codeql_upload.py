@@ -131,6 +131,29 @@ def read_artifact(data, run, target, language):
     return sarif
 
 
+def analysis_attempt(get, root, run, language, jobs_by_attempt):
+    """Find this language's latest execution, including partial workflow reruns."""
+    for attempt in range(run["run_attempt"], 0, -1):
+        if attempt not in jobs_by_attempt:
+            jobs_by_attempt[attempt] = list(pages(
+                get, f"{root}/actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs"))
+        matches = [job for job in jobs_by_attempt[attempt]
+                   if job["name"] == f"CodeQL analysis ({language})" and job["run_attempt"] == attempt]
+        if not matches:
+            continue
+        if len(matches) != 1:
+            raise RuntimeError("Ambiguous CodeQL analysis job")
+        job = matches[0]
+        if job["run_id"] != run["id"] or job["head_sha"] != run["head_sha"]:
+            raise RuntimeError("CodeQL job does not match the source run")
+        if job["status"] == "completed" and job["conclusion"] == "skipped":
+            continue
+        if job["status"] != "completed" or job["conclusion"] != "success":
+            raise RuntimeError("Latest CodeQL language execution did not succeed")
+        return attempt
+    raise RuntimeError("No successful CodeQL language execution")
+
+
 def publish(get, repository, repository_id, source, sleep=time.sleep):
     run, target = destination(get, repository, repository_id, source)
     if run["status"] != "completed" or run["conclusion"] != "success":
@@ -138,13 +161,15 @@ def publish(get, repository, repository_id, source, sleep=time.sleep):
     root = f"repos/{repository}"
     artifacts = list(pages(get, f"{root}/actions/runs/{run['id']}/artifacts", "artifacts"))
     reports = []
+    jobs_by_attempt = {}
     for language in CATEGORIES:
-        name = f"codeql-sarif-{run['id']}-{run['run_attempt']}-{language}"
+        attempt = analysis_attempt(get, root, run, language, jobs_by_attempt)
+        name = f"codeql-sarif-{run['id']}-{attempt}-{language}"
         matches = [a for a in artifacts if a["name"] == name and not a["expired"]]
         if len(matches) != 1:
             raise RuntimeError("Missing or duplicate SARIF artifact")
         data = get(f"{root}/actions/artifacts/{int(matches[0]['id'])}/zip", binary=True)
-        reports.append(read_artifact(data, run, target, language))
+        reports.append(read_artifact(data, dict(run, run_attempt=attempt), target, language))
     # Recheck after downloads, before the first write. Explicit SHA/ref remain
     # immutable even if the branch moves after this check.
     if destination(get, repository, repository_id, source)[1] != target:

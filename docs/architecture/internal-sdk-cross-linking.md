@@ -33,7 +33,10 @@ It never checks out candidate code or executes artifact contents.
 The required `CodeQL (actions)` and `CodeQL (go)` statuses belong to this trusted
 publisher. They remain pending while analysis or publication is outstanding,
 fail if analysis or report processing fails, and succeed only after both reports
-have been processed. Analysis jobs have distinct `CodeQL analysis (...)` names.
+have been processed. Analysis jobs have distinct `CodeQL analysis (...)` names. On a partial rerun,
+the publisher verifies each language's latest executed job and uses the artifact
+from that successful attempt; a missing report from a newer execution cannot be
+replaced by an older report.
 Stale results cannot complete a newer revision's statuses. The publisher becomes
 active after it lands on `main`; internal required statuses remain pending until
 that rollout completes.
