@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.28.2](https://github.com/openai/openai-cli/compare/v1.28.1...v1.28.2) (2026-09-28)
+
+
+### Chores
+
+* **deps:** bump github.com/charmbracelet/x/ansi from 0.11.7 to 0.11.8 in the charmbracelet group across 1 directory ([#308](https://github.com/openai/openai-cli/issues/308)) ([724df7e](https://github.com/openai/openai-cli/commit/724df7e20e0f8a9d4b0aa28493d2097c6138b97b))
+* **deps:** bump golang.org/x/image from 0.45.0 to 0.46.0 in the golang-x group across 1 directory ([#309](https://github.com/openai/openai-cli/issues/309)) ([c27db9c](https://github.com/openai/openai-cli/commit/c27db9cd8ab92774344141a8807d840fcf578570))
+* **deps:** bump the codeql group across 1 directory with 2 updates ([#311](https://github.com/openai/openai-cli/issues/311)) ([7ec00c0](https://github.com/openai/openai-cli/commit/7ec00c0eeb3ba537a9b9590e6aab2e824d0c5ccb))
+* **deps:** bump the go-minor-and-patch group across 1 directory with 4 updates ([#310](https://github.com/openai/openai-cli/issues/310)) ([6b9ba37](https://github.com/openai/openai-cli/commit/6b9ba3782e3538baaf35002cd95f4c7a930acbc4))
+
 ## [1.28.1](https://github.com/openai/openai-cli/compare/v1.28.0...v1.28.1) (2026-09-28)
 
 
