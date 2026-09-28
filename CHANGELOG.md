@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.1](https://github.com/openai/openai-cli/compare/v1.28.0...v1.28.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **api:** clarify file downloads and Agents API options ([#305](https://github.com/openai/openai-cli/issues/305)) ([e54ed76](https://github.com/openai/openai-cli/commit/e54ed7693a42f5fbafec4eb3c32dd49093c15152))
+
 ## [1.28.0](https://github.com/openai/openai-cli/compare/v1.27.0...v1.28.0) (2026-09-27)
 
 
