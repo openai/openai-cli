@@ -170,7 +170,13 @@ def wait_for_artifact(api, context, timeout=300, sleep=time.sleep, clock=time.mo
             run = api.get(f"repos/{REPOSITORY}/actions/runs/{run_id}")
             if not trusted_run(run, context):
                 continue
-            data = api.get(f"repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip", binary=True)
+            try:
+                data = api.get(f"repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip", binary=True)
+            except APIError as error:
+                if error.status != 404:
+                    raise
+                # A rerun can replace an unusable artifact after it was listed.
+                continue
             manifest, archive = unpack_artifact(data, context, run_id)
             if not successful_attempt(api, context, run_id, manifest["run_attempt"]):
                 continue

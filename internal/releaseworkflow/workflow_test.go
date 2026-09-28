@@ -660,10 +660,14 @@ with zipfile.ZipFile(buffer, "w") as archive:
     archive.writestr("manifest.json", json.dumps(manifest))
 class API:
     original_success = True
+    deleted_once = False
     def get(self, route, binary=False):
         if "/artifacts?" in route:
             return {"artifacts":[dict(id=8, name=link.artifact_name(context), expired=False, workflow_run={"id":7})]}
         if route.endswith("/zip"):
+            if self.deleted_once:
+                self.deleted_once = False
+                raise link.APIError(404)
             return buffer.getvalue()
         if route.endswith("/attempts/1"):
             return dict(run, run_attempt=1, conclusion="success" if self.original_success else "failure")
@@ -672,6 +676,8 @@ class API:
 api = API()
 assert link.wait_for_artifact(api, context)[0] == manifest
 assert link.existing_snapshot(api, context, 7) is True
+api.deleted_once = True
+assert link.wait_for_artifact(api, context, sleep=lambda _: None)[0] == manifest
 api.original_success = False
 assert link.existing_snapshot(api, context, 7) is False
 try:
