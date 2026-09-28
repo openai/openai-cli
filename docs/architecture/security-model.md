@@ -57,6 +57,13 @@ flowchart LR
 
 ## 2. Threat model, trust boundaries, and assumptions
 
+[Internal Go SDK cross-linking](internal-sdk-cross-linking.md) uses a trusted
+producer to share private SDK source with ordinary PR checks. Only the producer
+can access the main-restricted credential environment; PR jobs receive source
+artifacts without App credentials. The environment restricts key access, not
+the key's App-wide maximum authority, so protecting workflows on main remains
+essential.
+
 ### Protected assets and objectives
 
 - API and admin credentials, webhook secrets, mTLS private keys, prompts,

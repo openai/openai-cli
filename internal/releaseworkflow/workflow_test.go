@@ -37,6 +37,7 @@ type workflow struct {
 }
 
 type workflowJob struct {
+	If          string            `yaml:"if"`
 	Environment string            `yaml:"environment"`
 	Needs       any               `yaml:"needs"`
 	Outputs     map[string]string `yaml:"outputs"`
@@ -107,6 +108,47 @@ func TestWorkflowPermissionsRemainLeastPrivileged(t *testing.T) {
 	}
 	if ciJobs["build"].Permissions == nil || len(ciJobs["build"].Permissions) != 0 {
 		t.Fatalf("aggregate CI build must not receive repository credentials: %v", ciJobs["build"].Permissions)
+	}
+}
+
+func TestSDKSourcePreparationIsIsolatedFromPRCode(t *testing.T) {
+	t.Parallel()
+
+	parsed := readWorkflow(t, "sdk-cross-link.yml")
+	if parsed.Permissions == nil || len(parsed.Permissions) != 0 || len(parsed.Jobs) != 1 {
+		t.Fatal("SDK preparation must deny default permissions and use a single isolated job")
+	}
+	job := parsed.Jobs["prepare"]
+	if job.Environment != "sdk-cross-link" || !reflect.DeepEqual(job.Permissions, map[string]string{
+		"contents": "read", "pull-requests": "read", "actions": "read",
+	}) {
+		t.Fatalf("SDK preparation credential boundary changed: %#v", job)
+	}
+	for _, guard := range []string{
+		"github.repository == 'openai/openai-cli-internal'",
+		"github.repository_id == '1253662577'",
+		"github.event.repository.private",
+		"github.event.pull_request.head.repo.id == github.event.repository.id",
+		"github.event.pull_request.base.ref == 'main'",
+	} {
+		if !strings.Contains(job.If, guard) {
+			t.Errorf("SDK preparation is missing guard %q", guard)
+		}
+	}
+	checkoutIndex, checkout := requireStep(t, job, "Check out trusted fetch tooling")
+	if checkout.Uses != checkoutAction || checkout.With["persist-credentials"] != false || checkout.With["ref"] != "${{ github.sha }}" {
+		t.Fatalf("SDK preparation must check out trusted target code without persisting credentials: %#v", checkout)
+	}
+	tokenIndex, token := requireStep(t, job, "Create read-only Go repository token")
+	if token.Uses != "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1" || !reflect.DeepEqual(token.With, map[string]any{
+		"client-id": "${{ vars.OPENAI_SDKS_APP_CLIENT_ID }}", "private-key": "${{ secrets.OPENAI_SDKS_APP_PRIVATE_KEY }}",
+		"owner": "openai", "repositories": "openai-go-internal", "permission-contents": "read",
+	}) {
+		t.Fatalf("SDK preparation App token must be restricted to reading the Go repository: %#v", token)
+	}
+	sourceIndex, source := requireStep(t, job, "Download matching Go source without executing it")
+	if source.Run != "python3 -I .github/scripts/sdk_cross_link.py produce" || !(checkoutIndex < tokenIndex && tokenIndex < sourceIndex) {
+		t.Fatal("SDK preparation must run only the trusted source producer after checkout and token creation")
 	}
 }
 

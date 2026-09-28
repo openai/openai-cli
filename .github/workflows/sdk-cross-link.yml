@@ -1,0 +1,62 @@
+name: Prepare Go SDK
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: sdk-cross-link-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    # This workflow and every executable it uses come from trusted main.
+    # Never check out or execute either feature branch in this job.
+    if: >-
+      github.repository == 'openai/openai-cli-internal' &&
+      github.repository_id == '1253662577' &&
+      github.event.repository.private &&
+      github.event.pull_request.head.repo.id == github.event.repository.id &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: sdk-cross-link
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    steps:
+      - name: Check out trusted fetch tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Create read-only Go repository token
+        id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.OPENAI_SDKS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OPENAI_SDKS_APP_PRIVATE_KEY }}
+          owner: openai
+          repositories: openai-go-internal
+          permission-contents: read
+
+      - name: Download matching Go source without executing it
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SDK_TOKEN: ${{ steps.token.outputs.token }}
+        run: python3 -I .github/scripts/sdk_cross_link.py produce
+
+      - name: Share source with ordinary PR checks
+        if: steps.source.outputs.upload == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.source.outputs.artifact-name }}
+          path: ${{ runner.temp }}/go-sdk-artifact/
+          if-no-files-found: error
+          retention-days: 7
