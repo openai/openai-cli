@@ -27,13 +27,21 @@ This isolates the write token and constrains where reports can be published.
 It does not attest that candidate-produced SARIF faithfully represents the
 analysis: candidate workflows and builds can influence their own reports.
 The publisher first becomes active after it lands on `main`; until then the
-analysis jobs stage results but do not update code-scanning results.
+analysis jobs stage results but do not update code-scanning results. Analysis
+success and publication success are separate signals. If code scanning is made
+a merge requirement, require published code-scanning results rather than the
+analysis-only jobs; the publisher reports API or processing errors in its own
+workflow.
 
 If the Go branch does not exist, checks explicitly use the committed released
 dependency. Authentication and download failures do not fall back. If checks
 time out waiting for source, inspect `Prepare Go SDK` first. Public and fork
 pull requests, main pushes, merge queues, and releases keep their existing
 dependency behavior.
+
+Only snapshots from successful producer attempts are reused. A later failed
+rerun does not invalidate an earlier successful snapshot; a producer rerun
+replaces an artifact whose original attempt failed after uploading it.
 
 Rerunning consumer checks reuses the snapshot for that PR event while its
 artifact remains available (seven days). To select an updated Go branch,

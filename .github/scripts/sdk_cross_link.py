@@ -136,6 +136,14 @@ def trusted_run(run, context):
             run["head_branch"] == context["branch"] and run["head_sha"] == context["head_sha"])
 
 
+def successful_attempt(api, context, run_id, attempt):
+    if type(attempt) is not int or attempt < 1:
+        raise RuntimeError("Invalid Go source workflow attempt")
+    original = api.get(f"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}")
+    return (trusted_run(original, context) and original["run_attempt"] == attempt and
+            original["status"] == "completed" and original["conclusion"] == "success")
+
+
 def existing_snapshot(api, context, run_id):
     # A rerun retains the run ID and immutable artifacts from earlier attempts.
     # Reuse that source instead of moving the Go revision or colliding on upload.
@@ -143,8 +151,8 @@ def existing_snapshot(api, context, run_id):
     for artifact in result["artifacts"]:
         if artifact["name"] == artifact_name(context) and not artifact["expired"]:
             data = api.get(f"repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip", binary=True)
-            unpack_artifact(data, context, run_id)
-            return True
+            manifest, _ = unpack_artifact(data, context, run_id)
+            return successful_attempt(api, context, run_id, manifest["run_attempt"])
     return False
 
 
@@ -164,12 +172,7 @@ def wait_for_artifact(api, context, timeout=300, sleep=time.sleep, clock=time.mo
                 continue
             data = api.get(f"repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip", binary=True)
             manifest, archive = unpack_artifact(data, context, run_id)
-            attempt = manifest["run_attempt"]
-            if type(attempt) is not int or attempt < 1:
-                raise RuntimeError("Invalid Go source workflow attempt")
-            original = api.get(f"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}")
-            if (not trusted_run(original, context) or original["run_attempt"] != attempt or
-                    original["status"] != "completed" or original["conclusion"] != "success"):
+            if not successful_attempt(api, context, run_id, manifest["run_attempt"]):
                 continue
             return manifest, archive
         if clock() >= deadline:

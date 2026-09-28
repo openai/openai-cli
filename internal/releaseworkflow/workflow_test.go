@@ -150,6 +150,10 @@ func TestSDKSourcePreparationIsIsolatedFromPRCode(t *testing.T) {
 		t.Fatalf("SDK preparation App token must be restricted to reading the Go repository: %#v", token)
 	}
 	sourceIndex, source := requireStep(t, job, "Download matching Go source without executing it")
+	_, upload := requireStep(t, job, "Share source with ordinary PR checks")
+	if upload.With["overwrite"] != true {
+		t.Fatal("producer must be able to replace snapshots from unsuccessful attempts")
+	}
 	if source.Run != "python3 -I .github/scripts/sdk_cross_link.py produce" || !(checkoutIndex < tokenIndex && tokenIndex < sourceIndex) {
 		t.Fatal("SDK preparation must run only the trusted source producer after checkout and token creation")
 	}
@@ -657,7 +661,7 @@ with zipfile.ZipFile(buffer, "w") as archive:
 class API:
     original_success = True
     def get(self, route, binary=False):
-        if "/actions/artifacts?" in route:
+        if "/artifacts?" in route:
             return {"artifacts":[dict(id=8, name=link.artifact_name(context), expired=False, workflow_run={"id":7})]}
         if route.endswith("/zip"):
             return buffer.getvalue()
@@ -667,7 +671,9 @@ class API:
         return run
 api = API()
 assert link.wait_for_artifact(api, context)[0] == manifest
+assert link.existing_snapshot(api, context, 7) is True
 api.original_success = False
+assert link.existing_snapshot(api, context, 7) is False
 try:
     link.wait_for_artifact(api, context, timeout=0)
 except RuntimeError:
