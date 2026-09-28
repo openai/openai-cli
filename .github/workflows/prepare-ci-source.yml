@@ -70,7 +70,7 @@ jobs:
                   if type(attempt) is not int or attempt < 1:
                       raise RuntimeError("Invalid producer attempt")
                   run = api.get(f"repos/{sdk.REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}")
-                  if (run["event"] == "pull_request_target" and run["path"] == sdk.WORKFLOW and
+                  if (run["event"] == "pull_request_target" and run["path"] == ".github/workflows/sdk-cross-link.yml" and
                           run["repository"]["id"] == sdk.REPOSITORY_ID and
                           run["head_repository"]["id"] == sdk.REPOSITORY_ID and
                           run["head_branch"] == context["branch"] and run["head_sha"] == context["head_sha"] and

@@ -738,7 +738,7 @@ sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("real_sdk", %q)
 link = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(link)
-for name in ("REPOSITORY", "REPOSITORY_ID", "WORKFLOW", "APIError", "artifact_name", "unpack_artifact"):
+for name in ("REPOSITORY", "REPOSITORY_ID", "APIError", "artifact_name", "unpack_artifact"):
     globals()[name] = getattr(link, name)
 context = dict(repository_id=link.REPOSITORY_ID, pr=1, head_sha="a"*40, branch="feature", updated_at="now")
 identity = lambda event: context
