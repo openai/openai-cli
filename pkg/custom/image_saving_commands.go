@@ -35,7 +35,10 @@ func configureImageSaving(root *cli.Command) {
 			command.Description = imageGenerationSavingHelp
 			command.CustomHelpTemplate = imageGenerationQuickHelp
 		} else {
-			command.Description = imageUploadSavingHelp
+			command.Description = imageEditSavingHelp
+			if name == "create-variation" {
+				command.Description = imageVariationSavingHelp
+			}
 			command.CustomHelpTemplate = imageUploadQuickHelp
 		}
 		command.Action = imageSavingWorkflow(command.Action)

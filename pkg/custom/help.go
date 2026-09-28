@@ -34,8 +34,12 @@ func configureHelpGroups(root *cli.Command) {
 		sections := append([]clihelp.FlagGroup(nil), groups...)
 		if image {
 			sections = append([]clihelp.FlagGroup{
-				{Title: "Image settings", Names: []string{"model", "n", "size", "quality", "background", "output-format", "output-compression", "moderation", "input-fidelity", "mask", "user"}},
-				{Title: "Saving and previews", Names: []string{"output-dir", "name", "inline", "stream", "partial-images", "response-format"}},
+				{Title: "Image settings", Names: []string{"model", "n", "size", "quality", "background", "moderation", "input-fidelity", "mask"}},
+				{Title: "Image file format", Names: []string{"output-format", "output-compression"}},
+				{Title: "Saving", Names: []string{"output-dir", "name"}},
+				{Title: "Terminal previews", Names: []string{"inline"}},
+				{Title: "Progress", Names: []string{"stream", "partial-images", "max-items"}},
+				{Title: "API response", Names: []string{"response-format"}},
 			}, sections...)
 		}
 		command.Metadata["help-flag-groups"] = sections

@@ -27,34 +27,44 @@ Full help: {{$bin}} help --all images generate
 Key setup: {{$bin}} help setup
 `
 
-const imageGenerationSavingHelp = `Images save automatically to ~/Downloads/gpt-images/, including in pipes.
-The default folder is created. --output-dir chooses an existing folder.
-Names come from the prompt; --name overrides them. Existing names get -2, -3,
-etc. The returned PNG, JPEG or WebP bytes determine the file extension.
+const imageGenerationSavingHelp = `SAVE FOLDER AND NAME
 
-When neither model nor response-format is supplied, saving uses
-` + defaultSavedImageModel + `, one PNG, automatic size, quality, background
-and moderation, no partial images, and no streaming. Flags and JSON/YAML stdin
-override these defaults, including nulls. --count is an alias for -n.
-Explicit models keep API defaults; explicit DALL-E models request b64_json.
-Your account must support the chosen model.
+Images save automatically to ~/Downloads/gpt-images/, including when stdout is redirected. The default folder is created; a chosen folder must already exist.
+    openai images generate --prompt "A tiny cat" --output-dir "~/Downloads" --name cat
+The CLI expands the quoted ~ to your home folder on every platform. Names normally come from the prompt, with a timestamp fallback. --name chooses a filename stem. Name collisions add -2, -3, etc.; existing files are kept. Returned bytes determine the extension.
 
---format json (or another data format), --transform, --raw-output and
---response-format url keep API output without saving or applying CLI defaults.
-They cannot be combined with --name or --output-dir. --format auto and text save.
---output-format selects the image file format, separately from --format.
+SAVING DEFAULTS
 
---stream true saves only the final image. Positive --partial-images enables
-streaming when saving; 1 to 3 progress previews are shown where supported.
-Only the final image is saved to the output folder. Apple Terminal's auto mode
-uses color blocks. --inline on or a saved on preference enables sharp progress
-and final previews; this may request Terminal Automation and keeps private
-preview caches for scrollback. Unavailable sharp progress is skipped.
-Streaming supports one final image. Use --format json --stream true for complete
-API events.
-Interactive terminals show an inline preview when supported. --inline off disables
-it. --inline on allows a local Apple Terminal image font while keeping ordinary
-text styling. Preview failures keep saved files. Pipes and CI never show previews.`
+With both --model and --response-format omitted: ` + defaultSavedImageModel + `, one PNG, automatic size, quality, background and moderation; no partial images or streaming.
+` + imageSavingOverrideHelp + `
+
+COUNT, SIZE AND QUALITY
+
+--count is an alias for -n. Size, quality and count limits depend on the model; see the option reference below.
+    openai images generate --prompt "A tiny orange robot" --count 2
+    openai images generate --prompt "A tiny cat" --size 1024x1536 --quality low
+
+FILE FORMAT AND TRANSPARENCY
+
+For GPT Image models, --output-format selects png, jpeg or webp. Transparent backgrounds require png or webp. --output-compression accepts 0 to 100 for jpeg/webp only; the API default is 100.
+    openai images generate --prompt "A leaf" --background transparent --output-format webp --output-compression 80
+
+MODEL AND MODERATION
+
+Use an exact model ID your key can access; openai images models checks known models. GPT Image generation supports --moderation auto (default) or low.
+    openai images generate --prompt "A tiny cat" --model gpt-image-2.5-flare --moderation auto
+
+PROGRESS PREVIEWS
+    openai images generate --prompt "A tiny cat" --partial-images 2
+` + imageProgressSettingsHelp + `
+
+TERMINAL PREVIEWS
+    openai images generate --prompt "A tiny cat" --inline off
+` + imagePreviewSettingsHelp + `
+
+API OUTPUT
+    openai --format json images generate --model gpt-image-2.5-sunburst --prompt "A tiny cat"
+` + imageAPIOutputHelp
 
 type imageOutputPlan struct {
 	directory, name string
