@@ -27,43 +27,31 @@ Full help: {{$bin}} help --all images generate
 Key setup: {{$bin}} help setup
 `
 
-const imageGenerationSavingHelp = `SAVE FOLDER AND NAME
+const imageGenerationSavingHelp = `EXAMPLES
 
-Images save automatically to ~/Downloads/gpt-images/, including when stdout is redirected. The default folder is created; a chosen folder must already exist.
+Make two images:
+    openai images generate --prompt "A tiny cat" --count 2
+Choose a folder and filename:
     openai images generate --prompt "A tiny cat" --output-dir "~/Downloads" --name cat
-The CLI expands the quoted ~ to your home folder on every platform. Names normally come from the prompt, with a timestamp fallback. --name chooses a filename stem. Name collisions add -2, -3, etc.; existing files are kept. Returned bytes determine the extension.
+Make a transparent image:
+    openai images generate --prompt "A leaf" --background transparent --output-format webp
 
-SAVING DEFAULTS
+SAVING
 
-With both --model and --response-format omitted: ` + defaultSavedImageModel + `, one PNG, automatic size, quality, background and moderation; no partial images or streaming.
+Saves to ~/Downloads/gpt-images/ (created automatically). A chosen folder must already exist. Existing files are kept; duplicate names get -2, -3, etc.
+
+DEFAULTS
+
+With both --model and --response-format omitted: ` + defaultSavedImageModel + `, one PNG, automatic size, quality, background and moderation.
 ` + imageSavingOverrideHelp + `
 
-COUNT, SIZE AND QUALITY
+PREVIEWS
 
---count is an alias for -n. Size, quality and count limits depend on the model; see the option reference below.
-    openai images generate --prompt "A tiny orange robot" --count 2
-    openai images generate --prompt "A tiny cat" --size 1024x1536 --quality low
-
-FILE FORMAT AND TRANSPARENCY
-
-For GPT Image models, --output-format selects png, jpeg or webp. Transparent backgrounds require png or webp. --output-compression accepts 0 to 100 for jpeg/webp only; the API default is 100.
-    openai images generate --prompt "A leaf" --background transparent --output-format webp --output-compression 80
-
-MODEL AND MODERATION
-
-Use an exact model ID your key can access; openai images models checks known models. GPT Image generation supports --moderation auto (default) or low.
-    openai images generate --prompt "A tiny cat" --model gpt-image-2.5-flare --moderation auto
-
-PROGRESS PREVIEWS
-    openai images generate --prompt "A tiny cat" --partial-images 2
 ` + imageProgressSettingsHelp + `
-
-TERMINAL PREVIEWS
-    openai images generate --prompt "A tiny cat" --inline off
 ` + imagePreviewSettingsHelp + `
 
 API OUTPUT
-    openai --format json images generate --model gpt-image-2.5-sunburst --prompt "A tiny cat"
+
 ` + imageAPIOutputHelp
 
 type imageOutputPlan struct {

@@ -32,8 +32,13 @@ func TestMainImageSettingsHelpScope(t *testing.T) {
 			full := runMainDispatchWithEnv(t, "bash", env, "openai", "help", "--all", "images", operation)
 			require.Zero(t, full.code, full.stderr)
 			require.Empty(t, full.stderr)
+			_, description, found := strings.Cut(full.stdout, "\nDESCRIPTION:\n")
+			require.True(t, found, "full help must include the command description")
+			description, _, found = strings.Cut(description, "\nOPTIONS:")
+			require.True(t, found, "full help must retain the separate option reference")
+			require.LessOrEqual(t, len(strings.Fields(description)), 330, "keep the introduction concise; details belong in the option reference")
 			text := strings.Join(strings.Fields(full.stdout), " ")
-			for _, want := range []string{"--name", "folder must already exist", "-2, -3", "quoted ~", "--format json chooses the API response", "no saving or CLI image defaults", "overrides the saved preference for one command", "Pipes and CI never show previews"} {
+			for _, want := range []string{"--name", "folder", "must already exist", "-2, -3", "--format json returns API data", "no saving or CLI image defaults", "--inline off hides previews once", "openai images inline off remembers it", "--inline overrides the preference", "Pipes and CI never show previews"} {
 				require.Contains(t, text, want)
 			}
 			if operation == "create-variation" {
@@ -42,15 +47,11 @@ func TestMainImageSettingsHelpScope(t *testing.T) {
 				}
 				require.Contains(t, text, "Variations support dall-e-2 only")
 			} else {
-				for _, want := range []string{"With both --model and --response-format omitted", "A displayed flag default is not necessarily sent", "including explicit nulls", "up to that many previews, not a guaranteed count", "Only the final image is saved", "--output-format selects", "jpeg/webp only", "--max-items or use -1"} {
-					if want == "--output-format selects" && operation == "edit" {
-						want = "through --output-format"
-					}
+				for _, want := range []string{"With both --model and --response-format omitted", "including nulls", "Setting model or response-format leaves other omitted settings to the API", "requests up to that many previews and enables streaming when saving", "Only one final image is saved", "--format json --stream true", "--max-items or use -1"} {
 					require.Contains(t, text, want)
 				}
 				if operation == "edit" {
 					require.NotContains(t, full.stdout, "\n   --moderation ")
-					require.Contains(t, text, "There is no --moderation flag for edits")
 				}
 			}
 		})
@@ -66,32 +67,17 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 		args      []string
 	}{
 		{"generate", []string{"--prompt", "A tiny cat", "--output-dir", "~/Downloads", "--name", "cat"}},
-		{"generate", []string{"--prompt", "A tiny orange robot", "--count", "2"}},
-		{"generate", []string{"--prompt", "A tiny cat", "--inline", "off"}},
-		{"generate", []string{"--prompt", "A tiny cat", "--size", "1024x1536", "--quality", "low"}},
-		{"generate", []string{"--prompt", "A leaf", "--background", "transparent", "--output-format", "webp", "--output-compression", "80"}},
-		{"generate", []string{"--prompt", "A tiny cat", "--model", "gpt-image-2.5-flare", "--moderation", "auto"}},
-		{"generate", []string{"--prompt", "A tiny cat", "--partial-images", "2"}},
-		{"generate", []string{"--format", "json", "--model", "gpt-image-2.5-sunburst", "--prompt", "A tiny cat"}},
-		{"edit", []string{"--image", "photo.png", "--prompt", "Make the sky purple", "--output-dir", "~/Downloads", "--name", "purple-sky"}},
-		{"edit", []string{"--image", "photo.png", "--prompt", "Make the sky purple", "--inline", "off"}},
-		{"edit", []string{"--image", "photo.png", "--prompt", "Make the sky purple", "--size", "1024x1536", "--quality", "low"}},
-		{"edit", []string{"--image", "photo.png", "--prompt", "Remove the background", "--background", "transparent", "--output-format", "webp", "--output-compression", "80"}},
-		{"edit", []string{"--image", "photo.png", "--prompt", "Make the sky purple", "--partial-images", "2"}},
-		{"edit", []string{"--format", "json", "--image", "photo.png", "--prompt", "Make the sky purple", "--model", "gpt-image-2.5-sunburst"}},
-		{"create-variation", []string{"--image", "photo.png", "--output-dir", "~/Downloads", "--name", "variation"}},
-		{"create-variation", []string{"--image", "photo.png", "--inline", "off"}},
+		{"generate", []string{"--prompt", "A tiny cat", "--count", "2"}},
+		{"generate", []string{"--prompt", "A leaf", "--background", "transparent", "--output-format", "webp"}},
+		{"edit", []string{"--image", "photo.png", "--prompt", "Make the sky purple", "--name", "purple-sky"}},
+		{"edit", []string{"--image", "photo.png", "--prompt", "Remove the background", "--background", "transparent", "--output-format", "webp"}},
+		{"create-variation", []string{"--image", "photo.png", "--name", "variation"}},
 		{"create-variation", []string{"--image", "photo.png", "--count", "2", "--size", "512x512"}},
-		{"create-variation", []string{"--format", "json", "--image", "photo.png"}},
 	} {
 		t.Run(tc.operation+"/"+strings.Join(tc.args, " "), func(t *testing.T) {
 			args := append([]string(nil), tc.args...)
 			var example strings.Builder
 			example.WriteString("openai ")
-			if len(args) > 1 && args[0] == "--format" {
-				example.WriteString("--format json ")
-				args = args[2:]
-			}
 			fmt.Fprintf(&example, "images %s", tc.operation)
 			settings := map[string]any{}
 			for i := 0; i < len(args); i += 2 {
@@ -122,38 +108,27 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 				require.NoError(t, err)
 				extension = ".webp"
 			}
-			api := tc.args[0] == "--format"
-			streaming := settings["partial-images"] != nil
 			count := 1
 			if settings["count"] == "2" {
 				count = 2
 			}
 			want := map[string]any{}
-			if !api {
-				if tc.operation == "create-variation" {
-					want["model"], want["response_format"] = "dall-e-2", "b64_json"
-				} else if settings["model"] == nil {
-					want = map[string]any{"model": "gpt-image-2.5-sunburst", "n": float64(1), "size": "auto", "quality": "auto", "background": "auto", "output_format": "png", "partial_images": float64(0), "stream": false}
-					if tc.operation == "generate" {
-						want["moderation"] = "auto"
-					}
+			if tc.operation == "create-variation" {
+				want["model"], want["response_format"] = "dall-e-2", "b64_json"
+			} else {
+				want = map[string]any{"model": "gpt-image-2.5-sunburst", "n": float64(1), "size": "auto", "quality": "auto", "background": "auto", "output_format": "png", "partial_images": float64(0), "stream": false}
+				if tc.operation == "generate" {
+					want["moderation"] = "auto"
 				}
 			}
 			for name, value := range settings {
 				switch name {
-				case "image", "name", "output-dir", "inline":
+				case "image", "name", "output-dir":
 					continue
 				case "count":
 					name, value = "n", float64(count)
-				case "partial-images", "output-compression":
-					number, err := strconv.Atoi(value.(string))
-					require.NoError(t, err)
-					value = float64(number)
 				}
 				want[strings.ReplaceAll(name, "-", "_")] = value
-			}
-			if streaming {
-				want["stream"] = true
 			}
 			requests := make(chan bool, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -176,17 +151,6 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 				}
 				requests <- true
 				encoded := base64.StdEncoding.EncodeToString(payload)
-				if streaming {
-					kind := "image_generation"
-					if tc.operation == "edit" {
-						kind = "image_edit"
-					}
-					w.Header().Set("Content-Type", "text/event-stream")
-					// Two previews were requested; one followed by completion is valid.
-					fmt.Fprintf(w, "data: {\"type\":%q,\"partial_image_index\":0,\"b64_json\":%q}\n\n", kind+".partial_image", encoded)
-					fmt.Fprintf(w, "data: {\"type\":%q,\"b64_json\":%q}\n\n", kind+".completed", encoded)
-					return
-				}
 				data := make([]map[string]string, count)
 				for i := range data {
 					data[i] = map[string]string{"b64_json": encoded}
@@ -216,11 +180,6 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 				directory = filepath.Join(directory, "gpt-images")
 			}
 			files := imageGenerationFiles(t, directory)
-			if api {
-				require.True(t, json.Valid([]byte(result.stdout)))
-				require.Empty(t, files)
-				return
-			}
 			require.Len(t, files, count)
 			for _, file := range files {
 				saved, err := os.ReadFile(file)
