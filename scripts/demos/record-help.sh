@@ -33,7 +33,6 @@ set -uo pipefail
 test -t 0 && test -t 1 && test -t 2 || exit 99
 unset OPENAI_API_KEY
 printf '\033[2J\033[H'
-printf '%s\n' 'Terminal replay | asciinema + agg | help only, no API key'
 printf '%s\n\n' "$DEMO_SCENE_LABEL"
 sleep 0.4
 SCENE

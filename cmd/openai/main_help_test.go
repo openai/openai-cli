@@ -264,7 +264,7 @@ func TestMainHelpDoesNotAdvertiseUnshippedFeatures(t *testing.T) {
 			}
 		}
 	}
-	imageHelp := runMainDispatch(t, "bash", "openai", "images", "generate", "--help")
+	imageHelp := runMainDispatch(t, "bash", "openai", "help", "--all", "images", "generate")
 	for _, text := range []string{"--model", "--prompt", "JSON", "~/Downloads/gpt-images/", "--output-dir", "--name", "--count", "gpt-image-2.5-sunburst"} {
 		if !strings.Contains(imageHelp.stdout, text) {
 			t.Errorf("image help does not explain the existing command's %q: %s", text, imageHelp.stdout)

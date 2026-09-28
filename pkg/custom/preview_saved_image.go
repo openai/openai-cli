@@ -19,20 +19,13 @@ Preview size uses the current terminal window. Resize, then run it again.
 Automatic preview preferences do not affect this command.
 `
 
-const imagePreviewHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}View an image you already saved
+const imagePreviewHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}View a saved image
   {{$bin}} images preview "photo.png"
 
-Required: photo.png is the path to your saved image. Quote paths with spaces.
+Replace photo.png with your saved image's path.
+No API call or key needed. Keeps your original.
 
-` + imagePreviewDetails + `
-
-Optional, allow a sharp preview in local Apple Terminal:
-  {{$bin}} images preview --inline on "photo.png"
-Without this option, use native graphics or a color approximation.
-
-Pipes, CI and terminals without supported graphics or color cannot display previews.
-Preview limits: 64 MiB and 16 megapixels. Larger originals are still kept.
-Full help: {{$bin}} help --all images preview
+All options: {{$bin}} help --all images preview
 `
 
 func registerImagePreviewCommands(root *cli.Command) {

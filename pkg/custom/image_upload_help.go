@@ -3,28 +3,14 @@ package custom
 const imageUploadQuickHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}{{if eq .Name "edit"}}Edit an image
   {{$bin}} images edit --image "photo.png" --prompt "Make the sky purple"
 
-Required: --image is your source file; --prompt describes the change.
-photo.png means the path to your existing image. Quote paths with spaces.
-
-Default model: ` + defaultSavedImageModel + `.
-Repeat --image for multiple source files. --mask selects a mask file.
+Replace photo.png with your image's path and the prompt with your changes.
 {{else}}Make an image variation
   {{$bin}} images create-variation --image "photo.png"
 
-Required: --image is the path to your existing image, shown as photo.png.
-Quote paths with spaces. Uses dall-e-2. Requires a square PNG under 4 MB.
-{{end}}Saves new images to ~/Downloads/gpt-images/. Source files are kept.
-Model access varies by key. Interactive terminals can show a preview.
+Replace photo.png with your image's path: a square PNG under 4 MB.
+{{end}}Saves to ~/Downloads/gpt-images/. Keeps your original.
 
-Optional example, save without a terminal preview:
-{{if eq .Name "edit"}}  {{$bin}} images edit --image "photo.png" --prompt "Make the sky purple" --inline off
-{{else}}  {{$bin}} images create-variation --image "photo.png" --inline off
-{{end}}Use --name to choose a filename; --output-dir chooses an existing folder.
-Use --count to choose how many images to make.
-See full help for other settings and model limits.
-
-Scripts: --format json returns API data without saving or CLI defaults.
-Full help: {{$bin}} help --all images {{.Name}}
+All options: {{$bin}} help --all images {{.Name}}
 `
 
 const imageUploadSavingHelp = `Edited images and variations save automatically to

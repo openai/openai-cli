@@ -20,16 +20,15 @@ func TestMainHelpCompleteImageExamples(t *testing.T) {
 		args               []string
 	}{
 		{"generate", `openai images generate --prompt "A tiny orange robot"`, []string{"--prompt", "A tiny orange robot"}},
-		{"generate", `openai images generate --prompt "A tiny orange robot" --count 2`, []string{"--prompt", "A tiny orange robot", "--count", "2"}},
-		{"edit", `openai images edit --image "photo.png" --prompt "Make the sky purple" --inline off`, []string{"--image", "photo.png", "--prompt", "Make the sky purple", "--inline", "off"}},
-		{"create-variation", `openai images create-variation --image "photo.png" --inline off`, []string{"--image", "photo.png", "--inline", "off"}},
+		{"edit", `openai images edit --image "photo.png" --prompt "Make the sky purple"`, []string{"--image", "photo.png", "--prompt", "Make the sky purple"}},
+		{"create-variation", `openai images create-variation --image "photo.png"`, []string{"--image", "photo.png"}},
 	} {
 		t.Run(tc.example, func(t *testing.T) {
 			help := runMainDispatch(t, "bash", "openai", "images", tc.operation, "--help")
-			if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, tc.example) || !strings.Contains(help.stdout, "Required") {
+			if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, tc.example) {
 				t.Fatalf("incomplete short help: %+v", help)
 			}
-			if tc.operation != "generate" && !strings.Contains(help.stdout, "path to your existing image") {
+			if tc.operation != "generate" && !strings.Contains(help.stdout, "your image's path") {
 				t.Fatalf("source path placeholder is unexplained: %s", help.stdout)
 			}
 			// Variations require a square PNG under 4 MB. Use a valid source
@@ -81,6 +80,26 @@ func TestMainHelpCompleteImageExamples(t *testing.T) {
 			}
 			count := <-requests
 			assertImageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"), result.stdout, count, payload)
+		})
+	}
+}
+
+func TestMainHelpImagePagesStayBrief(t *testing.T) {
+	for _, operation := range []string{"generate", "edit", "create-variation", "preview"} {
+		t.Run(operation, func(t *testing.T) {
+			got := runMainDispatch(t, "bash", "openai", "images", operation, "--help")
+			if got.code != 0 || got.stderr != "" {
+				t.Fatalf("short help failed: %+v", got)
+			}
+			if lines := len(strings.Split(strings.TrimSpace(got.stdout), "\n")); lines > 8 {
+				t.Errorf("short help uses %d lines; want one example and at most 8 lines", lines)
+			}
+			if strings.Count(got.stdout, "  openai images "+operation+" ") != 1 {
+				t.Errorf("expected one complete example: %s", got.stdout)
+			}
+			if !strings.Contains(got.stdout, "openai help --all images "+operation) {
+				t.Errorf("full help is not discoverable: %s", got.stdout)
+			}
 		})
 	}
 }

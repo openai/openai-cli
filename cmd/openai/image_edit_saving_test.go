@@ -352,8 +352,12 @@ func TestMainImageUploadHelpIsOffline(t *testing.T) {
 		for _, args := range [][]string{{"images", operation, "--help"}, {"help", "--all", "images", operation}} {
 			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=not a URL"}, append([]string{"openai"}, args...)...)
 			require.Zero(t, got.code, got.stderr)
-			for _, flag := range []string{"--name", "--output-dir", "--count"} {
-				require.Contains(t, got.stdout, flag)
+			if args[0] == "help" {
+				for _, flag := range []string{"--name", "--output-dir", "--count"} {
+					require.Contains(t, got.stdout, flag)
+				}
+			} else {
+				require.Contains(t, got.stdout, "openai help --all images "+operation)
 			}
 			require.Contains(t, strings.ToLower(got.stdout), "save")
 		}
