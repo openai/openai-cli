@@ -11,6 +11,7 @@ spec = importlib.util.spec_from_file_location("publisher", Path(__file__).with_n
 publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
 
+START1, START2 = "2026-01-01T00:00:00Z", "2026-01-01T00:10:00Z"
 HEAD, BASE, MERGE = "a" * 40, "b" * 40, "c" * 40
 REPO = {"id": 1, "full_name": "test/cli", "owner": {"login": "test"}}
 
@@ -18,7 +19,7 @@ REPO = {"id": 1, "full_name": "test/cli", "owner": {"login": "test"}}
 class PublisherTest(unittest.TestCase):
     def setUp(self):
         self.run = dict(id=42, run_attempt=2, repository=REPO, head_repository=REPO,
-                        path=publisher.WORKFLOW, status="completed", conclusion="success",
+                        path=publisher.WORKFLOW, status="completed", conclusion="success", run_started_at=START2,
                         event="pull_request", head_sha=HEAD, head_branch="feature",
                         pull_requests=[{"number": 3, "base": {"sha": BASE}}])
         self.pr = dict(number=3, state="open", merge_commit_sha=MERGE,
@@ -32,7 +33,8 @@ class PublisherTest(unittest.TestCase):
         }
         self.responses["actions/runs/42/attempts/2/jobs?per_page=100&page=1"] = {"jobs": [
             dict(name=f"CodeQL analysis ({language})", run_id=42, run_attempt=2,
-                 head_sha=HEAD, status="completed", conclusion="success") for language in publisher.CATEGORIES]}
+                 head_sha=HEAD, status="completed", conclusion="success", started_at=START2) for language in publisher.CATEGORIES]}
+        self.responses["actions/runs/42/attempts/2"] = dict(self.run)
         self.target = {"sha": MERGE, "ref": "refs/pull/3/merge"}
         self.writes = []
 
@@ -193,9 +195,10 @@ class PublisherTest(unittest.TestCase):
 
     def partial_rerun(self):
         actions = dict(name="CodeQL analysis (actions)", run_id=42, run_attempt=1,
-                       head_sha=HEAD, status="completed", conclusion="success")
-        go = dict(actions, name="CodeQL analysis (go)", run_attempt=2)
+                       head_sha=HEAD, status="completed", conclusion="success", started_at=START1)
+        go = dict(actions, name="CodeQL analysis (go)", run_attempt=2, started_at=START2)
         self.responses["actions/runs/42/attempts/2/jobs?per_page=100&page=1"] = {"jobs": [go]}
+        self.responses["actions/runs/42/attempts/1"] = dict(self.run, run_attempt=1, run_started_at=START1, conclusion="failure")
         self.responses["actions/runs/42/attempts/1/jobs?per_page=100&page=1"] = {"jobs": [
             actions, dict(go, run_attempt=1, conclusion="failure")]}
         self.responses["actions/runs/42/artifacts?per_page=100&page=1"] = {"artifacts": [
@@ -216,6 +219,15 @@ class PublisherTest(unittest.TestCase):
         publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
         self.assertEqual([p["state"] for p in self.writes[-2:]], ["success", "success"])
 
+    def test_partial_rerun_copied_jobs_are_not_new_executions(self):
+        actions, _ = self.partial_rerun()
+        # Live GitHub responses copy successful jobs into attempt 2 with new
+        # IDs and run_attempt=2, but retain the attempt-1 execution timestamps.
+        self.responses["actions/runs/42/attempts/2/jobs?per_page=100&page=1"]["jobs"].append(
+            dict(actions, id=999, run_attempt=2))
+        publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
+        self.assertEqual([p["state"] for p in self.writes[-2:]], ["success", "success"])
+
     def test_partial_rerun_rejects_failed_or_different_source_job(self):
         for mutation in [lambda job: job.update(conclusion="failure"),
                          lambda job: job.update(head_sha=BASE),
@@ -230,7 +242,7 @@ class PublisherTest(unittest.TestCase):
     def test_new_successful_job_cannot_fall_back_to_older_artifact(self):
         actions, _ = self.partial_rerun()
         self.responses["actions/runs/42/attempts/2/jobs?per_page=100&page=1"]["jobs"].append(
-            dict(actions, run_attempt=2))
+            dict(actions, run_attempt=2, started_at=START2))
         with self.assertRaises(RuntimeError):
             publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
         self.assertNotIn("success", [p.get("state") for p in self.writes])

@@ -1,6 +1,7 @@
 """Publish candidate SARIF as data, using only GitHub-verified destinations."""
 
 import base64
+from datetime import datetime
 import gzip
 import io
 import json
@@ -131,13 +132,25 @@ def read_artifact(data, run, target, language):
     return sarif
 
 
+def execution_time(value):
+    result = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if result.tzinfo is None:
+        raise RuntimeError("GitHub execution time has no timezone")
+    return result
+
+
 def analysis_attempt(get, root, run, language, jobs_by_attempt):
     """Find this language's latest execution, including partial workflow reruns."""
     for attempt in range(run["run_attempt"], 0, -1):
         if attempt not in jobs_by_attempt:
-            jobs_by_attempt[attempt] = list(pages(
-                get, f"{root}/actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs"))
-        matches = [job for job in jobs_by_attempt[attempt]
+            prefix = f"{root}/actions/runs/{run['id']}/attempts/{attempt}"
+            info = get(prefix)
+            if (info["id"], info["run_attempt"], info["head_sha"]) != (run["id"], attempt, run["head_sha"]):
+                raise RuntimeError("CodeQL attempt does not match the source run")
+            jobs_by_attempt[attempt] = (execution_time(info["run_started_at"]),
+                                        list(pages(get, prefix + "/jobs", "jobs")))
+        started_at, jobs = jobs_by_attempt[attempt]
+        matches = [job for job in jobs
                    if job["name"] == f"CodeQL analysis ({language})" and job["run_attempt"] == attempt]
         if not matches:
             continue
@@ -147,6 +160,10 @@ def analysis_attempt(get, root, run, language, jobs_by_attempt):
         if job["run_id"] != run["id"] or job["head_sha"] != run["head_sha"]:
             raise RuntimeError("CodeQL job does not match the source run")
         if job["status"] == "completed" and job["conclusion"] == "skipped":
+            continue
+        # GitHub copies carried-forward successes into the newest attempt with
+        # new job IDs and run_attempt values, but preserves execution times.
+        if execution_time(job["started_at"]) < started_at:
             continue
         if job["status"] != "completed" or job["conclusion"] != "success":
             raise RuntimeError("Latest CodeQL language execution did not succeed")
