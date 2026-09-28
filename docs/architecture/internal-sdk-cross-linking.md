@@ -15,6 +15,20 @@ resolved Go commit. Build and test jobs receive no App credentials. Their job
 summaries show the selected Go commit, and their local module replacements are
 never committed.
 
+Cross-linking applies to CI, help compatibility, and Go CodeQL analysis.
+CodeQL analyzes candidate code with a read-only token and stages SARIF without
+uploading it. A separate `workflow_run` job runs the publisher from trusted
+`main`, verifies the source run, attempt, current PR merge commit or branch,
+and fixed language categories, then uploads the reports through GitHub's API.
+It never checks out candidate code or executes artifact contents. Stale results
+are skipped; processing failures fail the publisher.
+
+This isolates the write token and constrains where reports can be published.
+It does not attest that candidate-produced SARIF faithfully represents the
+analysis: candidate workflows and builds can influence their own reports.
+The publisher first becomes active after it lands on `main`; until then the
+analysis jobs stage results but do not update code-scanning results.
+
 If the Go branch does not exist, checks explicitly use the committed released
 dependency. Authentication and download failures do not fall back. If checks
 time out waiting for source, inspect `Prepare Go SDK` first. Public and fork

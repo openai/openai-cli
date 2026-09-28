@@ -596,3 +596,40 @@ func TestReleaseWorkflowActionsRemainPinned(t *testing.T) {
 		}
 	}
 }
+
+func TestCodeQLPublisherBoundary(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python is required for the Ubuntu CodeQL publisher")
+	}
+	command := exec.Command(python, "-I", "-B", "../../.github/scripts/test_codeql_upload.py")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("CodeQL publisher boundary: %v\n%s", err, output)
+	}
+}
+
+func TestCodeQLAnalysisCannotPublish(t *testing.T) {
+	analysis := readWorkflow(t, "codeql.yml").Jobs["analyze"]
+	if !reflect.DeepEqual(analysis.Permissions, map[string]string{"contents": "read", "actions": "read"}) {
+		t.Fatalf("candidate CodeQL analysis must be read-only: %v", analysis.Permissions)
+	}
+	_, analyze := requireStep(t, analysis, "Analyze")
+	if analyze.With["upload"] != "never" || analyze.With["upload-database"] != false {
+		t.Fatal("candidate analysis must not upload results or databases")
+	}
+	publisher := readWorkflow(t, "codeql-upload.yml").Jobs["upload"]
+	if !reflect.DeepEqual(publisher.Permissions, map[string]string{"contents": "read", "actions": "read", "pull-requests": "read", "security-events": "write"}) {
+		t.Fatalf("unexpected publisher permissions: %v", publisher.Permissions)
+	}
+	_, checkout := requireStep(t, publisher, "Check out trusted publisher")
+	if checkout.Uses != checkoutAction || checkout.With["ref"] != "${{ github.workflow_sha }}" || checkout.With["persist-credentials"] != false {
+		t.Fatal("publisher must check out only its trusted workflow revision")
+	}
+	if len(publisher.Steps) != 2 {
+		t.Fatal("publisher must only check out trusted tooling and publish passive data")
+	}
+	_, publish := requireStep(t, publisher, "Verify and publish CodeQL results")
+	if publish.Run != "python3 -I .github/scripts/codeql_upload.py publish" {
+		t.Fatal("publisher must invoke only trusted tooling in isolated Python mode")
+	}
+}
