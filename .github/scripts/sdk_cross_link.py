@@ -15,7 +15,6 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -156,36 +155,6 @@ def existing_snapshot(api, context, run_id):
     return False
 
 
-def wait_for_artifact(api, context, timeout=300, sleep=time.sleep, clock=time.monotonic):
-    deadline = clock() + timeout
-    name = artifact_name(context)
-    while True:
-        artifacts = api.get(f"repos/{REPOSITORY}/actions/artifacts?name={name}&per_page=100")
-        # The first successful producer for this event fixes the snapshot for
-        # every consumer, even if the producer is subsequently rerun.
-        for artifact in sorted(artifacts["artifacts"], key=lambda item: item["id"]):
-            if artifact["name"] != name or artifact["expired"]:
-                continue
-            run_id = artifact["workflow_run"]["id"]
-            run = api.get(f"repos/{REPOSITORY}/actions/runs/{run_id}")
-            if not trusted_run(run, context):
-                continue
-            try:
-                data = api.get(f"repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip", binary=True)
-            except APIError as error:
-                if error.status != 404:
-                    raise
-                # A rerun can replace an unusable artifact after it was listed.
-                continue
-            manifest, archive = unpack_artifact(data, context, run_id)
-            if not successful_attempt(api, context, run_id, manifest["run_attempt"]):
-                continue
-            return manifest, archive
-        if clock() >= deadline:
-            raise RuntimeError("Timed out waiting for the trusted Go source; inspect the Prepare Go SDK workflow")
-        sleep(5)
-
-
 def unpack_artifact(data, context, run_id):
     with zipfile.ZipFile(io.BytesIO(data)) as artifact:
         names = artifact.namelist()
@@ -257,8 +226,8 @@ def main():
         raise RuntimeError("Unexpected workflow event")
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     context = identity(event)
-    api = GitHub(os.environ.get("GH_TOKEN"))
     if args.mode == "produce":
+        api = GitHub(os.environ.get("GH_TOKEN"))
         if os.environ["GITHUB_REF"] != "refs/heads/main":
             raise RuntimeError("Producer must run from main")
         run_id = int(os.environ["GITHUB_RUN_ID"])
@@ -271,7 +240,10 @@ def main():
             output.write(f"artifact-name={name}\n")
             output.write(f"upload={'false' if reused else 'true'}\n")
         return
-    manifest, archive = wait_for_artifact(api, context)
+    data = (Path(os.environ["RUNNER_TEMP"]) / "ci-inputs" / "ci-sdk.zip").read_bytes()
+    with zipfile.ZipFile(io.BytesIO(data)) as artifact:
+        run_id = json.loads(artifact.read("manifest.json"))["run_id"]
+    manifest, archive = unpack_artifact(data, context, run_id)
     if archive is None:
         summary = "No matching Go SDK branch; using the committed released dependency."
     else:

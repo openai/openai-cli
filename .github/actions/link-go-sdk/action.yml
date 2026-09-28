@@ -1,9 +1,5 @@
 name: Link matching internal Go SDK
 description: Consume credential-free Go source prepared by the trusted workflow
-inputs:
-  github-token:
-    description: Read-only Actions token for downloading this repository's artifact
-    required: true
 runs:
   using: composite
   steps:
@@ -15,6 +11,4 @@ runs:
         github.event.pull_request.head.repo.id == github.event.repository.id &&
         github.event.pull_request.base.ref == 'main'
       shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.github-token }}
       run: python3 -I .github/scripts/sdk_cross_link.py consume

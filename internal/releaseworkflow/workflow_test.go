@@ -102,7 +102,7 @@ func TestWorkflowPermissionsRemainLeastPrivileged(t *testing.T) {
 
 	ciJobs := readWorkflow(t, "ci.yml").Jobs
 	for _, name := range []string{"lint", "macos-uploads", "build-artifacts", "test"} {
-		if !reflect.DeepEqual(ciJobs[name].Permissions, map[string]string{"contents": "read", "actions": "read"}) {
+		if ciJobs[name].Permissions == nil || len(ciJobs[name].Permissions) != 0 {
 			t.Errorf("CI job %s permissions changed: %v", name, ciJobs[name].Permissions)
 		}
 		if ciJobs[name].Environment != "" {
@@ -565,10 +565,10 @@ func TestCISnapshotGeneratesInputsBeforeGoReleaser(t *testing.T) {
 		t.Fatalf("CI must preserve the existing verified immutable snapshot invocation, got %#v", release)
 	}
 	if !(installerTestIndex < verifiedBinaryIndex && verifiedBinaryIndex < generateIndex && generateIndex < releaseIndex) {
-		t.Fatal("CI must test and verify GoReleaser, then generate inputs before its credential exists")
+		t.Fatal("CI must test and verify GoReleaser, then generate inputs before packaging")
 	}
-	if len(generate.Env) != 0 || release.Env["GITHUB_TOKEN"] == nil {
-		t.Fatal("CI generation must remain credential-free while preserving existing GoReleaser authentication")
+	if len(generate.Env) != 0 || release.Env["GITHUB_TOKEN"] != nil {
+		t.Fatal("CI generation and snapshot packaging must not receive a repository token")
 	}
 	for _, path := range releaseInputPaths[:3] {
 		if !strings.Contains(generate.Run, path) {
@@ -614,15 +614,15 @@ func TestCodeQLPublisherBoundary(t *testing.T) {
 
 func TestCodeQLAnalysisCannotPublish(t *testing.T) {
 	analysis := readWorkflow(t, "codeql.yml").Jobs["analyze"]
-	if !reflect.DeepEqual(analysis.Permissions, map[string]string{"contents": "read", "actions": "read"}) {
-		t.Fatalf("candidate CodeQL analysis must be read-only: %v", analysis.Permissions)
+	if analysis.Permissions == nil || len(analysis.Permissions) != 0 {
+		t.Fatalf("candidate CodeQL analysis must have no repository permissions: %v", analysis.Permissions)
 	}
 	_, analyze := requireStep(t, analysis, "Analyze")
 	if analyze.With["upload"] != "never" || analyze.With["upload-database"] != false {
 		t.Fatal("candidate analysis must not upload results or databases")
 	}
 	publisher := readWorkflow(t, "codeql-upload.yml").Jobs["upload"]
-	if !reflect.DeepEqual(publisher.Permissions, map[string]string{"contents": "read", "actions": "read", "pull-requests": "read", "security-events": "write"}) {
+	if !reflect.DeepEqual(publisher.Permissions, map[string]string{"contents": "read", "actions": "read", "pull-requests": "read", "security-events": "write", "statuses": "write"}) {
 		t.Fatalf("unexpected publisher permissions: %v", publisher.Permissions)
 	}
 	_, checkout := requireStep(t, publisher, "Check out trusted publisher")
@@ -674,21 +674,131 @@ class API:
         assert route.endswith("/runs/7"), route
         return run
 api = API()
-assert link.wait_for_artifact(api, context)[0] == manifest
 assert link.existing_snapshot(api, context, 7) is True
-api.deleted_once = True
-assert link.wait_for_artifact(api, context, sleep=lambda _: None)[0] == manifest
 api.original_success = False
 assert link.existing_snapshot(api, context, 7) is False
-try:
-    link.wait_for_artifact(api, context, timeout=0)
-except RuntimeError:
-    pass
-else:
-    raise AssertionError("accepted an artifact from an unsuccessful original attempt")
+
 `
 	command := exec.Command(python, "-I", "-B", "-c", code)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("snapshot attempt validation: %v\n%s", err, output)
+	}
+}
+
+func TestCandidateJobsUseOnlySameRunSourceArtifacts(t *testing.T) {
+	for filename, names := range map[string][]string{
+		"ci.yml":                 {"lint", "test", "build-artifacts", "macos-uploads"},
+		"help-compatibility.yml": {"help"}, "codeql.yml": {"analyze"},
+	} {
+		jobs := readWorkflow(t, filename).Jobs
+		for _, name := range names {
+			job := jobs[name]
+			if job.Permissions == nil || len(job.Permissions) != 0 || job.Environment != "" || job.Needs != "source" {
+				t.Fatalf("%s/%s must consume prepared source without repository credentials", filename, name)
+			}
+			_, download := requireStep(t, job, "Download prepared source")
+			if download.Uses != downloadArtifactAction || download.With["artifact-ids"] != "${{ needs.source.outputs.artifact-id }}" {
+				t.Fatal("source must be selected by the preparation job's immutable artifact ID")
+			}
+			if _, ok := download.With["github-token"]; ok {
+				t.Fatal("same-run source download must not receive a repository token")
+			}
+			for _, step := range job.Steps {
+				if step.Uses == checkoutAction || strings.Contains(fmt.Sprint(step.With, step.Env), "github.token") || strings.Contains(fmt.Sprint(step.With, step.Env), "secrets.") {
+					t.Fatalf("candidate job %s/%s receives checkout or credential access", filename, name)
+				}
+			}
+		}
+	}
+	job := readWorkflow(t, "prepare-ci-source.yml").Jobs["prepare"]
+	for _, step := range job.Steps {
+		if strings.HasPrefix(step.Uses, "./") {
+			t.Fatal("credential-bearing preparation must never load candidate actions")
+		}
+	}
+	_, checkout := requireStep(t, job, "Check out trusted SDK download tooling")
+	if checkout.With["ref"] != "main" || checkout.With["path"] != "trusted" || checkout.With["persist-credentials"] != false {
+		t.Fatal("SDK staging helper must come from trusted main in a separate directory")
+	}
+}
+
+func TestTrustedSDKStagingValidatesOriginalAttempt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("source preparation runs with Bash on Ubuntu")
+	}
+	_, step := requireStep(t, readWorkflow(t, "prepare-ci-source.yml").Jobs["prepare"], "Stage SDK snapshot without executing candidate code")
+	helper, err := filepath.Abs("../../.github/scripts/sdk_cross_link.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := fmt.Sprintf(`
+import importlib.util, io, json, os, sys, time, zipfile
+from pathlib import Path
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("real_sdk", %q)
+link = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(link)
+for name in ("REPOSITORY", "REPOSITORY_ID", "WORKFLOW", "APIError", "artifact_name", "unpack_artifact"):
+    globals()[name] = getattr(link, name)
+context = dict(repository_id=link.REPOSITORY_ID, pr=1, head_sha="a"*40, branch="feature", updated_at="now")
+identity = lambda event: context
+manifest = dict(schema=1, context=context, run_id=7, run_attempt=1, go_repository=link.GO_REPOSITORY, mode="released")
+buffer = io.BytesIO()
+with zipfile.ZipFile(buffer, "w") as archive:
+    archive.writestr("manifest.json", json.dumps(manifest))
+clock = iter([0, 0, 301])
+time.monotonic = lambda: next(clock)
+time.sleep = lambda _: None
+class GitHub:
+    def __init__(self, token):
+        assert token == "synthetic-staging-token"
+        self.deleted_once = os.environ["CASE"] == "replacement"
+    def get(self, route, binary=False):
+        if "/artifacts?" in route:
+            return {"artifacts":[dict(id=8, name=link.artifact_name(context), expired=False, workflow_run={"id":7})]}
+        if route.endswith("/zip"):
+            if self.deleted_once:
+                self.deleted_once = False
+                raise link.APIError(404)
+            return buffer.getvalue()
+        assert route.endswith("/attempts/1"), "must verify the original attempt"
+        return dict(event="pull_request_target", path=link.WORKFLOW,
+                    repository={"id":link.REPOSITORY_ID}, head_repository={"id":link.REPOSITORY_ID},
+                    head_branch="feature", head_sha="b"*40 if os.environ["CASE"] == "wrong-head" else "a"*40,
+                    run_attempt=1, status="completed", conclusion="failure" if os.environ["CASE"] == "failed-original" else "success")
+`, helper)
+	for _, name := range []string{"successful-original", "replacement", "failed-original", "wrong-head"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, tree := range []string{"trusted", "candidate"} {
+				path := filepath.Join(dir, tree, ".github", "scripts")
+				if err := os.MkdirAll(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				code := fixture
+				if tree == "candidate" {
+					code = "raise RuntimeError('candidate helper executed with credentials')"
+				}
+				if err := os.WriteFile(filepath.Join(path, "sdk_cross_link.py"), []byte(code), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			event := filepath.Join(dir, "event.json")
+			if err := os.WriteFile(event, []byte("{}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "-e", "-c", step.Run)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "RUNNER_TEMP="+dir, "GITHUB_EVENT_PATH="+event, "GH_TOKEN=synthetic-staging-token", "CASE="+name)
+			out, err := cmd.CombinedOutput()
+			wantSuccess := name == "successful-original" || name == "replacement"
+			if (err == nil) != wantSuccess {
+				t.Fatalf("staging result: %v\n%s", err, out)
+			}
+			_, artifactErr := os.Stat(filepath.Join(dir, "ci-sdk.zip"))
+			if (artifactErr == nil) != wantSuccess {
+				t.Fatalf("unexpected staged artifact: %v", artifactErr)
+			}
+		})
 	}
 }

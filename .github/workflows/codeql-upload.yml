@@ -3,7 +3,7 @@ name: Publish CodeQL results
 on:
   workflow_run:
     workflows: [CodeQL]
-    types: [completed]
+    types: [requested, in_progress, completed]
 
 permissions: {}
 
@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   upload:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.path == '.github/workflows/codeql.yml'
+    if: github.event.workflow_run.path == '.github/workflows/codeql.yml'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -21,6 +21,7 @@ jobs:
       actions: read
       pull-requests: read
       security-events: write
+      statuses: write
     steps:
       - name: Check out trusted publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

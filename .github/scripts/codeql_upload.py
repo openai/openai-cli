@@ -60,7 +60,6 @@ def destination(get, repository, repository_id, source):
     if (run["repository"]["id"] != repository_id or
             run["repository"]["full_name"] != repository or
             run["path"].split("@", 1)[0] != WORKFLOW or
-            run["status"] != "completed" or run["conclusion"] != "success" or
             not SHA.fullmatch(run["head_sha"])):
         raise RuntimeError("Unexpected source workflow")
     if run["event"] == "pull_request":
@@ -102,6 +101,10 @@ def destination(get, repository, repository_id, source):
         current = get(f"{root}/git/ref/heads/{quote(branch, safe='')}", missing_ok=True)
         if current["ref"] != ref or current["object"]["sha"] != sha:
             raise StaleRun("Source branch advanced")
+    runs = pages(get, f"{root}/actions/workflows/codeql.yml/runs?head_sha={run['head_sha']}&event={run['event']}", "workflow_runs")
+    if any(other["id"] > run["id"] and other["head_branch"] == run["head_branch"] and
+           other["head_repository"]["id"] == run["head_repository"]["id"] for other in runs):
+        raise StaleRun("A newer CodeQL run superseded this run")
     return run, {"sha": sha, "ref": ref}
 
 
@@ -130,6 +133,8 @@ def read_artifact(data, run, target, language):
 
 def publish(get, repository, repository_id, source, sleep=time.sleep):
     run, target = destination(get, repository, repository_id, source)
+    if run["status"] != "completed" or run["conclusion"] != "success":
+        raise RuntimeError("CodeQL analysis did not succeed")
     root = f"repos/{repository}"
     artifacts = list(pages(get, f"{root}/actions/runs/{run['id']}/artifacts", "artifacts"))
     reports = []
@@ -164,6 +169,38 @@ def publish(get, repository, repository_id, source, sleep=time.sleep):
     print(f"Published CodeQL results for {target['sha']}")
 
 
+def report(get, repository, repository_id, source, sleep=time.sleep):
+    """Required statuses stay pending until both SARIF uploads are processed."""
+    run, target = destination(get, repository, repository_id, source)
+
+    def status(state):
+        # Do not let a delayed completion overwrite a newer run or PR revision.
+        current, current_target = destination(get, repository, repository_id, source)
+        if current_target != target:
+            raise StaleRun("Publication target changed")
+        descriptions = {"pending": "Waiting for CodeQL analysis and publication",
+                        "failure": "CodeQL analysis or publication failed",
+                        "success": "CodeQL analysis published successfully"}
+        for language in CATEGORIES:
+            get(f"repos/{repository}/statuses/{target['sha']}", payload={
+                "context": f"CodeQL ({language})", "state": state,
+                "description": descriptions[state],
+                "target_url": f"https://github.com/{repository}/actions/runs/{run['id']}",
+            })
+
+    status("pending")
+    if run["status"] != "completed":
+        return
+    try:
+        publish(get, repository, repository_id, source, sleep=sleep)
+    except StaleRun:
+        raise
+    except Exception:
+        status("failure")
+        raise
+    status("success")
+
+
 def main():
     if sys.argv[1:] == ["record"]:
         language = os.environ["CODEQL_LANGUAGE"]
@@ -178,7 +215,7 @@ def main():
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
         if event["repository"]["full_name"] != os.environ["GITHUB_REPOSITORY"]:
             raise RuntimeError("Unexpected event repository")
-        publish(api, os.environ["GITHUB_REPOSITORY"], int(os.environ["GITHUB_REPOSITORY_ID"]),
+        report(api, os.environ["GITHUB_REPOSITORY"], int(os.environ["GITHUB_REPOSITORY_ID"]),
                 event["workflow_run"])
     else:
         raise RuntimeError("Unexpected uploader invocation")

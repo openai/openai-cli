@@ -10,21 +10,30 @@ on:
       - checks_requested
 
 jobs:
-  lint:
-    timeout-minutes: 15
-    name: lint
+  source:
+    uses: ./.github/workflows/prepare-ci-source.yml
     permissions:
       contents: read
       actions: read
+
+  lint:
+    timeout-minutes: 15
+    name: lint
+    needs: source
+    permissions: {}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          persist-credentials: false
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz" -C "$GITHUB_WORKSPACE"
 
       - uses: ./.github/actions/setup-go
-        with:
-          github-token: ${{ github.token }}
 
       - name: Run lints
         run: ./scripts/lint
@@ -32,35 +41,41 @@ jobs:
   macos-uploads:
     timeout-minutes: 15
     name: macOS upload cancellation
-    permissions:
-      contents: read
-      actions: read
+    needs: source
+    permissions: {}
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          persist-credentials: false
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz" -C "$GITHUB_WORKSPACE"
       - uses: ./.github/actions/setup-go
-        with:
-          github-token: ${{ github.token }}
       - name: Check upload cancellation and EOF
         run: go test ./internal/binaryparam ./pkg/cmd -run 'Test(CancellableFIFO|FilesCreateCLICancelClosesStalledFIFO|FilesCreateCLIStreamsSparseFile|ImagesEditCLIStreamsMultipleFiles)' -count=1
 
   build-artifacts:
     timeout-minutes: 30
     name: build artifacts
-    permissions:
-      contents: read
-      actions: read
+    needs: source
+    permissions: {}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          persist-credentials: false
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz" -C "$GITHUB_WORKSPACE"
 
       - uses: ./.github/actions/setup-go
-        with:
-          github-token: ${{ github.token }}
 
       - name: Test vulnerability scan coverage
         run: ./scripts/govulncheck-test
@@ -110,7 +125,6 @@ jobs:
           "$GORELEASER_EXECUTABLE" release --snapshot --clean --skip=publish
         env:
           GORELEASER_EXECUTABLE: ${{ steps.goreleaser.outputs.executable }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build:
     timeout-minutes: 10
@@ -133,18 +147,21 @@ jobs:
   test:
     timeout-minutes: 15
     name: test
-    permissions:
-      contents: read
-      actions: read
+    needs: source
+    permissions: {}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          persist-credentials: false
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz" -C "$GITHUB_WORKSPACE"
 
       - uses: ./.github/actions/setup-go
-        with:
-          github-token: ${{ github.token }}
 
       - name: Verify mock tooling security
         run: node scripts/mock-tools/security.test.js

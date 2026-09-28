@@ -1,9 +1,5 @@
 name: Setup Go
 description: 'Sets up the Go environment'
-inputs:
-  github-token:
-    description: Read-only Actions token for internal PR cross-linking
-    required: false
 runs:
   using: composite
   steps:
@@ -14,8 +10,6 @@ runs:
         check-latest: true
 
     - uses: ./.github/actions/link-go-sdk
-      with:
-        github-token: ${{ inputs.github-token }}
 
     - name: Bootstrap
       shell: bash

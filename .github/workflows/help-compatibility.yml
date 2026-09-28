@@ -5,12 +5,18 @@ on:
   merge_group:
     types: [checks_requested]
 
-permissions:
-  contents: read
-  actions: read
+permissions: {}
 
 jobs:
+  source:
+    uses: ./.github/workflows/prepare-ci-source.yml
+    permissions:
+      contents: read
+      actions: read
+
   help:
+    needs: source
+    permissions: {}
     name: Help on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -25,16 +31,20 @@ jobs:
           - os: windows-latest
             shells: cmd,powershell,pwsh
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          persist-credentials: false
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz" -C "$GITHUB_WORKSPACE"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: .go-version
           check-latest: true
       - uses: ./.github/actions/link-go-sdk
-        with:
-          github-token: ${{ github.token }}
       - name: Test help
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
       - name: Test command dispatch and native shells

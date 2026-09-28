@@ -36,6 +36,8 @@ class PublisherTest(unittest.TestCase):
     def get(self, route, **kwargs):
         self.assertTrue(route.startswith("repos/test/cli/"))
         route = route.removeprefix("repos/test/cli/")
+        if route.startswith("actions/workflows/codeql.yml/runs?"):
+            return {"workflow_runs": [copy.deepcopy(self.run)]}
         if "payload" in kwargs:
             self.writes.append(kwargs["payload"])
             return {"id": "safe-id"}
@@ -130,6 +132,60 @@ class PublisherTest(unittest.TestCase):
         self.responses["actions/artifacts/1/zip"] = self.archive(extra=True)
         with self.assertRaises(RuntimeError):
             publisher.publish(self.get, "test/cli", 1, {"id": 42, "run_attempt": 2})
+        self.assertEqual(self.writes, [])
+
+    def test_required_statuses_wait_for_successful_publication(self):
+        for language, index in [("actions", 0), ("go", 1)]:
+            self.responses[f"actions/artifacts/{index}/zip"] = self.archive(language)
+        self.responses["actions/runs/42/artifacts?per_page=100&page=1"] = {"artifacts": [
+            dict(id=i, name=f"codeql-sarif-42-2-{lang}", expired=False)
+            for i, lang in enumerate(publisher.CATEGORIES)]}
+        publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
+        self.assertEqual([p.get("state", "sarif") for p in self.writes],
+                         ["pending", "pending", "sarif", "sarif", "success", "success"])
+        self.writes.clear()
+        self.responses["actions/artifacts/1/zip"] = self.archive(extra=True)
+        with self.assertRaises(RuntimeError):
+            publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
+        self.assertEqual([p["state"] for p in self.writes], ["pending", "pending", "failure", "failure"])
+
+    def test_pending_and_failed_analysis_cannot_pass_required_status(self):
+        for status, conclusion in [("in_progress", None), ("completed", "failure"), ("completed", "cancelled")]:
+            with self.subTest(status=status, conclusion=conclusion):
+                self.run.update(status=status, conclusion=conclusion)
+                self.writes.clear()
+                if status == "completed":
+                    with self.assertRaises(RuntimeError):
+                        publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
+                    self.assertEqual([p["state"] for p in self.writes], ["pending", "pending", "failure", "failure"])
+                else:
+                    publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
+                    self.assertEqual([p["state"] for p in self.writes], ["pending", "pending"])
+
+    def test_processing_error_and_timeout_never_pass(self):
+        self.responses["actions/runs/42/artifacts?per_page=100&page=1"] = {"artifacts": [
+            dict(id=i, name=f"codeql-sarif-42-2-{lang}", expired=False)
+            for i, lang in enumerate(publisher.CATEGORIES)]}
+        for i, lang in enumerate(publisher.CATEGORIES):
+            self.responses[f"actions/artifacts/{i}/zip"] = self.archive(lang)
+        for outcome in ["failed", "pending"]:
+            self.writes.clear()
+            def get(route, **kwargs):
+                if route.endswith("code-scanning/sarifs/safe-id"):
+                    return {"processing_status": outcome}
+                return self.get(route, **kwargs)
+            with self.assertRaises(RuntimeError):
+                publisher.report(get, "test/cli", 1, dict(id=42, run_attempt=2), sleep=lambda _: None)
+            self.assertNotIn("success", [p.get("state") for p in self.writes])
+            self.assertEqual([p["state"] for p in self.writes[-2:]], ["failure", "failure"])
+
+    def test_superseded_run_cannot_overwrite_statuses(self):
+        def get(route, **kwargs):
+            if "actions/workflows/codeql.yml/runs?" in route:
+                return {"workflow_runs": [dict(self.run, id=43)]}
+            return self.get(route, **kwargs)
+        with self.assertRaises(publisher.StaleRun):
+            publisher.report(get, "test/cli", 1, dict(id=42, run_attempt=2))
         self.assertEqual(self.writes, [])
 
 
