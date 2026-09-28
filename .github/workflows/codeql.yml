@@ -14,14 +14,22 @@ on:
 permissions: {}
 
 jobs:
+  source:
+    uses: ./.github/workflows/prepare-ci-source.yml
+    permissions:
+      contents: read
+      actions: read
+
   analyze:
-    name: CodeQL (${{ matrix.language }})
+    name: CodeQL analysis (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
+    needs: source
+    permissions: {}
+    env:
+      # The pinned action otherwise reads the private workflow-run API to infer
+      # this fixed workflow/job identity during SARIF post-processing.
+      CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/codeql.yml:analyze
     strategy:
       fail-fast: false
       matrix:
@@ -32,10 +40,25 @@ jobs:
             build-mode: autobuild
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          persist-credentials: false
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+
+      - name: Set up Go for internal cross-linking
+        if: matrix.language == 'go' && github.repository == 'openai/openai-cli-internal' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.id == github.event.repository.id && github.event.pull_request.base.ref == 'main'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          check-latest: true
+
+      - uses: ./.github/actions/link-go-sdk
+        if: matrix.language == 'go'
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
@@ -45,3 +68,24 @@ jobs:
 
       - name: Analyze
         uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          upload: never
+          upload-database: false
+          output: ${{ runner.temp }}/codeql-raw
+          post-processed-sarif-path: ${{ runner.temp }}/codeql-sarif
+
+      - name: Record analyzed revision
+        env:
+          CODEQL_LANGUAGE: ${{ matrix.language }}
+          SARIF_DIRECTORY: ${{ runner.temp }}/codeql-sarif
+        run: python3 -I .github/scripts/codeql_upload.py record
+
+      - name: Stage CodeQL results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-sarif-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.language }}
+          path: |
+            ${{ runner.temp }}/codeql-sarif/upload.sarif
+            ${{ runner.temp }}/codeql-sarif/context.json
+          if-no-files-found: error
+          retention-days: 7

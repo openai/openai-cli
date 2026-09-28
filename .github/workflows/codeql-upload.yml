@@ -1,0 +1,35 @@
+name: Publish CodeQL results
+
+on:
+  workflow_run:
+    workflows: [CodeQL]
+    types: [requested, in_progress, completed]
+
+permissions: {}
+
+concurrency:
+  group: codeql-upload-${{ github.event.workflow_run.head_repository.id }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    if: github.event.workflow_run.path == '.github/workflows/codeql.yml'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      security-events: write
+      statuses: write
+    steps:
+      - name: Check out trusted publisher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Verify and publish CodeQL results
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I .github/scripts/codeql_upload.py publish

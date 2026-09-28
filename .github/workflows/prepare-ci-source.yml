@@ -1,0 +1,94 @@
+name: Prepare CI source
+
+on:
+  workflow_call:
+    outputs:
+      artifact-id:
+        value: ${{ jobs.prepare.outputs.artifact-id }}
+
+permissions: {}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      # Workflow definitions require review. Never execute a candidate helper or
+      # local action in this job, including before/after the explicit token use.
+      - name: Check out source as data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: candidate
+          persist-credentials: false
+
+      - name: Package candidate checkout
+        run: tar -czf "$RUNNER_TEMP/ci-source.tar.gz" -C candidate .
+
+      - name: Check out trusted SDK download tooling
+        if: github.repository == 'openai/openai-cli-internal' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.id == github.event.repository.id && github.event.pull_request.base.ref == 'main'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          path: trusted
+          persist-credentials: false
+
+      - name: Stage SDK snapshot without executing candidate code
+        if: github.repository == 'openai/openai-cli-internal' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.id == github.event.repository.id && github.event.pull_request.base.ref == 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -I - <<'PYTHON'
+          import importlib.util, json, os, time
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("sdk", Path("trusted/.github/scripts/sdk_cross_link.py").resolve())
+          sdk = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(sdk)
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          context = sdk.identity(event)
+          api = sdk.GitHub(os.environ["GH_TOKEN"])
+          name = sdk.artifact_name(context)
+          deadline = time.monotonic() + 300
+          while True:
+              artifacts = api.get(f"repos/{sdk.REPOSITORY}/actions/artifacts?name={name}&per_page=100")
+              for artifact in sorted(artifacts["artifacts"], key=lambda a: a["id"]):
+                  if artifact["name"] != name or artifact["expired"]:
+                      continue
+                  run_id = artifact["workflow_run"]["id"]
+                  try:
+                      data = api.get(f"repos/{sdk.REPOSITORY}/actions/artifacts/{artifact['id']}/zip", binary=True)
+                  except sdk.APIError as error:
+                      if error.status == 404:
+                          continue
+                      raise
+                  manifest, _ = sdk.unpack_artifact(data, context, run_id)
+                  attempt = manifest["run_attempt"]
+                  if type(attempt) is not int or attempt < 1:
+                      raise RuntimeError("Invalid producer attempt")
+                  run = api.get(f"repos/{sdk.REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}")
+                  if (run["event"] == "pull_request_target" and run["path"] == ".github/workflows/sdk-cross-link.yml" and
+                          run["repository"]["id"] == sdk.REPOSITORY_ID and
+                          run["head_repository"]["id"] == sdk.REPOSITORY_ID and
+                          run["head_branch"] == context["branch"] and run["head_sha"] == context["head_sha"] and
+                          run["run_attempt"] == attempt and run["status"] == "completed" and run["conclusion"] == "success"):
+                      (Path(os.environ["RUNNER_TEMP"]) / "ci-sdk.zip").write_bytes(data)
+                      raise SystemExit(0)
+              if time.monotonic() >= deadline:
+                  raise RuntimeError("Timed out waiting for Prepare Go SDK")
+              time.sleep(5)
+          PYTHON
+
+      - name: Stage fixed inputs for this workflow run
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ci-source.tar.gz
+            ${{ runner.temp }}/ci-sdk.zip
+          if-no-files-found: error
+          retention-days: 7

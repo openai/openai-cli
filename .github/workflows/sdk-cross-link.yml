@@ -60,3 +60,6 @@ jobs:
           path: ${{ runner.temp }}/go-sdk-artifact/
           if-no-files-found: error
           retention-days: 7
+          # A completed upload can belong to an attempt that later failed.
+          # Successful snapshots skip this step; only unusable ones are replaced.
+          overwrite: true

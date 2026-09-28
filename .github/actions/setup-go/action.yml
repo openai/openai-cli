@@ -9,6 +9,8 @@ runs:
         go-version-file: .go-version
         check-latest: true
 
+    - uses: ./.github/actions/link-go-sdk
+
     - name: Bootstrap
       shell: bash
       run: ./scripts/bootstrap
