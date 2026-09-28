@@ -37,6 +37,7 @@ type workflow struct {
 }
 
 type workflowJob struct {
+	Env         map[string]string `yaml:"env"`
 	If          string            `yaml:"if"`
 	Environment string            `yaml:"environment"`
 	Needs       any               `yaml:"needs"`
@@ -616,6 +617,9 @@ func TestCodeQLAnalysisCannotPublish(t *testing.T) {
 	analysis := readWorkflow(t, "codeql.yml").Jobs["analyze"]
 	if analysis.Permissions == nil || len(analysis.Permissions) != 0 {
 		t.Fatalf("candidate CodeQL analysis must have no repository permissions: %v", analysis.Permissions)
+	}
+	if analysis.Env["CODEQL_ACTION_ANALYSIS_KEY"] != ".github/workflows/codeql.yml:analyze" {
+		t.Fatal("offline CodeQL analysis must not require private workflow metadata to infer its key")
 	}
 	_, analyze := requireStep(t, analysis, "Analyze")
 	if analyze.With["upload"] != "never" || analyze.With["upload-database"] != false {

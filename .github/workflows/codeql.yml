@@ -26,6 +26,10 @@ jobs:
     timeout-minutes: 30
     needs: source
     permissions: {}
+    env:
+      # The pinned action otherwise reads the private workflow-run API to infer
+      # this fixed workflow/job identity during SARIF post-processing.
+      CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/codeql.yml:analyze
     strategy:
       fail-fast: false
       matrix:
