@@ -136,6 +136,21 @@ func serveImageGeneration(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Optional latency makes waiting feedback visible without a live generation.
+	if value := os.Getenv("DEMO_IMAGE_DELAY"); value != "" {
+		delay, err := time.ParseDuration(value)
+		if err != nil || delay < 0 || delay > 5*time.Second {
+			http.Error(w, "DEMO_IMAGE_DELAY must be between 0s and 5s.", http.StatusInternalServerError)
+			return
+		}
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-timer.C:
+		}
+	}
 	image := syntheticImagePNG
 	if os.Getenv("DEMO_IMAGE_PREVIEW_FIXTURE") == "robot" {
 		image = syntheticRobotPNG()

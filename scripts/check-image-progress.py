@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 """Run terminal-only regression groups in a real sized PTY, offline."""
-import errno
-import fcntl
 import json
 import os
 import pathlib
-import pty
 import re
-import select
-import struct
-import subprocess
 import sys
 import tempfile
-import termios
-import time
+
+# Permit isolated Python (-I) without relying on the caller's import path.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from terminal_test import run_terminal_test
 
 if len(sys.argv) != 4:
     raise SystemExit('usage: check-image-progress.py CUSTOM_TEST MAIN_TEST OUTPUT_DIR')
@@ -27,39 +23,19 @@ gated_names = {'generate', 'edit', 'stdin', 'iterm', 'explicit-on', 'failure', '
 darwin = sys.platform == 'darwin'
 gates = tempfile.TemporaryDirectory(prefix='image-progress-gates-')
 for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS'), ('main', 'TestMainImageProgressTerminal', 'MAIN-PROGRESS'), ('resize', 'TestSavedImageFallbackResizeTerminal', 'FONT-FALLBACK-RESIZE')]:
-    master, slave = pty.openpty()
-    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 45, 120, 0, 0))
     env = {k: v for k, v in os.environ.items() if not k.startswith('OPENAI_')}
     env['OPENAI_CLI_PROGRESS_GATE_DIR'] = gates.name
-    child = subprocess.Popen([binaries[binary], '-test.v', '-test.run=^' + test + '$'], stdin=subprocess.DEVNULL, stdout=slave, stderr=slave, env=env)
-    os.close(slave)
-    captured = bytearray()
-    deadline = time.monotonic() + 60
-    while True:
-        if time.monotonic() > deadline:
-            child.kill()
-            raise AssertionError('terminal tests timed out')
-        if select.select([master], [], [], 0.2)[0]:
-            try:
-                chunk = os.read(master, 65536)
-            except OSError as error:
-                if error.errno == errno.EIO:
-                    break
-                raise
-            if not chunk:
-                break
-            captured.extend(chunk)
-            if binary == 'main':
-                current = captured.decode('utf-8', errors='replace').rsplit('MAIN-PROGRESS-CASE ', 1)[-1]
-                name = current.split('\r\n', 1)[0]
-                shown = len(re.findall(r'Progress preview [12] of 2:', current)) == 2
-                skipped = darwin and name in apple_font_names and 'Sharp progress preview unavailable;' in current
-                if (shown or skipped) and name in gated_names:
-                    (pathlib.Path(gates.name) / name).touch()
-        elif child.poll() is not None:
-            break
-    os.close(master)
-    code = child.wait()
+
+    def observe(captured):
+        if binary == 'main':
+            current = captured.decode('utf-8', errors='replace').rsplit('MAIN-PROGRESS-CASE ', 1)[-1]
+            name = current.split('\r\n', 1)[0]
+            shown = len(re.findall(r'Progress preview [12] of 2:', current)) == 2
+            skipped = darwin and name in apple_font_names and 'Sharp progress preview unavailable;' in current
+            if (shown or skipped) and name in gated_names:
+                (pathlib.Path(gates.name) / name).touch()
+
+    code, captured = run_terminal_test(binaries[binary], test, env, observe)
     (root / (binary + '-pty.raw')).write_bytes(captured)
     text = captured.decode('utf-8')
     assert code == 0 and '--- SKIP' not in text, text

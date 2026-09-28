@@ -159,6 +159,37 @@ native terminal validation. The output also preserves transcripts, captures,
 the exact scene, tool versions, hashes, commit IDs and the empty request log.
 Keep this output outside Git; rerun after changing the demonstrated help.
 
+### Image loading feedback
+
+`record-image-loading.sh` compares the same generation request with an identical
+synthetic PNG returned after two seconds. Both commands use `--inline off` so the
+recording isolates waiting feedback and final saved-path output.
+
+```sh
+go build -o dist/demos/bin/demo-api ./scripts/demos
+bash scripts/demos/record-image-loading.sh \
+  /path/to/before/openai /path/to/after/openai \
+  BEFORE_COMMIT AFTER_COMMIT /path/outside/repository/loading-demo
+```
+
+Use the immediate parent as the before build and verify both commit IDs. The
+recorder reuses `capture_and_render.sh`, a fake key and isolated temporary homes.
+Its loopback fixture accepts only the existing fixed synthetic request. The
+optional `DEMO_IMAGE_DELAY` fixture setting accepts 0–5 seconds and stops waiting
+when the client cancels; this recording sets it to two seconds.
+
+`comparison.gif` preserves the real wait and completed output. `before.png` and
+`after.png` show actual pending frames selected one second before each recorded
+saved-path event; selection times are retained. `before-complete.png` and
+`after-complete.png` show cleanup and the final prompt. The recorder verifies
+identical requests and saved bytes, feedback only after the change, line cleanup
+and no feedback after the saved path. It never hides the cursor.
+
+Inspect all four PNGs and the GIF before sharing. The 90 × 20 replay uses bash,
+Menlo 18px, asciinema and agg; it does not validate native image appearance or
+Windows terminal behavior. Media, casts, transcripts, fixture logs and exact
+saved bytes remain outside Git. No live generation or uploads occur.
+
 ### Image defaults and saving
 
 Build the comparison binaries from main and the proposed feature

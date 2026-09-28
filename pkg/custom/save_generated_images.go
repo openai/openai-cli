@@ -73,6 +73,7 @@ type imageOutputPlan struct {
 	inline          string
 	diagnostics     io.Writer
 	partialImages   int64
+	stopLoading     func()
 }
 
 // A private classification carries locally authored guidance through the shared
@@ -190,6 +191,7 @@ func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Re
 
 func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writer) error {
 	saved, saveErr := imageoutput.SaveResponse(ctx, response, p.directory, p.name)
+	p.stopLoadingFeedback()
 	previewOutput := out
 	out = outputWriter{ctx: context.WithoutCancel(ctx), out: out}
 	if saveErr != nil {

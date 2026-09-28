@@ -25,6 +25,7 @@ func imageProgressProtocol(mode string, terminal bool, getenv func(string) strin
 // Rendering and output failures propagate, including cancellation, so callers
 // never continue writing another image after partially failed terminal output.
 func (p *imageOutputPlan) displayImageProgress(ctx context.Context, event gjson.Result, out io.Writer, protocol string) (unavailable bool, err error) {
+	p.stopLoadingFeedback()
 	warn := func(message string) (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return true, err
