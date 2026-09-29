@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.3](https://github.com/openai/openai-cli/compare/v1.29.2...v1.29.3) (2026-09-29)
+
+
+### Chores
+
+* **api:** add GPT-6.1 Sol to bundled specification ([#322](https://github.com/openai/openai-cli/issues/322)) ([0ec8a85](https://github.com/openai/openai-cli/commit/0ec8a856a31ec8bd93f32eedaf47d8127af096e2))
+
 ## [1.29.2](https://github.com/openai/openai-cli/compare/v1.29.1...v1.29.2) (2026-09-29)
 
 
