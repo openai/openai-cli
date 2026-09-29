@@ -7,10 +7,14 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
+	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	"github.com/urfave/cli/v3"
 )
@@ -37,7 +41,7 @@ func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageO
 	// Restore normal signal handling once cancellation starts. A second Ctrl-C
 	// can still terminate the process if a terminal write or cleanup is blocked.
 	stopReset := context.AfterFunc(ctx, stopSignals)
-	stopLoading := startLoadingFeedback(ctx, os.Stderr, label, loadingAnimationSupported(os.Getenv), func() int {
+	stopLoading := startLoadingFeedback(ctx, os.Stderr, label, loadingAnimationSupported(os.Getenv), imageLoadingSpinner(os.Getenv, runtime.GOOS), func() int {
 		width, _, _ := term.GetSize(os.Stderr.Fd())
 		return width
 	})
@@ -85,13 +89,44 @@ func loadingAnimationSupported(getenv func(string) string) bool {
 	return false
 }
 
+func imageLoadingSpinner(getenv func(string) string, goos string) spinner.Spinner {
+	animation := spinner.Line
+	// Respect locale precedence: LC_ALL=C must not inherit UTF-8 from LANG.
+	locale := getenv("LC_ALL")
+	if locale == "" {
+		locale = getenv("LC_CTYPE")
+	}
+	if locale == "" {
+		locale = getenv("LANG")
+	}
+	utf8 := strings.Contains(strings.ToLower(strings.ReplaceAll(locale, "-", "")), "utf8")
+	if (goos != "windows" && utf8) || (goos == "windows" && getenv("WT_SESSION") != "") {
+		animation = spinner.MiniDot
+	}
+	profile := colorprofile.Env([]string{"TERM=" + getenv("TERM"), "COLORTERM=" + getenv("COLORTERM")})
+	if getenv("NO_COLOR") == "" && getenv("CLICOLOR") != "0" && getenv("FORCE_COLOR") != "0" && profile >= colorprofile.ANSI {
+		// Copy the shared frame definitions before applying our single accent.
+		frames := make([]string, len(animation.Frames))
+		for i, frame := range animation.Frames {
+			frames[i] = "\x1b[36m" + frame + "\x1b[0m"
+		}
+		animation.Frames = frames
+	}
+	return animation
+}
+
 // startLoadingFeedback returns an idempotent stop that joins its worker. Only
 // fixed local labels reach this helper; filenames and API data never do. The
 // caller stops it before another writer uses the terminal. Cursor visibility
 // and terminal input modes are never changed. Diagnostic writes are best effort.
-func startLoadingFeedback(ctx context.Context, out io.Writer, label string, animate bool, width func() int) func() {
+func startLoadingFeedback(ctx context.Context, out io.Writer, label string, animate bool, animation spinner.Spinner, width func() int) func() {
 	stop, done := make(chan struct{}), make(chan struct{})
 	var once sync.Once
+	clearLine := "\r\x1b[2K"
+	if strings.Contains(animation.Frames[0], "\x1b[") {
+		// A partial frame write may end before its normal color reset.
+		clearLine = "\x1b[0m" + clearLine
+	}
 	go func() {
 		defer close(done)
 		delay := time.NewTimer(imageLoadingDelay)
@@ -103,13 +138,13 @@ func startLoadingFeedback(ctx context.Context, out io.Writer, label string, anim
 			return
 		case <-delay.C:
 		}
-		ticker := time.NewTicker(100 * time.Millisecond)
+		ticker := time.NewTicker(animation.FPS)
 		defer ticker.Stop()
 		drawn := false
 		defer func() {
 			if drawn {
 				// Cleanup must still run after request cancellation.
-				_, _ = io.WriteString(out, "\r\x1b[2K")
+				_, _ = io.WriteString(out, clearLine)
 			}
 		}()
 		for frame := 0; ; frame++ {
@@ -122,9 +157,10 @@ func startLoadingFeedback(ctx context.Context, out io.Writer, label string, anim
 			default:
 			}
 			columns := width()
-			if !animate || columns <= len(label)+2 {
+			text := animation.Frames[frame%len(animation.Frames)] + " " + label
+			if !animate || columns <= ansi.StringWidth(text) {
 				if drawn {
-					if _, err := io.WriteString(out, "\r\x1b[2K"); err != nil {
+					if _, err := io.WriteString(out, clearLine); err != nil {
 						return
 					}
 					drawn = false
@@ -134,7 +170,7 @@ func startLoadingFeedback(ctx context.Context, out io.Writer, label string, anim
 				}
 				return
 			}
-			text := fmt.Sprintf("\r%c %s", "|/-\\"[frame%4], label)
+			text = "\r" + text
 			n, err := io.WriteString(out, text)
 			drawn = drawn || n > 0
 			if err != nil || n != len(text) {

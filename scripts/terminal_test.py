@@ -60,5 +60,6 @@ def run_terminal_test(binary, test, env, observe=None, timeout=60, columns=120, 
             try:
                 os.killpg(child.pid, signal.SIGKILL)
             except ProcessLookupError:
+                # The process group can exit between the check and killpg.
                 pass
             child.wait()

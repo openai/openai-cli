@@ -35,6 +35,7 @@ func TestMainImageLoadingFeedbackTerminal(t *testing.T) {
 	for _, scenario := range []string{
 		"generate", "edit", "variation", "stdin", "fast", "api-failure", "malformed", "save-failure", "cancel",
 		"stream", "stream-interrupted", "dumb", "ci", "json", "error-json", "debug", "stdout-pipe", "stderr-pipe", "stdin-wait",
+		"utf8", "no-color", "ascii", "locale-override",
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			if scenario == "stdin-wait" {
@@ -145,6 +146,18 @@ func TestMainImageLoadingFeedbackTerminal(t *testing.T) {
 			}
 			if scenario == "ci" {
 				child.Env = append(child.Env, "CI=true")
+			}
+			switch scenario {
+			case "utf8", "no-color":
+				child.Env = append(child.Env, "LC_ALL=en_US.UTF-8", "NO_COLOR=", "CLICOLOR=", "FORCE_COLOR=")
+				if scenario == "no-color" {
+					child.Env = append(child.Env, "NO_COLOR=0")
+				}
+			case "ascii", "locale-override":
+				child.Env = append(child.Env, "LC_ALL=C", "NO_COLOR=1")
+				if scenario == "locale-override" {
+					child.Env = append(child.Env, "LANG=en_US.UTF-8", "LC_CTYPE=UTF-8")
+				}
 			}
 			child.Stdout, child.Stderr = os.Stdout, os.Stdout
 			var redirected bytes.Buffer

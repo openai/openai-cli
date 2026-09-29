@@ -19,7 +19,7 @@ output = pathlib.Path(sys.argv[2]).resolve()
 output.mkdir(parents=True, exist_ok=True)
 labels = r'(?:Generating image|Editing image|Creating image variation)\.\.\.'
 gated = {'generate', 'edit', 'variation', 'stdin', 'api-failure', 'malformed', 'save-failure', 'cancel',
-         'stream', 'stream-interrupted', 'dumb', 'ci'}
+         'stream', 'stream-interrupted', 'dumb', 'ci', 'utf8', 'no-color', 'ascii', 'locale-override'}
 quiet = {'fast', 'json', 'error-json', 'debug', 'stdout-pipe', 'stderr-pipe', 'stdin-wait'}
 partial_seen = {}
 with tempfile.TemporaryDirectory(prefix='image-loading-gates-') as directory:
@@ -59,6 +59,12 @@ for name in sorted(gated | quiet):
                 'LOADING-RESPONSE-SEND ' + name), (name, 'buffered feedback')
     if name in {'dumb', 'ci'}:
         assert count == 1 and '\x1b[2K' not in section, (name, 'expected static feedback')
+    if name in {'utf8', 'no-color'}:
+        assert '⠋' in section, (name, 'missing Unicode spinner')
+        assert ('\x1b[36m' in section) == (name == 'utf8'), (name, 'incorrect color policy')
+    if name in {'ascii', 'locale-override'}:
+        assert '\r| Generating image...' in section, (name, 'missing ASCII fallback')
+        assert '⠋' not in section and '\x1b[36m' not in section
     if name == 'json':
         payload = section.split('LOADING-RESPONSE-SEND json\r\n', 1)[1].strip()
         assert isinstance(json.loads(payload)['data'], list), 'API output is not clean JSON'
