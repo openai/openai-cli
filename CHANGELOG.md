@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.0](https://github.com/openai/openai-cli/compare/v1.29.3...v1.30.0) (2026-09-29)
+
+
+### Features
+
+* **cli:** show loading feedback for image requests ([#318](https://github.com/openai/openai-cli/issues/318)) ([51436e3](https://github.com/openai/openai-cli/commit/51436e3b95e203fc772f5320fce4981f8f6a27de))
+
 ## [1.29.3](https://github.com/openai/openai-cli/compare/v1.29.2...v1.29.3) (2026-09-29)
 
 
