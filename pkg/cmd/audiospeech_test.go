@@ -17,7 +17,7 @@ func TestAudioSpeechCreate(t *testing.T) {
 			"audio:speech", "create",
 			"--input", "input",
 			"--model", "tts-1",
-			"--voice", "alloy",
+			"--voice", "ash",
 			"--instructions", "instructions",
 			"--response-format", "mp3",
 			"--speed", "0.25",
@@ -31,7 +31,7 @@ func TestAudioSpeechCreate(t *testing.T) {
 		pipeData := []byte("" +
 			"input: input\n" +
 			"model: tts-1\n" +
-			"voice: alloy\n" +
+			"voice: ash\n" +
 			"instructions: instructions\n" +
 			"response_format: mp3\n" +
 			"speed: 0.25\n" +
