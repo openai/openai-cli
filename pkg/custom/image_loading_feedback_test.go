@@ -22,7 +22,7 @@ import (
 func TestLoadingFeedbackDelayAndStop(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var output bytes.Buffer
-		stop := startLoadingFeedback(t.Context(), &output, "Generating image...", true, spinner.Line, func() int { return 80 })
+		stop := startLoadingFeedback(t.Context(), &output, "Generating image", true, spinner.Line, func() int { return 80 })
 		time.Sleep(imageLoadingDelay - time.Nanosecond)
 		synctest.Wait()
 		require.Empty(t, output.String())
@@ -40,11 +40,11 @@ func TestLoadingFeedbackStopsAndClearsBeforeReturning(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var output bytes.Buffer
-			stop := startLoadingFeedback(ctx, &output, "Generating image...", true, spinner.Line, func() int { return 80 })
+			stop := startLoadingFeedback(ctx, &output, "Generating image", true, spinner.Line, func() int { return 80 })
 			time.Sleep(imageLoadingDelay + 250*time.Millisecond)
 			synctest.Wait()
-			require.Contains(t, output.String(), "\r| Generating image...")
-			require.Contains(t, output.String(), "\r/ Generating image...")
+			require.Contains(t, output.String(), "\r| Generating image")
+			require.Contains(t, output.String(), "\r/ Generating image")
 			require.NotContains(t, output.String(), "\x1b[2K")
 			if cancelContext {
 				cancel()
@@ -72,17 +72,17 @@ func TestLoadingFeedbackStaticAndNarrowTerminals(t *testing.T) {
 		width   int
 		want    string
 	}{
-		{"unsupported", false, 80, "Generating image...\n"},
-		{"unknown size", true, 0, "Generating image...\n"},
-		{"barely fits", true, 20, "Generating image...\n"},
-		{"narrow", true, 19, "Working...\n"},
+		{"unsupported", false, 80, "Generating image\n"},
+		{"unknown size", true, 0, "Generating image\n"},
+		{"barely fits", true, 17, "Generating image\n"},
+		{"narrow", true, 16, "Working...\n"},
 		{"tiny", true, 10, "...\n"},
 		{"no room", true, 3, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				var output bytes.Buffer
-				stop := startLoadingFeedback(t.Context(), &output, "Generating image...", test.animate, spinner.Line, func() int { return test.width })
+				stop := startLoadingFeedback(t.Context(), &output, "Generating image", test.animate, spinner.Line, func() int { return test.width })
 				time.Sleep(imageLoadingDelay + time.Second)
 				synctest.Wait()
 				stop()
@@ -97,7 +97,7 @@ func TestLoadingFeedbackResizeStopsAnimation(t *testing.T) {
 		var output bytes.Buffer
 		var width atomic.Int64
 		width.Store(80)
-		stop := startLoadingFeedback(t.Context(), &output, "Generating image...", true, spinner.Line, func() int { return int(width.Load()) })
+		stop := startLoadingFeedback(t.Context(), &output, "Generating image", true, spinner.Line, func() int { return int(width.Load()) })
 		time.Sleep(imageLoadingDelay)
 		synctest.Wait()
 		width.Store(12)
@@ -107,7 +107,7 @@ func TestLoadingFeedbackResizeStopsAnimation(t *testing.T) {
 		time.Sleep(time.Second)
 		synctest.Wait()
 		stop()
-		require.Equal(t, "\r| Generating image...\r\x1b[2KWorking...\n", output.String())
+		require.Equal(t, "\r| Generating image\r\x1b[2KWorking...\n", output.String())
 	})
 }
 
@@ -122,7 +122,7 @@ func TestLoadingFeedbackWriteFailureStopsRetries(t *testing.T) {
 				}
 				return 0, io.ErrClosedPipe
 			})
-			stop := startLoadingFeedback(t.Context(), writer, "Generating image...", true, spinner.Line, func() int { return 80 })
+			stop := startLoadingFeedback(t.Context(), writer, "Generating image", true, spinner.Line, func() int { return 80 })
 			time.Sleep(imageLoadingDelay + time.Second)
 			synctest.Wait()
 			stop()
@@ -151,7 +151,7 @@ func TestLoadingFeedbackPartialColorWriteResetsStyle(t *testing.T) {
 		animation := imageLoadingSpinner(func(key string) string {
 			return map[string]string{"TERM": "xterm-256color", "LANG": "en_US.UTF-8"}[key]
 		}, "darwin")
-		stop := startLoadingFeedback(t.Context(), writer, "Generating image...", true, animation, func() int { return 80 })
+		stop := startLoadingFeedback(t.Context(), writer, "Generating image", true, animation, func() int { return 80 })
 		time.Sleep(imageLoadingDelay + time.Second)
 		synctest.Wait()
 		stop()
@@ -219,37 +219,37 @@ func TestImageLoadingSpinnerEnvironment(t *testing.T) {
 			animation := imageLoadingSpinner(getenv, test.goos)
 			want := spinner.Line
 			if test.unicode {
-				want = spinner.MiniDot
+				want = spinner.Dot
 			}
 			require.Equal(t, want.FPS, animation.FPS)
 			require.Len(t, animation.Frames, len(want.Frames))
 			for i, frame := range animation.Frames {
 				require.Equal(t, want.Frames[i], ansi.Strip(frame))
-				require.Equal(t, 1, ansi.StringWidth(frame))
+				require.Equal(t, ansi.StringWidth(want.Frames[i]), ansi.StringWidth(frame))
 				require.Equal(t, test.color, strings.Contains(frame, "\x1b[36m"))
 			}
 		})
 	}
-	require.Equal(t, "⠋", spinner.MiniDot.Frames[0], "shared library frames must stay unmodified")
+	require.Equal(t, "⣾ ", spinner.Dot.Frames[0], "shared library frames must stay unmodified")
 	require.Equal(t, "|", spinner.Line.Frames[0])
 }
 
 func TestLoadingFeedbackUnicodeFitsByCells(t *testing.T) {
-	for _, columns := range []int{21, 22} {
+	for _, columns := range []int{19, 20} {
 		synctest.Test(t, func(t *testing.T) {
 			var output bytes.Buffer
 			animation := imageLoadingSpinner(func(key string) string {
 				return map[string]string{"TERM": "xterm-256color", "LANG": "en_US.UTF-8"}[key]
 			}, "darwin")
-			stop := startLoadingFeedback(t.Context(), &output, "Generating image...", true, animation, func() int { return columns })
+			stop := startLoadingFeedback(t.Context(), &output, "Generating image", true, animation, func() int { return columns })
 			time.Sleep(imageLoadingDelay + 2*animation.FPS)
 			synctest.Wait()
 			stop()
-			if columns == 21 {
-				require.Equal(t, "Generating image...\n", output.String(), "leave one column to prevent wrapping")
+			if columns == 19 {
+				require.Equal(t, "Generating image\n", output.String(), "leave one column to prevent wrapping")
 			} else {
-				require.Contains(t, output.String(), "\r\x1b[36m⠋\x1b[0m Generating image...")
-				require.Contains(t, output.String(), "\r\x1b[36m⠙\x1b[0m Generating image...")
+				require.Contains(t, output.String(), "\r\x1b[36m⣾ \x1b[0m Generating image")
+				require.Contains(t, output.String(), "\r\x1b[36m⣽ \x1b[0m Generating image")
 				require.True(t, strings.HasSuffix(output.String(), "\r\x1b[2K"))
 				require.NotContains(t, output.String(), "\n")
 			}

@@ -29,12 +29,12 @@ func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageO
 		root.Bool("debug") || errorOutputFormat(root) != "text" || root.String("transform-error") != "" {
 		return next(ctx, command)
 	}
-	label := "Generating image..."
+	label := "Generating image"
 	switch command.Name {
 	case "edit":
-		label = "Editing image..."
+		label = "Editing image"
 	case "create-variation":
-		label = "Creating image variation..."
+		label = "Creating image variation"
 	}
 	parent := ctx
 	ctx, stopSignals := signal.NotifyContext(ctx, os.Interrupt)
@@ -101,7 +101,7 @@ func imageLoadingSpinner(getenv func(string) string, goos string) spinner.Spinne
 	}
 	utf8 := strings.Contains(strings.ToLower(strings.ReplaceAll(locale, "-", "")), "utf8")
 	if (goos != "windows" && utf8) || (goos == "windows" && getenv("WT_SESSION") != "") {
-		animation = spinner.MiniDot
+		animation = spinner.Dot
 	}
 	profile := colorprofile.Env([]string{"TERM=" + getenv("TERM"), "COLORTERM=" + getenv("COLORTERM")})
 	if getenv("NO_COLOR") == "" && getenv("CLICOLOR") != "0" && getenv("FORCE_COLOR") != "0" && profile >= colorprofile.ANSI {

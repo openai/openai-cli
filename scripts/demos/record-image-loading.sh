@@ -87,12 +87,12 @@ for scene, home in [('before', 'b'), ('after', 'a')]:
     pending = ''.join(event[2] for event in events if event[0] <= pending_at)
     assert '--inline off' in pending and 'Saved image:' not in pending
     if scene == 'after':
-        assert 'Generating image...' in pending, 'no feedback while waiting'
-        assert raw.count('Generating image...') > 1, 'feedback did not animate'
+        assert 'Generating image' in pending, 'no feedback while waiting'
+        assert raw.count('Generating image') > 1, 'feedback did not animate'
         assert '\r\x1b[2K' in raw[:raw.index('Saved image:')], 'loading line was not cleared'
-        assert 'Generating image...' not in raw[raw.index('Saved image:'):], 'feedback continued after output'
+        assert 'Generating image' not in raw[raw.index('Saved image:'):], 'feedback continued after output'
     else:
-        assert 'Generating image...' not in raw, 'baseline already has loading feedback'
+        assert 'Generating image' not in raw, 'baseline already has loading feedback'
     (output / (scene + '-pending-time.txt')).write_text(f'{pending_at:.6f}\n')
     shutil.copyfile(files[0], retained / (scene + '.png'))
     print(f'PASS: {scene} exits 0; exact PNG saved; pending frame at {pending_at:.6f}s, saved path at {saved_at:.6f}s')
