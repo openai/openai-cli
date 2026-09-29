@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.1](https://github.com/openai/openai-cli/compare/v1.30.0...v1.30.1) (2026-09-29)
+
+
+### Chores
+
+* **api:** retain the existing command surface ([#326](https://github.com/openai/openai-cli/issues/326)) ([22f1255](https://github.com/openai/openai-cli/commit/22f12559fff1531228298d165fa2e039c48a95d6))
+
 ## [1.30.0](https://github.com/openai/openai-cli/compare/v1.29.3...v1.30.0) (2026-09-29)
 
 
