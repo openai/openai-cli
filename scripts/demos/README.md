@@ -183,7 +183,8 @@ when the client cancels; this recording sets it to two seconds.
 saved-path event; selection times are retained. `before-complete.png` and
 `after-complete.png` show cleanup and the final prompt. The recorder verifies
 identical requests and saved bytes, feedback only after the change, line cleanup
-and no feedback after the saved path. It never hides the cursor.
+and no feedback after the saved path. It never hides the cursor. Exit statuses
+are checked and retained in `metadata.txt`, without a status label in the replay.
 
 Inspect all four PNGs and the GIF before sharing. The 90 × 20 replay uses bash,
 Menlo 18px, asciinema and agg; it does not validate native image appearance or

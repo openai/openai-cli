@@ -34,7 +34,7 @@ if openai images generate --prompt 'A tiny orange robot' --inline off; then
 else
   demo_status=$?
 fi
-printf '\n[exit %s]\n$ ' "$demo_status"
+printf '\n$ '
 sleep 2
 exit "$demo_status"
 SCENE
@@ -80,7 +80,8 @@ for scene, home in [('before', 'b'), ('after', 'a')]:
     assert len(files) == 1 and files[0].name == 'tiny-orange-robot.png'
     assert files[0].read_bytes() == png, 'saved bytes changed'
     assert 'Saved image: "' + str(files[0]) + '"' in raw, 'incomplete saved path'
-    assert '[exit 0]' in raw and raw.count('Saved image:') == 1
+    assert '[exit ' not in raw and raw.endswith('$ '), 'unexpected demo footer'
+    assert raw.count('Saved image:') == 1
     assert '\x1b[?25l' not in raw, 'recording or CLI hid the cursor'
     saved_at = next(event[0] for event in events if 'Saved image:' in event[2])
     pending_at = saved_at - 1
