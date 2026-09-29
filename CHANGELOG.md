@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.0](https://github.com/openai/openai-cli/compare/v1.28.2...v1.29.0) (2026-09-28)
+
+
+### Features
+
+* **cli:** clearer help examples and full reference ([#315](https://github.com/openai/openai-cli/issues/315)) ([096e437](https://github.com/openai/openai-cli/commit/096e437482e3d56933e95138f58579956b4c5600))
+
 ## [1.28.2](https://github.com/openai/openai-cli/compare/v1.28.1...v1.28.2) (2026-09-28)
 
 
