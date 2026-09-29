@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
-	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	"github.com/urfave/cli/v3"
@@ -103,15 +102,7 @@ func imageLoadingSpinner(getenv func(string) string, goos string) spinner.Spinne
 	if (goos != "windows" && utf8) || (goos == "windows" && getenv("WT_SESSION") != "") {
 		animation = spinner.Dot
 	}
-	profile := colorprofile.Env([]string{"TERM=" + getenv("TERM"), "COLORTERM=" + getenv("COLORTERM")})
-	if getenv("NO_COLOR") == "" && getenv("CLICOLOR") != "0" && getenv("FORCE_COLOR") != "0" && profile >= colorprofile.ANSI {
-		// Copy the shared frame definitions before applying our single accent.
-		frames := make([]string, len(animation.Frames))
-		for i, frame := range animation.Frames {
-			frames[i] = "\x1b[36m" + frame + "\x1b[0m"
-		}
-		animation.Frames = frames
-	}
+	// Use the terminal foreground so the indicator follows light and dark themes.
 	return animation
 }
 
@@ -122,11 +113,7 @@ func imageLoadingSpinner(getenv func(string) string, goos string) spinner.Spinne
 func startLoadingFeedback(ctx context.Context, out io.Writer, label string, animate bool, animation spinner.Spinner, width func() int) func() {
 	stop, done := make(chan struct{}), make(chan struct{})
 	var once sync.Once
-	clearLine := "\r\x1b[2K"
-	if strings.Contains(animation.Frames[0], "\x1b[") {
-		// A partial frame write may end before its normal color reset.
-		clearLine = "\x1b[0m" + clearLine
-	}
+	const clearLine = "\r\x1b[2K"
 	go func() {
 		defer close(done)
 		delay := time.NewTimer(imageLoadingDelay)

@@ -135,16 +135,16 @@ func TestLoadingFeedbackWriteFailureStopsRetries(t *testing.T) {
 	}
 }
 
-func TestLoadingFeedbackPartialColorWriteResetsStyle(t *testing.T) {
+func TestLoadingFeedbackPartialFrameClearsLine(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var output bytes.Buffer
 		calls := 0
 		writer := loadingTestWriter(func(p []byte) (int, error) {
 			calls++
 			if calls == 1 {
-				// The terminal received cyan, but not the frame's style reset.
-				output.Write(p[:6])
-				return 6, io.ErrShortWrite
+				// The terminal received only part of the UTF-8 frame.
+				output.Write(p[:2])
+				return 2, io.ErrShortWrite
 			}
 			return output.Write(p)
 		})
@@ -156,7 +156,7 @@ func TestLoadingFeedbackPartialColorWriteResetsStyle(t *testing.T) {
 		synctest.Wait()
 		stop()
 		require.Equal(t, 2, calls, "stop retrying frames, but attempt to restore the terminal")
-		require.Equal(t, "\r\x1b[36m\x1b[0m\r\x1b[2K", output.String())
+		require.Equal(t, "\r\xe2\r\x1b[2K", output.String())
 	})
 }
 
@@ -189,22 +189,21 @@ func TestImageLoadingSpinnerEnvironment(t *testing.T) {
 		name, goos string
 		env        map[string]string
 		unicode    bool
-		color      bool
 	}{
-		{"UTF-8", "darwin", map[string]string{"LANG": "en_US.UTF-8"}, true, true},
-		{"UTF8", "linux", map[string]string{"LANG": "C.utf8"}, true, true},
-		{"unset locale", "linux", nil, false, true},
-		{"C locale", "linux", map[string]string{"LANG": "C"}, false, true},
-		{"LC_ALL overrides LANG", "darwin", map[string]string{"LANG": "en_US.UTF-8", "LC_ALL": "C"}, false, true},
-		{"LC_CTYPE overrides LANG", "darwin", map[string]string{"LANG": "C", "LC_CTYPE": "UTF-8"}, true, true},
-		{"LC_ALL overrides LC_CTYPE", "darwin", map[string]string{"LC_ALL": "C", "LC_CTYPE": "UTF-8"}, false, true},
-		{"legacy Windows", "windows", map[string]string{"LANG": "en_US.UTF-8"}, false, true},
-		{"Windows Terminal", "windows", map[string]string{"WT_SESSION": "synthetic"}, true, true},
-		{"NO_COLOR any value", "darwin", map[string]string{"LANG": "en_US.UTF-8", "NO_COLOR": "0"}, true, false},
-		{"NO_COLOR beats force", "darwin", map[string]string{"LANG": "en_US.UTF-8", "NO_COLOR": "1", "FORCE_COLOR": "1"}, true, false},
-		{"CLICOLOR off", "darwin", map[string]string{"LANG": "en_US.UTF-8", "CLICOLOR": "0"}, true, false},
-		{"FORCE_COLOR off", "darwin", map[string]string{"LANG": "en_US.UTF-8", "FORCE_COLOR": "0"}, true, false},
-		{"dumb", "darwin", map[string]string{"TERM": "dumb"}, false, false},
+		{"UTF-8", "darwin", map[string]string{"LANG": "en_US.UTF-8"}, true},
+		{"UTF8", "linux", map[string]string{"LANG": "C.utf8"}, true},
+		{"unset locale", "linux", nil, false},
+		{"C locale", "linux", map[string]string{"LANG": "C"}, false},
+		{"LC_ALL overrides LANG", "darwin", map[string]string{"LANG": "en_US.UTF-8", "LC_ALL": "C"}, false},
+		{"LC_CTYPE overrides LANG", "darwin", map[string]string{"LANG": "C", "LC_CTYPE": "UTF-8"}, true},
+		{"LC_ALL overrides LC_CTYPE", "darwin", map[string]string{"LC_ALL": "C", "LC_CTYPE": "UTF-8"}, false},
+		{"legacy Windows", "windows", map[string]string{"LANG": "en_US.UTF-8"}, false},
+		{"Windows Terminal", "windows", map[string]string{"WT_SESSION": "synthetic"}, true},
+		{"NO_COLOR any value", "darwin", map[string]string{"LANG": "en_US.UTF-8", "NO_COLOR": "0"}, true},
+		{"NO_COLOR beats force", "darwin", map[string]string{"LANG": "en_US.UTF-8", "NO_COLOR": "1", "FORCE_COLOR": "1"}, true},
+		{"CLICOLOR off", "darwin", map[string]string{"LANG": "en_US.UTF-8", "CLICOLOR": "0"}, true},
+		{"FORCE_COLOR off", "darwin", map[string]string{"LANG": "en_US.UTF-8", "FORCE_COLOR": "0"}, true},
+		{"dumb", "darwin", map[string]string{"TERM": "dumb"}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			getenv := func(key string) string {
@@ -224,9 +223,9 @@ func TestImageLoadingSpinnerEnvironment(t *testing.T) {
 			require.Equal(t, want.FPS, animation.FPS)
 			require.Len(t, animation.Frames, len(want.Frames))
 			for i, frame := range animation.Frames {
-				require.Equal(t, want.Frames[i], ansi.Strip(frame))
+				require.Equal(t, want.Frames[i], frame, "keep the terminal foreground without styling escapes")
 				require.Equal(t, ansi.StringWidth(want.Frames[i]), ansi.StringWidth(frame))
-				require.Equal(t, test.color, strings.Contains(frame, "\x1b[36m"))
+				require.NotContains(t, frame, "\x1b[")
 			}
 		})
 	}
@@ -248,8 +247,8 @@ func TestLoadingFeedbackUnicodeFitsByCells(t *testing.T) {
 			if columns == 19 {
 				require.Equal(t, "Generating image\n", output.String(), "leave one column to prevent wrapping")
 			} else {
-				require.Contains(t, output.String(), "\r\x1b[36m⣾ \x1b[0m Generating image")
-				require.Contains(t, output.String(), "\r\x1b[36m⣽ \x1b[0m Generating image")
+				require.Contains(t, output.String(), "\r⣾  Generating image")
+				require.Contains(t, output.String(), "\r⣽  Generating image")
 				require.True(t, strings.HasSuffix(output.String(), "\r\x1b[2K"))
 				require.NotContains(t, output.String(), "\n")
 			}

@@ -61,7 +61,7 @@ for name in sorted(gated | quiet):
         assert count == 1 and '\x1b[2K' not in section, (name, 'expected static feedback')
     if name in {'utf8', 'no-color'}:
         assert '⣾' in section, (name, 'missing Unicode spinner')
-        assert ('\x1b[36m' in section) == (name == 'utf8'), (name, 'incorrect color policy')
+        assert not re.search(r'\x1b\[[0-9;]*m', section), (name, 'loading must preserve the terminal foreground')
     if name in {'ascii', 'locale-override'}:
         assert '\r| Generating image' in section, (name, 'missing ASCII fallback')
         assert '⣾' not in section and '\x1b[36m' not in section
