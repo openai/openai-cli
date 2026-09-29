@@ -27,32 +27,13 @@ Full help: {{$bin}} help --all images generate
 Key setup: {{$bin}} help setup
 `
 
-const imageGenerationSavingHelp = `EXAMPLES
+const imageGenerationSavingHelp = `EXAMPLE
 
-Make two images:
-    openai images generate --prompt "A tiny cat" --count 2
-Choose a folder and filename:
-    openai images generate --prompt "A tiny cat" --output-dir "~/Downloads" --name cat
-Make a transparent image:
-    openai images generate --prompt "A leaf" --background transparent --output-format webp
+    openai images generate --prompt "A tiny cat" --name cat
 
-SAVING
-
-Saves to ~/Downloads/gpt-images/ (created automatically). A chosen folder must already exist. Existing files are kept; duplicate names get -2, -3, etc.
-
-DEFAULTS
-
-With both --model and --response-format omitted: ` + defaultSavedImageModel + `, one PNG, automatic size, quality, background and moderation.
-` + imageSavingOverrideHelp + `
-
-PREVIEWS
-
-` + imageProgressSettingsHelp + `
-` + imagePreviewSettingsHelp + `
-
-API OUTPUT
-
-` + imageAPIOutputHelp
+Saves to ~/Downloads/gpt-images/. Use --output-dir to choose an existing folder.
+For API data without saving, use --format json without --name or --output-dir.
+`
 
 type imageOutputPlan struct {
 	directory, name string

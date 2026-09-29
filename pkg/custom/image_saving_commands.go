@@ -48,8 +48,8 @@ func configureImageSaving(root *cli.Command) {
 func registerImageSavingFlags(command *cli.Command) {
 	command.Flags = append(command.Flags,
 		&cli.StringFlag{Name: "output-dir", Usage: "Save images in an existing `DIRECTORY`", DefaultText: "~/Downloads/gpt-images/"},
-		&cli.StringFlag{Name: "inline", Value: "auto", Usage: "Show a saved-image preview: auto, on or off; on allows a local Apple Terminal image font"},
-		&cli.StringFlag{Name: "name", Usage: "Save with this filename `STEM` (an image extension is optional); existing files are kept"},
+		&cli.StringFlag{Name: "inline", Value: "auto", Usage: "Show previews: auto, on or off. Uses your saved preference unless set. Local Apple Terminal: auto uses color blocks; on permits sharp previews, Terminal Automation and private font caches. Pipes and CI never show previews."},
+		&cli.StringFlag{Name: "name", Usage: "Save with this filename `STEM` (an image extension is optional); duplicates get -2, -3, etc. Existing files are kept"},
 	)
 	model := defaultSavedImageModel
 	if command.Name == "create-variation" {
@@ -61,9 +61,16 @@ func registerImageSavingFlags(command *cli.Command) {
 			if flag.Name == "n" {
 				flag.Aliases = append(flag.Aliases, "count")
 			}
+			if flag.Name == "partial-images" {
+				flag.Usage = "Positive values enable streaming when saving. " + flag.Usage
+			}
+		case *requestflag.Flag[*bool]:
+			if flag.Name == "stream" {
+				flag.Usage = "When saving, only the final image is kept. Omit --max-items or use -1. For previews, set --partial-images. Use --format json for API events. " + flag.Usage
+			}
 		case *requestflag.Flag[*string]:
 			if flag.Name == "model" {
-				flag.Usage = "CLI saving default: " + model + ". Explicit models retain API defaults. API behavior: " + flag.Usage
+				flag.Usage = "Saving default when model and response-format are omitted: " + model + ". Explicit models retain API defaults. API behavior: " + flag.Usage
 				flag.HideDefault = true
 			}
 			if flag.Name == "response-format" {
