@@ -29,10 +29,11 @@ func TestMainImageProgressHelpExplainsAppleModes(t *testing.T) {
 			require.Empty(t, got.stderr)
 			text := strings.Join(strings.Fields(got.stdout), " ")
 			for _, guidance := range []string{
-				"Only one final image is saved.",
+				"When saving, only the final image is kept.",
 				"Local Apple Terminal: auto uses color blocks",
-				"on (including a saved on preference) permits sharp previews",
-				"Terminal Automation and private preview caches",
+				"Uses your saved preference unless set",
+				"on permits sharp previews",
+				"Terminal Automation and private font caches",
 			} {
 				require.Contains(t, text, guidance)
 			}
