@@ -1,6 +1,8 @@
 package custom
 
 import (
+	"strings"
+
 	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -9,6 +11,7 @@ import (
 // ConfigureHelp decorates help without changing API commands or their defaults.
 func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 	configureHelpGroups(root)
+	configureImageHelpInvocation(root, clihelp.Invocation(root.Name, args))
 	// Full help documents credential flags, but must never echo their values.
 	for _, flag := range root.Flags {
 		if flag, ok := flag.(*requestflag.Flag[string]); ok {
@@ -19,6 +22,24 @@ func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 		}
 	}
 	return clihelp.Configure(root, args)
+}
+
+func configureImageHelpInvocation(root *cli.Command, invocation string) {
+	images := root.Command("images")
+	if images == nil {
+		return
+	}
+	for name, description := range map[string]string{
+		"generate":         imageGenerationSavingHelp,
+		"edit":             imageEditSavingHelp,
+		"create-variation": imageVariationSavingHelp,
+	} {
+		if command := images.Command(name); command != nil {
+			// Descriptions are plain text, not templates. Start from the original
+			// each time so repeated help configuration cannot retain an old path.
+			command.Description = strings.Replace(description, "\n    openai ", "\n    "+invocation+" ", 1)
+		}
+	}
 }
 
 func configureHelpGroups(root *cli.Command) {

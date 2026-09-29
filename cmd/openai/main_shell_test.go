@@ -125,68 +125,83 @@ func TestMainNativeShell(t *testing.T) {
 						t.Fatalf("displayed command %q failed: %+v", command, got)
 					}
 				})
+				for _, full := range []bool{false, true} {
+					exampleName, helpArgs, prompt := "copy brief image example", " images generate --help", "A tiny orange robot"
+					if full {
+						exampleName, helpArgs, prompt = "copy full image example", " help --all images generate", "A tiny cat"
+					}
+					if elsewhere {
+						exampleName += " from another directory"
+					}
+					t.Run(exampleName, func(t *testing.T) {
+						home := t.TempDir()
+						short := runNativeShell(t, shell, directory, home, "not-a-url", invocation+helpArgs)
+						var command string
+						for line := range strings.SplitSeq(short.stdout, "\n") {
+							if strings.Contains(line, " images generate --prompt ") {
+								command = strings.TrimSpace(line)
+								break
+							}
+						}
+						if short.code != 0 || short.stderr != "" || !strings.HasPrefix(command, invocation+" images generate ") {
+							t.Fatalf("help must use the invoked executable %q in its image example: %+v", invocation, short)
+						}
+						var requests atomic.Int32
+						payload := imageGenerationPNG(t)
+						server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							requests.Add(1)
+							if r.Method != http.MethodPost || r.URL.Path != "/images/generations" {
+								t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+							}
+							var body struct {
+								Model, Prompt string
+								Inline        json.RawMessage
+							}
+							if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+								t.Errorf("decode synthetic request: %v", err)
+							} else if body.Model != "gpt-image-2.5-sunburst" || body.Prompt != prompt {
+								t.Errorf("copied example changed its arguments: %+v", body)
+							}
+							if body.Inline != nil {
+								t.Error("local inline flag leaked into the API request")
+							}
+							if r.Header.Get("Authorization") != "Bearer fake-native-shell-key" {
+								t.Error("shell environment did not supply the synthetic key")
+							}
+							w.Header().Set("Content-Type", "application/json")
+							io.WriteString(w, imageGenerationResponse(payload))
+						}))
+						defer server.Close()
+						got := runNativeShell(t, shell, directory, home, server.URL, shell.setKey+command)
+						if got.code != 0 || got.stderr != "" || requests.Load() != 1 || !strings.Contains(got.stdout, "Saved image:") {
+							t.Fatalf("copied image example failed: code=%d requests=%d stderr=%q", got.code, requests.Load(), got.stderr)
+						}
+						assertImageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"), got.stdout, 1, payload)
+						if full {
+							if _, err := os.Stat(filepath.Join(home, "Downloads", "gpt-images", "cat.png")); err != nil {
+								t.Fatalf("copied full-help example did not save its requested filename: %v", err)
+							}
+						}
+						if strings.Contains(got.stdout+got.stderr, "fake-native-shell-key") {
+							t.Error("output printed the synthetic credential")
+						}
+						t.Run("explicit inline off preserves remembered on", func(t *testing.T) {
+							home := t.TempDir()
+							got := runNativeShell(t, shell, directory, home, server.URL, invocation+" images inline on")
+							if got.code != 0 || got.stderr != "" {
+								t.Fatalf("remember inline on: %+v", got)
+							}
+							assertNativeShellImagePreference(t, home, true)
+							got = runNativeShell(t, shell, directory, home, server.URL, shell.setKey+command+" --inline off")
+							if got.code != 0 || got.stderr != "" || requests.Load() != 2 || !strings.Contains(got.stdout, "Saved image:") {
+								t.Fatalf("explicit inline off failed: code=%d requests=%d stderr=%q", got.code, requests.Load(), got.stderr)
+							}
+							assertImageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"), got.stdout, 1, payload)
+							assertNativeShellImagePreference(t, home, true)
+						})
+					})
+				}
 			}
-			t.Run("copy image example", func(t *testing.T) {
-				short := runNativeShell(t, shell, work, home, "not-a-url", shell.binary+" images generate --help")
-				var command string
-				for line := range strings.SplitSeq(short.stdout, "\n") {
-					if strings.Contains(line, " images generate --prompt ") {
-						command = strings.TrimSpace(line)
-						break
-					}
-				}
-				if short.code != 0 || command == "" {
-					t.Fatalf("short help lacks an image example: %+v", short)
-				}
-				var requests atomic.Int32
-				payload := imageGenerationPNG(t)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					requests.Add(1)
-					if r.Method != http.MethodPost || r.URL.Path != "/images/generations" {
-						t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-					}
-					var body struct {
-						Model, Prompt string
-						Inline        json.RawMessage
-					}
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-						t.Errorf("decode synthetic request: %v", err)
-					} else if body.Model != "gpt-image-2.5-sunburst" || body.Prompt != "A tiny orange robot" {
-						t.Errorf("copied example changed its arguments: %+v", body)
-					}
-					if body.Inline != nil {
-						t.Error("local inline flag leaked into the API request")
-					}
-					if r.Header.Get("Authorization") != "Bearer fake-native-shell-key" {
-						t.Error("shell environment did not supply the synthetic key")
-					}
-					w.Header().Set("Content-Type", "application/json")
-					io.WriteString(w, imageGenerationResponse(payload))
-				}))
-				defer server.Close()
-				got := runNativeShell(t, shell, work, home, server.URL, shell.setKey+command)
-				if got.code != 0 || got.stderr != "" || requests.Load() != 1 || !strings.Contains(got.stdout, "Saved image:") {
-					t.Fatalf("copied image example failed: code=%d requests=%d stderr=%q", got.code, requests.Load(), got.stderr)
-				}
-				assertImageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"), got.stdout, 1, payload)
-				if strings.Contains(got.stdout+got.stderr, "fake-native-shell-key") {
-					t.Error("output printed the synthetic credential")
-				}
-				t.Run("explicit inline off preserves remembered on", func(t *testing.T) {
-					home := t.TempDir()
-					got := runNativeShell(t, shell, work, home, server.URL, shell.binary+" images inline on")
-					if got.code != 0 || got.stderr != "" {
-						t.Fatalf("remember inline on: %+v", got)
-					}
-					assertNativeShellImagePreference(t, home, true)
-					got = runNativeShell(t, shell, work, home, server.URL, shell.setKey+command+" --inline off")
-					if got.code != 0 || got.stderr != "" || requests.Load() != 2 || !strings.Contains(got.stdout, "Saved image:") {
-						t.Fatalf("explicit inline off failed: code=%d requests=%d stderr=%q", got.code, requests.Load(), got.stderr)
-					}
-					assertImageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"), got.stdout, 1, payload)
-					assertNativeShellImagePreference(t, home, true)
-				})
-			})
 			t.Run("local image commands", func(t *testing.T) {
 				var requests atomic.Int32
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
