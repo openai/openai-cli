@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.2](https://github.com/openai/openai-cli/compare/v1.29.1...v1.29.2) (2026-09-29)
+
+
+### Bug Fixes
+
+* **cli:** show common image commands first ([#317](https://github.com/openai/openai-cli/issues/317)) ([f676145](https://github.com/openai/openai-cli/commit/f676145cbf9613a52e00ca74f413300e1160b117))
+
 ## [1.29.1](https://github.com/openai/openai-cli/compare/v1.29.0...v1.29.1) (2026-09-29)
 
 
