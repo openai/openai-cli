@@ -36,18 +36,20 @@ func TestMainImageSettingsHelpScope(t *testing.T) {
 			require.True(t, found, "full help must include the command description")
 			description, _, found = strings.Cut(description, "\nOPTIONS:")
 			require.True(t, found, "full help must retain the separate option reference")
-			require.LessOrEqual(t, len(strings.Fields(description)), 330, "keep the introduction concise; details belong in the option reference")
+			require.LessOrEqual(t, len(strings.Fields(description)), 65, "keep the introduction concise; details belong in the option reference")
+			require.Equal(t, 1, strings.Count(description, "openai images "), "lead with one useful example")
 			text := strings.Join(strings.Fields(full.stdout), " ")
-			for _, want := range []string{"--name", "folder", "must already exist", "-2, -3", "--format json returns API data", "no saving or CLI image defaults", "--inline off hides previews once", "openai images inline off remembers it", "--inline overrides the preference", "Pipes and CI never show previews"} {
+			for _, want := range []string{"--name", "existing folder", "-2, -3", "--format json", "without saving", "Uses your saved preference unless set", "Pipes and CI never show previews"} {
 				require.Contains(t, text, want)
 			}
 			if operation == "create-variation" {
 				for _, unsupported := range []string{"--quality", "--partial-images", "--moderation", "--output-format", "--output-compression", "--background", "--stream"} {
 					require.NotContains(t, full.stdout, unsupported)
 				}
-				require.Contains(t, text, "Variations support dall-e-2 only")
+				require.Contains(t, text, "dall-e-2")
+				require.Contains(t, text, "square PNG under 4 MB")
 			} else {
-				for _, want := range []string{"With both --model and --response-format omitted", "including nulls", "Setting model or response-format leaves other omitted settings to the API", "requests up to that many previews and enables streaming when saving", "Only one final image is saved", "--format json --stream true", "--max-items or use -1"} {
+				for _, want := range []string{"Saving default when model and response-format are omitted", "Explicit models retain API defaults", "Positive values enable streaming when saving", "When saving, only the final image is kept", "Use --format json for API events", "--max-items or use -1"} {
 					require.Contains(t, text, want)
 				}
 				if operation == "edit" {
@@ -66,13 +68,9 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 		operation string
 		args      []string
 	}{
-		{"generate", []string{"--prompt", "A tiny cat", "--output-dir", "~/Downloads", "--name", "cat"}},
-		{"generate", []string{"--prompt", "A tiny cat", "--count", "2"}},
-		{"generate", []string{"--prompt", "A leaf", "--background", "transparent", "--output-format", "webp"}},
+		{"generate", []string{"--prompt", "A tiny cat", "--name", "cat"}},
 		{"edit", []string{"--image", "photo.png", "--prompt", "Make the sky purple", "--name", "purple-sky"}},
-		{"edit", []string{"--image", "photo.png", "--prompt", "Remove the background", "--background", "transparent", "--output-format", "webp"}},
 		{"create-variation", []string{"--image", "photo.png", "--name", "variation"}},
-		{"create-variation", []string{"--image", "photo.png", "--count", "2", "--size", "512x512"}},
 	} {
 		t.Run(tc.operation+"/"+strings.Join(tc.args, " "), func(t *testing.T) {
 			args := append([]string(nil), tc.args...)
@@ -83,7 +81,7 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 			for i := 0; i < len(args); i += 2 {
 				flag, value := args[i], args[i+1]
 				fmt.Fprintf(&example, " %s ", flag)
-				if strings.Contains(value, " ") || value == "photo.png" || strings.HasPrefix(value, "~/") {
+				if strings.Contains(value, " ") || value == "photo.png" {
 					example.WriteString(strconv.Quote(value))
 				} else {
 					example.WriteString(value)
@@ -100,18 +98,6 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 			require.NoError(t, png.Encode(&source, image.NewNRGBA(image.Rect(0, 0, 256, 256))))
 			sourcePath := filepath.Join(home, "photo.png")
 			require.NoError(t, os.WriteFile(sourcePath, source.Bytes(), 0600))
-			payload, extension := source.Bytes(), ".png"
-			if settings["output-format"] == "webp" {
-				// Same locally encoded synthetic 2x2 WebP as the preview tests.
-				var err error
-				payload, err = base64.StdEncoding.DecodeString("UklGRhwAAABXRUJQVlA4TA8AAAAvAUAAAAcQ/Y/+ByKi/wEA")
-				require.NoError(t, err)
-				extension = ".webp"
-			}
-			count := 1
-			if settings["count"] == "2" {
-				count = 2
-			}
 			want := map[string]any{}
 			if tc.operation == "create-variation" {
 				want["model"], want["response_format"] = "dall-e-2", "b64_json"
@@ -123,10 +109,8 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 			}
 			for name, value := range settings {
 				switch name {
-				case "image", "name", "output-dir":
+				case "image", "name":
 					continue
-				case "count":
-					name, value = "n", float64(count)
 				}
 				want[strings.ReplaceAll(name, "-", "_")] = value
 			}
@@ -150,11 +134,8 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 					require.Equal(t, [][]byte{source.Bytes()}, body.files[field])
 				}
 				requests <- true
-				encoded := base64.StdEncoding.EncodeToString(payload)
-				data := make([]map[string]string, count)
-				for i := range data {
-					data[i] = map[string]string{"b64_json": encoded}
-				}
+				encoded := base64.StdEncoding.EncodeToString(source.Bytes())
+				data := []map[string]string{{"b64_json": encoded}}
 				w.Header().Set("Content-Type", "application/json")
 				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data}))
 			}))
@@ -176,19 +157,17 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 			original, err := os.ReadFile(sourcePath)
 			require.NoError(t, err)
 			require.Equal(t, source.Bytes(), original)
-			if settings["output-dir"] == nil {
-				directory = filepath.Join(directory, "gpt-images")
-			}
+			directory = filepath.Join(directory, "gpt-images")
 			files := imageGenerationFiles(t, directory)
-			require.Len(t, files, count)
+			require.Len(t, files, 1)
 			for _, file := range files {
 				saved, err := os.ReadFile(file)
 				require.NoError(t, err)
-				require.Equal(t, payload, saved)
-				require.Equal(t, extension, filepath.Ext(file))
+				require.Equal(t, source.Bytes(), saved)
+				require.Equal(t, ".png", filepath.Ext(file))
 				require.Contains(t, result.stdout, strconv.Quote(file))
 				if stem, ok := settings["name"].(string); ok {
-					require.Equal(t, stem+extension, filepath.Base(file))
+					require.Equal(t, stem+".png", filepath.Base(file))
 				}
 			}
 		})
