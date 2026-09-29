@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.1](https://github.com/openai/openai-cli/compare/v1.29.0...v1.29.1) (2026-09-29)
+
+
+### Documentation
+
+* **cli:** explain image settings and saving defaults ([#316](https://github.com/openai/openai-cli/issues/316)) ([e544427](https://github.com/openai/openai-cli/commit/e544427250eb148d179f83741489f34d9a7bec9e))
+
 ## [1.29.0](https://github.com/openai/openai-cli/compare/v1.28.2...v1.29.0) (2026-09-28)
 
 
