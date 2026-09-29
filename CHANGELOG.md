@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.3](https://github.com/openai/openai-cli/compare/v1.30.2...v1.30.3) (2026-09-29)
+
+
+### Chores
+
+* **api:** refresh SDK metadata ([#330](https://github.com/openai/openai-cli/issues/330)) ([ce4a72b](https://github.com/openai/openai-cli/commit/ce4a72b935814f9c3976a89bddea9d7ee867f998))
+
 ## [1.30.2](https://github.com/openai/openai-cli/compare/v1.30.1...v1.30.2) (2026-09-29)
 
 
