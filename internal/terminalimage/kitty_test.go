@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi/kitty"
@@ -17,6 +18,10 @@ func TestKittyPartialFrameCleanup(t *testing.T) {
 		for _, location := range []string{"escape", "header", "payload", "terminator"} {
 			for _, failure := range []string{"error", "short write", "cancellation"} {
 				t.Run(fmt.Sprintf("frame%d/%s/%s", frameNumber, location, failure), func(t *testing.T) {
+					terminator := "\x1b\\"
+					if location == "escape" || location == "terminator" {
+						terminator = "\\"
+					}
 					ctx, cancel := context.WithCancel(t.Context())
 					defer cancel()
 					sentinel := errors.New("synthetic partial Kitty write")
@@ -29,7 +34,9 @@ func TestKittyPartialFrameCleanup(t *testing.T) {
 							return output.Write(data)
 						}
 						if writes > frameNumber {
-							require.Equal(t, "\x1b\\", string(data), "cleanup emits only ST")
+							cleanup := []string{terminator, "\x1b_Gq=2,m=0;\x1b\\"}
+							require.LessOrEqual(t, writes-frameNumber, len(cleanup))
+							require.Equal(t, cleanup[writes-frameNumber-1], string(data), "close APC before finishing the upload")
 							return output.Write(data)
 						}
 						accepted := 1
@@ -42,7 +49,7 @@ func TestKittyPartialFrameCleanup(t *testing.T) {
 							accepted = len(data) - 1
 						}
 						expected.Write(data[:accepted])
-						expected.WriteString("\x1b\\")
+						expected.WriteString(terminator + "\x1b_Gq=2,m=0;\x1b\\")
 						n, err := output.Write(data[:accepted])
 						if failure == "error" {
 							err = sentinel
@@ -60,7 +67,7 @@ func TestKittyPartialFrameCleanup(t *testing.T) {
 					case "cancellation":
 						require.ErrorIs(t, err, context.Canceled)
 					}
-					require.Equal(t, frameNumber+1, writes)
+					require.Equal(t, frameNumber+2, writes)
 					require.Equal(t, expected.Bytes(), output.Bytes())
 				})
 			}
@@ -68,11 +75,12 @@ func TestKittyPartialFrameCleanup(t *testing.T) {
 	}
 }
 
-func TestKittyCleanupRetainsBothErrors(t *testing.T) {
+func TestKittyCleanupRetainsErrors(t *testing.T) {
 	for _, canceled := range []bool{false, true} {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		payloadErr, cleanupErr := errors.New("synthetic Kitty write failure"), errors.New("synthetic ST failure")
+		finishErr := errors.New("synthetic final-chunk failure")
 		writes := 0
 		out := writerFunc(func(data []byte) (int, error) {
 			writes++
@@ -82,21 +90,30 @@ func TestKittyCleanupRetainsBothErrors(t *testing.T) {
 				}
 				return 3, payloadErr
 			}
-			require.Equal(t, "\x1b\\", string(data))
-			return 0, cleanupErr
+			if writes == 2 {
+				require.Equal(t, "\x1b\\", string(data))
+				return 0, cleanupErr
+			}
+			require.Equal(t, "\x1b_Gq=2,m=0;\x1b\\", string(data))
+			return 0, finishErr
 		})
 		err := Write(ctx, out, testImage(t), "kitty", 50)
 		require.ErrorIs(t, err, payloadErr)
 		require.ErrorIs(t, err, cleanupErr)
+		require.ErrorIs(t, err, finishErr)
 		if canceled {
 			require.ErrorIs(t, err, context.Canceled)
 		}
-		require.Equal(t, 2, writes, "attempt cleanup once even if it fails")
+		require.Equal(t, 3, writes, "attempt each cleanup write only once even if it fails")
 	}
 }
 
-func TestKittyClosedFramesNeedNoCleanup(t *testing.T) {
-	for _, frameNumber := range []int{1, 2} {
+func TestKittyClosedFramesFinishPendingTransfer(t *testing.T) {
+	var success bytes.Buffer
+	require.NoError(t, Write(t.Context(), &success, testImage(t), "kitty", 50))
+	lastFrame := strings.Count(success.String(), "\x1b_G")
+	require.Greater(t, lastFrame, 2)
+	for _, frameNumber := range []int{1, 2, lastFrame} {
 		for _, accepted := range []bool{false, true} {
 			for _, canceled := range []bool{false, true} {
 				ctx, cancel := context.WithCancel(t.Context())
@@ -104,6 +121,10 @@ func TestKittyClosedFramesNeedNoCleanup(t *testing.T) {
 				writes := 0
 				out := writerFunc(func(data []byte) (int, error) {
 					writes++
+					if writes > frameNumber {
+						require.Equal(t, "\x1b_Gq=2,m=0;\x1b\\", string(data), "closed APC needs only the final chunk")
+						return len(data), nil
+					}
 					n := len(data)
 					if writes == frameNumber {
 						if !accepted {
@@ -124,7 +145,11 @@ func TestKittyClosedFramesNeedNoCleanup(t *testing.T) {
 				} else {
 					require.ErrorIs(t, err, sentinel)
 				}
-				require.Equal(t, frameNumber, writes, "zero acceptance or a complete ST cannot leave a partial frame")
+				wantWrites := frameNumber
+				if (frameNumber > 1 || accepted) && !(frameNumber == lastFrame && accepted) {
+					wantWrites++
+				}
+				require.Equal(t, wantWrites, writes, "finish only an upload that may still be pending")
 			}
 		}
 	}

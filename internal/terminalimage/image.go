@@ -120,13 +120,23 @@ func (w contextWriter) Write(data []byte) (int, error) {
 
 // Encode into a checked writer: kitty.EncodeGraphics buffers the entire PNG
 // without checking cancellation. Reuse Charm's options/framing after encoding.
-func writeKittyImage(ctx context.Context, out io.Writer, img image.Image, columns int) error {
+func writeKittyImage(ctx context.Context, out io.Writer, img image.Image, columns int) (err error) {
 	var encoded bytes.Buffer
 	if err := imagefont.EncodePNG(ctx, &png.Encoder{}, &encoded, img); err != nil {
 		return err
 	}
 	options := (&kitty.Options{Action: kitty.TransmitAndPut, Transmission: kitty.Direct, Format: kitty.PNG, Quite: 2, Columns: columns}).Options()
 	destination := contextWriter{ctx, out}
+	incomplete := false
+	defer func() {
+		if incomplete {
+			// ST closes an APC, but not a chunked upload. Finish that upload
+			// quietly so a later image cannot be appended to its partial PNG.
+			// Do not delete images: earlier placements belong to scrollback.
+			_, cleanupErr := io.WriteString(contextWriter{context.WithoutCancel(ctx), out}, "\x1b_Gq=2,m=0;\x1b\\")
+			err = errors.Join(err, cleanupErr)
+		}
+	}()
 	const rawChunk = kitty.MaxChunkSize / 4 * 3
 	first := true
 	for encoded.Len() > 0 {
@@ -146,14 +156,24 @@ func writeKittyImage(ctx context.Context, out io.Writer, img image.Image, column
 			opts = append(opts, "m=0")
 		}
 		frame := ansi.KittyGraphics(payload, opts...)
-		if n, err := io.WriteString(destination, frame); err != nil {
+		n, writeErr := io.WriteString(destination, frame)
+		if n > 0 {
+			incomplete = n < len(frame) || encoded.Len() > 0
+		}
+		if writeErr != nil {
 			if n > 0 && n < len(frame) {
 				// Each chunk owns one APC. A partial write can leave it open;
-				// attempt only ST after cancellation, retaining both errors.
-				_, cleanupErr := io.WriteString(contextWriter{context.WithoutCancel(ctx), out}, "\x1b\\")
-				return errors.Join(err, cleanupErr)
+				// close it before the deferred final chunk, retaining all errors.
+				terminator := "\x1b\\"
+				if frame[n-1] == '\x1b' {
+					// Complete an accepted ESC rather than doubling it, which
+					// can leave a literal backslash in the terminal's text.
+					terminator = "\\"
+				}
+				_, cleanupErr := io.WriteString(contextWriter{context.WithoutCancel(ctx), out}, terminator)
+				return errors.Join(writeErr, cleanupErr)
 			}
-			return err
+			return writeErr
 		}
 		first = false
 	}
