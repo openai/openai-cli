@@ -4,7 +4,6 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
-	"reflect"
 	"slices"
 	"strings"
 )
@@ -64,19 +63,20 @@ func (m *RequestLogger) Middleware() Middleware {
 	}
 }
 
-// redactRequest redacts sensitive information from the request for logging
-// purposes. If redaction is necessary, the request is cloned before mutating
-// the original and that clone is returned. As a small optimization, the
-// original request is returned unchanged if no redaction is necessary.
+// redactRequest filters headers and omits query data on a logging-only copy.
 func (m *RequestLogger) redactRequest(req *http.Request) (*http.Request, error) {
-	redactedHeaders := m.redactHeaders(req.Header)
-
-	if reflect.DeepEqual(req.Header, redactedHeaders) {
-		return req, nil
-	}
-
 	redacted := req.Clone(req.Context())
-	redacted.Header = redactedHeaders
+	redacted.Header = m.redactHeaders(req.Header)
+	// DumpRequest prefers RequestURI, and URL.RequestURI prefers Opaque.
+	// Discard both alternate targets so only the escaped path is logged.
+	redacted.RequestURI = ""
+	if redacted.URL != nil {
+		redacted.URL.Opaque = ""
+		redacted.URL.User = nil
+		// Omit the whole query, including sensitive keys and malformed values.
+		redacted.URL.RawQuery = ""
+		redacted.URL.ForceQuery = false
+	}
 	return redacted, nil
 }
 
