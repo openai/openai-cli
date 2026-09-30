@@ -47022,28 +47022,6 @@ components:
       x-oaiMeta:
         name: Multi Grader
         group: graders
-        example: |
-          {
-            "type": "multi",
-            "name": "example multi grader",
-            "graders": {
-              "text_similarity_score": {
-                "type": "text_similarity",
-                "name": "example text similarity grader",
-                "input": "The graded text",
-                "reference": "The reference text",
-                "evaluation_metric": "fuzzy_match"
-              },
-              "string_check_score": {
-                "type": "string_check",
-                "name": "Example string check grader",
-                "input": "{{sample.output_text}}",
-                "reference": "{{item.label}}",
-                "operation": "eq"
-              }
-            },
-            "calculate_output": "0.5 * text_similarity_score + 0.5 * string_check_score"
-          }
     GraderPython:
       type: object
       title: PythonGrader
@@ -49383,10 +49361,9 @@ components:
       properties:
         type:
           type: string
-          description: Use `digest` for SIP Digest authentication. For Telnyx-backed trunks, use `digest_telnyx`. Both modes handle 401 and 407 challenges.
+          description: Use `digest` for SIP Digest authentication. Handles 401 and 407 challenges.
           enum:
           - digest
-          - digest_telnyx
         username:
           type: string
           minLength: 1
