@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.30.6](https://github.com/openai/openai-cli/compare/v1.30.5...v1.30.6) (2026-09-30)
+
+
+### Bug Fixes
+
+* **debug:** limit response header values to operational metadata ([#339](https://github.com/openai/openai-cli/issues/339)) ([6609abe](https://github.com/openai/openai-cli/commit/6609abe59f496532b213e51d175d1e508374c829))
+* omit query data from debug request logs ([#338](https://github.com/openai/openai-cli/issues/338)) ([4603381](https://github.com/openai/openai-cli/commit/4603381ba4987c3ce906419d1d4208648a24338e))
+
+
+### Chores
+
+* **api:** correct the eval run cancellation endpoint reference ([#341](https://github.com/openai/openai-cli/issues/341)) ([331dd2b](https://github.com/openai/openai-cli/commit/331dd2be05a8b7e6975f99eb49627c780de6a3b7))
+* **api:** refresh API reference and preserve Live session commands ([#337](https://github.com/openai/openai-cli/issues/337)) ([cabdceb](https://github.com/openai/openai-cli/commit/cabdceb7c74cd6c8e65c763b9762794683b6ffab))
+
 ## [1.30.5](https://github.com/openai/openai-cli/compare/v1.30.4...v1.30.5) (2026-09-30)
 
 
