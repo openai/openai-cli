@@ -92,12 +92,16 @@ func (m *RequestLogger) redactResponse(resp *http.Response) *http.Response {
 func (m *RequestLogger) redactResponseHeaders(headers http.Header) http.Header {
 	redactedHeaders := m.redactHeaders(headers)
 
-	// Redirect URLs can contain signed query parameters or embedded credentials.
+	// Keep only operational response metadata. Unknown headers and trailers may
+	// contain credentials even when their names were not supplied in the request.
 	for header, values := range redactedHeaders {
-		if strings.EqualFold(header, "Location") {
-			for i := range values {
-				values[i] = redactedPlaceholder
-			}
+		switch strings.ToLower(header) {
+		case "content-type", "content-length", "date", "retry-after", "x-request-id":
+			// redactHeaders has already applied explicitly sensitive names.
+			continue
+		}
+		for i := range values {
+			values[i] = redactedPlaceholder
 		}
 	}
 

@@ -144,7 +144,8 @@ func TestDebugMiddleware(t *testing.T) {
 
 		logged := logBuf.String()
 		require.NotContains(t, logged, secretToken)
-		require.Equal(t, 2, strings.Count(logged, "Proxy-Authorization: Basic "+redactedPlaceholder))
+		require.Contains(t, logged, "Proxy-Authorization: Basic "+redactedPlaceholder)
+		require.Contains(t, logged, "Proxy-Authorization: "+redactedPlaceholder)
 	})
 
 	t.Run("RedactsMultipleAuthorizationHeaders", func(t *testing.T) {
@@ -315,8 +316,7 @@ func TestDebugMiddleware(t *testing.T) {
 			require.NotContains(t, logged, secret)
 		}
 
-		require.Contains(t, logged, "Authorization: Bearer "+redactedPlaceholder)
-		require.Contains(t, logged, "Authorization: "+redactedPlaceholder)
+		require.Equal(t, 2, strings.Count(logged, "Authorization: "+redactedPlaceholder))
 		require.Contains(t, logged, "Api-Key: "+redactedPlaceholder)
 		require.Contains(t, logged, "X-Api-Key: "+redactedPlaceholder)
 		require.Contains(t, logged, customAPIKeyHeader+": "+redactedPlaceholder)
@@ -324,7 +324,7 @@ func TestDebugMiddleware(t *testing.T) {
 		require.Equal(t, 2, strings.Count(logged, "Set-Cookie: "+redactedPlaceholder))
 		require.Contains(t, logged, "Location: "+redactedPlaceholder)
 		require.Contains(t, logged, "X-Request-Id: request-id")
-		require.Contains(t, logged, "X-Response-Trace: trace-id")
+		require.Contains(t, logged, "X-Response-Trace: "+redactedPlaceholder)
 	})
 
 	t.Run("RedactsCaseVariantResponseHeadersFromCustomTransport", func(t *testing.T) {
@@ -397,7 +397,7 @@ func TestDebugMiddleware(t *testing.T) {
 			require.NotContains(t, logged, secret)
 		}
 		lowercaseLog := strings.ToLower(logged)
-		require.Equal(t, 2, strings.Count(lowercaseLog, "authorization: bearer <redacted>"))
+		require.NotContains(t, lowercaseLog, "authorization: bearer")
 		require.Contains(t, lowercaseLog, "authorization: <redacted>")
 		require.Equal(t, 2, strings.Count(lowercaseLog, "x-api-key: <redacted>"))
 		require.Equal(t, 3, strings.Count(lowercaseLog, "set-cookie: <redacted>"))
@@ -477,11 +477,11 @@ func TestDebugMiddleware(t *testing.T) {
 			require.NotContains(t, logged, secret)
 		}
 		lowercaseLog := strings.ToLower(logged)
-		require.Equal(t, 2, strings.Count(lowercaseLog, "authorization: bearer <redacted>"))
+		require.NotContains(t, lowercaseLog, "authorization: bearer")
 		require.Equal(t, 2, strings.Count(lowercaseLog, "x-api-key: <redacted>"))
 		require.Equal(t, 3, strings.Count(lowercaseLog, "set-cookie: <redacted>"))
 		require.Equal(t, 2, strings.Count(lowercaseLog, "location: <redacted>"))
-		require.Contains(t, logged, "X-Trace: trace-id")
+		require.Contains(t, logged, "X-Trace: "+redactedPlaceholder)
 		require.Contains(t, logged, "X-Request-Id: request-id")
 		body, err := io.ReadAll(returned.Body)
 		require.NoError(t, err)
@@ -544,7 +544,8 @@ func TestDebugMiddleware(t *testing.T) {
 		} {
 			require.NotContains(t, logged, secret)
 		}
-		require.Equal(t, 2, strings.Count(logged, "Authorization: Bearer "+redactedPlaceholder))
+		require.Contains(t, logged, "Authorization: Bearer "+redactedPlaceholder)
+		require.Contains(t, logged, "Authorization: "+redactedPlaceholder)
 		require.Equal(t, 2, strings.Count(logged, "Set-Cookie: "+redactedPlaceholder))
 		require.Contains(t, logged, "X-Api-Key: "+redactedPlaceholder)
 		require.Contains(t, logged, "Location: "+redactedPlaceholder)
