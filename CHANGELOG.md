@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.4](https://github.com/openai/openai-cli/compare/v1.30.3...v1.30.4) (2026-09-30)
+
+
+### Chores
+
+* **api:** refresh API reference and preserve Live session commands ([#332](https://github.com/openai/openai-cli/issues/332)) ([099b47d](https://github.com/openai/openai-cli/commit/099b47d3961ac20df2c675a8bfa7aa266a8f7d50))
+
 ## [1.30.3](https://github.com/openai/openai-cli/compare/v1.30.2...v1.30.3) (2026-09-29)
 
 
