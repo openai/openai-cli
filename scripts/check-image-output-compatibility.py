@@ -96,11 +96,14 @@ def main():
     binary = str(pathlib.Path(sys.argv[1]).resolve())
     output = pathlib.Path(sys.argv[2]).resolve()
     output.mkdir(parents=True, exist_ok=True)
+    result_path = output / 'image-output-compatibility.json'
+    # A failed rerun must not leave a previous successful result beside new logs.
+    result_path.unlink(missing_ok=True)
     env = {k: v for k, v in os.environ.items() if not k.startswith('OPENAI_')}
     code, captured = run_terminal_test(binary, TEST, env, timeout=100)
     (output / 'image-output-compatibility.raw').write_bytes(captured)
     results = validate(code, captured)
-    (output / 'image-output-compatibility.json').write_text(json.dumps(results, indent=2) + '\n')
+    result_path.write_text(json.dumps(results, indent=2) + '\n')
     print(json.dumps(results, indent=2))
 
 
