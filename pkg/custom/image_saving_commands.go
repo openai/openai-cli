@@ -96,11 +96,13 @@ type imagePresentation struct {
 // Prepare once so stdin and @file values are not consumed twice. The generated
 // handler still owns SDK dispatch and response/stream lifetime.
 func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
-	return func(ctx context.Context, command *cli.Command) error {
+	return func(ctx context.Context, command *cli.Command) (resultErr error) {
 		inline := command.String("inline")
 		if inline != "auto" && inline != "on" && inline != "off" {
 			return imageSavingFailure("--inline must be auto, on or off.", nil)
 		}
+		ctx, closeOutput := prepareNativeImageOutput(ctx, command)
+		defer func() { resultErr = errors.Join(resultErr, closeOutput()) }()
 		if command.Metadata == nil {
 			command.Metadata = make(map[string]any)
 		}

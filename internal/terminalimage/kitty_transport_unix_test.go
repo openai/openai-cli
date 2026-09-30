@@ -154,69 +154,50 @@ func TestKittySupervisorLifelineStopsBlockedWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dataRead, dataWrite, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer dataRead.Close()
-	defer dataWrite.Close()
 	outRead, outWrite, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer outRead.Close()
 	defer outWrite.Close()
-	lifeRead, lifeWrite, err := os.Pipe()
+	session, err := startKittySession(t.Context(), path, outWrite)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lifeRead.Close()
-	defer lifeWrite.Close()
-	command := exec.Command(path, kittyOutputHelperArgument)
-	command.Stdin = dataRead
-	command.Stdout = outWrite
-	command.ExtraFiles = []*os.File{lifeRead}
-	if err := command.Start(); err != nil {
-		t.Fatal(err)
-	}
-	_ = dataRead.Close()
-	_ = outWrite.Close()
-	_ = lifeRead.Close()
+	defer session.Close()
 	writes := make(chan error, 1)
 	go func() {
-		_, err := io.Copy(dataWrite, strings.NewReader(strings.Repeat("image bytes", 1<<18)))
+		_, err := session.write(t.Context(), func(out io.Writer) error {
+			_, err := io.Copy(out, strings.NewReader(strings.Repeat("image bytes", 1<<18)))
+			return err
+		})
 		writes <- err
 	}()
-	// One byte proves cat started. Leave the rest unread so output fills up.
 	if err := outRead.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	var first [1]byte
-	_, readErr := outRead.Read(first[:])
-	_ = lifeWrite.Close()
-	waited := make(chan error, 1)
-	go func() { waited <- command.Wait() }()
+	if _, err := outRead.Read(first[:]); err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- session.Close() }()
 	select {
-	case err := <-waited:
-		if readErr != nil || err == nil {
-			t.Fatalf("lifeline cancellation failed: first read=%v, wait=%v", readErr, err)
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("session closure failed: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		// Closing the private consumer releases a stuck writer even on failure.
-		_ = outRead.Close()
-		_ = dataWrite.Close()
-		_ = command.Process.Kill()
-		<-waited
-		t.Fatal("supervisor did not reap its blocked writer after lifeline EOF")
+		outRead.Close()
+		t.Fatal("supervisor did not reap blocked native writer")
 	}
 	select {
 	case err := <-writes:
 		if err == nil {
-			t.Fatal("blocked producer unexpectedly delivered its entire image")
+			t.Fatal("blocked producer unexpectedly succeeded")
 		}
 	case <-time.After(5 * time.Second):
-		_ = dataWrite.Close()
-		t.Fatal("native writer retained the data pipe after supervisor exited")
+		t.Fatal("native writer retained data pipe after closure")
 	}
 }
 

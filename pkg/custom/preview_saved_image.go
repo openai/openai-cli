@@ -49,7 +49,7 @@ func registerImagePreviewCommands(root *cli.Command) {
 	}
 }
 
-func handleImagesPreview(ctx context.Context, command *cli.Command) error {
+func handleImagesPreview(ctx context.Context, command *cli.Command) (resultErr error) {
 	if command.Args().Len() != 1 {
 		return imageSavingFailure("Provide one saved image: openai images preview \"path/to/image.png\". Quote filenames containing spaces.", nil)
 	}
@@ -74,6 +74,11 @@ func handleImagesPreview(ctx context.Context, command *cli.Command) error {
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
+	if protocol == "kitty" {
+		var closeOutput func() error
+		ctx, closeOutput = terminalimage.PrepareKittyOutput(ctx, out)
+		defer func() { resultErr = errors.Join(resultErr, closeOutput()) }()
+	}
 	img, err := terminalimage.ReadSaved(ctx, path)
 	if err != nil {
 		return imageSavingFailure("Could not preview that file. Choose a readable PNG, JPEG or WebP, at most 64 MiB and 16 megapixels. The original is unchanged.", err)

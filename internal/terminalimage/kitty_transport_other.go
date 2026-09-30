@@ -12,3 +12,7 @@ func writeKittyOutput(_ context.Context, out io.Writer, write func(io.Writer) er
 }
 
 func RunKittyOutputHelper(_ []string) (bool, error) { return false, nil }
+
+func PrepareKittyOutput(ctx context.Context, _ io.Writer) (context.Context, func() error) {
+	return ctx, func() error { return nil }
+}

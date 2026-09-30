@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
 	"time"
 
@@ -17,34 +16,78 @@ import (
 
 const kittyOutputCleanupTimeout = 2 * time.Second
 
-// Go's interrupted tty writes can resume after VINTR has flushed their header,
-// exposing the remaining base64 as text. A native cat in the same foreground
-// process group exits on SIGINT instead. It reads only our pipe, never stdin.
-// No terminal modes, user-owned descriptor flags, or parent signal handlers change.
-func writeKittyOutput(ctx context.Context, out io.Writer, write func(io.Writer) error) error {
+type kittyOutputContextKey struct{}
+type kittyOutputBinding struct {
+	output  *os.File
+	session *kittyOutputSession
+	err     error
+}
+
+// PrepareKittyOutput binds the writer before a command reads input or waits for
+// the API. Preparation errors are deferred until a preview actually uses it.
+// Close reports helper failures only after use, preserving non-preview paths.
+func PrepareKittyOutput(ctx context.Context, out io.Writer) (context.Context, func() error) {
+	file, ok := out.(*os.File)
+	if !ok || !term.IsTerminal(file.Fd()) {
+		return ctx, func() error { return nil }
+	}
+	binding := &kittyOutputBinding{output: file}
+	path, err := os.Executable()
+	if err == nil {
+		binding.session, err = startKittySession(ctx, path, file)
+	}
+	binding.err = err
+	return context.WithValue(ctx, kittyOutputContextKey{}, binding), func() error {
+		if binding.session == nil {
+			return nil
+		}
+		err := binding.session.Close()
+		if !binding.session.used.Load() {
+			return nil
+		}
+		return err
+	}
+}
+
+// Go's interrupted tty writes can resume after VINTR flushes their header.
+// Only native cat writes graphics; its supervisor owns cancellation and reaping.
+// Terminal modes, user descriptor flags and parent signal handlers are unchanged.
+func writeKittyOutput(ctx context.Context, out io.Writer, write func(io.Writer) error) (err error) {
 	file, ok := out.(*os.File)
 	if !ok || !term.IsTerminal(file.Fd()) {
 		return write(out)
 	}
-	_, err := kittyCatPath()
-	if err != nil {
-		return err
+	binding, _ := ctx.Value(kittyOutputContextKey{}).(*kittyOutputBinding)
+	if binding == nil {
+		// Direct internal-library callers may have no command preparation phase.
+		var closeOutput func() error
+		ctx, closeOutput = PrepareKittyOutput(ctx, out)
+		defer func() { err = errors.Join(err, closeOutput()) }()
+		binding, _ = ctx.Value(kittyOutputContextKey{}).(*kittyOutputBinding)
 	}
-	path, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("locate native image output helper: %w", err)
+	if binding == nil || binding.output != file {
+		return errors.New("native image output changed after preparation")
 	}
-	written, err := runKittyWriter(ctx, path, file, write)
+	if binding.err != nil {
+		return fmt.Errorf("prepare native image output: %w", binding.err)
+	}
+	session := binding.session
+	session.used.Store(true)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-session.gate:
+	}
+	defer func() { session.gate <- struct{}{} }()
+	written, err := session.write(ctx, write)
 	if err == nil || !written {
 		return err
 	}
-	// Pipe acceptance cannot tell us where the terminal cut a frame. Reap the
-	// first writer before resetting: NUL prevents a dangling ESC from printing
-	// a backslash, ST ends an APC, and the quiet final chunk ends its upload.
-	// Cleanup has a separate bound so cancellation cannot wait on a paused tty.
+	// Pipe acceptance does not identify the terminal's cut. Wait for cat before
+	// NUL + ST + quiet final chunk. Keep the lease through bounded cleanup.
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kittyOutputCleanupTimeout)
 	defer cancel()
-	_, cleanupErr := runKittyWriter(cleanupCtx, path, file, func(destination io.Writer) error {
+	_, cleanupErr := session.write(cleanupCtx, func(destination io.Writer) error {
 		_, err := io.WriteString(destination, "\x00\x1b\\\x1b_Gq=2,m=0;\x1b\\")
 		return err
 	})
@@ -54,8 +97,7 @@ func writeKittyOutput(ctx context.Context, out io.Writer, write func(io.Writer) 
 	return errors.Join(err, cleanupErr)
 }
 
-// Use system locations rather than PATH, which can name a shell/Go wrapper with
-// different signal behavior. Unsupported layouts fail before emitting graphics.
+// Fixed system locations avoid PATH wrappers with different signal behavior.
 func kittyCatPath() (string, error) {
 	paths := []string{"/bin/cat"}
 	if runtime.GOOS == "linux" {
@@ -81,63 +123,12 @@ func (w *kittyPipeWriter) Write(data []byte) (int, error) {
 	return n, err
 }
 
-func runKittyWriter(ctx context.Context, path string, out *os.File, write func(io.Writer) error) (bool, error) {
-	lifeRead, lifeWrite, err := os.Pipe()
+// One-shot entry used by focused transport tests and direct helper callers.
+func runKittyWriter(ctx context.Context, path string, out *os.File, write func(io.Writer) error) (written bool, err error) {
+	session, err := startKittySession(ctx, path, out)
 	if err != nil {
-		return false, fmt.Errorf("prepare image output lifeline: %w", err)
+		return false, err
 	}
-	defer lifeRead.Close()
-	defer lifeWrite.Close()
-	command := exec.CommandContext(ctx, path, kittyOutputHelperArgument)
-	command.Stdout = out
-	command.ExtraFiles = []*os.File{lifeRead}
-	// Let the supervisor kill and reap its native writer. Killing only the
-	// supervisor could leave a blocked writer alive after the CLI returns.
-	command.Cancel = func() error {
-		_ = lifeWrite.Close()
-		return nil
-	}
-	input, err := command.StdinPipe()
-	if err != nil {
-		return false, fmt.Errorf("prepare native image output: %w", err)
-	}
-	defer input.Close()
-	if err := command.Start(); err != nil {
-		return false, fmt.Errorf("start native image output: %w", err)
-	}
-	_ = lifeRead.Close()
-	waited := false
-	defer func() {
-		if !waited {
-			// Also release both children if the writer panics, without hiding
-			// that panic or leaving a pipe feeding a blocked terminal writer.
-			_ = lifeWrite.Close()
-			_ = input.Close()
-			_ = command.Wait()
-		}
-	}()
-	writer := &kittyPipeWriter{Writer: input}
-	writeErr := write(writer)
-	closeErr := input.Close()
-	if writeErr != nil {
-		// Do not wait for queued bytes after an encoder/output failure. This
-		// also releases a blocked tty writer when cancellation was observed.
-		_ = lifeWrite.Close()
-	}
-	waitErr := command.Wait()
-	waited = true
-	if waitErr != nil {
-		if _, exited := waitErr.(*exec.ExitError); exited {
-			// A helper's ExitCode is not the CLI's exit status. Exposing it via
-			// Unwrap would override command cancellation/error handling.
-			waitErr = fmt.Errorf("write image to terminal: %v", waitErr)
-		} else {
-			waitErr = fmt.Errorf("write image to terminal: %w", waitErr)
-		}
-	}
-	err = errors.Join(writeErr, closeErr, waitErr)
-	if canceled := ctx.Err(); canceled != nil && !errors.Is(err, canceled) {
-		err = errors.Join(err, canceled)
-	}
-	return writer.written, err
+	defer func() { err = errors.Join(err, session.Close()) }()
+	return session.write(ctx, write)
 }
