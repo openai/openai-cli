@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.5](https://github.com/openai/openai-cli/compare/v1.30.4...v1.30.5) (2026-09-30)
+
+
+### Chores
+
+* **api:** correct grader example and SIP auth reference ([#334](https://github.com/openai/openai-cli/issues/334)) ([41917c6](https://github.com/openai/openai-cli/commit/41917c68e2890464d1d56d4781b937ded6cc17b5))
+
 ## [1.30.4](https://github.com/openai/openai-cli/compare/v1.30.3...v1.30.4) (2026-09-30)
 
 
