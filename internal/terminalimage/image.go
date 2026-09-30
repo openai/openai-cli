@@ -125,6 +125,12 @@ func writeKittyImage(ctx context.Context, out io.Writer, img image.Image, column
 	if err := imagefont.EncodePNG(ctx, &png.Encoder{}, &encoded, img); err != nil {
 		return err
 	}
+	return writeKittyOutput(ctx, out, func(destination io.Writer) error {
+		return writeKittyFrames(ctx, destination, &encoded, columns)
+	})
+}
+
+func writeKittyFrames(ctx context.Context, out io.Writer, encoded *bytes.Buffer, columns int) (err error) {
 	options := (&kitty.Options{Action: kitty.TransmitAndPut, Transmission: kitty.Direct, Format: kitty.PNG, Quite: 2, Columns: columns}).Options()
 	destination := contextWriter{ctx, out}
 	incomplete := false

@@ -6,12 +6,20 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-cli/pkg/cmd"
 	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/urfave/cli/v3"
 )
 
 func main() {
+	if handled, err := terminalimage.RunKittyOutputHelper(os.Args); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Image output helper failed.")
+			os.Exit(1)
+		}
+		return
+	}
 	app := cmd.Command
 	app.Flags = append(app.Flags, cmd.NewRequestHeaderFlag())
 
