@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.7](https://github.com/openai/openai-cli/compare/v1.30.6...v1.30.7) (2026-09-30)
+
+
+### Chores
+
+* **api:** document original image detail in Chat Completions ([#343](https://github.com/openai/openai-cli/issues/343)) ([0a10600](https://github.com/openai/openai-cli/commit/0a1060062e8867343a1f0445474815de45c43026))
+
 ## [1.30.6](https://github.com/openai/openai-cli/compare/v1.30.5...v1.30.6) (2026-09-30)
 
 
