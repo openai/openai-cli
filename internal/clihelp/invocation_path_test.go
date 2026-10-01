@@ -60,6 +60,40 @@ func TestHelpInvocationKeepsDifferentExecutable(t *testing.T) {
 	}
 }
 
+func TestHelpInvocationKeepsLocalPathWithImplicitLookup(t *testing.T) {
+	directory := t.TempDir()
+	elsewhere := t.TempDir()
+	name := "openai"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+		t.Setenv("PATHEXT", ".EXE")
+	}
+	executable := filepath.Join(directory, name)
+	if err := os.WriteFile(executable, nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(directory)
+	t.Setenv("GODEBUG", os.Getenv("GODEBUG")+",execerrdot=0")
+	t.Setenv("NoDefaultCurrentDirectoryInExePath", "")
+	if err := os.Unsetenv("NoDefaultCurrentDirectoryInExePath"); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{elsewhere, ".", string(os.PathListSeparator) + elsewhere} {
+		t.Setenv("PATH", path)
+		want := "." + string(filepath.Separator) + name
+		if got := Invocation("openai", []string{executable}); got != want {
+			t.Fatalf("local invocation with PATH=%q = %q; want %q", path, got, want)
+		}
+	}
+	// Absolute PATH installations still shorten when the current directory
+	// contains no executable that Windows could discover implicitly.
+	t.Chdir(elsewhere)
+	t.Setenv("PATH", directory)
+	if got := Invocation("openai", []string{executable}); got != "openai" {
+		t.Fatalf("absolute PATH invocation = %q; want openai", got)
+	}
+}
+
 func TestHelpInvocationFollowsInstalledSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("creating Windows symlinks requires additional privileges")

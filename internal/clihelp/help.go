@@ -281,7 +281,10 @@ func Invocation(fallback string, args []string) string {
 	}
 	// Installed commands need no directory prefix when PATH selects this same
 	// executable. Keep the invoked path for local builds or other installations.
-	if installed, err := exec.LookPath(fallback); err == nil && sameExecutable(name, installed) && !hasPowerShellScriptOnPath(fallback) {
+	// Relative matches can come from Go's implicit current-directory lookup
+	// when execerrdot=0, which does not match PowerShell's command lookup.
+	if installed, err := exec.LookPath(fallback); err == nil && filepath.IsAbs(installed) &&
+		sameExecutable(name, installed) && !hasPowerShellScriptOnPath(fallback) {
 		return fallback
 	}
 	// PowerShell can supply an absolute argv[0] even for .\openai.exe. When
