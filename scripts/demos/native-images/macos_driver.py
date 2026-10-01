@@ -119,6 +119,47 @@ def wait_ready(path, process, seconds):
     return json.loads(path.read_text())
 
 
+def wait_owned_window(window_tool, process, env, seconds=4):
+    """Wait for asynchronous app activation without accepting another window."""
+    deadline = time.monotonic() + seconds
+    last_error = None
+    while True:
+        check(process.poll() is None, "terminal exited before owned window became visible")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 and last_error is not None:
+            raise last_error
+        check(remaining > 0, "owned window discovery exceeded its time bound")
+        try:
+            output = run([window_tool, "window", str(process.pid)], timeout=remaining, env=env)
+        except subprocess.CalledProcessError as error:
+            # Only absence of an eligible owned window is transient. Multiple
+            # windows, invalid identity and capture-permission errors are fatal.
+            if error.returncode != 4 or time.monotonic() >= deadline:
+                raise
+            try:
+                diagnostic = json.loads(error.stderr)
+            except (ValueError, TypeError):
+                raise error from None
+            if (not isinstance(diagnostic, dict) or diagnostic.get("pid") != process.pid
+                    or type(diagnostic.get("eligible_owned_count")) is not int
+                    or diagnostic["eligible_owned_count"] != 0):
+                raise
+            last_error = error
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+            continue
+        check(process.poll() is None, "terminal exited during owned window discovery")
+        window = json.loads(output.stdout)
+        check(window["pid"] == process.pid and type(window["window_id"]) is int
+              and window["window_id"] > 0, "invalid owned window identity")
+        return window
+
+
+def capture_time_left(deadline):
+    remaining = deadline - time.monotonic()
+    check(remaining > 0, "native capture exceeded the scene checkpoint deadline")
+    return remaining
+
+
 def terminate_owned_scene(directory, process):
     # Request cleanup from the scene that still owns the actual child Popen.
     # Never signal a numeric process-group ID read from a possibly stale file.
@@ -182,18 +223,24 @@ def one_case(root, terminal, executable, window_tool, label, mode):
             for phase in (("preview",) if mode == "preview" else ("prior", "cancel", "retry")):
                 ready = wait_ready(case / (phase + ".ready.json"), process, 18)
                 check(ready["phase"] == phase, "incorrect checkpoint")
+                # The scene waits 12 seconds for its ACK. Leave one second for
+                # writing it; no subprocess may consume more than this budget.
+                deadline = ready["monotonic"] + 11
                 # A file marker alone is not GPU completion proof. Capture the
                 # visible checkpoint after settlement and require two equal
                 # frames. Human pixel inspection must still see the marker.
-                time.sleep(0.5)
-                window = json.loads(run([window_tool, "window", str(process.pid)], env=env).stdout)
+                window = wait_owned_window(window_tool, process, env,
+                                           seconds=min(4, capture_time_left(deadline)))
+                time.sleep(min(0.5, capture_time_left(deadline)))
                 previous = None
                 settled = False
                 for attempt in range(6):
                     capture = case / (phase + "-sample-" + str(attempt) + ".png")
-                    run(["/usr/sbin/screencapture", "-x", "-o", "-l", str(window["window_id"]), "-t", "png", capture], env=env)
+                    run(["/usr/sbin/screencapture", "-x", "-o", "-l", str(window["window_id"]), "-t", "png", capture],
+                        env=env, timeout=capture_time_left(deadline))
                     info = png_info(capture)
-                    pixels = json.loads(run([window_tool, "pixels", capture], env=env).stdout)
+                    pixels = json.loads(run([window_tool, "pixels", capture], env=env,
+                                            timeout=capture_time_left(deadline)).stdout)
                     info.update(pixels)
                     if pixels["pixel_sha256"] == previous:
                         settled = True
@@ -201,8 +248,9 @@ def one_case(root, terminal, executable, window_tool, label, mode):
                         shutil.copyfile(capture, final)
                         break
                     previous = pixels["pixel_sha256"]
-                    time.sleep(0.15)
+                    time.sleep(min(0.15, capture_time_left(deadline)))
                 check(settled, "native framebuffer did not settle; no passing capture")
+                capture_time_left(deadline)
                 info.update({"phase": phase, "marker": ready["marker"], "window": window,
                              "capture_source": "owned native macOS window, screencapture",
                              "appearance": "pending pixel inspection"})

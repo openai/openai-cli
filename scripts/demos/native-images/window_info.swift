@@ -19,15 +19,27 @@ case "window":
         exit(3)
     }
     let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-    let owned = windows.filter { info in
-        guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
-              (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+    let visibleOwned = windows.filter { info in
+        (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid
+    }
+    let owned = visibleOwned.filter { info in
+        guard (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
               let b = info[kCGWindowBounds as String] as? [String: Any],
               let w = b["Width"] as? NSNumber, let h = b["Height"] as? NSNumber else { return false }
         return w.doubleValue > 200 && h.doubleValue > 100
     }
     guard owned.count == 1, let id = owned[0][kCGWindowNumber as String] as? NSNumber else {
-        fputs("expected one visible window owned by terminal PID\n", stderr)
+        // Diagnose only the launched process; never publish other windows.
+        let diagnostic: [String: Any] = ["error": "expected one visible window owned by terminal PID",
+            "pid": pid, "visible_owned_count": visibleOwned.count,
+            "eligible_owned_count": owned.count, "visible_owned_windows": visibleOwned.prefix(8).map { info in
+                ["id": info[kCGWindowNumber as String] ?? NSNull(),
+                 "layer": info[kCGWindowLayer as String] ?? NSNull(),
+                 "bounds": info[kCGWindowBounds as String] ?? [:]]
+            }]
+        let data = try JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys])
+        FileHandle.standardError.write(data)
+        FileHandle.standardError.write(Data("\n".utf8))
         exit(4)
     }
     result = ["pid": pid, "window_id": id, "bounds": owned[0][kCGWindowBounds as String] ?? [:]]
