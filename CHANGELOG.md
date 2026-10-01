@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.1](https://github.com/openai/openai-cli/compare/v1.31.0...v1.31.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **demos:** remove subgroup exit-code footer ([#349](https://github.com/openai/openai-cli/issues/349)) ([8f2ac67](https://github.com/openai/openai-cli/commit/8f2ac6786039e2c6a5f599ec5080a224db189675))
+
 ## [1.31.0](https://github.com/openai/openai-cli/compare/v1.30.7...v1.31.0) (2026-10-01)
 
 
