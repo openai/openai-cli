@@ -14,7 +14,6 @@ import struct
 import subprocess
 import sys
 import time
-import urllib.request
 
 SOURCE = Path(__file__).resolve().parent
 RUNTIMES = {
@@ -92,12 +91,22 @@ def png_info(path):
 def download(runtime, path):
     digestor = hashlib.sha256()
     total = 0
-    with urllib.request.urlopen(runtime["url"], timeout=30) as response, path.open("xb") as out:
-        while chunk := response.read(1024 * 1024):
+    limit = 256 * 1024 * 1024
+    # Use the system client's ordinary identity and TLS verification. Ignore
+    # curlrc customizations; normal system networking remains unchanged.
+    with path.open("x+b", buffering=0) as out:
+        subprocess.run(["/usr/bin/curl", "-q", "--fail", "--silent", "--show-error",
+                        "--location", "--max-redirs", "3", "--proto", "=https",
+                        "--proto-redir", "=https", "--max-time", "60",
+                        "--max-filesize", str(limit), runtime["url"]],
+                       stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.PIPE,
+                       timeout=65, check=True)
+        check(os.fstat(out.fileno()).st_size <= limit, "runtime download exceeds 256MiB")
+        out.seek(0)
+        while chunk := out.read(1024 * 1024):
             total += len(chunk)
-            check(total <= 256 * 1024 * 1024, "runtime download exceeds 256MiB")
+            check(total <= limit, "runtime download exceeds 256MiB")
             digestor.update(chunk)
-            out.write(chunk)
     check(digestor.hexdigest() == runtime["sha256"], "pinned runtime digest mismatch")
 
 

@@ -14,7 +14,7 @@ concurrency:
 jobs:
   native-images:
     if: github.repository == 'openai/openai-cli' && github.ref == 'refs/heads/codex/pr342-macos-native-proof'
-    runs-on: macos-26
+    runs-on: macos-26-xlarge
     timeout-minutes: 20
     env:
       CANDIDATE_SHA: 9321b76939ae60b57bfa4b7da2706a7bf9bb0be4
