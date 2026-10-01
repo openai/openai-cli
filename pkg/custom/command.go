@@ -24,6 +24,7 @@ func ConfigureCommand(root *cli.Command) {
 	configureReadableAudio(root)
 	configureReadableSpeech(root)
 	configureCommandSubgroups(root)
+	configureManpageCommands(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, mtlsClientFlags()...)
 	previousBefore := root.Before
