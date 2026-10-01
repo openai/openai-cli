@@ -207,7 +207,9 @@ def one_case(root, terminal, executable, window_tool, label, mode):
               "direct command path must contain no whitespace")
         wrapper.write_text("#!/bin/sh\nexec " + shlex.join(scene) + "\n")
         wrapper.chmod(0o700)
-        argv = [str(executable), "--config-default-files=false", "--title=" + case.name,
+        # Keep the pinned app fixed and suppress Sparkle's second-launch
+        # permission prompt through Ghostty's supported per-launch config.
+        argv = [str(executable), "--config-default-files=false", "--auto-update=off", "--title=" + case.name,
                 "--font-family=Menlo", "--font-size=13", "--window-width=120", "--window-height=45",
                 "--window-save-state=never", "--shell-integration=none", "--confirm-close-surface=false",
                 "--quit-after-last-window-closed=true", "--cursor-style-blink=false", "--background=#000000",
