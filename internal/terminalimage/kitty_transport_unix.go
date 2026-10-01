@@ -122,13 +122,3 @@ func (w *kittyPipeWriter) Write(data []byte) (int, error) {
 	w.written = w.written || n > 0
 	return n, err
 }
-
-// One-shot entry used by focused transport tests and direct helper callers.
-func runKittyWriter(ctx context.Context, path string, out *os.File, write func(io.Writer) error) (written bool, err error) {
-	session, err := startKittySession(ctx, path, out)
-	if err != nil {
-		return false, err
-	}
-	defer func() { err = errors.Join(err, session.Close()) }()
-	return session.write(ctx, write)
-}

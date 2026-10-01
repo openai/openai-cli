@@ -17,6 +17,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// One-shot session wrapper for focused native transport tests.
+func runKittyWriter(ctx context.Context, path string, out *os.File, write func(io.Writer) error) (written bool, err error) {
+	session, err := startKittySession(ctx, path, out)
+	if err != nil {
+		return false, err
+	}
+	defer func() { err = errors.Join(err, session.Close()) }()
+	return session.write(ctx, write)
+}
+
 func TestKittyCatPreservesBytesAndWaits(t *testing.T) {
 	path, err := os.Executable()
 	if err != nil {
