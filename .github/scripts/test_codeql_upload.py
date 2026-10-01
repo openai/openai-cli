@@ -154,6 +154,39 @@ class PublisherTest(unittest.TestCase):
             publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
         self.assertEqual([p["state"] for p in self.writes], ["pending", "pending", "failure", "failure"])
 
+    def test_regenerated_merge_still_requires_exact_analyzed_sha(self):
+        for index, language in enumerate(publisher.CATEGORIES):
+            self.responses[f"actions/artifacts/{index}/zip"] = self.archive(
+                language, mutate=lambda context, report: context.update(sha="d" * 40))
+        self.responses["actions/runs/42/artifacts?per_page=100&page=1"] = {"artifacts": [
+            dict(id=i, name=f"codeql-sarif-42-2-{lang}", expired=False)
+            for i, lang in enumerate(publisher.CATEGORIES)]}
+        # Even if a regenerated merge has the same parents/tree, old reports
+        # cannot be attributed to its different commit object.
+        with self.assertRaises(publisher.StaleRun):
+            publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
+        self.assertEqual([p["state"] for p in self.writes], ["pending", "pending"])
+
+    def test_merge_ref_moving_during_artifact_download_cannot_publish(self):
+        for index, language in enumerate(publisher.CATEGORIES):
+            self.responses[f"actions/artifacts/{index}/zip"] = self.archive(language)
+        self.responses["actions/runs/42/artifacts?per_page=100&page=1"] = {"artifacts": [
+            dict(id=i, name=f"codeql-sarif-42-2-{lang}", expired=False)
+            for i, lang in enumerate(publisher.CATEGORIES)]}
+
+        def get(route, **kwargs):
+            result = self.get(route, **kwargs)
+            if route.endswith("actions/artifacts/1/zip"):
+                replacement = "d" * 40
+                self.pr["merge_commit_sha"] = replacement
+                self.responses["git/ref/pull/3/merge"]["object"]["sha"] = replacement
+                self.responses["git/commits/" + replacement] = {"parents": [{"sha": BASE}, {"sha": HEAD}]}
+            return result
+
+        with self.assertRaises(publisher.StaleRun):
+            publisher.report(get, "test/cli", 1, dict(id=42, run_attempt=2))
+        self.assertEqual([p["state"] for p in self.writes], ["pending", "pending"])
+
     def test_pending_and_failed_analysis_cannot_pass_required_status(self):
         for status, conclusion in [("in_progress", None), ("completed", "failure"), ("completed", "cancelled")]:
             with self.subTest(status=status, conclusion=conclusion):

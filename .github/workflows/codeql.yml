@@ -16,6 +16,8 @@ permissions: {}
 jobs:
   source:
     uses: ./.github/workflows/prepare-ci-source.yml
+    with:
+      current-pr-merge: true
     permissions:
       contents: read
       actions: read
@@ -49,6 +51,10 @@ jobs:
       - name: Restore candidate checkout
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+
+      - name: Test CodeQL source and publication boundaries
+        if: matrix.language == 'actions'
+        run: python3 -B -I -m unittest discover -s .github/scripts -p 'test_codeql*.py'
 
       - name: Set up Go for internal cross-linking
         if: matrix.language == 'go' && github.repository == 'openai/openai-cli-internal' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.id == github.event.repository.id && github.event.pull_request.base.ref == 'main'

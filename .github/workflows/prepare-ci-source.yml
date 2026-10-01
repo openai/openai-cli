@@ -2,6 +2,11 @@ name: Prepare CI source
 
 on:
   workflow_call:
+    inputs:
+      current-pr-merge:
+        description: Fetch the current PR merge for exact-revision CodeQL publication
+        type: boolean
+        default: false
     outputs:
       artifact-id:
         value: ${{ jobs.prepare.outputs.artifact-id }}
@@ -25,6 +30,36 @@ jobs:
         with:
           path: candidate
           persist-credentials: false
+          # An event SHA can describe a previous incarnation of the PR merge.
+          # Opted-in PRs fetch the merge ref; other callers keep checkout's default.
+          ref: ${{ inputs.current-pr-merge && (github.event_name == 'pull_request' && github.ref || github.sha) || '' }}
+
+      - name: Verify selected pull request merge
+        if: inputs.current-pr-merge && github.event_name == 'pull_request'
+        run: |
+          python3 -I - <<'PYTHON'
+          import json, os, re, subprocess
+          from pathlib import Path
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          pr, repository, number = event["pull_request"], event["repository"], event["number"]
+          if (type(number) is not int or number < 1 or pr["number"] != number or
+                  pr["state"] != "open" or
+                  os.environ["GITHUB_REF"] != f"refs/pull/{number}/merge" or
+                  repository["full_name"] != os.environ["GITHUB_REPOSITORY"] or
+                  pr["base"]["repo"]["id"] != repository["id"] or
+                  pr["base"]["repo"]["full_name"] != repository["full_name"]):
+              raise RuntimeError("Unexpected pull request source identity")
+          expected = [pr["base"]["sha"], pr["head"]["sha"]]
+          if not all(isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha) for sha in expected):
+              raise RuntimeError("Invalid pull request parent revision")
+          # cat-file retains parents even in checkout's shallow repository.
+          # Read Git objects as data; never execute code from candidate/ here.
+          commit = subprocess.check_output(["git", "-C", "candidate", "cat-file", "commit", "HEAD"], text=True)
+          parents = [line.removeprefix("parent ") for line in commit.split("\n\n", 1)[0].splitlines()
+                     if line.startswith("parent ")]
+          if parents != expected:
+              raise RuntimeError("Pull request head or base changed before source preparation")
+          PYTHON
 
       - name: Package candidate checkout
         run: tar -czf "$RUNNER_TEMP/ci-source.tar.gz" -C candidate .
