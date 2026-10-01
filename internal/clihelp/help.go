@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -285,6 +286,14 @@ func Invocation(fallback string, args []string) string {
 	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return fallback
 	}
+	// Installed commands need no directory prefix when PATH selects this same
+	// executable. Keep the invoked path for local builds or other installations.
+	// Relative matches can come from Go's implicit current-directory lookup
+	// when execerrdot=0, which does not match PowerShell's command lookup.
+	if installed, err := exec.LookPath(fallback); err == nil && filepath.IsAbs(installed) &&
+		sameExecutable(name, installed) && !hasPowerShellScriptOnPath(fallback) {
+		return fallback
+	}
 	// PowerShell can supply an absolute argv[0] even for .\openai.exe. When
 	// already in the executable's folder, use the relative form accepted by
 	// both PowerShell and cmd.exe, including folders containing spaces.
@@ -303,6 +312,18 @@ func Invocation(fallback string, args []string) string {
 		return quoteInvocation(name, fallback)
 	}
 	return name
+}
+
+func hasPowerShellScriptOnPath(name string) bool {
+	// PowerShell can discover .ps1 commands that exec.LookPath misses, including
+	// scripts without a Unix executable bit and dangling symlinks. Keep the full
+	// path whenever one is present, since shell command precedence differs.
+	for _, directory := range filepath.SplitList(os.Getenv("PATH")) {
+		if info, err := os.Lstat(filepath.Join(directory, name+".ps1")); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 func sameExecutable(first, second string) bool {
