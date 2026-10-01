@@ -31,6 +31,10 @@ RUNTIMES = {
 }
 
 
+class SceneCleanupError(RuntimeError):
+    """The disposable runner must stop rather than launch another terminal."""
+
+
 def check(ok, message):
     if not ok:
         raise RuntimeError(message)
@@ -50,6 +54,31 @@ def run(argv, *, timeout=30, env=None):
     return subprocess.run([str(x) for x in argv], stdin=subprocess.DEVNULL,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           timeout=timeout, check=True, env=env)
+
+
+def bounded_output(data, limit=8192):
+    data = data or b""
+    if not isinstance(data, bytes):
+        data = str(data).encode()
+    return {"text": data[:limit].decode(errors="replace"), "bytes": len(data),
+            "truncated": len(data) > limit}
+
+
+def failure_details(error):
+    return {"type": type(error).__name__, "message": str(error)[:4096],
+            "returncode": getattr(error, "returncode", None),
+            "stdout": bounded_output(getattr(error, "stdout", None)),
+            "stderr": bounded_output(getattr(error, "stderr", None))}
+
+
+def log_tail(path, limit=8192):
+    if not path.exists():
+        return {"missing": True}
+    with path.open("rb") as stream:
+        size = stream.seek(0, os.SEEK_END)
+        stream.seek(max(0, size - limit))
+        data = stream.read(limit)
+    return {"text": data.decode(errors="replace"), "bytes": size, "truncated": size > limit}
 
 
 def png_info(path):
@@ -177,14 +206,24 @@ def one_case(root, terminal, executable, window_tool, label, mode):
             report["scene_result"] = result
             report["process_checks"] = "pass; native appearance still pending inspection"
     except BaseException as error:
-        report["failure"] = str(error)
+        report["failure"] = str(error)[:4096]
+        report["error"] = failure_details(error)
+        report["terminal_stdout_tail"] = log_tail(case / "terminal.stdout")
+        report["terminal_stderr_tail"] = log_tail(case / "terminal.stderr")
         raise
     finally:
-        if process is not None:
-            report["driver_cleanup"] = terminate_owned_scene(case, process)
-        record(case / "capture-report.json", report)
-        if report.get("driver_cleanup", {}).get("scene_group_marker_remaining"):
-            raise RuntimeError("scene did not confirm child cleanup; isolated runner teardown required")
+        try:
+            if process is not None:
+                report["driver_cleanup"] = terminate_owned_scene(case, process)
+                check(not report["driver_cleanup"]["forced_terminal_shutdown"], "terminal needed forced shutdown")
+                check(not report["driver_cleanup"]["scene_group_marker_remaining"], "scene did not confirm child cleanup")
+            record(case / "capture-report.json", report)
+        except BaseException as error:
+            report["cleanup_failure"] = failure_details(error)
+            try:
+                record(case / "capture-report.json", report)
+            finally:
+                raise SceneCleanupError("scene cleanup incomplete; isolated runner teardown required") from error
 
 
 def main():
@@ -198,6 +237,7 @@ def main():
     evidence.mkdir()
     report = {"candidate": os.environ["CANDIDATE_SHA"], "baseline": os.environ["BASELINE_SHA"],
               "runtimes": RUNTIMES, "native_appearance": "unreviewed", "mounts": [], "cases": [],
+              "terminal_attempts": {},
               "workflow_sha": os.environ.get("GITHUB_SHA"),
               "runner": {k: os.environ.get(k) for k in ("RUNNER_ENVIRONMENT", "RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion")},
               "source_sha256": {f.name: digest(f) for f in SOURCE.iterdir() if f.is_file() and f.suffix in (".py", ".swift")}}
@@ -205,6 +245,15 @@ def main():
     try:
         report["sw_vers"] = run(["sw_vers"]).stdout.decode()
         report["system"] = run(["uname", "-a"]).stdout.decode()
+        # Capability data is diagnostic only. No driver, privacy or app setting
+        # is changed, and unavailable diagnostics never count as native proof.
+        try:
+            graphics = run(["/usr/sbin/system_profiler", "SPDisplaysDataType", "-json",
+                            "-detailLevel", "mini", "-timeout", "10"], timeout=15)
+            report["host_graphics"] = {"stdout": bounded_output(graphics.stdout, 65536),
+                                       "stderr": bounded_output(graphics.stderr)}
+        except Exception as error:
+            report["host_graphics"] = {"unavailable": failure_details(error)}
         for name in ("scene.py", "make_fixtures.py", "window_info.swift"):
             shutil.copyfile(SOURCE / name, root / name)
         run([sys.executable, "-I", root / "make_fixtures.py"])
@@ -218,37 +267,59 @@ def main():
         window_tool = root / "window-info"
         run(["xcrun", "swiftc", "-O", root / "window_info.swift", "-o", window_tool], timeout=90)
         for terminal, runtime in RUNTIMES.items():
-            dmg = root / (terminal + ".dmg")
-            download(runtime, dmg)
-            mount = root / (terminal + "-mount")
-            mount.mkdir()
-            run(["hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", mount, dmg], timeout=45)
-            mounts.append(mount)
-            bundle = mount / runtime["bundle"]
-            run(["codesign", "--verify", "--deep", "--strict", bundle])
-            signature = run(["codesign", "-dv", "--verbose=4", bundle]).stderr.decode()
-            check("Identifier=" + runtime["id"] in signature, "bundle identifier mismatch")
-            assessment = run(["spctl", "--assess", "--type", "execute", "--verbose=4", bundle])
-            (evidence / (terminal + "-signature.txt")).write_text(signature + assessment.stderr.decode())
-            executable = bundle / "Contents/MacOS" / runtime["executable"]
-            version = run([executable, "--version"]).stdout.decode()
-            check(runtime["version"] in version, "terminal version mismatch")
-            report[terminal + "_version"] = version
-            report[terminal + "_executable_sha256"] = digest(executable)
-            for label in ("before", "after"):
-                for mode in ("preview", "ctrlc"):
-                    one_case(root, terminal, executable, window_tool, label, mode)
-                    report["cases"].append([terminal, label, mode])
+            attempt = {"status": "incomplete", "cases": []}
+            report["terminal_attempts"][terminal] = attempt
+            try:
+                dmg = root / (terminal + ".dmg")
+                download(runtime, dmg)
+                mount = root / (terminal + "-mount")
+                mount.mkdir()
+                run(["hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", mount, dmg], timeout=45)
+                mounts.append(mount)
+                report["mounts"].append(str(mount))
+                bundle = mount / runtime["bundle"]
+                run(["codesign", "--verify", "--deep", "--strict", bundle])
+                signature = run(["codesign", "-dv", "--verbose=4", bundle]).stderr.decode()
+                check("Identifier=" + runtime["id"] in signature, "bundle identifier mismatch")
+                assessment = run(["spctl", "--assess", "--type", "execute", "--verbose=4", bundle])
+                (evidence / (terminal + "-signature.txt")).write_text(signature + assessment.stderr.decode())
+                executable = bundle / "Contents/MacOS" / runtime["executable"]
+                version = run([executable, "--version"]).stdout.decode()
+                check(runtime["version"] in version, "terminal version mismatch")
+                report[terminal + "_version"] = version
+                report[terminal + "_executable_sha256"] = digest(executable)
+                for label in ("before", "after"):
+                    for mode in ("preview", "ctrlc"):
+                        attempt["current_case"] = [label, mode]
+                        attempt["case_report"] = "runs/run-" + terminal + "/" + mode + "-" + label + "/capture-report.json"
+                        one_case(root, terminal, executable, window_tool, label, mode)
+                        attempt["cases"].append([label, mode])
+                        report["cases"].append([terminal, label, mode])
+                attempt.pop("current_case", None)
+                attempt["status"] = "completed; native appearance unreviewed"
+            except Exception as error:
+                attempt["status"] = "failed"
+                attempt["error"] = failure_details(error)
+                # A failed renderer is independent of the other terminal. A
+                # surviving scene group requires disposable-runner teardown.
+                groups = list((root / "runs" / ("run-" + terminal)).glob("*/active-group"))
+                if isinstance(error, SceneCleanupError) or groups:
+                    attempt["cleanup_incomplete"] = True
+                    attempt["remaining_group_markers"] = [str(path) for path in groups]
+                    raise RuntimeError("scene cleanup incomplete; stopping further terminal attempts") from error
+        failed = [name for name, attempt in report["terminal_attempts"].items() if attempt["status"] == "failed"]
+        check(not failed, "native terminal attempts failed: " + ", ".join(failed))
         report["execution"] = "completed; no visual pass until independent PNG review"
     except BaseException as error:
-        report["failure"] = str(error)
+        report["failure"] = str(error)[:4096]
+        report["error"] = failure_details(error)
         raise
     finally:
         for mount in reversed(mounts):
             try:
                 run(["hdiutil", "detach", mount], timeout=15)
             except Exception as error:
-                report.setdefault("cleanup_errors", []).append(str(error))
+                report.setdefault("cleanup_errors", []).append(str(error)[:4096])
         for name in ("runs", "fixtures", "manifest.json"):
             path = root / name
             if path.is_dir():
