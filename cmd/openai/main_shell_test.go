@@ -72,6 +72,37 @@ func TestMainNativeShell(t *testing.T) {
 			}
 			shell.executable = path
 			home := t.TempDir()
+			t.Run("installed help uses command name", func(t *testing.T) {
+				t.Setenv("PATH", work+string(os.PathListSeparator)+os.Getenv("PATH"))
+				executable := filepath.Join(work, binary)
+				invocation := "'" + strings.ReplaceAll(executable, "'", "'\\''") + "'"
+				if shell.name == "cmd" {
+					invocation = `"` + executable + `"`
+				} else if shell.name == "powershell" || shell.name == "pwsh" {
+					invocation = "& '" + strings.ReplaceAll(executable, "'", "''") + "'"
+				}
+				directory := t.TempDir()
+				for _, topic := range []string{"", "--help", "images --help", "images generate --help", "help --all images generate", "help setup"} {
+					got := runNativeShell(t, shell, directory, home, "not-a-url", invocation+" "+topic)
+					if got.code != 0 || got.stderr != "" || strings.Contains(got.stdout, work) || !strings.Contains(got.stdout, "openai ") {
+						t.Fatalf("installed %s includes a path or fails: %+v", topic, got)
+					}
+				}
+				got := runNativeShell(t, shell, directory, home, "not-a-url", invocation+" images generate --help")
+				for line := range strings.SplitSeq(got.stdout, "\n") {
+					if command, found := strings.CutPrefix(strings.TrimSpace(line), "Full help: "); found {
+						if command != "openai help --all images generate" {
+							t.Fatalf("installed full-help link = %q", command)
+						}
+						copied := runNativeShell(t, shell, directory, home, "not-a-url", command)
+						if copied.code != 0 || copied.stderr != "" || !strings.Contains(copied.stdout, "--output-compression") {
+							t.Fatalf("copied installed help failed: %+v", copied)
+						}
+						return
+					}
+				}
+				t.Fatalf("no full-help link: %+v", got)
+			})
 			for _, flag := range []string{"-h", "--help", "--h"} {
 				for _, command := range []string{"", "images generate "} {
 					t.Run(command+flag, func(t *testing.T) {

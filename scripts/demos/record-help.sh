@@ -46,7 +46,7 @@ printf ' %s' "${demo_args[@]}"
 printf '\n'
 sleep 0.3
 if openai "${demo_args[@]}"; then demo_status=0; else demo_status=$?; fi
-printf '\n[exit %s]\n$ ' "$demo_status"
+printf '\n$ '
 sleep 4
 exit "$demo_status"
 SCENE
@@ -67,7 +67,6 @@ cp "$demo_runtime/scene.sh" "$demo_output/scene.sh"
 for demo_scene in before after; do
   demo_capture_scene "$demo_scene" 0 "$demo_runtime/$demo_scene" \
     "$demo_api_url/help-only/v1" "$demo_scene: $([ "$demo_scene" = before ] && echo 'parent' || echo 'proposed change')"
-  /usr/bin/grep -Fq '[exit 0]' "$demo_output/$demo_scene.txt"
   /usr/bin/grep -Fq 'openai' "$demo_output/$demo_scene.txt"
 done
 demo_stop_api
