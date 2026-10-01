@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.0](https://github.com/openai/openai-cli/compare/v1.30.7...v1.31.0) (2026-10-01)
+
+
+### Features
+
+* add browsable command subgroups ([#347](https://github.com/openai/openai-cli/issues/347)) ([1805191](https://github.com/openai/openai-cli/commit/1805191f797953a23b373c6ffd6f41895deba92d))
+
 ## [1.30.7](https://github.com/openai/openai-cli/compare/v1.30.6...v1.30.7) (2026-09-30)
 
 
