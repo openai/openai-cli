@@ -14,7 +14,7 @@ func configureCommandHelp(command *cli.Command, invocation, path string) {
 }
 
 func configureCommandHelpAtWidth(command *cli.Command, invocation, path string, width int) {
-	if path != "" && command.CustomHelpTemplate == "" && !command.Hidden {
+	if path != "" && command.CustomHelpTemplate == "" && allowsHelpTopic(command) {
 		if command.Metadata == nil {
 			command.Metadata = map[string]any{}
 		}

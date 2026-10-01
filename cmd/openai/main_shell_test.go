@@ -141,6 +141,8 @@ func TestMainNativeShell(t *testing.T) {
 			}
 			for _, tc := range []struct{ args, want string }{
 				{"help --all images generate", "--output-compression"},
+				{"help --all admin organization audit-logs list", "--event-type"},
+				{"help --all admin:organization:audit-logs list", "--event-type"},
 				{"help setup", "OPENAI_API_KEY"},
 			} {
 				t.Run(tc.args, func(t *testing.T) {

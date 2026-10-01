@@ -27,7 +27,7 @@ GET HELP
   {{$run}} --help                      This menu (also -h)
   {{$run}} images --help               Browse image commands
   {{$run}} images generate --help      Example and common inputs
-  {{$run}} help --all                  Every command and global option
+  {{$run}} help --all                  Command groups and global options
   {{$run}} help --all images generate  Complete help for one command
 
 Add --help (or -h) to any command. Help needs no API key or internet.
@@ -228,7 +228,7 @@ func showHelpTopics(ctx context.Context, command *cli.Command) error {
 	parent, target := root, root
 	for _, topic := range command.Args().Slice() {
 		next := target.Command(topic)
-		if next == nil || next.Hidden || topic == "help" {
+		if next == nil || !allowsHelpTopic(next) || topic == "help" {
 			return cli.Exit(fmt.Sprintf("Unknown help topic %q. Run %s help --all to see commands.", topic, root.Metadata["help-invocation"]), 3)
 		}
 		parent, target = target, next
@@ -240,6 +240,13 @@ func showHelpTopics(ctx context.Context, command *cli.Command) error {
 		return cli.ShowRootCommandHelp(root)
 	}
 	return cli.ShowCommandHelp(ctx, parent, target.Name)
+}
+
+// Compatibility aliases stay out of discovery but retain explicitly requested
+// help. Internal commands remain unavailable as help topics.
+func allowsHelpTopic(command *cli.Command) bool {
+	compatibility, _ := command.Metadata["command-compatibility-alias"].(bool)
+	return !command.Hidden || compatibility
 }
 
 func useFullHelp(root, target *cli.Command) {

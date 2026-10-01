@@ -632,6 +632,45 @@ func TestGetCompletions_ColonCommands_NoColonTyped(t *testing.T) {
 	assert.Equal(t, "", result.Completions[0].Usage)
 }
 
+func TestGetCompletions_CompatibilityColonPrefix(t *testing.T) {
+	t.Parallel()
+	root := &cli.Command{Commands: []*cli.Command{
+		{Name: "config", Usage: "Browse settings"},
+		{Name: "config:get", Usage: "Read a setting", Hidden: true, Metadata: map[string]any{"command-compatibility-alias": true}},
+		{Name: "config:private", Hidden: true},
+		{Name: "config:disabled", Hidden: true, Metadata: map[string]any{"command-compatibility-alias": false}},
+	}}
+	for _, style := range []CompletionStyle{CompletionStyleBash, CompletionStyleZsh, CompletionStyleFish, CompletionStylePowershell} {
+		t.Run(string(style), func(t *testing.T) {
+			name := "config:get"
+			if style == CompletionStyleBash {
+				name = "get"
+			}
+			group := []ShellCompletion{{Name: "config", Usage: "Browse settings"}}
+			legacy := []ShellCompletion{{Name: name, Usage: "Read a setting"}}
+			for _, tc := range []struct {
+				name string
+				args []string
+				want []ShellCompletion
+			}{
+				{"no arguments", nil, group},
+				{"empty prefix", []string{""}, group},
+				{"plain prefix", []string{"co"}, group},
+				{"explicit colon", []string{"config:"}, legacy},
+				{"legacy prefix", []string{"config:g"}, legacy},
+				{"internal prefix", []string{"config:p"}, nil},
+				{"disabled alias", []string{"config:d"}, nil},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					got := GetCompletions(style, root, tc.args)
+					assert.Equal(t, ShellCompletionBehaviorDefault, got.Behavior)
+					assert.ElementsMatch(t, tc.want, got.Completions)
+				})
+			}
+		})
+	}
+}
+
 func TestGetCompletions_ColonCommands_ColonTyped_Bash(t *testing.T) {
 	t.Parallel()
 
