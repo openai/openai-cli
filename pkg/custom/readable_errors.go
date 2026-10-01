@@ -271,7 +271,7 @@ func readableParameterChoices(command *cli.Command, path string) string {
 	// Keep choices scoped to API resources whose contract declares them. A
 	// different model can impose additional restrictions, so these are guidance,
 	// not a new client-side validation policy.
-	switch command.Lineage()[1].Name {
+	switch commandResourceName(command) {
 	case "embeddings":
 		if path == "encoding_format" {
 			return "float or base64."

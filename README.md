@@ -48,7 +48,7 @@ After cloning the git repository for this project, you can use the
 The CLI follows a resource-based command structure:
 
 ```sh
-openai [resource] <command> [flags...]
+openai <resource> [subresource...] <command> [flags...]
 ```
 
 Standard API endpoints require an [API key](https://platform.openai.com/settings/organization/api-keys):
@@ -66,11 +66,15 @@ Admin endpoints require an [admin API key](https://platform.openai.com/settings/
 ```sh
 export OPENAI_ADMIN_KEY="sk-admin-..."
 
-openai admin:organization:usage completions \
+openai admin organization usage completions \
   --start-time 1735689600 \
   --end-time 1735776000 \
   --bucket-width 1d
 ```
+
+Browse each group with `--help`, for example `openai admin --help` or
+`openai admin organization --help`. Existing colon commands such as
+`openai admin:organization:usage completions` continue to work.
 
 Run `openai` for a short starting guide. Help works without an API key or network connection:
 
@@ -78,7 +82,7 @@ Run `openai` for a short starting guide. Help works without an API key or networ
 openai help setup                  # Enter your API key safely
 openai images generate --help      # Example and common inputs
 openai help --all images generate  # Every image option and its details
-openai help --all                  # Every command and global option
+openai help --all                  # Command groups and global options
 ```
 
 Add `--help` (or `-h`) to any command for its short guide. Help changes only
