@@ -1,0 +1,57 @@
+# PROPOSAL: explicit one-shot validation branch, never PR-triggered or required.
+name: PR342 native macOS image proof
+on:
+  push:
+    branches: [codex/pr342-macos-native-proof]
+    paths:
+      - .github/workflows/native-image-macos.yml
+      - scripts/demos/native-images/**
+permissions:
+  contents: read
+concurrency:
+  group: pr342-native-macos-proof
+  cancel-in-progress: false
+jobs:
+  native-images:
+    if: github.repository == 'openai/openai-cli' && github.ref == 'refs/heads/codex/pr342-macos-native-proof'
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      CANDIDATE_SHA: 9321b76939ae60b57bfa4b7da2706a7bf9bb0be4
+      BASELINE_SHA: bdb3fa1fee9d08fe2a5f68d54727b111dd6f874f
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Build exact baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_ACTIONS" == true && "$RUNNER_ENVIRONMENT" == github-hosted ]]
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ && "$BASELINE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin "$BASELINE_SHA" "$CANDIDATE_SHA"
+          git cat-file -e "$BASELINE_SHA^{commit}"
+          git cat-file -e "$CANDIDATE_SHA^{commit}"
+          mkdir -p "$RUNNER_TEMP/native-images/bin"
+          git worktree add --detach "$RUNNER_TEMP/native-before" "$BASELINE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/native-after" "$CANDIDATE_SHA"
+          (cd "$RUNNER_TEMP/native-before" && go build -o "$RUNNER_TEMP/native-images/bin/openai-before" ./cmd/openai)
+          (cd "$RUNNER_TEMP/native-after" && go build -o "$RUNNER_TEMP/native-images/bin/openai-after" ./cmd/openai)
+      - name: Capture fixed synthetic scenes in native terminals
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I scripts/demos/native-images/macos_driver.py "$RUNNER_TEMP/native-images"
+      - name: Preserve synthetic evidence and failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr342-macos-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-images/evidence
+          if-no-files-found: error
+          retention-days: 7
