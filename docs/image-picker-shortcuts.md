@@ -1,5 +1,9 @@
 # Image picker shortcuts
 
+The CLI can [save setup for future shells](image-picker-shell-setup.md), including
+quiet setup on eligible first use. The commands below apply only to the current
+session.
+
 `openai images generate` opens the image picker when you press Enter in an
 interactive terminal. To also open it with Tab, load the optional hook in your
 current shell session:

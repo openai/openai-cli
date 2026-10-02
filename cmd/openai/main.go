@@ -22,6 +22,9 @@ func main() {
 	// Request configuration must not prevent local help from opening.
 	requestSetup := app.Before
 	app.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
+		if custom.IsImagePickerShellSetupCommand(command.Args().Slice()) {
+			return ctx, nil
+		}
 		if baseURL, ok := os.LookupEnv("OPENAI_BASE_URL"); ok {
 			if err := cmd.ValidateBaseURL(baseURL, "OPENAI_BASE_URL"); err != nil {
 				return ctx, err
@@ -37,6 +40,7 @@ func main() {
 
 	ctx := context.Background()
 	if err == nil {
+		custom.SetupImagePickerShellOnFirstRun(ctx, os.Args)
 		err = app.Run(ctx, args)
 	}
 	if err != nil {

@@ -1,0 +1,177 @@
+package main
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func pickerSetupProcessEnv(home string) []string {
+	return []string{"HOME=" + home, "USERPROFILE=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, "config"), "APPDATA=" + filepath.Join(home, "config"), "ZDOTDIR="}
+}
+
+func TestMainPickerShellSetupRoundTrip(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		t.Run(shell, func(t *testing.T) {
+			home := t.TempDir()
+			profile := filepath.Join(home, "startup with spaces")
+			original := "# personal startup\n"
+			if err := os.WriteFile(profile, []byte(original), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for _, action := range []string{"--install-picker", "--install-picker", "--uninstall-picker", "--uninstall-picker"} {
+				got := runMainDispatchWithEnv(t, shell, pickerSetupProcessEnv(home), "openai", "@completion", shell, action, "--profile", profile)
+				if got.code != 0 || got.stderr != "" {
+					t.Fatalf("setup failed: %+v", got)
+				}
+				data, err := os.ReadFile(profile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if action == "--install-picker" {
+					if !strings.Contains(got.stdout, "for future terminals") || !strings.HasPrefix(string(data), original) || strings.Count(string(data), "# >>> openai image picker") != 1 {
+						t.Fatalf("installation lost content or duplicated setup: %q, %q", got.stdout, data)
+					}
+				} else if string(data) != original || !strings.Contains(got.stdout, "setup removed") {
+					t.Fatalf("removal lost original content: %q, %q", got.stdout, data)
+				}
+			}
+		})
+	}
+}
+
+func TestMainPickerShellSetupPowerShellFallback(t *testing.T) {
+	const guidance = "PowerShell uses normal Tab completion. Type openai images generate and press Enter to open the image picker."
+	for _, action := range []string{"--install-picker", "--uninstall-picker"} {
+		for _, format := range []string{"text", "json"} {
+			t.Run(action+"/"+format, func(t *testing.T) {
+				home := t.TempDir()
+				got := runMainDispatchWithEnv(t, "pwsh", pickerSetupProcessEnv(home), "openai", "--format-error", format, "@completion", "pwsh", action)
+				if got.code != 2 || got.stdout != "" {
+					t.Fatalf("unexpected fallback result: %+v", got)
+				}
+				if format == "json" {
+					var value struct {
+						Message string `json:"message"`
+					}
+					if err := json.Unmarshal([]byte(got.stderr), &value); err != nil || value.Message != guidance {
+						t.Fatalf("structured guidance lost: %v, %q", err, got.stderr)
+					}
+				} else if strings.TrimSpace(got.stderr) != guidance {
+					t.Fatalf("guidance lost at process stderr: %q", got.stderr)
+				}
+				entries, err := os.ReadDir(home)
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("unsupported setup wrote files: %v, %v", entries, err)
+				}
+			})
+		}
+	}
+}
+
+func TestMainPickerShellSetupPreservesModifiedProfileAndPrivateErrors(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			home := t.TempDir()
+			profile := filepath.Join(home, "private startup")
+			original := "# >>> openai image picker modified\n# personal content\n"
+			if err := os.WriteFile(profile, []byte(original), 0600); err != nil {
+				t.Fatal(err)
+			}
+			got := runMainDispatchWithEnv(t, "zsh", pickerSetupProcessEnv(home), "openai", "--format-error", format, "@completion", "zsh", "--install-picker", "--profile", profile)
+			if got.code == 0 || got.stdout != "" || strings.Contains(got.stderr, home) {
+				t.Fatalf("failed setup lost its error or leaked a private path: %+v", got)
+			}
+			message := got.stderr
+			if format == "json" {
+				var value struct {
+					Message string `json:"message"`
+				}
+				if err := json.Unmarshal([]byte(got.stderr), &value); err != nil {
+					t.Fatalf("error stream is not one JSON document: %v, %q", err, got.stderr)
+				}
+				message = value.Message
+			}
+			if !strings.Contains(message, "Could not finish Tab shortcut setup") {
+				t.Fatalf("recovery guidance lost: %q", got.stderr)
+			}
+			data, err := os.ReadFile(profile)
+			if err != nil || string(data) != original {
+				t.Fatalf("modified startup changed: %q, %v", data, err)
+			}
+		})
+	}
+}
+
+func TestMainPickerShellSetupReadOnlyModesDoNotWrite(t *testing.T) {
+	for _, args := range [][]string{
+		{"--help"}, {"images", "generate", "--help"}, {"--format", "json", "images", "generate", "--help"},
+		{"@completion", "zsh"}, {"@completion", "zsh", "--picker"},
+		{"__complete", "--", "images", ""}, {"@completion", "--install-picker", "--help"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			home := t.TempDir()
+			got := runMainDispatchWithEnv(t, "zsh", pickerSetupProcessEnv(home), append([]string{"openai"}, args...)...)
+			if got.code != 0 || got.stderr != "" || got.stdout == "" {
+				t.Fatalf("read-only command failed: %+v", got)
+			}
+			entries, err := os.ReadDir(home)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("read-only command wrote state: %v, %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestMainPickerShellSetupIgnoresRequestConfiguration(t *testing.T) {
+	for _, configuration := range []string{"invalid base URL", "missing mTLS files"} {
+		t.Run(configuration, func(t *testing.T) {
+			home := t.TempDir()
+			profile := filepath.Join(home, "startup")
+			env := pickerSetupProcessEnv(home)
+			if configuration == "invalid base URL" {
+				env = append(env, "OPENAI_BASE_URL=invalid")
+			} else {
+				env = append(env, "OPENAI_BASE_URL=https://api.example.invalid",
+					"OPENAI_MTLS_CLIENT_CERT_FILE="+filepath.Join(home, "absent-cert"),
+					"OPENAI_MTLS_CLIENT_KEY_FILE="+filepath.Join(home, "absent-key"))
+			}
+			for _, action := range []string{"--install-picker=true", "--uninstall-picker"} {
+				got := runMainDispatchWithEnv(t, "zsh", env, "openai", "--format-error", "json", "@completion", "zsh", action, "--profile", profile)
+				if got.code != 0 || got.stderr != "" || got.stdout == "" {
+					t.Fatalf("local setup depended on request configuration: %+v", got)
+				}
+			}
+			data, err := os.ReadFile(profile)
+			if err != nil || len(data) != 0 {
+				t.Fatalf("setup round trip did not restore empty profile: %q, %v", data, err)
+			}
+		})
+	}
+}
+
+func TestMainPickerShellSetupDoesNotExemptAPIArguments(t *testing.T) {
+	for _, args := range [][]string{
+		{"images", "generate", "--prompt", "--install-picker"},
+		{"images", "generate", "--prompt", "@completion --uninstall-picker"},
+		{"--project", "@completion", "images", "generate", "--prompt", "--install-picker"},
+		{"@completion", "zsh", "--install-picker=false"},
+		{"@completion", "zsh", "--profile", "--install-picker"},
+		{"@completion", "zsh", "--", "--install-picker"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			home := t.TempDir()
+			env := append(pickerSetupProcessEnv(home), "OPENAI_BASE_URL=invalid")
+			got := runMainDispatchWithEnv(t, "zsh", env, append([]string{"openai"}, args...)...)
+			if got.code == 0 || got.stdout != "" || !strings.Contains(got.stderr, "OPENAI_BASE_URL must start") {
+				t.Fatalf("non-setup arguments bypassed request validation: %+v", got)
+			}
+			entries, err := os.ReadDir(home)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("non-setup arguments wrote files: %v, %v", entries, err)
+			}
+		})
+	}
+}

@@ -34,6 +34,12 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 
 <!-- x-release-please-end -->
 
+The first eligible interactive `openai` run quietly saves image picker Tab
+shortcuts for future Bash, zsh, and fish sessions. Open a new terminal to use
+them. See [shortcut setup and removal](docs/image-picker-shell-setup.md) for
+requirements and opt-out. PowerShell keeps normal Tab completion; press Enter
+after `openai images generate` to open the picker.
+
 ### Running Locally
 
 After cloning the git repository for this project, you can use the

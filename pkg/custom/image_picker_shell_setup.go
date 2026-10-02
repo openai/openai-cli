@@ -1,0 +1,232 @@
+package custom
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/openai/openai-cli/internal/autocomplete"
+	"github.com/urfave/cli/v3"
+)
+
+// IsImagePickerShellSetupCommand recognizes explicit local setup in the root's
+// remaining arguments, after global flags have been parsed. Setup validates
+// its own options before changing files. API argument values never qualify.
+func IsImagePickerShellSetupCommand(args []string) bool {
+	if len(args) < 2 || args[0] != "@completion" {
+		return false
+	}
+	for index := 1; index < len(args); index++ {
+		name, value, hasValue := strings.Cut(args[index], "=")
+		if name == "--" {
+			break
+		}
+		if name == "--profile" && !hasValue {
+			index++
+			continue
+		}
+		if name == "--install-picker" || name == "--uninstall-picker" {
+			if !hasValue {
+				return true
+			}
+			if enabled, err := strconv.ParseBool(value); err == nil && enabled {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Keep completion generation and persistent picker setup on the existing
+// completion command, without changing the generated command definition.
+func configureImagePickerShellSetup(root *cli.Command) {
+	completion := root.Command("@completion")
+	if completion == nil {
+		return
+	}
+	for _, flag := range completion.Flags {
+		if slices.Contains(flag.Names(), "install-picker") {
+			return
+		}
+	}
+	completion.Flags = append(completion.Flags,
+		&cli.BoolFlag{Name: "install-picker", Usage: "Enable Tab shortcuts in future shell sessions"},
+		&cli.BoolFlag{Name: "uninstall-picker", Usage: "Remove the managed Tab shortcut setup"},
+		&cli.BoolFlag{Name: "automatic", Usage: "Installer setup for the preferred shell; preserve a previous opt-out"},
+		&cli.StringFlag{Name: "profile", Usage: "Use this shell startup file for explicit setup"},
+	)
+	next := completion.Action
+	completion.Action = func(ctx context.Context, command *cli.Command) error {
+		install, remove := command.Bool("install-picker"), command.Bool("uninstall-picker")
+		if !install && !remove {
+			if command.Bool("automatic") || command.IsSet("profile") {
+				return cli.Exit("Use --install-picker or --uninstall-picker with setup options.", 2)
+			}
+			return next(ctx, command)
+		}
+		if install && remove || command.Bool("picker") || command.Args().Len() > 1 ||
+			command.IsSet("profile") && command.String("profile") == "" ||
+			command.Bool("automatic") && (remove || command.IsSet("profile") || command.Args().Len() > 0) {
+			return cli.Exit("Choose one setup action. Automatic setup does not accept a shell or profile override.", 2)
+		}
+		shell := command.Args().First()
+		if shell == "" && !command.Bool("automatic") {
+			shell = imagePickerParentShell(ctx)
+		}
+		if shell == "pwsh" {
+			return cli.Exit("PowerShell uses normal Tab completion. Type openai images generate and press Enter to open the image picker.", 2)
+		}
+		targets, err := imagePickerShellTarget(ctx, shell, command.Bool("automatic"), command.String("profile"))
+		if err != nil {
+			return imageSavingFailure("Could not choose a supported shell startup file. Use openai @completion SHELL --install-picker with an explicit shell.", err)
+		}
+		if len(targets) == 0 {
+			return nil
+		}
+		keptOff := false
+		err = autocomplete.WithPickerSetupLock(ctx, targets[0].Directory, func() error {
+			if command.Bool("automatic") {
+				declined, err := imagePickerTabDeclined(string(targets[0].Shell))
+				if err != nil {
+					return imageSavingFailure("Could not read the Tab shortcut preference; shell setup was kept unchanged.", err)
+				}
+				if declined {
+					keptOff = true
+					return nil
+				}
+			}
+			if err := changeImagePickerShellSetup(ctx, targets, remove); err != nil {
+				return imageSavingFailure("Could not finish Tab shortcut setup. Some startup files may already be configured; rerunning this command is safe.", err)
+			}
+			var err error
+			if remove {
+				err = declineImagePickerTab(ctx, string(targets[0].Shell))
+			} else {
+				err = clearImagePickerTabDecline(string(targets[0].Shell))
+			}
+			if err != nil {
+				return imageSavingFailure("Shell setup changed, but the Tab shortcut preference could not be saved.", err)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		message := "Tab setup saved for future terminals. Existing custom bindings are preserved."
+		if keptOff {
+			message = "Tab shortcuts remain off, as requested."
+		} else if remove {
+			message = "Tab shortcut setup removed. Open a new terminal to finish."
+		}
+		_, err = fmt.Fprintln(command.Root().Writer, message)
+		return err
+	}
+}
+
+func changeImagePickerShellSetup(ctx context.Context, targets []autocomplete.PickerInstallation, remove bool) error {
+	for _, target := range targets {
+		var err error
+		if remove {
+			_, err = autocomplete.RemovePicker(ctx, target)
+		} else {
+			_, err = autocomplete.InstallPicker(ctx, target)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// A private empty file records an explicit opt-out. It contains no prompt,
+// executable path or credentials. Exclusive creation cannot follow a symlink.
+func imagePickerTabChoicePath(shell string) (string, error) {
+	if imagePickerShellName(shell) != shell || shell == "" {
+		return "", errors.New("unsupported Tab shortcut shell")
+	}
+	path, err := imagePickerStatePath()
+	if err != nil {
+		return "", err
+	}
+	return path + ".tab-off-" + shell, nil
+}
+
+func imagePickerTabDeclined(shell string) (bool, error) {
+	path, err := imagePickerTabChoicePath(shell)
+	if err != nil {
+		return false, err
+	}
+	root, name, err := openImagePickerStateParent(path, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer root.Close()
+	info, err := root.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !privateImagePickerState(info) || info.Size() != 0 {
+		return false, errors.New("invalid Tab shortcut preference")
+	}
+	return true, nil
+}
+
+func declineImagePickerTab(ctx context.Context, shell string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	path, err := imagePickerTabChoicePath(shell)
+	if err != nil {
+		return err
+	}
+	root, name, err := openImagePickerStateParent(path, true)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	file, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if errors.Is(err, os.ErrExist) {
+		_, err = imagePickerTabDeclined(shell)
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	return file.Close()
+}
+
+func clearImagePickerTabDecline(shell string) error {
+	path, err := imagePickerTabChoicePath(shell)
+	if err != nil {
+		return err
+	}
+	root, name, err := openImagePickerStateParent(path, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	info, err := root.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !privateImagePickerState(info) || info.Size() != 0 {
+		return errors.New("invalid Tab shortcut preference")
+	}
+	return root.Remove(name)
+}
