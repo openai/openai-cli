@@ -42,6 +42,17 @@ Setup keeps symlinked profiles, unsafe permissions, and protected file metadata
 unchanged. On macOS and Linux this includes profiles with ACLs or extended
 attributes. Windows replacement also checks alternate streams and file-specific
 permissions. Profiles must be UTF-8 text and at most 1 MiB including the managed
-block. Use the [current-session shortcut](image-picker-shortcuts.md) when a
-profile cannot be managed automatically. PowerShell retains ordinary completion
-and does not use persistent picker setup.
+block.
+
+Setup treats configured `HOME`, `XDG_CONFIG_HOME`, `ZDOTDIR`, and explicit profile
+locations as trusted. It checks the immediate profile parent and both managed
+`openai` and `openai/shell` directories for ownership and unsafe permissions.
+On macOS, a profile parent may have deny-only ACLs such as the normal home
+directory deny-delete rule; ACLs granting permissions are left for manual setup.
+On macOS and Linux, both managed directories must be free of protected metadata,
+including ACLs. These checks do not audit arbitrary ancestors of the configured
+locations.
+
+Use the [current-session shortcut](image-picker-shortcuts.md) when a profile
+cannot be managed automatically. PowerShell retains ordinary completion and
+does not use persistent picker setup.
