@@ -317,7 +317,6 @@ func TestImagePickerCtrlGFromDropdown(t *testing.T) {
 	require.Equal(t, "choose", m.page)
 	pickerKey(m, tea.KeyDown)
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
-	cmd = cmd
 	require.NotNil(t, cmd)
 	require.Equal(t, openai.ImageModelGPTImage2_5Sunburst, m.settings.model, "unconfirmed highlighted option must not apply")
 	require.Equal(t, openai.ImageModelGPTImage2_5Sunburst, pickerArg(t, m.result.Args, "--model"))
@@ -616,7 +615,6 @@ func TestImagePickerInlineFinishedView(t *testing.T) {
 		require.False(t, view.AltScreen)
 		require.NotEmpty(t, view.Content)
 		_, cmd := m.Update(action)
-		cmd = cmd
 		require.NotNil(t, cmd)
 		view = m.View()
 		require.False(t, view.AltScreen)
