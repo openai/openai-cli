@@ -192,5 +192,3 @@ def printed_flags(terminal):
     arguments = shlex.split(commands[0])
     assert len(arguments[3:]) % 2 == 0, arguments
     return dict(zip(arguments[3::2], arguments[4::2]))
-
-
