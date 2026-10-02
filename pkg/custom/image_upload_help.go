@@ -4,12 +4,13 @@ const imageUploadQuickHelp = `{{$bin := or (index .Root.Metadata "help-invocatio
   {{$bin}} images edit --image "photo.png" --prompt "Make the sky purple"
 
 Replace photo.png with your image's path and the prompt with your changes.
-{{else}}Make an image variation
-  {{$bin}} images create-variation --image "photo.png"
+Saves to ~/Downloads/gpt-images/. Keeps your original.
+{{else}}Image variations are retired and no longer available.
+Use images edit with a GPT Image model and a prompt:
+  {{$bin}} images edit --image "photo.png" --prompt "Create a variation of this image"
 
-Replace photo.png with your image's path: a square PNG under 4 MB.
-{{end}}Saves to ~/Downloads/gpt-images/. Keeps your original.
-
+Replace photo.png with your image's path. Edits save to ~/Downloads/gpt-images/.
+{{end}}
 Full help: {{$bin}} help --all images {{.Name}}
 `
 
@@ -22,12 +23,9 @@ Use --output-dir to choose an existing folder.
 For API data without saving, use --format json without --name or --output-dir.
 `
 
-const imageVariationSavingHelp = `EXAMPLE
+const imageVariationSavingHelp = `This endpoint is retired and no longer available. Use images edit with a GPT Image model and a prompt:
 
-    openai images create-variation --image "photo.png" --name variation
+    openai images edit --image "photo.png" --prompt "Create a variation of this image" --name variation
 
-Requires a square PNG under 4 MB. Supports dall-e-2 only.
-Keeps your original. Saves to ~/Downloads/gpt-images/.
-Use --output-dir to choose an existing folder.
-For API data without saving, use --format json without --name or --output-dir.
+The options below describe the legacy variations contract.
 `

@@ -183,7 +183,7 @@ func TestMainHelpFullReferenceRoutes(t *testing.T) {
 				t.Errorf("args %q: full reference lost option %q", args, name)
 			}
 		}
-		for _, text := range []string{"32000 characters", "60 minutes", "base64-encoded images", "divisible by 16"} {
+		for _, text := range []string{"32000 characters", "Legacy response format parameter for retired image models", "base64-encoded images", "divisible by 16"} {
 			if !strings.Contains(strings.Join(strings.Fields(got.stdout), " "), text) {
 				t.Errorf("args %q: full reference lost detail %q", args, text)
 			}

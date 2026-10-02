@@ -99,9 +99,11 @@ uses `gpt-image-2.5-sunburst` when saving without an explicit model or legacy
 response format. Use `--model` for another exact ID, `--name` for a filename,
 or `--output-dir` for an existing directory. Existing files are kept.
 `--format json` returns API data without saving or applying the CLI preset.
-`images edit` and `images create-variation` also save new results while keeping
-their source files. See [image generation and saving](docs/image-generation-saving.md)
-for commands and defaults.
+`images edit` also saves new results while keeping source files.
+`images create-variation` is retired and no longer available. To create a
+variation, use `images edit` with a GPT Image model and a prompt. See
+[image generation and saving](docs/image-generation-saving.md) for commands
+and defaults.
 
 `openai images preview "path/to/image.png"` redisplays a saved image without an
 API request. Use `openai images inline on` or `off` to remember whether future

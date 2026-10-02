@@ -32,7 +32,7 @@ func TestMainHelpScriptsRunUsesCopyableInvocation(t *testing.T) {
 			{[]string{"images", "preview", "--help"}, []string{`  go run ./cmd/openai images preview "photo.png"`, "Full help: go run ./cmd/openai help --all images preview"}},
 			{[]string{"help", "--all", "images", "generate"}, []string{`    go run ./cmd/openai images generate --prompt "A tiny cat" --name cat`}},
 			{[]string{"help", "--all", "images", "edit"}, []string{`    go run ./cmd/openai images edit --image "photo.png" --prompt "Make the sky purple" --name purple-sky`}},
-			{[]string{"help", "--all", "images", "create-variation"}, []string{`    go run ./cmd/openai images create-variation --image "photo.png" --name variation`}},
+			{[]string{"help", "--all", "images", "create-variation"}, []string{"retired and no longer available", `    go run ./cmd/openai images edit --image "photo.png" --prompt "Create a variation of this image" --name variation`}},
 		} {
 			child := exec.CommandContext(ctx, "./scripts/run", tc.args...)
 			child.Dir = root

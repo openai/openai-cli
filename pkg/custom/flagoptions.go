@@ -1,6 +1,7 @@
 package custom
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -337,6 +338,88 @@ func isUTF8TextFile(content []byte) bool {
 	return false
 }
 
+const audioVoicesContextMetadata = "openai-audio-voices-create-context"
+
+// Constructed only from the selected built-in variant and its declared field
+// names, never from request values.
+type voiceVariantError struct {
+	voiceType string
+	flags     []string
+}
+
+func (e *voiceVariantError) Error() string {
+	if e.voiceType == "" {
+		return "Invalid voice type: --type must be audio_sample or prompt. Omit it to use audio_sample."
+	}
+	return "Options not supported for voice type " + e.voiceType + ": " + strings.Join(e.flags, ", ") + "."
+}
+
+// Voice variant checks require the actual request context when type is an
+// uploaded scalar. Keep preparation scoped to this action, as for image uploads.
+func AudioVoicesFlagOptions(ctx context.Context, cmd *cli.Command) ([]option.RequestOption, error) {
+	if cmd.Metadata == nil {
+		cmd.Metadata = make(map[string]any)
+	}
+	cmd.Metadata[audioVoicesContextMetadata] = ctx
+	defer delete(cmd.Metadata, audioVoicesContextMetadata)
+	return FlagOptions(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, MultipartFormEncoded, false)
+}
+
+// The final body has flags, piped input and file references merged. Inspect
+// only the discriminator; sample uploads stay unread. FlagOptions owns error
+// cleanup until the multipart encoder takes ownership.
+func prepareAudioVoicesMultipartBody(cmd *cli.Command, bodyMap map[string]any) error {
+	ctx, ok := cmd.Metadata[audioVoicesContextMetadata].(context.Context)
+	if !ok {
+		return nil
+	}
+	value, supplied := bodyMap["type"]
+	voiceType, replay, inspectErr := inspectImageMultipartSetting(ctx, "type", value)
+	if supplied {
+		bodyMap["type"] = replay
+	} else {
+		voiceType = "audio_sample"
+	}
+	if inspectErr != nil {
+		return inspectErr
+	}
+	var needed, inactive []string
+	var selectedType string
+	switch voiceType {
+	case "prompt":
+		selectedType = "prompt"
+		needed = []string{"prompt"}
+		inactive = []string{"audio_sample", "consent"}
+	case "audio_sample":
+		selectedType = "audio_sample"
+		needed = []string{"audio_sample", "consent"}
+		inactive = []string{"prompt", "model", "script_hint"}
+	default:
+		return &voiceVariantError{}
+	}
+	var missing []string
+	for _, name := range needed {
+		if bodyMap[name] == nil {
+			missing = append(missing, strings.ReplaceAll(name, "_", "-"))
+		}
+	}
+	if len(missing) == 1 {
+		return fmt.Errorf("Required flag %q not set\nRun '%s --help' for usage information", missing[0], cmd.FullName())
+	} else if len(missing) > 1 {
+		return fmt.Errorf("Required flags %q not set\nRun '%s --help' for usage information", strings.Join(missing, ", "), cmd.FullName())
+	}
+	var conflicts []string
+	for _, name := range inactive {
+		if _, present := bodyMap[name]; present {
+			conflicts = append(conflicts, "--"+strings.ReplaceAll(name, "_", "-"))
+		}
+	}
+	if len(conflicts) != 0 {
+		return &voiceVariantError{voiceType: selectedType, flags: conflicts}
+	}
+	return nil
+}
+
 func FlagOptions(
 	cmd *cli.Command,
 	nestedFormat apiquery.NestedQueryFormat,
@@ -565,6 +648,9 @@ func FlagOptions(
 		bodyMap, ok := requestContents.Body.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("Cannot send a non-map value to a form-encoded endpoint: %v\n", requestContents.Body)
+		}
+		if err := prepareAudioVoicesMultipartBody(cmd, bodyMap); err != nil {
+			return nil, err
 		}
 		if err := prepareImageMultipartBody(cmd, bodyMap); err != nil {
 			return nil, err

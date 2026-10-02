@@ -16,23 +16,21 @@ import (
 func TestMainHelpCompleteImageExamples(t *testing.T) {
 	payload := imageGenerationPNG(t)
 	for _, tc := range []struct {
-		operation, example string
-		args               []string
+		helpTopic, operation, example string
+		args                          []string
 	}{
-		{"generate", `openai images generate --prompt "A tiny orange robot"`, []string{"--prompt", "A tiny orange robot"}},
-		{"edit", `openai images edit --image "photo.png" --prompt "Make the sky purple"`, []string{"--image", "photo.png", "--prompt", "Make the sky purple"}},
-		{"create-variation", `openai images create-variation --image "photo.png"`, []string{"--image", "photo.png"}},
+		{"generate", "generate", `openai images generate --prompt "A tiny orange robot"`, []string{"--prompt", "A tiny orange robot"}},
+		{"edit", "edit", `openai images edit --image "photo.png" --prompt "Make the sky purple"`, []string{"--image", "photo.png", "--prompt", "Make the sky purple"}},
+		{"create-variation", "edit", `openai images edit --image "photo.png" --prompt "Create a variation of this image"`, []string{"--image", "photo.png", "--prompt", "Create a variation of this image"}},
 	} {
 		t.Run(tc.example, func(t *testing.T) {
-			help := runMainDispatch(t, "bash", "openai", "images", tc.operation, "--help")
+			help := runMainDispatch(t, "bash", "openai", "images", tc.helpTopic, "--help")
 			if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, tc.example) {
 				t.Fatalf("incomplete short help: %+v", help)
 			}
 			if tc.operation != "generate" && !strings.Contains(help.stdout, "your image's path") {
 				t.Fatalf("source path placeholder is unexplained: %s", help.stdout)
 			}
-			// Variations require a square PNG under 4 MB. Use a valid source
-			// even though the local fixture does not enforce model restrictions.
 			source := filepath.Join(t.TempDir(), "photo.png")
 			file, err := os.Create(source)
 			if err != nil {
@@ -94,11 +92,53 @@ func TestMainHelpImagePagesStayBrief(t *testing.T) {
 			if lines := len(strings.Split(strings.TrimSpace(got.stdout), "\n")); lines > 8 {
 				t.Errorf("short help uses %d lines; want one example and at most 8 lines", lines)
 			}
-			if strings.Count(got.stdout, "  openai images "+operation+" ") != 1 {
+			exampleOperation := operation
+			if operation == "create-variation" {
+				exampleOperation = "edit"
+			}
+			if strings.Count(got.stdout, "  openai images "+exampleOperation+" ") != 1 {
 				t.Errorf("expected one complete example: %s", got.stdout)
 			}
 			if !strings.Contains(got.stdout, "Full help: openai help --all images "+operation) {
 				t.Errorf("full help is not discoverable: %s", got.stdout)
+			}
+		})
+	}
+}
+
+func TestMainVariationHelpRetirementGuidance(t *testing.T) {
+	for _, args := range [][]string{
+		{"openai", "images", "create-variation", "--help"},
+		{"openai", "help", "images", "create-variation"},
+		{"openai", "images", "help", "create-variation"},
+		{"openai", "help", "--all", "images", "create-variation"},
+		{"openai", "help", "images", "create-variation", "--all"},
+		{"openai", "images", "help", "--all", "create-variation"},
+	} {
+		t.Run(strings.Join(args[1:], "/"), func(t *testing.T) {
+			result := runMainDispatchWithEnv(t, "bash",
+				[]string{"OPENAI_BASE_URL=not a URL", "OPENAI_API_KEY="}, args...)
+			if result.code != 0 || result.stderr != "" {
+				t.Fatalf("variation help must not attempt a request: %+v", result)
+			}
+			text := strings.Join(strings.Fields(result.stdout), " ")
+			for _, want := range []string{
+				"retired and no longer available",
+				`openai images edit --image "photo.png" --prompt "Create a variation of this image"`,
+			} {
+				if !strings.Contains(text, want) {
+					t.Errorf("variation help missing %q:\n%s", want, result.stdout)
+				}
+			}
+			for _, stale := range []string{
+				"images create-variation --image",
+				"Supports dall-e-2 only",
+				"Saving default when model and response-format are omitted",
+				"CLI saving requests b64_json for DALL-E",
+			} {
+				if strings.Contains(text, stale) {
+					t.Errorf("variation help still advertises %q:\n%s", stale, result.stdout)
+				}
 			}
 		})
 	}
