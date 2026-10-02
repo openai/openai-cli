@@ -62,7 +62,7 @@ func WithPickerSetupLock(ctx context.Context, directory string, change func() er
 	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory || strings.ContainsAny(directory, "\x00\r\n") {
 		return errors.New("shell integration requires a clean absolute configuration directory")
 	}
-	root, err := openPickerDirectory(directory, true)
+	root, err := openPickerScriptDirectory(directory, true)
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, e
 	if err != nil || installed == nil {
 		return false, err
 	}
-	scripts, err := openPickerDirectory(options.Directory, false)
+	scripts, err := openPickerScriptDirectory(options.Directory, false)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -162,7 +162,7 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	if remove && installed == nil {
 		return result, nil
 	}
-	scriptRoot, err := openPickerDirectory(options.Directory, !remove)
+	scriptRoot, err := openPickerScriptDirectory(options.Directory, !remove)
 	if remove && errors.Is(err, os.ErrNotExist) {
 		desired := append(append([]byte(nil), before...), after...)
 		if err := replacePickerProfile(ctx, profileRoot, profileName, profile, desired); err != nil {
@@ -381,6 +381,44 @@ func openPickerDirectory(path string, create bool) (*os.Root, error) {
 	if err != nil || !os.SameFile(info, actual) {
 		root.Close()
 		return nil, errors.Join(errPickerInstallChanged, err)
+	}
+	directory, err := root.Open(".")
+	if err == nil {
+		err = errors.Join(checkPickerDirectoryPermissions(directory), directory.Close())
+	}
+	if err != nil {
+		root.Close()
+		return nil, err
+	}
+	return root, nil
+}
+
+// Both managed directories must protect the sourced script: a writable parent
+// could replace the entire shell directory. Configured locations above these
+// directories are caller-selected trust boundaries, not an ancestor audit.
+func openPickerScriptDirectory(path string, create bool) (*os.Root, error) {
+	parent, err := openPickerManagedDirectory(filepath.Dir(path), create)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	return openPickerManagedDirectory(path, create)
+}
+
+func openPickerManagedDirectory(path string, create bool) (*os.Root, error) {
+	root, err := openPickerDirectory(path, create)
+	if err != nil {
+		return nil, err
+	}
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+		directory, err := root.Open(".")
+		if err == nil {
+			err = errors.Join(checkPickerFileMetadata(directory), directory.Close())
+		}
+		if err != nil {
+			root.Close()
+			return nil, err
+		}
 	}
 	return root, nil
 }
