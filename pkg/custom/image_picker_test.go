@@ -31,6 +31,15 @@ func pickerForTest(t *testing.T) *imagePicker {
 
 func pickerKey(m *imagePicker, code rune) tea.Cmd {
 	_, cmd := m.Update(tea.KeyPressMsg{Code: code})
+	return pickerFinishFolderCommand(m, cmd)
+}
+
+// Execute the same folder command as the event loop. Race tests use Update
+// directly when they need to hold or reorder the asynchronous reply.
+func pickerFinishFolderCommand(m *imagePicker, cmd tea.Cmd) tea.Cmd {
+	if cmd != nil && (m.folder.busy == "submit" || m.folder.busy == "select") {
+		_, cmd = m.Update(cmd())
+	}
 	return cmd
 }
 
@@ -317,6 +326,7 @@ func TestImagePickerCtrlGFromDropdown(t *testing.T) {
 	require.Equal(t, "choose", m.page)
 	pickerKey(m, tea.KeyDown)
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	cmd = pickerFinishFolderCommand(m, cmd)
 	require.NotNil(t, cmd)
 	require.Equal(t, openai.ImageModelGPTImage2_5Sunburst, m.settings.model, "unconfirmed highlighted option must not apply")
 	require.Equal(t, openai.ImageModelGPTImage2_5Sunburst, pickerArg(t, m.result.Args, "--model"))
@@ -360,6 +370,7 @@ func TestImagePickerTinyWindowCannotSubmit(t *testing.T) {
 		m.Update(tea.WindowSizeMsg{Width: 25, Height: 7})
 		require.Nil(t, pickerKey(m, tea.KeyEnter))
 		_, cmd := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+		cmd = pickerFinishFolderCommand(m, cmd)
 		require.Nil(t, cmd)
 		require.Empty(t, m.result.Args)
 		require.Contains(t, m.View().Content, "Resize")
@@ -615,6 +626,7 @@ func TestImagePickerInlineFinishedView(t *testing.T) {
 		require.False(t, view.AltScreen)
 		require.NotEmpty(t, view.Content)
 		_, cmd := m.Update(action)
+		cmd = pickerFinishFolderCommand(m, cmd)
 		require.NotNil(t, cmd)
 		view = m.View()
 		require.False(t, view.AltScreen)

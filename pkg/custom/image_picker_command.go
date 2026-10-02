@@ -17,6 +17,9 @@ func (s imagePickerSettings) args() []string {
 	// setting changes even when the prompt tail needs to be truncated.
 	args := []string{"images", "generate", "--model", s.model, "--size", s.size,
 		"--quality", s.quality, "--output-format", s.format, "--background", s.background, "--count", s.count}
+	if s.outputDir != "" {
+		args = append(args, "--output-dir", s.outputDir)
+	}
 	return append(args, "--prompt", prompt)
 }
 

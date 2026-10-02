@@ -26,9 +26,10 @@ type imagePickerOptions struct {
 	// PromptSet lets an explicit empty prompt override the active draft.
 	PromptSet bool
 	// Shell selects quoting for the displayed command, never execution.
-	Shell    string
-	initial  *imagePickerSettings
-	resuming bool
+	Shell       string
+	initial     *imagePickerSettings
+	resuming    bool
+	initialNote string
 }
 
 // imagePickerResult contains arguments for the existing images generate command.
@@ -51,6 +52,7 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	if err != nil {
 		return imagePickerResult{}, err
 	}
+	defer model.cancelFolderWork()
 	if input == nil || output == nil || !term.IsTerminal(input.Fd()) || !term.IsTerminal(output.Fd()) {
 		return imagePickerResult{}, errors.New("the image picker needs terminal input and output")
 	}
@@ -180,7 +182,7 @@ func (w *imagePickerOutput) Err() error {
 }
 
 type imagePickerSettings struct {
-	prompt, model, size, quality, background, format, count string
+	prompt, model, size, quality, background, format, count, outputDir string
 }
 
 type imagePicker struct {
@@ -199,6 +201,7 @@ type imagePicker struct {
 	dark           bool
 	note           string
 	result         imagePickerResult
+	folder         imagePickerFolder
 }
 
 type imagePickerRow struct {
@@ -219,6 +222,7 @@ func newImagePicker(options imagePickerOptions) (*imagePicker, error) {
 		m.draft, m.cursor = []rune(m.settings.prompt), len([]rune(m.settings.prompt))
 	}
 	m.shell = options.Shell
+	m.note = options.initialNote
 	return m, nil
 }
 
@@ -234,10 +238,12 @@ func (m *imagePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	// Cancellation can still stop a submitted action before the picker exits.
 	switch msg := message.(type) {
 	case imagePickerStopMsg:
+		m.cancelFolderWork()
 		m.result = imagePickerResult{Canceled: true, ExitCode: msg.code}
 		return m, tea.Quit
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
+			m.cancelFolderWork()
 			m.result = imagePickerResult{Canceled: true}
 			return m, tea.Quit
 		}
@@ -247,14 +253,20 @@ func (m *imagePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg := message.(type) {
-
+	case imagePickerFolderMsg:
+		return m, m.finishFolderWork(msg)
 	case tea.BackgroundColorMsg:
 		m.dark = msg.IsDark()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.clampCommandOffset()
 	case tea.PasteMsg:
-		if m.focus == "prompt" {
+		if m.folder.busy == "submit" || m.folder.busy == "select" {
+			return m, nil
+		}
+		if m.focus == "path" {
+			m.insertFolderPath(msg.Content)
+		} else if m.focus == "prompt" {
 			m.insertPrompt(msg.Content)
 		} else {
 			m.note = "Tab to Prompt to paste text."
@@ -262,7 +274,19 @@ func (m *imagePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		key := msg.String()
 		if key == "esc" {
+			if m.page == "folder" || m.page == "path" || m.folder.busy == "submit" {
+				return m, m.backFolder()
+			}
 			m.focusPrompt()
+			return m, nil
+		}
+		if m.folder.busy == "submit" || m.folder.busy == "select" {
+			return m, nil
+		}
+		if m.focus == "path" {
+			if m.width >= 40 && m.height >= 12 {
+				return m, m.editFolderPath(msg)
+			}
 			return m, nil
 		}
 		// Esc immediately followed by another key can arrive as an Alt key.
@@ -283,6 +307,7 @@ func (m *imagePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if key == "q" && m.focus != "prompt" {
+			m.cancelFolderWork()
 			m.result = imagePickerResult{Canceled: true}
 			return m, tea.Quit
 		}
@@ -354,12 +379,17 @@ func (m *imagePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 // Esc closes any menu without applying its highlighted choice. Committed
 // settings and prompt text remain intact.
 func (m *imagePicker) focusPrompt() {
+	m.cancelFolderWork()
 	m.page, m.focus, m.selected, m.note = "settings", "prompt", 0, ""
 }
 
 func (m *imagePicker) rows() []imagePickerRow {
 	s := m.settings
 	switch m.page {
+	case "folder":
+		return m.folderRows()
+	case "path":
+		return m.folderCompletionRows()
 	case "choose":
 		return m.choices(m.field)
 	case "more":
@@ -370,7 +400,7 @@ func (m *imagePicker) rows() []imagePickerRow {
 		{id: "size", label: "Size", value: imagePickerSizeLabel(s.size)},
 		{id: "quality", label: "Quality", value: imagePickerTitle(s.quality)},
 	}
-	return append(rows, imagePickerRow{id: "more", label: "More options", value: strings.ToUpper(s.format) + " / " + s.count + " image(s)"})
+	return append(rows, m.folderRow(), imagePickerRow{id: "more", label: "More options", value: strings.ToUpper(s.format) + " / " + s.count + " image(s)"})
 }
 
 func (m *imagePicker) cycleFocus(backwards bool) {
@@ -493,6 +523,8 @@ func (m *imagePicker) apply(value string) {
 
 func (m *imagePicker) activate(row imagePickerRow) tea.Cmd {
 	switch row.id {
+	case "folder", "folder-default", "folder-current", "folder-path", "folder-back":
+		return m.activateFolder(row.id)
 	case "choice":
 		m.apply(row.value)
 		m.page, m.selected = m.returnPage, m.returnSelected
@@ -504,8 +536,7 @@ func (m *imagePicker) activate(row imagePickerRow) tea.Cmd {
 		m.page, m.selected = "more", 0
 	case "generate", "print":
 		if m.validPrompt() {
-			m.result = imagePickerResult{Args: m.settings.args(), PrintOnly: row.id == "print", settings: m.settings, shell: m.shell}
-			return tea.Quit
+			return m.submitWithFolder(row.id == "print")
 		}
 	case "back":
 		return m.back()
@@ -539,6 +570,8 @@ func (m *imagePicker) validPrompt() bool {
 func (m *imagePicker) back() tea.Cmd {
 	m.note = ""
 	switch m.page {
+	case "folder", "path":
+		return m.backFolder()
 	case "more":
 		m.page = "settings"
 		m.selected = len(m.rows()) - 1

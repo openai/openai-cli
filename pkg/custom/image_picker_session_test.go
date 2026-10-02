@@ -4,27 +4,101 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/stretchr/testify/require"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v3"
 )
+
+func TestImagePickerFolderFlagRestoresParsedState(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unset", true: "explicit"}[explicit], func(t *testing.T) {
+			destination := ""
+			flag := &cli.StringFlag{Name: "output-dir", Value: "default", Destination: &destination}
+			app := &cli.Command{Flags: []cli.Flag{flag}}
+			app.Action = func(ctx context.Context, c *cli.Command) error {
+				before := c.String("output-dir")
+				beforeDestination := destination
+				for range 2 {
+					restore, err := setImagePickerFlag(c, "output-dir", "/tmp/絵 with spaces")
+					require.NoError(t, err)
+					require.Equal(t, "/tmp/絵 with spaces", c.String("output-dir"))
+					require.True(t, c.IsSet("output-dir"))
+					require.Equal(t, beforeDestination, destination)
+					restore()
+					require.Equal(t, before, c.String("output-dir"))
+					require.Equal(t, explicit, c.IsSet("output-dir"))
+					require.Equal(t, beforeDestination, destination)
+				}
+				return nil
+			}
+			args := []string{"openai"}
+			if explicit {
+				args = append(args, "--output-dir", "original")
+			}
+			require.NoError(t, app.Run(context.Background(), args))
+		})
+	}
+}
 
 type failedImagePickerWriter struct{}
 
 func (failedImagePickerWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
-func TestImagePickerSelectionEchoFailurePreventsGeneration(t *testing.T) {
-	m, err := newImagePicker(imagePickerOptions{Prompt: "Synthetic prompt"})
+func TestImagePickerSelectionHistoryFollowsSuccessfulEcho(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "image-picker.json")
+	model, err := newImagePicker(imagePickerOptions{Prompt: "previous"})
 	require.NoError(t, err)
-	result := imagePickerResult{Args: m.settings.args(), settings: m.settings}
-	err = finishImagePickerSelection(context.Background(), failedImagePickerWriter{}, result)
+	require.NoError(t, saveImagePickerState(ctx, path, model.settings))
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	model.settings.prompt = "new prompt\n'絵'"
+	result := imagePickerResult{Args: model.settings.args(), settings: model.settings, PrintOnly: true}
+	var diagnostic bytes.Buffer
+	err = finishImagePickerSelection(ctx, failedImagePickerWriter{}, &diagnostic, path, result)
 	require.ErrorIs(t, err, io.ErrClosedPipe)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	require.Empty(t, diagnostic.String())
 	var output bytes.Buffer
-	require.NoError(t, finishImagePickerSelection(context.Background(), &output, result))
-	require.Equal(t, formatImagePickerCommand(result.Args, "")+"\n", output.String())
+	require.NoError(t, finishImagePickerSelection(ctx, &output, &diagnostic, path, result))
+	require.Equal(t, formatImagePickerCommand(result.Args, "bash")+"\n", output.String())
+	got, found, err := loadImagePickerState(ctx, path)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, model.settings, got)
+}
+
+func TestImagePickerOptionalHistoryFailureDoesNotBlockSelection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "image-picker.json")
+	invalid := []byte(`{"version":99,"prompt":"private text"}`)
+	require.NoError(t, os.WriteFile(path, invalid, 0600))
+	model, err := newImagePicker(imagePickerOptions{Prompt: "new"})
+	require.NoError(t, err)
+	result := imagePickerResult{Args: model.settings.args(), settings: model.settings}
+	var output, diagnostics bytes.Buffer
+	require.NoError(t, finishImagePickerSelection(context.Background(), &output, &diagnostics, path, result))
+	require.Equal(t, "Could not remember these settings.\n", diagnostics.String())
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, invalid, after)
+	err = finishImagePickerSelection(context.Background(), &output, failedImagePickerWriter{}, path, result)
+	require.ErrorIs(t, err, io.ErrClosedPipe)
+}
+
+func TestImagePickerCanceledSelectionHasNoPersistenceOrOutput(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	output.Reset()
-	require.True(t, errors.Is(finishImagePickerSelection(ctx, &output, result), context.Canceled))
+	path := filepath.Join(t.TempDir(), "image-picker.json")
+	var output bytes.Buffer
+	err := finishImagePickerSelection(ctx, &output, &output, path, imagePickerResult{})
+	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, output.String())
+	_, err = os.Stat(path)
+	require.True(t, errors.Is(err, os.ErrNotExist))
 }
