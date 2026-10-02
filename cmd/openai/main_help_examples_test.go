@@ -143,3 +143,19 @@ func TestMainVariationHelpRetirementGuidance(t *testing.T) {
 		})
 	}
 }
+
+func TestMainHelpImagePicker(t *testing.T) {
+	for _, args := range [][]string{{"openai", "images", "generate", "--help"}, {"openai", "help", "--all", "images", "generate"}} {
+		got := runMainDispatch(t, "bash", args...)
+		if got.code != 0 || got.stderr != "" {
+			t.Fatalf("picker help failed: %+v", got)
+		}
+		text := strings.Join(strings.Fields(got.stdout), " ")
+		if !strings.Contains(text, "Run without flags to choose settings") || !strings.Contains(text, "Ctrl+C exits.") {
+			t.Fatalf("missing picker guidance: %s", text)
+		}
+		if strings.Contains(got.stdout, "\x1b") {
+			t.Fatalf("help should stay plain: %q", got.stdout)
+		}
+	}
+}

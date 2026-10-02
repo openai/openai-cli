@@ -9,6 +9,18 @@ openai images generate --prompt "A tiny orange robot" --output-format webp
 openai --format json images generate --prompt "A tiny orange robot" --model gpt-image-2.5-sunburst
 ```
 
+Run `openai images generate` without flags in a terminal to choose a prompt,
+model, size, quality, background, file type and image count. The picker starts
+with the CLI's default model, a 1024 × 1024 image, automatic quality and
+background, PNG and one image. Enter generates from the prompt; use the arrow
+keys or Tab to move through settings. Ctrl+P prints the command without
+requesting an image, and Ctrl+C exits.
+
+After a successful generation, the picker reopens below the saved result with
+the active prompt and settings. Choices last until this invocation exits.
+Explicit image flags, output formats, piped input and redirected output retain
+the direct command behavior described below.
+
 Generation uses API credits and requires access to the chosen model. The CLI's
 default for saving is the exact ID `gpt-image-2.5-sunburst`. This is a preset,
 not a guarantee of access or quota. When neither `model` nor `response_format`

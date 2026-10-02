@@ -17,10 +17,10 @@ import (
 // latest availability. Explicit API output retains the API's own defaults.
 const defaultSavedImageModel = "gpt-image-2.5-sunburst"
 
-const imageGenerationQuickHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}Make an image
+const imageGenerationQuickHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}Generate an image
   {{$bin}} images generate --prompt "A tiny orange robot"
 
-Replace the prompt with the image you want.
+Run without flags to choose settings. Ctrl+C exits.
 Saves to ~/Downloads/gpt-images/.
 
 Full help: {{$bin}} help --all images generate
@@ -30,6 +30,9 @@ Key setup: {{$bin}} help setup
 const imageGenerationSavingHelp = `EXAMPLE
 
     openai images generate --prompt "A tiny cat" --name cat
+
+Run without flags to choose settings in a terminal.
+After saving, the picker reopens with your settings. Ctrl+C exits.
 
 Saves to ~/Downloads/gpt-images/. Use --output-dir to choose an existing folder.
 For API data without saving, use --format json without --name or --output-dir.

@@ -42,6 +42,9 @@ func configureImageSaving(root *cli.Command) {
 			command.CustomHelpTemplate = imageUploadQuickHelp
 		}
 		command.Action = imageSavingWorkflow(command.Action)
+		if name == "generate" {
+			command.Action = imagePickerWorkflow(command.Action)
+		}
 	}
 }
 
