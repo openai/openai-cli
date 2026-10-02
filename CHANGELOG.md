@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.0](https://github.com/openai/openai-cli/compare/v1.31.1...v1.32.0) (2026-10-02)
+
+
+### Features
+
+* **api:** add custom voice creation command ([#352](https://github.com/openai/openai-cli/issues/352)) ([805f102](https://github.com/openai/openai-cli/commit/805f10213c26a8ee6a72fdc2c5d49a62f42981eb))
+
 ## [1.31.1](https://github.com/openai/openai-cli/compare/v1.31.0...v1.31.1) (2026-10-01)
 
 
