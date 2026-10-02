@@ -45,6 +45,8 @@ func ValidateBaseURL(value, source string) error {
 
 func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 	opts := []option.RequestOption{
+		// Allow local HTTP endpoints; the SDK enforces direct loopback connections.
+		option.WithUnsafeAllowHTTP(),
 		option.WithHeader("User-Agent", fmt.Sprintf("OpenAI/CLI %s", Version)),
 		option.WithHeader("X-Stainless-Lang", "cli"),
 		option.WithHeader("X-Stainless-Package-Version", Version),
