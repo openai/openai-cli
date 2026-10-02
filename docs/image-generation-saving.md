@@ -19,7 +19,14 @@ zsh, fish and PowerShell 7. In other or unidentified shells, generation remains
 available, but command printing is disabled with an explanation in the picker.
 
 After a successful generation, the picker reopens below the saved result with
-the active prompt and settings. Choices last until this invocation exits.
+the active prompt and settings. It remembers the last submitted prompt and
+settings for next time; canceled edits are discarded. Settings stay local to
+your user configuration folder and do not affect commands that supply flags.
+
+Choose **Save to** to use the default folder, current directory, or another
+existing folder. Tab completes folder names. Saved settings are optional: if
+they cannot be written, a warning appears and generation can still continue.
+Unknown or unreadable saved settings are left alone.
 Explicit image flags, output formats, piped input and redirected output retain
 the direct command behavior described below.
 

@@ -190,8 +190,8 @@ def main():
                 assert dict(zip(arguments[2::2], arguments[3::2]))['--prompt'] == prompt
                 assert len(server.requests) == before
                 assert not list(home.glob('Downloads/gpt-images/*'))
-                assert not (home/'Library'/'Application Support'/'openai'/'image-picker.json').exists()
-                assert not (home/'.config'/'openai'/'image-picker.json').exists()
+                states = list(home.rglob('image-picker.json'))
+                assert len(states) == 1 and json.loads(states[0].read_text())['prompt'] == prompt
                 passed(name)
             finally:
                 try:
@@ -275,7 +275,10 @@ def main():
                                     assert len(saved) == 2 and all(f.read_bytes() == picker.PNG for f in saved)
                                 else:
                                     check_saved(home)
-                    assert not list(home.rglob('image-picker.json')), 'picker state was persisted'
+                    states = list(home.rglob('image-picker.json'))
+                    assert len(states) == int(action != 'cancel'), (name, states)
+                    if states:
+                        assert json.loads(states[0].read_text())['prompt'] == prompt
                     generates = action not in {'cancel', 'print'}
                     assert len(server.requests)-before == int(generates)+int(action == 'two-generations'), name
                     if action == 'root-connection-options':

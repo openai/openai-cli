@@ -39,6 +39,8 @@ func imagePickerLine(value string) string {
 
 func (m *imagePicker) heading() string {
 	switch m.page {
+	case "folder", "path":
+		return "Save to · existing folder"
 	case "choose":
 		return "Choose " + m.field
 	case "more":
@@ -122,6 +124,16 @@ func (m *imagePicker) View() tea.View {
 		lines = append(lines, "")
 	}
 	lines = append(lines, strong.Render(m.heading()))
+	if m.page == "path" {
+		before := imagePickerLine(string(m.folder.draft[:m.folder.cursor]))
+		after := imagePickerLine(string(m.folder.draft[m.folder.cursor:]))
+		before = ansi.TruncateLeft(before, max(0, ansi.StringWidth(before)-(width-6)), "…")
+		path := before + "▏" + after
+		if len(m.folder.draft) == 0 {
+			path += "Enter a folder path…"
+		}
+		lines = append(lines, highlight(path, true))
+	}
 	// Prompt, command and help remain visible. The option list scrolls
 	// independently, keeping every selected choice accessible in a short terminal.
 	reserved := len(lines) + 1 + len(commandLines)
@@ -149,7 +161,7 @@ func (m *imagePicker) View() tea.View {
 		} else if row.value != "" {
 			text = fmt.Sprintf("%-14s %s", row.label, imagePickerLine(row.value))
 		}
-		active := i == m.selected && m.focus == "options"
+		active := i == m.selected && (m.focus == "options" || m.focus == "path" && m.folder.match >= 0)
 		lines = append(lines, highlight(ansi.Truncate(text, width-2, "…"), active))
 	}
 	if roomy {
@@ -179,7 +191,8 @@ func (m *imagePicker) View() tea.View {
 		if imagePickerShellQuoter(m.shell) != nil && ansi.StringWidth(footer+" · Ctrl+P print") <= width {
 			footer += " · Ctrl+P print"
 		}
-
+	} else if m.focus == "path" {
+		footer = "Ctrl+C exit · Enter use · Tab complete"
 	}
 	if len(rows) > available && m.focus == "options" {
 		footer = fmt.Sprintf("Ctrl+C exit · ↑↓ %d/%d · Enter select", m.selected+1, len(rows))
