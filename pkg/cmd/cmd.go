@@ -191,6 +191,14 @@ func init() {
 				},
 			},
 			{
+				Name:     "audio:voices",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&audioVoicesCreate,
+				},
+			},
+			{
 				Name:     "moderations",
 				Category: "API RESOURCE",
 				Suggest:  true,
