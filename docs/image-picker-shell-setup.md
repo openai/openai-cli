@@ -1,0 +1,47 @@
+# Save image picker shortcuts
+
+The CLI quietly configures future Bash, zsh, and fish sessions on the first
+eligible interactive `openai` run. Open a new terminal to activate the shortcut;
+the current session keeps its existing bindings. Bash needs version 4.3 or later
+for the Tab shortcut. Pressing Enter opens the picker without shell integration,
+including in PowerShell and Bash 3.2.
+
+First-use setup requires the running executable to be the `openai` on PATH and
+all three standard streams to be terminals. It skips CI, root/sudo, unsupported
+shells, `TERM=dumb`, completion and manpage requests, and shells with active
+integration. It respects an earlier opt-out. Setup failures leave the ordinary
+command running, and setup stops waiting after 250 milliseconds.
+
+To configure or remove persistent shortcuts explicitly:
+
+```sh
+openai @completion zsh --install-picker
+openai @completion zsh --uninstall-picker
+```
+
+Use `bash` or `fish` for those shells. Open a new terminal afterward.
+`--profile PATH` selects a different startup file. Without a shell argument,
+explicit setup uses the immediate parent shell. Installer integrations can use
+`openai @completion --install-picker --automatic` to select the preferred shell
+and preserve an existing opt-out; this mode does not accept shell or profile
+overrides.
+
+Setup uses `.zshrc` (respecting `ZDOTDIR`), Bash's `.bashrc` and first existing
+login startup file, or fish's `conf.d/openai-picker.fish`. Scripts use the current
+`openai` on PATH. If the executable is removed, the guarded source block becomes
+inactive. Existing startup content and custom key bindings are preserved.
+
+Removal deletes only intact CLI-owned blocks and verified scripts, and records
+an empty per-shell opt-out marker beside `image-picker.json`. Later automatic
+setup keeps that shell disabled. Explicit installation clears the opt-out.
+Repeating either command is safe. Modified blocks or scripts stay available for
+inspection. Bash configures its two startup modes separately; if a later write
+fails, the error reports partial setup and rerunning the command is safe.
+
+Setup keeps symlinked profiles, unsafe permissions, and protected file metadata
+unchanged. On macOS and Linux this includes profiles with ACLs or extended
+attributes. Windows replacement also checks alternate streams and file-specific
+permissions. Profiles must be UTF-8 text and at most 1 MiB including the managed
+block. Use the [current-session shortcut](image-picker-shortcuts.md) when a
+profile cannot be managed automatically. PowerShell retains ordinary completion
+and does not use persistent picker setup.

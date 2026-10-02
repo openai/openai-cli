@@ -1,0 +1,341 @@
+package custom
+
+import (
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/openai/openai-cli/internal/autocomplete"
+	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v3"
+)
+
+func pickerShellSetupHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	for name, value := range map[string]string{
+		"HOME": home, "USERPROFILE": home, "XDG_CONFIG_HOME": filepath.Join(home, "config"), "APPDATA": filepath.Join(home, "config"), "ZDOTDIR": "",
+	} {
+		t.Setenv(name, value)
+	}
+	return home
+}
+
+func runPickerShellSetup(t *testing.T, ctx context.Context, args ...string) (string, error) {
+	t.Helper()
+	var output, diagnostics bytes.Buffer
+	root := &cli.Command{
+		Name: "openai", Writer: &output, ErrWriter: &diagnostics,
+		ExitErrHandler: func(context.Context, *cli.Command, error) {},
+		Commands:       []*cli.Command{{Name: "@completion", Action: autocomplete.OutputCompletionScript}},
+	}
+	configureImagePickerCompletion(root)
+	configureImagePickerShellSetup(root)
+	err := root.Run(ctx, append([]string{"openai", "@completion"}, args...))
+	return output.String(), err
+}
+
+func TestImagePickerShellSetupInstallRemoveExplicitProfile(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		t.Run(shell, func(t *testing.T) {
+			home := pickerShellSetupHome(t)
+			profile := filepath.Join(home, "startup with spaces")
+			original := []byte("# user-owned startup content\n")
+			require.NoError(t, os.WriteFile(profile, original, 0600))
+			require.NoError(t, declineImagePickerTab(t.Context(), shell))
+			for range 2 {
+				output, err := runPickerShellSetup(t, t.Context(), shell, "--install-picker", "--profile", profile)
+				require.NoError(t, err)
+				require.Contains(t, output, "for future terminals")
+				targets, err := imagePickerShellTarget(t.Context(), shell, false, profile)
+				require.NoError(t, err)
+				installed, err := autocomplete.IsPickerInstalled(t.Context(), targets[0])
+				require.NoError(t, err)
+				require.True(t, installed)
+				data, err := os.ReadFile(profile)
+				require.NoError(t, err)
+				require.True(t, bytes.HasPrefix(data, original))
+				require.Equal(t, 1, strings.Count(string(data), "# >>> openai image picker"))
+				declined, err := imagePickerTabDeclined(shell)
+				require.NoError(t, err)
+				require.False(t, declined, "explicit installation must clear an old opt-out")
+			}
+			for range 2 {
+				output, err := runPickerShellSetup(t, t.Context(), shell, "--uninstall-picker", "--profile", profile)
+				require.NoError(t, err)
+				require.Contains(t, output, "setup removed")
+				data, err := os.ReadFile(profile)
+				require.NoError(t, err)
+				require.Equal(t, original, data)
+				declined, err := imagePickerTabDeclined(shell)
+				require.NoError(t, err)
+				require.True(t, declined, "removal must keep automatic setup off")
+			}
+		})
+	}
+}
+
+func TestImagePickerShellSetupRejectsPowerShellWithoutWriting(t *testing.T) {
+	home := pickerShellSetupHome(t)
+	profile := filepath.Join(home, "profile.ps1")
+	for _, action := range []string{"--install-picker", "--uninstall-picker"} {
+		for _, explicit := range []bool{false, true} {
+			args := []string{"pwsh", action}
+			if explicit {
+				args = append(args, "--profile", profile)
+			}
+			output, err := runPickerShellSetup(t, t.Context(), args...)
+			var exit cli.ExitCoder
+			require.ErrorAs(t, err, &exit)
+			require.Equal(t, 2, exit.ExitCode())
+			require.Contains(t, err.Error(), "PowerShell uses normal Tab completion")
+			require.Contains(t, err.Error(), "openai images generate")
+			require.Empty(t, output)
+			entries, err := os.ReadDir(home)
+			require.NoError(t, err)
+			require.Empty(t, entries)
+		}
+	}
+}
+
+func TestImagePickerShellSetupAutomaticPowerShellIsQuietAndDoesNotWrite(t *testing.T) {
+	home := pickerShellSetupHome(t)
+	t.Setenv("SHELL", filepath.Join(home, "pwsh"))
+	output, err := runPickerShellSetup(t, t.Context(), "--install-picker", "--automatic")
+	require.NoError(t, err)
+	require.Empty(t, output)
+	entries, err := os.ReadDir(home)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+func TestImagePickerShellSetupBashDefaultUpdatesBothStartupModes(t *testing.T) {
+	home := pickerShellSetupHome(t)
+	profile := filepath.Join(home, ".profile")
+	require.NoError(t, os.WriteFile(profile, []byte("# existing login startup\n"), 0600))
+	_, err := runPickerShellSetup(t, t.Context(), "bash", "--install-picker")
+	require.NoError(t, err)
+	for _, path := range []string{profile, filepath.Join(home, ".bashrc")} {
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.Contains(t, string(data), "# >>> openai image picker")
+	}
+	_, err = os.Stat(filepath.Join(home, ".bash_profile"))
+	require.ErrorIs(t, err, os.ErrNotExist, "creating .bash_profile would hide the existing login startup")
+}
+
+func TestImagePickerShellSetupPartialFailureIsRetryable(t *testing.T) {
+	home := pickerShellSetupHome(t)
+	interactive, login := filepath.Join(home, ".bashrc"), filepath.Join(home, ".bash_profile")
+	original := []byte("# personal startup\n")
+	modified := []byte("# >>> openai image picker modified\n")
+	require.NoError(t, os.WriteFile(interactive, original, 0600))
+	require.NoError(t, os.WriteFile(login, modified, 0600))
+	output, err := runPickerShellSetup(t, t.Context(), "bash", "--install-picker")
+	require.ErrorContains(t, err, "Some startup files may already be configured")
+	require.Empty(t, output)
+	data, err := os.ReadFile(interactive)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "# >>> openai image picker v1 >>>")
+	data, err = os.ReadFile(login)
+	require.NoError(t, err)
+	require.Equal(t, modified, data)
+	// Simulate the user resolving the changed second profile before retrying.
+	require.NoError(t, os.WriteFile(login, original, 0600))
+	_, err = runPickerShellSetup(t, t.Context(), "bash", "--install-picker")
+	require.NoError(t, err)
+	for _, profile := range []string{interactive, login} {
+		data, err := os.ReadFile(profile)
+		require.NoError(t, err)
+		require.Equal(t, 1, strings.Count(string(data), "# >>> openai image picker v1 >>>"))
+	}
+	_, err = runPickerShellSetup(t, t.Context(), "bash", "--uninstall-picker")
+	require.NoError(t, err)
+	for _, profile := range []string{interactive, login} {
+		data, err := os.ReadFile(profile)
+		require.NoError(t, err)
+		require.Equal(t, original, data)
+	}
+}
+
+func TestImagePickerShellSetupRejectsInvalidActionCombinations(t *testing.T) {
+	for _, args := range [][]string{
+		{"--automatic"}, {"zsh", "--profile", "startup"},
+		{"zsh", "--install-picker", "--uninstall-picker"},
+		{"zsh", "--install-picker", "--picker"},
+		{"bash", "zsh", "--install-picker"},
+		{"bash", "--install-picker", "--automatic"},
+		{"--install-picker", "--automatic", "--profile", "startup"},
+		{"--uninstall-picker", "--automatic"},
+		{"zsh", "--install-picker", "--profile", ""},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			home := pickerShellSetupHome(t)
+			_, err := runPickerShellSetup(t, t.Context(), args...)
+			var exit cli.ExitCoder
+			require.ErrorAs(t, err, &exit)
+			require.Equal(t, 2, exit.ExitCode())
+			entries, err := os.ReadDir(home)
+			require.NoError(t, err)
+			require.Empty(t, entries, "invalid options must not persist state")
+		})
+	}
+}
+
+func TestImagePickerShellSetupUnknownShellAndAutomaticHomeDoNotWrite(t *testing.T) {
+	for _, args := range [][]string{{"unknown", "--install-picker"}, {"--automatic", "--install-picker"}} {
+		home := pickerShellSetupHome(t)
+		t.Setenv("SHELL", "/bin/zsh")
+		output, err := runPickerShellSetup(t, t.Context(), args...)
+		require.Error(t, err)
+		require.NotContains(t, output, "enabled")
+		entries, err := os.ReadDir(home)
+		require.NoError(t, err)
+		require.Empty(t, entries)
+	}
+}
+
+func TestImagePickerShellSetupCanceledBeforeActionDoesNotWrite(t *testing.T) {
+	home := pickerShellSetupHome(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := runPickerShellSetup(t, ctx, "zsh", "--install-picker")
+	require.Error(t, err)
+	entries, err := os.ReadDir(home)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+func TestImagePickerShellSetupCancellationWhileAnotherSetupHoldsLock(t *testing.T) {
+	home := pickerShellSetupHome(t)
+	profile := filepath.Join(home, "startup")
+	original := []byte("# preserve while waiting for another setup\n")
+	require.NoError(t, os.WriteFile(profile, original, 0600))
+	targets, err := imagePickerShellTarget(t.Context(), "zsh", false, profile)
+	require.NoError(t, err)
+	locked, release := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- autocomplete.WithPickerSetupLock(t.Context(), targets[0].Directory, func() error {
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-locked:
+	case err := <-done:
+		close(release)
+		t.Fatalf("could not hold setup lock: %v", err)
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("setup lock was not acquired")
+	}
+	defer func() {
+		close(release)
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(2 * time.Second):
+			t.Error("setup lock worker did not finish before fixture cleanup")
+		}
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+	defer cancel()
+	_, err = runPickerShellSetup(t, ctx, "zsh", "--install-picker", "--profile", profile)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	data, err := os.ReadFile(profile)
+	require.NoError(t, err)
+	require.Equal(t, original, data, "a blocked setup must not edit profiles before acquiring the shared lock")
+	declined, err := imagePickerTabDeclined("zsh")
+	require.NoError(t, err)
+	require.False(t, declined)
+}
+
+func TestImagePickerShellSetupPreservesCompletionOutput(t *testing.T) {
+	home := pickerShellSetupHome(t)
+	normal, err := runPickerShellSetup(t, t.Context(), "zsh")
+	require.NoError(t, err)
+	picker, err := runPickerShellSetup(t, t.Context(), "zsh", "--picker")
+	require.NoError(t, err)
+	require.NotEmpty(t, normal)
+	require.True(t, strings.HasPrefix(picker, normal))
+	require.Greater(t, len(picker), len(normal))
+	entries, err := os.ReadDir(home)
+	require.NoError(t, err)
+	require.Empty(t, entries, "emitting scripts must not install or save a choice")
+}
+
+func TestImagePickerTabChoicePrivateIdempotentAndCanceled(t *testing.T) {
+	pickerShellSetupHome(t)
+	path, err := imagePickerTabChoicePath("zsh")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.ErrorIs(t, declineImagePickerTab(ctx, "zsh"), context.Canceled)
+	_, err = os.Lstat(filepath.Dir(path))
+	require.ErrorIs(t, err, os.ErrNotExist)
+	for range 2 {
+		require.NoError(t, declineImagePickerTab(t.Context(), "zsh"))
+		declined, err := imagePickerTabDeclined("zsh")
+		require.NoError(t, err)
+		require.True(t, declined)
+	}
+	info, err := os.Lstat(path)
+	require.NoError(t, err)
+	require.True(t, info.Mode().IsRegular())
+	require.Zero(t, info.Size())
+	if runtime.GOOS != "windows" {
+		require.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	}
+	for range 2 {
+		require.NoError(t, clearImagePickerTabDecline("zsh"))
+	}
+	declined, err := imagePickerTabDeclined("zsh")
+	require.NoError(t, err)
+	require.False(t, declined)
+}
+
+func TestImagePickerTabChoiceRejectsModifiedOrSymlinkMarker(t *testing.T) {
+	for _, kind := range []string{"content", "directory", "public", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			if runtime.GOOS == "windows" && (kind == "public" || kind == "symlink") {
+				t.Skip("Unix mode or symlink semantics")
+			}
+			home := pickerShellSetupHome(t)
+			path, err := imagePickerTabChoicePath("zsh")
+			require.NoError(t, err)
+			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+			target := filepath.Join(home, "preserved-file")
+			require.NoError(t, os.WriteFile(target, []byte("preserve these bytes"), 0600))
+			switch kind {
+			case "content":
+				require.NoError(t, os.WriteFile(path, []byte("external content"), 0600))
+			case "directory":
+				require.NoError(t, os.Mkdir(path, 0700))
+			case "public":
+				require.NoError(t, os.WriteFile(path, nil, 0600))
+				require.NoError(t, os.Chmod(path, 0644))
+			case "symlink":
+				require.NoError(t, os.Symlink(target, path))
+			}
+			before, err := os.Lstat(path)
+			require.NoError(t, err)
+			_, err = imagePickerTabDeclined("zsh")
+			require.Error(t, err)
+			require.Error(t, declineImagePickerTab(t.Context(), "zsh"))
+			require.Error(t, clearImagePickerTabDecline("zsh"))
+			after, err := os.Lstat(path)
+			require.NoError(t, err)
+			require.True(t, os.SameFile(before, after))
+			data, err := os.ReadFile(target)
+			require.NoError(t, err)
+			require.Equal(t, "preserve these bytes", string(data))
+		})
+	}
+}

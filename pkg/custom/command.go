@@ -21,6 +21,7 @@ func ConfigureCommand(root *cli.Command) {
 	configureReadableOutput(root)
 	configureImageSaving(root)
 	configureImagePickerCompletion(root)
+	configureImagePickerShellSetup(root)
 	registerImagePreviewCommands(root)
 	configureReadableAudio(root)
 	configureReadableSpeech(root)
