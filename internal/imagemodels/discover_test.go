@@ -390,7 +390,7 @@ func TestDiscoverRequestDeadlines(t *testing.T) {
 				body := fmt.Sprintf(`{"id":%q,"shutdown_date":null}`, id)
 				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 			})}
-			service := openai.NewModelService(option.WithAPIKey("fake-image-model-key"), option.WithHTTPClient(client), option.WithBaseURL("http://localhost/v1/"))
+			service := openai.NewModelService(option.WithAPIKey("fake-image-model-key"), option.WithHTTPClient(client), option.WithBaseURL("https://example.test/v1/"))
 			for _, result := range Discover(ctx, &service, false, option.WithRequestTimeout(time.Minute)) {
 				if result.Status != StatusVisible {
 					t.Errorf("deadline test failed: %+v", result)
@@ -449,7 +449,7 @@ func (*testNetworkError) Timeout() bool   { return false }
 func (*testNetworkError) Temporary() bool { return false }
 
 func testService(server *httptest.Server) openai.ModelService {
-	return openai.NewModelService(option.WithAPIKey("fake-image-model-key"), option.WithBaseURL(server.URL+"/v1/"), option.WithHTTPClient(server.Client()))
+	return openai.NewModelService(option.WithAPIKey("fake-image-model-key"), option.WithBaseURL(server.URL+"/v1/"), option.WithUnsafeAllowHTTP(), option.WithHTTPClient(server.Client()))
 }
 
 func writeModel(w http.ResponseWriter, id, shutdownDateJSON string) {

@@ -116,6 +116,7 @@ func TestMultipartRequestBodySourceErrorCannotBeParsedAsCompleteUpload(t *testin
 	client := openai.NewClient(
 		option.WithAPIKey("test-key"),
 		option.WithBaseURL(server.URL+"/"),
+		option.WithUnsafeAllowHTTP(),
 	)
 
 	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
@@ -261,6 +262,7 @@ func TestMultipartRequestOptionsReject307And308ForUploads(t *testing.T) {
 			client := openai.NewClient(
 				option.WithAPIKey("test-key"),
 				option.WithBaseURL(server.URL+"/"),
+				option.WithUnsafeAllowHTTP(),
 			)
 
 			_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
@@ -298,6 +300,7 @@ func TestMultipartRequestOptionsRetryScalarOnlyForms(t *testing.T) {
 	client := openai.NewClient(
 		option.WithAPIKey("test-key"),
 		option.WithBaseURL(server.URL+"/"),
+		option.WithUnsafeAllowHTTP(),
 	)
 
 	_, err = client.Videos.New(context.Background(), openai.VideoNewParams{}, options...)
@@ -332,6 +335,7 @@ func TestMultipartRequestOptionsDoNotRetryUploads(t *testing.T) {
 	client := openai.NewClient(
 		option.WithAPIKey("test-key"),
 		option.WithBaseURL(server.URL+"/"),
+		option.WithUnsafeAllowHTTP(),
 	)
 
 	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
@@ -452,6 +456,7 @@ func TestMultipartRequestOptionsSetContentLengthForRegularFiles(t *testing.T) {
 	client := openai.NewClient(
 		option.WithAPIKey("test-key"),
 		option.WithBaseURL(server.URL+"/"),
+		option.WithUnsafeAllowHTTP(),
 	)
 
 	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
@@ -484,6 +489,7 @@ func TestMultipartRequestOptionsUseChunkedEncodingForUnknownSources(t *testing.T
 	client := openai.NewClient(
 		option.WithAPIKey("test-key"),
 		option.WithBaseURL(server.URL+"/"),
+		option.WithUnsafeAllowHTTP(),
 	)
 
 	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
@@ -550,6 +556,7 @@ func TestOpenFileUploadStreamsProcfsWithUnknownLength(t *testing.T) {
 	client := openai.NewClient(
 		option.WithAPIKey("test-key"),
 		option.WithBaseURL(server.URL+"/"),
+		option.WithUnsafeAllowHTTP(),
 	)
 
 	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)

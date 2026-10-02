@@ -61,6 +61,7 @@ func TestMultipartRequestOptionsRetryTypedNilReaderAsScalar(t *testing.T) {
 	client := openai.NewClient(
 		option.WithAPIKey("test-key"),
 		option.WithBaseURL(server.URL+"/"),
+		option.WithUnsafeAllowHTTP(),
 	)
 
 	_, err = client.Videos.New(context.Background(), openai.VideoNewParams{}, options...)
@@ -99,6 +100,7 @@ func TestMultipartRequestOptionsReplayTypedNilReaderAcrossRedirects(t *testing.T
 			client := openai.NewClient(
 				option.WithAPIKey("test-key"),
 				option.WithBaseURL(server.URL+"/"),
+				option.WithUnsafeAllowHTTP(),
 			)
 
 			_, err = client.Videos.New(context.Background(), openai.VideoNewParams{}, options...)
@@ -138,6 +140,7 @@ func TestMultipartRequestOptionsKnownUploadAllowsTypedNilReaderField(t *testing.
 	client := openai.NewClient(
 		option.WithAPIKey("test-key"),
 		option.WithBaseURL(server.URL+"/"),
+		option.WithUnsafeAllowHTTP(),
 	)
 
 	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)

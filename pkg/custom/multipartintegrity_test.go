@@ -81,6 +81,7 @@ func TestMultipartPrematureEOFDoesNotCommitFinalBoundary(t *testing.T) {
 	client := openai.NewClient(
 		option.WithAPIKey("test-key"),
 		option.WithBaseURL(server.URL+"/"),
+		option.WithUnsafeAllowHTTP(),
 	)
 
 	_, err = client.Files.New(context.Background(), openai.FileNewParams{}, options...)
