@@ -92,6 +92,7 @@ func knownLocalError(command *cli.Command, message string) string {
 		"cannot read from stdin: stdin is already being used for the request body",
 		"cannot read from stdin: stdin was already consumed by piped YAML/JSON input",
 		"Setup help takes no additional arguments.",
+		"PowerShell uses normal Tab completion. Type openai images generate and press Enter to open the image picker.",
 		"COMPLETION_STYLE must be set to 'bash', 'zsh', 'pwsh', or 'fish'",
 		"COMPLETION_STYLE must be set to 'bash', 'zsh', 'pwsh', 'fish'":
 		return message

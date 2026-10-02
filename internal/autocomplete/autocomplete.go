@@ -66,6 +66,13 @@ func OutputCompletionScript(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return cli.Exit(err, 1)
 	}
+	if cmd.Bool("picker") {
+		picker, err := renderPickerCompletion(s, cmd.Root().Name)
+		if err != nil {
+			return cli.Exit(err, 1)
+		}
+		completionScript += "\n" + picker
+	}
 
 	_, err = cmd.Writer.Write([]byte(completionScript))
 	if err != nil {
