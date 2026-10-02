@@ -11,6 +11,23 @@ The reviewed checksums cover Linux and macOS hosts on x86_64 and arm64. The
 host architecture does not limit the Linux, macOS, and Windows release targets
 configured in `.goreleaser.yml`.
 
+Homebrew runs `openai @completion --install-picker --automatic` after installation
+and upgrades. It uses the staged executable and shared setup routine, preserves
+an opt-out, and does not fail installation if optional setup fails. Uninstall
+leaves the user's shell preferences intact; remove the shortcut first with
+`openai @completion SHELL --uninstall-picker` if desired.
+
+Linux packages install fish integration in `vendor_conf.d`. Activation waits for
+the first prompt so the user's PATH, bindings and opt-out take precedence. Bash
+and zsh use the CLI's quiet first-run setup; packages do not edit global shell
+startup files or individual home directories. The package-owned fish files are
+removed by the package manager. The configured `termux.deb` format still requires
+an Android build.
+
+The archive and Go-install fallback also uses quiet first-run setup for supported
+shells. PowerShell opens the picker with Enter and keeps ordinary completion.
+See [shell shortcuts](image-picker-shell-setup.md) for setup and removal.
+
 Shell completions and man pages are generated in a separate, read-only job before
 the protected publishing job receives repository-write tokens or signing and
 notarization credentials. GoReleaser packages those prebuilt files without

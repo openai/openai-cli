@@ -22,7 +22,7 @@ func main() {
 	// Request configuration must not prevent local help from opening.
 	requestSetup := app.Before
 	app.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
-		if custom.IsImagePickerShellSetupCommand(command.Args().Slice()) {
+		if custom.IsImagePickerShellSetupCommand(command.Args().Slice()) || custom.IsImagePickerPackageCommand(command.Args().Slice()) {
 			return ctx, nil
 		}
 		if baseURL, ok := os.LookupEnv("OPENAI_BASE_URL"); ok {

@@ -45,6 +45,7 @@ func TestGenerateReleaseArtifacts(t *testing.T) {
 		"run ./cmd/openai/main.go @completion bash",
 		"run ./cmd/openai/main.go @completion zsh",
 		"run ./cmd/openai/main.go @completion fish",
+		"run ./cmd/openai/main.go @completion fish --package-picker",
 		"run ./cmd/openai/main.go @manpages -o man",
 	}
 	if !slices.Equal(gotCalls, wantCalls) {
@@ -58,6 +59,9 @@ func TestGenerateReleaseArtifacts(t *testing.T) {
 		}
 		if got, want := string(contents), "completion:"+shell+"\n"; got != want {
 			t.Errorf("%s completion = %q, want %q", shell, got, want)
+		}
+		if _, err := os.Stat(filepath.Join(root, "completions", "picker", "openai.fish")); shell == "fish" && err != nil {
+			t.Errorf("%s package picker was not generated: %v", shell, err)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(root, "man", "man1", "openai.1.gz")); err != nil {
@@ -590,5 +594,9 @@ type goReleaserConfig struct {
 		} `yaml:"repository"`
 		Completions map[string]string `yaml:"completions"`
 		Manpages    []string          `yaml:"manpages"`
+		Hooks       struct {
+			Pre  map[string]string `yaml:"pre"`
+			Post map[string]string `yaml:"post"`
+		} `yaml:"hooks"`
 	} `yaml:"homebrew_casks"`
 }
