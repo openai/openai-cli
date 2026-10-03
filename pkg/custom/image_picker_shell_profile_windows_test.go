@@ -308,12 +308,12 @@ func TestImagePickerWindowsShellHomeOtherShellsKeepAppData(t *testing.T) {
 func TestImagePickerWindowsShellHomeFishConfigChangesShareSetupLock(t *testing.T) {
 	home := pickerShellSetupHome(t)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "fish-a"))
-	first, err := imagePickerShellTarget(t.Context(), "fish", false, "")
+	choice, err := imagePickerTabChoicePath("fish")
 	require.NoError(t, err)
 	acquired, release := make(chan struct{}), make(chan struct{})
 	finished := make(chan error, 1)
 	go func() {
-		finished <- autocomplete.WithPickerSetupLock(t.Context(), first[0].Directory, func() error {
+		finished <- autocomplete.WithPickerSetupLock(t.Context(), filepath.Dir(choice), func() error {
 			close(acquired)
 			<-release
 			return nil
@@ -341,4 +341,36 @@ func TestImagePickerWindowsShellHomeFishConfigChangesShareSetupLock(t *testing.T
 		_, err = os.Stat(filepath.Join(home, config))
 		require.ErrorIs(t, err, os.ErrNotExist)
 	}
+}
+
+func TestImagePickerWindowsShellHomeFishSharesOptOutAcrossRoots(t *testing.T) {
+	home := pickerShellSetupHome(t)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "fish-a"))
+	_, err := runPickerShellSetup(t, t.Context(), "fish", "--install-picker")
+	require.NoError(t, err)
+	first, err := imagePickerShellTarget(t.Context(), "fish", false, "")
+	require.NoError(t, err)
+	path, err := imagePickerTabChoicePath("fish")
+	require.NoError(t, err)
+	require.Equal(t, path, first[0].OptOutPath)
+	profile, err := os.ReadFile(first[0].Profile)
+	require.NoError(t, err)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "fish-b"))
+	second, err := imagePickerShellTarget(t.Context(), "fish", false, "")
+	require.NoError(t, err)
+	require.NotEqual(t, first[0].Profile, second[0].Profile)
+	require.Equal(t, first[0].OptOutPath, second[0].OptOutPath)
+	for _, action := range []string{"--uninstall-picker", "--install-picker"} {
+		_, err = runPickerShellSetup(t, t.Context(), "fish", action)
+		require.NoError(t, err)
+		declined, err := imagePickerTabDeclined("fish")
+		require.NoError(t, err)
+		require.Equal(t, action == "--uninstall-picker", declined)
+		unchanged, err := os.ReadFile(first[0].Profile)
+		require.NoError(t, err)
+		require.Equal(t, profile, unchanged, "the old root must use the shared preference without a profile rewrite")
+	}
+	explicit, err := imagePickerShellTarget(t.Context(), "fish", false, filepath.Join(home, "explicit.fish"))
+	require.NoError(t, err)
+	require.Equal(t, path, explicit[0].OptOutPath)
 }

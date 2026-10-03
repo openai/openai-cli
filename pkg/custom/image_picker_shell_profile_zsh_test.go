@@ -18,8 +18,12 @@ func TestImagePickerZshStartupChild(t *testing.T) {
 		t.Cleanup(func() {
 			state, err := imagePickerStatePath()
 			require.NoError(t, err)
-			_, err = os.Stat(filepath.Dir(state))
-			require.ErrorIs(t, err, os.ErrNotExist, "ambiguous setup must not create platform state, scripts, or locks")
+			choice, err := imagePickerTabChoicePath("zsh")
+			require.NoError(t, err)
+			for _, path := range []string{state, choice} {
+				_, err = os.Stat(filepath.Dir(path))
+				require.ErrorIs(t, err, os.ErrNotExist, "ambiguous setup must not create platform state, scripts, or locks")
+			}
 		})
 	}
 	if mode == "automatic" {

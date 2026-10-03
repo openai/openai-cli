@@ -4,6 +4,7 @@ package autocomplete
 
 import (
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,34 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
+
+func TestPickerInstallRetainsLinuxSELinuxLabel(t *testing.T) {
+	options := pickerInstallFixture(t, CompletionStyleZsh)
+	personal := []byte("# personal startup\n")
+	require.NoError(t, os.WriteFile(options.Profile, personal, 0600))
+	label := make([]byte, 65536)
+	count, err := unix.Getxattr(options.Profile, "security.selinux", label)
+	if errors.Is(err, unix.ENODATA) || errors.Is(err, unix.ENOTSUP) {
+		t.Skip("filesystem does not assign SELinux labels")
+	}
+	require.NoError(t, err)
+	label = label[:count]
+	for _, remove := range []bool{false, false, true} {
+		if remove {
+			_, err = RemovePicker(t.Context(), options)
+		} else {
+			_, err = InstallPicker(t.Context(), options)
+		}
+		require.NoError(t, err)
+		current := make([]byte, 65536)
+		count, err = unix.Getxattr(options.Profile, "security.selinux", current)
+		require.NoError(t, err)
+		require.Equal(t, label, current[:count])
+	}
+	restored, err := os.ReadFile(options.Profile)
+	require.NoError(t, err)
+	require.Equal(t, personal, restored)
+}
 
 func TestPickerInstallPreservesLinuxFileMetadata(t *testing.T) {
 	// The named user's access is read-only; the owning group's permission is

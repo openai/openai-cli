@@ -384,12 +384,12 @@ func TestImagePickerShellSetupCancellationWhileAnotherSetupHoldsLock(t *testing.
 	profile := filepath.Join(home, "startup")
 	original := []byte("# preserve while waiting for another setup\n")
 	require.NoError(t, os.WriteFile(profile, original, 0600))
-	targets, err := imagePickerShellTarget(t.Context(), "zsh", false, profile)
+	choice, err := imagePickerTabChoicePath("zsh")
 	require.NoError(t, err)
 	locked, release := make(chan struct{}), make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- autocomplete.WithPickerSetupLock(t.Context(), targets[0].Directory, func() error {
+		done <- autocomplete.WithPickerSetupLock(t.Context(), filepath.Dir(choice), func() error {
 			close(locked)
 			<-release
 			return nil

@@ -3,15 +3,13 @@
 package autocomplete
 
 import (
-	"errors"
 	"os"
 
 	"golang.org/x/sys/unix"
 )
 
-// Linux represents POSIX ACLs and security labels as extended attributes too.
-// Do not drop any attribute through atomic replacement. This deliberately
-// leaves profiles with SELinux labels or unknown metadata unchanged.
+// Accept kernel-assigned SELinux labels while retaining the refusal for ACLs
+// and other attributes. Replacement separately compares the opened labels.
 func checkPickerFileMetadata(file *os.File) error {
 	if err := checkPickerFileMode(file); err != nil {
 		return err
@@ -19,9 +17,20 @@ func checkPickerFileMetadata(file *os.File) error {
 	if err := checkPickerFileLinks(file); err != nil {
 		return err
 	}
-	count, err := unix.Flistxattr(int(file.Fd()), nil)
-	if err != nil || count != 0 {
-		return errors.New("shell startup file has protected or unreadable extended metadata")
-	}
-	return nil
+	_, err := pickerLinuxSecurityLabel(file)
+	return err
+}
+
+func pickerLinuxSecurityLabel(file *os.File) (pickerSecurityLabel, error) {
+	return readPickerSecurityLabel(
+		func(data []byte) (int, error) { return unix.Flistxattr(int(file.Fd()), data) },
+		func(data []byte) (int, error) { return unix.Fgetxattr(int(file.Fd()), "security.selinux", data) },
+	)
+}
+
+func checkPickerReplacementLabels(profile, staged *os.File) error {
+	return comparePickerSecurityLabels(
+		func() (pickerSecurityLabel, error) { return pickerLinuxSecurityLabel(profile) },
+		func() (pickerSecurityLabel, error) { return pickerLinuxSecurityLabel(staged) },
+	)
 }

@@ -50,8 +50,15 @@ login startup file, or fish's `conf.d/openai-picker.fish`. Fish follows
 `XDG_CONFIG_HOME/fish/conf.d`, falling back to `HOME/.config/fish/conf.d`,
 including on Windows. Windows scripts remain in `APPDATA/openai/shell`.
 New macOS scripts use `HOME/Library/Application Support/openai/shell`. Setup's
-decision lock stays beside the CLI preferences on every platform, so differing
-XDG settings cannot bypass the shared opt-out decision.
+decision lock and per-shell opt-outs use the stable native home directory under
+`.openai/shell`, independently of XDG or AppData configuration-root changes.
+Validated older opt-outs in the current configuration root are migrated there;
+an unknown earlier root must first be selected to migrate its old preference.
+Managed fish scripts also honor that shared opt-out before activating the
+shortcut. Removing setup under another XDG root therefore keeps retained
+current-version hooks inactive; explicit installation enables them again.
+Scripts from older builds that lack this check need one refresh in their
+original root before they can honor an opt-out recorded elsewhere.
 Existing profiles keep their recorded script location for refresh and removal
 after the configuration root changes; new profiles use the current root.
 After an interrupted refresh, later setup retries cleanup of unchanged obsolete
@@ -64,7 +71,7 @@ Fish installs its wrapper once at the first prompt, after `config.fish` and
 remain in effect; calling disable from `config.fish` also cancels pending setup.
 
 Removal deletes only intact CLI-owned blocks and verified scripts, and records
-an empty per-shell opt-out marker beside `image-picker.json`. Later automatic
+an empty per-shell opt-out marker under the native home's `.openai/shell`. Later automatic
 setup keeps that shell disabled. Explicit installation clears the opt-out.
 When setup created the profile itself, removal restores its absence if the
 intact managed block is still its only content. Preexisting empty files and
@@ -82,7 +89,9 @@ fails, the error reports partial setup and rerunning the command is safe.
 Setup checks the directory ancestry of configuration and startup paths before
 creating files. It keeps symlinked or hard-linked profiles, special permission
 bits, unsafe permissions, and protected file metadata unchanged. On macOS and
-Linux this includes profiles with ACLs or extended attributes. Windows junction
+Linux this includes profiles with ACLs or extended attributes. Linux SELinux
+labels are accepted when the existing profile and replacement have identical
+labels; labels are never rewritten or dropped. Windows junction
 or reparse-point ancestors require manual setup. Equivalent Windows home-directory
 spellings are recognized by filesystem identity. Profile aliases use their
 canonical path for setup locks and new script names, including trusted symlinked

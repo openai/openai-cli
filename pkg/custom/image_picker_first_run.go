@@ -78,10 +78,6 @@ func setupImagePickerShellOnFirstRun(ctx context.Context, args []string) {
 	if err != nil {
 		return
 	}
-	missing, err := imagePickerFirstRunMissing(ctx, targets)
-	if err != nil || len(missing) == 0 {
-		return
-	}
 	_ = setupImagePickerFirstRun(ctx, targets)
 }
 
@@ -122,11 +118,36 @@ func imagePickerSameExecutable(executable, onPath string) bool {
 }
 
 func setupImagePickerFirstRun(ctx context.Context, targets []autocomplete.PickerInstallation) error {
-	missing, err := imagePickerFirstRunMissing(ctx, targets)
-	if err != nil || len(missing) == 0 {
+	if err := ctx.Err(); err != nil || len(targets) == 0 {
 		return err
 	}
-	return autocomplete.WithPickerSetupLock(ctx, targets[0].Directory, func() error {
+	for _, target := range targets {
+		if target.Shell == autocomplete.CompletionStylePowershell {
+			return nil
+		}
+	}
+	missing, err := imagePickerFirstRunMissing(ctx, targets)
+	if err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		legacy, err := legacyImagePickerTabChoicePath(string(targets[0].Shell))
+		if err != nil {
+			return err
+		}
+		declined, err := readImagePickerTabDecline(legacy)
+		if err != nil || !declined {
+			return err
+		}
+	}
+	directory, err := imagePickerTabChoiceDirectory()
+	if err != nil {
+		return err
+	}
+	return autocomplete.WithPickerSetupLock(ctx, directory, func() error {
+		if err := migrateImagePickerTabDecline(ctx, string(targets[0].Shell)); err != nil {
+			return err
+		}
 		// Recheck preference and every startup file after taking the same
 		// decision lock as explicit installation/removal. An opt-out or a
 		// changed profile while waiting must not be overwritten.

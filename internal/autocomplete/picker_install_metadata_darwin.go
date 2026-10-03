@@ -12,6 +12,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Darwin metadata checks already refuse all attributes on both files.
+func checkPickerReplacementLabels(*os.File, *os.File) error { return nil }
+
 // Replacing a startup file with a new inode must not discard its extended
 // attributes, ACL, or BSD flags. Leave these profiles for manual configuration.
 func checkPickerFileMetadata(file *os.File) error {

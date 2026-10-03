@@ -58,7 +58,11 @@ func TestPickerInstallRoundTrip(t *testing.T) {
 				require.True(t, removed.Changed)
 				restored, err := os.ReadFile(options.Profile)
 				require.NoError(t, err)
-				require.Equal(t, original+"# added afterwards\n", string(restored))
+				want := original
+				if want != "" && !strings.HasSuffix(want, "\n") {
+					want += "\n"
+				}
+				require.Equal(t, want+"# added afterwards\n", string(restored))
 				_, err = os.Stat(first.ScriptPath)
 				require.ErrorIs(t, err, os.ErrNotExist)
 				third, err := RemovePicker(context.Background(), options)
@@ -108,6 +112,38 @@ func TestPickerRemoveRestoresAbsentProfile(t *testing.T) {
 				require.NoError(t, err)
 				require.False(t, removed.Changed)
 			})
+		}
+	}
+}
+
+func TestPickerRemovePreservesPersonalLineBoundaries(t *testing.T) {
+	for _, shell := range []CompletionStyle{CompletionStyleBash, CompletionStyleZsh, CompletionStyleFish} {
+		for _, missingDirectory := range []bool{false, true} {
+			for _, original := range []string{"export A=1", "export A=1\n", ""} {
+				for _, suffix := range []string{"export B=2\n", "\nexport B=2\n", ""} {
+					t.Run(fmt.Sprintf("%s/missing-directory=%t/before=%q/after=%q", shell, missingDirectory, original, suffix), func(t *testing.T) {
+						options := pickerInstallFixture(t, shell)
+						require.NoError(t, os.WriteFile(options.Profile, []byte(original), 0600))
+						_, err := InstallPicker(t.Context(), options)
+						require.NoError(t, err)
+						profile, err := os.ReadFile(options.Profile)
+						require.NoError(t, err)
+						require.NoError(t, os.WriteFile(options.Profile, append(profile, suffix...), 0600))
+						if missingDirectory {
+							require.NoError(t, os.RemoveAll(options.Directory))
+						}
+						_, err = RemovePicker(t.Context(), options)
+						require.NoError(t, err)
+						want := original + suffix
+						if original == "export A=1" && suffix == "export B=2\n" {
+							want = "export A=1\nexport B=2\n"
+						}
+						actual, err := os.ReadFile(options.Profile)
+						require.NoError(t, err)
+						require.Equal(t, want, string(actual))
+					})
+				}
+			}
 		}
 	}
 }

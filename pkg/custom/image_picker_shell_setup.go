@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -115,7 +116,15 @@ func configureImagePickerShellSetup(root *cli.Command) {
 			targets = imagePickerShellRemovalTargets(targets, command.String("profile"))
 		}
 		keptOff := false
-		err = autocomplete.WithPickerSetupLock(ctx, targets[0].Directory, func() error {
+		decisionDirectory, err := imagePickerTabChoiceDirectory()
+		if err != nil {
+			return err
+		}
+		err = autocomplete.WithPickerSetupLock(ctx, decisionDirectory, func() error {
+			migrationErr := migrateImagePickerTabDecline(ctx, string(targets[0].Shell))
+			if migrationErr != nil && !remove {
+				return imageSavingFailure("Could not read the Tab shortcut preference; shell setup was kept unchanged.", migrationErr)
+			}
 			if command.Bool("automatic") {
 				declined, err := imagePickerTabDeclined(string(targets[0].Shell))
 				if err != nil {
@@ -130,7 +139,7 @@ func configureImagePickerShellSetup(root *cli.Command) {
 			if remove {
 				// Preserve the explicit opt-out even if an independent startup
 				// file cannot be cleaned. Still try cleanup if saving it fails.
-				err = declineImagePickerTab(ctx, string(targets[0].Shell))
+				err = errors.Join(migrationErr, declineImagePickerTab(ctx, string(targets[0].Shell)))
 			}
 			if setupErr := changeImagePickerShellSetup(ctx, targets, remove); setupErr != nil {
 				return imageSavingFailure("Could not finish Tab shortcut setup. Some startup files may already be configured; rerunning this command is safe.", errors.Join(setupErr, err))
@@ -181,10 +190,27 @@ func changeImagePickerShellSetup(ctx context.Context, targets []autocomplete.Pic
 
 // A private empty file records an explicit opt-out. It contains no prompt,
 // executable path or credentials. Exclusive creation cannot follow a symlink.
+// Consent and its decision lock must not move with configurable script storage.
+func imagePickerTabChoiceDirectory() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || !imagePickerAbsolutePath(home) {
+		return "", errors.New("cannot determine an absolute home directory for the Tab shortcut preference")
+	}
+	return filepath.Join(home, ".openai", "shell"), nil
+}
+
 func imagePickerTabChoicePath(shell string) (string, error) {
 	if imagePickerShellName(shell) != shell || shell == "" {
 		return "", errors.New("unsupported Tab shortcut shell")
 	}
+	directory, err := imagePickerTabChoiceDirectory()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(directory, "image-picker.tab-off-"+shell), nil
+}
+
+func legacyImagePickerTabChoicePath(shell string) (string, error) {
 	path, err := imagePickerStatePath()
 	if err != nil {
 		return "", err
@@ -197,6 +223,18 @@ func imagePickerTabDeclined(shell string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	declined, err := readImagePickerTabDecline(path)
+	if err != nil || declined {
+		return declined, err
+	}
+	legacy, err := legacyImagePickerTabChoicePath(shell)
+	if err != nil {
+		return false, err
+	}
+	return readImagePickerTabDecline(legacy)
+}
+
+func readImagePickerTabDecline(path string) (bool, error) {
 	root, name, err := openImagePickerStateParent(path, false)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -218,6 +256,27 @@ func imagePickerTabDeclined(shell string) (bool, error) {
 	return true, nil
 }
 
+// Only the current legacy configuration root is discoverable. Copy consent
+// before removing its old marker, under the stable decision lock, so a later
+// explicit enable cannot be undone by revisiting a migrated root.
+func migrateImagePickerTabDecline(ctx context.Context, shell string) error {
+	legacy, err := legacyImagePickerTabChoicePath(shell)
+	if err != nil {
+		return err
+	}
+	declined, err := readImagePickerTabDecline(legacy)
+	if err != nil || !declined {
+		return err
+	}
+	if err := declineImagePickerTab(ctx, shell); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return removeImagePickerTabDecline(legacy)
+}
+
 func declineImagePickerTab(ctx context.Context, shell string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -233,7 +292,7 @@ func declineImagePickerTab(ctx context.Context, shell string) error {
 	defer root.Close()
 	file, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if errors.Is(err, os.ErrExist) {
-		_, err = imagePickerTabDeclined(shell)
+		_, err = readImagePickerTabDecline(path)
 		return err
 	}
 	if err != nil {
@@ -247,6 +306,19 @@ func clearImagePickerTabDecline(shell string) error {
 	if err != nil {
 		return err
 	}
+	legacy, err := legacyImagePickerTabChoicePath(shell)
+	if err != nil {
+		return err
+	}
+	for _, marker := range []string{path, legacy} {
+		if _, err := readImagePickerTabDecline(marker); err != nil {
+			return err
+		}
+	}
+	return errors.Join(removeImagePickerTabDecline(path), removeImagePickerTabDecline(legacy))
+}
+
+func removeImagePickerTabDecline(path string) error {
 	root, name, err := openImagePickerStateParent(path, false)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

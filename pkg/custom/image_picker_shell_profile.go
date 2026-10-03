@@ -70,8 +70,8 @@ func imagePickerShellTarget(ctx context.Context, shell string, automatic bool, p
 	if shell == "" || shell == "pwsh" || imagePickerShellName(shell) != shell {
 		return nil, errors.New("choose a supported shell: bash, zsh, or fish")
 	}
-	// Fish's startup directory follows XDG on every platform. Keep CLI scripts
-	// and decision locks beside preferences using the same platform directory.
+	// Fish's startup directory follows XDG on every platform. CLI scripts stay
+	// beside picker settings; consent and its decision lock use a stable home path.
 	fishConfig := os.Getenv("XDG_CONFIG_HOME")
 	if fishConfig == "" {
 		fishConfig = filepath.Join(home, ".config")
@@ -81,7 +81,20 @@ func imagePickerShellTarget(ctx context.Context, shell string, automatic bool, p
 		return nil, errors.New("cannot determine the shell integration directory")
 	}
 	paths := imagePickerShellPaths{home: home, config: config, fishConfig: fishConfig, zdotdir: os.Getenv("ZDOTDIR")}
-	return imagePickerSelectShellTargets(shell, profileOverride, paths)
+	targets, err := imagePickerSelectShellTargets(shell, profileOverride, paths)
+	if err != nil {
+		return nil, err
+	}
+	if shell == "fish" {
+		optOutPath, err := imagePickerTabChoicePath(shell)
+		if err != nil {
+			return nil, err
+		}
+		for index := range targets {
+			targets[index].OptOutPath = optOutPath
+		}
+	}
+	return targets, nil
 }
 
 func imagePickerAutomaticHome(home string, current *user.User, euid int, sudo bool) error {

@@ -228,9 +228,11 @@ func TestImagePickerFirstRunPreservesOptOutAndUntrustedProfile(t *testing.T) {
 func TestImagePickerFirstRunContendedLockHonorsDeadline(t *testing.T) {
 	home := pickerShellSetupHome(t)
 	targets := firstRunShellTargets(t, home, "zsh")
+	choice, err := imagePickerTabChoicePath("zsh")
+	require.NoError(t, err)
 	locked, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	go func() {
-		done <- autocomplete.WithPickerSetupLock(t.Context(), targets[0].Directory, func() error {
+		done <- autocomplete.WithPickerSetupLock(t.Context(), filepath.Dir(choice), func() error {
 			close(locked)
 			<-release
 			return nil
@@ -244,7 +246,7 @@ func TestImagePickerFirstRunContendedLockHonorsDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), imagePickerFirstRunTimeout)
 	defer cancel()
 	started := time.Now()
-	err := setupImagePickerFirstRun(ctx, targets)
+	err = setupImagePickerFirstRun(ctx, targets)
 	close(release)
 	require.NoError(t, <-done)
 	require.ErrorIs(t, err, context.DeadlineExceeded)

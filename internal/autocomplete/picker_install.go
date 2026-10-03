@@ -24,9 +24,10 @@ import (
 // consent belong to the command layer. Profile must be the startup file that
 // this shell actually reads.
 type PickerInstallation struct {
-	Shell     CompletionStyle
-	Directory string
-	Profile   string
+	Shell      CompletionStyle
+	Directory  string
+	Profile    string
+	OptOutPath string // Optional shared marker for managed fish activation.
 }
 
 type PickerInstallResult struct {
@@ -97,6 +98,15 @@ func RemovePicker(ctx context.Context, options PickerInstallation) (PickerInstal
 func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, error) {
 	if err := validatePickerInstallation(options); err != nil {
 		return false, err
+	}
+	// Match installation's read-only configuration check before first-run
+	// setup can create its separate consent lock, even for an absent profile.
+	checked, checkErr := openPickerScriptDirectory(ctx, options.Directory, false)
+	if checked != nil {
+		checked.Close()
+	}
+	if checkErr != nil && !errors.Is(checkErr, os.ErrNotExist) {
+		return false, checkErr
 	}
 	root, err := openPickerProfileDirectory(ctx, filepath.Dir(options.Profile), false)
 	if errors.Is(err, os.ErrNotExist) {
@@ -191,9 +201,6 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	if err != nil {
 		return result, err
 	}
-	if remove && installed == nil {
-		return result, nil
-	}
 	ownedPrevious := installed != nil && pickerScriptMatchesProfile(options, callerProfile, *installed)
 	if installed != nil {
 		options.Directory = filepath.Dir(installed.Script)
@@ -205,7 +212,10 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	}
 	scriptRoot, err := openPickerScriptDirectory(ctx, options.Directory, !remove)
 	if remove && errors.Is(err, os.ErrNotExist) {
-		desired := append(append([]byte(nil), before...), after...)
+		if installed == nil {
+			return result, nil
+		}
+		desired := withoutPickerBlock(before, after)
 		if err := removePickerProfileBlock(ctx, profileRoot, profileName, profile, *installed, desired); err != nil {
 			return result, err
 		}
@@ -221,6 +231,12 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 		return result, err
 	}
 	defer scriptLock.Close()
+	if remove && installed == nil {
+		// A previous removal may have committed the profile before script
+		// cleanup failed. Retry provable ownership in the selected directory.
+		result.Changed, err = reconcilePickerScripts(ctx, scriptRoot, options, callerProfile, pickerFileSnapshot{}, true)
+		return result, err
+	}
 	var previous pickerFileSnapshot
 	if installed != nil {
 		previous, err = readPickerFile(ctx, scriptRoot, filepath.Base(installed.Script))
@@ -241,7 +257,7 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 		}
 	}()
 	if remove {
-		desired = append(append([]byte(nil), before...), after...)
+		desired = withoutPickerBlock(before, after)
 	} else {
 		script, err := renderInstalledPicker(options)
 		if err != nil {
@@ -303,6 +319,9 @@ func validatePickerInstallation(options PickerInstallation) error {
 		return errors.New("PowerShell uses normal Tab completion. Type openai images generate and press Enter to open the image picker.")
 	}
 	paths := []string{options.Directory, options.Profile}
+	if options.OptOutPath != "" {
+		paths = append(paths, options.OptOutPath)
+	}
 	for _, path := range paths {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path || !utf8.ValidString(path) || strings.ContainsAny(path, "\x00\r\n") {
 			return errors.New("shell integration requires clean absolute paths without line breaks")
@@ -400,6 +419,16 @@ func parsePickerBlock(data []byte, options PickerInstallation) ([]byte, []byte, 
 	return data[:start], data[finish:], &installed, nil
 }
 
+func withoutPickerBlock(before, after []byte) []byte {
+	data := append([]byte(nil), before...)
+	// The block supplied a newline after an unterminated original file. Keep
+	// that boundary when the user subsequently added another startup line.
+	if len(before) != 0 && len(after) != 0 && before[len(before)-1] != '\n' && after[0] != '\n' {
+		data = append(data, '\n')
+	}
+	return append(data, after...)
+}
+
 func renderPickerBlock(block pickerInstalledBlock) []byte {
 	metadata, _ := json.Marshal(block)
 	script := quotePickerPath(block.Shell, block.Script)
@@ -446,6 +475,13 @@ func renderInstalledPicker(options PickerInstallation) ([]byte, error) {
 		// conf.d runs before config.fish and lazy fish_user_key_bindings.
 		// Install once at the first prompt so the wrapper captures the final
 		// user binding. Later prompts must not reclaim a replacement/disable.
+		declined := ""
+		if options.OptOutPath != "" {
+			// The command layer owns preference validation. Any marker suppresses
+			// activation here, including an invalid or dangling-link marker.
+			path := quotePickerPath(options.Shell, options.OptOutPath)
+			declined = "if test -e " + path + "; or test -L " + path + "\n    return\nend\n"
+		}
 		picker = `if not status is-interactive; or set -q __openai_picker_modes
     return
 end
@@ -453,9 +489,9 @@ set --erase --global OPENAI_PICKER_INTEGRATION
 function openai_picker_disable
     functions --erase __openai_picker_install_on_prompt
 end
-function __openai_picker_install_on_prompt --on-event fish_prompt
+` + declined + `function __openai_picker_install_on_prompt --on-event fish_prompt
     functions --erase __openai_picker_install_on_prompt
-` + picker + `
+` + declined + picker + `
     if set -q __openai_picker_modes[1]; set -gx OPENAI_PICKER_INTEGRATION fish; end
 end
 `

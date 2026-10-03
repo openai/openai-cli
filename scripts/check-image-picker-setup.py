@@ -113,8 +113,9 @@ def main():
 
             setup('--uninstall-picker')
             assert profile.read_bytes() == original
-            markers = list(home.rglob('image-picker.json.tab-off-'+shell))
+            markers = list(home.rglob('image-picker.tab-off-'+shell))
             assert len(markers) == 1 and markers[0].read_bytes() == b'', markers
+            assert markers[0].parent == home / '.openai' / 'shell', markers
             assert not list(home.rglob('picker-'+shell+'-*')), 'removed setup left an owned script'
             setup('--install-picker')
             assert not markers[0].exists(), 'explicit installation did not clear opt-out'

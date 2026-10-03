@@ -48,6 +48,9 @@ func checkPickerReplacementMetadata(root *os.Root, name, temporary string, previ
 	if err := checkPickerFileMetadata(profile); err != nil {
 		return err
 	}
+	if err := checkPickerReplacementLabels(profile, staged); err != nil {
+		return err
+	}
 	var existingInfo, stagedInfo unix.Stat_t
 	if unix.Fstat(int(profile.Fd()), &existingInfo) != nil || unix.Fstat(int(staged.Fd()), &stagedInfo) != nil || existingInfo.Uid != stagedInfo.Uid || existingInfo.Gid != stagedInfo.Gid {
 		return errors.New("shell startup replacement has different ownership; existing file was kept")
