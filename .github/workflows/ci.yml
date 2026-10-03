@@ -57,6 +57,8 @@ jobs:
       - uses: ./.github/actions/setup-go
       - name: Check upload cancellation and EOF
         run: go test ./internal/binaryparam ./pkg/cmd -run 'Test(CancellableFIFO|FilesCreateCLICancelClosesStalledFIFO|FilesCreateCLIStreamsSparseFile|ImagesEditCLIStreamsMultipleFiles)' -count=1
+      - name: Check native macOS picker metadata and profile transactions
+        run: go test ./internal/autocomplete -run '^TestPicker' -count=1 -v
 
   windows-picker-permissions:
     timeout-minutes: 15

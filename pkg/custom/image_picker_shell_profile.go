@@ -65,15 +65,21 @@ func imagePickerShellTarget(ctx context.Context, shell string, automatic bool, p
 		return nil, errors.New("choose a supported shell: bash, zsh, or fish")
 	}
 	config := os.Getenv("XDG_CONFIG_HOME")
+	// Fish's startup directory follows XDG on every platform. Windows CLI
+	// scripts and decision locks stay together with preferences in AppData.
+	fishConfig := config
+	if fishConfig == "" {
+		fishConfig = filepath.Join(home, ".config")
+	}
 	if runtime.GOOS == "windows" {
 		config, err = os.UserConfigDir()
 		if err != nil {
 			return nil, errors.New("cannot determine the shell integration directory")
 		}
 	} else if config == "" {
-		config = filepath.Join(home, ".config")
+		config = fishConfig
 	}
-	paths := imagePickerShellPaths{home: home, config: config, zdotdir: os.Getenv("ZDOTDIR")}
+	paths := imagePickerShellPaths{home: home, config: config, fishConfig: fishConfig, zdotdir: os.Getenv("ZDOTDIR")}
 	return imagePickerSelectShellTargets(shell, profileOverride, paths)
 }
 
@@ -106,7 +112,7 @@ func imagePickerSameHome(first, second string) bool {
 }
 
 type imagePickerShellPaths struct {
-	home, config, zdotdir string
+	home, config, fishConfig, zdotdir string
 }
 
 // Selection only inspects file names. Ownership, symlinks, concurrent changes,
@@ -153,7 +159,14 @@ func imagePickerSelectShellTargets(shell, override string, paths imagePickerShel
 			}
 			profiles = []string{filepath.Join(directory, ".zshrc")}
 		case "fish":
-			profiles = []string{filepath.Join(paths.config, "fish", "conf.d", "openai-picker.fish")}
+			directory := paths.fishConfig
+			if directory == "" {
+				directory = paths.config
+			}
+			if !imagePickerAbsolutePath(directory) {
+				return nil, errors.New("fish configuration directory must be an absolute native path; specify --profile for another startup file")
+			}
+			profiles = []string{filepath.Join(directory, "fish", "conf.d", "openai-picker.fish")}
 		}
 	}
 	result := make([]autocomplete.PickerInstallation, 0, len(profiles))

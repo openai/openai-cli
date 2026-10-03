@@ -38,7 +38,10 @@ setup. Different or MSYS-style home paths require an explicit `--profile PATH`;
 automatic setup skips these cases rather than guessing another startup location.
 
 Setup uses `.zshrc` (respecting `ZDOTDIR`), Bash's `.bashrc` and first existing
-login startup file, or fish's `conf.d/openai-picker.fish`. Scripts use the current
+login startup file, or fish's `conf.d/openai-picker.fish`. Fish follows
+`XDG_CONFIG_HOME/fish/conf.d`, falling back to `HOME/.config/fish/conf.d`,
+including on Windows. Windows scripts remain in `APPDATA/openai/shell`.
+Scripts use the current
 `openai` on PATH. If the executable is removed, the guarded source block becomes
 inactive. Existing startup content and custom key bindings are preserved.
 Fish installs its wrapper once at the first prompt, after `config.fish` and
