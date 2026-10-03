@@ -18,10 +18,10 @@ opt-out and refreshes intact saved scripts when their generated content changes,
 including in shells with active integration. Open a new terminal to load updated
 scripts. Setup failures leave the ordinary command running. The command waits
 at most 250 milliseconds for optional setup, including slow filesystem calls.
-An I/O operation already in progress, including an atomic profile replacement,
+An I/O operation already in progress, including a profile update,
 may finish in the background. Later changes check cancellation; the worker
 cleans up its uncommitted files when I/O returns. If the process exits first,
-inert staging files can remain, as with an interrupted explicit installation.
+recovery or staging files can remain, as with an interrupted explicit installation.
 At most one setup worker runs in a CLI process.
 
 To configure or remove persistent shortcuts explicitly:
@@ -81,6 +81,33 @@ If the startup directory was deleted, removal still cleans verified scripts in
 the selected script directory without recreating the startup directory. Missing
 profile metadata cannot identify an earlier script root or an unprovable alias;
 those files remain untouched.
+Before replacing or removing an existing profile, setup moves the actual old
+file into a private `.openai-picker-recovery-*` directory beside the profile.
+The `original` file remains there after success, including any later writes by
+an editor that kept the old file open. Setup never automatically deletes these
+originals. Publication and rollback refuse to replace a competing editor save.
+There is a brief interval when the startup path is absent; an interrupted process
+can leave it absent until the next setup or removal attempt. That attempt restores
+an unfinished capture only when the startup path is still absent, then applies
+the newly requested operation. A completed removal stays absent. If a newer
+startup file exists, it and the recovery original are both kept.
+While a capture is unfinished, retry with the profile spelling recorded in its
+manifest. An absent path cannot establish whether another spelling is a case or
+Windows short-name alias, so setup defers creating other missing profiles in that
+directory until the pending capture is recovered.
+
+Inspect `original` files before manually archiving or deleting their recovery
+directories. The small `manifest.json` identifies the profile basename; an empty
+`complete` marker records a finished update. Close editors with pending saves
+before discarding originals. A profile can retain 32 recovery directories;
+further changes stop until you free space, while unchanged setup remains a no-op.
+These copies preserve local profile data and may contain private settings. This
+protocol handles process interruption; it does not promise recovery from disk
+failure or sudden power loss. Incomplete or modified recovery metadata may need
+manual inspection; setup preserves files whose ownership it cannot establish.
+Supported native exclusive rename is required;
+filesystems without it refuse the change instead of overwriting a profile.
+
 Repeating either command is safe. Modified blocks or scripts stay available for
 inspection. Default Bash removal checks all three login profiles as well as
 `.bashrc`, so a newer, higher-priority login profile cannot hide earlier setup.

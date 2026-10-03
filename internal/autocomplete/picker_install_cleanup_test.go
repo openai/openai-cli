@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,13 +17,29 @@ import (
 
 type pickerCancelAfterProfileRemoval struct {
 	context.Context
-	profile string
+	profile         string
+	completedBefore int
 }
 
 func (ctx pickerCancelAfterProfileRemoval) Err() error {
 	data, err := os.ReadFile(ctx.profile)
 	if errors.Is(err, os.ErrNotExist) || err == nil && !bytes.Contains(data, []byte(pickerBlockBegin)) {
-		return context.Canceled
+		// Capturing an original briefly removes the profile before commit.
+		// Wait for this operation's completed archive before interrupting
+		// script cleanup, so the test still targets an already committed edit.
+		entries, _ := os.ReadDir(filepath.Dir(ctx.profile))
+		completed := 0
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), pickerRecoveryPrefix(filepath.Base(ctx.profile))) {
+				info, err := os.Lstat(filepath.Join(filepath.Dir(ctx.profile), entry.Name(), "complete"))
+				if err == nil && info.Mode().IsRegular() {
+					completed++
+				}
+			}
+		}
+		if completed > ctx.completedBefore {
+			return context.Canceled
+		}
 	}
 	return ctx.Context.Err()
 }
@@ -51,7 +68,8 @@ func TestPickerRemoveRetriesScriptCleanup(t *testing.T) {
 			modifiedName := namespace + pickerScriptName(options, modified)[len(namespace):]
 			modifiedPath := filepath.Join(options.Directory, modifiedName)
 			require.NoError(t, os.WriteFile(modifiedPath, []byte("# personal modification\n"), 0600))
-			removed, err := RemovePicker(pickerCancelAfterProfileRemoval{t.Context(), options.Profile}, options)
+			completedBefore := len(pickerRecoveryArchives(t, options.Profile))
+			removed, err := RemovePicker(pickerCancelAfterProfileRemoval{t.Context(), options.Profile, completedBefore}, options)
 			require.ErrorIs(t, err, context.Canceled)
 			require.True(t, removed.Changed)
 			_, err = os.Stat(installed.ScriptPath)

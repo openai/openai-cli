@@ -80,9 +80,10 @@ func WithPickerSetupLock(ctx context.Context, directory string, change func() er
 
 // InstallPicker persists normal completion and the optional picker hook. The
 // immutable script is committed before the profile; failed profile updates
-// remove only a newly created, unchanged script. Cooperating writers serialize
-// from validation to replacement. External editors do not share these locks:
-// identity and bytes are checked again immediately before atomic replacement.
+// preserve scripts needed by an interrupted profile transaction. Cooperating
+// writers serialize from validation through recovery. External editors do not
+// share these locks: displaced profiles are retained, and publication never
+// replaces an entry created by an editor during the transaction.
 func InstallPicker(ctx context.Context, options PickerInstallation) (PickerInstallResult, error) {
 	return changePickerInstallation(ctx, options, false)
 }
@@ -182,6 +183,9 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 		return result, err
 	}
 	defer profileLock.Close()
+	if err := recoverPickerProfiles(ctx, profileRoot, profileName); err != nil {
+		return result, err
+	}
 	profile, err := readPickerFile(ctx, profileRoot, profileName)
 	if err != nil {
 		return result, err
@@ -269,6 +273,11 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 		if len(desired) > pickerInstallLimit {
 			return result, errors.New("shell startup file exceeds the setup size limit")
 		}
+		if profile.info != nil && !bytes.Equal(profile.data, desired) {
+			if err := checkPickerRecoveryCapacity(ctx, profileRoot, profileName); err != nil {
+				return result, err
+			}
+		}
 		if newSnapshot.info == nil {
 			// Unique content addresses permit an exclusive create. No existing
 			// script is replaced and a profile never names a partial file.
@@ -284,6 +293,11 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 			err = removePickerProfileBlock(ctx, profileRoot, profileName, profile, *installed, desired)
 		} else {
 			err = replacePickerProfile(ctx, profileRoot, profileName, profile, desired)
+		}
+		// A bookkeeping failure after publication must not remove the script
+		// that the live profile now references.
+		if errors.Is(err, errPickerProfilePublished) {
+			created = false
 		}
 		if err != nil {
 			return result, err
@@ -318,6 +332,14 @@ func preflightPickerScriptDirectory(ctx context.Context, options PickerInstallat
 		profile, err := readPickerFile(ctx, profileRoot, filepath.Base(options.Profile))
 		if err != nil {
 			return err
+		}
+		if profile.info == nil {
+			pending, err := hasPendingPickerRecovery(ctx, profileRoot, filepath.Base(options.Profile))
+			if err != nil || pending {
+				// Recover under the profile lock before choosing a script root:
+				// the displaced profile may record a different valid root.
+				return err
+			}
 		}
 		_, _, installed, err := parsePickerBlock(profile.data, options)
 		if err != nil {
@@ -681,6 +703,11 @@ func replacePickerProfile(ctx context.Context, root *os.Root, name string, previ
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if previous.info != nil {
+		if err := checkPickerRecoveryCapacity(ctx, root, name); err != nil {
+			return err
+		}
+	}
 	temporary := ".openai-picker-" + rand.Text()
 	mode := os.FileMode(0600)
 	if previous.info != nil {
@@ -718,14 +745,14 @@ func replacePickerProfile(ctx context.Context, root *os.Root, name string, previ
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return root.Rename(temporary, name)
+	return commitPickerProfile(ctx, root, name, previous, temporary)
 }
 
 func removePickerProfileBlock(ctx context.Context, root *os.Root, name string, previous pickerFileSnapshot, installed pickerInstalledBlock, data []byte) error {
 	// Restore absence only when setup created the file and the owned block is
 	// still its entire contents. Older metadata cannot prove creation ownership.
 	if installed.ProfileCreated && len(data) == 0 {
-		return removePickerSnapshot(ctx, root, name, previous)
+		return commitPickerProfile(ctx, root, name, previous, "")
 	}
 	return replacePickerProfile(ctx, root, name, previous, data)
 }
