@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.0](https://github.com/openai/openai-cli/compare/v1.33.0...v1.34.0) (2026-10-03)
+
+
+### Features
+
+* **images:** remember picker settings and save folder ([#358](https://github.com/openai/openai-cli/issues/358)) ([1081066](https://github.com/openai/openai-cli/commit/1081066c5caedcf4f1e235256558e936bbd28082))
+
 ## [1.33.0](https://github.com/openai/openai-cli/compare/v1.32.1...v1.33.0) (2026-10-03)
 
 
