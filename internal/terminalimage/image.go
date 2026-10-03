@@ -139,7 +139,9 @@ func writeKittyFrames(ctx context.Context, out io.Writer, encoded *bytes.Buffer,
 			// ST closes an APC, but not a chunked upload. Finish that upload
 			// quietly so a later image cannot be appended to its partial PNG.
 			// Do not delete images: earlier placements belong to scrollback.
-			_, cleanupErr := io.WriteString(contextWriter{context.WithoutCancel(ctx), out}, "\x1b_Gq=2,m=0;\x1b\\")
+			// Keep cancellation: an arbitrary writer may block in cleanup.
+			// Native terminal workers have a separate bounded transport reset.
+			_, cleanupErr := io.WriteString(destination, "\x1b_Gq=2,m=0;\x1b\\")
 			err = errors.Join(err, cleanupErr)
 		}
 	}()
@@ -176,7 +178,7 @@ func writeKittyFrames(ctx context.Context, out io.Writer, encoded *bytes.Buffer,
 					// can leave a literal backslash in the terminal's text.
 					terminator = "\\"
 				}
-				_, cleanupErr := io.WriteString(contextWriter{context.WithoutCancel(ctx), out}, terminator)
+				_, cleanupErr := io.WriteString(destination, terminator)
 				return errors.Join(writeErr, cleanupErr)
 			}
 			return writeErr

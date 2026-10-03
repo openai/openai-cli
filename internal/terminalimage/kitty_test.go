@@ -8,10 +8,66 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi/kitty"
 	"github.com/stretchr/testify/require"
 )
+
+func TestKittyCancellationDoesNotEnterBlockingCleanup(t *testing.T) {
+	for _, at := range []string{"chunk", "partial chunk", "terminator"} {
+		t.Run(at, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			cleanupEntered := make(chan struct{}, 2)
+			release := make(chan struct{})
+			writes := 0
+			out := writerFunc(func(data []byte) (int, error) {
+				writes++
+				if writes == 1 {
+					if at == "terminator" {
+						return 3, io.ErrShortWrite
+					}
+					cancel()
+					if at == "partial chunk" {
+						return 3, nil
+					}
+					return len(data), nil
+				}
+				if at == "terminator" && writes == 2 {
+					cancel()
+					return len(data), nil
+				}
+				cleanupEntered <- struct{}{}
+				<-release
+				return len(data), nil
+			})
+			img := testImage(t)
+			done := make(chan error, 1)
+			go func() { done <- Write(ctx, out, img, "kitty", 50) }()
+			select {
+			case err := <-done:
+				close(release)
+				require.ErrorIs(t, err, context.Canceled)
+				wantWrites := 1
+				if at == "terminator" {
+					wantWrites = 2
+					require.ErrorIs(t, err, io.ErrShortWrite)
+				}
+				require.Equal(t, wantWrites, writes)
+			case <-cleanupEntered:
+				// Release and join the writer even on the old implementation.
+				close(release)
+				<-done
+				t.Fatal("canceled output entered an uninterruptible cleanup write")
+			case <-time.After(5 * time.Second):
+				close(release)
+				<-done
+				t.Fatal("canceled output did not return")
+			}
+		})
+	}
+}
 
 func TestKittyPartialFrameCleanup(t *testing.T) {
 	for _, frameNumber := range []int{1, 2} {
@@ -49,7 +105,9 @@ func TestKittyPartialFrameCleanup(t *testing.T) {
 							accepted = len(data) - 1
 						}
 						expected.Write(data[:accepted])
-						expected.WriteString(terminator + "\x1b_Gq=2,m=0;\x1b\\")
+						if failure != "cancellation" {
+							expected.WriteString(terminator + "\x1b_Gq=2,m=0;\x1b\\")
+						}
 						n, err := output.Write(data[:accepted])
 						if failure == "error" {
 							err = sentinel
@@ -67,7 +125,11 @@ func TestKittyPartialFrameCleanup(t *testing.T) {
 					case "cancellation":
 						require.ErrorIs(t, err, context.Canceled)
 					}
-					require.Equal(t, frameNumber+2, writes)
+					wantWrites := frameNumber + 2
+					if failure == "cancellation" {
+						wantWrites = frameNumber
+					}
+					require.Equal(t, wantWrites, writes)
 					require.Equal(t, expected.Bytes(), output.Bytes())
 				})
 			}
@@ -99,12 +161,14 @@ func TestKittyCleanupRetainsErrors(t *testing.T) {
 		})
 		err := Write(ctx, out, testImage(t), "kitty", 50)
 		require.ErrorIs(t, err, payloadErr)
-		require.ErrorIs(t, err, cleanupErr)
-		require.ErrorIs(t, err, finishErr)
 		if canceled {
 			require.ErrorIs(t, err, context.Canceled)
+			require.Equal(t, 1, writes, "cancellation must not enter arbitrary cleanup writes")
+		} else {
+			require.ErrorIs(t, err, cleanupErr)
+			require.ErrorIs(t, err, finishErr)
+			require.Equal(t, 3, writes, "attempt each cleanup write only once even if it fails")
 		}
-		require.Equal(t, 3, writes, "attempt each cleanup write only once even if it fails")
 	}
 }
 
@@ -146,7 +210,7 @@ func TestKittyClosedFramesFinishPendingTransfer(t *testing.T) {
 					require.ErrorIs(t, err, sentinel)
 				}
 				wantWrites := frameNumber
-				if (frameNumber > 1 || accepted) && !(frameNumber == lastFrame && accepted) {
+				if !canceled && (frameNumber > 1 || accepted) && !(frameNumber == lastFrame && accepted) {
 					wantWrites++
 				}
 				require.Equal(t, wantWrites, writes, "finish only an upload that may still be pending")

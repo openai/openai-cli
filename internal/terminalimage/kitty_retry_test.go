@@ -2,7 +2,6 @@ package terminalimage
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"errors"
 	"image"
@@ -41,8 +40,8 @@ func (s *kittyTransfers) accept(t *testing.T, wire []byte) {
 	}
 }
 
-func TestKittyInterruptedTransferPreservesNextImage(t *testing.T) {
-	for _, failure := range []string{"cancel after chunk", "error before next chunk"} {
+func TestKittyFailedTransferPreservesNextImage(t *testing.T) {
+	for _, failure := range []string{"error after chunk", "error before next chunk"} {
 		t.Run(failure, func(t *testing.T) {
 			var state kittyTransfers
 			var previous bytes.Buffer
@@ -51,28 +50,22 @@ func TestKittyInterruptedTransferPreservesNextImage(t *testing.T) {
 			require.Len(t, state.completed, 1)
 			prior := bytes.Clone(state.completed[0])
 
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
 			var interrupted bytes.Buffer
 			writes := 0
-			sinkErr := errors.New("synthetic failure before next chunk")
+			sinkErr := errors.New("synthetic chunk failure")
 			out := writerFunc(func(data []byte) (int, error) {
 				writes++
 				if failure == "error before next chunk" && writes == 2 {
 					return 0, sinkErr
 				}
 				n, err := interrupted.Write(data)
-				if failure == "cancel after chunk" && writes == 1 {
-					cancel()
+				if failure == "error after chunk" && writes == 1 {
+					err = sinkErr
 				}
 				return n, err
 			})
-			err := Write(ctx, out, testImage(t), "kitty", 50)
-			if failure == "cancel after chunk" {
-				require.ErrorIs(t, err, context.Canceled)
-			} else {
-				require.ErrorIs(t, err, sinkErr)
-			}
+			err := Write(t.Context(), out, testImage(t), "kitty", 50)
+			require.ErrorIs(t, err, sinkErr)
 			state.accept(t, interrupted.Bytes())
 			assertedPending := len(state.pending)
 
@@ -82,7 +75,7 @@ func TestKittyInterruptedTransferPreservesNextImage(t *testing.T) {
 			require.NoError(t, Write(t.Context(), &retry, img, "kitty", 20))
 			state.accept(t, retry.Bytes())
 			rendered, decodeErr := png.Decode(bytes.NewReader(state.completed[len(state.completed)-1]))
-			require.NoError(t, decodeErr, "the next image must not contain the canceled upload")
+			require.NoError(t, decodeErr, "the next image must not contain the failed upload")
 			require.Zero(t, assertedPending, "a closed APC must also complete the chunked transfer")
 			require.Empty(t, state.pending)
 			require.Equal(t, img.Bounds(), rendered.Bounds())

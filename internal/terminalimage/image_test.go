@@ -96,8 +96,8 @@ func TestWriteErrorsAndCancellation(t *testing.T) {
 			})
 			require.ErrorIs(t, Write(ctx, writer, img, protocol, 50), context.Canceled)
 			wantWrites := 1
-			if protocol == "iterm" || protocol == "kitty" {
-				wantWrites++ // Close the OSC or finish the pending chunked upload.
+			if protocol == "iterm" {
+				wantWrites++ // Close the OSC.
 			}
 			require.Equal(t, wantWrites, writes)
 			require.ErrorIs(t, Write(ctx, writer, img, protocol, 50), context.Canceled)
