@@ -55,6 +55,65 @@ func TestKittySessionReusesResidentAfterJobCancellation(t *testing.T) {
 	}
 }
 
+func TestKittySessionReportsReserveFailureOnlyWhenNeeded(t *testing.T) {
+	path, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("needed=%t", needed), func(t *testing.T) {
+			out, err := os.Create(filepath.Join(t.TempDir(), "output"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer out.Close()
+			session, err := startKittySession(t.Context(), path, out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer session.Close()
+			if err := session.workers[1].command.Process.Kill(); err != nil {
+				t.Fatal(err)
+			}
+			const image = "complete image"
+			_, err = session.write(t.Context(), func(w io.Writer) error {
+				_, err := io.WriteString(w, image)
+				return err
+			})
+			if err != nil {
+				t.Fatalf("primary output failed: %v", err)
+			}
+			if needed {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				_, err := session.write(ctx, func(io.Writer) error { cancel(); return nil })
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("primary cancellation lost: %v", err)
+				}
+				_, err = session.write(t.Context(), func(io.Writer) error {
+					t.Error("failed reserve accepted output")
+					return nil
+				})
+				if err == nil {
+					t.Fatal("required reserve failure was hidden")
+				}
+			}
+			if err := session.Close(); err != nil {
+				t.Fatalf("cleanup reported an unused or already reported failure: %v", err)
+			}
+			data, err := os.ReadFile(out.Name())
+			if err != nil || string(data) != image {
+				t.Fatalf("primary output changed: %q, %v", data, err)
+			}
+			for _, worker := range session.workers {
+				if worker.command.ProcessState == nil {
+					t.Fatal("worker was not reaped")
+				}
+			}
+		})
+	}
+}
+
 func TestKittyWorkerFailureReapsBeforeReturning(t *testing.T) {
 	path, err := os.Executable()
 	if err != nil {
@@ -138,6 +197,12 @@ func TestKittyCloseReapsStoppedIdleWorkers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
+	if _, err := session.write(t.Context(), func(w io.Writer) error {
+		_, err := io.WriteString(w, "image")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	for _, worker := range session.workers {
 		if err := worker.command.Process.Signal(syscall.SIGSTOP); err != nil {
 			t.Fatal(err)

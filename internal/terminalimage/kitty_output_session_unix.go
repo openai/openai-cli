@@ -22,6 +22,7 @@ type kittyOutputWorker struct {
 	command   *exec.Cmd
 	control   *net.UnixConn
 	life      *os.File
+	used      atomic.Bool
 	retired   atomic.Bool
 	closeOnce sync.Once
 	closeErr  error
@@ -60,7 +61,8 @@ func (s *kittyOutputSession) Close() error {
 	for i, worker := range s.workers {
 		// Retired workers were already reaped and reported by write, including
 		// intentional cancellation. Do not poison a successful reset with it.
-		if !worker.retired.Load() {
+		// An unused reserve cannot affect output that completed elsewhere.
+		if worker.used.Load() && !worker.retired.Load() {
 			err = errors.Join(err, errs[i])
 		}
 	}
@@ -219,6 +221,7 @@ func (s *kittyOutputWorker) write(ctx context.Context, write func(io.Writer) err
 			err = errors.Join(err, s.Close())
 		}
 	}()
+	s.used.Store(true)
 	_, _, err = s.control.WriteMsgUnix([]byte{'J'}, unix.UnixRights(int(dataRead.Fd())), nil)
 	if err != nil {
 		return false, err
