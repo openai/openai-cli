@@ -99,14 +99,8 @@ func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, e
 	if err := validatePickerInstallation(options); err != nil {
 		return false, err
 	}
-	// Match installation's read-only configuration check before first-run
-	// setup can create its separate consent lock, even for an absent profile.
-	checked, checkErr := openPickerScriptDirectory(ctx, options.Directory, false)
-	if checked != nil {
-		checked.Close()
-	}
-	if checkErr != nil && !errors.Is(checkErr, os.ErrNotExist) {
-		return false, checkErr
+	if err := preflightPickerScriptDirectory(ctx, options); err != nil {
+		return false, err
 	}
 	root, err := openPickerProfileDirectory(ctx, filepath.Dir(options.Profile), false)
 	if errors.Is(err, os.ErrNotExist) {
@@ -165,14 +159,8 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	if err := validatePickerInstallation(options); err != nil {
 		return result, err
 	}
-	// Reject an unsafe script location before creating profile directories or
-	// locks. A missing suffix is fine only after checking its existing ancestry.
-	checked, checkErr := openPickerScriptDirectory(ctx, options.Directory, false)
-	if checked != nil {
-		checked.Close()
-	}
-	if checkErr != nil && !errors.Is(checkErr, os.ErrNotExist) {
-		return result, checkErr
+	if err := preflightPickerScriptDirectory(ctx, options); err != nil {
+		return result, err
 	}
 	profileRoot, err := openPickerProfileDirectory(ctx, filepath.Dir(options.Profile), !remove)
 	if remove && errors.Is(err, os.ErrNotExist) {
@@ -309,6 +297,43 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	cleaned, err := reconcilePickerScripts(ctx, scriptRoot, options, callerProfile, newSnapshot, true)
 	result.Changed = result.Changed || cleaned
 	return result, err
+}
+
+// Inspect existing metadata before validating the script location. A changed
+// configuration root is irrelevant when the profile records another directory.
+// This check creates nothing, including for a missing profile; callers re-read
+// the profile and validate the selected directory for the actual operation.
+func preflightPickerScriptDirectory(ctx context.Context, options PickerInstallation) error {
+	profileRoot, err := openPickerProfileDirectory(ctx, filepath.Dir(options.Profile), false)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if profileRoot != nil {
+		defer profileRoot.Close()
+		options.Profile, err = pickerProfileIdentity(ctx, profileRoot, options.Profile)
+		if err != nil {
+			return err
+		}
+		profile, err := readPickerFile(ctx, profileRoot, filepath.Base(options.Profile))
+		if err != nil {
+			return err
+		}
+		_, _, installed, err := parsePickerBlock(profile.data, options)
+		if err != nil {
+			return err
+		}
+		if installed != nil {
+			options.Directory = filepath.Dir(installed.Script)
+		}
+	}
+	scripts, err := openPickerScriptDirectory(ctx, options.Directory, false)
+	if scripts != nil {
+		scripts.Close()
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func validatePickerInstallation(options PickerInstallation) error {
