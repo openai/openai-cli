@@ -216,8 +216,10 @@ archives:
 
 	for _, unexpected := range []string{
 		"completions/unexpected.sh",
+		"completions/picker/unexpected.fish",
 		"man/man1/unexpected.1.gz",
 		"nested/completions/unrelated.txt",
+		"nested/completions/picker/openai.fish",
 	} {
 		path := filepath.Join(root, filepath.FromSlash(unexpected))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
