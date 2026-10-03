@@ -86,7 +86,7 @@ func TestPickerWindowsInstallationRejectsOtherWriters(t *testing.T) {
 				"script directory":  options.Directory,
 				"profile":           options.Profile,
 				"script":            installed.ScriptPath,
-				"profile lock":      filepath.Join(filepath.Dir(options.Profile), ".bashrc.openai-picker.lock"),
+				"profile lock":      filepath.Join(filepath.Dir(options.Profile), "..bashrc.openai-picker.lock"),
 				"script lock":       filepath.Join(options.Directory, ".picker-install.lock"),
 			}
 			pickerWindowsSetPermissions(t, paths[target], user, "(A;;FW;;;WD)")
