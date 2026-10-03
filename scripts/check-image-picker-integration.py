@@ -12,7 +12,6 @@ import pathlib
 import shutil
 import signal
 import subprocess
-import sys
 import tempfile
 import threading
 import time
