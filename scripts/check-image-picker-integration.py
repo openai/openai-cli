@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import pty
 import shutil
 import signal
 import subprocess
@@ -68,7 +69,8 @@ def main():
         thread.start()
         base_url = f'http://127.0.0.1:{server.server_port}/v1'
         base_env = {'PATH': '/usr/bin:/bin', 'TERM': 'xterm-256color', 'LANG': 'en_US.UTF-8',
-                    'OPENAI_API_KEY': 'synthetic-picker-key', 'OPENAI_BASE_URL': base_url, 'CI': 'true'}
+                    'OPENAI_API_KEY': 'synthetic-picker-key', 'OPENAI_BASE_URL': base_url,
+                    'OPENAI_PICKER_SHELL': 'bash', 'CI': 'true'}
 
         def environment(name, extra=None):
             home = root/name
@@ -80,14 +82,15 @@ def main():
             print('PASS', name, flush=True)
 
         def direct_tty(name, arguments, expected_status=1, expected_body=None, extra_env=None,
-                       input_file=None, output_file=None, save_directory=None, save_name=None):
+                       input_file=None, output_file=None, save_directory=None, save_name=None,
+                       expected_error='Missing required options: --prompt'):
             home, env = environment(name, extra_env)
             before = len(server.requests)
             terminal = picker.Terminal(binary, arguments, env, input_file=input_file, output_file=output_file)
             try:
                 terminal.finish(expected_status, expect_picker=False)
                 if expected_status == 1:
-                    assert 'Missing required options: --prompt' in terminal.text(), terminal.text()
+                    assert expected_error in terminal.text(), terminal.text()
                 assert len(server.requests)-before == (1 if expected_body is not None else 0), name
                 if expected_body is not None:
                     check_body(server.requests[-1], expected_body)
@@ -96,8 +99,10 @@ def main():
                 assert not (home/'.config'/'openai'/'image-picker.json').exists()
                 passed(name)
             finally:
-                terminal.save(output/name)
-                terminal.close()
+                try:
+                    terminal.save(output/name)
+                finally:
+                    terminal.close()
 
         def direct_pipe(name, arguments, data=b'', expected_status=1, expected_body=None):
             home, env = environment(name)
@@ -119,6 +124,39 @@ def main():
             passed(name)
 
         try:
+            for shell in ['', 'sh', 'powershell.exe', 'unknown']:
+                name = 'unsupported-shell-'+(shell or 'detected-python')
+                home, env = environment(name, {'OPENAI_PICKER_SHELL': shell, 'SHELL': '/bin/zsh'})
+                if not shell:
+                    del env['OPENAI_PICKER_SHELL']
+                before = len(server.requests)
+                terminal = picker.Terminal(binary, ['images', 'generate'], env)
+                prompt = "A cat’s 'quoted' portrait\nsecond line"
+                try:
+                    terminal.wait('Command printing needs Bash, zsh, fish or PowerShell 7.')
+                    terminal.send(b'\x1b[200~'+prompt.encode()+b'\x1b[201~')
+                    mark = len(terminal.raw)
+                    terminal.send(picker.PRINT)
+                    terminal.wait('Command printing needs Bash, zsh, fish or PowerShell 7.', after=mark)
+                    assert terminal.child.poll() is None
+                    assert len(server.requests) == before
+                    assert 'openai images generate ' not in terminal.text()
+                    mark = len(terminal.raw)
+                    terminal.send(b'\r')
+                    wait_resumed(terminal, mark)
+                    assert len(server.requests) == before+1
+                    check_body(server.requests[-1], {'prompt': prompt})
+                    check_saved(home)
+                    assert 'openai images generate ' not in terminal.text()
+                    terminal.send(b'\x03')
+                    terminal.finish(130)
+                    passed(name)
+                finally:
+                    try:
+                        terminal.save(output/name)
+                    finally:
+                        terminal.close()
+
             name = 'bare-tty-early-paste'
             home, env = environment(name)
             before = len(server.requests)
@@ -156,8 +194,10 @@ def main():
                 assert not (home/'.config'/'openai'/'image-picker.json').exists()
                 passed(name)
             finally:
-                terminal.save(output/name)
-                terminal.close()
+                try:
+                    terminal.save(output/name)
+                finally:
+                    terminal.close()
 
             for action in ['cancel', 'print', 'generate', 'repeated-enter', 'root-connection-options',
                            'changed-model', 'literal-at-prompt', 'api-error', 'cancel-request', 'two-generations']:
@@ -247,10 +287,24 @@ def main():
                     passed(name)
                 finally:
                     server.release.set()
-                    terminal.save(output/name)
-                    terminal.close()
+                    try:
+                        terminal.save(output/name)
+                    finally:
+                        terminal.close()
 
             server.mode = 'ok'
+            output_master, output_slave = pty.openpty()
+            try:
+                read_only_output = os.open(os.ttyname(output_slave), os.O_RDONLY | os.O_NOCTTY)
+                try:
+                    direct_tty('read-only-tty-output', ['images', 'generate'], output_file=read_only_output,
+                               expected_error='Could not display the image picker. No new image request was started.')
+                finally:
+                    os.close(read_only_output)
+            finally:
+                os.close(output_master)
+                os.close(output_slave)
+
             direct_tty('help-tty', ['images', 'generate', '--help'], expected_status=0)
             direct_tty('full-help-tty', ['help', '--all', 'images', 'generate'], expected_status=0)
             direct_tty('dumb-terminal', ['images', 'generate'], extra_env={'TERM': 'dumb'})

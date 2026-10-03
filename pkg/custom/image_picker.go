@@ -139,7 +139,16 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	}()
 	_, runErr := program.Run()
 	inline.close()
-	return model.result, errors.Join(runErr, tracked.Err(), inline.err, parent.Err())
+	writeErr := tracked.Err()
+	if writeErr != nil {
+		// Stopping Tea after a failed write cancels its private context. That
+		// cancellation is not a user action; retain real parent cancellation below.
+		if errors.Is(runErr, context.Canceled) {
+			runErr = nil
+		}
+		writeErr = imageSavingFailure("Could not display the image picker. No new image request was started.", writeErr)
+	}
+	return model.result, errors.Join(runErr, writeErr, inline.err, parent.Err())
 }
 
 type imagePickerStopMsg struct{ code int }
@@ -503,6 +512,10 @@ func (m *imagePicker) activate(row imagePickerRow) tea.Cmd {
 	case "more":
 		m.page, m.selected = "more", 0
 	case "generate", "print":
+		if row.id == "print" && imagePickerShellQuoter(m.shell) == nil {
+			m.note = imagePickerUnsupportedShell
+			return nil
+		}
 		if m.validPrompt() {
 			m.result = imagePickerResult{Args: m.settings.args(), PrintOnly: row.id == "print", settings: m.settings, shell: m.shell}
 			return tea.Quit

@@ -13,7 +13,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/itchyny/json2yaml v0.1.5
 	github.com/muesli/reflow v0.3.0
-	github.com/openai/openai-go/v3 v3.68.0
+	github.com/openai/openai-go/v3 v3.71.1
 	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/gjson v1.19.0
 	github.com/tidwall/pretty v1.2.1

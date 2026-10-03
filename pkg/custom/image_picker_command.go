@@ -20,17 +20,30 @@ func (s imagePickerSettings) args() []string {
 	return append(args, "--prompt", prompt)
 }
 
+const imagePickerUnsupportedShell = "Command printing needs Bash, zsh, fish or PowerShell 7."
+
+func imagePickerShellQuoter(shell string) func(string) string {
+	switch shell {
+	case "bash", "zsh":
+		return imagePickerShellQuote
+	case "fish":
+		return imagePickerFishQuote
+	case "pwsh":
+		return imagePickerPowerShellQuote
+	default:
+		return nil
+	}
+}
+
+// An empty result means the shell is unsupported; never guess its syntax.
 func formatImagePickerCommand(args []string, shell string) string {
+	quote := imagePickerShellQuoter(shell)
+	if quote == nil {
+		return ""
+	}
 	words := make([]string, 0, len(args)+1)
 	words = append(words, "openai")
 	for _, arg := range args {
-		quote := imagePickerShellQuote
-		switch shell {
-		case "fish":
-			quote = imagePickerFishQuote
-		case "pwsh":
-			quote = imagePickerPowerShellQuote
-		}
 		words = append(words, quote(arg))
 	}
 	return strings.Join(words, " ")
