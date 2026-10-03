@@ -142,6 +142,15 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	if err := validatePickerInstallation(options); err != nil {
 		return result, err
 	}
+	// Reject an unsafe script location before creating profile directories or
+	// locks. A missing suffix is fine only after checking its existing ancestry.
+	checked, checkErr := openPickerScriptDirectory(ctx, options.Directory, false)
+	if checked != nil {
+		checked.Close()
+	}
+	if checkErr != nil && !errors.Is(checkErr, os.ErrNotExist) {
+		return result, checkErr
+	}
 	profileRoot, err := openPickerDirectory(ctx, filepath.Dir(options.Profile), !remove)
 	if remove && errors.Is(err, os.ErrNotExist) {
 		return result, nil
@@ -392,26 +401,23 @@ func openPickerDirectory(ctx context.Context, path string, create bool) (*os.Roo
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if create {
-		if err := os.MkdirAll(path, 0700); err != nil {
-			return nil, err
-		}
-	}
-	info, err := os.Lstat(path)
+	root, err := openPickerDirectoryTree(ctx, path, create)
 	if err != nil {
 		return nil, err
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !pickerInstallOwned(info) || (runtime.GOOS != "windows" && info.Mode().Perm()&0022 != 0) {
-		return nil, errors.New("shell integration requires a directory writable only by its owner")
-	}
-	root, err := os.OpenRoot(path)
+	info, err := root.Stat(".")
 	if err != nil {
+		root.Close()
 		return nil, err
 	}
-	actual, err := root.Stat(".")
-	if err != nil || !os.SameFile(info, actual) {
+	current, err := os.Lstat(path)
+	if err != nil || !current.IsDir() || !os.SameFile(info, current) {
 		root.Close()
 		return nil, errors.Join(errPickerInstallChanged, err)
+	}
+	if !info.IsDir() || !pickerInstallOwned(info) || (runtime.GOOS != "windows" && info.Mode().Perm()&0022 != 0) {
+		root.Close()
+		return nil, errors.New("shell integration requires a directory writable only by its owner")
 	}
 	directory, err := root.Open(".")
 	if err == nil {
@@ -424,9 +430,8 @@ func openPickerDirectory(ctx context.Context, path string, create bool) (*os.Roo
 	return root, nil
 }
 
-// Both managed directories must protect the sourced script: a writable parent
-// could replace the entire shell directory. Configured locations above these
-// directories are caller-selected trust boundaries, not an ancestor audit.
+// Full ancestry validation prevents replacement through the script path; both
+// managed directories additionally retain their strict metadata policy.
 func openPickerScriptDirectory(ctx context.Context, path string, create bool) (*os.Root, error) {
 	parent, err := openPickerManagedDirectory(ctx, filepath.Dir(path), create)
 	if err != nil {

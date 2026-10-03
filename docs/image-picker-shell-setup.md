@@ -61,10 +61,13 @@ An explicit `--profile` still limits removal to that file.
 Bash configures its two startup modes separately; if a later write
 fails, the error reports partial setup and rerunning the command is safe.
 
-Setup keeps symlinked profiles, unsafe permissions, and protected file metadata
-unchanged. On macOS and Linux this includes profiles with ACLs or extended
+Setup checks the directory ancestry of configuration and startup paths before
+creating files. It keeps symlinked profiles, unsafe permissions, and protected
+file metadata unchanged. Windows junction or reparse-point ancestors require
+manual setup. Equivalent Windows home-directory spellings are recognized by
+filesystem identity. On macOS and Linux this includes profiles with ACLs or extended
 attributes. Windows replacement also checks alternate streams and file-specific
-permissions. Windows directories, scripts and staging files require a current-user
+permissions. Windows managed directories, scripts and staging files require a current-user
 or local Administrators owner and a DACL that grants mutation only to that user,
 SYSTEM or local Administrators. Lock files also reject access by other readers.
 Profiles must be UTF-8 text and at most 1 MiB including the managed

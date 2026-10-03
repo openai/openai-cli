@@ -188,15 +188,19 @@ func TestImagePickerFirstRunSkipsPowerShellWithoutWriting(t *testing.T) {
 }
 
 func TestImagePickerFirstRunPreservesOptOutAndUntrustedProfile(t *testing.T) {
-	for _, mode := range []string{"optout", "modified profile", "symlink profile"} {
+	for _, mode := range []string{"optout", "modified profile", "symlink profile", "unsafe configuration"} {
 		t.Run(mode, func(t *testing.T) {
-			if runtime.GOOS == "windows" && mode == "symlink profile" {
+			if runtime.GOOS == "windows" && (mode == "symlink profile" || mode == "unsafe configuration") {
 				t.Skip("Unix symlink fixture")
 			}
 			home := pickerShellSetupHome(t)
 			targets := firstRunShellTargets(t, home, "bash")
 			if mode == "optout" {
 				require.NoError(t, declineImagePickerTab(t.Context(), "bash"))
+			} else if mode == "unsafe configuration" {
+				configuration := filepath.Dir(filepath.Dir(targets[0].Directory))
+				require.NoError(t, os.MkdirAll(configuration, 0700))
+				require.NoError(t, os.Chmod(configuration, 0770))
 			} else if mode == "modified profile" {
 				require.NoError(t, os.WriteFile(targets[1].Profile, []byte("# >>> openai image picker damaged\n"), 0600))
 			} else {

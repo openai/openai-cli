@@ -39,7 +39,7 @@ func imagePickerShellTarget(ctx context.Context, shell string, automatic bool, p
 	if runtime.GOOS == "windows" && profileOverride == "" {
 		// UserHomeDir uses USERPROFILE on Windows, while Unix shells read
 		// HOME. Do not guess a native equivalent for MSYS or other shell paths.
-		if shellHome := os.Getenv("HOME"); shellHome != "" && (!imagePickerAbsolutePath(shellHome) || filepath.Clean(shellHome) != filepath.Clean(home)) {
+		if shellHome := os.Getenv("HOME"); shellHome != "" && (!imagePickerAbsolutePath(shellHome) || !imagePickerSameHome(shellHome, home)) {
 			if automatic {
 				return nil, nil
 			}
@@ -81,10 +81,28 @@ func imagePickerAutomaticHome(home string, current *user.User, euid int, sudo bo
 	if euid == 0 || current.Uid == "0" || sudo {
 		return errors.New("automatic shell setup is skipped for root or sudo")
 	}
-	if !imagePickerAbsolutePath(home) || !imagePickerAbsolutePath(current.HomeDir) || filepath.Clean(home) != filepath.Clean(current.HomeDir) {
+	if !imagePickerAbsolutePath(home) || !imagePickerAbsolutePath(current.HomeDir) || !imagePickerSameHome(home, current.HomeDir) {
 		return errors.New("automatic shell setup requires the current user's home directory")
 	}
 	return nil
+}
+
+// Windows may spell the same directory with different casing or short names.
+// Compare filesystem identities instead of assuming case folding is safe on every
+// Windows volume. Unix retains its existing spelling requirement.
+func imagePickerSameHome(first, second string) bool {
+	if filepath.Clean(first) == filepath.Clean(second) {
+		return true
+	}
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	left, err := os.Stat(first)
+	if err != nil || !left.IsDir() {
+		return false
+	}
+	right, err := os.Stat(second)
+	return err == nil && right.IsDir() && os.SameFile(left, right)
 }
 
 type imagePickerShellPaths struct {

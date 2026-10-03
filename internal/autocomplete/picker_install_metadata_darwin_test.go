@@ -162,9 +162,12 @@ func TestPickerInstallAllowsBenignProfileParentACL(t *testing.T) {
 }
 
 func TestPickerInstallRejectsWritableDirectoryACL(t *testing.T) {
-	for _, target := range []string{"profile parent", "managed parent"} {
+	for _, target := range []string{"profile parent", "managed parent", "config ancestor", "higher ancestor"} {
 		t.Run(target, func(t *testing.T) {
 			options := pickerInstallFixture(t, CompletionStyleZsh)
+			ancestor := filepath.Join(filepath.Dir(options.Profile), "outer")
+			config := filepath.Join(ancestor, "config")
+			options.Directory = filepath.Join(config, "openai", "shell")
 			original := []byte("# personal startup\n")
 			require.NoError(t, os.WriteFile(options.Profile, original, 0600))
 			before, err := os.Stat(options.Profile)
@@ -173,6 +176,10 @@ func TestPickerInstallRejectsWritableDirectoryACL(t *testing.T) {
 			directory := filepath.Dir(options.Profile)
 			if target == "managed parent" {
 				directory = filepath.Dir(options.Directory)
+			} else if target == "config ancestor" {
+				directory = config
+			} else if target == "higher ancestor" {
+				directory = ancestor
 			}
 			output, err := exec.Command("/bin/chmod", "+a", "everyone allow add_file,delete_child,search", directory).CombinedOutput()
 			require.NoError(t, err, "%s", output)

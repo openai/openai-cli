@@ -173,6 +173,52 @@ func TestMainPickerShellSetupPreservesModifiedProfileAndPrivateErrors(t *testing
 	}
 }
 
+func TestMainPickerShellSetupRefusesUnsafeConfigurationAncestry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission fixtures; Windows has native ACL coverage")
+	}
+	for _, unsafeLevel := range []string{"configuration", "ancestor"} {
+		for _, format := range []string{"text", "json"} {
+			t.Run(unsafeLevel+"/"+format, func(t *testing.T) {
+				home := t.TempDir()
+				parent := filepath.Join(home, "settings")
+				configuration := filepath.Join(parent, "config")
+				if err := os.MkdirAll(configuration, 0700); err != nil {
+					t.Fatal(err)
+				}
+				unsafe := configuration
+				if unsafeLevel == "ancestor" {
+					unsafe = parent
+				}
+				if err := os.Chmod(unsafe, 0770); err != nil {
+					t.Fatal(err)
+				}
+				profile := filepath.Join(home, "startup")
+				original := "# personal settings\n"
+				if err := os.WriteFile(profile, []byte(original), 0600); err != nil {
+					t.Fatal(err)
+				}
+				env := append(pickerSetupProcessEnv(home), "XDG_CONFIG_HOME="+configuration)
+				got := runMainDispatchWithEnv(t, "zsh", env, "openai", "--format-error", format, "@completion", "zsh", "--install-picker", "--profile", profile)
+				if got.code == 0 || got.stdout != "" || got.stderr == "" || strings.Contains(got.stderr, home) {
+					t.Fatalf("unsafe setup did not fail privately: %+v", got)
+				}
+				if format == "json" && !json.Valid([]byte(got.stderr)) {
+					t.Fatalf("error is not one JSON document: %q", got.stderr)
+				}
+				data, err := os.ReadFile(profile)
+				if err != nil || string(data) != original {
+					t.Fatalf("unsafe setup changed profile: %q, %v", data, err)
+				}
+				entries, err := os.ReadDir(configuration)
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("unsafe setup created state: %v, %v", entries, err)
+				}
+			})
+		}
+	}
+}
+
 func TestMainPickerShellSetupReadOnlyModesDoNotWrite(t *testing.T) {
 	for _, args := range [][]string{
 		{"--help"}, {"images", "generate", "--help"}, {"--format", "json", "images", "generate", "--help"},

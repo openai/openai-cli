@@ -77,3 +77,23 @@ func TestPickerLinuxMetadataAddedAfterSnapshotIsKept(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, previous.data, current)
 }
+
+func TestPickerInstallRejectsWritableLinuxAncestorACL(t *testing.T) {
+	options := pickerInstallFixture(t, CompletionStyleBash)
+	config := filepath.Join(filepath.Dir(options.Profile), "config")
+	options.Directory = filepath.Join(config, "openai", "shell")
+	require.NoError(t, os.Mkdir(config, 0700))
+	acl := binary.LittleEndian.AppendUint32(nil, 2)
+	for _, entry := range [][3]uint32{{1, 7, ^uint32(0)}, {2, 7, uint32(os.Getuid()) + 1}, {4, 0, ^uint32(0)}, {16, 7, ^uint32(0)}, {32, 0, ^uint32(0)}} {
+		acl = binary.LittleEndian.AppendUint16(acl, uint16(entry[0]))
+		acl = binary.LittleEndian.AppendUint16(acl, uint16(entry[1]))
+		acl = binary.LittleEndian.AppendUint32(acl, entry[2])
+	}
+	require.NoError(t, unix.Setxattr(config, "system.posix_acl_access", acl, 0))
+	_, err := InstallPicker(t.Context(), options)
+	require.ErrorContains(t, err, "protected directory ancestors")
+	_, err = os.Lstat(filepath.Join(config, "openai"))
+	require.ErrorIs(t, err, os.ErrNotExist, "ACL permissions must be checked before creating descendants")
+	_, err = os.Lstat(options.Profile)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
