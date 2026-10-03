@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.0](https://github.com/openai/openai-cli/compare/v1.32.1...v1.33.0) (2026-10-03)
+
+
+### Features
+
+* **images:** add an inline generation picker ([#357](https://github.com/openai/openai-cli/issues/357)) ([100628d](https://github.com/openai/openai-cli/commit/100628d8490075870954c4988f2016e30d019368))
+
 ## [1.32.1](https://github.com/openai/openai-cli/compare/v1.32.0...v1.32.1) (2026-10-02)
 
 
