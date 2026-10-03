@@ -105,12 +105,14 @@ def close_terminal(terminal):
         try:
             os.killpg(terminal.child.pid, signal.SIGKILL)
         except ProcessLookupError:
+            # The process group exited between poll() and killpg().
             pass
     else:
         for pid in helpers(terminal):
             try:
                 signal_helper(terminal, pid, signal.SIGKILL)
             except (ProcessLookupError, AssertionError):
+                # The owned helper exited between observation and signaling.
                 pass
     terminal.close()
 
