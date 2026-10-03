@@ -244,11 +244,13 @@ func pickerConfigWritable(t *testing.T, path string) {
 func pickerConfigTree(t *testing.T, root string) map[string]string {
 	t.Helper()
 	tree := map[string]string{}
-	require.NoError(t, filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+	require.NoError(t, filepath.WalkDir(root, func(path string, _ fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		info, err := entry.Info()
+		// Windows directory enumeration can retain metadata from before a
+		// child's creation. Read the path itself for the current snapshot.
+		info, err := os.Lstat(path)
 		if err != nil {
 			return err
 		}
