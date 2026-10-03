@@ -17,7 +17,7 @@ jobs:
     runs-on: macos-26-xlarge
     timeout-minutes: 8
     env:
-      CANDIDATE_SHA: 86aa8de879adf861609f06e5ad1eca55563e8fbb
+      CANDIDATE_SHA: ee7b882fb738589c5ecaf354071c72d8993ab941
       BASELINE_SHA: 759464ea24c4cd86b6803c31361b83f43dfed3b9
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
