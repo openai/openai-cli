@@ -42,7 +42,7 @@ func TestPickerWindowsAncestorDescriptors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			descriptor, err := windows.SecurityDescriptorFromString("O:" + test.owner + "G:BAD:" + test.entries)
 			require.NoError(t, err)
-			err = validatePickerWindowsPermissionPolicy(descriptor, user, false, true)
+			err = validatePickerWindowsPermissionPolicy(descriptor, user, false, true, false)
 			if test.accepted {
 				require.NoError(t, err)
 			} else {
@@ -116,6 +116,87 @@ func TestPickerWindowsAncestryAllowsCreateSubdirectoryOnly(t *testing.T) {
 	options, user := pickerWindowsTestInstallation(t)
 	config := filepath.Dir(filepath.Dir(options.Directory))
 	pickerWindowsSetPermissions(t, config, user, "(A;;0x4;;;WD)")
+	installed, err := InstallPicker(t.Context(), options)
+	require.NoError(t, err)
+	require.True(t, installed.Changed)
+	active, err := IsPickerInstalled(t.Context(), options)
+	require.NoError(t, err)
+	require.True(t, active)
+	_, err = RemovePicker(t.Context(), options)
+	require.NoError(t, err)
+}
+
+func TestPickerWindowsAncestryChecksInheritanceBeforeCreatingChildren(t *testing.T) {
+	for _, grant := range []struct{ name, entry string }{
+		{"file mutation", "(A;OIIO;FW;;;WD)"},
+		{"directory mutation", "(A;CIIO;FA;;;WD)"},
+		{"file and directory mutation", "(A;OICIIO;FA;;;WD)"},
+		{"one generation directory mutation", "(A;CINPIO;FA;;;WD)"},
+		{"inherited file append", "(A;OIIO;0x4;;;WD)"},
+		{"inherited subdirectory creation", "(A;CIIO;0x4;;;WD)"},
+	} {
+		for _, target := range []string{"script ancestry", "profile ancestry"} {
+			t.Run(grant.name+"/"+target, func(t *testing.T) {
+				options, user := pickerWindowsTestInstallation(t)
+				home := filepath.Dir(options.Profile)
+				unsafe := home
+				if target == "script ancestry" {
+					unsafe = filepath.Join(home, "new-config")
+					require.NoError(t, os.Mkdir(unsafe, 0700))
+					options.Directory = filepath.Join(unsafe, "missing", "openai", "shell")
+				} else {
+					// Existing script storage has an independent protected DACL.
+					// Only creation of the missing profile parent must be denied.
+					pickerWindowsSetPermissions(t, filepath.Join(home, "config"), user, "")
+					options.Profile = filepath.Join(home, "missing", ".bashrc")
+				}
+				pickerWindowsSetPermissions(t, unsafe, user, grant.entry)
+				before := pickerWindowsTreePaths(t, home)
+				var err error
+				if target == "script ancestry" {
+					called := false
+					err = WithPickerSetupLock(t.Context(), options.Directory, func() error { called = true; return nil })
+					require.False(t, called)
+				} else {
+					_, err = InstallPicker(t.Context(), options)
+				}
+				require.ErrorContains(t, err, "writable by other users")
+				require.Equal(t, before, pickerWindowsTreePaths(t, home), "must reject before mkdir, not after creating an exposed child")
+			})
+		}
+	}
+}
+
+func TestPickerWindowsAncestryAllowsProtectedExistingChildren(t *testing.T) {
+	for _, entry := range []string{"(A;OIIO;FA;;;WD)", "(A;CIIO;FA;;;WD)", "(A;OICIIO;0x4;;;WD)"} {
+		t.Run(entry, func(t *testing.T) {
+			options, user := pickerWindowsTestInstallation(t)
+			managed := filepath.Dir(options.Directory)
+			// The existing protected subtree does not inherit this ancestor's
+			// grant. Traversing it creates no child below the unsafe template.
+			pickerWindowsSetPermissions(t, managed, user, "")
+			pickerWindowsSetPermissions(t, filepath.Dir(managed), user, entry)
+			require.NoError(t, WithPickerSetupLock(t.Context(), options.Directory, func() error { return nil }))
+			installed, err := InstallPicker(t.Context(), options)
+			require.NoError(t, err)
+			require.True(t, installed.Changed)
+			active, err := IsPickerInstalled(t.Context(), options)
+			require.NoError(t, err)
+			require.True(t, active)
+			_, err = RemovePicker(t.Context(), options)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestPickerWindowsAncestryAllowsNonpropagatingFileOnlyTemplate(t *testing.T) {
+	options, user := pickerWindowsTestInstallation(t)
+	config := filepath.Dir(filepath.Dir(options.Directory))
+	pickerWindowsSetPermissions(t, config, user, "(A;OINPIO;FA;;;WD)")
+	// No files are created directly under config, and the file-only template
+	// does not propagate into the new directories or their script/lock files.
+	options.Directory = filepath.Join(config, "new", "openai", "shell")
+	require.NoError(t, WithPickerSetupLock(t.Context(), options.Directory, func() error { return nil }))
 	installed, err := InstallPicker(t.Context(), options)
 	require.NoError(t, err)
 	require.True(t, installed.Changed)

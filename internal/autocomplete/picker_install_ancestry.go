@@ -56,6 +56,14 @@ func openPickerDirectoryTree(ctx context.Context, path string, create bool) (*os
 			}
 			before, err := root.Lstat(name)
 			if errors.Is(err, os.ErrNotExist) && create {
+				directory, openErr := root.Open(".")
+				if openErr != nil {
+					return fail(openErr)
+				}
+				err = errors.Join(checkPickerChildCreationPermissions(directory), directory.Close())
+				if err != nil {
+					return fail(err)
+				}
 				if err := ctx.Err(); err != nil {
 					return fail(err)
 				}

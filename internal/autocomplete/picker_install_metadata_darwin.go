@@ -58,6 +58,9 @@ func checkPickerDirectoryPermissions(file *os.File) error {
 	return checkPickerDarwinDirectoryACL(data[:])
 }
 
+// The ancestry check already rejects every Darwin ACL permission grant.
+func checkPickerChildCreationPermissions(*os.File) error { return nil }
+
 func checkPickerDarwinDirectoryACL(data []byte) error {
 	invalid := errors.New("shell directory has protected or unreadable access permissions")
 	if len(data) < 32 {
