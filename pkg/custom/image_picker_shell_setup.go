@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/autocomplete"
 	"github.com/urfave/cli/v3"
@@ -20,25 +22,47 @@ func IsImagePickerShellSetupCommand(args []string) bool {
 	if len(args) < 2 || args[0] != "@completion" {
 		return false
 	}
+	var install, remove bool
 	for index := 1; index < len(args); index++ {
-		name, value, hasValue := strings.Cut(args[index], "=")
-		if name == "--" {
+		token := strings.TrimSpace(args[index])
+		if token == "-" || token == "--" {
 			break
 		}
-		if name == "--profile" && !hasValue {
+		if strings.HasPrefix(token, "-") && !strings.HasPrefix(token, "--") {
+			first, _ := utf8.DecodeRuneInString(token[1:])
+			if !unicode.IsLetter(first) {
+				break
+			}
+		}
+		name, _, hasValue := strings.Cut(token, "=")
+		if !strings.HasPrefix(name, "-") {
+			continue
+		}
+		// urfave accepts either one or two leading hyphens for full names.
+		name = strings.TrimPrefix(strings.TrimPrefix(name, "-"), "-")
+		if name == "profile" && !hasValue {
 			index++
 			continue
 		}
-		if name == "--install-picker" || name == "--uninstall-picker" {
-			if !hasValue {
-				return true
+		if name == "install-picker" || name == "uninstall-picker" {
+			_, value, _ := strings.Cut(args[index], "=")
+			enabled := true
+			if hasValue && value != "" {
+				var err error
+				enabled, err = strconv.ParseBool(value)
+				if err != nil {
+					return false
+				}
 			}
-			if enabled, err := strconv.ParseBool(value); err == nil && enabled {
-				return true
+			// Repeated flags use the last value, just like the command parser.
+			if name == "install-picker" {
+				install = enabled
+			} else {
+				remove = enabled
 			}
 		}
 	}
-	return false
+	return install || remove
 }
 
 // Keep completion generation and persistent picker setup on the existing
@@ -102,13 +126,16 @@ func configureImagePickerShellSetup(root *cli.Command) {
 					return nil
 				}
 			}
-			if err := changeImagePickerShellSetup(ctx, targets, remove); err != nil {
-				return imageSavingFailure("Could not finish Tab shortcut setup. Some startup files may already be configured; rerunning this command is safe.", err)
-			}
 			var err error
 			if remove {
+				// Preserve the explicit opt-out even if an independent startup
+				// file cannot be cleaned. Still try cleanup if saving it fails.
 				err = declineImagePickerTab(ctx, string(targets[0].Shell))
-			} else {
+			}
+			if setupErr := changeImagePickerShellSetup(ctx, targets, remove); setupErr != nil {
+				return imageSavingFailure("Could not finish Tab shortcut setup. Some startup files may already be configured; rerunning this command is safe.", errors.Join(setupErr, err))
+			}
+			if !remove {
 				err = clearImagePickerTabDecline(string(targets[0].Shell))
 			}
 			if err != nil {
@@ -131,7 +158,11 @@ func configureImagePickerShellSetup(root *cli.Command) {
 }
 
 func changeImagePickerShellSetup(ctx context.Context, targets []autocomplete.PickerInstallation, remove bool) error {
+	var failures []error
 	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(failures, err)...)
+		}
 		var err error
 		if remove {
 			_, err = autocomplete.RemovePicker(ctx, target)
@@ -139,10 +170,13 @@ func changeImagePickerShellSetup(ctx context.Context, targets []autocomplete.Pic
 			_, err = autocomplete.InstallPicker(ctx, target)
 		}
 		if err != nil {
-			return err
+			if !remove {
+				return err
+			}
+			failures = append(failures, err)
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 // A private empty file records an explicit opt-out. It contains no prompt,

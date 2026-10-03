@@ -232,6 +232,97 @@ func TestImagePickerShellSetupPartialFailureIsRetryable(t *testing.T) {
 	}
 }
 
+func TestImagePickerShellSetupBashRemovalContinuesAfterUnrelatedFailure(t *testing.T) {
+	for _, unsafe := range []string{"symlink", "group writable"} {
+		t.Run(unsafe, func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				t.Skip("Unix symlink and permission fixtures")
+			}
+			home := pickerShellSetupHome(t)
+			profile := filepath.Join(home, ".profile")
+			original := "# previous login settings\n"
+			require.NoError(t, os.WriteFile(profile, []byte(original), 0600))
+			_, err := runPickerShellSetup(t, t.Context(), "bash", "--install-picker")
+			require.NoError(t, err)
+			preferred := filepath.Join(home, ".bash_profile")
+			personal := "# independent preferred login settings\n"
+			if unsafe == "symlink" {
+				target := filepath.Join(home, "user-profile")
+				require.NoError(t, os.WriteFile(target, []byte(personal), 0600))
+				require.NoError(t, os.Symlink(target, preferred))
+			} else {
+				require.NoError(t, os.WriteFile(preferred, []byte(personal), 0600))
+				require.NoError(t, os.Chmod(preferred, 0660))
+			}
+			before, err := os.Lstat(preferred)
+			require.NoError(t, err)
+			modified := "# >>> openai image picker modified\n"
+			require.NoError(t, os.WriteFile(filepath.Join(home, ".bash_login"), []byte(modified), 0600))
+			for range 2 {
+				output, err := runPickerShellSetup(t, t.Context(), "bash", "--uninstall-picker")
+				require.ErrorContains(t, err, "Could not finish Tab shortcut setup")
+				require.Empty(t, output, "partial cleanup must not claim success")
+				data, readErr := os.ReadFile(profile)
+				require.NoError(t, readErr)
+				require.Equal(t, original, string(data), "an independent unsafe file must not stop intact profile cleanup")
+				var failure *imageSavingError
+				require.ErrorAs(t, err, &failure)
+				require.ErrorContains(t, failure.cause, "regular files writable only by their owner")
+				require.ErrorContains(t, failure.cause, "ambiguous integration markers", "both independent failures must be retained")
+				after, statErr := os.Lstat(preferred)
+				require.NoError(t, statErr)
+				require.True(t, os.SameFile(before, after))
+				require.Equal(t, before.Mode(), after.Mode())
+				_, statErr = os.Lstat(filepath.Join(home, ".bashrc"))
+				require.ErrorIs(t, statErr, os.ErrNotExist)
+				for path, want := range map[string]string{preferred: personal, filepath.Join(home, ".bash_login"): modified} {
+					data, readErr := os.ReadFile(path)
+					require.NoError(t, readErr)
+					require.Equal(t, want, string(data))
+				}
+				scripts, globErr := filepath.Glob(filepath.Join(home, "config", "openai", "shell", "picker-bash-*.bash"))
+				require.NoError(t, globErr)
+				require.Empty(t, scripts)
+				declined, preferenceErr := imagePickerTabDeclined("bash")
+				require.NoError(t, preferenceErr)
+				require.True(t, declined, "explicit removal must stay off after partial cleanup")
+			}
+		})
+	}
+}
+
+func TestImagePickerShellSetupRemovalRetainsPreferenceAndCleanupFailures(t *testing.T) {
+	for _, modified := range []bool{false, true} {
+		t.Run(fmt.Sprintf("modified=%t", modified), func(t *testing.T) {
+			home := pickerShellSetupHome(t)
+			profile := filepath.Join(home, ".zshrc")
+			original := "# personal settings\n"
+			require.NoError(t, os.WriteFile(profile, []byte(original), 0600))
+			_, err := runPickerShellSetup(t, t.Context(), "zsh", "--install-picker")
+			require.NoError(t, err)
+			if modified {
+				original = "# >>> openai image picker modified\n"
+				require.NoError(t, os.WriteFile(profile, []byte(original), 0600))
+			}
+			preference, err := imagePickerTabChoicePath("zsh")
+			require.NoError(t, err)
+			require.NoError(t, os.MkdirAll(preference, 0700))
+			output, err := runPickerShellSetup(t, t.Context(), "zsh", "--uninstall-picker")
+			require.Error(t, err)
+			require.Empty(t, output)
+			var failure *imageSavingError
+			require.ErrorAs(t, err, &failure)
+			require.ErrorContains(t, failure.cause, "invalid Tab shortcut preference")
+			if modified {
+				require.ErrorContains(t, failure.cause, "ambiguous integration markers")
+			}
+			data, readErr := os.ReadFile(profile)
+			require.NoError(t, readErr)
+			require.Equal(t, original, string(data), "a preference failure must neither block cleanup nor alter a modified profile")
+		})
+	}
+}
+
 func TestImagePickerShellSetupRejectsInvalidActionCombinations(t *testing.T) {
 	for _, args := range [][]string{
 		{"--automatic"}, {"zsh", "--profile", "startup"},

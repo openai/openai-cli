@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -192,29 +193,80 @@ func TestMainPickerShellSetupReadOnlyModesDoNotWrite(t *testing.T) {
 	}
 }
 
-func TestMainPickerShellSetupIgnoresRequestConfiguration(t *testing.T) {
-	for _, configuration := range []string{"invalid base URL", "missing mTLS files"} {
-		t.Run(configuration, func(t *testing.T) {
+func TestMainPickerShellSetupPartialRemovalReportsFailureAfterCleanup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix symlink fixture")
+	}
+	for _, format := range []string{"auto", "json"} {
+		t.Run(format, func(t *testing.T) {
 			home := t.TempDir()
-			profile := filepath.Join(home, "startup")
 			env := pickerSetupProcessEnv(home)
-			if configuration == "invalid base URL" {
-				env = append(env, "OPENAI_BASE_URL=invalid")
-			} else {
-				env = append(env, "OPENAI_BASE_URL=https://api.example.invalid",
-					"OPENAI_MTLS_CLIENT_CERT_FILE="+filepath.Join(home, "absent-cert"),
-					"OPENAI_MTLS_CLIENT_KEY_FILE="+filepath.Join(home, "absent-key"))
+			profile := filepath.Join(home, ".profile")
+			original := "# personal login settings\n"
+			if err := os.WriteFile(profile, []byte(original), 0600); err != nil {
+				t.Fatal(err)
 			}
-			for _, action := range []string{"--install-picker=true", "--uninstall-picker"} {
-				got := runMainDispatchWithEnv(t, "zsh", env, "openai", "--format-error", "json", "@completion", "zsh", action, "--profile", profile)
-				if got.code != 0 || got.stderr != "" || got.stdout == "" {
-					t.Fatalf("local setup depended on request configuration: %+v", got)
-				}
+			got := runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--install-picker")
+			if got.code != 0 || got.stderr != "" {
+				t.Fatalf("installation failed: %+v", got)
 			}
-			if _, err := os.Lstat(profile); !os.IsNotExist(err) {
-				t.Fatalf("setup round trip did not restore absent profile: %v", err)
+			if err := os.Symlink(profile, filepath.Join(home, ".bash_profile")); err != nil {
+				t.Fatal(err)
+			}
+			got = runMainDispatchWithEnv(t, "bash", env, "openai", "--format-error", format, "@completion", "bash", "--uninstall-picker")
+			if got.code == 0 || got.stdout != "" || !strings.Contains(got.stderr, "Could not finish Tab shortcut setup") || strings.Contains(got.stderr, home) {
+				t.Fatalf("partial removal lost a safe failure diagnostic: %+v", got)
+			}
+			if format == "json" && !json.Valid([]byte(got.stderr)) {
+				t.Fatalf("partial failure is not one JSON document: %q", got.stderr)
+			}
+			data, err := os.ReadFile(profile)
+			if err != nil || string(data) != original {
+				t.Fatalf("failure prevented independent cleanup: %q, %v", data, err)
+			}
+			if info, err := os.Lstat(filepath.Join(home, ".bash_profile")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("removal changed the unrelated symlink: %v, %v", info, err)
+			}
+			scripts, err := filepath.Glob(filepath.Join(home, "config", "openai", "shell", "picker-bash-*.bash"))
+			if err != nil || len(scripts) != 0 {
+				t.Fatalf("partial removal left owned scripts: %v, %v", scripts, err)
 			}
 		})
+	}
+}
+
+func TestMainPickerShellSetupIgnoresRequestConfiguration(t *testing.T) {
+	for _, configuration := range []string{"invalid base URL", "missing mTLS files"} {
+		for _, spelling := range []struct {
+			name, install, remove, profile string
+		}{
+			{"double dash", "--install-picker=true", "--uninstall-picker", "--profile"},
+			{"single dash", "-install-picker", "-uninstall-picker=true", "-profile"},
+			{"empty bool value", "-install-picker=", "--uninstall-picker=", "-profile"},
+			{"padded flag", " -install-picker ", " --uninstall-picker ", " -profile "},
+		} {
+			t.Run(configuration+"/"+spelling.name, func(t *testing.T) {
+				home := t.TempDir()
+				profile := filepath.Join(home, "startup")
+				env := pickerSetupProcessEnv(home)
+				if configuration == "invalid base URL" {
+					env = append(env, "OPENAI_BASE_URL=invalid")
+				} else {
+					env = append(env, "OPENAI_BASE_URL=https://api.example.invalid",
+						"OPENAI_MTLS_CLIENT_CERT_FILE="+filepath.Join(home, "absent-cert"),
+						"OPENAI_MTLS_CLIENT_KEY_FILE="+filepath.Join(home, "absent-key"))
+				}
+				for _, action := range []string{spelling.install, spelling.remove} {
+					got := runMainDispatchWithEnv(t, "zsh", env, "openai", "--format-error", "json", "@completion", "zsh", action, spelling.profile, profile)
+					if got.code != 0 || got.stderr != "" || got.stdout == "" {
+						t.Fatalf("local setup depended on request configuration: %+v", got)
+					}
+				}
+				if _, err := os.Lstat(profile); !os.IsNotExist(err) {
+					t.Fatalf("setup round trip did not restore absent profile: %v", err)
+				}
+			})
+		}
 	}
 }
 
@@ -224,6 +276,18 @@ func TestMainPickerShellSetupDoesNotExemptAPIArguments(t *testing.T) {
 		{"images", "generate", "--prompt", "@completion --uninstall-picker"},
 		{"--project", "@completion", "images", "generate", "--prompt", "--install-picker"},
 		{"@completion", "zsh", "--install-picker=false"},
+		{"@completion", "zsh", "-install-picker=false"},
+		{"@completion", "zsh", "-install-picker", "-install-picker=false"},
+		{"@completion", "zsh", "--install-picker", "-install-picker=false"},
+		{"@completion", "zsh", "--uninstall-picker", "-uninstall-picker=false"},
+		{"@completion", "zsh", "-profile", "-install-picker"},
+		{"@completion", "zsh", "-profile", "--install-picker"},
+		{"@completion", "zsh", "-profile=-install-picker"},
+		{"@completion", "zsh", "--", "-install-picker"},
+		{"@completion", "zsh", " -- ", "-install-picker"},
+		{"@completion", "zsh", "-", "--install-picker"},
+		{"@completion", "zsh", "-1", "--install-picker"},
+		{"@completion", "zsh", "-@", "--install-picker"},
 		{"@completion", "zsh", "--profile", "--install-picker"},
 		{"@completion", "zsh", "--", "--install-picker"},
 	} {

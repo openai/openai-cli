@@ -55,6 +55,8 @@ creation metadata conservatively preserve the profile.
 Repeating either command is safe. Modified blocks or scripts stay available for
 inspection. Default Bash removal checks all three login profiles as well as
 `.bashrc`, so a newer, higher-priority login profile cannot hide earlier setup.
+If one profile cannot be safely cleaned, removal continues through the others,
+records the opt-out when possible, and reports failure after the cleanup.
 An explicit `--profile` still limits removal to that file.
 Bash configures its two startup modes separately; if a later write
 fails, the error reports partial setup and rerunning the command is safe.
