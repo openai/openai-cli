@@ -42,6 +42,42 @@ func TestMainPickerShellSetupRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMainPickerShellSetupBashRemovalAfterLoginPrecedenceChanges(t *testing.T) {
+	home := t.TempDir()
+	env := pickerSetupProcessEnv(home)
+	original := "# original login startup\n"
+	preferred := "# newly preferred login startup\n"
+	if err := os.WriteFile(filepath.Join(home, ".profile"), []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--install-picker")
+	if got.code != 0 || got.stderr != "" {
+		t.Fatalf("installation failed: %+v", got)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte(preferred), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		got = runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--uninstall-picker")
+		if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "setup removed") {
+			t.Fatalf("removal failed: %+v", got)
+		}
+		for name, want := range map[string]string{".profile": original, ".bash_profile": preferred, ".bashrc": ""} {
+			data, err := os.ReadFile(filepath.Join(home, name))
+			if err != nil || string(data) != want {
+				t.Fatalf("removal did not restore %s: %q, %v", name, data, err)
+			}
+		}
+		scripts, err := filepath.Glob(filepath.Join(home, "config", "openai", "shell", "picker-bash-*.bash"))
+		if err != nil || len(scripts) != 0 {
+			t.Fatalf("removal left obsolete scripts: %v, %v", scripts, err)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".bash_login")); !os.IsNotExist(err) {
+			t.Fatalf("removal created an absent startup file: %v", err)
+		}
+	}
+}
+
 func TestMainPickerShellSetupPowerShellFallback(t *testing.T) {
 	const guidance = "PowerShell uses normal Tab completion. Type openai images generate and press Enter to open the image picker."
 	for _, action := range []string{"--install-picker", "--uninstall-picker"} {

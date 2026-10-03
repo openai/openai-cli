@@ -13,6 +13,10 @@ import (
 
 const imagePickerFirstRunTimeout = 250 * time.Millisecond
 
+// A stalled filesystem operation must not accumulate workers if setup is
+// requested again in the same process. The worker releases its slot on return.
+var imagePickerFirstRunWorker = make(chan struct{}, 1)
+
 // SetupImagePickerShellOnFirstRun quietly prepares future interactive shells.
 // It does not change the current command, terminal bindings, or exit status.
 // Failures remain optional, and later ordinary runs may safely retry setup.
@@ -21,11 +25,45 @@ func SetupImagePickerShellOnFirstRun(ctx context.Context, args []string) {
 	if ctx.Err() != nil || !inputTTY || !outputTTY || !errorTTY {
 		return
 	}
+	args = append([]string(nil), args...)
+	waitForImagePickerFirstRun(ctx, func(ctx context.Context) {
+		setupImagePickerShellOnFirstRun(ctx, args)
+	})
+}
+
+// Filesystem calls cannot in general be interrupted by a context. Keep every
+// such call off the foreground command path and bound only the foreground wait.
+// A syscall already in progress may finish later; subsequent transaction steps
+// check cancellation, and cleanup may remove uncommitted owned artifacts.
+func waitForImagePickerFirstRun(ctx context.Context, setup func(context.Context)) {
+	if ctx.Err() != nil {
+		return
+	}
+	select {
+	case imagePickerFirstRunWorker <- struct{}{}:
+	default:
+		return
+	}
 	ctx, cancel := context.WithTimeout(ctx, imagePickerFirstRunTimeout)
 	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() { <-imagePickerFirstRunWorker }()
+		if ctx.Err() == nil {
+			setup(ctx)
+		}
+	}()
+	select {
+	case <-ctx.Done():
+	case <-done:
+	}
+}
+
+func setupImagePickerShellOnFirstRun(ctx context.Context, args []string) {
 	// The immediate shell may differ from the account's login shell.
 	shell := imagePickerParentShell(ctx)
-	if !imagePickerFirstRunEligible(args, os.Getenv, inputTTY, outputTTY, errorTTY, shell) {
+	if !imagePickerFirstRunEligible(args, os.Getenv, true, true, true, shell) {
 		return
 	}
 	executable, err := os.Executable()
@@ -54,7 +92,7 @@ func imagePickerFirstRunEligible(args []string, getenv func(string) string, inpu
 		return false
 	}
 	if len(args) == 0 || !inputTTY || !outputTTY || !errorTTY || strings.EqualFold(getenv("TERM"), "dumb") ||
-		getenv("OPENAI_PICKER_SHELL") != "" || getenv("OPENAI_PICKER_INTEGRATION") == shell {
+		getenv("OPENAI_PICKER_SHELL") != "" {
 		return false
 	}
 	for _, name := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "TF_BUILD", "BUILDKITE", "JENKINS_URL", "TEAMCITY_VERSION"} {

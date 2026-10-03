@@ -87,6 +87,9 @@ func configureImagePickerShellSetup(root *cli.Command) {
 		if len(targets) == 0 {
 			return nil
 		}
+		if remove {
+			targets = imagePickerShellRemovalTargets(targets, command.String("profile"))
+		}
 		keptOff := false
 		err = autocomplete.WithPickerSetupLock(ctx, targets[0].Directory, func() error {
 			if command.Bool("automatic") {

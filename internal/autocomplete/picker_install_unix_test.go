@@ -14,7 +14,7 @@ import (
 func TestPickerInstallKeepsFIFOReplacements(t *testing.T) {
 	options := pickerInstallFixture(t, CompletionStyleBash)
 	require.NoError(t, os.WriteFile(options.Profile, []byte("# original profile\n"), 0600))
-	root, err := openPickerDirectory(filepath.Dir(options.Profile), false)
+	root, err := openPickerDirectory(t.Context(), filepath.Dir(options.Profile), false)
 	require.NoError(t, err)
 	defer root.Close()
 	before, err := readPickerFile(t.Context(), root, filepath.Base(options.Profile))

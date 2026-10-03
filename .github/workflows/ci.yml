@@ -58,6 +58,26 @@ jobs:
       - name: Check upload cancellation and EOF
         run: go test ./internal/binaryparam ./pkg/cmd -run 'Test(CancellableFIFO|FilesCreateCLICancelClosesStalledFIFO|FilesCreateCLIStreamsSparseFile|ImagesEditCLIStreamsMultipleFiles)' -count=1
 
+  windows-picker-permissions:
+    timeout-minutes: 15
+    name: Windows shell setup permissions
+    needs: source
+    permissions: {}
+    runs-on: windows-latest
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-go
+      - name: Check native Windows ownership, ACLs and profile transactions
+        run: go test ./internal/autocomplete -run '^TestPicker(Windows.*|FileMetadataPreservesZoneIdentifierAtSnapshotRecheck|ReplacementMetadataKeepsSameInheritedPermissions|SecurityDescriptorComparisonPreservesPermissions|InstallRoundTrip|InstalledDetectsAndRefreshesOlderScript)$' -count=1 -v
+
   build-artifacts:
     timeout-minutes: 30
     name: build artifacts

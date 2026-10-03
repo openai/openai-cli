@@ -85,6 +85,43 @@ func TestPickerInstallRejectsPowerShellWithoutWriting(t *testing.T) {
 	require.Equal(t, before.ModTime(), after.ModTime())
 }
 
+func TestPickerInstalledDetectsAndRefreshesOlderScript(t *testing.T) {
+	for _, shell := range []CompletionStyle{CompletionStyleBash, CompletionStyleZsh, CompletionStyleFish} {
+		t.Run(string(shell), func(t *testing.T) {
+			options := pickerInstallFixture(t, shell)
+			current, err := renderInstalledPicker(options)
+			require.NoError(t, err)
+			older := []byte(pickerScriptHeader + "# previous CLI completion and picker implementation\n")
+			oldScript := filepath.Join(options.Directory, pickerScriptName(options, older))
+			require.NoError(t, os.MkdirAll(options.Directory, 0700))
+			require.NoError(t, os.WriteFile(oldScript, older, 0600))
+			personal := []byte("# personal startup\n")
+			profile := append(append([]byte(nil), personal...), renderPickerBlock(pickerInstalledBlock{shell, oldScript})...)
+			require.NoError(t, os.WriteFile(options.Profile, profile, 0600))
+			installed, err := IsPickerInstalled(t.Context(), options)
+			require.NoError(t, err)
+			require.False(t, installed, "an intact older script still needs reconciliation")
+			result, err := InstallPicker(t.Context(), options)
+			require.NoError(t, err)
+			require.True(t, result.Changed)
+			updated, err := os.ReadFile(result.ScriptPath)
+			require.NoError(t, err)
+			require.Equal(t, current, updated)
+			updatedProfile, err := os.ReadFile(options.Profile)
+			require.NoError(t, err)
+			require.Equal(t, append(personal, renderPickerBlock(pickerInstalledBlock{shell, result.ScriptPath})...), updatedProfile)
+			_, err = os.Stat(oldScript)
+			require.ErrorIs(t, err, os.ErrNotExist)
+			installed, err = IsPickerInstalled(t.Context(), options)
+			require.NoError(t, err)
+			require.True(t, installed)
+			repeated, err := InstallPicker(t.Context(), options)
+			require.NoError(t, err)
+			require.False(t, repeated.Changed)
+		})
+	}
+}
+
 func TestPickerInstallPreservesModifiedFiles(t *testing.T) {
 	for _, scenario := range []string{"script", "block", "duplicate", "future version"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -190,7 +227,7 @@ func TestPickerInstallCancellationAndReplacedLock(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	_, err = os.Stat(options.Directory)
 	require.ErrorIs(t, err, os.ErrNotExist)
-	root, err := openPickerDirectory(filepath.Dir(options.Profile), false)
+	root, err := openPickerDirectory(t.Context(), filepath.Dir(options.Profile), false)
 	require.NoError(t, err)
 	defer root.Close()
 	name := "." + filepath.Base(options.Profile) + ".openai-picker.lock"
@@ -210,7 +247,7 @@ func TestPickerInstallSnapshotDetectsReplacementAndRewrite(t *testing.T) {
 		t.Run(map[bool]string{true: "replace", false: "rewrite"}[replace], func(t *testing.T) {
 			options := pickerInstallFixture(t, CompletionStyleZsh)
 			require.NoError(t, os.WriteFile(options.Profile, []byte("before"), 0600))
-			root, err := openPickerDirectory(filepath.Dir(options.Profile), false)
+			root, err := openPickerDirectory(t.Context(), filepath.Dir(options.Profile), false)
 			require.NoError(t, err)
 			defer root.Close()
 			before, err := readPickerFile(context.Background(), root, filepath.Base(options.Profile))
@@ -273,7 +310,7 @@ func TestPickerInstallRollbackAndMissingScriptRemoval(t *testing.T) {
 
 func TestPickerInstallScriptPublicationIsExclusiveAndCancellable(t *testing.T) {
 	options := pickerInstallFixture(t, CompletionStyleBash)
-	root, err := openPickerDirectory(options.Directory, true)
+	root, err := openPickerDirectory(t.Context(), options.Directory, true)
 	require.NoError(t, err)
 	defer root.Close()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -327,7 +364,7 @@ func (ctx *pickerInstallNotifyContext) Err() error {
 
 func TestPickerInstallRejectsReplacedWaitingLock(t *testing.T) {
 	options := pickerInstallFixture(t, CompletionStyleZsh)
-	root, err := openPickerDirectory(options.Directory, true)
+	root, err := openPickerDirectory(t.Context(), options.Directory, true)
 	require.NoError(t, err)
 	defer root.Close()
 	first, err := lockPickerInstallation(context.Background(), root, ".lock")

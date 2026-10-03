@@ -9,13 +9,22 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Windows ownership/access is enforced by the filesystem ACL on each open.
+// FileInfo has no Windows owner or DACL. The opened handle is checked by the
+// directory, metadata, and lock helpers before it is trusted.
 func pickerInstallOwned(os.FileInfo) bool { return true }
 
 func tryPickerInstallLock(file *os.File) (bool, error) {
+	// LockFileEx also accepts read handles, so lock files must deny foreign
+	// readers as well as writers.
+	if err := checkPickerWindowsPermissions(file, true); err != nil {
+		return false, err
+	}
 	err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &windows.Overlapped{})
 	if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
 		return false, nil
+	}
+	if err == nil {
+		err = checkPickerWindowsPermissions(file, true)
 	}
 	return err == nil, err
 }

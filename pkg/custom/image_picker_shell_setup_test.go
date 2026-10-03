@@ -3,6 +3,7 @@ package custom
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -127,6 +128,74 @@ func TestImagePickerShellSetupBashDefaultUpdatesBothStartupModes(t *testing.T) {
 	}
 	_, err = os.Stat(filepath.Join(home, ".bash_profile"))
 	require.ErrorIs(t, err, os.ErrNotExist, "creating .bash_profile would hide the existing login startup")
+}
+
+func TestImagePickerShellSetupBashRemovalAfterLoginPrecedenceChanges(t *testing.T) {
+	for _, reinstall := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reinstall=%t", reinstall), func(t *testing.T) {
+			home := pickerShellSetupHome(t)
+			originals := map[string][]byte{
+				".bashrc":       []byte("# interactive startup\n"),
+				".profile":      []byte("# original login startup\n"),
+				".bash_login":   []byte("# newer login startup\n"),
+				".bash_profile": []byte("# preferred login startup\n"),
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(home, ".bashrc"), originals[".bashrc"], 0600))
+			for _, name := range []string{".profile", ".bash_login", ".bash_profile"} {
+				require.NoError(t, os.WriteFile(filepath.Join(home, name), originals[name], 0600))
+				if name == ".profile" || reinstall {
+					_, err := runPickerShellSetup(t, t.Context(), "bash", "--install-picker")
+					require.NoError(t, err)
+				}
+			}
+			unmanaged, err := os.Stat(filepath.Join(home, ".bash_profile"))
+			require.NoError(t, err)
+			for range 2 {
+				output, err := runPickerShellSetup(t, t.Context(), "bash", "--uninstall-picker")
+				require.NoError(t, err)
+				require.Contains(t, output, "setup removed")
+				for name, original := range originals {
+					data, err := os.ReadFile(filepath.Join(home, name))
+					require.NoError(t, err)
+					require.Equal(t, original, data, "removal must restore %s", name)
+				}
+				if !reinstall {
+					current, err := os.Stat(filepath.Join(home, ".bash_profile"))
+					require.NoError(t, err)
+					require.True(t, os.SameFile(unmanaged, current), "an unmanaged login profile must not be rewritten")
+					require.Equal(t, unmanaged.ModTime(), current.ModTime())
+				}
+				scripts, err := filepath.Glob(filepath.Join(home, "config", "openai", "shell", "picker-bash-*.bash"))
+				require.NoError(t, err)
+				require.Empty(t, scripts, "removal must clean scripts belonging to superseded login profiles")
+			}
+		})
+	}
+}
+
+func TestImagePickerShellSetupBashExplicitRemovalKeepsOtherProfiles(t *testing.T) {
+	home := pickerShellSetupHome(t)
+	profile := filepath.Join(home, ".profile")
+	original := []byte("# explicit removal target\n")
+	require.NoError(t, os.WriteFile(profile, original, 0600))
+	_, err := runPickerShellSetup(t, t.Context(), "bash", "--install-picker")
+	require.NoError(t, err)
+	interactive := filepath.Join(home, ".bashrc")
+	installed, err := os.ReadFile(interactive)
+	require.NoError(t, err)
+	_, err = runPickerShellSetup(t, t.Context(), "bash", "--uninstall-picker", "--profile", profile)
+	require.NoError(t, err)
+	data, err := os.ReadFile(profile)
+	require.NoError(t, err)
+	require.Equal(t, original, data)
+	data, err = os.ReadFile(interactive)
+	require.NoError(t, err)
+	require.Equal(t, installed, data, "an explicit override must limit removal to that profile")
+	targets, err := imagePickerShellTarget(t.Context(), "bash", false, interactive)
+	require.NoError(t, err)
+	kept, err := autocomplete.IsPickerInstalled(t.Context(), targets[0])
+	require.NoError(t, err)
+	require.True(t, kept, "the other profile's script must remain usable")
 }
 
 func TestImagePickerShellSetupPartialFailureIsRetryable(t *testing.T) {

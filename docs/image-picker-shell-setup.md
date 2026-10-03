@@ -8,9 +8,16 @@ including in PowerShell and Bash 3.2.
 
 First-use setup requires the running executable to be the `openai` on PATH and
 all three standard streams to be terminals. It skips CI, root/sudo, unsupported
-shells, `TERM=dumb`, completion and manpage requests, and shells with active
-integration. It respects an earlier opt-out. Setup failures leave the ordinary
-command running, and setup stops waiting after 250 milliseconds.
+shells, `TERM=dumb`, completion and manpage requests. It respects an earlier
+opt-out and refreshes intact saved scripts when their generated content changes,
+including in shells with active integration. Open a new terminal to load updated
+scripts. Setup failures leave the ordinary command running. The command waits
+at most 250 milliseconds for optional setup, including slow filesystem calls.
+An I/O operation already in progress, including an atomic profile replacement,
+may finish in the background. Later changes check cancellation; the worker
+cleans up its uncommitted files when I/O returns. If the process exits first,
+inert staging files can remain, as with an interrupted explicit installation.
+At most one setup worker runs in a CLI process.
 
 To configure or remove persistent shortcuts explicitly:
 
@@ -35,13 +42,19 @@ Removal deletes only intact CLI-owned blocks and verified scripts, and records
 an empty per-shell opt-out marker beside `image-picker.json`. Later automatic
 setup keeps that shell disabled. Explicit installation clears the opt-out.
 Repeating either command is safe. Modified blocks or scripts stay available for
-inspection. Bash configures its two startup modes separately; if a later write
+inspection. Default Bash removal checks all three login profiles as well as
+`.bashrc`, so a newer, higher-priority login profile cannot hide earlier setup.
+An explicit `--profile` still limits removal to that file.
+Bash configures its two startup modes separately; if a later write
 fails, the error reports partial setup and rerunning the command is safe.
 
 Setup keeps symlinked profiles, unsafe permissions, and protected file metadata
 unchanged. On macOS and Linux this includes profiles with ACLs or extended
 attributes. Windows replacement also checks alternate streams and file-specific
-permissions. Profiles must be UTF-8 text and at most 1 MiB including the managed
+permissions. Windows directories, scripts and staging files require a current-user
+or local Administrators owner and a DACL that grants mutation only to that user,
+SYSTEM or local Administrators. Lock files also reject access by other readers.
+Profiles must be UTF-8 text and at most 1 MiB including the managed
 block.
 
 Setup treats configured `HOME`, `XDG_CONFIG_HOME`, `ZDOTDIR`, and explicit profile

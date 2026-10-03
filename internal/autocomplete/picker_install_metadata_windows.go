@@ -10,6 +10,9 @@ import (
 )
 
 func checkPickerFileMetadata(file *os.File) error {
+	if err := checkPickerWindowsPermissions(file, false); err != nil {
+		return err
+	}
 	var streams [64 * 1024]byte
 	if err := windows.GetFileInformationByHandleEx(windows.Handle(file.Fd()), windows.FileStreamInfo, &streams[0], uint32(len(streams))); err != nil {
 		return errors.New("cannot inspect shell startup file metadata")
@@ -21,18 +24,6 @@ func checkPickerFileMetadata(file *os.File) error {
 // different file-specific permissions rather than changing their access rules.
 // Query only owner/group/DACL; reading auditing metadata would need privileges.
 func checkPickerReplacementMetadata(root *os.Root, name, temporary string, previous pickerFileSnapshot) error {
-	if previous.info == nil {
-		return nil
-	}
-	profile, err := root.Open(name)
-	if err != nil {
-		return errors.New("cannot inspect shell startup file permissions")
-	}
-	defer profile.Close()
-	opened, err := profile.Stat()
-	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(previous.info, opened) {
-		return errPickerInstallChanged
-	}
 	stagedInfo, err := root.Lstat(temporary)
 	if err != nil || !stagedInfo.Mode().IsRegular() {
 		return errPickerInstallChanged
@@ -45,6 +36,28 @@ func checkPickerReplacementMetadata(root *os.Root, name, temporary string, previ
 	stagedOpened, err := staged.Stat()
 	if err != nil || !os.SameFile(stagedInfo, stagedOpened) {
 		return errPickerInstallChanged
+	}
+	if err := checkPickerFileMetadata(staged); err != nil {
+		return err
+	}
+	if previous.info == nil {
+		current, err := root.Lstat(temporary)
+		if err != nil || !current.Mode().IsRegular() || !os.SameFile(stagedOpened, current) {
+			return errPickerInstallChanged
+		}
+		return nil
+	}
+	profile, err := root.Open(name)
+	if err != nil {
+		return errors.New("cannot inspect shell startup file permissions")
+	}
+	defer profile.Close()
+	opened, err := profile.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(previous.info, opened) {
+		return errPickerInstallChanged
+	}
+	if err := checkPickerFileMetadata(profile); err != nil {
+		return err
 	}
 	const information = windows.OWNER_SECURITY_INFORMATION | windows.GROUP_SECURITY_INFORMATION | windows.DACL_SECURITY_INFORMATION
 	existing, err := windows.GetSecurityInfo(windows.Handle(profile.Fd()), windows.SE_FILE_OBJECT, information)

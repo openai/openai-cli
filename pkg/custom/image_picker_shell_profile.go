@@ -137,6 +137,23 @@ func imagePickerSelectShellTargets(shell, override string, paths imagePickerShel
 	return result, nil
 }
 
+func imagePickerShellRemovalTargets(targets []autocomplete.PickerInstallation, profileOverride string) []autocomplete.PickerInstallation {
+	if len(targets) == 0 || targets[0].Shell != autocomplete.CompletionStyleBash || profileOverride != "" {
+		return targets
+	}
+	// A newer login profile can mask the file selected during installation.
+	// Default Bash selection starts with HOME/.bashrc; remove owned setup from
+	// every known startup file, while RemovePicker preserves unrelated content.
+	target := targets[0]
+	home := filepath.Dir(target.Profile)
+	result := make([]autocomplete.PickerInstallation, 0, 4)
+	for _, name := range []string{".bashrc", ".bash_profile", ".bash_login", ".profile"} {
+		target.Profile = filepath.Join(home, name)
+		result = append(result, target)
+	}
+	return result
+}
+
 func imagePickerAbsolutePath(path string) bool {
 	return filepath.IsAbs(path) && utf8.ValidString(path) && !strings.ContainsAny(path, "\x00\r\n")
 }

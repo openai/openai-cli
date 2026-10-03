@@ -62,7 +62,7 @@ func WithPickerSetupLock(ctx context.Context, directory string, change func() er
 	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory || strings.ContainsAny(directory, "\x00\r\n") {
 		return errors.New("shell integration requires a clean absolute configuration directory")
 	}
-	root, err := openPickerScriptDirectory(directory, true)
+	root, err := openPickerScriptDirectory(ctx, directory, true)
 	if err != nil {
 		return err
 	}
@@ -90,13 +90,13 @@ func RemovePicker(ctx context.Context, options PickerInstallation) (PickerInstal
 	return changePickerInstallation(ctx, options, true)
 }
 
-// IsPickerInstalled verifies an intact profile block and its owned script
-// without creating files or acquiring a writer lock.
+// IsPickerInstalled verifies an intact profile block and an owned script that
+// matches this CLI's current content, without creating files or locking.
 func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, error) {
 	if err := validatePickerInstallation(options); err != nil {
 		return false, err
 	}
-	root, err := openPickerDirectory(filepath.Dir(options.Profile), false)
+	root, err := openPickerDirectory(ctx, filepath.Dir(options.Profile), false)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -112,7 +112,7 @@ func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, e
 	if err != nil || installed == nil {
 		return false, err
 	}
-	scripts, err := openPickerScriptDirectory(options.Directory, false)
+	scripts, err := openPickerScriptDirectory(ctx, options.Directory, false)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -127,7 +127,11 @@ func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, e
 	if !validOwnedPickerScript(options, *installed, script.data) {
 		return false, errors.New("installed shell integration script was modified")
 	}
-	return true, nil
+	current, err := renderInstalledPicker(options)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(script.data, current), ctx.Err()
 }
 
 func changePickerInstallation(ctx context.Context, options PickerInstallation, remove bool) (result PickerInstallResult, err error) {
@@ -137,7 +141,7 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	if err := validatePickerInstallation(options); err != nil {
 		return result, err
 	}
-	profileRoot, err := openPickerDirectory(filepath.Dir(options.Profile), !remove)
+	profileRoot, err := openPickerDirectory(ctx, filepath.Dir(options.Profile), !remove)
 	if remove && errors.Is(err, os.ErrNotExist) {
 		return result, nil
 	}
@@ -162,7 +166,7 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	if remove && installed == nil {
 		return result, nil
 	}
-	scriptRoot, err := openPickerScriptDirectory(options.Directory, !remove)
+	scriptRoot, err := openPickerScriptDirectory(ctx, options.Directory, !remove)
 	if remove && errors.Is(err, os.ErrNotExist) {
 		desired := append(append([]byte(nil), before...), after...)
 		if err := replacePickerProfile(ctx, profileRoot, profileName, profile, desired); err != nil {
@@ -360,7 +364,10 @@ func renderInstalledPicker(options PickerInstallation) ([]byte, error) {
 	return []byte(pickerScriptHeader + preamble + completion + "\n" + picker + marker), nil
 }
 
-func openPickerDirectory(path string, create bool) (*os.Root, error) {
+func openPickerDirectory(ctx context.Context, path string, create bool) (*os.Root, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if create {
 		if err := os.MkdirAll(path, 0700); err != nil {
 			return nil, err
@@ -396,17 +403,17 @@ func openPickerDirectory(path string, create bool) (*os.Root, error) {
 // Both managed directories must protect the sourced script: a writable parent
 // could replace the entire shell directory. Configured locations above these
 // directories are caller-selected trust boundaries, not an ancestor audit.
-func openPickerScriptDirectory(path string, create bool) (*os.Root, error) {
-	parent, err := openPickerManagedDirectory(filepath.Dir(path), create)
+func openPickerScriptDirectory(ctx context.Context, path string, create bool) (*os.Root, error) {
+	parent, err := openPickerManagedDirectory(ctx, filepath.Dir(path), create)
 	if err != nil {
 		return nil, err
 	}
 	defer parent.Close()
-	return openPickerManagedDirectory(path, create)
+	return openPickerManagedDirectory(ctx, path, create)
 }
 
-func openPickerManagedDirectory(path string, create bool) (*os.Root, error) {
-	root, err := openPickerDirectory(path, create)
+func openPickerManagedDirectory(ctx context.Context, path string, create bool) (*os.Root, error) {
+	root, err := openPickerDirectory(ctx, path, create)
 	if err != nil {
 		return nil, err
 	}
@@ -482,6 +489,9 @@ func checkPickerSnapshot(ctx context.Context, root *os.Root, name string, expect
 }
 
 func writePickerScript(ctx context.Context, root *os.Root, name string, data []byte) (pickerFileSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return pickerFileSnapshot{}, err
+	}
 	temporary := ".openai-picker-script-" + rand.Text()
 	file, err := root.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
@@ -511,6 +521,9 @@ func writePickerScript(ctx context.Context, root *os.Root, name string, data []b
 }
 
 func replacePickerProfile(ctx context.Context, root *os.Root, name string, previous pickerFileSnapshot, data []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	temporary := ".openai-picker-" + rand.Text()
 	mode := os.FileMode(0600)
 	if previous.info != nil {
@@ -553,6 +566,9 @@ func removePickerSnapshot(ctx context.Context, root *os.Root, name string, previ
 // Lock files intentionally remain: removing a lock can give waiting processes
 // different inodes to lock. Kernel locks are released on close or process exit.
 func lockPickerInstallation(ctx context.Context, root *os.Root, name string) (*os.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	file, err := root.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NONBLOCK, 0600)
 	if errors.Is(err, os.ErrExist) {
 		info, statErr := root.Lstat(name)
