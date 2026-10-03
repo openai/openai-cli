@@ -182,6 +182,67 @@ complete -p openai >>"$PICKER_TEST_RESULT"
 	require.Equal(t, strings.Repeat("complete -F newer_completion openai\n", 2), string(result))
 }
 
+func TestPickerBashPreservesOtherCompletionKey(t *testing.T) {
+	requirePickerBash(t, "bash")
+	for _, mode := range []string{"emacs", "vi"} {
+		t.Run(mode, func(t *testing.T) {
+			directory := t.TempDir()
+			setup := "set -o " + mode + `
+other_completion() {
+  printf '%s %s\n' "$COMP_KEY" "$COMP_TYPE" >>"$PICKER_TEST_RESULT"
+  COMPREPLY=()
+  if [[ $COMP_KEY == 9 ]]; then COMPREPLY=(tab-result); fi
+}
+complete -F other_completion other
+`
+			runPickerShellPTY(t, "bash", directory, setup, "", `
+send -- "other tab\t"
+expect -exact "tab-result "
+send -- "\025exit\r"; expect eof
+`)
+			result, err := os.ReadFile(filepath.Join(directory, "result"))
+			require.NoError(t, err)
+			require.Equal(t, "9 9\n", string(result))
+		})
+	}
+}
+
+func TestPickerBashReenableAfterTemporaryReplacement(t *testing.T) {
+	requirePickerBash(t, "bash")
+	for _, mode := range []string{"emacs", "vi"} {
+		t.Run(mode, func(t *testing.T) {
+			directory := t.TempDir()
+			probe := `
+for keymap in emacs-standard vi-insert; do bind -m "$keymap" '"\C-i": "temporary"'; done
+openai_picker_disable
+for keymap in emacs-standard vi-insert; do
+  __openai_picker_binding "$keymap" '\C-i' >>"$PICKER_TEST_BINDING"
+  bind -m "$keymap" '"\C-i": complete'
+done
+source "$PICKER_TEST_HOOK"
+`
+			runPickerShellPTY(t, "bash", directory, "set -o "+mode, probe, `
+send -- "openai images generate\t"
+expect -exact "PICKER_LAUNCHED"
+send -- "cancel\n"
+expect -exact "PICKER_CANCELED"
+expect -exact "PICKER_TEST> "
+send -- "\025openai images gen\t"
+expect -exact "generate "
+send -- "\025openai_picker_disable\r"
+expect -exact "PICKER_TEST> "
+send -- "exit\r"; expect eof
+`)
+			binding, err := os.ReadFile(filepath.Join(directory, "binding"))
+			require.NoError(t, err)
+			require.Equal(t, strings.Repeat("\"\\C-i\": \"temporary\"\n", 2), string(binding))
+			result, err := os.ReadFile(filepath.Join(directory, "result"))
+			require.NoError(t, err)
+			require.Equal(t, 1, strings.Count(string(result), "launch "))
+		})
+	}
+}
+
 func TestPickerBashBindingsAndResourcing(t *testing.T) {
 	requirePickerBash(t, "bash")
 	for _, scenario := range []struct {
@@ -203,11 +264,11 @@ __openai_picker_binding emacs-standard '\C-i' >>"$PICKER_TEST_RESULT"`,
 		},
 		{
 			name:  "occupied private key",
-			setup: `bind -x '"\e[99;1~": printf owned'`,
+			setup: `bind -x '"\e[99;1\C-i": printf owned'`,
 			probe: `__openai_picker_binding emacs-standard '\C-i' >>"$PICKER_TEST_RESULT"
 openai_picker_disable
-__openai_picker_binding emacs-standard '\e[99;1~' >>"$PICKER_TEST_RESULT"`,
-			want: "\"\\C-i\": complete\n\"\\e[99;1~\": \"printf owned\"\n",
+__openai_picker_binding emacs-standard '\e[99;1\C-i' >>"$PICKER_TEST_RESULT"`,
+			want: "\"\\C-i\": complete\n\"\\e[99;1\\C-i\": \"printf owned\"\n",
 		},
 		{
 			name: "replacement after install",
@@ -219,7 +280,7 @@ __openai_picker_binding emacs-standard '\C-i' >>"$PICKER_TEST_RESULT"`,
 		{
 			name: "replacement private callback",
 			probe: `bind -x '"\e[99;2~": printf newer'
-COMP_LINE='openai images generate'; COMP_POINT=${#COMP_LINE}; COMP_TYPE=9; COMP_KEY=126
+COMP_LINE='openai images generate'; COMP_POINT=${#COMP_LINE}; COMP_TYPE=9; COMP_KEY=9
 COMP_WORDS=(openai images generate); COMP_CWORD=2
 __openai_picker_complete
 openai_picker_disable
@@ -230,7 +291,7 @@ __openai_picker_binding emacs-standard '\e[99;2~' >>"$PICKER_TEST_RESULT"`,
 			name: "repeated install disable enable",
 			probe: `source "$PICKER_TEST_HOOK"; openai_picker_disable
 __openai_picker_binding emacs-standard '\C-i' >>"$PICKER_TEST_RESULT"
-__openai_picker_binding emacs-standard '\e[99;1~' >>"$PICKER_TEST_RESULT"
+__openai_picker_binding emacs-standard '\e[99;1\C-i' >>"$PICKER_TEST_RESULT"
 __openai_picker_binding emacs-standard '\e[99;2~' >>"$PICKER_TEST_RESULT"
 source "$PICKER_TEST_HOOK"; openai_picker_disable
 __openai_picker_binding emacs-standard '\C-i' >>"$PICKER_TEST_RESULT"`,

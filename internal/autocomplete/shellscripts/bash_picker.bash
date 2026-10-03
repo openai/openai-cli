@@ -55,14 +55,14 @@ if [[ $- == *i* && -t 0 && -t 1 && -t 2 && -n ${TERM-} && ${TERM-} != dumb ]]; t
     }
 
     ____APPNAME___picker_complete() {
-      local keymap=vi-insertion
+      local keymap=vi-insert
       local binding
       [[ -o emacs ]] && keymap=emacs-standard
-      if [[ ${____APPNAME___picker_enabled-} == 1 && ${COMP_TYPE-} == 9 && ${COMP_KEY-} == 126 &&
+      if [[ ${____APPNAME___picker_enabled-} == 1 && ${COMP_TYPE-} == 9 && ${COMP_KEY-} == 9 &&
         -t 0 && -t 1 && -t 2 && -n ${TERM-} && ${TERM-} != dumb ]] &&
         [ "${____APPNAME___picker_keymaps[$keymap]-}" = 1 ] &&
-        [ "$(____APPNAME___picker_binding "$keymap" '\C-i')" = '"\C-i": "\e[99;1~\e[99;2~"' ] &&
-        [ "$(____APPNAME___picker_binding "$keymap" '\e[99;1~')" = '"\e[99;1~": complete' ] &&
+        [ "$(____APPNAME___picker_binding "$keymap" '\C-i')" = '"\C-i": "\e[99;1\C-i\e[99;2~"' ] &&
+        [ "$(____APPNAME___picker_binding "$keymap" '\e[99;1\C-i')" = '"\e[99;1\C-i": complete' ] &&
         ____APPNAME___picker_matches; then
         binding=$(____APPNAME___picker_binding "$keymap" '\e[99;2~')
         if [ "$binding" = '"\e[99;2~": ""' ] || [ "$binding" = '"\e[99;2~": "____APPNAME___picker_redraw"' ]; then
@@ -80,12 +80,12 @@ if [[ $- == *i* && -t 0 && -t 1 && -t 2 && -n ${TERM-} && ${TERM-} != dumb ]]; t
       if [ "$(complete -p '__APPNAME__' 2>/dev/null)" = 'complete -o filenames -F ____APPNAME___picker_complete __APPNAME__' ]; then
         complete -o filenames -F ____APPNAME___bash_autocomplete '__APPNAME__'
       fi
-      for keymap in emacs-standard vi-insertion; do
+      for keymap in emacs-standard vi-insert; do
         [ "${____APPNAME___picker_keymaps[$keymap]-}" = 1 ] || continue
-        if [ "$(____APPNAME___picker_binding "$keymap" '\C-i')" = '"\C-i": "\e[99;1~\e[99;2~"' ]; then
+        if [ "$(____APPNAME___picker_binding "$keymap" '\C-i')" = '"\C-i": "\e[99;1\C-i\e[99;2~"' ]; then
           bind -m "$keymap" '"\C-i": complete'
-          if [ "$(____APPNAME___picker_binding "$keymap" '\e[99;1~')" = '"\e[99;1~": complete' ]; then
-            bind -m "$keymap" -r '\e[99;1~'
+          if [ "$(____APPNAME___picker_binding "$keymap" '\e[99;1\C-i')" = '"\e[99;1\C-i": complete' ]; then
+            bind -m "$keymap" -r '\e[99;1\C-i'
           fi
           binding=$(____APPNAME___picker_binding "$keymap" '\e[99;2~')
           if [ "$binding" = '"\e[99;2~": ""' ] || [ "$binding" = '"\e[99;2~": "____APPNAME___picker_redraw"' ]; then
@@ -97,18 +97,28 @@ if [[ $- == *i* && -t 0 && -t 1 && -t 2 && -n ${TERM-} && ${TERM-} != dumb ]]; t
     }
 
     ____APPNAME___picker_install() {
-      local keymap
+      local keymap tab completion redraw owned
       declare -gA ____APPNAME___picker_keymaps
-      for keymap in emacs-standard vi-insertion; do
-        [ "${____APPNAME___picker_keymaps[$keymap]-}" = 1 ] && continue
-        # Install only around ordinary completion and only into unused keys.
-        # Custom Tab bindings and later replacements remain owned by their user.
-        if [ "$(____APPNAME___picker_binding "$keymap" '\C-i')" = '"\C-i": complete' ] &&
-          [ -z "$(____APPNAME___picker_binding "$keymap" '\e[99;1~')" ] &&
-          [ -z "$(____APPNAME___picker_binding "$keymap" '\e[99;2~')" ]; then
-          bind -m "$keymap" '"\e[99;1~": complete'
+      for keymap in emacs-standard vi-insert; do
+        tab=$(____APPNAME___picker_binding "$keymap" '\C-i')
+        completion=$(____APPNAME___picker_binding "$keymap" '\e[99;1\C-i')
+        redraw=$(____APPNAME___picker_binding "$keymap" '\e[99;2~')
+        owned=${____APPNAME___picker_keymaps[$keymap]-}
+        # A previous installation may have lost Tab to another owner. Only
+        # treat exact, still-owned bindings as available for reinstallation.
+        if [ "$owned" = 1 ]; then
+          [ "$tab" = '"\C-i": "\e[99;1\C-i\e[99;2~"' ] && tab='"\C-i": complete'
+          [ "$completion" = '"\e[99;1\C-i": complete' ] && completion=''
+          if [ "$redraw" = '"\e[99;2~": ""' ] || [ "$redraw" = '"\e[99;2~": "____APPNAME___picker_redraw"' ]; then
+            redraw=''
+          fi
+        fi
+        if [ "$tab" = '"\C-i": complete' ] && [ -z "$completion" ] && [ -z "$redraw" ]; then
+          # End the completion sequence in Tab so every command's completion
+          # receives the ordinary COMP_KEY=9, including unrelated commands.
+          bind -m "$keymap" '"\e[99;1\C-i": complete'
           bind -m "$keymap" '"\e[99;2~": ""'
-          bind -m "$keymap" '"\C-i": "\e[99;1~\e[99;2~"'
+          bind -m "$keymap" '"\C-i": "\e[99;1\C-i\e[99;2~"'
           ____APPNAME___picker_keymaps[$keymap]=1
         fi
       done
