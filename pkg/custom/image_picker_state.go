@@ -24,10 +24,9 @@ var (
 )
 
 // Keep this record separate from preview preferences and root configuration.
-// In particular, it cannot contain connection settings or credentials.
+// In particular, it cannot contain prompts, connection settings or credentials.
 type imagePickerState struct {
 	Version    int    `json:"version"`
-	Prompt     string `json:"prompt"`
 	Model      string `json:"model"`
 	Size       string `json:"size"`
 	Quality    string `json:"quality"`
@@ -132,7 +131,7 @@ func saveImagePickerState(ctx context.Context, path string, settings imagePicker
 	if !validImagePickerState(settings) {
 		return errImagePickerStateInvalid
 	}
-	state := imagePickerState{1, settings.prompt, settings.model, settings.size, settings.quality, settings.background, settings.format, settings.count, settings.outputDir}
+	state := imagePickerState{1, settings.model, settings.size, settings.quality, settings.background, settings.format, settings.count, settings.outputDir}
 	data, err := json.Marshal(state)
 	if err != nil {
 		return err
@@ -210,7 +209,7 @@ func decodeImagePickerState(data []byte) (imagePickerSettings, bool) {
 	if !utf8.Valid(data) {
 		return s, false
 	}
-	fields := map[string]*string{"prompt": &s.prompt, "model": &s.model, "size": &s.size, "quality": &s.quality, "background": &s.background, "format": &s.format, "count": &s.count, "output_dir": &s.outputDir}
+	fields := map[string]*string{"model": &s.model, "size": &s.size, "quality": &s.quality, "background": &s.background, "format": &s.format, "count": &s.count, "output_dir": &s.outputDir}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	token, err := decoder.Token()
@@ -233,6 +232,12 @@ func decodeImagePickerState(data []byte) (imagePickerSettings, bool) {
 			if value != json.Number("1") {
 				return s, false
 			}
+		} else if key == "prompt" {
+			// Earlier version 1 records included the submitted prompt. Accept
+			// its old type without restoring it or writing it on the next save.
+			if _, ok := value.(string); !ok {
+				return s, false
+			}
 		} else {
 			text, ok := value.(string)
 			field, known := fields[key]
@@ -243,6 +248,7 @@ func decodeImagePickerState(data []byte) (imagePickerSettings, bool) {
 		}
 	}
 	token, err = decoder.Token()
+	delete(seen, "prompt") // Optional legacy field; all settings remain required.
 	return s, err == nil && token == json.Delim('}') && len(seen) == len(fields)+1 && decoder.Decode(new(any)) == io.EOF && validImagePickerState(s)
 }
 
@@ -251,7 +257,7 @@ func validImagePickerState(settings imagePickerSettings) bool {
 		return false
 	}
 	total := 0
-	for _, value := range []string{settings.prompt, settings.model, settings.size, settings.quality, settings.background, settings.format, settings.count, settings.outputDir} {
+	for _, value := range []string{settings.model, settings.size, settings.quality, settings.background, settings.format, settings.count, settings.outputDir} {
 		if !utf8.ValidString(value) || len(value) > imagePickerStateLimit-total {
 			return false
 		}

@@ -19,9 +19,10 @@ zsh, fish and PowerShell 7. In other or unidentified shells, generation remains
 available, but command printing is disabled with an explanation in the picker.
 
 After a successful generation, the picker reopens below the saved result with
-the active prompt and settings. It remembers the last submitted prompt and
-settings for next time; canceled edits are discarded. Settings stay local to
-your user configuration folder and do not affect commands that supply flags.
+the same image settings and an empty prompt. It remembers the last submitted
+image settings and save folder for next time; the description starts empty and
+is not saved in picker preferences. Canceled edits are discarded. Settings stay
+local to your user configuration folder and do not affect commands that supply flags.
 
 Choose **Save to** to use the default folder, current directory, or another
 existing folder. Tab completes folder names. Saved settings are optional: if

@@ -68,6 +68,7 @@ def wait_resumed(terminal, mark):
     terminal.wait('Saved image:', after=mark)
     saved = terminal.raw.index(b'Saved image:', mark)
     terminal.wait('Images', after=saved)
+    terminal.wait('Describe your image', after=saved)
 
 
 def main():
@@ -161,24 +162,36 @@ def main():
                 check_images(folder, 1)
                 assert flags['--output-dir'] == str(folder), flags
                 saved = json.loads(path.read_bytes())
-                assert saved['prompt'] == prompt and saved['model'] == model, saved
+                assert 'prompt' not in saved and saved['model'] == model, saved
                 assert saved['output_dir'] == str(folder), saved
                 assert not (home/'Downloads'/'gpt-images').exists()
 
             previous_state = path.read_bytes()
             before = len(server.requests)
             with terminal_case('restore-print-changed-cwd', env, cwd=next_cwd) as terminal:
-                terminal.wait(prompt)
+                terminal.wait('Describe your image')
                 terminal.wait(model)
+                assert prompt not in terminal.text()
+                mark = len(terminal.raw)
+                terminal.send(b'\r')
+                terminal.wait('Add a prompt first.', after=mark)
+                assert len(server.requests) == before
+                assert path.read_bytes() == previous_state
+                print_prompt = 'An entirely new synthetic print prompt'
+                paste(terminal, print_prompt)
                 terminal.send(picker.PRINT)
                 terminal.finish(0)
                 restored_flags = picker.printed_flags(terminal)
-                assert restored_flags == flags, (flags, restored_flags)
+                assert restored_flags == dict(flags, **{'--prompt': print_prompt}), (flags, restored_flags)
                 assert path.read_bytes() == previous_state
                 assert len(server.requests) == before
                 assert not list(next_cwd.iterdir())
 
             with terminal_case('restore-generation-changed-cwd', env, cwd=next_cwd) as terminal:
+                terminal.wait('Describe your image')
+                assert prompt not in terminal.text() and print_prompt not in terminal.text()
+                next_prompt = 'Another synthetic image with the remembered settings'
+                paste(terminal, next_prompt)
                 mark = len(terminal.raw)
                 terminal.send(b'\r')
                 picker.wait_for_request(terminal, server.request_started)
@@ -186,16 +199,20 @@ def main():
                 terminal.send(b'\x03')
                 terminal.finish(130)
                 assert len(server.requests) == before+1
-                check_body(server.requests[-1], prompt, model)
+                check_body(server.requests[-1], next_prompt, model)
                 check_images(folder, 2)
                 assert not list(next_cwd.iterdir())
                 assert path.read_bytes() == previous_state
 
             before = len(server.requests)
             with terminal_case('cancel-keeps-previous-state', env) as terminal:
-                terminal.send(b'\x15')
                 paste(terminal, 'Changed synthetic draft discarded on cancel')
                 terminal.wait('Changed synthetic draft')
+                terminal.send(picker.DOWN+b'\r')
+                terminal.wait('Choose model')
+                mark = len(terminal.raw)
+                terminal.send(picker.HOME+b'\r')
+                terminal.wait('Settings', after=mark)
                 terminal.send(b'\x03')
                 terminal.finish(130)
                 assert path.read_bytes() == previous_state
@@ -214,6 +231,46 @@ def main():
                 terminal.send(b'\x03')
                 terminal.finish(130)
                 assert path.read_bytes() == previous_state
+
+            legacy_home, legacy_env = environment('legacy-state')
+            legacy_path = state_path(legacy_home, legacy_env)
+            legacy_path.parent.mkdir(parents=True, mode=0o700)
+            legacy_prompt = 'SYNTHETIC_LEGACY_PROMPT_MUST_NOT_RESTORE'
+            legacy = dict(saved, version=1, prompt=legacy_prompt)
+            legacy_bytes = (json.dumps(legacy)+'\n').encode()
+            legacy_path.write_bytes(legacy_bytes)
+            legacy_path.chmod(0o600)
+            with terminal_case('legacy-state-blank-and-cancel', legacy_env) as terminal:
+                terminal.wait('Describe your image')
+                terminal.wait(model)
+                assert legacy_prompt not in terminal.text()
+                assert 'Could not restore saved settings' not in terminal.text()
+                mark = len(terminal.raw)
+                terminal.send(b'\r')
+                terminal.wait('Add a prompt first.', after=mark)
+                assert legacy_path.read_bytes() == legacy_bytes
+                assert len(server.requests) == before
+                paste(terminal, 'Legacy synthetic draft discarded on cancel')
+                terminal.send(b'\x03')
+                terminal.finish(130)
+                assert legacy_path.read_bytes() == legacy_bytes
+                assert len(server.requests) == before
+                assert legacy_prompt not in terminal.text()
+
+            with terminal_case('legacy-state-submit-removes-prompt', legacy_env) as terminal:
+                terminal.wait('Describe your image')
+                legacy_replacement = 'A fresh synthetic prompt with legacy settings'
+                paste(terminal, legacy_replacement)
+                terminal.wait(legacy_replacement)
+                assert legacy_path.read_bytes() == legacy_bytes
+                terminal.send(picker.PRINT)
+                terminal.finish(0)
+                assert picker.printed_flags(terminal) == dict(flags, **{'--prompt': legacy_replacement})
+                assert json.loads(legacy_path.read_bytes()) == saved
+                assert legacy_prompt not in terminal.text()
+                assert 'Could not restore saved settings' not in terminal.text()
+                assert 'Could not remember these settings' not in terminal.text()
+                assert len(server.requests) == before
 
             completion_home, completion_env = environment('completion')
             completed = root/'completion parent'/'snow 雪 folder'

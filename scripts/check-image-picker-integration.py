@@ -48,6 +48,7 @@ def wait_resumed(terminal, mark):
     terminal.wait('Saved image:', after=mark)
     saved = terminal.raw.index(b'Saved image:', mark)
     terminal.wait('Images', after=saved)
+    terminal.wait('Describe your image', after=saved)
 
 
 def main():
@@ -191,7 +192,7 @@ def main():
                 assert len(server.requests) == before
                 assert not list(home.glob('Downloads/gpt-images/*'))
                 states = list(home.rglob('image-picker.json'))
-                assert len(states) == 1 and json.loads(states[0].read_text())['prompt'] == prompt
+                assert len(states) == 1 and 'prompt' not in json.loads(states[0].read_text())
                 passed(name)
             finally:
                 try:
@@ -254,13 +255,19 @@ def main():
                                     until = time.monotonic()+1.0
                                     while time.monotonic() < until:
                                         terminal.read(0.02)
+                                    blank = len(terminal.raw)
+                                    terminal.send(b'\r')
+                                    terminal.wait('Add a prompt first.', after=blank)
+                                    assert len(server.requests) == before+1
                                     server.request_started.clear()
                                     second = len(terminal.raw)
-                                    terminal.send(b' appended\r')
+                                    second_prompt = 'A completely new synthetic image'
+                                    terminal.send(b'\x1b[200~'+second_prompt.encode()+b'\x1b[201~\r')
                                     picker.wait_for_request(terminal, server.request_started)
                                     wait_resumed(terminal, second)
-                                    assert server.requests[-1]['prompt'] == prompt+' appended'
-                                    prompt += ' appended'
+                                    assert server.requests[-2]['prompt'] == prompt
+                                    assert server.requests[-1]['prompt'] == second_prompt
+                                    prompt = second_prompt
                                 terminal.send(b'\x03')
                                 terminal.finish(130)
                             model = 'gpt-image-2.5-flare' if action == 'changed-model' else 'gpt-image-2.5-sunburst'
@@ -278,7 +285,10 @@ def main():
                     states = list(home.rglob('image-picker.json'))
                     assert len(states) == int(action != 'cancel'), (name, states)
                     if states:
-                        assert json.loads(states[0].read_text())['prompt'] == prompt
+                        saved_settings = json.loads(states[0].read_text())
+                        assert 'prompt' not in saved_settings, saved_settings
+                        expected_model = 'gpt-image-2.5-flare' if action == 'changed-model' else 'gpt-image-2.5-sunburst'
+                        assert saved_settings['model'] == expected_model, saved_settings
                     generates = action not in {'cancel', 'print'}
                     assert len(server.requests)-before == int(generates)+int(action == 'two-generations'), name
                     if action == 'root-connection-options':

@@ -38,24 +38,19 @@ func pickerOpenPath(t *testing.T, m *imagePicker) {
 	require.Equal(t, "path", m.focus)
 }
 
-func TestImagePickerRestoredDraftAndExplicitPrompt(t *testing.T) {
+func TestImagePickerRestoredSettingsAndExplicitPrompt(t *testing.T) {
 	original := pickerForTest(t).settings
 	original.prompt, original.quality, original.outputDir = "Remembered 雪", "high", t.TempDir()
-	for _, tc := range []struct {
-		prompt string
-		set    bool
-		want   string
-	}{
-		{"", false, original.prompt}, {"", true, ""}, {"Override", false, "Override"},
-	} {
-		m, err := newImagePicker(imagePickerOptions{initial: &original, initialNote: "Remembered settings", Prompt: tc.prompt, PromptSet: tc.set})
+	for _, prompt := range []string{"", "Override 雪"} {
+		m, err := newImagePicker(imagePickerOptions{initial: &original, initialNote: "Remembered settings", Prompt: prompt})
 		require.NoError(t, err)
-		require.Equal(t, tc.want, m.settings.prompt)
-		require.Equal(t, tc.want, string(m.draft))
-		require.Equal(t, len([]rune(tc.want)), m.cursor)
+		require.Equal(t, prompt, m.settings.prompt)
+		require.Equal(t, prompt, string(m.draft))
+		require.Equal(t, len([]rune(prompt)), m.cursor)
 		require.Equal(t, original.outputDir, m.settings.outputDir)
 		require.Equal(t, "high", m.settings.quality)
 		require.Equal(t, "Remembered settings", m.note)
+		require.Equal(t, "Remembered 雪", original.prompt)
 	}
 }
 

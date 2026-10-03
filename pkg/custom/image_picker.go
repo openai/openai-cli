@@ -23,8 +23,6 @@ import (
 // imagePickerOptions configures the interactive image settings.
 type imagePickerOptions struct {
 	Prompt string
-	// PromptSet lets an explicit empty prompt override the active draft.
-	PromptSet bool
 	// Shell selects quoting for the displayed command, never execution.
 	Shell       string
 	initial     *imagePickerSettings
@@ -225,10 +223,9 @@ func newImagePicker(options imagePickerOptions) (*imagePicker, error) {
 	}
 	if options.initial != nil {
 		m.settings = *options.initial
-		if options.PromptSet || options.Prompt != "" {
-			m.settings.prompt = options.Prompt
-		}
-		m.draft, m.cursor = []rune(m.settings.prompt), len([]rune(m.settings.prompt))
+		// Carry image settings forward, but require a fresh description for
+		// each image. Only an explicitly supplied prompt may prefill it.
+		m.settings.prompt = options.Prompt
 	}
 	m.shell = options.Shell
 	m.note = options.initialNote
