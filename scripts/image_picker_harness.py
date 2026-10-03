@@ -6,7 +6,6 @@ import fcntl
 import http.server
 import json
 import os
-import pathlib
 import pty
 import re
 import select
@@ -15,9 +14,7 @@ import signal
 import struct
 import subprocess
 import sys
-import tempfile
 import termios
-import threading
 import time
 
 PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP438AAAAQBAYDFKhhdAAAAAElFTkSuQmCC')
@@ -113,6 +110,7 @@ class Terminal:
                 try:
                     os.killpg(self.child.pid, signal.SIGKILL)
                 except ProcessLookupError:
+                    # The process can exit between poll() and killpg().
                     pass
         finally:
             # Darwin can keep a session leader exiting until the controlling
@@ -149,6 +147,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
         try:
             self.wfile.write(data)
         except (BrokenPipeError, ConnectionResetError):
+            # Cancellation tests intentionally disconnect before the reply.
             pass
 
 
