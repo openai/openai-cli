@@ -110,16 +110,31 @@ func TestImagePickerUnsupportedShellSelection(t *testing.T) {
 	for _, shell := range []string{"", "sh", "powershell.exe", "unknown"} {
 		t.Run(shell, func(t *testing.T) {
 			m := pickerForTest(t)
+			path := filepath.Join(t.TempDir(), "image-picker.json")
 			result := imagePickerResult{Args: m.settings.args(), settings: m.settings, shell: shell}
-			var output bytes.Buffer
-			require.NoError(t, finishImagePickerSelection(context.Background(), &output, &output, "", result))
+			var output, diagnostics bytes.Buffer
+			require.NoError(t, finishImagePickerSelection(context.Background(), &output, &diagnostics, path, result))
 			require.Empty(t, output.String(), "generation must not echo a command for the wrong shell")
+			require.Empty(t, diagnostics.String())
+			got, found, err := loadImagePickerState(t.Context(), path)
+			require.NoError(t, err)
+			require.True(t, found, "generation still remembers settings without a printable command")
+			want := m.settings
+			want.prompt = ""
+			require.Equal(t, want, got)
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+			result.settings.quality = "high"
+			result.Args = result.settings.args()
 			result.PrintOnly = true
-			require.ErrorContains(t, finishImagePickerSelection(context.Background(), &output, &output, "", result), imagePickerUnsupportedShell)
+			require.ErrorContains(t, finishImagePickerSelection(context.Background(), &output, &diagnostics, path, result), imagePickerUnsupportedShell)
 			require.Empty(t, output.String())
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, before, after, "unsupported command printing must not save a selection")
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			require.ErrorIs(t, finishImagePickerSelection(ctx, &output, &output, "", result), context.Canceled)
+			require.ErrorIs(t, finishImagePickerSelection(ctx, &output, &diagnostics, path, result), context.Canceled)
 		})
 	}
 }

@@ -66,10 +66,10 @@ func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writ
 		if result.PrintOnly {
 			return imageSavingFailure(imagePickerUnsupportedShell, nil)
 		}
-		return nil
-	}
-	if _, err := fmt.Fprintln(output, command); err != nil {
-		return imageSavingFailure("Could not print the command. No image request was started.", err)
+	} else {
+		if _, err := fmt.Fprintln(output, command); err != nil {
+			return imageSavingFailure("Could not print the command. No image request was started.", err)
+		}
 	}
 	if path == "" {
 		return nil

@@ -88,7 +88,7 @@ def main():
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         base_env = {'PATH': '/usr/bin:/bin', 'TERM': 'xterm-256color', 'LANG': 'en_US.UTF-8',
-                    'OPENAI_API_KEY': 'synthetic-picker-key', 'CI': 'true',
+                    'OPENAI_API_KEY': 'synthetic-picker-key', 'OPENAI_PICKER_SHELL': 'bash', 'CI': 'true',
                     'OPENAI_BASE_URL': f'http://127.0.0.1:{server.server_port}/v1'}
 
         def environment(name):

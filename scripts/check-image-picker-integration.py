@@ -142,6 +142,7 @@ def main():
                     assert terminal.child.poll() is None
                     assert len(server.requests) == before
                     assert 'openai images generate ' not in terminal.text()
+                    assert not list(home.rglob('image-picker.json')), 'disabled printing wrote settings'
                     mark = len(terminal.raw)
                     terminal.send(b'\r')
                     wait_resumed(terminal, mark)
@@ -149,8 +150,30 @@ def main():
                     check_body(server.requests[-1], {'prompt': prompt})
                     check_saved(home)
                     assert 'openai images generate ' not in terminal.text()
+                    states = list(home.rglob('image-picker.json'))
+                    assert len(states) == 1, states
+                    saved_state = states[0].read_bytes()
+                    assert json.loads(saved_state) == {
+                        'version': 1, 'model': 'gpt-image-2.5-sunburst', 'size': '1024x1024',
+                        'quality': 'auto', 'background': 'auto', 'format': 'png',
+                        'count': '1', 'output_dir': ''}, saved_state
                     terminal.send(b'\x03')
                     terminal.finish(130)
+                    reopened = picker.Terminal(binary, ['images', 'generate'], env)
+                    try:
+                        reopened.wait('Describe your image')
+                        reopened.wait('gpt-image-2.5-sunburst')
+                        assert prompt.splitlines()[0] not in reopened.text()
+                        assert 'Could not restore saved settings' not in reopened.text()
+                        reopened.send(b'\x03')
+                        reopened.finish(130)
+                        assert states[0].read_bytes() == saved_state
+                        assert len(server.requests) == before+1
+                    finally:
+                        try:
+                            reopened.save(output/(name+'-reopened'))
+                        finally:
+                            reopened.close()
                     passed(name)
                 finally:
                     try:
