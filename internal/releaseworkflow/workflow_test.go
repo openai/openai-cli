@@ -28,6 +28,7 @@ var releaseInputPaths = []string{
 	"completions/openai.bash",
 	"completions/openai.zsh",
 	"completions/openai.fish",
+	"completions/picker/openai.fish",
 	"man/man1/openai.1.gz",
 }
 
@@ -204,6 +205,7 @@ func TestReleaseInputsUseAnIsolatedUnprivilegedJob(t *testing.T) {
 		"@completion bash > completions/openai.bash",
 		"@completion zsh > completions/openai.zsh",
 		"@completion fish > completions/openai.fish",
+		"@completion fish --package-picker > completions/picker/openai.fish",
 		"@manpages -o man",
 	} {
 		if !strings.Contains(generate.Run, fragment) {
@@ -394,6 +396,10 @@ func TestReleaseInputVerifierRejectsUnsafeArtifacts(t *testing.T) {
 	}
 
 	_, verify := requireStep(t, readWorkflow(t, "publish-release.yml").Jobs["goreleaser"], "Verify isolated release inputs")
+	releaseConfig, err := os.ReadFile(filepath.Join("..", "..", ".goreleaser.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name   string
@@ -456,6 +462,15 @@ func TestReleaseInputVerifierRejectsUnsafeArtifacts(t *testing.T) {
 			workspace := t.TempDir()
 			if output, err := exec.Command("git", "init", "--quiet", workspace).CombinedOutput(); err != nil {
 				t.Fatalf("initialize isolated publisher checkout: %v\n%s", err, output)
+			}
+			writeReleaseTestFile(t, filepath.Join(workspace, ".goreleaser.yml"), releaseConfig)
+			for _, args := range [][]string{
+				{"add", ".goreleaser.yml"},
+				{"-c", "user.name=Release Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "trusted release config"},
+			} {
+				if output, err := exec.Command("git", append([]string{"-C", workspace}, args...)...).CombinedOutput(); err != nil {
+					t.Fatalf("prepare trusted publisher config: %v\n%s", err, output)
+				}
 			}
 			command := exec.Command("bash", "-c", verify.Run)
 			command.Dir = workspace

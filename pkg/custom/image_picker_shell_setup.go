@@ -17,6 +17,10 @@ import (
 // remaining arguments, after global flags have been parsed. Setup validates
 // its own options before changing files. API argument values never qualify.
 func IsImagePickerShellSetupCommand(args []string) bool {
+	return isImagePickerCompletionAction(args, "--install-picker", "--uninstall-picker")
+}
+
+func isImagePickerCompletionAction(args []string, actions ...string) bool {
 	if len(args) < 2 || args[0] != "@completion" {
 		return false
 	}
@@ -29,7 +33,7 @@ func IsImagePickerShellSetupCommand(args []string) bool {
 			index++
 			continue
 		}
-		if name == "--install-picker" || name == "--uninstall-picker" {
+		if slices.Contains(actions, name) {
 			if !hasValue {
 				return true
 			}

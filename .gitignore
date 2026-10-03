@@ -4,6 +4,7 @@ dist/
 /completions/openai.bash
 /completions/openai.zsh
 /completions/openai.fish
+/completions/picker/openai.fish
 /man/man1/openai.1.gz
 /openai
 *.exe

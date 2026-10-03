@@ -24,8 +24,9 @@ for credential in "${credentials[@]}"; do
   fi
 done
 
-mkdir -p completions
+mkdir -p completions/picker
 for shell in bash zsh fish; do
   go run ./cmd/openai/main.go @completion "$shell" > "completions/openai.$shell"
 done
+go run ./cmd/openai/main.go @completion fish --package-picker > completions/picker/openai.fish
 go run ./cmd/openai/main.go @manpages -o man

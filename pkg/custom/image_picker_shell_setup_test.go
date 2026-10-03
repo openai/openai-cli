@@ -36,6 +36,7 @@ func runPickerShellSetup(t *testing.T, ctx context.Context, args ...string) (str
 	}
 	configureImagePickerCompletion(root)
 	configureImagePickerShellSetup(root)
+	configureImagePickerPackage(root)
 	err := root.Run(ctx, append([]string{"openai", "@completion"}, args...))
 	return output.String(), err
 }
