@@ -30,7 +30,12 @@ func TestPickerProfileRecoveryRetainsHeldEditorFile(t *testing.T) {
 					_, err := InstallPicker(t.Context(), options)
 					require.NoError(t, err)
 				}
-				editor, err := os.OpenFile(options.Profile, os.O_RDWR, 0)
+				parent, err := os.OpenRoot(filepath.Dir(options.Profile))
+				require.NoError(t, err)
+				defer parent.Close()
+				// Root.OpenFile permits deletion sharing on Windows so this
+				// editor can retain its handle while the profile is captured.
+				editor, err := parent.OpenFile(filepath.Base(options.Profile), os.O_RDWR, 0)
 				require.NoError(t, err)
 				defer editor.Close()
 				original, err := editor.Stat()
@@ -192,7 +197,7 @@ func TestPickerProfileRecoveryInterruptedCapture(t *testing.T) {
 	if value := os.Getenv(childEnv); value != "" {
 		var child request
 		require.NoError(t, json.Unmarshal([]byte(value), &child))
-		original, err := os.Stat(child.Options.Profile)
+		original, err := pickerRecoveryFileIdentity(child.Options.Profile)
 		require.NoError(t, err)
 		ctx := &pickerRecoveryCaptureContext{Context: t.Context(), profile: child.Options.Profile, original: original,
 			action: func() error { os.Exit(77); return nil }}
@@ -240,13 +245,13 @@ func TestPickerProfileRecoveryPendingOtherSpellingRefusesNewProfile(t *testing.T
 			options.Profile = filepath.Join(filepath.Dir(options.Profile), "MiXeDProfile.rc")
 			personal := []byte("# personal content before interrupted setup\n")
 			require.NoError(t, os.WriteFile(options.Profile, personal, 0600))
-			original, err := os.Stat(options.Profile)
+			original, err := pickerRecoveryFileIdentity(options.Profile)
 			require.NoError(t, err)
 			other := options
 			other.Profile = filepath.Join(filepath.Dir(options.Profile), "other-profile")
 			if kind == "case alias" {
 				other.Profile = filepath.Join(filepath.Dir(options.Profile), "mixedprofile.rc")
-				alias, err := os.Stat(other.Profile)
+				alias, err := pickerRecoveryFileIdentity(other.Profile)
 				if errors.Is(err, os.ErrNotExist) {
 					t.Skip("fixture filesystem treats case spellings as distinct files")
 				}
@@ -469,7 +474,7 @@ func pickerRecoveryFixture(t *testing.T, action string) (PickerInstallation, os.
 		_, err := InstallPicker(t.Context(), options)
 		require.NoError(t, err)
 	}
-	info, err := os.Stat(options.Profile)
+	info, err := pickerRecoveryFileIdentity(options.Profile)
 	require.NoError(t, err)
 	data, err := os.ReadFile(options.Profile)
 	require.NoError(t, err)
@@ -559,7 +564,7 @@ func pickerRecoveryOriginalPath(profile string, expected os.FileInfo) (string, e
 		if path == profile || !entry.Type().IsRegular() {
 			return nil
 		}
-		info, err := os.Lstat(path)
+		info, err := pickerRecoveryFileIdentity(path)
 		if err != nil {
 			return err
 		}
@@ -569,4 +574,16 @@ func pickerRecoveryOriginalPath(profile string, expected os.FileInfo) (string, e
 		return nil
 	})
 	return found, err
+}
+
+func pickerRecoveryFileIdentity(path string) (os.FileInfo, error) {
+	// File.Stat materializes the Windows file ID while the path still exists.
+	// Path-based Stat defers that lookup, which fails after capture or while an
+	// editor retains a writable handle to the captured file.
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	return info, errors.Join(err, file.Close())
 }

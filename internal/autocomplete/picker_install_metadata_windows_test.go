@@ -83,7 +83,7 @@ func TestPickerWindowsProfileStagingRejectsDifferentPermissionsBeforeCopy(t *tes
 			}
 			before, err := os.ReadFile(options.Profile)
 			require.NoError(t, err)
-			identity, err := os.Stat(options.Profile)
+			identity, err := pickerRecoveryFileIdentity(options.Profile)
 			require.NoError(t, err)
 			// Keep the existing profile private and shield scripts from this
 			// profile-directory fixture's permissions.
@@ -118,7 +118,9 @@ func TestPickerWindowsProfileStagingRejectsDifferentPermissionsBeforeCopy(t *tes
 			require.NoError(t, err)
 			var temporary []string
 			for _, entry := range entries {
-				if strings.HasPrefix(entry.Name(), ".openai-picker-") {
+				// An earlier successful install also retained a recovery
+				// directory; only regular files are profile staging candidates.
+				if entry.Type().IsRegular() && strings.HasPrefix(entry.Name(), ".openai-picker-") {
 					temporary = append(temporary, filepath.Join(home, entry.Name()))
 				}
 			}
@@ -130,7 +132,7 @@ func TestPickerWindowsProfileStagingRejectsDifferentPermissionsBeforeCopy(t *tes
 			after, err := os.ReadFile(options.Profile)
 			require.NoError(t, err)
 			require.Equal(t, before, after)
-			current, err := os.Stat(options.Profile)
+			current, err := pickerRecoveryFileIdentity(options.Profile)
 			require.NoError(t, err)
 			require.True(t, os.SameFile(identity, current))
 		})
