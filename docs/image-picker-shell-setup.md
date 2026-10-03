@@ -67,11 +67,15 @@ Bash configures its two startup modes separately; if a later write
 fails, the error reports partial setup and rerunning the command is safe.
 
 Setup checks the directory ancestry of configuration and startup paths before
-creating files. It keeps symlinked or hard-linked profiles, unsafe permissions, and protected
-file metadata unchanged. Windows junction or reparse-point ancestors require
-manual setup. Equivalent Windows home-directory spellings are recognized by
-filesystem identity. On macOS and Linux this includes profiles with ACLs or extended
-attributes. Windows replacement also checks alternate streams and file-specific
+creating files. It keeps symlinked or hard-linked profiles, special permission
+bits, unsafe permissions, and protected file metadata unchanged. On macOS and
+Linux this includes profiles with ACLs or extended attributes. Windows junction
+or reparse-point ancestors require manual setup. Equivalent Windows home-directory
+spellings are recognized by filesystem identity. Windows profile aliases use the
+actual long path for setup locks and new script names. When an older script records
+an unprovable path spelling, refresh or removal preserves that script and any empty
+profile; that profile no longer sources the old script after refresh or removal.
+Windows replacement also checks alternate streams and file-specific
 permissions. Windows managed directories, scripts and staging files require a current-user
 or local Administrators owner and a DACL that grants mutation only to that user,
 SYSTEM or local Administrators. Lock files also reject access by other readers.

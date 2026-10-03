@@ -13,6 +13,9 @@ import (
 // Do not drop any attribute through atomic replacement. This deliberately
 // leaves profiles with SELinux labels or unknown metadata unchanged.
 func checkPickerFileMetadata(file *os.File) error {
+	if err := checkPickerFileMode(file); err != nil {
+		return err
+	}
 	if err := checkPickerFileLinks(file); err != nil {
 		return err
 	}

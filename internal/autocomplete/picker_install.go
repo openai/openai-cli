@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -105,6 +106,10 @@ func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, e
 		return false, err
 	}
 	defer root.Close()
+	options.Profile, err = pickerProfileIdentity(ctx, root, options.Profile)
+	if err != nil {
+		return false, err
+	}
 	profile, err := readPickerFile(ctx, root, filepath.Base(options.Profile))
 	if err != nil {
 		return false, err
@@ -128,7 +133,7 @@ func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, e
 	if err != nil || script.info == nil {
 		return false, err
 	}
-	if !validOwnedPickerScript(options, *installed, script.data) {
+	if !validInstalledPickerScript(options, *installed, script.data) {
 		return false, errors.New("installed shell integration script was modified")
 	}
 	current, err := renderInstalledPicker(options)
@@ -162,6 +167,11 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 		return result, err
 	}
 	defer profileRoot.Close()
+	callerProfile := options.Profile
+	options.Profile, err = pickerProfileIdentity(ctx, profileRoot, options.Profile)
+	if err != nil {
+		return result, err
+	}
 	profileName := filepath.Base(options.Profile)
 	profileLock, err := lockPickerInstallation(ctx, profileRoot, "."+profileName+".openai-picker.lock")
 	if err != nil {
@@ -179,8 +189,14 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	if remove && installed == nil {
 		return result, nil
 	}
+	ownedPrevious := installed != nil && pickerScriptMatchesProfile(options, callerProfile, *installed)
 	if installed != nil {
 		options.Directory = filepath.Dir(installed.Script)
+		if runtime.GOOS == "windows" && !ownedPrevious {
+			// Older metadata cannot recover the spelling used for its profile
+			// hash. Preserve unproven scripts and profile creation ownership.
+			installed.ProfileCreated = false
+		}
 	}
 	scriptRoot, err := openPickerScriptDirectory(ctx, options.Directory, !remove)
 	if remove && errors.Is(err, os.ErrNotExist) {
@@ -206,7 +222,7 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 		if err != nil {
 			return result, err
 		}
-		if previous.info != nil && !validOwnedPickerScript(options, *installed, previous.data) {
+		if previous.info != nil && !validInstalledPickerScript(options, *installed, previous.data) {
 			return result, errors.New("installed shell integration script was modified; existing files were kept")
 		}
 	}
@@ -269,7 +285,7 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	// After the profile commit the new script belongs to that profile. A
 	// superseded cleanup failure must not remove its active replacement.
 	created = false
-	if installed != nil && installed.Script != next.Script && previous.info != nil {
+	if ownedPrevious && installed.Script != next.Script && previous.info != nil {
 		if err := removePickerSnapshot(ctx, scriptRoot, filepath.Base(installed.Script), previous); err != nil {
 			return result, err
 		}
@@ -300,8 +316,49 @@ func validatePickerInstallation(options PickerInstallation) error {
 
 func pickerScriptName(options PickerInstallation, data []byte) string {
 	ext := map[CompletionStyle]string{CompletionStyleZsh: "zsh", CompletionStyleBash: "bash", CompletionStyleFish: "fish"}[options.Shell]
+	return fmt.Sprintf("%s%x.%s", pickerScriptProfilePrefix(options), sha256.Sum256(data), ext)
+}
+
+func pickerScriptProfilePrefix(options PickerInstallation) string {
 	profileHash := sha256.Sum256([]byte(options.Profile))
-	return fmt.Sprintf("picker-%s-%x-%x.%s", options.Shell, profileHash[:8], sha256.Sum256(data), ext)
+	return fmt.Sprintf("picker-%s-%x-", options.Shell, profileHash[:8])
+}
+
+func pickerScriptMatchesProfile(options PickerInstallation, callerProfile string, block pickerInstalledBlock) bool {
+	name := filepath.Base(block.Script)
+	if strings.HasPrefix(name, pickerScriptProfilePrefix(options)) {
+		return true
+	}
+	options.Profile = callerProfile
+	return strings.HasPrefix(name, pickerScriptProfilePrefix(options))
+}
+
+func validInstalledPickerScript(options PickerInstallation, block pickerInstalledBlock, data []byte) bool {
+	if validOwnedPickerScript(options, block, data) {
+		return true
+	}
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	// Legacy Windows blocks retain only a hash of the original path spelling.
+	// Verify content independently, but never delete a script whose profile
+	// namespace cannot be proved by pickerScriptMatchesProfile.
+	return validPickerScriptContent(options, block, data)
+}
+
+func validPickerScriptContent(options PickerInstallation, block pickerInstalledBlock, data []byte) bool {
+	if !bytes.HasPrefix(data, []byte(pickerScriptHeader)) {
+		return false
+	}
+	name, ok := strings.CutPrefix(filepath.Base(block.Script), "picker-"+string(options.Shell)+"-")
+	if !ok || len(name) < 17 || name[16] != '-' {
+		return false
+	}
+	if _, err := hex.DecodeString(name[:16]); err != nil || name[:16] != strings.ToLower(name[:16]) {
+		return false
+	}
+	// Replacing only the namespace must produce the expected full hash/name.
+	return pickerScriptProfilePrefix(options)+name[17:] == pickerScriptName(options, data)
 }
 
 func validOwnedPickerScript(options PickerInstallation, block pickerInstalledBlock, data []byte) bool {
@@ -574,6 +631,14 @@ func replacePickerProfile(ctx context.Context, root *os.Root, name string, previ
 		return err
 	}
 	defer root.Remove(temporary)
+	// Validate the empty staging file before copying private profile contents.
+	// A later refusal cannot revoke a reader's already-open staging handle.
+	if err := checkPickerSnapshot(ctx, root, name, previous); err != nil {
+		return errors.Join(err, file.Close())
+	}
+	if err := checkPickerReplacementMetadata(root, name, temporary, previous); err != nil {
+		return errors.Join(err, file.Close())
+	}
 	_, writeErr := file.Write(data)
 	if writeErr == nil {
 		writeErr = file.Chmod(mode) // Preserve mode even under a restrictive umask.

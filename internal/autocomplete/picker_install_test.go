@@ -445,11 +445,16 @@ func TestPickerInstallKeepsRuntimeCommandAndGuardedMarker(t *testing.T) {
 type pickerInstallNotifyContext struct {
 	context.Context
 	once   sync.Once
+	checks int
 	opened chan struct{}
 }
 
 func (ctx *pickerInstallNotifyContext) Err() error {
-	ctx.once.Do(func() { close(ctx.opened) })
+	ctx.checks++
+	// The first check precedes opening the lock; the second starts its wait loop.
+	if ctx.checks > 1 {
+		ctx.once.Do(func() { close(ctx.opened) })
+	}
 	return ctx.Context.Err()
 }
 

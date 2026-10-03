@@ -3,9 +3,23 @@ package autocomplete
 import (
 	"encoding/binary"
 	"errors"
+	"os"
 	"strings"
 	"unicode/utf16"
 )
+
+// Atomic replacement must not silently discard special bits on regular files.
+// Directory modes are handled by the directory policy and are not replaced.
+func checkPickerFileMode(file *os.File) error {
+	info, err := file.Stat()
+	if err != nil {
+		return errors.New("cannot inspect shell startup file mode")
+	}
+	if info.Mode().IsRegular() && info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
+		return errors.New("shell startup file has special permission bits; existing file was kept")
+	}
+	return nil
+}
 
 // Windows FILE_STREAM_INFO identifies streams on the opened file itself.
 // Atomic replacement must not discard origin marks or other user metadata.

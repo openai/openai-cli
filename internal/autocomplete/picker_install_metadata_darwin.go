@@ -15,6 +15,9 @@ import (
 // Replacing a startup file with a new inode must not discard its extended
 // attributes, ACL, or BSD flags. Leave these profiles for manual configuration.
 func checkPickerFileMetadata(file *os.File) error {
+	if err := checkPickerFileMode(file); err != nil {
+		return err
+	}
 	if err := checkPickerFileLinks(file); err != nil {
 		return err
 	}
