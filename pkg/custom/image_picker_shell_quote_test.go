@@ -16,6 +16,9 @@ func TestImagePickerNativeShellQuoting(t *testing.T) {
 	values := []string{"", "ordinary", "two words", "a 'quote' and \"double\"", `C:\folder\name`,
 		"line one\nline two\tend\r", "雪 🐈", "a\u202eb\u0085c\u200bd", "$(touch NOT_RUN); & | > [x] {x}",
 		"$HOME `backtick`", "trailing ", "~", "\x1b]52;c;synthetic\x07", "a\u2028b\u2029c", "\\@literal"}
+	for _, quote := range "‘’‚‛“”„‟" {
+		values = append(values, "a cat"+string(quote)+"s portrait", "a cat"+string(quote)+"s portrait\nnext line")
+	}
 	for _, shell := range []string{"bash", "zsh", "fish", "pwsh"} {
 		t.Run(shell, func(t *testing.T) {
 			binary, err := exec.LookPath(shell)

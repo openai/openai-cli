@@ -23,7 +23,7 @@ func pickerForTest(t *testing.T) *imagePicker {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	m, err := newImagePicker(imagePickerOptions{Prompt: "A tiny orange robot watering a plant"})
+	m, err := newImagePicker(imagePickerOptions{Prompt: "A tiny orange robot watering a plant", Shell: "bash"})
 	require.NoError(t, err)
 	m.width, m.height, m.color = 90, 24, false
 	return m
@@ -43,6 +43,27 @@ func pickerArg(t *testing.T, args []string, flag string) string {
 	}
 	t.Fatalf("missing flag %s", flag)
 	return ""
+}
+
+func TestImagePickerUnsupportedShellKeepsGeneration(t *testing.T) {
+	for _, shell := range []string{"", "sh", "powershell.exe", "unknown"} {
+		t.Run(shell, func(t *testing.T) {
+			m := pickerForTest(t)
+			m.shell = shell
+			m.focus = "command"
+			require.Contains(t, m.View().Content, imagePickerUnsupportedShell)
+			require.NotContains(t, m.View().Content, "openai images generate")
+			require.NotContains(t, m.View().Content, "Ctrl+P print")
+			_, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+			require.Nil(t, cmd)
+			require.Empty(t, m.result.Args)
+			require.Equal(t, imagePickerUnsupportedShell, m.note)
+			cmd = pickerKey(m, tea.KeyEnter)
+			require.NotNil(t, cmd)
+			require.False(t, m.result.PrintOnly)
+			require.Equal(t, m.settings.args(), m.result.Args)
+		})
+	}
 }
 
 func TestImagePickerPromptSubmitsExactlyOnce(t *testing.T) {
@@ -726,7 +747,7 @@ func TestImagePickerParentContextDuringInput(t *testing.T) {
 			_, _ = control.Read(data[:])
 			cancel()
 		}()
-		result, err := runImagePicker(ctx, os.Stdin, os.Stdout, imagePickerOptions{Prompt: "Synthetic context cancellation"})
+		result, err := runImagePicker(ctx, os.Stdin, os.Stdout, imagePickerOptions{Prompt: "Synthetic context cancellation", Shell: "bash"})
 		require.ErrorIs(t, err, context.Canceled)
 		require.True(t, result.Canceled)
 		require.Empty(t, result.Args)

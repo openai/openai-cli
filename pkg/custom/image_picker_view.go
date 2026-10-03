@@ -176,7 +176,7 @@ func (m *imagePicker) View() tea.View {
 				footer = "Ctrl+C exit · Enter run · ↑↓ scroll"
 			}
 		}
-		if ansi.StringWidth(footer+" · Ctrl+P print") <= width {
+		if imagePickerShellQuoter(m.shell) != nil && ansi.StringWidth(footer+" · Ctrl+P print") <= width {
 			footer += " · Ctrl+P print"
 		}
 
@@ -209,6 +209,9 @@ func (m *imagePicker) commandPreview(width, height int) ([]string, int, int) {
 
 func (m *imagePicker) commandLines(width int) []string {
 	command := formatImagePickerCommand(m.settings.args(), m.shell)
+	if command == "" {
+		command = imagePickerUnsupportedShell
+	}
 	var lines []string
 	var line strings.Builder
 	used, width := 0, max(1, width)

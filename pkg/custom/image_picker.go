@@ -512,6 +512,10 @@ func (m *imagePicker) activate(row imagePickerRow) tea.Cmd {
 	case "more":
 		m.page, m.selected = "more", 0
 	case "generate", "print":
+		if row.id == "print" && imagePickerShellQuoter(m.shell) == nil {
+			m.note = imagePickerUnsupportedShell
+			return nil
+		}
 		if m.validPrompt() {
 			m.result = imagePickerResult{Args: m.settings.args(), PrintOnly: row.id == "print", settings: m.settings, shell: m.shell}
 			return tea.Quit

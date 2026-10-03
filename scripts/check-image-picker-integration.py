@@ -69,7 +69,8 @@ def main():
         thread.start()
         base_url = f'http://127.0.0.1:{server.server_port}/v1'
         base_env = {'PATH': '/usr/bin:/bin', 'TERM': 'xterm-256color', 'LANG': 'en_US.UTF-8',
-                    'OPENAI_API_KEY': 'synthetic-picker-key', 'OPENAI_BASE_URL': base_url, 'CI': 'true'}
+                    'OPENAI_API_KEY': 'synthetic-picker-key', 'OPENAI_BASE_URL': base_url,
+                    'OPENAI_PICKER_SHELL': 'bash', 'CI': 'true'}
 
         def environment(name, extra=None):
             home = root/name
@@ -123,6 +124,39 @@ def main():
             passed(name)
 
         try:
+            for shell in ['', 'sh', 'powershell.exe', 'unknown']:
+                name = 'unsupported-shell-'+(shell or 'detected-python')
+                home, env = environment(name, {'OPENAI_PICKER_SHELL': shell, 'SHELL': '/bin/zsh'})
+                if not shell:
+                    del env['OPENAI_PICKER_SHELL']
+                before = len(server.requests)
+                terminal = picker.Terminal(binary, ['images', 'generate'], env)
+                prompt = "A cat’s 'quoted' portrait\nsecond line"
+                try:
+                    terminal.wait('Command printing needs Bash, zsh, fish or PowerShell 7.')
+                    terminal.send(b'\x1b[200~'+prompt.encode()+b'\x1b[201~')
+                    mark = len(terminal.raw)
+                    terminal.send(picker.PRINT)
+                    terminal.wait('Command printing needs Bash, zsh, fish or PowerShell 7.', after=mark)
+                    assert terminal.child.poll() is None
+                    assert len(server.requests) == before
+                    assert 'openai images generate ' not in terminal.text()
+                    mark = len(terminal.raw)
+                    terminal.send(b'\r')
+                    wait_resumed(terminal, mark)
+                    assert len(server.requests) == before+1
+                    check_body(server.requests[-1], {'prompt': prompt})
+                    check_saved(home)
+                    assert 'openai images generate ' not in terminal.text()
+                    terminal.send(b'\x03')
+                    terminal.finish(130)
+                    passed(name)
+                finally:
+                    try:
+                        terminal.save(output/name)
+                    finally:
+                        terminal.close()
+
             name = 'bare-tty-early-paste'
             home, env = environment(name)
             before = len(server.requests)

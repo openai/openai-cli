@@ -45,10 +45,11 @@ func imagePickerPowerShellQuote(value string) string {
 	if plain {
 		return value
 	}
-	if !control {
+	if !control && !strings.ContainsAny(value, "‘’‚‛“”„‟") {
 		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 	}
-	// PowerShell 7 Unicode escapes keep control bytes out of terminal output.
+	// PowerShell also treats smart quotes as delimiters. Unicode escapes keep
+	// them literal and keep control bytes out of terminal output.
 	var b strings.Builder
 	b.WriteByte('"')
 	for _, r := range value {
@@ -56,7 +57,7 @@ func imagePickerPowerShellQuote(value string) string {
 		case r == '`' || r == '$' || r == '"':
 			b.WriteByte('`')
 			b.WriteRune(r)
-		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029':
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' || r >= '\u2018' && r <= '\u201f':
 			fmt.Fprintf(&b, "`u{%x}", r)
 		default:
 			b.WriteRune(r)

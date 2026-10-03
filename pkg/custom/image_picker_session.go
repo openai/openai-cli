@@ -32,7 +32,14 @@ func finishImagePickerSelection(ctx context.Context, output io.Writer, result im
 	if result.Canceled || len(result.Args) < 4 || (len(result.Args)-2)%2 != 0 {
 		return fmt.Errorf("no image request was selected")
 	}
-	if _, err := fmt.Fprintln(output, formatImagePickerCommand(result.Args, result.shell)); err != nil {
+	command := formatImagePickerCommand(result.Args, result.shell)
+	if command == "" {
+		if result.PrintOnly {
+			return imageSavingFailure(imagePickerUnsupportedShell, nil)
+		}
+		return nil
+	}
+	if _, err := fmt.Fprintln(output, command); err != nil {
 		return imageSavingFailure("Could not print the command. No image request was started.", err)
 	}
 	return nil

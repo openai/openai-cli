@@ -14,7 +14,9 @@ model, size, quality, background, file type and image count. The picker starts
 with the CLI's default model, a 1024 × 1024 image, automatic quality and
 background, PNG and one image. Enter generates from the prompt; use the arrow
 keys or Tab to move through settings. Ctrl+P prints the command without
-requesting an image, and Ctrl+C exits.
+requesting an image, and Ctrl+C exits. Command previews and Ctrl+P support Bash,
+zsh, fish and PowerShell 7. In other or unidentified shells, generation remains
+available, but command printing is disabled with an explanation in the picker.
 
 After a successful generation, the picker reopens below the saved result with
 the active prompt and settings. Choices last until this invocation exits.
