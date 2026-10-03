@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.0](https://github.com/openai/openai-cli/compare/v1.34.0...v1.35.0) (2026-10-03)
+
+
+### Features
+
+* **images:** open the picker with Tab in supported shells ([#359](https://github.com/openai/openai-cli/issues/359)) ([8b6db1f](https://github.com/openai/openai-cli/commit/8b6db1f4ac85b0cae997de379e1951954a204683))
+
 ## [1.34.0](https://github.com/openai/openai-cli/compare/v1.33.0...v1.34.0) (2026-10-03)
 
 
