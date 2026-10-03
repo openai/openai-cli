@@ -2,7 +2,7 @@
 
 ____APPNAME___bash_autocomplete() {
   if [[ "${COMP_WORDS[0]}" != "source" ]]; then
-    local cur completions exit_code
+    local cur completions exit_code file
     local IFS=$'\n'
     cur="${COMP_WORDS[COMP_CWORD]}"
 
@@ -49,16 +49,27 @@ ____APPNAME___bash_autocomplete() {
     fi
 
     if [[ "$force_file_completion" == true ]]; then
-      local file
       COMPREPLY=()
       while IFS= read -r file; do
         COMPREPLY+=("$prefix$file")
       done < <(compgen -f -- "$file_part")
     else
       case $exit_code in
-      10) mapfile -t COMPREPLY < <(compgen -f -- "$cur") ;; # file completion
-      11) COMPREPLY=() ;;                                   # no completion
-      0) mapfile -t COMPREPLY <<<"$completions" ;;          # use returned completions
+      10) # File completion, including Bash 3.2 (which has no mapfile).
+        COMPREPLY=()
+        while IFS= read -r file; do
+          COMPREPLY+=("$file")
+        done < <(compgen -f -- "$cur")
+        ;;
+      11) COMPREPLY=() ;; # no completion
+      0)
+        COMPREPLY=()
+        if [[ -n "$completions" ]]; then
+          while IFS= read -r file; do
+            COMPREPLY+=("$file")
+          done <<<"$completions"
+        fi
+        ;;
       esac
     fi
     return 0

@@ -16,6 +16,9 @@ background, PNG and one image. Enter generates from the prompt; use the arrow
 keys or Tab to move through settings. Ctrl+P prints the command without
 requesting an image, and Ctrl+C exits.
 
+An optional [Tab shortcut](image-picker-shortcuts.md) opens the same picker in
+Bash 4.3+, zsh and fish. Other shells use Enter.
+
 After a successful generation, the picker reopens below the saved result with
 the active prompt and settings. It remembers the last submitted prompt and
 settings for next time; canceled edits are discarded. Settings stay local to
