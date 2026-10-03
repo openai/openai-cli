@@ -31,6 +31,12 @@ func PrepareKittyOutput(ctx context.Context, out io.Writer) (context.Context, fu
 	if !ok || !term.IsTerminal(file.Fd()) {
 		return ctx, func() error { return nil }
 	}
+	// A picker owns this binding across its requests. Nested saving workflows
+	// reuse it without taking ownership of closure or reopening the executable.
+	// writeKittyOutput still rejects a different output descriptor.
+	if binding, _ := ctx.Value(kittyOutputContextKey{}).(*kittyOutputBinding); binding != nil {
+		return ctx, func() error { return nil }
+	}
 	binding := &kittyOutputBinding{output: file}
 	path, err := os.Executable()
 	if err == nil {

@@ -2,6 +2,7 @@ package custom
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -15,13 +16,19 @@ import (
 // Only a bare interactive command enters the picker. Explicit flags and piped
 // bodies retain their existing validation, defaults and output behavior.
 func imagePickerWorkflow(next cli.ActionFunc) cli.ActionFunc {
-	return func(ctx context.Context, command *cli.Command) error {
+	return func(ctx context.Context, command *cli.Command) (resultErr error) {
 		out, ok := command.Root().Writer.(*os.File)
 		if !ok || out != os.Stdout || !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(out.Fd()) ||
 			strings.EqualFold(os.Getenv("TERM"), "dumb") || !imagePickerRequested(command) {
 			return next(ctx, command)
 		}
 		options := imagePickerOptions{}
+		// Keep the executable binding through initial input and every request.
+		// Each native writer still finishes before the picker reads input again.
+		ctx, closeOutput := prepareNativeImageOutput(ctx, command)
+		defer func() {
+			resultErr = errors.Join(resultErr, closeOutput())
+		}()
 		for {
 			result, err := runImagePickerSession(ctx, os.Stdin, out, options)
 			if err != nil {
