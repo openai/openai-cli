@@ -288,14 +288,16 @@ def one_case(root, terminal, executable, window_tool, label, mode):
 def main():
     check(sys.platform == "darwin" and os.environ.get("GITHUB_ACTIONS") == "true"
           and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted", "refusing local GUI execution")
-    check(len(sys.argv) == 2, "usage: macos_driver.py OWNED_RUNNER_TEMP_DIR")
+    check(len(sys.argv) in (2, 3), "usage: macos_driver.py OWNED_RUNNER_TEMP_DIR [kitty|ghostty]")
+    check(len(sys.argv) == 2 or sys.argv[2] in RUNTIMES, "unknown native terminal")
+    runtimes = RUNTIMES if len(sys.argv) == 2 else {sys.argv[2]: RUNTIMES[sys.argv[2]]}
     root = Path(sys.argv[1]).resolve()
     runner_temp = Path(os.environ["RUNNER_TEMP"]).resolve()
     check(root.parent == runner_temp and root.name == "native-images", "must use the owned runner temporary directory")
     evidence = root / "evidence"
     evidence.mkdir()
     report = {"candidate": os.environ["CANDIDATE_SHA"], "baseline": os.environ["BASELINE_SHA"],
-              "runtimes": RUNTIMES, "native_appearance": "unreviewed", "mounts": [], "cases": [],
+              "runtimes": runtimes, "native_appearance": "unreviewed", "mounts": [], "cases": [],
               "terminal_attempts": {},
               "workflow_sha": os.environ.get("GITHUB_SHA"),
               "runner": {k: os.environ.get(k) for k in ("RUNNER_ENVIRONMENT", "RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion")},
@@ -325,7 +327,7 @@ def main():
         report["manifest"] = manifest
         window_tool = root / "window-info"
         run(["xcrun", "swiftc", "-O", root / "window_info.swift", "-o", window_tool], timeout=90)
-        for terminal, runtime in RUNTIMES.items():
+        for terminal, runtime in runtimes.items():
             attempt = {"status": "incomplete", "cases": []}
             report["terminal_attempts"][terminal] = attempt
             try:

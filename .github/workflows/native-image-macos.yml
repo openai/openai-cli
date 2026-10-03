@@ -1,4 +1,4 @@
-# One bounded capability experiment; native recipes remain pinned at 23fd98e.
+# Scoped Ghostty validation of the redesigned writer; never PR-triggered or required.
 name: PR342 native macOS image proof
 on:
   push:
@@ -12,53 +12,48 @@ concurrency:
   group: pr342-native-macos-proof
   cancel-in-progress: false
 jobs:
-  opengl-capability:
+  native-images:
     if: github.repository == 'openai/openai-cli' && github.ref == 'refs/heads/codex/pr342-macos-native-proof'
-    runs-on: macos-15-intel
-    timeout-minutes: 2
+    runs-on: macos-26-xlarge
+    timeout-minutes: 8
+    env:
+      CANDIDATE_SHA: 86aa8de879adf861609f06e5ad1eca55563e8fbb
+      BASELINE_SHA: 759464ea24c4cd86b6803c31361b83f43dfed3b9
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Check Kitty-equivalent native OpenGL capability
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Validate capture orchestration without a GUI
+        run: python3 -I scripts/demos/native-images/test_macos_driver.py -v
+      - name: Build exact baseline and candidate
         shell: bash
         run: |
           set -euo pipefail
           [[ "$GITHUB_ACTIONS" == true && "$RUNNER_ENVIRONMENT" == github-hosted ]]
-          python3 -I - <<'PY'
-          import hashlib, json, os, pathlib, subprocess
-          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'kitty-opengl-capability'
-          root.mkdir()
-          source = pathlib.Path('scripts/demos/native-images/check_kitty_opengl.m')
-          report = {'workflow_sha': os.environ['GITHUB_SHA'], 'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
-                    'runner_arch': os.environ.get('RUNNER_ARCH'), 'image_version': os.environ.get('ImageVersion'),
-                    'scope': 'capability only; no CLI build, terminal launch, or screenshots'}
-          try:
-              for name, argv, timeout in [
-                  ('compile', ['xcrun', 'clang', '-fobjc-arc', '-Wno-deprecated-declarations', '-framework', 'Cocoa',
-                               '-framework', 'OpenGL', str(source), '-o', str(root / 'check')], 30),
-                  ('probe', [str(root / 'check')], 10),
-              ]:
-                  with (root / (name + '.stdout')).open('xb') as out, (root / (name + '.stderr')).open('xb') as err:
-                      result = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err, timeout=timeout)
-                  report[name + '_exit'] = result.returncode
-                  if result.returncode:
-                      raise RuntimeError(name + ' failed; see retained output')
-          except BaseException as error:
-              report['failure'] = str(error)
-              raise
-          finally:
-              (root / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
-          PY
-      - name: Preserve capability diagnostics
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ && "$BASELINE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin "$BASELINE_SHA" "$CANDIDATE_SHA"
+          git cat-file -e "$BASELINE_SHA^{commit}"
+          git cat-file -e "$CANDIDATE_SHA^{commit}"
+          mkdir -p "$RUNNER_TEMP/native-images/bin"
+          git worktree add --detach "$RUNNER_TEMP/native-before" "$BASELINE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/native-after" "$CANDIDATE_SHA"
+          (cd "$RUNNER_TEMP/native-before" && go build -o "$RUNNER_TEMP/native-images/bin/openai-before" ./cmd/openai)
+          (cd "$RUNNER_TEMP/native-after" && go build -o "$RUNNER_TEMP/native-images/bin/openai-after" ./cmd/openai)
+      - name: Capture fixed synthetic scenes in native terminals
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I -B scripts/demos/native-images/macos_driver.py "$RUNNER_TEMP/native-images" ghostty
+      - name: Preserve synthetic evidence and failures
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pr342-kitty-opengl-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/kitty-opengl-capability/*.json
-            ${{ runner.temp }}/kitty-opengl-capability/*.stdout
-            ${{ runner.temp }}/kitty-opengl-capability/*.stderr
+          name: pr342-macos-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-images/evidence
           if-no-files-found: error
           retention-days: 7
