@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 	"time"
 
 	"github.com/charmbracelet/x/term"
@@ -56,7 +55,7 @@ func PrepareKittyOutput(ctx context.Context, out io.Writer) (context.Context, fu
 }
 
 // Go's interrupted tty writes can resume after VINTR flushes their header.
-// Only native cat writes graphics; its supervisor owns cancellation and reaping.
+// Only a directly owned worker with kernel-default SIGINT writes graphics.
 // Terminal modes, user descriptor flags and parent signal handlers are unchanged.
 func writeKittyOutput(ctx context.Context, out io.Writer, write func(io.Writer) error) (err error) {
 	file, ok := out.(*os.File)
@@ -89,7 +88,7 @@ func writeKittyOutput(ctx context.Context, out io.Writer, write func(io.Writer) 
 	if err == nil || !written {
 		return err
 	}
-	// Pipe acceptance does not identify the terminal's cut. Wait for cat before
+	// Pipe acceptance does not identify the terminal's cut. Reap failed workers before
 	// NUL + ST + quiet final chunk. Keep the lease through bounded cleanup.
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kittyOutputCleanupTimeout)
 	defer cancel()
@@ -101,21 +100,6 @@ func writeKittyOutput(ctx context.Context, out io.Writer, write func(io.Writer) 
 		cleanupErr = fmt.Errorf("reset interrupted image output: %w", cleanupErr)
 	}
 	return errors.Join(err, cleanupErr)
-}
-
-// Fixed system locations avoid PATH wrappers with different signal behavior.
-func kittyCatPath() (string, error) {
-	paths := []string{"/bin/cat"}
-	if runtime.GOOS == "linux" {
-		paths = append(paths, "/usr/bin/cat")
-	}
-	for _, path := range paths {
-		info, err := os.Stat(path)
-		if err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
-			return path, nil
-		}
-	}
-	return "", errors.New("native image preview requires the system cat executable in /bin or /usr/bin")
 }
 
 type kittyPipeWriter struct {

@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -50,6 +52,147 @@ func TestKittySessionReusesResidentAfterJobCancellation(t *testing.T) {
 	data, err := os.ReadFile(out.Name())
 	if err != nil || len(data) < len("cleanup") || string(data[len(data)-len("cleanup"):]) != "cleanup" {
 		t.Fatalf("cleanup was not complete before acknowledgement: %q, %v", data, err)
+	}
+}
+
+func TestKittyWorkerFailureReapsBeforeReturning(t *testing.T) {
+	path, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"killed", "stopped-then-canceled", "interrupt"} {
+		t.Run(mode, func(t *testing.T) {
+			outRead, outWrite, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer outRead.Close()
+			defer outWrite.Close()
+			session, err := startKittySession(t.Context(), path, outWrite)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer session.Close()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				_, err := session.write(ctx, func(out io.Writer) error {
+					_, err := io.Copy(out, strings.NewReader(strings.Repeat("image", 1<<20)))
+					return err
+				})
+				done <- err
+			}()
+			if err := outRead.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			var first [1]byte
+			if _, err := outRead.Read(first[:]); err != nil {
+				t.Fatal(err)
+			}
+			worker := session.workers[0]
+			sig := syscall.SIGKILL
+			if mode == "stopped-then-canceled" {
+				sig = syscall.SIGSTOP
+			} else if mode == "interrupt" {
+				sig = syscall.SIGINT
+			}
+			if err := worker.command.Process.Signal(sig); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "stopped-then-canceled" {
+				cancel()
+			}
+			// Never drain output to make cancellation or helper failure finish.
+			select {
+			case err := <-done:
+				if err == nil || (mode != "killed" && !errors.Is(err, context.Canceled)) {
+					t.Fatalf("worker failure lost: %v", err)
+				}
+			case <-time.After(3 * time.Second):
+				outRead.Close()
+				t.Fatal("worker failure left producer blocked")
+			}
+			if worker.command.ProcessState == nil {
+				t.Fatal("worker was not reaped before write returned")
+			}
+			if !worker.retired.Load() || session.workers[1].retired.Load() {
+				t.Fatal("failure consumed the idle reset worker")
+			}
+		})
+	}
+}
+
+func TestKittyCloseReapsStoppedIdleWorkers(t *testing.T) {
+	path, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	session, err := startKittySession(t.Context(), path, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	for _, worker := range session.workers {
+		if err := worker.command.Process.Signal(syscall.SIGSTOP); err != nil {
+			t.Fatal(err)
+		}
+	}
+	started := time.Now()
+	if err := session.Close(); err == nil {
+		t.Fatal("forced shutdown failure was not reported")
+	}
+	if elapsed := time.Since(started); elapsed > 4*time.Second {
+		t.Fatalf("stopped idle workers outlived shutdown: %v", elapsed)
+	}
+	for _, worker := range session.workers {
+		if worker.command.ProcessState == nil {
+			t.Fatal("idle worker was not reaped")
+		}
+	}
+}
+
+func TestKittyJobRejectsWritePipeBeforeReadiness(t *testing.T) {
+	path, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	worker, err := startKittyWorker(t.Context(), path, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer worker.Close()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	flags, err := unix.FcntlInt(w.Fd(), unix.F_GETFL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := worker.control.WriteMsgUnix([]byte{'J'}, unix.UnixRights(int(w.Fd())), nil); err != nil {
+		t.Fatal(err)
+	}
+	status, fds, err := readKittyControl(worker.control)
+	closeKittyDescriptors(fds)
+	if err != nil || status != '1' || len(fds) != 0 {
+		t.Fatalf("invalid job entered output phase: status=%q, err=%v", status, err)
+	}
+	after, err := unix.FcntlInt(w.Fd(), unix.F_GETFL, 0)
+	if err != nil || flags != after {
+		t.Fatalf("rejected pipe flags changed: %v, %v, %v", flags, after, err)
 	}
 }
 
@@ -116,35 +259,6 @@ func TestKittyControlRejectsExcessDescriptorsWithoutLeaks(t *testing.T) {
 	var b [1]byte
 	if _, err := r.Read(b[:]); !errors.Is(err, io.EOF) {
 		t.Fatalf("transferred writer leaked after rejection: %v", err)
-	}
-}
-
-func TestKittyJobRejectsAliasedPipesBeforeChangingFlags(t *testing.T) {
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	defer w.Close()
-	one, err := unix.Dup(int(r.Fd()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	two, err := unix.Dup(int(r.Fd()))
-	if err != nil {
-		unix.Close(one)
-		t.Fatal(err)
-	}
-	flags, err := unix.FcntlInt(r.Fd(), unix.F_GETFL, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := runKittyJob(t.Context(), "/bin/cat", []int{one, two}); err == nil {
-		t.Fatal("aliased data and cancellation pipes accepted")
-	}
-	after, err := unix.FcntlInt(r.Fd(), unix.F_GETFL, 0)
-	if err != nil || after != flags {
-		t.Fatalf("rejected pipe flags changed: %v, %v, %v", flags, after, err)
 	}
 }
 
