@@ -17,6 +17,12 @@ import sys
 import termios
 import time
 
+# Public fixtures used by the dynamically loaded picker process checks.
+__all__ = [
+    'ANSI', 'DOWN', 'END', 'Fixture', 'HOME', 'PNG', 'PRINT', 'Terminal', 'UP',
+    'generate', 'http', 'printed_flags', 'ready', 'wait_for_request',
+]
+
 PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP438AAAAQBAYDFKhhdAAAAAElFTkSuQmCC')
 ANSI = re.compile(r'\x1b\][^\x07]*?(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]')
 DOWN, UP, HOME, END = b'\x1b[B', b'\x1b[A', b'\x1b[H', b'\x1b[F'

@@ -139,7 +139,16 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	}()
 	_, runErr := program.Run()
 	inline.close()
-	return model.result, errors.Join(runErr, tracked.Err(), inline.err, parent.Err())
+	writeErr := tracked.Err()
+	if writeErr != nil {
+		// Stopping Tea after a failed write cancels its private context. That
+		// cancellation is not a user action; retain real parent cancellation below.
+		if errors.Is(runErr, context.Canceled) {
+			runErr = nil
+		}
+		writeErr = imageSavingFailure("Could not display the image picker. No new image request was started.", writeErr)
+	}
+	return model.result, errors.Join(runErr, writeErr, inline.err, parent.Err())
 }
 
 type imagePickerStopMsg struct{ code int }
