@@ -164,7 +164,8 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	}
 	profileRoot, err := openPickerProfileDirectory(ctx, filepath.Dir(options.Profile), !remove)
 	if remove && errors.Is(err, os.ErrNotExist) {
-		return result, nil
+		result.Changed, err = removePickerScriptsWithoutProfile(ctx, options)
+		return result, err
 	}
 	if err != nil {
 		return result, err

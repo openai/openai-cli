@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -142,5 +144,137 @@ func TestPickerInstallRetriesSupersededScriptCleanup(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, active)
 		first = retried
+	}
+}
+
+func TestPickerRemoveMissingProfileParentCleansOwnedScripts(t *testing.T) {
+	for _, shell := range []CompletionStyle{CompletionStyleBash, CompletionStyleZsh, CompletionStyleFish} {
+		t.Run(string(shell), func(t *testing.T) {
+			options := pickerInstallFixture(t, shell)
+			home := filepath.Dir(options.Profile)
+			options.Profile = filepath.Join(home, "startup", "profile")
+			installed, err := InstallPicker(t.Context(), options)
+			require.NoError(t, err)
+			peer := options
+			peer.Profile = filepath.Join(home, "peer-profile")
+			peerInstalled, err := InstallPicker(t.Context(), peer)
+			require.NoError(t, err)
+			prefixLength := len("picker-"+string(shell)+"-") + 16 + 1
+			namespace := filepath.Base(installed.ScriptPath)[:prefixLength]
+			older := []byte(pickerScriptHeader + "# older owned script\n")
+			oldPath := filepath.Join(options.Directory, namespace+pickerScriptName(options, older)[prefixLength:])
+			require.NoError(t, os.WriteFile(oldPath, older, 0600))
+			modified := []byte(pickerScriptHeader + "# original bytes\n")
+			modifiedPath := filepath.Join(options.Directory, namespace+pickerScriptName(options, modified)[prefixLength:])
+			require.NoError(t, os.WriteFile(modifiedPath, []byte("# personal modification\n"), 0600))
+			unproven := options
+			unproven.Profile += "-unknown-alias"
+			unprovenPath := filepath.Join(options.Directory, pickerScriptName(unproven, older))
+			require.NoError(t, os.WriteFile(unprovenPath, older, 0600))
+			preserved := make(map[string][]byte)
+			for _, path := range []string{peerInstalled.ScriptPath, modifiedPath, unprovenPath} {
+				preserved[path], err = os.ReadFile(path)
+				require.NoError(t, err)
+			}
+			require.NoError(t, os.RemoveAll(filepath.Dir(options.Profile)))
+			removed, err := RemovePicker(t.Context(), options)
+			require.NoError(t, err)
+			require.True(t, removed.Changed)
+			for _, path := range []string{installed.ScriptPath, oldPath, filepath.Dir(options.Profile)} {
+				_, err = os.Lstat(path)
+				require.ErrorIs(t, err, os.ErrNotExist, "cleanup must not recreate the missing startup directory")
+			}
+			for path, before := range preserved {
+				after, err := os.ReadFile(path)
+				require.NoError(t, err)
+				require.Equal(t, before, after, "preserve scripts outside provable ownership")
+			}
+			active, err := IsPickerInstalled(t.Context(), peer)
+			require.NoError(t, err)
+			require.True(t, active)
+			again, err := RemovePicker(t.Context(), options)
+			require.NoError(t, err)
+			require.False(t, again.Changed)
+		})
+	}
+}
+
+func TestPickerRemoveMissingProfileAndScriptDirectoriesNoOp(t *testing.T) {
+	for _, shell := range []CompletionStyle{CompletionStyleBash, CompletionStyleZsh, CompletionStyleFish} {
+		t.Run(string(shell), func(t *testing.T) {
+			options := pickerInstallFixture(t, shell)
+			home := filepath.Dir(options.Profile)
+			options.Profile = filepath.Join(home, "absent", "profile")
+			before := pickerConfigTree(t, home)
+			for range 2 {
+				removed, err := RemovePicker(t.Context(), options)
+				require.NoError(t, err)
+				require.False(t, removed.Changed)
+			}
+			require.Equal(t, before, pickerConfigTree(t, home))
+		})
+	}
+}
+
+// Done is evaluated by the lock wait only after an acquisition failed. It
+// provides a handshake without depending on the number of validation checks.
+type pickerCleanupWaitingContext struct {
+	context.Context
+	once    sync.Once
+	waiting chan struct{}
+}
+
+func (ctx *pickerCleanupWaitingContext) Done() <-chan struct{} {
+	ctx.once.Do(func() { close(ctx.waiting) })
+	return ctx.Context.Done()
+}
+
+func TestPickerRemoveMissingProfileParentReappearsWhileWaiting(t *testing.T) {
+	for _, shell := range []CompletionStyle{CompletionStyleBash, CompletionStyleZsh, CompletionStyleFish} {
+		t.Run(string(shell), func(t *testing.T) {
+			options := pickerInstallFixture(t, shell)
+			options.Profile = filepath.Join(filepath.Dir(options.Profile), "startup", "profile")
+			installed, err := InstallPicker(t.Context(), options)
+			require.NoError(t, err)
+			profile, err := os.ReadFile(options.Profile)
+			require.NoError(t, err)
+			script, err := os.ReadFile(installed.ScriptPath)
+			require.NoError(t, err)
+			require.NoError(t, os.RemoveAll(filepath.Dir(options.Profile)))
+			root, err := openPickerScriptDirectory(t.Context(), options.Directory, false)
+			require.NoError(t, err)
+			defer root.Close()
+			lock, err := lockPickerInstallation(t.Context(), root, ".picker-install.lock")
+			require.NoError(t, err)
+			defer lock.Close()
+			deadline, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			ctx := &pickerCleanupWaitingContext{Context: deadline, waiting: make(chan struct{})}
+			finished := make(chan error, 1)
+			go func() {
+				_, err := RemovePicker(ctx, options)
+				finished <- err
+			}()
+			select {
+			case <-ctx.waiting:
+			case err := <-finished:
+				t.Fatalf("removal returned before waiting for the script lock: %v", err)
+			case <-deadline.Done():
+				t.Fatal("removal did not reach the script lock")
+			}
+			require.NoError(t, os.Mkdir(filepath.Dir(options.Profile), 0700))
+			require.NoError(t, os.WriteFile(options.Profile, profile, 0600))
+			require.NoError(t, lock.Close())
+			require.ErrorIs(t, <-finished, errPickerInstallChanged)
+			after, err := os.ReadFile(installed.ScriptPath)
+			require.NoError(t, err)
+			require.Equal(t, script, after)
+			after, err = os.ReadFile(options.Profile)
+			require.NoError(t, err)
+			require.Equal(t, profile, after)
+			active, err := IsPickerInstalled(t.Context(), options)
+			require.NoError(t, err)
+			require.True(t, active)
+		})
 	}
 }

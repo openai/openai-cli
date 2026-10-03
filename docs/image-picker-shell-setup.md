@@ -77,6 +77,10 @@ When setup created the profile itself, removal restores its absence if the
 intact managed block is still its only content. Preexisting empty files and
 profiles containing personal changes remain. Older installations without
 creation metadata conservatively preserve the profile.
+If the startup directory was deleted, removal still cleans verified scripts in
+the selected script directory without recreating the startup directory. Missing
+profile metadata cannot identify an earlier script root or an unprovable alias;
+those files remain untouched.
 Repeating either command is safe. Modified blocks or scripts stay available for
 inspection. Default Bash removal checks all three login profiles as well as
 `.bashrc`, so a newer, higher-priority login profile cannot hide earlier setup.
