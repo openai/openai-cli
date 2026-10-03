@@ -163,3 +163,41 @@ func TestImageUploadPreparedBodyClosesOnce(t *testing.T) {
 	require.NoError(t, body.Close())
 	require.EqualValues(t, 1, source.closeCount.Load())
 }
+
+// Use the same owned blocking source fixture as image upload cancellation.
+// The voice discriminator must never force a read outside the request context.
+func TestAudioVoiceTypeFileCancellationReleasesOwnedRead(t *testing.T) {
+	source := newCloseUnblocksReader(errors.New("synthetic source closed"))
+	sample := &recordingReadCloser{reader: strings.NewReader("synthetic unread sample")}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	command := &cli.Command{
+		Name:     "create",
+		Metadata: map[string]any{audioVoicesContextMetadata: ctx},
+	}
+	body := map[string]any{
+		"type":         fileUpload{Reader: source},
+		"audio_sample": fileUpload{Reader: sample},
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- prepareAudioVoicesMultipartBody(command, body)
+	}()
+	select {
+	case <-source.readStarted:
+	case <-time.After(multipartTestTimeout):
+		t.Fatal("voice type inspection did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(multipartTestTimeout):
+		t.Fatal("cancellation did not release voice type source")
+	}
+	require.EqualValues(t, 1, source.closeCount.Load())
+	// FlagOptions performs this cleanup on its error path after inspection.
+	require.NoError(t, closeFileUploads(body))
+	require.EqualValues(t, 1, source.closeCount.Load())
+	require.EqualValues(t, 1, sample.closeCount.Load())
+}

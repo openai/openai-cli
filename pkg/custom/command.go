@@ -20,9 +20,12 @@ func ConfigureCommand(root *cli.Command) {
 	registerImageModels(root)
 	configureReadableOutput(root)
 	configureImageSaving(root)
+	configureImagePickerCompletion(root)
 	registerImagePreviewCommands(root)
 	configureReadableAudio(root)
 	configureReadableSpeech(root)
+	configureCommandSubgroups(root)
+	configureManpageCommands(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, mtlsClientFlags()...)
 	previousBefore := root.Before

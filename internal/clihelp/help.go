@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -26,7 +27,7 @@ GET HELP
   {{$run}} --help                      This menu (also -h)
   {{$run}} images --help               Browse image commands
   {{$run}} images generate --help      Example and common inputs
-  {{$run}} help --all                  Every command and global option
+  {{$run}} help --all                  Command groups and global options
   {{$run}} help --all images generate  Complete help for one command
 
 Add --help (or -h) to any command. Help needs no API key or internet.
@@ -227,7 +228,7 @@ func showHelpTopics(ctx context.Context, command *cli.Command) error {
 	parent, target := root, root
 	for _, topic := range command.Args().Slice() {
 		next := target.Command(topic)
-		if next == nil || next.Hidden || topic == "help" {
+		if next == nil || !allowsHelpTopic(next) || topic == "help" {
 			return cli.Exit(fmt.Sprintf("Unknown help topic %q. Run %s help --all to see commands.", topic, root.Metadata["help-invocation"]), 3)
 		}
 		parent, target = target, next
@@ -239,6 +240,13 @@ func showHelpTopics(ctx context.Context, command *cli.Command) error {
 		return cli.ShowRootCommandHelp(root)
 	}
 	return cli.ShowCommandHelp(ctx, parent, target.Name)
+}
+
+// Compatibility aliases stay out of discovery but retain explicitly requested
+// help. Internal commands remain unavailable as help topics.
+func allowsHelpTopic(command *cli.Command) bool {
+	compatibility, _ := command.Metadata["command-compatibility-alias"].(bool)
+	return !command.Hidden || compatibility
 }
 
 func useFullHelp(root, target *cli.Command) {
@@ -278,6 +286,14 @@ func Invocation(fallback string, args []string) string {
 	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return fallback
 	}
+	// Installed commands need no directory prefix when PATH selects this same
+	// executable. Keep the invoked path for local builds or other installations.
+	// Relative matches can come from Go's implicit current-directory lookup
+	// when execerrdot=0, which does not match PowerShell's command lookup.
+	if installed, err := exec.LookPath(fallback); err == nil && filepath.IsAbs(installed) &&
+		sameExecutable(name, installed) && !hasPowerShellScriptOnPath(fallback) {
+		return fallback
+	}
 	// PowerShell can supply an absolute argv[0] even for .\openai.exe. When
 	// already in the executable's folder, use the relative form accepted by
 	// both PowerShell and cmd.exe, including folders containing spaces.
@@ -296,6 +312,18 @@ func Invocation(fallback string, args []string) string {
 		return quoteInvocation(name, fallback)
 	}
 	return name
+}
+
+func hasPowerShellScriptOnPath(name string) bool {
+	// PowerShell can discover .ps1 commands that exec.LookPath misses, including
+	// scripts without a Unix executable bit and dangling symlinks. Keep the full
+	// path whenever one is present, since shell command precedence differs.
+	for _, directory := range filepath.SplitList(os.Getenv("PATH")) {
+		if info, err := os.Lstat(filepath.Join(directory, name+".ps1")); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 func sameExecutable(first, second string) bool {

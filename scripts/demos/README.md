@@ -159,6 +159,24 @@ native terminal validation. The output also preserves transcripts, captures,
 the exact scene, tool versions, hashes, commit IDs and the empty request log.
 Keep this output outside Git; rerun after changing the demonstrated help.
 
+### Installed command paths
+
+`record-command-paths.sh` compares the no-argument welcome page using the same
+absolute invocation and PATH entry. Only the installed symlink's target changes
+between the verified before and after binaries:
+
+```sh
+bash scripts/demos/record-command-paths.sh \
+  /path/to/before/openai /path/to/after/openai \
+  BEFORE_COMMIT AFTER_COMMIT /path/outside/repository/command-paths-demo
+```
+
+Supply full 40-character commit IDs and an empty output directory. The shared
+capture helper records real exit statuses and rejects failed commands. The
+runner checks that welcome examples change from a full path to `openai`.
+It starts no API fixture and uses no credentials. Inspect the 130x24 terminal
+replay, screenshots and metadata before publishing; keep media outside Git.
+
 ### Image loading feedback
 
 `record-image-loading.sh` compares the same generation request with an identical

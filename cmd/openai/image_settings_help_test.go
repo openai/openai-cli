@@ -39,17 +39,17 @@ func TestMainImageSettingsHelpScope(t *testing.T) {
 			require.LessOrEqual(t, len(strings.Fields(description)), 65, "keep the introduction concise; details belong in the option reference")
 			require.Equal(t, 1, strings.Count(description, "openai images "), "lead with one useful example")
 			text := strings.Join(strings.Fields(full.stdout), " ")
-			for _, want := range []string{"--name", "existing folder", "-2, -3", "--format json", "without saving", "Uses your saved preference unless set", "Pipes and CI never show previews"} {
+			for _, want := range []string{"--name", "-2, -3", "Uses your saved preference unless set", "Pipes and CI never show previews"} {
 				require.Contains(t, text, want)
 			}
 			if operation == "create-variation" {
 				for _, unsupported := range []string{"--quality", "--partial-images", "--moderation", "--output-format", "--output-compression", "--background", "--stream"} {
 					require.NotContains(t, full.stdout, unsupported)
 				}
-				require.Contains(t, text, "dall-e-2")
-				require.Contains(t, text, "square PNG under 4 MB")
+				require.Contains(t, text, "retired and no longer available")
+				require.Contains(t, text, "The options below describe the legacy variations contract")
 			} else {
-				for _, want := range []string{"Saving default when model and response-format are omitted", "Explicit models retain API defaults", "Positive values enable streaming when saving", "When saving, only the final image is kept", "Use --format json for API events", "--max-items or use -1"} {
+				for _, want := range []string{"existing folder", "--format json", "without saving", "Saving default when model and response-format are omitted", "Explicit models retain API defaults", "Positive values enable streaming when saving", "When saving, only the final image is kept", "Use --format json for API events", "--max-items or use -1"} {
 					require.Contains(t, text, want)
 				}
 				if operation == "edit" {
@@ -65,14 +65,14 @@ func TestMainImageSettingsHelpScope(t *testing.T) {
 // establish live model access or validate an image model's visual output.
 func TestMainImageSettingsCompleteExamples(t *testing.T) {
 	for _, tc := range []struct {
-		operation string
-		args      []string
+		helpTopic, operation string
+		args                 []string
 	}{
-		{"generate", []string{"--prompt", "A tiny cat", "--name", "cat"}},
-		{"edit", []string{"--image", "photo.png", "--prompt", "Make the sky purple", "--name", "purple-sky"}},
-		{"create-variation", []string{"--image", "photo.png", "--name", "variation"}},
+		{"generate", "generate", []string{"--prompt", "A tiny cat", "--name", "cat"}},
+		{"edit", "edit", []string{"--image", "photo.png", "--prompt", "Make the sky purple", "--name", "purple-sky"}},
+		{"create-variation", "edit", []string{"--image", "photo.png", "--prompt", "Create a variation of this image", "--name", "variation"}},
 	} {
-		t.Run(tc.operation+"/"+strings.Join(tc.args, " "), func(t *testing.T) {
+		t.Run(tc.helpTopic+"/"+strings.Join(tc.args, " "), func(t *testing.T) {
 			args := append([]string(nil), tc.args...)
 			var example strings.Builder
 			example.WriteString("openai ")
@@ -88,7 +88,7 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 				}
 				settings[strings.TrimPrefix(flag, "--")] = value
 			}
-			help := runMainDispatch(t, "bash", "openai", "help", "--all", "images", tc.operation)
+			help := runMainDispatch(t, "bash", "openai", "help", "--all", "images", tc.helpTopic)
 			require.Zero(t, help.code, help.stderr)
 			require.Contains(t, help.stdout, example.String(), "the exact example must remain copyable")
 			home := t.TempDir()
@@ -98,14 +98,9 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 			require.NoError(t, png.Encode(&source, image.NewNRGBA(image.Rect(0, 0, 256, 256))))
 			sourcePath := filepath.Join(home, "photo.png")
 			require.NoError(t, os.WriteFile(sourcePath, source.Bytes(), 0600))
-			want := map[string]any{}
-			if tc.operation == "create-variation" {
-				want["model"], want["response_format"] = "dall-e-2", "b64_json"
-			} else {
-				want = map[string]any{"model": "gpt-image-2.5-sunburst", "n": float64(1), "size": "auto", "quality": "auto", "background": "auto", "output_format": "png", "partial_images": float64(0), "stream": false}
-				if tc.operation == "generate" {
-					want["moderation"] = "auto"
-				}
+			want := map[string]any{"model": "gpt-image-2.5-sunburst", "n": float64(1), "size": "auto", "quality": "auto", "background": "auto", "output_format": "png", "partial_images": float64(0), "stream": false}
+			if tc.operation == "generate" {
+				want["moderation"] = "auto"
 			}
 			for name, value := range settings {
 				switch name {
@@ -127,11 +122,7 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 						expected[name] = []string{fmt.Sprint(value)}
 					}
 					require.Equal(t, expected, body.values)
-					field := "image[]"
-					if tc.operation == "create-variation" {
-						field = "image"
-					}
-					require.Equal(t, [][]byte{source.Bytes()}, body.files[field])
+					require.Equal(t, [][]byte{source.Bytes()}, body.files["image[]"])
 				}
 				requests <- true
 				encoded := base64.StdEncoding.EncodeToString(source.Bytes())

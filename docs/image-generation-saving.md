@@ -9,6 +9,31 @@ openai images generate --prompt "A tiny orange robot" --output-format webp
 openai --format json images generate --prompt "A tiny orange robot" --model gpt-image-2.5-sunburst
 ```
 
+Run `openai images generate` without flags in a terminal to choose a prompt,
+model, size, quality, background, file type and image count. The picker starts
+with the CLI's default model, a 1024 × 1024 image, automatic quality and
+background, PNG and one image. Enter generates from the prompt; use the arrow
+keys or Tab to move through settings. Ctrl+P prints the command without
+requesting an image, and Ctrl+C exits. Command previews and Ctrl+P support Bash,
+zsh, fish and PowerShell 7. In other or unidentified shells, generation remains
+available, but command printing is disabled with an explanation in the picker.
+
+An optional [Tab shortcut](image-picker-shortcuts.md) opens the same picker in
+Bash 4.3+, zsh and fish. Other shells use Enter.
+
+After a successful generation, the picker reopens below the saved result with
+the same image settings and an empty prompt. It remembers the last submitted
+image settings and save folder for next time; the description starts empty and
+is not saved in picker preferences. Canceled edits are discarded. Settings stay
+local to your user configuration folder and do not affect commands that supply flags.
+
+Choose **Save to** to use the default folder, current directory, or another
+existing folder. Tab completes folder names. Saved settings are optional: if
+they cannot be written, a warning appears and generation can still continue.
+Unknown or unreadable saved settings are left alone.
+Explicit image flags, output formats, piped input and redirected output retain
+the direct command behavior described below.
+
 Generation uses API credits and requires access to the chosen model. The CLI's
 default for saving is the exact ID `gpt-image-2.5-sunburst`. This is a preset,
 not a guarantee of access or quota. When neither `model` nor `response_format`
@@ -46,33 +71,33 @@ without claiming that an image was saved.
 
 ## Editing and variations
 
+The `images create-variation` endpoint is retired and no longer available.
+To create a variation, use `images edit` with a GPT Image model and a prompt:
+
 ```sh
 openai images edit --image photo.png --prompt "Make the sky purple"
 openai images edit --image first.png --image second.png --mask mask.png --prompt "Add a purple sky"
 openai images edit --image photo.png --prompt "Make the sky purple" --name result --count 2
 openai images edit --image photo.png --prompt "Make the sky purple" --stream true
-openai images create-variation --image photo.png
+openai images edit --image "photo.png" --prompt "Create a variation of this image" --name variation
 openai --format json images edit --image photo.png --prompt "Make the sky purple"
 ```
 
-These existing commands now use the same saving folder, filename overrides,
-collision protection and explicit-format opt-outs as generation. Source images
+Edits use the same saving folder, filename overrides, collision protection
+and explicit-format opt-outs as generation. Source images
 and masks are uploaded without being rewritten; saved results are new files.
-Editing names come from the prompt. Variations use `image-variation`.
+Editing names come from the prompt.
 
 Saving edits uses the generation preset above without `moderation`, which the
-edit endpoint does not accept. Variations default to `dall-e-2` and `b64_json`;
-the endpoint requires a square PNG under 4 MB. Explicit models and nulls keep
+edit endpoint does not accept. Explicit models and nulls keep
 the existing request semantics. In multipart requests, explicit null fields
 retain their existing empty form-part encoding rather than acquiring defaults.
 
 Streamed edits save only the final image. `--partial-images 1`, `2` or `3`
 enables streaming and displays progress previews where supported.
-Variations do not support streaming. Explicit `--format json` preserves the
-original responses or edit events and makes no saved files. Model-discovery
-default markers remain separate work.
-Use `openai help --all images edit` or `openai help --all images create-variation`
-for every request setting.
+Explicit `--format json` preserves the original responses or edit events and
+makes no saved files. Model-discovery default markers remain separate work.
+Use `openai help --all images edit` for every request setting.
 
 ## Inline previews
 
@@ -143,9 +168,9 @@ openai images generate --prompt "A tiny orange robot" --inline off
 openai images generate --prompt "A tiny orange robot" --inline on
 ```
 
-Without a saved preference, `--inline auto` is the default on generation, edits
-and variations. Kitty and
-Ghostty use the Kitty graphics protocol; iTerm2 and WezTerm use the iTerm protocol.
+Without a saved preference, `--inline auto` is the default on generation and
+edits. Kitty and Ghostty use the Kitty graphics protocol; iTerm2 and WezTerm
+use the iTerm protocol.
 Other color terminals show a labeled color-block approximation. `NO_COLOR` or
 `CLICOLOR=0` disables that approximation, while native image graphics remain
 available. Basic terminals keep the saved path without a preview.

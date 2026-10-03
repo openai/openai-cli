@@ -1,5 +1,54 @@
 # Changelog
 
+## [1.35.0](https://github.com/openai/openai-cli/compare/v1.34.0...v1.35.0) (2026-10-03)
+
+
+### Features
+
+* **images:** open the picker with Tab in supported shells ([#359](https://github.com/openai/openai-cli/issues/359)) ([8b6db1f](https://github.com/openai/openai-cli/commit/8b6db1f4ac85b0cae997de379e1951954a204683))
+
+## [1.34.0](https://github.com/openai/openai-cli/compare/v1.33.0...v1.34.0) (2026-10-03)
+
+
+### Features
+
+* **images:** remember picker settings and save folder ([#358](https://github.com/openai/openai-cli/issues/358)) ([1081066](https://github.com/openai/openai-cli/commit/1081066c5caedcf4f1e235256558e936bbd28082))
+
+## [1.33.0](https://github.com/openai/openai-cli/compare/v1.32.1...v1.33.0) (2026-10-03)
+
+
+### Features
+
+* **images:** add an inline generation picker ([#357](https://github.com/openai/openai-cli/issues/357)) ([100628d](https://github.com/openai/openai-cli/commit/100628d8490075870954c4988f2016e30d019368))
+
+## [1.32.1](https://github.com/openai/openai-cli/compare/v1.32.0...v1.32.1) (2026-10-02)
+
+
+### Chores
+
+* **deps:** update openai-go to v3.71.1 ([#346](https://github.com/openai/openai-cli/issues/346)) ([7083dc6](https://github.com/openai/openai-cli/commit/7083dc66693766939fbf74ea5b15ac60d6312e45))
+
+## [1.32.0](https://github.com/openai/openai-cli/compare/v1.31.1...v1.32.0) (2026-10-02)
+
+
+### Features
+
+* **api:** add custom voice creation command ([#352](https://github.com/openai/openai-cli/issues/352)) ([805f102](https://github.com/openai/openai-cli/commit/805f10213c26a8ee6a72fdc2c5d49a62f42981eb))
+
+## [1.31.1](https://github.com/openai/openai-cli/compare/v1.31.0...v1.31.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **demos:** remove subgroup exit-code footer ([#349](https://github.com/openai/openai-cli/issues/349)) ([8f2ac67](https://github.com/openai/openai-cli/commit/8f2ac6786039e2c6a5f599ec5080a224db189675))
+
+## [1.31.0](https://github.com/openai/openai-cli/compare/v1.30.7...v1.31.0) (2026-10-01)
+
+
+### Features
+
+* add browsable command subgroups ([#347](https://github.com/openai/openai-cli/issues/347)) ([1805191](https://github.com/openai/openai-cli/commit/1805191f797953a23b373c6ffd6f41895deba92d))
+
 ## [1.30.7](https://github.com/openai/openai-cli/compare/v1.30.6...v1.30.7) (2026-09-30)
 
 

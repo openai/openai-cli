@@ -42,6 +42,9 @@ func configureImageSaving(root *cli.Command) {
 			command.CustomHelpTemplate = imageUploadQuickHelp
 		}
 		command.Action = imageSavingWorkflow(command.Action)
+		if name == "generate" {
+			command.Action = imagePickerWorkflow(command.Action)
+		}
 	}
 }
 
@@ -51,10 +54,6 @@ func registerImageSavingFlags(command *cli.Command) {
 		&cli.StringFlag{Name: "inline", Value: "auto", Usage: "Show previews: auto, on or off. Uses your saved preference unless set. Local Apple Terminal: auto uses color blocks; on permits sharp previews, Terminal Automation and private font caches. Pipes and CI never show previews."},
 		&cli.StringFlag{Name: "name", Usage: "Save with this filename `STEM` (an image extension is optional); duplicates get -2, -3, etc. Existing files are kept"},
 	)
-	model := defaultSavedImageModel
-	if command.Name == "create-variation" {
-		model = "dall-e-2"
-	}
 	for _, flag := range command.Flags {
 		switch flag := flag.(type) {
 		case *requestflag.Flag[*int64]:
@@ -70,11 +69,15 @@ func registerImageSavingFlags(command *cli.Command) {
 			}
 		case *requestflag.Flag[*string]:
 			if flag.Name == "model" {
-				flag.Usage = "Saving default when model and response-format are omitted: " + model + ". Explicit models retain API defaults. API behavior: " + flag.Usage
+				if command.Name != "create-variation" {
+					flag.Usage = "Saving default when model and response-format are omitted: " + defaultSavedImageModel + ". Explicit models retain API defaults. API behavior: " + flag.Usage
+				}
 				flag.HideDefault = true
 			}
 			if flag.Name == "response-format" {
-				flag.Usage = "CLI saving requests b64_json for DALL-E when omitted; url disables saving. API behavior: " + flag.Usage
+				if command.Name != "create-variation" {
+					flag.Usage = "CLI saving requests b64_json for DALL-E when omitted; url disables saving. API behavior: " + flag.Usage
+				}
 				flag.HideDefault = true
 			}
 		}

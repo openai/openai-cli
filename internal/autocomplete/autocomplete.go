@@ -66,6 +66,13 @@ func OutputCompletionScript(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return cli.Exit(err, 1)
 	}
+	if cmd.Bool("picker") {
+		picker, err := renderPickerCompletion(s, cmd.Root().Name)
+		if err != nil {
+			return cli.Exit(err, 1)
+		}
+		completionScript += "\n" + picker
+	}
 
 	_, err = cmd.Writer.Write([]byte(completionScript))
 	if err != nil {
@@ -139,7 +146,10 @@ func completionFlags(lineage []*cli.Command) []cli.Flag {
 
 func findChild(cmd *cli.Command, name string) *cli.Command {
 	for _, c := range cmd.Commands {
-		if !c.Hidden && slices.Contains(c.Names(), name) {
+		// Hidden compatibility routes are still valid when explicitly typed.
+		// Prefix completion below requires a colon to expose these names.
+		compatibility, _ := c.Metadata["command-compatibility-alias"].(bool)
+		if (!c.Hidden || compatibility) && slices.Contains(c.Names(), name) {
 			return c
 		}
 	}
@@ -300,8 +310,11 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 		}
 	}
 
+	// Keep compatibility aliases out of discovery unless a colon requests them.
+	colonPrefix := strings.Contains(current, ":")
 	for _, child := range cmd.Commands {
-		if !child.Hidden {
+		compatibility, _ := child.Metadata["command-compatibility-alias"].(bool)
+		if !child.Hidden || (compatibility && colonPrefix) {
 			completions = builder.createFromCommand(current, child, completions)
 		}
 	}

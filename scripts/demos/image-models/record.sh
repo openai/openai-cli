@@ -31,7 +31,7 @@ printf ' %s' "${demo_args[@]}"
 printf '\n'
 sleep 0.4
 if openai "${demo_args[@]}"; then demo_status=0; else demo_status=$?; fi
-printf '\n[exit %s]\n$ ' "$demo_status"
+printf '\n$ '
 sleep 4
 exit "$demo_status"
 SCENE
