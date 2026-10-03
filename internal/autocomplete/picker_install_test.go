@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -85,6 +86,95 @@ func TestPickerInstallRejectsPowerShellWithoutWriting(t *testing.T) {
 	require.Equal(t, before.ModTime(), after.ModTime())
 }
 
+func TestPickerRemoveRestoresAbsentProfile(t *testing.T) {
+	for _, shell := range []CompletionStyle{CompletionStyleBash, CompletionStyleZsh, CompletionStyleFish} {
+		for _, missingDirectory := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/missing-directory=%t", shell, missingDirectory), func(t *testing.T) {
+				options := pickerInstallFixture(t, shell)
+				_, err := InstallPicker(t.Context(), options)
+				require.NoError(t, err)
+				_, err = InstallPicker(t.Context(), options)
+				require.NoError(t, err, "reinstallation must retain the profile's creation state")
+				if missingDirectory {
+					require.NoError(t, os.RemoveAll(options.Directory))
+				}
+				removed, err := RemovePicker(t.Context(), options)
+				require.NoError(t, err)
+				require.True(t, removed.Changed)
+				_, err = os.Lstat(options.Profile)
+				require.ErrorIs(t, err, os.ErrNotExist, "an owned startup file must not mask another profile after removal")
+				removed, err = RemovePicker(t.Context(), options)
+				require.NoError(t, err)
+				require.False(t, removed.Changed)
+			})
+		}
+	}
+}
+
+func TestPickerRemovePreservesExistingFilesAndPersonalEdits(t *testing.T) {
+	for _, missingDirectory := range []bool{false, true} {
+		for _, scenario := range []string{"existing empty", "added before", "added after"} {
+			t.Run(fmt.Sprintf("%s/missing-directory=%t", scenario, missingDirectory), func(t *testing.T) {
+				options := pickerInstallFixture(t, CompletionStyleBash)
+				if scenario == "existing empty" {
+					require.NoError(t, os.WriteFile(options.Profile, nil, 0600))
+				}
+				_, err := InstallPicker(t.Context(), options)
+				require.NoError(t, err)
+				personal := ""
+				if scenario != "existing empty" {
+					personal = "# user-added setting\n"
+					profile, err := os.ReadFile(options.Profile)
+					require.NoError(t, err)
+					if scenario == "added before" {
+						profile = append([]byte(personal), profile...)
+					} else {
+						profile = append(profile, []byte(personal)...)
+					}
+					require.NoError(t, os.WriteFile(options.Profile, profile, 0600))
+				}
+				if missingDirectory {
+					require.NoError(t, os.RemoveAll(options.Directory))
+				}
+				_, err = RemovePicker(t.Context(), options)
+				require.NoError(t, err)
+				actual, err := os.ReadFile(options.Profile)
+				require.NoError(t, err, "a preexisting file or personal edits must survive removal")
+				require.Equal(t, personal, string(actual))
+			})
+		}
+	}
+}
+
+func TestPickerInstallUpgradePreservesProfileCreation(t *testing.T) {
+	for _, created := range []bool{false, true} {
+		t.Run(fmt.Sprintf("created=%t", created), func(t *testing.T) {
+			options := pickerInstallFixture(t, CompletionStyleBash)
+			older := []byte(pickerScriptHeader + "# previous implementation\n")
+			block := pickerInstalledBlock{Shell: options.Shell, Script: filepath.Join(options.Directory, pickerScriptName(options, older)), ProfileCreated: created}
+			require.NoError(t, os.MkdirAll(options.Directory, 0700))
+			require.NoError(t, os.WriteFile(block.Script, older, 0600))
+			require.NoError(t, os.WriteFile(options.Profile, renderPickerBlock(block), 0600))
+			_, err := InstallPicker(t.Context(), options)
+			require.NoError(t, err)
+			profile, err := os.ReadFile(options.Profile)
+			require.NoError(t, err)
+			_, _, upgraded, err := parsePickerBlock(profile, options)
+			require.NoError(t, err)
+			require.Equal(t, created, upgraded.ProfileCreated)
+			_, err = RemovePicker(t.Context(), options)
+			require.NoError(t, err)
+			profile, err = os.ReadFile(options.Profile)
+			if created {
+				require.ErrorIs(t, err, os.ErrNotExist)
+			} else {
+				require.NoError(t, err, "legacy metadata must not infer ownership of an empty file")
+				require.Empty(t, profile)
+			}
+		})
+	}
+}
+
 func TestPickerInstalledDetectsAndRefreshesOlderScript(t *testing.T) {
 	for _, shell := range []CompletionStyle{CompletionStyleBash, CompletionStyleZsh, CompletionStyleFish} {
 		t.Run(string(shell), func(t *testing.T) {
@@ -96,7 +186,7 @@ func TestPickerInstalledDetectsAndRefreshesOlderScript(t *testing.T) {
 			require.NoError(t, os.MkdirAll(options.Directory, 0700))
 			require.NoError(t, os.WriteFile(oldScript, older, 0600))
 			personal := []byte("# personal startup\n")
-			profile := append(append([]byte(nil), personal...), renderPickerBlock(pickerInstalledBlock{shell, oldScript})...)
+			profile := append(append([]byte(nil), personal...), renderPickerBlock(pickerInstalledBlock{Shell: shell, Script: oldScript})...)
 			require.NoError(t, os.WriteFile(options.Profile, profile, 0600))
 			installed, err := IsPickerInstalled(t.Context(), options)
 			require.NoError(t, err)
@@ -109,7 +199,7 @@ func TestPickerInstalledDetectsAndRefreshesOlderScript(t *testing.T) {
 			require.Equal(t, current, updated)
 			updatedProfile, err := os.ReadFile(options.Profile)
 			require.NoError(t, err)
-			require.Equal(t, append(personal, renderPickerBlock(pickerInstalledBlock{shell, result.ScriptPath})...), updatedProfile)
+			require.Equal(t, append(personal, renderPickerBlock(pickerInstalledBlock{Shell: shell, Script: result.ScriptPath})...), updatedProfile)
 			_, err = os.Stat(oldScript)
 			require.ErrorIs(t, err, os.ErrNotExist)
 			installed, err = IsPickerInstalled(t.Context(), options)
@@ -258,6 +348,8 @@ func TestPickerInstallSnapshotDetectsReplacementAndRewrite(t *testing.T) {
 			require.NoError(t, os.WriteFile(options.Profile, []byte("user's external update"), 0600))
 			err = replacePickerProfile(context.Background(), root, filepath.Base(options.Profile), before, []byte("would overwrite update"))
 			require.ErrorIs(t, err, errPickerInstallChanged)
+			err = removePickerProfileBlock(t.Context(), root, filepath.Base(options.Profile), before, pickerInstalledBlock{ProfileCreated: true}, nil)
+			require.ErrorIs(t, err, errPickerInstallChanged, "restoring absence must not delete a changed profile")
 			actual, err := os.ReadFile(options.Profile)
 			require.NoError(t, err)
 			require.Equal(t, "user's external update", string(actual))
@@ -301,9 +393,8 @@ func TestPickerInstallRollbackAndMissingScriptRemoval(t *testing.T) {
 			}
 			_, err = RemovePicker(context.Background(), options)
 			require.NoError(t, err)
-			actual, err := os.ReadFile(options.Profile)
-			require.NoError(t, err)
-			require.Empty(t, actual)
+			_, err = os.Lstat(options.Profile)
+			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 	}
 }

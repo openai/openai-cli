@@ -62,7 +62,7 @@ func TestMainPickerShellSetupBashRemovalAfterLoginPrecedenceChanges(t *testing.T
 		if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "setup removed") {
 			t.Fatalf("removal failed: %+v", got)
 		}
-		for name, want := range map[string]string{".profile": original, ".bash_profile": preferred, ".bashrc": ""} {
+		for name, want := range map[string]string{".profile": original, ".bash_profile": preferred} {
 			data, err := os.ReadFile(filepath.Join(home, name))
 			if err != nil || string(data) != want {
 				t.Fatalf("removal did not restore %s: %q, %v", name, data, err)
@@ -74,6 +74,37 @@ func TestMainPickerShellSetupBashRemovalAfterLoginPrecedenceChanges(t *testing.T
 		}
 		if _, err := os.Stat(filepath.Join(home, ".bash_login")); !os.IsNotExist(err) {
 			t.Fatalf("removal created an absent startup file: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".bashrc")); !os.IsNotExist(err) {
+			t.Fatalf("removal left a created startup file: %v", err)
+		}
+	}
+}
+
+func TestMainPickerShellSetupBashRemovalRestoresAbsentLoginProfile(t *testing.T) {
+	home := t.TempDir()
+	env := pickerSetupProcessEnv(home)
+	got := runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--install-picker")
+	if got.code != 0 || got.stderr != "" {
+		t.Fatalf("installation failed: %+v", got)
+	}
+	personal := "# later login settings\n"
+	if err := os.WriteFile(filepath.Join(home, ".profile"), []byte(personal), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		got = runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--uninstall-picker")
+		if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "setup removed") {
+			t.Fatalf("removal failed: %+v", got)
+		}
+		for _, name := range []string{".bash_profile", ".bashrc"} {
+			if _, err := os.Lstat(filepath.Join(home, name)); !os.IsNotExist(err) {
+				t.Fatalf("removal left a newly created startup file %s: %v", name, err)
+			}
+		}
+		data, err := os.ReadFile(filepath.Join(home, ".profile"))
+		if err != nil || string(data) != personal {
+			t.Fatalf("removal changed later personal login settings: %q, %v", data, err)
 		}
 	}
 }
@@ -180,9 +211,8 @@ func TestMainPickerShellSetupIgnoresRequestConfiguration(t *testing.T) {
 					t.Fatalf("local setup depended on request configuration: %+v", got)
 				}
 			}
-			data, err := os.ReadFile(profile)
-			if err != nil || len(data) != 0 {
-				t.Fatalf("setup round trip did not restore empty profile: %q, %v", data, err)
+			if _, err := os.Lstat(profile); !os.IsNotExist(err) {
+				t.Fatalf("setup round trip did not restore absent profile: %v", err)
 			}
 		})
 	}

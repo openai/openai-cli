@@ -82,7 +82,7 @@ func configureImagePickerShellSetup(root *cli.Command) {
 		}
 		targets, err := imagePickerShellTarget(ctx, shell, command.Bool("automatic"), command.String("profile"))
 		if err != nil {
-			return imageSavingFailure("Could not choose a supported shell startup file. Use openai @completion SHELL --install-picker with an explicit shell.", err)
+			return imageSavingFailure("Could not choose a supported shell startup file. Use openai @completion SHELL --install-picker with an explicit shell and --profile PATH when needed.", err)
 		}
 		if len(targets) == 0 {
 			return nil

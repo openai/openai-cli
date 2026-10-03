@@ -36,6 +36,16 @@ func imagePickerShellTarget(ctx context.Context, shell string, automatic bool, p
 	if err != nil || !imagePickerAbsolutePath(home) {
 		return nil, errors.New("cannot determine an absolute home directory for shell setup")
 	}
+	if runtime.GOOS == "windows" && profileOverride == "" {
+		// UserHomeDir uses USERPROFILE on Windows, while Unix shells read
+		// HOME. Do not guess a native equivalent for MSYS or other shell paths.
+		if shellHome := os.Getenv("HOME"); shellHome != "" && (!imagePickerAbsolutePath(shellHome) || filepath.Clean(shellHome) != filepath.Clean(home)) {
+			if automatic {
+				return nil, nil
+			}
+			return nil, errors.New("Windows shell HOME differs from USERPROFILE; specify the shell startup file with --profile")
+		}
+	}
 	if automatic {
 		current, currentErr := user.Current()
 		if currentErr != nil {

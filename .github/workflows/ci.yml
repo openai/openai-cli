@@ -77,6 +77,8 @@ jobs:
       - uses: ./.github/actions/setup-go
       - name: Check native Windows ownership, ACLs and profile transactions
         run: go test ./internal/autocomplete -run '^TestPicker(Windows.*|FileMetadataPreservesZoneIdentifierAtSnapshotRecheck|ReplacementMetadataKeepsSameInheritedPermissions|SecurityDescriptorComparisonPreservesPermissions|InstallRoundTrip|InstalledDetectsAndRefreshesOlderScript)$' -count=1 -v
+      - name: Check Windows shell home targeting
+        run: go test ./pkg/custom -run '^TestImagePickerWindowsShellHome' -count=1 -v
 
   build-artifacts:
     timeout-minutes: 30

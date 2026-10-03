@@ -81,7 +81,7 @@ def main():
                 command += 'printf "COMPLETION:%s\\nINTEGRATION:%s\\n" "${_comps[openai]}" "${OPENAI_PICKER_INTEGRATION-}"'
                 shell_args = ['-f', '-i', '-c', command]
             else:
-                command = 'source "$OPENAI_TEST_PROFILE"; functions -q openai_picker_disable; or exit 9; '
+                command = 'source "$OPENAI_TEST_PROFILE"; emit fish_prompt; functions -q openai_picker_disable; or exit 9; '
                 command += 'printf "INTEGRATION:%s\\n" "$OPENAI_PICKER_INTEGRATION"'
                 shell_args = ['--no-config', '-i', '-c', command]
             terminal = picker.Terminal(executable, shell_args, env)

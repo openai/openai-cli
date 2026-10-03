@@ -33,14 +33,25 @@ explicit setup uses the immediate parent shell. Installer integrations can use
 and preserve an existing opt-out; this mode does not accept shell or profile
 overrides.
 
+On Windows, a Unix shell's nonempty `HOME` must match `USERPROFILE` for default
+setup. Different or MSYS-style home paths require an explicit `--profile PATH`;
+automatic setup skips these cases rather than guessing another startup location.
+
 Setup uses `.zshrc` (respecting `ZDOTDIR`), Bash's `.bashrc` and first existing
 login startup file, or fish's `conf.d/openai-picker.fish`. Scripts use the current
 `openai` on PATH. If the executable is removed, the guarded source block becomes
 inactive. Existing startup content and custom key bindings are preserved.
+Fish installs its wrapper once at the first prompt, after `config.fish` and
+`fish_user_key_bindings`. Later custom bindings and `openai_picker_disable`
+remain in effect; calling disable from `config.fish` also cancels pending setup.
 
 Removal deletes only intact CLI-owned blocks and verified scripts, and records
 an empty per-shell opt-out marker beside `image-picker.json`. Later automatic
 setup keeps that shell disabled. Explicit installation clears the opt-out.
+When setup created the profile itself, removal restores its absence if the
+intact managed block is still its only content. Preexisting empty files and
+profiles containing personal changes remain. Older installations without
+creation metadata conservatively preserve the profile.
 Repeating either command is safe. Modified blocks or scripts stay available for
 inspection. Default Bash removal checks all three login profiles as well as
 `.bashrc`, so a newer, higher-priority login profile cannot hide earlier setup.

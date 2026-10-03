@@ -43,8 +43,9 @@ const (
 var errPickerInstallChanged = errors.New("shell integration files changed during setup; existing files were kept")
 
 type pickerInstalledBlock struct {
-	Shell  CompletionStyle `json:"shell"`
-	Script string          `json:"script"`
+	Shell          CompletionStyle `json:"shell"`
+	Script         string          `json:"script"`
+	ProfileCreated bool            `json:"profile_created,omitempty"`
 }
 
 type pickerFileSnapshot struct {
@@ -169,7 +170,7 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	scriptRoot, err := openPickerScriptDirectory(ctx, options.Directory, !remove)
 	if remove && errors.Is(err, os.ErrNotExist) {
 		desired := append(append([]byte(nil), before...), after...)
-		if err := replacePickerProfile(ctx, profileRoot, profileName, profile, desired); err != nil {
+		if err := removePickerProfileBlock(ctx, profileRoot, profileName, profile, *installed, desired); err != nil {
 			return result, err
 		}
 		result.Changed = true
@@ -210,7 +211,10 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 		if err != nil {
 			return result, err
 		}
-		next = pickerInstalledBlock{options.Shell, filepath.Join(options.Directory, pickerScriptName(options, script))}
+		next = pickerInstalledBlock{
+			Shell: options.Shell, Script: filepath.Join(options.Directory, pickerScriptName(options, script)),
+			ProfileCreated: profile.info == nil || installed != nil && installed.ProfileCreated,
+		}
 		result.ScriptPath = next.Script
 		newSnapshot, err = readPickerFile(ctx, scriptRoot, filepath.Base(next.Script))
 		if err != nil {
@@ -235,7 +239,12 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 		}
 	}
 	if !bytes.Equal(profile.data, desired) {
-		if err = replacePickerProfile(ctx, profileRoot, profileName, profile, desired); err != nil {
+		if remove {
+			err = removePickerProfileBlock(ctx, profileRoot, profileName, profile, *installed, desired)
+		} else {
+			err = replacePickerProfile(ctx, profileRoot, profileName, profile, desired)
+		}
+		if err != nil {
 			return result, err
 		}
 		result.Changed = true
@@ -359,7 +368,22 @@ func renderInstalledPicker(options PickerInstallation) ([]byte, error) {
 	case CompletionStyleBash:
 		marker = "\nif [[ ${__openai_picker_enabled-} == 1 ]]; then export OPENAI_PICKER_INTEGRATION=bash; fi\n"
 	case CompletionStyleFish:
-		marker = "\nif set -q __openai_picker_modes[1]; set -gx OPENAI_PICKER_INTEGRATION fish; end\n"
+		// conf.d runs before config.fish and lazy fish_user_key_bindings.
+		// Install once at the first prompt so the wrapper captures the final
+		// user binding. Later prompts must not reclaim a replacement/disable.
+		picker = `if not status is-interactive; or set -q __openai_picker_modes
+    return
+end
+set --erase --global OPENAI_PICKER_INTEGRATION
+function openai_picker_disable
+    functions --erase __openai_picker_install_on_prompt
+end
+function __openai_picker_install_on_prompt --on-event fish_prompt
+    functions --erase __openai_picker_install_on_prompt
+` + picker + `
+    if set -q __openai_picker_modes[1]; set -gx OPENAI_PICKER_INTEGRATION fish; end
+end
+`
 	}
 	return []byte(pickerScriptHeader + preamble + completion + "\n" + picker + marker), nil
 }
@@ -554,6 +578,15 @@ func replacePickerProfile(ctx context.Context, root *os.Root, name string, previ
 		return err
 	}
 	return root.Rename(temporary, name)
+}
+
+func removePickerProfileBlock(ctx context.Context, root *os.Root, name string, previous pickerFileSnapshot, installed pickerInstalledBlock, data []byte) error {
+	// Restore absence only when setup created the file and the owned block is
+	// still its entire contents. Older metadata cannot prove creation ownership.
+	if installed.ProfileCreated && len(data) == 0 {
+		return removePickerSnapshot(ctx, root, name, previous)
+	}
+	return replacePickerProfile(ctx, root, name, previous, data)
 }
 
 func removePickerSnapshot(ctx context.Context, root *os.Root, name string, previous pickerFileSnapshot) error {
