@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.0](https://github.com/openai/openai-cli/compare/v1.35.0...v1.36.0) (2026-10-03)
+
+
+### Features
+
+* **cli:** save picker shortcuts for future shell sessions ([#360](https://github.com/openai/openai-cli/issues/360)) ([814316e](https://github.com/openai/openai-cli/commit/814316eee2eda76a623130b58626535bd7df3cf9))
+
 ## [1.35.0](https://github.com/openai/openai-cli/compare/v1.34.0...v1.35.0) (2026-10-03)
 
 
