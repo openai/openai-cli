@@ -15,6 +15,9 @@ import (
 // Replacing a startup file with a new inode must not discard its extended
 // attributes, ACL, or BSD flags. Leave these profiles for manual configuration.
 func checkPickerFileMetadata(file *os.File) error {
+	if err := checkPickerFileLinks(file); err != nil {
+		return err
+	}
 	count, err := unix.Flistxattr(int(file.Fd()), nil)
 	if err != nil || count != 0 {
 		return errors.New("shell startup file has protected or unreadable extended metadata")

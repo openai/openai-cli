@@ -10,6 +10,9 @@ import (
 )
 
 func checkPickerFileMetadata(file *os.File) error {
+	if err := checkPickerFileLinks(file); err != nil {
+		return err
+	}
 	if err := checkPickerWindowsPermissions(file, false); err != nil {
 		return err
 	}

@@ -41,6 +41,8 @@ Setup uses `.zshrc` (respecting `ZDOTDIR`), Bash's `.bashrc` and first existing
 login startup file, or fish's `conf.d/openai-picker.fish`. Fish follows
 `XDG_CONFIG_HOME/fish/conf.d`, falling back to `HOME/.config/fish/conf.d`,
 including on Windows. Windows scripts remain in `APPDATA/openai/shell`.
+Existing profiles keep their recorded script location for refresh and removal
+after the configuration root changes; new profiles use the current root.
 Scripts use the current
 `openai` on PATH. If the executable is removed, the guarded source block becomes
 inactive. Existing startup content and custom key bindings are preserved.
@@ -65,7 +67,7 @@ Bash configures its two startup modes separately; if a later write
 fails, the error reports partial setup and rerunning the command is safe.
 
 Setup checks the directory ancestry of configuration and startup paths before
-creating files. It keeps symlinked profiles, unsafe permissions, and protected
+creating files. It keeps symlinked or hard-linked profiles, unsafe permissions, and protected
 file metadata unchanged. Windows junction or reparse-point ancestors require
 manual setup. Equivalent Windows home-directory spellings are recognized by
 filesystem identity. On macOS and Linux this includes profiles with ACLs or extended
@@ -82,8 +84,7 @@ locations as trusted. It checks the immediate profile parent and both managed
 On macOS, a profile parent may have deny-only ACLs such as the normal home
 directory deny-delete rule; ACLs granting permissions are left for manual setup.
 On macOS and Linux, both managed directories must be free of protected metadata,
-including ACLs. These checks do not audit arbitrary ancestors of the configured
-locations.
+including ACLs.
 
 Use the [current-session shortcut](image-picker-shortcuts.md) when a profile
 cannot be managed automatically. PowerShell retains ordinary completion and

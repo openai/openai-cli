@@ -113,6 +113,9 @@ func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, e
 	if err != nil || installed == nil {
 		return false, err
 	}
+	// Existing profiles keep their verified script location when the user's
+	// configuration root changes. New profiles use the caller-selected root.
+	options.Directory = filepath.Dir(installed.Script)
 	scripts, err := openPickerScriptDirectory(ctx, options.Directory, false)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -175,6 +178,9 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	}
 	if remove && installed == nil {
 		return result, nil
+	}
+	if installed != nil {
+		options.Directory = filepath.Dir(installed.Script)
 	}
 	scriptRoot, err := openPickerScriptDirectory(ctx, options.Directory, !remove)
 	if remove && errors.Is(err, os.ErrNotExist) {
@@ -327,8 +333,13 @@ func parsePickerBlock(data []byte, options PickerInstallation) ([]byte, []byte, 
 	metadata, err := base64.RawURLEncoding.DecodeString(string(bytes.TrimPrefix(lines[2], []byte("# openai-picker: "))))
 	var installed pickerInstalledBlock
 	if err != nil || json.Unmarshal(metadata, &installed) != nil || installed.Shell != options.Shell ||
-		filepath.Dir(installed.Script) != options.Directory ||
-		strings.ContainsAny(installed.Script, "\x00\r\n") || !bytes.Equal(block, renderPickerBlock(installed)) {
+		!filepath.IsAbs(installed.Script) || filepath.Clean(installed.Script) != installed.Script ||
+		!utf8.ValidString(installed.Script) || strings.ContainsAny(installed.Script, "\x00\r\n") || !bytes.Equal(block, renderPickerBlock(installed)) {
+		return nil, nil, nil, errors.New("shell integration block was modified or belongs to another setup; existing files were kept")
+	}
+	recorded := options
+	recorded.Directory = filepath.Dir(installed.Script)
+	if validatePickerInstallation(recorded) != nil {
 		return nil, nil, nil, errors.New("shell integration block was modified or belongs to another setup; existing files were kept")
 	}
 	return data[:start], data[finish:], &installed, nil
@@ -607,7 +618,7 @@ func lockPickerInstallation(ctx context.Context, root *os.Root, name string) (*o
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	file, err := root.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NONBLOCK, 0600)
+	file, err := createPickerInstallLock(root, name)
 	if errors.Is(err, os.ErrExist) {
 		info, statErr := root.Lstat(name)
 		if statErr != nil {

@@ -4,6 +4,6 @@ package autocomplete
 
 import "os"
 
-func checkPickerFileMetadata(*os.File) error { return nil }
+func checkPickerFileMetadata(file *os.File) error { return checkPickerFileLinks(file) }
 
 func checkPickerReplacementMetadata(*os.Root, string, string, pickerFileSnapshot) error { return nil }
