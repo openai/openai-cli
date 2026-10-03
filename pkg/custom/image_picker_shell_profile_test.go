@@ -114,6 +114,7 @@ func TestImagePickerShellTargetAutomaticRejectsTemporaryHome(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", home)
 	_, err := imagePickerShellTarget(context.Background(), "", true, "")
 	require.Error(t, err)
 	entries, err := os.ReadDir(home)

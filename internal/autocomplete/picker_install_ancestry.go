@@ -8,6 +8,14 @@ import (
 	"strings"
 )
 
+func openPickerProfileDirectory(ctx context.Context, path string, create bool) (*os.Root, error) {
+	// Keep the trailing separator and dot: the profile's parent then receives
+	// full ancestor validation, including trusted Unix aliases, before the
+	// resolved directory is bound to its opened handle. filepath.Join cleans it
+	// away. Managed script directories still reject a final symbolic link.
+	return openPickerDirectory(ctx, path+string(os.PathSeparator)+".", create)
+}
+
 // Walk from the volume root through opened parents. A sourced script's lexical
 // path and every symlink target must both remain protected from replacement.
 // Missing components are created only below an already validated directory.

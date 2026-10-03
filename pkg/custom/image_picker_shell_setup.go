@@ -81,7 +81,7 @@ func configureImagePickerShellSetup(root *cli.Command) {
 		&cli.BoolFlag{Name: "install-picker", Usage: "Enable Tab shortcuts in future shell sessions"},
 		&cli.BoolFlag{Name: "uninstall-picker", Usage: "Remove the managed Tab shortcut setup"},
 		&cli.BoolFlag{Name: "automatic", Usage: "Installer setup for the preferred shell; preserve a previous opt-out"},
-		&cli.StringFlag{Name: "profile", Usage: "Use this shell startup file for explicit setup"},
+		&cli.StringFlag{Name: "profile", Usage: "Use this startup file; required for zsh unless ZDOTDIR is exported and absolute"},
 	)
 	next := completion.Action
 	completion.Action = func(ctx context.Context, command *cli.Command) error {

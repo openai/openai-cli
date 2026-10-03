@@ -31,6 +31,12 @@ func imagePickerShellTarget(ctx context.Context, shell string, automatic bool, p
 		if shell == "pwsh" {
 			return nil, nil
 		}
+		// An absent environment value cannot distinguish unset ZDOTDIR from
+		// a parent-shell parameter that was never exported. Empty and relative
+		// values also cannot safely select an absolute startup file.
+		if shell == "zsh" && !imagePickerAbsolutePath(os.Getenv("ZDOTDIR")) {
+			return nil, nil
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || !imagePickerAbsolutePath(home) {
@@ -64,20 +70,15 @@ func imagePickerShellTarget(ctx context.Context, shell string, automatic bool, p
 	if shell == "" || shell == "pwsh" || imagePickerShellName(shell) != shell {
 		return nil, errors.New("choose a supported shell: bash, zsh, or fish")
 	}
-	config := os.Getenv("XDG_CONFIG_HOME")
-	// Fish's startup directory follows XDG on every platform. Windows CLI
-	// scripts and decision locks stay together with preferences in AppData.
-	fishConfig := config
+	// Fish's startup directory follows XDG on every platform. Keep CLI scripts
+	// and decision locks beside preferences using the same platform directory.
+	fishConfig := os.Getenv("XDG_CONFIG_HOME")
 	if fishConfig == "" {
 		fishConfig = filepath.Join(home, ".config")
 	}
-	if runtime.GOOS == "windows" {
-		config, err = os.UserConfigDir()
-		if err != nil {
-			return nil, errors.New("cannot determine the shell integration directory")
-		}
-	} else if config == "" {
-		config = fishConfig
+	config, err := os.UserConfigDir()
+	if err != nil {
+		return nil, errors.New("cannot determine the shell integration directory")
 	}
 	paths := imagePickerShellPaths{home: home, config: config, fishConfig: fishConfig, zdotdir: os.Getenv("ZDOTDIR")}
 	return imagePickerSelectShellTargets(shell, profileOverride, paths)
@@ -151,11 +152,8 @@ func imagePickerSelectShellTargets(shell, override string, paths imagePickerShel
 			profiles = []string{filepath.Join(paths.home, ".bashrc"), login}
 		case "zsh":
 			directory := paths.zdotdir
-			if directory == "" {
-				directory = paths.home
-			}
 			if !imagePickerAbsolutePath(directory) {
-				return nil, errors.New("ZDOTDIR must be absolute; specify --profile for a relative ZDOTDIR")
+				return nil, errors.New("zsh setup requires an exported absolute ZDOTDIR; otherwise specify the current shell's startup file with --profile")
 			}
 			profiles = []string{filepath.Join(directory, ".zshrc")}
 		case "fish":

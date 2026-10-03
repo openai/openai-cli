@@ -6,6 +6,11 @@ the current session keeps its existing bindings. Bash needs version 4.3 or later
 for the Tab shortcut. Pressing Enter opens the picker without shell integration,
 including in PowerShell and Bash 3.2.
 
+For zsh, automatic setup requires an exported, absolute `ZDOTDIR`. A child
+process cannot distinguish an unset variable from an unexported zsh parameter,
+so ambiguous default locations are skipped. Use the explicit commands below
+when `ZDOTDIR` is not exported.
+
 First-use setup requires the running executable to be the `openai` on PATH and
 all three standard streams to be terminals. It skips CI, root/sudo, unsupported
 shells, `TERM=dumb`, completion and manpage requests. It respects an earlier
@@ -22,11 +27,13 @@ At most one setup worker runs in a CLI process.
 To configure or remove persistent shortcuts explicitly:
 
 ```sh
-openai @completion zsh --install-picker
-openai @completion zsh --uninstall-picker
+openai @completion zsh --install-picker --profile "${ZDOTDIR-$HOME}/.zshrc"
+openai @completion zsh --uninstall-picker --profile "${ZDOTDIR-$HOME}/.zshrc"
 ```
 
-Use `bash` or `fish` for those shells. Open a new terminal afterward.
+Run those commands in zsh so it expands its own startup location, including an
+unexported `ZDOTDIR`. Bash and fish can use `--install-picker` or
+`--uninstall-picker` without `--profile`. Open a new terminal afterward.
 `--profile PATH` selects a different startup file. Without a shell argument,
 explicit setup uses the immediate parent shell. Installer integrations can use
 `openai @completion --install-picker --automatic` to select the preferred shell
@@ -37,12 +44,18 @@ On Windows, a Unix shell's nonempty `HOME` must match `USERPROFILE` for default
 setup. Different or MSYS-style home paths require an explicit `--profile PATH`;
 automatic setup skips these cases rather than guessing another startup location.
 
-Setup uses `.zshrc` (respecting `ZDOTDIR`), Bash's `.bashrc` and first existing
+Default zsh setup uses an absolute exported `ZDOTDIR/.zshrc`; missing, empty or
+relative values require an explicit profile. Other defaults use Bash's `.bashrc` and first existing
 login startup file, or fish's `conf.d/openai-picker.fish`. Fish follows
 `XDG_CONFIG_HOME/fish/conf.d`, falling back to `HOME/.config/fish/conf.d`,
 including on Windows. Windows scripts remain in `APPDATA/openai/shell`.
+New macOS scripts use `HOME/Library/Application Support/openai/shell`. Setup's
+decision lock stays beside the CLI preferences on every platform, so differing
+XDG settings cannot bypass the shared opt-out decision.
 Existing profiles keep their recorded script location for refresh and removal
 after the configuration root changes; new profiles use the current root.
+After an interrupted refresh, later setup retries cleanup of unchanged obsolete
+scripts in that profile's verified namespace. Modified or unproven files remain.
 Scripts use the current
 `openai` on PATH. If the executable is removed, the guarded source block becomes
 inactive. Existing startup content and custom key bindings are preserved.
@@ -71,8 +84,9 @@ creating files. It keeps symlinked or hard-linked profiles, special permission
 bits, unsafe permissions, and protected file metadata unchanged. On macOS and
 Linux this includes profiles with ACLs or extended attributes. Windows junction
 or reparse-point ancestors require manual setup. Equivalent Windows home-directory
-spellings are recognized by filesystem identity. Windows profile aliases use the
-actual long path for setup locks and new script names. When an older script records
+spellings are recognized by filesystem identity. Profile aliases use their
+canonical path for setup locks and new script names, including trusted symlinked
+parent directories on Unix. When an older script records
 an unprovable path spelling, refresh or removal preserves that script and any empty
 profile; that profile no longer sources the old script after refresh or removal.
 Windows replacement also checks alternate streams and file-specific

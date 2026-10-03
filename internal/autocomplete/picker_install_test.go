@@ -18,7 +18,8 @@ import (
 
 func pickerInstallFixture(t *testing.T, shell CompletionStyle) PickerInstallation {
 	t.Helper()
-	home := t.TempDir()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	return PickerInstallation{Shell: shell, Directory: filepath.Join(home, "settings with ' quotes", "shell"), Profile: filepath.Join(home, "profile")}
 }
 

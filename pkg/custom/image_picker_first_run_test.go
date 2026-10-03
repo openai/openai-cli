@@ -124,7 +124,7 @@ func TestImagePickerFirstRunRequiresExactPathExecutable(t *testing.T) {
 func firstRunShellTargets(t *testing.T, home, shell string) []autocomplete.PickerInstallation {
 	t.Helper()
 	targets, err := imagePickerSelectShellTargets(shell, "", imagePickerShellPaths{
-		home: home, config: filepath.Join(home, "config"),
+		home: home, config: filepath.Join(home, "config"), zdotdir: home,
 	})
 	require.NoError(t, err)
 	return targets

@@ -20,7 +20,7 @@ func pickerShellSetupHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	for name, value := range map[string]string{
-		"HOME": home, "USERPROFILE": home, "XDG_CONFIG_HOME": filepath.Join(home, "config"), "APPDATA": filepath.Join(home, "config"), "ZDOTDIR": "",
+		"HOME": home, "USERPROFILE": home, "XDG_CONFIG_HOME": filepath.Join(home, "config"), "APPDATA": filepath.Join(home, "config"), "ZDOTDIR": home,
 	} {
 		t.Setenv(name, value)
 	}
@@ -165,7 +165,9 @@ func TestImagePickerShellSetupBashRemovalAfterLoginPrecedenceChanges(t *testing.
 					require.True(t, os.SameFile(unmanaged, current), "an unmanaged login profile must not be rewritten")
 					require.Equal(t, unmanaged.ModTime(), current.ModTime())
 				}
-				scripts, err := filepath.Glob(filepath.Join(home, "config", "openai", "shell", "picker-bash-*.bash"))
+				config, err := os.UserConfigDir()
+				require.NoError(t, err)
+				scripts, err := filepath.Glob(filepath.Join(config, "openai", "shell", "picker-bash-*.bash"))
 				require.NoError(t, err)
 				require.Empty(t, scripts, "removal must clean scripts belonging to superseded login profiles")
 			}
@@ -267,7 +269,11 @@ func TestImagePickerShellSetupBashRemovalContinuesAfterUnrelatedFailure(t *testi
 				require.Equal(t, original, string(data), "an independent unsafe file must not stop intact profile cleanup")
 				var failure *imageSavingError
 				require.ErrorAs(t, err, &failure)
-				require.ErrorContains(t, failure.cause, "regular files writable only by their owner")
+				if unsafe == "symlink" {
+					require.ErrorContains(t, failure.cause, "requires a regular startup file")
+				} else {
+					require.ErrorContains(t, failure.cause, "regular files writable only by their owner")
+				}
 				require.ErrorContains(t, failure.cause, "ambiguous integration markers", "both independent failures must be retained")
 				after, statErr := os.Lstat(preferred)
 				require.NoError(t, statErr)
@@ -280,7 +286,9 @@ func TestImagePickerShellSetupBashRemovalContinuesAfterUnrelatedFailure(t *testi
 					require.NoError(t, readErr)
 					require.Equal(t, want, string(data))
 				}
-				scripts, globErr := filepath.Glob(filepath.Join(home, "config", "openai", "shell", "picker-bash-*.bash"))
+				config, configErr := os.UserConfigDir()
+				require.NoError(t, configErr)
+				scripts, globErr := filepath.Glob(filepath.Join(config, "openai", "shell", "picker-bash-*.bash"))
 				require.NoError(t, globErr)
 				require.Empty(t, scripts)
 				declined, preferenceErr := imagePickerTabDeclined("bash")

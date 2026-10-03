@@ -98,7 +98,7 @@ func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, e
 	if err := validatePickerInstallation(options); err != nil {
 		return false, err
 	}
-	root, err := openPickerDirectory(ctx, filepath.Dir(options.Profile), false)
+	root, err := openPickerProfileDirectory(ctx, filepath.Dir(options.Profile), false)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -106,6 +106,7 @@ func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, e
 		return false, err
 	}
 	defer root.Close()
+	callerProfile := options.Profile
 	options.Profile, err = pickerProfileIdentity(ctx, root, options.Profile)
 	if err != nil {
 		return false, err
@@ -140,7 +141,11 @@ func IsPickerInstalled(ctx context.Context, options PickerInstallation) (bool, e
 	if err != nil {
 		return false, err
 	}
-	return bytes.Equal(script.data, current), ctx.Err()
+	if !bytes.Equal(script.data, current) {
+		return false, ctx.Err()
+	}
+	pending, err := reconcilePickerScripts(ctx, scripts, options, callerProfile, script, false)
+	return !pending && err == nil, err
 }
 
 func changePickerInstallation(ctx context.Context, options PickerInstallation, remove bool) (result PickerInstallResult, err error) {
@@ -159,7 +164,7 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	if checkErr != nil && !errors.Is(checkErr, os.ErrNotExist) {
 		return result, checkErr
 	}
-	profileRoot, err := openPickerDirectory(ctx, filepath.Dir(options.Profile), !remove)
+	profileRoot, err := openPickerProfileDirectory(ctx, filepath.Dir(options.Profile), !remove)
 	if remove && errors.Is(err, os.ErrNotExist) {
 		return result, nil
 	}
@@ -192,7 +197,7 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	ownedPrevious := installed != nil && pickerScriptMatchesProfile(options, callerProfile, *installed)
 	if installed != nil {
 		options.Directory = filepath.Dir(installed.Script)
-		if runtime.GOOS == "windows" && !ownedPrevious {
+		if !ownedPrevious {
 			// Older metadata cannot recover the spelling used for its profile
 			// hash. Preserve unproven scripts and profile creation ownership.
 			installed.ProfileCreated = false
@@ -285,13 +290,9 @@ func changePickerInstallation(ctx context.Context, options PickerInstallation, r
 	// After the profile commit the new script belongs to that profile. A
 	// superseded cleanup failure must not remove its active replacement.
 	created = false
-	if ownedPrevious && installed.Script != next.Script && previous.info != nil {
-		if err := removePickerSnapshot(ctx, scriptRoot, filepath.Base(installed.Script), previous); err != nil {
-			return result, err
-		}
-		result.Changed = true
-	}
-	return result, nil
+	cleaned, err := reconcilePickerScripts(ctx, scriptRoot, options, callerProfile, newSnapshot, true)
+	result.Changed = result.Changed || cleaned
+	return result, err
 }
 
 func validatePickerInstallation(options PickerInstallation) error {
@@ -337,10 +338,7 @@ func validInstalledPickerScript(options PickerInstallation, block pickerInstalle
 	if validOwnedPickerScript(options, block, data) {
 		return true
 	}
-	if runtime.GOOS != "windows" {
-		return false
-	}
-	// Legacy Windows blocks retain only a hash of the original path spelling.
+	// Legacy blocks retain only a hash of the original path spelling.
 	// Verify content independently, but never delete a script whose profile
 	// namespace cannot be proved by pickerScriptMatchesProfile.
 	return validPickerScriptContent(options, block, data)

@@ -10,7 +10,14 @@ import (
 )
 
 func pickerSetupProcessEnv(home string) []string {
-	return []string{"HOME=" + home, "USERPROFILE=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, "config"), "APPDATA=" + filepath.Join(home, "config"), "ZDOTDIR="}
+	return []string{"HOME=" + home, "USERPROFILE=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, "config"), "APPDATA=" + filepath.Join(home, "config"), "ZDOTDIR=" + home}
+}
+
+func pickerSetupProcessConfig(home string) string {
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Application Support")
+	}
+	return filepath.Join(home, "config")
 }
 
 func TestMainPickerShellSetupRoundTrip(t *testing.T) {
@@ -69,7 +76,7 @@ func TestMainPickerShellSetupBashRemovalAfterLoginPrecedenceChanges(t *testing.T
 				t.Fatalf("removal did not restore %s: %q, %v", name, data, err)
 			}
 		}
-		scripts, err := filepath.Glob(filepath.Join(home, "config", "openai", "shell", "picker-bash-*.bash"))
+		scripts, err := filepath.Glob(filepath.Join(pickerSetupProcessConfig(home), "openai", "shell", "picker-bash-*.bash"))
 		if err != nil || len(scripts) != 0 {
 			t.Fatalf("removal left obsolete scripts: %v, %v", scripts, err)
 		}
@@ -183,6 +190,10 @@ func TestMainPickerShellSetupRefusesUnsafeConfigurationAncestry(t *testing.T) {
 				home := t.TempDir()
 				parent := filepath.Join(home, "settings")
 				configuration := filepath.Join(parent, "config")
+				if runtime.GOOS == "darwin" {
+					configuration = pickerSetupProcessConfig(home)
+					parent = filepath.Dir(configuration)
+				}
 				if err := os.MkdirAll(configuration, 0700); err != nil {
 					t.Fatal(err)
 				}
@@ -273,7 +284,7 @@ func TestMainPickerShellSetupPartialRemovalReportsFailureAfterCleanup(t *testing
 			if info, err := os.Lstat(filepath.Join(home, ".bash_profile")); err != nil || info.Mode()&os.ModeSymlink == 0 {
 				t.Fatalf("removal changed the unrelated symlink: %v, %v", info, err)
 			}
-			scripts, err := filepath.Glob(filepath.Join(home, "config", "openai", "shell", "picker-bash-*.bash"))
+			scripts, err := filepath.Glob(filepath.Join(pickerSetupProcessConfig(home), "openai", "shell", "picker-bash-*.bash"))
 			if err != nil || len(scripts) != 0 {
 				t.Fatalf("partial removal left owned scripts: %v, %v", scripts, err)
 			}
