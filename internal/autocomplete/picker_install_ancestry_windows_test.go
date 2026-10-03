@@ -136,7 +136,7 @@ func TestPickerWindowsAncestryRejectsJunction(t *testing.T) {
 	require.NoError(t, err, string(output))
 	options.Directory = filepath.Join(alias, "openai", "shell")
 	_, err = InstallPicker(t.Context(), options)
-	require.ErrorContains(t, err, "reparse points")
+	require.Error(t, err, "junction ancestry must be refused before setup writes")
 	_, err = os.Stat(options.Profile)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	entries, err := os.ReadDir(options.Directory)
