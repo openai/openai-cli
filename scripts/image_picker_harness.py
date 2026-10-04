@@ -31,18 +31,24 @@ PRINT = b'\x10'  # Ctrl+P prints the complete command without making a request.
 
 class Terminal:
     def __init__(self, binary, args, env, width=80, height=24,
-                 input_file=None, output_file=None, controlling_terminal=False):
+                 input_file=None, output_file=None, controlling_terminal=False, stderr_file=None):
         self.master, self.slave = pty.openpty()
         self.initial = termios.tcgetattr(self.slave)
         self.initial_size = (width, height)
         self.resize(width, height, notify=False)
         self.started = time.monotonic()
         self.events, self.raw = [], bytearray()
-        self.child = subprocess.Popen([binary, *args], stdin=self.slave if input_file is None else input_file,
-                                      stdout=self.slave if output_file is None else output_file, stderr=self.slave,
-                                      env=env, start_new_session=True,
-                                      preexec_fn=(lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
-                                      if controlling_terminal else None)
+        try:
+            self.child = subprocess.Popen([binary, *args], stdin=self.slave if input_file is None else input_file,
+                                          stdout=self.slave if output_file is None else output_file,
+                                          stderr=self.slave if stderr_file is None else stderr_file,
+                                          env=env, start_new_session=True,
+                                          preexec_fn=(lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
+                                          if controlling_terminal else None)
+        except Exception:
+            os.close(self.master)
+            os.close(self.slave)
+            raise
 
     def resize(self, width, height, notify=True):
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack('HHHH', height, width, 0, 0))

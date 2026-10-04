@@ -17,7 +17,6 @@ import json
 import os
 import pathlib
 import platform
-import pty
 import re
 import select
 import shutil
@@ -26,7 +25,6 @@ import struct
 import subprocess
 import sys
 import tempfile
-import termios
 import threading
 import time
 import zlib
@@ -38,20 +36,8 @@ from image_picker_harness import Terminal, generate as submit_picker, ready, wai
 class CapturedTerminal(Terminal):
     """Use the shared PTY lifecycle with a separate real stderr descriptor."""
     def __init__(self, binary, args, env, stderr, width, height, input_file=None):
-        self.master, self.slave = pty.openpty()
-        self.initial = termios.tcgetattr(self.slave)
-        self.initial_size = (width, height)
-        self.resize(width, height, notify=False)
-        self.started = time.monotonic()
-        self.events, self.raw = [], bytearray()
-        try:
-            self.child = subprocess.Popen([str(binary), *args], env=env, start_new_session=True,
-                                          stdin=self.slave if input_file is None else input_file,
-                                          stdout=self.slave, stderr=stderr)
-        except Exception:
-            os.close(self.master)
-            os.close(self.slave)
-            raise
+        super().__init__(str(binary), args, env, width=width, height=height,
+                         input_file=input_file, stderr_file=stderr)
 
 
 def require(condition, message):
