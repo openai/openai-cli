@@ -33,13 +33,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from image_picker_harness import Terminal, generate as submit_picker, ready, wait_for_request
 
 
-class CapturedTerminal(Terminal):
-    """Use the shared PTY lifecycle with a separate real stderr descriptor."""
-    def __init__(self, binary, args, env, stderr, width, height, input_file=None):
-        super().__init__(str(binary), args, env, width=width, height=height,
-                         input_file=input_file, stderr_file=stderr)
-
-
 def require(condition, message):
     if not condition:
         raise AssertionError(message)
@@ -234,11 +227,9 @@ def main():
             case = server.case
             stderr_path = output / (name + '.stderr')
             with stderr_path.open('wb') as stderr_file:
-                if stderr_tty:
-                    terminal = Terminal(str(executable), arguments, env, width=width, height=height)
-                else:
-                    terminal = CapturedTerminal(executable, arguments, env, stderr_file, width, height,
-                                                input_file=subprocess.PIPE if input_data is not None else None)
+                terminal = Terminal(str(executable), arguments, env, width=width, height=height,
+                                    input_file=subprocess.PIPE if input_data is not None else None,
+                                    stderr_file=None if stderr_tty else stderr_file)
             try:
                 if input_data is not None:
                     terminal.child.stdin.write(input_data)
@@ -399,10 +390,12 @@ def main():
                 require(os.read(terminal.slave, 4096) == queued, 'queued input changed')
 
             tty('queued-input-preserved', generate, case=Response('ok', normal, True), interact=queued_input)
-            _, case, _, _ = tty('piped-json-stdin', ['images', 'generate'],
-                                input_data=b'{"prompt":"Synthetic piped input","n":1,"metadata":{"fixture":true}}')
-            require(case.requests[0]['prompt'] == 'Synthetic piped input' and
-                    case.requests[0]['metadata'] == {'fixture': True}, 'piped JSON request changed')
+            for stderr_tty in (False, True):
+                name = 'piped-json-stdin-tty-stderr' if stderr_tty else 'piped-json-stdin'
+                _, case, _, _ = tty(name, ['images', 'generate'], stderr_tty=stderr_tty,
+                                    input_data=b'{"prompt":"Synthetic piped input","n":1,"metadata":{"fixture":true}}')
+                require(case.requests[0]['prompt'] == 'Synthetic piped input' and
+                        case.requests[0]['metadata'] == {'fixture': True}, 'piped JSON request changed')
 
             for iteration in range(2):
                 tty(f'repeat-{iteration + 1}', generate, home_name='repeat', saved=iteration + 1)
