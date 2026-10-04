@@ -2,7 +2,6 @@ package imagegallery
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -110,7 +109,7 @@ func (g *Gallery) cleanupClosed(ctx context.Context, current TerminalSession, in
 	}
 	tty := string(data)
 	data, err = readPrivate(filepath.Join(g.directory, "state.json"), 1<<20)
-	if err != nil || json.Unmarshal(data, &g.state) != nil || g.state.Version != 1 || !isHex(g.state.ID, 32) {
+	if err != nil || g.decodeState(data) != nil || g.validateMetadata() != nil {
 		return nil
 	}
 	liveTTYs, liveFonts, err := inventory(ctx)

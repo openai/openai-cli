@@ -2,6 +2,7 @@ package imagegallery
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"image"
 	"os"
@@ -196,4 +197,90 @@ func TestCleanupSkipsUninitializedOwner(t *testing.T) {
 		t.Fatal("uninitialized ownership is not enough to unregister fonts")
 		return nil, nil, nil
 	}, nil))
+}
+
+func TestCleanupPreservesMalformedMetadata(t *testing.T) {
+	for _, damage := range []string{"identity", "font", "allocation", "duplicate", "receipt", "unknown field", "trailing data"} {
+		t.Run(damage, func(t *testing.T) {
+			root, directory, display := cleanupFixture(t, true)
+			statePath := filepath.Join(directory, "state.json")
+			data, err := os.ReadFile(statePath)
+			require.NoError(t, err)
+			font, err := os.ReadFile(display.FontPath)
+			require.NoError(t, err)
+			var state diskState
+			require.NoError(t, json.Unmarshal(data, &state))
+			switch damage {
+			case "identity":
+				if state.ID[0] == 'a' {
+					state.ID = "b" + state.ID[1:]
+				} else {
+					state.ID = "a" + state.ID[1:]
+				}
+			case "font":
+				state.Font = "invalid.ttf"
+			case "allocation":
+				state.Images[0].Start++
+			case "duplicate":
+				state.Images = append(state.Images, state.Images[0])
+			case "receipt":
+				state.CompletedAttempt = "invalid"
+			}
+			data, err = json.Marshal(state)
+			require.NoError(t, err)
+			if damage == "unknown field" {
+				data = append(data[:len(data)-1], []byte(`,"unknown":true}`)...)
+			} else if damage == "trailing data" {
+				data = append(data, []byte(` {}`)...)
+			}
+			require.NoError(t, os.WriteFile(statePath, data, 0600))
+			gallery, err := Open(t.Context(), directory)
+			require.Error(t, err)
+			require.Nil(t, gallery)
+			inventoryCalls, unregisterCalls := 0, 0
+			require.NoError(t, CleanupClosed(t.Context(), root, TerminalSession{}, func(context.Context) ([]string, []string, error) {
+				inventoryCalls++
+				// The owner closed, but another tab still selects this font.
+				return []string{"/dev/ttys002"}, []string{display.PostScript}, nil
+			}, func(context.Context, string) error {
+				unregisterCalls++
+				return nil
+			}))
+			require.Zero(t, inventoryCalls, "reject uncertain ownership before native calls")
+			require.Zero(t, unregisterCalls)
+			retained, err := os.ReadFile(statePath)
+			require.NoError(t, err)
+			require.Equal(t, data, retained)
+			retained, err = os.ReadFile(display.FontPath)
+			require.NoError(t, err)
+			require.Equal(t, font, retained)
+		})
+	}
+}
+
+func TestCleanupResumesAfterPartialArtifactRemoval(t *testing.T) {
+	for _, removed := range [][]string{{"images"}, {"fonts"}, {"images", "fonts"}} {
+		t.Run(strings.Join(removed, " and "), func(t *testing.T) {
+			root, directory, _ := cleanupFixture(t, true)
+			for _, name := range removed {
+				require.NoError(t, os.RemoveAll(filepath.Join(directory, name)))
+			}
+			unregistered := 0
+			require.NoError(t, CleanupClosed(t.Context(), root, TerminalSession{}, func(context.Context) ([]string, []string, error) {
+				return nil, nil, nil
+			}, func(context.Context, string) error {
+				unregistered++
+				return nil
+			}))
+			if len(removed) == 1 && removed[0] == "images" {
+				require.Equal(t, 1, unregistered)
+			} else {
+				require.Zero(t, unregistered)
+			}
+			remaining, err := os.ReadDir(directory)
+			require.NoError(t, err)
+			require.Len(t, remaining, 1)
+			require.Equal(t, ".lock", remaining[0].Name())
+		})
+	}
 }

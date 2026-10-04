@@ -106,14 +106,8 @@ func Open(ctx context.Context, directory string) (*Gallery, error) {
 	path := filepath.Join(absolute, "state.json")
 	data, err := readPrivate(path, 1<<20)
 	if err == nil {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		if err = decoder.Decode(&g.state); err != nil {
-			return nil, fmt.Errorf("invalid image gallery state: %w", err)
-		}
-		var extra any
-		if err = decoder.Decode(&extra); err != io.EOF {
-			return nil, errors.New("invalid image gallery state: trailing data")
+		if err = g.decodeState(data); err != nil {
+			return nil, err
 		}
 		if err = g.validate(); err != nil {
 			return nil, err
@@ -326,7 +320,36 @@ func (g *Gallery) check(ctx context.Context) error {
 	}
 	return ctx.Err()
 }
+
+// decodeState shares strict metadata decoding with cleanup.
+func (g *Gallery) decodeState(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&g.state); err != nil {
+		return fmt.Errorf("invalid image gallery state: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return errors.New("invalid image gallery state: trailing data")
+	}
+	return nil
+}
+
 func (g *Gallery) validate() error {
+	if err := g.validateMetadata(); err != nil {
+		return err
+	}
+	for _, item := range g.state.Images {
+		if err := checkPrivate(filepath.Join(g.directory, "images", item.Hash+".png"), false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Cleanup needs valid ownership and allocations even when an earlier attempt
+// already removed some artifacts. Opening a gallery also checks those files.
+func (g *Gallery) validateMetadata() error {
 	s := g.state
 	if s.Version != 1 || !isHex(s.ID, 32) || s.Revision < 0 || !isFontName(s.Font) || s.PostScript == "" || s.Family == "" || len(s.Images) > imagefont.MaxGlyphs || s.CompletedAttempt != "" && !isHex(s.CompletedAttempt, 32) {
 		return errors.New("invalid image gallery metadata")
@@ -347,10 +370,6 @@ func (g *Gallery) validate() error {
 		key := placement{item.Hash, item.Columns}
 		if !isHex(item.Hash, 64) || seen[key] || item.Columns < 1 || item.Columns > 64 || item.Rows < 1 || item.Rows > imagefont.MaxFrameRows || item.Start != next || count > int(imagefont.LastCodepoint-next)+1 {
 			return errors.New("invalid image gallery character allocation")
-		}
-		if err := checkPrivate(filepath.Join(g.directory, "images", item.Hash+".png"), false); err != nil {
-
-			return err
 		}
 		seen[key] = true
 		next += rune(count)
