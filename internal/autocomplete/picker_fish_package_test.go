@@ -22,7 +22,12 @@ func TestFishPackagePickerFirstPrompt(t *testing.T) {
 		t.Skip("fish is unavailable")
 	}
 	expect, err := exec.LookPath("expect")
-	require.NoError(t, err, "expect is required for native fish startup")
+	if err != nil {
+		if strings.Contains(os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS"), "fish") {
+			t.Fatal(err)
+		}
+		t.Skip("expect is required for native fish startup")
+	}
 	for _, scenario := range []struct {
 		name, setup string
 		disabled    bool
