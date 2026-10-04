@@ -155,6 +155,49 @@ func TestHomebrewPickerInstallHook(t *testing.T) {
 	}
 }
 
+// CI installation must not launch setup at all, even when shell targeting would
+// otherwise be eligible. False values match first-use setup's existing contract.
+func TestHomebrewPickerHookSkipsCI(t *testing.T) {
+	config := readReleaseYAML[goReleaserConfig](t, filepath.Join("..", ".goreleaser.yml"))
+	if len(config.HomebrewCasks) != 1 {
+		t.Fatal("expected one Homebrew cask")
+	}
+	ruby, err := exec.LookPath("ruby")
+	if err != nil {
+		t.Skip("Ruby is required to execute the Homebrew hook fixture")
+	}
+	home := t.TempDir()
+	hook := filepath.Join(home, "hook.rb")
+	if err := os.WriteFile(hook, []byte(config.HomebrewCasks[0].Hooks.Post["install"]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "TF_BUILD", "BUILDKITE", "JENKINS_URL", "TEAMCITY_VERSION"} {
+		for _, value := range []string{"true", "1", "https://ci.example.invalid", "FALSE", "false", "0", "", " false ", string([]byte{0xff})} {
+			t.Run(name+"="+value, func(t *testing.T) {
+				command := exec.CommandContext(t.Context(), ruby, "-e", `
+require "timeout"
+def staged_path; "/synthetic/cask"; end
+def system_command(*args, **options); puts "setup invoked"; end
+eval(File.read(ARGV.fetch(0)), binding, ARGV.fetch(0))
+puts "installation continued"
+`, hook)
+				command.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin", "SHELL=/bin/zsh", "HOMEBREW_ZDOTDIR=" + home, "CI=false", name + "=" + value}
+				// Setting another marker must still skip when CI itself is false.
+				var stdout, stderr bytes.Buffer
+				command.Stdout, command.Stderr = &stdout, &stderr
+				err := command.Run()
+				want := "installation continued\n"
+				if value == "" || value == "0" || strings.EqualFold(value, "false") {
+					want = "setup invoked\n" + want
+				}
+				if err != nil || stdout.String() != want || stderr.Len() != 0 {
+					t.Fatalf("CI hook dispatch: %v stdout=%q stderr=%q, want %q", err, stdout.String(), stderr.String(), want)
+				}
+			})
+		}
+	}
+}
+
 // Homebrew raises on timeout even with must_succeed: false. Only that optional
 // failure is swallowed; cancellation and unexpected hook errors still abort.
 func TestHomebrewPickerHookExceptions(t *testing.T) {

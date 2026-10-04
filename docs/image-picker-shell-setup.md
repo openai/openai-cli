@@ -29,6 +29,10 @@ users can load the shortcut in a new terminal before their first interactive CLI
 run. The hook uses the newly staged executable as the installing user and keeps
 any earlier opt-out. It restores Homebrew's saved `ZDOTDIR` and `XDG_CONFIG_HOME`
 for the setup command; zsh still requires an exported absolute `ZDOTDIR`.
+The hook skips setup when a recognized CI marker is enabled in Homebrew's
+environment. Set `CI=1` for automated installations; Homebrew preserves this
+marker when filtering the environment. Empty, `false` (case-insensitive), and
+`0` values do not enable a marker.
 The hook allows ten seconds for setup; Homebrew may take additional time to
 terminate a timed-out child. Diagnostics remain visible, but an unsuccessful or
 timed-out setup does not fail the cask installation. Uninstall does not edit

@@ -13,9 +13,9 @@ configured in `.goreleaser.yml`.
 
 The Homebrew cask's post-install hook runs the staged binary's existing
 `@completion --install-picker --automatic` action during install and upgrade.
-It restores Homebrew's saved shell configuration locations and sudo marker only
-for that child, uses no sudo, and tolerates setup failure or its ten-second
-timeout. User interruption still propagates. There is no uninstall
+It skips detected CI environments and restores Homebrew's saved shell
+configuration locations and sudo marker only for that child, uses no sudo,
+and tolerates setup failure or its ten-second timeout. User interruption still propagates. There is no uninstall
 hook, so upgrades do not remove setup or record an opt-out. The shared setup
 routine owns profile changes and consent; see [shell setup](image-picker-shell-setup.md)
 for eligibility, activation and removal. This hook runs on the user's machine,
