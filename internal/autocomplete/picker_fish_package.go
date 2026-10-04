@@ -3,7 +3,7 @@ package autocomplete
 import "strings"
 
 // FishPackagePickerScript renders the Linux package's vendor_conf.d script.
-// It resolves the user's home and selected executable when the shell starts.
+// It checks consent at activation and the selected executable at every Tab press.
 func FishPackagePickerScript() ([]byte, error) {
 	return fishPackagePickerScript("/usr/bin/openai")
 }
@@ -13,6 +13,13 @@ func fishPackagePickerScript(executable string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	check := strings.ReplaceAll(string(guard), "__OPENAI_PACKAGE_EXECUTABLE__", quotePickerPath(CompletionStyleFish, executable))
-	return renderPickerStartup(PickerInstallation{Shell: CompletionStyleFish}, check)
+	binary := quotePickerPath(CompletionStyleFish, executable)
+	check := strings.ReplaceAll(string(guard), "__OPENAI_PACKAGE_EXECUTABLE__", binary)
+	// External test supports -ef on older fish versions too. Compare identities
+	// so symlinked package commands work, while later PATH changes fall back.
+	picker, err := renderPickerCompletionWithGuard(CompletionStyleFish, "openai", "command test (command -s openai) -ef "+binary+" 2>/dev/null")
+	if err != nil {
+		return nil, err
+	}
+	return renderPickerStartup(PickerInstallation{Shell: CompletionStyleFish}, "", picker, check), nil
 }

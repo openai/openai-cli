@@ -504,12 +504,6 @@ func quotePickerPath(shell CompletionStyle, path string) string {
 }
 
 func renderInstalledPicker(options PickerInstallation) ([]byte, error) {
-	return renderPickerStartup(options, "")
-}
-
-// Package eligibility is evaluated at the prompt, after user configuration.
-// Both personal and package scripts use the same activation and disable handler.
-func renderPickerStartup(options PickerInstallation, fishPromptGuard string) ([]byte, error) {
 	completion, err := shellCompletions[options.Shell](nil, "openai")
 	if err != nil {
 		return nil, err
@@ -518,6 +512,12 @@ func renderPickerStartup(options PickerInstallation, fishPromptGuard string) ([]
 	if err != nil {
 		return nil, err
 	}
+	return renderPickerStartup(options, completion, picker, ""), nil
+}
+
+// Package startup leaves ordinary completion to the user's existing setup.
+// Both personal and package scripts share activation and disable handling.
+func renderPickerStartup(options PickerInstallation, completion, picker, fishPromptGuard string) []byte {
 	preamble, marker := "", ""
 	switch options.Shell {
 	case CompletionStyleZsh:
@@ -550,7 +550,7 @@ end
 end
 `
 	}
-	return []byte(pickerScriptHeader + preamble + completion + "\n" + picker + marker), nil
+	return []byte(pickerScriptHeader + preamble + completion + "\n" + picker + marker)
 }
 
 func openPickerDirectory(ctx context.Context, path string, create bool) (*os.Root, error) {

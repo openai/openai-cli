@@ -8,6 +8,12 @@ import (
 // Picker hooks share the completion script distribution, but are opt-in because
 // they change an interactive key's behavior. They never edit startup files.
 func renderPickerCompletion(shell CompletionStyle, appName string) (string, error) {
+	return renderPickerCompletionWithGuard(shell, appName, "")
+}
+
+// A package hook checks its executable again at each Tab press. Personal hooks
+// retain their existing behavior of following the selected command on PATH.
+func renderPickerCompletionWithGuard(shell CompletionStyle, appName, fishCommandCondition string) (string, error) {
 	if appName == "" {
 		return "", fmt.Errorf("a command name is required for picker integration")
 	}
@@ -34,5 +40,10 @@ func renderPickerCompletion(shell CompletionStyle, appName string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	return strings.ReplaceAll(string(script), "__APPNAME__", appName), nil
+	guard := ""
+	if fishCommandCondition != "" {
+		guard = "; and " + fishCommandCondition
+	}
+	content := strings.ReplaceAll(string(script), "__FISH_PICKER_COMMAND_GUARD__", guard)
+	return strings.ReplaceAll(content, "__APPNAME__", appName), nil
 }

@@ -207,6 +207,28 @@ func TestKittyCloseReapsStoppedIdleWorkers(t *testing.T) {
 		if err := worker.command.Process.Signal(syscall.SIGSTOP); err != nil {
 			t.Fatal(err)
 		}
+		// Sending SIGSTOP does not confirm the worker has stopped. Closing its
+		// lifeline first can let it exit normally before the signal takes effect.
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			var status syscall.WaitStatus
+			pid, err := syscall.Wait4(worker.command.Process.Pid, &status, syscall.WUNTRACED|syscall.WNOHANG, nil)
+			if err != nil && !errors.Is(err, syscall.EINTR) {
+				t.Fatal(err)
+			}
+			if pid != 0 && err == nil {
+				// Go's BSD WaitStatus.Stopped excludes SIGSTOP. With no
+				// WCONTINUED requested, require its exact stop notification.
+				if status != syscall.WaitStatus(syscall.SIGSTOP<<8|0x7f) {
+					t.Fatalf("worker did not stop: %v", status)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("worker did not acknowledge SIGSTOP")
+			}
+			time.Sleep(time.Millisecond)
+		}
 	}
 	started := time.Now()
 	if err := session.Close(); err == nil {
