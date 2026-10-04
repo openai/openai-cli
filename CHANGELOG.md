@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.37.0](https://github.com/openai/openai-cli/compare/v1.36.0...v1.37.0) (2026-10-04)
+
+
+### Features
+
+* **cli:** include fish picker shortcuts in Linux packages ([#361](https://github.com/openai/openai-cli/issues/361)) ([bae10cc](https://github.com/openai/openai-cli/commit/bae10ccb79bde2bacb142c387e7b31539913313a))
+
+
+### Documentation
+
+* **cli:** keep Homebrew picker setup on first run ([#367](https://github.com/openai/openai-cli/issues/367)) ([fbe7e46](https://github.com/openai/openai-cli/commit/fbe7e46715bd3a8b735bded78d351205e469bf36))
+
 ## [1.36.0](https://github.com/openai/openai-cli/compare/v1.35.0...v1.36.0) (2026-10-03)
 
 
