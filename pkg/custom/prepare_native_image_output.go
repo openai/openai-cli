@@ -22,8 +22,9 @@ func prepareNativeImageOutput(ctx context.Context, command *cli.Command) (contex
 		return skip()
 	}
 	out := imageCommandWriter(command)
-	if savedImageProtocol(command.String("inline"), isTerminal(out), os.Getenv) != "kitty" {
+	protocol := savedImageProtocol(command.String("inline"), isTerminal(out), os.Getenv)
+	if protocol != "kitty" && protocol != "iterm-auto" {
 		return skip()
 	}
-	return terminalimage.PrepareKittyOutput(ctx, out)
+	return terminalimage.PrepareNativeImageOutput(ctx, out)
 }

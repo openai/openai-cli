@@ -21,7 +21,8 @@ import (
 )
 
 // Write displays img at the requested width in terminal cells, preserving its
-// aspect ratio. The caller selects the protocol and supplies a terminal writer.
+// aspect ratio. iterm-auto delegates sizing to the terminal's live viewport.
+// The caller selects the protocol and supplies a terminal writer.
 func Write(ctx context.Context, w io.Writer, img image.Image, protocol string, columns int) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -37,6 +38,13 @@ func Write(ctx context.Context, w io.Writer, img image.Image, protocol string, c
 		return writeKittyImage(ctx, w, img, columns)
 	case "iterm":
 		return writeITermImage(ctx, w, img, columns)
+	case "iterm-auto":
+		// xterm's IIP renderer fits auto/auto within its current viewport.
+		// An explicit width overrides its height limit, and OS window metadata
+		// does not reliably describe VS Code's cell size (including on Windows).
+		return writeITermOutput(ctx, w, func(destination io.Writer) error {
+			return writeITermImage(ctx, destination, img, 0)
+		})
 	case "blocks":
 		cellWidth, cellHeight := 1, 2
 		if file, ok := w.(*os.File); ok {

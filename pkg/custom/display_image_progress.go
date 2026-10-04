@@ -53,7 +53,7 @@ func (p *imageOutputPlan) displayImageProgress(ctx context.Context, event gjson.
 		return false, errors.New("inline previews require a terminal")
 	}
 	width, height, sizeErr := term.GetSize(file.Fd())
-	if sizeErr != nil {
+	if sizeErr != nil || width < 2 || height < 2 {
 		return warn(unavailableMessage)
 	}
 	cellWidth, cellHeight := terminalimage.CellSize(file.Fd())
@@ -61,7 +61,7 @@ func (p *imageOutputPlan) displayImageProgress(ctx context.Context, event gjson.
 	if protocol == "font" {
 		columns = terminalimage.FontPreviewColumns(img.Bounds(), columns, height)
 	}
-	if columns < 1 {
+	if columns < 1 && protocol != "iterm-auto" {
 		return warn(unavailableMessage)
 	}
 	if protocol == "blocks" {

@@ -75,6 +75,42 @@ func TestSavedImagePreviewSkipsNonTerminalWithoutReadingFile(t *testing.T) {
 	}
 }
 
+func TestVSCodeImageOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode, setting, want string
+		tty                       bool
+		extra                     map[string]string
+	}{
+		{"unknown", "auto", "", "blocks", true, nil},
+		{"on is not capability", "on", "", "blocks", true, nil},
+		{"disabled", "auto", "0", "blocks", true, nil},
+		{"strict assertion", "auto", "true", "blocks", true, nil},
+		{"auto opt in", "auto", "1", "iterm-auto", true, nil},
+		{"on opt in", "on", "1", "iterm-auto", true, nil},
+		{"off wins", "off", "1", "", true, nil},
+		{"redirected", "on", "1", "", false, nil},
+		{"ci", "on", "1", "", true, map[string]string{"CI": "true"}},
+		{"dumb", "on", "1", "", true, map[string]string{"TERM": "dumb"}},
+		{"tmux", "on", "1", "blocks", true, map[string]string{"TMUX": "active"}},
+		{"screen", "on", "1", "blocks", true, map[string]string{"TERM": "screen-256color"}},
+		{"zellij", "on", "1", "blocks", true, map[string]string{"ZELLIJ": "active"}},
+		{"no identity", "auto", "1", "blocks", true, map[string]string{"TERM_PROGRAM": ""}},
+		{"different identity", "auto", "1", "iterm", true, map[string]string{"TERM_PROGRAM": "iTerm.app"}},
+		{"no color retains native", "auto", "1", "iterm-auto", true, map[string]string{"NO_COLOR": "1"}},
+		{"ssh explicit assertion", "auto", "1", "iterm-auto", true, map[string]string{"SSH_TTY": "/dev/pts/1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := map[string]string{"TERM_PROGRAM": "vscode", "TERM": "xterm-256color", "OPENAI_VSCODE_IMAGES": tc.setting}
+			for key, value := range tc.extra {
+				env[key] = value
+			}
+			getenv := func(key string) string { return env[key] }
+			require.Equal(t, tc.want, savedImageProtocol(tc.mode, tc.tty, getenv))
+			require.Equal(t, tc.want, imageProgressProtocol(tc.mode, tc.tty, getenv))
+		})
+	}
+}
+
 // Run in a real PTY as well as the ordinary suite. This test writes synthetic
 // native protocol output; it must never activate the Apple Terminal font path.
 func TestSavedImagePreviewTerminal(t *testing.T) {

@@ -171,6 +171,37 @@ openai images generate --prompt "A tiny orange robot" --inline on
 Without a saved preference, `--inline auto` is the default on generation and
 edits. Kitty and Ghostty use the Kitty graphics protocol; iTerm2 and WezTerm
 use the iTerm protocol.
+
+VS Code requires a separate opt-in. Its terminal identity does not indicate
+whether its optional image renderer is active. First enable
+`terminal.integrated.enableImages` in VS Code and ensure GPU acceleration is
+available. Then, in that VS Code terminal, opt in for a command:
+
+```sh
+env OPENAI_VSCODE_IMAGES=1 openai images preview "photo.png" # Bash, zsh or fish
+```
+
+`OPENAI_VSCODE_IMAGES` must be exactly `1`, with `TERM_PROGRAM=vscode`. This
+asserts that you enabled image support; the CLI cannot verify the setting or a
+working renderer. An incorrect or stale assertion can produce no visible image.
+Unset it when image support is disabled. Without the assertion, `auto` and `on`
+keep the existing color-block fallback when available. `--inline off` still
+disables automatic previews. The opt-in also applies to generation and progress
+previews. It never reads terminal replies or changes VS Code settings.
+
+VS Code sizes the image using its current viewport and actual cell dimensions,
+without the usual 64-column cap or upscaling small images. Resize, then preview
+again to fit a new window.
+The CLI sends original pixels and transparency as PNG. VS Code controls
+displayed scaling and compositing. Its image storage limits can evict older
+images. Images do not survive a window reload. The image addon can silently
+drop PNG payloads over 32 MiB or images at or above 16,777,216 pixels.
+It can also drop very thin images below a text cell.
+These renderer limits do not limit API responses or
+saved originals. See [VS Code image support](https://code.visualstudio.com/docs/terminal/advanced#_image-support).
+VS Code requires ConPTY v2 or later for these images on Windows. Windows and
+remote sessions require separate rendering checks; an opt-in or successful write
+is not proof of visible rendering there.
 Other color terminals show a labeled color-block approximation. `NO_COLOR` or
 `CLICOLOR=0` disables that approximation, while native image graphics remain
 available. Basic terminals keep the saved path without a preview.
@@ -194,8 +225,9 @@ native graphics or Apple font activation. Apple image fonts are unavailable over
 SSH. Native Kitty rendering can work over SSH when the terminal identity is
 forwarded. Explicit API formats and other saving opt-outs never render graphics.
 
-Optional previews are limited to 64 MiB and 16 megapixels, and must fit the
-terminal at a width of at least one cell. Larger or unusually tall images remain
+Optional previews are limited to 64 MiB and 16 megapixels. Except for VS Code's
+terminal-controlled sizing, they must fit at a width of at least one cell.
+Larger or unusually tall images remain
 saved in full; the CLI explains why they could not be displayed. Preview decoding
 and font failures keep the saved files. Follow the printed path instead of
 paying to generate the image again. No separate viewer is opened.

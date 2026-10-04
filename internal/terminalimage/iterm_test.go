@@ -46,7 +46,7 @@ func TestITermOutputMatchesOriginalEncoder(t *testing.T) {
 			if columns > 0 {
 				width = iterm2.Cells(columns)
 			}
-			want := ansi.ITerm2(iterm2.File{Inline: true, Width: width, Height: iterm2.Auto, Content: []byte(base64.StdEncoding.EncodeToString(encoded.Bytes()))})
+			want := ansi.ITerm2(iterm2.File{Size: int64(encoded.Len()), Inline: true, Width: width, Height: iterm2.Auto, Content: []byte(base64.StdEncoding.EncodeToString(encoded.Bytes()))})
 			var got bytes.Buffer
 			require.NoError(t, Write(t.Context(), &got, img, "iterm", columns))
 			require.Equal(t, want, got.String())
@@ -175,7 +175,7 @@ func TestITermBase64PaddingMatchesOriginal(t *testing.T) {
 		payload := bytes.Repeat([]byte{171}, size)
 		var got bytes.Buffer
 		require.NoError(t, writeITermPayload(t.Context(), &got, payload, 50))
-		want := ansi.ITerm2(iterm2.File{Inline: true, Width: "50", Height: iterm2.Auto, Content: []byte(base64.StdEncoding.EncodeToString(payload))})
+		want := ansi.ITerm2(iterm2.File{Size: int64(len(payload)), Inline: true, Width: "50", Height: iterm2.Auto, Content: []byte(base64.StdEncoding.EncodeToString(payload))})
 		require.Equal(t, want, got.String())
 	}
 }

@@ -68,7 +68,7 @@ func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnos
 	if protocol == "font" {
 		columns = terminalimage.FontPreviewColumns(img.Bounds(), columns, height)
 	}
-	if columns < 1 {
+	if columns < 1 && protocol != "iterm-auto" {
 		return reportImagePreviewUnavailable(diagnostics, "Inline preview unavailable: the image is too tall for this terminal. Open the saved file to view it.")
 	}
 	if protocol == "blocks" {
@@ -152,6 +152,13 @@ func savedImageProtocol(mode string, terminal bool, getenv func(string) string) 
 			return "kitty"
 		case "iTerm.app", "WezTerm":
 			return "iterm"
+		case "vscode":
+			// VS Code does not export whether its optional image renderer is
+			// active. This is an explicit user assertion, not autodetection.
+			// Never query the terminal or inspect settings from this selector.
+			if getenv("OPENAI_VSCODE_IMAGES") == "1" {
+				return "iterm-auto"
+			}
 		case "Apple_Terminal":
 			if mode == "on" && getenv("SSH_CONNECTION") == "" && getenv("SSH_CLIENT") == "" && getenv("SSH_TTY") == "" && runtime.GOOS == "darwin" {
 				return "font"

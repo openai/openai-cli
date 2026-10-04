@@ -22,10 +22,11 @@ type kittyOutputBinding struct {
 	err     error
 }
 
-// PrepareKittyOutput binds the writer before a command reads input or waits for
+// PrepareNativeImageOutput binds the writer before a command reads input or waits for
 // the API. Preparation errors are deferred until a preview actually uses it.
 // Close reports helper failures only after use, preserving non-preview paths.
-func PrepareKittyOutput(ctx context.Context, out io.Writer) (context.Context, func() error) {
+// The existing Kitty worker also carries VS Code's IIP bytes without interpreting them.
+func PrepareNativeImageOutput(ctx context.Context, out io.Writer) (context.Context, func() error) {
 	file, ok := out.(*os.File)
 	if !ok || !term.IsTerminal(file.Fd()) {
 		return ctx, func() error { return nil }
@@ -58,6 +59,14 @@ func PrepareKittyOutput(ctx context.Context, out io.Writer) (context.Context, fu
 // Only a directly owned worker with kernel-default SIGINT writes graphics.
 // Terminal modes, user descriptor flags and parent signal handlers are unchanged.
 func writeKittyOutput(ctx context.Context, out io.Writer, write func(io.Writer) error) (err error) {
+	return writeNativeImageOutput(ctx, out, write, "\x00\x1b\\\x1b_Gq=2,m=0;\x1b\\")
+}
+
+func writeITermOutput(ctx context.Context, out io.Writer, write func(io.Writer) error) error {
+	return writeNativeImageOutput(ctx, out, write, "\x00\x1b\\")
+}
+
+func writeNativeImageOutput(ctx context.Context, out io.Writer, write func(io.Writer) error, reset string) (err error) {
 	file, ok := out.(*os.File)
 	if !ok || !term.IsTerminal(file.Fd()) {
 		return write(out)
@@ -66,7 +75,7 @@ func writeKittyOutput(ctx context.Context, out io.Writer, write func(io.Writer) 
 	if binding == nil {
 		// Direct internal-library callers may have no command preparation phase.
 		var closeOutput func() error
-		ctx, closeOutput = PrepareKittyOutput(ctx, out)
+		ctx, closeOutput = PrepareNativeImageOutput(ctx, out)
 		defer func() { err = errors.Join(err, closeOutput()) }()
 		binding, _ = ctx.Value(kittyOutputContextKey{}).(*kittyOutputBinding)
 	}
@@ -89,11 +98,11 @@ func writeKittyOutput(ctx context.Context, out io.Writer, write func(io.Writer) 
 		return err
 	}
 	// Pipe acceptance does not identify the terminal's cut. Reap failed workers before
-	// NUL + ST + quiet final chunk. Keep the lease through bounded cleanup.
+	// the protocol-specific reset. Keep the lease through bounded cleanup.
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kittyOutputCleanupTimeout)
 	defer cancel()
 	_, cleanupErr := session.write(cleanupCtx, func(destination io.Writer) error {
-		_, err := io.WriteString(destination, "\x00\x1b\\\x1b_Gq=2,m=0;\x1b\\")
+		_, err := io.WriteString(destination, reset)
 		return err
 	})
 	if cleanupErr != nil {

@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"io"
 	"math/rand"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -26,11 +27,11 @@ func testImage(t *testing.T) image.Image {
 
 func TestWritePreservesImageAndFitsWidth(t *testing.T) {
 	img := testImage(t)
-	for _, protocol := range []string{"kitty", "iterm"} {
+	for _, protocol := range []string{"kitty", "iterm", "iterm-auto"} {
 		t.Run(protocol, func(t *testing.T) {
 			var output bytes.Buffer
 			require.NoError(t, Write(t.Context(), &output, img, protocol, 50))
-			var payload string
+			var payload, imageHeader string
 			if protocol == "kitty" {
 				frames := strings.Split(strings.TrimSuffix(output.String(), "\x1b\\"), "\x1b\\")
 				require.Greater(t, len(frames), 1, "fixture should exercise chunking")
@@ -56,12 +57,19 @@ func TestWritePreservesImageAndFitsWidth(t *testing.T) {
 			} else {
 				header, data, ok := strings.Cut(output.String(), ":")
 				require.True(t, ok)
-				require.Equal(t, "\x1b]1337;File=width=50;height=auto;inline=1", header)
+				imageHeader = header
 				require.True(t, strings.HasSuffix(data, "\x07"))
 				payload = strings.TrimSuffix(data, "\x07")
 			}
 			decoded, err := base64.StdEncoding.DecodeString(payload)
 			require.NoError(t, err)
+			if protocol != "kitty" {
+				width := "50"
+				if protocol == "iterm-auto" {
+					width = "auto"
+				}
+				require.Equal(t, "\x1b]1337;File=size="+strconv.Itoa(len(decoded))+";width="+width+";height=auto;inline=1", imageHeader)
+			}
 			rendered, err := png.Decode(bytes.NewReader(decoded))
 			require.NoError(t, err)
 			require.Equal(t, img.Bounds(), rendered.Bounds())
@@ -76,7 +84,7 @@ func (f writerFunc) Write(data []byte) (int, error) { return f(data) }
 
 func TestWriteErrorsAndCancellation(t *testing.T) {
 	img := testImage(t)
-	for _, protocol := range []string{"kitty", "iterm", "blocks"} {
+	for _, protocol := range []string{"kitty", "iterm", "iterm-auto", "blocks"} {
 		t.Run(protocol, func(t *testing.T) {
 			sinkErr := errors.New("synthetic output failure")
 			require.ErrorIs(t, Write(t.Context(), writerFunc(func([]byte) (int, error) {
@@ -96,7 +104,7 @@ func TestWriteErrorsAndCancellation(t *testing.T) {
 			})
 			require.ErrorIs(t, Write(ctx, writer, img, protocol, 50), context.Canceled)
 			wantWrites := 1
-			if protocol == "iterm" {
+			if protocol == "iterm" || protocol == "iterm-auto" {
 				wantWrites++ // Close the OSC.
 			}
 			require.Equal(t, wantWrites, writes)
@@ -142,7 +150,7 @@ func TestWriteNativeStopsDuringPNGPreparation(t *testing.T) {
 			img.SetRGBA(x, y, color.RGBA{R: byte(x), G: byte(y), A: 255})
 		}
 	}
-	for _, protocol := range []string{"kitty", "iterm"} {
+	for _, protocol := range []string{"kitty", "iterm", "iterm-auto"} {
 		t.Run(protocol, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
