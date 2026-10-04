@@ -15,9 +15,9 @@ func fishPackagePickerScript(executable string) ([]byte, error) {
 	}
 	binary := quotePickerPath(CompletionStyleFish, executable)
 	check := strings.ReplaceAll(string(guard), "__OPENAI_PACKAGE_EXECUTABLE__", binary)
-	// External test supports -ef on older fish versions too. Compare identities
-	// so symlinked package commands work, while later PATH changes fall back.
-	picker, err := renderPickerCompletionWithGuard(CompletionStyleFish, "openai", "command test (command -s openai) -ef "+binary+" 2>/dev/null")
+	// The system test supports -ef on older fish versions too. Its absolute
+	// path keeps automatic activation independent of other executables on PATH.
+	picker, err := renderPickerCompletionWithGuard(CompletionStyleFish, "openai", "test -x /usr/bin/test; and command /usr/bin/test (command -s openai) -ef "+binary+" 2>/dev/null")
 	if err != nil {
 		return nil, err
 	}

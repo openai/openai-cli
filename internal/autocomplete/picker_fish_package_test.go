@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ func TestFishPackagePickerFirstPrompt(t *testing.T) {
 		{"different executable", "set -gx PATH $HOME/other $PATH", true},
 		{"different executable after prompt", "", false},
 		{"function shadows executable", "function openai; end", true},
-		{"external file identity test", "", false},
+		{"PATH-selected test is ignored", "", false},
 		{"relative home", "set -gx HOME relative", true},
 		{"same executable through symlink", "rm \"$HOME/other/openai\"\nln -s \"$HOME/openai\" \"$HOME/other/openai\"\nset -gx PATH $HOME/other $PATH", false},
 		{"repeated source", `source "$PICKER_TEST_PACKAGE"`, false},
@@ -53,14 +54,16 @@ func TestFishPackagePickerFirstPrompt(t *testing.T) {
 			binary := filepath.Join(home, "openai")
 			require.NoError(t, os.WriteFile(binary, []byte(fixture), 0700))
 			require.NoError(t, os.WriteFile(filepath.Join(home, "other", "openai"), []byte("#!/bin/sh\nexit 99\n"), 0700))
-			if scenario.name == "external file identity test" {
-				externalTest, err := exec.LookPath("test")
-				require.NoError(t, err)
-				fixture := "#!/bin/sh\nprintf 'identity\\n' >>\"$HOME/identity-calls\"\nexec " + pickerShellQuote(externalTest) + " \"$@\"\n"
+			if scenario.name == "PATH-selected test is ignored" {
+				fixture := "#!/bin/sh\nprintf 'unexpected\\n' >>\"$HOME/identity-calls\"\nexit 99\n"
 				require.NoError(t, os.WriteFile(filepath.Join(home, "test"), []byte(fixture), 0700))
 			}
 			packageScript, err := fishPackagePickerScript(binary)
 			require.NoError(t, err)
+			if runtime.GOOS == "darwin" {
+				// The asset targets Linux; macOS keeps its system test in /bin.
+				packageScript = []byte(strings.ReplaceAll(string(packageScript), "/usr/bin/test", "/bin/test"))
+			}
 			personalScript, err := renderInstalledPicker(PickerInstallation{Shell: CompletionStyleFish, OptOutPath: filepath.Join(home, ".openai", "shell", "image-picker.tab-off-fish")})
 			require.NoError(t, err)
 			require.NoError(t, os.WriteFile(filepath.Join(home, "package.fish"), packageScript, 0600))
@@ -147,10 +150,9 @@ expect eof
 				want = "active\nfallback\n"
 			}
 			require.Equal(t, want, string(result), string(output))
-			if scenario.name == "external file identity test" {
-				calls, err := os.ReadFile(filepath.Join(home, "identity-calls"))
-				require.NoError(t, err)
-				require.GreaterOrEqual(t, strings.Count(string(calls), "identity\n"), 2, "startup and Tab must both use external test")
+			if scenario.name == "PATH-selected test is ignored" {
+				_, err := os.Stat(filepath.Join(home, "identity-calls"))
+				require.ErrorIs(t, err, os.ErrNotExist, "startup and Tab must ignore a PATH-selected test executable")
 			}
 		})
 	}
