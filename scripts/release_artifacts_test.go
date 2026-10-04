@@ -443,6 +443,9 @@ func TestGoReleaserPreservesArtifactsWithoutApplicationHooks(t *testing.T) {
 		t.Fatal("Homebrew cask publishing configuration was removed")
 	}
 	cask := config.HomebrewCasks[0]
+	if len(cask.Hooks.Pre) != 0 || len(cask.Hooks.Post) != 0 {
+		t.Fatal("Homebrew cask must leave picker setup to the existing first-run path")
+	}
 	if cask.Repository.Name != "homebrew-tools" || cask.Repository.Token != "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}" {
 		t.Errorf("Homebrew repository configuration = %+v", cask.Repository)
 	}
