@@ -28,6 +28,7 @@ var releaseInputPaths = []string{
 	"completions/openai.bash",
 	"completions/openai.zsh",
 	"completions/openai.fish",
+	"completions/picker/openai.fish",
 	"man/man1/openai.1.gz",
 }
 
@@ -204,6 +205,7 @@ func TestReleaseInputsUseAnIsolatedUnprivilegedJob(t *testing.T) {
 		"@completion bash > completions/openai.bash",
 		"@completion zsh > completions/openai.zsh",
 		"@completion fish > completions/openai.fish",
+		"go run ./scripts/render-linux-picker > completions/picker/openai.fish",
 		"@manpages -o man",
 	} {
 		if !strings.Contains(generate.Run, fragment) {
@@ -394,13 +396,42 @@ func TestReleaseInputVerifierRejectsUnsafeArtifacts(t *testing.T) {
 	}
 
 	_, verify := requireStep(t, readWorkflow(t, "publish-release.yml").Jobs["goreleaser"], "Verify isolated release inputs")
+	releaseConfig, err := os.ReadFile(filepath.Join("..", "..", ".goreleaser.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
-		name   string
-		mutate func(t *testing.T, root string)
-		valid  bool
+		name       string
+		mutate     func(t *testing.T, root string)
+		valid      bool
+		historical bool
 	}{
 		{name: "exact passive artifacts", valid: true},
+		{name: "historical inputs", historical: true, valid: true},
+		{name: "historical unexpected picker", historical: true, mutate: func(t *testing.T, root string) {
+			writeReleaseTestFile(t, filepath.Join(root, "completions/picker/openai.fish"), []byte("unexpected"))
+		}},
+		{name: "missing fish picker", mutate: func(t *testing.T, root string) {
+			if err := os.Remove(filepath.Join(root, "completions/picker/openai.fish")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "symlinked fish picker", mutate: func(t *testing.T, root string) {
+			path := filepath.Join(root, "completions/picker/openai.fish")
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(root, releaseInputPaths[0]), path); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "empty fish picker", mutate: func(t *testing.T, root string) {
+			writeReleaseTestFile(t, filepath.Join(root, "completions/picker/openai.fish"), nil)
+		}},
+		{name: "oversized fish picker", mutate: func(t *testing.T, root string) {
+			writeReleaseTestFile(t, filepath.Join(root, "completions/picker/openai.fish"), bytes.Repeat([]byte("x"), 10*1024*1024+1))
+		}},
 		{name: "unexpected workflow file", mutate: func(t *testing.T, root string) {
 			writeReleaseTestFile(t, filepath.Join(root, ".goreleaser.yml"), []byte("before: compromised"))
 		}},
@@ -447,7 +478,13 @@ func TestReleaseInputVerifierRejectsUnsafeArtifacts(t *testing.T) {
 			t.Parallel()
 
 			root := filepath.Join(t.TempDir(), "inputs")
-			for _, path := range releaseInputPaths {
+			inputs := releaseInputPaths
+			config := releaseConfig
+			if test.historical {
+				inputs = []string{"completions/openai.bash", "completions/openai.zsh", "completions/openai.fish", "man/man1/openai.1.gz"}
+				config = []byte("version: 2\n")
+			}
+			for _, path := range inputs {
 				writeReleaseTestFile(t, filepath.Join(root, path), []byte("safe passive release input"))
 			}
 			if test.mutate != nil {
@@ -456,6 +493,15 @@ func TestReleaseInputVerifierRejectsUnsafeArtifacts(t *testing.T) {
 			workspace := t.TempDir()
 			if output, err := exec.Command("git", "init", "--quiet", workspace).CombinedOutput(); err != nil {
 				t.Fatalf("initialize isolated publisher checkout: %v\n%s", err, output)
+			}
+			writeReleaseTestFile(t, filepath.Join(workspace, ".goreleaser.yml"), config)
+			for _, args := range [][]string{
+				{"add", ".goreleaser.yml"},
+				{"-c", "user.name=Release Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "trusted release config"},
+			} {
+				if output, err := exec.Command("git", append([]string{"-C", workspace}, args...)...).CombinedOutput(); err != nil {
+					t.Fatalf("prepare trusted publisher config: %v\n%s", err, output)
+				}
 			}
 			command := exec.Command("bash", "-c", verify.Run)
 			command.Dir = workspace
@@ -467,8 +513,15 @@ func TestReleaseInputVerifierRejectsUnsafeArtifacts(t *testing.T) {
 			if !test.valid && err == nil {
 				t.Fatalf("unsafe release inputs were accepted:\n%s", output)
 			}
-			if test.valid {
+			if !test.valid {
 				for _, path := range releaseInputPaths {
+					if _, err := os.Lstat(filepath.Join(workspace, path)); !os.IsNotExist(err) {
+						t.Errorf("invalid input was copied before verification completed: %s, %v", path, err)
+					}
+				}
+			}
+			if test.valid {
+				for _, path := range inputs {
 					if _, err := os.Stat(filepath.Join(workspace, path)); err != nil {
 						t.Errorf("verified release input %s was not staged: %v", path, err)
 					}
@@ -578,6 +631,9 @@ func TestCISnapshotGeneratesInputsBeforeGoReleaser(t *testing.T) {
 	}
 	if !strings.Contains(generate.Run, "@manpages -o man") {
 		t.Fatal("CI snapshot no longer generates release manpages")
+	}
+	if !strings.Contains(generate.Run, "go run ./scripts/render-linux-picker > completions/picker/openai.fish") {
+		t.Fatal("CI snapshot does not generate the Linux fish picker")
 	}
 	for _, path := range releaseInputPaths {
 		if !strings.Contains(generate.Run, "'/"+path+"'") {

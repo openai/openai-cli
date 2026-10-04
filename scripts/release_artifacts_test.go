@@ -45,6 +45,7 @@ func TestGenerateReleaseArtifacts(t *testing.T) {
 		"run ./cmd/openai/main.go @completion bash",
 		"run ./cmd/openai/main.go @completion zsh",
 		"run ./cmd/openai/main.go @completion fish",
+		"run ./scripts/render-linux-picker",
 		"run ./cmd/openai/main.go @manpages -o man",
 	}
 	if !slices.Equal(gotCalls, wantCalls) {
@@ -59,6 +60,9 @@ func TestGenerateReleaseArtifacts(t *testing.T) {
 		if got, want := string(contents), "completion:"+shell+"\n"; got != want {
 			t.Errorf("%s completion = %q, want %q", shell, got, want)
 		}
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "completions", "picker", "openai.fish")); err != nil || string(data) != "synthetic fish picker\n" {
+		t.Fatalf("Linux fish picker output = %q, error = %v", data, err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "man", "man1", "openai.1.gz")); err != nil {
 		t.Errorf("man page was not generated at its existing archive path: %v", err)
@@ -89,25 +93,28 @@ func TestGenerateReleaseArtifactsRejectsEveryCredential(t *testing.T) {
 }
 
 func TestGenerateReleaseArtifactsStopsAfterFailure(t *testing.T) {
-	_, logPath, command := newReleaseArtifactFixture(t)
-	command.Env = append(command.Env, "RELEASE_GO_FAILURE=run ./cmd/openai/main.go @completion zsh")
-
-	output, err := command.CombinedOutput()
-	if err == nil {
-		t.Fatalf("generator accepted failed completion generation; output:\n%s", output)
-	}
-
-	calls, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gotCalls := strings.Split(strings.TrimSpace(string(calls)), "\n")
-	wantCalls := []string{
+	calls := []string{
 		"run ./cmd/openai/main.go @completion bash",
 		"run ./cmd/openai/main.go @completion zsh",
+		"run ./cmd/openai/main.go @completion fish",
+		"run ./scripts/render-linux-picker",
 	}
-	if !slices.Equal(gotCalls, wantCalls) {
-		t.Errorf("Go calls after failure = %v, want %v", gotCalls, wantCalls)
+	for _, index := range []int{1, 3} {
+		t.Run(calls[index], func(t *testing.T) {
+			_, logPath, command := newReleaseArtifactFixture(t)
+			command.Env = append(command.Env, "RELEASE_GO_FAILURE="+calls[index])
+			if output, err := command.CombinedOutput(); err == nil {
+				t.Fatalf("generator accepted failed artifact generation; output:\n%s", output)
+			}
+			data, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, want := strings.Split(strings.TrimSpace(string(data)), "\n"), calls[:index+1]
+			if !slices.Equal(got, want) {
+				t.Errorf("Go calls after failure = %v, want %v", got, want)
+			}
+		})
 	}
 }
 
@@ -124,9 +131,10 @@ func TestLocalReleasePreflight(t *testing.T) {
 	}
 	root := t.TempDir()
 	files := map[string]string{
-		".gitignore":                         string(ignore),
-		"scripts/generate-release-artifacts": string(generator),
-		"go.mod":                             "module example.com/local-release\n\ngo 1.25.0\n",
+		".gitignore":                          string(ignore),
+		"scripts/generate-release-artifacts":  string(generator),
+		"go.mod":                              "module example.com/local-release\n\ngo 1.25.0\n",
+		"scripts/render-linux-picker/main.go": "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"synthetic fish picker\") }\n",
 		"cmd/openai/main.go": `package main
 
 import (
@@ -212,8 +220,10 @@ archives:
 
 	for _, unexpected := range []string{
 		"completions/unexpected.sh",
+		"completions/picker/unexpected.fish",
 		"man/man1/unexpected.1.gz",
 		"nested/completions/unrelated.txt",
+		"nested/completions/picker/openai.fish",
 	} {
 		path := filepath.Join(root, filepath.FromSlash(unexpected))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -397,8 +407,8 @@ func TestCIReleasePreflightUsesVerifiedExecutable(t *testing.T) {
 	if !(install < preflight && preflight < generate) {
 		t.Errorf("CI release steps are out of order: install=%d preflight=%d generate=%d", install, preflight, generate)
 	}
-	if !strings.Contains(job.Steps[preflight].Run, "Test(Local|Historical)ReleasePreflight") {
-		t.Errorf("CI does not execute both real local and historical-tag release preflights")
+	if !strings.Contains(job.Steps[preflight].Run, "Test((Local|Historical)ReleasePreflight|LinuxFishPickerPackageArtifacts)") {
+		t.Errorf("CI does not execute real local/historical preflights and Linux fish packaging")
 	}
 	if got, want := job.Steps[preflight].Env["GORELEASER_EXECUTABLE"], "${{ steps.goreleaser.outputs.executable }}"; got != want {
 		t.Errorf("CI release preflights executable = %q, want reviewed verified binary %q", got, want)
@@ -491,6 +501,10 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$RELEASE_GO_LOG"
 if [[ "$*" == "${RELEASE_GO_FAILURE:-}" ]]; then
   exit 23
+fi
+if [[ "$2" == "./scripts/render-linux-picker" ]]; then
+  printf 'synthetic fish picker\n'
+  exit 0
 fi
 case "$3" in
   @completion) printf 'completion:%s\n' "$4" ;;

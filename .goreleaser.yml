@@ -87,6 +87,10 @@ nfpms:
     contents:
       - src: man/man1/*.1.gz
         dst: /usr/share/man/man1/
+      - src: completions/picker/openai.fish
+        dst: /usr/share/fish/vendor_conf.d/openai-picker.fish
+        file_info:
+          mode: 0644
 homebrew_casks:
   - name: openai
     repository:

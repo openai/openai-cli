@@ -117,7 +117,7 @@ jobs:
         uses: ./.github/actions/setup-goreleaser
 
       - name: Verify local and historical release preflight
-        run: go test ./scripts -run '^Test(Local|Historical)ReleasePreflight$' -count=1
+        run: go test ./scripts -run '^Test((Local|Historical)ReleasePreflight|LinuxFishPickerPackageArtifacts)$' -count=1
         env:
           GORELEASER_EXECUTABLE: ${{ steps.goreleaser.outputs.executable }}
 
@@ -127,12 +127,14 @@ jobs:
           go run ./cmd/openai/main.go @completion bash > completions/openai.bash
           go run ./cmd/openai/main.go @completion zsh > completions/openai.zsh
           go run ./cmd/openai/main.go @completion fish > completions/openai.fish
+          mkdir -p completions/picker
+          go run ./scripts/render-linux-picker > completions/picker/openai.fish
           go run ./cmd/openai/main.go @manpages -o man
 
-          for directory in completions man man/man1; do
+          for directory in completions completions/picker man man/man1; do
             [[ -d "$directory" && ! -L "$directory" ]] || exit 1
           done
-          for path in completions/openai.bash completions/openai.zsh completions/openai.fish man/man1/openai.1.gz; do
+          for path in completions/openai.bash completions/openai.zsh completions/openai.fish completions/picker/openai.fish man/man1/openai.1.gz; do
             [[ -f "$path" && ! -L "$path" ]] || exit 1
             size="$(wc -c < "$path")"
             [[ "$size" -gt 0 && "$size" -le 10485760 ]] || exit 1
@@ -143,6 +145,7 @@ jobs:
             '/completions/openai.bash' \
             '/completions/openai.zsh' \
             '/completions/openai.fish' \
+            '/completions/picker/openai.fish' \
             '/man/man1/openai.1.gz' \
             >> "$exclude_file"
 

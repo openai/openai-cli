@@ -11,6 +11,18 @@ The reviewed checksums cover Linux and macOS hosts on x86_64 and arm64. The
 host architecture does not limit the Linux, macOS, and Windows release targets
 configured in `.goreleaser.yml`.
 
+Linux packages install one fish startup file at
+`/usr/share/fish/vendor_conf.d/openai-picker.fish`. It activates at the first
+prompt after user configuration, respects opt-out and custom bindings, and only
+runs when `/usr/bin/openai` is the selected executable. The package manager owns
+and removes the file; installation does not edit user profiles. Bash and zsh
+retain their existing first-run setup. See [shell shortcuts](image-picker-shell-setup.md).
+
+`go run ./scripts/render-linux-picker` generates the fish asset at build time.
+Release inputs include it only when the checked-out tag's package configuration
+references it, preserving older tags' original inputs. The configured
+`termux.deb` format still requires an Android build.
+
 Shell completions and man pages are generated in a separate, read-only job before
 the protected publishing job receives repository-write tokens or signing and
 notarization credentials. GoReleaser packages those prebuilt files without

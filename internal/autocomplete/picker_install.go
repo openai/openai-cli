@@ -504,6 +504,12 @@ func quotePickerPath(shell CompletionStyle, path string) string {
 }
 
 func renderInstalledPicker(options PickerInstallation) ([]byte, error) {
+	return renderPickerStartup(options, "")
+}
+
+// Package eligibility is evaluated at the prompt, after user configuration.
+// Both personal and package scripts use the same activation and disable handler.
+func renderPickerStartup(options PickerInstallation, fishPromptGuard string) ([]byte, error) {
 	completion, err := shellCompletions[options.Shell](nil, "openai")
 	if err != nil {
 		return nil, err
@@ -539,7 +545,7 @@ function openai_picker_disable
 end
 ` + declined + `function __openai_picker_install_on_prompt --on-event fish_prompt
     functions --erase __openai_picker_install_on_prompt
-` + declined + picker + `
+` + declined + fishPromptGuard + picker + `
     if set -q __openai_picker_modes[1]; set -gx OPENAI_PICKER_INTEGRATION fish; end
 end
 `

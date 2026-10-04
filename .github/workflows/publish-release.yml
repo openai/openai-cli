@@ -76,6 +76,11 @@ jobs:
         go run ./cmd/openai/main.go @completion bash > completions/openai.bash
         go run ./cmd/openai/main.go @completion zsh > completions/openai.zsh
         go run ./cmd/openai/main.go @completion fish > completions/openai.fish
+        # Historical tags did not ship the Linux fish picker asset.
+        if grep -Fq 'src: completions/picker/openai.fish' .goreleaser.yml; then
+          mkdir -p completions/picker
+          go run ./scripts/render-linux-picker > completions/picker/openai.fish
+        fi
         go run ./cmd/openai/main.go @manpages -o man
     - name: Stage isolated release inputs
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -85,6 +90,7 @@ jobs:
           completions/openai.bash
           completions/openai.zsh
           completions/openai.fish
+          completions/picker/openai.fish
           man/man1/openai.1.gz
         if-no-files-found: error
         retention-days: 1
@@ -169,11 +175,26 @@ jobs:
           exit 1
         fi
 
+        inputs=(completions/openai.bash completions/openai.zsh completions/openai.fish man/man1/openai.1.gz)
+        package_picker=false
+        if grep -Fq 'src: completions/picker/openai.fish' .goreleaser.yml; then
+          package_picker=true
+          inputs+=(completions/picker/openai.fish)
+        fi
+
         while IFS= read -r -d '' path; do
           relative="${path#"$RELEASE_INPUT_DIR"/}"
           case "$relative" in
             completions|man|man/man1)
               [[ -d "$path" && ! -L "$path" ]] || exit 1
+              ;;
+            completions/picker)
+              [[ "$package_picker" == true && -d "$path" && ! -L "$path" ]] || exit 1
+              ;;
+            completions/picker/openai.fish)
+              [[ "$package_picker" == true && -f "$path" && ! -L "$path" ]] || exit 1
+              size="$(wc -c < "$path")"
+              [[ "$size" -gt 0 && "$size" -le 10485760 ]] || exit 1
               ;;
             completions/openai.bash|completions/openai.zsh|completions/openai.fish|man/man1/openai.1.gz)
               [[ -f "$path" && ! -L "$path" ]] || exit 1
@@ -190,22 +211,18 @@ jobs:
           esac
         done < <(find "$RELEASE_INPUT_DIR" -mindepth 1 -print0)
 
-        for path in completions/openai.bash completions/openai.zsh completions/openai.fish man/man1/openai.1.gz; do
+        for path in "${inputs[@]}"; do
           [[ -f "$RELEASE_INPUT_DIR/$path" && ! -L "$RELEASE_INPUT_DIR/$path" ]] || exit 1
         done
 
         mkdir -p completions man/man1
-        for path in completions/openai.bash completions/openai.zsh completions/openai.fish man/man1/openai.1.gz; do
+        if [[ "$package_picker" == true ]]; then mkdir -p completions/picker; fi
+        for path in "${inputs[@]}"; do
           install -m 0644 "$RELEASE_INPUT_DIR/$path" "$path"
         done
 
         exclude_file="$(git rev-parse --git-path info/exclude)"
-        printf '%s\n' \
-          '/completions/openai.bash' \
-          '/completions/openai.zsh' \
-          '/completions/openai.fish' \
-          '/man/man1/openai.1.gz' \
-          >> "$exclude_file"
+        printf '/%s\n' "${inputs[@]}" >> "$exclude_file"
     - name: Create release app token for this repo
       id: app-token
       uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
