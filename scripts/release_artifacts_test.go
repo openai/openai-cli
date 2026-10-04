@@ -604,5 +604,9 @@ type goReleaserConfig struct {
 		} `yaml:"repository"`
 		Completions map[string]string `yaml:"completions"`
 		Manpages    []string          `yaml:"manpages"`
+		Hooks       struct {
+			Pre  map[string]string `yaml:"pre"`
+			Post map[string]string `yaml:"post"`
+		} `yaml:"hooks"`
 	} `yaml:"homebrew_casks"`
 }

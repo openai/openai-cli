@@ -112,5 +112,25 @@ homebrew_casks:
       bash: "completions/openai.bash"
       zsh: "completions/openai.zsh"
       fish: "completions/openai.fish"
+    hooks:
+      post:
+        install: |
+          # Homebrew saves these before filtering the caller's environment.
+          # Pass literal argv values: system_command's env: escapes spaces.
+          setup_env = %w[ZDOTDIR XDG_CONFIG_HOME SUDO_USER].map do |name|
+            value = ENV["HOMEBREW_#{name}"] || ENV[name]
+            "#{name}=#{value}" if value
+          end.compact
+          begin
+            system_command "/usr/bin/env",
+                           args: setup_env + ["#{staged_path}/openai", "@completion", "--install-picker", "--automatic"],
+                           sudo: false,
+                           must_succeed: false,
+                           timeout: 10,
+                           print_stdout: true,
+                           print_stderr: true
+          rescue Timeout::Error
+            warn "Tab shortcut setup timed out; installation will continue."
+          end
     manpages:
     - man/man1/openai.1.gz
