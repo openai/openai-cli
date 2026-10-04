@@ -175,7 +175,8 @@ use the iTerm protocol.
 VS Code requires a separate opt-in. Its terminal identity does not indicate
 whether its optional image renderer is active. First enable
 `terminal.integrated.enableImages` in VS Code and ensure GPU acceleration is
-available. Then, in that VS Code terminal, opt in for a command:
+available. Open a new terminal after changing these settings.
+Then, in that VS Code terminal, opt in for a command:
 
 ```sh
 env OPENAI_VSCODE_IMAGES=1 openai images preview "photo.png" # Bash, zsh or fish
