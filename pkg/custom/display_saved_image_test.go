@@ -75,6 +75,46 @@ func TestSavedImagePreviewSkipsNonTerminalWithoutReadingFile(t *testing.T) {
 	}
 }
 
+func TestWarpImageProtocolSelection(t *testing.T) {
+	native, withoutColor := "blocks", ""
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+		native, withoutColor = "kitty", "kitty"
+	}
+	for _, tc := range []struct {
+		name, mode, want string
+		tty              bool
+		extra            map[string]string
+	}{
+		{"automatic", "auto", native, true, nil},
+		{"explicit on", "on", native, true, nil},
+		{"off", "off", "", true, nil},
+		{"pipe cannot be forced", "on", "", false, nil},
+		{"ci", "on", "", true, map[string]string{"CI": "true"}},
+		{"ci false", "auto", native, true, map[string]string{"CI": "false"}},
+		{"dumb", "on", "", true, map[string]string{"TERM": "dumb"}},
+		{"tmux", "on", "blocks", true, map[string]string{"TMUX": "active"}},
+		{"tmux term", "on", "blocks", true, map[string]string{"TERM": "tmux-256color"}},
+		{"screen", "on", "blocks", true, map[string]string{"STY": "active"}},
+		{"screen term", "on", "blocks", true, map[string]string{"TERM": "screen-256color"}},
+		{"zellij", "on", "blocks", true, map[string]string{"ZELLIJ": "active"}},
+		{"no color preserves native", "auto", withoutColor, true, map[string]string{"NO_COLOR": "1"}},
+		{"clicolor preserves native", "auto", withoutColor, true, map[string]string{"CLICOLOR": "0"}},
+		{"no color disables mux fallback", "on", "", true, map[string]string{"TMUX": "active", "NO_COLOR": "1"}},
+		{"missing identity", "auto", "blocks", true, map[string]string{"TERM_PROGRAM": ""}},
+		{"different identity", "auto", "blocks", true, map[string]string{"TERM_PROGRAM": "unknown"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := map[string]string{"TERM_PROGRAM": "WarpTerminal", "TERM": "xterm-256color"}
+			for key, value := range tc.extra {
+				env[key] = value
+			}
+			getenv := func(key string) string { return env[key] }
+			require.Equal(t, tc.want, savedImageProtocol(tc.mode, tc.tty, getenv))
+			require.Equal(t, tc.want, imageProgressProtocol(tc.mode, tc.tty, getenv))
+		})
+	}
+}
+
 func TestVSCodeImageOptIn(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode, setting, want string

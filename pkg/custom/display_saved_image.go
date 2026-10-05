@@ -152,6 +152,12 @@ func savedImageProtocol(mode string, terminal bool, getenv func(string) string) 
 			return "kitty"
 		case "iTerm.app", "WezTerm":
 			return "iterm"
+		case "WarpTerminal":
+			// Warp documents native image protocols on macOS and Linux.
+			// Use Kitty's interrupt-safe output path on those CLI platforms.
+			if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+				return "kitty"
+			}
 		case "vscode":
 			// VS Code does not export whether its optional image renderer is
 			// active. This is an explicit user assertion, not autodetection.
