@@ -61,7 +61,10 @@ for name in sorted(gated | quiet):
         assert count == 1 and '\x1b[2K' not in section, (name, 'expected static feedback')
     if name in {'utf8', 'no-color'}:
         assert '⣾' in section, (name, 'missing Unicode spinner')
-        assert not re.search(r'\x1b\[[0-9;]*m', section), (name, 'loading must preserve the terminal foreground')
+        if name == 'no-color':
+            assert not re.search(r'\x1b\[[0-9;]*m', section), (name, 'NO_COLOR must stay colorless')
+        else:
+            assert '\x1b[34m' in section and '\x1b[39m' in section, (name, 'missing blue spinner')
     if name in {'ascii', 'locale-override'}:
         assert '\r| Generating image' in section, (name, 'missing ASCII fallback')
         assert '⣾' not in section and '\x1b[36m' not in section
@@ -75,6 +78,8 @@ for name in sorted(gated | quiet):
         if marker in section:
             assert not re.search(labels, section.split(marker, 1)[1]), (name, 'late redraw')
     assert '\x1b[?25l' not in section, (name, 'cursor hidden')
+    if name in gated - {'dumb', 'ci'}:
+        assert re.search(labels + r'\r', section), (name, 'cursor left after loading label')
     results[name] = {'loading_frames': count, 'passed': True}
 (output / 'loading-pty-results.json').write_text(json.dumps(results, indent=2) + '\n')
 print(json.dumps(results, indent=2))

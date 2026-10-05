@@ -8,11 +8,13 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	"github.com/urfave/cli/v3"
@@ -102,7 +104,14 @@ func imageLoadingSpinner(getenv func(string) string, goos string) spinner.Spinne
 	if (goos != "windows" && utf8) || (goos == "windows" && getenv("WT_SESSION") != "") {
 		animation = spinner.Dot
 	}
-	// Use the terminal foreground so the indicator follows light and dark themes.
+	// Use the terminal's blue palette entry; keep the label on its normal foreground.
+	if getenv("NO_COLOR") == "" && getenv("CLICOLOR") != "0" && getenv("FORCE_COLOR") != "0" &&
+		colorprofile.Env([]string{"TERM=" + getenv("TERM"), "COLORTERM=" + getenv("COLORTERM")}) >= colorprofile.ANSI {
+		animation.Frames = slices.Clone(animation.Frames)
+		for i, frame := range animation.Frames {
+			animation.Frames[i] = "\x1b[34m" + frame + "\x1b[39m"
+		}
+	}
 	return animation
 }
 
@@ -113,7 +122,10 @@ func imageLoadingSpinner(getenv func(string) string, goos string) spinner.Spinne
 func startLoadingFeedback(ctx context.Context, out io.Writer, label string, animate bool, animation spinner.Spinner, width func() int) func() {
 	stop, done := make(chan struct{}), make(chan struct{})
 	var once sync.Once
-	const clearLine = "\r\x1b[2K"
+	clearLine := "\r\x1b[2K"
+	if strings.Contains(animation.Frames[0], "\x1b[") {
+		clearLine = "\r\x1b[39m\x1b[2K"
+	}
 	go func() {
 		defer close(done)
 		delay := time.NewTimer(imageLoadingDelay)
@@ -147,7 +159,7 @@ func startLoadingFeedback(ctx context.Context, out io.Writer, label string, anim
 			text := animation.Frames[frame%len(animation.Frames)] + " " + label
 			if !animate || columns <= ansi.StringWidth(text) {
 				if drawn {
-					if _, err := io.WriteString(out, clearLine); err != nil {
+					if n, err := io.WriteString(out, clearLine); err != nil || n != len(clearLine) {
 						return
 					}
 					drawn = false
@@ -157,7 +169,9 @@ func startLoadingFeedback(ctx context.Context, out io.Writer, label string, anim
 				}
 				return
 			}
-			text = "\r" + text
+			// Keep the terminal cursor on the indicator, not after the label.
+			// Cursor visibility stays unchanged, including during shell suspension.
+			text = "\r" + text + "\r"
 			n, err := io.WriteString(out, text)
 			drawn = drawn || n > 0
 			if err != nil || n != len(text) {

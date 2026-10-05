@@ -406,7 +406,11 @@ func (m *imagePicker) rows() []imagePickerRow {
 		{id: "size", label: "Size", value: imagePickerSizeLabel(s.size)},
 		{id: "quality", label: "Quality", value: imagePickerTitle(s.quality)},
 	}
-	return append(rows, m.folderRow(), imagePickerRow{id: "more", label: "More options", value: strings.ToUpper(s.format) + " / " + s.count + " image(s)"})
+	images := s.count + " images"
+	if s.count == "1" {
+		images = "1 image"
+	}
+	return append(rows, m.folderRow(), imagePickerRow{id: "more", label: "More options", value: strings.ToUpper(s.format) + " · " + images})
 }
 
 func (m *imagePicker) cycleFocus(backwards bool) {

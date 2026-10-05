@@ -46,6 +46,7 @@ func TestLoadingFeedbackStopsAndClearsBeforeReturning(t *testing.T) {
 			require.Contains(t, output.String(), "\r| Generating image")
 			require.Contains(t, output.String(), "\r/ Generating image")
 			require.NotContains(t, output.String(), "\x1b[2K")
+			require.True(t, strings.HasSuffix(output.String(), "\r"), "keep cursor on the spinner while waiting")
 			if cancelContext {
 				cancel()
 			}
@@ -107,7 +108,7 @@ func TestLoadingFeedbackResizeStopsAnimation(t *testing.T) {
 		time.Sleep(time.Second)
 		synctest.Wait()
 		stop()
-		require.Equal(t, "\r| Generating image\r\x1b[2KWorking...\n", output.String())
+		require.Equal(t, "\r| Generating image\r\r\x1b[2KWorking...\n", output.String())
 	})
 }
 
@@ -142,7 +143,7 @@ func TestLoadingFeedbackPartialFrameClearsLine(t *testing.T) {
 		writer := loadingTestWriter(func(p []byte) (int, error) {
 			calls++
 			if calls == 1 {
-				// The terminal received only part of the UTF-8 frame.
+				// The terminal received an incomplete styling sequence.
 				output.Write(p[:2])
 				return 2, io.ErrShortWrite
 			}
@@ -156,7 +157,7 @@ func TestLoadingFeedbackPartialFrameClearsLine(t *testing.T) {
 		synctest.Wait()
 		stop()
 		require.Equal(t, 2, calls, "stop retrying frames, but attempt to restore the terminal")
-		require.Equal(t, "\r\xe2\r\x1b[2K", output.String())
+		require.Equal(t, "\r\x1b\r\x1b[39m\x1b[2K", output.String())
 	})
 }
 
@@ -223,9 +224,13 @@ func TestImageLoadingSpinnerEnvironment(t *testing.T) {
 			require.Equal(t, want.FPS, animation.FPS)
 			require.Len(t, animation.Frames, len(want.Frames))
 			for i, frame := range animation.Frames {
-				require.Equal(t, want.Frames[i], frame, "keep the terminal foreground without styling escapes")
+				require.Equal(t, want.Frames[i], ansi.Strip(frame))
 				require.Equal(t, ansi.StringWidth(want.Frames[i]), ansi.StringWidth(frame))
-				require.NotContains(t, frame, "\x1b[")
+				if test.env["NO_COLOR"] != "" || test.env["CLICOLOR"] == "0" || test.env["FORCE_COLOR"] == "0" || test.env["TERM"] == "dumb" {
+					require.NotContains(t, frame, "\x1b[")
+				} else {
+					require.Equal(t, "\x1b[34m"+want.Frames[i]+"\x1b[39m", frame)
+				}
 			}
 		})
 	}
@@ -247,9 +252,9 @@ func TestLoadingFeedbackUnicodeFitsByCells(t *testing.T) {
 			if columns == 19 {
 				require.Equal(t, "Generating image\n", output.String(), "leave one column to prevent wrapping")
 			} else {
-				require.Contains(t, output.String(), "\r⣾  Generating image")
-				require.Contains(t, output.String(), "\r⣽  Generating image")
-				require.True(t, strings.HasSuffix(output.String(), "\r\x1b[2K"))
+				require.Contains(t, ansi.Strip(output.String()), "\r⣾  Generating image\r")
+				require.Contains(t, ansi.Strip(output.String()), "\r⣽  Generating image\r")
+				require.True(t, strings.HasSuffix(output.String(), "\r\x1b[39m\x1b[2K"))
 				require.NotContains(t, output.String(), "\n")
 			}
 		})
@@ -313,3 +318,29 @@ func TestImageLoadingStopsBeforeVisibleOutput(t *testing.T) {
 type loadingTestWriter func([]byte) (int, error)
 
 func (w loadingTestWriter) Write(p []byte) (int, error) { return w(p) }
+
+func TestLoadingFeedbackFailedClearDoesNotPrintFallback(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var output bytes.Buffer
+		var width atomic.Int64
+		width.Store(80)
+		failed := false
+		writer := loadingTestWriter(func(p []byte) (int, error) {
+			if !failed && strings.Contains(string(p), "\x1b[2K") {
+				failed = true
+				return 0, nil
+			}
+			return output.Write(p)
+		})
+		stop := startLoadingFeedback(t.Context(), writer, "Generating image", true, spinner.Line, func() int { return int(width.Load()) })
+		time.Sleep(imageLoadingDelay)
+		synctest.Wait()
+		width.Store(12)
+		time.Sleep(time.Second)
+		synctest.Wait()
+		stop()
+		require.True(t, failed)
+		require.NotContains(t, output.String(), "Working...", "do not append output after a short cleanup write")
+		require.True(t, strings.HasSuffix(output.String(), "\r\x1b[2K"))
+	})
+}
