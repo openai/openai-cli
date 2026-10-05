@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/term"
@@ -166,6 +167,14 @@ func savedImageProtocol(mode string, terminal bool, getenv func(string) string) 
 		case "":
 			if t == "xterm-kitty" || t == "xterm-ghostty" {
 				return "kitty"
+			}
+			// The assertion requires Konsole's resize/scroll fix. Its version
+			// identifies protocol support only, not whether that fix is present.
+			version := getenv("KONSOLE_VERSION")
+			if getenv("OPENAI_KONSOLE_IMAGES") == "1" && len(version) == 6 {
+				if number, err := strconv.Atoi(version); err == nil && number >= 220400 {
+					return "iterm"
+				}
 			}
 		}
 	}
