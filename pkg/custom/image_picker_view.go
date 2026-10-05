@@ -69,6 +69,7 @@ func (m *imagePicker) View() tea.View {
 	selected := lipgloss.NewStyle().Bold(true)
 	accent := selected
 	border := lipgloss.NewStyle()
+	input := lipgloss.NewStyle()
 	focusColor, fillColor, textColor, mutedColor, borderColor := "#3159BC", "#E9EFFE", "#20283B", "#657087", "#BAC4D8"
 	if m.dark {
 		focusColor, fillColor, textColor, mutedColor, borderColor = "#8AA8FF", "#343D58", "#F2F4FA", "#A4ACC2", "#51566B"
@@ -80,6 +81,9 @@ func (m *imagePicker) View() tea.View {
 		border = border.Foreground(lipgloss.Color(borderColor))
 		if m.focus == "prompt" {
 			border = border.Foreground(lipgloss.Color(focusColor))
+			if m.settings.prompt != "" {
+				input = input.Foreground(lipgloss.Color(textColor)).Background(lipgloss.Color(fillColor))
+			}
 		}
 	}
 	highlight := func(text string, active bool) string {
@@ -96,24 +100,27 @@ func (m *imagePicker) View() tea.View {
 	if m.focus == "prompt" {
 		before := imagePickerLine(string(m.draft[:m.cursor]))
 		after := imagePickerLine(string(m.draft[m.cursor:]))
-		leftWidth := max(0, ansi.StringWidth(before)-(width-6))
-		before = ansi.TruncateLeft(before, leftWidth, "…")
+		before = imagePickerPromptTail(before, width-6)
 		prompt = before + "▏" + after
 	}
 	if m.settings.prompt == "" {
-		prompt = "Describe your image…"
+		prompt = muted.Render("Describe your image…")
 		if m.focus == "prompt" {
-			prompt = "▏ " + prompt
+			prompt = border.Render("▏") + " " + prompt
 		}
 	}
-	lines := []string{strong.Render("openai") + "  " + muted.Render("Images")}
+	lines := []string{strong.Render("Create image")}
 	if height >= 18 && m.width >= 50 {
-		prompt = ansi.Truncate(prompt, width-2, "…")
-		caption := "Prompt "
+		prompt = imagePickerPromptFit(prompt, width-4)
+		caption := "╭─ Prompt "
+		// Match the painter's conservative width budget. Position the closing
+		// edge explicitly because terminals disagree on emoji cluster widths.
+		row := border.Render("│") + input.Render(ansi.EraseCharacter(width-2)+" "+prompt+" ") +
+			ansi.CursorHorizontalAbsolute(width+2) + border.Render("│")
 		lines = append(lines, "",
-			border.Render(caption+strings.Repeat("─", width-ansi.StringWidth(caption))),
-			"  "+prompt,
-			border.Render(strings.Repeat("─", width)))
+			border.Render(caption+strings.Repeat("─", width-ansi.StringWidth(caption)-1)+"╮"),
+			row,
+			border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
 	} else {
 		caption := "  Prompt"
 		if m.focus == "prompt" {
@@ -204,6 +211,43 @@ func (m *imagePicker) View() tea.View {
 	lines = append(lines, muted.Render(footer))
 	view.Content = m.fit(lines, width, height)
 	return view
+}
+
+// Fit complete clusters using the same width bound as the inline painter.
+func imagePickerPromptTail(text string, width int) string {
+	remaining := 0
+	for rest := text; len(rest) > 0; {
+		_, cells, read := imagePickerSequence(rest)
+		remaining += cells
+		rest = rest[read:]
+	}
+	if remaining <= width {
+		return text
+	}
+	for remaining > width-1 {
+		_, cells, read := imagePickerSequence(text)
+		remaining -= cells
+		text = text[read:]
+	}
+	return "…" + text
+}
+
+func imagePickerPromptFit(text string, width int) string {
+	var result strings.Builder
+	used := 0
+	for len(text) > 0 {
+		sequence, cells, read := imagePickerSequence(text)
+		if used+cells > width || used+cells == width && read < len(text) {
+			result.WriteRune('…')
+			used++
+			break
+		}
+		result.WriteString(sequence)
+		used += cells
+		text = text[read:]
+	}
+	result.WriteString(strings.Repeat(" ", max(0, width-used)))
+	return result.String()
 }
 
 // Leave room for previous shell output while keeping the active controls short.

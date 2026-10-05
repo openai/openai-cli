@@ -47,7 +47,7 @@ def check_saved(home, directory=None, filename=None):
 def wait_resumed(terminal, mark):
     terminal.wait('Saved image:', after=mark)
     saved = terminal.raw.index(b'Saved image:', mark)
-    terminal.wait('Images', after=saved)
+    terminal.wait('Create image', after=saved)
     terminal.wait('Describe your image', after=saved)
 
 
@@ -125,6 +125,37 @@ def main():
             passed(name)
 
         try:
+            name = 'no-color-unicode-frame'
+            home, env = environment(name, {'NO_COLOR': '1'})
+            before = len(server.requests)
+            terminal = picker.Terminal(binary, ['images', 'generate'], env)
+            try:
+                picker.ready(terminal)
+                prompt = 'A family 👨‍👩‍👧‍👦 portrait'
+                mark = len(terminal.raw)
+                terminal.send(b'\x1b[200~'+prompt.encode()+b'\x1b[201~')
+                terminal.wait(prompt, after=mark)
+                deadline = time.monotonic()+8
+                while b'\x1b[78G' not in terminal.raw[mark:]:
+                    terminal.read()
+                    assert terminal.child.poll() is None and time.monotonic() < deadline, 'right-border positioning was stripped'
+                assert b'\x1b[74X' in terminal.raw[mark:], 'prompt interior fill control was stripped'
+                assert b';2;' not in terminal.raw[mark:] and b';5;' not in terminal.raw[mark:], 'NO_COLOR emitted color'
+                mark = len(terminal.raw)
+                terminal.send(b'\r')
+                wait_resumed(terminal, mark)
+                terminal.send(b'\x03')
+                terminal.finish(130)
+                assert len(server.requests) == before+1, 'expected one image request'
+                check_body(server.requests[-1], {'prompt': prompt})
+                check_saved(home)
+                passed(name)
+            finally:
+                try:
+                    terminal.save(output/name)
+                finally:
+                    terminal.close()
+
             for shell in ['', 'sh', 'powershell.exe', 'unknown']:
                 name = 'unsupported-shell-'+(shell or 'detected-python')
                 home, env = environment(name, {'OPENAI_PICKER_SHELL': shell, 'SHELL': '/bin/zsh'})
@@ -191,10 +222,10 @@ def main():
                 while b'\x1b[?2004h' not in terminal.raw:
                     terminal.read()
                     assert terminal.child.poll() is None and time.monotonic() < deadline, 'paste mode not enabled'
-                assert 'Images' not in terminal.text(), 'early-paste probe missed the startup window'
+                assert 'Create image' not in terminal.text(), 'early-paste probe missed the startup window'
                 terminal.send(b'\x1b[200~'+prompt.encode()+b'\x1b[201~\r\x07\x10')
                 picker.ready(terminal)
-                terminal.wait('Images')
+                terminal.wait('Create image')
                 assert len(server.requests) == before, 'startup input submitted an unseen request'
                 terminal.send(picker.PRINT)
                 terminal.finish(0)
@@ -242,7 +273,7 @@ def main():
                     prompt = "@not-a-local-file 'quoted'\n$(touch NOT_RUN)"
                 try:
                     picker.ready(terminal)
-                    terminal.wait('Images')
+                    terminal.wait('Create image')
                     if action == 'cancel':
                         terminal.send(b'\x03')
                         terminal.finish(130)
