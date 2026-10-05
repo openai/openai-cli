@@ -69,7 +69,6 @@ func (m *imagePicker) View() tea.View {
 	selected := lipgloss.NewStyle().Bold(true)
 	accent := selected
 	border := lipgloss.NewStyle()
-	input := lipgloss.NewStyle()
 	focusColor, fillColor, textColor, mutedColor, borderColor := "#3159BC", "#E9EFFE", "#20283B", "#657087", "#BAC4D8"
 	if m.dark {
 		focusColor, fillColor, textColor, mutedColor, borderColor = "#8AA8FF", "#343D58", "#F2F4FA", "#A4ACC2", "#51566B"
@@ -81,7 +80,6 @@ func (m *imagePicker) View() tea.View {
 		border = border.Foreground(lipgloss.Color(borderColor))
 		if m.focus == "prompt" {
 			border = border.Foreground(lipgloss.Color(focusColor))
-			input = input.Foreground(lipgloss.Color(textColor)).Background(lipgloss.Color(fillColor))
 		}
 	}
 	highlight := func(text string, active bool) string {
@@ -110,15 +108,18 @@ func (m *imagePicker) View() tea.View {
 	}
 	lines := []string{strong.Render("openai") + "  " + muted.Render("Images")}
 	if height >= 18 && m.width >= 50 {
-		prompt = ansi.Truncate(prompt, width-4, "…")
-		prompt += strings.Repeat(" ", max(0, width-4-ansi.StringWidth(prompt)))
-		caption := "╭─ Prompt "
+		prompt = ansi.Truncate(prompt, width-2, "…")
+		caption := "Prompt "
 		lines = append(lines, "",
-			border.Render(caption+strings.Repeat("─", width-ansi.StringWidth(caption)-1)+"╮"),
-			border.Render("│")+input.Render(" "+prompt+" ")+border.Render("│"),
-			border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
+			border.Render(caption+strings.Repeat("─", width-ansi.StringWidth(caption))),
+			"  "+prompt,
+			border.Render(strings.Repeat("─", width)))
 	} else {
-		lines = append(lines, highlight("Prompt", m.focus == "prompt"), "  "+prompt)
+		caption := "  Prompt"
+		if m.focus == "prompt" {
+			caption = "› Prompt"
+		}
+		lines = append(lines, border.Render(caption), "  "+prompt)
 	}
 	if roomy {
 		lines = append(lines, "")
