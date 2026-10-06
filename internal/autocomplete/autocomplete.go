@@ -395,8 +395,10 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 		return cli.Exit("COMPLETION_STYLE must be set to 'bash', 'zsh', 'pwsh', 'fish'", 1)
 	}
 
-	// Bash/fish pass a separator. PowerShell also includes the executable word.
-	if len(args) > 0 && args[0] == "--" {
+	// Bash/fish pass a separator. Zsh sends only the user's tokens, so its
+	// leading -- may be a flag prefix or the user's end-of-options marker.
+	// Keep the separator form accepted by direct PowerShell backend callers.
+	if completionStyle != CompletionStyleZsh && len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	} else if completionStyle == CompletionStylePowershell && len(args) > 1 {
 		name := strings.ReplaceAll(strings.Trim(args[0], `"'`), `\`, "/")

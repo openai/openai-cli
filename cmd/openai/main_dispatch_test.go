@@ -29,6 +29,17 @@ type mainDispatchResult struct {
 	stdout, stderr string
 }
 
+// Match the argument shape sent by each bundled shell adapter.
+func mainCompletionArgs(style string, args ...string) []string {
+	argv := []string{"openai", "__complete"}
+	if style == "bash" || style == "fish" {
+		argv = append(argv, "--")
+	} else if style == "pwsh" {
+		argv = append(argv, "openai")
+	}
+	return append(argv, args...)
+}
+
 // Run the production entrypoint in a fresh process: its command tree and flag
 // state must not be shared between ordinary invocations and completion probes.
 func runMainDispatch(t *testing.T, style string, argv ...string) mainDispatchResult {
@@ -137,12 +148,7 @@ func TestMainDispatchCompletionForms(t *testing.T) {
 			}
 			// Match the bundled scripts' argument shapes. Native shell execution
 			// is separate from these production-entrypoint protocol checks.
-			prefix := []string{"openai", "__complete"}
-			if style == "bash" || style == "fish" {
-				prefix = append(prefix, "--")
-			} else if style == "pwsh" {
-				prefix = append(prefix, "openai")
-			}
+			prefix := mainCompletionArgs(style)
 			for _, tc := range []struct {
 				args []string
 				want mainDispatchResult

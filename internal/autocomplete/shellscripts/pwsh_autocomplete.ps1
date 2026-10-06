@@ -66,21 +66,8 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
   } else {
     switch ($exitCode) {
       10 {
-        # File completion behavior
-        $items = if ([string]::IsNullOrEmpty($wordToComplete)) {
-          Get-ChildItem -ErrorAction SilentlyContinue
-        } else {
-          Get-ChildItem -Path "$wordToComplete*" -ErrorAction SilentlyContinue
-        }
-        $items | ForEach-Object {
-          $completionText = if ($_.PSIsContainer) { $_.Name + "/" } else { $_.Name }
-          [System.Management.Automation.CompletionResult]::new(
-            $completionText,
-            $completionText,
-            'ProviderItem',
-            $completionText
-          )
-        }
+        # Let PowerShell preserve directory prefixes and quote file names.
+        [System.Management.Automation.CompletionCompleters]::CompleteFilename($wordToComplete)
       }
       11 {
         # No reasonable suggestions

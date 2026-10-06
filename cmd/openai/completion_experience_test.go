@@ -13,7 +13,7 @@ func TestMainCompletionStaysLocalWithInvalidRequestConfiguration(t *testing.T) {
 		"OPENAI_MTLS_CLIENT_KEY_FILE=/missing/completion-key.pem",
 	}
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
-		got := runMainDispatchWithEnv(t, style, env, "openai", "__complete", "--", "models", "")
+		got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, "models", "")...)
 		if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "list") {
 			t.Errorf("%s completion depends on request configuration: %+v", style, got)
 		}
@@ -27,7 +27,7 @@ func TestMainCompletionStaysLocalWithInvalidRequestConfiguration(t *testing.T) {
 func TestMainCompletionDescriptionsStayInOneRecord(t *testing.T) {
 	want := map[string]bool{"create": true, "retrieve": true, "delete": true, "cancel": true, "compact": true, "input-items": true, "input-tokens": true}
 	for _, style := range []string{"zsh", "fish"} {
-		got := runMainDispatch(t, style, "openai", "__complete", "--", "responses", "")
+		got := runMainDispatch(t, style, mainCompletionArgs(style, "responses", "")...)
 		if got.code != 0 || got.stderr != "" {
 			t.Fatalf("%s completion failed: %+v", style, got)
 		}
@@ -52,15 +52,35 @@ func TestMainCompletionDescriptionsStayInOneRecord(t *testing.T) {
 
 func TestMainCompletionHelpAndFileInputs(t *testing.T) {
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
-		got := runMainDispatch(t, style, "openai", "__complete", "--", "help", "--all", "responses", "cr")
+		got := runMainDispatch(t, style, mainCompletionArgs(style, "help", "--all", "responses", "cr")...)
 		if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, "create") || strings.Contains(got.stdout, "setup") {
 			t.Errorf("%s help completion failed: %+v", style, got)
 		}
 		for _, args := range [][]string{{"files", "create", "--file", ""}, {"audio", "transcriptions", "create", "--file", ""}, {"images", "edit", "--image", ""}} {
-			got := runMainDispatch(t, style, append([]string{"openai", "__complete", "--"}, args...)...)
+			got := runMainDispatch(t, style, mainCompletionArgs(style, args...)...)
 			if got.code != 10 || got.stdout != "" || got.stderr != "" {
 				t.Errorf("%s file completion failed for %q: %+v", style, args, got)
 			}
 		}
+	}
+}
+
+func TestMainCompletionPreservesTypedDoubleDash(t *testing.T) {
+	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+		t.Run(style, func(t *testing.T) {
+			got := runMainDispatch(t, style, mainCompletionArgs(style, "--")...)
+			if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "--format") {
+				t.Fatalf("long flag prefix lost: %+v", got)
+			}
+			for _, line := range strings.Split(strings.TrimSuffix(got.stdout, "\n"), "\n") {
+				if !strings.HasPrefix(line, "--") {
+					t.Fatalf("flag prefix offered a command: %q", line)
+				}
+			}
+			got = runMainDispatch(t, style, mainCompletionArgs(style, "--", "--fo")...)
+			if got != (mainDispatchResult{}) {
+				t.Fatalf("end-of-options marker offered flags: %+v", got)
+			}
+		})
 	}
 }

@@ -68,7 +68,7 @@ func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 				}
 			}
 			for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
-				args := append([]string{"openai", "__complete", "--"}, strings.Fields(tc.path)...)
+				args := mainCompletionArgs(style, strings.Fields(tc.path)...)
 				got := runMainDispatch(t, style, append(args, "")...)
 				if got.stderr != "" || !strings.Contains(got.stdout, tc.child) {
 					t.Fatalf("%s completion failed: %+v", style, got)
@@ -77,7 +77,7 @@ func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 		})
 	}
 	for _, resource := range [][]string{{"admin:organization:audit-logs"}, {"admin", "organization", "audit-logs"}} {
-		got := runMainDispatch(t, "zsh", append(append([]string{"openai", "__complete", "--"}, resource...), "list", "--eff")...)
+		got := runMainDispatch(t, "zsh", append(mainCompletionArgs("zsh", resource...), "list", "--eff")...)
 		if got.stderr != "" || !strings.Contains(got.stdout, "--effective-at") {
 			t.Fatalf("compatibility flag completion failed: %+v", got)
 		}
@@ -98,7 +98,7 @@ func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 			t.Fatalf("internal command exposed as a help topic: %+v", got)
 		}
 	}
-	got := runMainDispatch(t, "zsh", "openai", "__complete", "--", "")
+	got := runMainDispatch(t, "zsh", mainCompletionArgs("zsh", "")...)
 	if strings.Contains(got.stdout, "admin:organization") || !strings.Contains(got.stdout, "admin") {
 		t.Fatalf("root completion does not prefer subgroups: %+v", got)
 	}
@@ -147,7 +147,7 @@ func TestMainCommandSubgroupsLegacyPrefixCompletion(t *testing.T) {
 						}
 						want = strings.Join(records, "\n") + "\n"
 					}
-					args := append([]string{"openai", "__complete", "--"}, tc.args...)
+					args := mainCompletionArgs(style, tc.args...)
 					got := runMainDispatch(t, style, args...)
 					if got != (mainDispatchResult{code: tc.code, stdout: want}) {
 						t.Fatalf("legacy prefix completion: got %+v, want exit %d stdout %q and empty stderr", got, tc.code, want)

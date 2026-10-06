@@ -64,6 +64,7 @@ func TestShellCompletionProtocol(t *testing.T) {
 		output     string
 		candidates string
 	}{
+		{"root long flag prefix", []string{"--"}, 0, "--format\n--file\n--image\n--help\n", "--format\n--file\n--image\n--help\n"},
 		{"root value", []string{"--format", "candidate-"}, 11, "", ""},
 		{"nested local value", []string{"models", "list", "--max-items", "candidate-"}, 11, "", ""},
 		{"file value", []string{"--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
@@ -160,6 +161,7 @@ func TestZshCompletionRespectsCursor(t *testing.T) {
 		code       int
 		candidates string
 	}{
+		{"root long flag prefix", []string{"--"}, 2, 0, "--format\n--file\n--image\n--help:show help\n"},
 		{"mid-line command", []string{"models", "li", "--format", "json"}, 3, 0, "list\n"},
 		{"mid-line flag", []string{"models", "list", "--max", "--format", "json"}, 4, 0, "--max-items\n"},
 		{"end-of-line command", []string{"models", "li"}, 3, 0, "list\n"},

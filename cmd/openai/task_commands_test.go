@@ -74,7 +74,7 @@ func TestMainTaskRouteCompletionProtocols(t *testing.T) {
 				{"admin organization projects retrieve", "--project-i", []string{"--project-id"}},
 				{"admin:organization:projects:users:roles list", "--user-i", []string{"--user-id"}},
 			} {
-				args := append([]string{"openai", "__complete", "--"}, taskRouteArgs(tc.route, tc.prefix)...)
+				args := mainCompletionArgs(style, taskRouteArgs(tc.route, tc.prefix)...)
 				got := runMainDispatchWithEnv(t, style, env, args...)
 				require.Zero(t, got.code, "%s %s", tc.route, tc.prefix)
 				require.Empty(t, got.stderr)
@@ -90,11 +90,11 @@ func TestMainTaskRouteCompletionProtocols(t *testing.T) {
 				require.Equal(t, tc.want, names, "%s %s", tc.route, tc.prefix)
 			}
 			for _, route := range []string{"transcribe", "translate", "audio transcribe", "audio translate", "files upload", "files create", "audio transcriptions create", "audio:transcriptions create", "audio translations create"} {
-				args := append([]string{"openai", "__complete", "--"}, taskRouteArgs(route, "--file", "synthetic-")...)
+				args := mainCompletionArgs(style, taskRouteArgs(route, "--file", "synthetic-")...)
 				got := runMainDispatchWithEnv(t, style, env, args...)
 				require.Equal(t, mainDispatchResult{code: 10}, got, "%s file completion", route)
 			}
-			got := runMainDispatchWithEnv(t, style, env, "openai", "__complete", "--", "transcribe", "--model", "synthetic-")
+			got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, "transcribe", "--model", "synthetic-")...)
 			require.Equal(t, mainDispatchResult{code: 11}, got, "model values must not request file completion")
 		})
 	}

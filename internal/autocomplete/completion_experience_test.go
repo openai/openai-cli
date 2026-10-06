@@ -90,7 +90,11 @@ func TestCompletionDescriptionsEscapeControlsAndRecordDelimiters(t *testing.T) {
 				},
 				ExitErrHandler: func(context.Context, *cli.Command, error) {},
 			}
-			err := root.Run(context.Background(), []string{"openai", "__complete", "--", "safe:"})
+			args := []string{"openai", "__complete"}
+			if style != "zsh" {
+				args = append(args, "--")
+			}
+			err := root.Run(context.Background(), append(args, "safe:"))
 			var exit cli.ExitCoder
 			require.ErrorAs(t, err, &exit)
 			require.Zero(t, exit.ExitCode())

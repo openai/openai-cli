@@ -234,7 +234,7 @@ func TestMainPickerShellSetupReadOnlyModesDoNotWrite(t *testing.T) {
 	for _, args := range [][]string{
 		{"--help"}, {"images", "generate", "--help"}, {"--format", "json", "images", "generate", "--help"},
 		{"@completion", "zsh"}, {"@completion", "zsh", "--picker"},
-		{"__complete", "--", "images", ""}, {"@completion", "--install-picker", "--help"},
+		{"__complete", "images", ""}, {"@completion", "--install-picker", "--help"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			home := t.TempDir()
