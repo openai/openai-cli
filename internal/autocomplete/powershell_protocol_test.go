@@ -25,7 +25,11 @@ func TestPowerShellFileCompletionPreservesPaths(t *testing.T) {
 	script, err := shellCompletions[CompletionStylePowershell](&cli.Command{}, "openai")
 	require.NoError(t, err)
 	dir := t.TempDir()
-	files := []string{"assets/logo.png", "assets/long name.png", "assets/l'quote.png", "assets/long dir/child.txt", "space dir/logo.png", "apostrophe's/logo.png", "special/log$(not-run).png"}
+	files := []string{
+		"assets/logo.png", "assets/long name.png", "assets/l'quote.png", "assets/long dir/child.txt",
+		"space dir/logo.png", "apostrophe's/logo.png", "special/log$(not-run).png",
+		"assets/l[bracket].png", "assets/l`tick.png", "assets/x`[tick].png", "bracket[dir]/logo.png", "tick`dir/logo.png",
+	}
 	for _, name := range files {
 		path := filepath.Join(dir, filepath.FromSlash(name))
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
@@ -65,6 +69,14 @@ ConvertTo-Json -InputObject $results -Compress
 		{"apostrophe filename", "'assets/l''", []string{"assets/l'quote.png"}},
 		{"apostrophe directory", `'apostrophe''s/lo`, []string{"apostrophe's/logo.png"}},
 		{"literal shell syntax", "special/lo", []string{"special/log$(not-run).png"}},
+		{"bracket filename", "assets/l[", []string{"assets/l[bracket].png"}},
+		{"single quoted bracket", "'assets/l[", []string{"assets/l[bracket].png"}},
+		{"double quoted bracket", "\"assets/l[", []string{"assets/l[bracket].png"}},
+		{"literal backtick", "'assets/l`", []string{"assets/l`tick.png"}},
+		{"double quoted backtick", "\"assets/l``", []string{"assets/l`tick.png"}},
+		{"backtick before bracket", "assets/x", []string{"assets/x`[tick].png"}},
+		{"bracket directory", "'bracket[dir]/lo", []string{"bracket[dir]/logo.png"}},
+		{"backtick directory", "'tick`dir/lo", []string{"tick`dir/logo.png"}},
 		{"directory", "'assets/long dir/", []string{"assets/long dir/child.txt"}},
 		{"absolute", filepath.Join(dir, "assets", "lo"), []string{"assets/logo.png", "assets/long name.png", "assets/long dir"}},
 	} {

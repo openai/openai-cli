@@ -66,8 +66,19 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
   } else {
     switch ($exitCode) {
       10 {
-        # Let PowerShell preserve directory prefixes and quote file names.
-        [System.Management.Automation.CompletionCompleters]::CompleteFilename($wordToComplete)
+        # FileInput accepts literal paths, without provider wildcard escapes.
+        # PowerShell resolves the parent directory through Resolve-Path -Path.
+        $separator = [Math]::Max($wordContent.LastIndexOf('/'), $wordContent.LastIndexOf('\'))
+        $fileWord = $wordContent
+        if ($separator -ge 0) {
+          $fileWord = [System.Management.Automation.WildcardPattern]::Escape($wordContent.Substring(0, $separator + 1)) + $wordContent.Substring($separator + 1)
+        }
+        # Quote the word before asking PowerShell for literal-path results.
+        $literalWord = [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($fileWord)
+        $fileCommand = "Microsoft.PowerShell.Management\Get-Item -LiteralPath '$literalWord'"
+        [System.Management.Automation.CommandCompletion]::CompleteInput(
+          $fileCommand, $fileCommand.Length, @{ LiteralPaths = $true }
+        ).CompletionMatches
       }
       11 {
         # No reasonable suggestions
