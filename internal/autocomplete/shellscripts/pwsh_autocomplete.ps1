@@ -1,20 +1,6 @@
 Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
   param($wordToComplete, $commandAst, $cursorPosition)
 
-  $elements = $commandAst.CommandElements
-  $completionArgs = @()
-
-  # Extract each of the arguments
-  for ($i = 0; $i -lt $elements.Count; $i++) {
-    $completionArgs += $elements[$i].Extent.Text
-  }
-
-  # Add empty string if there's a trailing space (wordToComplete is empty but cursor is after space)
-  # Necessary for differentiating between getting completions for namespaced commands vs. subcommands
-  if ($wordToComplete.Length -eq 0 -and $elements.Count -gt 0) {
-    $completionArgs += ""
-  }
-
   # PowerShell includes quotes in $wordToComplete - strip them for pattern matching
   # but preserve them in the prefix for the completion result
   $wordContent = $wordToComplete
@@ -30,10 +16,20 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
   }
 
 
-  # Use PowerShell's normalized current word for quoted flag assignments.
-  if ($wordToComplete.Length -gt 0) {
-    $completionArgs[-1] = $wordContent
+  # The backend completes its final argument. Exclude the current AST element
+  # and later arguments, then append PowerShell's normalized current word once.
+  $completionArgs = @()
+  foreach ($element in $commandAst.CommandElements) {
+    if ($element.Extent.EndOffset -ge $cursorPosition) {
+      break
+    }
+    if ($element -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+      $completionArgs += $element.Value
+    } else {
+      $completionArgs += $element.Extent.Text
+    }
   }
+  $completionArgs += $wordContent
 
   $output = & {
     $env:COMPLETION_STYLE = 'pwsh'

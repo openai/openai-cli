@@ -147,3 +147,94 @@ ConvertTo-Json -InputObject $results -Compress
 		}
 	}
 }
+
+func TestPowerShellCompletionRespectsCursor(t *testing.T) {
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("PowerShell is not available")
+	}
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	script, err := shellCompletions[CompletionStylePowershell](&cli.Command{}, "openai")
+	require.NoError(t, err)
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "assets"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "assets", "logo.png"), nil, 0600))
+	probe := `
+function openai {
+ $global:completionBackendArgs = @($args)
+ & $env:OPENAI_CLI_COMPLETION_BINARY '-test.run=^TestShellCompletionProtocolHelper$' -- openai @args
+ $global:LASTEXITCODE = $LASTEXITCODE
+}
+` + script + `
+$markedLine = $env:OPENAI_CLI_COMPLETION_LINE
+if ($markedLine -eq 'completion chain') {
+ $firstLine = 'openai --file=assets/lo'
+ $first = TabExpansion2 $firstLine $firstLine.Length
+ if ($first.CompletionMatches.Count -ne 1) { throw 'Expected one file completion' }
+ $markedLine = $firstLine.Substring(0,$first.ReplacementIndex) + $first.CompletionMatches[0].CompletionText + ' models li|'
+}
+$cursor = $markedLine.IndexOf('|')
+$line = $markedLine.Remove($cursor,1)
+$expansion = TabExpansion2 $line $cursor
+$matches = @($expansion.CompletionMatches | Where-Object { $_.CompletionText -ne ' ' } | ForEach-Object {
+ $completedLine = $line.Substring(0,$expansion.ReplacementIndex) + $_.CompletionText + $line.Substring($expansion.ReplacementIndex+$expansion.ReplacementLength)
+ $tokens = $null
+ $errors = $null
+ $ast = [System.Management.Automation.Language.Parser]::ParseInput($completedLine,[ref]$tokens,[ref]$errors)
+ $elements = $ast.EndBlock.Statements[0].PipelineElements[0].CommandElements
+ [pscustomobject]@{ text=$_.CompletionText; line=$completedLine; errors=$errors.Count; args=@($elements | ForEach-Object { $_.Value }) }
+})
+[pscustomobject]@{ backend=$global:completionBackendArgs; matches=$matches } | ConvertTo-Json -Depth 5 -Compress
+`
+	probePath := filepath.Join(dir, "cursor-probe.ps1")
+	require.NoError(t, os.WriteFile(probePath, []byte(probe), 0600))
+	for _, tc := range []struct {
+		name, line    string
+		backend, want []string
+	}{
+		{"separate file", "openai --file assets/lo| --format json", []string{"--file", "assets/lo"}, []string{"openai", "--file", filepath.FromSlash("assets/logo.png"), "--format", "json"}},
+		{"assigned file", "openai --file=assets/lo| --format json", []string{"--file=assets/lo"}, []string{"openai", "--file=" + filepath.FromSlash("assets/logo.png"), "--format", "json"}},
+		{"quoted midword file", `openai --file 'assets/lo|go.png' --format json`, []string{"--file", "assets/logo.png"}, []string{"openai", "--file", filepath.FromSlash("assets/logo.png"), "--format", "json"}},
+		{"nonfile value", "openai --format assets/lo| --file unused.wav", []string{"--format", "assets/lo"}, nil},
+		{"assigned nonfile value", "openai --format=assets/lo| --file unused.wav", []string{"--format=assets/lo"}, nil},
+		{"empty file value", "openai --file | --format json", []string{"--file", ""}, nil},
+		{"completion chain", "completion chain", []string{"--file=" + filepath.FromSlash("assets/logo.png"), "models", "li"}, []string{"openai", "--file=" + filepath.FromSlash("assets/logo.png"), "models", "list"}},
+		{"preceding quoted assignment", "openai '--file=assets/logo.png' models li|", []string{"--file=assets/logo.png", "models", "li"}, []string{"openai", "--file=assets/logo.png", "models", "list"}},
+		{"empty nonfile value", "openai --format | --file unused.wav", []string{"--format", ""}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", probePath)
+			command.Dir = dir
+			command.Env = append(os.Environ(), "OPENAI_CLI_COMPLETION_HELPER=1", "OPENAI_CLI_COMPLETION_BINARY="+binary, "OPENAI_CLI_COMPLETION_LINE="+tc.line)
+			out, err := command.CombinedOutput()
+			require.NoError(t, err, string(out))
+			var result struct {
+				Backend []string
+				Matches []struct {
+					Text, Line string
+					Errors     int
+					Args       []string
+				}
+			}
+			require.NoError(t, json.Unmarshal(out, &result), string(out))
+			require.Equal(t, append([]string{"__complete", "openai"}, tc.backend...), result.Backend, string(out))
+			if tc.name == "empty file value" {
+				require.NotEmpty(t, result.Matches)
+				for _, match := range result.Matches {
+					require.Zero(t, match.Errors, match.Line)
+					require.Len(t, match.Args, 5)
+					require.Equal(t, []string{"--format", "json"}, match.Args[3:])
+				}
+			} else if tc.want == nil {
+				require.Empty(t, result.Matches)
+			} else {
+				require.Len(t, result.Matches, 1)
+				require.Zero(t, result.Matches[0].Errors, result.Matches[0].Line)
+				require.Equal(t, tc.want, result.Matches[0].Args)
+			}
+		})
+	}
+}
