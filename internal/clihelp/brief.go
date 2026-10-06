@@ -38,7 +38,7 @@ func briefHelpAtWidth(command *cli.Command, invocation, path string, width int) 
 	}
 	if example := examples[path]; example != "" {
 		fmt.Fprintf(&out, "\nEXAMPLE\n  %s %s\n", invocation, example)
-		if path == "files create" {
+		if path == "files create" || path == "files upload" {
 			out.WriteString(wrapDescription("example.txt is the path to your existing file. Replace it with your file's path.", "", width))
 		}
 	}
@@ -99,6 +99,7 @@ var examples = map[string]string{
 	"models retrieve":   "models retrieve --model gpt-5.5",
 	"responses create":  `responses create --model gpt-5.5 --input "Say hello"`,
 	"files create":      `files create --file ./example.txt --purpose assistants`,
+	"files upload":      `files upload --file ./example.txt --purpose assistants`,
 	"images generate":   `images generate --prompt "A tiny orange robot"`,
 	"images inline":     "images inline on",
 	"images inline on":  "images inline on",

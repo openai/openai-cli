@@ -42,16 +42,18 @@ func TestMainManpagesDeepSubgroups(t *testing.T) {
 		}
 	}
 	for _, path := range []string{
-		"admin organization projects users roles create",
-		"admin organization projects service-accounts api-keys create",
-		"admin organization projects groups roles delete",
-		"audio transcriptions create",
+		"admin projects users roles create",
+		"admin projects service-accounts api-keys create",
+		"projects groups roles delete",
+		"audio transcribe",
+		"transcribe",
+		"files upload",
 	} {
 		if !strings.Contains(string(text), "\n.SH "+path+"\n") {
 			t.Errorf("missing full-path heading for %s", path)
 		}
 	}
-	for _, hidden := range []string{"@manpages", "__complete", "admin:organization"} {
+	for _, hidden := range []string{"@manpages", "__complete", "admin:organization", "\n.SH admin organization", "\n.SH audio transcriptions"} {
 		if strings.Contains(string(text), hidden) {
 			t.Errorf("hidden command %s leaked into manpage", hidden)
 		}

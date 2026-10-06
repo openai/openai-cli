@@ -72,6 +72,9 @@ func cloneResourceCommand(source *cli.Command) *cli.Command {
 }
 
 func commandResourceName(command *cli.Command) string {
+	if name, ok := command.Metadata[resourceCommandMetadata].(string); ok {
+		return name
+	}
 	lineage := command.Lineage()
 	if len(lineage) < 2 {
 		return ""

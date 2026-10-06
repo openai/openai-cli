@@ -27,8 +27,8 @@ func TestMainCommandSubgroupsCoverGeneratedRoutes(t *testing.T) {
 				t.Fatalf("missing nested route for %s", old.Name)
 			}
 		}
-		if !old.Hidden || nested.Hidden {
-			t.Fatalf("discovery should prefer the nested route for %s", old.Name)
+		if !old.Hidden || nested.Hidden && nested.Metadata["command-compatibility-alias"] != true {
+			t.Fatalf("nested route must stay available for %s", old.Name)
 		}
 		for _, action := range old.Commands {
 			copy := nested.Command(action.Name)
@@ -45,11 +45,11 @@ func TestMainCommandSubgroupsCoverGeneratedRoutes(t *testing.T) {
 
 func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 	for _, tc := range []struct{ path, child string }{
-		{"admin", "organization"}, {"admin organization", "audit-logs"},
+		{"admin", "projects"}, {"admin organization", "audit-logs"},
 		{"admin organization projects", "service-accounts"},
 		{"admin organization projects service-accounts", "api-keys"},
 		{"chat", "completions"}, {"chat completions", "messages"},
-		{"audio", "transcriptions"}, {"beta threads runs", "steps"},
+		{"audio", "transcribe"}, {"beta threads runs", "steps"},
 		{"containers files", "content"}, {"skills versions", "content"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {

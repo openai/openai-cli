@@ -198,6 +198,29 @@ It removes the API key before running each command.
 Inspect both PNG files and `comparison.gif` before sharing.
 These files show actual PTY execution through asciinema/agg replay, not graphical terminal validation.
 
+### Grouped actions and root shortcuts
+
+`record-command-shortcuts.sh` compares audio actions, root discovery, and root shortcut help.
+Build the existing `image-model-demo-api` fixture, then run:
+
+```sh
+bash scripts/demos/record-command-shortcuts.sh audio \
+  /path/to/before/openai /path/to/candidate/openai \
+  BEFORE_COMMIT CANDIDATE_COMMIT /path/outside/repository/audio-demo
+```
+
+Use `root` for a labeled 32-line root help excerpt containing shortcuts and grouped commands.
+Use `transcribe` for `openai transcribe --help`; this expects status 3 before and status 0 after.
+Each mode requires a separate empty output directory and verified full commit IDs.
+Use `DEMO_API_BINARY` for a separately built fixture and `DEMO_SOURCE_MANIFEST` for uncommitted development sources.
+
+The recorder uses isolated Bash PTYs, no API key, and a rejecting loopback fixture.
+It checks real exit statuses and requires zero API requests.
+The 105-column replay uses 28 rows, or 40 rows for root help, with Menlo at 18 pixels.
+Inspect PNGs and individual GIF frames before sharing; exclude any combined GIF with rendering artifacts.
+Build information, hashes, transcripts, and raw captures remain beside the media.
+This records actual local CLI execution, not native graphical terminal appearance or API behavior.
+
 ### Installed command paths
 
 `record-command-paths.sh` compares the no-argument welcome page using the same

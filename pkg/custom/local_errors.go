@@ -217,12 +217,10 @@ func unknownCommandAt(command *cli.Command, name string) string {
 	}
 	if command.Suggest {
 		candidates := clihelp.VisibleCommands(command)
-		if strings.Contains(name, ":") {
-			for _, child := range command.Commands {
-				compatibility, _ := child.Metadata["command-compatibility-alias"].(bool)
-				if child.Hidden && compatibility {
-					candidates = append(candidates, child)
-				}
+		for _, child := range command.Commands {
+			compatibility, _ := child.Metadata["command-compatibility-alias"].(bool)
+			if child.Hidden && compatibility && (strings.Contains(name, ":") || withinOneEdit(strings.ToLower(name), strings.ToLower(child.Name))) {
+				candidates = append(candidates, child)
 			}
 		}
 		if suggestion := suggestCommand(candidates, name); suggestion != "" {

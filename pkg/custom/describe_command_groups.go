@@ -122,6 +122,7 @@ var commandDisplaySections = map[string][]commandDisplaySection{
 		{"Retired commands", "create-variation"},
 	},
 	"": {
+		{"Shortcuts", "transcribe translate speak projects"},
 		{"Generate content", "responses chat completions images audio videos"},
 		{"Live and realtime", "live realtime"},
 		{"Data and retrieval", "files uploads vector-stores embeddings conversations"},
@@ -154,8 +155,12 @@ func configureCommandPresentation(root *cli.Command) {
 		if path == "images" {
 			command.Metadata["help-preserve-command-order"] = true
 		}
+		canonicalPath := path
+		if resource, ok := command.Metadata[resourceCommandMetadata].(string); ok && command.Category == "API RESOURCE" {
+			canonicalPath = strings.ReplaceAll(resource, ":", " ")
+		}
 		if command.Category == "API RESOURCE" && command.Usage == "" {
-			command.Usage = commandGroupDescriptions[path]
+			command.Usage = commandGroupDescriptions[canonicalPath]
 			if command.Usage == "" {
 				parts := strings.Fields(path)
 				name := command.Name
@@ -170,7 +175,10 @@ func configureCommandPresentation(root *cli.Command) {
 			childPath := strings.TrimSpace(path + " " + strings.ReplaceAll(child.Name, ":", " "))
 			visit(child, childPath)
 		}
-		sections, ok := commandDisplaySections[path]
+		if path == "admin" {
+			canonicalPath = "admin organization"
+		}
+		sections, ok := commandDisplaySections[canonicalPath]
 		if !ok {
 			return
 		}
