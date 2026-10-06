@@ -102,6 +102,20 @@ func TestWarpImageProtocolSelection(t *testing.T) {
 		{"no color disables mux fallback", "on", "", true, map[string]string{"TMUX": "active", "NO_COLOR": "1"}},
 		{"missing identity", "auto", "blocks", true, map[string]string{"TERM_PROGRAM": ""}},
 		{"different identity", "auto", "blocks", true, map[string]string{"TERM_PROGRAM": "unknown"}},
+		{"wsl distro auto", "auto", "blocks", true, map[string]string{"WSL_DISTRO_NAME": "Ubuntu"}},
+		{"wsl distro on", "on", "blocks", true, map[string]string{"WSL_DISTRO_NAME": "Ubuntu"}},
+		{"wsl interop auto", "auto", "blocks", true, map[string]string{"WSL_INTEROP": "/run/WSL/42_interop"}},
+		{"wsl interop on", "on", "blocks", true, map[string]string{"WSL_INTEROP": "/run/WSL/42_interop"}},
+		{"ssh connection auto", "auto", "blocks", true, map[string]string{"SSH_CONNECTION": "192.0.2.1 1234 192.0.2.2 22"}},
+		{"ssh connection on", "on", "blocks", true, map[string]string{"SSH_CONNECTION": "192.0.2.1 1234 192.0.2.2 22"}},
+		{"ssh client auto", "auto", "blocks", true, map[string]string{"SSH_CLIENT": "192.0.2.1 1234 22"}},
+		{"ssh client on", "on", "blocks", true, map[string]string{"SSH_CLIENT": "192.0.2.1 1234 22"}},
+		{"ssh tty auto", "auto", "blocks", true, map[string]string{"SSH_TTY": "/dev/pts/1"}},
+		{"ssh tty on", "on", "blocks", true, map[string]string{"SSH_TTY": "/dev/pts/1"}},
+		{"no color disables wsl fallback", "on", "", true, map[string]string{"WSL_DISTRO_NAME": "Ubuntu", "NO_COLOR": "1"}},
+		{"clicolor disables wsl fallback", "auto", "", true, map[string]string{"WSL_INTEROP": "/run/WSL/42_interop", "CLICOLOR": "0"}},
+		{"no color disables ssh fallback", "auto", "", true, map[string]string{"SSH_TTY": "/dev/pts/1", "NO_COLOR": "1"}},
+		{"clicolor disables ssh fallback", "on", "", true, map[string]string{"SSH_CONNECTION": "192.0.2.1 1234 192.0.2.2 22", "CLICOLOR": "0"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := map[string]string{"TERM_PROGRAM": "WarpTerminal", "TERM": "xterm-256color"}

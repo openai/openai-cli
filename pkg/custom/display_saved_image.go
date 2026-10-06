@@ -153,8 +153,14 @@ func savedImageProtocol(mode string, terminal bool, getenv func(string) string) 
 		case "iTerm.app", "WezTerm":
 			return "iterm"
 		case "WarpTerminal":
+			// The CLI host does not identify Warp's platform in WSL or SSH.
+			// Preserve the fallback when Windows may own the terminal.
+			wsl := getenv("WSL_DISTRO_NAME") != "" || getenv("WSL_INTEROP") != ""
+			ssh := getenv("SSH_CONNECTION") != "" || getenv("SSH_CLIENT") != "" || getenv("SSH_TTY") != ""
+			if wsl || ssh {
+				break
+			}
 			// Warp documents native image protocols on macOS and Linux.
-			// Use Kitty's interrupt-safe output path on those CLI platforms.
 			if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
 				return "kitty"
 			}
