@@ -8,9 +8,11 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/urfave/cli/v3"
 )
 
@@ -28,6 +30,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var streamFailure *streamResultError
 	var imageModelsFailure *imageModelsError
 	var voiceVariantFailure *voiceVariantError
+	var helpTopicFailure *clihelp.UnknownTopicError
 	switch {
 	case errors.Is(failure, context.Canceled):
 		return "Request canceled."
@@ -47,6 +50,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return imageModelsFailure.Error()
 	case errors.As(failure, &voiceVariantFailure):
 		return voiceVariantFailure.Error()
+	case errors.As(failure, &helpTopicFailure):
+		return unknownCommandAt(helpTopicFailure.Parent, helpTopicFailure.Topic)
 	case errors.As(failure, &pathError):
 		switch {
 		case errors.Is(pathError, os.ErrNotExist):
@@ -201,14 +206,45 @@ func unknownCommandErrorMessage(command *cli.Command) string {
 			command = next
 			continue
 		}
-		if command.Suggest {
-			if suggestion := suggestCommand(command.Commands, name); suggestion != "" {
-				return "Unknown help topic. " + suggestion
-			}
-		}
-		break
+		return unknownCommandAt(command, name)
 	}
 	return "Unknown help topic. Run openai help --all to see commands."
+}
+
+func unknownCommandAt(command *cli.Command, name string) string {
+	if command == nil {
+		return "Unknown help topic. Run openai help --all to see commands."
+	}
+	if command.Suggest {
+		candidates := clihelp.VisibleCommands(command)
+		if strings.Contains(name, ":") {
+			for _, child := range command.Commands {
+				compatibility, _ := child.Metadata["command-compatibility-alias"].(bool)
+				if child.Hidden && compatibility {
+					candidates = append(candidates, child)
+				}
+			}
+		}
+		if suggestion := suggestCommand(candidates, name); suggestion != "" {
+			prefix := "Did you mean '" + command.Root().Name
+			if strings.HasPrefix(suggestion, prefix+" ") {
+				suggestion = "Did you mean '" + errorHelpInvocation(command.Root()) + strings.TrimPrefix(suggestion, prefix)
+			}
+			return "Unknown help topic. " + suggestion
+		}
+	}
+	var path []string
+	for _, ancestor := range command.Lineage() {
+		if ancestor != command.Root() {
+			path = append(path, ancestor.Name)
+		}
+	}
+	slices.Reverse(path)
+	invocation := errorHelpInvocation(command.Root()) + " help --all"
+	if len(path) > 0 {
+		invocation += " " + strings.Join(path, " ")
+	}
+	return "Unknown help topic. Run " + invocation + " to see commands."
 }
 
 func afterQuotedValue(message, prefix string) (string, bool) {

@@ -78,18 +78,18 @@ func TestBriefHelpIncludesEveryRequiredInput(t *testing.T) {
 	}
 }
 
-func TestBriefHelpGroupsAreBoundedAndHideInternalCommands(t *testing.T) {
+func TestBriefHelpGroupsAreCompleteAndHideInternalCommands(t *testing.T) {
 	command := &cli.Command{Name: "group", Commands: []*cli.Command{{Name: "internal-only", Hidden: true}}}
 	for i := range 12 {
 		command.Commands = append(command.Commands, &cli.Command{Name: fmt.Sprintf("command-%02d", i), Usage: "A short description. Extra details."})
 	}
 	got := briefHelp(command, "./openai", "group")
-	for _, name := range []string{"command-00", "command-09", "+ 2 more", "./openai group COMMAND --help", "./openai help --all group"} {
+	for _, name := range []string{"command-00", "command-09", "command-10", "command-11", "./openai group COMMAND --help", "./openai help --all group"} {
 		if !strings.Contains(got, name) {
 			t.Errorf("group help lacks %q: %s", name, got)
 		}
 	}
-	for _, name := range []string{"internal-only", "command-10", "Extra details"} {
+	for _, name := range []string{"internal-only", "+ 2 more", "Extra details"} {
 		if strings.Contains(got, name) {
 			t.Errorf("group help should not include %q", name)
 		}

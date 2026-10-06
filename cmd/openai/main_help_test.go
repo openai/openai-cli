@@ -22,10 +22,10 @@ func TestMainHelpWelcome(t *testing.T) {
 	if want.code != 0 || want.stderr != "" {
 		t.Fatalf("welcome failed: %+v", want)
 	}
-	if lines := len(strings.Split(strings.TrimSpace(want.stdout), "\n")); lines > 20 {
-		t.Errorf("welcome uses %d lines; want at most 20", lines)
+	if lines := len(strings.Split(strings.TrimSpace(want.stdout), "\n")); lines > 75 {
+		t.Errorf("complete command overview uses %d lines; want at most 75", lines)
 	}
-	for _, text := range []string{"openai help setup", "openai models list", "--help", "help --all", "openai images --help", "openai help --all images generate"} {
+	for _, text := range []string{"openai help setup", "openai models list", "--help", "help --all", "openai images --help", "openai images generate --help"} {
 		if !strings.Contains(want.stdout, text) {
 			t.Errorf("welcome lacks %q: %s", text, want.stdout)
 		}

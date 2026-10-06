@@ -159,6 +159,45 @@ native terminal validation. The output also preserves transcripts, captures,
 the exact scene, tool versions, hashes, commit IDs and the empty request log.
 Keep this output outside Git; rerun after changing the demonstrated help.
 
+### Command navigation
+
+`record-command-navigation.sh` compares command discovery in a 105-column, 45-row PTY.
+The `root` mode records the first 38 lines of full help and labels both scenes as excerpts.
+The `projects` mode records complete help for `openai admin organization projects`.
+
+Build the existing fixture:
+
+```sh
+go build -o dist/demos/bin/image-model-demo-api ./scripts/demos/image-models
+```
+
+Record the root comparison against a verified installed binary with flat resource names:
+
+```sh
+bash scripts/demos/record-command-navigation.sh root \
+  /path/to/installed/openai /path/to/candidate/openai \
+  BEFORE_BASE_COMMIT CANDIDATE_BASE_COMMIT /path/outside/repository/root-demo
+```
+
+Record the project comparison against a verified main binary with truncated group help:
+
+```sh
+bash scripts/demos/record-command-navigation.sh projects \
+  /path/to/main/openai /path/to/candidate/openai \
+  MAIN_COMMIT CANDIDATE_BASE_COMMIT /path/outside/repository/projects-demo
+```
+
+Supply full commit IDs and an empty output directory for each mode.
+Check each binary's actual build information before selecting its base commit.
+An installed binary can contain uncommitted changes; a base commit alone does not establish its complete source.
+Set `DEMO_SOURCE_MANIFEST` to a source-hash manifest when the candidate contains uncommitted changes.
+The recorder copies this manifest, captures available Go build information, and hashes both binaries.
+
+The recorder checks exit status, expected help text, and an empty loopback request log.
+It removes the API key before running each command.
+Inspect both PNG files and `comparison.gif` before sharing.
+These files show actual PTY execution through asciinema/agg replay, not graphical terminal validation.
+
 ### Installed command paths
 
 `record-command-paths.sh` compares the no-argument welcome page using the same

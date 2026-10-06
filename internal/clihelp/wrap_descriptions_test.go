@@ -14,7 +14,7 @@ func TestBriefDescriptionsWrapWithoutLosingWords(t *testing.T) {
 	command := &cli.Command{Name: "images", Commands: []*cli.Command{{Name: "edit", Usage: description}}}
 	for _, width := range []int{32, 40, 80, 120} {
 		got := briefHelpAtWidth(command, "openai", "images", width)
-		_, listing, _ := strings.Cut(got, "COMMANDS\n")
+		_, listing, _ := strings.Cut(got, "ACTIONS\n")
 		listing, _, _ = strings.Cut(listing, "\nCommand help:")
 		if !strings.Contains(strings.Join(strings.Fields(listing), " "), description) || strings.Contains(listing, "...") {
 			t.Errorf("width %d lost a command description: %s", width, got)

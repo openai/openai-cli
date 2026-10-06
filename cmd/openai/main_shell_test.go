@@ -79,6 +79,27 @@ func TestMainNativeShell(t *testing.T) {
 			} else if shell.name == "powershell" || shell.name == "pwsh" {
 				invocation = "& '" + strings.ReplaceAll(executable, "'", "''") + "'"
 			}
+			if runtime.GOOS != "windows" {
+				t.Run("copy typo suggestion with another openai on PATH", func(t *testing.T) {
+					other := t.TempDir()
+					if err := os.WriteFile(filepath.Join(other, "openai"), []byte("#!/bin/sh\nprintf 'wrong executable\\n'\nexit 99\n"), 0o700); err != nil {
+						t.Fatal(err)
+					}
+					t.Setenv("PATH", other+string(os.PathListSeparator)+os.Getenv("PATH"))
+					for _, args := range []string{"help admin organization projcts", "admin organization projcts", "help audio:transcriptins"} {
+						got := runNativeShell(t, shell, other, home, "http://127.0.0.1:1", invocation+" "+args)
+						_, suggestion, found := strings.Cut(got.stderr, "Did you mean '")
+						suggestion = strings.TrimSuffix(strings.TrimSpace(suggestion), "'?")
+						if got.code != 3 || !found || !strings.HasPrefix(suggestion, invocation+" ") {
+							t.Fatalf("suggestion changed executable identity: %+v", got)
+						}
+						copied := runNativeShell(t, shell, other, home, "http://127.0.0.1:1", suggestion+" --help")
+						if copied.code != 0 || copied.stderr != "" || strings.Contains(copied.stdout, "wrong executable") {
+							t.Fatalf("copied suggestion failed: %+v", copied)
+						}
+					}
+				})
+			}
 			t.Run("installed help uses command name", func(t *testing.T) {
 				t.Setenv("PATH", work+string(os.PathListSeparator)+os.Getenv("PATH"))
 				directory := t.TempDir()

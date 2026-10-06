@@ -23,12 +23,11 @@ START HERE
   {{$run}} help setup                  Set up your API key
   {{$run}} models list                 List models available to your key
 
+{{call (index .Metadata "help-command-list")}}
 GET HELP
-  {{$run}} --help                      This menu (also -h)
   {{$run}} images --help               Browse image commands
   {{$run}} images generate --help      Example and common inputs
   {{$run}} help --all                  Command groups and global options
-  {{$run}} help --all images generate  Complete help for one command
 
 Add --help (or -h) to any command. Help needs no API key or internet.
 `
@@ -82,10 +81,12 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 		root.Metadata = map[string]any{}
 	}
 	root.Metadata["help-invocation"] = Invocation(root.Name, args)
+	configureCommandList(root)
 	configureCommandHelp(root, root.Metadata["help-invocation"].(string), "")
 	if root.Command("help") == nil {
 		root.Commands = append(root.Commands, &cli.Command{
 			Name: "help", Usage: "Get help: help [--all] [command...]", HideHelpCommand: true,
+			Metadata:           map[string]any{"help-command-section": "Help", "help-command-rank": 100000, "help-topic-command": true},
 			CustomHelpTemplate: welcomeHelp,
 			Flags:              []cli.Flag{&cli.BoolFlag{Name: "all", Usage: "Show every command option", HideDefault: true}},
 			Action:             showHelpTopics,
@@ -229,7 +230,7 @@ func showHelpTopics(ctx context.Context, command *cli.Command) error {
 	for _, topic := range command.Args().Slice() {
 		next := target.Command(topic)
 		if next == nil || !allowsHelpTopic(next) || topic == "help" {
-			return cli.Exit(fmt.Sprintf("Unknown help topic %q. Run %s help --all to see commands.", topic, root.Metadata["help-invocation"]), 3)
+			return &UnknownTopicError{Parent: target, Topic: topic}
 		}
 		parent, target = target, next
 	}
@@ -241,6 +242,19 @@ func showHelpTopics(ctx context.Context, command *cli.Command) error {
 	}
 	return cli.ShowCommandHelp(ctx, parent, target.Name)
 }
+
+// UnknownTopicError retains the last valid group for safe local recovery guidance.
+// Presenters can suggest declared commands without echoing an untrusted topic.
+type UnknownTopicError struct {
+	Parent *cli.Command
+	Topic  string
+}
+
+func (e *UnknownTopicError) Error() string {
+	return fmt.Sprintf("Unknown help topic %q.", e.Topic)
+}
+
+func (*UnknownTopicError) ExitCode() int { return 3 }
 
 // Compatibility aliases stay out of discovery but retain explicitly requested
 // help. Internal commands remain unavailable as help topics.

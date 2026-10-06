@@ -17,7 +17,7 @@ func TestMainUnknownCommandSuggestions(t *testing.T) {
 		{[]string{"responses", "creat"}, "Unknown help topic. Did you mean 'openai responses create'?\n"},
 		{[]string{"RESPONSES"}, "Unknown help topic. Did you mean 'openai responses'?\n"},
 		{[]string{"totallybogus"}, "Unknown help topic. Run openai help --all to see commands.\n"},
-		{[]string{"responses", "zzzzz"}, "Unknown help topic. Run openai help --all to see commands.\n"},
+		{[]string{"responses", "zzzzz"}, "Unknown help topic. Run openai help --all responses to see commands.\n"},
 	} {
 		for _, flags := range [][]string{nil, {"--format-error", "json"}, {"--format", "json"}} {
 			t.Run(strings.Join(append(append([]string{}, tc.args...), flags...), "/"), func(t *testing.T) {

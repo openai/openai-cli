@@ -129,6 +129,12 @@ func TestMainDispatchEmptyArguments(t *testing.T) {
 func TestMainDispatchCompletionForms(t *testing.T) {
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
 		t.Run(style, func(t *testing.T) {
+			modelCompletions := "models\nmoderations\n"
+			if style == "zsh" {
+				modelCompletions = "models:List and inspect available models.\nmoderations:Classify potentially harmful text and image inputs.\n"
+			} else if style == "fish" {
+				modelCompletions = "models\tList and inspect available models.\nmoderations\tClassify potentially harmful text and image inputs.\n"
+			}
 			// Match the bundled scripts' argument shapes. Native shell execution
 			// is separate from these production-entrypoint protocol checks.
 			prefix := []string{"openai", "__complete"}
@@ -141,13 +147,13 @@ func TestMainDispatchCompletionForms(t *testing.T) {
 				args []string
 				want mainDispatchResult
 			}{
-				{[]string{"mo"}, mainDispatchResult{0, "moderations\nmodels\n", ""}},
+				{[]string{"mo"}, mainDispatchResult{0, modelCompletions, ""}},
 				{[]string{"--format", "__complete"}, mainDispatchResult{11, "", ""}},
 				{[]string{"models", "retrieve", "--model", "__complete"}, mainDispatchResult{11, "", ""}},
 				{[]string{"--mtls-client-cert-file", "candidate-"}, mainDispatchResult{10, "", ""}},
-				{[]string{"--format", "__complete", "mo"}, mainDispatchResult{0, "moderations\nmodels\n", ""}},
-				{[]string{"--format", "two words", "mo"}, mainDispatchResult{0, "moderations\nmodels\n", ""}},
-				{[]string{"--format", "", "mo"}, mainDispatchResult{0, "moderations\nmodels\n", ""}},
+				{[]string{"--format", "__complete", "mo"}, mainDispatchResult{0, modelCompletions, ""}},
+				{[]string{"--format", "two words", "mo"}, mainDispatchResult{0, modelCompletions, ""}},
+				{[]string{"--format", "", "mo"}, mainDispatchResult{0, modelCompletions, ""}},
 				{[]string{"models", "retrieve", "--model", "@candidate-"}, mainDispatchResult{11, "", ""}},
 			} {
 				t.Run(strings.Join(tc.args, "/"), func(t *testing.T) {

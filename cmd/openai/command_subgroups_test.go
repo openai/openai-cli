@@ -105,6 +105,14 @@ func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 }
 
 func TestMainCommandSubgroupsLegacyPrefixCompletion(t *testing.T) {
+	summaries := map[string]string{
+		"audio":                         "Transcribe audio, generate speech, and create voices.",
+		"audio:transcriptions":          "Convert audio to text.",
+		"audio:translations":            "Translate supported audio to English text.",
+		"admin:organization:audit-logs": "List organization actions and configuration changes.",
+		"beta:threads:runs":             "Create and manage runs on a beta thread.",
+		"beta:threads:runs:steps":       "Inspect the steps of a beta thread run.",
+	}
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
 		t.Run(style, func(t *testing.T) {
 			for _, tc := range []struct {
@@ -128,8 +136,16 @@ func TestMainCommandSubgroupsLegacyPrefixCompletion(t *testing.T) {
 					want := tc.want
 					if style == "bash" {
 						want = tc.bashWant
-					} else if style == "zsh" {
-						want = strings.ReplaceAll(want, ":", `\:`)
+					} else if (style == "zsh" || style == "fish") && want != "" {
+						var records []string
+						for _, name := range strings.Split(strings.TrimSuffix(want, "\n"), "\n") {
+							if style == "zsh" {
+								records = append(records, strings.ReplaceAll(name, ":", `\:`)+":"+summaries[name])
+							} else {
+								records = append(records, name+"\t"+summaries[name])
+							}
+						}
+						want = strings.Join(records, "\n") + "\n"
 					}
 					args := append([]string{"openai", "__complete", "--"}, tc.args...)
 					got := runMainDispatch(t, style, args...)

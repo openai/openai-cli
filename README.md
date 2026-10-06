@@ -82,7 +82,9 @@ Browse each group with `--help`, for example `openai admin --help` or
 `openai admin organization --help`. Existing colon commands such as
 `openai admin:organization:usage completions` continue to work.
 
-Run `openai` for a short starting guide. Help works without an API key or network connection:
+Run `openai` to browse command groups by task, with descriptions for each group.
+Group help separates actions from nested command groups and lists every immediate command.
+Help works without an API key or network connection:
 
 ```sh
 openai help setup                  # Enter your API key safely
@@ -93,6 +95,7 @@ openai help --all                  # Command groups and global options
 
 Add `--help` (or `-h`) to any command for its short guide. Help changes only
 what is displayed; command behavior, defaults, and output formats are unchanged.
+Tab completion follows the same group order and supports help topics and file input paths.
 
 Successful JSON responses print readable text by default, including in pipes.
 Use `--format json` or `--format jsonl` in scripts that parse API data.

@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
 
@@ -247,10 +249,8 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	builder := shellCompletionBuilder{completionStyle: completionStyle}
 	completions := make([]ShellCompletion, 0)
 	if len(args) == 0 {
-		for _, child := range root.Commands {
-			if !child.Hidden {
-				completions = builder.createFromCommand("", child, completions)
-			}
+		for _, child := range completionCommands(root) {
+			completions = builder.createFromCommand("", child, completions)
 		}
 		return CompletionResult{Completions: completions, Behavior: ShellCompletionBehaviorDefault}
 	}
@@ -260,48 +260,68 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	cmd := root
 	lineage := []*cli.Command{root}
 	flags := completionFlags(lineage)
+	help := root.Command("help")
+	localHelp := false
+	if help != nil {
+		localHelp, _ = help.Metadata["help-topic-command"].(bool)
+	}
+	helpTopics, literal := false, false
 	i := 0
 	for i < len(preceding) {
 		arg := preceding[i]
 
-		if isFlag(arg) {
-			flag := findFlag(flags, arg)
+		if arg == "--" && !literal {
+			literal = true
+			i++
+			continue
+		}
+		if isFlag(arg) && !literal {
+			name, _, assigned := strings.Cut(arg, "=")
+			flag := findFlag(flags, name)
 			if flag == nil {
-				i++
-			} else if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() {
-				// All flags except for bool flags take values
+				return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+			} else if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && !assigned {
+				if i == len(preceding)-1 {
+					return CompletionResult{Behavior: flagValueCompletion(*flag)}
+				}
 				i += 2
 			} else {
 				i++
 			}
 		} else {
+			if arg == "" {
+				i++
+				continue
+			}
+			if localHelp && arg == "help" && !helpTopics && len(cmd.Commands) > 0 {
+				helpTopics = true
+				flags = completionFlags([]*cli.Command{root, help})
+				i++
+				continue
+			}
 			child := findChild(cmd, arg)
+			if helpTopics && cmd == root && arg == "setup" {
+				child = findChild(help, arg)
+			}
+			if helpTopics && arg == "help" {
+				child = nil
+			}
 			if child != nil {
 				cmd = child
 				lineage = append(lineage, child)
-				flags = completionFlags(lineage)
+				if !helpTopics {
+					flags = completionFlags(lineage)
+				}
+			} else if helpTopics || len(cmd.Commands) > 0 {
+				// A failed group traversal must not offer commands from its parent.
+				return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 			}
 			i++
 		}
 	}
 
-	// Check if the previous arg was a flag expecting a value
-	if len(preceding) > 0 {
-		prev := preceding[len(preceding)-1]
-		if isFlag(prev) {
-			flag := findFlag(flags, prev)
-			if flag != nil {
-				if fb, ok := (*flag).(*cli.StringFlag); ok && fb.TakesFile {
-					return CompletionResult{Completions: completions, Behavior: ShellCompletionBehaviorFile}
-				} else if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() {
-					return CompletionResult{Completions: completions, Behavior: ShellCompletionBehaviorNoComplete}
-				}
-			}
-		}
-	}
-
 	// Completing a flag name
-	if isFlag(current) {
+	if isFlag(current) && !literal {
 		for _, flag := range flags {
 			if vf, ok := flag.(cli.VisibleFlag); ok && !vf.IsVisible() {
 				continue
@@ -312,9 +332,17 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 
 	// Keep compatibility aliases out of discovery unless a colon requests them.
 	colonPrefix := strings.Contains(current, ":")
+	children := completionCommands(cmd)
+	if helpTopics && cmd == root {
+		children = slices.DeleteFunc(children, func(child *cli.Command) bool { return child == help })
+		children = append(children, clihelp.VisibleCommands(help)...)
+	}
+	for _, child := range children {
+		completions = builder.createFromCommand(current, child, completions)
+	}
 	for _, child := range cmd.Commands {
 		compatibility, _ := child.Metadata["command-compatibility-alias"].(bool)
-		if !child.Hidden || (compatibility && colonPrefix) {
+		if child.Hidden && compatibility && colonPrefix {
 			completions = builder.createFromCommand(current, child, completions)
 		}
 	}
@@ -323,6 +351,26 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 		Completions: completions,
 		Behavior:    ShellCompletionBehaviorDefault,
 	}
+}
+
+func flagValueCompletion(flag cli.Flag) ShellCompletionBehavior {
+	if file, ok := flag.(interface{ IsFileInput() bool }); ok && file.IsFileInput() {
+		return ShellCompletionBehaviorFile
+	}
+	if file, ok := flag.(*cli.StringFlag); ok && file.TakesFile {
+		return ShellCompletionBehaviorFile
+	}
+	return ShellCompletionBehaviorNoComplete
+}
+
+func completionCommands(command *cli.Command) []*cli.Command {
+	children := clihelp.VisibleCommands(command)
+	// The framework omits help from VisibleCommands. Preserve its completion
+	// aliases without adding framework-specific helpers to the printed index.
+	if help := command.Command("help"); help != nil && !help.Hidden {
+		children = append(children, help)
+	}
+	return children
 }
 
 func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
@@ -347,6 +395,17 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 		return cli.Exit("COMPLETION_STYLE must be set to 'bash', 'zsh', 'pwsh', 'fish'", 1)
 	}
 
+	// Bash/fish pass a separator. PowerShell also includes the executable word.
+	if len(args) > 0 && args[0] == "--" {
+		args = args[1:]
+	} else if completionStyle == CompletionStylePowershell && len(args) > 1 {
+		name := strings.ReplaceAll(strings.Trim(args[0], `"'`), `\`, "/")
+		name = name[strings.LastIndex(name, "/")+1:]
+		if strings.EqualFold(strings.TrimSuffix(strings.ToLower(name), ".exe"), root.Name) {
+			args = args[1:]
+		}
+	}
+
 	result := GetCompletions(completionStyle, root, args)
 
 	for _, completion := range result.Completions {
@@ -354,12 +413,19 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 		if completionStyle == CompletionStyleZsh {
 			name = strings.ReplaceAll(name, ":", "\\:")
 		}
-		if completionStyle == CompletionStyleZsh && len(completion.Usage) > 0 {
-			_, _ = fmt.Fprintf(cmd.Writer, "%s:%s\n", name, completion.Usage)
-		} else if completionStyle == CompletionStyleFish && len(completion.Usage) > 0 {
-			_, _ = fmt.Fprintf(cmd.Writer, "%s\t%s\n", name, completion.Usage)
-		} else {
-			_, _ = fmt.Fprintf(cmd.Writer, "%s\n", name)
+		// Shell adapters split on newlines and tabs. Keep API prose within one
+		// record and escape terminal controls before they reach the menu.
+		usage := readable.Text(strings.Join(strings.Fields(completion.Usage), " "))
+		if sentence, _, found := strings.Cut(usage, ". "); found {
+			usage = sentence + "."
+		}
+		if completionStyle == CompletionStyleZsh && usage != "" {
+			name += ":" + usage
+		} else if completionStyle == CompletionStyleFish && usage != "" {
+			name += "\t" + usage
+		}
+		if _, err := fmt.Fprintln(cmd.Writer, name); err != nil {
+			return err
 		}
 	}
 	return cli.Exit("", int(result.Behavior))

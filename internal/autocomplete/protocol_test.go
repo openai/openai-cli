@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -25,11 +26,13 @@ func TestShellCompletionProtocolHelper(t *testing.T) {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "format"},
 			&cli.StringFlag{Name: "file", TakesFile: true},
+			&requestflag.Flag[[]string]{Name: "image", FileInput: true},
 		},
 		Commands: []*cli.Command{
 			{Name: "models", Commands: []*cli.Command{
 				{Name: "list", Flags: []cli.Flag{&cli.IntFlag{Name: "max-items"}}},
 			}},
+			{Name: "responses", Commands: []*cli.Command{{Name: "create", Usage: "Create a response\nfrom text\tinput."}}},
 			{Name: "__complete", Hidden: true, SkipFlagParsing: true, Action: ExecuteShellCompletion},
 		},
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
@@ -64,6 +67,7 @@ func TestShellCompletionProtocol(t *testing.T) {
 		{"root value", []string{"--format", "candidate-"}, 11, "", ""},
 		{"nested local value", []string{"models", "list", "--max-items", "candidate-"}, 11, "", ""},
 		{"file value", []string{"--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
+		{"request file value", []string{"--image", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
 		{"spaced preceding value", []string{"--format", "two words", "--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
 		{"empty preceding value", []string{"--format", "", "--file", "candidate-"}, 10, "", "candidate-fixture.txt\n"},
 		{"explicit file prefix", []string{"--format", "@candidate-"}, 11, "", "@candidate-fixture.txt\n"},
@@ -159,12 +163,14 @@ func TestZshCompletionRespectsCursor(t *testing.T) {
 		{"mid-line command", []string{"models", "li", "--format", "json"}, 3, 0, "list\n"},
 		{"mid-line flag", []string{"models", "list", "--max", "--format", "json"}, 4, 0, "--max-items\n"},
 		{"end-of-line command", []string{"models", "li"}, 3, 0, "list\n"},
+		{"multiline description", []string{"responses", "cr"}, 3, 0, "create:Create a response from text input.\n"},
 		{"empty mid-line word", []string{"models", "", "--format", "json"}, 3, 0, allModelCommands},
 		{"empty end-of-line word", []string{"models", ""}, 3, 0, allModelCommands},
 		{"spaced preceding value", []string{"--format", "two words", "models", "li", "--file", "unused"}, 5, 0, "list\n"},
 		{"empty preceding value", []string{"--format", "", "models", "li", "--file", "unused"}, 5, 0, "list\n"},
 		{"mid-line file value", []string{"--file", "candidate-", "models", "list"}, 3, 0, "files\n"},
 		{"end-of-line file value", []string{"--file", "candidate-"}, 3, 0, "files\n"},
+		{"request file value", []string{"--image", "candidate-"}, 3, 0, "files\n"},
 		{"spaced file value", []string{"--file", "two words", "models", "list"}, 3, 0, "files\n"},
 		{"explicit file prefix", []string{"--format", "@candidate-", "models", "list"}, 3, 0, "prefix:*@\nfiles\n"},
 		{"file URL prefix", []string{"--format", "@file://candidate-", "models", "list"}, 3, 0, "prefix:*file://\nfiles\n"},
