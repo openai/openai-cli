@@ -171,12 +171,12 @@ Build the existing fixture:
 go build -o dist/demos/bin/image-model-demo-api ./scripts/demos/image-models
 ```
 
-Record the root comparison against a verified installed binary with flat resource names:
+Record the root comparison against a pinned main binary:
 
 ```sh
 bash scripts/demos/record-command-navigation.sh root \
-  /path/to/installed/openai /path/to/candidate/openai \
-  BEFORE_BASE_COMMIT CANDIDATE_BASE_COMMIT /path/outside/repository/root-demo
+  /path/to/main/openai /path/to/candidate/openai \
+  MAIN_COMMIT CANDIDATE_COMMIT /path/outside/repository/root-demo
 ```
 
 Record the project comparison against a verified main binary with truncated group help:
@@ -184,13 +184,13 @@ Record the project comparison against a verified main binary with truncated grou
 ```sh
 bash scripts/demos/record-command-navigation.sh projects \
   /path/to/main/openai /path/to/candidate/openai \
-  MAIN_COMMIT CANDIDATE_BASE_COMMIT /path/outside/repository/projects-demo
+  MAIN_COMMIT CANDIDATE_COMMIT /path/outside/repository/projects-demo
 ```
 
 Supply full commit IDs and an empty output directory for each mode.
-Check each binary's actual build information before selecting its base commit.
-An installed binary can contain uncommitted changes; a base commit alone does not establish its complete source.
-Set `DEMO_SOURCE_MANIFEST` to a source-hash manifest when the candidate contains uncommitted changes.
+Use a clean candidate build for PR evidence and verify both binaries against their supplied commit IDs.
+Check each binary's build information; record archive provenance when its build information lacks a commit ID.
+For local development, set `DEMO_SOURCE_MANIFEST` when the candidate contains uncommitted changes.
 The recorder copies this manifest, captures available Go build information, and hashes both binaries.
 
 The recorder checks exit status, expected help text, and an empty loopback request log.

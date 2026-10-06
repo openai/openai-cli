@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -ne 6 ]; then
-  echo 'usage: record-command-navigation.sh MODE BEFORE_BINARY AFTER_BINARY BEFORE_SHA CANDIDATE_BASE_SHA OUTPUT_DIR' >&2
+  echo 'usage: record-command-navigation.sh MODE BEFORE_BINARY AFTER_BINARY BEFORE_SHA CANDIDATE_SHA OUTPUT_DIR' >&2
   echo 'MODE: root (first 38 help lines) or projects (complete project group help)' >&2
   exit 2
 fi
@@ -46,7 +46,7 @@ SCENE
   echo 'feature: complete, described command navigation'
   echo "mode: $demo_mode"
   echo "before base commit: $demo_before_sha (inspect build info for dirty state)"
-  echo "candidate base commit: $demo_after_sha (record candidate source manifest separately)"
+  echo "candidate commit: $demo_after_sha (inspect build info for dirty state)"
   echo 'capture: actual binaries in isolated bash PTYs; no API key or live requests'
   echo 'scope: asciinema/agg terminal replay, not a graphical terminal inspection'
   echo "terminal dimensions: $demo_window_size"
@@ -66,10 +66,10 @@ case "$demo_mode" in
   root)
     echo "command: openai help --all | sed -n '1,38p'" >> "$demo_output/metadata.txt"
     demo_capture_scene before 0 "$demo_runtime/before" "$demo_api_url" \
-      'Before: installed CLI (help excerpt, first 38 lines)' DEMO_MODE=root
+      'Before: main branch (help excerpt, first 38 lines)' DEMO_MODE=root
     demo_capture_scene after 0 "$demo_runtime/after" "$demo_api_url" \
       'After: command sections (help excerpt, first 38 lines)' DEMO_MODE=root
-    /usr/bin/grep -Fq 'chat:completions' "$demo_output/before.txt"
+    /usr/bin/grep -Fq 'API RESOURCE:' "$demo_output/before.txt"
     /usr/bin/grep -Fq 'GENERATE CONTENT' "$demo_output/after.txt"
     ;;
   projects)
