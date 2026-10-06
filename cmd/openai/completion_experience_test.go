@@ -84,3 +84,34 @@ func TestMainCompletionPreservesTypedDoubleDash(t *testing.T) {
 		})
 	}
 }
+
+func TestMainCompletionAssignedFileValues(t *testing.T) {
+	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+		for _, args := range [][]string{
+			{"audio", "transcribe", "--file=assets/lo"}, {"transcribe", "--file=assets/lo"},
+			{"files", "upload", "--file=assets/lo"}, {"images", "edit", "--image=assets/a=b"},
+			{"audio", "transcriptions", "create", "--file="}, {"audio:transcriptions", "create", "--file=assets/lo"},
+			{"--mtls-client-cert-file=assets/lo"}, {"models", "list", "--mtls-client-key-file=assets/lo"},
+		} {
+			got := runMainDispatch(t, style, mainCompletionArgs(style, args...)...)
+			name, _, _ := strings.Cut(args[len(args)-1], "=")
+			if got.code != 10 || got.stdout != name+"=\n" || got.stderr != "" {
+				t.Errorf("%s assigned file completion failed for %q: %+v", style, args, got)
+			}
+		}
+		for _, tc := range []struct {
+			args []string
+			code int
+		}{
+			{[]string{"transcribe", "--file", "--file=assets/lo"}, 10},
+			{[]string{"transcribe", "--model=assets/lo"}, 11},
+			{[]string{"transcribe", "--unknown=assets/lo"}, 11},
+			{[]string{"transcribe", "--", "--file=assets/lo"}, 0},
+		} {
+			got := runMainDispatch(t, style, mainCompletionArgs(style, tc.args...)...)
+			if got.code != tc.code || got.stdout != "" || got.stderr != "" {
+				t.Errorf("%s assignment control failed for %q: %+v", style, tc.args, got)
+			}
+		}
+	}
+}

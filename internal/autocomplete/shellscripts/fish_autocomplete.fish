@@ -33,8 +33,24 @@ function ____APPNAME___fish_autocomplete
     else
         switch $exit_code
             case 10
-                # File completion
-                __fish_complete_path "$current"
+                # The backend returns a prefix only for an assigned file flag.
+                set -l assignment "$completions"
+                set -l value "$current"
+                if test -n "$assignment"
+                    set value (string sub -s (math (string length -- "$assignment") + 1) -- "$current")
+                end
+                # Fish treats leading --name= specially, even for file values.
+                set -l literal_prefix ""
+                if string match -qr '^-' -- "$value"
+                    set value "./$value"
+                    set literal_prefix "./"
+                end
+                for path in (__fish_complete_path "$value")
+                    if test -n "$literal_prefix"
+                        set path (string sub -s 3 -- "$path")
+                    end
+                    printf '%s%s\n' "$assignment" "$path"
+                end
             case 11
                 # No completion
                 return 0

@@ -30,7 +30,10 @@ ____APPNAME___zsh_autocomplete() {
 
   case $exit_code in
     10)
-      # File completion behavior
+      # The backend returns a prefix only for an assigned file flag.
+      if [[ -n "$temp" ]]; then
+        compset -P "${(b)temp}"
+      fi
       _files
       ;;
     11)

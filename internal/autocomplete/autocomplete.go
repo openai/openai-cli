@@ -104,6 +104,9 @@ const (
 type CompletionResult struct {
 	Completions []ShellCompletion
 	Behavior    ShellCompletionBehavior
+	// FileValuePrefix is emitted only for an assigned file value. Shells use it
+	// to distinguish --file=path from a separated path that contains an equals.
+	FileValuePrefix string
 }
 
 func isFlag(arg string) bool {
@@ -320,6 +323,22 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 		}
 	}
 
+	// Complete assigned values before matching flag names.
+	if isFlag(current) && !literal {
+		if name, _, assigned := strings.Cut(current, "="); assigned {
+			result := CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+			if flag := findFlag(flags, name); flag != nil {
+				if doc, ok := (*flag).(cli.DocGenerationFlag); ok && doc.TakesValue() {
+					result.Behavior = flagValueCompletion(*flag)
+					if result.Behavior == ShellCompletionBehaviorFile {
+						result.FileValuePrefix = name + "="
+					}
+				}
+			}
+			return result
+		}
+	}
+
 	// Completing a flag name
 	if isFlag(current) && !literal {
 		for _, flag := range flags {
@@ -409,6 +428,11 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	result := GetCompletions(completionStyle, root, args)
+	if result.FileValuePrefix != "" {
+		if _, err := fmt.Fprintln(cmd.Writer, result.FileValuePrefix); err != nil {
+			return err
+		}
+	}
 
 	for _, completion := range result.Completions {
 		name := completion.Name

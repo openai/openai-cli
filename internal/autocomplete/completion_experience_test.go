@@ -118,3 +118,38 @@ func TestCompletionDescriptionsEscapeControlsAndRecordDelimiters(t *testing.T) {
 		})
 	}
 }
+
+func TestCompletionAssignedFileValues(t *testing.T) {
+	root := &cli.Command{Name: "openai", Flags: []cli.Flag{
+		&requestflag.Flag[string]{Name: "file", Aliases: []string{"f"}, FileInput: true},
+		&requestflag.Flag[[]string]{Name: "image", FileInput: true},
+		&cli.StringFlag{Name: "certificate", TakesFile: true},
+		&cli.StringFlag{Name: "prompt"}, &cli.BoolFlag{Name: "verbose"},
+	}}
+	for _, style := range []CompletionStyle{CompletionStyleBash, CompletionStyleZsh, CompletionStyleFish, CompletionStylePowershell} {
+		for _, tc := range []struct {
+			args []string
+			want ShellCompletionBehavior
+		}{
+			{[]string{"--file=assets/lo"}, ShellCompletionBehaviorFile},
+			{[]string{"--file="}, ShellCompletionBehaviorFile},
+			{[]string{"-f=assets/lo"}, ShellCompletionBehaviorFile},
+			{[]string{"--image=assets/a=b"}, ShellCompletionBehaviorFile},
+			{[]string{"--certificate=assets/lo"}, ShellCompletionBehaviorFile},
+			{[]string{"--prompt=assets/lo"}, ShellCompletionBehaviorNoComplete},
+			{[]string{"--verbose=assets/lo"}, ShellCompletionBehaviorNoComplete},
+			{[]string{"--unknown=assets/lo"}, ShellCompletionBehaviorNoComplete},
+			{[]string{"--", "--file=assets/lo"}, ShellCompletionBehaviorDefault},
+			{[]string{"--prompt", "--file=assets/lo"}, ShellCompletionBehaviorNoComplete},
+			{[]string{"--file", "="}, ShellCompletionBehaviorFile},
+			{[]string{"--file", "=", "assets/lo"}, ShellCompletionBehaviorDefault},
+			{[]string{"--file=assets/first", "--image=assets/lo"}, ShellCompletionBehaviorFile},
+		} {
+			t.Run(string(style)+"/"+strings.Join(tc.args, " "), func(t *testing.T) {
+				got := GetCompletions(style, root, tc.args)
+				require.Equal(t, tc.want, got.Behavior)
+				require.Empty(t, got.Completions)
+			})
+		}
+	}
+}

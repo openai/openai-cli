@@ -7,9 +7,66 @@ ____APPNAME___bash_autocomplete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
 
     local -a completion_args=()
-    local word_index
+    local word_index previous raw source before after current_raw="$cur"
+    local -a adjacent=()
+    source="${COMP_LINE:0:COMP_POINT}"
+    # Bash 5 splits '=' into words. Source gaps distinguish assignments from
+    # separate '=' values. Walk backwards so earlier commands cannot interfere.
+    for ((word_index = COMP_CWORD; word_index >= 0; word_index--)); do
+      raw="${COMP_WORDS[word_index]}"
+      if [[ $word_index -eq $COMP_CWORD && -n "$source" ]]; then
+        # COMP_WORDS can include closing quotes beyond the cursor.
+        while [[ -n "$raw" && "$source" != *"$raw" ]]; do
+          raw="${raw:0:${#raw}-1}"
+        done
+        current_raw="$raw"
+      fi
+      if [[ -n "$raw" && "$source" == *"$raw"* ]]; then
+        before="${source%"$raw"*}"
+        after="${source#"$before$raw"}"
+        [[ -z "$after" ]] && adjacent[word_index]=1
+        source="$before"
+      fi
+    done
     for ((word_index = 1; word_index <= COMP_CWORD; word_index++)); do
-      completion_args+=("${COMP_WORDS[word_index]}")
+      raw="${COMP_WORDS[word_index]}"
+      [[ $word_index -eq $COMP_CWORD ]] && raw="$current_raw"
+      previous=$((word_index - 1))
+      if [[ ${#completion_args[@]} -gt 0 && "${adjacent[previous]}" == 1 &&
+            ( ( -n "$raw" && -z "${raw//=/}" ) ||
+              ( -n "${COMP_WORDS[previous]}" && -z "${COMP_WORDS[previous]//=/}" ) ) ]]; then
+        previous=$((${#completion_args[@]} - 1))
+        completion_args[previous]+="$raw"
+      else
+        completion_args+=("$raw")
+      fi
+    done
+    # Remove shell quoting without evaluating substitutions or expressions.
+    local token value quote char next offset argument
+    for ((argument = 0; argument < ${#completion_args[@]}; argument++)); do
+      token="${completion_args[argument]}"
+      value="" quote=""
+      for ((offset = 0; offset < ${#token}; offset++)); do
+        char="${token:offset:1}"
+        if [[ "$quote" == "'" ]]; then
+          if [[ "$char" == "'" ]]; then quote=""; else value+="$char"; fi
+        elif [[ "$char" == "\\" && "$quote" != "'" ]]; then
+          next="${token:offset+1:1}"
+          if [[ -z "$quote" || "$next" == "\\" || "$next" == '"' || "$next" == '$' || "$next" == '`' ]]; then
+            value+="$next"
+            ((offset++))
+          else
+            value+="$char"
+          fi
+        elif [[ -n "$quote" && "$char" == "$quote" ]]; then
+          quote=""
+        elif [[ -z "$quote" && ( "$char" == "'" || "$char" == '"' ) ]]; then
+          quote="$char"
+        else
+          value+="$char"
+        fi
+      done
+      completion_args[argument]="$value"
     done
     completions=$(COMPLETION_STYLE=bash "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
     exit_code=$?
@@ -57,9 +114,18 @@ ____APPNAME___bash_autocomplete() {
       case $exit_code in
       10) # File completion, including Bash 3.2 (which has no mapfile).
         COMPREPLY=()
+        local current_value="${completion_args[${#completion_args[@]} - 1]}"
+        local assignment="$completions" replacement_prefix=""
+        file_part="${current_value#"$assignment"}"
+        # Readline replaces the callback word, which can follow the last '='.
+        # Restore only the part that Readline includes in its replacement.
+        if [[ $# -ge 2 && "$current_value" == *"$2" ]]; then
+          replacement_prefix="${current_value%"$2"}"
+        fi
         while IFS= read -r file; do
-          COMPREPLY+=("$file")
-        done < <(compgen -f -- "$cur")
+          file="$assignment$file"
+          COMPREPLY+=("${file#"$replacement_prefix"}")
+        done < <(compgen -f -- "$file_part")
         ;;
       11) COMPREPLY=() ;; # no completion
       0)

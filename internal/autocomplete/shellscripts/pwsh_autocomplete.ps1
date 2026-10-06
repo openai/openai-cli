@@ -15,18 +15,6 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
     $completionArgs += ""
   }
 
-  $output = & {
-    $env:COMPLETION_STYLE = 'pwsh'
-    __APPNAME__ __complete @completionArgs 2>&1
-  }
-  $exitCode = $LASTEXITCODE
-
-  # Check for custom file completion patterns
-  # Patterns can appear anywhere in the word (e.g., inside quotes: 'my file is @file://path')
-  $prefix = ""
-  $filePart = $wordToComplete
-  $forceFileCompletion = $false
-
   # PowerShell includes quotes in $wordToComplete - strip them for pattern matching
   # but preserve them in the prefix for the completion result
   $wordContent = $wordToComplete
@@ -40,6 +28,25 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
     $leadingQuote = $Matches[1]
     $wordContent = $Matches[2]
   }
+
+
+  # Use PowerShell's normalized current word for quoted flag assignments.
+  if ($wordToComplete.Length -gt 0) {
+    $completionArgs[-1] = $wordContent
+  }
+
+  $output = & {
+    $env:COMPLETION_STYLE = 'pwsh'
+    __APPNAME__ __complete @completionArgs 2>&1
+  }
+  $exitCode = $LASTEXITCODE
+
+  # Check for custom file completion patterns
+  # Patterns can appear anywhere in the word (e.g., inside quotes: 'my file is @file://path')
+  $prefix = ""
+  $filePart = $wordToComplete
+  $forceFileCompletion = $false
+
 
   if ($wordContent -match '^(.*)@(file://|data://)?(.*)$') {
     $prefix = $leadingQuote + $Matches[1] + '@' + $Matches[2]
@@ -66,19 +73,52 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
   } else {
     switch ($exitCode) {
       10 {
-        # FileInput accepts literal paths, without provider wildcard escapes.
-        # PowerShell resolves the parent directory through Resolve-Path -Path.
-        $separator = [Math]::Max($wordContent.LastIndexOf('/'), $wordContent.LastIndexOf('\'))
-        $fileWord = $wordContent
-        if ($separator -ge 0) {
-          $fileWord = [System.Management.Automation.WildcardPattern]::Escape($wordContent.Substring(0, $separator + 1)) + $wordContent.Substring($separator + 1)
+        # A nonempty backend result identifies an assigned file flag.
+        $assignment = [string]($output | Select-Object -First 1)
+        $fileValue = $wordContent
+        if ($assignment.Length -gt 0) {
+          $fileValue = $wordContent.Substring($assignment.Length)
         }
-        # Quote the word before asking PowerShell for literal-path results.
-        $literalWord = [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($fileWord)
-        $fileCommand = "Microsoft.PowerShell.Management\Get-Item -LiteralPath '$literalWord'"
-        [System.Management.Automation.CommandCompletion]::CompleteInput(
-          $fileCommand, $fileCommand.Length, @{ LiteralPaths = $true }
-        ).CompletionMatches
+        # Enumerate the literal parent. Provider wildcard completion can add
+        # backticks that native FileInput would treat as filename characters.
+        $fileValue = $fileValue.Replace('\', [System.IO.Path]::DirectorySeparatorChar).Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+        $separator = $fileValue.LastIndexOf([System.IO.Path]::DirectorySeparatorChar)
+        $directory = '.'
+        $pathPrefix = '.' + [System.IO.Path]::DirectorySeparatorChar
+        $leaf = $fileValue
+        if ($separator -ge 0) {
+          $directory = $fileValue.Substring(0, $separator + 1)
+          $pathPrefix = $directory
+          $leaf = $fileValue.Substring($separator + 1)
+        } elseif (($drive = [System.IO.Path]::GetPathRoot($fileValue)).Length -gt 0) {
+          # C:relative uses the drive's current directory, not C:\.
+          $directory = $drive
+          $pathPrefix = $drive
+          $leaf = $fileValue.Substring($drive.Length)
+        }
+        $fileMatches = @(Get-ChildItem -LiteralPath $directory -Force -ErrorAction SilentlyContinue | ForEach-Object {
+          if ($_ -is [System.IO.FileSystemInfo] -and $_.Name.StartsWith($leaf, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $path = $pathPrefix + $_.Name
+            if ($directory.StartsWith('~')) {
+              $path = $_.FullName
+            }
+            $type = 'ProviderItem'
+            if ($_.PSIsContainer) {
+              $path += [System.IO.Path]::DirectorySeparatorChar
+              $type = 'ProviderContainer'
+            }
+            $literal = [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($assignment + $path)
+            [System.Management.Automation.CompletionResult]::new(
+              "'$literal'", $_.Name, $type, $_.FullName
+            )
+          }
+        })
+        if ($fileMatches.Count -gt 0) {
+          $fileMatches
+        } else {
+          # Prevent PowerShell's wildcard fallback for unmatched literal paths.
+          [System.Management.Automation.CompletionResult]::new(' ', ' ', 'ParameterValue', ' ')
+        }
       }
       11 {
         # No reasonable suggestions
