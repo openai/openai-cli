@@ -87,16 +87,7 @@ func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
 }
 
 func fullFlag(flag cli.Flag) string {
-	rendered := flag.String()
-	if input, ok := flag.(interface{ IsFileInput() bool }); ok && input.IsFileInput() {
-		// These SDK descriptions describe objects, but FileInput accepts local
-		// paths. Keep every format, size constraint, and environment hint.
-		rendered = strings.NewReplacer(
-			"The audio file object (not file name) to transcribe", "Path to the audio file to transcribe",
-			"The audio file object (not file name) translate", "Path to the audio file to translate",
-			"The File object (not file name) to be uploaded", "Path to the file to upload",
-		).Replace(rendered)
-	}
+	rendered := fileInputUsage(flag, flag.String())
 	doc, ok := flag.(cli.DocGenerationFlag)
 	if !ok {
 		return rendered
@@ -120,6 +111,19 @@ func fullFlag(flag cli.Flag) string {
 	}
 	// Keep descriptions, defaults, and environment hints after file-input wording.
 	return fullFlagNames(flag, label) + "\t" + details
+}
+
+func fileInputUsage(flag cli.Flag, text string) string {
+	if input, ok := flag.(interface{ IsFileInput() bool }); ok && input.IsFileInput() {
+		// These SDK descriptions describe objects, but FileInput accepts local
+		// paths. Keep every format, size constraint, and environment hint.
+		text = strings.NewReplacer(
+			"The audio file object (not file name) to transcribe", "Path to the audio file to transcribe",
+			"The audio file object (not file name) translate", "Path to the audio file to translate",
+			"The File object (not file name) to be uploaded", "Path to the file to upload",
+		).Replace(text)
+	}
+	return text
 }
 
 func fullFlagNames(flag cli.Flag, placeholder string) string {

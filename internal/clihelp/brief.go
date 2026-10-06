@@ -123,7 +123,7 @@ func writeBriefFlag(out *strings.Builder, flag cli.Flag, width int) {
 	}
 	var usage string
 	if doc, ok := flag.(cli.DocGenerationFlag); ok {
-		usage = shortDescription(doc.GetUsage())
+		usage = shortDescription(fileInputUsage(flag, doc.GetUsage()))
 		if doc.TakesValue() {
 			name += " VALUE"
 		}
@@ -137,9 +137,6 @@ func writeBriefFlag(out *strings.Builder, flag cli.Flag, width int) {
 		if usage == "" {
 			usage = "Text or other input to send to the model."
 		}
-	}
-	if input, ok := flag.(interface{ IsFileInput() bool }); ok && input.IsFileInput() {
-		usage = "Path to the file to upload."
 	}
 	writeHelpEntry(out, name, usage, width)
 }
