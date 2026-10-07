@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check recorded command statuses, JSON output, and synthetic request headers."""
+"""Check recorded command statuses, extracted output, and synthetic request headers."""
 
 import json
 import pathlib
@@ -11,38 +11,28 @@ def check(condition, message):
         raise SystemExit(message)
 
 
-def json_objects(text):
-    decoder = json.JSONDecoder()
-    objects = []
-    while "{" in text:
-        start = text.index("{")
-        value, end = decoder.raw_decode(text[start:])
-        objects.append(value)
-        text = text[start + end:]
-    return objects
-
-
 def main():
     check(len(sys.argv) == 2, "usage: validate.py CAPTURE_DIRECTORY")
     directory = pathlib.Path(sys.argv[1])
     commands = [
-        "$ openai --project proj-example --format=json models list",
-        "$ openai models --project proj-example --format=json list",
-        "$ openai models list --project proj-example --format=json",
+        "$ openai --project proj-example models list --transform=id -r",
+        "$ openai models --project proj-example list --transform=id -r",
+        "$ openai models list --project proj-example --transform=id -r",
     ]
-    model = {
-        "created": 0,
-        "id": "OpenAI-Project: proj-example",
-        "object": "model",
-        "owned_by": "synthetic",
+    labels = ["1. Before the command", "2. Between command words", "3. After the command"]
+    summaries = {
+        "before": "--project works only before the command.",
+        "after": "--project works in all three positions.",
     }
     error = "An option is not recognized. Check the command's available options with --help."
     for scene, count in [("before", 1), ("after", 3)]:
         transcript = (directory / f"{scene}.txt").read_text()
-        for command in commands:
-            check(transcript.count(command) == 1, f"{scene}: missing or repeated command: {command}")
-        check(json_objects(transcript) == [model] * count, f"{scene}: unexpected JSON output")
-        check(transcript.count(error) == 3 - count, f"{scene}: unexpected diagnostic count")
+        expected_lines = [scene.upper(), summaries[scene], ""]
+        for index, (label, command) in enumerate(zip(labels, commands)):
+            output = "OpenAI-Project: proj-example" if index < count else error
+            expected_lines.extend([label, command, output, ""])
+        expected_lines.append("Synthetic API: output shows the received project header.")
+        check(transcript.splitlines() == expected_lines, f"{scene}: unexpected command/output sequence")
 
     requests = [json.loads(line) for line in (directory / "requests.jsonl").read_text().splitlines()]
     expected = {"method": "GET", "path": "/v1/models", "project": "proj-example"}
@@ -52,7 +42,7 @@ def main():
         "before\troot\t0", "before\tgroup\t1", "before\tleaf\t1",
         "after\troot\t0", "after\tgroup\t0", "after\tleaf\t0",
     ], "unexpected command exit statuses")
-    print("PASS: six command statuses, four JSON results, and four project headers")
+    print("PASS: six command statuses, four extracted results, and four project headers")
 
 
 if __name__ == "__main__":

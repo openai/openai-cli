@@ -18,16 +18,19 @@ cat > "$demo_runtime/scene.sh" <<'SCENE'
 set -uo pipefail
 test -t 0 && test -t 1 && test -t 2 || exit 99
 printf '\033[2J\033[H\033[?25l'
-printf '%s\n' 'Terminal replay | asciinema + agg | synthetic API responses'
-printf '%s\n' "$DEMO_SCENE_LABEL"
-printf '%s\n\n' 'The model ID reflects the received OpenAI-Project header.'
+printf '\033[1m%s\033[0m\n' "$DEMO_SCENE_LABEL"
+printf '%s\n\n' "$DEMO_SCENE_SUMMARY"
 sleep 0.5
 for demo_position in root group leaf; do
   case "$demo_position" in
-    root) demo_args=(--project proj-example --format=json models list);;
-    group) demo_args=(models --project proj-example --format=json list);;
-    leaf) demo_args=(models list --project proj-example --format=json);;
+    root) demo_args=(--project proj-example models list --transform=id -r)
+      demo_position_label='1. Before the command';;
+    group) demo_args=(models --project proj-example list --transform=id -r)
+      demo_position_label='2. Between command words';;
+    leaf) demo_args=(models list --project proj-example --transform=id -r)
+      demo_position_label='3. After the command';;
   esac
+  printf '\033[36m%s\033[0m\n' "$demo_position_label"
   printf '$ openai'
   printf ' %s' "${demo_args[@]}"
   printf '\n'
@@ -40,7 +43,7 @@ for demo_position in root group leaf; do
   printf '\n'
   sleep 1
 done
-printf '$ '
+printf '%s\n' 'Synthetic API: output shows the received project header.'
 sleep 4
 SCENE
 
@@ -52,7 +55,8 @@ SCENE
   echo "after binary: $demo_after"
   echo 'data: loopback synthetic model IDs reflect validated project headers; no live requests'
   echo 'capture: real PTY, stdin/stdout/stderr verified as terminals, bash --noprofile --norc'
-  echo 'render: asciinema + agg resvg, Menlo 22px, Dracula, 110 columns x 38 rows, line height 1.2, maximum 20 fps'
+  echo 'output: existing --transform=id -r extracts the synthetic model ID; output is not rewritten'
+  echo 'render: asciinema + agg resvg, Menlo 26px, Dracula, 80 columns x 18 rows, line height 1.3, maximum 20 fps'
   echo 'scope: terminal replay; not native Apple Terminal, PowerShell, or cmd.exe validation'
   echo 'each scene checks actual command statuses; statuses.tsv retains every result'
   echo 'recipe: scripts/demos/global-flags/record.sh'
@@ -60,17 +64,19 @@ SCENE
   shasum -a 256 "$demo_source/record.sh" "$demo_source/main.go" "$demo_source/validate.py"
 } > "$demo_output/metadata.txt"
 
-demo_window_size=110x38
-demo_render_options=(--renderer resvg --font-family Menlo --font-size 22 --line-height 1.2 \
+demo_window_size=80x18
+demo_render_options=(--renderer resvg --font-family Menlo --font-size 26 --line-height 1.3 \
   --theme dracula --fps-cap 20 --last-frame-duration 4)
 for demo_scene in before after; do
   demo_command_dir="$demo_runtime/$demo_scene"
-  demo_label='Before: only the root placement sends a request'
+  demo_label='BEFORE'
+  demo_summary='--project works only before the command.'
   if [ "$demo_scene" = after ]; then
-    demo_label='After: all three placements send the same project header'
+    demo_label='AFTER'
+    demo_summary='--project works in all three positions.'
   fi
   demo_capture_scene "$demo_scene" 0 "$demo_command_dir" "$demo_api_url" "$demo_label" \
-    "DEMO_SCENE=$demo_scene" "DEMO_STATUS_LOG=$demo_runtime/statuses.tsv"
+    "DEMO_SCENE=$demo_scene" "DEMO_SCENE_SUMMARY=$demo_summary" "DEMO_STATUS_LOG=$demo_runtime/statuses.tsv"
 done
 demo_stop_api
 cp "$demo_runtime/requests.jsonl" "$demo_output/requests.jsonl"

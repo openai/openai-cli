@@ -2,7 +2,9 @@
 
 The loopback fixture reflects the received `OpenAI-Project` header in a synthetic model ID.
 The recorder uses matching commands and settings for both binaries.
-Each command places `--project` and `--format=json` before, between, or after the command words.
+Each command places `--project` before, between, or after the command words.
+Existing `--transform=id -r` options print the synthetic model ID on one line.
+The recorder preserves actual CLI output and labels each placement for comparison.
 
 Build the fixture:
 
@@ -25,7 +27,7 @@ It runs isolated Bash sessions with a synthetic key and a loopback base URL.
 
 The baseline must accept only the root placement.
 The candidate must accept all three placements.
-The recorder checks command exit statuses, JSON output, and actual request headers.
+The recorder checks command exit statuses, extracted output, and actual request headers.
 It retains these checks in `statuses.tsv`, `requests.jsonl`, and `validation.txt`.
 
 Inspect `before.png`, `after.png`, and `comparison.gif` before sharing the captures.
