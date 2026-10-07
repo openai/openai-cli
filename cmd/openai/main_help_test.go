@@ -200,7 +200,7 @@ func TestMainHelpKeepsAPIProjectInCommandOptions(t *testing.T) {
 	if !ok || !strings.Contains(local, "--project any") || !strings.Contains(local, "membership is granted") {
 		t.Fatalf("API project input is missing: %s", got.stdout)
 	}
-	for _, heading := range []string{"Request configuration", "Response output"} {
+	for _, heading := range []string{"Authentication", "Output", "Request options", "Troubleshooting"} {
 		if strings.Contains(local, heading) || !strings.Contains(global, heading) {
 			t.Errorf("%q should group only global flags: %s", heading, got.stdout)
 		}
