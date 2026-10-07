@@ -167,7 +167,7 @@ func TestMainHelpFullReferenceRoutes(t *testing.T) {
 		} else if got.stdout != reference {
 			t.Errorf("args %q: full help differs between routes", args)
 		}
-		for _, text := range []string{"--prompt string", "-n int", "(default: auto)", "(default: 1)", "(default: png)", "(default: 100)", "(default: 0)"} {
+		for _, text := range []string{"--prompt TEXT", "-n INTEGER", "(default: auto)", "(default: 1)", "(default: png)", "(default: 100)", "(default: 0)"} {
 			if !strings.Contains(got.stdout, text) {
 				t.Errorf("args %q: full help lost label/default %q", args, text)
 			}
@@ -197,7 +197,7 @@ func TestMainHelpKeepsAPIProjectInCommandOptions(t *testing.T) {
 		t.Fatalf("full help failed: %+v", got)
 	}
 	local, global, ok := strings.Cut(got.stdout, "GLOBAL OPTIONS:")
-	if !ok || !strings.Contains(local, "--project any") || !strings.Contains(local, "membership is granted") {
+	if !ok || !strings.Contains(local, "--project VALUE") || !strings.Contains(local, "membership is granted") {
 		t.Fatalf("API project input is missing: %s", got.stdout)
 	}
 	for _, heading := range []string{"Authentication", "Output", "Request options", "Troubleshooting"} {
@@ -205,7 +205,7 @@ func TestMainHelpKeepsAPIProjectInCommandOptions(t *testing.T) {
 			t.Errorf("%q should group only global flags: %s", heading, got.stdout)
 		}
 	}
-	if !strings.Contains(global, "--base-url") || !strings.Contains(global, "--format string") {
+	if !strings.Contains(global, "--base-url") || !strings.Contains(global, "--format FORMAT") {
 		t.Errorf("global configuration is missing: %s", global)
 	}
 }
@@ -215,8 +215,8 @@ func TestMainHelpFullReferenceNullableDefaults(t *testing.T) {
 		path              []string
 		flag, wantDefault string
 	}{
-		{[]string{"beta:assistants", "create"}, "--description string", ""},
-		{[]string{"images", "generate"}, "--output-format string", "(default: png)"},
+		{[]string{"beta:assistants", "create"}, "--description TEXT", ""},
+		{[]string{"images", "generate"}, "--output-format TEXT", "(default: png)"},
 	} {
 		t.Run(strings.Join(tc.path, "/"), func(t *testing.T) {
 			got := runMainDispatch(t, "bash", append([]string{"openai", "help", "--all"}, tc.path...)...)

@@ -1,6 +1,7 @@
 package custom
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
@@ -26,6 +27,9 @@ func configureGlobalFlagDescriptions(root *cli.Command) {
 			RequestFlag() *requestflag.Flag[string]
 		}); ok {
 			flag = wrapped.RequestFlag()
+		}
+		if wrapped, ok := flag.(interface{ CLIStringFlag() *cli.StringFlag }); ok {
+			flag = wrapped.CLIStringFlag()
 		}
 		switch flag := flag.(type) {
 		case *requestflag.Flag[string]:
@@ -141,9 +145,45 @@ func configureHelpGroups(root *cli.Command) {
 			}, sections...)
 		}
 		command.Metadata["help-flag-groups"] = sections
+		for _, flag := range command.Flags {
+			if limit, ok := flag.(*requestflag.Flag[int64]); ok && limit.Name == "max-items" &&
+				limit.Usage == "The maximum number of items to return (use -1 for unlimited)." {
+				// Generated handlers distinguish omission from an explicit zero.
+				limit.DefaultText = "unlimited"
+				limit.Usage = "Maximum items to return; omit or use -1 for unlimited, or use 0 for no items."
+			}
+		}
 		for _, child := range command.Commands {
 			visit(child, image || child == root.Command("images"))
 		}
 	}
 	visit(root, false)
+	// These API commands support every output option shown in their brief help.
+	for _, path := range [][]string{{"models", "list"}, {"models", "retrieve"}, {"responses", "create"}, {"responses", "retrieve"}} {
+		command := root
+		var local []cli.Flag
+		for _, name := range path {
+			command = command.Command(name)
+			if command == nil {
+				break
+			}
+			local = append(local, command.Flags...)
+		}
+		if command != nil {
+			var output []cli.Flag
+			for _, name := range []string{"format", "transform", "raw-output"} {
+				for _, flag := range root.Flags {
+					shadowed := slices.ContainsFunc(local, func(other cli.Flag) bool {
+						return slices.ContainsFunc(other.Names(), func(alias string) bool {
+							return slices.Contains(flag.Names(), alias)
+						})
+					})
+					if len(flag.Names()) > 0 && flag.Names()[0] == name && !shadowed {
+						output = append(output, flag)
+					}
+				}
+			}
+			command.Metadata["brief-output-flags"] = output
+		}
+	}
 }

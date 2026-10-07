@@ -24,6 +24,11 @@ START HERE
   {{$run}} models list                 List models available to your key
 
 {{call (index .Metadata "help-command-list")}}
+OUTPUT
+  --format json                 Return complete JSON
+  --transform PATH              Select a JSON field, such as id
+  --raw-output                  Print selected strings without quotes
+
 GET HELP
   {{$run}} images --help               Browse image commands
   {{$run}} images generate --help      Example and common inputs

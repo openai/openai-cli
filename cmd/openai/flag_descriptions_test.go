@@ -61,6 +61,9 @@ func TestMainGlobalFlagDescriptions(t *testing.T) {
 				remaining = after
 			}
 			text := strings.Join(strings.Fields(got.stdout), " ")
+			for _, format := range []string{"auto", "text", "json", "jsonl", "yaml", "explore", "pretty", "raw"} {
+				require.Contains(t, got.stdout, "\n      - "+format+":", "format choices must stay on separate lines")
+			}
 			for _, description := range []string{
 				"Format names are case-insensitive.",
 				"readable text, including pipes",

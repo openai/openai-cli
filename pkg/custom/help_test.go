@@ -16,6 +16,48 @@ type helpRequestFlag struct{ *requestflag.Flag[string] }
 func (f *helpRequestFlag) RequestFlag() *requestflag.Flag[string] { return f.Flag }
 func (*helpRequestFlag) IsLocal() bool                            { return false }
 
+type helpStringFlag struct{ *cli.StringFlag }
+
+func (f *helpStringFlag) CLIStringFlag() *cli.StringFlag { return f.StringFlag }
+
+func TestConfigureHelpWrappedStringMetadata(t *testing.T) {
+	flag := &cli.StringFlag{Name: mtlsClientKeyFileFlag, Value: "synthetic-private-path"}
+	root := &cli.Command{Flags: []cli.Flag{&helpStringFlag{flag}}}
+	configureGlobalFlagDescriptions(root)
+	if !flag.HideDefault || !strings.Contains(flag.Usage, "matching") || strings.Contains(root.Flags[0].String(), flag.Value) {
+		t.Fatal("wrapped string flag lost its description or exposed its configured path")
+	}
+}
+
+func TestConfigureHelpPaginationMetadataPreservesValues(t *testing.T) {
+	flag := &requestflag.Flag[int64]{Name: "max-items", Usage: "The maximum number of items to return (use -1 for unlimited)."}
+	command := &cli.Command{Name: "list", Flags: []cli.Flag{flag}}
+	configureHelpGroups(command)
+	configureHelpGroups(command)
+	if flag.Default != 0 || flag.IsSet() || flag.DefaultText != "unlimited" || !strings.Contains(flag.Usage, "use 0 for no items") {
+		t.Fatal("pagination help changed parser state or lost omitted/zero guidance")
+	}
+}
+
+func TestConfigureHelpOutputMetadataRespectsShadowing(t *testing.T) {
+	format := &cli.StringFlag{Name: "format", Aliases: []string{"f"}}
+	transform := &cli.StringFlag{Name: "transform"}
+	local := &cli.StringFlag{Name: "field", Aliases: []string{"f"}}
+	leaf := &cli.Command{Name: "list", Flags: []cli.Flag{local}}
+	root := &cli.Command{Name: "openai", Flags: []cli.Flag{format, transform}, Commands: []*cli.Command{
+		{Name: "models", Commands: []*cli.Command{leaf}},
+		{Name: "local"},
+	}}
+	configureHelpGroups(root)
+	flags := leaf.Metadata["brief-output-flags"].([]cli.Flag)
+	if len(flags) != 1 || flags[0] != transform {
+		t.Fatalf("output help included a shadowed root flag: %v", flags)
+	}
+	if _, exists := root.Command("local").Metadata["brief-output-flags"]; exists {
+		t.Fatal("local command received API output help")
+	}
+}
+
 func TestConfigureHelpHidesConfiguredGlobalValues(t *testing.T) {
 	for _, name := range []string{"api-key", "admin-api-key", "webhook-secret", "organization", "project"} {
 		for _, order := range []string{"plain", "wrapped-first", "wrapped-after"} {

@@ -63,7 +63,7 @@ func TestBriefHelpIncludesEveryRequiredInput(t *testing.T) {
 	}
 	required, _, _ := strings.Cut(inputs, "OPTIONAL INPUTS")
 	for _, name := range []string{"body-input", "path-input", "ordinary-input"} {
-		if !strings.Contains(required, "--"+name+" VALUE") {
+		if !strings.Contains(required, "--"+name+" TEXT") {
 			t.Errorf("required help lacks --%s: %s", name, got)
 		}
 	}
@@ -117,6 +117,84 @@ func TestBriefImageExampleUsesMinimalInput(t *testing.T) {
 		if strings.Contains(got, text) {
 			t.Errorf("image help advertises an unshipped behavior: %q", text)
 		}
+	}
+}
+
+func TestBriefModelsHelpShowsOutputExamplesAndTypedLimit(t *testing.T) {
+	command := &cli.Command{Name: "list", Flags: []cli.Flag{
+		&requestflag.Flag[int64]{Name: "max-items", Usage: "Maximum items; use -1 for unlimited."},
+	}, Metadata: map[string]any{"brief-output-flags": []cli.Flag{
+		&cli.StringFlag{Name: "format", Usage: "The full reference contains many format details.", Value: "auto"},
+		&cli.StringFlag{Name: "transform", Usage: "The full reference contains path exceptions."},
+		&cli.BoolFlag{Name: "raw-output"},
+	}}}
+	for _, width := range []int{40, 80} {
+		got := briefHelpAtWidth(command, "'/tmp/CLI build/openai'", "models list", width)
+		for _, want := range []string{
+			"EXAMPLES\n",
+			"  '/tmp/CLI build/openai' models list\n",
+			"  '/tmp/CLI build/openai' models list --format json\n",
+			"  '/tmp/CLI build/openai' models list --transform id --raw-output\n",
+			"--max-items INTEGER", "\nOUTPUT\n", "--format FORMAT", "--transform PATH", "--raw-output",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("width %d lacks %q:\n%s", width, want, got)
+			}
+		}
+		if strings.Contains(got, "more in full help") || strings.Contains(got, "The full reference") {
+			t.Errorf("width %d repeats reference details or advertises nonexistent optional inputs:\n%s", width, got)
+		}
+	}
+}
+
+func TestBriefResponsesHelpPrioritizesInputModelAndStream(t *testing.T) {
+	command := &cli.Command{Name: "create", Flags: []cli.Flag{
+		&requestflag.Flag[any]{Name: "access-programs", Usage: "Other configuration."},
+		&requestflag.Flag[*bool]{Name: "background", Usage: "Run in the background."},
+		&requestflag.Flag[any]{Name: "input"},
+		&requestflag.Flag[string]{Name: "model"},
+		&requestflag.Flag[*bool]{Name: "stream", Usage: "Stream the response."},
+	}}
+	got := briefHelp(command, "openai", "responses create")
+	for _, want := range []string{"--model MODEL", "--input VALUE", "--stream BOOLEAN", "more in full help"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("responses help lacks %q:\n%s", want, got)
+		}
+	}
+	for _, excluded := range []string{"--access-programs", "--background"} {
+		if strings.Contains(got, excluded) {
+			t.Errorf("responses help prioritized %q:\n%s", excluded, got)
+		}
+	}
+}
+
+func TestBriefOutputFlagsRequireVisiblePersistentMetadata(t *testing.T) {
+	format := &cli.StringFlag{Name: "format", Value: "auto", Usage: "Original format documentation."}
+	before := *format
+	for _, tc := range []struct {
+		name  string
+		flags []cli.Flag
+		want  bool
+	}{
+		{"absent", nil, false},
+		{"visible", []cli.Flag{format, format}, true},
+		{"hidden", []cli.Flag{&cli.StringFlag{Name: "format", Hidden: true}}, false},
+		{"local", []cli.Flag{&cli.StringFlag{Name: "format", Local: true}}, false},
+		{"unrecognized", []cli.Flag{&cli.StringFlag{Name: "unrelated"}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			command := &cli.Command{Name: "operation", Metadata: map[string]any{"brief-output-flags": tc.flags}}
+			got := briefHelp(command, "openai", "example operation")
+			if strings.Contains(got, "\nOUTPUT\n") != tc.want {
+				t.Fatalf("output section visibility is incorrect:\n%s", got)
+			}
+			if tc.want && strings.Count(got, "--format FORMAT") != 1 {
+				t.Fatalf("output flag is missing or duplicated:\n%s", got)
+			}
+		})
+	}
+	if !reflect.DeepEqual(before, *format) {
+		t.Fatal("brief output help changed the root flag definition")
 	}
 }
 

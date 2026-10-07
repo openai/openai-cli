@@ -42,7 +42,7 @@ for demo_topic in "${demo_topics[@]}"; do
   case "$demo_topic" in
     root-full) demo_args=(help --all); demo_rows="$demo_full_rows";;
     images-full) demo_args=(help --all images generate); demo_rows="$demo_full_rows";;
-    root-short) demo_args=(--help); demo_rows=48;;
+    root-short) demo_args=(--help); demo_rows=96;;
     models-short) demo_args=(models list --help); demo_rows=48;;
     responses-short) demo_args=(responses create --help); demo_rows=48;;
     images-short) demo_args=(images generate --help); demo_rows=48;;

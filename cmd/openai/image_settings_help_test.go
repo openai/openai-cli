@@ -25,9 +25,15 @@ func TestMainImageSettingsHelpScope(t *testing.T) {
 			short := runMainDispatchWithEnv(t, "bash", env, "openai", "images", operation, "--help")
 			require.Zero(t, short.code, short.stderr)
 			require.Empty(t, short.stderr)
-			require.LessOrEqual(t, len(strings.Split(strings.TrimSpace(short.stdout), "\n")), 8)
+			require.LessOrEqual(t, len(strings.Split(strings.TrimSpace(short.stdout), "\n")), 18)
 			require.Contains(t, short.stdout, "~/Downloads/gpt-images/")
-			require.NotContains(t, short.stdout, "--name")
+			if operation != "create-variation" {
+				require.Contains(t, short.stdout, "--name NAME")
+				require.Contains(t, short.stdout, "--output-dir DIRECTORY")
+				if operation == "generate" {
+					require.Contains(t, short.stdout, "interactive terminal")
+				}
+			}
 			require.Contains(t, short.stdout, "Full help: openai help --all images "+operation)
 			full := runMainDispatchWithEnv(t, "bash", env, "openai", "help", "--all", "images", operation)
 			require.Zero(t, full.code, full.stderr)

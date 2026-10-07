@@ -36,8 +36,15 @@ func briefHelpAtWidth(command *cli.Command, invocation, path string, width int) 
 	if command.Usage != "" {
 		out.WriteString(wrapDescription(shortDescription(command.Usage), "", width))
 	}
-	if example := examples[path]; example != "" {
-		fmt.Fprintf(&out, "\nEXAMPLE\n  %s %s\n", invocation, example)
+	if commands := examples[path]; len(commands) > 0 {
+		heading := "EXAMPLE"
+		if len(commands) > 1 {
+			heading = "EXAMPLES"
+		}
+		fmt.Fprintf(&out, "\n%s\n", heading)
+		for _, example := range commands {
+			fmt.Fprintf(&out, "  %s %s\n", invocation, example)
+		}
 		if path == "files create" || path == "files upload" {
 			out.WriteString(wrapDescription("example.txt is the path to your existing file. Replace it with your file's path.", "", width))
 		}
@@ -66,10 +73,18 @@ func briefHelpAtWidth(command *cli.Command, invocation, path string, width int) 
 			}
 		}
 		if len(optional) > 0 {
-			out.WriteString("\nOPTIONAL INPUTS (more in full help)\n")
+			out.WriteString("\nOPTIONAL INPUTS")
+			if len(optional) > 3 {
+				out.WriteString(" (more in full help)")
+			}
+			out.WriteByte('\n')
 			// Put common choices first without changing the parser's flag order.
 			shown := make(map[int]bool)
-			for _, name := range []string{"model", "input", "size", "quality", "limit"} {
+			priority := []string{"model", "input", "size", "quality", "limit"}
+			if path == "responses create" || path == "responses retrieve" {
+				priority = []string{"model", "input", "stream"}
+			}
+			for _, name := range priority {
 				for i, flag := range optional {
 					if flag.Names()[0] == name && len(shown) < 3 {
 						writeBriefFlag(&out, flag, width)
@@ -87,23 +102,28 @@ func briefHelpAtWidth(command *cli.Command, invocation, path string, width int) 
 				}
 			}
 		}
+		writeBriefOutputFlags(&out, command, width)
 	}
 	fmt.Fprintf(&out, "\nFull help: %s help --all %s\n", invocation, path)
 	fmt.Fprintf(&out, "Key setup: %s help setup\n", invocation)
 	return out.String()
 }
 
-var examples = map[string]string{
-	"images":            `images generate --prompt "A tiny orange robot"`,
-	"models list":       "models list",
-	"models retrieve":   "models retrieve --model gpt-5.5",
-	"responses create":  `responses create --model gpt-5.5 --input "Say hello"`,
-	"files create":      `files create --file ./example.txt --purpose assistants`,
-	"files upload":      `files upload --file ./example.txt --purpose assistants`,
-	"images generate":   `images generate --prompt "A tiny orange robot"`,
-	"images inline":     "images inline on",
-	"images inline on":  "images inline on",
-	"images inline off": "images inline off",
+var examples = map[string][]string{
+	"images": {`images generate --prompt "A tiny orange robot"`},
+	"models list": {
+		"models list",
+		"models list --format json",
+		"models list --transform id --raw-output",
+	},
+	"models retrieve":   {"models retrieve --model gpt-5.5"},
+	"responses create":  {`responses create --model gpt-5.5 --input "Say hello"`},
+	"files create":      {`files create --file ./example.txt --purpose assistants`},
+	"files upload":      {`files upload --file ./example.txt --purpose assistants`},
+	"images generate":   {`images generate --prompt "A tiny orange robot"`},
+	"images inline":     {"images inline on"},
+	"images inline on":  {"images inline on"},
+	"images inline off": {"images inline off"},
 }
 
 func isRequired(flag cli.Flag) bool {
@@ -124,8 +144,8 @@ func writeBriefFlag(out *strings.Builder, flag cli.Flag, width int) {
 	var usage string
 	if doc, ok := flag.(cli.DocGenerationFlag); ok {
 		usage = shortDescription(fileInputUsage(flag, doc.GetUsage()))
-		if doc.TakesValue() {
-			name += " VALUE"
+		if label := flagValueLabel(flag); label != "" {
+			name += " " + label
 		}
 	}
 	// These generated descriptions are absent or describe an SDK object.
@@ -137,8 +157,53 @@ func writeBriefFlag(out *strings.Builder, flag cli.Flag, width int) {
 		if usage == "" {
 			usage = "Text or other input to send to the model."
 		}
+	case "stream":
+		if flagValueLabel(flag) == "BOOLEAN" {
+			usage = "Stream results as they arrive when true."
+		}
 	}
 	writeHelpEntry(out, name, usage, width)
+}
+
+func writeBriefOutputFlags(out *strings.Builder, command *cli.Command, width int) {
+	flags, _ := command.Metadata["brief-output-flags"].([]cli.Flag)
+	shown := make(map[string]bool)
+	for _, flag := range flags {
+		if visible, ok := flag.(cli.VisibleFlag); ok && !visible.IsVisible() {
+			continue
+		}
+		persistent, ok := flag.(cli.LocalFlag)
+		if !ok || persistent.IsLocal() || len(flag.Names()) == 0 {
+			continue
+		}
+		name := flag.Names()[0]
+		if shown[name] {
+			continue
+		}
+		var usage string
+		switch name {
+		case "format":
+			usage = "auto: readable text; json: complete JSON; jsonl: one JSON value per line."
+		case "transform":
+			usage = "Select a JSON field, such as id."
+			if command.Name == "list" {
+				usage += " With json, select from each item."
+			}
+		case "raw-output":
+			usage = "Print selected strings without JSON quotes."
+		default:
+			continue
+		}
+		if len(shown) == 0 {
+			out.WriteString("\nOUTPUT\n")
+		}
+		shown[name] = true
+		label := "--" + name
+		if value := flagValueLabel(flag); value != "" {
+			label += " " + value
+		}
+		writeHelpEntry(out, label, usage, width)
+	}
 }
 
 func shortDescription(text string) string {

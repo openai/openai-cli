@@ -89,8 +89,8 @@ func TestMainHelpImagePagesStayBrief(t *testing.T) {
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("short help failed: %+v", got)
 			}
-			if lines := len(strings.Split(strings.TrimSpace(got.stdout), "\n")); lines > 8 {
-				t.Errorf("short help uses %d lines; want one example and at most 8 lines", lines)
+			if lines := len(strings.Split(strings.TrimSpace(got.stdout), "\n")); lines > 18 {
+				t.Errorf("short help uses %d lines; want one example and at most 18 lines", lines)
 			}
 			exampleOperation := operation
 			if operation == "create-variation" {

@@ -14,42 +14,42 @@ func TestFullFlagUsesTypesInsteadOfExamples(t *testing.T) {
 		name, heading, details string
 		flag                   cli.Flag
 	}{
-		{"prompt", "--prompt string", "32000 characters", &requestflag.Flag[string]{
+		{"prompt", "--prompt TEXT", "32000 characters", &requestflag.Flag[string]{
 			Name: "prompt", Required: true, BodyPath: "prompt",
 			Usage: "A text description, up to 32000 characters; use `dall-e-2` for legacy generation.",
 		}},
-		{"count", "-n int", "(default: 1)", &requestflag.Flag[*int64]{
+		{"count", "-n INTEGER", "(default: 1)", &requestflag.Flag[*int64]{
 			Name: "n", Default: requestflag.Ptr[int64](1),
 			Usage: "Number of images. For `dall-e-3`, only one is supported.",
 		}},
-		{"nullable boolean", "--stream boolean", "(default: false)", &requestflag.Flag[*bool]{
+		{"nullable boolean", "--stream BOOLEAN", "(default: false)", &requestflag.Flag[*bool]{
 			Name: "stream", Default: requestflag.Ptr(false), Usage: "Defaults to `false`.",
 		}},
 		{"boolean switch", "--debug, -d", "Enable debug mode.", &cli.BoolFlag{
 			Name: "debug", Aliases: []string{"d"}, Usage: "Enable `debug` mode.",
 		}},
-		{"native int", "--limit int, -l int", "(default: 12)", &cli.IntFlag{
+		{"native int", "--limit INTEGER, -l INTEGER", "(default: 12)", &cli.IntFlag{
 			Name: "limit", Aliases: []string{"l"}, Value: 12, Usage: "Number of `items`.",
 		}},
-		{"list", "--tag string, -t string [ --tag string, -t string ]", "(default: \"one\")", &cli.StringSliceFlag{
+		{"list", "--tag TEXT, -t TEXT [ --tag TEXT, -t TEXT ]", "(default: \"one\")", &cli.StringSliceFlag{
 			Name: "tag", Aliases: []string{"t"}, Value: []string{"one"}, Usage: "Repeat for each `tag`.",
 		}},
-		{"map", "--field string=string [ --field string=string ]", "Each key has a value.", &cli.StringMapFlag{
+		{"map", "--field TEXT=TEXT [ --field TEXT=TEXT ]", "Each key has a value.", &cli.StringMapFlag{
 			Name: "field", Usage: "Each `key` has a value.",
 		}},
-		{"environment", "--mode string", "OPENAI_TEST_HELP_MODE", &cli.StringFlag{
+		{"environment", "--mode TEXT", "OPENAI_TEST_HELP_MODE", &cli.StringFlag{
 			Name: "mode", Value: "auto", Sources: cli.EnvVars("OPENAI_TEST_HELP_MODE"), Usage: "Use `auto` to choose.",
 		}},
-		{"required native", "--required string", "Required text.", &cli.StringFlag{
+		{"required native", "--required TEXT", "Required text.", &cli.StringFlag{
 			Name: "required", Value: "not-a-default", Required: true, Usage: "Required `text`.",
 		}},
-		{"default label", "--color string", "(default: automatic)", &cli.StringFlag{
+		{"default label", "--color TEXT", "(default: automatic)", &cli.StringFlag{
 			Name: "color", Value: "auto", DefaultText: "automatic", Usage: "Choose `auto`.",
 		}},
-		{"credential", "--api-key string", "API key.", &requestflag.Flag[string]{
+		{"credential", "--api-key TEXT", "API key.", &requestflag.Flag[string]{
 			Name: "api-key", Default: "fake-help-test-key", HideDefault: true, Usage: "API `key`.",
 		}},
-		{"unclosed quote", "--input string", "A `text value", &cli.StringFlag{
+		{"unclosed quote", "--input TEXT", "A `text value", &cli.StringFlag{
 			Name: "input", Usage: "A `text value",
 		}},
 		{"inverse switch", "--[no-]color, -c", "Use color.", &cli.BoolWithInverseFlag{
@@ -102,7 +102,7 @@ func TestFullHelpPreservesCategoriesGlobalOptionsAndDescriptions(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := out.String()
-			for _, want := range []string{"GLOBAL OPTIONS:", "--api-key string", "OPENAI_TEST_HELP_KEY"} {
+			for _, want := range []string{"GLOBAL OPTIONS:", "--api-key TEXT", "OPENAI_TEST_HELP_KEY"} {
 				if !strings.Contains(got, want) {
 					t.Errorf("full help missing %q:\n%s", want, got)
 				}
@@ -111,7 +111,7 @@ func TestFullHelpPreservesCategoriesGlobalOptionsAndDescriptions(t *testing.T) {
 				t.Fatal("hidden information appeared in full help")
 			}
 			if args[len(args)-1] == "generate" {
-				for _, want := range []string{"Image inputs", "--prompt string", "Complete image reference.", "Use a description with blue and `cat`.", "All limits stay here."} {
+				for _, want := range []string{"Image inputs", "--prompt TEXT", "Complete image reference.", "Use a description with blue and `cat`.", "All limits stay here."} {
 					if !strings.Contains(got, want) {
 						t.Errorf("leaf help missing %q:\n%s", want, got)
 					}
@@ -152,5 +152,16 @@ func TestFullHelpGroupingKeepsEachFlagAndItsDetails(t *testing.T) {
 				t.Errorf("grouping lost flag %q or its details: %s", heading, got)
 			}
 		}
+	}
+}
+
+func TestFullHelpSeparatesFlagEntries(t *testing.T) {
+	flags := []cli.Flag{
+		&cli.StringFlag{Name: "first", Usage: "First setting."},
+		&cli.StringFlag{Name: "second", Usage: "Second setting."},
+	}
+	got := fullFlagGroups(&cli.Command{}, flags, 80)
+	if !strings.Contains(got, "First setting.\n\n   --second TEXT\n") {
+		t.Fatalf("flag entries lack a blank line: %q", got)
 	}
 }

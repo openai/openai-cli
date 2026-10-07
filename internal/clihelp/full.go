@@ -79,7 +79,7 @@ func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
 		for _, flag := range flags {
 			heading, description, _ := strings.Cut(fullFlag(flag), "\t")
 			fmt.Fprintf(&out, "\n   %s\n", heading)
-			out.WriteString(strings.TrimSuffix(wrapDescription(description, "      ", width), "\n"))
+			out.WriteString(wrapDescription(description, "      ", width))
 		}
 		delete(grouped, group.Title)
 	}
@@ -92,25 +92,24 @@ func fullFlag(flag cli.Flag) string {
 	if !ok {
 		return rendered
 	}
+	placeholder := ""
+	if doc.TakesValue() {
+		placeholder = doc.TypeName()
+		if placeholder == "" {
+			placeholder = "value"
+		}
+	}
 	_, quoted, found := strings.Cut(doc.GetUsage(), "`")
-	placeholder, _, closed := strings.Cut(quoted, "`")
-	if !found || !closed || placeholder == "" {
-		return rendered
+	if value, _, closed := strings.Cut(quoted, "`"); found && closed && value != "" {
+		placeholder = value
 	}
 	heading, details, separated := strings.Cut(rendered, "\t")
 	if !separated || heading != fullFlagNames(flag, placeholder) {
 		// Preserve flags with their own presentation, such as --[no-]color.
 		return rendered
 	}
-	label := ""
-	if doc.TakesValue() {
-		label = doc.TypeName()
-		if label == "" {
-			label = "value"
-		}
-	}
 	// Keep descriptions, defaults, and environment hints after file-input wording.
-	return fullFlagNames(flag, label) + "\t" + details
+	return fullFlagNames(flag, flagValueLabel(flag)) + "\t" + details
 }
 
 func fileInputUsage(flag cli.Flag, text string) string {
