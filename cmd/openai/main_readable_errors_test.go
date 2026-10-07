@@ -149,9 +149,13 @@ func TestMainSensitiveLocalErrors(t *testing.T) {
 		env, args         []string
 	}{
 		{
-			name: "invalid base URL", want: "OPENAI_BASE_URL",
+			name: "invalid environment base URL", want: "OPENAI_BASE_URL",
 			env:  []string{"OPENAI_BASE_URL=synthetic-private-host/?token=fake-secret"},
 			args: []string{"models", "list"},
+		},
+		{
+			name: "invalid explicit base URL", want: "--base-url",
+			args: []string{"--base-url", "synthetic-private-host/?token=fake-secret", "models", "list"},
 		},
 		{
 			name: "missing file", want: "local file",
@@ -181,9 +185,9 @@ func TestMainSensitiveLocalErrors(t *testing.T) {
 					}
 					t.Cleanup(func() { _ = stdin.Close() })
 				}
-				args := []string{"openai", "--base-url", server.URL, "--format-error", format}
+				args := []string{"openai", "--format-error", format}
 				args = append(args, test.args...)
-				env := append([]string{"OPENAI_API_KEY=synthetic-private-key"}, test.env...)
+				env := append([]string{"OPENAI_API_KEY=synthetic-private-key", "OPENAI_BASE_URL=" + server.URL}, test.env...)
 				result := runMainDispatchWithStdin(t, "bash", env, stdin, args...)
 				if result.code == 0 || result.stdout != "" || !strings.Contains(result.stderr, test.want) {
 					t.Errorf("local error = %+v; want failure, empty stdout and guidance containing %q", result, test.want)
