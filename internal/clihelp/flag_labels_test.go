@@ -1,11 +1,16 @@
 package clihelp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
+
+type wrappedStringHelpFlag struct{ *cli.StringFlag }
+
+func (f *wrappedStringHelpFlag) CLIStringFlag() *cli.StringFlag { return f.StringFlag }
 
 func TestFlagValueLabelsDescribeAcceptedInputs(t *testing.T) {
 	for _, tc := range []struct {
@@ -26,6 +31,9 @@ func TestFlagValueLabelsDescribeAcceptedInputs(t *testing.T) {
 		{"URL", &cli.StringFlag{Name: "base-url"}, "URL"},
 		{"prompt", &requestflag.Flag[string]{Name: "prompt"}, "TEXT"},
 		{"file path", &requestflag.Flag[any]{Name: "image", FileInput: true}, "PATH"},
+		{"string file path", &cli.StringFlag{Name: "certificate", TakesFile: true}, "PATH"},
+		{"wrapped file path", &wrappedStringHelpFlag{&cli.StringFlag{Name: "certificate", TakesFile: true}}, "PATH"},
+		{"wrapped ordinary string", &wrappedStringHelpFlag{&cli.StringFlag{Name: "certificate"}}, "TEXT"},
 		{"ordinary string", &cli.StringFlag{Name: "file"}, "TEXT"},
 		{"string map", &cli.StringMapFlag{Name: "field"}, "TEXT=TEXT"},
 		{"polymorphic input", &requestflag.Flag[any]{Name: "input"}, "VALUE"},
@@ -38,6 +46,23 @@ func TestFlagValueLabelsDescribeAcceptedInputs(t *testing.T) {
 				t.Fatalf("label = %q; want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFileValueLabelsPreserveHiddenDefaults(t *testing.T) {
+	for _, wrapped := range []bool{false, true} {
+		value := &cli.StringFlag{Name: "certificate", TakesFile: true, Value: "synthetic-private-path", HideDefault: true}
+		var flag cli.Flag = value
+		if wrapped {
+			flag = &wrappedStringHelpFlag{value}
+		}
+		before := flag.String()
+		if got := fullFlag(flag); !strings.Contains(got, "--certificate PATH") || strings.Contains(got, value.Value) {
+			t.Fatalf("file help lost its label or exposed its value: %q", got)
+		}
+		if flag.String() != before || !value.HideDefault || value.Value != "synthetic-private-path" {
+			t.Fatal("file label changed flag metadata or values")
+		}
 	}
 }
 

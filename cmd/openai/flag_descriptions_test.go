@@ -61,6 +61,9 @@ func TestMainGlobalFlagDescriptions(t *testing.T) {
 				remaining = after
 			}
 			text := strings.Join(strings.Fields(got.stdout), " ")
+			for _, flag := range []string{"--mtls-client-cert-file", "--mtls-client-key-file"} {
+				require.Contains(t, got.stdout, "\n   "+flag+" PATH\n")
+			}
 			for _, format := range []string{"auto", "text", "json", "jsonl", "yaml", "explore", "pretty", "raw"} {
 				require.Contains(t, got.stdout, "\n      - "+format+":", "format choices must stay on separate lines")
 			}

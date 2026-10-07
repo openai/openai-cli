@@ -15,6 +15,13 @@ func flagValueLabel(flag cli.Flag) string {
 	if input, ok := flag.(interface{ IsFileInput() bool }); ok && input.IsFileInput() {
 		return "PATH"
 	}
+	fileFlag := flag
+	if wrapped, ok := flag.(interface{ CLIStringFlag() *cli.StringFlag }); ok {
+		fileFlag = wrapped.CLIStringFlag()
+	}
+	if value, ok := fileFlag.(*cli.StringFlag); ok && value != nil && value.TakesFile {
+		return "PATH"
+	}
 	if doc.TypeName() == "string" {
 		if names := flag.Names(); len(names) > 0 {
 			switch names[0] {
