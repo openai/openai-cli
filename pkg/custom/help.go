@@ -31,9 +31,9 @@ func configureGlobalFlagDescriptions(root *cli.Command) {
 		case *requestflag.Flag[string]:
 			switch flag.Name {
 			case "api-key":
-				flag.Usage = "API key used to authenticate API requests."
+				flag.Usage = "Authenticate API requests. Set OPENAI_API_KEY to keep the key out of shell history."
 			case "admin-api-key":
-				flag.Usage = "Admin API key used to authenticate organization administration requests."
+				flag.Usage = "Authenticate organization administration requests. Set OPENAI_ADMIN_KEY; a project API key cannot replace an admin key."
 			case "organization":
 				flag.Usage = "Organization ID to send in the OpenAI-Organization request header."
 			case "project":
@@ -52,9 +52,14 @@ func configureGlobalFlagDescriptions(root *cli.Command) {
 				flag.DefaultText = "https://api.openai.com/v1"
 			case "format":
 				flag.Usage = "Choose how results are displayed. Format names are case-insensitive.\n" +
-					"auto: readable text, including pipes; --transform or --raw-output selects JSON handling.\n" +
-					"text: readable summary; json: full JSON; jsonl: one JSON value per line; yaml: YAML.\n" +
-					"explore: interactive JSON viewer (JSON when piped); pretty: styled JSON; raw: unformatted JSON.\n" +
+					"- auto: readable text, including pipes; --transform or --raw-output selects JSON handling.\n" +
+					"- text: readable summary.\n" +
+					"- json: full JSON.\n" +
+					"- jsonl: one JSON value per line.\n" +
+					"- yaml: YAML.\n" +
+					"- explore: interactive JSON viewer (JSON when piped).\n" +
+					"- pretty: styled JSON.\n" +
+					"- raw: unformatted JSON.\n\n" +
 					"For paginated lists, raw returns one API page envelope. It differs from --raw-output."
 			case "format-error":
 				flag.Usage = "Choose how errors are displayed on stderr. Uses the same formats as --format.\n" +

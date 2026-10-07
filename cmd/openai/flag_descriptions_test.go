@@ -86,8 +86,9 @@ func TestMainGlobalFlagDescriptions(t *testing.T) {
 			}
 			if len(path) == 0 {
 				for _, description := range []string{
-					"API key used to authenticate API requests.",
-					"Admin API key used to authenticate organization administration requests.",
+					"Authenticate API requests. Set OPENAI_API_KEY to keep the key out of shell history.",
+					"Authenticate organization administration requests.",
+					"a project API key cannot replace an admin key.",
 					"Organization ID to send in the OpenAI-Organization request header.",
 					"Project ID to send in the OpenAI-Project request header.",
 					"The CLI has no webhook verification command.",
