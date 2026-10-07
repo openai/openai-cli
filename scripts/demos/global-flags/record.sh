@@ -30,7 +30,7 @@ for demo_position in root group leaf; do
     leaf) demo_args=(models list --project proj-example --transform=id -r)
       demo_position_label='3. After the command';;
   esac
-  printf '\033[36m%s\033[0m\n' "$demo_position_label"
+  printf '%s\n' "$demo_position_label"
   printf '$ openai'
   printf ' %s' "${demo_args[@]}"
   printf '\n'
@@ -56,7 +56,7 @@ SCENE
   echo 'data: loopback synthetic model IDs reflect validated project headers; no live requests'
   echo 'capture: real PTY, stdin/stdout/stderr verified as terminals, bash --noprofile --norc'
   echo 'output: existing --transform=id -r extracts the synthetic model ID; output is not rewritten'
-  echo 'render: asciinema + agg resvg, Menlo 26px, Dracula, 80 columns x 18 rows, line height 1.3, maximum 20 fps'
+  echo 'render: asciinema + agg resvg, Menlo 26px, asciinema theme, plain labels, 80 columns x 18 rows, line height 1.3, maximum 20 fps'
   echo 'scope: terminal replay; not native Apple Terminal, PowerShell, or cmd.exe validation'
   echo 'each scene checks actual command statuses; statuses.tsv retains every result'
   echo 'recipe: scripts/demos/global-flags/record.sh'
@@ -66,7 +66,7 @@ SCENE
 
 demo_window_size=80x18
 demo_render_options=(--renderer resvg --font-family Menlo --font-size 26 --line-height 1.3 \
-  --theme dracula --fps-cap 20 --last-frame-duration 4)
+  --theme asciinema --fps-cap 20 --last-frame-duration 4)
 for demo_scene in before after; do
   demo_command_dir="$demo_runtime/$demo_scene"
   demo_label='BEFORE'
