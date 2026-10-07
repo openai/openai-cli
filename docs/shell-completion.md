@@ -12,7 +12,7 @@ For ordinary completion, run the command for your shell.
 Bash:
 
 ```bash
-source <(openai @completion bash)
+eval "$(openai @completion bash)"
 ```
 
 Zsh, after completion has been initialized with `compinit`:
