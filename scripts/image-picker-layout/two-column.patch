@@ -1,0 +1,67 @@
+--- a/pkg/custom/image_picker_view.go
++++ b/pkg/custom/image_picker_view.go
+@@ -162,22 +162,48 @@
+ 	rows := m.rows()
+ 	start := max(0, min(m.selected-available+1, len(rows)-available))
+ 	end := min(len(rows), start+available)
+-	for i := start; i < end; i++ {
+-		row := rows[i]
+-		text := row.label
+-		if row.id == "choice" {
+-			field := m.field
+-			if row.value == m.value(field) {
+-				text += "  ✓"
+-			}
+-			if row.detail != "" {
+-				text += "  " + row.detail
+-			}
+-		} else if row.value != "" {
+-			text = fmt.Sprintf("%-14s %s", row.label, imagePickerLine(row.value))
+-		}
+-		active := i == m.selected && (m.focus == "options" || m.focus == "path" && m.folder.match >= 0)
+-		lines = append(lines, highlight(ansi.Truncate(text, width-2, "…"), active))
++	if m.page == "settings" && m.width >= 76 && available >= len(rows)+1 {
++		columnWidth := (width - 2) / 2
++		for i := 0; i < len(rows); i += 2 {
++			var labels, values []string
++			for j := i; j < min(i+2, len(rows)); j++ {
++				row := rows[j]
++				label, value := row.label, imagePickerLine(row.value)
++				prefix := "  "
++				active := m.focus == "options" && m.selected == j
++				if active {
++					prefix = "› "
++				}
++				label = prefix + ansi.Truncate(label, columnWidth-2, "…")
++				value = "  " + ansi.Truncate(value, columnWidth-2, "…")
++				label += strings.Repeat(" ", max(0, columnWidth-ansi.StringWidth(label)))
++				value += strings.Repeat(" ", max(0, columnWidth-ansi.StringWidth(value)))
++				if active {
++					label, value = selected.Render(label), selected.Render(value)
++				}
++				labels, values = append(labels, label), append(values, value)
++			}
++			lines = append(lines, strings.Join(labels, "  "))
++			lines = append(lines, strings.Join(values, "  "))
++		}
++	} else {
++		for i := start; i < end; i++ {
++			row := rows[i]
++			text := row.label
++			if row.id == "choice" {
++				field := m.field
++				if row.value == m.value(field) {
++					text += "  ✓"
++				}
++				if row.detail != "" {
++					text += "  " + row.detail
++				}
++			} else if row.value != "" {
++				text = fmt.Sprintf("%-14s %s", row.label, imagePickerLine(row.value))
++			}
++			active := i == m.selected && (m.focus == "options" || m.focus == "path" && m.folder.match >= 0)
++			lines = append(lines, highlight(ansi.Truncate(text, width-2, "…"), active))
++		}
+ 	}
+ 	if roomy {
+ 		lines = append(lines, "")

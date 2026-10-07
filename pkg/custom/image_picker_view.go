@@ -42,6 +42,9 @@ func (m *imagePicker) heading() string {
 	case "folder", "path":
 		return "Save to · existing folder"
 	case "choose":
+		if m.field == "count" {
+			return "Choose image count"
+		}
 		return "Choose " + m.field
 	case "more":
 		return "More options"
@@ -131,7 +134,11 @@ func (m *imagePicker) View() tea.View {
 	if roomy {
 		lines = append(lines, "")
 	}
-	lines = append(lines, strong.Render(m.heading()))
+	heading := strong.Render(m.heading())
+	if m.width < 60 && m.page != "path" {
+		heading += muted.Render(" · Tab switch")
+	}
+	lines = append(lines, heading)
 	if m.page == "path" {
 		before := imagePickerLine(string(m.folder.draft[:m.folder.cursor]))
 		after := imagePickerLine(string(m.folder.draft[m.folder.cursor:]))
@@ -204,6 +211,12 @@ func (m *imagePicker) View() tea.View {
 	}
 	if len(rows) > available && m.focus == "options" {
 		footer = fmt.Sprintf("Ctrl+C exit · ↑↓ %d/%d · Enter select", m.selected+1, len(rows))
+	}
+	if m.focus == "options" && ansi.StringWidth(footer+" · Ctrl+G generate") <= width {
+		footer += " · Ctrl+G generate"
+	}
+	if m.focus != "path" && ansi.StringWidth(footer+" · Tab switch") <= width {
+		footer += " · Tab switch"
 	}
 	if m.note != "" {
 		lines = append(lines, muted.Render(imagePickerLine(m.note)))
@@ -289,10 +302,11 @@ func (m *imagePicker) commandLines(width int) []string {
 
 func (m *imagePicker) commandDimensions() (width, height int) {
 	height = 1
-	if m.viewHeight() >= 16 {
+	// Expand the command when focused. Otherwise keep common settings visible.
+	if m.focus == "command" && m.viewHeight() >= 16 {
 		height = 3
 	}
-	if m.viewHeight() >= 18 {
+	if m.focus == "command" && m.viewHeight() >= 18 {
 		height = 4
 	}
 	return max(1, min(m.width-4, 100)-2), height
