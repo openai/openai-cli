@@ -79,7 +79,7 @@ func TestShellCompletionProtocol(t *testing.T) {
 			env := append(os.Environ(), "OPENAI_CLI_COMPLETION_HELPER=1", "COMPLETION_STYLE=bash")
 			args := append([]string{"-test.run=^TestShellCompletionProtocolHelper$", "--", "openai", "__complete", "--"}, test.args...)
 			command := exec.Command(binary, args...)
-			command.Env = env
+			command.Env = append(env, "OPENAI_CLI_COMPLETION_FILE_VALUES=1")
 			var stdout, stderr bytes.Buffer
 			command.Stdout, command.Stderr = &stdout, &stderr
 			err := command.Run()

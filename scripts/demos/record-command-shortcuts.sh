@@ -91,13 +91,13 @@ case "$demo_mode" in
   root)
     if /usr/bin/grep -Fq 'SHORTCUTS' "$demo_output/before.txt"; then exit 1; fi
     /usr/bin/grep -Fq 'SHORTCUTS' "$demo_output/after.txt"
-    /usr/bin/grep -Fq 'Shortcut for audio transcribe.' "$demo_output/after.txt"
+    /usr/bin/grep -Fq 'Convert audio to text; shortcut for audio transcribe.' "$demo_output/after.txt"
     /usr/bin/grep -Fq 'projects' "$demo_output/after.txt"
     /usr/bin/grep -Fq 'GENERATE CONTENT' "$demo_output/after.txt"
     ;;
   transcribe)
     /usr/bin/grep -Fq 'Unknown help topic' "$demo_output/before.txt"
-    /usr/bin/grep -Fq 'Shortcut for audio transcribe.' "$demo_output/after.txt"
+    /usr/bin/grep -Fq 'Convert audio to text; shortcut for audio transcribe.' "$demo_output/after.txt"
     /usr/bin/grep -Fq -- '--file' "$demo_output/after.txt"
     /usr/bin/grep -Fq -- '--model' "$demo_output/after.txt"
     ;;

@@ -57,7 +57,7 @@ func TestMainCompletionHelpAndFileInputs(t *testing.T) {
 			t.Errorf("%s help completion failed: %+v", style, got)
 		}
 		for _, args := range [][]string{{"files", "create", "--file", ""}, {"audio", "transcriptions", "create", "--file", ""}, {"images", "edit", "--image", ""}} {
-			got := runMainDispatch(t, style, mainCompletionArgs(style, args...)...)
+			got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_FILE_VALUES=1"}, mainCompletionArgs(style, args...)...)
 			if got.code != 10 || got.stdout != "" || got.stderr != "" {
 				t.Errorf("%s file completion failed for %q: %+v", style, args, got)
 			}
@@ -93,7 +93,7 @@ func TestMainCompletionAssignedFileValues(t *testing.T) {
 			{"audio", "transcriptions", "create", "--file="}, {"audio:transcriptions", "create", "--file=assets/lo"},
 			{"--mtls-client-cert-file=assets/lo"}, {"models", "list", "--mtls-client-key-file=assets/lo"},
 		} {
-			got := runMainDispatch(t, style, mainCompletionArgs(style, args...)...)
+			got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_FILE_VALUES=1"}, mainCompletionArgs(style, args...)...)
 			name, _, _ := strings.Cut(args[len(args)-1], "=")
 			if got.code != 10 || got.stdout != name+"=\n" || got.stderr != "" {
 				t.Errorf("%s assigned file completion failed for %q: %+v", style, args, got)
@@ -108,10 +108,37 @@ func TestMainCompletionAssignedFileValues(t *testing.T) {
 			{[]string{"transcribe", "--unknown=assets/lo"}, 11},
 			{[]string{"transcribe", "--", "--file=assets/lo"}, 0},
 		} {
-			got := runMainDispatch(t, style, mainCompletionArgs(style, tc.args...)...)
+			got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_FILE_VALUES=1"}, mainCompletionArgs(style, tc.args...)...)
 			if got.code != tc.code || got.stdout != "" || got.stderr != "" {
 				t.Errorf("%s assignment control failed for %q: %+v", style, tc.args, got)
 			}
+		}
+	}
+}
+
+func TestMainCompletionRetainsOlderAdapterBehavior(t *testing.T) {
+	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+		for _, marker := range []string{"", "0", "true", "2"} {
+			for _, args := range [][]string{
+				{"audio:transcriptions", "create", "--file", "assets/lo"},
+				{"audio:transcriptions", "create", "--file=assets/lo"},
+				{"transcribe", "--file", "assets/lo"},
+				{"images", "edit", "--image", "assets/lo"},
+				{"--mtls-client-cert-file=assets/lo"},
+			} {
+				env := []string(nil)
+				if marker != "" {
+					env = []string{"OPENAI_CLI_COMPLETION_FILE_VALUES=" + marker}
+				}
+				got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, args...)...)
+				if got != (mainDispatchResult{code: 11}) {
+					t.Errorf("%s marker %q changed older adapter behavior for %q: %+v", style, marker, args, got)
+				}
+			}
+		}
+		got := runMainDispatch(t, style, mainCompletionArgs(style, "--mtls-client-cert-file", "assets/lo")...)
+		if got != (mainDispatchResult{code: 10}) {
+			t.Errorf("%s lost legacy TakesFile completion: %+v", style, got)
 		}
 	}
 }

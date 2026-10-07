@@ -96,6 +96,8 @@ openai help --all                  # Command groups and global options
 Add `--help` (or `-h`) to any command for its short guide. Help changes only
 what is displayed; command behavior, defaults, and output formats are unchanged.
 Tab completion follows the same group order and supports help topics and file input paths.
+After upgrading, [reload shell completion](docs/shell-completion.md) to enable the new file-path behavior.
+Older loaded completion scripts keep their previous behavior until refreshed.
 
 Successful JSON responses print readable text by default, including in pipes.
 Use `--format json` or `--format jsonl` in scripts that parse API data.

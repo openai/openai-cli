@@ -1,6 +1,10 @@
 package custom
 
-import "github.com/urfave/cli/v3"
+import (
+	"strings"
+
+	"github.com/urfave/cli/v3"
+)
 
 // Task routes reuse the decorated API handlers. Install them before help and
 // parsing, so each invocation gets its own command nodes and displayed path.
@@ -108,7 +112,7 @@ func addTaskShortcut(root, source *cli.Command, name, path string) *cli.Command 
 	}
 	shortcut := cloneResourceCommand(source)
 	shortcut.Name, shortcut.Aliases, shortcut.Hidden = name, nil, false
-	shortcut.Usage = "Shortcut for " + path + ". " + source.Usage
+	shortcut.Usage = strings.TrimSuffix(source.Usage, ".") + "; shortcut for " + path + "."
 	root.Commands = append(root.Commands, shortcut)
 	return shortcut
 }

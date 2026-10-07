@@ -47,7 +47,7 @@ func TestMainTaskRouteHelpStaysLocal(t *testing.T) {
 }
 
 func TestMainTaskRouteCompletionProtocols(t *testing.T) {
-	env := []string{"OPENAI_BASE_URL=invalid-task-completion-url"}
+	env := []string{"OPENAI_BASE_URL=invalid-task-completion-url", "OPENAI_CLI_COMPLETION_FILE_VALUES=1"}
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
 		t.Run(style, func(t *testing.T) {
 			for _, tc := range []struct {

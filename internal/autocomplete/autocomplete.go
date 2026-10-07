@@ -107,6 +107,8 @@ type CompletionResult struct {
 	// FileValuePrefix is emitted only for an assigned file value. Shells use it
 	// to distinguish --file=path from a separated path that contains an equals.
 	FileValuePrefix string
+	// Older adapters cannot preserve paths for newly enabled file values.
+	requiresFileValueSupport bool
 }
 
 func isFlag(arg string) bool {
@@ -285,7 +287,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 				return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 			} else if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && !assigned {
 				if i == len(preceding)-1 {
-					return CompletionResult{Behavior: flagValueCompletion(*flag)}
+					return flagValueCompletion(*flag)
 				}
 				i += 2
 			} else {
@@ -329,9 +331,10 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			result := CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 			if flag := findFlag(flags, name); flag != nil {
 				if doc, ok := (*flag).(cli.DocGenerationFlag); ok && doc.TakesValue() {
-					result.Behavior = flagValueCompletion(*flag)
+					result = flagValueCompletion(*flag)
 					if result.Behavior == ShellCompletionBehaviorFile {
 						result.FileValuePrefix = name + "="
+						result.requiresFileValueSupport = true
 					}
 				}
 			}
@@ -372,14 +375,14 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	}
 }
 
-func flagValueCompletion(flag cli.Flag) ShellCompletionBehavior {
+func flagValueCompletion(flag cli.Flag) CompletionResult {
 	if file, ok := flag.(interface{ IsFileInput() bool }); ok && file.IsFileInput() {
-		return ShellCompletionBehaviorFile
+		return CompletionResult{Behavior: ShellCompletionBehaviorFile, requiresFileValueSupport: true}
 	}
 	if file, ok := flag.(*cli.StringFlag); ok && file.TakesFile {
-		return ShellCompletionBehaviorFile
+		return CompletionResult{Behavior: ShellCompletionBehaviorFile}
 	}
-	return ShellCompletionBehaviorNoComplete
+	return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 }
 
 func completionCommands(command *cli.Command) []*cli.Command {
@@ -428,6 +431,11 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	result := GetCompletions(completionStyle, root, args)
+	// Adapters advertise this only for their backend call. Older binaries ignore
+	// the marker; older loaded adapters keep their existing completion behavior.
+	if result.requiresFileValueSupport && os.Getenv("OPENAI_CLI_COMPLETION_FILE_VALUES") != "1" {
+		result = CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+	}
 	if result.FileValuePrefix != "" {
 		if _, err := fmt.Fprintln(cmd.Writer, result.FileValuePrefix); err != nil {
 			return err

@@ -31,11 +31,17 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
   }
   $completionArgs += $wordContent
 
-  $output = & {
+  $previousStyle = $env:COMPLETION_STYLE
+  $previousFileValues = $env:OPENAI_CLI_COMPLETION_FILE_VALUES
+  try {
     $env:COMPLETION_STYLE = 'pwsh'
-    __APPNAME__ __complete @completionArgs 2>&1
+    $env:OPENAI_CLI_COMPLETION_FILE_VALUES = '1'
+    $output = __APPNAME__ __complete @completionArgs 2>&1
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $env:COMPLETION_STYLE = $previousStyle
+    $env:OPENAI_CLI_COMPLETION_FILE_VALUES = $previousFileValues
   }
-  $exitCode = $LASTEXITCODE
 
   # Check for custom file completion patterns
   # Patterns can appear anywhere in the word (e.g., inside quotes: 'my file is @file://path')
