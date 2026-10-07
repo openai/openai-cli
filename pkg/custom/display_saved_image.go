@@ -172,6 +172,11 @@ func savedImageProtocol(mode string, terminal bool, getenv func(string) string) 
 				return "iterm-auto"
 			}
 		case "Apple_Terminal":
+			// Kitty can inherit TERM_PROGRAM when launched from Apple Terminal.
+			// Require both Kitty markers; nested terminals can inherit its window ID.
+			if t == "xterm-kitty" && getenv("KITTY_WINDOW_ID") != "" {
+				return "kitty"
+			}
 			if mode == "on" && getenv("SSH_CONNECTION") == "" && getenv("SSH_CLIENT") == "" && getenv("SSH_TTY") == "" && runtime.GOOS == "darwin" {
 				return "font"
 			}
