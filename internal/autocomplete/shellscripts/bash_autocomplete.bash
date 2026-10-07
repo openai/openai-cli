@@ -32,7 +32,7 @@ ____APPNAME___bash_autocomplete() {
       raw="${COMP_WORDS[word_index]}"
       [[ $word_index -eq $COMP_CWORD ]] && raw="$current_raw"
       previous=$((word_index - 1))
-      if [[ ${#completion_args[@]} -gt 0 && "${adjacent[previous]}" == 1 &&
+      if [[ ${#completion_args[@]} -gt 0 && "${adjacent[previous]-}" == 1 &&
             ( ( -n "$raw" && -z "${raw//=/}" ) ||
               ( -n "${COMP_WORDS[previous]}" && -z "${COMP_WORDS[previous]//=/}" ) ) ]]; then
         previous=$((${#completion_args[@]} - 1))

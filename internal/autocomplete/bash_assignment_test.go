@@ -32,6 +32,9 @@ func TestBashFileCompletionPreservesAssignments(t *testing.T) {
 		name, line, callback string
 		words, want          []string
 	}{
+		{"root command", "openai mo", "mo", []string{"mo"}, []string{"models"}},
+		{"nested command", "openai models l", "l", []string{"models", "l"}, []string{"list"}},
+		{"no matching command", "openai models missing", "missing", []string{"models", "missing"}, nil},
 		{"bash3 assignment", "openai --file=assets/lo", "assets/lo", []string{"--file=assets/lo"}, []string{"assets/logo.png", "assets/long name.png"}},
 		{"bash5 assignment", "openai --file=assets/lo", "assets/lo", []string{"--file", "=", "assets/lo"}, []string{"assets/logo.png", "assets/long name.png"}},
 		{"bash3 quoted", `openai --file="assets/long `, "assets/long ", []string{`--file="assets/long `}, []string{"assets/long name.png"}},
@@ -49,8 +52,9 @@ func TestBashFileCompletionPreservesAssignments(t *testing.T) {
 		{"unknown assignment", "openai --unknown=assets/lo", "assets/lo", []string{"--unknown", "=", "assets/lo"}, nil},
 		{"end of options", "openai -- --file=assets/lo", "assets/lo", []string{"--", "--file", "=", "assets/lo"}, nil},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			probe := `
+		for _, mode := range []string{"default", "nounset"} {
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				probe := `
 test_binary=$1
 COMP_LINE=$2
 callback=$3
@@ -61,19 +65,25 @@ COMP_POINT=${#COMP_LINE}
 COMP_WORDS=(openai "$@")
 COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
 __openai_bash_autocomplete openai "$callback" ""
-for item in "${COMPREPLY[@]}"; do printf '%s\n' "$item"; done
+if [[ ${#COMPREPLY[@]} -gt 0 ]]; then
+  for item in "${COMPREPLY[@]}"; do printf '%s\n' "$item"; done
+fi
 `
-			args := append([]string{"-c", probe, "completion-probe", binary, tc.line, tc.callback}, tc.words...)
-			command := exec.Command(bash, args...)
-			command.Dir = dir
-			command.Env = append(os.Environ(), "OPENAI_CLI_COMPLETION_HELPER=1")
-			out, err := command.CombinedOutput()
-			require.NoError(t, err, string(out))
-			var got []string
-			if len(out) > 0 {
-				got = strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
-			}
-			require.ElementsMatch(t, tc.want, got)
-		})
+				args := append([]string{"-c", probe, "completion-probe", binary, tc.line, tc.callback}, tc.words...)
+				if mode == "nounset" {
+					args = append([]string{"-u"}, args...)
+				}
+				command := exec.Command(bash, args...)
+				command.Dir = dir
+				command.Env = append(os.Environ(), "OPENAI_CLI_COMPLETION_HELPER=1")
+				out, err := command.CombinedOutput()
+				require.NoError(t, err, string(out))
+				var got []string
+				if len(out) > 0 {
+					got = strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+				}
+				require.ElementsMatch(t, tc.want, got)
+			})
+		}
 	}
 }
