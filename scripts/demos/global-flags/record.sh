@@ -52,7 +52,7 @@ SCENE
   echo "after binary: $demo_after"
   echo 'data: loopback synthetic model IDs reflect validated project headers; no live requests'
   echo 'capture: real PTY, stdin/stdout/stderr verified as terminals, bash --noprofile --norc'
-  echo 'render: asciinema + agg, Menlo 22px, Dracula, 110 columns x 34 rows, line height 1.2, maximum 20 fps'
+  echo 'render: asciinema + agg resvg, Menlo 22px, Dracula, 110 columns x 34 rows, line height 1.2, maximum 20 fps'
   echo 'scope: terminal replay; not native Apple Terminal, PowerShell, or cmd.exe validation'
   echo 'each scene checks actual command statuses; statuses.tsv retains every result'
   echo 'recipe: scripts/demos/global-flags/record.sh'
@@ -61,7 +61,7 @@ SCENE
 } > "$demo_output/metadata.txt"
 
 demo_window_size=110x34
-demo_render_options=(--font-family Menlo --font-size 22 --line-height 1.2 \
+demo_render_options=(--renderer resvg --font-family Menlo --font-size 22 --line-height 1.2 \
   --theme dracula --fps-cap 20 --last-frame-duration 4)
 for demo_scene in before after; do
   demo_command_dir="$demo_runtime/$demo_scene"
