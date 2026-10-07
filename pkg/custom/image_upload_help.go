@@ -8,10 +8,11 @@ Saves to ~/Downloads/gpt-images/. Keeps your original.
 
 COMMON OPTIONS
   --model MODEL          Choose a model ID
-  --size SIZE            Image dimensions, such as 1024x1024
-  --quality QUALITY      GPT Image: auto, low, medium, or high
+  --size SIZE            e.g. 1024x1024
+  --quality QUALITY      auto, low, medium, high
   --name NAME            Name the saved image
   --output-dir DIRECTORY Save in an existing folder
+Size and quality choices depend on the model.
 {{else}}Image variations are retired and no longer available.
 Use images edit with a GPT Image model and a prompt:
   {{$bin}} images edit --image "photo.png" --prompt "Create a variation of this image"

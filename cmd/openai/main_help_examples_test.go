@@ -92,6 +92,11 @@ func TestMainHelpImagePagesStayBrief(t *testing.T) {
 			if lines := len(strings.Split(strings.TrimSpace(got.stdout), "\n")); lines > 18 {
 				t.Errorf("short help uses %d lines; want one example and at most 18 lines", lines)
 			}
+			for line := range strings.SplitSeq(got.stdout, "\n") {
+				if strings.HasPrefix(line, "  --") && len(line) > 56 {
+					t.Errorf("common option wraps at 56 columns: %q", line)
+				}
+			}
 			exampleOperation := operation
 			if operation == "create-variation" {
 				exampleOperation = "edit"
