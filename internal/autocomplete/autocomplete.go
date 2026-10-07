@@ -376,6 +376,9 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 }
 
 func flagValueCompletion(flag cli.Flag) CompletionResult {
+	if wrapped, ok := flag.(interface{ CLIStringFlag() *cli.StringFlag }); ok {
+		flag = wrapped.CLIStringFlag()
+	}
 	if file, ok := flag.(interface{ IsFileInput() bool }); ok && file.IsFileInput() {
 		return CompletionResult{Behavior: ShellCompletionBehaviorFile, requiresFileValueSupport: true}
 	}
