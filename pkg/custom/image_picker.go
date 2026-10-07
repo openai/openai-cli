@@ -399,18 +399,16 @@ func (m *imagePicker) rows() []imagePickerRow {
 	case "choose":
 		return m.choices(m.field)
 	case "more":
-		return []imagePickerRow{{id: "background", label: "Background", value: s.background}, {id: "format", label: "File type", value: strings.ToUpper(s.format)}, {id: "count", label: "Images", value: s.count}, {id: "back", label: "Back to settings"}}
+		return []imagePickerRow{{id: "format", label: "File type", value: strings.ToUpper(s.format)}, {id: "back", label: "Back to settings"}}
 	}
 	rows := []imagePickerRow{
 		{id: "model", label: "Model", value: s.model},
-		{id: "size", label: "Size", value: imagePickerSizeLabel(s.size)},
+		{id: "size", label: "Size / aspect", value: imagePickerSizeLabel(s.size)},
 		{id: "quality", label: "Quality", value: imagePickerTitle(s.quality)},
+		{id: "count", label: "Images", value: s.count},
+		{id: "background", label: "Background", value: imagePickerTitle(s.background)},
 	}
-	images := s.count + " images"
-	if s.count == "1" {
-		images = "1 image"
-	}
-	return append(rows, m.folderRow(), imagePickerRow{id: "more", label: "More options", value: strings.ToUpper(s.format) + " · " + images})
+	return append(rows, m.folderRow(), imagePickerRow{id: "more", label: "More options", value: strings.ToUpper(s.format)})
 }
 
 func (m *imagePicker) cycleFocus(backwards bool) {

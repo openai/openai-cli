@@ -42,6 +42,9 @@ func (m *imagePicker) heading() string {
 	case "folder", "path":
 		return "Save to · existing folder"
 	case "choose":
+		if m.field == "count" {
+			return "Choose image count"
+		}
 		return "Choose " + m.field
 	case "more":
 		return "More options"
@@ -117,7 +120,7 @@ func (m *imagePicker) View() tea.View {
 		// edge explicitly because terminals disagree on emoji cluster widths.
 		row := border.Render("│") + input.Render(ansi.EraseCharacter(width-2)+" "+prompt+" ") +
 			ansi.CursorHorizontalAbsolute(width+2) + border.Render("│")
-		lines = append(lines, "",
+		lines = append(lines,
 			border.Render(caption+strings.Repeat("─", width-ansi.StringWidth(caption)-1)+"╮"),
 			row,
 			border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
@@ -128,10 +131,11 @@ func (m *imagePicker) View() tea.View {
 		}
 		lines = append(lines, border.Render(caption), "  "+prompt)
 	}
-	if roomy {
-		lines = append(lines, "")
+	heading := strong.Render(m.heading())
+	if m.width < 60 && m.page != "path" {
+		heading += muted.Render(" · Tab switch")
 	}
-	lines = append(lines, strong.Render(m.heading()))
+	lines = append(lines, heading)
 	if m.page == "path" {
 		before := imagePickerLine(string(m.folder.draft[:m.folder.cursor]))
 		after := imagePickerLine(string(m.folder.draft[m.folder.cursor:]))
@@ -148,11 +152,12 @@ func (m *imagePicker) View() tea.View {
 	if m.note != "" {
 		reserved++
 	}
-	if roomy {
+	rows := m.rows()
+	commandGap := roomy && height-reserved > len(rows)
+	if commandGap {
 		reserved++
 	}
 	available := max(1, height-reserved)
-	rows := m.rows()
 	start := max(0, min(m.selected-available+1, len(rows)-available))
 	end := min(len(rows), start+available)
 	for i := start; i < end; i++ {
@@ -172,7 +177,7 @@ func (m *imagePicker) View() tea.View {
 		active := i == m.selected && (m.focus == "options" || m.focus == "path" && m.folder.match >= 0)
 		lines = append(lines, highlight(ansi.Truncate(text, width-2, "…"), active))
 	}
-	if roomy {
+	if commandGap {
 		lines = append(lines, "")
 	}
 	for i, line := range commandLines {
@@ -204,6 +209,12 @@ func (m *imagePicker) View() tea.View {
 	}
 	if len(rows) > available && m.focus == "options" {
 		footer = fmt.Sprintf("Ctrl+C exit · ↑↓ %d/%d · Enter select", m.selected+1, len(rows))
+	}
+	if m.focus == "options" && ansi.StringWidth(footer+" · Ctrl+G generate") <= width {
+		footer += " · Ctrl+G generate"
+	}
+	if m.focus != "path" && ansi.StringWidth(footer+" · Tab switch") <= width {
+		footer += " · Tab switch"
 	}
 	if m.note != "" {
 		lines = append(lines, muted.Render(imagePickerLine(m.note)))

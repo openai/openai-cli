@@ -357,20 +357,33 @@ func TestImagePickerCtrlGFromDropdown(t *testing.T) {
 func TestImagePickerMoreOptions(t *testing.T) {
 	m := pickerForTest(t)
 	pickerKey(m, tea.KeyTab)
-	pickerKey(m, tea.KeyEnd)
-	pickerKey(m, tea.KeyEnter)
-	require.Equal(t, "more", m.page)
+	for range len(m.rows()) - 1 {
+		if m.rows()[m.selected].id == "background" {
+			break
+		}
+		pickerKey(m, tea.KeyDown)
+	}
+	require.Equal(t, "background", m.rows()[m.selected].id)
 	pickerKey(m, tea.KeyEnter) // background
 	pickerKey(m, tea.KeyEnd)
 	pickerKey(m, tea.KeyEnter) // transparent
 	require.Equal(t, "transparent", m.settings.background)
-	pickerKey(m, tea.KeyDown)
+	pickerKey(m, tea.KeyEnd)
+	pickerKey(m, tea.KeyEnter)
+	require.Equal(t, "more", m.page)
 	pickerKey(m, tea.KeyEnter) // file type
 	pickerKey(m, tea.KeyDown)
 	pickerKey(m, tea.KeyEnter) // JPEG
 	require.Equal(t, "jpeg", m.settings.format)
 	require.Equal(t, "opaque", m.settings.background)
-	pickerKey(m, tea.KeyDown)
+	pickerKey(m, tea.KeyLeft) // Back to settings.
+	for range len(m.rows()) - 1 {
+		if m.rows()[m.selected].id == "count" {
+			break
+		}
+		pickerKey(m, tea.KeyUp)
+	}
+	require.Equal(t, "count", m.rows()[m.selected].id)
 	pickerKey(m, tea.KeyEnter) // image count
 	pickerKey(m, tea.KeyEnd)
 	pickerKey(m, tea.KeyEnter) // ten
