@@ -363,3 +363,45 @@ func TestSavedImageFallbackResizeTerminal(t *testing.T) {
 type previewNoticeWriter func([]byte) (int, error)
 
 func (w previewNoticeWriter) Write(data []byte) (int, error) { return w(data) }
+
+func TestSavedImageProtocolKittyInheritedAppleIdentity(t *testing.T) {
+	apple := "blocks"
+	if runtime.GOOS == "darwin" {
+		apple = "font"
+	}
+	for _, tc := range []struct {
+		name, mode, want string
+		tty              bool
+		extra            map[string]string
+	}{
+		{"auto", "auto", "kitty", true, nil},
+		{"on", "on", "kitty", true, nil},
+		{"off", "off", "", true, nil},
+		{"pipe", "on", "", false, nil},
+		{"ci", "on", "", true, map[string]string{"CI": "true"}},
+		{"dumb", "on", "", true, map[string]string{"TERM": "dumb"}},
+		{"tmux", "on", "blocks", true, map[string]string{"TMUX": "active"}},
+		{"screen", "on", "blocks", true, map[string]string{"STY": "active"}},
+		{"zellij", "on", "blocks", true, map[string]string{"ZELLIJ": "active"}},
+		{"tmux term", "on", "blocks", true, map[string]string{"TERM": "tmux-256color"}},
+		{"screen term", "on", "blocks", true, map[string]string{"TERM": "screen-256color"}},
+		{"no window identity", "on", apple, true, map[string]string{"KITTY_WINDOW_ID": ""}},
+		{"inherited window identity", "on", apple, true, map[string]string{"TERM": "xterm-256color"}},
+		{"vscode identity", "on", "blocks", true, map[string]string{"TERM_PROGRAM": "vscode"}},
+		{"vscode opt in", "on", "iterm-auto", true, map[string]string{"TERM_PROGRAM": "vscode", "OPENAI_VSCODE_IMAGES": "1"}},
+		{"iterm identity", "on", "iterm", true, map[string]string{"TERM_PROGRAM": "iTerm.app"}},
+		{"no color", "auto", "kitty", true, map[string]string{"NO_COLOR": "1"}},
+		{"ssh", "auto", "kitty", true, map[string]string{"SSH_TTY": "/dev/pts/1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := map[string]string{
+				"TERM": "xterm-kitty", "TERM_PROGRAM": "Apple_Terminal",
+				"KITTY_WINDOW_ID": "1", "COLORTERM": "truecolor",
+			}
+			for key, value := range tc.extra {
+				env[key] = value
+			}
+			require.Equal(t, tc.want, savedImageProtocol(tc.mode, tc.tty, func(key string) string { return env[key] }))
+		})
+	}
+}

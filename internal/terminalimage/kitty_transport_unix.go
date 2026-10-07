@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/charmbracelet/x/term"
@@ -59,14 +60,18 @@ func PrepareNativeImageOutput(ctx context.Context, out io.Writer) (context.Conte
 // Only a directly owned worker with kernel-default SIGINT writes graphics.
 // Terminal modes, user descriptor flags and parent signal handlers are unchanged.
 func writeKittyOutput(ctx context.Context, out io.Writer, write func(io.Writer) error) (err error) {
-	return writeNativeImageOutput(ctx, out, write, "\x00\x1b\\\x1b_Gq=2,m=0;\x1b\\")
+	job := byte('J')
+	if runtime.GOOS == "darwin" {
+		job = 'K'
+	}
+	return writeNativeImageOutput(ctx, out, write, "\x00\x1b\\\x1b_Gq=2,m=0;\x1b\\", job)
 }
 
 func writeITermOutput(ctx context.Context, out io.Writer, write func(io.Writer) error) error {
-	return writeNativeImageOutput(ctx, out, write, "\x00\x1b\\")
+	return writeNativeImageOutput(ctx, out, write, "\x00\x1b\\", 'J')
 }
 
-func writeNativeImageOutput(ctx context.Context, out io.Writer, write func(io.Writer) error, reset string) (err error) {
+func writeNativeImageOutput(ctx context.Context, out io.Writer, write func(io.Writer) error, reset string, job byte) (err error) {
 	file, ok := out.(*os.File)
 	if !ok || !term.IsTerminal(file.Fd()) {
 		return write(out)
@@ -93,7 +98,7 @@ func writeNativeImageOutput(ctx context.Context, out io.Writer, write func(io.Wr
 	case <-session.gate:
 	}
 	defer func() { session.gate <- struct{}{} }()
-	written, err := session.write(ctx, write)
+	written, err := session.writeJob(ctx, job, write)
 	if err == nil || !written {
 		return err
 	}
@@ -101,7 +106,7 @@ func writeNativeImageOutput(ctx context.Context, out io.Writer, write func(io.Wr
 	// the protocol-specific reset. Keep the lease through bounded cleanup.
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kittyOutputCleanupTimeout)
 	defer cancel()
-	_, cleanupErr := session.write(cleanupCtx, func(destination io.Writer) error {
+	_, cleanupErr := session.writeJob(cleanupCtx, job, func(destination io.Writer) error {
 		_, err := io.WriteString(destination, reset)
 		return err
 	})
