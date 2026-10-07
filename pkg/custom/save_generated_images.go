@@ -32,7 +32,7 @@ COMMON OPTIONS
   --output-dir DIRECTORY Save in an existing folder
 Size and quality choices depend on the model.
 
-Full help: {{$bin}} help --all images generate
+Help: {{$bin}} help images generate
 Key setup: {{$bin}} help setup
 `
 

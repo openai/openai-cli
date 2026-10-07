@@ -1,9 +1,6 @@
 package custom
 
 import (
-	"slices"
-	"strings"
-
 	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -14,7 +11,7 @@ func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 	orderImageCommands(root)
 	configureGlobalFlagDescriptions(root)
 	configureHelpGroups(root)
-	configureImageHelpInvocation(root, clihelp.Invocation(root.Name, args))
+	configureImageHelpContent(root)
 	return clihelp.Configure(root, args)
 }
 
@@ -52,7 +49,7 @@ func configureGlobalFlagDescriptions(root *cli.Command) {
 		case *cli.StringFlag:
 			switch flag.Name {
 			case "base-url":
-				flag.Usage = "Send API requests to this endpoint. Env: OPENAI_BASE_URL."
+				flag.Usage = "Send API requests to this endpoint.\nEnv: OPENAI_BASE_URL"
 				flag.DefaultText = "https://api.openai.com/v1"
 			case "format":
 				flag.Usage = "Choose how results are displayed. Format names are case-insensitive.\n" +
@@ -98,27 +95,91 @@ func configureGlobalFlagDescriptions(root *cli.Command) {
 			flag.Usage = "Add an HTTP request header as 'Name: Value'.\n" +
 				"Repeat for multiple headers; the last value for each header name wins.\n" +
 				"Example: -H 'X-Request-Tag: cli-test'.\n" +
-				"Env: OPENAI_CUSTOM_HEADERS accepts one 'Name: Value' header per line. Flags override matching environment headers."
+				"Env: OPENAI_CUSTOM_HEADERS\n" +
+				"Environment headers use one 'Name: Value' header per line. Flags override matching environment headers."
 		}
 	}
 }
 
-func configureImageHelpInvocation(root *cli.Command, invocation string) {
+func configureImageHelpContent(root *cli.Command) {
 	images := root.Command("images")
 	if images == nil {
 		return
 	}
-	for name, description := range map[string]string{
-		"generate":         imageGenerationSavingHelp,
-		"edit":             imageEditSavingHelp,
-		"create-variation": imageVariationSavingHelp,
+	const localOutput = "This local command supports --format auto or text only.\n" +
+		"It cannot use --transform or --raw-output."
+	for name, content := range map[string]clihelp.Content{
+		"generate": {
+			Description: "Run without flags to choose settings in an interactive terminal.\n" +
+				"After saving, the picker reopens with your settings. Ctrl+C exits.\n\n" +
+				"Saves to ~/Downloads/gpt-images/. Use --output-dir to choose an existing folder.\n" +
+				"For API data without saving, use --format json without --name or --output-dir.\n" +
+				"Size and quality choices depend on the model.",
+			Examples: []clihelp.Example{{Description: "Generate and save an image:", Command: `images generate --prompt "A tiny cat" --name cat`}},
+		},
+		"edit": {
+			Description: "Replace photo.png with your image's path and the prompt with your changes.\n" +
+				"Keeps your original. Saves to ~/Downloads/gpt-images/.\n" +
+				"Use --output-dir to choose an existing folder.\n" +
+				"For API data without saving, use --format json without --name or --output-dir.\n" +
+				"Size and quality choices depend on the model.",
+			Examples: []clihelp.Example{{Description: "Edit and save an image:", Command: `images edit --image "photo.png" --prompt "Make the sky purple" --name purple-sky`}},
+		},
+		"create-variation": {
+			Description: "This endpoint is retired and no longer available. Use images edit with a GPT Image model and a prompt.\n" +
+				"Replace photo.png with your image's path. Edits save to ~/Downloads/gpt-images/.\n" +
+				"The options below describe the legacy variations contract.",
+			Examples: []clihelp.Example{{Description: "Create a variation with images edit:", Command: `images edit --image "photo.png" --prompt "Create a variation of this image" --name variation`}},
+		},
+		"preview": {
+			Description: imagePreviewDetails + "\nReplace photo.png with your saved image's path.\n" +
+				"Pipes, CI and terminals without supported graphics or color cannot display previews.\n" +
+				"Preview limits: 64 MiB and 16 megapixels. Larger originals are still kept.\n\n" + localOutput,
+			Examples: []clihelp.Example{{Description: "View a saved image:", Command: `images preview "photo.png"`}},
+		},
+		"models": {
+			Description: "Shows exact model names and checks metadata visibility with your key.\n" +
+				"Checks known image models individually, without loading the full API model list.\n" +
+				"No images are generated. Checks stop after 15 seconds, with no retries.\n" +
+				"Use --offline to show known names without an API key or access check.\n\n" +
+				"The known list comes from this CLI's SDK; it may not include newly released models.\n" +
+				"Visibility checks do not guarantee image-generation permissions or quota.\n" +
+				"Readable output also works in scripts. Failed checks keep partial results and exit nonzero.",
+			Examples: []clihelp.Example{
+				{Description: "Check image model visibility:", Command: "images models"},
+				{Description: "Use an exact model name:", Command: `images generate --prompt "A tiny orange robot" --model gpt-image-2.5-flare`},
+				{Description: "Return JSON for scripts:", Command: "--format json images models"},
+			},
+		},
 	} {
 		if command := images.Command(name); command != nil {
-			// Descriptions are plain text, not templates. Start from the original
-			// each time so repeated help configuration cannot retain an old path.
-			command.Description = strings.Replace(description, "\n    openai ", "\n    "+invocation+" ", 1)
+			setCompleteHelpContent(command, content)
 		}
 	}
+	if inline := images.Command("inline"); inline != nil {
+		setCompleteHelpContent(inline, clihelp.Content{
+			Description: inline.Description + "\n" + localOutput,
+			Examples:    []clihelp.Example{{Description: "Turn on automatic image previews:", Command: "images inline on"}},
+		})
+		for _, name := range []string{"on", "off"} {
+			if command := inline.Command(name); command != nil {
+				setCompleteHelpContent(command, clihelp.Content{
+					Description: command.Description + "\n\n" + localOutput,
+					Examples:    []clihelp.Example{{Description: "Remember automatic image previews " + name + ":", Command: "images inline " + name}},
+				})
+			}
+		}
+	}
+}
+
+// Adapt only known feature pages. The shared renderer supplies flags and the
+// current executable invocation without changing runtime command descriptions.
+func setCompleteHelpContent(command *cli.Command, content clihelp.Content) {
+	if command.Metadata == nil {
+		command.Metadata = map[string]any{}
+	}
+	command.Metadata["help-content"] = content
+	command.CustomHelpTemplate = ""
 }
 
 func configureHelpGroups(root *cli.Command) {
@@ -127,6 +188,12 @@ func configureHelpGroups(root *cli.Command) {
 		{Title: "Output", Names: []string{"format", "format-error", "transform", "transform-error", "raw-output"}, Owner: root},
 		{Title: "Request options", Names: []string{"organization", "project", "base-url", "header"}, Owner: root},
 		{Title: "Troubleshooting", Names: []string{"debug"}, Owner: root},
+	}
+	labels := []clihelp.FlagLabel{
+		{Owner: root, Names: []string{"api-key", "admin-api-key"}, Label: "KEY"},
+		{Owner: root, Names: []string{"organization", "project"}, Label: "ID"},
+		{Owner: root, Names: []string{"webhook-secret"}, Label: "SECRET"},
+		{Owner: root, Names: []string{"header"}, Label: "'NAME: VALUE'"},
 	}
 	var visit func(*cli.Command, bool)
 	visit = func(command *cli.Command, image bool) {
@@ -145,6 +212,7 @@ func configureHelpGroups(root *cli.Command) {
 			}, sections...)
 		}
 		command.Metadata["help-flag-groups"] = sections
+		command.Metadata["help-flag-labels"] = labels
 		for _, flag := range command.Flags {
 			if limit, ok := flag.(*requestflag.Flag[int64]); ok && limit.Name == "max-items" &&
 				limit.Usage == "The maximum number of items to return (use -1 for unlimited)." {
@@ -158,32 +226,4 @@ func configureHelpGroups(root *cli.Command) {
 		}
 	}
 	visit(root, false)
-	// These API commands support every output option shown in their brief help.
-	for _, path := range [][]string{{"models", "list"}, {"models", "retrieve"}, {"responses", "create"}, {"responses", "retrieve"}} {
-		command := root
-		var local []cli.Flag
-		for _, name := range path {
-			command = command.Command(name)
-			if command == nil {
-				break
-			}
-			local = append(local, command.Flags...)
-		}
-		if command != nil {
-			var output []cli.Flag
-			for _, name := range []string{"format", "transform", "raw-output"} {
-				for _, flag := range root.Flags {
-					shadowed := slices.ContainsFunc(local, func(other cli.Flag) bool {
-						return slices.ContainsFunc(other.Names(), func(alias string) bool {
-							return slices.Contains(flag.Names(), alias)
-						})
-					})
-					if len(flag.Names()) > 0 && flag.Names()[0] == name && !shadowed {
-						output = append(output, flag)
-					}
-				}
-			}
-			command.Metadata["brief-output-flags"] = output
-		}
-	}
 }

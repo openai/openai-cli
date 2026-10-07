@@ -1,7 +1,9 @@
 package custom
 
 import (
+	"bytes"
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -36,25 +38,6 @@ func TestConfigureHelpPaginationMetadataPreservesValues(t *testing.T) {
 	configureHelpGroups(command)
 	if flag.Default != 0 || flag.IsSet() || flag.DefaultText != "unlimited" || !strings.Contains(flag.Usage, "use 0 for no items") {
 		t.Fatal("pagination help changed parser state or lost omitted/zero guidance")
-	}
-}
-
-func TestConfigureHelpOutputMetadataRespectsShadowing(t *testing.T) {
-	format := &cli.StringFlag{Name: "format", Aliases: []string{"f"}}
-	transform := &cli.StringFlag{Name: "transform"}
-	local := &cli.StringFlag{Name: "field", Aliases: []string{"f"}}
-	leaf := &cli.Command{Name: "list", Flags: []cli.Flag{local}}
-	root := &cli.Command{Name: "openai", Flags: []cli.Flag{format, transform}, Commands: []*cli.Command{
-		{Name: "models", Commands: []*cli.Command{leaf}},
-		{Name: "local"},
-	}}
-	configureHelpGroups(root)
-	flags := leaf.Metadata["brief-output-flags"].([]cli.Flag)
-	if len(flags) != 1 || flags[0] != transform {
-		t.Fatalf("output help included a shadowed root flag: %v", flags)
-	}
-	if _, exists := root.Command("local").Metadata["brief-output-flags"]; exists {
-		t.Fatal("local command received API output help")
 	}
 }
 
@@ -111,6 +94,12 @@ func TestConfigureHelpPreservesRootAndRequestFlagOwnership(t *testing.T) {
 			t.Fatalf("incorrect root-owned group: %+v", groups[i])
 		}
 	}
+	labels := child.Metadata["help-flag-labels"].([]clihelp.FlagLabel)
+	for _, label := range labels {
+		if label.Owner != root {
+			t.Fatalf("semantic label could apply to a local request field: %+v", label)
+		}
+	}
 }
 
 func TestConfigureHelpBaseURLUsesLiteralDefault(t *testing.T) {
@@ -127,30 +116,85 @@ func TestConfigureHelpBaseURLUsesLiteralDefault(t *testing.T) {
 }
 
 func TestConfigureHelpRefreshesImageExampleInvocation(t *testing.T) {
+	for _, executable := range []string{"./openai", "./a user's directory/openai", "openai"} {
+		for name, example := range map[string]string{
+			"generate":         `images generate --prompt "A tiny cat" --name cat`,
+			"edit":             `images edit --image "photo.png" --prompt "Make the sky purple" --name purple-sky`,
+			"create-variation": `images edit --image "photo.png" --prompt "Create a variation of this image" --name variation`,
+		} {
+			t.Run(executable+"/"+name, func(t *testing.T) {
+				var out bytes.Buffer
+				root := &cli.Command{Name: "openai", Writer: &out, HideHelpCommand: true,
+					Commands: []*cli.Command{{Name: "images", Commands: []*cli.Command{{Name: name}}}},
+				}
+				// Reconfiguration must not retain the first executable in examples.
+				if _, _, err := ConfigureHelp(root, []string{"./old-directory/openai", "help", "images", name}); err != nil {
+					t.Fatal(err)
+				}
+				args := []string{executable, "help", "images", name}
+				normalized, _, err := ConfigureHelp(root, args)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := root.Run(t.Context(), normalized); err != nil {
+					t.Fatal(err)
+				}
+				want := clihelp.Invocation(root.Name, args) + " " + example
+				if got := out.String(); strings.Count(got, want) != 1 || strings.Contains(got, "old-directory") {
+					t.Fatalf("example is duplicated or retains an old invocation: want %q in %q", want, got)
+				}
+			})
+		}
+	}
+}
+
+func TestConfigureHelpPreservesImageGuidance(t *testing.T) {
 	images := &cli.Command{Name: "images", Commands: []*cli.Command{
 		{Name: "generate"}, {Name: "edit"}, {Name: "create-variation"},
-		{Name: "unrelated", Description: "    openai unrelated"},
+		{Name: "unrelated", Description: "Keep this description", CustomHelpTemplate: "Keep this template"},
 	}}
 	root := &cli.Command{Name: "openai", Commands: []*cli.Command{images}}
-	originals := map[string]string{
-		"generate": imageGenerationSavingHelp, "edit": imageEditSavingHelp,
-		"create-variation": imageVariationSavingHelp,
+	configureImageSaving(root)
+	registerImagePreviewCommands(root)
+	registerImageModels(root)
+	wantGuidance := map[string][]string{
+		"generate":         {"interactive terminal", "picker reopens", "Ctrl+C exits", "~/Downloads/gpt-images/", "--format json", "without --name or --output-dir", "depend on the model"},
+		"edit":             {"Replace photo.png", "Keeps your original", "~/Downloads/gpt-images/", "existing folder", "--format json", "depend on the model"},
+		"create-variation": {"retired and no longer available", "GPT Image model", "Replace photo.png", "legacy variations contract"},
+		"preview":          {"PNG, JPEG and WebP", "No API call or key", "original is unchanged", "Resize, then run", "preferences do not affect", "Replace photo.png", "Pipes, CI", "64 MiB", "16 megapixels", "--format auto or text only", "cannot use --transform or --raw-output"},
+		"models":           {"exact model names", "individually", "No images are generated", "15 seconds", "no retries", "--offline", "without an API key", "CLI's SDK", "newly released", "permissions or quota", "partial results", "exit nonzero"},
 	}
-	// The same tree can be configured again by an embedding caller or a test.
-	for _, executable := range []string{"./openai", "./a user's directory/openai", "openai"} {
-		args := []string{executable, "help", "--all", "images", "generate"}
-		if _, _, err := ConfigureHelp(root, args); err != nil {
-			t.Fatal(err)
+	for _, command := range images.Commands {
+		beforeDescription, beforeUsage := command.Description, command.UsageText
+		beforeFlags := append([]cli.Flag(nil), command.Flags...)
+		configureImageHelpContent(root)
+		configureImageHelpContent(root)
+		if command.Description != beforeDescription || command.UsageText != beforeUsage || !reflect.DeepEqual(command.Flags, beforeFlags) {
+			t.Fatalf("help adaptation changed the runtime definition of %s", command.Name)
 		}
-		invocation := clihelp.Invocation(root.Name, args)
-		for name, original := range originals {
-			want := strings.Replace(original, "\n    openai ", "\n    "+invocation+" ", 1)
-			if got := images.Command(name).Description; got != want {
-				t.Errorf("%s example after %q: got %q, want %q", name, executable, got, want)
+		if command.Name == "unrelated" {
+			if command.CustomHelpTemplate != "Keep this template" {
+				t.Fatal("help adaptation replaced an unrelated feature template")
+			}
+			continue
+		}
+		content := command.Metadata["help-content"].(clihelp.Content)
+		for _, want := range wantGuidance[command.Name] {
+			if !strings.Contains(content.Description, want) {
+				t.Errorf("%s help lost %q: %s", command.Name, want, content.Description)
 			}
 		}
-		if got := images.Command("unrelated").Description; got != "    openai unrelated" {
-			t.Fatalf("unrelated description changed: %q", got)
+		if command.Name != "models" && len(content.Examples) != 1 {
+			t.Errorf("%s help needs one example, got %d", command.Name, len(content.Examples))
+		}
+	}
+	for _, name := range []string{"on", "off"} {
+		command := images.Command("inline").Command(name)
+		content := command.Metadata["help-content"].(clihelp.Content)
+		for _, want := range []string{"future image generation", "No API request or key", "overrides it", "preview ignores", "local Apple Terminal", "--format auto or text only", "cannot use --transform or --raw-output"} {
+			if !strings.Contains(content.Description, want) {
+				t.Errorf("inline %s help lost %q: %s", name, want, content.Description)
+			}
 		}
 	}
 }

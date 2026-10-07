@@ -146,8 +146,13 @@ func TestFullHelpGroupingKeepsEachFlagAndItsDetails(t *testing.T) {
 				t.Errorf("section %q duplicated or missing: %s", section, got)
 			}
 		}
-		for _, flag := range flags {
-			heading, details, _ := strings.Cut(fullFlag(flag), "\t")
+		for _, expected := range []struct{ heading, details string }{
+			{"--optional TEXT", "A future setting must remain visible."},
+			{"--prompt TEXT", "Required text. Keep the important limit."},
+			{"--image, -i TEXT", "Path to your file."},
+			{"--categorized INTEGER", "Original category. Default: 12"},
+		} {
+			heading, details := expected.heading, expected.details
 			if strings.Count(got, heading) != 1 || !strings.Contains(strings.Join(strings.Fields(got), " "), strings.Join(strings.Fields(details), " ")) {
 				t.Errorf("grouping lost flag %q or its details: %s", heading, got)
 			}

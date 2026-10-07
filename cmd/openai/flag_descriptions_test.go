@@ -9,7 +9,7 @@ import (
 )
 
 func TestMainGlobalFlagErrorTransformExample(t *testing.T) {
-	help := runMainDispatch(t, "bash", "openai", "help", "--all")
+	help := runMainDispatch(t, "bash", "openai", "help")
 	require.Zero(t, help.code, help.stderr)
 	_, description, found := strings.Cut(help.stdout, "\n   --transform-error ")
 	require.True(t, found)
@@ -38,7 +38,7 @@ func TestMainGlobalFlagDescriptions(t *testing.T) {
 	}
 	for _, path := range [][]string{nil, {"models", "list"}, {"images"}, {"images", "generate"}} {
 		t.Run(strings.Join(append([]string{"root"}, path...), "/"), func(t *testing.T) {
-			args := append([]string{"openai", "help", "--all"}, path...)
+			args := append([]string{"openai", "help"}, path...)
 			got := runMainDispatchWithEnv(t, "bash", nil, args...)
 			require.Zero(t, got.code, got.stderr)
 			require.Empty(t, got.stderr)
@@ -81,7 +81,7 @@ func TestMainGlobalFlagDescriptions(t *testing.T) {
 				"Inherits json, jsonl, raw, or yaml from --format unless explicitly set.",
 				"API and local errors use 'message'; streamed errors can use 'error.message'.",
 				"Repeat for multiple headers; the last value for each header name wins.",
-				"OPENAI_CUSTOM_HEADERS accepts one 'Name: Value' header per line.",
+				"Environment headers use one 'Name: Value' header per line.",
 				"Flags override matching environment headers.",
 				"https://api.openai.com/v1",
 			} {
@@ -128,7 +128,7 @@ func TestMainGlobalFlagHelpHidesConfiguredValues(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		for _, route := range [][]string{
 			{"--help"}, {"images", "generate", "--help"}, {"models", "list", "--help"},
-			{"help", "--all"}, {"help", "--all", "images", "generate"}, {"help", "--all", "models", "list"},
+			{"help"}, {"help", "images", "generate"}, {"help", "models", "list"},
 		} {
 			name := "environment/"
 			if explicit {
@@ -158,7 +158,7 @@ func TestMainGlobalFlagHelpHidesConfiguredValues(t *testing.T) {
 func TestMainGlobalFlagDescriptionsPreserveRequestProject(t *testing.T) {
 	for _, path := range [][]string{{"admin", "organization", "invites", "create"}, {"admin:organization:invites", "create"}} {
 		t.Run(strings.Join(path, "/"), func(t *testing.T) {
-			args := append([]string{"openai", "help", "--all"}, path...)
+			args := append([]string{"openai", "help"}, path...)
 			got := runMainDispatchWithEnv(t, "bash", nil, args...)
 			require.Zero(t, got.code, got.stderr)
 			require.Empty(t, got.stderr)

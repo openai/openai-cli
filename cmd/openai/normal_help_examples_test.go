@@ -25,7 +25,7 @@ func TestMainNormalHelpOutputOptions(t *testing.T) {
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("normal help failed: %+v", got)
 			}
-			for _, want := range []string{"\nOUTPUT\n", "--format ", "--transform PATH", "--raw-output"} {
+			for _, want := range []string{"\n   Output\n", "--format ", "--transform PATH", "--raw-output"} {
 				if !strings.Contains(got.stdout, want) {
 					t.Errorf("normal help lacks %q:\n%s", want, got.stdout)
 				}
@@ -34,22 +34,28 @@ func TestMainNormalHelpOutputOptions(t *testing.T) {
 	}
 	for _, args := range [][]string{{"images", "inline"}, {"images", "inline", "on"}, {"images", "inline", "off"}} {
 		got := runMainDispatch(t, "bash", append(append([]string{"openai"}, args...), "--help")...)
-		if got.code != 0 || got.stderr != "" || strings.Contains(got.stdout, "\nOUTPUT\n") {
-			t.Fatalf("local image help advertises API output options: %+v", got)
+		if got.code != 0 || got.stderr != "" {
+			t.Fatalf("local image help failed: %+v", got)
+		}
+		text := strings.Join(strings.Fields(got.stdout), " ")
+		for _, want := range []string{"This local command supports --format auto or text only.", "It cannot use --transform or --raw-output."} {
+			if !strings.Contains(text, want) {
+				t.Errorf("local help omitted output restriction %q", want)
+			}
 		}
 	}
 }
 
 func TestMainNormalHelpModelsLimit(t *testing.T) {
 	server, requests := normalHelpModelsServer(t)
-	for _, args := range [][]string{{"models", "list", "--help"}, {"help", "--all", "models", "list"}} {
+	for _, args := range [][]string{{"models", "list", "--help"}, {"help", "models", "list"}} {
 		got := runMainDispatch(t, "bash", append([]string{"openai"}, args...)...)
 		text := strings.Join(strings.Fields(got.stdout), " ")
 		if got.code != 0 || got.stderr != "" || !strings.Contains(text, "--max-items INTEGER") ||
 			!strings.Contains(text, "omit or use -1 for unlimited, or use 0 for no items") {
 			t.Fatalf("help does not explain the limit contract: %+v", got)
 		}
-		if args[0] == "help" && !strings.Contains(text, "(default: unlimited)") {
+		if args[0] == "help" && !strings.Contains(text, "Default: unlimited") {
 			t.Fatalf("full help displays the wrong omitted default: %s", text)
 		}
 	}
@@ -123,8 +129,13 @@ func TestMainNormalHelpNativeModelExamples(t *testing.T) {
 						t.Fatalf("normal help failed or made a request: %+v", help)
 					}
 					var examples []string
-					for line := range strings.SplitSeq(help.stdout, "\n") {
-						if strings.HasPrefix(line, "  "+printedInvocation+" models list") {
+					_, exampleSection, found := strings.Cut(help.stdout, "EXAMPLES:\n")
+					if !found {
+						t.Fatal("model help omitted examples")
+					}
+					exampleSection, _, _ = strings.Cut(exampleSection, "\nOPTIONS:")
+					for line := range strings.SplitSeq(exampleSection, "\n") {
+						if strings.HasPrefix(strings.TrimSpace(line), printedInvocation+" models list") {
 							examples = append(examples, strings.TrimSpace(line))
 						}
 					}

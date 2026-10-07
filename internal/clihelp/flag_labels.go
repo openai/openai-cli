@@ -1,10 +1,33 @@
 package clihelp
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/urfave/cli/v3"
 )
+
+// FlagLabel supplies a semantic value label only for flags declared by Owner.
+type FlagLabel struct {
+	Owner *cli.Command
+	Names []string
+	Label string
+}
+
+func commandFlagValueLabel(command *cli.Command, flag cli.Flag) string {
+	labels, _ := command.Metadata["help-flag-labels"].([]FlagLabel)
+	for _, label := range labels {
+		if label.Owner == nil || !slices.Contains(label.Owner.Flags, flag) {
+			continue
+		}
+		for _, name := range label.Names {
+			if slices.Contains(flag.Names(), name) {
+				return label.Label
+			}
+		}
+	}
+	return flagValueLabel(flag)
+}
 
 // Labels describe accepted input without reading configured values or defaults.
 func flagValueLabel(flag cli.Flag) string {

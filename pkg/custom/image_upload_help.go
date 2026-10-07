@@ -19,7 +19,7 @@ Use images edit with a GPT Image model and a prompt:
 
 Replace photo.png with your image's path. Edits save to ~/Downloads/gpt-images/.
 {{end}}
-Full help: {{$bin}} help --all images {{.Name}}
+Help: {{$bin}} help images {{.Name}}
 `
 
 const imageEditSavingHelp = `EXAMPLE

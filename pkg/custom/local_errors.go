@@ -191,7 +191,7 @@ func knownLocalError(command *cli.Command, message string) string {
 	case strings.HasPrefix(message, "No help topic for '"):
 		return unknownCommandErrorMessage(command)
 	case strings.HasPrefix(message, "Unknown help topic "):
-		return "Unknown help topic. Run openai help --all to see commands."
+		return "Unknown help topic. Run openai help to see commands."
 	case strings.HasPrefix(message, "Failed to parse piped data as YAML/JSON:\n"):
 		return "Could not parse piped input as YAML or JSON. Check the input's syntax."
 	case strings.HasPrefix(message, "Cannot merge flags with a body that is not a map:"),
@@ -291,12 +291,12 @@ func unknownCommandErrorMessage(command *cli.Command) string {
 		}
 		return unknownCommandAt(command, name)
 	}
-	return "Unknown help topic. Run openai help --all to see commands."
+	return "Unknown help topic. Run openai help to see commands."
 }
 
 func unknownCommandAt(command *cli.Command, name string) string {
 	if command == nil {
-		return "Unknown help topic. Run openai help --all to see commands."
+		return "Unknown help topic. Run openai help to see commands."
 	}
 	if command.Suggest {
 		candidates := clihelp.VisibleCommands(command)
@@ -321,7 +321,7 @@ func unknownCommandAt(command *cli.Command, name string) string {
 		}
 	}
 	slices.Reverse(path)
-	invocation := errorHelpInvocation(command.Root()) + " help --all"
+	invocation := errorHelpInvocation(command.Root()) + " help"
 	if len(path) > 0 {
 		invocation += " " + strings.Join(path, " ")
 	}
