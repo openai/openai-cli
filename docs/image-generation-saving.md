@@ -172,6 +172,17 @@ Without a saved preference, `--inline auto` is the default on generation and
 edits. Kitty and Ghostty use the Kitty graphics protocol; iTerm2 and WezTerm
 use the iTerm protocol.
 
+Warp uses the Kitty graphics protocol on local macOS and Linux sessions with
+`TERM_PROGRAM=WarpTerminal`. Generation, progress and saved-image previews use
+the same renderer. No extra setting is required. `--inline off` still disables
+automatic previews; pipes, CI and multiplexers keep their existing behavior.
+Other CLI platforms retain the color-block fallback when available.
+[Warp documents image-protocol support on macOS and Linux](https://docs.warp.dev/terminal/more-features/files-and-links).
+Detected WSL and SSH sessions retain the color-block fallback when available,
+including with `--inline on`. The CLI checks `WSL_DISTRO_NAME`, `WSL_INTEROP`,
+`SSH_CONNECTION`, `SSH_CLIENT` and `SSH_TTY`. Its host operating system cannot
+establish which Warp platform displays the output in these sessions.
+
 VS Code requires a separate opt-in. Its terminal identity does not indicate
 whether its optional image renderer is active. First enable
 `terminal.integrated.enableImages` in VS Code and ensure GPU acceleration is

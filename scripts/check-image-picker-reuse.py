@@ -67,7 +67,7 @@ def check_body(body, prompt, model):
 def wait_resumed(terminal, mark):
     terminal.wait('Saved image:', after=mark)
     saved = terminal.raw.index(b'Saved image:', mark)
-    terminal.wait('Images', after=saved)
+    terminal.wait('Create image', after=saved)
     terminal.wait('Describe your image', after=saved)
 
 
@@ -118,7 +118,7 @@ def main():
             try:
                 if interactive:
                     picker.ready(terminal)
-                    terminal.wait('Images')
+                    terminal.wait('Create image')
                 yield terminal
                 passed(name)
             except BaseException:

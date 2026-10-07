@@ -297,7 +297,7 @@ def main():
                     wait_for_request(terminal, case.started)
                     terminal.wait('Saved image:', after=mark)
                     saved = terminal.raw.index(b'Saved image:', mark)
-                    terminal.wait('Images', after=saved)
+                    terminal.wait('Create image', after=saved)
                     terminal.wait('Describe your image', after=saved)
                     check_frames(bytes(terminal.raw), index + 1, normal_shape, picker=True)
                     check_saved(home, normal, index + 1)

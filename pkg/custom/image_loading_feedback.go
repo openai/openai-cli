@@ -147,7 +147,7 @@ func startLoadingFeedback(ctx context.Context, out io.Writer, label string, anim
 			text := animation.Frames[frame%len(animation.Frames)] + " " + label
 			if !animate || columns <= ansi.StringWidth(text) {
 				if drawn {
-					if _, err := io.WriteString(out, clearLine); err != nil {
+					if n, err := io.WriteString(out, clearLine); err != nil || n != len(clearLine) {
 						return
 					}
 					drawn = false

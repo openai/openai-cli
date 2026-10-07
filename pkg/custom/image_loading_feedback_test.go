@@ -313,3 +313,29 @@ func TestImageLoadingStopsBeforeVisibleOutput(t *testing.T) {
 type loadingTestWriter func([]byte) (int, error)
 
 func (w loadingTestWriter) Write(p []byte) (int, error) { return w(p) }
+
+func TestLoadingFeedbackFailedClearDoesNotPrintFallback(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var output bytes.Buffer
+		var width atomic.Int64
+		width.Store(80)
+		failed := false
+		writer := loadingTestWriter(func(p []byte) (int, error) {
+			if !failed && strings.Contains(string(p), "\x1b[2K") {
+				failed = true
+				return 0, nil
+			}
+			return output.Write(p)
+		})
+		stop := startLoadingFeedback(t.Context(), writer, "Generating image", true, spinner.Line, func() int { return int(width.Load()) })
+		time.Sleep(imageLoadingDelay)
+		synctest.Wait()
+		width.Store(12)
+		time.Sleep(time.Second)
+		synctest.Wait()
+		stop()
+		require.True(t, failed)
+		require.NotContains(t, output.String(), "Working...", "do not append output after a short cleanup write")
+		require.True(t, strings.HasSuffix(output.String(), "\r\x1b[2K"))
+	})
+}
