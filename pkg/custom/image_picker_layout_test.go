@@ -22,7 +22,7 @@ func TestImagePickerLayoutCommonSettingsVisible(t *testing.T) {
 		ids = append(ids, row.id)
 	}
 	require.Equal(t, []string{"model", "size", "quality", "count", "background", "folder", "more"}, ids)
-	for _, focus := range []string{"prompt", "options"} {
+	for _, focus := range []string{"prompt", "options", "command"} {
 		m.focus = focus
 		view := ansi.Strip(m.View().Content)
 		require.Contains(t, view, "╭─ Prompt")
@@ -39,6 +39,77 @@ func TestImagePickerLayoutCommonSettingsVisible(t *testing.T) {
 	require.Equal(t, "more", m.page)
 	require.Equal(t, []string{"format", "back"}, []string{m.rows()[0].id, m.rows()[1].id})
 	require.Len(t, m.rows(), 2)
+}
+
+func TestImagePickerLayoutFullCommandVisibleWithoutChangingFocus(t *testing.T) {
+	for _, prompt := range []string{"A tiny orange robot watering a plant", strings.Repeat("orange robot ", 8) + "final flower"} {
+		for _, note := range []string{"", "File type changed to PNG to keep transparency."} {
+			m := pickerForTest(t)
+			m.width, m.height = 80, 24
+			m.settings.prompt, m.draft, m.cursor = prompt, []rune(prompt), len([]rune(prompt))
+			m.note = note
+			commandLines := m.commandLines(74)
+			require.GreaterOrEqual(t, len(commandLines), 3)
+			require.LessOrEqual(t, len(commandLines), 4)
+			if strings.HasSuffix(prompt, "final flower") {
+				require.Len(t, commandLines, 4, "exercise a complete four-line command")
+			}
+			for _, focus := range []string{"prompt", "options", "command"} {
+				m.focus = focus
+				view := ansi.Strip(m.View().Content)
+				for _, line := range commandLines {
+					require.Contains(t, view, line, "focus=%s note=%q must show the complete command", focus, note)
+				}
+				for _, row := range m.rows() {
+					require.Contains(t, view, row.label, "focus=%s note=%q row=%s", focus, note, row.id)
+				}
+				require.Contains(t, view, note)
+				require.Contains(t, view, "Ctrl+C exit")
+				require.Contains(t, view, "Enter ")
+				pickerLayoutAssertBounds(t, m)
+			}
+		}
+	}
+}
+
+func TestImagePickerLayoutFullCommandReturnsAfterNarrowResize(t *testing.T) {
+	for _, focus := range []string{"prompt", "options", "command"} {
+		m := pickerForTest(t)
+		m.focus = focus
+		m.selected = len(m.rows()) - 1
+		m.note = "File type changed to PNG to keep transparency."
+		for _, size := range [][2]int{{80, 24}, {40, 12}, {49, 24}, {80, 24}} {
+			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			view := ansi.Strip(m.View().Content)
+			require.Equal(t, focus, m.focus)
+			require.Contains(t, view, "Ctrl+C exit")
+			if focus == "options" {
+				require.Contains(t, view, "› More options")
+			}
+			if size[0] == 80 {
+				for _, line := range m.commandLines(74) {
+					require.Contains(t, view, line, "focus=%s", focus)
+				}
+				for _, row := range m.rows() {
+					require.Contains(t, view, row.label, "focus=%s row=%s", focus, row.id)
+				}
+				require.Contains(t, view, m.note)
+			}
+			pickerLayoutAssertBounds(t, m)
+		}
+		require.Empty(t, m.result.Args)
+	}
+}
+
+func pickerLayoutAssertBounds(t *testing.T, m *imagePicker) {
+	t.Helper()
+	view := m.View()
+	require.False(t, view.AltScreen)
+	lines := strings.Split(view.Content, "\n")
+	require.LessOrEqual(t, len(lines), min(18, m.height-3))
+	for _, line := range lines {
+		require.LessOrEqual(t, ansi.StringWidth(line), m.width)
+	}
 }
 
 func TestImagePickerLayoutPromotedSettingsKeepConstraints(t *testing.T) {

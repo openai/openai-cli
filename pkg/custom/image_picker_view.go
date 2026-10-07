@@ -120,7 +120,7 @@ func (m *imagePicker) View() tea.View {
 		// edge explicitly because terminals disagree on emoji cluster widths.
 		row := border.Render("│") + input.Render(ansi.EraseCharacter(width-2)+" "+prompt+" ") +
 			ansi.CursorHorizontalAbsolute(width+2) + border.Render("│")
-		lines = append(lines, "",
+		lines = append(lines,
 			border.Render(caption+strings.Repeat("─", width-ansi.StringWidth(caption)-1)+"╮"),
 			row,
 			border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
@@ -130,9 +130,6 @@ func (m *imagePicker) View() tea.View {
 			caption = "› Prompt"
 		}
 		lines = append(lines, border.Render(caption), "  "+prompt)
-	}
-	if roomy {
-		lines = append(lines, "")
 	}
 	heading := strong.Render(m.heading())
 	if m.width < 60 && m.page != "path" {
@@ -155,11 +152,12 @@ func (m *imagePicker) View() tea.View {
 	if m.note != "" {
 		reserved++
 	}
-	if roomy {
+	rows := m.rows()
+	commandGap := roomy && height-reserved > len(rows)
+	if commandGap {
 		reserved++
 	}
 	available := max(1, height-reserved)
-	rows := m.rows()
 	start := max(0, min(m.selected-available+1, len(rows)-available))
 	end := min(len(rows), start+available)
 	for i := start; i < end; i++ {
@@ -179,7 +177,7 @@ func (m *imagePicker) View() tea.View {
 		active := i == m.selected && (m.focus == "options" || m.focus == "path" && m.folder.match >= 0)
 		lines = append(lines, highlight(ansi.Truncate(text, width-2, "…"), active))
 	}
-	if roomy {
+	if commandGap {
 		lines = append(lines, "")
 	}
 	for i, line := range commandLines {
@@ -302,11 +300,10 @@ func (m *imagePicker) commandLines(width int) []string {
 
 func (m *imagePicker) commandDimensions() (width, height int) {
 	height = 1
-	// Expand the command when focused. Otherwise keep common settings visible.
-	if m.focus == "command" && m.viewHeight() >= 16 {
+	if m.viewHeight() >= 16 {
 		height = 3
 	}
-	if m.focus == "command" && m.viewHeight() >= 18 {
+	if m.viewHeight() >= 18 {
 		height = 4
 	}
 	return max(1, min(m.width-4, 100)-2), height

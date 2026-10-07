@@ -1,24 +1,34 @@
 #!/bin/bash
-# Usage: record.sh BASELINE_BINARY COLUMN_BINARY GRID_BINARY BASE_SHA OUTPUT_DIR
+# Usage: record.sh BASELINE_BINARY COLUMN_BINARY GRID_BINARY_OR_DASH BASE_SHA OUTPUT_DIR
 # Build binaries outside Git. The third binary is a temporary layout experiment.
+# Use - for the third argument to capture only the recommended layout revision.
 set -euo pipefail
 
 if [ "$#" -ne 5 ]; then
-  echo 'usage: record.sh BASELINE_BINARY COLUMN_BINARY GRID_BINARY BASE_SHA OUTPUT_DIR' >&2
+  echo 'usage: record.sh BASELINE_BINARY COLUMN_BINARY GRID_BINARY_OR_DASH BASE_SHA OUTPUT_DIR' >&2
   exit 2
 fi
 demo_source="$(cd "$(dirname "$0")" && pwd -P)"
 demo_root="$(cd "$demo_source/../.." && pwd -P)"
-demo_grid="$(cd "$(dirname "$3")" && pwd -P)/$(basename "$3")"
+demo_grid=""
+if [ "$3" != - ]; then
+  demo_grid="$(cd "$(dirname "$3")" && pwd -P)/$(basename "$3")"
+fi
 demo_python="$(command -v python3)"
 demo_candidate_sha="$(git -C "$demo_root" rev-parse HEAD)"
 source "$demo_source/../demos/capture_and_render.sh"
 # The driver owns the loopback request trap. No shared API process is needed.
 # Record the Python runtime in the shared dependency metadata slot.
 demo_prepare_capture "$demo_root" "$1" "$2" "$4" "$demo_candidate_sha" "$5" "$demo_python"
-test -x "$demo_grid"
-mkdir "$demo_runtime/grid"
-ln -s "$demo_grid" "$demo_runtime/grid/openai"
+demo_layouts=(before column column-no-color)
+demo_comparison=(before-80 column-80)
+if [ -n "$demo_grid" ]; then
+  test -x "$demo_grid"
+  mkdir "$demo_runtime/grid"
+  ln -s "$demo_grid" "$demo_runtime/grid/openai"
+  demo_layouts=(before column grid column-no-color)
+  demo_comparison+=(grid-80)
+fi
 
 cat > "$demo_runtime/scene.sh" <<'SCENE'
 #!/bin/bash
@@ -39,7 +49,11 @@ SCENE
   echo 'candidate identity: binary and source hashes below include uncommitted experiments'
   echo "baseline binary: $demo_before"
   echo "single-column binary: $demo_after"
-  echo "two-column experiment binary: $demo_grid"
+  if [ -n "$demo_grid" ]; then
+    echo "two-column experiment binary: $demo_grid"
+  else
+    echo 'scope: baseline versus recommended single-column layout revision'
+  fi
   echo 'data: synthetic prompt; loopback request trap; zero expected API requests'
   echo 'driver: existing image_picker_harness.Terminal; public images generate command'
   echo 'capture: actual macOS PTY output through shared asciinema lifecycle'
@@ -47,7 +61,8 @@ SCENE
   echo 'scope: terminal replay; not native graphical terminal or Linux/Windows evidence'
   echo 'the request trap never serves an image; no paid generation or live API access'
   demo_capture_metadata
-  shasum -a 256 "$demo_grid" "$demo_source/record.sh" "$demo_source/drive_picker.py" \
+  if [ -n "$demo_grid" ]; then shasum -a 256 "$demo_grid"; fi
+  shasum -a 256 "$demo_source/record.sh" "$demo_source/drive_picker.py" \
     "$demo_source/prompt_frame.py" \
     "$demo_source/build_two_column.py" "$demo_source/two-column.patch" \
     "$demo_root/scripts/image_picker_harness.py" \
@@ -58,7 +73,7 @@ demo_render_options=(--renderer resvg --text-font-family Menlo --font-size 20 --
   --theme dracula --fps-cap 15 --last-frame-duration 1)
 for demo_width in 80 40; do
   demo_window_size="${demo_width}x24"
-  for demo_layout in before column grid column-no-color; do
+  for demo_layout in "${demo_layouts[@]}"; do
     demo_command_dir="$demo_runtime/$demo_layout"
     demo_label="Baseline | ${demo_width}x24"
     demo_no_color=0
@@ -82,5 +97,5 @@ for demo_width in 80 40; do
       -frames:v 1 "$demo_output/$demo_scene.png"
   done
 done
-demo_assemble_capture 100 before-80 column-80 grid-80
+demo_assemble_capture 100 "${demo_comparison[@]}"
 printf 'Recorded image picker layouts in %s\n' "$demo_output"
