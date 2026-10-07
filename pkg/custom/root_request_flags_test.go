@@ -42,6 +42,8 @@ func TestRootRequestFlagsPreserveOwnershipAndMetadata(t *testing.T) {
 }
 
 func TestRootRequestFlagsPreserveMTLSPlacement(t *testing.T) {
+	t.Setenv(mtlsClientCertFileEnv, "/missing/synthetic-env-certificate")
+	t.Setenv(mtlsClientKeyFileEnv, "/missing/synthetic-env-key")
 	pki := newMTLSTestPKI(t)
 	clientCAs := x509.NewCertPool()
 	require.True(t, clientCAs.AppendCertsFromPEM(pki.rootPEM))

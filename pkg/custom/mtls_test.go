@@ -42,8 +42,9 @@ func TestMTLSClientFlags(t *testing.T) {
 			t.Parallel()
 
 			flag := findCommandFlag(t, tt.name)
-			stringFlag, ok := flag.(*cli.StringFlag)
+			wrapped, ok := flag.(interface{ CLIStringFlag() *cli.StringFlag })
 			require.True(t, ok)
+			stringFlag := wrapped.CLIStringFlag()
 			assert.True(t, stringFlag.TakesFile)
 			assert.Equal(t, []string{tt.envName}, stringFlag.GetEnvVars())
 		})
