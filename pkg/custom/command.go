@@ -17,6 +17,7 @@ func ConfigureCommand(root *cli.Command) {
 		return
 	}
 	root.Metadata[configuredCommandMetadata] = true
+	configureRootRequestFlags(root)
 	registerImageModels(root)
 	configureReadableOutput(root)
 	configureImageSaving(root)

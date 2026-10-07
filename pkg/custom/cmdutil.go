@@ -61,8 +61,10 @@ func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 	if cmd.IsSet("organization") {
 		opts = append(opts, option.WithOrganization(cmd.String("organization")))
 	}
-	if cmd.IsSet("project") {
-		opts = append(opts, option.WithProject(cmd.String("project")))
+	// Endpoint body fields named project must not select the request's project context.
+	root := cmd.Root()
+	if root.IsSet("project") {
+		opts = append(opts, option.WithProject(root.String("project")))
 	}
 	if cmd.IsSet("webhook-secret") {
 		opts = append(opts, option.WithWebhookSecret(cmd.String("webhook-secret")))
