@@ -37,6 +37,11 @@ func TestMainGcloudHelpPreservesDetailsAfterShortName(t *testing.T) {
 	if strings.Contains(description, "](") {
 		t.Errorf("DESCRIPTION retained unrendered Markdown: %s", description)
 	}
+	for _, label := range []string{"Built-in tools", "MCP Tools", "Function calls (custom tools)"} {
+		if !strings.Contains(got.stdout, label) || strings.Contains(got.stdout, "**"+label+"**") {
+			t.Errorf("tool guidance lost its text or retained emphasis markers: %s", label)
+		}
+	}
 }
 
 func TestMainGcloudHelpConcreteSyntaxAndLabels(t *testing.T) {
