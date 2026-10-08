@@ -27,7 +27,7 @@ func tokenizerEditorExample() *tokenizerEditor {
 }
 
 func TestTokenizerEditorViewFitsEverySupportedSizeAndFocus(t *testing.T) {
-	for _, size := range [][2]int{{80, 24}, {120, 40}, {60, 16}, {40, 12}} {
+	for _, size := range [][2]int{{80, 24}, {120, 40}, {60, 16}, {40, 12}, {41, 12}, {42, 12}} {
 		for focus := tokenizerFocusText; focus <= tokenizerFocusResults; focus++ {
 			t.Run(fmt.Sprintf("%dx%d/focus%d", size[0], size[1], focus), func(t *testing.T) {
 				m := tokenizerEditorExample()
@@ -36,7 +36,11 @@ func TestTokenizerEditorViewFitsEverySupportedSizeAndFocus(t *testing.T) {
 				require.False(t, view.AltScreen)
 				require.Contains(t, view.Content, "4 tokens")
 				require.NotContains(t, view.Content, "13 bytes")
-				require.Contains(t, view.Content, "View       [Text] Token IDs Bytes")
+				options := "[Text]  Token IDs  Bytes"
+				if size[0] == 40 {
+					options = "[Text] Token IDs Bytes"
+				}
+				require.Contains(t, view.Content, "View       "+options)
 				require.Contains(t, view.Content, "Token IDs")
 				require.Contains(t, view.Content, "Bytes")
 				require.Contains(t, view.Content, "Token 3 of 4")
@@ -428,7 +432,11 @@ func TestTokenizerEditorNoColorKeepsSelectionAndNavigation(t *testing.T) {
 				m.focus, m.option = state.focus, state.option
 				view := m.View().Content
 				require.NotRegexp(t, `\x1b\[[0-9;:]*m`, view)
-				require.Contains(t, view, "View       [Text] Token IDs Bytes")
+				options := "[Text]  Token IDs  Bytes"
+				if size[0] == 40 {
+					options = "[Text] Token IDs Bytes"
+				}
+				require.Contains(t, view, "View       "+options)
 				require.Contains(t, view, "Tokenizer  cl100k_base")
 				if m.focus == tokenizerFocusResults {
 					require.Contains(t, view, "›[")
@@ -519,7 +527,11 @@ func TestTokenizerEditorRowsShareAlignedGuttersAndValues(t *testing.T) {
 			for _, label := range []string{"View", "Tokenizer  cl100k_base", "Token 3 of 4", "[9906]"} {
 				require.Equal(t, gutter, column(label), label)
 			}
-			require.Equal(t, column("Text [Token IDs] Bytes"), column("cl100k_base"))
+			options := "Text  [Token IDs]  Bytes"
+			if size[0] == 40 {
+				options = "Text [Token IDs] Bytes"
+			}
+			require.Equal(t, column(options), column("cl100k_base"))
 			consecutiveBlank := false
 			for _, row := range rows {
 				blank := strings.TrimSpace(row) == ""

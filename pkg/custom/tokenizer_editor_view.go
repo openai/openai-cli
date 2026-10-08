@@ -136,7 +136,10 @@ func (m *tokenizerEditor) View() tea.View {
 		}
 		tabs = append(tabs, label)
 	}
-	views := m.optionRow(s, "View", strings.Join(tabs, " "), viewActive)
+	views := m.optionRow(s, "View", strings.Join(tabs, "  "), viewActive)
+	if ansi.StringWidth(views) > width {
+		views = m.optionRow(s, "View", strings.Join(tabs, " "), viewActive)
+	}
 	if ansi.StringWidth(views+"  ←→") <= width {
 		views += s.muted.Render("  ←→")
 	}
