@@ -214,8 +214,12 @@ func (m *listNavigation) finish(out *listNavigationOutput, runErr error) error {
 		// Automatic completion retains the selected table or labeled format.
 		content := m.content
 		if m.printPage {
-			// Plain labels preserve full values when the user requests p.
-			content, printErr = renderListNavigationLabels(m.opts, m.pages[m.index].items)
+			printOpts := m.opts
+			if printOpts.Operation == "(resource) models > (method) list" {
+				// Models printing requests original fields, without either summary pass.
+				printOpts.RawOutput = true
+			}
+			content, printErr = renderListNavigationLabels(printOpts, m.pages[m.index].items)
 		}
 		if printErr == nil {
 			_, printErr = (outputWriter{ctx: m.opts.Context, out: m.opts.Stdout}).WriteString(content)
@@ -459,8 +463,8 @@ func renderListNavigationPage(opts ShowJSONOpts, items []gjson.Result, width int
 	return renderListNavigationLabels(opts, items)
 }
 
-// Printing a page always uses complete labeled values, independent of the
-// viewport's width and any compact table projection used for navigation.
+// Labeled output preserves values independently of compact table widths.
+// RawOutput bypasses the default response and resource summaries.
 func renderListNavigationLabels(opts ShowJSONOpts, items []gjson.Result) (string, error) {
 	var content strings.Builder
 	omitted := false

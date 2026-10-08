@@ -21,13 +21,13 @@ func TestModelsListTableOmitsOtherMetadata(t *testing.T) {
 	require.Equal(t, "ID       OWNER\nmodel-a  synthetic\nmodel-a  (unknown)\nmodel-z  synthetic-owner\n\nListed 3 models.\nDetails: --format json\n", content)
 	require.NotContains(t, content, "2030-01-01")
 	require.NotContains(t, content, "synthetic detail")
-	// p remains an explicit request for complete readable records.
+	// The readable fallback preserves unfamiliar metadata.
 	labels, err := renderListNavigationLabels(opts, items)
 	require.NoError(t, err)
 	require.Contains(t, labels, "ID: model-z")
 	require.Contains(t, labels, "synthetic detail")
 	require.Contains(t, labels, "2030-01-01")
-	// Explicit text retains the existing complete readable presentation.
+	// Explicit text retains the existing readable presentation.
 	opts.Format = "text"
 	text, err := renderListNavigationPage(opts, items, 80)
 	require.NoError(t, err)

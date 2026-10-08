@@ -41,6 +41,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
         try:
             self.wfile.write(self.server.body)
         except (BrokenPipeError, ConnectionResetError):
+            # The CLI can disconnect when canceled or when the test closes its terminal.
             pass
 
 

@@ -37,7 +37,9 @@ def wait_screen(terminal, marker, *, absent=None, after_event=-1):
 
 
 def send_key(terminal, key, keys):
-    assert os.write(terminal.master, key.encode()) == 1, "short key write"
+    written = os.write(terminal.master, key.encode())
+    if written != 1:
+        raise AssertionError("short key write")
     keys.append(key)
     terminal.events.append([time.monotonic() - terminal.started, "i", key])
 

@@ -506,7 +506,10 @@ def main():
         with case(name, resource='models') as (terminal, server):
             text = completed_output(terminal, [item_id(1)])
             assert request_count(server) == 1
-            assert text.startswith('ID\nitem_001\n') and 'Listed 1 model.' in text
+            lines = text.splitlines()
+            assert lines[0].split() == ['ID', 'OWNER'], text
+            assert lines[1].split() == [item_id(1), '(unknown)'], text
+            assert 'Listed 1 model.' in text
             assert not any(label in text for label in ('ID:', 'Filename:', 'Status:', 'Owned by:'))
 
     name = 'vector-stores-default-bypass'
