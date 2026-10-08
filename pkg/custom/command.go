@@ -20,6 +20,7 @@ func ConfigureCommand(root *cli.Command) {
 	configureRootRequestFlags(root)
 	registerImageModels(root)
 	configureReadableOutput(root)
+	configureBatchCommands(root)
 	configureImageSaving(root)
 	configureImagePickerCompletion(root)
 	configureImagePickerShellSetup(root)

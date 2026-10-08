@@ -31,7 +31,10 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var imageModelsFailure *imageModelsError
 	var voiceTypeFailure *voiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
+	var batchFailure *batchWorkflowError
 	switch {
+	case errors.As(failure, &batchFailure):
+		return batchFailure.message
 	case errors.Is(failure, context.Canceled):
 		return "Request canceled."
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():

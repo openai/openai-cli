@@ -62,6 +62,22 @@ func errorOutputFormat(root *cli.Command) string {
 // prose, request values, URLs or arbitrary local diagnostics. Both renderer sinks
 // use out, including explorer output and warnings. Writer failures are returned.
 func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
+	return withBatchErrorOutput(failure, out, func(ctx context.Context, destination io.Writer) error {
+		return showCommandError(ctx, root, failure, destination)
+	})
+}
+
+// ShowCommandErrorFallback keeps secondary cancellation diagnostics bounded too.
+// Its result retains the original presentation failure and any fallback failure.
+func ShowCommandErrorFallback(failure, presentationErr error, out io.Writer) error {
+	fallbackErr := withBatchErrorOutput(failure, out, func(_ context.Context, destination io.Writer) error {
+		_, err := fmt.Fprintln(destination, "Could not display the error.")
+		return err
+	})
+	return errors.Join(presentationErr, fallbackErr)
+}
+
+func showCommandError(ctx context.Context, root *cli.Command, failure error, out io.Writer) error {
 	if failure == nil {
 		return nil
 	}
@@ -71,6 +87,9 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 		return nil
 	}
 	format := errorOutputFormat(root)
+	if format == "explore" && interruptedBatchError(failure) {
+		format = "json"
+	}
 	// A rejected format can still be present in the parsed flag state. Present
 	// its validation error using text, rather than failing to render it again.
 	if !slices.Contains(OutputFormats, format) {
@@ -113,7 +132,7 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 		value = gjson.ParseBytes(data)
 	}
 	return ShowJSON(value, ShowJSONOpts{
-		Operation: "", OutputKind: OutputUnspecified,
+		Context: ctx, Operation: "", OutputKind: OutputUnspecified,
 		Format: format, ExplicitFormat: root.IsSet("format-error") || root.IsSet("format"),
 		Stdout: out, Stderr: out, Title: "Error", Transform: root.String("transform-error"),
 	})

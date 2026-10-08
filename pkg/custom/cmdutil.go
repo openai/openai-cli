@@ -114,6 +114,8 @@ func isInputPiped() bool {
 
 func isTerminal(w io.Writer) bool {
 	switch v := w.(type) {
+	case batchTerminalWriter:
+		return term.IsTerminal(v.file.Fd())
 	case *os.File:
 		return term.IsTerminal(v.Fd())
 	default:
@@ -541,7 +543,10 @@ func (o *ShowJSONOpts) setDefaults() {
 
 // ShowJSON displays a single JSON result to the user.
 func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
-	return showJSON(res, opts, transformers.Select)
+	if err := showJSON(res, opts, transformers.Select); err != nil {
+		return err
+	}
+	return showBatchNextCommand(res, opts)
 }
 
 func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformerSelector) error {
@@ -603,7 +608,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 		}
 	case "explore":
 		if isTerminal(opts.Stdout) {
-			return jsonview.ExploreJSONWithOutput(opts.Title, res, opts.Stdout)
+			return jsonview.ExploreJSONWithContext(opts.Context, opts.Title, res, opts.Stdout)
 		}
 		if opts.ExplicitFormat {
 			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stderr}).WriteString(warningExploreNotSupported); err != nil {
