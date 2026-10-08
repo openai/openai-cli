@@ -63,6 +63,12 @@ func init() {
 	if strings.Contains(mode, "short-write") {
 		output = tokenizerTerminalShortWriter{os.Stdout}
 	}
+	if strings.Contains(mode, "completion") {
+		output = tokenizerTerminalBlockedWriter{os.Stdout}
+		if strings.Contains(mode, "native") {
+			output = tokenizerTerminalObservedWriter{os.Stdout, filepath.Join(filepath.Dir(os.Args[0]), "started")}
+		}
+	}
 	err := serveTokenizerTerminalOutput(context.Background(), os.Stdin, output, os.Stderr)
 	if strings.Contains(mode, "completion") {
 		_ = os.WriteFile(filepath.Join(filepath.Dir(os.Args[0]), "completed"), []byte("stopped"), 0600)
@@ -77,6 +83,29 @@ type tokenizerTerminalShortWriter struct{ io.Writer }
 
 func (w tokenizerTerminalShortWriter) Write(data []byte) (int, error) {
 	return w.Writer.Write(data[:len(data)/2])
+}
+
+type tokenizerTerminalBlockedWriter struct{ io.Writer }
+
+func (w tokenizerTerminalBlockedWriter) Write(data []byte) (int, error) {
+	if n, err := w.Writer.Write(data[:1]); n != 1 || err != nil {
+		return n, err
+	}
+	// The start byte proves entry. Never finish or acknowledge this write:
+	// only the production lifeline reader can release the helper's serve loop.
+	select {}
+}
+
+type tokenizerTerminalObservedWriter struct {
+	io.Writer
+	started string
+}
+
+func (w tokenizerTerminalObservedWriter) Write(data []byte) (int, error) {
+	if err := os.WriteFile(w.started, []byte("started"), 0600); err != nil {
+		return 0, err
+	}
+	return w.Writer.Write(data)
 }
 
 func tokenizerTerminalTestExecutable(t *testing.T, mode string) string {
@@ -274,8 +303,9 @@ func TestTokenizerTerminalOutputParentDeathStopsBlockedWriter(t *testing.T) {
 			_ = child.Kill()
 		}
 	}()
-	// A byte proves a terminal write began. Keep the read end open but stop
-	// draining; parent death must stop the writer without relying on EPIPE.
+	// This fixture emits one byte, then blocks before any acknowledgement.
+	// The marker therefore observes lifeline completion, not an ack SIGPIPE.
+	// A separate native-pipe test observes process exit under real backpressure.
 	var first [1]byte
 	if _, err := io.ReadFull(read, first[:]); err != nil {
 		t.Fatal(err)
@@ -290,7 +320,7 @@ func TestTokenizerTerminalOutputParentDeathStopsBlockedWriter(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("blocked writer survived its parent's death")
+			t.Fatal("output serve loop did not finish after parent death")
 		}
 		time.Sleep(time.Millisecond)
 	}
