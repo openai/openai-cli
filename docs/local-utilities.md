@@ -3,6 +3,41 @@
 These commands work offline without API credentials.
 They do not save your text, edit settings, or install software.
 
+## Explore tokens interactively
+
+```sh
+openai tokenizer
+```
+
+A capable terminal opens the live editor with the same theme as image generation.
+Type or paste text to see its exact token count.
+The editor supports up to 1 MiB of UTF-8 input.
+
+- Press Tab to select results.
+- Press Left or Right to switch Text, Token IDs, and Bytes.
+- Press Up or Down to select a token.
+- Press Enter on a token to inspect every byte.
+- Press Tab again to select the encoding.
+- Press F1 for all controls and script examples.
+- Press Ctrl+C to exit.
+
+Enter inserts a newline while editing text.
+Ctrl+U removes text before the cursor, matching the image prompt editor.
+Paste preserves whitespace, line endings, and Unicode normalization.
+The editor escapes control characters for display.
+The Bytes view exposes token fragments that split a Unicode character.
+
+Editing clears stale results immediately.
+The editor cancels superseded computations and displays only the current revision.
+Long unbroken text can take time; editing and quitting remain available during computation.
+If computation fails, edit the text or press `r` while results have focus.
+The draft remains available until you exit; the CLI never saves it.
+
+The editor requires terminal input and output, automatic format, and at least 40 columns by 12 rows.
+Pipes, CI, `TERM=dumb`, and explicit text format receive command guidance without consuming stdin.
+`NO_COLOR` retains keyboard controls and visible focus markers.
+Use `count` or `inspect` for JSON output and scripts.
+
 ## Count and inspect tokens
 
 ```sh
@@ -21,6 +56,7 @@ Combining both options is an error.
 Without either option, the command reads redirected stdin through EOF.
 Use `--file -` to read interactive stdin through EOF.
 Plain terminal input without an explicit source returns guidance instead of waiting.
+These input rules apply to `count` and `inspect`, not the live editor.
 
 `--text` treats `@`, JSON, YAML, and special-token spellings as ordinary text.
 File paths are literal; `--file` does not expand `@` references.
@@ -72,6 +108,8 @@ openai codex --destination docs --open # explicitly request a browser launch
 ```
 
 The OpenAI CLI command `openai codex` prints instructions for the separate Codex CLI executable, `codex`.
+Automatic terminal output groups installation, startup, configuration, and official links in the CLI theme.
+Explicit text and JSON formats retain their plain output contracts.
 It never runs installation commands, launches an agent, logs in, or changes configuration.
 Codex CLI and destination services handle their own sign-in and access checks.
 
@@ -93,8 +131,9 @@ See [configuration basics](https://learn.chatgpt.com/docs/config-file/config-bas
 
 ## Formats, failures, and dependencies
 
-Both utilities support the existing `--format` flag with `auto`, `text`, and `json`.
-`auto` produces readable text, including through pipes.
+Tokenizer subcommands and Codex support `--format auto`, `text`, and `json`.
+Bare `openai tokenizer` requires `count` or `inspect` for JSON output.
+`auto` produces readable text through pipes.
 Unsupported formats, `--transform`, and `--raw-output` return errors.
 The existing `--format-error` behavior remains available.
 Invalid input, read failures, opening failures, and output failures return nonzero statuses.
@@ -104,10 +143,16 @@ Interrupted output can be incomplete.
 
 Check the exit status before using output in a script.
 Do not treat partial JSON or a printed Codex URL as proof that the command succeeded.
-The commands never retry, change your input, install a browser, or choose a different encoding automatically.
+Script commands never retry, change your input, install a browser, or choose a different encoding automatically.
+The live editor replaces tokenization work when you edit text or select another encoding.
 
 | Failure | What remains | What to do next |
 | --- | --- | --- |
+| Live preview fails | Your draft remains; stale results disappear. | Edit the text or press `r` with results selected. Use `tokenizer inspect` for plain output. |
+| Invalid or oversized paste | The editor keeps the complete previous draft. | Paste valid UTF-8 within the 1 MiB total limit. The editor never truncates accepted input. |
+| Terminal becomes too small | The draft and current results remain in memory. | Resize to at least 40 columns by 12 rows, or press Ctrl+C. |
+| Editor startup or display fails | The CLI attempts terminal restoration and exits nonzero. | Use `tokenizer count` or `tokenizer inspect` with an explicit source. |
+| Editor exits or receives a termination signal | The draft is discarded; no files or settings change. | Keep important source text in your own file before opening the editor. |
 | No input in a terminal | No token result. | Supply `--text`, `--file`, or a pipe. Use `--file -` for interactive stdin. |
 | Conflicting or repeated input options | No token result; input stays unread. | Supply each option once and choose either `--text` or `--file`. |
 | Unknown encoding or option | No token result. | Run `openai tokenizer encodings` or command `--help`. Use an encoding name, not a model name. |

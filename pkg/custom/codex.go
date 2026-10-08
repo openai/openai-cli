@@ -67,7 +67,7 @@ func codexCommand(open func(context.Context, string) error) *cli.Command {
 			"Supports --format auto, text, and json. Does not support --transform or --raw-output.",
 		HideHelpCommand:    true,
 		CustomHelpTemplate: help,
-		Metadata:           map[string]any{localUtilityMetadata: true, "local-help-full": help},
+		Metadata:           map[string]any{localUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools"},
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "destination", Usage: "Print an official link: docs, config, app, or web", OnlyOnce: true},
 			&cli.BoolFlag{Name: "open", Usage: "Open the selected destination in a browser; requires --destination", OnlyOnce: true},
@@ -131,6 +131,14 @@ func handleCodex(ctx context.Context, command *cli.Command, open func(context.Co
 	}
 	if command.Bool("open") && selected == nil {
 		return &localUtilityError{message: "Opening a Codex destination requires --destination docs, config, app, or web."}
+	}
+	if selected == nil {
+		if handled, err := writeCodexTerminalGuide(ctx, command, guide); handled {
+			if err != nil {
+				return &localUtilityError{message: "Could not write Codex output. Output may be incomplete. Check the output file or pipe before rerunning.", cause: err}
+			}
+			return nil
+		}
 	}
 	var content string
 	if format == "json" {
@@ -196,7 +204,19 @@ func openCodexDestination(ctx context.Context, url string) error {
 		return err
 	}
 	command := exec.CommandContext(ctx, name, args...)
+	command.Env = codexBrowserEnvironment(os.Environ())
 	return command.Run()
+}
+
+func codexBrowserEnvironment(environment []string) []string {
+	clean := make([]string, 0, len(environment))
+	for _, setting := range environment {
+		name, _, _ := strings.Cut(setting, "=")
+		if !strings.HasPrefix(strings.ToUpper(name), "OPENAI_") {
+			clean = append(clean, setting)
+		}
+	}
+	return clean
 }
 
 func codexBrowserCommand(goos, url string) (string, []string, error) {

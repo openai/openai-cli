@@ -17,18 +17,26 @@ import (
 )
 
 func registerTokenizerCommands(root *cli.Command) {
+	help := `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}EXAMPLE
+  {{$bin}} tokenizer
+
+Opens the live editor in a terminal. Use count or inspect for scripts.
+
+` + cli.CommandHelpTemplate
 	root.Commands = append(root.Commands, &cli.Command{
-		Name: "tokenizer", Usage: "Count and inspect plain-text tokens locally",
+		Name: "tokenizer", Usage: "Explore text, token IDs, and bytes locally",
 		Description: "Tokenizes exact UTF-8 text without credentials, network access, or saved input. " +
 			"Plain-text counts are not complete request counts, billed usage, prices, or context-limit guarantees. " +
 			"Use responses input-tokens count for server request counting.",
 		HideHelpCommand:    true,
-		CustomHelpTemplate: cli.CommandHelpTemplate,
-		Metadata:           map[string]any{localUtilityMetadata: true},
+		CustomHelpTemplate: help,
+		Metadata:           map[string]any{localUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools"},
+		Action:             handleTokenizerEditor,
 		Commands: []*cli.Command{
 			tokenizerInputCommand("count", false), tokenizerInputCommand("inspect", true),
 			{Name: "encodings", Usage: "List the embedded tokenizer encodings", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate, Action: handleTokenizerEncodings},
 			{Name: "licenses", Usage: "Print the bundled tokenizer license notices", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate, Action: handleTokenizerLicenses},
+			tokenizerPreviewCommand(),
 		},
 	})
 }

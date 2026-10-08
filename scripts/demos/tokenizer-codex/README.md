@@ -13,12 +13,16 @@ Each process receives a rejecting loopback base URL and no personal environment 
 | `inspect` | `openai tokenizer inspect --text "Hi!"` | 1 | 0 |
 | `codex` | `openai codex --destination config` | 1 | 0 |
 | `guide` | `openai codex` | 3 | 0 |
+| `editor` | `openai tokenizer` | 0 | 130 |
 
 The baseline is main `da762ffff4f35732f4720ac4db531d8d764f2cbe`.
 Direct baseline execution verified these statuses before recording.
 The first three baseline commands report an unrecognized option.
 The guide baseline reports an unknown help topic.
 Recordings preserve those actual errors; they do not substitute explanatory output.
+The editor scene uses published feature commit `6e761e71051aa260e01d189437a77dd5e9f72365` as its baseline.
+That baseline prints tokenizer help and exits successfully.
+The candidate opens the editor; the driver exits through Ctrl+C and preserves status 130.
 
 The default `o200k_base` count example contains 13 input bytes and four tokens.
 The inspect example contains three input bytes and two tokens.
@@ -81,3 +85,45 @@ Retain only these reproducible scripts and instructions in the repository.
 These recordings show real macOS PTY execution with replay rendering.
 They do not prove graphical terminal appearance or native Windows/Linux execution.
 No recording has occurred merely because this recipe exists.
+
+## Interactive editor and guide refinement
+
+Use the published feature baseline for the editor and the updated Codex guide.
+Set `DEMO_BEFORE_STATUS=0` for the guide when comparing against that baseline.
+The original main baseline still uses the guide's default status 3.
+The recorder saves expected statuses separately from actual process statuses.
+
+```sh
+DEMO_THEME=dark DEMO_BEFORE_STATUS=0 \
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh editor \
+  /absolute/path/to/published-feature /absolute/path/to/candidate \
+  6e761e71051aa260e01d189437a77dd5e9f72365 "$AFTER_SHA" \
+  /absolute/path/outside/repository/editor-dark-80
+```
+
+Repeat with `DEMO_COLUMNS=40` for the compact layout.
+Use `DEMO_THEME=light` for a light terminal.
+Use `DEMO_THEME=no-color` to set `NO_COLOR=1`.
+The editor defaults to dark; existing scenes retain their no-color default.
+Editor dimensions are 80×32 or 40×44, preserving room for the baseline's help output.
+
+The Bash scene uses a small Python keyboard driver inside the shared capture lifecycle.
+The driver starts the actual CLI in a terminal with matching dimensions.
+It types `Hello, ` and pastes the remaining synthetic UTF-8 text.
+It visits Text, Token IDs, Bytes, token details, the alternate encoding, and controls.
+It forwards only the CLI's actual terminal output.
+It answers terminal capability queries and stops its process group on interrupted recording.
+No fabricated application frames enter the recording.
+
+The scene retains its exact synthetic input, observed states, dimensions, theme, and actual exit status.
+The validator selects screenshot times from actual output events in `after.cast`.
+It requires distinct visible states before generating screenshots.
+`after.png` shows the live Text view before exit.
+`after-ids.png`, `after-bytes.png`, `after-details.png`, `after-encoding.png`, and `after-controls.png` preserve the other states.
+`after-exit.png` retains the final shell frame.
+The comparison GIF includes the complete interaction and cleanup.
+
+Use `guide` with the same baseline, theme, and before-status setting for the Codex presentation comparison.
+The guide scene prints instructions only.
+Review every selected screenshot and the GIF before publication.

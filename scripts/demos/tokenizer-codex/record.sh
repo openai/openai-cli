@@ -3,13 +3,13 @@ set -euo pipefail
 
 if [ "$#" -ne 6 ]; then
   echo 'usage: record.sh MODE BEFORE_BINARY AFTER_BINARY BEFORE_SHA AFTER_SHA OUTPUT_DIR' >&2
-  echo 'MODE: count, inspect, codex, or guide' >&2
+  echo 'MODE: count, inspect, codex, guide, or editor' >&2
   exit 2
 fi
 demo_mode="$1"
 case "$demo_mode" in
-  count|inspect|codex|guide) ;;
-  *) echo 'MODE must be count, inspect, codex, or guide.' >&2; exit 2;;
+  count|inspect|codex|guide|editor) ;;
+  *) echo 'MODE must be count, inspect, codex, guide, or editor.' >&2; exit 2;;
 esac
 shift
 demo_columns="${DEMO_COLUMNS:-80}"
@@ -20,15 +20,27 @@ esac
 demo_source="$(cd "$(dirname "$0")" && pwd)"
 demo_root="$(cd "$demo_source/../../.." && pwd)"
 demo_python="$(command -v python3)"
+demo_theme="${DEMO_THEME:-no-color}"
+if [ "$demo_mode" = editor ]; then demo_theme="${DEMO_THEME:-dark}"; fi
+case "$demo_theme" in
+  dark) demo_palette=asciinema; demo_theme_environment=('COLORFGBG=15;0');;
+  light) demo_palette=github-light; demo_theme_environment=('COLORFGBG=0;15');;
+  no-color) demo_palette=asciinema; demo_theme_environment=(NO_COLOR=1 'COLORFGBG=15;0');;
+  *) echo 'DEMO_THEME must be dark, light, or no-color.' >&2; exit 2;;
+esac
 source "$demo_source/../capture_and_render.sh"
 # The shared lifecycle requires an executable fixture argument. It is unused here.
 demo_prepare_capture "$demo_root" "$1" "$2" "$3" "$4" "$5" "$2"
 demo_rows=24
 if [ "$demo_mode" = guide ]; then demo_rows=40; fi
 if [ "$demo_columns" = 40 ]; then demo_rows=$((demo_rows + 20)); fi
+if [ "$demo_mode" = editor ]; then
+  demo_rows=32
+  if [ "$demo_columns" = 40 ]; then demo_rows=44; fi
+fi
 demo_window_size="${demo_columns}x${demo_rows}"
-demo_render_options=(--renderer resvg --font-family Menlo --font-size 22 --line-height 1.2 \
-  --theme asciinema --fps-cap 20 --last-frame-duration 3)
+demo_render_options=(--renderer resvg --font-family 'Menlo,Apple Color Emoji' --font-size 22 --line-height 1.2 \
+  --theme "$demo_palette" --fps-cap 20 --last-frame-duration 3)
 
 cat > "$demo_runtime/scene.sh" <<'SCENE'
 #!/bin/bash
@@ -55,12 +67,20 @@ case "$DEMO_MODE" in
     printf '%s\n' '$ openai codex'
     demo_args=(codex)
     ;;
+  editor)
+    printf '%s\n' '$ openai tokenizer'
+    demo_args=(tokenizer)
+    ;;
   *) exit 2;;
 esac
 sleep 0.4
-if openai "${demo_args[@]}"; then demo_status=0; else demo_status=$?; fi
+if [ "$DEMO_MODE" = editor ] && [ "$DEMO_SCENE" = after ]; then
+  if "$DEMO_PYTHON" "$DEMO_EDITOR_DRIVER"; then demo_status=0; else demo_status=$?; fi
+else
+  if openai "${demo_args[@]}"; then demo_status=0; else demo_status=$?; fi
+fi
 printf '%s\t%s\n' "$DEMO_SCENE" "$demo_status" >> "$DEMO_STATUS_LOG" || exit 98
-printf '\n$ '
+printf '\033[?25h\n$ '
 sleep 3
 exit "$demo_status"
 SCENE
@@ -77,13 +97,14 @@ SCENE
   echo 'API configuration: rejecting loopback address http://127.0.0.1:1; no live endpoint'
   echo 'capture: actual commands in isolated Bash PTYs; actual errors and statuses retained'
   echo "terminal dimensions: $demo_window_size"
-  echo 'render: asciinema and agg; Menlo 22px; asciinema theme; 20 fps cap'
+  echo "render: asciinema and agg; Menlo/Apple Color Emoji 22px; $demo_palette theme; 20 fps cap"
+  echo "application theme: $demo_theme"
   echo 'scope: terminal replay, not graphical terminal or native Windows/Linux validation'
   echo 'browser: no --open flag; installation commands are printed only'
   echo 'recipe: scripts/demos/tokenizer-codex/record.sh'
   demo_capture_metadata
   "$demo_python" --version
-  shasum -a 256 "$demo_source/record.sh" "$demo_source/validate.py" "$demo_source/README.md"
+  shasum -a 256 "$demo_source/record.sh" "$demo_source/validate.py" "$demo_source/editor_driver.py" "$demo_source/README.md"
 } > "$demo_output/metadata.txt"
 if command -v go >/dev/null; then
   go version -m "$demo_before" > "$demo_output/before-build-info.txt"
@@ -96,10 +117,32 @@ fi
 cp "$demo_runtime/scene.sh" "$demo_output/scene.sh"
 demo_before_status=1
 if [ "$demo_mode" = guide ]; then demo_before_status=3; fi
+if [ "$demo_mode" = editor ]; then demo_before_status=0; fi
+demo_before_status="${DEMO_BEFORE_STATUS:-$demo_before_status}"
+case "$demo_before_status" in
+  0|1|3) ;;
+  *) echo 'DEMO_BEFORE_STATUS must be 0, 1, or 3.' >&2; exit 2;;
+esac
+demo_after_status=0
+if [ "$demo_mode" = editor ]; then demo_after_status=130; fi
+printf '%s\t%s\n' before "$demo_before_status" after "$demo_after_status" > "$demo_output/expected-statuses.tsv"
 demo_capture_scene before "$demo_before_status" "$demo_runtime/before" 'http://127.0.0.1:1' 'BEFORE' \
-  "DEMO_MODE=$demo_mode" 'DEMO_SCENE=before' "DEMO_STATUS_LOG=$demo_output/statuses.tsv" NO_COLOR=1
-demo_capture_scene after 0 "$demo_runtime/after" 'http://127.0.0.1:1' 'AFTER' \
-  "DEMO_MODE=$demo_mode" 'DEMO_SCENE=after' "DEMO_STATUS_LOG=$demo_output/statuses.tsv" NO_COLOR=1
+  "DEMO_MODE=$demo_mode" 'DEMO_SCENE=before' "DEMO_STATUS_LOG=$demo_output/statuses.tsv" "${demo_theme_environment[@]}"
+demo_capture_scene after "$demo_after_status" "$demo_runtime/after" 'http://127.0.0.1:1' 'AFTER' \
+  "DEMO_MODE=$demo_mode" 'DEMO_SCENE=after' "DEMO_STATUS_LOG=$demo_output/statuses.tsv" \
+  "DEMO_PYTHON=$demo_python" "DEMO_EDITOR_DRIVER=$demo_source/editor_driver.py" \
+  "DEMO_EDITOR_REPORT=$demo_output/editor-input.json" "DEMO_COLUMNS=$demo_columns" "DEMO_ROWS=$demo_rows" \
+  "DEMO_THEME=$demo_theme" "${demo_theme_environment[@]}"
 "$demo_python" "$demo_source/validate.py" "$demo_output" "$demo_mode" > "$demo_output/validation.txt"
+if [ "$demo_mode" = editor ]; then
+  mv "$demo_output/after.png" "$demo_output/after-exit.png"
+  while IFS=$'\t' read -r demo_state demo_time; do
+    "$demo_agg" --quiet "${demo_render_options[@]}" --select "$demo_time" \
+      "$demo_output/after.cast" "$demo_output/after-$demo_state.gif"
+    "$demo_ffmpeg" -hide_banner -loglevel error -y -i "$demo_output/after-$demo_state.gif" \
+      -frames:v 1 "$demo_output/after-$demo_state.png"
+  done < "$demo_output/editor-snapshots.tsv"
+  cp "$demo_output/after-text.png" "$demo_output/after.png"
+fi
 demo_assemble_capture 300 before after
 printf 'Recorded %s terminal replay in %s\n' "$demo_mode" "$demo_output"
