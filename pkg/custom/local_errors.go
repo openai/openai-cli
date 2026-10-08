@@ -34,6 +34,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var adminCredentialsFailure *adminCredentialsError
 	var adminSetupFailure *adminSetupError
 	switch {
+	case errors.As(failure, &adminSetupFailure):
+		return adminSetupFailure.Error()
 	case errors.Is(failure, context.Canceled):
 		return "Request canceled."
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
@@ -56,8 +58,6 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return unknownCommandAt(helpTopicFailure.Parent, helpTopicFailure.Topic)
 	case errors.As(failure, &adminCredentialsFailure):
 		return adminCredentialsFailure.Error()
-	case errors.As(failure, &adminSetupFailure):
-		return adminSetupFailure.Error()
 	case errors.As(failure, &pathError):
 		switch {
 		case errors.Is(pathError, os.ErrNotExist):

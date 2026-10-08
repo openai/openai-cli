@@ -58,9 +58,12 @@ Show manual setup for an ordinary API key:
 type adminSetupError struct {
 	message string
 	code    int
+	// Only canonical context errors belong here, never backend or caller data.
+	cause error
 }
 
 func (err *adminSetupError) Error() string { return err.message }
+func (err *adminSetupError) Unwrap() error { return err.cause }
 func (err *adminSetupError) ExitCode() int {
 	if err.code != 0 {
 		return err.code
@@ -196,7 +199,10 @@ func verifyAdminSetup(ctx context.Context, options []option.RequestOption, key [
 		if ctx.Err() != nil {
 			return adminSetupCanceled(ctx)
 		}
-		return &adminSetupError{message: "Verification timed out after 15 seconds. Check your connection, then run setup admin again."}
+		return &adminSetupError{
+			message: "Verification timed out after 15 seconds. Check your connection, then run setup admin again.",
+			cause:   context.DeadlineExceeded,
+		}
 	}
 	var apiError *openai.Error
 	if errors.As(err, &apiError) {
@@ -237,9 +243,18 @@ func adminSetupSignalContext(parent context.Context) (context.Context, func()) {
 }
 
 func adminSetupCanceled(ctx context.Context) error {
+	// Preserve the caller's standard cancellation identity without retaining an
+	// arbitrary cancellation cause that could contain private request details.
+	cause := ctx.Err()
+	if cause == nil {
+		cause = context.Canceled
+	}
+	if errors.Is(cause, context.DeadlineExceeded) {
+		return &adminSetupError{message: "Admin setup timed out. No key was saved.", cause: cause}
+	}
 	code := 130
 	if errors.Is(context.Cause(ctx), errAdminSetupTerminated) {
 		code = 143
 	}
-	return &adminSetupError{message: "Admin setup canceled. No key was saved.", code: code}
+	return &adminSetupError{message: "Admin setup canceled. No key was saved.", code: code, cause: cause}
 }

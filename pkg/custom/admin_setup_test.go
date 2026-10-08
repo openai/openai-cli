@@ -30,6 +30,7 @@ func TestAdminSetupRepeatedHelpConfiguration(t *testing.T) {
 			t.Fatalf("guide lost current invocation %q: %s", invocation, &output)
 		}
 		root.Metadata["help-invocation"] = invocation
+		root.Metadata[adminCredentialsRequiredMetadata] = true
 		err := checkAdminCredentials(root)
 		if err == nil || !strings.Contains(err.Error(), invocation+" help setup admin") {
 			t.Fatalf("missing-key error lost current invocation %q: %v", invocation, err)

@@ -1,7 +1,6 @@
 package custom
 
 import (
-	"context"
 	"net/http"
 	"net/url"
 	"os"
@@ -11,6 +10,8 @@ import (
 )
 
 type adminCredentialsError struct{ invocation string }
+
+const adminCredentialsRequiredMetadata = "admin-credentials-required"
 
 func (err *adminCredentialsError) Error() string {
 	invocation := err.invocation
@@ -27,34 +28,30 @@ For key creation and manual setup instructions, run:
   ` + invocation + ` help setup admin`
 }
 
-// Decorate canonical generated operations before subgroup cloning. The action
-// retains its authentication requirement when another route or alias invokes it.
+// Mark canonical generated operations before subgroup cloning. Request setup
+// checks credentials after positional and required-input validation.
 func configureAdminCredentials(root *cli.Command) {
 	for _, resource := range root.Commands {
-		if resource.Category != "API RESOURCE" || !strings.HasPrefix(resource.Name, "admin:") {
+		if resource.Category != "API RESOURCE" ||
+			(!strings.HasPrefix(resource.Name, "admin:") && resource.Name != "fine-tuning:checkpoints:permissions") {
 			continue
 		}
 		for _, operation := range resource.Commands {
 			if operation.Action == nil {
 				continue
 			}
-			next := operation.Action
-			operation.Action = func(ctx context.Context, command *cli.Command) error {
-				// Generated actions reject extra arguments before building requests.
-				// Preserve that error; a positional value is never an admin key.
-				if command.Args().Present() {
-					return next(ctx, command)
-				}
-				if err := checkAdminCredentials(command); err != nil {
-					return err
-				}
-				return next(ctx, command)
+			if operation.Metadata == nil {
+				operation.Metadata = map[string]any{}
 			}
+			operation.Metadata[adminCredentialsRequiredMetadata] = true
 		}
 	}
 }
 
 func checkAdminCredentials(command *cli.Command) error {
+	if required, _ := command.Metadata[adminCredentialsRequiredMetadata].(bool); !required {
+		return nil
+	}
 	invocation, _ := command.Root().Metadata["help-invocation"].(string)
 	missing := &adminCredentialsError{invocation: invocation}
 	// Custom endpoints own their authentication contracts and server errors.

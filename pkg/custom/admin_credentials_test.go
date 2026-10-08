@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -38,12 +39,18 @@ func adminCredentialsTestCommand(t *testing.T, action cli.ActionFunc) *cli.Comma
 		},
 		Commands: []*cli.Command{{
 			Name: "admin:organization:projects", Category: "API RESOURCE",
-			Commands: []*cli.Command{{Name: "list", Action: action}},
+			Commands: []*cli.Command{{Name: "list", Action: func(ctx context.Context, command *cli.Command) error {
+				// Generated actions validate request input before checking credentials.
+				if _, err := FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatRepeat, EmptyBody, false); err != nil {
+					return err
+				}
+				return action(ctx, command)
+			}}},
 		}},
 	}
 }
 
-func TestAdminCredentialsCanonicalActionsSurviveRoutes(t *testing.T) {
+func TestAdminCredentialsCanonicalRequirementsSurviveRoutes(t *testing.T) {
 	for _, route := range []string{"nested", "compatibility", "renamed alias"} {
 		t.Run(route, func(t *testing.T) {
 			calls := 0
