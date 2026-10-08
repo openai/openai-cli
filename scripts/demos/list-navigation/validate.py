@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate request timing, exit statuses, and captured terminal output."""
+import hashlib
 import json
 import pathlib
 import sys
@@ -45,6 +46,14 @@ def main():
             assert f'file_{number:03d}' in final_page, (scene, 'last page', number)
         cast = [json.loads(line) for line in (output/(scene+'.cast')).read_text().splitlines()]
         assert cast[0]['version'] == 2 and cast[0]['width'] == 90 and cast[0]['height'] == 30
+        capture = ''.join(event[2] for event in cast[1:] if event[1] == 'o')
+        command_marker = '$ '+evidence['command']+'\r\n'
+        assert capture.count(command_marker) == 1, 'capture command boundary is ambiguous'
+        relayed = capture.split(command_marker, 1)[1]
+        annotation_marker = '\r\nObserved API requests before input: '
+        assert relayed.count(annotation_marker) == 1, 'capture annotation boundary is ambiguous'
+        relayed = relayed.split(annotation_marker, 1)[0]
+        assert hashlib.sha256(relayed.encode()).hexdigest() == evidence['relay_sha256'], 'capture changed relayed CLI bytes'
         # capture_and_render.sh creates this transcript with asciinema convert.
         # Use its reconstructed output instead of stripping terminal controls.
         rendered = (output/(scene+'.txt')).read_text()

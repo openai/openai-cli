@@ -34,7 +34,7 @@ SCENE
   echo 'input: observe 1.5 seconds without keys; after receives Space, then q after 1.5 seconds'
   echo 'evidence: server counts exclude count-observation requests; every CLI request is recorded'
   echo 'environment: temporary HOME; no inherited credentials, CI setting, or shell startup files'
-  echo 'render: asciinema + agg, Menlo 20px, Dracula, 90x30, line height 1.2'
+  echo 'render: asciinema + agg swash, Menlo 20px, Dracula, 90x30, line height 1.2'
   echo 'scope: terminal replay; not native Apple Terminal, Windows, or Linux appearance'
   demo_capture_metadata
   "$demo_python" --version
@@ -44,7 +44,7 @@ SCENE
 } > "$demo_output/metadata.txt"
 cp "$demo_runtime/scene.sh" "$demo_output/scene.sh"
 demo_window_size=90x30
-demo_render_options=(--renderer resvg --font-family Menlo --font-size 20 --line-height 1.2 \
+demo_render_options=(--renderer swash --font-family Menlo --font-size 20 --line-height 1.2 \
   --theme dracula --fps-cap 20 --last-frame-duration 2)
 for demo_scene in before after; do
   if [ "$demo_scene" = before ]; then

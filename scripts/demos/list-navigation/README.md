@@ -6,6 +6,15 @@ Public activation requires the normal generator-source and SDK-promotion sequenc
 The recipe below requires a separately activated candidate and must not prove activation of this prerequisite.
 Identify that candidate and its generated-source provenance when recording future integration evidence.
 
+Before generated activation, carry both reviewed handwritten follow-ups:
+
+- `51bac6bca356f067ee671add8bac630b8aa87658`: one-screen completion prints the complete fitting result once and exits without q.
+- `f4c1b76603b5830e61143255a3cddd25a9ee09af`: tab-aware display fitting preserves the shell prompt row.
+
+This inert draft does not complete SDK-1178 or SDK-1179.
+Recheck the affected public commands after those fixes and normal generated promotion.
+Historical activated recordings remain integration evidence, not public behavior of this prerequisite.
+
 Record identical commands against two synthetic API pages.
 The recorder checks request counts before input and after Space.
 It uses the shared asciinema and agg workflow.
@@ -42,4 +51,8 @@ The viewport wraps long IDs; use `p` for unbroken logical ID lines.
 The PTY checker covers this action separately from the comparison recording.
 
 The recording uses private PTYs and temporary homes.
+The driver disables outer PTY output translation while it relays CLI bytes.
+It restores the outer PTY before printing recorder annotations.
+The validator compares the recorded CLI bytes with the driver's SHA256 digest.
+The recorder uses agg's swash backend for consistent glyph placement across incremental redraws.
 It demonstrates synthetic process behavior, not native graphical terminal appearance.

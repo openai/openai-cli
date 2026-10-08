@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Drive one synthetic list scene inside the shared asciinema capture."""
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -23,11 +24,31 @@ spec.loader.exec_module(terminal_module)
 
 
 class DemoTerminal(terminal_module.Terminal):
+    def __init__(self, *args, **kwargs):
+        self.outer_fd = sys.stdout.fileno()
+        self.outer_initial = termios.tcgetattr(self.outer_fd)
+        relay_mode = self.outer_initial[:]
+        # Tea uses LF without CR to retain its current column during redraws.
+        # A second PTY's output processing would turn that LF into CRLF.
+        relay_mode[1] &= ~termios.OPOST
+        termios.tcsetattr(self.outer_fd, termios.TCSADRAIN, relay_mode)
+        try:
+            super().__init__(*args, **kwargs)
+        except BaseException:
+            termios.tcsetattr(self.outer_fd, termios.TCSADRAIN, self.outer_initial)
+            raise
+
     def read(self, duration=0.05):
         mark = len(self.raw)
         super().read(duration)
         sys.stdout.buffer.write(self.raw[mark:])
         sys.stdout.buffer.flush()
+
+    def close(self):
+        try:
+            super().close()
+        finally:
+            termios.tcsetattr(self.outer_fd, termios.TCSADRAIN, self.outer_initial)
 
 
 def drain(terminal, seconds):
@@ -141,6 +162,7 @@ def main():
             assert terminal.child.returncode == 0, terminal.text()[-1000:]
             assert mark('finished') == 2
             evidence['screens']['finished'] = screen_text(terminal, asciinema)
+            evidence['relay_sha256'] = hashlib.sha256(terminal.raw).hexdigest()
             restored, initial = termios.tcgetattr(terminal.slave), terminal.initial[:]
             if sys.platform == 'darwin':
                 restored[3] &= ~termios.PENDIN
