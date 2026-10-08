@@ -5,8 +5,6 @@ import (
 	_ "embed"
 	"errors"
 	"unicode/utf8"
-
-	"github.com/tiktoken-go/tokenizer/codec"
 )
 
 // MaxInputBytes bounds this local utility's input and result allocations.
@@ -38,50 +36,64 @@ func Encode(text, encoding string, inspect bool) (Result, error) {
 	if !utf8.ValidString(text) {
 		return Result{}, errors.New("tokenizer input must be valid UTF-8")
 	}
-
-	var encoder *codec.Codec
-	switch encoding {
-	case "cl100k_base":
-		encoder = codec.NewCl100kBase()
-	case "o200k_base":
-		encoder = codec.NewO200kBase()
-	default:
-		return Result{}, errors.New("unsupported encoding; choose o200k_base or cl100k_base")
+	encoder, err := loadEncoding(encoding)
+	if err != nil {
+		return Result{}, err
 	}
+	return encoder.encode(text, encoding, inspect)
+}
 
-	result := Result{Encoding: encoding, InputBytes: len(text)}
-	if !inspect {
-		count, err := encoder.Count(text)
-		if err != nil {
-			return Result{}, errors.New("could not tokenize input")
+func (e *textEncoding) encode(text, name string, inspect bool) (Result, error) {
+	result := Result{Encoding: name, InputBytes: len(text)}
+	if inspect {
+		result.IDs, result.Fragments = []uint{}, []string{}
+	}
+	offset := 0
+	yield := func(id int) bool {
+		if id < 0 || id >= len(e.fragments) {
+			return false
 		}
-		result.TokenCount = count
-		return result, nil
+		fragment := e.fragments[id]
+		if fragment == "" || len(fragment) > len(text)-offset || text[offset:offset+len(fragment)] != fragment {
+			return false
+		}
+		offset += len(fragment)
+		result.TokenCount++
+		if inspect {
+			result.IDs = append(result.IDs, uint(id))
+			result.Fragments = append(result.Fragments, fragment)
+		}
+		return true
 	}
-
-	ids, fragments, err := encoder.Encode(text)
+	// Iterate exact reference pieces. Count never retains a whole-input token
+	// list. This is reference pre-tokenization, not arbitrary input chunking.
+	match, err := e.split.FindStringMatch(text)
+	for err == nil && match != nil {
+		piece := match.String()
+		if id, ranked := e.ranks[piece]; ranked {
+			if !yield(id) {
+				return Result{}, errors.New("tokenizer could not preserve input bytes")
+			}
+		} else {
+			ids, err := e.encodePiece(piece)
+			if err != nil {
+				return Result{}, errors.New("could not tokenize input")
+			}
+			for _, id := range ids {
+				if !yield(id) {
+					return Result{}, errors.New("tokenizer could not preserve input bytes")
+				}
+			}
+		}
+		match, err = e.split.FindNextMatch(match)
+	}
 	if err != nil {
 		return Result{}, errors.New("could not tokenize input")
 	}
-	if len(ids) != len(fragments) {
-		return Result{}, errors.New("tokenizer could not preserve input bytes")
-	}
-	offset := 0
-	for _, fragment := range fragments {
-		if len(fragment) == 0 || len(fragment) > len(text)-offset || text[offset:offset+len(fragment)] != fragment {
-			return Result{}, errors.New("tokenizer could not preserve input bytes")
-		}
-		offset += len(fragment)
-	}
+	// The BPE dependency ignores regex errors internally. Both modes reject
+	// partial results, including any unmatched outer-regex suffix or gap.
 	if offset != len(text) {
 		return Result{}, errors.New("tokenizer could not preserve input bytes")
 	}
-	if ids == nil {
-		ids = []uint{}
-		fragments = []string{}
-	}
-	result.IDs = ids
-	result.Fragments = fragments
-	result.TokenCount = len(ids)
 	return result, nil
 }

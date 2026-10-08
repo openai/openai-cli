@@ -44,6 +44,14 @@ func TestEncodeReferenceVectors(t *testing.T) {
 		{"cl100k_base", "'rE", []uint{97670, 36}, []string{"2772", "45"}},
 		{"cl100k_base", "x'RE", []uint{87, 95253}, []string{"78", "275245"}},
 		{"cl100k_base", "hello'RE", []uint{15339, 95253}, []string{"68656c6c6f", "275245"}},
+		// Unicode 16 letters and Unicode 17 additions follow the pinned reference,
+		// regardless of the Unicode tables bundled with the Go compiler.
+		{"cl100k_base", "\u1c89\\u", []uint{157, 110, 231, 3855}, []string{"e1", "b2", "89", "5c75"}},
+		{"cl100k_base", "\u1c8a\\u", []uint{157, 110, 232, 3855}, []string{"e1", "b2", "8a", "5c75"}},
+		{"cl100k_base", "\u0897\\u", []uint{156, 95, 245, 59, 84}, []string{"e0", "a2", "97", "5c", "75"}},
+		{"cl100k_base", "\U00010d40\\u", []uint{172, 238, 113, 222, 3855}, []string{"f0", "90", "b5", "80", "5c75"}},
+		{"cl100k_base", "\u088f\\u", []uint{156, 95, 237, 59, 84}, []string{"e0", "a2", "8f", "5c", "75"}},
+		{"cl100k_base", "\U00016ea0\\u", []uint{172, 244, 118, 254, 59, 84}, []string{"f0", "96", "ba", "a0", "5c", "75"}},
 		{"o200k_base", "", []uint{}, []string{}},
 		{"o200k_base", "hello world", []uint{24912, 2375}, []string{"68656c6c6f", "20776f726c64"}},
 		{"o200k_base", "Hello, world!", []uint{13225, 11, 2375, 0}, []string{"48656c6c6f", "2c", "20776f726c64", "21"}},
@@ -70,6 +78,12 @@ func TestEncodeReferenceVectors(t *testing.T) {
 		{"o200k_base", "'rE", []uint{15770, 36}, []string{"2772", "45"}},
 		{"o200k_base", "x'RE", []uint{87, 6, 1099}, []string{"78", "27", "5245"}},
 		{"o200k_base", "hello'RE", []uint{24912, 6, 1099}, []string{"68656c6c6f", "27", "5245"}},
+		{"o200k_base", "\u1c89\\u", []uint{157, 110, 231, 7570}, []string{"e1", "b2", "89", "5c75"}},
+		{"o200k_base", "\u1c8a\\u", []uint{157, 110, 232, 7570}, []string{"e1", "b2", "8a", "5c75"}},
+		{"o200k_base", "\u0897\\u", []uint{156, 95, 245, 7570}, []string{"e0", "a2", "97", "5c75"}},
+		{"o200k_base", "\U00010d40\\u", []uint{172, 238, 113, 222, 7570}, []string{"f0", "90", "b5", "80", "5c75"}},
+		{"o200k_base", "\u088f\\u", []uint{156, 95, 237, 59, 84}, []string{"e0", "a2", "8f", "5c", "75"}},
+		{"o200k_base", "\U00016ea0\\u", []uint{172, 244, 118, 254, 59, 84}, []string{"f0", "96", "ba", "a0", "5c", "75"}},
 	}
 
 	for _, tt := range tests {

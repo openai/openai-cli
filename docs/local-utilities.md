@@ -68,6 +68,8 @@ It performs no Unicode normalization and rejects invalid UTF-8.
 The default encoding is `o200k_base`; `cl100k_base` is also available.
 Use exact encoding names.
 The command does not guess an encoding from a model name.
+Token IDs follow OpenAI tiktoken 0.14.0 with fixed Unicode 16 character rules.
+Compiler upgrades do not change those rules.
 
 The input limit is 1 MiB.
 Long unbroken text can take minutes; Ctrl+C stops the process.
@@ -200,9 +202,9 @@ The temporary-file example preserves an existing result when tokenization fails.
 
 ## Tokenizer dependencies
 
-The tokenizer uses `github.com/tiktoken-go/tokenizer v0.7.0` and embedded OpenAI vocabulary data.
-The dependency adds about 11 MB to an unstripped macOS executable.
+The tokenizer reads embedded OpenAI vocabularies through `github.com/tiktoken-go/tokenizer v0.7.0`.
+It uses `github.com/pkoukk/tiktoken-go v0.1.8` for ordinary BPE encoding with fixed Unicode 16 rules.
+Each encoding initializes once, and both counting and inspection validate every returned byte against the input.
 The CLI never downloads vocabulary data during execution.
-Version 0.7.0 matches the checked reference vectors; version 0.8.1 failed control-byte and whitespace cases.
-Dependency upgrades must retain these reference checks.
+Dependency and Unicode updates must retain reference checks across supported Go versions.
 `openai tokenizer licenses` prints the complete bundled notices.
