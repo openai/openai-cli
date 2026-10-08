@@ -132,8 +132,9 @@ def drive():
         while time.monotonic() < deadline:
             pump(max(0, min(0.05, deadline - time.monotonic())))
 
-    def send(data):
-        buffer.clear()
+    def send(data, clear=True):
+        if clear:
+            buffer.clear()
         write(data)
 
     def mark(name):
@@ -167,7 +168,13 @@ def drive():
         if layout == "options":
             send(b"\t")
             wait_for("Enter details")
-        send(b"\x1b[B" * 4 + b"\r")
+        # Arrow keys can leave the unchanged Results footer out of a redraw.
+        send(b"\x1b[B" * 4, clear=False)
+        wait_for("Token 5 of 10" if layout == "options" else "Token 5/10 · ID 61138")
+        wait_for("›[20 f0 9f 91]")
+        wait_for("Enter details")
+        mark("results")
+        send(b"\r")
         wait_for("Token details · exact bytes")
         wait_for("partial UTF-8")
         wait_for("ID 61138")
@@ -208,7 +215,7 @@ def drive():
             raise RuntimeError(f"editor returned {status}, expected 130")
         with open(report_path, "w", encoding="utf-8") as report:
             json.dump({"input": FIXTURE, "input_bytes": len(FIXTURE.encode()), "theme": theme,
-                       "columns": width, "rows": height, "layout": layout,
+                       "columns": width, "rows": height, "layout": layout, "capture_version": 2,
                        "input_actions": {"typed": "Hello, ", "pasted": ["tokens! 👋", "Café."], "newline": "Enter"},
                        "states": events, "exit_status": status}, report, indent=2)
             report.write("\n")

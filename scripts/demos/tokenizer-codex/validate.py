@@ -27,7 +27,7 @@ def validate(directory, mode):
     layouts = editor_layouts(directory) if mode == "editor" else {}
     before_status = 3 if mode == "guide" else 1
     if mode == "editor":
-        before_status = 130 if layouts["before"] == "legacy" else 0
+        before_status = 0 if layouts["before"] == "help" else 130
     after_status = 130 if mode == "editor" else 0
     expected = [f"before\t{before_status}", f"after\t{after_status}"]
     if (directory / "expected-statuses.tsv").exists():
@@ -37,7 +37,7 @@ def validate(directory, mode):
         before_status = int(expected[0].split("\t")[1])
         allowed = (0, 1, 3)
         if mode == "editor":
-            allowed = (130,) if layouts["before"] == "legacy" else (0,)
+            allowed = (0,) if layouts["before"] == "help" else (130,)
         check(before_status in allowed, "unsupported baseline status")
     statuses = (directory / "statuses.tsv").read_text().splitlines()
     check(statuses == expected, "unexpected command exit statuses")
@@ -54,8 +54,8 @@ def validate(directory, mode):
     before = transcripts["before"]
     after = transcripts["after"]
     error = "Unknown help topic." if mode == "guide" else "An option is not recognized."
-    if mode == "editor" and layouts["before"] == "legacy":
-        validate_editor(directory, "before", "legacy")
+    if mode == "editor" and layouts["before"] != "help":
+        validate_editor(directory, "before", layouts["before"])
     elif before_status != 0:
         check(error in before, "before: expected the baseline command failure")
     elif mode == "editor":
@@ -102,7 +102,7 @@ def editor_layouts(directory):
     check(len(rows) == 2 and all(len(row) == 2 for row in rows) and
           rows[0][0] == "before" and rows[1][0] == "after", "invalid editor layout record")
     layouts = dict(rows)
-    check(layouts["before"] in ("help", "legacy") and layouts["after"] == "options",
+    check(layouts["before"] in ("help", "legacy", "options") and layouts["after"] == "options",
           "unsupported editor layout comparison")
     return layouts
 
@@ -115,6 +115,8 @@ def validate_editor(directory, scene="after", layout="legacy"):
     check(report["input"] == "Hello, tokens! 👋\nCafé." and report["input_bytes"] == 26,
           "editor: synthetic input changed")
     check(report["exit_status"] == 130, "editor: Ctrl+C status changed")
+    capture_version = report.get("capture_version", 1)
+    check(capture_version in (1, 2), "editor: unsupported capture version")
     if "layout" in report:
         check(report.get("input_actions") == {"typed": "Hello, ", "pasted": ["tokens! 👋", "Café."], "newline": "Enter"},
               "editor: exact paste or Text Enter input changed")
@@ -129,6 +131,10 @@ def validate_editor(directory, scene="after", layout="legacy"):
     if layout == "options":
         stages.insert(2, ("view-choice", re.compile(r"Choose view")))
         stages.insert(5, ("tokenizer-choice", re.compile(r"Choose tokenizer")))
+    if capture_version == 2:
+        details_index = next(index for index, (name, _) in enumerate(stages) if name == "details")
+        position = r"Token 5 of 10\b" if layout == "options" else r"Token 5/10 · ID 61138\b"
+        stages.insert(details_index, ("results", re.compile(position)))
     check([event["state"] for event in report["states"]] == [name for name, _ in stages],
           "editor: incomplete input-driver states")
     events = [json.loads(line) for line in (directory / f"{scene}.cast").read_text().splitlines()]
@@ -145,7 +151,10 @@ def validate_editor(directory, scene="after", layout="legacy"):
         if len(snapshots) < len(stages):
             name, pattern = stages[len(snapshots)]
             complete = pattern.search(plain)
-            if name == "details":
+            if name == "results":
+                complete = complete and "›[20 f0 9f 91]" in plain and "Enter details" in plain
+                complete = complete and "Token details · exact bytes" not in plain
+            elif name == "details":
                 complete = complete and all(value in plain for value in ["partial UTF-8", "ID 61138", "20 f0 9f 91"])
                 complete = complete and re.search(r"bytes\s+\[14,\s*18\)", plain)
             elif name == "encoding":

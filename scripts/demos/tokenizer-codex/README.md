@@ -13,7 +13,7 @@ Each process receives a rejecting loopback base URL and no personal environment 
 | `inspect` | `openai tokenizer inspect --text "Hi!"` | 1 | 0 |
 | `codex` | `openai codex --destination config` | 1 | 0 |
 | `guide` | `openai codex` | 3 | 0 |
-| `editor` | `openai tokenizer` | 0 for help; 130 for the previous editor | 130 |
+| `editor` | `openai tokenizer` | 0 for help; 130 for legacy or Options editors | 130 |
 
 The baseline is main `da762ffff4f35732f4720ac4db531d8d764f2cbe`.
 Direct baseline execution verified these statuses before recording.
@@ -24,7 +24,11 @@ The editor scene defaults to the historical help baseline at `6e761e71051aa260e0
 That baseline prints tokenizer help and exits successfully.
 Use `DEMO_EDITOR_BEFORE=legacy` for the previous interactive editor at `30a5e9186f7b0d8129401622cd4507bf90b37d55`.
 This comparison drives both actual editors and preserves their Ctrl+C status 130.
-The candidate uses the current Options layout in both comparisons.
+Use `DEMO_EDITOR_BEFORE=options` for visual refinements against `9fb91c176c9f70d09cf806648c2f17b1654a292a`.
+Both editors then use the same Options controls.
+The retained comparison binary embeds `e990b0bf4355ad0a934d0c4ffc0d5fe53628ad0d`; its runtime matches published `9fb91c1`.
+Record the actual binary's build commit in capture metadata.
+The candidate uses the current Options layout in every comparison.
 
 The default `o200k_base` count example contains 13 input bytes and four tokens.
 The inspect example contains three input bytes and two tokens.
@@ -90,23 +94,25 @@ No recording has occurred merely because this recipe exists.
 
 ## Interactive editor and guide refinement
 
-Use the previous interactive editor when reviewing the new View and Tokenizer controls.
-The driver maps the previous editor's controls separately from the candidate's Options layout.
+Use the previous Options editor when reviewing focus, alignment, and spacing refinements.
+The driver uses matching controls on both sides of that comparison.
 The recorder saves both layouts, expected statuses, and actual process statuses.
 
 ```sh
-DEMO_THEME=dark DEMO_EDITOR_BEFORE=legacy \
+DEMO_THEME=dark DEMO_EDITOR_BEFORE=options \
 PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
   bash scripts/demos/tokenizer-codex/record.sh editor \
-  /absolute/path/to/previous-editor /absolute/path/to/candidate \
-  30a5e9186f7b0d8129401622cd4507bf90b37d55 "$AFTER_SHA" \
+  /absolute/path/to/previous-options-editor /absolute/path/to/candidate \
+  e990b0bf4355ad0a934d0c4ffc0d5fe53628ad0d "$AFTER_SHA" \
   /absolute/path/outside/repository/editor-dark-80
 ```
 
+The earlier controls comparison remains available with `DEMO_EDITOR_BEFORE=legacy` and the `30a5e91` full commit above.
+That mapping follows the older editor's focus and encoding controls.
 Omit `DEMO_EDITOR_BEFORE` to retain the historical help-to-editor recipe.
 For that comparison, provide the help-only binary and its `6e761e7` full commit above.
 Do not label a help-only baseline as the previous interactive experience.
-The legacy editor baseline requires status 130; the help baseline requires status zero.
+Both interactive baseline variants require status 130; the help baseline requires status zero.
 
 Repeat with `DEMO_COLUMNS=40` for the compact layout.
 Use `DEMO_THEME=light` for a light terminal.
@@ -121,7 +127,8 @@ Both layouts therefore receive the exact same 26-byte text.
 The candidate's default Text and Token IDs views show token count without the advanced byte count.
 The driver tabs to Options and switches to Token IDs with Right.
 Enter opens the View chooser; Down and Enter apply Bytes.
-Tab moves to Results, where arrows select the partial Unicode token and Enter opens its details.
+Tab moves to Results, where arrows select the partial Unicode token.
+The driver holds that focused selection before Enter opens its details.
 Escape closes details; another Escape returns to Text.
 The driver then opens the Tokenizer chooser and applies `cl100k_base`.
 It also opens the controls reference before exiting through Ctrl+C.
@@ -137,9 +144,12 @@ It checks the partial token's ID, byte boundaries, and complete hexadecimal byte
 It also checks the candidate's View and Tokenizer labels and count-only default status.
 `after.png` shows the live Text view before exit.
 `after-ids.png`, `after-bytes.png`, `after-details.png`, `after-encoding.png`, and `after-controls.png` preserve the other states.
+`after-results.png` shows the selected token with Results focus before Details.
 `after-view-choice.png` and `after-tokenizer-choice.png` show the candidate's selection menus.
 `after-exit.png` retains the final shell frame.
-The legacy comparison creates corresponding `before-*` snapshots for its six existing states.
+Interactive comparisons create corresponding `before-*` snapshots, including `before-results.png`.
+An Options baseline also retains both chooser snapshots.
+Historical captures retain validation support for their original state sequences.
 Its `before.png` also shows the live Text view.
 The help-only comparison retains the historical help screenshot as `before.png`.
 The comparison GIF includes the complete interaction and cleanup.

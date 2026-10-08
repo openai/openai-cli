@@ -14,8 +14,8 @@ esac
 shift
 demo_editor_before="${DEMO_EDITOR_BEFORE:-help}"
 case "$demo_editor_before" in
-  help|legacy) ;;
-  *) echo 'DEMO_EDITOR_BEFORE must be help or legacy.' >&2; exit 2;;
+  help|legacy|options) ;;
+  *) echo 'DEMO_EDITOR_BEFORE must be help, legacy, or options.' >&2; exit 2;;
 esac
 demo_columns="${DEMO_COLUMNS:-80}"
 case "$demo_columns" in
@@ -128,21 +128,21 @@ cp "$demo_runtime/scene.sh" "$demo_output/scene.sh"
 demo_before_status=1
 if [ "$demo_mode" = guide ]; then demo_before_status=3; fi
 if [ "$demo_mode" = editor ]; then demo_before_status=0; fi
-if [ "$demo_mode" = editor ] && [ "$demo_editor_before" = legacy ]; then demo_before_status=130; fi
+if [ "$demo_mode" = editor ] && [ "$demo_editor_before" != help ]; then demo_before_status=130; fi
 demo_before_status="${DEMO_BEFORE_STATUS:-$demo_before_status}"
 case "$demo_before_status" in
   0|1|3) ;;
   130)
-    if [ "$demo_mode" != editor ] || [ "$demo_editor_before" != legacy ]; then
-      echo 'Status 130 requires a legacy editor baseline.' >&2
+    if [ "$demo_mode" != editor ] || [ "$demo_editor_before" = help ]; then
+      echo 'Status 130 requires an interactive editor baseline.' >&2
       exit 2
     fi
     ;;
-  *) echo 'DEMO_BEFORE_STATUS must be 0, 1, 3, or 130 for a legacy editor.' >&2; exit 2;;
+  *) echo 'DEMO_BEFORE_STATUS must be 0, 1, 3, or 130 for an interactive editor.' >&2; exit 2;;
 esac
 if [ "$demo_mode" = editor ]; then
   demo_editor_status=0
-  if [ "$demo_editor_before" = legacy ]; then demo_editor_status=130; fi
+  if [ "$demo_editor_before" != help ]; then demo_editor_status=130; fi
   if [ "$demo_before_status" != "$demo_editor_status" ]; then
     echo 'The editor baseline status must match its selected layout.' >&2
     exit 2
@@ -165,7 +165,7 @@ demo_capture_scene after "$demo_after_status" "$demo_runtime/after" 'http://127.
 "$demo_python" "$demo_source/validate.py" "$demo_output" "$demo_mode" > "$demo_output/validation.txt"
 if [ "$demo_mode" = editor ]; then
   demo_editor_scenes=(after)
-  if [ "$demo_editor_before" = legacy ]; then demo_editor_scenes=(before after); fi
+  if [ "$demo_editor_before" != help ]; then demo_editor_scenes=(before after); fi
   for demo_scene in "${demo_editor_scenes[@]}"; do
     demo_snapshots="$demo_output/editor-snapshots.tsv"
     if [ "$demo_scene" = before ]; then demo_snapshots="$demo_output/before-editor-snapshots.tsv"; fi
@@ -176,13 +176,15 @@ if [ "$demo_mode" = editor ]; then
       "$demo_ffmpeg" -nostdin -hide_banner -loglevel error -y -i "$demo_output/$demo_scene-$demo_state.gif" \
         -frames:v 1 "$demo_output/$demo_scene-$demo_state.png"
     done < "$demo_snapshots"
-    for demo_state in text ids bytes details encoding controls; do
+    for demo_state in text ids bytes results details encoding controls; do
       test -s "$demo_output/$demo_scene-$demo_state.png"
     done
+    if [ "$demo_scene" = after ] || [ "$demo_editor_before" = options ]; then
+      for demo_state in view-choice tokenizer-choice; do
+        test -s "$demo_output/$demo_scene-$demo_state.png"
+      done
+    fi
     cp "$demo_output/$demo_scene-text.png" "$demo_output/$demo_scene.png"
-  done
-  for demo_state in view-choice tokenizer-choice; do
-    test -s "$demo_output/after-$demo_state.png"
   done
 fi
 demo_assemble_capture 300 before after
