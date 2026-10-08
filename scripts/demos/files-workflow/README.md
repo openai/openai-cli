@@ -51,3 +51,33 @@ Check clipping, timestamp clarity, the complete ID, and copyable suggested comma
 The replay uses Bash, 110 columns, 46 rows, and Menlo at 18 pixels.
 This is PTY execution with asciinema/agg replay, not native graphical terminal validation.
 Keep generated media and executables outside Git.
+
+## Command discovery recording
+
+Record Files help separately from the upload and download workflow.
+This recorder uses the same shared capture lifecycle and synthetic fixture.
+Both scenes run `openai files --help` and must make zero API requests.
+The existing workflow validator still requires its original twelve requests.
+
+Wait for the coordinator's terminal slot before running:
+
+```sh
+DEMO_API_BINARY=/absolute/task/evidence/files-workflow-demo-api \
+DEMO_EVIDENCE_ROLE=public-candidate \
+  bash scripts/demos/files-workflow/record-discovery.sh \
+  --run-authorized-pty-slot \
+  /absolute/task/evidence/baseline-openai \
+  /absolute/task/evidence/candidate-openai \
+  BEFORE_COMMIT AFTER_COMMIT \
+  /absolute/task/evidence/files-discovery-media
+```
+
+Use `DEMO_EVIDENCE_ROLE=combined-integration` for an integration binary containing unpublished dependency changes.
+Do not describe that recording as evidence from the public PR candidate.
+Set `DEMO_SOURCE_MANIFEST` when the recording needs an explicit source manifest.
+
+The discovery replay uses Bash, 110 columns, 54 rows, and Menlo at 18 pixels.
+It captures the complete Files group help with its three examples and workflow order.
+The recorder produces separate Before and After screenshots and a comparison GIF.
+Inspect all three assets for clipping and readable command examples.
+The original workflow GIF remains a separate artifact.
