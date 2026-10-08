@@ -332,8 +332,8 @@ func TestImagePickerRequestWriterKeepsPlainOutputSafe(t *testing.T) {
 	require.NotContains(t, out.String(), "\x1b")
 	require.NotContains(t, out.String(), "\a")
 	require.NotContains(t, out.String(), "private-server-detail")
-	require.True(t, strings.HasSuffix(out.String(), "\n"))
-	require.False(t, strings.HasSuffix(out.String(), "\n\n"))
+	require.True(t, strings.HasSuffix(out.String(), "\n\n"))
+	require.False(t, strings.HasSuffix(out.String(), "\n\n\n"))
 
 	require.ErrorIs(t, writeImagePickerRequestMessage(t.Context(), imagePickerFailedWriter{}, root, &openai.Error{StatusCode: 401}, false), io.ErrClosedPipe)
 	require.ErrorIs(t, writeImagePickerRequestMessage(t.Context(), imagePickerShortWriter{}, root, &openai.Error{StatusCode: 403}, false), io.ErrShortWrite)

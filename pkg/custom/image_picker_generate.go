@@ -106,9 +106,7 @@ func writeImagePickerRequestMessage(ctx context.Context, out io.Writer, root *cl
 		heading, body, _ := strings.Cut(message, "\n")
 		message = lipgloss.NewStyle().Bold(true).Render(heading) + "\n" + body
 	}
-	if !strings.HasSuffix(message, "\n") {
-		message += "\n"
-	}
+	message = strings.TrimRight(message, "\n") + "\n\n"
 	_, err := io.WriteString(outputWriter{ctx: ctx, out: out}, message)
 	return err
 }
