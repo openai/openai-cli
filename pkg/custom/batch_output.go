@@ -72,8 +72,8 @@ func RunBatchOutputHelper(args []string) (bool, error) {
 	if len(args) != 3 {
 		return true, errors.New("invalid batch output helper invocation")
 	}
-	descriptor, err := strconv.ParseUint(args[2], 10, 64)
-	if err != nil || descriptor < 3 || descriptor > uint64(^uintptr(0)) {
+	descriptor, err := strconv.ParseUint(args[2], 10, strconv.IntSize)
+	if err != nil || descriptor < 3 {
 		return true, errors.New("invalid batch output lifeline")
 	}
 	life := os.NewFile(uintptr(descriptor), "batch-output-lifeline")
