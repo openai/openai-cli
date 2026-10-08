@@ -100,6 +100,55 @@ The existing `--format-error` behavior remains available.
 Invalid input, read failures, opening failures, and output failures return nonzero statuses.
 Interrupted output can be incomplete.
 
+## Recover from a failure
+
+Check the exit status before using output in a script.
+Do not treat partial JSON or a printed Codex URL as proof that the command succeeded.
+The commands never retry, change your input, install a browser, or choose a different encoding automatically.
+
+| Failure | What remains | What to do next |
+| --- | --- | --- |
+| No input in a terminal | No token result. | Supply `--text`, `--file`, or a pipe. Use `--file -` for interactive stdin. |
+| Conflicting or repeated input options | No token result; input stays unread. | Supply each option once and choose either `--text` or `--file`. |
+| Unknown encoding or option | No token result. | Run `openai tokenizer encodings` or command `--help`. Use an encoding name, not a model name. |
+| Invalid UTF-8 | No token result; source bytes remain unchanged. | Convert a copy from its known source encoding to UTF-8. Do not discard invalid bytes silently. |
+| Input exceeds 1 MiB | No token result; source bytes remain unchanged. | Choose a smaller complete input. Counts from arbitrary chunks may differ from the complete text. |
+| File cannot open or read | No token result. | Check the supplied path, file type, permissions, and producer. The error does not print private paths. |
+| Input producer has not closed stdin | The command waits for EOF. | Finish the producer or send EOF. Press Ctrl+C to stop. |
+| Producer fails after writing a valid prefix | The tokenizer can successfully count that prefix. | Check the producer's exit status too. Bash and zsh can use `set -o pipefail`. |
+| Unsupported output format or transformation | No result. | Use `--format text` or `--format json`; remove `--transform` and `--raw-output`. |
+| Output file or pipe fails | Previously written bytes can remain incomplete. | Fix the output destination and rerun. Discard partial output; do not append a retry to it. |
+| Tokenization is interrupted | No complete result is promised. | Rerun only if you still need the result. Long unbroken input can remain slow. |
+| Missing or unknown Codex destination | No browser launches. | Choose `docs`, `config`, `app`, or `web`. `--open` requires an explicit destination. |
+| Browser launcher is missing, fails, or exceeds ten seconds | The printed URL remains; the command exits nonzero. | Check whether the page opened. Otherwise, open the printed URL manually. |
+
+An output failure prevents `--open` from launching a browser.
+A browser launch can partially succeed before its launcher reports an error.
+Cancellation terminates the launcher; it does not close an already launched browser.
+The CLI cannot verify page loading, network access, or destination sign-in.
+If stderr also fails, an explanatory message might be unavailable; the exit status still indicates failure.
+The tokenizer cannot distinguish normal EOF from a producer that failed after writing data.
+Without `pipefail`, a shell pipeline can hide the producer's failure behind the tokenizer's successful exit.
+
+For file output, write to a temporary file and replace the final file only after success:
+
+```sh
+token_result=$(mktemp './tokens.json.XXXXXX') || exit 1
+trap 'rm -f "$token_result"' EXIT
+if openai --format json tokenizer inspect --file prompt.txt >"$token_result"; then
+  mv "$token_result" tokens.json
+else
+  token_status=$?
+  printf '%s\n' 'Tokenization failed; existing tokens.json was kept.' >&2
+  exit "$token_status"
+fi
+```
+
+Shell redirection alone can truncate an existing file before the CLI starts.
+The temporary-file example preserves an existing result when tokenization fails.
+
+## Tokenizer dependencies
+
 The tokenizer uses `github.com/tiktoken-go/tokenizer v0.7.0` and embedded OpenAI vocabulary data.
 The dependency adds about 11 MB to an unstripped macOS executable.
 The CLI never downloads vocabulary data during execution.

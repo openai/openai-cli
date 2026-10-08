@@ -106,10 +106,17 @@ func handleTokenizer(ctx context.Context, command *cli.Command, inspect bool) er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := writeTokenizerResult(ctx, command.Root().Writer, result, inspect, format == "json"); err != nil {
-		return &localUtilityError{message: "Could not write tokenizer output. Output may be incomplete.", cause: err}
+	return tokenizerOutputFailure(writeTokenizerResult(ctx, command.Root().Writer, result, inspect, format == "json"))
+}
+
+func tokenizerOutputFailure(err error) error {
+	if err == nil {
+		return nil
 	}
-	return nil
+	return &localUtilityError{
+		message: "Could not write tokenizer output. Output may be incomplete. Check the output file or pipe before rerunning.",
+		cause:   err,
+	}
 }
 
 func readTokenizerInput(ctx context.Context, command *cli.Command) (string, error) {
@@ -250,7 +257,7 @@ func handleTokenizerEncodings(ctx context.Context, command *cli.Command) error {
 		text = "{\"default_encoding\":\"o200k_base\",\"encodings\":[\"o200k_base\",\"cl100k_base\"]}\n"
 	}
 	_, err = io.WriteString(outputWriter{ctx: ctx, out: command.Root().Writer}, text)
-	return err
+	return tokenizerOutputFailure(err)
 }
 
 func handleTokenizerLicenses(ctx context.Context, command *cli.Command) error {
@@ -269,5 +276,5 @@ func handleTokenizerLicenses(ctx context.Context, command *cli.Command) error {
 		text = string(data) + "\n"
 	}
 	_, err = io.WriteString(outputWriter{ctx: ctx, out: command.Root().Writer}, text)
-	return err
+	return tokenizerOutputFailure(err)
 }

@@ -149,7 +149,7 @@ func handleCodex(ctx context.Context, command *cli.Command, open func(context.Co
 		content = codexGuideText(guide)
 	}
 	if err := readable.WriteText(outputWriter{ctx: ctx, out: root.Writer}, content); err != nil {
-		return &localUtilityError{message: "Could not write Codex instructions.", cause: err}
+		return &localUtilityError{message: "Could not write Codex output. Output may be incomplete. Check the output file or pipe before rerunning.", cause: err}
 	}
 	if err := ctx.Err(); err != nil {
 		return err
