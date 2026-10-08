@@ -52,7 +52,7 @@ func main() {
 			exitCode = exitErr.ExitCode()
 		}
 		if showErr := custom.ShowCommandError(app, err, os.Stderr); showErr != nil {
-			fmt.Fprintln(os.Stderr, "Could not display the error.")
+			_ = custom.ShowCommandErrorFallback(err, showErr, os.Stderr)
 		}
 		os.Exit(exitCode)
 	}

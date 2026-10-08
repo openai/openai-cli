@@ -145,13 +145,18 @@ An unknown future status prints the response and exits nonzero.
 | Request failures, failed, expired, cancelled, unknown status, or missing/inconsistent counts | 1 |
 | API or transport error | 1 |
 | Overall local wait timeout | 124 |
-| Interrupt signal while waiting or writing output | 130 |
+| SIGINT while waiting or writing output | 130 |
+| SIGTERM during local batch work | 143 |
 
 Ordinary retrieve retains its existing HTTP-success exit behavior, regardless of batch status.
 `--wait=false` also retains ordinary retrieval.
-Ctrl+C stops local waiting. It never cancels the remote batch.
+Ctrl+C and SIGTERM stop local work. Neither cancels the remote batch.
 Inside the interactive explorer, `q` or keyboard Ctrl+C closes the view and retains the batch outcome.
 The wait deadline also stops the explorer.
+Terminal restoration gets up to 200 ms of cleanup time.
+Cancellation diagnostics use a separate 250 ms delivery window.
+A fallback diagnostic, if needed, has its own 250 ms window.
+For canceled batch work, `--format-error explore` emits static JSON instead of opening another view.
 Cancellation can omit its diagnostic when the interrupted output destination also carries errors.
 The exit status still distinguishes interruption from timeout.
 
@@ -168,6 +173,9 @@ Cancelled and expired work can still have partial output or error files.
 See the [Batch guide](https://developers.openai.com/api/docs/guides/batch) for lifecycle behavior.
 
 ## Download files
+
+Choose a file path without a trailing path separator.
+Directory-like destinations fail before an API request.
 
 Download one selected batch file to an explicit destination:
 

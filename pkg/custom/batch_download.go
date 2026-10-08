@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 
 	"github.com/openai/openai-cli/internal/requestflag"
@@ -39,14 +38,17 @@ func handleBatchDownload(ctx context.Context, command *cli.Command) (err error) 
 	if path == "" {
 		return batchError("Add --output with a new file path, or - for stdout.")
 	}
+	if os.IsPathSeparator(path[len(path)-1]) {
+		return batchError("Choose an output file path without a trailing path separator.")
+	}
 	options, err := batchRequestOptions(command)
 	if err != nil {
 		return err
 	}
-	ctx, stopSignals := signal.NotifyContext(ctx, os.Interrupt)
+	ctx, stopSignals := batchSignalContext(ctx)
 	stopReset := context.AfterFunc(ctx, stopSignals)
 	defer func() {
-		contextErr := ctx.Err()
+		contextErr := errors.Join(ctx.Err(), context.Cause(ctx))
 		stopReset()
 		stopSignals()
 		if errors.Is(contextErr, context.Canceled) {

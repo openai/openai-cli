@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"strconv"
 	"time"
 
@@ -39,11 +38,16 @@ func batchError(message string) error { return &batchWorkflowError{message: mess
 func batchContextError(err error) error {
 	quiet := interruptedBatchDiagnostic(err)
 	if errors.Is(err, context.Canceled) {
+		code := 130
+		var signalError *batchSignalError
+		if errors.As(err, &signalError) {
+			code = signalError.code
+		}
 		message := "Local batch operation interrupted. The remote batch was not canceled."
 		if quiet {
 			message = ""
 		}
-		return &batchWorkflowError{message: message, code: 130, cause: err}
+		return &batchWorkflowError{message: message, code: code, cause: err}
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		message := "Local batch wait timed out. The remote batch was not canceled. Retrieve it again to continue waiting."
@@ -116,7 +120,7 @@ func waitForBatch(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+	ctx, stop := batchSignalContext(ctx)
 	defer stop()
 	if timeout > 0 {
 		var cancel context.CancelFunc
@@ -133,7 +137,7 @@ func waitForBatch(ctx context.Context, cmd *cli.Command) error {
 		err = pollBatch(ctx, cmd, options, interval, nil)
 	}
 	if ctx.Err() != nil {
-		return batchContextError(errors.Join(ctx.Err(), err))
+		return batchContextError(errors.Join(ctx.Err(), context.Cause(ctx), err))
 	}
 	return err
 }
@@ -237,7 +241,7 @@ func batchProgress(batch gjson.Result) string {
 
 func batchShowJSON(ctx context.Context, cmd *cli.Command, batch gjson.Result, operation string) error {
 	root := cmd.Root()
-	return writeBatchStdout(ctx, root.Writer, func(out io.Writer) error {
+	return writeBatchStdoutWithCleanup(ctx, root.Writer, batchOutputCleanupGrace, func(out io.Writer) error {
 		return ShowJSON(batch, ShowJSONOpts{
 			Context: ctx, Operation: "(resource) batches > (method) " + operation, OutputKind: OutputResponse,
 			Format: root.String("format"), ExplicitFormat: root.IsSet("format"), RawOutput: root.Bool("raw-output"),
