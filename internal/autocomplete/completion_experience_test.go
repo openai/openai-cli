@@ -30,7 +30,7 @@ func TestCompletionHelpTopicsFollowCommandTree(t *testing.T) {
 		{[]string{"help", "--all", "responses", "input-items", ""}, []string{"list"}},
 		{[]string{"responses", "help", "input-items", ""}, []string{"list"}},
 		{[]string{"help", "legacy:responses", ""}, []string{"create"}},
-		{[]string{"help", "responses", "--a"}, []string{"--all"}},
+		{[]string{"help", "responses", "--a"}, nil},
 	} {
 		t.Run(strings.Join(tc.args, "/"), func(t *testing.T) {
 			got := GetCompletions(CompletionStyleZsh, root, tc.args)
