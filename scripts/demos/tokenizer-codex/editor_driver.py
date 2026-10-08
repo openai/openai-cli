@@ -21,6 +21,24 @@ OSC = re.compile(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 QUERY = re.compile(rb"\x1b\[\?7\$p|\x1b\]11;\?(?:\x07|\x1b\\)")
 
 
+def stop_editor(pid, terminal):
+    # Failed recordings need no remaining frames. Release terminal backpressure
+    # before waiting for the owned session leader to finish on Darwin.
+    os.close(terminal)
+    for number in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pid, number)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            waited, value = os.waitpid(pid, os.WNOHANG)
+            if waited:
+                return os.waitstatus_to_exitcode(value)
+            time.sleep(0.01)
+    raise RuntimeError("editor did not exit within the recording cleanup deadline")
+
+
 def drive():
     width = int(os.environ["DEMO_COLUMNS"])
     height = int(os.environ["DEMO_ROWS"])
@@ -38,9 +56,15 @@ def drive():
         os.close(gate_read)
         os.execvp("openai", ["openai", "tokenizer"])
     os.close(gate_read)
-    fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
-    os.write(gate_write, b"1")
-    os.close(gate_write)
+    try:
+        fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
+        os.write(gate_write, b"1")
+    except BaseException:
+        os.close(gate_write)
+        stop_editor(pid, terminal)
+        raise
+    else:
+        os.close(gate_write)
     buffer = bytearray()
     queries = bytearray()
     events = []
@@ -162,7 +186,7 @@ def drive():
         wait_for("cl100k_base")
         pause(0.2)
         send(b"\r")
-        wait_for(f"tokens · {len(FIXTURE.encode())} bytes")
+        wait_for("11 tokens · 26 bytes")
         send(b"\x1b[Z")
         tokenizer_label = "Tokenizer" if layout == "options" else "Encoding"
         wait_for(tokenizer_label + "  cl100k_base")
@@ -190,23 +214,9 @@ def drive():
         return status
     finally:
         if status is None:
-            for number in (signal.SIGTERM, signal.SIGKILL):
-                try:
-                    os.killpg(pid, number)
-                except ProcessLookupError:
-                    break
-                deadline = time.monotonic() + 1
-                while status is None and time.monotonic() < deadline:
-                    waited, value = os.waitpid(pid, os.WNOHANG)
-                    if waited:
-                        status = os.waitstatus_to_exitcode(value)
-                    else:
-                        time.sleep(0.01)
-                if status is not None:
-                    break
-            if status is None:
-                os.waitpid(pid, 0)
-        os.close(terminal)
+            status = stop_editor(pid, terminal)
+        else:
+            os.close(terminal)
 
 
 if __name__ == "__main__":

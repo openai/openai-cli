@@ -148,6 +148,8 @@ def validate_editor(directory, scene="after", layout="legacy"):
             if name == "details":
                 complete = complete and all(value in plain for value in ["partial UTF-8", "ID 61138", "20 f0 9f 91"])
                 complete = complete and re.search(r"bytes\s+\[14,\s*18\)", plain)
+            elif name == "encoding":
+                complete = complete and "11 tokens · 26 bytes" in plain
             elif layout == "options":
                 if name == "text":
                     complete = complete and "View  " in plain and "Tokenizer  o200k_base" in plain
