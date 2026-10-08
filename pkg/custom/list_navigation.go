@@ -360,6 +360,22 @@ func (m *listNavigation) View() tea.View {
 // Rendering only consumes loaded items. The table integration can replace this
 // bounded presentation call without owning fetch timing or keyboard input.
 func renderListNavigationPage(opts ShowJSONOpts, items []gjson.Result, width int) (string, error) {
+	if err := opts.Context.Err(); err != nil {
+		return "", err
+	}
+	if (opts.Format == "" || strings.EqualFold(opts.Format, "auto")) &&
+		opts.Transform == "" && !opts.RawOutput {
+		content, supported, err := renderListTablePage(opts.Context, opts.Operation, items, width)
+		if err != nil {
+			return "", err
+		}
+		if err := opts.Context.Err(); err != nil {
+			return "", err
+		}
+		if supported {
+			return content, nil
+		}
+	}
 	return renderListNavigationLabels(opts, items)
 }
 
