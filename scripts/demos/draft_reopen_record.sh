@@ -19,7 +19,7 @@ demo_driver="$demo_source/draft_reopen_check.py"
 demo_python="$(command -v python3)"
 demo_prepare_capture "$demo_root" "$1" "$2" "$3" "$4" "$5" "$demo_python"
 demo_window_size=80x24
-demo_render_options=(--font-family Menlo --font-size 18 --line-height 1.2 --theme dracula --fps-cap 20 --last-frame-duration 2)
+demo_render_options=(--renderer swash --font-family Menlo --font-size 18 --line-height 1.2 --theme dracula --fps-cap 20 --last-frame-duration 2)
 cat > "$demo_runtime/scene.sh" <<'SCENE'
 #!/bin/bash
 set -euo pipefail
@@ -37,6 +37,7 @@ SCENE
   echo 'auth-reopen baseline: compact-auth source 39e26577; use unsent for main without recovery'
   echo 'actions: edit prompt and quality, Ctrl+C, reopen; no automatic requests'
   echo 'scope: native zsh PTY and terminal-text replay; fake credentials and isolated HOME'
+  echo 'render: agg swash; PNGs use the composed scene GIF at the reopened frame'
   demo_capture_metadata
   shasum -a 256 "$demo_driver" "$demo_root/scripts/demos/image_recovery_check.py"
 } > "$demo_output/metadata.txt"
@@ -60,8 +61,9 @@ for row in pathlib.Path(sys.argv[1]).read_text().splitlines()[1:]:
 else: raise SystemExit('reopened draft frame missing')
 FRAME
 )"
-  "$demo_agg" --quiet "${demo_render_options[@]}" --select "$frame_time" "$demo_output/$scene.cast" "$demo_output/$scene-reopened.gif"
-  "$demo_ffmpeg" -nostdin -hide_banner -loglevel error -y -i "$demo_output/$scene-reopened.gif" -frames:v 1 "$demo_output/$scene-reopened.png"
+  # Decode the full animation, retaining the last composed frame at this time.
+  "$demo_ffmpeg" -nostdin -hide_banner -loglevel error -y -i "$demo_output/$scene.gif" \
+    -vf "select=lte(t\,$frame_time)" -vsync 0 -update 1 "$demo_output/$scene-reopened.png"
 done
 "$demo_python" - "$demo_output" "$demo_expected_requests" <<'COMPARE'
 import json,pathlib,sys
