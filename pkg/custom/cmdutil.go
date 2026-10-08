@@ -78,7 +78,7 @@ func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 		opts = append(opts, option.WithHTTPClient(httpClient))
 	}
 
-	return opts
+	return append(opts, agentsRequestOptions(cmd)...)
 }
 
 // isInputPiped tries to check for input being piped into the CLI which tells us that we should try to read
@@ -640,6 +640,10 @@ type hasRawJSON interface {
 
 // ShowJSONIterator displays an iterator of values to the user. Use itemsToDisplay = -1 for no limit.
 func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts) error {
+	route := transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}
+	if transformers.IsAgentsStream(route) {
+		return showJSONIterator(&agentsStream[T]{source: iter, route: route}, itemsToDisplay, opts, transformers.Select)
+	}
 	return showJSONIterator(iter, itemsToDisplay, opts, transformers.Select)
 }
 

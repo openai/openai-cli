@@ -14,6 +14,9 @@ import (
 // Match the generated operation and response boundary before interpreting a
 // field as media. Metadata, tool schemas, and unknown fields may use any names.
 func selectReadableTransformer(route Route) Transformer {
+	if transform := SelectAgentsTransformer(route); transform != nil {
+		return transform
+	}
 	var fields func(gjson.Result) []gjson.Result
 	vectors := false
 	switch route {

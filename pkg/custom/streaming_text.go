@@ -14,13 +14,19 @@ func showReadableStream(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts) e
 	out := outputWriter{ctx: opts.Context, out: opts.Stdout}
 	writer := readable.NewStreamWriter(out)
 	route := transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}
+	var agents transformers.AgentsStreamProjector
 	for iter.Next() {
 		value := iter.Current().Result
-		event, projected := transformers.ProjectTextStream(value, route)
+		event, projected, err := agents.Project(opts.Context, value, route)
+		if err != nil {
+			return errors.Join(err, iter.Err())
+		}
+		if !projected {
+			event, projected = transformers.ProjectTextStream(value, route)
+		}
 		if !projected {
 			event, projected = transformers.ProjectAudioStream(value, route)
 		}
-		var err error
 		if projected {
 			err = writer.Write(event)
 		} else {
@@ -30,10 +36,10 @@ func showReadableStream(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts) e
 			return errors.Join(err, iter.Err())
 		}
 	}
-	if err := errors.Join(iter.Err(), writer.Finish()); err != nil {
+	if err := errors.Join(iter.Err(), writer.Finish(), writeAgentsStreamSummaryHint(opts, agents.HasOmissions())); err != nil {
 		return err
 	}
-	if !writer.HasOutput() {
+	if !writer.HasOutput() && !agents.HasOmissions() {
 		return readable.WriteText(out, "No results.")
 	}
 	return opts.Context.Err()
