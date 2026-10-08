@@ -307,3 +307,18 @@ printf 'passed\n' > "$F29_BROWSER_REPORT"
 		t.Fatal("launcher changed the parent's environment")
 	}
 }
+
+func TestCodexBrowserEnvironmentFiltersOnlyOpenAISettings(t *testing.T) {
+	settings := []string{"PATH=/synthetic/bin", "OPENAI_API_KEY=fake", "OpenAi_ADMIN_KEY=fake", "OPENAI_EMPTY=",
+		"BROWSER=synthetic-browser", "SystemRoot=C:\\Windows", "=C:=C:\\synthetic", "UNRELATED=exact=value", "OPENAI=fake"}
+	want := []string{"PATH=/synthetic/bin", "BROWSER=synthetic-browser", "SystemRoot=C:\\Windows",
+		"=C:=C:\\synthetic", "UNRELATED=exact=value", "OPENAI=fake"}
+	if got := codexBrowserEnvironment(settings); !reflect.DeepEqual(got, want) {
+		t.Fatalf("desktop environment changed: %#v", got)
+	}
+	for _, settings := range [][]string{nil, {"OPENAI_API_KEY=fake", "openai_admin_key="}} {
+		if got := codexBrowserEnvironment(settings); got == nil || len(got) != 0 {
+			t.Fatalf("empty child environment must remain explicit: %#v", got)
+		}
+	}
+}
