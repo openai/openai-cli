@@ -34,9 +34,15 @@ const (
 // or validation. It owns no request/output writers and cannot replace a failure.
 func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageOutputPlan, next cli.ActionFunc) (err error) {
 	root := command.Root()
-	if plan == nil || !isTerminal(imageCommandWriter(command)) || !isTerminal(os.Stderr) ||
+	out := imageCommandWriter(command)
+	if plan == nil || !isTerminal(out) || !isTerminal(os.Stderr) ||
 		root.Bool("debug") || errorOutputFormat(root) != "text" || root.String("transform-error") != "" {
 		return next(ctx, command)
+	}
+	feedback := os.Stderr
+	if plan.loadingPrompt != "" {
+		// Keep the visible picker prompt on its UI surface, outside diagnostics.
+		feedback = out.(*os.File) // isTerminal above requires an *os.File.
 	}
 	label := "Generating image"
 	switch command.Name {
@@ -50,8 +56,8 @@ func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageO
 	// Restore normal signal handling once cancellation starts. A second Ctrl-C
 	// can still terminate the process if a terminal write or cleanup is blocked.
 	stopReset := context.AfterFunc(ctx, stopSignals)
-	stopLoading, advance := startLoadingFeedback(ctx, os.Stderr, label, plan.loadingPrompt, loadingAnimationSupported(os.Getenv), imageLoadingSpinner(os.Getenv, runtime.GOOS), func() (int, int) {
-		width, height, _ := term.GetSize(os.Stderr.Fd())
+	stopLoading, advance := startLoadingFeedback(ctx, feedback, label, plan.loadingPrompt, loadingAnimationSupported(os.Getenv), imageLoadingSpinner(os.Getenv, runtime.GOOS), func() (int, int) {
+		width, height, _ := term.GetSize(feedback.Fd())
 		return width, height
 	})
 	plan.stopLoading = stopLoading
@@ -125,7 +131,7 @@ func imageLoadingSpinner(getenv func(string) string, goos string) spinner.Spinne
 
 // The picker supplies only prompt text already visible in its form. Clearing
 // frames does not redact terminal captures. The caller stops this worker before
-// another writer uses the terminal. Diagnostic writes are best effort; stop joins
+// another writer uses the terminal. Feedback writes are best effort; stop joins
 // the worker without changing cursor visibility or terminal input modes.
 func startLoadingFeedback(ctx context.Context, out io.Writer, label, prompt string, animate bool, animation spinner.Spinner, size func() (int, int)) (stopFeedback func(), advance func(imageLoadingStage)) {
 	stop, done := make(chan struct{}), make(chan struct{})
