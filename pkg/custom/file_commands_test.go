@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -159,4 +160,21 @@ func TestFileCommandsPreserveExistingFriendlyRoutes(t *testing.T) {
 	require.False(t, files.Command("retrieve").Hidden)
 	require.False(t, files.Command("content").Hidden)
 	require.NotPanics(t, func() { configureFileCommands(&cli.Command{Name: "openai"}) })
+}
+
+func TestFileCommandsMakeWorkflowDiscoverable(t *testing.T) {
+	root := fileWorkflowCommandTree(func(context.Context, *cli.Command) error { return nil })
+	files := root.Command("files")
+	files.Commands = append(files.Commands, &cli.Command{Name: "list"}, &cli.Command{Name: "delete"})
+	configureTaskCommands(root)
+	configureFileCommands(root)
+	require.Equal(t, "Upload, inspect, and download files.", files.Usage)
+	var names []string
+	for _, command := range clihelp.VisibleCommands(files) {
+		names = append(names, command.Name)
+	}
+	require.Equal(t, []string{"upload", "get", "download", "list", "delete"}, names)
+	for _, name := range []string{"create", "retrieve", "content"} {
+		require.NotNil(t, files.Command(name))
+	}
 }

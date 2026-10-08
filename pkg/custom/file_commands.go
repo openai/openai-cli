@@ -23,6 +23,8 @@ func configureFileCommands(root *cli.Command) {
 	if files == nil {
 		return
 	}
+	files.Usage = "Upload, inspect, and download files."
+	files.Description = "Use upload for a local file, get for metadata, and download for contents.\nExisting create, retrieve, and content commands remain available."
 	if upload := files.Command("upload"); upload != nil {
 		upload.Usage = "Upload a local file with an explicit purpose."
 		upload.UsageText = clihelp.Invocation(root.Name, os.Args) + " files upload [PATH | --file PATH] --purpose PURPOSE [options]"
@@ -72,5 +74,13 @@ func configureFileCommands(root *cli.Command) {
 		}
 		files.Commands = append(files.Commands, command)
 		markCompatibilityCommand(source)
+	}
+	for name, rank := range map[string]int{"upload": 10, "get": 20, "download": 30} {
+		if command := files.Command(name); command != nil {
+			if command.Metadata == nil {
+				command.Metadata = map[string]any{}
+			}
+			command.Metadata["help-command-rank"] = rank
+		}
 	}
 }

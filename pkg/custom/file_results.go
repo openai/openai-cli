@@ -35,6 +35,10 @@ func showFileResult(value gjson.Result, opts ShowJSONOpts) (bool, error) {
 		}
 		return true, readable.Write(out, metadata)
 	case command == fileUploadCommand && opts.Operation == "(resource) files > (method) create":
+		if !outputDiagnosticsAllowed(opts.Context) {
+			// Quiet suppresses the receipt, while ordinary rendering keeps data.
+			return false, nil
+		}
 		if !validFileReceipt(value) {
 			return false, nil
 		}
