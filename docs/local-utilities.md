@@ -30,7 +30,11 @@ The editor supports up to 1 MiB of UTF-8 input.
 Enter inserts a newline while editing text.
 Down at the end of text opens options, matching the image picker's navigation.
 Within multiline text, Up and Down continue to move the text cursor.
+The token marked with a dot follows the text cursor without recalculating tokens.
+At a token boundary, the marker selects the token on the right. At the end, it selects the last token.
+Tokens can split a Unicode character; cursor movement still follows complete graphemes.
 Tab and Shift+Tab cycle through text, options, and tokens.
+Chooser focus uses the image picker's bold highlight. A checkmark identifies the applied choice.
 The main screen shows the token count and selected token position.
 The Bytes view adds the input byte count; full hexadecimal details remain available through Enter.
 Text and Token IDs are the primary reading views. Bytes supports exact-byte inspection and debugging.
@@ -56,6 +60,7 @@ Use `count` or `inspect` for JSON output and scripts.
 ```sh
 openai tokenizer count --text "Hello, world!"
 openai tokenizer inspect --text "Hi!" --encoding cl100k_base
+openai tokenizer count --text "    return value" --encoding p50k_base
 openai tokenizer count --file prompt.txt
 printf 'Hello, world!' | openai tokenizer count
 openai --format json tokenizer inspect --file prompt.txt
@@ -77,11 +82,18 @@ Empty input produces zero tokens.
 The tokenizer preserves whitespace, BOM, combining marks, and final newlines.
 It performs no Unicode normalization and rejects invalid UTF-8.
 
-The default encoding is `o200k_base`; `cl100k_base` is also available.
+The default encoding remains `o200k_base`.
+The tokenizer also supports `cl100k_base`, `r50k_base`, and `p50k_base` offline.
+`cl100k_base` supports the GPT-4 and GPT-3.5 families.
+The legacy `r50k_base` encoding supports GPT-3 models such as `davinci`.
+The legacy `p50k_base` encoding supports original Codex models and `text-davinci-002`/`text-davinci-003`.
+These model families follow the [OpenAI tokenizer reference](https://developers.openai.com/cookbook/examples/how_to_count_tokens_with_tiktoken).
+The original Codex models differ from the current Codex CLI.
 Use exact encoding names.
 The command does not guess an encoding from a model name.
 Token IDs follow OpenAI tiktoken 0.14.0 with fixed Unicode 16 character rules.
 Compiler upgrades do not change those rules.
+Legacy encodings preserve their case-sensitive contractions and distinct whitespace tokens.
 
 The input limit is 1 MiB.
 Long unbroken text can take minutes; Ctrl+C stops the process.

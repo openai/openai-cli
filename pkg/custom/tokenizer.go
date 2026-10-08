@@ -65,7 +65,7 @@ func tokenizerInputCommand(name string, inspect bool) *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "text", Usage: "Use literal UTF-8 `TEXT`, including an empty string; @ stays literal", OnlyOnce: true},
 			&cli.StringFlag{Name: "file", Usage: "Read UTF-8 text from `PATH`; use - for stdin through EOF", TakesFile: true, OnlyOnce: true},
-			&cli.StringFlag{Name: "encoding", Usage: "Use `ENCODING`: o200k_base or cl100k_base; no model mapping", Value: "o200k_base", OnlyOnce: true},
+			&cli.StringFlag{Name: "encoding", Usage: "Use `ENCODING`: " + strings.Join(tokenizer.SupportedEncodings(), ", ") + "; no model mapping", Value: tokenizer.DefaultEncoding, OnlyOnce: true},
 		},
 		Action: func(ctx context.Context, command *cli.Command) error {
 			return handleTokenizer(ctx, command, inspect)
@@ -99,8 +99,8 @@ func handleTokenizer(ctx context.Context, command *cli.Command, inspect bool) er
 		return err
 	}
 	encoding := command.String("encoding")
-	if encoding != "o200k_base" && encoding != "cl100k_base" {
-		return &localUtilityError{message: "Choose a tokenizer encoding: o200k_base or cl100k_base. Model names are not encodings."}
+	if !tokenizer.IsSupportedEncoding(encoding) {
+		return &localUtilityError{message: "Choose a tokenizer encoding: " + strings.Join(tokenizer.SupportedEncodings(), ", ") + ". Model names are not encodings."}
 	}
 	text, err := readTokenizerInput(ctx, command)
 	if err != nil {
@@ -261,9 +261,27 @@ func handleTokenizerEncodings(ctx context.Context, command *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	text := "o200k_base (default)\ncl100k_base\n"
+	encodings := tokenizer.SupportedEncodings()
+	var lines []string
+	for _, name := range encodings {
+		label := name
+		if name == tokenizer.DefaultEncoding {
+			label += " (default)"
+		} else if name == "r50k_base" || name == "p50k_base" {
+			label += " (legacy)"
+		}
+		lines = append(lines, label)
+	}
+	text := strings.Join(lines, "\n") + "\n"
 	if format == "json" {
-		text = "{\"default_encoding\":\"o200k_base\",\"encodings\":[\"o200k_base\",\"cl100k_base\"]}\n"
+		data, err := json.Marshal(struct {
+			DefaultEncoding string   `json:"default_encoding"`
+			Encodings       []string `json:"encodings"`
+		}{tokenizer.DefaultEncoding, encodings})
+		if err != nil {
+			return err
+		}
+		text = string(data) + "\n"
 	}
 	_, err = io.WriteString(outputWriter{ctx: ctx, out: command.Root().Writer}, text)
 	return tokenizerOutputFailure(err)

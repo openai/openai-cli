@@ -11,6 +11,23 @@ import (
 // It does not limit API requests or guarantee short execution for unbroken text.
 const MaxInputBytes = 1 << 20
 
+// DefaultEncoding is the encoding used when the caller makes no selection.
+const DefaultEncoding = "o200k_base"
+
+// SupportedEncodings returns exact encoding names in presentation order.
+func SupportedEncodings() []string {
+	names := make([]string, len(encodingDefinitions))
+	for i := range encodingDefinitions {
+		names[i] = encodingDefinitions[i].name
+	}
+	return names
+}
+
+// IsSupportedEncoding checks an exact encoding name without loading vocabulary data.
+func IsSupportedEncoding(name string) bool {
+	return encodingDefinitionFor(name) != nil
+}
+
 // Licenses retains the tokenizer dependencies' distribution notices in the binary.
 //
 //go:embed LICENSES.txt

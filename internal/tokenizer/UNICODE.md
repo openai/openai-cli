@@ -1,11 +1,16 @@
 # Pinned tokenization data
 
 These encodings match the plain-text `encode_ordinary` behavior of OpenAI tiktoken 0.14.0.
-They use Unicode 16.0.0 categories, whitespace, and contraction case-fold closures.
+They use Unicode 16.0.0 categories and whitespace.
+Modern encodings use explicit contraction case-fold closures; legacy encodings preserve case-sensitive contractions.
 Explicit regex classes keep results independent of the Go compiler's Unicode version.
 
 The adapter extracts ordinary vocabulary bytes through tokenizer v0.7.0's public `Decode` API.
 It builds immutable rank and fragment tables once per encoding.
+The supported names are `o200k_base`, `cl100k_base`, `r50k_base`, and `p50k_base`.
+`r50k_base` has ordinary ranks 0 through 50255.
+`p50k_base` adds ranks 50257 through 50280 for runs of spaces.
+Initialization verifies that its special-token gap at 50256 remains absent.
 It then processes exact reference pre-tokenizer matches incrementally.
 Exact ranked pieces need no BPE construction.
 For other pieces, pkoukk/tiktoken-go v0.1.8 performs BPE with an anchored match-all pattern.

@@ -17,6 +17,15 @@ case "$demo_editor_before" in
   help|legacy|options) ;;
   *) echo 'DEMO_EDITOR_BEFORE must be help, legacy, or options.' >&2; exit 2;;
 esac
+demo_editor_linked="${DEMO_EDITOR_LINKED:-0}"
+case "$demo_editor_linked" in
+  0|1) ;;
+  *) echo 'DEMO_EDITOR_LINKED must be 0 or 1.' >&2; exit 2;;
+esac
+if [ "$demo_editor_linked" = 1 ] && [ "$demo_mode" != editor ]; then
+  echo 'DEMO_EDITOR_LINKED requires editor mode.' >&2
+  exit 2
+fi
 demo_columns="${DEMO_COLUMNS:-80}"
 case "$demo_columns" in
   40|80) ;;
@@ -96,6 +105,7 @@ SCENE
   if [ "$demo_mode" = editor ]; then
     echo "before editor layout: $demo_editor_before"
     echo 'after editor layout: options'
+    echo "after linked cursor and legacy tokenizers: $demo_editor_linked"
   fi
   echo "before commit: $demo_before_sha"
   echo "candidate commit: $demo_after_sha (check source manifest for uncommitted changes)"
@@ -148,6 +158,7 @@ if [ "$demo_mode" = editor ]; then
     exit 2
   fi
   printf 'before\t%s\nafter\toptions\n' "$demo_editor_before" > "$demo_output/editor-layouts.tsv"
+  printf 'before\t0\nafter\t%s\n' "$demo_editor_linked" > "$demo_output/editor-linked.tsv"
 fi
 demo_after_status=0
 if [ "$demo_mode" = editor ]; then demo_after_status=130; fi
@@ -161,7 +172,7 @@ demo_capture_scene after "$demo_after_status" "$demo_runtime/after" 'http://127.
   "DEMO_MODE=$demo_mode" 'DEMO_SCENE=after' "DEMO_STATUS_LOG=$demo_output/statuses.tsv" \
   "DEMO_PYTHON=$demo_python" "DEMO_EDITOR_DRIVER=$demo_source/editor_driver.py" \
   'DEMO_EDITOR_LAYOUT=options' "DEMO_EDITOR_REPORT=$demo_output/editor-input.json" "DEMO_COLUMNS=$demo_columns" "DEMO_ROWS=$demo_rows" \
-  "DEMO_THEME=$demo_theme" "${demo_theme_environment[@]}"
+  "DEMO_EDITOR_LINKED=$demo_editor_linked" "DEMO_THEME=$demo_theme" "${demo_theme_environment[@]}"
 "$demo_python" "$demo_source/validate.py" "$demo_output" "$demo_mode" > "$demo_output/validation.txt"
 if [ "$demo_mode" = editor ]; then
   demo_editor_scenes=(after)
@@ -181,6 +192,11 @@ if [ "$demo_mode" = editor ]; then
     done
     if [ "$demo_scene" = after ] || [ "$demo_editor_before" = options ]; then
       for demo_state in view-choice tokenizer-choice; do
+        test -s "$demo_output/$demo_scene-$demo_state.png"
+      done
+    fi
+    if [ "$demo_scene" = after ] && [ "$demo_editor_linked" = 1 ]; then
+      for demo_state in caret r50k p50k; do
         test -s "$demo_output/$demo_scene-$demo_state.png"
       done
     fi

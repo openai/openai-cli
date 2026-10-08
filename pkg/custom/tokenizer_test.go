@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -97,6 +98,7 @@ func TestTokenizerInvalidInputsDoNotReadStdin(t *testing.T) {
 	for _, args := range [][]string{
 		{"--text", "private text", "--file", "private path"},
 		{"--encoding", "unknown-private-model"}, {"--encoding", "gpt-4o"},
+		{"--encoding", "gpt2"}, {"--encoding", "p50k_edit"}, {"--encoding", "P50K_BASE"}, {"--encoding", "r50k_base "},
 		{"--file", ""}, {"--text", string([]byte{0xff})},
 		{"--text", strings.Repeat("x", tokenizer.MaxInputBytes+1)},
 		{"--text", "first", "--text", "second"}, {"--file", "first", "--file", "second"},
@@ -134,6 +136,90 @@ func TestTokenizerInputLimitBoundsReads(t *testing.T) {
 	}
 	if input.bytes != tokenizer.MaxInputBytes+1 {
 		t.Fatalf("read %d bytes; limit probe should read %d", input.bytes, tokenizer.MaxInputBytes+1)
+	}
+}
+
+func TestTokenizerLegacyEncodingSources(t *testing.T) {
+	text := "  "
+	path := filepath.Join(t.TempDir(), "legacy input.txt")
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		ids  []uint
+	}{
+		{"r50k_base", []uint{220, 220}},
+		{"p50k_base", []uint{50257}},
+	} {
+		for _, source := range []string{"text", "file", "stdin", "explicit stdin"} {
+			for _, operation := range []string{"count", "inspect"} {
+				t.Run(tc.name+"/"+source+"/"+operation, func(t *testing.T) {
+					var input io.Reader = tokenizerRejectReader{}
+					args := []string{"openai", "--format", "json", "tokenizer", operation, "--encoding", tc.name}
+					switch source {
+					case "text":
+						args = append(args, "--text", text)
+					case "file":
+						args = append(args, "--file", path)
+					case "stdin":
+						input = strings.NewReader(text)
+					case "explicit stdin":
+						args = append(args, "--file", "-")
+						input = strings.NewReader(text)
+					}
+					var out bytes.Buffer
+					if err := tokenizerTestRoot(input, &out).Run(t.Context(), args); err != nil {
+						t.Fatal(err)
+					}
+					var result struct {
+						Encoding   string           `json:"encoding"`
+						InputBytes int              `json:"input_bytes"`
+						TokenCount int              `json:"token_count"`
+						Tokens     []tokenizerToken `json:"tokens"`
+					}
+					if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+						t.Fatal(err)
+					}
+					if result.Encoding != tc.name || result.InputBytes != len(text) || result.TokenCount != len(tc.ids) {
+						t.Fatalf("legacy count changed: %s", out.String())
+					}
+					if operation == "inspect" {
+						var ids []uint
+						var data []byte
+						for _, token := range result.Tokens {
+							fragment, err := hex.DecodeString(token.BytesHex)
+							if err != nil || token.StartByte != len(data) || token.EndByte != len(data)+len(fragment) {
+								t.Fatalf("invalid legacy byte boundaries: %+v", token)
+							}
+							data = append(data, fragment...)
+							ids = append(ids, token.ID)
+						}
+						if !reflect.DeepEqual(ids, tc.ids) || string(data) != text {
+							t.Fatalf("legacy result changed: %s", out.String())
+						}
+					} else if result.Tokens != nil {
+						t.Fatal("count unexpectedly returned inspection data")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestTokenizerEncodingListPreservesExactNames(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		var out bytes.Buffer
+		if err := tokenizerTestRoot(tokenizerRejectReader{}, &out).Run(t.Context(), []string{"openai", "tokenizer", "encodings", "--format", format}); err != nil {
+			t.Fatal(err)
+		}
+		want := "o200k_base (default)\ncl100k_base\nr50k_base (legacy)\np50k_base (legacy)\n"
+		if format == "json" {
+			want = "{\"default_encoding\":\"o200k_base\",\"encodings\":[\"o200k_base\",\"cl100k_base\",\"r50k_base\",\"p50k_base\"]}\n"
+		}
+		if out.String() != want {
+			t.Fatalf("encoding list = %q; want %q", out.String(), want)
+		}
 	}
 }
 

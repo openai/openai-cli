@@ -48,6 +48,12 @@ def drive():
     layout = os.environ.get("DEMO_EDITOR_LAYOUT", "options")
     if layout not in ("legacy", "options"):
         raise ValueError("DEMO_EDITOR_LAYOUT must be legacy or options")
+    linked_setting = os.environ.get("DEMO_EDITOR_LINKED", "0")
+    if linked_setting not in ("0", "1"):
+        raise ValueError("DEMO_EDITOR_LINKED must be 0 or 1")
+    linked = linked_setting == "1"
+    if linked and (layout != "options" or os.environ.get("DEMO_SCENE") != "after"):
+        raise ValueError("linked recording requires the after Options editor")
     gate_read, gate_write = os.pipe()
     pid, terminal = pty.fork()
     if pid == 0:
@@ -120,8 +126,13 @@ def drive():
     def wait_for(needle):
         deadline = time.monotonic() + 12
         while True:
-            text = CSI.sub(b"", OSC.sub(b"", bytes(buffer))).decode("utf-8", "replace")
-            if needle in text:
+            visible = bytes(buffer)
+            if linked:
+                # Each inline frame starts with CR + EraseScreenBelow.
+                # Do not combine a new tokenizer label with an old equal count.
+                visible = visible.rsplit(b"\r\x1b[J", 1)[-1]
+            text = CSI.sub(b"", OSC.sub(b"", visible)).decode("utf-8", "replace")
+            if needle in text and (not linked or "Ctrl+C exit" in text):
                 return
             if status is not None or time.monotonic() >= deadline:
                 raise RuntimeError("editor did not reach the requested state")
@@ -151,6 +162,12 @@ def drive():
              "Café.".encode() + b"\x1b[201~")
         wait_for("10 tokens" if layout == "options" else "10 tokens · 26 bytes")
         mark("text")
+        if linked:
+            send(b"\x1b[H\x1b[C")
+            wait_for("C▏afé.")
+            wait_for("Token 9 of 10")
+            wait_for('·["afé"]')
+            mark("caret")
         send(b"\t\x1b[C")
         wait_for("[Token IDs]")
         mark("ids")
@@ -169,7 +186,8 @@ def drive():
             send(b"\t")
             wait_for("Enter details")
         # Arrow keys can leave the unchanged Results footer out of a redraw.
-        send(b"\x1b[B" * 4, clear=False)
+        # Caret-linked editors can arrive at the last token after typing.
+        send(b"\x1b[H" + b"\x1b[B" * 4, clear=False)
         wait_for("Token 5 of 10" if layout == "options" else "Token 5/10 · ID 61138")
         wait_for("›[20 f0 9f 91]")
         wait_for("Enter details")
@@ -199,11 +217,26 @@ def drive():
         tokenizer_label = "Tokenizer" if layout == "options" else "Encoding"
         wait_for(tokenizer_label + "  cl100k_base")
         mark("encoding")
+        final_encoding = "cl100k_base"
+        if linked:
+            for index, encoding in [(2, "r50k_base"), (3, "p50k_base")]:
+                # Text -> Options; choose its Tokenizer row independently of
+                # the row remembered from the preceding selection.
+                send(b"\t\x1b[H\x1b[B\r")
+                wait_for("Choose tokenizer")
+                send(b"\x1b[H" + b"\x1b[B" * index + b"\r")
+                wait_for("Tokenizer  " + encoding)
+                wait_for("11 tokens · 26 bytes")
+                send(b"\x1b[Z")
+                wait_for("Tokenizer  " + encoding)
+                wait_for("11 tokens · 26 bytes")
+                mark(encoding.removesuffix("_base"))
+                final_encoding = encoding
         send(b"\x1bOP")
         wait_for("Tokenizer · controls")
         mark("controls")
         send(b"\x1b")
-        wait_for(tokenizer_label + "  cl100k_base")
+        wait_for(tokenizer_label + "  " + final_encoding)
         pause(0.3)
         send(b"\x03")
         deadline = time.monotonic() + 5
@@ -213,11 +246,16 @@ def drive():
             pump(0.05)
         if status != 130:
             raise RuntimeError(f"editor returned {status}, expected 130")
+        result = {"input": FIXTURE, "input_bytes": len(FIXTURE.encode()), "theme": theme,
+                  "columns": width, "rows": height, "layout": layout,
+                  "capture_version": 3 if linked else 2,
+                  "input_actions": {"typed": "Hello, ", "pasted": ["tokens! 👋", "Café."], "newline": "Enter"},
+                  "states": events, "exit_status": status}
+        if linked:
+            result["caret_actions"] = {"keys": ["Home", "Right"], "expected_byte_offset": 21}
+            result["tokenizer_actions"] = ["cl100k_base", "r50k_base", "p50k_base"]
         with open(report_path, "w", encoding="utf-8") as report:
-            json.dump({"input": FIXTURE, "input_bytes": len(FIXTURE.encode()), "theme": theme,
-                       "columns": width, "rows": height, "layout": layout, "capture_version": 2,
-                       "input_actions": {"typed": "Hello, ", "pasted": ["tokens! 👋", "Café."], "newline": "Enter"},
-                       "states": events, "exit_status": status}, report, indent=2)
+            json.dump(result, report, indent=2)
             report.write("\n")
         return status
     finally:

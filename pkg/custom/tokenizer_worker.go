@@ -185,19 +185,30 @@ func tokenizerPreviewEncoding(encoding string) (byte, error) {
 		return 0, nil
 	case "cl100k_base":
 		return 1, nil
+	case "r50k_base":
+		return 2, nil
+	case "p50k_base":
+		return 3, nil
 	default:
 		return 0, errors.New("invalid preview encoding")
 	}
 }
 
-// These are the largest ordinary IDs in the pinned tokenizer v0.7.0
-// codec/o200k_base_vocab.go and codec/cl100k_base_vocab.go files. The preview
-// never encodes special markers as special IDs. Check this with library updates.
-func tokenizerPreviewMaximumID(encoding byte) uint32 {
-	if encoding == 1 {
-		return 100255
+// These bounds come from the pinned tokenizer v0.7.0 codec vocabularies.
+// p50k reserves 50256 for a special marker; ordinary encoding never emits it.
+func tokenizerPreviewValidID(encoding byte, id uint64) bool {
+	switch encoding {
+	case 0:
+		return id <= 199997
+	case 1:
+		return id <= 100255
+	case 2:
+		return id <= 50255
+	case 3:
+		return id <= 50280 && id != 50256
+	default:
+		return false
 	}
-	return 199997
 }
 
 func runTokenizerPreview(ctx context.Context, executable, text, encoding string) (tokens []tokenizerPreviewToken, err error) {
@@ -309,7 +320,7 @@ func readTokenizerPreviewOutput(input io.Reader, inputBytes int, encoding byte) 
 			return nil, err
 		}
 		token := tokenizerPreviewToken{binary.BigEndian.Uint32(data[:4]), binary.BigEndian.Uint32(data[4:])}
-		if token.ID > tokenizerPreviewMaximumID(encoding) || token.EndByte <= offset || uint64(token.EndByte) > uint64(inputBytes) {
+		if !tokenizerPreviewValidID(encoding, uint64(token.ID)) || token.EndByte <= offset || uint64(token.EndByte) > uint64(inputBytes) {
 			return nil, errors.New("invalid preview token boundary")
 		}
 		tokens[i] = token
@@ -334,7 +345,9 @@ func serveTokenizerPreview(ctx context.Context, input io.ReadCloser, out io.Writ
 	}
 	encodingID := header[7]
 	header[7] = 0
-	if string(header[:8]) != string(tokenizerPreviewMagic[:]) || encodingID > 1 {
+	// Preserve the private protocol's existing IDs when adding vocabularies.
+	encodings := [...]string{"o200k_base", "cl100k_base", "r50k_base", "p50k_base"}
+	if string(header[:8]) != string(tokenizerPreviewMagic[:]) || int(encodingID) >= len(encodings) {
 		return errors.New("invalid preview request")
 	}
 	size := binary.BigEndian.Uint32(header[8:])
@@ -348,10 +361,7 @@ func serveTokenizerPreview(ctx context.Context, input io.ReadCloser, out io.Writ
 	if !utf8.Valid(data) {
 		return errors.New("invalid preview input")
 	}
-	encoding := "o200k_base"
-	if encodingID == 1 {
-		encoding = "cl100k_base"
-	}
+	encoding := encodings[encodingID]
 	life := make(chan struct{})
 	go func() {
 		defer close(life)
@@ -390,7 +400,7 @@ func writeTokenizerPreviewOutput(out io.Writer, result tokenizer.Result, encodin
 	var data [8]byte
 	var offset uint32
 	for i, id := range result.IDs {
-		if uint64(id) > uint64(tokenizerPreviewMaximumID(encoding)) {
+		if !tokenizerPreviewValidID(encoding, uint64(id)) {
 			return errors.New("invalid preview token ID")
 		}
 		offset += uint32(len(result.Fragments[i]))

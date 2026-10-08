@@ -64,7 +64,7 @@ type tokenizerEditor struct {
 }
 
 func newTokenizerEditor() *tokenizerEditor {
-	return &tokenizerEditor{encoding: "o200k_base", invocation: "openai", boundaries: []int{0}, color: true, dark: true}
+	return &tokenizerEditor{encoding: tokenizer.DefaultEncoding, invocation: "openai", boundaries: []int{0}, color: true, dark: true}
 }
 
 func (m *tokenizerEditor) Init() tea.Cmd { return nil }
@@ -73,6 +73,12 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if m.quit {
 		return m, nil
 	}
+	previousFocus, previousCursor := m.focus, m.cursor
+	defer func() {
+		if !m.quit && m.focus == tokenizerFocusText && (previousFocus != m.focus || previousCursor != m.cursor) {
+			m.selectCursorToken()
+		}
+	}()
 	switch msg := message.(type) {
 	case tokenizerEditorStopMsg:
 		m.quit, m.exitCode = true, msg.Code
@@ -99,13 +105,18 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.updating = false
 		if msg.Err != nil || !m.validTokens(msg.Tokens) {
-			m.failed = true
+			m.tokens, m.failed = nil, true
+			m.selected, m.tokenStart = 0, 0
 			m.note = "Could not tokenize. Edit text or press r in Tokens to retry."
 			return m, nil
 		}
 		m.tokens, m.failed = msg.Tokens, false
-		m.selected = max(0, min(m.selected, len(m.tokens)-1))
-		m.keepSelectionVisible()
+		if m.focus == tokenizerFocusText {
+			m.selectCursorToken()
+		} else {
+			m.selected = max(0, min(m.selected, len(m.tokens)-1))
+			m.keepSelectionVisible()
+		}
 	case tea.PasteMsg:
 		if m.focus == tokenizerFocusText && m.modal == tokenizerModalNone && m.usable() {
 			return m, m.insert(msg.Content)
@@ -243,16 +254,21 @@ func (m *tokenizerEditor) openChoice() {
 	m.modal, m.choice = tokenizerModalView, m.tab
 	if m.option == 1 {
 		m.modal, m.choice = tokenizerModalEncoding, 0
-		if m.encoding == "cl100k_base" {
-			m.choice = 1
+		for index, encoding := range tokenizer.SupportedEncodings() {
+			if m.encoding == encoding {
+				m.choice = index
+				break
+			}
 		}
 	}
 }
 
 func (m *tokenizerEditor) updateChoice(key string) tea.Cmd {
 	last := 2
+	var encodings []string
 	if m.modal == tokenizerModalEncoding {
-		last = 1
+		encodings = tokenizer.SupportedEncodings()
+		last = len(encodings) - 1
 	}
 	switch key {
 	case "up":
@@ -279,7 +295,7 @@ func (m *tokenizerEditor) updateChoice(key string) tea.Cmd {
 			m.tab = m.choice
 			m.keepSelectionVisible()
 		} else {
-			encoding := []string{"o200k_base", "cl100k_base"}[m.choice]
+			encoding := encodings[m.choice]
 			if encoding != m.encoding {
 				m.encoding = encoding
 				return m.changed()
@@ -305,10 +321,9 @@ func (m *tokenizerEditor) validTokens(tokens []tokenizerPreviewToken) bool {
 func (m *tokenizerEditor) changed() tea.Cmd {
 	m.revision++
 	m.tokens, m.failed, m.note = nil, false, ""
-	m.tokenStart = 0
+	m.selected, m.tokenStart = 0, 0
 	m.updating = m.text != ""
 	if !m.updating {
-		m.selected = 0
 		return nil
 	}
 	return m.debounce()
@@ -360,6 +375,21 @@ func (m *tokenizerEditor) indexText() {
 
 func (m *tokenizerEditor) cursorIndex() int {
 	return min(sort.SearchInts(m.boundaries, m.cursor), len(m.boundaries)-1)
+}
+
+// A caret selects the token containing its byte position: [start, end).
+// Boundaries select the following token; EOF selects the final token fragment.
+// Grapheme movement stays unchanged even when tokens split a UTF-8 character.
+func (m *tokenizerEditor) selectCursorToken() {
+	if m.updating || m.failed || len(m.tokens) == 0 {
+		m.selected, m.tokenStart = 0, 0
+		return
+	}
+	m.selected = sort.Search(len(m.tokens), func(index int) bool {
+		return int(m.tokens[index].EndByte) > m.cursor
+	})
+	m.selected = min(m.selected, len(m.tokens)-1)
+	m.keepSelectionVisible()
 }
 
 func (m *tokenizerEditor) edit(msg tea.KeyPressMsg) tea.Cmd {

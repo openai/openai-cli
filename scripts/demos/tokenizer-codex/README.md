@@ -154,6 +154,46 @@ Its `before.png` also shows the live Text view.
 The help-only comparison retains the historical help screenshot as `before.png`.
 The comparison GIF includes the complete interaction and cleanup.
 
+## Cursor-linked selection and legacy tokenizers
+
+Set `DEMO_EDITOR_LINKED=1` when the after binary supports cursor-linked selection and all four tokenizers.
+This optional mode applies only to the after editor.
+The before binary keeps its selected help, legacy, or Options workflow.
+Earlier recipes keep their original behavior when this setting is absent.
+
+```sh
+DEMO_EDITOR_LINKED=1 DEMO_EDITOR_BEFORE=options DEMO_THEME=dark \
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh editor \
+  /absolute/path/to/previous-options-editor /absolute/path/to/candidate \
+  "$BEFORE_SHA" "$AFTER_SHA" \
+  /absolute/path/outside/repository/editor-linked-dark-80
+```
+
+Use the actual build commits for both binaries.
+For example, a verified `b542a47` Options binary provides the earlier behavior without cursor-linked selection.
+The existing width and theme settings also apply to this mode.
+
+After typing the unchanged 26-byte fixture, the driver presses Home and Right within `Café.`.
+The caret reaches byte 21 and selects token 9 of 10, containing `afé`.
+The driver requires both `C▏afé.` in the editor and the dependent `·["afé"]` token marker.
+The new `after-caret.png` captures that state before the existing Token IDs stage.
+The Results stage first presses Home, then moves four tokens to the split emoji fragment.
+This preserves its exact-byte comparison when typing initially selects the final token.
+
+After the `cl100k_base` stage, the driver selects `r50k_base` and `p50k_base` in order.
+Each legacy tokenizer produces 11 tokens and 26 input bytes for this fixture.
+The recorder retains these settled states as `after-r50k.png` and `after-p50k.png`.
+The controls stage and Ctrl+C cleanup follow normally.
+
+Linked reports use capture version 3 and record the exact caret and tokenizer actions.
+`editor-linked.tsv` records the requested mode and keeps the before scene unlinked.
+Version 3 matches stage conditions within the latest inline frame.
+This prevents an earlier equal token count from validating a later tokenizer's Updating frame.
+The driver and validator still use bounded buffers and actual CLI output.
+Versions 1 and 2 retain their historical validation paths.
+All three extra PNGs must exist before the recorder can report success.
+
 For the Codex presentation comparison, use `guide` with the historical published-feature baseline and `DEMO_BEFORE_STATUS=0`.
 The original main baseline still uses the guide's default status 3.
 The guide scene prints instructions only.

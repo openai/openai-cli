@@ -111,6 +111,45 @@ func TestMainLocalUtilitiesRootFlagPlacement(t *testing.T) {
 	}
 }
 
+func TestMainLocalUtilitiesLegacyTokenizers(t *testing.T) {
+	env := append(localUtilitiesEnvironment(t), "OPENAI_BASE_URL=://synthetic-private-endpoint")
+	for _, encoding := range []string{"r50k_base", "p50k_base"} {
+		t.Run(encoding, func(t *testing.T) {
+			for _, mode := range []string{"count", "inspect"} {
+				got := runMainDispatchWithEnv(t, "bash", env,
+					"openai", "tokenizer", mode, "--encoding", encoding, "--text", "Hello, world!", "--format", "json")
+				require.Zero(t, got.code, "%s", got.stderr)
+				require.Empty(t, got.stderr)
+				var result struct {
+					Encoding   string `json:"encoding"`
+					InputBytes int    `json:"input_bytes"`
+					TokenCount int    `json:"token_count"`
+					Tokens     []struct {
+						ID       int    `json:"id"`
+						BytesHex string `json:"bytes_hex"`
+					} `json:"tokens"`
+				}
+				require.NoError(t, json.Unmarshal([]byte(got.stdout), &result))
+				require.Equal(t, encoding, result.Encoding)
+				require.Equal(t, 13, result.InputBytes)
+				require.Equal(t, 4, result.TokenCount)
+				if mode == "inspect" {
+					var ids []int
+					var exactBytes string
+					for _, token := range result.Tokens {
+						ids = append(ids, token.ID)
+						exactBytes += token.BytesHex
+					}
+					require.Equal(t, []int{15496, 11, 995, 0}, ids)
+					require.Equal(t, "48656c6c6f2c20776f726c6421", exactBytes)
+				} else {
+					require.Empty(t, result.Tokens)
+				}
+			}
+		})
+	}
+}
+
 func TestMainLocalUtilitiesNamesDoNotBypassRemoteValidation(t *testing.T) {
 	server, requests := localUtilitiesRequestTrap(t)
 	for _, configuration := range []struct {

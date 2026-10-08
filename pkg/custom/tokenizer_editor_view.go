@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/readable"
+	"github.com/openai/openai-cli/internal/tokenizer"
 )
 
 func (m *tokenizerEditor) viewHeight() int { return min(18, max(0, m.height-1)) }
@@ -195,7 +196,7 @@ func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, label, value string
 func (m *tokenizerEditor) highlightRow(s tokenizerEditorStyles, value string, active bool) string {
 	value = tokenizerClip(value, m.viewWidth()-2)
 	if active {
-		return s.accent.Render("› ") + s.selected.Render(value+strings.Repeat(" ", max(0, m.viewWidth()-2-ansi.StringWidth(value))))
+		return s.accent.Render("› ") + s.focused.Render(value+strings.Repeat(" ", max(0, m.viewWidth()-2-ansi.StringWidth(value))))
 	}
 	return "  " + value
 }
@@ -236,22 +237,30 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 	descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hex bytes"}
 	current := m.tab
 	if m.modal == tokenizerModalEncoding {
-		title, explanation = "Choose tokenizer", "The tokenizer sets how text is split into tokens."
-		labels = []string{"o200k_base", "cl100k_base"}
-		descriptions = []string{"Default", "Alternate vocabulary"}
+		title, explanation = "Choose tokenizer", "Choose how text splits into tokens."
+		labels = tokenizer.SupportedEncodings()
+		descriptions = []string{"Default", "GPT-4/3.5 · legacy", "GPT-3 · legacy", "Legacy code"}
 		current = 0
-		if m.encoding == "cl100k_base" {
-			current = 1
+		for i, encoding := range labels {
+			if m.encoding == encoding {
+				current = i
+			}
 		}
 	}
 	lines := []string{s.title.Render(title)}
-	lines = append(lines, strings.Split(ansi.Wrap(explanation, m.viewWidth(), ""), "\n")...)
+	for _, line := range strings.Split(ansi.Wrap(explanation, m.viewWidth(), ""), "\n") {
+		lines = append(lines, s.muted.Render(line))
+	}
 	lines = append(lines, "")
 	for i, label := range labels {
 		if i == current {
 			label += " ✓"
 		}
-		line := fmt.Sprintf("%-14s%s", label, descriptions[i])
+		description := descriptions[i]
+		if i != m.choice {
+			description = s.muted.Render(description)
+		}
+		line := fmt.Sprintf("%-14s%s", label, description)
 		if ansi.StringWidth(line) > m.viewWidth()-2 {
 			line = label
 		}
@@ -454,6 +463,8 @@ func (m *tokenizerEditor) resultWindow(s tokenizerEditorStyles, width int) ([]st
 		}
 		if m.focus == tokenizerFocusResults && i == m.selected {
 			chip = s.accent.Render("›") + s.focused.Render(strings.TrimPrefix(chip, "›"))
+		} else if m.focus == tokenizerFocusText && i == m.selected && !m.updating && !m.failed {
+			chip = s.accent.Render(chip)
 		} else if m.focus != tokenizerFocusResults {
 			chip = s.muted.Render(chip)
 		}
@@ -533,6 +544,8 @@ func (m *tokenizerEditor) tokenChip(index, width int) string {
 	marker := " "
 	if m.focus == tokenizerFocusResults && index == m.selected {
 		marker = "›"
+	} else if m.focus == tokenizerFocusText && index == m.selected && !m.updating && !m.failed {
+		marker = "·"
 	}
 	return marker + "[" + label + "]"
 }
@@ -557,6 +570,7 @@ func tokenizerClip(text string, width int) string {
 var tokenizerEditorHelp = []string{
 	"Text: type or paste exact UTF-8 text.",
 	"Enter inserts a newline. Arrows move the cursor.",
+	"The marked token follows the text cursor.",
 	"Home/End move to the line boundaries.",
 	"Backspace/Delete remove a complete grapheme.",
 	"Ctrl+U removes all text before the cursor.",

@@ -116,7 +116,22 @@ def validate_editor(directory, scene="after", layout="legacy"):
           "editor: synthetic input changed")
     check(report["exit_status"] == 130, "editor: Ctrl+C status changed")
     capture_version = report.get("capture_version", 1)
-    check(capture_version in (1, 2), "editor: unsupported capture version")
+    check(capture_version in (1, 2, 3), "editor: unsupported capture version")
+    linked = capture_version == 3
+    linked_path = directory / "editor-linked.tsv"
+    linked_expected = False
+    if linked_path.exists():
+        settings = linked_path.read_text().splitlines()
+        check(len(settings) == 2 and settings[0] == "before\t0" and
+              settings[1] in ("after\t0", "after\t1"), "editor: invalid linked recording setting")
+        linked_expected = scene == "after" and settings[1] == "after\t1"
+    check(linked == linked_expected, f"{scene}: linked recording version differs from requested mode")
+    if linked:
+        check(scene == "after" and layout == "options", "editor: linked mode requires after Options layout")
+        check(report.get("caret_actions") == {"keys": ["Home", "Right"], "expected_byte_offset": 21},
+              "editor: linked caret actions changed")
+        check(report.get("tokenizer_actions") == ["cl100k_base", "r50k_base", "p50k_base"],
+              "editor: legacy tokenizer actions changed")
     if "layout" in report:
         check(report.get("input_actions") == {"typed": "Hello, ", "pasted": ["tokens! 👋", "Café."], "newline": "Enter"},
               "editor: exact paste or Text Enter input changed")
@@ -131,10 +146,17 @@ def validate_editor(directory, scene="after", layout="legacy"):
     if layout == "options":
         stages.insert(2, ("view-choice", re.compile(r"Choose view")))
         stages.insert(5, ("tokenizer-choice", re.compile(r"Choose tokenizer")))
-    if capture_version == 2:
+    if capture_version >= 2:
         details_index = next(index for index, (name, _) in enumerate(stages) if name == "details")
         position = r"Token 5 of 10\b" if layout == "options" else r"Token 5/10 · ID 61138\b"
         stages.insert(details_index, ("results", re.compile(position)))
+    if linked:
+        stages.insert(1, ("caret", re.compile(r"Token 9 of 10\b")))
+        controls_index = next(index for index, (name, _) in enumerate(stages) if name == "controls")
+        stages[controls_index:controls_index] = [
+            ("r50k", re.compile(r"Tokenizer  r50k_base")),
+            ("p50k", re.compile(r"Tokenizer  p50k_base")),
+        ]
     check([event["state"] for event in report["states"]] == [name for name, _ in stages],
           "editor: incomplete input-driver states")
     events = [json.loads(line) for line in (directory / f"{scene}.cast").read_text().splitlines()]
@@ -147,10 +169,16 @@ def validate_editor(directory, scene="after", layout="legacy"):
         if event[1] != "o":
             continue
         output = (output + event[2])[-65536:]
+        if linked:
+            # Version 3 needs one coherent frame: all three alternate
+            # tokenizers have the same fixture count, including stale results.
+            output = output.rsplit("\r\x1b[J", 1)[-1]
         plain = ansi.sub("", output)
         if len(snapshots) < len(stages):
             name, pattern = stages[len(snapshots)]
             complete = pattern.search(plain)
+            if linked:
+                complete = complete and "Ctrl+C exit" in plain
             if name == "results":
                 complete = complete and "›[20 f0 9f 91]" in plain and "Enter details" in plain
                 complete = complete and "Token details · exact bytes" not in plain
@@ -159,6 +187,11 @@ def validate_editor(directory, scene="after", layout="legacy"):
                 complete = complete and re.search(r"bytes\s+\[14,\s*18\)", plain)
             elif name == "encoding":
                 complete = complete and "11 tokens · 26 bytes" in plain
+            elif name == "caret":
+                complete = complete and all(value in plain for value in ['·["afé"]', "C▏afé.", "Tokenizer  o200k_base"])
+                complete = complete and re.search(r"10 tokens[ \t]*(?:[\r\n]|$)", plain)
+            elif name in ("r50k", "p50k"):
+                complete = complete and "11 tokens · 26 bytes" in plain and "Updating" not in plain
             elif layout == "options":
                 if name == "text":
                     complete = complete and "View  " in plain and "Tokenizer  o200k_base" in plain
@@ -170,8 +203,10 @@ def validate_editor(directory, scene="after", layout="legacy"):
                     complete = complete and all(value in plain for value in ["Text", "Token IDs", "Bytes", "Esc cancel"])
                 elif name == "tokenizer-choice":
                     complete = complete and all(value in plain for value in ["o200k_base", "cl100k_base", "Esc cancel"])
+                    if linked:
+                        complete = complete and "r50k_base" in plain and "p50k_base" in plain
             if complete:
-                if layout == "options" and name in ("text", "ids"):
+                if layout == "options" and name in ("text", "caret", "ids"):
                     check(re.search(r"\d+ tokens? · \d+ bytes?", plain) is None,
                           f"{scene}: {name} view exposed the advanced byte count")
                 timestamp = float(event[0]) + 0.25

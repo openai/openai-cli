@@ -557,7 +557,7 @@ func TestTokenizerEditorTokenSpacingDoesNotReflowOnFocusOrSelection(t *testing.T
 				view := ansi.Strip(strings.Join(rows, "\n"))
 				require.NotContains(t, view, "][")
 				require.NotContains(t, view, "]›[")
-				neutral := strings.ReplaceAll(view, "›", " ")
+				neutral := strings.NewReplacer("›", " ", "·", " ").Replace(view)
 				if previous != "" {
 					require.Equal(t, previous, neutral, "a reserved marker cell must prevent focus or selection reflow")
 				}
@@ -601,8 +601,8 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 				descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hex bytes"}
 				if modal == tokenizerModalEncoding {
 					title, current = "Choose tokenizer", "cl100k_base ✓"
-					choices = []string{"o200k_base", "cl100k_base"}
-					descriptions = []string{"Default", "Alternate vocabulary"}
+					choices = []string{"o200k_base", "cl100k_base", "r50k_base", "p50k_base"}
+					descriptions = []string{"Default", "GPT-4/3.5 · legacy", "GPT-3 · legacy", "Legacy code"}
 				}
 				for choice, label := range choices {
 					m.choice = choice
@@ -640,9 +640,38 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 					}
 					if !m.color {
 						require.NotRegexp(t, `\x1b\[[0-9;:]*m`, view)
+					} else {
+						require.Regexp(t, `\x1b\[1(?:;[0-9:]+)*m`+regexp.QuoteMeta(label), view,
+							"the focused chooser label must be bold, like the image picker")
 					}
 				}
 			}
+		}
+	}
+}
+
+func TestTokenizerEditorCaretCueRemainsSubordinateToFocus(t *testing.T) {
+	for _, size := range [][2]int{{40, 12}, {80, 24}} {
+		for _, color := range []bool{false, true} {
+			m := tokenizerEditorExample()
+			m.width, m.height, m.color = size[0], size[1], color
+			m.focus, m.tab, m.selected = tokenizerFocusText, 1, 2
+			rows := strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n")
+			require.Contains(t, ansi.Strip(rows), "·[1917]")
+			require.Equal(t, 1, strings.Count(ansi.Strip(rows), "·["))
+			require.NotContains(t, rows, "›", "linked selection must not claim keyboard focus")
+			require.NotContains(t, rows, "48;2;", "linked selection must not use a focus fill")
+			if !color {
+				require.NotRegexp(t, `\x1b\[[0-9;:]*m`, rows)
+			}
+			m.focus = tokenizerFocusOptions
+			rows = strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n")
+			require.NotContains(t, rows, "·[")
+			require.NotContains(t, rows, "›")
+			m.focus, m.updating = tokenizerFocusText, true
+			require.NotContains(t, ansi.Strip(strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n")), "·[")
+			m.updating, m.failed = false, true
+			require.NotContains(t, ansi.Strip(strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n")), "·[")
 		}
 	}
 }

@@ -62,8 +62,8 @@ func init() {
 
 func TestTokenizerPreviewMatchesExactEncodings(t *testing.T) {
 	t.Setenv("OPENAI_TEST_TOKENIZER_PREVIEW", "worker")
-	for _, encoding := range []string{"o200k_base", "cl100k_base"} {
-		for _, input := range []string{"", "Hello, world!", "漢字👩‍💻e\u0301\r\n\x00<|endoftext|>", "\ufeffa\n", strings.Repeat("a\n", tokenizer.MaxInputBytes/2)} {
+	for _, encoding := range tokenizer.SupportedEncodings() {
+		for _, input := range []string{"", "Hello, world!", "    indented", strings.Repeat(" ", 25), "漢字👩‍💻e\u0301\r\n\x00<|endoftext|>", "\ufeffa\n", strings.Repeat("a\n", tokenizer.MaxInputBytes/2)} {
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 			got, err := runTokenizerPreview(ctx, os.Args[0], input, encoding)
 			cancel()
@@ -119,6 +119,21 @@ func TestTokenizerPreviewCancellationDuringChildWork(t *testing.T) {
 		if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 3*time.Second {
 			t.Fatalf("cancellation was lost or delayed: %v", err)
 		}
+	}
+}
+
+func TestTokenizerPreviewLegacyCancellationDuringNumericWork(t *testing.T) {
+	t.Setenv("OPENAI_TEST_TOKENIZER_PREVIEW", "worker")
+	for _, encoding := range []string{"r50k_base", "p50k_base"} {
+		t.Run(encoding, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+			defer cancel()
+			started := time.Now()
+			_, err := runTokenizerPreview(ctx, os.Args[0], strings.Repeat("1234567890", tokenizer.MaxInputBytes/10), encoding)
+			if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 3*time.Second {
+				t.Fatalf("legacy cancellation was lost or delayed: %v", err)
+			}
+		})
 	}
 }
 
@@ -257,12 +272,37 @@ func TestTokenizerPreviewRejectsMalformedRequests(t *testing.T) {
 	binary.BigEndian.PutUint32(oversize[8:], tokenizer.MaxInputBytes+1)
 	for name, data := range map[string][]byte{
 		"empty": nil, "bad magic": []byte("xxxxxxxxxxxx"),
-		"unknown encoding": frame("a", 2), "oversize": oversize,
+		"unknown encoding": frame("a", 4), "oversize": oversize,
 		"invalid UTF8": frame("\xff", 0), "missing bytes": frame("a", 0)[:12],
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := serveTokenizerPreview(t.Context(), io.NopCloser(bytes.NewReader(data)), io.Discard); err == nil {
 				t.Fatal("malformed worker input succeeded")
+			}
+		})
+	}
+}
+
+func TestTokenizerPreviewRejectsSpecialAndOutOfVocabularyIDs(t *testing.T) {
+	for _, invalid := range []struct {
+		encoding byte
+		id       uint32
+	}{
+		{0, 199998}, {1, 100256}, {2, 50256}, {3, 50256}, {3, 50281},
+	} {
+		t.Run(fmt.Sprintf("%d/%d", invalid.encoding, invalid.id), func(t *testing.T) {
+			frame := make([]byte, 20)
+			copy(frame, tokenizerPreviewMagic[:])
+			frame[7] = invalid.encoding
+			binary.BigEndian.PutUint32(frame[8:], 1)
+			binary.BigEndian.PutUint32(frame[12:], invalid.id)
+			binary.BigEndian.PutUint32(frame[16:], 1)
+			if _, err := readTokenizerPreviewOutput(bytes.NewReader(frame), 1, invalid.encoding); err == nil {
+				t.Fatal("invalid ordinary token ID was accepted")
+			}
+			result := tokenizer.Result{TokenCount: 1, IDs: []uint{uint(invalid.id)}, Fragments: []string{"x"}}
+			if err := writeTokenizerPreviewOutput(io.Discard, result, invalid.encoding); err == nil {
+				t.Fatal("invalid ordinary token ID was emitted")
 			}
 		})
 	}

@@ -10,7 +10,7 @@ import (
 	"github.com/tiktoken-go/tokenizer/codec"
 )
 
-const unsupportedEncodingMessage = "unsupported encoding; choose o200k_base or cl100k_base"
+const unsupportedEncodingMessage = "unsupported encoding; choose o200k_base, cl100k_base, r50k_base, or p50k_base"
 
 // textEncoding owns immutable vocabulary data and the pinned pre-tokenizer.
 // Library BPE construction is lazy because exact ranked pieces need no merge.
@@ -29,17 +29,37 @@ type encodingCache struct {
 	err   error
 }
 
-var cl100kEncoding, o200kEncoding encodingCache
+type encodingDefinition struct {
+	name    string
+	source  func() *codec.Codec
+	maximum int
+	gap     int
+	cache   encodingCache
+}
+
+// p50k's ordinary vocabulary skips the end-of-text special token at 50256.
+// These explicit bounds come from the embedded, fingerprinted vocabularies.
+var encodingDefinitions = [...]encodingDefinition{
+	{name: DefaultEncoding, source: codec.NewO200kBase, maximum: 199997, gap: -1},
+	{name: "cl100k_base", source: codec.NewCl100kBase, maximum: 100255, gap: -1},
+	{name: "r50k_base", source: codec.NewR50kBase, maximum: 50255, gap: -1},
+	{name: "p50k_base", source: codec.NewP50kBase, maximum: 50280, gap: 50256},
+}
+
+func encodingDefinitionFor(name string) *encodingDefinition {
+	for i := range encodingDefinitions {
+		if encodingDefinitions[i].name == name {
+			return &encodingDefinitions[i]
+		}
+	}
+	return nil
+}
 
 func loadEncoding(name string) (*textEncoding, error) {
-	switch name {
-	case "cl100k_base":
-		return cl100kEncoding.load(name)
-	case "o200k_base":
-		return o200kEncoding.load(name)
-	default:
-		return nil, errors.New(unsupportedEncodingMessage)
+	if definition := encodingDefinitionFor(name); definition != nil {
+		return definition.cache.load(name)
 	}
+	return nil, errors.New(unsupportedEncodingMessage)
 }
 
 func (c *encodingCache) load(name string) (*textEncoding, error) {
@@ -48,16 +68,11 @@ func (c *encodingCache) load(name string) (*textEncoding, error) {
 }
 
 func initializeEncoding(name string) (*textEncoding, error) {
-	var source *codec.Codec
-	var maximum int
-	switch name {
-	case "cl100k_base":
-		source, maximum = codec.NewCl100kBase(), 100255
-	case "o200k_base":
-		source, maximum = codec.NewO200kBase(), 199997
-	default:
+	definition := encodingDefinitionFor(name)
+	if definition == nil {
 		return nil, errors.New(unsupportedEncodingMessage)
 	}
+	source, maximum := definition.source(), definition.maximum
 
 	ranks := make(map[string]int, maximum+1)
 	fragments := make([]string, maximum+1)
@@ -65,6 +80,12 @@ func initializeEncoding(name string) (*textEncoding, error) {
 	// its public API, then discard the source codec before publishing our data.
 	for id := 0; id <= maximum; id++ {
 		piece, err := source.Decode([]uint{uint(id)})
+		if id == definition.gap {
+			if err == nil {
+				return nil, fmt.Errorf("unexpected embedded token %d", id)
+			}
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("invalid embedded token %d: %w", id, err)
 		}
@@ -125,6 +146,10 @@ func encodingPattern(name string) (string, error) {
 	prefix := `[^\r\n` + unicode16Letters + unicode16Numbers + `]`
 	suffix := space + `*[\r\n]+|` + space + `+(?!` + notSpace + `)|` + space + `+`
 	switch name {
+	case "r50k_base", "p50k_base":
+		// Legacy contractions are case-sensitive. Numbers have no three-digit cap.
+		return `'s|'t|'re|'ve|'m|'ll|'d| ?` + letters + `+| ?` + numbers + `+| ?` +
+			other + `+|` + space + `+(?!` + notSpace + `)|` + space + `+`, nil
 	case "cl100k_base":
 		return contraction + `|` + prefix + `?` + letters + `+|` + numbers + `{1,3}| ?` + other + `+[\r\n]*|` + suffix, nil
 	case "o200k_base":
