@@ -5,12 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/urfave/cli/v3"
 )
 
 type fileCommandKey struct{}
+type fileInvocationKey struct{}
+
+type fileInvocation struct {
+	display    string
+	executable string
+}
 
 const (
 	fileUploadCommand = "upload"
@@ -69,6 +77,14 @@ func configureFileCommands(root *cli.Command) {
 					return err
 				}
 			}
+			invocation := fileInvocation{display: errorHelpInvocation(command.Root())}
+			if len(os.Args) > 0 {
+				invocation.executable = os.Args[0]
+				if strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe") != command.Root().Name {
+					invocation.display = os.Args[0]
+				}
+			}
+			ctx = context.WithValue(ctx, fileInvocationKey{}, invocation)
 			return next(context.WithValue(ctx, fileCommandKey{}, fileUploadCommand), command)
 		}
 	}

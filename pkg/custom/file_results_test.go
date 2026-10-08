@@ -60,7 +60,7 @@ func TestFileReceiptValuesAndUnknownShell(t *testing.T) {
 		value := gjson.Parse(strings.Replace(fileReceiptFixture, `"bytes":13`, `"bytes":`+tc.bytes, 1))
 		for _, shell := range []string{"", "unknown-shell"} {
 			var out bytes.Buffer
-			require.NoError(t, writeFileReceipt(&out, value, shell))
+			require.NoError(t, writeFileReceipt(&out, value, shell, fileInvocation{display: "openai"}))
 			require.Equal(t, "Uploaded upload space.txt"+tc.suffix+"\nID: file-example\nPurpose: user_data\n", out.String())
 		}
 	}
@@ -80,7 +80,7 @@ func TestFileReceiptFallsBackForInvalidByteCounts(t *testing.T) {
 func TestFileReceiptEscapesFieldsAndRetainsProcessingFailure(t *testing.T) {
 	value := gjson.Parse(`{"object":"file","id":"file-\nID: spoof\u001b","filename":"a\r\n\t\u202e.txt","purpose":"user_data\u0007","bytes":0,"status":"error","status_details":"failed\nPurpose: spoof"}`)
 	var out bytes.Buffer
-	require.NoError(t, writeFileReceipt(&out, value, ""))
+	require.NoError(t, writeFileReceipt(&out, value, "", fileInvocation{display: "openai"}))
 	require.Equal(t, "Uploaded a\\r\\n\\t\\u202e.txt (0 B)\nID: file-\\nID: spoof\\u001b\nPurpose: user_data\\u0007\nStatus: error\nStatus details: failed\\nPurpose: spoof\n", out.String())
 	for _, control := range []string{"\r", "\t", "\x1b", "\x07", "\u202e"} {
 		require.NotContains(t, out.String(), control)
@@ -105,7 +105,7 @@ func TestFileReceiptCommandsPreserveShellArguments(t *testing.T) {
 				data, err := json.Marshal(map[string]any{"object": "file", "id": tc.id, "filename": tc.filename, "purpose": "user_data", "bytes": 0})
 				require.NoError(t, err)
 				var out bytes.Buffer
-				require.NoError(t, writeFileReceipt(&out, gjson.ParseBytes(data), shell))
+				require.NoError(t, writeFileReceipt(&out, gjson.ParseBytes(data), shell, fileInvocation{display: "openai"}))
 				_, command, found := strings.Cut(out.String(), "\nDownload it: ")
 				require.True(t, found)
 				command = strings.TrimSuffix(command, "\n")
@@ -139,12 +139,12 @@ func TestFileReceiptPropagatesOutputFailuresAndCancellation(t *testing.T) {
 	failure := errors.New("synthetic output failure")
 	for _, tc := range []struct{ returned, want error }{{failure, failure}, {nil, io.ErrShortWrite}} {
 		out := outputWriter{ctx: t.Context(), out: failOutputWriter{tc.returned}}
-		require.ErrorIs(t, writeFileReceipt(out, value, "bash"), tc.want)
+		require.ErrorIs(t, writeFileReceipt(out, value, "bash", fileInvocation{display: "openai"}), tc.want)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	var out bytes.Buffer
-	require.ErrorIs(t, writeFileReceipt(outputWriter{ctx: ctx, out: &out}, value, "bash"), context.Canceled)
+	require.ErrorIs(t, writeFileReceipt(outputWriter{ctx: ctx, out: &out}, value, "bash", fileInvocation{display: "openai"}), context.Canceled)
 	require.Empty(t, out.String())
 }
 
@@ -161,9 +161,23 @@ func TestFileReceiptOmitsAmbiguousDestinations(t *testing.T) {
 		data, err := json.Marshal(map[string]any{"object": "file", "id": tc.id, "filename": tc.filename, "purpose": "user_data"})
 		require.NoError(t, err)
 		var out bytes.Buffer
-		require.NoError(t, writeFileReceipt(&out, gjson.ParseBytes(data), "bash"))
+		require.NoError(t, writeFileReceipt(&out, gjson.ParseBytes(data), "bash", fileInvocation{display: "openai"}))
 		require.Contains(t, out.String(), "Uploaded ")
 		require.NotContains(t, out.String(), "Download it:")
 		require.NotContains(t, out.String(), "\x00")
+	}
+}
+
+func TestFileReceiptPreservesSafeExecutableInvocation(t *testing.T) {
+	invocation := fileInvocation{display: `'/tmp/CLI'\''s folder/openai'`, executable: "/tmp/CLI's folder/openai"}
+	for _, status := range []string{"uploaded", "error"} {
+		value := gjson.Parse(strings.TrimSuffix(fileReceiptFixture, "}") + `,"status":"` + status + `"}`)
+		var out bytes.Buffer
+		require.NoError(t, writeFileReceipt(&out, value, "bash", invocation))
+		if status == "error" {
+			require.Contains(t, out.String(), "Inspect it: "+invocation.display+" files get file-example --format json")
+		} else {
+			require.Contains(t, out.String(), "Download it: "+invocation.display+" files download file-example")
+		}
 	}
 }

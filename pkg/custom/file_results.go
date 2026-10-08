@@ -42,7 +42,8 @@ func showFileResult(value gjson.Result, opts ShowJSONOpts) (bool, error) {
 		if !validFileReceipt(value) {
 			return false, nil
 		}
-		return true, writeFileReceipt(out, value, imagePickerParentShell(opts.Context))
+		invocation, _ := opts.Context.Value(fileInvocationKey{}).(fileInvocation)
+		return true, writeFileReceipt(out, value, imagePickerParentShell(opts.Context), invocation)
 	default:
 		return false, nil
 	}
@@ -89,7 +90,7 @@ func validFileReceipt(value gjson.Result) bool {
 	return valid
 }
 
-func writeFileReceipt(out io.Writer, value gjson.Result, shell string) error {
+func writeFileReceipt(out io.Writer, value gjson.Result, shell string, invocation fileInvocation) error {
 	// Keep each response value on one line before adding our own layout.
 	safe := func(text string) string { return readable.Text(jsonview.SanitizeTerminalString(text)) }
 	filename, id := value.Get("filename").Str, value.Get("id").Str
@@ -134,7 +135,35 @@ func writeFileReceipt(out io.Writer, value gjson.Result, shell string) error {
 		args = append(args, "--output", filename)
 	}
 	if command := formatImagePickerCommand(args, shell); command != "" {
+		prefix := fileReceiptInvocation(invocation, shell)
+		if prefix == "" {
+			return nil
+		}
+		command = prefix + strings.TrimPrefix(command, "openai")
 		return readable.WriteText(out, "\n"+label+command)
 	}
 	return nil
+}
+
+// Keep help's executable selection, using the actual shell for quoted paths.
+func fileReceiptInvocation(invocation fileInvocation, shell string) string {
+	if !utf8.ValidString(invocation.executable) {
+		return ""
+	}
+	if invocation.display == "" {
+		return "openai"
+	}
+	plain, _ := imagePickerQuoteProperties(invocation.display)
+	if plain || strings.HasPrefix(invocation.display, "go run ") || invocation.executable == "" {
+		return invocation.display
+	}
+	quote := imagePickerShellQuoter(shell)
+	if quote == nil {
+		return ""
+	}
+	command := quote(invocation.executable)
+	if shell == "pwsh" {
+		command = "& " + command
+	}
+	return command
 }

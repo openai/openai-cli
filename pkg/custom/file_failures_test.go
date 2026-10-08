@@ -23,7 +23,7 @@ func TestFileReceiptPreservesUnfamiliarProcessingStatus(t *testing.T) {
 func TestFileReceiptProcessingFailureSuggestsInspection(t *testing.T) {
 	value := gjson.Parse(strings.TrimSuffix(fileReceiptFixture, "}") + `,"status":"error","status_details":"synthetic processing failure"}`)
 	var out bytes.Buffer
-	require.NoError(t, writeFileReceipt(&out, value, "bash"))
+	require.NoError(t, writeFileReceipt(&out, value, "bash", fileInvocation{display: "openai"}))
 	require.Contains(t, out.String(), "Uploaded upload space.txt (13 B)")
 	require.Contains(t, out.String(), "Status: error")
 	require.Contains(t, out.String(), "Status details: synthetic processing failure")
@@ -39,7 +39,7 @@ func TestFileReceiptRejectsInvalidUTF8Fields(t *testing.T) {
 		require.False(t, validFileReceipt(value), field)
 		if field != "purpose" {
 			var out bytes.Buffer
-			require.NoError(t, writeFileReceipt(&out, value, "bash"))
+			require.NoError(t, writeFileReceipt(&out, value, "bash", fileInvocation{display: "openai"}))
 			require.NotContains(t, out.String(), "Download it:", field)
 		}
 	}
