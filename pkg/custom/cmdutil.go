@@ -51,6 +51,7 @@ func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 		option.WithHeader("X-Stainless-Runtime", "cli"),
 		option.WithHeader("X-Stainless-CLI-Command", cmd.FullName()),
 		option.WithMiddleware(captureAudioText),
+		option.WithMiddleware(captureSaveReceiptPolicy(cmd)),
 	}
 	if cmd.IsSet("api-key") {
 		opts = append(opts, option.WithAPIKey(cmd.String("api-key")))
@@ -283,6 +284,7 @@ func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile stri
 		if err != nil {
 			message = ""
 		}
+		message, err = reportResponseSaveReceipt(response, message, err)
 	}()
 	if handled, message, err := writeReadableSpeech(response, stdout, outfile); handled {
 		return message, err

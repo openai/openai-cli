@@ -45,6 +45,22 @@ Use a file path when an API needs a named file or a specific extension.
 Uploads containing readers stream once and do not retry or replay automatically.
 Multipart uploads preserve NUL and non-UTF8 bytes.
 
+### Windows shells
+
+Windows PowerShell 5.1 can transform binary data in pipelines and redirection.
+PowerShell 7.4 and later preserve native byte pipelines and stdout redirection when stdout and stderr remain separate.
+PowerShell object pipelines can have different behavior.
+See [Microsoft's byte-stream guidance](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_redirection#example-7-redirecting-binary-data-from-a-native-command).
+
+File paths avoid shell conversion for uploads and downloads:
+
+```powershell
+openai files create --file .\sample.wav --purpose user_data
+openai files content file-example --output .\copy.bin
+```
+
+The CLI preserves the bytes it receives; it cannot restore bytes that the shell already changed.
+
 An empty explicit text input produces an empty string.
 An empty binary input produces an empty upload.
 The API still determines whether those values are valid.
@@ -88,6 +104,10 @@ A failed network transfer leaves the existing file unchanged.
 Successful completion preserves its inode, permissions, symlinks, and hardlinks.
 Linked names therefore continue to expose the saved bytes.
 
+On Windows, new explicit file destinations use protected permissions for the current user, SYSTEM, and Administrators.
+Existing files retain their access-control lists.
+Private staging files use the same protected Windows permissions.
+
 The final local copy into an existing file is not atomic.
 A disk, write, close, or interruption failure during that copy can leave partial contents.
 The error identifies that outcome instead of promising rollback.
@@ -105,11 +125,11 @@ The CLI detects common destination replacements but does not lock out arbitrary 
 Special destinations, such as `/dev/null` and named pipes, retain direct streaming behavior.
 Automatic terminal downloads retain their existing destination selection and partial-file behavior.
 
-Successful save receipts still go to stdout.
-Output-format and error-format flags do not suppress these legacy receipts.
-Moving receipts to stderr requires a later generated-command update.
-That update will also activate the shared receipt policy.
-Generated manpage receipt routing and gzip completion changes remain deferred.
+Successful API download receipts go to stderr, leaving stdout available for data.
+Structured error formats and error extraction suppress optional receipts.
+Use `--format-error text` to request text diagnostics alongside an explicit response format.
+A receipt-write failure returns a nonzero status while retaining the completed file.
+The local `@manpages` command retains its existing status messages and completion behavior.
 
 Explicit-path speech SSE saves require a `speech.audio.done` event before success.
 Empty, heartbeat-only, and incomplete speech streams fail.

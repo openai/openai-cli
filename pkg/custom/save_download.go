@@ -197,7 +197,7 @@ func newDownloadStage(directory string) (*downloadStage, error) {
 		return nil, err
 	}
 	name := ".openai-download-" + rand.Text() + ".tmp"
-	file, err := root.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := createPrivateDownloadFile(root, name)
 	if err != nil {
 		return nil, errors.Join(err, root.Close())
 	}
@@ -420,7 +420,7 @@ func publishNewDownload(
 	if err := downloadContextError(ctx); err != nil {
 		return nil, false, errors.Join(err, source.Close())
 	}
-	file, err := stage.root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := createPrivateDownloadFile(stage.root, name)
 	if err != nil {
 		return nil, false, errors.Join(err, source.Close())
 	}
