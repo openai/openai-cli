@@ -13,15 +13,27 @@ A capable terminal opens the live editor with the same theme as image generation
 Type or paste text to see its exact token count.
 The editor supports up to 1 MiB of UTF-8 input.
 
-- Press Tab to select results.
-- Press Left or Right to switch Text, Token IDs, and Bytes.
-- Press Up or Down to select a token.
-- Press Enter on a token to inspect every byte.
-- Press Tab again to select the encoding.
+- Press Tab to focus the visible View control.
+- Press Left or Right on View to switch Text, Token IDs, and Bytes immediately.
+- Press Enter on View to open the view chooser.
+- Press Down to select the Tokenizer row.
+- Press Enter on Tokenizer to open its chooser.
+- Press Up or Down in a chooser to highlight a choice.
+- Press Enter to apply that choice.
+- Press Escape to cancel a chooser and return to text.
+- Press Tab from options to focus the tokens.
+- Use the arrow keys in the tokens to select a token.
+- Press Enter on a token to inspect its ID, byte offsets, and every byte.
 - Press F1 for all controls and script examples.
 - Press Ctrl+C to exit.
 
 Enter inserts a newline while editing text.
+Down at the end of text opens options, matching the image picker's navigation.
+Within multiline text, Up and Down continue to move the text cursor.
+Tab and Shift+Tab cycle through text, options, and tokens.
+The main screen shows the token count and selected token position.
+The Bytes view adds the input byte count; full hexadecimal details remain available through Enter.
+Text and Token IDs are the primary reading views. Bytes supports exact-byte inspection and debugging.
 Ctrl+U removes text before the cursor, matching the image prompt editor.
 Paste preserves whitespace, line endings, and Unicode normalization.
 The editor escapes control characters for display.
@@ -31,7 +43,7 @@ Editing clears stale results immediately.
 The editor cancels superseded computations and displays only the current revision.
 Long unbroken text can take time; editing and quitting remain available during computation.
 Terminal output runs independently, so a blocked display does not stop keyboard handling.
-If computation fails, edit the text or press `r` while results have focus.
+If computation fails, edit the text or press `r` while Tokens has focus.
 The draft remains available until you exit; the CLI never saves it.
 
 The editor requires terminal input and output, automatic format, and at least 40 columns by 12 rows.

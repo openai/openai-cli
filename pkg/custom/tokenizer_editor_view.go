@@ -42,7 +42,7 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 	s.accent = s.accent.Foreground(lipgloss.Color(focus)).Bold(true)
 	s.selected = s.selected.Foreground(lipgloss.Color(text)).Background(lipgloss.Color(fill))
 	s.border = s.border.Foreground(lipgloss.Color(border))
-	if m.focus == 0 {
+	if m.focus == tokenizerFocusText {
 		s.border = s.border.Foreground(lipgloss.Color(focus))
 		if m.text != "" {
 			s.input = s.selected
@@ -66,6 +66,10 @@ func (m *tokenizerEditor) View() tea.View {
 		return view
 	}
 	s := m.styles()
+	if m.modal == tokenizerModalView || m.modal == tokenizerModalEncoding {
+		view.Content = m.choiceView(s)
+		return view
+	}
 	if m.modal != 0 {
 		view.Content = m.modalView(s)
 		return view
@@ -90,74 +94,124 @@ func (m *tokenizerEditor) View() tea.View {
 		lines = append(lines, s.border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
 	} else {
 		prefix := "Text  "
-		if m.focus == 0 {
+		if m.focus == tokenizerFocusText {
 			prefix = "› Text "
 		}
 		lines = append(lines, s.accent.Render(prefix)+m.editorLines(width-ansi.StringWidth(prefix), 1)[0])
 	}
-	tokenLabel, byteLabel := "tokens", "bytes"
+	if m.roomy() && m.note == "" {
+		lines = append(lines, "")
+	}
+	tokenLabel := "tokens"
 	if len(m.tokens) == 1 {
 		tokenLabel = "token"
 	}
-	if len(m.text) == 1 {
-		byteLabel = "byte"
-	}
-	inputSummary := fmt.Sprintf("%d %s", len(m.text), byteLabel)
-	status := fmt.Sprintf("%d %s · %s", len(m.tokens), tokenLabel, inputSummary)
+	status := fmt.Sprintf("%d %s", len(m.tokens), tokenLabel)
 	if m.updating {
-		status = "Updating… · " + inputSummary
+		status = "Updating…"
 	} else if m.failed {
-		status = "Count unavailable · " + inputSummary
+		status = "Count unavailable"
+	}
+	if m.tab == 2 {
+		byteLabel := "bytes"
+		if len(m.text) == 1 {
+			byteLabel = "byte"
+		}
+		status += fmt.Sprintf(" · %d %s", len(m.text), byteLabel)
 	}
 	lines = append(lines, status)
 	var tabs []string
 	for i, label := range []string{"Text", "Token IDs", "Bytes"} {
 		if m.tab == i {
-			label = s.accent.Render("[" + label + "]")
+			label = "[" + label + "]"
 		}
 		tabs = append(tabs, label)
 	}
-	lines = append(lines, strings.Join(tabs, "  "))
+	lines = append(lines, m.highlightRow(s, "View  "+strings.Join(tabs, " ")+"  ←→", m.focus == tokenizerFocusOptions && m.option == 0))
+	lines = append(lines, m.highlightRow(s, "Tokenizer  "+m.encoding+"  ›", m.focus == tokenizerFocusOptions && m.option == 1))
+	if m.roomy() && m.note == "" {
+		lines = append(lines, "")
+	}
+	position := "Tokens"
+	if len(m.tokens) > 0 {
+		position = fmt.Sprintf("Token %d of %d", m.selected+1, len(m.tokens))
+		fragment, _, _ := m.fragment(m.selected)
+		if !utf8.ValidString(fragment) {
+			position += " · partial UTF-8"
+		}
+	}
+	lines = append(lines, m.highlightRow(s, position, m.focus == tokenizerFocusResults))
 	lines = append(lines, m.resultLines(s, width)...)
-	details := m.detailSummary(width)
 	if m.note != "" {
-		details = strings.Split(ansi.Wrap(m.note, width, ""), "\n")
-		for len(details) < 3 {
-			details = append(details, "")
-		}
+		notes := strings.Split(ansi.Wrap(m.note, width, ""), "\n")
+		available := max(0, m.viewHeight()-len(lines)-1)
+		lines = append(lines, notes[:min(len(notes), available)]...)
 	}
-	lines = append(lines, details[:min(len(details), 3)]...)
-	encoding := m.encoding
-	if m.focus == 2 {
-		choice := []string{"o200k_base", "cl100k_base"}[m.encodingChoice]
-		if choice != m.encoding {
-			encoding = choice + " · Enter use"
-		}
-		lines = append(lines, s.selected.Render("› Encoding "+encoding))
-	} else {
-		lines = append(lines, "Encoding  "+encoding)
-	}
-	note := "Plain text only · excludes request structure"
-	if !m.roomy() {
-		note = "Local only · input not saved"
-	}
-	if m.focus == 1 {
-		note = "Enter details · Tab next · ? help"
-	}
-	lines = append(lines, s.muted.Render(note))
-	footer := "Enter newline · Tab inspect · F1 help · Ctrl+C exit"
-	if !m.roomy() {
-		footer = "Tab inspect · F1 help · Ctrl+C exit"
-	}
-	switch m.focus {
-	case 1:
-		footer = "←→ view · ↑↓ token · Ctrl+C exit"
-	case 2:
-		footer = "↑↓ choose · Enter use · Ctrl+C exit"
-	}
-	lines = append(lines, s.muted.Render(footer))
+	lines = append(lines, s.muted.Render(m.footer()))
 	view.Content = m.fit(lines, true)
 	return view
+}
+
+func (m *tokenizerEditor) highlightRow(s tokenizerEditorStyles, value string, active bool) string {
+	value = tokenizerClip(value, m.viewWidth()-2)
+	if active {
+		return s.accent.Render("› ") + s.selected.Render(value+strings.Repeat(" ", max(0, m.viewWidth()-2-ansi.StringWidth(value))))
+	}
+	return "  " + value
+}
+
+func (m *tokenizerEditor) footer() string {
+	footer := "Ctrl+C exit · ↑↓ move · Enter select"
+	switch m.focus {
+	case tokenizerFocusText:
+		footer = "Ctrl+C exit · Tab options · Enter newline"
+		if ansi.StringWidth(footer) > m.viewWidth() {
+			footer = "Ctrl+C exit · Tab options"
+		}
+	case tokenizerFocusResults:
+		footer = "Ctrl+C exit · ←→ token · Enter details"
+		if ansi.StringWidth(footer) > m.viewWidth() {
+			footer = "Ctrl+C exit · ←→ · Enter details"
+		}
+	}
+	if m.focus != tokenizerFocusText && ansi.StringWidth(footer+" · Tab switch") <= m.viewWidth() {
+		footer += " · Tab switch"
+	}
+	if ansi.StringWidth(footer+" · F1 help") <= m.viewWidth() {
+		footer += " · F1 help"
+	}
+	return footer
+}
+
+func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
+	title, explanation := "Choose view", "Show the same tokens in a different form."
+	labels := []string{"Text", "Token IDs", "Bytes"}
+	descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hexadecimal bytes"}
+	current := m.tab
+	if m.modal == tokenizerModalEncoding {
+		title, explanation = "Choose tokenizer", "The tokenizer sets how text is split into tokens."
+		labels = []string{"o200k_base", "cl100k_base"}
+		descriptions = []string{"Default", "Alternate vocabulary"}
+		current = 0
+		if m.encoding == "cl100k_base" {
+			current = 1
+		}
+	}
+	lines := []string{s.title.Render(title)}
+	lines = append(lines, strings.Split(ansi.Wrap(explanation, m.viewWidth(), ""), "\n")...)
+	lines = append(lines, "")
+	for i, label := range labels {
+		if i == current {
+			label += " ✓"
+		}
+		line := label + "  " + descriptions[i]
+		if ansi.StringWidth(line) > m.viewWidth()-2 {
+			line = label
+		}
+		lines = append(lines, m.highlightRow(s, line, i == m.choice))
+	}
+	lines = append(lines, "", s.muted.Render("↑↓ choose · Enter use · Esc cancel"), s.muted.Render("Ctrl+C exit"))
+	return m.fit(lines, true)
 }
 
 func (m *tokenizerEditor) fit(lines []string, inset bool) string {
@@ -443,28 +497,6 @@ func (m *tokenizerEditor) previousPageSize() int {
 	return max(1, count)
 }
 
-func (m *tokenizerEditor) detailSummary(width int) []string {
-	if len(m.tokens) == 0 {
-		return []string{"", "", ""}
-	}
-	fragment, start, end := m.fragment(m.selected)
-	label := fmt.Sprintf("Token %d/%d · ID %d", m.selected+1, len(m.tokens), m.tokens[m.selected].ID)
-	text := tokenizerFragmentLabel(fragment, width)
-	if !utf8.ValidString(fragment) {
-		text = "partial UTF-8 · " + text
-	}
-	hexCount := min(len(fragment), max(1, (width-6)/3))
-	hexLabel := "Hex " + fmt.Sprintf("% x", []byte(fragment[:hexCount]))
-	if hexCount < len(fragment) {
-		hexLabel += " …"
-	}
-	return []string{
-		label,
-		fmt.Sprintf("Bytes [%d, %d) · %s", start, end, text),
-		hexLabel,
-	}
-}
-
 func tokenizerClip(text string, width int) string {
 	return ansi.Truncate(text, max(1, width), "…")
 }
@@ -475,13 +507,18 @@ var tokenizerEditorHelp = []string{
 	"Home/End move to the line boundaries.",
 	"Backspace/Delete remove a complete grapheme.",
 	"Ctrl+U removes all text before the cursor.",
-	"Tab and Shift+Tab change focus.",
-	"Results: Left/Right switch Text, Token IDs, and Bytes.",
-	"Up/Down select a token; Home/End select first/last.",
+	"Tab and Shift+Tab switch Text, options, and tokens.",
+	"At the end of text, Down opens options.",
+	"Options: Up/Down move; Enter opens choices.",
+	"View: Left/Right switch Text, Token IDs, and Bytes.",
+	"Tokens: arrows select; Home/End select first/last.",
 	"Page Up/Page Down move by one visible page.",
 	"Enter opens every byte of the selected token.",
-	"Encoding: Up/Down choose; Enter applies.",
+	"Choices: Up/Down choose; Enter applies; Esc cancels.",
 	"Escape returns to Text. Ctrl+C exits.",
+	"View changes the display without retokenizing.",
+	"Tokenizer selects the vocabulary and splitting rules.",
+	"Bytes is an advanced view of exact token bytes.",
 	"Input is local and never saved. Maximum: 1 MiB.",
 	"Long unbroken text can take time. Editing replaces pending work.",
 	"Special-token spellings stay ordinary text.",

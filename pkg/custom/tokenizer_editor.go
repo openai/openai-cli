@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -27,13 +28,27 @@ type tokenizerEditorResultMsg struct {
 type tokenizerEditorStopMsg struct{ Code int }
 type tokenizerEditorDebounceMsg struct{ revision uint64 }
 
+const (
+	tokenizerFocusText = iota
+	tokenizerFocusOptions
+	tokenizerFocusResults
+)
+
+const (
+	tokenizerModalNone = iota
+	tokenizerModalHelp
+	tokenizerModalDetails
+	tokenizerModalView
+	tokenizerModalEncoding
+)
+
 type tokenizerEditor struct {
 	text              string
 	cursor            int
 	boundaries        []int
 	encoding          string
 	invocation        string
-	encodingChoice    int
+	option, choice    int
 	focus, tab, modal int
 	selected, scroll  int
 	tokenStart        int
@@ -85,14 +100,14 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.updating = false
 		if msg.Err != nil || !m.validTokens(msg.Tokens) {
 			m.failed = true
-			m.note = "Could not tokenize. Edit text or press r in results to retry."
+			m.note = "Could not tokenize. Edit text or press r in Tokens to retry."
 			return m, nil
 		}
 		m.tokens, m.failed = msg.Tokens, false
 		m.selected = max(0, min(m.selected, len(m.tokens)-1))
 		m.keepSelectionVisible()
 	case tea.PasteMsg:
-		if m.focus == 0 && m.modal == 0 && m.usable() {
+		if m.focus == tokenizerFocusText && m.modal == tokenizerModalNone && m.usable() {
 			return m, m.insert(msg.Content)
 		}
 		if m.usable() {
@@ -107,12 +122,31 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.usable() {
 			return m, nil
 		}
-		if m.modal != 0 {
+		// Match the image picker when a quick Escape followed by typing is
+		// decoded as an Alt key. No menu assigns Alt shortcuts.
+		if msg.Mod&tea.ModAlt != 0 {
+			printable := (msg.Mod == tea.ModAlt || msg.Mod == tea.ModAlt|tea.ModShift) && unicode.IsPrint(msg.Code)
+			if m.focus != tokenizerFocusText || printable || m.modal != tokenizerModalNone {
+				m.focus, m.modal, m.option, m.note = tokenizerFocusText, tokenizerModalNone, 0, ""
+				if printable {
+					letter := msg.Code
+					if msg.Mod&tea.ModShift != 0 {
+						letter = unicode.ToUpper(letter)
+					}
+					return m, m.insert(string(letter))
+				}
+				return m, nil
+			}
+		}
+		if m.modal == tokenizerModalView || m.modal == tokenizerModalEncoding {
+			return m, m.updateChoice(key)
+		}
+		if m.modal != tokenizerModalNone {
 			m.updateModal(key)
 			return m, nil
 		}
-		if key == "f1" || m.focus != 0 && key == "?" {
-			m.modal, m.scroll = 1, 0
+		if key == "f1" || m.focus != tokenizerFocusText && key == "?" {
+			m.modal, m.scroll = tokenizerModalHelp, 0
 			return m, nil
 		}
 		switch key {
@@ -122,27 +156,63 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				direction = -1
 			}
 			m.focus = (m.focus + direction + 3) % 3
-			m.encodingChoice = 0
-			if m.encoding == "cl100k_base" {
-				m.encodingChoice = 1
-			}
 			return m, nil
 		case "esc":
-			m.focus, m.note = 0, ""
+			m.focus, m.option, m.note = tokenizerFocusText, 0, ""
 			return m, nil
 		}
 		switch m.focus {
-		case 0:
+		case tokenizerFocusText:
+			if key == "down" && m.cursor == len(m.text) {
+				m.focus, m.option = tokenizerFocusOptions, 0
+				return m, nil
+			}
 			return m, m.edit(msg)
-		case 1:
+		case tokenizerFocusOptions:
 			switch key {
-			case "left":
-				m.tab = (m.tab + 2) % 3
-			case "right":
-				m.tab = (m.tab + 1) % 3
 			case "up":
-				m.selected--
+				if m.option == 0 {
+					m.focus = tokenizerFocusText
+				} else {
+					m.option--
+				}
 			case "down":
+				if m.option == 1 {
+					m.focus = tokenizerFocusResults
+				} else {
+					m.option++
+				}
+			case "home":
+				m.option = 0
+			case "end":
+				m.option = 1
+			case "left", "right":
+				if m.option == 0 {
+					direction := 1
+					if key == "left" {
+						direction = -1
+					}
+					m.tab = (m.tab + direction + 3) % 3
+					m.keepSelectionVisible()
+				} else if key == "left" {
+					m.focus = tokenizerFocusText
+				} else {
+					m.openChoice()
+				}
+			case "enter":
+				m.openChoice()
+			}
+		case tokenizerFocusResults:
+			switch key {
+			case "up":
+				if m.selected == 0 {
+					m.focus, m.option = tokenizerFocusOptions, 1
+				} else {
+					m.selected--
+				}
+			case "left":
+				m.selected--
+			case "down", "right":
 				m.selected++
 			case "pgup":
 				m.selected -= m.previousPageSize()
@@ -155,7 +225,7 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.selected = len(m.tokens) - 1
 			case "enter":
 				if len(m.tokens) > 0 {
-					m.modal, m.scroll = 2, 0
+					m.modal, m.scroll = tokenizerModalDetails, 0
 				}
 			case "r":
 				if m.failed {
@@ -164,20 +234,59 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.selected = max(0, min(m.selected, len(m.tokens)-1))
 			m.keepSelectionVisible()
-		case 2:
-			switch key {
-			case "up", "down", "left", "right":
-				m.encodingChoice = 1 - m.encodingChoice
-			case "enter":
-				encoding := []string{"o200k_base", "cl100k_base"}[m.encodingChoice]
-				if encoding != m.encoding {
-					m.encoding = encoding
-					return m, m.changed()
-				}
-			}
 		}
 	}
 	return m, nil
+}
+
+func (m *tokenizerEditor) openChoice() {
+	m.modal, m.choice = tokenizerModalView, m.tab
+	if m.option == 1 {
+		m.modal, m.choice = tokenizerModalEncoding, 0
+		if m.encoding == "cl100k_base" {
+			m.choice = 1
+		}
+	}
+}
+
+func (m *tokenizerEditor) updateChoice(key string) tea.Cmd {
+	last := 2
+	if m.modal == tokenizerModalEncoding {
+		last = 1
+	}
+	switch key {
+	case "up":
+		m.choice = max(0, m.choice-1)
+	case "down":
+		m.choice = min(last, m.choice+1)
+	case "home":
+		m.choice = 0
+	case "end":
+		m.choice = last
+	case "esc":
+		m.modal, m.focus, m.option = tokenizerModalNone, tokenizerFocusText, 0
+	case "left", "f1":
+		m.modal = tokenizerModalNone
+	case "tab", "shift+tab":
+		m.modal, m.focus = tokenizerModalNone, tokenizerFocusResults
+		if key == "shift+tab" {
+			m.focus = tokenizerFocusText
+		}
+	case "enter":
+		modal := m.modal
+		m.modal = tokenizerModalNone
+		if modal == tokenizerModalView {
+			m.tab = m.choice
+			m.keepSelectionVisible()
+		} else {
+			encoding := []string{"o200k_base", "cl100k_base"}[m.choice]
+			if encoding != m.encoding {
+				m.encoding = encoding
+				return m.changed()
+			}
+		}
+	}
+	return nil
 }
 
 func (m *tokenizerEditor) usable() bool { return m.width >= 40 && m.height >= 12 }
@@ -256,7 +365,7 @@ func (m *tokenizerEditor) cursorIndex() int {
 func (m *tokenizerEditor) edit(msg tea.KeyPressMsg) tea.Cmd {
 	index := m.cursorIndex()
 	switch msg.String() {
-	case "enter":
+	case "enter", "alt+enter":
 		return m.insert("\n")
 	case "left":
 		m.cursor = m.boundaries[max(0, index-1)]
@@ -342,7 +451,7 @@ func (m *tokenizerEditor) updateModal(key string) {
 	_, total := m.modalRows(0, 0)
 	m.scroll = min(m.scroll, max(0, total-max(1, m.viewHeight()-3)))
 	switch key {
-	case "esc", "f1":
+	case "esc", "left", "f1":
 		m.modal, m.scroll = 0, 0
 	case "up":
 		m.scroll--

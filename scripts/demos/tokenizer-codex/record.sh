@@ -12,6 +12,11 @@ case "$demo_mode" in
   *) echo 'MODE must be count, inspect, codex, guide, or editor.' >&2; exit 2;;
 esac
 shift
+demo_editor_before="${DEMO_EDITOR_BEFORE:-help}"
+case "$demo_editor_before" in
+  help|legacy) ;;
+  *) echo 'DEMO_EDITOR_BEFORE must be help or legacy.' >&2; exit 2;;
+esac
 demo_columns="${DEMO_COLUMNS:-80}"
 case "$demo_columns" in
   40|80) ;;
@@ -74,7 +79,7 @@ case "$DEMO_MODE" in
   *) exit 2;;
 esac
 sleep 0.4
-if [ "$DEMO_MODE" = editor ] && [ "$DEMO_SCENE" = after ]; then
+if [ "$DEMO_MODE" = editor ] && [ "$DEMO_EDITOR_LAYOUT" != help ]; then
   if "$DEMO_PYTHON" "$DEMO_EDITOR_DRIVER"; then demo_status=0; else demo_status=$?; fi
 else
   if openai "${demo_args[@]}"; then demo_status=0; else demo_status=$?; fi
@@ -88,6 +93,10 @@ SCENE
 {
   echo 'feature: local tokenizer and Codex instructions'
   echo "mode: $demo_mode"
+  if [ "$demo_mode" = editor ]; then
+    echo "before editor layout: $demo_editor_before"
+    echo 'after editor layout: options'
+  fi
   echo "before commit: $demo_before_sha"
   echo "candidate commit: $demo_after_sha (check source manifest for uncommitted changes)"
   echo "before binary: $demo_before"
@@ -119,34 +128,62 @@ cp "$demo_runtime/scene.sh" "$demo_output/scene.sh"
 demo_before_status=1
 if [ "$demo_mode" = guide ]; then demo_before_status=3; fi
 if [ "$demo_mode" = editor ]; then demo_before_status=0; fi
+if [ "$demo_mode" = editor ] && [ "$demo_editor_before" = legacy ]; then demo_before_status=130; fi
 demo_before_status="${DEMO_BEFORE_STATUS:-$demo_before_status}"
 case "$demo_before_status" in
   0|1|3) ;;
-  *) echo 'DEMO_BEFORE_STATUS must be 0, 1, or 3.' >&2; exit 2;;
+  130)
+    if [ "$demo_mode" != editor ] || [ "$demo_editor_before" != legacy ]; then
+      echo 'Status 130 requires a legacy editor baseline.' >&2
+      exit 2
+    fi
+    ;;
+  *) echo 'DEMO_BEFORE_STATUS must be 0, 1, 3, or 130 for a legacy editor.' >&2; exit 2;;
 esac
+if [ "$demo_mode" = editor ]; then
+  demo_editor_status=0
+  if [ "$demo_editor_before" = legacy ]; then demo_editor_status=130; fi
+  if [ "$demo_before_status" != "$demo_editor_status" ]; then
+    echo 'The editor baseline status must match its selected layout.' >&2
+    exit 2
+  fi
+  printf 'before\t%s\nafter\toptions\n' "$demo_editor_before" > "$demo_output/editor-layouts.tsv"
+fi
 demo_after_status=0
 if [ "$demo_mode" = editor ]; then demo_after_status=130; fi
 printf '%s\t%s\n' before "$demo_before_status" after "$demo_after_status" > "$demo_output/expected-statuses.tsv"
 demo_capture_scene before "$demo_before_status" "$demo_runtime/before" 'http://127.0.0.1:1' 'BEFORE' \
-  "DEMO_MODE=$demo_mode" 'DEMO_SCENE=before' "DEMO_STATUS_LOG=$demo_output/statuses.tsv" "${demo_theme_environment[@]}"
+  "DEMO_MODE=$demo_mode" 'DEMO_SCENE=before' "DEMO_STATUS_LOG=$demo_output/statuses.tsv" \
+  "DEMO_PYTHON=$demo_python" "DEMO_EDITOR_DRIVER=$demo_source/editor_driver.py" \
+  "DEMO_EDITOR_LAYOUT=$demo_editor_before" "DEMO_EDITOR_REPORT=$demo_output/before-editor-input.json" \
+  "DEMO_COLUMNS=$demo_columns" "DEMO_ROWS=$demo_rows" "DEMO_THEME=$demo_theme" "${demo_theme_environment[@]}"
 demo_capture_scene after "$demo_after_status" "$demo_runtime/after" 'http://127.0.0.1:1' 'AFTER' \
   "DEMO_MODE=$demo_mode" 'DEMO_SCENE=after' "DEMO_STATUS_LOG=$demo_output/statuses.tsv" \
   "DEMO_PYTHON=$demo_python" "DEMO_EDITOR_DRIVER=$demo_source/editor_driver.py" \
-  "DEMO_EDITOR_REPORT=$demo_output/editor-input.json" "DEMO_COLUMNS=$demo_columns" "DEMO_ROWS=$demo_rows" \
+  'DEMO_EDITOR_LAYOUT=options' "DEMO_EDITOR_REPORT=$demo_output/editor-input.json" "DEMO_COLUMNS=$demo_columns" "DEMO_ROWS=$demo_rows" \
   "DEMO_THEME=$demo_theme" "${demo_theme_environment[@]}"
 "$demo_python" "$demo_source/validate.py" "$demo_output" "$demo_mode" > "$demo_output/validation.txt"
 if [ "$demo_mode" = editor ]; then
-  mv "$demo_output/after.png" "$demo_output/after-exit.png"
-  while IFS=$'\t' read -r demo_state demo_time; do
-    "$demo_agg" --quiet "${demo_render_options[@]}" --select "$demo_time" \
-      "$demo_output/after.cast" "$demo_output/after-$demo_state.gif"
-    "$demo_ffmpeg" -nostdin -hide_banner -loglevel error -y -i "$demo_output/after-$demo_state.gif" \
-      -frames:v 1 "$demo_output/after-$demo_state.png"
-  done < "$demo_output/editor-snapshots.tsv"
-  for demo_state in text ids bytes details encoding controls; do
+  demo_editor_scenes=(after)
+  if [ "$demo_editor_before" = legacy ]; then demo_editor_scenes=(before after); fi
+  for demo_scene in "${demo_editor_scenes[@]}"; do
+    demo_snapshots="$demo_output/editor-snapshots.tsv"
+    if [ "$demo_scene" = before ]; then demo_snapshots="$demo_output/before-editor-snapshots.tsv"; fi
+    mv "$demo_output/$demo_scene.png" "$demo_output/$demo_scene-exit.png"
+    while IFS=$'\t' read -r demo_state demo_time; do
+      "$demo_agg" --quiet "${demo_render_options[@]}" --select "$demo_time" \
+        "$demo_output/$demo_scene.cast" "$demo_output/$demo_scene-$demo_state.gif"
+      "$demo_ffmpeg" -nostdin -hide_banner -loglevel error -y -i "$demo_output/$demo_scene-$demo_state.gif" \
+        -frames:v 1 "$demo_output/$demo_scene-$demo_state.png"
+    done < "$demo_snapshots"
+    for demo_state in text ids bytes details encoding controls; do
+      test -s "$demo_output/$demo_scene-$demo_state.png"
+    done
+    cp "$demo_output/$demo_scene-text.png" "$demo_output/$demo_scene.png"
+  done
+  for demo_state in view-choice tokenizer-choice; do
     test -s "$demo_output/after-$demo_state.png"
   done
-  cp "$demo_output/after-text.png" "$demo_output/after.png"
 fi
 demo_assemble_capture 300 before after
 printf 'Recorded %s terminal replay in %s\n' "$demo_mode" "$demo_output"

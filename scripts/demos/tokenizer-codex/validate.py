@@ -24,7 +24,10 @@ def check(condition, message):
 
 def validate(directory, mode):
     check(mode in COMMANDS, "MODE must be count, inspect, codex, guide, or editor")
-    before_status = 0 if mode == "editor" else 3 if mode == "guide" else 1
+    layouts = editor_layouts(directory) if mode == "editor" else {}
+    before_status = 3 if mode == "guide" else 1
+    if mode == "editor":
+        before_status = 130 if layouts["before"] == "legacy" else 0
     after_status = 130 if mode == "editor" else 0
     expected = [f"before\t{before_status}", f"after\t{after_status}"]
     if (directory / "expected-statuses.tsv").exists():
@@ -32,7 +35,10 @@ def validate(directory, mode):
         check(len(expected) == 2 and expected[0].startswith("before\t") and
               expected[1] == f"after\t{after_status}", "invalid expected status record")
         before_status = int(expected[0].split("\t")[1])
-        check(before_status in (0, 1, 3), "unsupported baseline status")
+        allowed = (0, 1, 3)
+        if mode == "editor":
+            allowed = (130,) if layouts["before"] == "legacy" else (0,)
+        check(before_status in allowed, "unsupported baseline status")
     statuses = (directory / "statuses.tsv").read_text().splitlines()
     check(statuses == expected, "unexpected command exit statuses")
     transcripts = {}
@@ -48,7 +54,9 @@ def validate(directory, mode):
     before = transcripts["before"]
     after = transcripts["after"]
     error = "Unknown help topic." if mode == "guide" else "An option is not recognized."
-    if before_status != 0:
+    if mode == "editor" and layouts["before"] == "legacy":
+        validate_editor(directory, "before", "legacy")
+    elif before_status != 0:
         check(error in before, "before: expected the baseline command failure")
     elif mode == "editor":
         check("USAGE:" in before and "Count and inspect" in before,
@@ -81,30 +89,51 @@ def validate(directory, mode):
         ]:
             check(value in after, f"after: missing instruction {value!r}")
     else:
-        validate_editor(directory)
+        validate_editor(directory, "after", layouts["after"])
     print(f"PASS: {mode} command transcripts and before/after exit statuses")
 
 
-def validate_editor(directory):
-    report = json.loads((directory / "editor-input.json").read_text())
+def editor_layouts(directory):
+    path = directory / "editor-layouts.tsv"
+    if not path.exists():
+        report = json.loads((directory / "editor-input.json").read_text())
+        return {"before": "help", "after": report.get("layout", "legacy")}
+    rows = [row.split("\t") for row in path.read_text().splitlines()]
+    check(len(rows) == 2 and all(len(row) == 2 for row in rows) and
+          rows[0][0] == "before" and rows[1][0] == "after", "invalid editor layout record")
+    layouts = dict(rows)
+    check(layouts["before"] in ("help", "legacy") and layouts["after"] == "options",
+          "unsupported editor layout comparison")
+    return layouts
+
+
+def validate_editor(directory, scene="after", layout="legacy"):
+    report_name = "editor-input.json" if scene == "after" else "before-editor-input.json"
+    report = json.loads((directory / report_name).read_text())
+    check(layout in ("legacy", "options") and report.get("layout", "legacy") == layout,
+          f"{scene}: input driver used the wrong editor layout")
     check(report["input"] == "Hello, tokens! 👋\nCafé." and report["input_bytes"] == 26,
           "editor: synthetic input changed")
     check(report["exit_status"] == 130, "editor: Ctrl+C status changed")
+    if "layout" in report:
+        check(report.get("input_actions") == {"typed": "Hello, ", "pasted": ["tokens! 👋", "Café."], "newline": "Enter"},
+              "editor: exact paste or Text Enter input changed")
     stages = [
-        ("text", re.compile(r"\d+ tokens · 26 bytes")),
+        ("text", re.compile(r"10 tokens(?:[ \t]*\r?\n|[ \t]*$)" if layout == "options" else r"10 tokens · 26 bytes")),
         ("ids", re.compile(r"\[Token IDs\]")),
         ("bytes", re.compile(r"\[Bytes\]")),
         ("details", re.compile(r"Token details · exact bytes")),
-        ("encoding", re.compile(r"Encoding  cl100k_base")),
+        ("encoding", re.compile(("Tokenizer" if layout == "options" else "Encoding") + r"  cl100k_base")),
         ("controls", re.compile(r"Tokenizer · controls")),
     ]
+    if layout == "options":
+        stages.insert(2, ("view-choice", re.compile(r"Choose view")))
+        stages.insert(5, ("tokenizer-choice", re.compile(r"Choose tokenizer")))
     check([event["state"] for event in report["states"]] == [name for name, _ in stages],
           "editor: incomplete input-driver states")
-    events = [json.loads(line) for line in (directory / "after.cast").read_text().splitlines()]
+    events = [json.loads(line) for line in (directory / f"{scene}.cast").read_text().splitlines()]
     check(events[0]["width"] == report["columns"] and events[0]["height"] == report["rows"],
           "editor: inner and recorded terminal dimensions differ")
-    check("partial UTF-8" in "".join(event[2] for event in events[1:] if event[1] == "o"),
-          "editor: exact bytes for the partial Unicode token were not shown")
     output = ""
     snapshots = []
     ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
@@ -115,7 +144,25 @@ def validate_editor(directory):
         plain = ansi.sub("", output)
         if len(snapshots) < len(stages):
             name, pattern = stages[len(snapshots)]
-            if pattern.search(plain):
+            complete = pattern.search(plain)
+            if name == "details":
+                complete = complete and all(value in plain for value in ["partial UTF-8", "ID 61138", "20 f0 9f 91"])
+                complete = complete and re.search(r"bytes\s+\[14,\s*18\)", plain)
+            elif layout == "options":
+                if name == "text":
+                    complete = complete and "View  " in plain and "Tokenizer  o200k_base" in plain
+                elif name == "ids":
+                    complete = complete and "View  " in plain
+                elif name == "bytes":
+                    complete = complete and "10 tokens · 26 bytes" in plain and "View  " in plain
+                elif name == "view-choice":
+                    complete = complete and all(value in plain for value in ["Text", "Token IDs", "Bytes", "Esc cancel"])
+                elif name == "tokenizer-choice":
+                    complete = complete and all(value in plain for value in ["o200k_base", "cl100k_base", "Esc cancel"])
+            if complete:
+                if layout == "options" and name in ("text", "ids"):
+                    check(re.search(r"\d+ tokens? · \d+ bytes?", plain) is None,
+                          f"{scene}: {name} view exposed the advanced byte count")
                 timestamp = float(event[0]) + 0.25
                 if snapshots:
                     check(timestamp - snapshots[-1][1] > 0.5,
@@ -124,9 +171,10 @@ def validate_editor(directory):
                 output = ""
     check(len(snapshots) == len(stages), "editor: recording omitted a required visible state")
     check(snapshots[-1][1] < float(events[-1][0]), "editor: snapshot occurs after recording ends")
-    (directory / "editor-snapshots.tsv").write_text(
+    snapshot_name = "editor-snapshots.tsv" if scene == "after" else "before-editor-snapshots.tsv"
+    (directory / snapshot_name).write_text(
         "".join(f"{name}\t{timestamp:.6f}\n" for name, timestamp in snapshots))
-    print("PASS: real editor text, IDs, bytes, details, encoding, controls, and Ctrl+C")
+    print(f"PASS: {scene} {layout} editor views, exact details, tokenizer selection, controls, and Ctrl+C")
 
 
 def main():

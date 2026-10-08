@@ -13,16 +13,18 @@ Each process receives a rejecting loopback base URL and no personal environment 
 | `inspect` | `openai tokenizer inspect --text "Hi!"` | 1 | 0 |
 | `codex` | `openai codex --destination config` | 1 | 0 |
 | `guide` | `openai codex` | 3 | 0 |
-| `editor` | `openai tokenizer` | 0 | 130 |
+| `editor` | `openai tokenizer` | 0 for help; 130 for the previous editor | 130 |
 
 The baseline is main `da762ffff4f35732f4720ac4db531d8d764f2cbe`.
 Direct baseline execution verified these statuses before recording.
 The first three baseline commands report an unrecognized option.
 The guide baseline reports an unknown help topic.
 Recordings preserve those actual errors; they do not substitute explanatory output.
-The editor scene uses published feature commit `6e761e71051aa260e01d189437a77dd5e9f72365` as its baseline.
+The editor scene defaults to the historical help baseline at `6e761e71051aa260e01d189437a77dd5e9f72365`.
 That baseline prints tokenizer help and exits successfully.
-The candidate opens the editor; the driver exits through Ctrl+C and preserves status 130.
+Use `DEMO_EDITOR_BEFORE=legacy` for the previous interactive editor at `30a5e9186f7b0d8129401622cd4507bf90b37d55`.
+This comparison drives both actual editors and preserves their Ctrl+C status 130.
+The candidate uses the current Options layout in both comparisons.
 
 The default `o200k_base` count example contains 13 input bytes and four tokens.
 The inspect example contains three input bytes and two tokens.
@@ -88,42 +90,61 @@ No recording has occurred merely because this recipe exists.
 
 ## Interactive editor and guide refinement
 
-Use the published feature baseline for the editor and the updated Codex guide.
-Set `DEMO_BEFORE_STATUS=0` for the guide when comparing against that baseline.
-The original main baseline still uses the guide's default status 3.
-The recorder saves expected statuses separately from actual process statuses.
+Use the previous interactive editor when reviewing the new View and Tokenizer controls.
+The driver maps the previous editor's controls separately from the candidate's Options layout.
+The recorder saves both layouts, expected statuses, and actual process statuses.
 
 ```sh
-DEMO_THEME=dark DEMO_BEFORE_STATUS=0 \
+DEMO_THEME=dark DEMO_EDITOR_BEFORE=legacy \
 PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
   bash scripts/demos/tokenizer-codex/record.sh editor \
-  /absolute/path/to/published-feature /absolute/path/to/candidate \
-  6e761e71051aa260e01d189437a77dd5e9f72365 "$AFTER_SHA" \
+  /absolute/path/to/previous-editor /absolute/path/to/candidate \
+  30a5e9186f7b0d8129401622cd4507bf90b37d55 "$AFTER_SHA" \
   /absolute/path/outside/repository/editor-dark-80
 ```
+
+Omit `DEMO_EDITOR_BEFORE` to retain the historical help-to-editor recipe.
+For that comparison, provide the help-only binary and its `6e761e7` full commit above.
+Do not label a help-only baseline as the previous interactive experience.
+The legacy editor baseline requires status 130; the help baseline requires status zero.
 
 Repeat with `DEMO_COLUMNS=40` for the compact layout.
 Use `DEMO_THEME=light` for a light terminal.
 Use `DEMO_THEME=no-color` to set `NO_COLOR=1`.
 The editor defaults to dark; existing scenes retain their no-color default.
-Editor dimensions are 80×32 or 40×44, preserving room for the baseline's help output.
+Editor dimensions are 80×32 or 40×44, also accommodating the historical baseline's help output.
 
 The Bash scene uses a small Python keyboard driver inside the shared capture lifecycle.
 The driver starts the actual CLI in a terminal with matching dimensions.
-It types `Hello, ` and pastes the remaining synthetic UTF-8 text.
-It visits Text, Token IDs, Bytes, token details, the alternate encoding, and controls.
+It types `Hello, ` and pastes `tokens! 👋` and `Café.` around an Enter newline.
+Both layouts therefore receive the exact same 26-byte text.
+The candidate's default Text and Token IDs views show token count without the advanced byte count.
+The driver tabs to Options and switches to Token IDs with Right.
+Enter opens the View chooser; Down and Enter apply Bytes.
+Tab moves to Results, where arrows select the partial Unicode token and Enter opens its details.
+Escape closes details; another Escape returns to Text.
+The driver then opens the Tokenizer chooser and applies `cl100k_base`.
+It also opens the controls reference before exiting through Ctrl+C.
+The previous editor follows its existing focus and encoding controls.
 It forwards only the CLI's actual terminal output.
 It answers terminal capability queries and stops its process group on interrupted recording.
 No fabricated application frames enter the recording.
 
-The scene retains its exact synthetic input, observed states, dimensions, theme, and actual exit status.
-The validator selects screenshot times from actual output events in `after.cast`.
+The scene retains its synthetic input actions, observed states, layout, dimensions, theme, and actual exit status.
+The validator selects screenshot times from each driven editor's actual output events.
 It requires distinct visible states before generating screenshots.
+It checks the partial token's ID, byte boundaries, and complete hexadecimal bytes.
+It also checks the candidate's View and Tokenizer labels and count-only default status.
 `after.png` shows the live Text view before exit.
 `after-ids.png`, `after-bytes.png`, `after-details.png`, `after-encoding.png`, and `after-controls.png` preserve the other states.
+`after-view-choice.png` and `after-tokenizer-choice.png` show the candidate's selection menus.
 `after-exit.png` retains the final shell frame.
+The legacy comparison creates corresponding `before-*` snapshots for its six existing states.
+Its `before.png` also shows the live Text view.
+The help-only comparison retains the historical help screenshot as `before.png`.
 The comparison GIF includes the complete interaction and cleanup.
 
-Use `guide` with the same baseline, theme, and before-status setting for the Codex presentation comparison.
+For the Codex presentation comparison, use `guide` with the historical published-feature baseline and `DEMO_BEFORE_STATUS=0`.
+The original main baseline still uses the guide's default status 3.
 The guide scene prints instructions only.
 Review every selected screenshot and the GIF before publication.
