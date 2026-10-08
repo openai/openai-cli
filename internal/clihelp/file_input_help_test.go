@@ -30,7 +30,7 @@ func TestFileInputHelpPreservesPurpose(t *testing.T) {
 					t.Fatal(err)
 				}
 				before := flag.String()
-				brief := briefHelpAtWidth(&cli.Command{Name: "create", Flags: []cli.Flag{flag}}, "openai", "test create", 200)
+				brief := commandHelpAtWidth(&cli.Command{Name: "create", Flags: []cli.Flag{flag}}, "openai", "test create", 200)
 				full := fullFlag(flag)
 				wantBrief, wantFull := tc.brief, tc.full
 				if !fileInput {

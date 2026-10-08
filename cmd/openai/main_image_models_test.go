@@ -48,7 +48,7 @@ func TestMainImageModelsHelpAndOfflineMakeNoRequests(t *testing.T) {
 				}
 				assertMainImageModelsRows(t, report, args[len(args)-1] == "--all", imagemodels.StatusNotChecked)
 			} else {
-				for _, want := range []string{"openai images models", "--offline", "--all", "exact model names", "API key setup: openai help setup", "--model gpt-image-2.5-flare"} {
+				for _, want := range []string{"openai images models", "--offline", "--all", "exact model names", "Key setup: openai help setup", "--model gpt-image-2.5-flare"} {
 					if !strings.Contains(got.stdout, want) {
 						t.Errorf("help missing %q: %s", want, got.stdout)
 					}

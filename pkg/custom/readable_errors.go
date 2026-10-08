@@ -215,7 +215,7 @@ func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command) stri
 	}
 	invocation := errorHelpInvocation(command.Root())
 	pathToCommand := strings.TrimPrefix(command.FullName(), command.Root().Name+" ")
-	return message + "\nOptions and examples: " + invocation + " help --all " + pathToCommand
+	return message + "\nOptions and examples: " + invocation + " help " + pathToCommand
 }
 
 func readableParameterFlag(command *cli.Command, parameter string) (name, path string) {

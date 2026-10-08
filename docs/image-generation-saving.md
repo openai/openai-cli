@@ -97,7 +97,7 @@ Streamed edits save only the final image. `--partial-images 1`, `2` or `3`
 enables streaming and displays progress previews where supported.
 Explicit `--format json` preserves the original responses or edit events and
 makes no saved files. Model-discovery default markers remain separate work.
-Use `openai help --all images edit` for every request setting.
+Use `openai images edit --help` for every request setting.
 
 ## Inline previews
 
