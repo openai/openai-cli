@@ -29,7 +29,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var imageFailure *imageSavingError
 	var streamFailure *streamResultError
 	var imageModelsFailure *imageModelsError
-	var voiceVariantFailure *voiceVariantError
+	var voiceTypeFailure *voiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
 	switch {
 	case errors.Is(failure, context.Canceled):
@@ -48,8 +48,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return "The output pager failed. Check PAGER or use --format text to display the result without a pager."
 	case errors.As(failure, &imageModelsFailure):
 		return imageModelsFailure.Error()
-	case errors.As(failure, &voiceVariantFailure):
-		return voiceVariantFailure.Error()
+	case errors.As(failure, &voiceTypeFailure):
+		return voiceTypeFailure.Error()
 	case errors.As(failure, &helpTopicFailure):
 		return unknownCommandAt(helpTopicFailure.Parent, helpTopicFailure.Topic)
 	case errors.As(failure, &pathError):
