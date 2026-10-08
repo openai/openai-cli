@@ -19,7 +19,7 @@ func helpSection(text, start, end string) string {
 	return strings.TrimSpace(section)
 }
 
-func TestMainGcloudHelpPreservesDetailsAfterShortName(t *testing.T) {
+func TestMainHelpPresentationPreservesDetailsAfterShortName(t *testing.T) {
 	got := runMainDispatch(t, "bash", "openai", "responses", "create", "--help")
 	if got.code != 0 || got.stderr != "" {
 		t.Fatalf("help failed: %+v", got)
@@ -48,7 +48,7 @@ func TestMainGcloudHelpPreservesDetailsAfterShortName(t *testing.T) {
 	}
 }
 
-func TestMainGcloudHelpConcreteSyntaxAndLabels(t *testing.T) {
+func TestMainHelpPresentationConcreteSyntaxAndLabels(t *testing.T) {
 	for _, tc := range []struct {
 		path []string
 		want []string
@@ -73,7 +73,7 @@ func TestMainGcloudHelpConcreteSyntaxAndLabels(t *testing.T) {
 	}
 }
 
-func TestMainGcloudHelpCompactGlobalsAndLocalRestrictions(t *testing.T) {
+func TestMainHelpPresentationCompactGlobalsAndLocalRestrictions(t *testing.T) {
 	root := runMainDispatch(t, "bash", "openai", "--help")
 	for _, path := range [][]string{{"models", "list"}, {"images", "preview"}, {"images", "inline", "on"}} {
 		got := runMainDispatch(t, "bash", append(append([]string{"openai"}, path...), "--help")...)
@@ -106,7 +106,7 @@ func TestMainGcloudHelpCompactGlobalsAndLocalRestrictions(t *testing.T) {
 	}
 }
 
-func TestMainGcloudHelpDocumentedInputSourcesExecute(t *testing.T) {
+func TestMainHelpPresentationDocumentedInputSourcesExecute(t *testing.T) {
 	requests := make(chan string, 12)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests <- r.Method + " " + r.URL.Path
