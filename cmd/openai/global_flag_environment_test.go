@@ -3,28 +3,149 @@ package main
 import (
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
 func TestMainGlobalFlagBaseURLOverridesMalformedEnvironment(t *testing.T) {
-	for _, equals := range []bool{false, true} {
-		for position, placement := range []string{"before", "between", "after"} {
-			t.Run(map[bool]string{false: "spaced", true: "equals"}[equals]+"/"+placement, func(t *testing.T) {
-				server, requests := globalFlagsServer(t, globalFlagsPage)
-				flags := []string{"--base-url", server.URL}
-				if equals {
-					flags = []string{"--base-url=" + server.URL}
+	for _, malformed := range []struct{ name, value string }{
+		{"missing scheme", "not-a-request-url"},
+		{"invalid relative escape", "not%url"},
+		{"invalid absolute escape", "http://127.0.0.1/%zz"},
+	} {
+		for _, equals := range []bool{false, true} {
+			for position, placement := range []string{"before", "between", "after"} {
+				t.Run(malformed.name+"/"+map[bool]string{false: "spaced", true: "equals"}[equals]+"/"+placement, func(t *testing.T) {
+					server, requests := globalFlagsServer(t, globalFlagsPage)
+					flags := []string{"--base-url", server.URL}
+					if equals {
+						flags = []string{"--base-url=" + server.URL}
+					}
+					flags = append(flags, "--project=proj-explicit", "--format=raw")
+					got := runMainDispatchWithEnv(t, "bash", globalFlagsEnv(server, "OPENAI_BASE_URL="+malformed.value),
+						globalFlagsAt([]string{"models", "list"}, flags, position)...)
+					if got.code != 0 || got.stderr != "" || got.stdout != globalFlagsPage+"\n" {
+						t.Fatalf("explicit endpoint did not override the environment: %+v", got)
+					}
+					request := globalFlagsOneRequest(t, requests)
+					if request.method != http.MethodGet || request.path != "/models" || request.header.Get("OpenAI-Project") != "proj-explicit" {
+						t.Fatalf("unexpected request: method=%q path=%q project=%q", request.method, request.path, request.header.Get("OpenAI-Project"))
+					}
+					if request.header.Get("Authorization") != "Bearer synthetic-env-key" {
+						t.Fatal("endpoint override changed the environment credential")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestMainGlobalFlagInvalidPercentBaseURLStillFails(t *testing.T) {
+	server, requests := globalFlagsServer(t, globalFlagsPage)
+	for _, malformed := range []struct{ name, value string }{
+		{"relative", "not%url"},
+		{"absolute", server.URL + "/%zz"},
+	} {
+		for _, config := range []struct {
+			name, env string
+			flags     []string
+		}{
+			{"environment", malformed.value, nil},
+			{"empty spaced fallback", malformed.value, []string{"--base-url", ""}},
+			{"empty equals fallback", malformed.value, []string{"--base-url="}},
+			{"explicit", server.URL, []string{"--base-url", malformed.value}},
+		} {
+			t.Run(malformed.name+"/"+config.name, func(t *testing.T) {
+				args := append([]string{"openai", "models", "list", "--format=raw"}, config.flags...)
+				got := runMainDispatchWithEnv(t, "bash", globalFlagsEnv(server, "OPENAI_BASE_URL="+config.env), args...)
+				if got.code != 1 || got.stdout != "" || got.stderr == "" || len(requests) != 0 {
+					t.Fatalf("selected invalid endpoint must fail without requests: %+v; requests=%d", got, len(requests))
 				}
-				flags = append(flags, "--project=proj-explicit", "--format=raw")
-				got := runMainDispatchWithEnv(t, "bash", globalFlagsEnv(server, "OPENAI_BASE_URL=not-a-request-url"),
-					globalFlagsAt([]string{"models", "list"}, flags, position)...)
-				if got.code != 0 || got.stderr != "" || got.stdout != globalFlagsPage+"\n" {
-					t.Fatalf("explicit endpoint did not override the environment: %+v", got)
+			})
+		}
+	}
+}
+
+func TestMainGlobalFlagBaseURLOverridePreservesEnvironmentHeaders(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		command []string
+		flags   []string
+		want    map[string]string
+	}{
+		{"API defaults", []string{"models", "list"}, nil, nil},
+		{"explicit context", []string{"models", "list"}, []string{"--organization=org-explicit", "--project=proj-explicit"},
+			map[string]string{"OpenAI-Organization": "org-explicit", "OpenAI-Project": "proj-explicit"}},
+		{"header precedence", []string{"models", "list"}, []string{
+			"--project=proj-explicit", "--header=OpenAI-Project: proj-first", "-H=OpenAI-Project: proj-last",
+			"--header=X-Synthetic-Custom: first", "-H=X-Synthetic-Custom: last",
+		}, map[string]string{"OpenAI-Project": "proj-last", "X-Synthetic-Custom": "last"}},
+		{"admin defaults", []string{"admin", "organization", "invites", "list"}, nil,
+			map[string]string{"Authorization": "Bearer synthetic-admin-key"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const response = `{"object":"list","data":[]}`
+			server, requests := globalFlagsServer(t, response)
+			env := globalFlagsEnv(server, "OPENAI_BASE_URL=not%url", "OPENAI_ADMIN_KEY=synthetic-admin-key",
+				"OPENAI_ORG_ID=org-env", "OPENAI_PROJECT_ID=proj-env",
+				"OPENAI_CUSTOM_HEADERS=X-Synthetic-Custom: env-first\nx-synthetic-custom: env-last\nX-Synthetic-Only: env-only")
+			args := append([]string{"openai"}, tc.command...)
+			args = append(args, "--base-url="+server.URL, "--format=raw")
+			args = append(args, tc.flags...)
+			got := runMainDispatchWithEnv(t, "bash", env, args...)
+			if got.code != 0 || got.stderr != "" || got.stdout != response+"\n" {
+				t.Fatalf("endpoint override lost environment request options: %+v", got)
+			}
+			request := globalFlagsOneRequest(t, requests)
+			wantPath := "/models"
+			if tc.command[0] == "admin" {
+				wantPath = "/organization/invites"
+			}
+			if request.method != http.MethodGet || request.path != wantPath {
+				t.Fatalf("unexpected request: %s %s", request.method, request.path)
+			}
+			want := map[string]string{
+				"Authorization": "Bearer synthetic-env-key", "OpenAI-Organization": "org-env", "OpenAI-Project": "proj-env",
+				"X-Synthetic-Custom": "env-last", "X-Synthetic-Only": "env-only",
+			}
+			for name, value := range tc.want {
+				want[name] = value
+			}
+			for name, value := range want {
+				if !slices.Equal(request.header.Values(name), []string{value}) {
+					t.Errorf("endpoint override changed %s values or precedence", name)
 				}
-				request := globalFlagsOneRequest(t, requests)
-				if request.method != http.MethodGet || request.path != "/models" || request.header.Get("OpenAI-Project") != "proj-explicit" {
-					t.Fatalf("unexpected request: method=%q path=%q project=%q", request.method, request.path, request.header.Get("OpenAI-Project"))
+			}
+		})
+	}
+}
+
+func TestMainGlobalFlagInvalidPercentBaseURLErrorsAreSafe(t *testing.T) {
+	server, requests := globalFlagsServer(t, globalFlagsPage)
+	malformed := "http://synthetic-private-user:synthetic-private-password@" + strings.TrimPrefix(server.URL, "http://") +
+		"/synthetic-private-path/%zz?token=synthetic-private-query"
+	for _, format := range []string{"text", "json"} {
+		for _, config := range []struct {
+			name, env string
+			flags     []string
+		}{
+			{"environment", malformed, nil},
+			{"empty fallback", malformed, []string{"--base-url="}},
+			{"explicit", server.URL, []string{"--base-url", malformed}},
+		} {
+			t.Run(format+"/"+config.name, func(t *testing.T) {
+				args := append([]string{"openai", "models", "list", "--format-error=" + format}, config.flags...)
+				got := runMainDispatchWithEnv(t, "bash", globalFlagsEnv(server, "OPENAI_BASE_URL="+config.env,
+					"OPENAI_API_KEY=synthetic-private-key", "OPENAI_CUSTOM_HEADERS=X-Synthetic-Secret: synthetic-private-header"), args...)
+				if got.code != 1 || got.stdout != "" || got.stderr == "" || len(requests) != 0 {
+					t.Fatalf("invalid endpoint must fail without requests: %+v; requests=%d", got, len(requests))
+				}
+				if strings.Contains(got.stderr, "synthetic-private-") || strings.Contains(got.stderr, "token=") {
+					t.Fatal("invalid endpoint diagnostic exposed synthetic sensitive values")
+				}
+				if format == "json" {
+					decodeMainStructuredError(t, format, got.stderr)
 				}
 			})
 		}
@@ -172,6 +293,40 @@ func TestMainGlobalFlagRequestConfigurationStillValidates(t *testing.T) {
 				got := runMainDispatchWithEnv(t, "bash", globalFlagsEnv(server, config.env...), args...)
 				if got.code != 1 || got.stdout != "" || !strings.Contains(got.stderr, config.want) || len(requests) != 0 {
 					t.Fatalf("request configuration validation changed: %+v; requests=%d", got, len(requests))
+				}
+			})
+		}
+	}
+}
+
+func TestMainGlobalFlagURLConfigurationPreservesOfflineHelp(t *testing.T) {
+	server, requests := globalFlagsServer(t, globalFlagsPage)
+	for _, test := range []struct {
+		args []string
+		ok   bool
+	}{
+		{[]string{"help"}, true},
+		{[]string{"help", "setup"}, true},
+		{[]string{"help", "models", "list"}, true},
+		{[]string{"help", "imaginary"}, false},
+		{[]string{"help", "models", "imaginary"}, false},
+	} {
+		for _, format := range []string{"text", "json"} {
+			t.Run(strings.Join(test.args, "/")+"/"+format, func(t *testing.T) {
+				args := append([]string{"openai", "--format-error", format}, test.args...)
+				want := runMainDispatchWithEnv(t, "bash", globalFlagsEnv(server), args...)
+				if test.ok && (want.code != 0 || want.stdout == "" || want.stderr != "") {
+					t.Fatalf("valid help control failed: %+v", want)
+				}
+				if !test.ok && (want.code == 0 || want.stdout != "" || want.stderr == "") {
+					t.Fatalf("unknown help topic control lost its error: %+v", want)
+				}
+				env := globalFlagsEnv(server, "OPENAI_BASE_URL=not%url", "OPENAI_MTLS_CLIENT_CERT_FILE=/synthetic/missing.crt", "OPENAI_MTLS_CLIENT_KEY_FILE=/synthetic/missing.key")
+				if got := runMainDispatchWithEnv(t, "bash", env, args...); got != want {
+					t.Fatalf("request configuration changed local help: got %+v; want %+v", got, want)
+				}
+				if len(requests) != 0 {
+					t.Fatalf("local help made %d requests", len(requests))
 				}
 			})
 		}

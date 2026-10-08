@@ -28,29 +28,13 @@ func main() {
 		prepareForAutocomplete(app)
 	}
 
-	// Local help and completion do not use request configuration.
-	requestSetup := app.Before
-	app.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
-		if completing || command.Args().First() == "@completion" {
-			return ctx, nil
-		}
-		if baseURL, ok := os.LookupEnv("OPENAI_BASE_URL"); ok && command.Root().String("base-url") == "" {
-			if err := cmd.ValidateBaseURL(baseURL, "OPENAI_BASE_URL"); err != nil {
-				return ctx, err
-			}
-		}
-		if requestSetup != nil {
-			return requestSetup(ctx, command)
-		}
-		return ctx, nil
-	}
 	args, _, err := custom.ConfigureHelp(app, os.Args)
 	custom.ConfigureCommandErrors(app)
 
 	ctx := context.Background()
 	if err == nil {
 		custom.SetupImagePickerShellOnFirstRun(ctx, os.Args)
-		err = app.Run(ctx, args)
+		err = runWithRequestConfiguration(ctx, app, args, completing)
 	}
 	if err != nil {
 		exitCode := 1
