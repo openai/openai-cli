@@ -133,6 +133,10 @@ Without `pipefail`, a shell pipeline can hide the producer's failure behind the 
 For file output, write to a temporary file and replace the final file only after success:
 
 ```sh
+if [ -d tokens.json ]; then
+  printf '%s\n' 'tokens.json is a directory; choose an output file.' >&2
+  exit 1
+fi
 token_result=$(mktemp './tokens.json.XXXXXX') || exit 1
 trap 'rm -f "$token_result"' EXIT
 if openai --format json tokenizer inspect --file prompt.txt >"$token_result"; then
