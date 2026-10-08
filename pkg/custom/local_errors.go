@@ -33,6 +33,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var helpTopicFailure *clihelp.UnknownTopicError
 	var adminCredentialsFailure *adminCredentialsError
 	var adminSetupFailure *adminSetupError
+	var navigationFailure *listNavigationError
 	switch {
 	case errors.As(failure, &adminSetupFailure):
 		return adminSetupFailure.Error()
@@ -42,6 +43,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return "The request timed out. The API may have received it; check its status before repeating it."
 	case errors.As(failure, &imageFailure):
 		return imageFailure.message
+	case errors.As(failure, &navigationFailure):
+		return navigationFailure.Error()
 	case errors.As(failure, &streamFailure):
 		return streamFailure.message + "\nOutput may be incomplete."
 	case errors.As(failure, &typeError):
