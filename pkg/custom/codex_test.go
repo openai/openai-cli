@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -260,5 +261,64 @@ func TestCodexMissingBrowserDoesNotFallback(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if err := openCodexDestination(t.Context(), codexDocsURL); err == nil {
 		t.Fatal("browser launch succeeded without a launcher")
+	}
+}
+
+func TestCodexBrowserEnvironmentKeepsDesktopSettings(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("native fixture uses a POSIX launcher")
+	}
+	dir := t.TempDir()
+	name, _, err := codexBrowserCommand(runtime.GOOS, codexDocsURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(dir, "launcher-result")
+	script := `#!/bin/sh
+test -z "${OPENAI_API_KEY+x}" || exit 21
+test -z "${OPENAI_ADMIN_KEY+x}" || exit 22
+test -z "${OPENAI_WEBHOOK_SECRET+x}" || exit 23
+test -z "${OPENAI_BASE_URL+x}" || exit 24
+test -z "${openai_api_key+x}" || exit 25
+test "$DISPLAY" = synthetic-display || exit 26
+test "$HOME" = "$F29_BROWSER_HOME" || exit 27
+test "$1" = 'https://learn.chatgpt.com/docs/cli' || exit 28
+printf 'passed\n' > "$F29_BROWSER_REPORT"
+`
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("F29_BROWSER_HOME", dir)
+	t.Setenv("F29_BROWSER_REPORT", report)
+	t.Setenv("DISPLAY", "synthetic-display")
+	for _, key := range []string{"OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_WEBHOOK_SECRET", "OPENAI_BASE_URL", "openai_api_key"} {
+		t.Setenv(key, "synthetic-browser-isolation-value")
+	}
+	if err := openCodexDestination(t.Context(), codexDocsURL); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(report)
+	if err != nil || string(data) != "passed\n" {
+		t.Fatalf("launcher verification failed: %v", err)
+	}
+	if os.Getenv("OPENAI_API_KEY") != "synthetic-browser-isolation-value" {
+		t.Fatal("launcher changed the parent's environment")
+	}
+}
+
+func TestCodexBrowserEnvironmentFiltersOnlyOpenAISettings(t *testing.T) {
+	settings := []string{"PATH=/synthetic/bin", "OPENAI_API_KEY=fake", "OpenAi_ADMIN_KEY=fake", "OPENAI_EMPTY=",
+		"BROWSER=synthetic-browser", "SystemRoot=C:\\Windows", "=C:=C:\\synthetic", "UNRELATED=exact=value", "OPENAI=fake"}
+	want := []string{"PATH=/synthetic/bin", "BROWSER=synthetic-browser", "SystemRoot=C:\\Windows",
+		"=C:=C:\\synthetic", "UNRELATED=exact=value", "OPENAI=fake"}
+	if got := codexBrowserEnvironment(settings); !reflect.DeepEqual(got, want) {
+		t.Fatalf("desktop environment changed: %#v", got)
+	}
+	for _, settings := range [][]string{nil, {"OPENAI_API_KEY=fake", "openai_admin_key="}} {
+		if got := codexBrowserEnvironment(settings); got == nil || len(got) != 0 {
+			t.Fatalf("empty child environment must remain explicit: %#v", got)
+		}
 	}
 }

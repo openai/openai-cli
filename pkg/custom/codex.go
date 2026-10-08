@@ -196,7 +196,19 @@ func openCodexDestination(ctx context.Context, url string) error {
 		return err
 	}
 	command := exec.CommandContext(ctx, name, args...)
+	command.Env = codexBrowserEnvironment(os.Environ())
 	return command.Run()
+}
+
+func codexBrowserEnvironment(environment []string) []string {
+	clean := make([]string, 0, len(environment))
+	for _, setting := range environment {
+		name, _, _ := strings.Cut(setting, "=")
+		if !strings.HasPrefix(strings.ToUpper(name), "OPENAI_") {
+			clean = append(clean, setting)
+		}
+	}
+	return clean
 }
 
 func codexBrowserCommand(goos, url string) (string, []string, error) {
