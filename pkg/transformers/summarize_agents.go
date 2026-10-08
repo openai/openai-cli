@@ -7,22 +7,23 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// SelectAgentsTransformer returns a readable resource projection, or nil for
-// unrelated routes. The presentation boundary excludes explicit machine formats.
-func SelectAgentsTransformer(route Route) Transformer {
-	if route.OutputKind != OutputResponse && route.OutputKind != OutputPageItem {
-		return nil
+// summarizeAgentsResource retains omission metadata for the readable presenter.
+// A zero summary preserves unsupported routes, unknown fields, and shapes.
+func summarizeAgentsResource(ctx context.Context, value gjson.Result, route Route) (gjson.Result, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return gjson.Result{}, false, err
 	}
 	operation, ok := strings.CutPrefix(route.Operation, "(resource) ")
 	resource, method, found := strings.Cut(operation, " > (method) ")
-	if !ok || !found || method != "create" && method != "retrieve" && method != "update" && method != "list" {
-		return nil
+	if !ok || !found || !(route.OutputKind == OutputResponse && (method == "create" || method == "retrieve" || method == "update") ||
+		route.OutputKind == OutputPageItem && method == "list") {
+		return gjson.Result{}, false, nil
 	}
 	var object, fields, omitted string
 	switch resource {
 	case "beta.agents":
 		object, fields = "agent", "id name model"
-		omitted = "object created_at instructions tools reasoning text service_tier multi_agent metadata"
+		omitted = "object created_at updated_at instructions tools reasoning text service_tier multi_agent metadata"
 	case "beta.agents.sessions":
 		object, fields = "agent.session", "id status error required_actions usage"
 		omitted = "object created_at last_active_at agent environment metadata vault_ids"
@@ -36,22 +37,10 @@ func SelectAgentsTransformer(route Route) Transformer {
 		object, fields = "agent.session.trace", "id session_id created_at"
 		omitted = "object otlp"
 	default:
-		return nil
+		return gjson.Result{}, false, nil
 	}
-	return func(ctx context.Context, value gjson.Result) (gjson.Result, error) {
-		if err := ctx.Err(); err != nil {
-			return gjson.Result{}, err
-		}
-		if !value.IsObject() || value.Get("object").String() != object || value.Get("id").Type != gjson.String || value.Get("id").Str == "" {
-			return value, nil
-		}
-		result, _, err := summarizeResourceFields(ctx, value, strings.Fields(fields), strings.Fields(omitted))
-		if err != nil {
-			return gjson.Result{}, err
-		}
-		if !result.Exists() {
-			return value, nil
-		}
-		return result, nil
+	if !value.IsObject() || value.Get("object").String() != object || value.Get("id").Type != gjson.String || value.Get("id").Str == "" {
+		return gjson.Result{}, false, nil
 	}
+	return summarizeResourceFields(ctx, value, strings.Fields(fields), strings.Fields(omitted))
 }
