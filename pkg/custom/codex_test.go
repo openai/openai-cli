@@ -320,7 +320,8 @@ func TestCodexBrowserEnvironmentKeepsOnlyPlatformSettings(t *testing.T) {
 		"SSH_AUTH_SOCK=/synthetic/agent", "HTTPS_PROXY=https://fake:fake@invalid",
 		"LD_PRELOAD=/synthetic/loader", "DYLD_INSERT_LIBRARIES=/synthetic/loader", "BASH_ENV=/synthetic/startup",
 		"NODE_OPTIONS=synthetic", "QT_PLUGIN_PATH=/synthetic/plugins", "COMSPEC=synthetic-shell",
-		"PATH_SECRET=fake", "LC_SECRET=fake", "XDG_SECRET=fake", "UNRELATED=exact=value",
+		"PATH_SECRET=fake", "LC_SECRET=fake", "XDG_SECRET=fake", "XDG_UTILS_OTHER_OVERRIDE_DE=fake", "UNRELATED=exact=value",
+		"DE_SECRET=fake", "WSL_SECRET=fake", "WSLENV=GITHUB_TOKEN", "XDG_UTILS_SETTINGS_OVERRIDE_DE=generic",
 		"=C:=C:\\synthetic", "HOME", "=empty-name", "WAYLAND_SOCKET=9",
 	}
 	for _, tc := range []struct {
@@ -331,7 +332,10 @@ func TestCodexBrowserEnvironmentKeepsOnlyPlatformSettings(t *testing.T) {
 		{"darwin", []string{"PATH=/synthetic bin", "HOME=/synthetic/home", "TMPDIR=", "USER=synthetic", "LOGNAME=synthetic",
 			"LANG=en_US.UTF-8", "LANGUAGE=en", "LC_ALL=", "LC_CTYPE=UTF-8", "LC_MESSAGES=C", "LC_TIME=C", "TZ=UTC",
 			"__CF_USER_TEXT_ENCODING=synthetic", "PATH=/second/bin"},
-			[]string{"BROWSER=synthetic-browser", "DISPLAY=synthetic", "XDG_CONFIG_HOME=/synthetic/config", "SystemRoot=C:\\Windows", "Path=/wrong-case", "home=/wrong-case"}},
+			[]string{"BROWSER=synthetic-browser", "XDG_UTILS_OVERRIDE_DE=generic", "XDG_UTILS_OPEN_OVERRIDE_DE=flatpak",
+				"DE=generic", "WSL_INTEROP=/synthetic/interop", "WSL_DISTRO_NAME=synthetic", "XDG_MENU_PREFIX=synthetic-",
+				"XDG_UTILS_MIME_OVERRIDE_DE=generic", "XDG_UTILS_REALPATH_BACKEND=busybox-realpath",
+				"DISPLAY=synthetic", "XDG_CONFIG_HOME=/synthetic/config", "SystemRoot=C:\\Windows", "Path=/wrong-case", "home=/wrong-case"}},
 		{"linux", []string{"PATH=/synthetic bin", "HOME=/synthetic/home", "TMPDIR=", "USER=synthetic", "LOGNAME=synthetic",
 			"LANG=en_US.UTF-8", "LC_ALL=", "LC_CTYPE=UTF-8", "LC_MESSAGES=C", "LC_PAPER=C", "TZ=UTC",
 			"DISPLAY=:synthetic", "WAYLAND_DISPLAY=wayland-synthetic", "XAUTHORITY=/synthetic/auth",
@@ -340,6 +344,9 @@ func TestCodexBrowserEnvironmentKeepsOnlyPlatformSettings(t *testing.T) {
 			"XDG_CONFIG_HOME=/synthetic/config", "XDG_CONFIG_DIRS=/one:/two", "XDG_DATA_HOME=/synthetic/data", "XDG_DATA_DIRS=/three:/four",
 			"XDG_CACHE_HOME=/synthetic/cache", "XDG_STATE_HOME=/synthetic/state", "XDG_CURRENT_DESKTOP=GNOME:synthetic",
 			"XDG_SESSION_DESKTOP=synthetic", "XDG_SESSION_TYPE=wayland", "DESKTOP_SESSION=synthetic",
+			"XDG_UTILS_OVERRIDE_DE=generic", "XDG_UTILS_OPEN_OVERRIDE_DE=flatpak", "XDG_UTILS_OPEN_OVERRIDE_DE=",
+			"DE=generic", "WSL_INTEROP=/synthetic/interop", "WSL_DISTRO_NAME=synthetic", "XDG_MENU_PREFIX=synthetic-",
+			"XDG_UTILS_MIME_OVERRIDE_DE=generic", "XDG_UTILS_REALPATH_BACKEND=busybox-realpath",
 			"KDE_FULL_SESSION=true", "KDE_SESSION_VERSION=6", "GNOME_DESKTOP_SESSION_ID=synthetic",
 			"MATE_DESKTOP_SESSION_ID=synthetic", "DESKTOP=synthetic", "LXQT_SESSION_CONFIG=/synthetic/lxqt"},
 			[]string{"__CF_USER_TEXT_ENCODING=synthetic", "SystemRoot=C:\\Windows", "Path=/wrong-case", "home=/wrong-case"}},
@@ -349,7 +356,10 @@ func TestCodexBrowserEnvironmentKeepsOnlyPlatformSettings(t *testing.T) {
 			"ALLUSERSPROFILE=C:\\synthetic\\shared", "ProgramFiles=C:\\synthetic programs", "ProgramFiles(x86)=C:\\synthetic x86",
 			"ProgramW6432=C:\\synthetic64", "CommonProgramFiles=C:\\synthetic common", "CommonProgramFiles(x86)=C:\\synthetic common x86",
 			"CommonProgramW6432=C:\\synthetic common64", "TEMP=", "tmp=C:\\synthetic tmp"},
-			[]string{"BROWSER=synthetic-browser", "HOME=/synthetic/home", "DISPLAY=:synthetic", "XDG_CONFIG_HOME=/synthetic/config", "__CF_USER_TEXT_ENCODING=synthetic"}},
+			[]string{"BROWSER=synthetic-browser", "XDG_UTILS_OVERRIDE_DE=generic", "XDG_UTILS_OPEN_OVERRIDE_DE=flatpak",
+				"DE=generic", "WSL_INTEROP=/synthetic/interop", "WSL_DISTRO_NAME=synthetic", "XDG_MENU_PREFIX=synthetic-",
+				"XDG_UTILS_MIME_OVERRIDE_DE=generic", "XDG_UTILS_REALPATH_BACKEND=busybox-realpath",
+				"HOME=/synthetic/home", "DISPLAY=:synthetic", "XDG_CONFIG_HOME=/synthetic/config", "__CF_USER_TEXT_ENCODING=synthetic"}},
 		{"unsupported", []string{}, []string{"PATH=/synthetic/bin", "HOME=/synthetic/home"}},
 	} {
 		t.Run(tc.goos, func(t *testing.T) {
