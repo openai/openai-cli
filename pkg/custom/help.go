@@ -22,7 +22,9 @@ func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 			}
 		}
 	}
-	return clihelp.Configure(root, args)
+	args, handled, err := clihelp.Configure(root, args)
+	configureAdminSetupHelp(root)
+	return args, handled, err
 }
 
 func configureImageHelpInvocation(root *cli.Command, invocation string) {

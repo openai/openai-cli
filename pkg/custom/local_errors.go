@@ -31,6 +31,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var imageModelsFailure *imageModelsError
 	var voiceTypeFailure *voiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
+	var adminCredentialsFailure *adminCredentialsError
+	var adminSetupFailure *adminSetupError
 	switch {
 	case errors.Is(failure, context.Canceled):
 		return "Request canceled."
@@ -52,6 +54,10 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return voiceTypeFailure.Error()
 	case errors.As(failure, &helpTopicFailure):
 		return unknownCommandAt(helpTopicFailure.Parent, helpTopicFailure.Topic)
+	case errors.As(failure, &adminCredentialsFailure):
+		return adminCredentialsFailure.Error()
+	case errors.As(failure, &adminSetupFailure):
+		return adminSetupFailure.Error()
 	case errors.As(failure, &pathError):
 		switch {
 		case errors.Is(pathError, os.ErrNotExist):
