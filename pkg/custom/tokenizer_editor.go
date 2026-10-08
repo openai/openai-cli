@@ -174,7 +174,7 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch m.focus {
 		case tokenizerFocusText:
-			if key == "down" && m.cursor == len(m.text) {
+			if key == "down" && m.lineEnd(m.cursor) == len(m.text) {
 				m.focus, m.option = tokenizerFocusOptions, 0
 				return m, nil
 			}

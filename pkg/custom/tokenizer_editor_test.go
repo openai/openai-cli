@@ -318,6 +318,61 @@ func TestTokenizerEditorPickerNavigation(t *testing.T) {
 	require.Equal(t, "one\ntwo", m.text)
 }
 
+func TestTokenizerEditorDownFromLastLineEntersOptions(t *testing.T) {
+	for _, test := range []struct {
+		name, text   string
+		cursor, next int
+		focus        int
+	}{
+		{"empty", "", 0, 0, tokenizerFocusOptions},
+		{"single line start", "abc", 0, 0, tokenizerFocusOptions},
+		{"single line middle", "abc", 1, 1, tokenizerFocusOptions},
+		{"single line end", "abc", 3, 3, tokenizerFocusOptions},
+		{"earlier line middle", "one\ntwo", 1, 5, tokenizerFocusText},
+		{"earlier line end", "one\ntwo", 3, 7, tokenizerFocusText},
+		{"last line start", "one\ntwo", 4, 4, tokenizerFocusOptions},
+		{"last line middle", "one\ntwo", 5, 5, tokenizerFocusOptions},
+		{"last line end", "one\ntwo", 7, 7, tokenizerFocusOptions},
+		{"before trailing newline", "one\n", 1, 4, tokenizerFocusText},
+		{"trailing empty line", "one\n", 4, 4, tokenizerFocusOptions},
+		{"CRLF earlier line", "one\r\ntwo", 3, 8, tokenizerFocusText},
+		{"CRLF trailing empty line", "one\r\n", 5, 5, tokenizerFocusOptions},
+		{"Unicode earlier line", "é👩‍💻\nαβ", len("é"), len("é👩‍💻\nα"), tokenizerFocusText},
+		{"Unicode last line", "é👩‍💻\nαβ", len("é👩‍💻\nα"), len("é👩‍💻\nα"), tokenizerFocusOptions},
+		{"combining last line", "a\ne\u0301z", len("a\ne\u0301"), len("a\ne\u0301"), tokenizerFocusOptions},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := testTokenizerEditor()
+			m.insert(test.text)
+			tokens := make([]tokenizerPreviewToken, len(test.text))
+			for index := range tokens {
+				tokens[index] = tokenizerPreviewToken{ID: uint32(index), EndByte: uint32(index + 1)}
+			}
+			if len(tokens) > 0 {
+				m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
+			}
+			m.cursor, m.option = test.cursor, 1
+			m.selectCursorToken()
+			revision, selected := m.revision, m.selected
+			beforeTokens := m.tokens
+
+			require.Nil(t, tokenizerEditorKey(m, tea.KeyDown), "navigation must not start tokenization")
+			require.Equal(t, test.focus, m.focus)
+			require.Equal(t, test.next, m.cursor)
+			require.Contains(t, m.boundaries, m.cursor)
+			require.Equal(t, test.text, m.text)
+			require.Equal(t, revision, m.revision)
+			require.Equal(t, beforeTokens, m.tokens)
+			if test.focus == tokenizerFocusOptions {
+				require.Zero(t, m.option)
+				require.Equal(t, selected, m.selected, "leaving Text preserves its selected token")
+			} else {
+				require.Equal(t, min(test.next, len(tokens)-1), m.selected, "vertical movement keeps the caret-linked token")
+			}
+		})
+	}
+}
+
 func TestTokenizerEditorViewChooserPreservesResultAndSelection(t *testing.T) {
 	m := tokenizerEditorExample()
 	m.focus, m.option = tokenizerFocusOptions, 0

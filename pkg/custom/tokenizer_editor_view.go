@@ -138,19 +138,21 @@ func (m *tokenizerEditor) View() tea.View {
 		tabs = append(tabs, label)
 	}
 	views := m.optionRow(s, "View", strings.Join(tabs, "  "), viewActive)
-	if ansi.StringWidth(views) > width {
-		views = m.optionRow(s, "View", strings.Join(tabs, " "), viewActive)
-	}
 	if ansi.StringWidth(views+"  ←→") <= width {
 		views += s.muted.Render("  ←→")
 	}
 	lines = append(lines, views)
 	encodingActive := m.focus == tokenizerFocusOptions && m.option == 1
-	encoding := m.encoding
+	model, badge := tokenizerModelLabel(m.encoding)
+	model += "  " + badge
 	if encodingActive {
-		encoding = s.focused.Render(encoding)
+		model = s.focused.Render(model)
 	}
-	lines = append(lines, m.optionRow(s, "Tokenizer", encoding+s.muted.Render("  ›"), encodingActive))
+	modelRow := m.optionRow(s, "Model", model, encodingActive)
+	if ansi.StringWidth(modelRow+"  ›") <= width {
+		modelRow += s.muted.Render("  ›")
+	}
+	lines = append(lines, modelRow)
 	if m.note == "" {
 		lines = append(lines, "")
 	}
@@ -164,7 +166,7 @@ func (m *tokenizerEditor) View() tea.View {
 	}
 	if m.focus == tokenizerFocusResults && len(m.tokens) == 0 {
 		lines = append(lines, s.accent.Render("› "+position))
-	} else {
+	} else if len(m.tokens) != 1 {
 		caption := s.muted
 		if m.focus == tokenizerFocusResults {
 			caption = s.accent
@@ -190,7 +192,22 @@ func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, label, value string
 	if active {
 		marker, caption = s.accent.Render("› "), s.accent
 	}
-	return marker + caption.Render(fmt.Sprintf("%-11s", label)) + value
+	return marker + caption.Render(fmt.Sprintf("%-7s", label)) + value
+}
+
+func tokenizerModelLabel(encoding string) (string, string) {
+	switch encoding {
+	case "o200k_base":
+		return "GPT-5.x & o1/o3", "Default"
+	case "cl100k_base":
+		return "GPT-4 & GPT-3.5", "Legacy"
+	case "r50k_base":
+		return "GPT-3", "Legacy"
+	case "p50k_base":
+		return "Codex / Davinci", "Legacy"
+	default:
+		return "Unknown", ""
+	}
 }
 
 func (m *tokenizerEditor) highlightRow(s tokenizerEditorStyles, value string, active bool) string {
@@ -205,9 +222,9 @@ func (m *tokenizerEditor) footer() string {
 	footer := "Ctrl+C exit · ↑↓ move · Enter select"
 	switch m.focus {
 	case tokenizerFocusText:
-		footer = "Ctrl+C exit · Tab options · Enter newline"
-		if ansi.StringWidth(footer) > m.viewWidth() {
-			footer = "Ctrl+C exit · Tab options"
+		footer = "Ctrl+C exit · Tab options"
+		if m.lineEnd(m.cursor) == len(m.text) {
+			footer = "Ctrl+C exit · ↓ options · Tab switch"
 		}
 	case tokenizerFocusResults:
 		footer = "Ctrl+C exit · ←→ token · Enter details"
@@ -225,32 +242,28 @@ func (m *tokenizerEditor) footer() string {
 	if m.focus != tokenizerFocusText && ansi.StringWidth(footer+" · Tab switch") <= m.viewWidth() {
 		footer += " · Tab switch"
 	}
-	if ansi.StringWidth(footer+" · F1 help") <= m.viewWidth() {
-		footer += " · F1 help"
-	}
 	return footer
 }
 
 func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
-	title, explanation := "Choose view", "Show the same tokens in a different form."
+	title := "Choose view"
 	labels := []string{"Text", "Token IDs", "Bytes"}
 	descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hex bytes"}
+	labelWidth := 14
 	current := m.tab
 	if m.modal == tokenizerModalEncoding {
-		title, explanation = "Choose tokenizer", "Choose how text splits into tokens."
-		labels = tokenizer.SupportedEncodings()
-		descriptions = []string{"Default", "GPT-4/3.5 · legacy", "GPT-3 · legacy", "Legacy code"}
+		title, labelWidth = "Choose model", 20
+		encodings := tokenizer.SupportedEncodings()
+		labels, descriptions = make([]string, len(encodings)), make([]string, len(encodings))
 		current = 0
-		for i, encoding := range labels {
+		for i, encoding := range encodings {
+			labels[i], descriptions[i] = tokenizerModelLabel(encoding)
 			if m.encoding == encoding {
 				current = i
 			}
 		}
 	}
 	lines := []string{s.title.Render(title)}
-	for _, line := range strings.Split(ansi.Wrap(explanation, m.viewWidth(), ""), "\n") {
-		lines = append(lines, s.muted.Render(line))
-	}
 	lines = append(lines, "")
 	for i, label := range labels {
 		if i == current {
@@ -260,13 +273,19 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 		if i != m.choice {
 			description = s.muted.Render(description)
 		}
-		line := fmt.Sprintf("%-14s%s", label, description)
+		line := fmt.Sprintf("%-*s%s", labelWidth, label, description)
 		if ansi.StringWidth(line) > m.viewWidth()-2 {
 			line = label
 		}
 		lines = append(lines, m.highlightRow(s, line, i == m.choice))
 	}
-	lines = append(lines, "", s.muted.Render("↑↓ choose · Enter use · Esc cancel"), s.muted.Render("Ctrl+C exit"))
+	footer := "Ctrl+C exit · ↑↓ move · Enter select · Esc cancel"
+	lines = append(lines, "")
+	if ansi.StringWidth(footer) <= m.viewWidth() {
+		lines = append(lines, s.muted.Render(footer))
+	} else {
+		lines = append(lines, s.muted.Render("Ctrl+C exit · ↑↓ move"), s.muted.Render("Enter select · Esc cancel"))
+	}
 	return m.fit(lines, true)
 }
 
@@ -575,7 +594,7 @@ var tokenizerEditorHelp = []string{
 	"Backspace/Delete remove a complete grapheme.",
 	"Ctrl+U removes all text before the cursor.",
 	"Tab and Shift+Tab switch Text, options, and tokens.",
-	"At the end of text, Down opens options.",
+	"On the last line, Down opens options.",
 	"Options: Up/Down move; Enter opens choices.",
 	"View: Left/Right switch Text, Token IDs, and Bytes.",
 	"Tokens: arrows select; Home/End select first/last.",

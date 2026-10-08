@@ -7,6 +7,22 @@ import re
 import sys
 
 
+MODEL_NAMES = {"o200k_base": "GPT-5.x & o1/o3", "cl100k_base": "GPT-4 & GPT-3.5",
+               "r50k_base": "GPT-3", "p50k_base": "Codex / Davinci"}
+
+
+def model_choices_complete(plain):
+    rows = [line.strip().removeprefix("› ").strip() for line in plain.splitlines()]
+    checked = 0
+    for encoding, label in MODEL_NAMES.items():
+        badge = "Default" if encoding == "o200k_base" else "Legacy"
+        matches = [row for row in rows if re.fullmatch(re.escape(label) + r"(?: ✓)?[ \t]+" + badge, row)]
+        if len(matches) != 1:
+            return False
+        checked += " ✓" in matches[0]
+    return checked == 1
+
+
 COMMANDS = {
     "count": '$ openai tokenizer count --text "Hello, world!"',
     "inspect": '$ openai tokenizer inspect --text "Hi!"',
@@ -116,8 +132,9 @@ def validate_editor(directory, scene="after", layout="legacy"):
           "editor: synthetic input changed")
     check(report["exit_status"] == 130, "editor: Ctrl+C status changed")
     capture_version = report.get("capture_version", 1)
-    check(capture_version in (1, 2, 3), "editor: unsupported capture version")
-    linked = capture_version == 3
+    check(capture_version in (1, 2, 3, 4), "editor: unsupported capture version")
+    linked = capture_version >= 3
+    models = capture_version == 4
     linked_path = directory / "editor-linked.tsv"
     linked_expected = False
     if linked_path.exists():
@@ -126,6 +143,22 @@ def validate_editor(directory, scene="after", layout="legacy"):
               settings[1] in ("after\t0", "after\t1"), "editor: invalid linked recording setting")
         linked_expected = scene == "after" and settings[1] == "after\t1"
     check(linked == linked_expected, f"{scene}: linked recording version differs from requested mode")
+    presentation = "encodings"
+    presentation_path = directory / "editor-presentation.tsv"
+    if presentation_path.exists():
+        settings = presentation_path.read_text().splitlines()
+        check(len(settings) == 2 and settings[0] == "before\tencodings" and
+              settings[1] in ("after\tencodings", "after\tmodels"), "editor: invalid presentation setting")
+        if scene == "after":
+            presentation = settings[1].split("\t")[1]
+    check(models == (presentation == "models") and report.get("presentation", "encodings") == presentation,
+          f"{scene}: presentation version differs from requested mode")
+
+    def encoding_row(encoding):
+        if models:
+            return "Model  " + MODEL_NAMES[encoding] + "  " + ("Default" if encoding == "o200k_base" else "Legacy")
+        return ("Tokenizer" if layout == "options" else "Encoding") + "  " + encoding
+
     if linked:
         check(scene == "after" and layout == "options", "editor: linked mode requires after Options layout")
         check(report.get("caret_actions") == {"keys": ["Home", "Right"], "expected_byte_offset": 21},
@@ -140,12 +173,12 @@ def validate_editor(directory, scene="after", layout="legacy"):
         ("ids", re.compile(r"\[Token IDs\]")),
         ("bytes", re.compile(r"\[Bytes\]")),
         ("details", re.compile(r"Token details · exact bytes")),
-        ("encoding", re.compile(("Tokenizer" if layout == "options" else "Encoding") + r"  cl100k_base")),
+        ("encoding", re.compile(re.escape(encoding_row("cl100k_base")))),
         ("controls", re.compile(r"Tokenizer · controls")),
     ]
     if layout == "options":
         stages.insert(2, ("view-choice", re.compile(r"Choose view")))
-        stages.insert(5, ("tokenizer-choice", re.compile(r"Choose tokenizer")))
+        stages.insert(5, ("tokenizer-choice", re.compile("Choose model" if models else "Choose tokenizer")))
     if capture_version >= 2:
         details_index = next(index for index, (name, _) in enumerate(stages) if name == "details")
         position = r"Token 5 of 10\b" if layout == "options" else r"Token 5/10 · ID 61138\b"
@@ -154,8 +187,8 @@ def validate_editor(directory, scene="after", layout="legacy"):
         stages.insert(1, ("caret", re.compile(r"Token 9 of 10\b")))
         controls_index = next(index for index, (name, _) in enumerate(stages) if name == "controls")
         stages[controls_index:controls_index] = [
-            ("r50k", re.compile(r"Tokenizer  r50k_base")),
-            ("p50k", re.compile(r"Tokenizer  p50k_base")),
+            ("r50k", re.compile(re.escape(encoding_row("r50k_base")))),
+            ("p50k", re.compile(re.escape(encoding_row("p50k_base")))),
         ]
     check([event["state"] for event in report["states"]] == [name for name, _ in stages],
           "editor: incomplete input-driver states")
@@ -170,7 +203,7 @@ def validate_editor(directory, scene="after", layout="legacy"):
             continue
         output = (output + event[2])[-65536:]
         if linked:
-            # Version 3 needs one coherent frame: all three alternate
+            # Linked versions need one coherent frame: all three alternate
             # tokenizers have the same fixture count, including stale results.
             output = output.rsplit("\r\x1b[J", 1)[-1]
         plain = ansi.sub("", output)
@@ -185,16 +218,18 @@ def validate_editor(directory, scene="after", layout="legacy"):
             elif name == "details":
                 complete = complete and all(value in plain for value in ["partial UTF-8", "ID 61138", "20 f0 9f 91"])
                 complete = complete and re.search(r"bytes\s+\[14,\s*18\)", plain)
+                if models:
+                    complete = complete and "Encoding o200k_base" in plain
             elif name == "encoding":
                 complete = complete and "11 tokens · 26 bytes" in plain
             elif name == "caret":
-                complete = complete and all(value in plain for value in ['·["afé"]', "C▏afé.", "Tokenizer  o200k_base"])
+                complete = complete and all(value in plain for value in ['·["afé"]', "C▏afé.", encoding_row("o200k_base")])
                 complete = complete and re.search(r"10 tokens[ \t]*(?:[\r\n]|$)", plain)
             elif name in ("r50k", "p50k"):
                 complete = complete and "11 tokens · 26 bytes" in plain and "Updating" not in plain
             elif layout == "options":
                 if name == "text":
-                    complete = complete and "View  " in plain and "Tokenizer  o200k_base" in plain
+                    complete = complete and "View  " in plain and encoding_row("o200k_base") in plain
                 elif name == "ids":
                     complete = complete and "View  " in plain
                 elif name == "bytes":
@@ -202,10 +237,21 @@ def validate_editor(directory, scene="after", layout="legacy"):
                 elif name == "view-choice":
                     complete = complete and all(value in plain for value in ["Text", "Token IDs", "Bytes", "Esc cancel"])
                 elif name == "tokenizer-choice":
-                    complete = complete and all(value in plain for value in ["o200k_base", "cl100k_base", "Esc cancel"])
-                    if linked:
+                    if models:
+                        complete = complete and model_choices_complete(plain) and "Esc cancel" in plain
+                    else:
+                        complete = complete and all(value in plain for value in ["o200k_base", "cl100k_base", "Esc cancel"])
+                    if linked and not models:
                         complete = complete and "r50k_base" in plain and "p50k_base" in plain
             if complete:
+                if models and name not in ("details", "controls"):
+                    check(not any(value in plain for value in MODEL_NAMES),
+                          f"{scene}: {name} exposed a raw encoding name")
+                    check("F1" not in plain and "Enter newline" not in plain,
+                          f"{scene}: {name} retained a removed footer hint")
+                    if name in ("text", "caret"):
+                        check("↓ options" in plain and "Tab switch" in plain,
+                              f"{scene}: {name} omitted last-line navigation")
                 if layout == "options" and name in ("text", "caret", "ids"):
                     check(re.search(r"\d+ tokens? · \d+ bytes?", plain) is None,
                           f"{scene}: {name} view exposed the advanced byte count")

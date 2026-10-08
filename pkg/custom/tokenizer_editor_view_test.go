@@ -37,17 +37,14 @@ func TestTokenizerEditorViewFitsEverySupportedSizeAndFocus(t *testing.T) {
 				require.Contains(t, view.Content, "4 tokens")
 				require.NotContains(t, view.Content, "13 bytes")
 				options := "[Text]  Token IDs  Bytes"
-				if size[0] == 40 {
-					options = "[Text] Token IDs Bytes"
-				}
-				require.Contains(t, view.Content, "View       "+options)
+				require.Contains(t, view.Content, "View   "+options)
 				require.Contains(t, view.Content, "Token IDs")
 				require.Contains(t, view.Content, "Bytes")
 				require.Contains(t, view.Content, "Token 3 of 4")
 				require.NotContains(t, view.Content, "ID 1917")
 				require.NotContains(t, view.Content, "[6, 12)")
 				require.Contains(t, view.Content, "Ctrl+C exit")
-				require.Contains(t, view.Content, "Tokenizer  cl100k_base")
+				require.Contains(t, view.Content, "Model  GPT-4 & GPT-3.5  Legacy")
 				lines := strings.Split(view.Content, "\n")
 				require.LessOrEqual(t, len(lines), m.viewHeight())
 				for _, line := range lines {
@@ -422,9 +419,9 @@ func TestTokenizerEditorNoColorKeepsSelectionAndNavigation(t *testing.T) {
 				focus, option int
 				marker, hint  string
 			}{
-				{tokenizerFocusText, 0, "▏", "Tab options"},
+				{tokenizerFocusText, 0, "▏", "↓ options"},
 				{tokenizerFocusOptions, 0, "› View", "←→ view"},
-				{tokenizerFocusOptions, 1, "› Tokenizer", "Enter select"},
+				{tokenizerFocusOptions, 1, "› Model", "Enter select"},
 				{tokenizerFocusResults, 0, "›[", "Enter details"},
 			} {
 				m := tokenizerEditorExample()
@@ -433,11 +430,8 @@ func TestTokenizerEditorNoColorKeepsSelectionAndNavigation(t *testing.T) {
 				view := m.View().Content
 				require.NotRegexp(t, `\x1b\[[0-9;:]*m`, view)
 				options := "[Text]  Token IDs  Bytes"
-				if size[0] == 40 {
-					options = "[Text] Token IDs Bytes"
-				}
-				require.Contains(t, view, "View       "+options)
-				require.Contains(t, view, "Tokenizer  cl100k_base")
+				require.Contains(t, view, "View   "+options)
+				require.Contains(t, view, "Model  GPT-4 & GPT-3.5  Legacy")
 				if m.focus == tokenizerFocusResults {
 					require.Contains(t, view, "›[")
 				} else {
@@ -468,17 +462,17 @@ func TestTokenizerEditorFocusFillStaysInActiveRegion(t *testing.T) {
 						plain := ansi.Strip(row)
 						fills := background.FindAllStringSubmatch(row, -1)
 						switch {
-						case strings.Contains(plain, "View       "):
+						case strings.Contains(plain, "View   "):
 							if state.focus == tokenizerFocusOptions && state.option == 0 {
 								require.Len(t, fills, 1)
 								require.Equal(t, []string{"[Text]", "[Token IDs]", "[Bytes]"}[tab], fills[0][1])
 							} else {
 								require.Empty(t, fills)
 							}
-						case strings.Contains(plain, "Tokenizer  cl100k_base"):
+						case strings.Contains(plain, "Model  GPT-4 & GPT-3.5  Legacy"):
 							if state.focus == tokenizerFocusOptions && state.option == 1 {
 								require.Len(t, fills, 1)
-								require.Equal(t, "cl100k_base", fills[0][1])
+								require.Equal(t, "GPT-4 & GPT-3.5  Legacy", fills[0][1])
 							} else {
 								require.Empty(t, fills)
 							}
@@ -524,14 +518,11 @@ func TestTokenizerEditorRowsShareAlignedGuttersAndValues(t *testing.T) {
 				return -1
 			}
 			gutter := column("4 tokens")
-			for _, label := range []string{"View", "Tokenizer  cl100k_base", "Token 3 of 4", "[9906]"} {
+			for _, label := range []string{"View", "Model  GPT-4 & GPT-3.5  Legacy", "Token 3 of 4", "[9906]"} {
 				require.Equal(t, gutter, column(label), label)
 			}
 			options := "Text  [Token IDs]  Bytes"
-			if size[0] == 40 {
-				options = "Text [Token IDs] Bytes"
-			}
-			require.Equal(t, column(options), column("cl100k_base"))
+			require.Equal(t, column(options), column("GPT-4 & GPT-3.5  Legacy"))
 			consecutiveBlank := false
 			for _, row := range rows {
 				blank := strings.TrimSpace(row) == ""
@@ -600,9 +591,9 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 				choices := []string{"Text", "Token IDs", "Bytes"}
 				descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hex bytes"}
 				if modal == tokenizerModalEncoding {
-					title, current = "Choose tokenizer", "cl100k_base ✓"
-					choices = []string{"o200k_base", "cl100k_base", "r50k_base", "p50k_base"}
-					descriptions = []string{"Default", "GPT-4/3.5 · legacy", "GPT-3 · legacy", "Legacy code"}
+					title, current = "Choose model", "GPT-4 & GPT-3.5 ✓"
+					choices = []string{"GPT-5.x & o1/o3", "GPT-4 & GPT-3.5", "GPT-3", "Codex / Davinci"}
+					descriptions = []string{"Default", "Legacy", "Legacy", "Legacy"}
 				}
 				for choice, label := range choices {
 					m.choice = choice
@@ -619,11 +610,19 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 					for i, description := range descriptions {
 						require.Contains(t, plain, description, "chooser descriptions must remain complete")
 						for _, row := range strings.Split(plain, "\n") {
+							primary := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(row), "›"))
+							if !strings.HasPrefix(primary, choices[i]+" ") {
+								continue
+							}
 							if index := strings.Index(row, description); index >= 0 {
 								labelIndex := strings.Index(row, choices[i])
 								require.GreaterOrEqual(t, labelIndex, 0)
 								column := ansi.StringWidth(row[:index])
-								require.Equal(t, 14, column-ansi.StringWidth(row[:labelIndex]))
+								labelWidth := 14
+								if modal == tokenizerModalEncoding {
+									labelWidth = 20
+								}
+								require.Equal(t, labelWidth, column-ansi.StringWidth(row[:labelIndex]))
 								if descriptionColumn >= 0 {
 									require.Equal(t, descriptionColumn, column, "description columns must align")
 								}
@@ -631,7 +630,9 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 							}
 						}
 					}
-					require.Contains(t, plain, "↑↓ choose · Enter use · Esc cancel")
+					require.Contains(t, plain, "↑↓ move")
+					require.Contains(t, plain, "Enter select")
+					require.Contains(t, plain, "Esc cancel")
 					require.Contains(t, plain, "Ctrl+C exit")
 					require.NotContains(t, plain, "…")
 					require.LessOrEqual(t, len(strings.Split(view, "\n")), m.viewHeight())
@@ -672,6 +673,31 @@ func TestTokenizerEditorCaretCueRemainsSubordinateToFocus(t *testing.T) {
 			require.NotContains(t, ansi.Strip(strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n")), "·[")
 			m.updating, m.failed = false, true
 			require.NotContains(t, ansi.Strip(strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n")), "·[")
+		}
+	}
+}
+
+func TestTokenizerEditorMainViewShowsModelNamesWithoutRedundantHints(t *testing.T) {
+	for _, width := range []int{40, 80} {
+		for _, choice := range []struct{ encoding, label, badge string }{
+			{"o200k_base", "GPT-5.x & o1/o3", "Default"},
+			{"cl100k_base", "GPT-4 & GPT-3.5", "Legacy"},
+			{"r50k_base", "GPT-3", "Legacy"},
+			{"p50k_base", "Codex / Davinci", "Legacy"},
+		} {
+			m := testTokenizerEditor()
+			m.width, m.height, m.encoding = width, 24, choice.encoding
+			m.insert("he")
+			m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: []tokenizerPreviewToken{{ID: 1, EndByte: 2}}})
+			view := ansi.Strip(m.View().Content)
+			require.Contains(t, view, "Model  "+choice.label+"  "+choice.badge)
+			require.Contains(t, view, "1 token")
+			require.Contains(t, view, `·["he"]`)
+			require.NotContains(t, view, choice.encoding)
+			require.NotContains(t, view, "Token 1 of 1")
+			require.NotContains(t, view, "F1 help")
+			require.NotContains(t, view, "Enter newline")
+			require.Contains(t, view, "↓ options")
 		}
 	}
 }

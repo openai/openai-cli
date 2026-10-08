@@ -26,6 +26,15 @@ if [ "$demo_editor_linked" = 1 ] && [ "$demo_mode" != editor ]; then
   echo 'DEMO_EDITOR_LINKED requires editor mode.' >&2
   exit 2
 fi
+demo_editor_presentation="${DEMO_EDITOR_PRESENTATION:-encodings}"
+case "$demo_editor_presentation" in
+  encodings|models) ;;
+  *) echo 'DEMO_EDITOR_PRESENTATION must be encodings or models.' >&2; exit 2;;
+esac
+if [ "$demo_editor_presentation" = models ] && [ "$demo_editor_linked" != 1 ]; then
+  echo 'Model presentation requires DEMO_EDITOR_LINKED=1 in editor mode.' >&2
+  exit 2
+fi
 demo_columns="${DEMO_COLUMNS:-80}"
 case "$demo_columns" in
   40|80) ;;
@@ -106,6 +115,7 @@ SCENE
     echo "before editor layout: $demo_editor_before"
     echo 'after editor layout: options'
     echo "after linked cursor and legacy tokenizers: $demo_editor_linked"
+    echo "after editor presentation: $demo_editor_presentation"
   fi
   echo "before commit: $demo_before_sha"
   echo "candidate commit: $demo_after_sha (check source manifest for uncommitted changes)"
@@ -159,6 +169,7 @@ if [ "$demo_mode" = editor ]; then
   fi
   printf 'before\t%s\nafter\toptions\n' "$demo_editor_before" > "$demo_output/editor-layouts.tsv"
   printf 'before\t0\nafter\t%s\n' "$demo_editor_linked" > "$demo_output/editor-linked.tsv"
+  printf 'before\tencodings\nafter\t%s\n' "$demo_editor_presentation" > "$demo_output/editor-presentation.tsv"
 fi
 demo_after_status=0
 if [ "$demo_mode" = editor ]; then demo_after_status=130; fi
@@ -172,7 +183,8 @@ demo_capture_scene after "$demo_after_status" "$demo_runtime/after" 'http://127.
   "DEMO_MODE=$demo_mode" 'DEMO_SCENE=after' "DEMO_STATUS_LOG=$demo_output/statuses.tsv" \
   "DEMO_PYTHON=$demo_python" "DEMO_EDITOR_DRIVER=$demo_source/editor_driver.py" \
   'DEMO_EDITOR_LAYOUT=options' "DEMO_EDITOR_REPORT=$demo_output/editor-input.json" "DEMO_COLUMNS=$demo_columns" "DEMO_ROWS=$demo_rows" \
-  "DEMO_EDITOR_LINKED=$demo_editor_linked" "DEMO_THEME=$demo_theme" "${demo_theme_environment[@]}"
+  "DEMO_EDITOR_LINKED=$demo_editor_linked" "DEMO_EDITOR_PRESENTATION=$demo_editor_presentation" \
+  "DEMO_THEME=$demo_theme" "${demo_theme_environment[@]}"
 "$demo_python" "$demo_source/validate.py" "$demo_output" "$demo_mode" > "$demo_output/validation.txt"
 if [ "$demo_mode" = editor ]; then
   demo_editor_scenes=(after)

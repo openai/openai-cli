@@ -16,6 +16,8 @@ import time
 
 
 FIXTURE = "Hello, tokens! 👋\nCafé."
+MODEL_NAMES = {"o200k_base": "GPT-5.x & o1/o3", "cl100k_base": "GPT-4 & GPT-3.5",
+               "r50k_base": "GPT-3", "p50k_base": "Codex / Davinci"}
 CSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 OSC = re.compile(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 QUERY = re.compile(rb"\x1b\[\?7\$p|\x1b\]11;\?(?:\x07|\x1b\\)")
@@ -54,6 +56,19 @@ def drive():
     linked = linked_setting == "1"
     if linked and (layout != "options" or os.environ.get("DEMO_SCENE") != "after"):
         raise ValueError("linked recording requires the after Options editor")
+    presentation = os.environ.get("DEMO_EDITOR_PRESENTATION", "encodings")
+    if presentation not in ("encodings", "models"):
+        raise ValueError("DEMO_EDITOR_PRESENTATION must be encodings or models")
+    models = presentation == "models"
+    if models and not linked:
+        raise ValueError("model presentation requires the linked after Options editor")
+
+    def encoding_row(encoding):
+        if models:
+            return "Model  " + MODEL_NAMES[encoding] + "  " + ("Default" if encoding == "o200k_base" else "Legacy")
+        return ("Tokenizer" if layout == "options" else "Encoding") + "  " + encoding
+
+    chooser_title = "Choose model" if models else "Choose tokenizer"
     gate_read, gate_write = os.pipe()
     pid, terminal = pty.fork()
     if pid == 0:
@@ -202,20 +217,19 @@ def drive():
         wait_for("Enter details")
         if layout == "options":
             send(b"\x1b")
-            wait_for("Tab options")
+            wait_for("↓ options" if models else "Tab options")
             send(b"\t\x1b[B\r")
-            wait_for("Choose tokenizer")
+            wait_for(chooser_title)
             mark("tokenizer-choice")
             send(b"\x1b[B")
         else:
             send(b"\t\x1b[B")
-        wait_for("cl100k_base")
+        wait_for(MODEL_NAMES["cl100k_base"] if models else "cl100k_base")
         pause(0.2)
         send(b"\r")
         wait_for("11 tokens · 26 bytes")
         send(b"\x1b[Z")
-        tokenizer_label = "Tokenizer" if layout == "options" else "Encoding"
-        wait_for(tokenizer_label + "  cl100k_base")
+        wait_for(encoding_row("cl100k_base"))
         mark("encoding")
         final_encoding = "cl100k_base"
         if linked:
@@ -223,12 +237,12 @@ def drive():
                 # Text -> Options; choose its Tokenizer row independently of
                 # the row remembered from the preceding selection.
                 send(b"\t\x1b[H\x1b[B\r")
-                wait_for("Choose tokenizer")
+                wait_for(chooser_title)
                 send(b"\x1b[H" + b"\x1b[B" * index + b"\r")
-                wait_for("Tokenizer  " + encoding)
+                wait_for(encoding_row(encoding))
                 wait_for("11 tokens · 26 bytes")
                 send(b"\x1b[Z")
-                wait_for("Tokenizer  " + encoding)
+                wait_for(encoding_row(encoding))
                 wait_for("11 tokens · 26 bytes")
                 mark(encoding.removesuffix("_base"))
                 final_encoding = encoding
@@ -236,7 +250,7 @@ def drive():
         wait_for("Tokenizer · controls")
         mark("controls")
         send(b"\x1b")
-        wait_for(tokenizer_label + "  " + final_encoding)
+        wait_for(encoding_row(final_encoding))
         pause(0.3)
         send(b"\x03")
         deadline = time.monotonic() + 5
@@ -248,12 +262,14 @@ def drive():
             raise RuntimeError(f"editor returned {status}, expected 130")
         result = {"input": FIXTURE, "input_bytes": len(FIXTURE.encode()), "theme": theme,
                   "columns": width, "rows": height, "layout": layout,
-                  "capture_version": 3 if linked else 2,
+                  "capture_version": 4 if models else 3 if linked else 2,
                   "input_actions": {"typed": "Hello, ", "pasted": ["tokens! 👋", "Café."], "newline": "Enter"},
                   "states": events, "exit_status": status}
         if linked:
             result["caret_actions"] = {"keys": ["Home", "Right"], "expected_byte_offset": 21}
             result["tokenizer_actions"] = ["cl100k_base", "r50k_base", "p50k_base"]
+        if models:
+            result["presentation"] = presentation
         with open(report_path, "w", encoding="utf-8") as report:
             json.dump(result, report, indent=2)
             report.write("\n")

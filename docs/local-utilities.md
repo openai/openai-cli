@@ -16,8 +16,8 @@ The editor supports up to 1 MiB of UTF-8 input.
 - Press Tab to focus the visible View control.
 - Press Left or Right on View to switch Text, Token IDs, and Bytes immediately.
 - Press Enter on View to open the view chooser.
-- Press Down to select the Tokenizer row.
-- Press Enter on Tokenizer to open its chooser.
+- Press Down to select the Model row.
+- Press Enter on Model to open its chooser.
 - Press Up or Down in a chooser to highlight a choice.
 - Press Enter to apply that choice.
 - Press Escape to cancel a chooser and return to text.
@@ -28,14 +28,15 @@ The editor supports up to 1 MiB of UTF-8 input.
 - Press Ctrl+C to exit.
 
 Enter inserts a newline while editing text.
-Down at the end of text opens options, matching the image picker's navigation.
-Within multiline text, Up and Down continue to move the text cursor.
+Down opens options from any column on the last line.
+On earlier lines, Down moves the text cursor. Up moves to the previous text line.
 The token marked with a dot follows the text cursor without recalculating tokens.
 At a token boundary, the marker selects the token on the right. At the end, it selects the last token.
 Tokens can split a Unicode character; cursor movement still follows complete graphemes.
 Tab and Shift+Tab cycle through text, options, and tokens.
 Chooser focus uses the image picker's bold highlight. A checkmark identifies the applied choice.
-The main screen shows the token count and selected token position.
+The main screen shows model families instead of encoding identifiers.
+It shows the token count and, for multiple tokens, the selected position.
 The Bytes view adds the input byte count; full hexadecimal details remain available through Enter.
 Text and Token IDs are the primary reading views. Bytes supports exact-byte inspection and debugging.
 Ctrl+U removes text before the cursor, matching the image prompt editor.

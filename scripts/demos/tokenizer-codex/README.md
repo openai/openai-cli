@@ -194,6 +194,32 @@ The driver and validator still use bounded buffers and actual CLI output.
 Versions 1 and 2 retain their historical validation paths.
 All three extra PNGs must exist before the recorder can report success.
 
+## Model-family presentation
+
+Add `DEMO_EDITOR_PRESENTATION=models` to the linked editor recipe for the model-family labels.
+This setting applies only to the after scene and requires `DEMO_EDITOR_LINKED=1`.
+The before scene retains its encoding labels, including the `8990809` baseline.
+
+```sh
+DEMO_EDITOR_PRESENTATION=models DEMO_EDITOR_LINKED=1 DEMO_EDITOR_BEFORE=options DEMO_THEME=dark \
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh editor \
+  /absolute/path/to/previous-editor /absolute/path/to/candidate \
+  "$BEFORE_SHA" "$AFTER_SHA" \
+  /absolute/path/outside/repository/editor-models-dark-80
+```
+
+Version 4 checks the `Model` row and `Choose model` chooser.
+The four labels are `GPT-5.x & o1/o3`, `GPT-4 & GPT-3.5`, `GPT-3`, and `Codex / Davinci`.
+The first label carries `Default`; the others carry `Legacy`.
+Validation requires each complete chooser row, so `GPT-3` cannot match part of `GPT-3.5`.
+Primary frames must omit raw encoding names, the F1 hint, and the Enter-newline reminder.
+The driver still uses F1 to inspect controls.
+Exact-byte details retain their encoding metadata.
+The fixture, stage names, counts, cursor checks, and cleanup remain unchanged.
+`editor-presentation.tsv` records the requested presentation independently of the older capture settings.
+Earlier recipes and capture versions 1 through 3 retain their validation behavior.
+
 For the Codex presentation comparison, use `guide` with the historical published-feature baseline and `DEMO_BEFORE_STATUS=0`.
 The original main baseline still uses the guide's default status 3.
 The guide scene prints instructions only.
