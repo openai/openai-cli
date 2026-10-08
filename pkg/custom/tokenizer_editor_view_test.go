@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -34,7 +35,7 @@ func TestTokenizerEditorViewFitsEverySupportedSizeAndFocus(t *testing.T) {
 				require.False(t, view.AltScreen)
 				require.Contains(t, view.Content, "4 tokens")
 				require.NotContains(t, view.Content, "13 bytes")
-				require.Contains(t, view.Content, "View  [Text] Token IDs Bytes  ←→")
+				require.Contains(t, view.Content, "View       [Text] Token IDs Bytes")
 				require.Contains(t, view.Content, "Token IDs")
 				require.Contains(t, view.Content, "Bytes")
 				require.Contains(t, view.Content, "Token 3 of 4")
@@ -310,22 +311,160 @@ func TestTokenizerEditorNoColorKeepsSelectionAndNavigation(t *testing.T) {
 				marker, hint  string
 			}{
 				{tokenizerFocusText, 0, "▏", "Tab options"},
-				{tokenizerFocusOptions, 0, "› View", "↑↓ move"},
+				{tokenizerFocusOptions, 0, "› View", "←→ view"},
 				{tokenizerFocusOptions, 1, "› Tokenizer", "Enter select"},
-				{tokenizerFocusResults, 0, "› Token 3 of 4", "Enter details"},
+				{tokenizerFocusResults, 0, "›[", "Enter details"},
 			} {
 				m := tokenizerEditorExample()
 				m.width, m.height, m.color, m.dark = size[0], size[1], false, dark
 				m.focus, m.option = state.focus, state.option
 				view := m.View().Content
 				require.NotRegexp(t, `\x1b\[[0-9;:]*m`, view)
-				require.Contains(t, view, "View  [Text] Token IDs Bytes  ←→")
+				require.Contains(t, view, "View       [Text] Token IDs Bytes")
 				require.Contains(t, view, "Tokenizer  cl100k_base")
-				require.Contains(t, view, "›[")
+				if m.focus == tokenizerFocusResults {
+					require.Contains(t, view, "›[")
+				} else {
+					require.NotContains(t, view, "›[")
+				}
 				require.Contains(t, view, state.marker)
 				require.Contains(t, view, state.hint)
 				require.Contains(t, view, "Ctrl+C exit")
 			}
+		}
+	}
+}
+
+func TestTokenizerEditorFocusFillStaysInActiveRegion(t *testing.T) {
+	background := regexp.MustCompile(`\x1b\[[0-9;]*48;2;[0-9;]+m([^\x1b]*)`)
+	for _, size := range [][2]int{{80, 24}, {40, 12}} {
+		for _, dark := range []bool{false, true} {
+			for _, state := range []struct{ focus, option int }{
+				{tokenizerFocusText, 0}, {tokenizerFocusOptions, 0},
+				{tokenizerFocusOptions, 1}, {tokenizerFocusResults, 0},
+			} {
+				for tab := 0; tab < 3; tab++ {
+					m := tokenizerEditorExample()
+					m.width, m.height, m.color, m.dark = size[0], size[1], true, dark
+					m.focus, m.option, m.tab = state.focus, state.option, tab
+					rows := strings.Split(m.View().Content, "\n")
+					for _, row := range rows {
+						plain := ansi.Strip(row)
+						fills := background.FindAllStringSubmatch(row, -1)
+						switch {
+						case strings.Contains(plain, "View       "):
+							if state.focus == tokenizerFocusOptions && state.option == 0 {
+								require.Len(t, fills, 1)
+								require.Equal(t, []string{"[Text]", "[Token IDs]", "[Bytes]"}[tab], fills[0][1])
+							} else {
+								require.Empty(t, fills)
+							}
+						case strings.Contains(plain, "Tokenizer  cl100k_base"):
+							if state.focus == tokenizerFocusOptions && state.option == 1 {
+								require.Len(t, fills, 1)
+								require.Equal(t, "cl100k_base", fills[0][1])
+							} else {
+								require.Empty(t, fills)
+							}
+						case strings.Contains(plain, "Token 3 of 4"):
+							require.Empty(t, fills, "selection caption must not form a second highlighted row")
+						}
+						if !m.roomy() && state.focus != tokenizerFocusText && strings.HasPrefix(strings.TrimSpace(plain), "Text ") {
+							focusColor := "38;2;49;89;188"
+							if dark {
+								focusColor = "38;2;138;168;255"
+							}
+							require.NotContains(t, row, focusColor, "inactive compact Text must not retain focus color")
+						}
+					}
+					chips := strings.Join(m.resultLines(m.styles(), m.viewWidth()), "\n")
+					fills := background.FindAllStringSubmatch(chips, -1)
+					if state.focus == tokenizerFocusResults {
+						require.Len(t, fills, 1, "only the selected token receives focus fill")
+						require.Equal(t, 1, strings.Count(ansi.Strip(chips), "›["))
+					} else {
+						require.Empty(t, fills)
+						require.NotContains(t, chips, "›[")
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestTokenizerEditorRowsShareAlignedGuttersAndValues(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {40, 12}} {
+		for focus := tokenizerFocusText; focus <= tokenizerFocusResults; focus++ {
+			m := tokenizerEditorExample()
+			m.width, m.height, m.focus, m.tab = size[0], size[1], focus, 1
+			rows := strings.Split(ansi.Strip(m.View().Content), "\n")
+			column := func(text string) int {
+				for _, row := range rows {
+					if index := strings.Index(row, text); index >= 0 {
+						return ansi.StringWidth(row[:index])
+					}
+				}
+				t.Fatalf("missing aligned content %q in %q", text, rows)
+				return -1
+			}
+			gutter := column("4 tokens")
+			for _, label := range []string{"View", "Tokenizer  cl100k_base", "Token 3 of 4", "[9906]"} {
+				require.Equal(t, gutter, column(label), label)
+			}
+			require.Equal(t, column("Text [Token IDs] Bytes"), column("cl100k_base"))
+			consecutiveBlank := false
+			for _, row := range rows {
+				blank := strings.TrimSpace(row) == ""
+				require.False(t, blank && consecutiveBlank, "blocks should have one separating blank row")
+				consecutiveBlank = blank
+			}
+			require.Contains(t, rows[len(rows)-1], "Ctrl+C exit")
+		}
+	}
+}
+
+func TestTokenizerEditorTokenSpacingDoesNotReflowOnFocusOrSelection(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {40, 12}} {
+		m := tokenizerEditorExample()
+		m.width, m.height, m.tab = size[0], size[1], 1
+		var previous string
+		for focus := tokenizerFocusText; focus <= tokenizerFocusResults; focus++ {
+			m.focus = focus
+			for selected := range m.tokens {
+				m.selected = selected
+				rows, count := m.resultWindow(m.styles(), m.viewWidth())
+				require.Equal(t, len(m.tokens), count)
+				view := ansi.Strip(strings.Join(rows, "\n"))
+				require.NotContains(t, view, "][")
+				require.NotContains(t, view, "]›[")
+				neutral := strings.ReplaceAll(view, "›", " ")
+				if previous != "" {
+					require.Equal(t, previous, neutral, "a reserved marker cell must prevent focus or selection reflow")
+				}
+				previous = neutral
+				for _, row := range rows {
+					require.LessOrEqual(t, ansi.StringWidth(row), m.viewWidth())
+				}
+			}
+		}
+	}
+}
+
+func TestTokenizerEditorEmptyResultsRetainFocusMarker(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {40, 12}} {
+		for _, state := range []string{"empty", "updating", "failed"} {
+			m := testTokenizerEditor()
+			m.width, m.height, m.focus = size[0], size[1], tokenizerFocusResults
+			if state != "empty" {
+				m.insert("pending")
+			}
+			if state == "failed" {
+				m.Update(tokenizerEditorResultMsg{Revision: m.revision, Err: errors.New("synthetic failure")})
+			}
+			view := m.View().Content
+			require.Contains(t, view, "› Tokens")
+			require.NotContains(t, view, "›[")
+			require.Contains(t, view, "Ctrl+C exit")
 		}
 	}
 }
@@ -339,9 +478,11 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 				m.color, m.dark = theme != "NO_COLOR", theme != "light"
 				title, current := "Choose view", "Token IDs ✓"
 				choices := []string{"Text", "Token IDs", "Bytes"}
+				descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hex bytes"}
 				if modal == tokenizerModalEncoding {
 					title, current = "Choose tokenizer", "cl100k_base ✓"
 					choices = []string{"o200k_base", "cl100k_base"}
+					descriptions = []string{"Default", "Alternate vocabulary"}
 				}
 				for choice, label := range choices {
 					m.choice = choice
@@ -353,6 +494,22 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 					require.Equal(t, 1, strings.Count(plain, "✓"))
 					for _, available := range choices {
 						require.Contains(t, plain, available)
+					}
+					descriptionColumn := -1
+					for i, description := range descriptions {
+						require.Contains(t, plain, description, "chooser descriptions must remain complete")
+						for _, row := range strings.Split(plain, "\n") {
+							if index := strings.Index(row, description); index >= 0 {
+								labelIndex := strings.Index(row, choices[i])
+								require.GreaterOrEqual(t, labelIndex, 0)
+								column := ansi.StringWidth(row[:index])
+								require.Equal(t, 14, column-ansi.StringWidth(row[:labelIndex]))
+								if descriptionColumn >= 0 {
+									require.Equal(t, descriptionColumn, column, "description columns must align")
+								}
+								descriptionColumn = column
+							}
+						}
 					}
 					require.Contains(t, plain, "↑↓ choose · Enter use · Esc cancel")
 					require.Contains(t, plain, "Ctrl+C exit")

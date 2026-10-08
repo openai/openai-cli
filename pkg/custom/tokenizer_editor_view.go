@@ -25,7 +25,7 @@ func (m *tokenizerEditor) resultRows() int {
 }
 
 type tokenizerEditorStyles struct {
-	title, muted, accent, selected, border, input lipgloss.Style
+	title, muted, accent, selected, focused, border, input lipgloss.Style
 }
 
 func (m *tokenizerEditor) styles() tokenizerEditorStyles {
@@ -41,6 +41,7 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 	s.muted = s.muted.Foreground(lipgloss.Color(muted))
 	s.accent = s.accent.Foreground(lipgloss.Color(focus)).Bold(true)
 	s.selected = s.selected.Foreground(lipgloss.Color(text)).Background(lipgloss.Color(fill))
+	s.focused = s.selected.Bold(true)
 	s.border = s.border.Foreground(lipgloss.Color(border))
 	if m.focus == tokenizerFocusText {
 		s.border = s.border.Foreground(lipgloss.Color(focus))
@@ -93,13 +94,17 @@ func (m *tokenizerEditor) View() tea.View {
 		}
 		lines = append(lines, s.border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
 	} else {
-		prefix := "Text  "
+		prefix := "  Text "
 		if m.focus == tokenizerFocusText {
 			prefix = "› Text "
 		}
-		lines = append(lines, s.accent.Render(prefix)+m.editorLines(width-ansi.StringWidth(prefix), 1)[0])
+		caption := s.muted
+		if m.focus == tokenizerFocusText {
+			caption = s.accent
+		}
+		lines = append(lines, caption.Render(prefix)+m.editorLines(width-ansi.StringWidth(prefix), 1)[0])
 	}
-	if m.roomy() && m.note == "" {
+	if m.note == "" {
 		lines = append(lines, "")
 	}
 	tokenLabel := "tokens"
@@ -119,17 +124,30 @@ func (m *tokenizerEditor) View() tea.View {
 		}
 		status += fmt.Sprintf(" · %d %s", len(m.text), byteLabel)
 	}
-	lines = append(lines, status)
+	lines = append(lines, "  "+status)
+	viewActive := m.focus == tokenizerFocusOptions && m.option == 0
 	var tabs []string
 	for i, label := range []string{"Text", "Token IDs", "Bytes"} {
 		if m.tab == i {
 			label = "[" + label + "]"
+			if viewActive {
+				label = s.focused.Render(label)
+			}
 		}
 		tabs = append(tabs, label)
 	}
-	lines = append(lines, m.highlightRow(s, "View  "+strings.Join(tabs, " ")+"  ←→", m.focus == tokenizerFocusOptions && m.option == 0))
-	lines = append(lines, m.highlightRow(s, "Tokenizer  "+m.encoding+"  ›", m.focus == tokenizerFocusOptions && m.option == 1))
-	if m.roomy() && m.note == "" {
+	views := m.optionRow(s, "View", strings.Join(tabs, " "), viewActive)
+	if ansi.StringWidth(views+"  ←→") <= width {
+		views += s.muted.Render("  ←→")
+	}
+	lines = append(lines, views)
+	encodingActive := m.focus == tokenizerFocusOptions && m.option == 1
+	encoding := m.encoding
+	if encodingActive {
+		encoding = s.focused.Render(encoding)
+	}
+	lines = append(lines, m.optionRow(s, "Tokenizer", encoding+s.muted.Render("  ›"), encodingActive))
+	if m.note == "" {
 		lines = append(lines, "")
 	}
 	position := "Tokens"
@@ -140,16 +158,35 @@ func (m *tokenizerEditor) View() tea.View {
 			position += " · partial UTF-8"
 		}
 	}
-	lines = append(lines, m.highlightRow(s, position, m.focus == tokenizerFocusResults))
+	if m.focus == tokenizerFocusResults && len(m.tokens) == 0 {
+		lines = append(lines, s.accent.Render("› "+position))
+	} else {
+		caption := s.muted
+		if m.focus == tokenizerFocusResults {
+			caption = s.accent
+		}
+		lines = append(lines, "  "+caption.Render(position))
+	}
 	lines = append(lines, m.resultLines(s, width)...)
 	if m.note != "" {
 		notes := strings.Split(ansi.Wrap(m.note, width, ""), "\n")
 		available := max(0, m.viewHeight()-len(lines)-1)
 		lines = append(lines, notes[:min(len(notes), available)]...)
 	}
+	if m.note == "" && lines[len(lines)-1] != "" && len(lines)+1 < m.viewHeight() {
+		lines = append(lines, "")
+	}
 	lines = append(lines, s.muted.Render(m.footer()))
 	view.Content = m.fit(lines, true)
 	return view
+}
+
+func (m *tokenizerEditor) optionRow(s tokenizerEditorStyles, label, value string, active bool) string {
+	marker, caption := "  ", s.muted
+	if active {
+		marker, caption = s.accent.Render("› "), s.accent
+	}
+	return marker + caption.Render(fmt.Sprintf("%-11s", label)) + value
 }
 
 func (m *tokenizerEditor) highlightRow(s tokenizerEditorStyles, value string, active bool) string {
@@ -173,6 +210,13 @@ func (m *tokenizerEditor) footer() string {
 		if ansi.StringWidth(footer) > m.viewWidth() {
 			footer = "Ctrl+C exit · ←→ · Enter details"
 		}
+	case tokenizerFocusOptions:
+		if m.option == 0 {
+			footer = "Ctrl+C exit · ←→ view · Enter select"
+			if ansi.StringWidth(footer+" · ↑↓ move") <= m.viewWidth() {
+				footer += " · ↑↓ move"
+			}
+		}
 	}
 	if m.focus != tokenizerFocusText && ansi.StringWidth(footer+" · Tab switch") <= m.viewWidth() {
 		footer += " · Tab switch"
@@ -186,7 +230,7 @@ func (m *tokenizerEditor) footer() string {
 func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 	title, explanation := "Choose view", "Show the same tokens in a different form."
 	labels := []string{"Text", "Token IDs", "Bytes"}
-	descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hexadecimal bytes"}
+	descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hex bytes"}
 	current := m.tab
 	if m.modal == tokenizerModalEncoding {
 		title, explanation = "Choose tokenizer", "The tokenizer sets how text is split into tokens."
@@ -204,7 +248,7 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 		if i == current {
 			label += " ✓"
 		}
-		line := label + "  " + descriptions[i]
+		line := fmt.Sprintf("%-14s%s", label, descriptions[i])
 		if ansi.StringWidth(line) > m.viewWidth()-2 {
 			line = label
 		}
@@ -379,7 +423,7 @@ func (m *tokenizerEditor) resultWindow(s tokenizerEditorStyles, width int) ([]st
 		} else if m.failed {
 			label = "Edit text or press r here to retry."
 		}
-		lines := []string{s.muted.Render(label)}
+		lines := []string{"  " + s.muted.Render(tokenizerClip(label, width-2))}
 		for len(lines) < rows {
 			lines = append(lines, "")
 		}
@@ -387,25 +431,31 @@ func (m *tokenizerEditor) resultWindow(s tokenizerEditorStyles, width int) ([]st
 	}
 	start := m.resultStart(width)
 	var lines []string
-	line, used := "", 0
+	line, used := " ", 1
 	if start > 0 {
-		line, used = "… ", 2
+		line, used = " … ", 3
 	}
 	for i := start; i < len(m.tokens); i++ {
 		chip := m.tokenChip(i, width)
 		cells := ansi.StringWidth(chip)
-		if used > 0 && used+cells > width {
+		gap := 0
+		if used > 1 {
+			gap = 1
+		}
+		if used > 1 && used+gap+cells > width {
 			lines = append(lines, line)
 			if len(lines) == rows {
 				return lines, i - start
 			}
-			line, used = "", 0
+			line, used, gap = " ", 1, 0
 		}
-		if i == m.selected {
-			chip = s.selected.Render(chip)
+		if m.focus == tokenizerFocusResults && i == m.selected {
+			chip = s.accent.Render("›") + s.focused.Render(strings.TrimPrefix(chip, "›"))
+		} else if m.focus != tokenizerFocusResults {
+			chip = s.muted.Render(chip)
 		}
-		line += chip
-		used += cells
+		line += strings.Repeat(" ", gap) + chip
+		used += gap + cells
 	}
 	lines = append(lines, line)
 	for len(lines) < rows {
@@ -442,20 +492,24 @@ func (m *tokenizerEditor) resultStart(width int) int {
 }
 
 func (m *tokenizerEditor) resultEnd(start, width int) int {
-	row, used := 1, 0
+	row, used := 1, 1
 	if start > 0 {
-		used = 2 // The leading ellipsis indicates earlier tokens.
+		used = 3 // The leading ellipsis indicates earlier tokens.
 	}
 	for index := start; index < len(m.tokens); index++ {
 		cells := ansi.StringWidth(m.tokenChip(index, width))
-		if used > 0 && used+cells > width {
+		gap := 0
+		if used > 1 {
+			gap = 1
+		}
+		if used > 1 && used+gap+cells > width {
 			row++
-			used = 0
+			used, gap = 1, 0
 		}
 		if row > m.resultRows() {
 			return index
 		}
-		used += cells
+		used += gap + cells
 	}
 	return len(m.tokens)
 }
@@ -473,25 +527,29 @@ func (m *tokenizerEditor) tokenChip(index, width int) string {
 			label += "…"
 		}
 	}
-	chip := "[" + label + "]"
-	if index == m.selected {
-		chip = "›" + chip
+	marker := " "
+	if m.focus == tokenizerFocusResults && index == m.selected {
+		marker = "›"
 	}
-	return chip
+	return marker + "[" + label + "]"
 }
 
 func (m *tokenizerEditor) previousPageSize() int {
-	width, rows, used, count := m.viewWidth(), 1, 0, 0
+	width, rows, used, count := m.viewWidth(), 1, 1, 0
 	for index := m.selected - 1; index >= 0; index-- {
 		cells := ansi.StringWidth(m.tokenChip(index, width))
-		if used > 0 && used+cells > width {
+		gap := 0
+		if used > 1 {
+			gap = 1
+		}
+		if used > 1 && used+gap+cells > width {
 			rows++
-			used = 0
+			used, gap = 1, 0
 		}
 		if rows > m.resultRows() {
 			break
 		}
-		used += cells
+		used += gap + cells
 		count++
 	}
 	return max(1, count)
