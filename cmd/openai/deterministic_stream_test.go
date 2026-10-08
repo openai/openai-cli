@@ -14,7 +14,7 @@ import (
 func TestMainStructuredStreamEmitsBeforeNextEvent(t *testing.T) {
 	for _, format := range []string{"json", "jsonl", "yaml", "raw", "pretty", "explore"} {
 		t.Run(format, func(t *testing.T) {
-			release := make(chan struct{})
+			release := make(chan struct{}, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				writeStreamingTextEvent(w, `{"type":"response.output_text.delta","delta":"synthetic first event","sequence_number":0}`)

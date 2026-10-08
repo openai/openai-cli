@@ -635,15 +635,23 @@ func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, op
 	return showJSONIterator(iter, itemsToDisplay, opts, transformers.Select)
 }
 
-func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectTransformer transformerSelector) error {
+func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectTransformer transformerSelector) (resultErr error) {
 	opts.setDefaults()
 	if presentation, ok := savedImagePresentation(opts, OutputStreamEvent); ok {
 		return presentation.output(func(out io.Writer) error {
 			return saveFinalImageStream(opts.Context, source, presentation.plan, out)
 		})
 	}
+	// SDK streams own response bodies and timers. Close even when presentation
+	// stops at a limit, cancellation, or an output failure. Saved-image streams
+	// retain their cleanup owner above; list iterators remain caller-owned.
+	if opts.OutputKind == OutputStreamEvent {
+		if closer, ok := any(source).(io.Closer); ok {
+			defer func() { resultErr = errors.Join(resultErr, closer.Close()) }()
+		}
+	}
 	if itemsToDisplay == 0 {
-		return source.Err()
+		return errors.Join(opts.Context.Err(), source.Err())
 	}
 	iter := &outputIterator[T]{
 		source:    source,
