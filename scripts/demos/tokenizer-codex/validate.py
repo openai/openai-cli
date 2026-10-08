@@ -119,7 +119,7 @@ def validate_editor(directory, scene="after", layout="legacy"):
         check(report.get("input_actions") == {"typed": "Hello, ", "pasted": ["tokens! 👋", "Café."], "newline": "Enter"},
               "editor: exact paste or Text Enter input changed")
     stages = [
-        ("text", re.compile(r"10 tokens(?:[ \t]*\r?\n|[ \t]*$)" if layout == "options" else r"10 tokens · 26 bytes")),
+        ("text", re.compile(r"10 tokens[ \t]*(?:[\r\n]|$)" if layout == "options" else r"10 tokens · 26 bytes")),
         ("ids", re.compile(r"\[Token IDs\]")),
         ("bytes", re.compile(r"\[Bytes\]")),
         ("details", re.compile(r"Token details · exact bytes")),
