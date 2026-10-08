@@ -60,7 +60,7 @@ Type "# After: list/get summaries | same file"
 Enter
 Type "openai files retrieve file_training"
 Enter
-Wait+Screen /Summary; use --format json for full data./
+Wait+Screen /Full data: --format json\./
 Sleep 500ms
 Screenshot after-retrieve.png
 Sleep 3s

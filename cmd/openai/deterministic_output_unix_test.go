@@ -57,7 +57,7 @@ func TestMainDispatchOutputSummaryKeepsStderrPipeFailure(t *testing.T) {
 			} else if err != nil {
 				t.Fatal(err)
 			}
-			if ctx.Err() != nil || code != tc.code || !strings.Contains(output.String(), "file_synthetic") || strings.Contains(output.String(), "Summary;") {
+			if ctx.Err() != nil || code != tc.code || !strings.Contains(output.String(), "file_synthetic") || strings.Contains(output.String(), "Full data: --format json.") {
 				t.Fatalf("stderr failure changed data/status: exit=%d stdout=%q context=%v", code, output.String(), ctx.Err())
 			}
 		})

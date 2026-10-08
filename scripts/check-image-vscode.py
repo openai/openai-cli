@@ -440,7 +440,7 @@ def main():
             tty('cancel-after-partial', stream, case=Response('stream-ok', normal, True),
                 interact=interrupt_after_partial, expected=130, images=1, saved=0, stderr_tty=True)
             _, _, _, error = tty('api-error-tty', generate, case=Response('error', normal), expected=1, images=0, saved=0)
-            require(b'400 Bad Request' in error and b'--format-error json' in error, 'readable API error lost')
+            require(b'HTTP 400: Bad Request.' in error and b'--format-error json' in error, 'readable API error lost')
 
             tty('format-text-saving', ['--format', 'text', *generate])
             for name, flags in [('format-json', ['--format', 'json']), ('format-jsonl', ['--format', 'jsonl']),

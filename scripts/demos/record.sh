@@ -119,7 +119,7 @@ for demo_scene in "${demo_scenes[@]}"; do
     case "$demo_scene" in
       before|before-retrieve) /usr/bin/grep -Fq 'Created at: 1704067200' "$demo_output/$demo_scene.txt";;
       after|after-retrieve)
-        test "$(/usr/bin/grep -Fc 'Summary; use --format json for full data.' "$demo_output/$demo_scene.txt")" -eq 1
+        test "$(/usr/bin/grep -Fc 'Full data: --format json.' "$demo_output/$demo_scene.txt")" -eq 1
         if /usr/bin/grep -Fq 'Created at:' "$demo_output/$demo_scene.txt"; then
           echo "Unexpected $demo_scene output: creation timestamp was not summarized" >&2
           exit 1
