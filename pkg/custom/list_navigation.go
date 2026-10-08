@@ -139,16 +139,20 @@ type listPageMessage struct {
 }
 
 type listNavigation struct {
-	opts      ShowJSONOpts
-	fetch     func() (listNavigationPage, error)
-	cancel    context.CancelFunc
-	viewport  viewport.Model
-	pages     []listNavigationPage
-	index     int
-	loading   bool
-	quitting  bool
-	printPage bool
-	err       error
+	opts          ShowJSONOpts
+	fetch         func() (listNavigationPage, error)
+	cancel        context.CancelFunc
+	viewport      viewport.Model
+	window        tea.WindowSizeMsg
+	content       string
+	contentFits   bool
+	pages         []listNavigationPage
+	index         int
+	loading       bool
+	quitting      bool
+	printPage     bool
+	printComplete bool
+	err           error
 
 	// Fetches start in the event loop. Shutdown cancels and joins the one worker,
 	// including when quitting races with a completed request failure.
@@ -163,6 +167,7 @@ func runListNavigation(opts ShowJSONOpts, fetch func() (listNavigationPage, erro
 		return err
 	}
 	m := &listNavigation{opts: opts, fetch: fetch, cancel: cancel,
+		window:   tea.WindowSizeMsg{Width: width, Height: height},
 		viewport: viewport.New(viewport.WithWidth(max(1, width)), viewport.WithHeight(max(1, height-2)))}
 	// Wrap once in linear time. Viewport soft wrapping repeatedly scans long
 	// source lines, which can block keyboard handling on large API fields.
@@ -204,11 +209,14 @@ func (m *listNavigation) finish(out *listNavigationOutput, runErr error) error {
 		runErr = nil
 	}
 	var printErr error
-	if m.printPage {
+	if m.printPage || m.printComplete {
 		// Print only after the worker stops and Tea restores the terminal.
-		// Plain labels let the terminal wrap long IDs without inserting newlines.
-		var content string
-		content, printErr = renderListNavigationLabels(m.opts, m.pages[m.index].items)
+		// Automatic completion retains the selected table or labeled format.
+		content := m.content
+		if m.printPage {
+			// Plain labels preserve full values when the user requests p.
+			content, printErr = renderListNavigationLabels(m.opts, m.pages[m.index].items)
+		}
 		if printErr == nil {
 			_, printErr = (outputWriter{ctx: m.opts.Context, out: m.opts.Stdout}).WriteString(content)
 		}
@@ -261,10 +269,52 @@ func (m *listNavigation) render() error {
 	}
 	content, err := renderListNavigationPage(m.opts, m.pages[m.index].items, m.viewport.Width())
 	if err == nil {
-		content = ansi.Hardwrap(content, max(1, m.viewport.Width()), true)
-		m.viewport.SetContent(strings.TrimSuffix(content, "\n"))
+		wrapped := ansi.Hardwrap(content, max(1, m.viewport.Width()), true)
+		m.viewport.SetContent(strings.TrimSuffix(wrapped, "\n"))
+		m.content = ""
+		m.contentFits = listNavigationContentFits(content, m.window.Width, m.window.Height)
+		// Long pages only need the viewport copy. Retain the original body
+		// only when it can be printed on automatic completion.
+		if m.contentFits {
+			m.content = content
+		}
 	}
 	return err
+}
+
+// listNavigationContentFits counts the original output's terminal rows, leaving
+// one row for the shell prompt. Hardwrap treats tabs as zero-width controls;
+// terminal output instead advances to the next eight-column tab stop.
+func listNavigationContentFits(content string, width, height int) bool {
+	if width <= 0 || height <= 1 {
+		return false
+	}
+	rows, column := 1, 0
+	state := ansi.NormalState
+	for content = strings.TrimSuffix(content, "\n"); len(content) > 0; {
+		sequence, cells, n, next := ansi.DecodeSequence(content, state, nil)
+		content, state = content[n:], next
+		switch sequence {
+		case "\n":
+			rows++
+			column = 0
+		case "\t":
+			column = min(width-1, (column/8+1)*8)
+		default:
+			if cells > width {
+				return false
+			}
+			if cells > 0 && column+cells > width {
+				rows++
+				column = 0
+			}
+			column += cells
+		}
+		if rows >= height {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *listNavigation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -276,6 +326,7 @@ func (m *listNavigation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
+		m.window = msg
 		m.viewport.SetWidth(max(1, msg.Width))
 		m.viewport.SetHeight(max(1, msg.Height-2))
 		m.err = m.render()
@@ -285,6 +336,7 @@ func (m *listNavigation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case listPageMessage:
 		m.loading = false
+		first := len(m.pages) == 0
 		if len(msg.page.items) != 0 || len(m.pages) == 0 {
 			m.pages = append(m.pages, msg.page)
 			m.index = len(m.pages) - 1
@@ -295,6 +347,15 @@ func (m *listNavigation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.err = errors.Join(m.err, msg.err)
 		if m.err != nil {
+			return m, tea.Quit
+		}
+		// Only a complete first response can bypass navigation. Keep later
+		// pages open so users can revisit previously loaded results.
+		// Reserve one terminal row for the returned shell prompt.
+		if first && !msg.page.more && m.contentFits {
+			m.printComplete = true
+			m.quitting = true
+			m.cancel()
 			return m, tea.Quit
 		}
 		return m, nil
@@ -332,6 +393,10 @@ func (m *listNavigation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *listNavigation) View() tea.View {
+	if m.printComplete {
+		// The original rendered content is printed once after restoration.
+		return tea.NewView("")
+	}
 	footer := "Space: more   q: quit"
 	if m.viewport.Width() >= len("Space: more   b: back   q: quit") {
 		footer = "Space: more   b: back   q: quit"

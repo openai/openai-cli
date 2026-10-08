@@ -504,3 +504,126 @@ func TestListNavigationErrorPresentation(t *testing.T) {
 		}
 	}
 }
+
+func TestListNavigationCompleteFirstPageFitsScreen(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		width, height int
+		items         []gjson.Result
+		more, want    bool
+	}{
+		{"single row", 40, 2, []gjson.Result{gjson.Parse(`{"id":"a"}`)}, false, true},
+		{"empty result", 40, 2, nil, false, true},
+		{"empty tiny terminal", 40, 1, nil, false, false},
+		{"unknown width", 0, 20, nil, false, false},
+		{"unknown height", 40, 0, nil, false, false},
+		{"exact fit with separator", 40, 4, []gjson.Result{gjson.Parse(`{"id":"a"}`), gjson.Parse(`{"id":"b"}`)}, false, true},
+		{"one row over", 40, 3, []gjson.Result{gjson.Parse(`{"id":"a"}`), gjson.Parse(`{"id":"b"}`)}, false, false},
+		{"wide characters fit", 5, 3, []gjson.Result{gjson.Parse(`{"id":"漢字"}`)}, false, true},
+		{"wide characters overflow", 5, 2, []gjson.Result{gjson.Parse(`{"id":"漢字"}`)}, false, false},
+		{"tabbed filename fits", 20, 3, []gjson.Result{gjson.Parse(`{"id":"file_a","filename":"a\t1234"}`)}, false, true},
+		{"tabbed filename overflows", 20, 3, []gjson.Result{gjson.Parse(`{"id":"file_a","filename":"a\t123456789"}`)}, false, false},
+		{"tabbed filename taller terminal", 20, 4, []gjson.Result{gjson.Parse(`{"id":"file_a","filename":"a\t123456789"}`)}, false, true},
+		{"tab cancels pending wrap", 20, 3, []gjson.Result{gjson.Parse(`{"id":"file_a","filename":"abcdefghij\tZ"}`)}, false, true},
+		{"text after margin tab wraps", 20, 3, []gjson.Result{gjson.Parse(`{"id":"file_a","filename":"abcdefghij\tYZ"}`)}, false, false},
+		{"more API pages", 40, 20, []gjson.Result{gjson.Parse(`{"id":"a"}`)}, true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			m := &listNavigation{opts: ShowJSONOpts{Context: context.Background()}, cancel: cancel,
+				window:   tea.WindowSizeMsg{Width: tt.width, Height: tt.height},
+				viewport: viewport.New(viewport.WithWidth(max(1, tt.width)), viewport.WithHeight(max(1, tt.height-2)))}
+			m.viewport.SoftWrap = false
+			_, command := m.Update(listPageMessage{page: listNavigationPage{items: tt.items, more: tt.more}})
+			if m.err != nil {
+				t.Fatal(m.err)
+			}
+			if m.printComplete != tt.want || m.quitting != tt.want || (command != nil) != tt.want || (ctx.Err() != nil) != tt.want {
+				t.Fatalf("print=%v, quitting=%v, command=%v, canceled=%v; want %v", m.printComplete, m.quitting, command != nil, ctx.Err(), tt.want)
+			}
+			if tt.want && m.View().Content != "" {
+				t.Fatal("completed result would be printed both by Tea and after restoration")
+			}
+			if tt.want {
+				for _, item := range tt.items {
+					if !strings.Contains(m.content, "ID: "+item.Get("id").String()+"\n") {
+						t.Fatalf("original logical ID was wrapped in final output: %q", m.content)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestListNavigationContentFitsDisplayCells(t *testing.T) {
+	for _, tt := range []struct {
+		name, content string
+		width, height int
+		want          bool
+	}{
+		{"tab exactly fills row", "a\t1234\n", 12, 2, true},
+		{"tab adds wrapped row", "a\t12345\n", 12, 2, false},
+		{"tab after wide grapheme", "界\t12345\n", 12, 2, false},
+		{"tab after combining grapheme", "e\u0301\t12345\n", 12, 2, false},
+		{"tab after wrapped text", "abcdefghijklmn\t12345\n", 12, 3, false},
+		{"tab stops at right margin", "a\t\tX\n", 12, 2, true},
+		{"tab clears pending wrap", "abcdefghijkl\tX\n", 12, 2, true},
+		{"text wraps after margin tab", "abcdefghijkl\tXY\n", 12, 2, false},
+		{"color has no display width", "\x1b[31ma\x1b[0m\t1234\n", 12, 2, true},
+		{"blank separator counts", "first\n\nlast\n", 12, 3, false},
+		{"prompt row remains", "first\n\nlast\n", 12, 4, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := listNavigationContentFits(tt.content, tt.width, tt.height); got != tt.want {
+				t.Fatalf("fit=%v, want %v for %q in %dx%d", got, tt.want, tt.content, tt.width, tt.height)
+			}
+		})
+	}
+}
+
+func TestListNavigationShortResultPreservesErrorsAndHistory(t *testing.T) {
+	failure := errors.New("synthetic first-page failure")
+	for _, state := range []string{"request error", "render canceled", "later page", "resized viewer"} {
+		t.Run(state, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			m := &listNavigation{opts: ShowJSONOpts{Context: ctx}, cancel: cancel,
+				window:   tea.WindowSizeMsg{Width: 40, Height: 20},
+				viewport: viewport.New(viewport.WithWidth(40), viewport.WithHeight(18))}
+			page := listNavigationPage{items: []gjson.Result{gjson.Parse(`{"id":"a"}`)}}
+			message := listPageMessage{page: page}
+			switch state {
+			case "request error":
+				message.err = failure
+			case "render canceled":
+				cancel()
+			case "later page":
+				m.pages = []listNavigationPage{{items: []gjson.Result{gjson.Parse(`{"id":"earlier"}`)}, more: true}}
+			case "resized viewer":
+				m.pages = []listNavigationPage{page}
+				m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+				if m.printComplete || m.quitting {
+					t.Fatal("resizing exited an established viewer")
+				}
+				return
+			}
+			m.Update(message)
+			if m.printComplete {
+				t.Fatal("auto-exited despite an error or existing history")
+			}
+			if state == "request error" && !errors.Is(m.err, failure) {
+				t.Fatal("lost first-page error", m.err)
+			}
+			if state == "render canceled" && !errors.Is(m.err, context.Canceled) {
+				t.Fatal("lost render cancellation", m.err)
+			}
+			if state == "later page" {
+				m.Update(tea.KeyPressMsg{Code: 'b', Text: "b"})
+				if m.index != 0 || !strings.Contains(m.viewport.GetContent(), "earlier") {
+					t.Fatal("lost backward navigation after a short final page")
+				}
+			}
+		})
+	}
+}

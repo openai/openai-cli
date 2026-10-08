@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-go/v3/packages/pagination"
@@ -53,7 +52,7 @@ func writeModelsList[T any](iter *outputIterator[T], opts ShowJSONOpts, width, h
 	if err != nil {
 		return errors.Join(err, iter.Err())
 	}
-	if height > 0 && len(items) != 0 && iter.Err() == nil && modelsListNeedsViewport(content, width, height) {
+	if height > 0 && iter.Err() == nil && modelsListNeedsViewport(content, width, height) {
 		// This callback serves only the response already loaded by the SDK.
 		// Browsing and resizing cannot fetch another API page.
 		ctx, cancel := context.WithCancel(opts.Context)
@@ -76,8 +75,7 @@ func modelsListNeedsViewport(content string, width, height int) bool {
 	if content == "" {
 		return false
 	}
-	// Match the viewer's wrapping and leave one line for the shell prompt.
-	wrapped := ansi.Hardwrap(content, max(1, width), true)
-	lines := strings.Count(strings.TrimSuffix(wrapped, "\n"), "\n") + 1
-	return lines > max(1, height-1)
+	// Use the same tab stops, display-cell widths, and prompt-row reservation
+	// as the cursor-page lists, including malformed-record labeled fallback.
+	return !listNavigationContentFits(content, width, height)
 }

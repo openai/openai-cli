@@ -63,8 +63,12 @@ func TestModelsListNeedsViewport(t *testing.T) {
 		{name: "combining marks exact fit", content: strings.Repeat("e\u0301", 20) + "\n", width: 10, height: 3},
 		{name: "combining marks overflow", content: strings.Repeat("e\u0301", 21) + "\n", width: 10, height: 3, want: true},
 		{name: "ANSI styling has no width", content: "\x1b[31m" + strings.Repeat("x", 20) + "\x1b[0m\n", width: 10, height: 3},
-		{name: "minimum height exact fit", content: "model-first\n", width: 80, height: 1},
+		{name: "minimum height reserves prompt", content: "model-first\n", width: 80, height: 1, want: true},
 		{name: "minimum height overflow", content: "model-first\nmodel-second\n", width: 80, height: 1, want: true},
+		{name: "empty result reserves prompt", content: "No results.\n", width: 80, height: 1, want: true},
+		{name: "tabbed fallback overflows", content: "ID: model_a\nName: abcdef\t12345\n", width: 20, height: 3, want: true},
+		{name: "tabbed fallback fits", content: "ID: model_a\nName: abcdef\t12345\n", width: 20, height: 4},
+		{name: "tab cancels pending wrap", content: "ID: model_a\nName: abcdefghijklmn\tZ\n", width: 20, height: 3},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := modelsListNeedsViewport(test.content, test.width, test.height); got != test.want {
