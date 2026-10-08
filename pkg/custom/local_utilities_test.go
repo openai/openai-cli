@@ -62,3 +62,26 @@ func TestLocalUtilityParsedSelection(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalUtilityFirstRunSuppression(t *testing.T) {
+	// Exercise the early eligibility gate with every prerequisite enabled.
+	// Temporary HOME process tests also encounter the later real-home guard.
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		getenv := func(string) string { return "" }
+		if !imagePickerFirstRunEligible([]string{"openai", "models", "list"}, getenv, true, true, true, shell) {
+			t.Fatalf("%s control did not enable ordinary first-run setup", shell)
+		}
+		for _, args := range [][]string{
+			{"openai", "tokenizer", "count", "--text", "example"},
+			{"openai", "--format", "json", "tokenizer", "inspect"},
+			{"openai", "tokenizer", "licenses"},
+			{"openai", "codex"},
+			{"openai", "codex", "--destination", "config"},
+			{"openai", "--format", "json", "help", "tokenizer", "count"},
+		} {
+			if imagePickerFirstRunEligible(args, getenv, true, true, true, shell) {
+				t.Errorf("%s: local utility allowed automatic shell setup: %q", shell, args)
+			}
+		}
+	}
+}
