@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -208,7 +209,11 @@ func TestInheritedGlobalIndexKeepsEveryNameAndRootReference(t *testing.T) {
 	if !found {
 		t.Fatal("missing inherited flag index")
 	}
-	for _, want := range []string{"--root-option, -r", "--future-00", "--future-11", "Global option details: '/tmp/CLI build/openai' --help", "This command supports text output only."} {
+	rootReference := "Global option details: '/tmp/CLI build/openai' --help"
+	if runtime.GOOS == "windows" {
+		rootReference = "Global option details: & '/tmp/CLI build/openai' --help"
+	}
+	for _, want := range []string{"--root-option, -r", "--future-00", "--future-11", rootReference, "This command supports text output only."} {
 		if !strings.Contains(index, want) {
 			t.Errorf("global index lost %q: %s", want, index)
 		}
