@@ -17,14 +17,15 @@ func TestMainAdminCredentialsLocalValidation(t *testing.T) {
 		{"admin", "organization", "projects"},
 		{"admin:organization:projects"},
 	} {
+		helpPrefix := "\nOptions and examples: openai " + strings.Join(route, " ") + " "
 		for _, test := range []struct {
 			name, stdin, want string
 			args              []string
 		}{
-			{"missing path", "", "Missing required options: --project-id. Check --help for usage.", []string{"retrieve"}},
-			{"missing body", "", "Missing required options: --name. Check --help for usage.", []string{"create"}},
+			{"missing path", "", "Missing required options: --project-id." + helpPrefix + "retrieve --help", []string{"retrieve"}},
+			{"missing body", "", "Missing required options: --name." + helpPrefix + "create --help", []string{"create"}},
 			{"malformed JSON", `{"project_id":`, "Could not parse piped input as YAML or JSON. Check the input's syntax.", []string{"retrieve"}},
-			{"extra positional value", "", "Unexpected extra arguments. Check the command's accepted arguments with --help.", []string{"retrieve", "proj_synthetic", "synthetic-extra-value"}},
+			{"extra positional value", "", "Unexpected extra arguments." + helpPrefix + "retrieve --help", []string{"retrieve", "proj_synthetic", "synthetic-extra-value"}},
 		} {
 			for _, format := range []string{"text", "json"} {
 				t.Run(strings.Join(route, "/")+"/"+test.name+"/"+format, func(t *testing.T) {
