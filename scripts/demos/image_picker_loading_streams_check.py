@@ -36,23 +36,19 @@ class SplitProcess(Process):
     """Reuse picker input and lifecycle helpers while capturing channels separately."""
 
     def __init__(self, binary, env, args=None):
-        self.output, self.status = bytearray(), None
         self.streams = {'stdout': bytearray(), 'stderr': bytearray()}
         err_master, err_slave = pty.openpty()
         fcntl.ioctl(err_slave, termios.TIOCSWINSZ, struct.pack('HHHH', 28, WIDTHS['stderr'], 0, 0))
-        pid, ui_master = pty.fork()
-        if pid == 0:
-            os.dup2(err_slave, 2)
+        try:
+            super().__init__(binary, env, args, stderr_fd=err_slave)
+        except BaseException:
             os.close(err_master)
-            if err_slave != 2:
-                os.close(err_slave)
-            os.execve('/bin/zsh', ['zsh', '-f', '-c', 'exec "$@"', 'picker-stream-check',
-                                  str(binary), *(args or ['images', 'generate'])], env)
-        os.close(err_slave)
-        self.pid, self.fd = pid, ui_master
-        self.descriptors = [ui_master, err_master]
-        self.readers = {ui_master: 'stdout', err_master: 'stderr'}
-        fcntl.ioctl(ui_master, termios.TIOCSWINSZ, struct.pack('HHHH', 28, WIDTHS['stdout'], 0, 0))
+            raise
+        finally:
+            os.close(err_slave)
+        self.descriptors = [self.fd, err_master]
+        self.readers = {self.fd: 'stdout', err_master: 'stderr'}
+        fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack('HHHH', 28, WIDTHS['stdout'], 0, 0))
 
     def pump(self, duration=0.1):
         deadline = time.monotonic() + duration
@@ -111,7 +107,7 @@ def fixture(case):
                 self.end_headers()
                 self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError):
-                pass
+                pass  # Cancellation deliberately disconnects this synthetic client.
 
         def do_GET(self):
             api.events.append({'method': 'GET', 'path': self.path})

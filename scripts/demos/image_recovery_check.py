@@ -83,12 +83,14 @@ def environment(home, fixture):
 
 
 class Process:
-    def __init__(self, binary, env, args=None, mirror=False):
+    def __init__(self, binary, env, args=None, mirror=False, *, stderr_fd=None):
         self.output = bytearray()
         self.status = None
         self.mirror = mirror
         pid, self.fd = pty.fork()
         if pid == 0:
+            if stderr_fd is not None:
+                os.dup2(stderr_fd, 2)
             os.execve("/bin/zsh", ["zsh", "-f", "-c", 'exec "$@"', "image-recovery",
                                   str(binary), *(args or ["images", "generate"])], env)
         self.pid = pid
