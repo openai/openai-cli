@@ -25,10 +25,32 @@ func configureFileCommands(root *cli.Command) {
 	}
 	files.Usage = "Upload, inspect, and download files."
 	files.Description = "Use upload for a local file, get for metadata, and download for contents.\nExisting create, retrieve, and content commands remain available."
+	if files.Metadata == nil {
+		files.Metadata = map[string]any{}
+	}
+	files.Metadata["help-content"] = clihelp.Content{
+		Description: files.Description,
+		Examples: []clihelp.Example{
+			{Description: "Upload a local file:", Command: `files upload "upload space.txt" --purpose user_data`},
+			{Description: "Inspect its metadata:", Command: `files get file-example`},
+			{Description: "Save its contents:", Command: `files download file-example --output "downloaded copy.txt"`},
+		},
+	}
 	if upload := files.Command("upload"); upload != nil {
+		if upload.Metadata == nil {
+			upload.Metadata = map[string]any{}
+		}
 		upload.Usage = "Upload a local file with an explicit purpose."
 		upload.UsageText = clihelp.Invocation(root.Name, os.Args) + " files upload [PATH | --file PATH] --purpose PURPOSE [options]"
 		upload.Description = "Pass a plain local path. Paths with spaces need quotes.\nA leading @ is part of the filename; do not add @ to a plain path.\nUse --purpose PURPOSE -- -name for a filename starting with a dash.\nThe API validates file types and purposes. Upload success does not mean processing is complete."
+		upload.Metadata["help-content"] = clihelp.Content{
+			InputNote: "A path is required: use PATH or --file PATH. Choose --purpose explicitly. " +
+				"The existing piped JSON/YAML keys are file and purpose.",
+			Description: upload.Description,
+			Examples: []clihelp.Example{
+				{Description: "Upload an existing file:", Command: `files upload "upload space.txt" --purpose user_data`},
+			},
+		}
 		upload.Arguments = []cli.Argument{&cli.StringArgs{Name: "path", Max: 1}}
 		next := upload.Action
 		upload.Action = func(ctx context.Context, command *cli.Command) error {
@@ -50,7 +72,7 @@ func configureFileCommands(root *cli.Command) {
 		}
 	}
 	for _, route := range []struct{ name, source, usage string }{
-		{"get", "retrieve", "Show file metadata, including its ID and creation time."},
+		{"get", "retrieve", "Inspect file metadata."},
 		{"download", "content", "Download file contents to a path or stdout."},
 	} {
 		if files.Command(route.name) != nil {
