@@ -16,7 +16,7 @@ function ____APPNAME___fish_autocomplete
     set -l file_part "$current"
     set -l force_file_completion 0
 
-    if string match -gqr '^(?<before>.*)@(?<protocol>file://|data://)?(?<file_part>.*)$' -- $current
+    if test $exit_code -ne 10; and string match -gqr '^(?<before>.*)@(?<protocol>file://|data://)?(?<file_part>.*)$' -- $current
         if string match -qr '^[\'"]' -- $before
             # Ensures we don't insert an extra quote when the user is building an argument in quotes
             set before (string sub -s 2 -- $before)

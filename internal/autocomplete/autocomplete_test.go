@@ -195,6 +195,9 @@ if ! type mapfile >/dev/null 2>&1; then
 fi
 
 openai() {
+  for argument in "$@"; do
+    if [[ "$argument" == --input ]]; then return 11; fi
+  done
   return 10
 }
 
@@ -202,7 +205,7 @@ openai() {
 
 printf 'spec:%s\n' "$(complete -p openai)"
 
-COMP_WORDS=(openai files create --file '@$(')
+COMP_WORDS=(openai responses create --input '@$(')
 COMP_CWORD=4
 __openai_bash_autocomplete
 printf 'forced:%s\n' "${COMPREPLY[0]}"
@@ -391,7 +394,8 @@ sed() {
 }
 
 openai() {
-  return 10
+  # Generic JSON references are not literal binary-file values.
+  return 11
 }
 
 ` + completionScript + `
@@ -405,7 +409,8 @@ for completion in "${COMPREPLY[@]}"; do
 done
 `
 
-			args := append([]string{"-c", probe, "bash-completion-probe", directory}, tt.words...)
+			words := append([]string{"openai", "responses", "create", "--input"}, tt.words[2:]...)
+			args := append([]string{"-c", probe, "bash-completion-probe", directory}, words...)
 			out, err := exec.Command(bash, args...).CombinedOutput()
 			if !assert.NoError(t, err, string(out)) {
 				return

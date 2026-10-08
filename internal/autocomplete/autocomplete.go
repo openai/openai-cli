@@ -272,6 +272,8 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 		localHelp, _ = help.Metadata["help-topic-command"].(bool)
 	}
 	helpTopics, literal := false, false
+	positionalCount := 0
+	var usedFlags []cli.Flag
 	i := 0
 	for i < len(preceding) {
 		arg := preceding[i]
@@ -302,7 +304,9 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			}
 			if flag == nil {
 				return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
-			} else if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && !assigned {
+			}
+			usedFlags = append(usedFlags, *flag)
+			if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && !assigned {
 				if i == len(preceding)-1 {
 					return flagValueCompletion(*flag)
 				}
@@ -311,6 +315,12 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 				i++
 			}
 		} else {
+			fileFlag, _ := cmd.Metadata["completion-positional-file"].(string)
+			if fileFlag != "" && !helpTopics && (literal || arg == "") {
+				positionalCount++
+				i++
+				continue
+			}
 			if arg == "" {
 				i++
 				continue
@@ -330,6 +340,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			}
 			if child != nil {
 				cmd = child
+				positionalCount = 0
 				lineage = append(lineage, child)
 				if !helpTopics {
 					flags = completionFlags(lineage)
@@ -337,6 +348,8 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			} else if helpTopics || len(cmd.Commands) > 0 {
 				// A failed group traversal must not offer commands from its parent.
 				return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+			} else {
+				positionalCount++
 			}
 			i++
 		}
@@ -367,6 +380,22 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			}
 			completions = builder.createFromFlag(current, &flag, completions)
 		}
+	}
+
+	// Metadata opts one positional path into its existing alternate file flag.
+	// Keep flag-value completion above and help-topic traversal unchanged.
+	fileFlag, _ := cmd.Metadata["completion-positional-file"].(string)
+	if fileFlag != "" && !helpTopics && (literal || !isFlag(current)) {
+		if positionalCount == 0 {
+			if flag := findFlag(flags, fileFlag); flag != nil && !slices.Contains(usedFlags, *flag) {
+				result := flagValueCompletion(*flag)
+				if result.Behavior == ShellCompletionBehaviorFile {
+					result.requiresFileValueSupport = true
+					return result
+				}
+			}
+		}
+		return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 	}
 
 	// Keep compatibility aliases out of discovery unless a colon requests them.

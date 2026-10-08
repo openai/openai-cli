@@ -386,3 +386,51 @@ func TestMainFilesWorkflowHelpAndCompletionStayLocal(t *testing.T) {
 		require.Equal(t, mainDispatchResult{code: 10}, got, "%s file completion", style)
 	}
 }
+
+func TestMainFilesWorkflowHelpExplainsPaths(t *testing.T) {
+	got := runMainDispatch(t, "bash", "openai", "files", "upload", "--help")
+	require.Zero(t, got.code, "%+v", got)
+	require.Empty(t, got.stderr)
+	text := strings.Join(strings.Fields(got.stdout), " ")
+	require.Contains(t, text, "With upload, PATH can replace --file PATH.")
+	require.Contains(t, text, "A leading @ is literal.")
+}
+
+func TestMainFilesWorkflowPositionalCompletion(t *testing.T) {
+	env := []string{"OPENAI_BASE_URL=invalid-files-completion-url", "OPENAI_CLI_COMPLETION_FILE_VALUES=1"}
+	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+		for _, args := range [][]string{
+			{"files", "upload", ""},
+			{"files", "upload", "upload sp"},
+			{"files", "upload", "@literal"},
+			{"files", "upload", "--purpose", "user_data", ""},
+			{"files", "upload", "--purpose", "user_data", "--", "-literal"},
+		} {
+			got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, args...)...)
+			require.Equal(t, mainDispatchResult{code: 10}, got, "%s %q", style, args)
+		}
+		for _, args := range [][]string{
+			{"files", "upload", "first.txt", ""},
+			{"files", "upload", "--file", "first.txt", ""},
+			{"files", "upload", "--file=first.txt", ""},
+			{"files", "upload", "--purpose", ""},
+		} {
+			got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, args...)...)
+			require.Equal(t, mainDispatchResult{code: 11}, got, "%s %q", style, args)
+		}
+	}
+}
+
+func TestMainFilesWorkflowHelpAfterOperands(t *testing.T) {
+	for _, args := range [][]string{
+		{"files", "upload", "missing.txt", "--purpose", "user_data", "--help"},
+		{"files", "get", "file-example", "--help"},
+		{"files", "download", "file-example", "--output", "absent/target.txt", "--help"},
+	} {
+		got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=invalid-files-help-url"}, append([]string{"openai"}, args...)...)
+		require.Zero(t, got.code, "%+v", got)
+		require.Empty(t, got.stderr)
+		require.Contains(t, got.stdout, "SYNOPSIS:")
+		require.Contains(t, got.stdout, "openai files "+args[1])
+	}
+}

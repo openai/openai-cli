@@ -87,7 +87,7 @@ ____APPNAME___bash_autocomplete() {
     local prefix=""
     local file_part="$cur"
     local force_file_completion=false
-    if [[ "$last_token" =~ (.*)@(file://|data://)?(.*)$ ]]; then
+    if [[ "$exit_code" -ne 10 && "$last_token" =~ (.*)@(file://|data://)?(.*)$ ]]; then
       local before_at="${BASH_REMATCH[1]}"
       local protocol="${BASH_REMATCH[2]}"
       file_part="${BASH_REMATCH[3]}"

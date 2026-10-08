@@ -14,7 +14,7 @@ ____APPNAME___zsh_autocomplete() {
   # Patterns can appear anywhere in the word (e.g., inside quotes: 'my file is @file://path')
   local cur="${words[CURRENT]}"
 
-  if [[ "$cur" = *'@'* ]]; then
+  if [[ "$exit_code" -ne 10 && "$cur" = *'@'* ]]; then
     # Extract everything after the last @
     local after_last_at="${cur##*@}"
 

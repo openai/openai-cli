@@ -50,7 +50,7 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
   $forceFileCompletion = $false
 
 
-  if ($wordContent -match '^(.*)@(file://|data://)?(.*)$') {
+  if ($exitCode -ne 10 -and $wordContent -match '^(.*)@(file://|data://)?(.*)$') {
     $prefix = $leadingQuote + $Matches[1] + '@' + $Matches[2]
     $filePart = $Matches[3]
     $forceFileCompletion = $true
