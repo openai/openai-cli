@@ -35,7 +35,7 @@ const (
 func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageOutputPlan, next cli.ActionFunc) (err error) {
 	root := command.Root()
 	out := imageCommandWriter(command)
-	if plan == nil || !isTerminal(out) || !isTerminal(os.Stderr) ||
+	if plan == nil || !isTerminal(out) ||
 		root.Bool("debug") || errorOutputFormat(root) != "text" || root.String("transform-error") != "" {
 		return next(ctx, command)
 	}
@@ -43,6 +43,9 @@ func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageO
 	if plan.loadingPrompt != "" {
 		// Keep the visible picker prompt on its UI surface, outside diagnostics.
 		feedback = out.(*os.File) // isTerminal above requires an *os.File.
+	}
+	if !isTerminal(feedback) {
+		return next(ctx, command)
 	}
 	label := "Generating image"
 	switch command.Name {

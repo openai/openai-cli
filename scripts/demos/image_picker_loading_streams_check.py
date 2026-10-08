@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
-"""Check picker feedback channels using separate UI and diagnostic PTYs.
+"""Check picker feedback with separate diagnostic PTYs or redirected stderr.
 
 Uses macOS/zsh terminals and synthetic loopback requests only.
-Before: --case error --expect stderr. After: --case retry --case cancel --case direct --expect stdout.
+Separate terminals: --case retry --case cancel --case direct --expect stdout.
+
+Redirected-stderr regression (run from the repository root):
+  python3 -B -I scripts/demos/image_picker_loading_streams_check.py BEFORE_BINARY BEFORE_OUTPUT \
+    --source-commit BEFORE_COMMIT --expect none --case redirected-retry
+  python3 -B -I scripts/demos/image_picker_loading_streams_check.py AFTER_BINARY AFTER_OUTPUT \
+    --source-commit AFTER_COMMIT --expect stdout --case redirected-retry --case redirected-cancel --case redirected-direct --case retry --case direct
+
+Each output directory must be new. The baseline observes a gated pending interval;
+it does not wait for feedback that the affected binary suppresses.
+Cancellation requires active feedback; the baseline bypasses its signal handler.
 """
 
 import argparse
@@ -30,15 +40,19 @@ PROMPT = 'SYNTHETIC_PICKER_PRIVATE'
 RETRY = PROMPT + ' retry'
 DIRECT = 'SYNTHETIC_DIRECT_PRIVATE'
 WIDTHS = {'stdout': 96, 'stderr': 60}
+FEEDBACK = (b'Generating image', b'Saving image', b'Images saved | ', b' elapsed', b'Ctrl+C to cancel')
 
 
 class SplitProcess(Process):
     """Reuse picker input and lifecycle helpers while capturing channels separately."""
 
-    def __init__(self, binary, env, args=None):
+    def __init__(self, binary, env, args=None, *, stderr_pipe=False):
         self.streams = {'stdout': bytearray(), 'stderr': bytearray()}
-        err_master, err_slave = pty.openpty()
-        fcntl.ioctl(err_slave, termios.TIOCSWINSZ, struct.pack('HHHH', 28, WIDTHS['stderr'], 0, 0))
+        if stderr_pipe:
+            err_master, err_slave = os.pipe()
+        else:
+            err_master, err_slave = pty.openpty()
+            fcntl.ioctl(err_slave, termios.TIOCSWINSZ, struct.pack('HHHH', 28, WIDTHS['stderr'], 0, 0))
         try:
             super().__init__(binary, env, args, stderr_fd=err_slave)
         except BaseException:
@@ -125,6 +139,17 @@ def offsets(process):
 
 def loading(process, start, prompt, stream):
     label = b'Generating image' + (b" '" + prompt.encode() + b"'" if prompt else b'')
+    if stream == 'none':
+        # Keep the server gated through the delay and first elapsed-time update.
+        pending_at = time.monotonic()
+        process.pump(1.3)
+        pending_seconds = time.monotonic() - pending_at
+        assert pending_seconds >= 1.3, 'the suppressed-feedback observation ended early'
+        assert process.status is None, 'request exited before the response gate opened'
+        for channel, data in process.streams.items():
+            current = bytes(data[start[channel]:])
+            assert not any(marker in current for marker in FEEDBACK), 'suppressed loading appeared on ' + channel
+        return label, pending_seconds
 
     def complete():
         current = process.streams[stream][start[stream]:]
@@ -144,11 +169,13 @@ def loading(process, start, prompt, stream):
         assert PROMPT.encode() not in process.streams['stderr']
         assert RETRY.encode() not in process.streams['stderr']
         assert DIRECT.encode() not in process.streams['stderr']
-    return label
+    return label, None
 
 
 def run(binary, output, case, expected):
-    api = fixture(case)
+    redirected = case.startswith('redirected-')
+    kind = case.removeprefix('redirected-')
+    api = fixture(kind)
     process = None
     output.mkdir(parents=True, exist_ok=False)
     try:
@@ -157,28 +184,33 @@ def run(binary, output, case, expected):
             env = environment(home, api)
             env.update(LC_ALL='C', TERM_SESSION_ID='')
             args = None
-            if case == 'direct':
+            if kind == 'direct':
                 args = ['images', 'generate', '--prompt', DIRECT, '--model', 'gpt-image-2',
                         '--name', 'synthetic-safe-name', '--inline', 'off']
-            process = SplitProcess(binary, env, args)
-            selected = 'stderr' if case == 'direct' else expected
+            process = SplitProcess(binary, env, args, stderr_pipe=redirected)
+            selected = ('none' if redirected else 'stderr') if kind == 'direct' else expected
+            suppression_intervals = []
             start = offsets(process)
-            if case != 'direct':
+            if kind != 'direct':
                 process.ready()
                 start = offsets(process)
                 process.submit(PROMPT)
             process.wait_for(lambda: len(api.requests) == 1)
-            first_label = loading(process, start, None if case == 'direct' else PROMPT, selected)
-            if case == 'cancel':
+            first_label, pending_seconds = loading(process, start, None if kind == 'direct' else PROMPT, selected)
+            assert not api.gates[0].is_set(), 'the request completed before its pending observation'
+            if pending_seconds is not None:
+                suppression_intervals.append(pending_seconds)
+            if kind == 'cancel':
                 canceled_at = time.monotonic()
                 assert process.stop() == 130
                 cancellation_seconds = time.monotonic() - canceled_at
                 assert cancellation_seconds < 1
             else:
                 api.gates[0].set()
-                if case == 'direct':
+                if kind == 'direct':
                     process.wait_for(lambda: process.status is not None)
                     assert process.status == 1
+                    assert b'401' in process.streams['stderr'] and b'Authentication failed' in process.streams['stderr']
                 else:
                     process.wait_for(lambda: b'Authentication failed' in process.streams['stderr'])
                     process.wait_for(lambda: bytes(process.streams['stdout']).count(b'Create image') >= 2)
@@ -187,47 +219,62 @@ def run(binary, output, case, expected):
                     assert b'Generating image' not in reopened[reopened.rfind(b'Create image'):], 'loading redrew over the reopened picker'
                     diagnostic = bytes(process.streams['stderr'])
                     assert b'Generating image' not in diagnostic[diagnostic.index(b'Authentication failed'):], 'loading continued after the error'
-                    if case == 'retry':
+                    if kind == 'retry':
                         start_second = offsets(process)
                         process.send(' retry')
                         process.pump(0.2)
                         process.send(b'\r')
                         process.wait_for(lambda: len(api.requests) == 2)
-                        loading(process, start_second, RETRY, selected)
-                        second = process.streams[selected][start_second[selected]:]
+                        _, pending_seconds = loading(process, start_second, RETRY, selected)
+                        assert not api.gates[1].is_set(), 'retry completed before its pending observation'
+                        if pending_seconds is not None:
+                            suppression_intervals.append(pending_seconds)
+                        second_stream = 'stdout' if selected == 'none' else selected
+                        second = process.streams[second_stream][start_second[second_stream]:]
                         assert first_label not in second, 'retry retained the old loading prompt'
                         api.gates[1].set()
                         process.wait_for(lambda: b'Saved image:' in process.streams['stdout'])
                         process.wait_for(lambda: bytes(process.streams['stdout']).count(b'Create image') >= 3)
                         process.pump(0.9)
                         stdout = bytes(process.streams['stdout'])
-                        assert b'Images saved | ' in process.streams[selected]
+                        if selected != 'none':
+                            assert b'Images saved | ' in process.streams[selected]
                         if selected == 'stdout':
                             assert stdout.index(b'Images saved | ') < stdout.index(b'Saved image:')
                             assert b'Generating image' not in stdout[stdout.index(b'Saved image:'):]
                     assert process.stop() == 130
 
-            count = 2 if case == 'retry' else 1
+            count = 2 if kind == 'retry' else 1
             assert len(api.requests) == len(api.events) == count
             assert all(event == {'method': 'POST', 'path': '/v1/images/generations'} for event in api.events)
-            assert [r['prompt'] for r in api.requests] == ([PROMPT, RETRY] if case == 'retry' else [DIRECT if case == 'direct' else PROMPT])
-            if case == 'retry':
+            assert [r['prompt'] for r in api.requests] == ([PROMPT, RETRY] if kind == 'retry' else [DIRECT if kind == 'direct' else PROMPT])
+            if kind == 'retry':
                 assert {k: v for k, v in api.requests[0].items() if k != 'prompt'} == {
                     k: v for k, v in api.requests[1].items() if k != 'prompt'}, 'retry changed request settings'
             assert not api.errors, api.errors
             captures = {stream: bytes(data) for stream, data in process.streams.items()}
-            last_label = captures[selected].rfind(b'Generating image')
-            assert captures[selected].rfind(b'\r\x1b[J') > last_label, 'final loading frame was not cleared'
-            if expected == 'stdout' or case == 'direct':
+            if selected != 'none':
+                last_label = captures[selected].rfind(b'Generating image')
+                assert last_label >= 0, 'the loading cleanup assertion requires a visible frame'
+                assert captures[selected].rfind(b'\r\x1b[J') > last_label, 'final loading frame was not cleared'
+            else:
+                assert not any(marker in data for data in captures.values() for marker in FEEDBACK)
+            if expected == 'stdout' or kind == 'direct' or redirected:
                 for prompt in (PROMPT, RETRY, DIRECT):
                     assert prompt.encode() not in captures['stderr']
+            if redirected:
+                assert b'\x1b' not in captures['stderr'], 'redirected diagnostics contain terminal controls'
+                assert not any(marker in captures['stderr'] for marker in FEEDBACK), 'feedback leaked into redirected diagnostics'
             files = saved(home)
-            assert len(files) == (1 if case == 'retry' else 0)
+            assert len(files) == (1 if kind == 'retry' else 0)
             record = {'case': case, 'passed': True, 'feedback_stream': selected,
-                      'stdout_columns': WIDTHS['stdout'], 'stderr_columns': WIDTHS['stderr'],
+                      'stdout_columns': WIDTHS['stdout'], 'stderr_columns': None if redirected else WIDTHS['stderr'],
+                      'stderr_capture': 'pipe' if redirected else 'pty',
                       'exit_status': process.status, 'requests': api.requests, 'events': api.events,
                       'saved_files': files, 'diagnostics_contain_picker_prompt': PROMPT.encode() in captures['stderr']}
-            if case == 'cancel':
+            if suppression_intervals:
+                record['suppressed_pending_seconds'] = suppression_intervals
+            if kind == 'cancel':
                 record['cancellation_seconds'] = cancellation_seconds
             (output / 'result.json').write_text(json.dumps(record, indent=2) + '\n')
             return record
@@ -236,7 +283,8 @@ def run(binary, output, case, expected):
             gate.set()
         if process is not None:
             for stream, data in process.streams.items():
-                (output / (stream + '.pty.bin')).write_bytes(data)
+                suffix = '.pipe.bin' if stream == 'stderr' and redirected else '.pty.bin'
+                (output / (stream + suffix)).write_bytes(data)
             process.close()
         (output / 'requests.json').write_text(json.dumps(api.requests, indent=2) + '\n')
         api.close()
@@ -247,9 +295,11 @@ def main():
     parser.add_argument('binary', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--source-commit', required=True)
-    parser.add_argument('--expect', choices=('stdout', 'stderr'), required=True)
-    parser.add_argument('--case', choices=('error', 'retry', 'cancel', 'direct'), action='append', dest='cases', required=True)
+    parser.add_argument('--expect', choices=('stdout', 'stderr', 'none'), required=True)
+    parser.add_argument('--case', choices=('error', 'retry', 'cancel', 'direct', 'redirected-retry', 'redirected-direct', 'redirected-cancel'), action='append', dest='cases', required=True)
     args = parser.parse_args()
+    if args.expect == 'none' and any(case not in ('redirected-retry', 'redirected-direct') for case in args.cases):
+        parser.error('--expect none supports redirected-retry or redirected-direct; cancellation requires active feedback')
     binary = args.binary.resolve()
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
     args.output.mkdir(parents=True, exist_ok=False)
