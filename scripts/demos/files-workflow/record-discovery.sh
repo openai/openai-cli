@@ -43,9 +43,11 @@ python3 - "$demo_output" <<'PY'
 from pathlib import Path
 import sys
 root=Path(sys.argv[1]); after=(root/'after.txt').read_text()
-required=['Upload, inspect, and download files.', 'upload', 'get', 'download', 'Existing create, retrieve, and content', 'files upload "upload space.txt" --purpose user_data', 'files get file-example', 'files download file-example --output "downloaded copy.txt"']
+required=['Upload, inspect, and download files.', 'upload', 'get', 'download', 'files upload "upload space.txt" --purpose user_data', 'files get file-example', 'files download file-example --output "downloaded copy.txt"']
 for value in required:
  if value not in after: raise SystemExit('Missing discovery output: '+value)
+if 'Existing create, retrieve, and content commands remain available.' not in ' '.join(after.split()):
+ raise SystemExit('Missing compatibility guidance')
 actions=after.split('ACTIONS',1)[1].split('Command help:',1)[0]
 positions=[actions.index('  '+name+' ') for name in ['upload','get','download','list','delete']]
 if positions != sorted(positions): raise SystemExit('Workflow commands are not in the expected order')
