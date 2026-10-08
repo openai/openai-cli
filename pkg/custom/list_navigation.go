@@ -365,7 +365,7 @@ func renderListNavigationPage(opts ShowJSONOpts, items []gjson.Result, width int
 	}
 	if (opts.Format == "" || strings.EqualFold(opts.Format, "auto")) &&
 		opts.Transform == "" && !opts.RawOutput {
-		content, supported, err := renderListTablePage(opts.Operation, items, width)
+		content, supported, err := renderListTablePage(opts.Context, opts.Operation, items, width)
 		if err != nil {
 			return "", err
 		}
