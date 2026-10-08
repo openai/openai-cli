@@ -80,7 +80,7 @@ func (m *tokenizerEditor) View() tea.View {
 			if line == "" || line == "▏" {
 				input = lipgloss.NewStyle()
 			}
-			line += strings.Repeat(" ", max(0, width-4-ansi.StringWidth(line)))
+			line = imagePickerPromptFit(line, width-4)
 			// Match the image prompt's explicit edge placement. Terminals can
 			// disagree about the cell width of complete emoji clusters.
 			row := s.border.Render("│") + input.Render(ansi.EraseCharacter(width-2)+" "+line+" ") +
@@ -226,7 +226,7 @@ func (m *tokenizerEditor) editorLine(start, end, cursor, width int) string {
 		used := 0
 		for index > first {
 			part := m.text[m.boundaries[index-1]:min(m.boundaries[index], end)]
-			cells := ansi.StringWidth(tokenizerSourceDisplay(part))
+			cells := tokenizerSourceWidth(tokenizerSourceDisplay(part))
 			if used+cells > max(1, width-3) {
 				break
 			}
@@ -238,7 +238,7 @@ func (m *tokenizerEditor) editorLine(start, end, cursor, width int) string {
 	if index > first {
 		out.WriteRune('…')
 	}
-	used := ansi.StringWidth(out.String())
+	used := tokenizerSourceWidth(out.String())
 	for index < len(m.boundaries) && m.boundaries[index] <= end {
 		offset := m.boundaries[index]
 		if offset == cursor {
@@ -250,7 +250,7 @@ func (m *tokenizerEditor) editorLine(start, end, cursor, width int) string {
 		}
 		part := m.text[offset:min(m.boundaries[index+1], end)]
 		display := tokenizerSourceDisplay(part)
-		cells := ansi.StringWidth(display)
+		cells := tokenizerSourceWidth(display)
 		if used+cells > width-1 {
 			out.WriteRune('…')
 			break
@@ -260,6 +260,18 @@ func (m *tokenizerEditor) editorLine(start, end, cursor, width int) string {
 		index++
 	}
 	return out.String()
+}
+
+// Source windows and padding must share the inline painter's conservative
+// grapheme widths, including terminals that render a ZWJ cluster as scalars.
+func tokenizerSourceWidth(text string) int {
+	width := 0
+	for len(text) > 0 {
+		_, cells, read := imagePickerSequence(text)
+		width += cells
+		text = text[read:]
+	}
+	return width
 }
 
 func (m *tokenizerEditor) fragment(index int) (string, int, int) {

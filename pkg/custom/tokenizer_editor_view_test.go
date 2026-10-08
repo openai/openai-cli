@@ -325,3 +325,37 @@ func TestTokenizerEditorLargeTokenJumpUsesBoundedWindow(t *testing.T) {
 	require.Less(t, len(frame), 4096)
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256<<10), "jumping must not format the skipped tokens")
 }
+
+func TestTokenizerEditorSourceBordersSurviveInlinePainter(t *testing.T) {
+	for _, theme := range []string{"light", "dark", "NO_COLOR"} {
+		t.Run(theme, func(t *testing.T) {
+			m := testTokenizerEditor()
+			m.color, m.dark = theme != "NO_COLOR", theme != "light"
+			source := "Line one\r\n日本語 and e\u0301\nEmoji 👩‍💻\tend\n"
+			m.insert(source)
+			m.cursor = len("Line one\r\n日本語 and e\u0301")
+			frame := imagePickerInlineFrame(m.View().Content, m.width)
+			require.Equal(t, 6, strings.Count(ansi.Strip(frame), "│"), "every source row must retain both borders")
+			require.Equal(t, source, m.text)
+		})
+	}
+}
+
+func TestTokenizerEditorEmojiEndCursorSurvivesInlinePainter(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {40, 12}} {
+		for _, cluster := range []string{"👩‍💻", "👨‍👩‍👧‍👦", "1️⃣", "🇯🇵"} {
+			t.Run(fmt.Sprintf("%d/%s", size[0], cluster), func(t *testing.T) {
+				m := testTokenizerEditor()
+				m.width, m.height = size[0], size[1]
+				source := strings.Repeat(cluster, 200)
+				m.insert(source)
+				frame := ansi.Strip(imagePickerInlineFrame(m.View().Content, m.width))
+				require.Contains(t, frame, cluster+"▏", "the ending grapheme and cursor must remain visible")
+				if m.roomy() {
+					require.Equal(t, 6, strings.Count(frame, "│"))
+				}
+				require.Equal(t, source, m.text)
+			})
+		}
+	}
+}

@@ -69,6 +69,15 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	if err != nil {
 		return 0, err
 	}
+	executable, err := os.Executable()
+	if err != nil {
+		return 0, err
+	}
+	terminalOutput, err := newTokenizerTerminalOutput(parent, executable, output)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { err = errors.Join(err, terminalOutput.Close()) }()
 	inputState, err := term.GetState(input.Fd())
 	if err != nil {
 		return 0, err
@@ -89,25 +98,28 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	if _, err := console.MakeRaw(); err != nil {
 		return 0, err
 	}
-	executable, err := os.Executable()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	inputBridge, err := newTokenizerInputBridge(ctx, input)
 	if err != nil {
 		return 0, err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	defer inputBridge.Close()
 	worker := newTokenizerPreviewWorker(ctx, executable)
 	defer worker.Close()
+	painter := newTokenizerPainter(terminalOutput, cancel)
+	defer painter.Stop()
 	model := newTokenizerEditor()
 	model.width, model.height = width, height
 	model.dark = codexGuideDarkBackground(os.Getenv("COLORFGBG"))
 	if invocation != "" {
 		model.invocation = invocation
 	}
-	tracked := &imagePickerOutput{File: output, cancel: cancel}
 	profile := prettyColorProfile(output, os.Environ())
 	model.color = profile >= colorprofile.ANSI
-	inline := &tokenizerEditorInline{model: model, worker: worker, output: tracked, profile: profile}
-	options := []tea.ProgramOption{tea.WithInput(input), tea.WithOutput(tracked), tea.WithContext(ctx),
+	inline := &tokenizerEditorInline{model: model, worker: worker, output: output, profile: profile,
+		painter: painter, input: inputBridge, fail: cancel}
+	options := []tea.ProgramOption{tea.WithInput(inputBridge.Input()), tea.WithOutput(io.Discard), tea.WithContext(ctx),
 		tea.WithWindowSize(width, height), tea.WithColorProfile(profile), tea.WithoutSignalHandler(), tea.WithoutRenderer()}
 	program := tea.NewProgram(inline, options...)
 	listenerDone := make(chan struct{})
@@ -133,6 +145,11 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 			case <-parent.Done():
 				program.Send(tokenizerEditorStopMsg{Code: 130})
 				return
+			case <-inputBridge.Done():
+				if err := inputBridge.Err(); err != nil {
+					program.Send(tokenizerEditorInputErrorMsg{err: err})
+				}
+				return
 			case result, ok := <-worker.Results():
 				if !ok {
 					return
@@ -153,24 +170,52 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	}()
 	_, runErr := program.Run()
 	closeErr := worker.Close()
-	inline.close()
-	writeErr := tracked.Err()
-	if writeErr != nil && errors.Is(runErr, context.Canceled) {
+	inputErr := inputBridge.Close()
+	writeErr := painter.Stop()
+	cleanupErr := closeTokenizerEditorFrame(terminalOutput, inline.close(), model.exitCode != 0)
+	if (writeErr != nil || inline.err != nil) && errors.Is(runErr, context.Canceled) {
 		// A failed write cancels the private loop, not the user's operation.
 		runErr = nil
 	}
-	return model.exitCode, errors.Join(runErr, writeErr, inline.err, closeErr, parent.Err())
+	return model.exitCode, errors.Join(runErr, writeErr, inline.err, closeErr, inputErr, cleanupErr, parent.Err())
 }
 
 type tokenizerEditorSizeErrorMsg struct{}
 type tokenizerEditorWrapTimeout struct{}
+type tokenizerEditorInputErrorMsg struct{ err error }
 
-// The image picker owns the shared frame and failed-write primitives. This
-// wrapper adds revision-bound preview work without changing the image session.
+// A terminal that stops accepting output cannot receive an unbounded cleanup
+// write. Native input/output modes still restore in the runner's defer.
+func closeTokenizerEditorFrame(output tokenizerFrameOutput, frame string, interrupted bool) error {
+	if frame == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	n, err := output.WriteContext(ctx, []byte(frame))
+	if interrupted && errors.Is(err, context.DeadlineExceeded) {
+		return nil
+	}
+	if err == nil && n != len(frame) {
+		err = io.ErrShortWrite
+	}
+	return err
+}
+
+type tokenizerFramePainter interface {
+	Control(string)
+	Frame(string)
+}
+
+// Reuse the image picker's frame layout while keeping terminal backpressure
+// outside the model and retaining the tokenizer's exact input bytes.
 type tokenizerEditorInline struct {
 	model                             *tokenizerEditor
 	worker                            *tokenizerPreviewWorker
-	output                            *imagePickerOutput
+	output                            *os.File
+	painter                           tokenizerFramePainter
+	input                             *tokenizerInputBridge
+	fail                              context.CancelFunc
 	profile                           colorprofile.Profile
 	started, modesActive, restoreWrap bool
 	content                           string
@@ -184,12 +229,18 @@ func (p *tokenizerEditorInline) Init() tea.Cmd {
 	if p.model.color {
 		query += ansi.RequestBackgroundColor
 	}
-	_, _ = io.WriteString(p.output, query)
+	p.painter.Control(query)
 	return tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg { return tokenizerEditorWrapTimeout{} })
 }
 
 func (p *tokenizerEditorInline) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if p.input != nil {
+		message = p.input.Resolve(message)
+	}
 	switch msg := message.(type) {
+	case tokenizerEditorInputErrorMsg:
+		p.err = msg.err
+		return p, tea.Quit
 	case tokenizerEditorSizeErrorMsg:
 		p.err = errors.New("could not read terminal size")
 		return p, tea.Quit
@@ -230,14 +281,14 @@ func (p *tokenizerEditorInline) start() {
 		return
 	}
 	p.started = true
-	_, _ = io.WriteString(p.output, ansi.SetModeAutoWrap)
+	p.painter.Control(ansi.SetModeAutoWrap)
 }
 
 func (p *tokenizerEditorInline) draw() {
 	width, height, err := term.GetSize(p.output.Fd())
 	if err != nil {
 		p.err = errors.New("could not read terminal size")
-		p.output.cancel()
+		p.fail()
 		return
 	}
 	p.model.width, p.model.height = width, height
@@ -247,21 +298,23 @@ func (p *tokenizerEditorInline) draw() {
 	if content == p.content && width == p.width && height == p.height {
 		return
 	}
-	_, _ = io.WriteString(p.output, imagePickerInlineFrame(content, width))
+	p.painter.Frame(imagePickerInlineFrame(content, width))
 	p.content, p.width, p.height = content, width, height
 }
 
-func (p *tokenizerEditorInline) close() {
+func (p *tokenizerEditorInline) close() string {
 	if !p.modesActive {
-		return
+		return ""
 	}
-	cleanup := ansi.ResetModeBracketedPaste + ansi.SetModeTextCursorEnable
+	// Cancel a partial escape sequence before restoring visible terminal modes.
+	cleanup := "\x18\x1b\\" + ansi.ResetStyle
 	if p.started {
-		cleanup = "\r" + ansi.EraseScreenBelow + cleanup
+		cleanup += "\r" + ansi.EraseScreenBelow
 	}
+	cleanup += ansi.ResetModeBracketedPaste + ansi.SetModeTextCursorEnable
 	if p.restoreWrap {
 		cleanup += ansi.ResetModeAutoWrap
 	}
-	_, _ = io.WriteString(p.output, cleanup)
 	p.started, p.modesActive = false, false
+	return cleanup
 }

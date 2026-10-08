@@ -37,6 +37,7 @@ Opens the live editor in a terminal. Use count or inspect for scripts.
 			{Name: "encodings", Usage: "List the embedded tokenizer encodings", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate, Action: handleTokenizerEncodings},
 			{Name: "licenses", Usage: "Print the bundled tokenizer license notices", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate, Action: handleTokenizerLicenses},
 			tokenizerPreviewCommand(),
+			tokenizerTerminalOutputCommand(),
 		},
 	})
 }

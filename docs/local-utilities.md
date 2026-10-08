@@ -30,6 +30,7 @@ The Bytes view exposes token fragments that split a Unicode character.
 Editing clears stale results immediately.
 The editor cancels superseded computations and displays only the current revision.
 Long unbroken text can take time; editing and quitting remain available during computation.
+Terminal output runs independently, so a blocked display does not stop keyboard handling.
 If computation fails, edit the text or press `r` while results have focus.
 The draft remains available until you exit; the CLI never saves it.
 
@@ -152,6 +153,7 @@ The live editor replaces tokenization work when you edit text or select another 
 | Invalid or oversized paste | The editor keeps the complete previous draft. | Paste valid UTF-8 within the 1 MiB total limit. The editor never truncates accepted input. |
 | Terminal becomes too small | The draft and current results remain in memory. | Resize to at least 40 columns by 12 rows, or press Ctrl+C. |
 | Editor startup or display fails | The CLI attempts terminal restoration and exits nonzero. | Use `tokenizer count` or `tokenizer inspect` with an explicit source. |
+| Terminal stops accepting output | Cancellation still restores native terminal modes. Final display cleanup may not reach the terminal. | Press Ctrl+C to exit, then restore terminal output before continuing. |
 | Editor exits or receives a termination signal | The draft is discarded; no files or settings change. | Keep important source text in your own file before opening the editor. |
 | No input in a terminal | No token result. | Supply `--text`, `--file`, or a pipe. Use `--file -` for interactive stdin. |
 | Conflicting or repeated input options | No token result; input stays unread. | Supply each option once and choose either `--text` or `--file`. |

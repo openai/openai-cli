@@ -83,6 +83,7 @@ func TestMainTokenizerEditorHelpAndDiscoveryStayNonInteractive(t *testing.T) {
 			require.Contains(t, got.stdout, "inspect")
 			require.NotContains(t, got.stdout, "Key setup:")
 			require.NotContains(t, got.stdout, "__preview")
+			require.NotContains(t, got.stdout, "__output")
 			require.NotContains(t, got.stdout, "\x1b")
 		})
 	}
@@ -97,12 +98,15 @@ func TestMainTokenizerEditorHelpAndDiscoveryStayNonInteractive(t *testing.T) {
 		require.Empty(t, got.stderr)
 		require.Contains(t, got.stdout, "inspect")
 		require.NotContains(t, got.stdout, "\x1b")
-		hidden := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, "tokenizer", "__p")...)
+		hidden := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, "tokenizer", "__")...)
 		require.Zero(t, hidden.code, "%s", hidden.stderr)
 		require.Empty(t, hidden.stdout)
 		require.Empty(t, hidden.stderr)
 	}
 	hiddenHelp := runMainDispatchWithEnv(t, "bash", env, "openai", "help", "tokenizer", "__preview")
+	require.NotZero(t, hiddenHelp.code)
+	require.Empty(t, hiddenHelp.stdout)
+	hiddenHelp = runMainDispatchWithEnv(t, "bash", env, "openai", "help", "tokenizer", "__output")
 	require.NotZero(t, hiddenHelp.code)
 	require.Empty(t, hiddenHelp.stdout)
 }

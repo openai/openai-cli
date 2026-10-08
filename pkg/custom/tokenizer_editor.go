@@ -67,6 +67,8 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.keepSelectionVisible()
 	case tea.BackgroundColorMsg:
 		m.dark = msg.IsDark()
+	case tokenizerInputPasteErrorMsg:
+		m.note = msg.message
 	case tokenizerEditorDebounceMsg:
 		m.debouncing = false
 		if msg.revision != m.revision && m.updating {

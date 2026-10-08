@@ -5,9 +5,9 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -56,29 +56,11 @@ func TestTokenizerEditorFormatRecoveryDistinguishesScriptCommands(t *testing.T) 
 func TestTokenizerEditorModesRestoreOnEarlyExit(t *testing.T) {
 	for _, started := range []bool{false, true} {
 		for _, restoreWrap := range []bool{false, true} {
-			file, err := os.CreateTemp(t.TempDir(), "terminal-writes")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer file.Close()
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			tracked := &imagePickerOutput{File: file, cancel: cancel}
-			inline := &tokenizerEditorInline{model: newTokenizerEditor(), output: tracked}
+			paint := &tokenizerRecordedFrames{}
+			inline := &tokenizerEditorInline{model: newTokenizerEditor(), painter: paint}
 			_ = inline.Init()
 			inline.started, inline.restoreWrap = started, restoreWrap
-			inline.close()
-			inline.close()
-			if err := tracked.Err(); err != nil {
-				t.Fatal(err)
-			}
-			if ctx.Err() != nil {
-				t.Fatal("successful cleanup canceled context")
-			}
-			data, err := os.ReadFile(file.Name())
-			if err != nil {
-				t.Fatal(err)
-			}
+			data := []byte(paint.String() + inline.close() + inline.close())
 			for _, control := range []string{ansi.ResetModeBracketedPaste, ansi.SetModeTextCursorEnable} {
 				if bytes.Count(data, []byte(control)) != 1 {
 					t.Fatalf("cleanup did not restore %q exactly once", control)
@@ -91,5 +73,25 @@ func TestTokenizerEditorModesRestoreOnEarlyExit(t *testing.T) {
 				t.Fatal("cleanup cleared before the first frame")
 			}
 		}
+	}
+}
+
+type tokenizerRecordedFrames struct{ strings.Builder }
+
+func (p *tokenizerRecordedFrames) Control(data string) { _, _ = p.WriteString(data) }
+func (p *tokenizerRecordedFrames) Frame(data string)   { _, _ = p.WriteString(data) }
+
+func TestTokenizerEditorCleanupCannotBlockCancellation(t *testing.T) {
+	writer := &tokenizerPainterProbe{entered: make(chan string, 1), resume: make(chan struct{})}
+	start := time.Now()
+	if err := closeTokenizerEditorFrame(writer, "cleanup", true); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("cleanup did not respect its bounded cancellation scope")
+	}
+	writer = &tokenizerPainterProbe{entered: make(chan string, 1), resume: make(chan struct{})}
+	if err := closeTokenizerEditorFrame(writer, "cleanup", false); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ordinary cleanup failure was lost: %v", err)
 	}
 }
