@@ -190,19 +190,24 @@ func TestMainNativeShell(t *testing.T) {
 				}
 				t.Run(name, func(t *testing.T) {
 					short := runNativeShell(t, shell, directory, home, "not-a-url", invocation+" images generate --help")
-					var command string
-					for line := range strings.SplitSeq(short.stdout, "\n") {
-						if after, ok := strings.CutPrefix(strings.TrimSpace(line), "Key setup: "); ok {
-							command = after
-							break
+					for _, link := range []struct{ label, content string }{
+						{"Key setup: ", "OPENAI_API_KEY"},
+						{"Global option details: ", "--api-key KEY"},
+					} {
+						var command string
+						for line := range strings.SplitSeq(short.stdout, "\n") {
+							if after, ok := strings.CutPrefix(strings.TrimSpace(line), link.label); ok {
+								command = after
+								break
+							}
 						}
-					}
-					if short.code != 0 || command == "" {
-						t.Fatalf("help lacks a copyable setup command: %+v", short)
-					}
-					got := runNativeShell(t, shell, directory, home, "not-a-url", command)
-					if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "OPENAI_API_KEY") {
-						t.Fatalf("displayed command %q failed: %+v", command, got)
+						if short.code != 0 || command == "" {
+							t.Fatalf("help lacks a copyable %s command: %+v", link.label, short)
+						}
+						got := runNativeShell(t, shell, directory, home, "not-a-url", command)
+						if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, link.content) {
+							t.Fatalf("displayed command %q failed: %+v", command, got)
+						}
 					}
 				})
 				for _, full := range []bool{false, true} {
@@ -217,7 +222,12 @@ func TestMainNativeShell(t *testing.T) {
 						home := t.TempDir()
 						short := runNativeShell(t, shell, directory, home, "not-a-url", invocation+helpArgs)
 						var command string
-						for line := range strings.SplitSeq(short.stdout, "\n") {
+						_, examples, found := strings.Cut(short.stdout, "EXAMPLES:\n")
+						if !found {
+							t.Fatalf("help omitted its executable examples: %+v", short)
+						}
+						examples, _, _ = strings.Cut(examples, "\nOPTIONS:")
+						for line := range strings.SplitSeq(examples, "\n") {
 							if strings.Contains(line, " images generate --prompt ") {
 								command = strings.TrimSpace(line)
 								break

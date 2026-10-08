@@ -180,7 +180,7 @@ func TestConfigureHelpPreservesImageGuidance(t *testing.T) {
 		}
 		content := command.Metadata["help-content"].(clihelp.Content)
 		for _, want := range wantGuidance[command.Name] {
-			if !strings.Contains(content.Description, want) {
+			if !strings.Contains(content.Description+"\n"+content.GlobalOptionsNote, want) {
 				t.Errorf("%s help lost %q: %s", command.Name, want, content.Description)
 			}
 		}
@@ -192,7 +192,7 @@ func TestConfigureHelpPreservesImageGuidance(t *testing.T) {
 		command := images.Command("inline").Command(name)
 		content := command.Metadata["help-content"].(clihelp.Content)
 		for _, want := range []string{"future image generation", "No API request or key", "overrides it", "preview ignores", "local Apple Terminal", "--format auto or text only", "cannot use --transform or --raw-output"} {
-			if !strings.Contains(content.Description, want) {
+			if !strings.Contains(content.Description+"\n"+content.GlobalOptionsNote, want) {
 				t.Errorf("inline %s help lost %q: %s", name, want, content.Description)
 			}
 		}

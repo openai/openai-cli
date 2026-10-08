@@ -25,7 +25,11 @@ func TestMainNormalHelpOutputOptions(t *testing.T) {
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("normal help failed: %+v", got)
 			}
-			for _, want := range []string{"\n   Output\n", "--format ", "--transform PATH", "--raw-output"} {
+			wantOptions := []string{"GLOBAL OPTIONS:", "--format", "--transform", "--raw-output", "Global option details: openai --help"}
+			if len(args) == 0 {
+				wantOptions = []string{"\n   Output\n", "--format FORMAT", "--transform PATH", "--raw-output"}
+			}
+			for _, want := range wantOptions {
 				if !strings.Contains(got.stdout, want) {
 					t.Errorf("normal help lacks %q:\n%s", want, got.stdout)
 				}

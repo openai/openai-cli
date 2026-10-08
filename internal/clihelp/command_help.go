@@ -10,8 +10,11 @@ import (
 // Content supplies complete handwritten guidance without changing command behavior.
 // Command examples omit the executable; the renderer supplies the safe invocation.
 type Content struct {
-	Description string
-	Examples    []Example
+	Summary           string
+	InputNote         string
+	Description       string
+	Examples          []Example
+	GlobalOptionsNote string
 }
 
 type Example struct {
@@ -49,16 +52,33 @@ func commandHelpAtWidth(command *cli.Command, invocation, path string, width int
 	if path == "" {
 		usage = "Use the OpenAI API from your terminal."
 	}
-	out.WriteString(wrapDescription(usage, "   ", width))
-	fmt.Fprintf(&out, "\nSYNOPSIS:\n   %s\n", commandSynopsis(command, name, invocation))
-
 	content, supplied := command.Metadata["help-content"].(Content)
 	if !supplied {
 		content = Content{Description: command.Description, Examples: examples[path]}
 	}
-	if content.Description != "" {
+	plainUsage := terminalProse(usage)
+	summary := terminalProse(content.Summary)
+	if summary == "" {
+		summary = commandSummary(plainUsage)
+	}
+	out.WriteString(wrapPlainDescription(summary, "   ", width))
+	out.WriteString("\nSYNOPSIS:\n")
+	out.WriteString(commandSynopsis(command, name, invocation, width))
+	note := content.InputNote
+	if note == "" {
+		note = synopsisInputNote(command)
+	}
+	if note != "" {
+		out.WriteByte('\n')
+		out.WriteString(wrapDescription(note, "   ", width))
+	}
+	description := content.Description
+	if strings.Join(strings.Fields(plainUsage), " ") != strings.Join(strings.Fields(summary), " ") {
+		description = joinHelpDescriptions(usage, description)
+	}
+	if description != "" {
 		out.WriteString("\nDESCRIPTION:\n")
-		out.WriteString(wrapDescription(content.Description, "   ", width))
+		out.WriteString(wrapDescription(description, "   ", width))
 	}
 	if path == "" {
 		fmt.Fprintf(&out, "\nSTART HERE\n   %s help setup\n   %s models list\n", invocation, invocation)
@@ -90,8 +110,13 @@ func commandHelpAtWidth(command *cli.Command, invocation, path string, width int
 		out.WriteString(fullFlagGroups(command, flags, width))
 	}
 	if flags := command.VisiblePersistentFlags(); len(flags) > 0 {
-		out.WriteString("\nGLOBAL OPTIONS:")
-		out.WriteString(fullFlagGroups(command, flags, width))
+		out.WriteString("\nGLOBAL OPTIONS:\n")
+		out.WriteString(globalFlagIndex(flags, width))
+		if content.GlobalOptionsNote != "" {
+			out.WriteByte('\n')
+			out.WriteString(wrapDescription(content.GlobalOptionsNote, "   ", width))
+		}
+		fmt.Fprintf(&out, "\n   Global option details: %s --help\n", invocation)
 	}
 	if path == "" {
 		out.WriteString("\nAdd --help (or -h) to any command. Help needs no API key or internet.\n")
@@ -100,22 +125,49 @@ func commandHelpAtWidth(command *cli.Command, invocation, path string, width int
 	return out.String()
 }
 
-func commandSynopsis(command *cli.Command, name, invocation string) string {
-	if command.UsageText != "" {
-		// Existing handwritten usage uses the public command name. Replace only
-		// that leading executable, never filenames or arbitrary description text.
-		return strings.Replace(command.UsageText, "openai ", invocation+" ", 1)
+func commandSummary(usage string) string {
+	paragraph, _, _ := strings.Cut(usage, "\n\n")
+	paragraph = strings.Join(strings.Fields(paragraph), " ")
+	for i := range len(paragraph) - 1 {
+		if strings.ContainsRune(".!?", rune(paragraph[i])) && paragraph[i+1] == ' ' {
+			return paragraph[:i+1]
+		}
 	}
-	// Required request fields may also arrive through stdin. The required-input
-	// reference describes those fields without making flags the only syntax.
-	name += " [OPTIONS]"
-	if len(VisibleCommands(command)) > 0 {
-		name += " COMMAND"
+	return paragraph
+}
+
+func joinHelpDescriptions(descriptions ...string) string {
+	var paragraphs []string
+	seen := map[string]bool{}
+	for _, description := range descriptions {
+		for _, paragraph := range strings.Split(description, "\n\n") {
+			key := strings.Join(strings.Fields(paragraph), " ")
+			if key != "" && !seen[key] {
+				paragraphs = append(paragraphs, paragraph)
+				seen[key] = true
+			}
+		}
 	}
-	if command.ArgsUsage != "" {
-		name += " " + command.ArgsUsage
+	return strings.Join(paragraphs, "\n\n")
+}
+
+func globalFlagIndex(flags []cli.Flag, width int) string {
+	var names []string
+	seen := map[string]bool{}
+	for _, flag := range flags {
+		for _, name := range flag.Names() {
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			prefix := "--"
+			if len(name) == 1 {
+				prefix = "-"
+			}
+			names = append(names, prefix+name)
+		}
 	}
-	return name
+	return wrapPlainDescription(strings.Join(names, ", "), "   ", width)
 }
 
 var examples = map[string][]Example{

@@ -95,6 +95,7 @@ openai --help                      # Command groups and global options
 
 Add `--help` (or `-h`) to any command for its complete help page.
 `openai help COMMAND` shows the same page.
+Command pages list global options. Use `openai --help` for their full descriptions.
 You can place `--help` after valid command options.
 The old `help --all` spelling prints migration guidance and the complete page.
 Command behavior, defaults, and output formats remain unchanged.

@@ -115,7 +115,11 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 					t.Errorf("full help lost command %q", child.Name)
 				}
 			}
-			for _, text := range []string{"--header", "OPENAI_CUSTOM_HEADERS"} {
+			headerReference := []string{"--header", "Global option details: openai --help"}
+			if len(path) == 0 {
+				headerReference = []string{"--header", "OPENAI_CUSTOM_HEADERS"}
+			}
+			for _, text := range headerReference {
 				if !strings.Contains(got.stdout, text) {
 					t.Errorf("full help lost request-header documentation %q", text)
 				}
@@ -210,11 +214,11 @@ func TestMainHelpKeepsAPIProjectInCommandOptions(t *testing.T) {
 		t.Fatalf("API project input is missing: %s", got.stdout)
 	}
 	for _, heading := range []string{"Authentication", "Output", "Request options", "Troubleshooting"} {
-		if strings.Contains(local, heading) || !strings.Contains(global, heading) {
-			t.Errorf("%q should group only global flags: %s", heading, got.stdout)
+		if strings.Contains(local, "\n   "+heading+"\n") {
+			t.Errorf("global group %q appeared among local API fields: %s", heading, got.stdout)
 		}
 	}
-	if !strings.Contains(global, "--base-url") || !strings.Contains(global, "--format FORMAT") {
+	if !strings.Contains(global, "--base-url") || !strings.Contains(global, "--format") || !strings.Contains(global, "Global option details: openai --help") {
 		t.Errorf("global configuration is missing: %s", global)
 	}
 }
@@ -225,14 +229,14 @@ func TestMainHelpFullReferenceNullableDefaults(t *testing.T) {
 		flag, wantDefault string
 	}{
 		{[]string{"beta:assistants", "create"}, "--description TEXT", ""},
-		{[]string{"images", "generate"}, "--output-format TEXT", "Default: png"},
+		{[]string{"images", "generate"}, "--output-format FORMAT", "Default: png"},
 	} {
 		t.Run(strings.Join(tc.path, "/"), func(t *testing.T) {
 			got := runMainDispatch(t, "bash", append([]string{"openai", "help"}, tc.path...)...)
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("full reference failed: %+v", got)
 			}
-			_, details, found := strings.Cut(got.stdout, tc.flag)
+			_, details, found := strings.Cut(got.stdout, "\n   "+tc.flag+"\n")
 			if !found {
 				t.Fatalf("full reference lost %s", tc.flag)
 			}

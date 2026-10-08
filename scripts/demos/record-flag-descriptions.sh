@@ -101,11 +101,13 @@ with (directory / "metadata.txt").open("a") as stream:
     stream.write(f"{scene}: {len(rows)} complete terminal lines; excerpt shows {min(len(rows), 70)}\n")
 PYTHON
 
-for demo_topic in root images-generate; do
+for demo_topic in root images-generate responses-create models-retrieve; do
   demo_expected_status=0
   case "$demo_topic" in
     root) demo_args=(--help);;
     images-generate) demo_args=(images generate --help);;
+    responses-create) demo_args=(responses create --help);;
+    models-retrieve) demo_args=(models retrieve --help);;
   esac
   {
     cat <<'SCENE'

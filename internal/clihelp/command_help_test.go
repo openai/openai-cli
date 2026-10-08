@@ -112,6 +112,121 @@ func TestCompleteHelpContentOverridesExamplesAndDescription(t *testing.T) {
 	}
 }
 
+func TestCommandNameKeepsLongUsageInDescription(t *testing.T) {
+	command := &cli.Command{Name: "create",
+		Usage:       "Create a response. Preserve the complete API restriction.\n\nRead [the guide](https://example.invalid/guide).",
+		Description: "Keep the authored caveat.",
+	}
+	got := commandHelpAtWidth(command, "openai", "responses create", 80)
+	name, rest, found := strings.Cut(got, "\nSYNOPSIS:")
+	if !found || !strings.Contains(name, "Create a response.") || strings.Contains(name, "restriction") {
+		t.Fatalf("NAME is not a short command identity: %s", name)
+	}
+	_, description, found := strings.Cut(rest, "\nDESCRIPTION:\n")
+	if !found {
+		t.Fatal("long usage has no DESCRIPTION")
+	}
+	for _, want := range []string{"Create a response. Preserve the complete API restriction.", "the guide (https://example.invalid/guide)", "Keep the authored caveat."} {
+		if !strings.Contains(description, want) {
+			t.Errorf("DESCRIPTION lost %q: %s", want, description)
+		}
+	}
+}
+
+func TestAuthoredSummaryPreservesUsageAndContentContract(t *testing.T) {
+	command := &cli.Command{Name: "create", Usage: "A long existing usage sentence with important input details.",
+		Description: "Superseded description.",
+		Metadata: map[string]any{"help-content": Content{
+			Summary: "Create an item.", Description: "Keep the complete feature caveat.",
+		}},
+	}
+	got := commandHelpAtWidth(command, "openai", "items create", 100)
+	name, _, _ := strings.Cut(got, "\nSYNOPSIS:")
+	if !strings.Contains(name, "Create an item.") || strings.Contains(name, "existing usage") {
+		t.Fatalf("authored summary was not used: %s", name)
+	}
+	if !strings.Contains(got, command.Usage) || !strings.Contains(got, "Keep the complete feature caveat.") || strings.Contains(got, "Superseded") {
+		t.Fatalf("description content changed: %s", got)
+	}
+}
+
+func TestInputNoteOverridesOnlySynopsisGuidance(t *testing.T) {
+	prompt := &requestflag.Flag[string]{Name: "prompt", Required: true, BodyPath: "prompt"}
+	before := *prompt
+	var parsed string
+	command := &cli.Command{Name: "generate", Flags: []cli.Flag{prompt},
+		Metadata: map[string]any{"help-content": Content{InputNote: "Choose a prompt interactively or supply it through flags or piped JSON/YAML."}},
+		Action: func(_ context.Context, command *cli.Command) error {
+			parsed = command.String("prompt")
+			return nil
+		},
+	}
+	root := &cli.Command{Name: "openai", Commands: []*cli.Command{command}}
+	args := []string{"openai", "generate", "--prompt", "synthetic prompt"}
+	normalized, help, err := Configure(root, args)
+	if err != nil || help || !slices.Equal(normalized, args) {
+		t.Fatalf("authored note changed normal routing: %q, %v, %v", normalized, help, err)
+	}
+	got := commandHelpAtWidth(command, "openai", "generate", 100)
+	if !strings.Contains(got, "Choose a prompt interactively") || strings.Contains(got, "Required request inputs:") {
+		t.Fatalf("authored input note did not replace automatic guidance: %s", got)
+	}
+	if !reflect.DeepEqual(*prompt, before) || command.Flags[0] != prompt {
+		t.Fatal("authored note changed a flag declaration")
+	}
+	if err := root.Run(t.Context(), normalized); err != nil {
+		t.Fatal(err)
+	}
+	if parsed != "synthetic prompt" {
+		t.Fatalf("normal parser received %q", parsed)
+	}
+}
+
+func TestInheritedGlobalIndexKeepsEveryNameAndRootReference(t *testing.T) {
+	var out bytes.Buffer
+	leaf := &cli.Command{Name: "run", Flags: []cli.Flag{&cli.StringFlag{Name: "project", Usage: "Local project field."}},
+		Metadata: map[string]any{"help-content": Content{GlobalOptionsNote: "This command supports text output only."}},
+	}
+	root := &cli.Command{Name: "openai", Writer: &out, Commands: []*cli.Command{leaf}, Flags: []cli.Flag{
+		&cli.StringFlag{Name: "root-option", Aliases: []string{"r"}, Usage: "Complete inherited explanation."},
+		&cli.StringFlag{Name: "project", Usage: "Root project explanation."},
+		&cli.BoolFlag{Name: "hidden-global", Hidden: true},
+		&cli.BoolFlag{Name: "root-only", Local: true},
+	}}
+	for i := range 12 {
+		root.Flags = append(root.Flags, &cli.BoolFlag{Name: fmt.Sprintf("future-%02d", i), Usage: "Keep future flags visible."})
+	}
+	args, _, err := Configure(root, []string{"/tmp/CLI build/openai", "run", "--help"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Run(t.Context(), args); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	_, index, found := strings.Cut(got, "\nGLOBAL OPTIONS:\n")
+	if !found {
+		t.Fatal("missing inherited flag index")
+	}
+	for _, want := range []string{"--root-option, -r", "--future-00", "--future-11", "Global option details: '/tmp/CLI build/openai' --help", "This command supports text output only."} {
+		if !strings.Contains(index, want) {
+			t.Errorf("global index lost %q: %s", want, index)
+		}
+	}
+	for _, absent := range []string{"Complete inherited explanation", "Root project explanation", "--project", "--hidden-global", "--root-only"} {
+		if strings.Contains(index, absent) {
+			t.Errorf("global index contains %q: %s", absent, index)
+		}
+	}
+	if !strings.Contains(got, "Local project field.") {
+		t.Fatal("local flag description was removed")
+	}
+	rootHelp := commandHelpAtWidth(root, "openai", "", 80)
+	if !strings.Contains(rootHelp, "Complete inherited explanation.") || !strings.Contains(rootHelp, "Root project explanation.") {
+		t.Fatal("root help lost full global descriptions")
+	}
+}
+
 func TestGoRunInvocationIsCopyableFromSourceCheckout(t *testing.T) {
 	project := t.TempDir()
 	t.Chdir(project)

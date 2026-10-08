@@ -42,6 +42,24 @@ func TestMainGlobalFlagDescriptions(t *testing.T) {
 			got := runMainDispatchWithEnv(t, "bash", nil, args...)
 			require.Zero(t, got.code, got.stderr)
 			require.Empty(t, got.stderr)
+			if len(path) > 0 {
+				_, index, found := strings.Cut(got.stdout, "GLOBAL OPTIONS:\n")
+				require.True(t, found)
+				for _, group := range groups {
+					for _, flag := range group.flags {
+						// Root-local flags become inherited in the separate globals feature.
+						if flag == "--api-key" || flag == "--admin-api-key" || flag == "--webhook-secret" || flag == "--organization" || flag == "--project" {
+							continue
+						}
+						require.Contains(t, index, flag)
+					}
+				}
+				require.Contains(t, index, "Global option details: openai --help")
+				// Execute the reference before checking the full global descriptions.
+				got = runMainDispatch(t, "bash", "openai", "--help")
+				require.Zero(t, got.code, got.stderr)
+				require.Empty(t, got.stderr)
+			}
 			remaining := got.stdout
 			for i, group := range groups {
 				_, after, found := strings.Cut(remaining, "\n   "+group.title+"\n")
@@ -146,9 +164,11 @@ func TestMainGlobalFlagHelpHidesConfiguredValues(t *testing.T) {
 				for _, secret := range []string{"synthetic-env-", "synthetic-flag-", "example.invalid"} {
 					require.NotContains(t, got.stdout+got.stderr, secret)
 				}
-				if route[0] == "help" {
+				if len(route) == 1 {
 					require.Contains(t, got.stdout, "https://api.openai.com/v1")
 					require.Contains(t, got.stdout, "OPENAI_BASE_URL")
+				} else {
+					require.Contains(t, got.stdout, "Global option details: openai --help")
 				}
 			})
 		}

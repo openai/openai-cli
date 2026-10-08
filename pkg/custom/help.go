@@ -1,6 +1,8 @@
 package custom
 
 import (
+	"strings"
+
 	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -110,6 +112,8 @@ func configureImageHelpContent(root *cli.Command) {
 		"It cannot use --transform or --raw-output."
 	for name, content := range map[string]clihelp.Content{
 		"generate": {
+			InputNote: "Supply the prompt with --prompt or piped JSON/YAML (key: prompt).\n" +
+				"Run without flags to enter it in the interactive picker.",
 			Description: "Run without flags to choose settings in an interactive terminal.\n" +
 				"After saving, the picker reopens with your settings. Ctrl+C exits.\n\n" +
 				"Saves to ~/Downloads/gpt-images/. Use --output-dir to choose an existing folder.\n" +
@@ -134,8 +138,9 @@ func configureImageHelpContent(root *cli.Command) {
 		"preview": {
 			Description: imagePreviewDetails + "\nReplace photo.png with your saved image's path.\n" +
 				"Pipes, CI and terminals without supported graphics or color cannot display previews.\n" +
-				"Preview limits: 64 MiB and 16 megapixels. Larger originals are still kept.\n\n" + localOutput,
-			Examples: []clihelp.Example{{Description: "View a saved image:", Command: `images preview "photo.png"`}},
+				"Preview limits: 64 MiB and 16 megapixels. Larger originals are still kept.",
+			Examples:          []clihelp.Example{{Description: "View a saved image:", Command: `images preview "photo.png"`}},
+			GlobalOptionsNote: localOutput,
 		},
 		"models": {
 			Description: "Shows exact model names and checks metadata visibility with your key.\n" +
@@ -158,14 +163,16 @@ func configureImageHelpContent(root *cli.Command) {
 	}
 	if inline := images.Command("inline"); inline != nil {
 		setCompleteHelpContent(inline, clihelp.Content{
-			Description: inline.Description + "\n" + localOutput,
-			Examples:    []clihelp.Example{{Description: "Turn on automatic image previews:", Command: "images inline on"}},
+			Description:       inline.Description,
+			Examples:          []clihelp.Example{{Description: "Turn on automatic image previews:", Command: "images inline on"}},
+			GlobalOptionsNote: localOutput,
 		})
 		for _, name := range []string{"on", "off"} {
 			if command := inline.Command(name); command != nil {
 				setCompleteHelpContent(command, clihelp.Content{
-					Description: command.Description + "\n\n" + localOutput,
-					Examples:    []clihelp.Example{{Description: "Remember automatic image previews " + name + ":", Command: "images inline " + name}},
+					Description:       command.Description,
+					Examples:          []clihelp.Example{{Description: "Remember automatic image previews " + name + ":", Command: "images inline " + name}},
+					GlobalOptionsNote: localOutput,
 				})
 			}
 		}
@@ -212,7 +219,25 @@ func configureHelpGroups(root *cli.Command) {
 			}, sections...)
 		}
 		command.Metadata["help-flag-groups"] = sections
-		command.Metadata["help-flag-labels"] = labels
+		commandLabels := append([]clihelp.FlagLabel(nil), labels...)
+		if positional, ok := command.Metadata["help-positional-flags"].([]string); ok {
+			for _, name := range positional {
+				commandLabels = append(commandLabels, clihelp.FlagLabel{
+					Owner: command, Names: []string{name}, Label: strings.ToUpper(strings.ReplaceAll(name, "-", "_")),
+				})
+			}
+		}
+		if image {
+			for _, label := range []struct{ name, value string }{
+				{"size", "SIZE"}, {"quality", "QUALITY"}, {"background", "BACKGROUND"},
+				{"moderation", "LEVEL"}, {"input-fidelity", "FIDELITY"},
+				{"output-format", "FORMAT"}, {"response-format", "FORMAT"},
+				{"name", "NAME"}, {"inline", "MODE"},
+			} {
+				commandLabels = append(commandLabels, clihelp.FlagLabel{Owner: command, Names: []string{label.name}, Label: label.value})
+			}
+		}
+		command.Metadata["help-flag-labels"] = commandLabels
 		for _, flag := range command.Flags {
 			if limit, ok := flag.(*requestflag.Flag[int64]); ok && limit.Name == "max-items" &&
 				limit.Usage == "The maximum number of items to return (use -1 for unlimited)." {

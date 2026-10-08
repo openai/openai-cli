@@ -17,6 +17,28 @@ type FlagGroup struct {
 	Owner *cli.Command
 }
 
+// FlagUsage supplies display-only guidance for flags declared by Owner.
+type FlagUsage struct {
+	Owner *cli.Command
+	Names []string
+	Usage string
+}
+
+func commandFlagUsage(command *cli.Command, flag cli.Flag, usage string) string {
+	configured, _ := command.Metadata["help-flag-usages"].([]FlagUsage)
+	for _, entry := range configured {
+		if entry.Owner == nil || !slices.Contains(entry.Owner.Flags, flag) {
+			continue
+		}
+		for _, name := range entry.Names {
+			if slices.Contains(flag.Names(), name) {
+				return entry.Usage
+			}
+		}
+	}
+	return usage
+}
+
 func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
 	groups := []FlagGroup{{Title: "Required inputs"}}
 	if configured, ok := command.Metadata["help-flag-groups"].([]FlagGroup); ok {
@@ -86,12 +108,7 @@ func flagReference(command *cli.Command, flag cli.Flag) (string, string) {
 	if label := commandFlagValueLabel(command, flag); label != "" {
 		heading += " " + label
 	}
-	usage := fileInputUsage(flag, doc.GetUsage())
-	if start := strings.IndexByte(usage, '`'); start >= 0 {
-		if end := strings.IndexByte(usage[start+1:], '`'); end >= 0 {
-			usage = usage[:start] + usage[start+1:start+1+end] + usage[start+end+2:]
-		}
-	}
+	usage := fileInputUsage(flag, commandFlagUsage(command, flag, doc.GetUsage()))
 	if multi, ok := flag.(cli.DocGenerationMultiValueFlag); ok && multi.IsMultiValueFlag() &&
 		!strings.Contains(strings.ToLower(usage), "repeat") {
 		usage += "\nCan be used more than once."
@@ -128,7 +145,7 @@ func writeFlagDescription(out *strings.Builder, description string, width int) {
 		// their boundaries without inferring values from arbitrary flag prose.
 		if strings.HasPrefix(line, "Default:") || strings.HasPrefix(line, "Env:") {
 			flush()
-			out.WriteString(wrapDescription(line, "      ", width))
+			out.WriteString(wrapPlainDescription(line, "      ", width))
 		} else {
 			prose = append(prose, line)
 		}

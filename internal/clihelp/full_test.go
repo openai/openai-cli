@@ -102,7 +102,11 @@ func TestFullHelpPreservesCategoriesGlobalOptionsAndDescriptions(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := out.String()
-			for _, want := range []string{"GLOBAL OPTIONS:", "--api-key TEXT", "OPENAI_TEST_HELP_KEY"} {
+			globalDetails := []string{"GLOBAL OPTIONS:", "--api-key", "Global option details: openai --help"}
+			if args[len(args)-1] == "--all" {
+				globalDetails = []string{"GLOBAL OPTIONS:", "--api-key TEXT", "OPENAI_TEST_HELP_KEY"}
+			}
+			for _, want := range globalDetails {
 				if !strings.Contains(got, want) {
 					t.Errorf("full help missing %q:\n%s", want, got)
 				}
@@ -110,8 +114,14 @@ func TestFullHelpPreservesCategoriesGlobalOptionsAndDescriptions(t *testing.T) {
 			if strings.Contains(got, "fake-help-test-key") || strings.Contains(got, "Hidden configuration") {
 				t.Fatal("hidden information appeared in full help")
 			}
+			if args[len(args)-1] != "--all" && strings.Contains(got, "OPENAI_TEST_HELP_KEY") {
+				t.Fatal("child help repeated the global reference instead of its index")
+			}
+			if args[len(args)-1] == "images" && (!strings.Contains(got, "--limit INTEGER") || !strings.Contains(got, "Up to ten images.")) {
+				t.Fatal("group help lost its complete local flag description")
+			}
 			if args[len(args)-1] == "generate" {
-				for _, want := range []string{"Image inputs", "--prompt TEXT", "Complete image reference.", "Use a description with blue and `cat`.", "All limits stay here."} {
+				for _, want := range []string{"Image inputs", "--prompt TEXT", "Complete image reference.", "Use a description with blue and cat.", "All limits stay here."} {
 					if !strings.Contains(got, want) {
 						t.Errorf("leaf help missing %q:\n%s", want, got)
 					}
@@ -168,5 +178,52 @@ func TestFullHelpSeparatesFlagEntries(t *testing.T) {
 	got := fullFlagGroups(&cli.Command{}, flags, 80)
 	if !strings.Contains(got, "First setting.\n\n   --second TEXT\n") {
 		t.Fatalf("flag entries lack a blank line: %q", got)
+	}
+}
+
+func TestFlagReferenceNormalizesProseWithoutChangingValues(t *testing.T) {
+	flag := &cli.StringFlag{
+		Name: "path", Value: "`literal` [label](url)",
+		Usage: "Select `fav\\.movie`, `data[0]`, or `auto`. Read [the guide](https://example.invalid).",
+	}
+	if err := flag.PreParse(); err != nil {
+		t.Fatal(err)
+	}
+	before := flag.String()
+	got := fullFlagGroups(&cli.Command{}, []cli.Flag{flag}, 100)
+	for _, want := range []string{`Select fav\.movie, data[0], or auto.`, "Read the guide (https://example.invalid).", "Default: \"`literal` [label](url)\""} {
+		if !strings.Contains(got, want) {
+			t.Errorf("flag reference lost %q: %s", want, got)
+		}
+	}
+	if flag.String() != before || flag.Value != "`literal` [label](url)" {
+		t.Fatal("presentation changed flag behavior or source metadata")
+	}
+}
+
+func TestFlagUsageOverrideRequiresDeclaringOwner(t *testing.T) {
+	rootFlag := &cli.StringFlag{Name: "model", Aliases: []string{"m"}, Usage: "Root model."}
+	localFlag := &cli.StringFlag{Name: "model", Usage: "", Value: "declared-model"}
+	root := &cli.Command{Flags: []cli.Flag{rootFlag}}
+	leaf := &cli.Command{Flags: []cli.Flag{localFlag}}
+	leaf.Metadata = map[string]any{"help-flag-usages": []FlagUsage{
+		{Owner: root, Names: []string{"m"}, Usage: "Root `model` guidance."},
+		{Owner: leaf, Names: []string{"model"}, Usage: "ID of the `model` to retrieve."},
+	}}
+	for _, flag := range []cli.Flag{rootFlag, localFlag} {
+		if err := flag.PreParse(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := fullFlagGroups(leaf, []cli.Flag{localFlag}, 80)
+	if !strings.Contains(got, "ID of the model to retrieve.") || strings.Contains(got, "Root model guidance") {
+		t.Fatalf("local usage inherited another owner's guidance: %s", got)
+	}
+	if localFlag.Usage != "" || localFlag.Value != "declared-model" || rootFlag.Usage != "Root model." {
+		t.Fatal("usage metadata changed a flag declaration")
+	}
+	delete(leaf.Metadata, "help-flag-usages")
+	if got := fullFlagGroups(leaf, []cli.Flag{localFlag}, 80); strings.Contains(got, "ID of the model") {
+		t.Fatalf("usage override persisted after its metadata was removed: %s", got)
 	}
 }
