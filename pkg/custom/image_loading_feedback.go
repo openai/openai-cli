@@ -10,15 +10,25 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
 
 const imageLoadingDelay = 400 * time.Millisecond
+
+type imageLoadingStage int32
+
+const (
+	imageLoadingWaiting imageLoadingStage = iota
+	imageLoadingSaving
+	imageLoadingSaved
+)
 
 // Feedback starts after request preparation, so it never changes stdin reading
 // or validation. It owns no request/output writers and cannot replace a failure.
@@ -40,11 +50,12 @@ func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageO
 	// Restore normal signal handling once cancellation starts. A second Ctrl-C
 	// can still terminate the process if a terminal write or cleanup is blocked.
 	stopReset := context.AfterFunc(ctx, stopSignals)
-	stopLoading := startLoadingFeedback(ctx, os.Stderr, label, loadingAnimationSupported(os.Getenv), imageLoadingSpinner(os.Getenv, runtime.GOOS), func() int {
-		width, _, _ := term.GetSize(os.Stderr.Fd())
-		return width
+	stopLoading, advance := startLoadingFeedback(ctx, os.Stderr, label, plan.loadingPrompt, loadingAnimationSupported(os.Getenv), imageLoadingSpinner(os.Getenv, runtime.GOOS), func() (int, int) {
+		width, height, _ := term.GetSize(os.Stderr.Fd())
+		return width, height
 	})
 	plan.stopLoading = stopLoading
+	plan.loadingStage = advance
 	defer func() {
 		stopLoading()
 		stopReset()
@@ -71,6 +82,12 @@ func (e *imageLoadingInterrupt) ExitCode() int { return 130 }
 func (p *imageOutputPlan) stopLoadingFeedback() {
 	if p.stopLoading != nil {
 		p.stopLoading()
+	}
+}
+
+func (p *imageOutputPlan) setLoadingStage(stage imageLoadingStage) {
+	if p != nil && p.loadingStage != nil {
+		p.loadingStage(stage)
 	}
 }
 
@@ -106,14 +123,17 @@ func imageLoadingSpinner(getenv func(string) string, goos string) spinner.Spinne
 	return animation
 }
 
-// startLoadingFeedback returns an idempotent stop that joins its worker. Only
-// fixed local labels reach this helper; filenames and API data never do. The
-// caller stops it before another writer uses the terminal. Cursor visibility
-// and terminal input modes are never changed. Diagnostic writes are best effort.
-func startLoadingFeedback(ctx context.Context, out io.Writer, label string, animate bool, animation spinner.Spinner, width func() int) func() {
+// The prompt reaches only ephemeral animated feedback. The caller stops this
+// worker before another writer uses the terminal. Cursor visibility and input
+// modes never change. Diagnostic writes are best effort; stop joins the worker.
+func startLoadingFeedback(ctx context.Context, out io.Writer, label, prompt string, animate bool, animation spinner.Spinner, size func() (int, int)) (stopFeedback func(), advance func(imageLoadingStage)) {
 	stop, done := make(chan struct{}), make(chan struct{})
+	refresh := make(chan struct{}, 1)
+	var stage atomic.Int32
 	var once sync.Once
-	const clearLine = "\r\x1b[2K"
+	const clearFrame = "\r\x1b[J"
+	prompt = loadingPromptText(prompt)
+	started := time.Now()
 	go func() {
 		defer close(done)
 		delay := time.NewTimer(imageLoadingDelay)
@@ -127,11 +147,38 @@ func startLoadingFeedback(ctx context.Context, out io.Writer, label string, anim
 		}
 		ticker := time.NewTicker(animation.FPS)
 		defer ticker.Stop()
-		drawn := false
+		drawn, reserved, restore, interruptedWrite := false, false, false, false
+		clear := func() bool {
+			text := clearFrame
+			if restore {
+				text = "\x1b8" + text
+			}
+			if interruptedWrite {
+				// Cancel a control sequence cut short by a failed write.
+				text = "\x18" + text
+			}
+			n, err := io.WriteString(out, text)
+			if err != nil || n != len(text) {
+				interruptedWrite = true
+				return false
+			}
+			drawn, restore, interruptedWrite = false, false, false
+			return true
+		}
 		defer func() {
 			if drawn {
 				// Cleanup must still run after request cancellation.
-				_, _ = io.WriteString(out, clearLine)
+				canComplete := !interruptedWrite && ctx.Err() == nil && imageLoadingStage(stage.Load()) == imageLoadingSaved
+				if clear() && canComplete {
+					columns, _ := size()
+					if line := loadingStatusLine(imageLoadingSaved, time.Since(started), columns); line != "" {
+						// Keep completion visible without retaining the prompt or
+						// delaying saving. Later preview failures remain distinct.
+						_, _ = fmt.Fprintln(out, line)
+					}
+				}
+			} else if interruptedWrite {
+				_, _ = io.WriteString(out, "\x18\r")
 			}
 		}()
 		for frame := 0; ; frame++ {
@@ -143,39 +190,123 @@ func startLoadingFeedback(ctx context.Context, out io.Writer, label string, anim
 				return
 			default:
 			}
-			columns := width()
-			text := animation.Frames[frame%len(animation.Frames)] + " " + label
-			if !animate || columns <= ansi.StringWidth(text) {
-				if drawn {
-					if n, err := io.WriteString(out, clearLine); err != nil || n != len(clearLine) {
-						return
-					}
-					drawn = false
+			columns, rows := size()
+			current := imageLoadingStage(stage.Load())
+			currentLabel := label
+			if current == imageLoadingSaving {
+				currentLabel = "Saving image"
+			} else if current == imageLoadingSaved {
+				currentLabel = "Images saved"
+			}
+			prefix := animation.Frames[frame%len(animation.Frames)] + " "
+			text := prefix + loadingPromptLabel(currentLabel, prompt, columns-ansi.StringWidth(prefix))
+			if !animate || rows < 2 || columns <= ansi.StringWidth(text) {
+				if drawn && !clear() {
+					return
 				}
-				if text := loadingStaticLabel(label, columns); text != "" {
+				if text := loadingStaticLabel(currentLabel, columns); text != "" {
 					_, _ = fmt.Fprintln(out, text)
 				}
 				return
 			}
-			text = "\r" + text
+			if !reserved {
+				// Reserve a lower row before saving the anchor, including at
+				// the screen bottom where a newline scrolls the terminal.
+				const reserve = "\r\n\x1b[A"
+				n, err := io.WriteString(out, reserve)
+				if err != nil || n != len(reserve) {
+					interruptedWrite = n > 0
+					return
+				}
+				reserved = true
+			}
+			status := loadingStatusLine(current, time.Since(started), columns)
+			// A soft wrap keeps both rows together during ordinary terminal
+			// reflow. Paint the top last so disabled autowrap safely leaves
+			// only that row. No terminal modes or input settings change.
+			const anchor = "\r\x1b[J\x1b7"
+			text = anchor + fmt.Sprintf("\x1b[%dG  \r", columns) + status + "\x1b8\x1b[2K" + text
 			n, err := io.WriteString(out, text)
 			drawn = drawn || n > 0
+			restore = n >= len(anchor) && n < len(text)
 			if err != nil || n != len(text) {
+				interruptedWrite = n > 0
 				return
 			}
+
 			select {
 			case <-stop:
 				return
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+			case <-refresh:
 			}
 		}
 	}()
 	return func() {
-		once.Do(func() { close(stop) })
-		<-done
+			once.Do(func() { close(stop) })
+			<-done
+		}, func(next imageLoadingStage) {
+			if next < imageLoadingWaiting || next > imageLoadingSaved {
+				return
+			}
+			for {
+				current := stage.Load()
+				if int32(next) <= current {
+					return
+				}
+				if stage.CompareAndSwap(current, int32(next)) {
+					break
+				}
+			}
+			select {
+			case refresh <- struct{}{}:
+			default:
+			}
+		}
+}
+
+// Bound display work without restricting the request. Prepare escapes once,
+// then clip this small display copy by terminal cells on each resize.
+func loadingPromptText(prompt string) string {
+	for i := range prompt {
+		if i >= 512 {
+			prompt = prompt[:i] + "..."
+			break
+		}
 	}
+	prompt = readable.Text(strings.ReplaceAll(prompt, "\\", "\\\\"))
+	return strings.NewReplacer("\n", `\n`, "\t", `\t`, "'", `\'`).Replace(prompt)
+}
+
+func loadingPromptLabel(label, prompt string, columns int) string {
+	available := columns - ansi.StringWidth(label) - 4 // Space, quotes, and a spare terminal cell.
+	if prompt == "" || available < 4 {
+		return label
+	}
+	return label + " '" + ansi.Truncate(prompt, available, "...") + "'"
+}
+
+// Elapsed time describes the request duration. Saving states come from the
+// existing save workflow; no estimated fraction or extra API work is needed.
+func loadingStatusLine(stage imageLoadingStage, elapsed time.Duration, columns int) string {
+	elapsed = max(elapsed, 0)
+	seconds := int64(elapsed / time.Second)
+	duration := fmt.Sprintf("%ds", seconds)
+	if seconds >= 60 {
+		duration = fmt.Sprintf("%dm %02ds", seconds/60, seconds%60)
+	}
+	labels := []string{duration + " elapsed | Ctrl+C to cancel", duration + " elapsed", duration}
+	if stage == imageLoadingSaved {
+		labels = []string{"Images saved | " + duration + " elapsed", "Images saved " + duration, "Images saved"}
+	}
+	for _, label := range labels {
+		if len(label) < columns {
+			return label
+		}
+	}
+	return ""
 }
 
 func loadingStaticLabel(label string, columns int) string {
