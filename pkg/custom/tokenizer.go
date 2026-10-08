@@ -22,7 +22,7 @@ func registerTokenizerCommands(root *cli.Command) {
 
 Opens the live editor in a terminal. Use count or inspect for scripts.
 
-` + cli.CommandHelpTemplate
+` + cli.SubcommandHelpTemplate
 	root.Commands = append(root.Commands, &cli.Command{
 		Name: "tokenizer", Usage: "Explore text, token IDs, and bytes locally",
 		Description: "Tokenizes exact UTF-8 text without credentials, network access, or saved input. " +

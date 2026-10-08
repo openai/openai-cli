@@ -79,8 +79,9 @@ func TestMainTokenizerEditorHelpAndDiscoveryStayNonInteractive(t *testing.T) {
 			got := runMainDispatchWithEnv(t, "bash", env, args...)
 			require.Zero(t, got.code, "%s", got.stderr)
 			require.Empty(t, got.stderr)
-			require.Contains(t, got.stdout, "count")
-			require.Contains(t, got.stdout, "inspect")
+			for _, name := range []string{"count", "inspect", "encodings", "licenses"} {
+				require.Regexp(t, `(?m)^\s+`+name+`\s+\S`, got.stdout)
+			}
 			require.NotContains(t, got.stdout, "Key setup:")
 			require.NotContains(t, got.stdout, "__preview")
 			require.NotContains(t, got.stdout, "__output")
