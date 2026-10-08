@@ -165,6 +165,8 @@ func TestMainImageModelsExploreFallbackWarning(t *testing.T) {
 			wantWarning := ""
 			if format == "explore" {
 				wantWarning = "Warning: Output format 'explore' not supported for non-terminal output; falling back to 'json'\n"
+			} else if format == "auto" {
+				wantWarning = "Choose a model:\n  openai images generate --prompt \"A tiny orange robot\" --model gpt-image-2.5-sunburst\n"
 			}
 			if got.stderr != wantWarning {
 				t.Errorf("stderr = %q; want %q", got.stderr, wantWarning)
@@ -376,19 +378,18 @@ func TestMainImageModelsPipeIsReadableAndAllRevealsUnavailable(t *testing.T) {
 				args = append(args, "--all")
 			}
 			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=synthetic-models-key"}, args...)
-			if got.code != 0 || got.stderr != "" {
+			if got.code != 0 || !strings.Contains(got.stderr, `openai images generate --prompt "A tiny orange robot" --model gpt-image-2.5-sunburst`) {
 				t.Fatalf("readable piped discovery failed: %+v", got)
 			}
 			for _, want := range []string{
 				"MODEL", "STATUS", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "Visible",
-				`openai images generate --prompt "A tiny orange robot" --model gpt-image-2.5-sunburst`,
 				"generation permissions can differ",
 			} {
 				if !strings.Contains(got.stdout, want) {
 					t.Errorf("readable output missing %q: %s", want, got.stdout)
 				}
 			}
-			for _, hidden := range []string{`"id":`, `"source":`, "\x1b", "Checking image models", "default", "Leaving out --model"} {
+			for _, hidden := range []string{`"id":`, `"source":`, "\x1b", "Checking image models", "default", "Leaving out --model", "Choose a model", "openai images"} {
 				if strings.Contains(got.stdout, hidden) {
 					t.Errorf("readable pipe exposed JSON/progress/default/control %q: %q", hidden, got.stdout)
 				}
@@ -405,7 +406,7 @@ func TestMainImageModelsPipeIsReadableAndAllRevealsUnavailable(t *testing.T) {
 						t.Errorf("default presentation exposed unavailable row %q", hidden)
 					}
 				}
-				if !strings.Contains(got.stdout, "2 retired or not visible") || !strings.Contains(got.stdout, "openai images models --all") {
+				if !strings.Contains(got.stdout, "2 retired or not visible") || !strings.Contains(got.stderr, "openai images models --all") {
 					t.Errorf("missing hidden-row guidance: %q", got.stdout)
 				}
 			}

@@ -132,7 +132,7 @@ func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts)
 		emitted = true
 	}
 	if omitted {
-		if err := readable.WriteText(out, resourceSummaryHint); err != nil {
+		if err := writeOutputHint(opts, resourceSummaryHint); err != nil {
 			iterErr := iter.Err()
 			// Closing stdout may suppress an output-only broken pipe, but must
 			// never turn a failed page fetch into a successful command.

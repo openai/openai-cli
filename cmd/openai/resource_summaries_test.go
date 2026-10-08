@@ -58,13 +58,13 @@ func TestMainResourceSummariesRetainActionFields(t *testing.T) {
 			}))
 			defer server.Close()
 			got := runReadableCommand(t, server, tc.args...)
-			if got.code != 0 || got.stderr != "" || requests.Load() != 1 {
+			if got.code != 0 || got.stderr != resourceSummaryHint+"\n" || requests.Load() != 1 {
 				t.Fatalf("result=%+v requests=%d", got, requests.Load())
 			}
-			if strings.Count(got.stdout, resourceSummaryHint) != 1 {
-				t.Fatalf("retrieve must explain omissions once: %q", got.stdout)
+			if strings.Contains(got.stdout, resourceSummaryHint) {
+				t.Fatalf("retrieve hint must stay on stderr: %q", got.stdout)
 			}
-			for _, want := range append(tc.want, resourceSummaryHint) {
+			for _, want := range tc.want {
 				if !strings.Contains(got.stdout, want+"\n") {
 					t.Errorf("missing %q in %q", want, got.stdout)
 				}
@@ -88,7 +88,7 @@ func TestMainResourceSummaryListFilesInVectorBatch(t *testing.T) {
 	}))
 	defer server.Close()
 	got := runReadableCommand(t, server, "vector-stores:file-batches", "list-files", "--vector-store-id", "vs_synthetic", "--batch-id", "vsfb_synthetic")
-	if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "Vector store ID: vs_synthetic\n") || !strings.Contains(got.stdout, resourceSummaryHint) || strings.Contains(got.stdout, "Created at:") {
+	if got.code != 0 || got.stderr != resourceSummaryHint+"\n" || !strings.Contains(got.stdout, "Vector store ID: vs_synthetic\n") || strings.Contains(got.stdout, resourceSummaryHint) || strings.Contains(got.stdout, "Created at:") {
 		t.Fatalf("list-files did not summarize its file item: %+v", got)
 	}
 }
@@ -132,7 +132,11 @@ func TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits(t *testi
 			actualCursors := slices.Clone(cursors)
 			mu.Unlock()
 			wantCursors := []string{"file_before", "file_b"}[:tc.calls]
-			if got.code != 0 || got.stderr != "" || !slices.Equal(actualCursors, wantCursors) {
+			wantDiagnostic := ""
+			if len(tc.ids) > 0 {
+				wantDiagnostic = resourceSummaryHint + "\n"
+			}
+			if got.code != 0 || got.stderr != wantDiagnostic || !slices.Equal(actualCursors, wantCursors) {
 				t.Fatalf("result=%+v cursors=%q; want %q", got, actualCursors, wantCursors)
 			}
 			var ids []string
@@ -144,8 +148,8 @@ func TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits(t *testi
 			if !slices.Equal(ids, tc.ids) || strings.Contains(got.stdout, "Created at:") {
 				t.Fatalf("summary records changed: ids=%q want=%q output=%q", ids, tc.ids, got.stdout)
 			}
-			if len(ids) == 0 && got.stdout != "" || len(ids) > 0 && (strings.Count(got.stdout, resourceSummaryHint) != 1 || !strings.HasSuffix(got.stdout, resourceSummaryHint+"\n")) {
-				t.Fatalf("incorrect summary notice or zero limit output: %q", got.stdout)
+			if len(ids) == 0 && got.stdout != "" || strings.Contains(got.stdout, resourceSummaryHint) {
+				t.Fatalf("summary notice entered stdout or zero limit produced output: %q", got.stdout)
 			}
 		})
 	}
@@ -171,11 +175,8 @@ func TestMainResourceSummaryListNoticeForMixedRecords(t *testing.T) {
 			}))
 			defer server.Close()
 			got := runReadableCommand(t, server, "files", "list")
-			if got.code != 0 || got.stderr != "" || strings.Count(got.stdout, resourceSummaryHint) != tc.hints {
+			if got.code != 0 || got.stderr != strings.Repeat(resourceSummaryHint+"\n", tc.hints) || strings.Contains(got.stdout, resourceSummaryHint) {
 				t.Fatalf("incorrect list notice: %+v", got)
-			}
-			if tc.hints > 0 && !strings.HasSuffix(got.stdout, resourceSummaryHint+"\n") {
-				t.Fatalf("notice must follow all records: %q", got.stdout)
 			}
 			var ids []string
 			for _, line := range strings.Split(got.stdout, "\n") {
@@ -268,7 +269,7 @@ func TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData(t *testing.
 	for _, format := range []string{"auto", "text", "TeXt"} {
 		t.Run(format, func(t *testing.T) {
 			got := runReadableCommand(t, server, "--format", format, "models", "retrieve", "model_synthetic")
-			if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, resourceSummaryHint) || strings.Contains(got.stdout, "Created:") {
+			if got.code != 0 || got.stderr != resourceSummaryHint+"\n" || strings.Contains(got.stdout, resourceSummaryHint) || strings.Contains(got.stdout, "Created:") {
 				t.Fatalf("explicit readable format did not summarize: %+v", got)
 			}
 		})
@@ -423,7 +424,7 @@ func TestMainResourceSummaryPreservesLargeActionArguments(t *testing.T) {
 	}))
 	defer server.Close()
 	got := runReadableCommand(t, server, "beta:threads:runs", "retrieve", "--thread-id", "thread_synthetic", "--run-id", "run_synthetic")
-	if got.code != 0 || got.stderr != "" || strings.Count(got.stdout, argument) != 1 || !strings.Contains(got.stdout, resourceSummaryHint) || strings.Contains(got.stdout, "Created at:") {
+	if got.code != 0 || got.stderr != resourceSummaryHint+"\n" || strings.Count(got.stdout, argument) != 1 || strings.Contains(got.stdout, resourceSummaryHint) || strings.Contains(got.stdout, "Created at:") {
 		t.Fatalf("large action summary failed: exit=%d stdout bytes=%d stderr=%q", got.code, len(got.stdout), got.stderr)
 	}
 }
@@ -448,15 +449,18 @@ func TestMainResourceSummaryPreservesPartialPageOnFailure(t *testing.T) {
 				args = append([]string{"--format-error", "json"}, args...)
 			}
 			got := runReadableCommand(t, server, args...)
-			if got.code != 1 || requests.Load() != 2 || strings.Count(got.stdout, "ID: file_first\n") != 1 || strings.Count(got.stdout, "ID: file_second\n") != 1 || strings.Count(got.stdout, resourceSummaryHint) != 1 || !strings.HasSuffix(got.stdout, resourceSummaryHint+"\n") || strings.Contains(got.stdout, "Created at:") {
+			if got.code != 1 || requests.Load() != 2 || strings.Count(got.stdout, "ID: file_first\n") != 1 || strings.Count(got.stdout, "ID: file_second\n") != 1 || strings.Contains(got.stdout, resourceSummaryHint) || strings.Contains(got.stdout, "Created at:") {
 				t.Fatalf("partial output or pagination failure changed: %+v requests=%d", got, requests.Load())
 			}
 			if format == "json" {
+				if strings.Contains(got.stderr, resourceSummaryHint) {
+					t.Fatalf("summary hint corrupted the selected machine error: %q", got.stderr)
+				}
 				var failure map[string]any
 				if err := json.Unmarshal([]byte(got.stderr), &failure); err != nil || failure["message"] != "synthetic second-page failure" || failure["type"] != "invalid_request_error" {
 					t.Fatalf("explicit API error details lost: %q (%v)", got.stderr, err)
 				}
-			} else if !strings.Contains(got.stderr, "The API rejected the request.") || !strings.Contains(got.stderr, "--format-error json") || strings.Contains(got.stderr, "synthetic second-page failure") {
+			} else if strings.Count(got.stderr, resourceSummaryHint) != 1 || !strings.HasPrefix(got.stderr, resourceSummaryHint+"\n") || !strings.Contains(got.stderr, "The API rejected the request.") || !strings.Contains(got.stderr, "--format-error json") || strings.Contains(got.stderr, "synthetic second-page failure") {
 				t.Fatalf("expected safe guidance with explicit error-details option: %q", got.stderr)
 			}
 		})
@@ -528,7 +532,7 @@ func TestMainResourceSummaryWritesBeforeNextPageArrives(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := child.Wait(); err != nil || stderr.Len() != 0 || !strings.Contains(string(rest), "ID: file_second\n") {
+	if err := child.Wait(); err != nil || stderr.String() != resourceSummaryHint+"\n" || !strings.Contains(string(rest), "ID: file_second\n") || strings.Contains(string(rest), resourceSummaryHint) {
 		t.Fatalf("completion error=%v stderr=%q output=%q", err, stderr.String(), rest)
 	}
 }

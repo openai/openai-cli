@@ -113,6 +113,7 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 		value = gjson.ParseBytes(data)
 	}
 	return ShowJSON(value, ShowJSONOpts{
+		Context:   outputPolicyContext(context.Background(), root),
 		Operation: "", OutputKind: OutputUnspecified,
 		Format: format, ExplicitFormat: root.IsSet("format-error") || root.IsSet("format"),
 		Stdout: out, Stderr: out, Title: "Error", Transform: root.String("transform-error"),

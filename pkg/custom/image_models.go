@@ -105,7 +105,7 @@ func handleImagesModels(ctx context.Context, command *cli.Command) error {
 			return err
 		}
 		client := openai.NewClient(GetDefaultRequestOptions(command)...)
-		if human && isTerminal(os.Stderr) && !root.Bool("debug") {
+		if human && isTerminal(os.Stderr) && !root.Bool("debug") && outputDiagnosticsAllowed(ctx) {
 			if _, err := fmt.Fprintln(os.Stderr, "Checking image models..."); err != nil {
 				return err
 			}
@@ -123,12 +123,16 @@ func handleImagesModels(ctx context.Context, command *cli.Command) error {
 		}
 	}
 	if human {
-		if err := writeImageModels(root.Writer, report, command.Bool("all"), invocation); err != nil {
+		var hints io.Writer
+		if outputDiagnosticsAllowed(ctx) {
+			hints = os.Stderr
+		}
+		if err := writeImageModels(root.Writer, report, command.Bool("all"), invocation, hints); err != nil {
 			return err
 		}
 	} else {
 		// Presentation warnings use ShowJSON's stderr default, not the command error buffer.
-		if err := writeImageModelsData(command, report, nil); err != nil {
+		if err := writeImageModelsData(ctx, command, report, nil); err != nil {
 			return err
 		}
 	}
@@ -141,7 +145,7 @@ func handleImagesModels(ctx context.Context, command *cli.Command) error {
 	return nil
 }
 
-func writeImageModelsData(command *cli.Command, report imageModelsReport, stderr io.Writer) error {
+func writeImageModelsData(ctx context.Context, command *cli.Command, report imageModelsReport, stderr io.Writer) error {
 	root := command.Root()
 	payload, err := json.Marshal(report)
 	if err != nil {
@@ -149,7 +153,8 @@ func writeImageModelsData(command *cli.Command, report imageModelsReport, stderr
 	}
 	obj := gjson.ParseBytes(payload)
 	opts := ShowJSONOpts{
-		Format: root.String("format"), ExplicitFormat: root.IsSet("format"),
+		Context: context.WithoutCancel(ctx),
+		Format:  root.String("format"), ExplicitFormat: root.IsSet("format"),
 		RawOutput: root.Bool("raw-output"), Title: "Image models", Transform: root.String("transform"),
 	}
 	// The report includes completed checks even after discovery is canceled.
@@ -158,8 +163,9 @@ func writeImageModelsData(command *cli.Command, report imageModelsReport, stderr
 	return ShowJSON(obj, opts)
 }
 
-func writeImageModels(out io.Writer, report imageModelsReport, all bool, invocation string) error {
+func writeImageModels(out io.Writer, report imageModelsReport, all bool, invocation string, hints io.Writer) error {
 	var text strings.Builder
+	var guidance strings.Builder
 	if report.Source == "offline" {
 		text.WriteString("Known image models — access not checked (offline)\n\n")
 	} else {
@@ -189,17 +195,24 @@ func writeImageModels(out io.Writer, report imageModelsReport, all bool, invocat
 		text.WriteString("No known, active image models were visible to this key.\n")
 	}
 	if hidden > 0 {
-		fmt.Fprintf(&text, "\n%d retired or not visible. Include them and dated versions: %s images models --all\n", hidden, invocation)
+		fmt.Fprintf(&text, "\n%d retired or not visible.\n", hidden)
+		fmt.Fprintf(&guidance, "Include them and dated versions: %s images models --all\n", invocation)
 	}
 	if choice != "" {
-		fmt.Fprintf(&text, "\nChoose a model:\n  %s images generate --prompt \"A tiny orange robot\" --model %s\n", invocation, choice)
+		fmt.Fprintf(&guidance, "Choose a model:\n  %s images generate --prompt \"A tiny orange robot\" --model %s\n", invocation, choice)
 	}
 
 	text.WriteString("\nKnown image IDs from this CLI; newly released models may not be listed.\n")
 	if report.Source == "live" {
 		text.WriteString("Visible means model information was accessible; generation permissions can differ.\n")
 	}
-	return readable.WriteText(out, text.String())
+	if err := readable.WriteText(out, text.String()); err != nil {
+		return err
+	}
+	if hints != nil && guidance.Len() > 0 {
+		return readable.WriteText(hints, guidance.String())
+	}
+	return nil
 }
 
 func imageModelStatusText(model imagemodels.Result) string {

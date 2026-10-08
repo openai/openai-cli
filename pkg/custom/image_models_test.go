@@ -31,7 +31,7 @@ func TestImageModelsPresentationPartialAndHidden(t *testing.T) {
 		imageModelTestRow("dall-e-2", imagemodels.StatusRetired, ""),
 	}}
 	var out strings.Builder
-	if err := writeImageModels(&out, report, false, "openai"); err != nil {
+	if err := writeImageModels(&out, report, false, "openai", &out); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "Could not check (timeout)", "2 retired or not visible", "openai images models --all", `openai images generate --prompt "A tiny orange robot" --model gpt-image-2.5-sunburst`, "generation permissions can differ"} {
@@ -45,7 +45,7 @@ func TestImageModelsPresentationPartialAndHidden(t *testing.T) {
 		}
 	}
 	out.Reset()
-	if err := writeImageModels(&out, report, true, "openai"); err != nil {
+	if err := writeImageModels(&out, report, true, "openai", &out); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "gpt-image-1") || !strings.Contains(out.String(), "dall-e-2") {
@@ -62,7 +62,7 @@ func TestImageModelsSuggestsOnlyVisibleOrUncheckedNames(t *testing.T) {
 			}
 			for _, all := range []bool{false, true} {
 				var out strings.Builder
-				if err := writeImageModels(&out, report, all, "openai"); err != nil {
+				if err := writeImageModels(&out, report, all, "openai", &out); err != nil {
 					t.Fatal(err)
 				}
 				eligible := status == imagemodels.StatusVisible || status == imagemodels.StatusNotChecked
@@ -165,7 +165,7 @@ func TestImageModelsWriteErrors(t *testing.T) {
 		if expected == nil {
 			expected = io.ErrShortWrite
 		}
-		if got := writeImageModels(imageModelsFailWriter{failure}, imageModelsReport{}, false, "openai"); !errors.Is(got, expected) {
+		if got := writeImageModels(imageModelsFailWriter{failure}, imageModelsReport{}, false, "openai", nil); !errors.Is(got, expected) {
 			t.Fatalf("error=%v; want %v", got, expected)
 		}
 	}
@@ -270,7 +270,7 @@ func TestImageModelsDataFormatsAndExtraction(t *testing.T) {
 func imageModelsOutputCommand(out, stderr io.Writer, report imageModelsReport) *cli.Command {
 	return &cli.Command{Name: "openai", Writer: out, Flags: []cli.Flag{
 		&cli.StringFlag{Name: "format", Value: "auto"}, &cli.StringFlag{Name: "transform"}, &cli.BoolFlag{Name: "raw-output"},
-	}, Action: func(_ context.Context, command *cli.Command) error {
-		return writeImageModelsData(command, report, stderr)
+	}, Action: func(ctx context.Context, command *cli.Command) error {
+		return writeImageModelsData(ctx, command, report, stderr)
 	}}
 }

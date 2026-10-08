@@ -236,6 +236,9 @@ type outputWriteError struct{ error }
 func (e *outputWriteError) Unwrap() error { return e.error }
 
 func isOutputBrokenPipe(err error) bool {
+	if _, diagnostic := err.(*diagnosticWriteError); diagnostic {
+		return false
+	}
 	if outputErr, ok := err.(*outputWriteError); ok {
 		return strings.Contains(outputErr.Error(), "broken pipe")
 	}
@@ -410,6 +413,9 @@ func guessExtension(data []byte) string {
 }
 
 func shouldUseColors(w io.Writer) bool {
+	if !isTerminal(w) || os.Getenv("NO_COLOR") != "" {
+		return false
+	}
 	force, ok := os.LookupEnv("FORCE_COLOR")
 	if ok {
 		if force == "1" {
@@ -426,9 +432,11 @@ func shouldUseColors(w io.Writer) bool {
 // to w. Lipgloss v2 styles always render full color escapes, so the output must
 // be downsampled for its destination. This matches the lipgloss v1 behavior the
 // CLI had before: plain text when w is not a terminal or NO_COLOR is set, and
-// color on a terminal. CLICOLOR_FORCE is honored, and FORCE_COLOR works the same
-// way as it does for the json and jsonl formats.
+// color on a terminal. Color overrides never decorate pipes or files.
 func prettyColorProfile(w io.Writer, environ []string) colorprofile.Profile {
+	if !isTerminal(w) {
+		return colorprofile.NoTTY
+	}
 	lookup := func(name string) string {
 		value := ""
 		for _, kv := range environ {
@@ -597,7 +605,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 				return err
 			}
 			if omitted {
-				return readable.WriteText(out, resourceSummaryHint)
+				return writeOutputHint(opts, resourceSummaryHint)
 			}
 			return nil
 		}
@@ -605,7 +613,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 		if isTerminal(opts.Stdout) {
 			return jsonview.ExploreJSONWithOutput(opts.Title, res, opts.Stdout)
 		}
-		if opts.ExplicitFormat {
+		if opts.ExplicitFormat && outputDiagnosticsAllowed(opts.Context) {
 			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stderr}).WriteString(warningExploreNotSupported); err != nil {
 				return err
 			}
@@ -677,7 +685,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 			}
 			return err
 		}
-		if opts.ExplicitFormat {
+		if opts.ExplicitFormat && outputDiagnosticsAllowed(opts.Context) {
 			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stderr}).WriteString(warningExploreNotSupported); err != nil {
 				return err
 			}

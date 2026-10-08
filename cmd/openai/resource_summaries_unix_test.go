@@ -110,8 +110,8 @@ func TestMainResourceSummaryClosedStdoutPreservesPageFailure(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("second-page request did not arrive")
 			}
-			// Only the final summary hint remains to write after this response.
-			// Close the actual child stdout consumer before releasing that response.
+			// Close the actual child stdout consumer before the final response.
+			// The summary hint belongs to stderr; page failures must remain visible.
 			if err := stdout.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -132,8 +132,8 @@ func TestMainResourceSummaryClosedStdoutPreservesPageFailure(t *testing.T) {
 				t.Errorf("requests = %d; want exactly two pages", requests.Load())
 			}
 			if !tc.pageFails {
-				if code != 0 || stderr.Len() != 0 {
-					t.Fatalf("closing only the final hint must succeed quietly: exit=%d stderr=%q", code, stderr.String())
+				if code != 0 || stderr.String() != resourceSummaryHint+"\n" {
+					t.Fatalf("closed stdout must preserve the stderr hint: exit=%d stderr=%q", code, stderr.String())
 				}
 				return
 			}

@@ -26,27 +26,26 @@ func TestResourceSummaryNoticePreservesFinalErrors(t *testing.T) {
 			source := &transformTestIterator{items: []any{item, item}, err: upstreamErr}
 			var output bytes.Buffer
 			writer := resourceSummaryTestWriter(func(p []byte) (int, error) {
-				if strings.Contains(string(p), hint) {
-					require.Equal(t, 3, source.calls, "notice must follow the whole list")
-					return 0, tc.err
-				}
-				return output.Write(p)
+				require.Equal(t, hint+"\n", string(p), "stderr must contain only the final notice")
+				require.Equal(t, 3, source.calls, "notice must follow the whole list")
+				return 0, tc.err
 			})
 			err := ShowJSONIterator(source, -1, ShowJSONOpts{
-				Operation: "(resource) files > (method) list", OutputKind: OutputPageItem, Stdout: writer,
+				Operation: "(resource) files > (method) list", OutputKind: OutputPageItem, Stdout: &output, Stderr: writer,
 			})
 			want := tc.err
 			if want == nil {
 				want = io.ErrShortWrite
 			}
 			if errors.Is(tc.err, syscall.EPIPE) {
-				require.NotErrorIs(t, err, syscall.EPIPE, "a broken hint pipe must not make the page error suppressible")
+				require.ErrorIs(t, err, syscall.EPIPE, "stderr failure must remain beside the page failure")
 				require.False(t, isOutputBrokenPipe(err))
 			} else {
 				require.ErrorIs(t, err, want)
 			}
 			require.ErrorIs(t, err, upstreamErr)
 			require.Equal(t, 2, strings.Count(output.String(), "ID: file_summary\n"))
+			require.NotContains(t, output.String(), hint)
 		})
 	}
 
@@ -59,9 +58,9 @@ func TestResourceSummaryNoticePreservesFinalErrors(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			source := &resourceSummaryEndIterator{transformTestIterator: transformTestIterator{items: []any{item, item}, err: pageErr}, finish: cancel}
-			var output bytes.Buffer
+			var output, diagnostic bytes.Buffer
 			err := ShowJSONIterator(source, -1, ShowJSONOpts{
-				Context: ctx, Operation: "(resource) files > (method) list", OutputKind: OutputPageItem, Stdout: &output,
+				Context: ctx, Operation: "(resource) files > (method) list", OutputKind: OutputPageItem, Stdout: &output, Stderr: &diagnostic,
 			})
 			require.ErrorIs(t, err, context.Canceled)
 			if pageErr != nil {
@@ -69,6 +68,7 @@ func TestResourceSummaryNoticePreservesFinalErrors(t *testing.T) {
 			}
 			require.Equal(t, 2, strings.Count(output.String(), "ID: file_summary\n"))
 			require.NotContains(t, output.String(), hint)
+			require.Empty(t, diagnostic.String())
 		})
 	}
 }

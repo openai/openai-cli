@@ -3,7 +3,6 @@ package custom
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -161,8 +160,7 @@ func configureImagePickerShellSetup(root *cli.Command) {
 		} else if remove {
 			message = "Tab shortcut setup removed. Open a new terminal to finish."
 		}
-		_, err = fmt.Fprintln(command.Root().Writer, message)
-		return err
+		return writeOutputReceipt(ctx, message)
 	}
 }
 

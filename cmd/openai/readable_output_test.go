@@ -146,7 +146,11 @@ func TestMainReadableListPreservesItemsAndRawPage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			requests.Store(0)
 			got := runReadableCommand(t, server, tc.args...)
-			if got.code != 0 || got.stderr != "" || int(requests.Load()) != tc.calls {
+			wantDiagnostics := ""
+			if tc.count > 0 {
+				wantDiagnostics = resourceSummaryHint + "\n"
+			}
+			if got.code != 0 || got.stderr != wantDiagnostics || int(requests.Load()) != tc.calls || strings.Contains(got.stdout, resourceSummaryHint) {
 				t.Fatalf("result=%+v requests=%d; want %d", got, requests.Load(), tc.calls)
 			}
 			if tc.rawPage {

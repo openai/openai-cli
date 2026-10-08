@@ -68,7 +68,7 @@ func TestPrettyOutputIsPlainWhenNotATerminal(t *testing.T) {
 	}
 }
 
-func TestPrettyOutputHonorsForcedColor(t *testing.T) {
+func TestPrettyOutputDoesNotForceColorIntoPipes(t *testing.T) {
 	readPipe, writePipe, err := os.Pipe()
 	require.NoError(t, err)
 	t.Cleanup(func() { readPipe.Close() })
@@ -79,8 +79,8 @@ func TestPrettyOutputHonorsForcedColor(t *testing.T) {
 		env       map[string]string
 		wantColor bool
 	}{
-		{name: "FORCE_COLOR=1", env: map[string]string{"FORCE_COLOR": "1"}, wantColor: true},
-		{name: "CLICOLOR_FORCE=1", env: map[string]string{"CLICOLOR_FORCE": "1"}, wantColor: true},
+		{name: "FORCE_COLOR=1", env: map[string]string{"FORCE_COLOR": "1"}, wantColor: false},
+		{name: "CLICOLOR_FORCE=1", env: map[string]string{"CLICOLOR_FORCE": "1"}, wantColor: false},
 		{name: "FORCE_COLOR=0 with CLICOLOR_FORCE=1", env: map[string]string{"FORCE_COLOR": "0", "CLICOLOR_FORCE": "1"}, wantColor: false},
 		{name: "NO_COLOR=1 with CLICOLOR_FORCE=1", env: map[string]string{"NO_COLOR": "1", "CLICOLOR_FORCE": "1"}, wantColor: false},
 	}
