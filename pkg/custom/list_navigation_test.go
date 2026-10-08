@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -279,6 +280,96 @@ func TestListNavigationOutputPreservesFailureAndRestoresModes(t *testing.T) {
 	}
 }
 
+func TestListNavigationOutputFailureDiagnostic(t *testing.T) {
+	outputFailure := &os.PathError{Op: "write", Path: "/synthetic-private/output", Err: io.ErrClosedPipe}
+	pageFailure := &listNavigationError{}
+	joinedFailure := errors.Join(pageFailure, context.Canceled)
+	const outputMessage = "A local file could not be read or written. Check your file arguments and permissions."
+	const timeoutMessage = "The request timed out. The API may have received it; check its status before repeating it."
+	for _, tt := range []struct {
+		name       string
+		callerErr  error
+		fetchError func(error) error
+		modelError error
+		runError   error
+		wantCause  error
+		want       string
+	}{
+		{name: "fetch canceled", want: outputMessage},
+		{name: "fetch wrapped", fetchError: func(err error) error { return fmt.Errorf("request: %w", err) }, want: outputMessage},
+		{name: "fetch finished", fetchError: func(error) error { return nil }, want: outputMessage},
+		{name: "fetch joined", fetchError: func(err error) error {
+			return fmt.Errorf("request: %w", errors.Join(pageFailure, err))
+		}, wantCause: pageFailure, want: pageFailure.Error()},
+		{name: "model joined", modelError: errors.Join(pageFailure, context.Canceled), wantCause: pageFailure, want: pageFailure.Error()},
+		{name: "received fetch failure", modelError: joinedFailure, fetchError: func(error) error { return joinedFailure }, wantCause: pageFailure, want: pageFailure.Error()},
+		{name: "program joined", runError: io.ErrUnexpectedEOF, wantCause: io.ErrUnexpectedEOF, want: outputMessage},
+		{name: "request timeout", fetchError: func(error) error { return context.DeadlineExceeded }, wantCause: context.DeadlineExceeded, want: timeoutMessage},
+		{name: "caller canceled", callerErr: context.Canceled, wantCause: context.Canceled, want: "Request canceled."},
+		{name: "caller timeout", callerErr: context.DeadlineExceeded, wantCause: context.DeadlineExceeded, want: timeoutMessage},
+	} {
+		for _, format := range []string{"text", "json"} {
+			t.Run(tt.name+"/"+format, func(t *testing.T) {
+				caller := context.Background()
+				if tt.callerErr == context.Canceled {
+					var cancel context.CancelFunc
+					caller, cancel = context.WithCancel(caller)
+					cancel()
+				} else if tt.callerErr == context.DeadlineExceeded {
+					var cancel context.CancelFunc
+					caller, cancel = context.WithDeadline(caller, time.Unix(1, 0))
+					defer cancel()
+				}
+				request, cancel := context.WithCancel(caller)
+				defer cancel()
+				program, stop := context.WithCancel(caller)
+				defer stop()
+				m := &listNavigation{opts: ShowJSONOpts{Context: caller}, cancel: cancel, err: tt.modelError,
+					fetch: func() (listNavigationPage, error) {
+						<-request.Done()
+						err := request.Err()
+						if tt.fetchError != nil {
+							err = tt.fetchError(err)
+						}
+						return listNavigationPage{}, err
+					}}
+				m.load()
+				out := &listNavigationOutput{terminalOutputWriter: terminalOutputWriter{
+					outputWriter: outputWriter{ctx: context.Background(), out: navigationWriteFunc(func([]byte) (int, error) {
+						return 0, outputFailure
+					})},
+				}, stop: stop}
+				out.Write([]byte("partial result"))
+				failure := m.finish(out, errors.Join(tea.ErrProgramKilled, program.Err(), tt.runError))
+				if !errors.Is(failure, outputFailure) || tt.wantCause != nil && !errors.Is(failure, tt.wantCause) {
+					t.Fatalf("lost original failure: %v", failure)
+				}
+				if tt.callerErr == nil && errors.Is(failure, context.Canceled) {
+					t.Errorf("cleanup became caller cancellation: %v", failure)
+				}
+				if tt.wantCause == pageFailure && strings.Count(failure.Error(), pageFailure.Error()) != 1 {
+					t.Errorf("duplicated fetch failure: %v", failure)
+				}
+				var output bytes.Buffer
+				if err := ShowCommandError(readableErrorTestCommand(t, "--format-error", format), failure, &output); err != nil {
+					t.Fatal(err)
+				}
+				got := strings.TrimSpace(output.String())
+				if format == "json" {
+					var payload struct{ Message string }
+					if err := json.Unmarshal(output.Bytes(), &payload); err != nil {
+						t.Fatal(err)
+					}
+					got = payload.Message
+				}
+				if got != tt.want {
+					t.Fatalf("diagnostic %q, want %q", got, tt.want)
+				}
+			})
+		}
+	}
+}
+
 func TestListNavigationQuitRetainsRealFailures(t *testing.T) {
 	failure := errors.New("synthetic page failure")
 	for _, tt := range []struct {
@@ -299,6 +390,10 @@ func TestListNavigationQuitRetainsRealFailures(t *testing.T) {
 			m.Update(listPageMessage{err: tt.received})
 			if tt.want == nil && m.err != nil || tt.want != nil && !errors.Is(m.err, tt.want) {
 				t.Fatalf("got %v, want %v", m.err, tt.want)
+			}
+			failure := m.finish(&listNavigationOutput{}, tea.ErrProgramKilled)
+			if tt.want == nil && failure != nil || tt.want != nil && !errors.Is(failure, tt.want) {
+				t.Fatalf("shutdown returned %v, want %v", failure, tt.want)
 			}
 		})
 	}

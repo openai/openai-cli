@@ -177,31 +177,65 @@ func runListNavigation(opts ShowJSONOpts, fetch func() (listNavigationPage, erro
 	program := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(out),
 		tea.WithContext(programContext), tea.WithWindowSize(width, height))
 	_, runErr := program.Run()
-	cancel()
+	return m.finish(out, runErr)
+}
+
+func (m *listNavigation) finish(out *listNavigationOutput, runErr error) error {
+	m.cancel()
 	m.work.Wait()
 	m.mu.Lock()
 	fetchErr := m.fetchErr
 	m.mu.Unlock()
+	if errors.Is(m.err, fetchErr) {
+		fetchErr = nil
+	}
+	outputErr := out.Err()
+	if outputErr != nil && m.opts.Context.Err() == nil {
+		// An output failure stops Tea and cancels its pending fetch. Remove those
+		// cleanup causes so they cannot hide the write failure in diagnostics.
+		m.err = listWithoutCleanupCancellation(m.err)
+		fetchErr = listWithoutCleanupCancellation(fetchErr)
+		runErr = listWithoutCleanupCancellation(runErr)
+	}
 	if m.quitting && listCancellationOnly(fetchErr) {
 		fetchErr = nil
 	}
 	if m.quitting && errors.Is(runErr, tea.ErrProgramKilled) {
 		runErr = nil
 	}
-	if errors.Is(m.err, fetchErr) {
-		fetchErr = nil
-	}
 	var printErr error
 	if m.printPage {
 		// Print only after the worker stops and Tea restores the terminal.
 		// Plain labels let the terminal wrap long IDs without inserting newlines.
 		var content string
-		content, printErr = renderListNavigationLabels(opts, m.pages[m.index].items)
+		content, printErr = renderListNavigationLabels(m.opts, m.pages[m.index].items)
 		if printErr == nil {
-			_, printErr = (outputWriter{ctx: opts.Context, out: opts.Stdout}).WriteString(content)
+			_, printErr = (outputWriter{ctx: m.opts.Context, out: m.opts.Stdout}).WriteString(content)
 		}
 	}
-	return errors.Join(m.err, fetchErr, out.Err(), runErr, printErr)
+	return errors.Join(m.err, fetchErr, outputErr, runErr, printErr)
+}
+
+// Retain real errors beside cleanup cancellation, including inside wrappers.
+// Caller cancellation bypasses this filter, and timeouts remain unchanged.
+func listWithoutCleanupCancellation(err error) error {
+	if err == context.Canceled || err == tea.ErrProgramKilled {
+		return nil
+	}
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, tea.ErrProgramKilled) {
+		return err
+	}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		var causes []error
+		for _, cause := range wrapped.Unwrap() {
+			causes = append(causes, listWithoutCleanupCancellation(cause))
+		}
+		return errors.Join(causes...)
+	case interface{ Unwrap() error }:
+		return listWithoutCleanupCancellation(wrapped.Unwrap())
+	}
+	return err
 }
 
 func (m *listNavigation) Init() tea.Cmd { return m.load() }
