@@ -91,7 +91,9 @@ func TestAgentsContentPartSnapshotsAndLateAddedItems(t *testing.T) {
 		gjson.Parse(`{"type":"agent.session.turn.content_part.done","event_id":"ev_done","session_id":"sess_test","turn_id":"turn_1","item_id":"msg_1","content_index":0,"part":{"type":"output_text","text":"Hello world","annotations":[]}}`),
 		gjson.Parse(`{"type":"agent.session.turn.content_part.added","event_id":"ev_late","session_id":"sess_test","turn_id":"turn_1","item_id":"msg_1","content_index":0,"part":{"type":"output_text","text":"Old","annotations":[]}}`),
 		gjson.Parse(`{"type":"agent.session.turn.item.done","event_id":"ev_item","session_id":"sess_test","turn_id":"turn_1","item":{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hello world"}]}}`))
-	require.Equal(t, "Agent:\nHello world\n", output)
+	require.Equal(t, 1, strings.Count(output, "Hello world"))
+	require.NotContains(t, output, "Old")
+	require.Equal(t, 2, strings.Count(output, "Annotations: (empty list)"), "Agents annotations remain unfamiliar data")
 }
 
 func TestAgentsFutureFieldsAndToolFailuresRemainVisible(t *testing.T) {

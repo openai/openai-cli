@@ -97,11 +97,16 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 	var projected bool
 	var hidden bool
 	var err error
+	var messageState *AgentsStreamProjector
 	switch kind {
 	case "agent.session.turn.output_text.delta", "agent.session.turn.output_text.done":
 		field, final := "delta", strings.HasSuffix(kind, ".done")
 		if final {
 			field = "text"
+		}
+		if !agentsUniqueFields(value, "type", "event_id", "session_id", "turn_id", "item_id", "output_index", "content_index", field) ||
+			!agentsTextMetadataValid(value) || !value.Get("content_index").Exists() {
+			break
 		}
 		content, ok := streamIndex(value.Get("content_index"))
 		if !ok {
@@ -119,9 +124,13 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 			event.Details = streamResidual(value, nil, "type", "event_id", "session_id", "turn_id", "item_id", "output_index", "content_index", field)
 		}
 	case "agent.session.turn.content_part.added", "agent.session.turn.content_part.done":
+		if !agentsUniqueFields(value, "type", "event_id", "session_id", "turn_id", "item_id", "output_index", "content_index", "part") ||
+			!agentsTextMetadataValid(value) || !value.Get("content_index").Exists() {
+			break
+		}
 		part := value.Get("part")
 		content, ok := streamIndex(value.Get("content_index"))
-		if !ok || part.Get("type").String() != "output_text" {
+		if !ok || !agentsUniqueFields(part, "type", "text") || part.Get("type").String() != "output_text" {
 			break
 		}
 		final := strings.HasSuffix(kind, ".done")
@@ -132,7 +141,7 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 		if text.Key != "" {
 			event.Parts = []readable.StreamPart{text}
 		}
-		remaining := streamResidual(part, streamOmitEmpty(part, map[string]gjson.Result{}, "annotations"), "type", "text")
+		remaining := streamResidual(part, nil, "type", "text")
 		event.Details = streamResidual(value, map[string]gjson.Result{"part": remaining},
 			"type", "event_id", "session_id", "turn_id", "item_id", "output_index", "content_index")
 		projected = true
@@ -170,7 +179,11 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 			break
 		}
 		if item.Get("type").String() == "message" && item.Get("role").String() == "assistant" {
-			event, projected = s.message(ctx, value, item, kind == "agent.session.turn.item.done")
+			// A failed multipart projection must not finalize earlier parts. Copy
+			// only bounded projector state, never the event or its text payloads.
+			pending := *s
+			event, projected = pending.message(ctx, value, item, kind == "agent.session.turn.item.done")
+			messageState = &pending
 			break
 		}
 	}
@@ -180,15 +193,18 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 	if err := ctx.Err(); err != nil {
 		return readable.StreamEvent{}, false, err
 	}
+	if projected && messageState != nil {
+		s.parts, s.partCount = messageState.parts, messageState.partCount
+	}
 	s.omitted = s.omitted || projected && hidden
 	return event, projected, nil
 }
 
 func (s *AgentsStreamProjector) message(ctx context.Context, value, item gjson.Result, final bool) (readable.StreamEvent, bool) {
-	content := item.Get("content")
-	if !content.IsArray() {
+	if !agentsMessageSnapshotValid(ctx, value, item) {
 		return readable.StreamEvent{}, false
 	}
+	content := item.Get("content")
 	var event readable.StreamEvent
 	var residual strings.Builder
 	residual.WriteByte('[')
@@ -208,7 +224,7 @@ func (s *AgentsStreamProjector) message(ctx context.Context, value, item gjson.R
 			if projected.Key != "" {
 				event.Parts = append(event.Parts, projected)
 			}
-			remaining = streamResidual(part, streamOmitEmpty(part, map[string]gjson.Result{}, "annotations"), "type", "text")
+			remaining = streamResidual(part, nil, "type", "text")
 		}
 		if index > 0 {
 			residual.WriteByte(',')
@@ -230,8 +246,61 @@ func (s *AgentsStreamProjector) message(ctx context.Context, value, item gjson.R
 	if hasResidual {
 		remaining = gjson.Parse(residual.String())
 	}
-	itemDetails := streamResidual(item, map[string]gjson.Result{"content": remaining}, "id", "type", "role", "status")
+	replacements := map[string]gjson.Result{"content": remaining}
+	if status := item.Get("status"); status.Type == gjson.String && (status.Str == "completed" || status.Str == "in_progress") {
+		replacements["status"] = gjson.Result{}
+	}
+	itemDetails := streamResidual(item, replacements, "id", "type", "role")
 	event.Details = streamResidual(value, map[string]gjson.Result{"item": itemDetails},
 		"type", "event_id", "session_id", "turn_id", "output_index")
 	return event, true
+}
+
+// Metadata removed from a text event must have an understood shape. Identity
+// strings and text values receive their remaining checks in textPart.
+func agentsTextMetadataValid(value gjson.Result) bool {
+	if id := value.Get("event_id"); id.Exists() && id.Type != gjson.String {
+		return false
+	}
+	output := value.Get("output_index")
+	// Added history/input items permit null here. This index is not a text key.
+	if output.Type == gjson.Null && output.Raw == "null" && value.Get("type").Str == "agent.session.turn.item.added" {
+		return true
+	}
+	_, valid := streamIndex(output)
+	return valid
+}
+
+func agentsMessageSnapshotValid(ctx context.Context, value, item gjson.Result) bool {
+	if !agentsUniqueFields(value, "type", "event_id", "session_id", "turn_id", "output_index", "item") ||
+		!agentsUniqueFields(item, "id", "type", "role", "status", "content", "turn_id") || !agentsTextMetadataValid(value) {
+		return false
+	}
+	for _, id := range []gjson.Result{value.Get("session_id"), value.Get("turn_id"), item.Get("id")} {
+		if id.Type != gjson.String || id.Str == "" {
+			return false
+		}
+	}
+	if turn := item.Get("turn_id"); turn.Exists() && (turn.Type != gjson.String || turn.Str != value.Get("turn_id").Str) {
+		return false
+	}
+	content := item.Get("content")
+	if !content.IsArray() {
+		return false
+	}
+	valid := true
+	content.ForEach(func(_, part gjson.Result) bool {
+		if ctx.Err() != nil {
+			valid = false
+			return false
+		}
+		if part.IsObject() {
+			valid = agentsUniqueFields(part, "type")
+			if part.Get("type").Str == "output_text" {
+				valid = valid && agentsUniqueFields(part, "text") && part.Get("text").Type == gjson.String
+			}
+		}
+		return valid
+	})
+	return valid && ctx.Err() == nil
 }

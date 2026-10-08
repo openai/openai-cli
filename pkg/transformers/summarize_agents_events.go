@@ -11,6 +11,9 @@ import (
 // summarizeAgentsEvent projects only pinned public resource fields. A new field
 // leaves the complete record visible instead of silently changing its meaning.
 func summarizeAgentsEvent(ctx context.Context, value gjson.Result, slot, fields, omitted string) (readable.StreamEvent, bool, bool, error) {
+	if !agentsUniqueFields(value, slot, "type", "event_id", "output_index", "session_id", "turn_id") {
+		return readable.StreamEvent{}, false, false, ctx.Err()
+	}
 	record := value.Get(slot)
 	if !record.IsObject() || record.Get("id").Type != gjson.String || record.Get("id").Str == "" {
 		return readable.StreamEvent{}, false, false, nil

@@ -128,13 +128,12 @@ func (s *AgentsStreamState) Observe(value gjson.Result, route Route) {
 	if !strings.HasPrefix(kind, "agent.session.turn.") && kind != "agent.output.command_execution_output.delta" {
 		return
 	}
-	terminalEvent := agentsTerminalTurnKind(kind)
-	if terminalEvent && !agentsUniqueFields(value, "type", "session_id", "turn_id", "turn") {
+	if !agentsUniqueFields(value, "type", "session_id", "turn_id", "turn") {
 		// An ambiguous envelope cannot identify a new turn or change existing ownership.
 		return
 	}
 	_, _, root, known := agentsTurnRole(value)
-	if terminalEvent && !agentsUniqueFields(value.Get("turn"), "status", "id", "session_id", "subagent_id") {
+	if !agentsUniqueFields(value.Get("turn"), "status", "id", "session_id", "subagent_id") {
 		// Keep trusted outer identities pending without accepting ambiguous attribution.
 		root, known = false, false
 	}
