@@ -23,8 +23,8 @@ demo_python="$(command -v python3)"
 demo_theme="${DEMO_THEME:-no-color}"
 if [ "$demo_mode" = editor ]; then demo_theme="${DEMO_THEME:-dark}"; fi
 case "$demo_theme" in
-  dark) demo_palette=asciinema; demo_theme_environment=('COLORFGBG=15;0');;
-  light) demo_palette=github-light; demo_theme_environment=('COLORFGBG=0;15');;
+  dark) demo_palette=asciinema; demo_theme_environment=('COLORFGBG=15;0' COLORTERM=truecolor);;
+  light) demo_palette=github-light; demo_theme_environment=('COLORFGBG=0;15' COLORTERM=truecolor);;
   no-color) demo_palette=asciinema; demo_theme_environment=(NO_COLOR=1 'COLORFGBG=15;0');;
   *) echo 'DEMO_THEME must be dark, light, or no-color.' >&2; exit 2;;
 esac
@@ -99,6 +99,7 @@ SCENE
   echo "terminal dimensions: $demo_window_size"
   echo "render: asciinema and agg; Menlo/Apple Color Emoji 22px; $demo_palette theme; 20 fps cap"
   echo "application theme: $demo_theme"
+  echo 'color capability: explicit truecolor for dark/light; NO_COLOR for no-color scenes'
   echo 'scope: terminal replay, not graphical terminal or native Windows/Linux validation'
   echo 'browser: no --open flag; installation commands are printed only'
   echo 'recipe: scripts/demos/tokenizer-codex/record.sh'
@@ -139,9 +140,12 @@ if [ "$demo_mode" = editor ]; then
   while IFS=$'\t' read -r demo_state demo_time; do
     "$demo_agg" --quiet "${demo_render_options[@]}" --select "$demo_time" \
       "$demo_output/after.cast" "$demo_output/after-$demo_state.gif"
-    "$demo_ffmpeg" -hide_banner -loglevel error -y -i "$demo_output/after-$demo_state.gif" \
+    "$demo_ffmpeg" -nostdin -hide_banner -loglevel error -y -i "$demo_output/after-$demo_state.gif" \
       -frames:v 1 "$demo_output/after-$demo_state.png"
   done < "$demo_output/editor-snapshots.tsv"
+  for demo_state in text ids bytes details encoding controls; do
+    test -s "$demo_output/after-$demo_state.png"
+  done
   cp "$demo_output/after-text.png" "$demo_output/after.png"
 fi
 demo_assemble_capture 300 before after
