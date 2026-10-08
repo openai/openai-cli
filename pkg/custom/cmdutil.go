@@ -680,17 +680,23 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	// The existing pager writes to process stdout. Other injected destinations
 	// must stay on their own writer, including error output on stderr.
 	stdout, processStdout := opts.Stdout.(*os.File)
-	if !processStdout || stdout != os.Stdout {
-		for iter.Next() {
-			formatted, err := formatJSON(iter.Current().Result, opts)
-			if err != nil {
-				return errors.Join(err, iter.Err())
+	if opts.OutputKind == OutputStreamEvent || !processStdout || stdout != os.Stdout {
+		writeEvents := func(out io.Writer) error {
+			for iter.Next() {
+				formatted, err := formatJSON(iter.Current().Result, opts)
+				if err != nil {
+					return errors.Join(err, iter.Err())
+				}
+				if _, err := (outputWriter{ctx: opts.Context, out: out}).Write(formatted); err != nil {
+					return errors.Join(err, iter.Err())
+				}
 			}
-			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stdout}).Write(formatted); err != nil {
-				return errors.Join(err, iter.Err())
-			}
+			return iter.Err()
 		}
-		return iter.Err()
+		if processStdout && stdout == os.Stdout {
+			return streamToStdout(func(stdout *os.File) error { return writeEvents(stdout) })
+		}
+		return writeEvents(opts.Stdout)
 	}
 
 	terminalWidth, terminalHeight, err := term.GetSize(os.Stdout.Fd())
