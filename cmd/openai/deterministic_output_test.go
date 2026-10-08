@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestMainPipedFormatsIgnoreForcedDecoration(t *testing.T) {
+func TestMainDispatchOutputPipedFormatsIgnoreForcedDecoration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, readableModelResponse)
@@ -38,7 +38,7 @@ func TestMainPipedFormatsIgnoreForcedDecoration(t *testing.T) {
 	}
 }
 
-func TestMainQuietPreservesSelectedPayloads(t *testing.T) {
+func TestMainDispatchOutputQuietPreservesSelectedPayloads(t *testing.T) {
 	const binary = "synthetic\x00\xff\x1b[31m\r\nbytes"
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +85,7 @@ func TestMainQuietPreservesSelectedPayloads(t *testing.T) {
 	}
 }
 
-func TestMainVerboseKeepsDataAndProtectsMachineErrors(t *testing.T) {
+func TestMainDispatchOutputVerboseKeepsDataAndProtectsMachineErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.HasSuffix(r.URL.Path, "model_failure") {
@@ -128,7 +128,7 @@ func TestMainVerboseKeepsDataAndProtectsMachineErrors(t *testing.T) {
 	}
 }
 
-func TestMainQuietKeepsExplicitHelpVersionAndCompletion(t *testing.T) {
+func TestMainDispatchOutputQuietKeepsExplicitHelpVersionAndCompletion(t *testing.T) {
 	for _, args := range [][]string{{"models", "retrieve", "--help"}, {"--version"}, {"-v"}, {"@completion", "bash"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			ordinary := runMainDispatch(t, "bash", append([]string{"openai"}, args...)...)
@@ -140,7 +140,7 @@ func TestMainQuietKeepsExplicitHelpVersionAndCompletion(t *testing.T) {
 	}
 }
 
-func TestMainVerboseBinaryKeepsBytesAndLabelsFormatOption(t *testing.T) {
+func TestMainDispatchOutputVerboseBinaryKeepsBytesAndLabelsFormatOption(t *testing.T) {
 	const payload = "synthetic-private-binary\x00\xff\x1b[31m\r\n"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
@@ -153,7 +153,7 @@ func TestMainVerboseBinaryKeepsBytesAndLabelsFormatOption(t *testing.T) {
 	}
 }
 
-func TestMainQuietPreservesSavedImagePaths(t *testing.T) {
+func TestMainDispatchOutputQuietPreservesSavedImagePaths(t *testing.T) {
 	payload := imageGenerationPNG(t)
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -170,7 +170,7 @@ func TestMainQuietPreservesSavedImagePaths(t *testing.T) {
 	assertImageGenerationFiles(t, directory, got.stdout, 1, payload)
 }
 
-func TestMainQuietKeepsFailurePayloadsAndSuppressesFallbackNotice(t *testing.T) {
+func TestMainDispatchOutputQuietKeepsFailurePayloadsAndSuppressesFallbackNotice(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -188,7 +188,7 @@ func TestMainQuietKeepsFailurePayloadsAndSuppressesFallbackNotice(t *testing.T) 
 	}
 }
 
-func TestMainRedirectedErrorsIgnoreForcedDecoration(t *testing.T) {
+func TestMainDispatchOutputRedirectedErrorsIgnoreForcedDecoration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)

@@ -268,7 +268,7 @@ func TestMainNativeShell(t *testing.T) {
 						t.Run("explicit inline off preserves remembered on", func(t *testing.T) {
 							home := t.TempDir()
 							got := runNativeShell(t, shell, directory, home, server.URL, invocation+" images inline on")
-							if got.code != 0 || got.stderr != "" {
+							if got.code != 0 || got.stdout != "" || !strings.Contains(got.stderr, "Automatic image previews on.") {
 								t.Fatalf("remember inline on: %+v", got)
 							}
 							assertNativeShellImagePreference(t, home, true)
@@ -291,7 +291,7 @@ func TestMainNativeShell(t *testing.T) {
 				defer server.Close()
 				for _, mode := range []string{"off", "on", "off"} {
 					got := runNativeShell(t, shell, work, home, server.URL, shell.binary+" images inline "+mode)
-					if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "Automatic image previews "+mode+".") {
+					if got.code != 0 || got.stdout != "" || !strings.Contains(got.stderr, "Automatic image previews "+mode+".") {
 						t.Fatalf("remember inline %s: %+v", mode, got)
 					}
 					assertNativeShellImagePreference(t, home, mode == "on")

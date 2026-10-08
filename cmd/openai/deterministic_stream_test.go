@@ -11,7 +11,7 @@ import (
 
 // The server cannot send its terminal event until the consumer sees output.
 // This tests the real stdout path, including its process-level pipe handling.
-func TestMainStructuredStreamEmitsBeforeNextEvent(t *testing.T) {
+func TestMainDispatchOutputStructuredStreamEmitsBeforeNextEvent(t *testing.T) {
 	for _, format := range []string{"json", "jsonl", "yaml", "raw", "pretty", "explore"} {
 		t.Run(format, func(t *testing.T) {
 			release := make(chan struct{}, 1)
