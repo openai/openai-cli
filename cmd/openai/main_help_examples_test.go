@@ -19,9 +19,9 @@ func TestMainHelpCompleteImageExamples(t *testing.T) {
 		helpTopic, operation, example string
 		args                          []string
 	}{
-		{"generate", "generate", `openai images generate --prompt "A tiny orange robot"`, []string{"--prompt", "A tiny orange robot"}},
-		{"edit", "edit", `openai images edit --image "photo.png" --prompt "Make the sky purple"`, []string{"--image", "photo.png", "--prompt", "Make the sky purple"}},
-		{"create-variation", "edit", `openai images edit --image "photo.png" --prompt "Create a variation of this image"`, []string{"--image", "photo.png", "--prompt", "Create a variation of this image"}},
+		{"generate", "generate", `openai images generate --prompt "A tiny cat" --name cat`, []string{"--prompt", "A tiny cat", "--name", "cat"}},
+		{"edit", "edit", `openai images edit --image "photo.png" --prompt "Make the sky purple" --name purple-sky`, []string{"--image", "photo.png", "--prompt", "Make the sky purple", "--name", "purple-sky"}},
+		{"create-variation", "edit", `openai images edit --image "photo.png" --prompt "Create a variation of this image" --name variation`, []string{"--image", "photo.png", "--prompt", "Create a variation of this image", "--name", "variation"}},
 	} {
 		t.Run(tc.example, func(t *testing.T) {
 			help := runMainDispatch(t, "bash", "openai", "images", tc.helpTopic, "--help")
@@ -52,7 +52,7 @@ func TestMainHelpCompleteImageExamples(t *testing.T) {
 				count := 1
 				if tc.operation == "generate" {
 					var body map[string]any
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["prompt"] != "A tiny orange robot" {
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["prompt"] != "A tiny cat" {
 						t.Errorf("example prompt changed: %v, %v", body, err)
 					}
 					count = int(body["n"].(float64))
@@ -82,25 +82,39 @@ func TestMainHelpCompleteImageExamples(t *testing.T) {
 	}
 }
 
-func TestMainHelpImagePagesStayBrief(t *testing.T) {
+func TestMainHelpImagePagesAreComplete(t *testing.T) {
 	for _, operation := range []string{"generate", "edit", "create-variation", "preview"} {
 		t.Run(operation, func(t *testing.T) {
 			got := runMainDispatch(t, "bash", "openai", "images", operation, "--help")
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("short help failed: %+v", got)
 			}
-			if lines := len(strings.Split(strings.TrimSpace(got.stdout), "\n")); lines > 8 {
-				t.Errorf("short help uses %d lines; want one example and at most 8 lines", lines)
+			for _, heading := range []string{"SYNOPSIS:", "EXAMPLES:", "OPTIONS:", "GLOBAL OPTIONS:"} {
+				if !strings.Contains(got.stdout, heading) {
+					t.Errorf("complete page lacks %q", heading)
+				}
+			}
+			for _, name := range map[string][]string{
+				"generate":         {"--output-compression", "--partial-images", "--moderation"},
+				"edit":             {"--mask", "--input-fidelity", "--output-compression"},
+				"create-variation": {"--image", "--response-format", "--output-dir"},
+				"preview":          {"--inline"},
+			}[operation] {
+				if !strings.Contains(got.stdout, name) {
+					t.Errorf("complete help omitted %q", name)
+				}
 			}
 			exampleOperation := operation
 			if operation == "create-variation" {
 				exampleOperation = "edit"
 			}
-			if strings.Count(got.stdout, "  openai images "+exampleOperation+" ") != 1 {
+			_, examples, _ := strings.Cut(got.stdout, "EXAMPLES:\n")
+			examples, _, _ = strings.Cut(examples, "\nOPTIONS:")
+			if strings.Count(examples, "openai images "+exampleOperation+" ") != 1 {
 				t.Errorf("expected one complete example: %s", got.stdout)
 			}
-			if !strings.Contains(got.stdout, "Full help: openai help --all images "+operation) {
-				t.Errorf("full help is not discoverable: %s", got.stdout)
+			if strings.Contains(got.stdout, "Full help:") || strings.Contains(got.stdout, "help --all") {
+				t.Errorf("complete help advertises a second help mode: %s", got.stdout)
 			}
 		})
 	}

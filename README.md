@@ -88,13 +88,17 @@ Help works without an API key or network connection:
 
 ```sh
 openai help setup                  # Enter your API key safely
-openai images generate --help      # Example and common inputs
-openai help --all images generate  # Every image option and its details
-openai help --all                  # Command groups and global options
+openai images generate --help      # Example and every image option
+openai help images generate        # The same complete image help
+openai --help                      # Command groups and global options
 ```
 
-Add `--help` (or `-h`) to any command for its short guide. Help changes only
-what is displayed; command behavior, defaults, and output formats are unchanged.
+Add `--help` (or `-h`) to any command for its complete help page.
+`openai help COMMAND` shows the same page.
+Command pages list global options. Use `openai --help` for their full descriptions.
+You can place `--help` after valid command options.
+The old `help --all` spelling prints migration guidance and the complete page.
+Command behavior, defaults, and output formats remain unchanged.
 Tab completion follows the same group order and supports help topics and file input paths.
 After upgrading, [reload shell completion](docs/shell-completion.md) to enable the new file-path behavior.
 Older loaded completion scripts keep their previous behavior until refreshed.
