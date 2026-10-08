@@ -29,21 +29,21 @@ func TestModelsListViewerLoadedModelsAndLimit(t *testing.T) {
 	opts.setDefaults()
 	require.NoError(t, writeModelsList(iter, opts, 80, 0))
 	require.Contains(t, out.String(), "Listed 2 models.")
-	require.NotContains(t, out.String(), "OWNER")
+	require.Contains(t, out.String(), "OWNER")
 	require.Contains(t, out.String(), "model-first")
 	require.Contains(t, out.String(), "model-second")
 	require.NotContains(t, out.String(), "unread")
 	require.Equal(t, 2, source.Index())
 }
 
-func TestModelsListViewerModelsNamesIgnoreMetadata(t *testing.T) {
+func TestModelsListViewerModelsTableOmitsOtherMetadata(t *testing.T) {
 	for _, test := range []struct {
 		name, data, want, hidden string
 		width                    int
 	}{
-		{"narrow", `[{"id":"model-complete-long-identifier","object":"model","owned_by":"synthetic"}]`, "model-complete-long-identifier\n", "ID:", 10},
-		{"unknown", `[{"id":"model-a","object":"model","owned_by":"synthetic","notice":"keep this"}]`, "model-a\n", "keep this", 80},
-		{"retirement", `[{"id":"model-a","object":"model","owned_by":"synthetic","shutdown_date":"2027-01-01"}]`, "model-a\n", "2027-01-01", 80},
+		{"narrow", `[{"id":"model-complete-long-identifier","object":"model","owned_by":"synthetic"}]`, "ID: model-complete-long-identifier\nOwned by: synthetic\n", "Created:", 10},
+		{"unknown", `[{"id":"model-a","object":"model","owned_by":"synthetic","notice":"keep this"}]`, "model-a  synthetic\n", "keep this", 80},
+		{"retirement", `[{"id":"model-a","object":"model","owned_by":"synthetic","shutdown_date":"2027-01-01"}]`, "model-a  synthetic\n", "2027-01-01", 80},
 		{"empty", `[]`, "No results.\n", "Models", 80},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -54,7 +54,6 @@ func TestModelsListViewerModelsNamesIgnoreMetadata(t *testing.T) {
 			require.NoError(t, writeModelsList(iter, opts, test.width, 0))
 			require.Contains(t, out.String(), test.want)
 			require.NotContains(t, out.String(), test.hidden)
-			require.NotContains(t, out.String(), "OWNER")
 		})
 	}
 }

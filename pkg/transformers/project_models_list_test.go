@@ -10,7 +10,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestProjectModelNamesPreservesIDsAndSortsSelectedItems(t *testing.T) {
+func TestProjectModelsListPreservesIDsAndSortsSelectedItems(t *testing.T) {
 	items := []gjson.Result{
 		gjson.Parse(`{"id":"synthetic_z","object":"model"}`),
 		gjson.Parse(`{"id":"synthetic_A","object":"model"}`),
@@ -18,50 +18,103 @@ func TestProjectModelNamesPreservesIDsAndSortsSelectedItems(t *testing.T) {
 		gjson.Parse(`{"id":"synthetic_A","object":"model"}`),
 	}
 	original := append([]gjson.Result(nil), items...)
-	names, supported, err := ProjectModelNames(t.Context(), items, false)
+	names, supported, err := ProjectModelsList(t.Context(), items, false)
 	require.NoError(t, err)
 	require.True(t, supported)
-	require.Equal(t, []string{"synthetic_A", "synthetic_A", "synthetic_a", "synthetic_z"}, names)
+	require.Equal(t, []ModelListRow{{ID: "synthetic_A"}, {ID: "synthetic_A"}, {ID: "synthetic_a"}, {ID: "synthetic_z"}}, names)
 	require.Equal(t, original, items, "Projection must not reorder or modify the original records.")
 
 	// The caller applies max-items before projection. Sort only those records.
-	names, supported, err = ProjectModelNames(t.Context(), items[:2], false)
+	names, supported, err = ProjectModelsList(t.Context(), items[:2], false)
 	require.NoError(t, err)
 	require.True(t, supported)
-	require.Equal(t, []string{"synthetic_A", "synthetic_z"}, names)
+	require.Equal(t, []ModelListRow{{ID: "synthetic_A"}, {ID: "synthetic_z"}}, names)
 
-	names, supported, err = ProjectModelNames(t.Context(), items, true)
+	names, supported, err = ProjectModelsList(t.Context(), items, true)
 	require.NoError(t, err)
 	require.True(t, supported)
-	require.Equal(t, []string{"synthetic_z", "synthetic_a", "synthetic_A", "synthetic_A"}, names)
+	require.Equal(t, []ModelListRow{{ID: "synthetic_z"}, {ID: "synthetic_a"}, {ID: "synthetic_A"}, {ID: "synthetic_A"}}, names)
 	require.Equal(t, original, items)
 }
 
-func TestProjectModelNamesIgnoresUnfamiliarMetadata(t *testing.T) {
+func TestProjectModelsListIgnoresUnfamiliarMetadata(t *testing.T) {
 	metadata := strings.Repeat("synthetic-metadata-", 256*1024)
 	items := []gjson.Result{
 		gjson.Parse(`{"id":"synthetic_second","object":"model","shutdown_date":"2027-01-01","owned_by":null,"created":{},"unknown":{"id":"nested","object":"file","payload":"` + metadata + `"}}`),
 		gjson.Parse(`{"unknown":[false,null,1],"id":"synthetic_first","object":"model","warning":"synthetic notice","unknown":"another value"}`),
 	}
 	original := append([]gjson.Result(nil), items...)
-	names, supported, err := ProjectModelNames(t.Context(), items, false)
+	names, supported, err := ProjectModelsList(t.Context(), items, false)
 	require.NoError(t, err)
 	require.True(t, supported)
-	require.Equal(t, []string{"synthetic_first", "synthetic_second"}, names)
+	require.Equal(t, []ModelListRow{{ID: "synthetic_first"}, {ID: "synthetic_second"}}, names)
 	require.Equal(t, original, items)
 }
 
-func TestProjectModelNamesPreservesUnicodeAndControls(t *testing.T) {
+func TestProjectModelsListPreservesUnicodeAndControls(t *testing.T) {
 	id := "  synthetic-日本語-e\u0301-👩‍💻-\x1b[31m\n\t\r\x00  " + strings.Repeat("long-id-", 4096)
-	encoded, err := json.Marshal(map[string]string{"id": id, "object": "model"})
+	owner := "owner-研究-e\u0301-\x1b[31m\n\t\r\x00"
+	encoded, err := json.Marshal(map[string]string{"id": id, "object": "model", "owned_by": owner})
 	require.NoError(t, err)
-	names, supported, err := ProjectModelNames(t.Context(), []gjson.Result{gjson.ParseBytes(encoded)}, false)
+	names, supported, err := ProjectModelsList(t.Context(), []gjson.Result{gjson.ParseBytes(encoded)}, false)
 	require.NoError(t, err)
 	require.True(t, supported)
-	require.Equal(t, []string{id}, names, "Only the renderer may escape terminal controls.")
+	require.Equal(t, []ModelListRow{{ID: id, Owner: &owner}}, names, "Only the renderer may escape terminal controls.")
 }
 
-func TestProjectModelNamesRejectsAmbiguousOrMalformedIdentity(t *testing.T) {
+func TestProjectModelsListKeepsStableOwnerAssociation(t *testing.T) {
+	items := []gjson.Result{
+		gjson.Parse(`{"id":"model-z","object":"model","owned_by":"z-owner"}`),
+		gjson.Parse(`{"id":"model-a","object":"model","owned_by":"first-a-owner"}`),
+		gjson.Parse(`{"id":"model-a","object":"model","owned_by":"second-a-owner"}`),
+	}
+	original := append([]gjson.Result(nil), items...)
+	for _, descending := range []bool{false, true} {
+		rows, supported, err := ProjectModelsList(t.Context(), items, descending)
+		require.NoError(t, err)
+		require.True(t, supported)
+		order := []int{1, 2, 0}
+		if descending {
+			order = []int{0, 1, 2}
+		}
+		for index, input := range order {
+			require.Equal(t, items[input].Get("id").Str, rows[index].ID)
+			require.NotNil(t, rows[index].Owner)
+			require.Equal(t, items[input].Get("owned_by").Str, *rows[index].Owner)
+		}
+		require.Equal(t, original, items)
+	}
+}
+
+func TestProjectModelsListUnknownOwnerIsNotInvented(t *testing.T) {
+	for _, ownerFields := range []string{
+		``, `,"owned_by":null`, `,"owned_by":""`, `,"owned_by":123`, `,"owned_by":false`,
+		`,"owned_by":[]`, `,"owned_by":{"name":"synthetic"}`,
+		`,"owned_by":"first","owned_by":"second"`,
+		`,"owned_by":"same","owned_by":"same"`,
+		`,"owned_by":"first","owned_\u0062y":"second"`,
+		`,"owned_by":null,"owned_by":"second","owned_by":"third"`,
+	} {
+		t.Run(ownerFields, func(t *testing.T) {
+			item := gjson.Parse(`{"id":"model-a","object":"model"` + ownerFields + `}`)
+			rows, supported, err := ProjectModelsList(t.Context(), []gjson.Result{item}, false)
+			require.NoError(t, err)
+			require.True(t, supported)
+			require.Equal(t, []ModelListRow{{ID: "model-a"}}, rows)
+		})
+	}
+	for _, owner := range []string{"(unknown)", " ", "null", "synthetic-owner"} {
+		encoded, err := json.Marshal(map[string]string{"id": "model-a", "object": "model", "owned_by": owner})
+		require.NoError(t, err)
+		rows, supported, err := ProjectModelsList(t.Context(), []gjson.Result{gjson.ParseBytes(encoded)}, false)
+		require.NoError(t, err)
+		require.True(t, supported)
+		require.NotNil(t, rows[0].Owner, "A real owner value is distinct from unavailable owner information.")
+		require.Equal(t, owner, *rows[0].Owner)
+	}
+}
+
+func TestProjectModelsListRejectsAmbiguousOrMalformedIdentity(t *testing.T) {
 	valid := gjson.Parse(`{"id":"synthetic_valid","object":"model"}`)
 	for _, test := range []struct{ name, input string }{
 		{"null", `null`},
@@ -92,7 +145,7 @@ func TestProjectModelNamesRejectsAmbiguousOrMalformedIdentity(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			item := gjson.Parse(test.input)
 			original := item
-			names, supported, err := ProjectModelNames(t.Context(), []gjson.Result{valid, item, valid}, false)
+			names, supported, err := ProjectModelsList(t.Context(), []gjson.Result{valid, item, valid}, false)
 			require.NoError(t, err)
 			require.False(t, supported)
 			require.Nil(t, names, "Fallback must preserve the whole page, not a valid prefix.")
@@ -101,15 +154,15 @@ func TestProjectModelNamesRejectsAmbiguousOrMalformedIdentity(t *testing.T) {
 	}
 }
 
-func TestProjectModelNamesEmptyAndCancellation(t *testing.T) {
-	names, supported, err := ProjectModelNames(t.Context(), nil, false)
+func TestProjectModelsListEmptyAndCancellation(t *testing.T) {
+	names, supported, err := ProjectModelsList(t.Context(), nil, false)
 	require.NoError(t, err)
 	require.True(t, supported)
 	require.Empty(t, names)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	names, supported, err = ProjectModelNames(ctx, nil, false)
+	names, supported, err = ProjectModelsList(ctx, nil, false)
 	require.ErrorIs(t, err, context.Canceled)
 	require.False(t, supported)
 	require.Nil(t, names)
@@ -121,7 +174,7 @@ func TestProjectModelNamesEmptyAndCancellation(t *testing.T) {
 	for _, after := range []int32{2, 3, 5, 9, 13, 14} {
 		ctx, cancel := context.WithCancel(t.Context())
 		polls := &cancelSummaryContext{Context: ctx, cancel: cancel, after: after}
-		names, supported, err := ProjectModelNames(polls, items, false)
+		names, supported, err := ProjectModelsList(polls, items, false)
 		cancel()
 		require.ErrorIs(t, err, context.Canceled, "cancel after %d checks", after)
 		require.False(t, supported)

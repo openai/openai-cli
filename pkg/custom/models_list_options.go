@@ -33,7 +33,7 @@ func configureModelsList(root *cli.Command) {
 			limit.DefaultText = "unlimited"
 		}
 	}
-	command.Usage = "List accessible model IDs."
+	command.Usage = "List accessible model IDs and owners."
 	command.Description = `Use --filter and --sort-by to select models before --max-items limits the result.
 Without these flags, --max-items selects response-order records before display sorting.
 These controls use the loaded response and make no additional API requests.
@@ -51,7 +51,7 @@ Use --format json for complete records. Filtering and sorting do not support --f
 	next := command.Action
 	command.Action = func(ctx context.Context, command *cli.Command) error {
 		if !command.IsSet("filter") && !command.IsSet("sort-by") {
-			return next(ctx, command)
+			return runWithModelsListLoading(ctx, command, next)
 		}
 		options, err := parseModelsListOptions(command.String("filter"), command.IsSet("filter"), command.String("sort-by"))
 		if err != nil {
@@ -60,7 +60,7 @@ Use --format json for complete records. Filtering and sorting do not support --f
 		if strings.EqualFold(command.Root().String("format"), "raw") {
 			return &modelsListError{"--filter and --sort-by do not support --format raw. Use --format json for selected complete records."}
 		}
-		return next(context.WithValue(ctx, modelsListOptionsKey{}, options), command)
+		return runWithModelsListLoading(context.WithValue(ctx, modelsListOptionsKey{}, options), command, next)
 	}
 }
 

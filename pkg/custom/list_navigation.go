@@ -440,7 +440,7 @@ func renderListNavigationPage(opts ShowJSONOpts, items []gjson.Result, width int
 	if (opts.Format == "" || strings.EqualFold(opts.Format, "auto")) &&
 		opts.Transform == "" && !opts.RawOutput {
 		if opts.Operation == "(resource) models > (method) list" && opts.OutputKind == OutputPageItem {
-			content, supported, err := renderModelsListNames(opts, items, width)
+			content, supported, err := renderModelsListTable(opts, items, width)
 			if err != nil || supported {
 				return content, err
 			}
