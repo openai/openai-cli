@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve 120 synthetic models for the public-baseline terminal comparison."""
+"""Serve short synthetic model IDs and varied owners, with a loading gate."""
 
 import hashlib
 import http.server
@@ -12,16 +12,19 @@ import time
 
 
 def main():
-    if len(sys.argv) != 4:
-        raise SystemExit("usage: server.py ADDRESS_FILE REQUEST_LOG FIXTURE_METADATA")
-    items = [{"id": f"synthetic-finetune-model-for-viewport-regression-with-long-readable-id-{i:05d}",
-              "object": "model", "created": 1700000000, "owned_by": "synthetic-owner",
-              "shutdown_date": "2030-01-01" if i % 2 else None} for i in range(119, -1, -1)]
+    if len(sys.argv) != 5:
+        raise SystemExit("usage: server.py ADDRESS_FILE REQUEST_LOG FIXTURE_METADATA LOADING_GATE")
+    gate = pathlib.Path(sys.argv[4])
+    gate.mkdir()
+    owners = ("openai", "system", "demo-research-team")
+    items = [{"id": f"demo-text-2026-10-01-{i:03d}", "object": "model", "created": 1700000000,
+              "owned_by": owners[i % len(owners)], "shutdown_date": "2030-01-01" if i % 2 else None}
+             for i in range(47, -1, -1)]
     body = json.dumps({"object": "list", "data": items}, separators=(",", ":")).encode()
     pathlib.Path(sys.argv[3]).write_text(json.dumps({
         "models": len(items), "response_bytes": len(body),
         "sha256": hashlib.sha256(body).hexdigest(), "data": "synthetic only",
-        "response_order": "descending model IDs",
+        "response_order": "descending model IDs", "records": items,
     }, indent=2) + "\n")
     failures = []
     lock = threading.Lock()
@@ -38,8 +41,15 @@ def main():
 
             def do_GET(self):
                 try:
-                    if self.path not in {"/before/v1/models", "/after/v1/models"}:
+                    if self.path not in {"/before/v1/models", "/after/v1/models", "/loading/v1/models"}:
                         raise AssertionError("unexpected synthetic request path")
+                    requested = time.monotonic()
+                    if self.path == "/loading/v1/models":
+                        (gate / "requested").write_text("request received\n")
+                        deadline = requested + 15
+                        while not (gate / "release").exists():
+                            if stop.wait(0.02) or time.monotonic() >= deadline:
+                                raise TimeoutError("loading scene did not release its response")
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(body)))
@@ -50,6 +60,7 @@ def main():
                         log.write(json.dumps({"path": self.path, "status": 200,
                                               "response_bytes": len(body),
                                               "response_sha256": hashlib.sha256(body).hexdigest(),
+                                              "held_seconds": time.monotonic() - requested,
                                               "elapsed_seconds": time.monotonic() - started}) + "\n")
                         log.flush()
                 except Exception as error:

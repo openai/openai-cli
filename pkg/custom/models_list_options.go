@@ -34,7 +34,10 @@ func configureModelsList(root *cli.Command) {
 		}
 	}
 	command.Usage = "List accessible model IDs and owners."
-	command.Description = `Use --filter and --sort-by to select models before --max-items limits the result.
+	command.Description = `Shows IDs and owners. Narrow terminals keep both values in labeled output.
+Large results use Space/b/q navigation; p prints all selected records.
+Slow interactive requests show loading feedback.
+Use --filter and --sort-by to select models before --max-items limits the result.
 Without these flags, --max-items selects response-order records before display sorting.
 These controls use the loaded response and make no additional API requests.
 Matches are case-sensitive by default. Regex matches anywhere; use ^ and $ to anchor it.

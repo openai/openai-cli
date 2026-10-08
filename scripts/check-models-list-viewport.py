@@ -49,7 +49,8 @@ def main():
     parser.add_argument("binary")
     parser.add_argument("output")
     parser.add_argument("--expect-viewer", action="store_true")
-    parser.add_argument("--expect-names", action="store_true", help="Require a names-only automatic view")
+    parser.add_argument("--expect-id-owner", "--expect-names", dest="expect_id_owner", action="store_true",
+                        help="Require exact IDs and owners without unrelated metadata")
     parser.add_argument("--count", type=int, default=11892)
     parser.add_argument("--width", type=int, default=110)
     parser.add_argument("--height", type=int, default=30)
@@ -93,7 +94,23 @@ def main():
                 return value
 
             def visible_ids(value):
-                return re.findall(r"(?:readable-id-|synthetic-model-)(\d{5})", value)
+                # Labeled IDs can wrap at narrow widths; these fixture IDs contain no whitespace.
+                compact = re.sub(r"\s+", "", value)
+                return re.findall(r"(?:readable-id-|synthetic-model-)(\d{5})", compact)
+
+            def assert_id_owner(value, require_last=False):
+                compact = re.sub(r"\s+", "", value)
+                numbers = visible_ids(value)
+                assert numbers, "No complete model IDs are visible"
+                assert not any(label in value for label in
+                               ("Shutdown date:", "Created:", "Object:")), "Unrelated metadata expanded the list"
+                checked = [f"{args.count - 1:05d}"] if require_last else numbers[:-1] or numbers[:1]
+                for number in checked:
+                    item = items[int(number)]
+                    identity = re.sub(r"\s+", "", item["id"])
+                    owner = re.sub(r"\s+", "", item["owned_by"])
+                    assert identity + owner in compact or identity + "Ownedby:" + owner in compact, \
+                        "A complete ID/owner pair was shortened or mismatched"
 
             deadline = time.monotonic() + 8
             while time.monotonic() < deadline:
@@ -102,7 +119,7 @@ def main():
                     for _ in range(5):
                         terminal.read(0.01)
                     break
-                if (items and items[0]["id"].encode() in terminal.raw and b"q: quit" in terminal.raw):
+                if items and b"p:" in terminal.raw and b"q: quit" in terminal.raw:
                     break
             navigation.drain(terminal, 0.1)
             before = bytes(terminal.raw)
@@ -116,10 +133,10 @@ def main():
                 initial_screen = screen("initial-screen")
                 first_ids = visible_ids(initial_screen)
                 assert first_ids and first_ids[0] == "00000", ("First model missing", initial_screen)
-                if args.expect_names:
-                    assert "ID\n" in initial_screen, "Model ID heading missing"
-                    assert not any(label in initial_screen for label in
-                                   ("ID:", "Owned by:", "Shutdown date:", "Created:", "OWNER")), "Metadata expanded the model list"
+                if args.expect_id_owner:
+                    assert ("ID" in initial_screen and "OWNER" in initial_screen) or \
+                        ("ID:" in initial_screen and "Owned by:" in initial_screen), "ID/owner labels missing"
+                    assert_id_owner(initial_screen)
                 assert "End of results" not in initial_screen, "End displayed above unread rows"
                 assert "Space: more" in initial_screen and "b: back" in initial_screen
                 assert len(initial_screen.splitlines()) <= args.height, "Initial screen overflowed the terminal"
@@ -131,7 +148,11 @@ def main():
                 result["bytes_after_space"] = len(terminal.raw)
                 result["request_count_after_space"] = len(server.requests)
                 terminal.send(b"b")
-                navigation.wait_screen(terminal, items[0]["id"])
+                deadline = time.monotonic() + 8
+                while "00000" not in visible_ids(navigation.screen_text(terminal)):
+                    if terminal.child.poll() is not None or time.monotonic() >= deadline:
+                        raise AssertionError("Back did not restore the first model")
+                    terminal.read(0.03)
                 assert visible_ids(screen("after-back")) == first_ids, "Back did not restore the initial model range"
                 result["bytes_after_back"] = len(terminal.raw)
                 terminal.resize(max(40, args.width - 30), args.height)
@@ -139,6 +160,8 @@ def main():
                 resized_screen = screen("after-resize")
                 assert "00000" in visible_ids(resized_screen), "Resize lost loaded models"
                 assert "Space: more" in resized_screen and "q: quit" in resized_screen
+                if args.expect_id_owner:
+                    assert_id_owner(resized_screen)
                 # Repeated user page-down keys visit the final loaded response.
                 # This deliberately exceeds the screens needed by both fixtures.
                 for _ in range((args.count + 127) // 128 + 1):
@@ -149,8 +172,10 @@ def main():
                 navigation.wait_screen(terminal, "End of results")
                 bottom_screen = screen("bottom")
                 assert f"{args.count-1:05d}" in visible_ids(bottom_screen), "Last model is inaccessible"
-                if args.expect_names:
-                    assert f"Listed {args.count} models." in bottom_screen, "Model count missing"
+                if args.expect_id_owner:
+                    noun = "model" if args.count == 1 else "models"
+                    assert f"Listed {args.count} {noun}." in bottom_screen, "Model count missing"
+                    assert_id_owner(bottom_screen, require_last=True)
                 terminal.send(b"b")
                 navigation.drain(terminal, 0.15)
                 assert "End of results" not in screen("back-from-bottom"), "End stayed visible above the bottom"
