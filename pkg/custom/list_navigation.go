@@ -333,17 +333,26 @@ func (m *listNavigation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *listNavigation) View() tea.View {
 	footer := "Space: more   q: quit"
+	if m.viewport.Width() >= len("Space: more   b: back   q: quit") {
+		footer = "Space: more   b: back   q: quit"
+	}
 	printHint := ""
 	if len(m.pages) != 0 {
 		printHint = "p: print page, quit"
+		if m.opts.Operation == "(resource) models > (method) list" && m.opts.OutputKind == OutputPageItem {
+			printHint = modelsListPrintHint(len(m.pages[m.index].items), m.viewport.Width())
+		}
 	}
 	if m.loading {
 		footer = "Loading next page…   q: quit"
 		if ansi.StringWidth(footer) > m.viewport.Width() {
 			footer = "Loading… q: quit"
 		}
-	} else if len(m.pages) != 0 && m.index == len(m.pages)-1 && !m.pages[m.index].more {
+	} else if len(m.pages) != 0 && m.index == len(m.pages)-1 && !m.pages[m.index].more && m.viewport.AtBottom() {
 		footer = "End of results   q: quit"
+		if m.viewport.Width() >= len("End of results   b: back   q: quit") {
+			footer = "End of results   b: back   q: quit"
+		}
 		if ansi.StringWidth(footer) > m.viewport.Width() {
 			footer = "End q: quit"
 		}
@@ -365,6 +374,12 @@ func renderListNavigationPage(opts ShowJSONOpts, items []gjson.Result, width int
 	}
 	if (opts.Format == "" || strings.EqualFold(opts.Format, "auto")) &&
 		opts.Transform == "" && !opts.RawOutput {
+		if opts.Operation == "(resource) models > (method) list" && opts.OutputKind == OutputPageItem {
+			content, supported, err := renderModelsListNames(opts, items, width)
+			if err != nil || supported {
+				return content, err
+			}
+		}
 		content, supported, err := renderListTablePage(opts.Context, opts.Operation, items, width)
 		if err != nil {
 			return "", err

@@ -645,12 +645,18 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	if itemsToDisplay == 0 {
 		return source.Err()
 	}
+	if handled, err := showModelsListSelection(source, itemsToDisplay, opts); handled {
+		return err
+	}
 	iter := &outputIterator[T]{
 		source:    source,
 		context:   opts.Context,
 		transform: selectOutputTransformer(opts, selectTransformer),
 		route:     transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind},
 		remaining: itemsToDisplay,
+	}
+	if handled, err := showModelsListViewer(source, iter, opts); handled {
+		return err
 	}
 	opts.Format = resolvedOutputFormat(opts)
 	if opts.Format == "text" {
