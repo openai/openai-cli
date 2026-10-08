@@ -17,7 +17,7 @@ import time
 
 FIXTURE = "Hello, tokens! 👋\nCafé."
 MODEL_NAMES = {"o200k_base": "GPT-5.x & o1/o3", "cl100k_base": "GPT-4 & GPT-3.5",
-               "r50k_base": "GPT-3", "p50k_base": "Codex / Davinci"}
+               "r50k_base": "GPT-3", "p50k_base": "Codex"}
 CSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 OSC = re.compile(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 QUERY = re.compile(rb"\x1b\[\?7\$p|\x1b\]11;\?(?:\x07|\x1b\\)")

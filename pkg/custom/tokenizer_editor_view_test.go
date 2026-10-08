@@ -592,7 +592,7 @@ func TestTokenizerEditorChoiceLayoutsKeepSelectionAndControlsVisible(t *testing.
 				descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hex bytes"}
 				if modal == tokenizerModalEncoding {
 					title, current = "Choose model", "GPT-4 & GPT-3.5 ✓"
-					choices = []string{"GPT-5.x & o1/o3", "GPT-4 & GPT-3.5", "GPT-3", "Codex / Davinci"}
+					choices = []string{"GPT-5.x & o1/o3", "GPT-4 & GPT-3.5", "GPT-3", "Codex"}
 					descriptions = []string{"Default", "Legacy", "Legacy", "Legacy"}
 				}
 				for choice, label := range choices {
@@ -683,7 +683,7 @@ func TestTokenizerEditorMainViewShowsModelNamesWithoutRedundantHints(t *testing.
 			{"o200k_base", "GPT-5.x & o1/o3", "Default"},
 			{"cl100k_base", "GPT-4 & GPT-3.5", "Legacy"},
 			{"r50k_base", "GPT-3", "Legacy"},
-			{"p50k_base", "Codex / Davinci", "Legacy"},
+			{"p50k_base", "Codex", "Legacy"},
 		} {
 			m := testTokenizerEditor()
 			m.width, m.height, m.encoding = width, 24, choice.encoding

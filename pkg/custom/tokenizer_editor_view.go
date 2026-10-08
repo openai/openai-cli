@@ -204,7 +204,7 @@ func tokenizerModelLabel(encoding string) (string, string) {
 	case "r50k_base":
 		return "GPT-3", "Legacy"
 	case "p50k_base":
-		return "Codex / Davinci", "Legacy"
+		return "Codex", "Legacy"
 	default:
 		return "Unknown", ""
 	}

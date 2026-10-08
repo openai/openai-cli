@@ -210,7 +210,7 @@ PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
 ```
 
 Version 4 checks the `Model` row and `Choose model` chooser.
-The four labels are `GPT-5.x & o1/o3`, `GPT-4 & GPT-3.5`, `GPT-3`, and `Codex / Davinci`.
+The four labels are `GPT-5.x & o1/o3`, `GPT-4 & GPT-3.5`, `GPT-3`, and `Codex`.
 The first label carries `Default`; the others carry `Legacy`.
 Validation requires each complete chooser row, so `GPT-3` cannot match part of `GPT-3.5`.
 Primary frames must omit raw encoding names, the F1 hint, and the Enter-newline reminder.
