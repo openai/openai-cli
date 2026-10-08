@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strconv"
@@ -36,11 +37,20 @@ func (e *batchWorkflowError) ExitCode() int {
 func batchError(message string) error { return &batchWorkflowError{message: message} }
 
 func batchContextError(err error) error {
+	quiet := interruptedBatchDiagnostic(err)
 	if errors.Is(err, context.Canceled) {
-		return &batchWorkflowError{message: "Local batch operation interrupted. The remote batch was not canceled.", code: 130, cause: err}
+		message := "Local batch operation interrupted. The remote batch was not canceled."
+		if quiet {
+			message = ""
+		}
+		return &batchWorkflowError{message: message, code: 130, cause: err}
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return &batchWorkflowError{message: "Local batch wait timed out. The remote batch was not canceled. Retrieve it again to continue waiting.", code: 124, cause: err}
+		message := "Local batch wait timed out. The remote batch was not canceled. Retrieve it again to continue waiting."
+		if quiet {
+			message = ""
+		}
+		return &batchWorkflowError{message: message, code: 124, cause: err}
 	}
 	return err
 }
@@ -115,6 +125,20 @@ func waitForBatch(ctx context.Context, cmd *cli.Command) error {
 	}
 	stopReset := context.AfterFunc(ctx, stop)
 	defer stopReset()
+	if batchHumanTerminal(cmd.Root()) {
+		err = writeBatchStdout(ctx, os.Stderr, func(progress io.Writer) error {
+			return pollBatch(ctx, cmd, options, interval, progress)
+		})
+	} else {
+		err = pollBatch(ctx, cmd, options, interval, nil)
+	}
+	if ctx.Err() != nil {
+		return batchContextError(errors.Join(ctx.Err(), err))
+	}
+	return err
+}
+
+func pollBatch(ctx context.Context, cmd *cli.Command, options []option.RequestOption, interval time.Duration, progress io.Writer) error {
 	client := openai.NewClient(GetDefaultRequestOptions(cmd)...)
 	var previous string
 	for {
@@ -127,12 +151,19 @@ func waitForBatch(ctx context.Context, cmd *cli.Command) error {
 			}
 			return err
 		}
+		valid := gjson.ValidBytes(raw)
+		if ctx.Err() != nil {
+			return batchContextError(ctx.Err())
+		}
+		if !valid {
+			return batchError("The API returned invalid batch JSON. Local waiting stopped; retrieve the batch again to check its status.")
+		}
 		batch := gjson.ParseBytes(raw)
 		terminal, result := batchWaitResult(batch)
-		if batchHumanTerminal(cmd.Root()) {
+		if progress != nil {
 			message := batchProgress(batch)
 			if message != previous {
-				if err := readable.WriteText(os.Stderr, message); err != nil {
+				if err := readable.WriteText(progress, message); err != nil {
 					return errors.Join(err, result)
 				}
 				previous = message
@@ -141,7 +172,7 @@ func waitForBatch(ctx context.Context, cmd *cli.Command) error {
 		if terminal {
 			outputErr := batchShowJSON(ctx, cmd, batch, "retrieve")
 			if ctx.Err() != nil {
-				return errors.Join(batchContextError(ctx.Err()), outputErr, result)
+				return errors.Join(batchContextError(errors.Join(ctx.Err(), outputErr)), result)
 			}
 			return errors.Join(outputErr, result)
 		}
@@ -206,10 +237,12 @@ func batchProgress(batch gjson.Result) string {
 
 func batchShowJSON(ctx context.Context, cmd *cli.Command, batch gjson.Result, operation string) error {
 	root := cmd.Root()
-	return ShowJSON(batch, ShowJSONOpts{
-		Context: ctx, Operation: "(resource) batches > (method) " + operation, OutputKind: OutputResponse,
-		Format: root.String("format"), ExplicitFormat: root.IsSet("format"), RawOutput: root.Bool("raw-output"),
-		Transform: root.String("transform"), Title: "batches " + operation, Stdout: root.Writer,
+	return writeBatchStdout(ctx, root.Writer, func(out io.Writer) error {
+		return ShowJSON(batch, ShowJSONOpts{
+			Context: ctx, Operation: "(resource) batches > (method) " + operation, OutputKind: OutputResponse,
+			Format: root.String("format"), ExplicitFormat: root.IsSet("format"), RawOutput: root.Bool("raw-output"),
+			Transform: root.String("transform"), Title: "batches " + operation, Stdout: out,
+		})
 	})
 }
 

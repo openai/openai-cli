@@ -58,6 +58,9 @@ func handleBatchDownload(ctx context.Context, command *cli.Command) (err error) 
 	if err != nil {
 		return err
 	}
+	if batch == nil {
+		return batchError("The API returned no batch object. Retrieve the batch again to check its file IDs.")
+	}
 	fileID := batch.OutputFileID
 	if selection == "error" {
 		fileID = batch.ErrorFileID
@@ -72,7 +75,10 @@ func handleBatchDownload(ctx context.Context, command *cli.Command) (err error) 
 		return err
 	}
 	if path == "-" {
-		_, copyErr := io.Copy(outputWriter{ctx: ctx, out: command.Root().Writer}, response.Body)
+		copyErr := writeBatchStdout(ctx, command.Root().Writer, func(out io.Writer) error {
+			_, copyErr := io.Copy(outputWriter{ctx: ctx, out: out}, response.Body)
+			return copyErr
+		})
 		return errors.Join(copyErr, response.Body.Close(), ctx.Err())
 	}
 	written, err := writeBatchDownload(ctx, path, response.Body)

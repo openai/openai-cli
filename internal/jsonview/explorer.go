@@ -332,13 +332,18 @@ func ExploreJSON(title string, json gjson.Result) error {
 
 // ExploreJSONWithOutput sends the explorer and its selected value to output.
 func ExploreJSONWithOutput(title string, json gjson.Result, output io.Writer) error {
+	return ExploreJSONWithContext(context.Background(), title, json, output)
+}
+
+// ExploreJSONWithContext also stops the explorer when its caller is canceled.
+func ExploreJSONWithContext(ctx context.Context, title string, json gjson.Result, output io.Writer) error {
 	view, err := newView("", json, false)
 	if err != nil {
 		return err
 	}
 
 	viewer := &JSONViewer{stack: []JSONView{view}, root: title, rawMode: false, help: help.New()}
-	return runExplorerWithOutput(viewer, output)
+	return runExplorerWithOutput(viewer, output, tea.WithContext(ctx))
 }
 
 func runExplorerWithOutput(viewer *JSONViewer, output io.Writer, options ...tea.ProgramOption) error {

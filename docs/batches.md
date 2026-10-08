@@ -108,6 +108,7 @@ The default wait timeout is zero, meaning no overall deadline.
 A positive timeout includes requests, retries, and polling delays.
 It does not change the SDK's individual request timeout behavior.
 The CLI retains SDK retries and supported `Retry-After` handling; exhausted retries stop waiting.
+Malformed batch JSON stops local waiting with an error.
 Timing flags require `--wait`.
 
 Human terminal progress uses returned counts:
@@ -144,11 +145,15 @@ An unknown future status prints the response and exits nonzero.
 | Request failures, failed, expired, cancelled, unknown status, or missing/inconsistent counts | 1 |
 | API or transport error | 1 |
 | Overall local wait timeout | 124 |
-| Ctrl+C | 130 |
+| Interrupt signal while waiting or writing output | 130 |
 
 Ordinary retrieve retains its existing HTTP-success exit behavior, regardless of batch status.
 `--wait=false` also retains ordinary retrieval.
 Ctrl+C stops local waiting. It never cancels the remote batch.
+Inside the interactive explorer, `q` or keyboard Ctrl+C closes the view and retains the batch outcome.
+The wait deadline also stops the explorer.
+Cancellation can omit its diagnostic when the interrupted output destination also carries errors.
+The exit status still distinguishes interruption from timeout.
 
 ## Cancel remote work
 
