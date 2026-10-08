@@ -26,6 +26,17 @@ openai files download file-example > copy.txt
 
 Replace `file-example` with the full ID from your upload response.
 
+## Find commands and complete paths
+
+Use `openai files --help` to see upload, get, and download in workflow order.
+Each command's `--help` explains its inputs and shows an example.
+Help also works after a path or file ID without sending an API request.
+
+The existing Bash, Zsh, fish, and PowerShell completion adapters support the first upload path.
+[Reload an already loaded completion adapter](shell-completion.md) after updating the CLI.
+The adapter completes literal filenames, including a leading `@`.
+In PowerShell, quote a leading `@` or use `./@name` to avoid shell splatting.
+
 ## Upload paths and purpose
 
 Upload takes a plain local path. Quote paths that contain spaces or shell characters.
@@ -79,6 +90,8 @@ Download it: openai files download file-example --output 'upload space.txt'
 ```
 
 The receipt uses the returned filename, size, ID, and purpose.
+The CLI omits the size when the API does not supply it.
+The download suggestion appears for supported shells and unambiguous returned filenames.
 A successful upload does not mean that downstream processing has finished.
 When the returned status is `error`, the receipt suggests inspecting the metadata.
 An upload can return success while its status reports a processing error.
@@ -139,6 +152,8 @@ openai files get file-example --transform filename --raw-output
 ```
 
 Interactive receipts do not appear in JSON, extraction, or piped upload output.
+`--quiet` suppresses upload receipts and retains the selected metadata output.
+The receipt's suggested command preserves the executable used for the upload.
 See [reading command results](readable-output.md) for output formats.
 
 Inspect command help without making an API request:

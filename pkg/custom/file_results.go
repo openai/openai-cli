@@ -154,7 +154,7 @@ func fileReceiptInvocation(invocation fileInvocation, shell string) string {
 		return "openai"
 	}
 	plain, _ := imagePickerQuoteProperties(invocation.display)
-	if plain || strings.HasPrefix(invocation.display, "go run ") || invocation.executable == "" {
+	if plain || invocation.goRun || invocation.executable == "" {
 		return invocation.display
 	}
 	quote := imagePickerShellQuoter(shell)

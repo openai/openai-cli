@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/urfave/cli/v3"
@@ -18,6 +19,7 @@ type fileInvocationKey struct{}
 type fileInvocation struct {
 	display    string
 	executable string
+	goRun      bool
 }
 
 const (
@@ -78,10 +80,13 @@ func configureFileCommands(root *cli.Command) {
 				}
 			}
 			invocation := fileInvocation{display: errorHelpInvocation(command.Root())}
+			invocation.goRun = invocation.display == "go run ./cmd/"+command.Root().Name
 			if len(os.Args) > 0 {
 				invocation.executable = os.Args[0]
-				if strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe") != command.Root().Name {
+				if strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe") != command.Root().Name ||
+					strings.IndexFunc(os.Args[0], unicode.IsControl) >= 0 {
 					invocation.display = os.Args[0]
+					invocation.goRun = false
 				}
 			}
 			ctx = context.WithValue(ctx, fileInvocationKey{}, invocation)

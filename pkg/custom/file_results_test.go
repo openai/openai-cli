@@ -181,3 +181,21 @@ func TestFileReceiptPreservesSafeExecutableInvocation(t *testing.T) {
 		}
 	}
 }
+
+func TestFileReceiptQuotesExecutableNamedLikeGoRun(t *testing.T) {
+	name := "go run synthetic tool"
+	invocation := fileInvocation{display: name, executable: name}
+	for _, shell := range []string{"bash", "zsh", "fish", "pwsh"} {
+		t.Run(shell, func(t *testing.T) {
+			quoted := imagePickerShellQuoter(shell)(name)
+			if shell == "pwsh" {
+				quoted = "& " + quoted
+			}
+			require.Equal(t, quoted, fileReceiptInvocation(invocation, shell))
+		})
+	}
+	// Only the help-selected development invocation may remain shell syntax.
+	require.Equal(t, "go run ./cmd/openai", fileReceiptInvocation(fileInvocation{
+		display: "go run ./cmd/openai", executable: "/tmp/go-build123/b001/exe/openai", goRun: true,
+	}, "bash"))
+}
