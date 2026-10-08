@@ -392,8 +392,26 @@ func TestMainFilesWorkflowHelpExplainsPaths(t *testing.T) {
 	require.Zero(t, got.code, "%+v", got)
 	require.Empty(t, got.stderr)
 	text := strings.Join(strings.Fields(got.stdout), " ")
-	require.Contains(t, text, "With upload, PATH can replace --file PATH.")
-	require.Contains(t, text, "A leading @ is literal.")
+	require.Contains(t, text, "A path is required: use PATH or --file PATH.")
+	require.Contains(t, text, "Choose --purpose explicitly.")
+	require.Contains(t, text, "A leading @ is part of the filename; do not add @ to a plain path.")
+	require.NotContains(t, text, "example.txt is the path")
+}
+
+func TestMainFilesWorkflowHelpIncludesExamples(t *testing.T) {
+	for _, tc := range []struct{ command, example string }{
+		{"upload", `openai files upload "upload space.txt" --purpose user_data`},
+		{"get", "openai files get file-example"},
+		{"download", `openai files download file-example --output "downloaded copy.txt"`},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=invalid-files-help-url"}, "openai", "files", tc.command, "--help")
+			require.Zero(t, got.code, "%+v", got)
+			require.Empty(t, got.stderr)
+			require.Contains(t, got.stdout, "EXAMPLES:")
+			require.Contains(t, got.stdout, tc.example)
+		})
+	}
 }
 
 func TestMainFilesWorkflowPositionalCompletion(t *testing.T) {

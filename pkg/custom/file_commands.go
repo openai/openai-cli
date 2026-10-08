@@ -93,9 +93,9 @@ func configureFileCommands(root *cli.Command) {
 			return next(context.WithValue(ctx, fileCommandKey{}, fileUploadCommand), command)
 		}
 	}
-	for _, route := range []struct{ name, source, usage string }{
-		{"get", "retrieve", "Inspect file metadata."},
-		{"download", "content", "Download file contents to a path or stdout."},
+	for _, route := range []struct{ name, source, usage, example string }{
+		{"get", "retrieve", "Inspect file metadata.", "files get file-example"},
+		{"download", "content", "Download file contents to a path or stdout.", `files download file-example --output "downloaded copy.txt"`},
 	} {
 		if files.Command(route.name) != nil {
 			continue
@@ -115,6 +115,13 @@ func configureFileCommands(root *cli.Command) {
 			}
 		} else {
 			command.Description = "Use --output PATH to save the contents, or redirect stdout to a file.\nUse --output - to force stdout. Existing download behavior also applies in a terminal."
+		}
+		if command.Metadata == nil {
+			command.Metadata = map[string]any{}
+		}
+		command.Metadata["help-content"] = clihelp.Content{
+			Description: command.Description,
+			Examples:    []clihelp.Example{{Description: route.usage, Command: route.example}},
 		}
 		files.Commands = append(files.Commands, command)
 		markCompatibilityCommand(source)

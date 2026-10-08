@@ -70,7 +70,9 @@ Alternatively, place options before `--`. The CLI treats the following path as l
 openai files upload --purpose user_data -- "-notes.txt"
 ```
 
-Use `./-` for a file named `-`. The existing `--file -` behavior reads file contents from stdin.
+Use `./-` for a file named `-`. The existing `--file -` sentinel requests stdin.
+Current piped input can be consumed first as JSON/YAML and rejected before the upload starts.
+Use a local file for binary uploads until the shared stdin handling changes.
 
 Supply `--purpose` for each upload. The CLI does not select a purpose for you.
 The example uses `user_data`; select the purpose required by your API workflow.
