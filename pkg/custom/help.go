@@ -192,7 +192,7 @@ func setCompleteHelpContent(command *cli.Command, content clihelp.Content) {
 func configureHelpGroups(root *cli.Command) {
 	groups := []clihelp.FlagGroup{
 		{Title: "Authentication", Names: []string{"api-key", "admin-api-key", "webhook-secret", "mtls-client-cert-file", "mtls-client-key-file"}, Owner: root},
-		{Title: "Output", Names: []string{"format", "format-error", "transform", "transform-error", "raw-output"}, Owner: root},
+		{Title: "Output", Names: []string{"format", "format-error", "transform", "transform-error", "raw-output", "quiet", "verbose"}, Owner: root},
 		{Title: "Request options", Names: []string{"organization", "project", "base-url", "header"}, Owner: root},
 		{Title: "Troubleshooting", Names: []string{"debug"}, Owner: root},
 	}

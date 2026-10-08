@@ -129,15 +129,57 @@ func TestMainDispatchOutputVerboseKeepsDataAndProtectsMachineErrors(t *testing.T
 }
 
 func TestMainDispatchOutputQuietKeepsExplicitHelpVersionAndCompletion(t *testing.T) {
-	for _, args := range [][]string{{"models", "retrieve", "--help"}, {"--version"}, {"-v"}, {"@completion", "bash"}} {
+	for _, args := range [][]string{{"--help"}, {"models", "retrieve", "--help"}, {"--version"}, {"-v"}, {"@completion", "bash"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			ordinary := runMainDispatch(t, "bash", append([]string{"openai"}, args...)...)
-			quiet := runMainDispatch(t, "bash", append([]string{"openai", "--quiet"}, args...)...)
-			if ordinary.code != 0 || ordinary.stdout == "" || quiet != ordinary {
-				t.Fatalf("quiet changed explicit help/protocol: ordinary=%+v quiet=%+v", ordinary, quiet)
+			if ordinary.code != 0 || ordinary.stdout == "" || ordinary.stderr != "" {
+				t.Fatalf("explicit help/protocol failed: %+v", ordinary)
+			}
+			for _, flag := range []string{"--quiet", "--verbose"} {
+				t.Run(flag, func(t *testing.T) {
+					got := runMainDispatch(t, "bash", append([]string{"openai", flag}, args...)...)
+					if got != ordinary {
+						t.Fatalf("%s changed explicit help/protocol: ordinary=%+v got=%+v", flag, ordinary, got)
+					}
+				})
 			}
 		})
 	}
+}
+
+func TestMainDispatchOutputHelpGroupsLongFlagsAndPreservesVersion(t *testing.T) {
+	t.Run("Output group", func(t *testing.T) {
+		got := runMainDispatch(t, "bash", "openai", "--help")
+		if got.code != 0 || got.stderr != "" {
+			t.Fatalf("root help failed: %+v", got)
+		}
+		_, globals, ok := strings.Cut(got.stdout, "\nGLOBAL OPTIONS:")
+		if !ok {
+			t.Fatalf("root help lost global options: %q", got.stdout)
+		}
+		_, outputAndRest, ok := strings.Cut(globals, "\n   Output\n")
+		if !ok {
+			t.Fatalf("root help lost the Output group: %q", globals)
+		}
+		output, _, ok := strings.Cut(outputAndRest, "\n\n   Request options\n")
+		if !ok {
+			t.Fatalf("Output group boundary is missing: %q", outputAndRest)
+		}
+		for _, name := range []string{"--quiet", "--verbose"} {
+			// A complete definition line also rejects short aliases or value labels.
+			definition := "\n   " + name + "\n"
+			if strings.Count(got.stdout, definition) != 1 || strings.Count(output, definition) != 1 {
+				t.Errorf("%s must appear once, long-only, inside Output: %q", name, got.stdout)
+			}
+		}
+	})
+	t.Run("version alias", func(t *testing.T) {
+		version := runMainDispatch(t, "bash", "openai", "--version")
+		short := runMainDispatch(t, "bash", "openai", "-v")
+		if version.code != 0 || version.stdout == "" || version.stderr != "" || short != version {
+			t.Fatalf("-v must preserve --version: version=%+v short=%+v", version, short)
+		}
+	})
 }
 
 func TestMainDispatchOutputVerboseBinaryKeepsBytesAndLabelsFormatOption(t *testing.T) {
