@@ -3,9 +3,11 @@ package custom
 import (
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/openai/openai-cli/internal/imageoutput"
 	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/pkg/transformers"
@@ -35,7 +37,7 @@ func showFileResult(value gjson.Result, opts ShowJSONOpts) (bool, error) {
 		}
 		return true, readable.Write(out, metadata)
 	case command == fileUploadCommand && opts.Operation == "(resource) files > (method) create":
-		if !outputDiagnosticsAllowed(opts.Context) {
+		if quietOutput(opts.Context) {
 			// Quiet suppresses the receipt, while ordinary rendering keeps data.
 			return false, nil
 		}
@@ -126,7 +128,7 @@ func writeFileReceipt(out io.Writer, value gjson.Result, shell string, invocatio
 	if verb == "get" {
 		args = append(args, "--format", "json")
 	} else {
-		if !utf8.ValidString(filename) || strings.ContainsRune(filename, 0) || strings.ContainsAny(filename, `/\`) || filename == "." || filename == ".." {
+		if !fileReceiptDestinationAllowed(filename, runtime.GOOS) {
 			return nil
 		}
 		if filename == "-" {
@@ -143,6 +145,16 @@ func writeFileReceipt(out io.Writer, value gjson.Result, shell string, invocatio
 		return readable.WriteText(out, "\n"+label+command)
 	}
 	return nil
+}
+
+// Limit suggested destinations, without changing accepted upload or download paths.
+func fileReceiptDestinationAllowed(filename, goos string) bool {
+	if filename == "" || !utf8.ValidString(filename) || strings.ContainsRune(filename, 0) ||
+		strings.ContainsAny(filename, `/\`) || filename == "." || filename == ".." {
+		return false
+	}
+	// Reuse the existing portable filename rules only where Windows requires them.
+	return goos != "windows" || imageoutput.ValidateName(filename) == nil
 }
 
 // Keep help's executable selection, using the actual shell for quoted paths.

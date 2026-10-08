@@ -21,6 +21,11 @@ const filesWorkflowMetadata = `{"id":"` + filesWorkflowID + `","object":"file","
 
 func filesWorkflowUploadServer(t *testing.T, filename string, payload []byte) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
+	return filesWorkflowUploadServerWithResponse(t, filename, payload, http.StatusOK, filesWorkflowMetadata)
+}
+
+func filesWorkflowUploadServerWithResponse(t *testing.T, filename string, payload []byte, status int, response string) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
 	requests := new(atomic.Int32)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -51,7 +56,8 @@ func filesWorkflowUploadServer(t *testing.T, filename string, payload []byte) (*
 			t.Errorf("upload changed: filename=%q bytes=%q error=%v", header.Filename, body, err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, filesWorkflowMetadata)
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, response)
 	}))
 	t.Cleanup(server.Close)
 	return server, requests

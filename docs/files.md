@@ -94,6 +94,8 @@ Download it: openai files download file-example --output 'upload space.txt'
 The receipt uses the returned filename, size, ID, and purpose.
 The CLI omits the size when the API does not supply it.
 The download suggestion appears for supported shells and unambiguous returned filenames.
+On Windows, the CLI omits suggestions for drive-relative names, alternate-stream syntax, reserved device names, and trailing dots or spaces.
+Choose an ordinary destination explicitly when the receipt omits the suggestion.
 A successful upload does not mean that downstream processing has finished.
 When the returned status is `error`, the receipt suggests inspecting the metadata.
 An upload can return success while its status reports a processing error.
@@ -155,6 +157,7 @@ openai files get file-example --transform filename --raw-output
 
 Interactive receipts do not appear in JSON, extraction, or piped upload output.
 `--quiet` suppresses upload receipts and retains the selected metadata output.
+`--format-error` and `--transform-error` affect errors only; they do not change successful upload output.
 The receipt's suggested command preserves the executable used for the upload.
 See [reading command results](readable-output.md) for output formats.
 
