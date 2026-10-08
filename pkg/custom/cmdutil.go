@@ -642,7 +642,8 @@ type hasRawJSON interface {
 func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts) error {
 	route := transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}
 	if transformers.IsAgentsStream(route) {
-		return showJSONIterator(&agentsStream[T]{source: iter, route: route}, itemsToDisplay, opts, transformers.Select)
+		state := transformers.AgentsStreamState{AllowNoInputSessionCreation: agentsSessionCreationWithoutInput(opts.Context)}
+		return showJSONIterator(&agentsStream[T]{source: iter, route: route, state: state}, itemsToDisplay, opts, transformers.Select)
 	}
 	return showJSONIterator(iter, itemsToDisplay, opts, transformers.Select)
 }

@@ -2,8 +2,6 @@ package transformers
 
 import (
 	"context"
-	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/openai/openai-cli/internal/readable"
@@ -40,9 +38,13 @@ func summarizeAgentsEvent(ctx context.Context, value gjson.Result, slot, fields,
 func summarizeAgentsToolEvent(ctx context.Context, value gjson.Result) (readable.StreamEvent, bool, bool, error) {
 	fields, omitted := "id type status turn_id", ""
 	switch value.Get("item.type").String() {
+	case "message":
+		return summarizeAgentsUserImages(ctx, value)
 	case "function_call":
 		fields += " name call_id"
 		omitted = "arguments"
+	case "function_call_output":
+		return summarizeAgentsInputImages(ctx, value, value.Get("item.output"))
 	case "mcp_call":
 		fields += " name server_label error"
 		omitted = "arguments output"
@@ -79,21 +81,12 @@ func summarizeAgentsComputerUseEvent(ctx context.Context, value gjson.Result) (r
 		return readable.StreamEvent{}, false, false, nil
 	}
 	output := item.Get("output")
-	image := output.Get("image_url")
 	hidden := false
-	if output.Get("type").Str == "computer_screenshot" && image.Type == gjson.String {
-		if encoded, ok := strings.CutPrefix(image.Str, "data:image/jpeg;base64,"); ok {
-			// Reuse cancellable validation without allocating decoded image bytes.
-			valid, err := encodedSummary(ctx, gjson.Result{Type: gjson.String, Str: encoded}, false)
-			if err != nil {
-				return readable.StreamEvent{}, false, false, err
-			}
-			if valid != "" {
-				label := fmt.Sprintf("(JPEG screenshot; %d base64 characters)", len(encoded))
-				start := image.Index - value.Index
-				value = gjson.Parse(value.Raw[:start] + strconv.Quote(label) + value.Raw[start+len(image.Raw):])
-				hidden = true
-			}
+	if output.Get("type").Str == "computer_screenshot" {
+		var err error
+		value, hidden, err = summarizeAgentsEncodedImages(ctx, value, []gjson.Result{output.Get("image_url")}, "image/jpeg", "JPEG screenshot")
+		if err != nil {
+			return readable.StreamEvent{}, false, false, err
 		}
 	}
 	event, projected, omitted, err := summarizeAgentsEvent(ctx, value, "item", "id type status turn_id title output", "")

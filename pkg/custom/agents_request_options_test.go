@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/require"
@@ -47,17 +48,22 @@ func TestAgentsSourceNoRetryPreservesMutationAndReadPolicies(t *testing.T) {
 			t.Setenv("OPENAI_BASE_URL", server.URL+"/")
 			t.Setenv("OPENAI_ORG_ID", "org_synthetic")
 			t.Setenv("OPENAI_PROJECT_ID", "proj_synthetic")
+			t.Setenv("OPENAI_CUSTOM_HEADERS", "")
 			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard,
 				ExitErrHandler: func(context.Context, *cli.Command, error) {},
 				Commands: []*cli.Command{{Name: test.resource, Category: "API RESOURCE", Commands: []*cli.Command{{
 					Name: test.method, Action: func(ctx context.Context, command *cli.Command) error {
 						options := append([]option.RequestOption{option.WithMaxRetries(2)}, GetDefaultRequestOptions(command)...)
 						client := openai.NewClient(options...)
+						requestOptions, err := FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, ApplicationJSON, true)
+						if err != nil {
+							return err
+						}
 						var result any
 						if test.method == "retrieve" {
-							return client.Get(ctx, "synthetic", nil, &result)
+							return client.Get(ctx, "synthetic", nil, &result, requestOptions...)
 						}
-						return client.Post(ctx, "synthetic", nil, &result)
+						return client.Post(ctx, "synthetic", nil, &result, requestOptions...)
 					},
 				}}}},
 			}

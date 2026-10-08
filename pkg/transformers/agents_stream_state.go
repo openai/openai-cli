@@ -17,11 +17,14 @@ type agentsTurnState struct {
 // Memory scales with distinct turn identities. Digest-only tombstones preserve
 // terminal outcomes and subagent attribution across late, out-of-order events.
 type AgentsStreamState struct {
-	turns         map[[32]byte]agentsTurnState
-	subagentTurns map[[32]byte]struct{}
-	completed     bool
-	inconsistent  bool
-	failure       string
+	// Enable only for finalized self-hosted creation with omitted or null input.
+	AllowNoInputSessionCreation bool
+	creation                    agentsCreationAcknowledgement
+	turns                       map[[32]byte]agentsTurnState
+	subagentTurns               map[[32]byte]struct{}
+	completed                   bool
+	inconsistent                bool
+	failure                     string
 }
 
 // IsAgentsStream limits presentation and lifecycle rules to generated Agents routes.
@@ -100,9 +103,16 @@ func AgentsStreamFailure(value gjson.Result, route Route) string {
 }
 
 func (s *AgentsStreamState) Observe(value gjson.Result, route Route) {
-	if !IsAgentsStream(route) || !gjson.Valid(value.Raw) {
+	if !IsAgentsStream(route) {
 		return
 	}
+	if !gjson.Valid(value.Raw) {
+		if s.acceptsNoInputCreation(route) {
+			s.creation.invalid = true
+		}
+		return
+	}
+	s.observeSessionCreation(value, route)
 	if failure := AgentsStreamFailure(value, route); failure != "" && s.failure == "" {
 		s.failure = failure
 	}
@@ -167,6 +177,9 @@ func (s *AgentsStreamState) CompletionError(route Route) string {
 	if s.failure != "" {
 		return s.failure
 	}
+	if s.acceptsNoInputCreation(route) && s.creation.inconsistent {
+		return "the stream reported inconsistent agent session identities"
+	}
 	if s.inconsistent {
 		return "the stream reported inconsistent agent turn identities"
 	}
@@ -175,7 +188,7 @@ func (s *AgentsStreamState) CompletionError(route Route) string {
 			return "the stream ended before the agent turn completed"
 		}
 	}
-	if !s.completed {
+	if !s.completed && !s.hasNoInputCreationAcknowledgement(route) {
 		return "the stream ended without a confirmed agent turn outcome"
 	}
 	return ""
