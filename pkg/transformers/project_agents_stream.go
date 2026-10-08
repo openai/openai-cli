@@ -161,6 +161,10 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 			strings.Fields("type event_id session_id turn_id item_id output_index delta"))
 		projected = summary.Exists()
 	case "agent.session.turn.item.added", "agent.session.turn.item.done":
+		event, projected, hidden, err = summarizeAgentsToolEvent(ctx, value)
+		if projected || err != nil {
+			break
+		}
 		item := value.Get("item")
 		if !item.IsObject() {
 			break
@@ -169,7 +173,6 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 			event, projected = s.message(ctx, value, item, kind == "agent.session.turn.item.done")
 			break
 		}
-		event, projected, hidden, err = summarizeAgentsToolEvent(ctx, value)
 	}
 	if err != nil {
 		return readable.StreamEvent{}, false, err

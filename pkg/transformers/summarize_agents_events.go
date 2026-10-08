@@ -36,15 +36,28 @@ func summarizeAgentsEvent(ctx context.Context, value gjson.Result, slot, fields,
 }
 
 func summarizeAgentsToolEvent(ctx context.Context, value gjson.Result) (readable.StreamEvent, bool, bool, error) {
+	summary, hidden, preserve, err := summarizeAgentsStreamItemImages(ctx, value)
+	if err != nil {
+		return readable.StreamEvent{}, false, false, err
+	}
+	if hidden || preserve {
+		// Repeated item containers need their complete envelope. Replacing an item
+		// through streamResidual would copy its first value over later occurrences.
+		if hidden && !preserve && summary.Get("item.type").Str == "computer_use_call" {
+			event, projected, _, err := summarizeAgentsComputerUseEvent(ctx, summary)
+			if projected || err != nil {
+				return event, projected, hidden, err
+			}
+		}
+		return readable.StreamEvent{Details: summary}, true, hidden, nil
+	}
 	fields, omitted := "id type status turn_id", ""
 	switch value.Get("item.type").String() {
-	case "message":
-		return summarizeAgentsUserImages(ctx, value)
+	case "message", "function_call_output":
+		return readable.StreamEvent{}, false, false, nil
 	case "function_call":
 		fields += " name call_id"
 		omitted = "arguments"
-	case "function_call_output":
-		return summarizeAgentsInputImages(ctx, value, value.Get("item.output"))
 	case "mcp_call":
 		fields += " name server_label error"
 		omitted = "arguments output"
@@ -73,26 +86,43 @@ func summarizeAgentsToolEvent(ctx context.Context, value gjson.Result) (readable
 	return summarizeAgentsEvent(ctx, value, "item", fields, omitted)
 }
 
-// Only the pinned screenshot URL slot contains encoded media. Preserve future
-// fields and malformed media; the ordinary stream hint reports the omission.
+func summarizeAgentsStreamItemImages(ctx context.Context, value gjson.Result) (gjson.Result, bool, bool, error) {
+	kind, valid := agentsImageDiscriminator(ctx, value, "type")
+	if !valid || kind != "agent.session.turn.item.added" && kind != "agent.session.turn.item.done" {
+		return value, false, true, ctx.Err()
+	}
+	var images []agentsImageSlot
+	count, preserve := 0, false
+	value.ForEach(func(key, item gjson.Result) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		if key.Str == "item" {
+			count++
+			itemType, valid := agentsImageDiscriminator(ctx, item, "type")
+			preserve = preserve || !valid
+			if itemType == "message" {
+				_, valid = agentsImageDiscriminator(ctx, item, "role")
+				preserve = preserve || !valid
+			}
+			collectAgentsItemImages(ctx, item, &images)
+		}
+		return true
+	})
+	summary, hidden, err := summarizeAgentsEncodedImages(ctx, value, images)
+	return summary, hidden, preserve || count != 1, err
+}
+
+// Image spans are already reduced before the existing screenshot presentation.
 func summarizeAgentsComputerUseEvent(ctx context.Context, value gjson.Result) (readable.StreamEvent, bool, bool, error) {
 	item := value.Get("item")
 	if item.Get("id").Type != gjson.String || item.Get("id").Str == "" {
 		return readable.StreamEvent{}, false, false, nil
 	}
-	output := item.Get("output")
-	hidden := false
-	if output.Get("type").Str == "computer_screenshot" {
-		var err error
-		value, hidden, err = summarizeAgentsEncodedImages(ctx, value, []gjson.Result{output.Get("image_url")}, "image/jpeg", "JPEG screenshot")
-		if err != nil {
-			return readable.StreamEvent{}, false, false, err
-		}
-	}
 	event, projected, omitted, err := summarizeAgentsEvent(ctx, value, "item", "id type status turn_id title output", "")
 	if err == nil && !projected {
 		// Unknown item fields stay visible, with only the known image slot reduced.
-		return readable.StreamEvent{Details: value}, true, hidden, nil
+		return readable.StreamEvent{Details: value}, true, false, nil
 	}
-	return event, projected, hidden || omitted, err
+	return event, projected, omitted, err
 }

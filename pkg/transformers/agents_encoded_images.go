@@ -10,57 +10,109 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/openai/openai-cli/internal/readable"
 	"github.com/tidwall/gjson"
 )
 
-func summarizeAgentsUserImages(ctx context.Context, value gjson.Result) (readable.StreamEvent, bool, bool, error) {
-	item := value.Get("item")
-	if item.Get("role").Str != "user" {
-		return readable.StreamEvent{}, false, false, nil
-	}
-	return summarizeAgentsInputImages(ctx, value, item.Get("content"))
+type agentsImageSlot struct {
+	value               gjson.Result
+	expectedMIME, label string
 }
 
-func summarizeAgentsInputImages(ctx context.Context, value, content gjson.Result) (readable.StreamEvent, bool, bool, error) {
-	if !content.IsArray() {
-		return readable.StreamEvent{}, false, false, nil
+// Identical discriminator repetitions retain their meaning. Conflicting values,
+// malformed values, and case-ambiguous keys cannot identify a known image shape.
+func agentsImageDiscriminator(ctx context.Context, value gjson.Result, field string) (string, bool) {
+	if !value.IsObject() {
+		return "", false
 	}
-	var images []gjson.Result
-	content.ForEach(func(_, part gjson.Result) bool {
+	var name string
+	found, valid := false, true
+	value.ForEach(func(key, item gjson.Result) bool {
 		if ctx.Err() != nil {
 			return false
 		}
-		if part.Get("type").Str == "input_image" {
-			images = append(images, part.Get("image_url"))
+		if strings.EqualFold(key.Str, field) {
+			if key.Str != field || item.Type != gjson.String || found && item.Str != name {
+				valid = false
+				return false
+			}
+			name, found = item.Str, true
 		}
 		return true
 	})
-	if err := ctx.Err(); err != nil {
-		return readable.StreamEvent{}, false, false, err
+	return name, found && valid && ctx.Err() == nil
+}
+
+// Collect only the declared image containers, preserving every source occurrence.
+func collectAgentsItemImages(ctx context.Context, item gjson.Result, images *[]agentsImageSlot) {
+	kind, valid := agentsImageDiscriminator(ctx, item, "type")
+	if !valid {
+		return
 	}
-	summary, hidden, err := summarizeAgentsEncodedImages(ctx, value, images, "", "")
-	if err != nil || !hidden {
-		return readable.StreamEvent{}, false, false, err
+	container := "output"
+	switch kind {
+	case "message":
+		role, valid := agentsImageDiscriminator(ctx, item, "role")
+		if !valid || role != "user" {
+			return
+		}
+		container = "content"
+	case "function_call_output", "computer_use_call":
+	default:
+		return
 	}
-	// Keep the complete record and original part order, including legacy null IDs.
-	return readable.StreamEvent{Details: summary}, true, true, nil
+	item.ForEach(func(key, content gjson.Result) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		if key.Str != container {
+			return true
+		}
+		if kind == "computer_use_call" {
+			if output, valid := agentsImageDiscriminator(ctx, content, "type"); valid && output == "computer_screenshot" {
+				collectAgentsImageURLs(ctx, content, images, "image/jpeg", "JPEG screenshot")
+			}
+		} else if content.IsArray() {
+			content.ForEach(func(_, part gjson.Result) bool {
+				if ctx.Err() != nil {
+					return false
+				}
+				if partType, valid := agentsImageDiscriminator(ctx, part, "type"); valid && partType == "input_image" {
+					collectAgentsImageURLs(ctx, part, images, "", "")
+				}
+				return true
+			})
+		}
+		return true
+	})
+}
+
+func collectAgentsImageURLs(ctx context.Context, part gjson.Result, images *[]agentsImageSlot, expectedMIME, label string) {
+	part.ForEach(func(key, image gjson.Result) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		if key.Str == "image_url" {
+			*images = append(*images, agentsImageSlot{image, expectedMIME, label})
+		}
+		return true
+	})
 }
 
 // Callers select only known image slots in source order. Replace their source
 // spans once, preserving unfamiliar fields and avoiding one full copy per image.
-func summarizeAgentsEncodedImages(ctx context.Context, value gjson.Result, images []gjson.Result, expectedMIME, label string) (gjson.Result, bool, error) {
+func summarizeAgentsEncodedImages(ctx context.Context, value gjson.Result, images []agentsImageSlot) (gjson.Result, bool, error) {
 	var out strings.Builder
 	offset := 0
-	for _, image := range images {
+	for _, slot := range images {
 		if err := ctx.Err(); err != nil {
 			return gjson.Result{}, false, err
 		}
+		image := slot.value
 		if image.Type != gjson.String {
 			continue
 		}
 		mediaType, encoded, ok := agentsImageDataURL(image.Str)
-		if !ok || expectedMIME != "" && mediaType != expectedMIME {
+		if !ok || slot.expectedMIME != "" && mediaType != slot.expectedMIME {
 			continue
 		}
 		characters, err := agentsImageBase64Length(ctx, encoded)
@@ -70,7 +122,7 @@ func summarizeAgentsEncodedImages(ctx context.Context, value gjson.Result, image
 		if characters == 0 {
 			continue
 		}
-		kind := label
+		kind := slot.label
 		if kind == "" {
 			kind = mediaType
 			if kind == "" {

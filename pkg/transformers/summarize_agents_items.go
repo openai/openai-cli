@@ -16,24 +16,7 @@ func summarizeAgentsItemImages(ctx context.Context, value gjson.Result) (gjson.R
 	if !valid {
 		return gjson.Result{}, false, nil
 	}
-	var content gjson.Result
-	switch value.Get("type").Str {
-	case "message":
-		if value.Get("role").Str != "user" {
-			return gjson.Result{}, false, nil
-		}
-		content = value.Get("content")
-	case "function_call_output":
-		content = value.Get("output")
-	case "computer_use_call":
-		output := value.Get("output")
-		if output.Get("type").Str != "computer_screenshot" {
-			return gjson.Result{}, false, nil
-		}
-		return summarizeAgentsEncodedImages(ctx, value, []gjson.Result{output.Get("image_url")}, "image/jpeg", "JPEG screenshot")
-	default:
-		return gjson.Result{}, false, nil
-	}
-	event, _, hidden, err := summarizeAgentsInputImages(ctx, value, content)
-	return event.Details, hidden, err
+	var images []agentsImageSlot
+	collectAgentsItemImages(ctx, value, &images)
+	return summarizeAgentsEncodedImages(ctx, value, images)
 }
