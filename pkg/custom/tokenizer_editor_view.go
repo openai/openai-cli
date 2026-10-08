@@ -535,24 +535,16 @@ func (m *tokenizerEditor) tokenChip(index, width int) string {
 }
 
 func (m *tokenizerEditor) previousPageSize() int {
-	width, rows, used, count := m.viewWidth(), 1, 1, 0
-	for index := m.selected - 1; index >= 0; index-- {
-		cells := ansi.StringWidth(m.tokenChip(index, width))
-		gap := 0
-		if used > 1 {
-			gap = 1
-		}
-		if used > 1 && used+gap+cells > width {
-			rows++
-			used, gap = 1, 0
-		}
-		if rows > m.resultRows() {
+	start := m.selected
+	// Use the rendered window's budget, including its continuation marker.
+	// The scan stops within one preceding viewport, even for large sequences.
+	for previous := m.selected - 1; previous >= 0; previous-- {
+		if m.resultEnd(previous, m.viewWidth()) < m.selected {
 			break
 		}
-		used += gap + cells
-		count++
+		start = previous
 	}
-	return max(1, count)
+	return max(1, m.selected-start)
 }
 
 func tokenizerClip(text string, width int) string {

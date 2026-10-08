@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -168,6 +169,62 @@ func TestTokenizerEditorTokenWindowStaysStillUntilSelectionLeaves(t *testing.T) 
 	require.Zero(t, m.tokenStart)
 }
 
+func TestTokenizerEditorPageUpFitsContinuationAndFirstPage(t *testing.T) {
+	m := testTokenizerEditor()
+	m.width, m.height, m.focus, m.tab = 40, 12, tokenizerFocusResults, 1
+	m.insert(strings.Repeat("a", 100))
+	tokens := make([]tokenizerPreviewToken, 100)
+	for i := range tokens {
+		tokens[i] = tokenizerPreviewToken{ID: uint32(10 + i%90), EndByte: uint32(i + 1)}
+	}
+	m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
+	chips := regexp.MustCompile(`\[([0-9]+)\]`)
+	assertPage := func(first, count int) {
+		t.Helper()
+		frame := ansi.Strip(m.View().Content)
+		matches := chips.FindAllStringSubmatch(frame, -1)
+		require.Len(t, matches, count)
+		for i, match := range matches {
+			require.Equal(t, fmt.Sprint(tokens[first+i].ID), match[1])
+		}
+		require.Contains(t, frame, fmt.Sprintf("Token %d of 100", m.selected+1))
+		require.Contains(t, frame, fmt.Sprintf("›[%d]", tokens[m.selected].ID))
+		for _, row := range strings.Split(frame, "\n") {
+			if chips.MatchString(row) {
+				require.Equal(t, first > 0, strings.HasPrefix(strings.TrimSpace(row), "…"))
+			}
+		}
+	}
+	tokenizerEditorKey(m, tea.KeyEnd)
+	assertPage(95, 5)
+	for _, selected := range []int{94, 89} {
+		before := m.selected
+		tokenizerEditorKey(m, tea.KeyPgUp)
+		require.Equal(t, 5, before-m.selected, "continuation pages fit five two-digit token IDs")
+		require.Equal(t, selected, m.selected)
+		assertPage(selected, 5)
+	}
+	tokenizerEditorKey(m, tea.KeyHome)
+	assertPage(0, 6)
+	for range 11 {
+		tokenizerEditorKey(m, tea.KeyRight)
+	}
+	tokenizerEditorKey(m, tea.KeyPgUp)
+	require.Equal(t, 6, m.selected)
+	assertPage(6, 5)
+	tokenizerEditorKey(m, tea.KeyPgUp)
+	require.Zero(t, m.selected, "the first page fits six tokens without a continuation marker")
+	assertPage(0, 6)
+	tokenizerEditorKey(m, tea.KeyPgDown)
+	require.Equal(t, 6, m.selected)
+	tokenizerEditorKey(m, tea.KeyPgUp)
+	require.Zero(t, m.selected)
+	assertPage(0, 6)
+	tokenizerEditorKey(m, tea.KeyPgUp)
+	require.Zero(t, m.selected)
+	assertPage(0, 6)
+}
+
 func TestTokenizerEditorCompactResultHintsRemainComplete(t *testing.T) {
 	m := tokenizerEditorExample()
 	m.width, m.height, m.focus = 40, 12, tokenizerFocusResults
@@ -279,6 +336,57 @@ func TestTokenizerEditorDetailsExposeEveryByteWithBoundedFrames(t *testing.T) {
 	old := m.scroll
 	tokenizerEditorKey(m, tea.KeyUp)
 	require.Less(t, m.scroll, old)
+}
+
+func TestTokenizerEditorModalEndCanScrollBack(t *testing.T) {
+	for _, modal := range []int{tokenizerModalHelp, tokenizerModalDetails} {
+		t.Run(fmt.Sprint(modal), func(t *testing.T) {
+			m := testTokenizerEditor()
+			m.width, m.height, m.focus = 40, 12, tokenizerFocusResults
+			m.insert(strings.Repeat("abcdefghijklmnopqrstuvwxyz012345", 4))
+			m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: []tokenizerPreviewToken{{ID: 1, EndByte: 128}}})
+			m.modal = modal
+			rangeLabel := regexp.MustCompile(`Rows ([0-9]+)–([0-9]+) of ([0-9]+)`)
+			readPage := func() (first, last, total int, body []string) {
+				t.Helper()
+				frame := ansi.Strip(m.View().Content)
+				match := rangeLabel.FindStringSubmatch(frame)
+				require.Len(t, match, 4)
+				values := []*int{&first, &last, &total}
+				for i, target := range values {
+					value, err := strconv.Atoi(match[i+1])
+					require.NoError(t, err)
+					*target = value
+				}
+				rows := strings.Split(frame, "\n")
+				require.Contains(t, rows[len(rows)-1], "Ctrl+C exit")
+				body = rows[1 : len(rows)-2]
+				require.Len(t, body, last-first+1)
+				return
+			}
+			tokenizerEditorKey(m, tea.KeyEnd)
+			endFirst, endLast, total, endBody := readPage()
+			require.Equal(t, total, endLast)
+			require.Greater(t, endFirst, len(endBody), "fixture must cover more than two visible pages")
+			tokenizerEditorKey(m, tea.KeyUp)
+			upFirst, upLast, upTotal, upBody := readPage()
+			require.Equal(t, endFirst-1, upFirst)
+			require.Equal(t, endLast-1, upLast)
+			require.Equal(t, total, upTotal)
+			require.NotEqual(t, endBody, upBody)
+			require.Equal(t, endBody[:len(endBody)-1], upBody[1:], "Up must move the displayed content one row")
+			tokenizerEditorKey(m, tea.KeyEnd)
+			tokenizerEditorKey(m, tea.KeyPgUp)
+			pageFirst, pageLast, pageTotal, pageBody := readPage()
+			require.Equal(t, endFirst-len(endBody), pageFirst)
+			require.Equal(t, endLast-len(endBody), pageLast)
+			require.Equal(t, total, pageTotal)
+			require.NotEqual(t, endBody, pageBody)
+			tokenizerEditorKey(m, tea.KeyHome)
+			first, _, _, _ := readPage()
+			require.Equal(t, 1, first)
+		})
+	}
 }
 
 func TestTokenizerEditorRenderingBoundsLongCombiningCluster(t *testing.T) {
