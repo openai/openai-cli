@@ -42,6 +42,7 @@ type adminConsoleTestModes struct {
 
 type adminConsoleTestFrame struct {
 	Event, Phase, Nonce              string
+	Scenario                         string
 	Original, Active, Restored       adminConsoleTestModes
 	Exit, Started, Completed, Phases int
 	Passed                           bool
@@ -215,7 +216,7 @@ func adminConsoleRunCases(t *testing.T) {
 				t.Fatal("CLI did not establish hidden console input")
 			}
 			session.waitPrompt(t)
-			session.write(t, test.input)
+			session.write(t, test.name, test.input)
 			completed := session.receive(t)
 			if completed.Event != "completed" || completed.Exit != test.exit || completed.Restored != hello.Original {
 				t.Fatalf("CLI console lifecycle failed: exit=%d, expected=%d, modes_restored=%t", completed.Exit, test.exit, completed.Restored == hello.Original)
@@ -235,76 +236,125 @@ func adminConsoleRunCases(t *testing.T) {
 			t.Logf("console handles verified; original=%+v active=%+v restored=%+v exit=%d requests=%d", hello.Original, active.Active, completed.Restored, completed.Exit, requests.Load())
 		})
 	}
-	t.Run("native_reader_lifecycle", func(t *testing.T) {
-		session := adminConsoleStart(t, os.Getenv("OPENAI_ADMIN_CONSOLE_OBSERVER"), "TestAdminSetupConsoleObserverChild", nil)
-		session.send(t, map[string]any{"action": "start", "nonce": session.nonce})
-		sent := map[string]bool{}
-		const partialPaste = "\x1b[200~sk-admin-SYNTHETIC"
-		canceled, phases := false, 0
-		for {
-			frame := session.receive(t)
-			switch frame.Event {
-			case "ready":
-				if !adminConsoleHiddenInput(frame.Active.Stdin) || frame.Original != session.hello.Original {
-					t.Fatal("reader did not establish hidden input from restored modes")
-				}
-			case "read_started":
-				t.Logf("phase=%s read_started=%d read_completed=%d active=%d bytes=%d", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads, frame.ReadBytes)
-				if !sent[frame.Phase] {
-					session.waitPrompt(t)
-					input := adminConsoleSyntheticKey + "\r"
-					if frame.Phase == "success2" {
-						input = "sk-admin-SYNTHETIC-console-next\r"
-					}
-					if frame.Phase == "cancel_partial" {
-						input = partialPaste
-					}
-					session.write(t, input)
-					sent[frame.Phase] = true
-				} else if frame.Phase == "cancel_partial" && frame.ReadBytes == len(partialPaste) && !canceled {
-					session.send(t, map[string]any{"action": "cancel", "phase": frame.Phase})
-					canceled = true
-				}
-			case "read_completed":
-				t.Logf("phase=%s read_started=%d read_completed=%d active=%d bytes=%d last_read_bytes=%d last_read_error=%s first_category=%s last_category=%s categories=%v", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads, frame.ReadBytes, frame.LastReadBytes, frame.LastReadError, frame.FirstByteCategory, frame.LastByteCategory, frame.ByteCategories)
-			case "cancel_result":
-				if frame.CancelReturned == nil {
-					t.Fatal("observer omitted the actual Cancel result")
-				}
-				t.Logf("phase=%s actual Cancel=%t", frame.Phase, *frame.CancelReturned)
-			case "close_result":
-				if frame.CloseSucceeded == nil {
-					t.Fatal("observer omitted the actual Close result")
-				}
-				t.Logf("phase=%s Close calls=%d started=%d completed=%d active=%d reads_complete_at_close=%t close_succeeded=%t", frame.Phase, frame.CloseCalls, frame.CloseStartedReads, frame.CloseCompletedReads, frame.CloseActiveReads, frame.ReadsCompleteAtClose, *frame.CloseSucceeded)
-			case "phase_complete":
-				adminConsoleLogPhaseDiagnostics(t, frame)
-				if frame.CloseCalls != 1 || frame.CloseActiveReads != 0 || frame.CloseStartedReads != frame.CloseCompletedReads || !frame.ReadsCompleteAtClose || frame.CloseSucceeded == nil || !*frame.CloseSucceeded {
-					t.Fatalf("native reader Close ordering failed: phase=%s calls=%d started=%d completed=%d active=%d", frame.Phase, frame.CloseCalls, frame.CloseStartedReads, frame.CloseCompletedReads, frame.CloseActiveReads)
-				}
-				if !frame.Passed || !frame.ReadsComplete || frame.Started != frame.Completed || frame.ActiveReads != 0 || frame.CancelCalls != 1 || frame.CancelReturned == nil || frame.Restored != session.hello.Original || frame.ReaderType != "*uv.conInputReader" {
-					t.Fatalf("native reader lifecycle failed: phase=%s started=%d completed=%d active=%d", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads)
-				}
-				if (frame.Phase == "cancel_partial") != frame.ContextCanceled || (frame.Phase != "cancel_partial") != frame.KeyMatches {
-					t.Fatal("native reader returned the wrong phase result")
-				}
-				phases++
-				t.Logf("phase=%s reader=%s started=%d completed=%d active=%d modes_restored=true", frame.Phase, frame.ReaderType, frame.Started, frame.Completed, frame.ActiveReads)
-				if frame.Phase == "success2" {
-					t.Log("success2 verifies later-key ownership in the surviving reader process; it is not a shell read")
-				}
-			case "done":
-				if !frame.Passed || frame.Phases != 3 || phases != 3 || !canceled {
-					t.Fatal("native reader did not complete all three phases")
-				}
-				session.send(t, map[string]any{"action": "ack"})
-				session.finish(t)
-				return
-			default:
-				t.Fatal("observer sent an unexpected control event")
+	for _, scenario := range []struct {
+		name, mode              string
+		phases                  []string
+		plainCancel, splitFinal bool
+	}{
+		{"native_reader_lifecycle", "original", []string{"success1", "cancel_partial", "success2"}, false, false},
+		{"native_reader_success_only", "success_only", []string{"success1", "success2"}, false, false},
+		{"native_reader_cancel_first", "cancel_first", []string{"cancel_partial", "success2"}, false, false},
+		{"native_reader_cancel_plain", "cancel_plain", []string{"success1", "cancel_partial", "success2"}, true, false},
+		{"native_reader_split_final", "split_final", []string{"success1", "cancel_partial", "success2"}, false, true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			var extra []string
+			if scenario.mode != "original" {
+				extra = []string{"OPENAI_ADMIN_CONSOLE_SCENARIO=" + scenario.mode}
 			}
-		}
-	})
+			session := adminConsoleStart(t, os.Getenv("OPENAI_ADMIN_CONSOLE_OBSERVER"), "TestAdminSetupConsoleObserverChild", extra)
+			if session.hello.Scenario != scenario.mode {
+				t.Fatal("observer selected a different diagnostic scenario")
+			}
+			if scenario.mode != "original" {
+				if session.connection.SetDeadline(time.Now().Add(10*time.Second)) != nil {
+					t.Fatal("could not bound the diagnostic observer scenario")
+				}
+			}
+			session.send(t, map[string]any{"action": "start", "nonce": session.nonce})
+			sent := map[string]bool{}
+			partialPaste := "\x1b[200~sk-admin-SYNTHETIC"
+			if scenario.plainCancel {
+				partialPaste = "sk-admin-SYNTHETIC"
+			}
+			canceled, phases := false, 0
+			finalEnterSent := false
+			for {
+				frame := session.receive(t)
+				if frame.Event != "done" && (phases >= len(scenario.phases) || frame.Phase != scenario.phases[phases]) {
+					t.Fatal("observer phase order differs from the diagnostic scenario")
+				}
+				switch frame.Event {
+				case "ready":
+					if !adminConsoleHiddenInput(frame.Active.Stdin) || frame.Original != session.hello.Original {
+						t.Fatal("reader did not establish hidden input from restored modes")
+					}
+				case "read_started":
+					t.Logf("phase=%s read_started=%d read_completed=%d active=%d bytes=%d", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads, frame.ReadBytes)
+					if !sent[frame.Phase] {
+						session.waitPrompt(t)
+						input := adminConsoleSyntheticKey + "\r"
+						label := frame.Phase + "/combined"
+						if frame.Phase == "success2" {
+							input = "sk-admin-SYNTHETIC-console-next\r"
+							if scenario.splitFinal {
+								input = strings.TrimSuffix(input, "\r")
+								label = frame.Phase + "/prefix"
+							}
+						}
+						if frame.Phase == "cancel_partial" {
+							input = partialPaste
+						}
+						session.write(t, label, input)
+						sent[frame.Phase] = true
+					} else if frame.Phase == "cancel_partial" && frame.ReadBytes == len(partialPaste) && !canceled {
+						session.send(t, map[string]any{"action": "cancel", "phase": frame.Phase})
+						canceled = true
+					}
+				case "read_completed":
+					t.Logf("phase=%s read_started=%d read_completed=%d active=%d bytes=%d last_read_bytes=%d last_read_error=%s first_category=%s last_category=%s categories=%v", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads, frame.ReadBytes, frame.LastReadBytes, frame.LastReadError, frame.FirstByteCategory, frame.LastByteCategory, frame.ByteCategories)
+					if scenario.splitFinal && frame.Phase == "success2" && !finalEnterSent {
+						if frame.ByteCategories["CR"] != 0 {
+							t.Error("CR reached the final reader before the controller sent this phase's Enter")
+						}
+						if frame.ReadBytes == 31 && frame.ByteCategories["ascii-printable"] == 31 && frame.LastReadError == "nil" {
+							t.Log("final printable prefix consumed; now sending the separate Enter")
+							session.write(t, frame.Phase+"/enter", "\r")
+							finalEnterSent = true
+						}
+					}
+				case "cancel_result":
+					if frame.CancelReturned == nil {
+						t.Fatal("observer omitted the actual Cancel result")
+					}
+					t.Logf("phase=%s actual Cancel=%t", frame.Phase, *frame.CancelReturned)
+				case "close_result":
+					if frame.CloseSucceeded == nil {
+						t.Fatal("observer omitted the actual Close result")
+					}
+					t.Logf("phase=%s Close calls=%d started=%d completed=%d active=%d reads_complete_at_close=%t close_succeeded=%t", frame.Phase, frame.CloseCalls, frame.CloseStartedReads, frame.CloseCompletedReads, frame.CloseActiveReads, frame.ReadsCompleteAtClose, *frame.CloseSucceeded)
+				case "phase_complete":
+					adminConsoleLogPhaseDiagnostics(t, frame)
+					if scenario.splitFinal && frame.Phase == "success2" && !finalEnterSent {
+						t.Error("final helper returned before the controller sent this phase's Enter")
+					}
+					if frame.CloseCalls != 1 || frame.CloseActiveReads != 0 || frame.CloseStartedReads != frame.CloseCompletedReads || !frame.ReadsCompleteAtClose || frame.CloseSucceeded == nil || !*frame.CloseSucceeded {
+						t.Fatalf("native reader Close ordering failed: phase=%s calls=%d started=%d completed=%d active=%d", frame.Phase, frame.CloseCalls, frame.CloseStartedReads, frame.CloseCompletedReads, frame.CloseActiveReads)
+					}
+					if !frame.Passed || !frame.ReadsComplete || frame.Started != frame.Completed || frame.ActiveReads != 0 || frame.CancelCalls != 1 || frame.CancelReturned == nil || frame.Restored != session.hello.Original || frame.ReaderType != "*uv.conInputReader" {
+						t.Fatalf("native reader lifecycle failed: phase=%s started=%d completed=%d active=%d", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads)
+					}
+					if (frame.Phase == "cancel_partial") != frame.ContextCanceled || (frame.Phase != "cancel_partial") != frame.KeyMatches {
+						t.Fatal("native reader returned the wrong phase result")
+					}
+					phases++
+					t.Logf("phase=%s reader=%s started=%d completed=%d active=%d modes_restored=true", frame.Phase, frame.ReaderType, frame.Started, frame.Completed, frame.ActiveReads)
+					if frame.Phase == "success2" {
+						t.Log("success2 verifies later-key ownership in the surviving reader process; it is not a shell read")
+					}
+				case "done":
+					if !frame.Passed || frame.Phases != len(scenario.phases) || phases != len(scenario.phases) || canceled != (scenario.mode != "success_only") {
+						t.Fatal("native reader did not complete the diagnostic scenario's required phases")
+					}
+					session.send(t, map[string]any{"action": "ack"})
+					session.finish(t)
+					return
+				default:
+					t.Fatal("observer sent an unexpected control event")
+				}
+			}
+		})
+	}
 }
 
 func adminConsoleLogPhaseDiagnostics(t *testing.T, frame adminConsoleTestFrame) {
@@ -475,6 +525,8 @@ type adminConsoleSession struct {
 	nonce            string
 	finished         bool
 	prompts          int
+	writes           int
+	acceptedBytes    int
 }
 
 func adminConsoleStart(t *testing.T, executable, testName string, extra []string) *adminConsoleSession {
@@ -654,10 +706,15 @@ func (session *adminConsoleSession) receive(t *testing.T) adminConsoleTestFrame 
 	}
 	return frame
 }
-func (session *adminConsoleSession) write(t *testing.T, input string) {
+func (session *adminConsoleSession) write(t *testing.T, label, input string) {
 	t.Helper()
-	if _, err := io.WriteString(session.input, input); err != nil {
-		t.Fatal("console input write failed")
+	n, err := io.WriteString(session.input, input)
+	session.writes++
+	session.acceptedBytes += n
+	// Pipe acceptance is not evidence of delivery to the application's reader.
+	t.Logf("console pipe acceptance write=%d label=%s requested_bytes=%d accepted_bytes=%d total_accepted_bytes=%d error_present=%t", session.writes, label, len(input), n, session.acceptedBytes, err != nil)
+	if err != nil || n != len(input) {
+		t.Fatal("console input pipe did not accept the complete synthetic write")
 	}
 }
 func (session *adminConsoleSession) waitPrompt(t *testing.T) {

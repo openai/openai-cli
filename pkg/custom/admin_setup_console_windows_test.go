@@ -294,6 +294,20 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 	if len(nonce) < 32 {
 		t.Fatal("console observer requires a controller nonce")
 	}
+	scenario := os.Getenv("OPENAI_ADMIN_CONSOLE_SCENARIO")
+	phases := []string{"success1", "cancel_partial", "success2"}
+	switch scenario {
+	case "", "original":
+		scenario = "original"
+	case "success_only":
+		phases = []string{"success1", "success2"}
+	case "cancel_first":
+		phases = []string{"cancel_partial", "success2"}
+	case "cancel_plain", "split_final":
+		// The controller changes only its input framing for these comparisons.
+	default:
+		t.Fatal("console observer received an unsupported diagnostic scenario")
+	}
 	original, err := adminConsoleGetModes()
 	if err != nil {
 		adminConsoleLogHandleFailure(t, "original")
@@ -308,7 +322,7 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 		t.Fatal("console observer could not bound its control channel")
 	}
 	observer := &adminConsoleObserver{encoder: json.NewEncoder(connection), controls: make(chan adminConsoleControl, 1)}
-	observer.send(map[string]any{"event": "hello", "nonce": nonce, "original": original})
+	observer.send(map[string]any{"event": "hello", "nonce": nonce, "original": original, "scenario": scenario})
 	// This bounds test-control metadata only, never key input or API payloads.
 	decoder := json.NewDecoder(io.LimitReader(connection, 64<<10))
 	var start adminConsoleControl
@@ -334,7 +348,7 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 		}
 	}()
 
-	for _, phase := range []string{"success1", "cancel_partial", "success2"} {
+	for _, phase := range phases {
 		expectedKey := "sk-admin-SYNTHETIC-console-only"
 		if phase == "success2" {
 			expectedKey = "sk-admin-SYNTHETIC-console-next"
@@ -440,7 +454,7 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 			t.Fatal("console observer phase failed its lifecycle contract")
 		}
 	}
-	observer.send(map[string]any{"event": "done", "passed": true, "phases": 3})
+	observer.send(map[string]any{"event": "done", "passed": true, "phases": len(phases)})
 	ack, open := <-observer.controls
 	if !open || ack.Action != "ack" || !observer.healthy() {
 		t.Fatal("console observer did not receive its final acknowledgement")
