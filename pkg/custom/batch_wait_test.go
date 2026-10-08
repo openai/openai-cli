@@ -6,6 +6,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
@@ -39,6 +40,50 @@ func TestBatchWaitResult(t *testing.T) {
 			terminal, err := batchWaitResult(batch)
 			if terminal != tc.terminal || (err != nil) != tc.failure {
 				t.Fatalf("got terminal=%v err=%v", terminal, err)
+			}
+		})
+	}
+}
+
+func TestBatchHintRetainsOnlyReproducibleRequestContext(t *testing.T) {
+	for _, tc := range []struct {
+		name, flag, environment, inherited string
+		args                               []string
+		needsOptions                       bool
+	}{
+		{"environment key", "api-key", "OPENAI_API_KEY", "synthetic-env-key", nil, false},
+		{"matching key", "api-key", "OPENAI_API_KEY", "synthetic-env-key", []string{"--api-key", "synthetic-env-key"}, false},
+		{"different key", "api-key", "OPENAI_API_KEY", "synthetic-env-key", []string{"--api-key", "synthetic-override-key"}, true},
+		{"empty key override", "api-key", "OPENAI_API_KEY", "synthetic-env-key", []string{"--api-key="}, true},
+		{"project", "project", "OPENAI_PROJECT_ID", "proj_env", []string{"--project", "proj_override"}, true},
+		{"organization", "organization", "OPENAI_ORG_ID", "org_env", []string{"--organization", "org_override"}, true},
+		{"admin key", "admin-api-key", "OPENAI_ADMIN_KEY", "", []string{"--admin-api-key", "synthetic-admin-key"}, true},
+		{"secret", "webhook-secret", "OPENAI_WEBHOOK_SECRET", "", []string{"--webhook-secret", "synthetic-secret"}, true},
+		{"certificate", mtlsClientCertFileFlag, mtlsClientCertFileEnv, "", []string{"--mtls-client-cert-file", "private-cert.pem"}, true},
+		{"client key", mtlsClientKeyFileFlag, mtlsClientKeyFileEnv, "", []string{"--mtls-client-key-file", "private-key.pem"}, true},
+		{"header", "unused", "OPENAI_CUSTOM_HEADERS", "X-Example: inherited", []string{"--header", "X-Example: override"}, true},
+		{"environment headers", "unused", "OPENAI_CUSTOM_HEADERS", "X-Example: inherited", nil, false},
+		{"environment endpoint", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", nil, false},
+		{"explicit endpoint", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", []string{"--base-url", "http://127.0.0.1:1"}, true},
+		{"different endpoint", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", []string{"--base-url", "http://127.0.0.1:2"}, true},
+		{"empty endpoint fallback", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", []string{"--base-url="}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(tc.environment, tc.inherited)
+			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard,
+				Flags: []cli.Flag{
+					&requestflag.Flag[string]{Name: tc.flag, Sources: cli.EnvVars(tc.environment)},
+					&cli.StringFlag{Name: "base-url"}, NewRequestHeaderFlag(),
+				},
+				Action: func(_ context.Context, cmd *cli.Command) error {
+					if got := batchHintNeedsRequestOptions(cmd); got != tc.needsOptions {
+						t.Errorf("needs options = %v; want %v", got, tc.needsOptions)
+					}
+					return nil
+				},
+			}
+			if err := root.Run(t.Context(), append([]string{"openai"}, tc.args...)); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

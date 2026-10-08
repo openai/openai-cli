@@ -216,6 +216,7 @@ func batchShowJSON(ctx context.Context, cmd *cli.Command, batch gjson.Result, op
 func batchHumanTerminal(root *cli.Command) bool {
 	return isTerminal(root.Writer) && isTerminal(os.Stderr) && !root.Bool("debug") &&
 		!root.Bool("raw-output") && root.String("transform") == "" &&
+		root.String("transform-error") == "" && errorOutputFormat(root) == "text" &&
 		resolvedOutputFormat(ShowJSONOpts{Format: root.String("format")}) == "text"
 }
 
@@ -241,5 +242,35 @@ func showBatchNextCommand(batch gjson.Result, opts ShowJSONOpts) error {
 			return nil
 		}
 	}
+	if batchHintNeedsRequestOptions(cmd.Root()) {
+		return readable.WriteText(opts.Stderr, "To wait for this batch, reuse the same connection and authentication options with batches retrieve --wait.")
+	}
 	return readable.WriteText(opts.Stderr, fmt.Sprintf("Follow this batch:\n  %s batches retrieve --batch-id=%s --wait", errorHelpInvocation(cmd.Root()), id))
+}
+
+// A new process inherits environment configuration but loses command-line
+// overrides. Compare effective values without ever printing private options.
+func batchHintNeedsRequestOptions(root *cli.Command) bool {
+	if root.IsSet("header") {
+		return true
+	}
+	// Startup may temporarily normalize an invalid environment URL to this
+	// explicit override. The next process would inherit the original value.
+	if root.String("base-url") != "" {
+		return true
+	}
+	for _, setting := range []struct{ flag, environment string }{
+		{"api-key", "OPENAI_API_KEY"},
+		{"admin-api-key", "OPENAI_ADMIN_KEY"},
+		{"organization", "OPENAI_ORG_ID"},
+		{"project", "OPENAI_PROJECT_ID"},
+		{"webhook-secret", "OPENAI_WEBHOOK_SECRET"},
+		{mtlsClientCertFileFlag, mtlsClientCertFileEnv},
+		{mtlsClientKeyFileFlag, mtlsClientKeyFileEnv},
+	} {
+		if root.IsSet(setting.flag) && root.String(setting.flag) != os.Getenv(setting.environment) {
+			return true
+		}
+	}
+	return false
 }

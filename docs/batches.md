@@ -6,6 +6,7 @@ Waiting and downloading use existing Batches and Files APIs.
 ## Prepare and submit
 
 Each JSONL line contains one request with a unique `custom_id`.
+Use the same model throughout one input file.
 Use a model supported by your account and the selected endpoint.
 This example uses two synthetic requests:
 
@@ -36,6 +37,18 @@ openai batches create \
 The expiration example keeps output and error files for one day after each file's creation.
 Omit expiration flags to use the service default.
 Create also accepts `--output-expires-after '{"anchor":"created_at","seconds":86400}'`.
+Omission does not promise indefinite retention.
+The [Batch guide](https://developers.openai.com/api/docs/guides/batch) documents automatic output deletion after 30 days.
+Inspect the file's `expires_at` value for its returned expiration timestamp.
+
+Input files have a separate retention policy.
+[Files uploads](https://developers.openai.com/api/reference/resources/files/methods/create) with purpose `batch` expire after 30 days by default.
+For example, keep an input file for seven days:
+
+```sh
+openai files upload --file requests.jsonl --purpose batch \
+  --expires-after.anchor created_at --expires-after.seconds 604800
+```
 
 Current [Batch creation limits](https://developers.openai.com/api/reference/resources/batches/methods/create) include 50,000 requests and 200 MB per input file.
 The completion window is `24h`.
@@ -54,6 +67,33 @@ Existing commands retrieve once or list batches:
 openai batches list --limit 20 --max-items 20
 openai batches retrieve --batch-id batch_example
 openai --format json batches retrieve batch_example
+```
+
+Explicit JSON includes creation time, completion window, lifecycle timestamps, metadata, and complete errors.
+The default readable view summarizes those fields.
+For example, extract the exact ID without copying labels:
+
+```sh
+openai --transform id --raw-output batches retrieve batch_example
+```
+
+The following optional view recipes use `jq` or Python 3.
+Neither tool is a CLI dependency.
+In Bash or zsh scripts, use `set -o pipefail` to retain failures from upstream commands.
+
+Show chronological lifecycle events, retaining Unix timestamps:
+
+```sh
+openai --format json batches retrieve batch_example |
+  jq 'to_entries | map(select(.key != "expires_at" and (.key | endswith("_at")) and (.value | type == "number"))) | sort_by(.value)'
+```
+
+This includes returned lifecycle timestamps and excludes the expiration deadline.
+Show elapsed completion time in seconds, or null before completion:
+
+```sh
+openai --format json batches retrieve batch_example |
+  jq 'if (.completed_at | type) == "number" then .completed_at - .created_at else null end'
 ```
 
 Add `--wait` to poll until the batch reaches a terminal status:
@@ -88,8 +128,10 @@ openai --transform status --raw-output batches retrieve batch_example --wait
 ```
 
 Progress and create hints use stderr only with human output and terminal stdout/stderr.
-Pipes, extraction, and machine formats receive no progress or hints.
+Pipes, extraction, and machine formats for either results or errors receive no progress or hints.
 A successful create can show a follow-up command containing its returned batch ID.
+Explicit connection or authentication overrides instead show a reminder to reuse those options.
+The CLI never copies private option values into a hint.
 Interruption during final output can leave partial data on stdout.
 
 Wait continues through `validating`, `in_progress`, `finalizing`, and `cancelling`.
@@ -161,6 +203,49 @@ openai files content --file-id file_example --output results.jsonl
 ```
 
 Unlike the batch convenience, existing `files content --output PATH` overwrites its destination.
+
+## Browse and manage linked files
+
+Use the batch's input, output, or error file ID to inspect file details:
+
+```sh
+openai --format json files retrieve file_example
+```
+
+The response includes filename, byte size, purpose, creation time, expiration, and any returned status details.
+Browse existing files before selecting an input ID:
+
+```sh
+openai --format json files list --order desc --max-items -1
+```
+
+Add `--purpose batch` to select uploaded batch inputs.
+JSON list output emits successive records; use `jq -s` when you need one array.
+Search filenames with a case-insensitive literal substring:
+
+```sh
+openai --format jsonl files list --order desc --max-items -1 |
+  python3 -c '
+import json, sys
+needle = sys.argv[1].strip().lower()
+for line in sys.stdin:
+    item = json.loads(line)
+    if needle in (item.get("filename") or "").lower():
+        print(json.dumps(item, ensure_ascii=False))
+' 'requests'
+```
+
+This streams local filtering across all returned pages, including Unicode filenames.
+It preserves the server's newest-first ordering.
+
+Files also provides explicit deletion:
+
+```sh
+openai files delete file_example
+```
+
+Deletion removes the file, including its use in vector stores.
+File deletion and batch cancellation are separate operations.
 
 ## Access and safety
 
