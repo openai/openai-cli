@@ -54,7 +54,8 @@ func TestMainGcloudHelpConcreteSyntaxAndLabels(t *testing.T) {
 		want []string
 	}{
 		{[]string{"models", "retrieve"}, []string{"[MODEL | --model MODEL]", "Model ID.", "JSON/YAML keys: model."}},
-		{[]string{"files", "upload"}, []string{"[--file PATH]", "[--purpose TEXT]", "Required request inputs: --file, --purpose."}},
+		{[]string{"files", "upload"}, []string{"[PATH | --file PATH] --purpose PURPOSE [options]", "A path is required: use PATH or --file PATH.", "Choose --purpose explicitly.", "The existing piped JSON/YAML keys are file and purpose."}},
+		{[]string{"files", "create"}, []string{"[--file PATH]", "[--purpose TEXT]", "Required request inputs: --file, --purpose."}},
 		{[]string{"images", "generate"}, []string{"--size SIZE", "--quality QUALITY", "--background BACKGROUND", "--output-format FORMAT", "--inline MODE"}},
 	} {
 		got := runMainDispatch(t, "bash", append(append([]string{"openai"}, tc.path...), "--help")...)
