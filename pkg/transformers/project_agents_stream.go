@@ -97,8 +97,13 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 	var projected bool
 	var hidden bool
 	var err error
-	var messageState *AgentsStreamProjector
+	var projectedState *AgentsStreamProjector
 	switch kind {
+	case "agent.session.turn.reasoning_summary_text.delta", "agent.session.turn.reasoning_summary_text.done",
+		"agent.session.turn.reasoning_summary_part.added", "agent.session.turn.reasoning_summary_part.done":
+		pending := *s
+		event, projected = pending.reasoning(ctx, value, kind)
+		projectedState = &pending
 	case "agent.session.turn.output_text.delta", "agent.session.turn.output_text.done":
 		field, final := "delta", strings.HasSuffix(kind, ".done")
 		if final {
@@ -183,7 +188,7 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 			// only bounded projector state, never the event or its text payloads.
 			pending := *s
 			event, projected = pending.message(ctx, value, item, kind == "agent.session.turn.item.done")
-			messageState = &pending
+			projectedState = &pending
 			break
 		}
 	}
@@ -193,8 +198,8 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 	if err := ctx.Err(); err != nil {
 		return readable.StreamEvent{}, false, err
 	}
-	if projected && messageState != nil {
-		s.parts, s.partCount = messageState.parts, messageState.partCount
+	if projected && projectedState != nil {
+		*s = *projectedState
 	}
 	s.omitted = s.omitted || projected && hidden
 	return event, projected, nil
