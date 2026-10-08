@@ -27,6 +27,9 @@ func summarizeAgentsResource(ctx context.Context, value gjson.Result, route Rout
 	case "beta.agents.sessions":
 		object, fields = "agent.session", "id status error required_actions usage"
 		omitted = "object created_at last_active_at agent environment metadata vault_ids"
+	case "beta.agents.sessions.subagents":
+		object, fields = "agent.session.subagent", "id session_id name status parent_agent_id"
+		omitted = "object opened_at closed_at instructions"
 	case "beta.agents.sessions.turns", "beta.agents.sessions.subagents.turns":
 		object, fields = "agent.session.turn", "id session_id agent_id subagent_id status error usage"
 		omitted = "object created_at started_at completed_at"
@@ -36,6 +39,12 @@ func summarizeAgentsResource(ctx context.Context, value gjson.Result, route Rout
 	case "beta.agents.sessions.traces":
 		object, fields = "agent.session.trace", "id session_id created_at"
 		omitted = "object otlp"
+	case "beta.agents.sessions.items", "beta.agents.sessions.turns.items",
+		"beta.agents.sessions.subagents.items", "beta.agents.sessions.subagents.turns.items":
+		if route.OutputKind == OutputPageItem && method == "list" {
+			return summarizeAgentsItemImages(ctx, value)
+		}
+		return gjson.Result{}, false, nil
 	default:
 		return gjson.Result{}, false, nil
 	}

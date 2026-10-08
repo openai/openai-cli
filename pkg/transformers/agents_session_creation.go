@@ -22,7 +22,7 @@ func (s *AgentsStreamState) observeSessionCreation(value gjson.Result, route Rou
 		return
 	}
 	creation := &s.creation
-	if !agentsCreationUniqueFields(value, "type", "session_id", "session") {
+	if !agentsUniqueFields(value, "type", "session_id", "session") {
 		creation.invalid = true
 	}
 	if outer := value.Get("session_id"); outer.Exists() {
@@ -30,7 +30,7 @@ func (s *AgentsStreamState) observeSessionCreation(value gjson.Result, route Rou
 	}
 	kind := value.Get("type").Str
 	if strings.HasPrefix(kind, "agent.session.environment.") {
-		if !agentsCreationUniqueFields(value, "environment", "environment_id", "turn_id") {
+		if !agentsUniqueFields(value, "environment", "environment_id", "turn_id") {
 			creation.invalid = true
 		}
 		if environment := value.Get("environment"); environment.Exists() {
@@ -54,7 +54,7 @@ func (s *AgentsStreamState) observeSessionCreation(value gjson.Result, route Rou
 	}
 	session := value.Get("session")
 	if session.IsObject() {
-		if !agentsCreationUniqueFields(session, "id", "status", "error", "environment", "required_actions") {
+		if !agentsUniqueFields(session, "id", "status", "error", "environment", "required_actions") {
 			creation.invalid = true
 		}
 		if environment := session.Get("environment"); environment.Exists() {
@@ -79,10 +79,10 @@ func (s *AgentsStreamState) observeSessionCreation(value gjson.Result, route Rou
 	}
 	environment := session.Get("environment")
 	id, environmentID := session.Get("id"), environment.Get("id")
-	valid := session.IsObject() && agentsCreationUniqueFields(session, "id", "status", "error", "environment", "required_actions") &&
+	valid := session.IsObject() && agentsUniqueFields(session, "id", "status", "error", "environment", "required_actions") &&
 		id.Type == gjson.String && id.Str != "" && session.Get("status").Type == gjson.String && session.Get("status").Str == "idle" &&
 		(!session.Get("error").Exists() || session.Get("error").Raw == "null") &&
-		environment.IsObject() && agentsCreationUniqueFields(environment, "id", "type") &&
+		environment.IsObject() && agentsUniqueFields(environment, "id", "type") &&
 		environment.Get("type").Type == gjson.String && environment.Get("type").Str == "self_hosted" &&
 		environmentID.Type == gjson.String && environmentID.Str != ""
 	if !valid {
@@ -105,7 +105,7 @@ func (s *agentsCreationAcknowledgement) recordSession(id gjson.Result) {
 }
 
 func (s *agentsCreationAcknowledgement) recordEnvironment(environment gjson.Result) {
-	if !agentsCreationUniqueFields(environment, "id", "type", "status", "error") {
+	if !agentsUniqueFields(environment, "id", "type", "status", "error") {
 		s.invalid = true
 		return
 	}
@@ -132,8 +132,8 @@ func (s *agentsCreationAcknowledgement) recordEnvironmentID(id gjson.Result) {
 	s.environment, s.hasEnvironment = key, true
 }
 
-// Repeated or case-ambiguous semantic fields cannot prove a creation outcome.
-func agentsCreationUniqueFields(value gjson.Result, fields ...string) bool {
+// Repeated or case-ambiguous semantic fields cannot prove an outcome.
+func agentsUniqueFields(value gjson.Result, fields ...string) bool {
 	if !value.IsObject() {
 		return false
 	}

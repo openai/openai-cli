@@ -2,6 +2,7 @@ package transformers
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -140,4 +141,135 @@ func TestAgentsStreamRetainsFirstFailureWhileObservingTrailingRecords(t *testing
 	state.Observe(agentsTurnEvent("completed", "other_root", "null"), agentsEventsRoute)
 	require.Equal(t, "the agent turn failed", state.CompletionError(agentsEventsRoute))
 	require.Len(t, state.turns, 2)
+}
+
+func TestAgentsTerminalStatusMustMatchOutcome(t *testing.T) {
+	for _, terminal := range []string{"completed", "failed", "cancelled"} {
+		for _, tc := range []struct {
+			name, status string
+			valid        bool
+		}{
+			{"matching", fmt.Sprintf("%q", terminal), true},
+			{"missing", "", false},
+			{"null", "null", false},
+			{"number", "0", false},
+			{"boolean", "false", false},
+			{"array", `["` + terminal + `"]`, false},
+			{"object", `{"value":"` + terminal + `"}`, false},
+			{"empty", `""`, false},
+			{"in progress", `"in_progress"`, false},
+			{"unknown", `"future_status"`, false},
+			{"other terminal", fmt.Sprintf("%q", map[string]string{"completed": "failed", "failed": "cancelled", "cancelled": "completed"}[terminal]), false},
+		} {
+			t.Run(terminal+"/"+tc.name, func(t *testing.T) {
+				event := agentsTurnEvent(terminal, "root", "null").Raw
+				replacement := ""
+				if tc.status != "" {
+					replacement = `"status":` + tc.status + `,`
+				}
+				event = strings.Replace(event, `"status":"`+terminal+`",`, replacement, 1)
+				value := gjson.Parse(event)
+				for _, route := range []Route{agentsCreateRoute, agentsEventsRoute} {
+					if got := AgentsRootTurnTerminal(value, route); got != tc.valid {
+						t.Errorf("terminal classifier = %t; want %t", got, tc.valid)
+					}
+					var state AgentsStreamState
+					state.Observe(value, route)
+					if state.completed != tc.valid {
+						t.Errorf("state confirmed terminal = %t; want %t", state.completed, tc.valid)
+					}
+					if !tc.valid {
+						require.Contains(t, state.CompletionError(route), "before the agent turn completed")
+						require.Empty(t, AgentsStreamFailure(value, route), "malformed status must not manufacture a specific root failure")
+					} else if terminal == "completed" {
+						require.Empty(t, state.CompletionError(route))
+					} else {
+						require.NotEmpty(t, state.CompletionError(route))
+					}
+					require.Equal(t, event, value.Raw)
+				}
+			})
+		}
+	}
+}
+
+func TestAgentsTerminalMalformedJSONCannotClassify(t *testing.T) {
+	valid := agentsTurnEvent("completed", "root", "null").Raw
+	for _, event := range []string{
+		strings.TrimSuffix(valid, "}"),
+		strings.Replace(valid, `"subagent_id":null}`, `"subagent_id":null,}`, 1),
+		strings.Replace(valid, `"turn":{`, `"turn":[{`, 1),
+	} {
+		value := gjson.Parse(event)
+		require.False(t, gjson.Valid(value.Raw))
+		require.False(t, AgentsRootTurnTerminal(value, agentsCreateRoute))
+		var state AgentsStreamState
+		state.Observe(value, agentsCreateRoute)
+		require.NotEmpty(t, state.CompletionError(agentsCreateRoute))
+	}
+}
+
+func TestAgentsTerminalAmbiguousFieldsCannotConfirmOutcome(t *testing.T) {
+	valid := strings.Replace(agentsTurnEvent("completed", "root", "null").Raw, `"turn":{`, `"turn":{"session_id":"sess_test",`, 1)
+	for _, tc := range []struct{ field, replacement string }{
+		{`"type":"agent.session.turn.completed"`, `"type":"agent.session.turn.completed","type":"agent.session.turn.failed"`},
+		{`"type":"agent.session.turn.completed"`, `"type":"agent.session.turn.completed","\u0074ype":"agent.session.turn.failed"`},
+		{`"type":"agent.session.turn.completed"`, `"type":"agent.session.turn.completed","Type":"agent.session.turn.failed"`},
+		{`"status":"completed"`, `"status":"completed","status":"failed"`},
+		{`"status":"completed"`, `"status":"completed","\u0073tatus":"failed"`},
+		{`"status":"completed"`, `"status":"completed","Status":"failed"`},
+		{`"id":"root"`, `"id":"root","id":"other"`},
+		{`"id":"root"`, `"id":"root","\u0069d":"other"`},
+		{`"id":"root"`, `"id":"root","ID":"other"`},
+		{`"session_id":"sess_test"`, `"session_id":"sess_test","session_id":"other"`},
+		{`"session_id":"sess_test"`, `"session_id":"sess_test","\u0073ession_id":"other"`},
+		{`"session_id":"sess_test"`, `"session_id":"sess_test","Session_id":"other"`},
+		{`"turn_id":"root"`, `"turn_id":"root","turn_id":"other"`},
+		{`"turn_id":"root"`, `"turn_id":"root","\u0074urn_id":"other"`},
+		{`"turn_id":"root"`, `"turn_id":"root","Turn_id":"other"`},
+		{`"subagent_id":null`, `"subagent_id":null,"subagent_id":"sub_other"`},
+		{`"subagent_id":null`, `"subagent_id":null,"\u0073ubagent_id":"sub_other"`},
+		{`"subagent_id":null`, `"subagent_id":null,"Subagent_id":"sub_other"`},
+		{`"turn":{"session_id":"sess_test"`, `"turn":{"session_id":"sess_test","session_id":"other"`},
+		{`"turn":{"session_id":"sess_test"`, `"turn":{"session_id":"sess_test","\u0073ession_id":"other"`},
+		{`"turn":{"session_id":"sess_test"`, `"turn":{"session_id":"sess_test","Session_id":"other"`},
+		{`}}`, `},"turn":{}}`},
+		{`}}`, `},"\u0074urn":{}}`},
+		{`}}`, `},"Turn":{}}`},
+	} {
+		t.Run(tc.replacement, func(t *testing.T) {
+			value := gjson.Parse(strings.Replace(valid, tc.field, tc.replacement, 1))
+			require.True(t, gjson.Valid(value.Raw), "ambiguity differs from invalid JSON syntax")
+			if AgentsRootTurnTerminal(value, agentsEventsRoute) {
+				t.Error("ambiguous event confirmed a root outcome")
+			}
+			var state AgentsStreamState
+			state.Observe(value, agentsEventsRoute)
+			require.NotEmpty(t, state.CompletionError(agentsEventsRoute))
+			require.False(t, state.completed)
+		})
+	}
+}
+
+func TestAgentsTerminalAmbiguityCannotErasePendingTurns(t *testing.T) {
+	var state AgentsStreamState
+	state.Observe(agentsTurnEvent("completed", "root", "null"), agentsEventsRoute)
+	state.Observe(agentsTextEvent("delta", "ev_pending", "pending", "msg", "unfinished"), agentsEventsRoute)
+	child := agentsTurnEvent("completed", "pending", `"sub_child"`).Raw
+	ambiguous := strings.Replace(child, `"subagent_id":"sub_child"`, `"subagent_id":"sub_child","subagent_id":null`, 1)
+	state.Observe(gjson.Parse(ambiguous), agentsEventsRoute)
+	require.Contains(t, state.CompletionError(agentsEventsRoute), "before the agent turn completed")
+	require.Empty(t, state.subagentTurns, "an ambiguous terminal event cannot establish delegated ownership")
+	state.Observe(agentsTurnEvent("completed", "pending", "null"), agentsEventsRoute)
+	require.Empty(t, state.CompletionError(agentsEventsRoute))
+
+	// Later malformed noise cannot revoke an already confirmed outcome for this turn.
+	for _, event := range []string{
+		strings.Replace(agentsTurnEvent("completed", "root", "null").Raw, `"status":"completed",`, "", 1),
+		strings.Replace(agentsTurnEvent("completed", "root", "null").Raw, `"status":"completed"`, `"status":"completed","status":"failed"`, 1),
+		strings.Replace(agentsTurnEvent("completed", "root", "null").Raw, `"turn_id":"root"`, `"turn_id":"root","turn_id":"other"`, 1),
+	} {
+		state.Observe(gjson.Parse(event), agentsEventsRoute)
+		require.Empty(t, state.CompletionError(agentsEventsRoute))
+	}
 }

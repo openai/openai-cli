@@ -62,19 +62,23 @@ func agentsTurnRole(value gjson.Result) (string, string, bool, bool) {
 // AgentsRootTurnTerminal excludes subagent and malformed terminal events.
 // It classifies outcomes only. Trailing stream events must remain visible.
 func AgentsRootTurnTerminal(value gjson.Result, route Route) bool {
-	if !IsAgentsStream(route) {
+	if !IsAgentsStream(route) || !gjson.Valid(value.Raw) {
 		return false
 	}
 	_, _, root := agentsRootTurn(value)
-	if !root {
-		return false
-	}
-	status := strings.TrimPrefix(value.Get("type").String(), "agent.session.turn.")
-	if status != "completed" && status != "failed" && status != "cancelled" {
-		return false
-	}
-	embedded := value.Get("turn.status")
-	return !embedded.Exists() || embedded.Type == gjson.String && embedded.Str == status
+	return root && agentsTurnTerminalStatus(value)
+}
+
+func agentsTerminalTurnKind(kind string) bool {
+	return kind == "agent.session.turn.completed" || kind == "agent.session.turn.failed" || kind == "agent.session.turn.cancelled"
+}
+
+func agentsTurnTerminalStatus(value gjson.Result) bool {
+	kind, status := value.Get("type"), value.Get("turn.status")
+	return kind.Type == gjson.String && agentsTerminalTurnKind(kind.Str) &&
+		status.Type == gjson.String && kind.Str == "agent.session.turn."+status.Str &&
+		agentsUniqueFields(value, "type", "session_id", "turn_id", "turn") &&
+		agentsUniqueFields(value.Get("turn"), "status", "id", "session_id", "subagent_id")
 }
 
 // AgentsStreamFailure classifies lifecycle failures without exposing API prose.
@@ -124,7 +128,16 @@ func (s *AgentsStreamState) Observe(value gjson.Result, route Route) {
 	if !strings.HasPrefix(kind, "agent.session.turn.") && kind != "agent.output.command_execution_output.delta" {
 		return
 	}
+	terminalEvent := agentsTerminalTurnKind(kind)
+	if terminalEvent && !agentsUniqueFields(value, "type", "session_id", "turn_id", "turn") {
+		// An ambiguous envelope cannot identify a new turn or change existing ownership.
+		return
+	}
 	_, _, root, known := agentsTurnRole(value)
+	if terminalEvent && !agentsUniqueFields(value.Get("turn"), "status", "id", "session_id", "subagent_id") {
+		// Keep trusted outer identities pending without accepting ambiguous attribution.
+		root, known = false, false
+	}
 	key := agentsIdentity(session.Str, turn.Str)
 	if known && !root {
 		if previous := s.turns[key]; previous.known {
@@ -143,11 +156,7 @@ func (s *AgentsStreamState) Observe(value gjson.Result, route Route) {
 		}
 		return
 	}
-	status := strings.TrimPrefix(kind, "agent.session.turn.")
-	terminal := known && (status == "completed" || status == "failed" || status == "cancelled")
-	if embedded := value.Get("turn.status"); embedded.Exists() && (embedded.Type != gjson.String || embedded.Str != status) {
-		terminal = false
-	}
+	terminal := known && agentsTurnTerminalStatus(value)
 	if s.turns == nil {
 		s.turns = make(map[[32]byte]agentsTurnState)
 	}
