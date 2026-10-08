@@ -91,7 +91,11 @@ func TestMainGlobalFlagsPlacementHeadersAndOutput(t *testing.T) {
 					got := runMainDispatchWithEnv(t, "bash", globalFlagsEnv(server,
 						"OPENAI_PROJECT_ID=proj-env", "OPENAI_ORG_ID=org-env", "OPENAI_BASE_URL=http://127.0.0.1:1"),
 						globalFlagsAt([]string{"models", "list"}, flags, position)...)
-					if got.code != 0 || got.stderr != "" {
+					wantStderr := ""
+					if format == "text" {
+						wantStderr = "Summary; use --format json for full data.\n"
+					}
+					if got.code != 0 || got.stderr != wantStderr {
 						t.Fatalf("command failed: %+v", got)
 					}
 					request := globalFlagsOneRequest(t, requests)
@@ -112,7 +116,7 @@ func TestMainGlobalFlagsPlacementHeadersAndOutput(t *testing.T) {
 							t.Fatalf("JSON items changed: %q; error=%v", got.stdout, err)
 						}
 					case "text":
-						if got.stdout != "ID: model_synthetic\nOwned by: synthetic\nSummary; use --format json for full data.\n" {
+						if got.stdout != "ID: model_synthetic\nOwned by: synthetic\n" {
 							t.Fatalf("text output changed: %q", got.stdout)
 						}
 					case "raw":
