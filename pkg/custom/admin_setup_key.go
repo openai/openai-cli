@@ -18,9 +18,20 @@ var (
 	errAdminSetupKeyIO      = errors.New("Could not read the admin API key or restore the terminal.")
 )
 
+type adminSetupKeyReader interface {
+	io.ReadCloser
+	Cancel() bool
+}
+
 // readAdminSetupKey returns a caller-owned buffer. The caller must clear it after use.
 // It does not store the key in the environment, command flags, or persistent storage.
 func readAdminSetupKey(ctx context.Context, input, output *os.File) (key []byte, err error) {
+	return readAdminSetupKeyWithReader(ctx, input, output, func(reader io.Reader) (adminSetupKeyReader, error) {
+		return uv.NewCancelReader(reader)
+	})
+}
+
+func readAdminSetupKeyWithReader(ctx context.Context, input, output *os.File, newReader func(io.Reader) (adminSetupKeyReader, error)) (key []byte, err error) {
 	if ctx.Err() != nil {
 		return nil, context.Canceled
 	}
@@ -45,7 +56,7 @@ func readAdminSetupKey(ctx context.Context, input, output *os.File) (key []byte,
 	if _, rawErr := term.MakeRaw(input.Fd()); rawErr != nil {
 		return nil, errAdminSetupKeyIO
 	}
-	reader, readerErr := uv.NewCancelReader(input)
+	reader, readerErr := newReader(input)
 	if readerErr != nil {
 		return nil, errAdminSetupKeyIO
 	}
