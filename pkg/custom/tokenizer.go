@@ -22,7 +22,7 @@ func registerTokenizerCommands(root *cli.Command) {
 
 Opens the live editor in a terminal. Use count or inspect for scripts.
 
-` + cli.SubcommandHelpTemplate
+` + cli.SubcommandHelpTemplate + localUtilityGlobalHelp
 	root.Commands = append(root.Commands, &cli.Command{
 		Name: "tokenizer", Usage: "Explore text, token IDs, and bytes locally",
 		Description: "Tokenizes exact UTF-8 text without credentials, network access, or saved input. " +
@@ -34,8 +34,8 @@ Opens the live editor in a terminal. Use count or inspect for scripts.
 		Action:             handleTokenizerEditor,
 		Commands: []*cli.Command{
 			tokenizerInputCommand("count", false), tokenizerInputCommand("inspect", true),
-			{Name: "encodings", Usage: "List the embedded tokenizer encodings", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate, Action: handleTokenizerEncodings},
-			{Name: "licenses", Usage: "Print the bundled tokenizer license notices", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate, Action: handleTokenizerLicenses},
+			{Name: "encodings", Usage: "List the embedded tokenizer encodings", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate + localUtilityGlobalHelp, Action: handleTokenizerEncodings},
+			{Name: "licenses", Usage: "Print the bundled tokenizer license notices", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate + localUtilityGlobalHelp, Action: handleTokenizerLicenses},
 			tokenizerPreviewCommand(),
 			tokenizerTerminalOutputCommand(),
 		},
@@ -50,7 +50,7 @@ func tokenizerInputCommand(name string, inspect bool) *cli.Command {
 	help := `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}EXAMPLE
   {{$bin}} tokenizer {{.Name}} --text "Hello, world!"
 
-` + cli.CommandHelpTemplate
+` + cli.CommandHelpTemplate + localUtilityGlobalHelp
 	return &cli.Command{
 		Name: name, Usage: usage, HideHelpCommand: true,
 		CustomHelpTemplate: help,

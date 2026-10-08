@@ -58,7 +58,7 @@ func codexCommand(open func(context.Context, string) error) *cli.Command {
 	help := `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}EXAMPLE
   {{$bin}} codex --destination config
 
-` + cli.CommandHelpTemplate
+` + cli.CommandHelpTemplate + localUtilityGlobalHelp
 	return &cli.Command{
 		Name: "codex", Usage: "Show local Codex CLI instructions and official links",
 		Description: "Prints installation and configuration instructions for the separate codex command. " +
