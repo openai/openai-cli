@@ -301,7 +301,7 @@ def main():
                             elif action == 'api-error':
                                 terminal.finish(1)
                                 assert '401 Unauthorized' in terminal.text(), terminal.text()
-                                assert 'Authentication failed.' in terminal.text(), terminal.text()
+                                assert 'Check API key, organization and project.' in terminal.text(), terminal.text()
                             else:
                                 wait_resumed(terminal, mark)
                                 if action == 'two-generations':

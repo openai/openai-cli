@@ -61,7 +61,7 @@ the feature branch. Both commands use `openai files list --max-items 2`. The
 records have distinct IDs, filenames and sizes, with seven fields each so the
 complete before output fits in the 90-column by 24-row capture. The after scene
 retains ID, filename, purpose, bytes and status, followed by
-one `Summary; use --format json for full data.` notice after the list.
+one `Full data: --format json.` notice after the list.
 
 Two more scenes retrieve the first file before and after the change. The last
 scene uses `openai --format json files retrieve file_training`, demonstrating

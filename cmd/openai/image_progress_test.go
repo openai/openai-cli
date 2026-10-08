@@ -52,11 +52,14 @@ func TestMainImageProgressTerminal(t *testing.T) {
 	}
 	gateDirectory := os.Getenv("OPENAI_CLI_PROGRESS_GATE_DIR")
 	require.NotEmpty(t, gateDirectory, "requires the PTY observer gate")
-	for _, scenario := range []string{"generate", "edit", "stdin", "iterm", "off", "persisted-off", "explicit-on", "apple-auto", "apple-on", "apple-persisted-on", "apple-no-color", "apple-error-json", "ci", "api", "malformed", "malformed-error-json", "failure", "final-first"} {
+	for _, scenario := range []string{"generate", "edit", "stdin", "iterm", "off", "persisted-off", "explicit-on", "apple-auto", "apple-on", "apple-persisted-on", "apple-no-color", "apple-error-json", "ci", "api", "malformed", "malformed-error-json", "failure", "final-first", "quiet", "quiet-malformed", "quiet-api", "error-json", "quiet-error-json"} {
 		t.Run(scenario, func(t *testing.T) {
 			apple := strings.HasPrefix(scenario, "apple-")
 			fontRequested := apple && scenario != "apple-auto"
-			streamFails := scenario == "failure" || scenario == "malformed-error-json" || scenario == "apple-error-json"
+			quiet := strings.HasPrefix(scenario, "quiet")
+			api := scenario == "api" || scenario == "quiet-api"
+			machineError := strings.HasSuffix(scenario, "error-json")
+			streamFails := scenario == "failure" || machineError
 			payload := imageGenerationPNG(t)
 			encoded := base64.StdEncoding.EncodeToString(payload)
 			closed := make(chan struct{})
@@ -70,7 +73,7 @@ func TestMainImageProgressTerminal(t *testing.T) {
 					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 					require.Equal(t, float64(2), body["partial_images"])
 					require.Equal(t, true, body["stream"])
-					if scenario == "api" {
+					if api {
 						require.NotContains(t, body, "model")
 					} else {
 						require.Equal(t, defaultProgressModel, body["model"])
@@ -83,7 +86,7 @@ func TestMainImageProgressTerminal(t *testing.T) {
 				}
 				if scenario != "final-first" {
 					first := encoded
-					if scenario == "malformed" || scenario == "malformed-error-json" {
+					if scenario == "malformed" || scenario == "malformed-error-json" || scenario == "quiet-malformed" {
 						first = "private-invalid-progress"
 					}
 					fmt.Fprintf(w, "data: {\"type\":%q,\"partial_image_index\":0,\"b64_json\":%q}\n\n", kind+".partial_image", first)
@@ -92,7 +95,7 @@ func TestMainImageProgressTerminal(t *testing.T) {
 					fmt.Fprintf(w, "data: {\"type\":%q,\"partial_image_index\":1,\"b64_json\":%q}\n\n", kind+".partial_image", encoded)
 					w.(http.Flusher).Flush()
 				}
-				if scenario == "generate" || scenario == "edit" || scenario == "stdin" || scenario == "iterm" || scenario == "explicit-on" || scenario == "failure" || (apple && (runtime.GOOS == "darwin" || scenario != "apple-no-color")) {
+				if scenario == "generate" || scenario == "edit" || scenario == "stdin" || scenario == "iterm" || scenario == "explicit-on" || scenario == "failure" || scenario == "error-json" || (apple && (runtime.GOOS == "darwin" || scenario != "apple-no-color")) {
 					deadline := time.NewTimer(5 * time.Second)
 					defer deadline.Stop()
 					poll := time.NewTicker(10 * time.Millisecond)
@@ -119,7 +122,7 @@ func TestMainImageProgressTerminal(t *testing.T) {
 				}
 				fmt.Fprintf(w, "data: {\"type\":%q,\"b64_json\":%q}\n\n", kind+".completed", encoded)
 				w.(http.Flusher).Flush()
-				if scenario != "api" {
+				if !api {
 					select {
 					case <-r.Context().Done():
 						close(closed)
@@ -133,6 +136,12 @@ func TestMainImageProgressTerminal(t *testing.T) {
 			require.NoError(t, os.Mkdir(temporary, 0700))
 			env := append(imageGenerationEnv(server, home), "APPDATA="+home, "XDG_CONFIG_HOME="+home, "OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "TERM_PROGRAM=kitty", "TERM=xterm-256color", "CI=false", "TMPDIR="+temporary, "TMP="+temporary, "TEMP="+temporary)
 			args := []string{"images", "generate", "--prompt", "synthetic progress", "--partial-images", "2", "--max-items", "-1"}
+			if quiet {
+				args = append(args, "--quiet")
+				if !api {
+					args = append(args, "--inline", "on")
+				}
+			}
 			var input io.Reader
 			if scenario == "edit" {
 				source, _ := imageUploadSource(t)
@@ -166,11 +175,11 @@ func TestMainImageProgressTerminal(t *testing.T) {
 			if scenario == "iterm" {
 				env = append(env, "TERM_PROGRAM=iTerm.app")
 			}
-			if scenario == "api" {
+			if api {
 				args = append([]string{"--format", "json"}, args...)
 				args = append(args, "--stream", "true")
 			}
-			if scenario == "malformed-error-json" || scenario == "apple-error-json" {
+			if machineError {
 				args = append([]string{"--format-error", "json"}, args...)
 			}
 			binary, err := os.Executable()
@@ -201,7 +210,7 @@ func TestMainImageProgressTerminal(t *testing.T) {
 			if streamFails {
 				require.Error(t, err)
 				require.Contains(t, diagnostic.String(), "before trying again")
-				if scenario == "malformed-error-json" || scenario == "apple-error-json" {
+				if machineError {
 					require.True(t, json.Valid(diagnostic.Bytes()), diagnostic.String())
 				}
 			} else {
@@ -218,7 +227,7 @@ func TestMainImageProgressTerminal(t *testing.T) {
 			}
 			require.NotContains(t, diagnostic.String(), "synthetic-private")
 			files := imageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"))
-			if streamFails || scenario == "api" {
+			if streamFails || api {
 				require.Empty(t, files)
 			} else {
 				require.Len(t, files, 1)

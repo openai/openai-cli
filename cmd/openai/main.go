@@ -35,7 +35,9 @@ func main() {
 	ctx := context.Background()
 	if err == nil {
 		custom.SetupImagePickerShellOnFirstRun(ctx, os.Args)
-		err = runWithRequestConfiguration(ctx, app, args, completing)
+		err = custom.RunWithOutputPolicy(ctx, app, func(ctx context.Context) error {
+			return runWithRequestConfiguration(ctx, app, args, completing)
+		})
 	}
 	if err != nil {
 		exitCode := 1

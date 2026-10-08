@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-const resourceSummaryHint = "Summary; use --format json for full data."
+const resourceSummaryHint = "Full data: --format json."
 
 func TestMainResourceSummariesRetainActionFields(t *testing.T) {
 	for _, tc := range []struct {

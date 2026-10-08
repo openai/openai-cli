@@ -57,16 +57,16 @@ func TestReadableAPIErrorSummaryDoesNotEchoResponseDetails(t *testing.T) {
 		code   string
 		want   string
 	}{
-		{"authentication", http.StatusUnauthorized, "invalid_api_key", "Authentication failed."},
-		{"permissions", http.StatusForbidden, "synthetic-private-code", "Access denied."},
-		{"not found", http.StatusNotFound, "synthetic-private-code", "not found or is not available"},
+		{"authentication", http.StatusUnauthorized, "invalid_api_key", "Check API key, organization and project."},
+		{"permissions", http.StatusForbidden, "synthetic-private-code", "Check your key's permissions."},
+		{"not found", http.StatusNotFound, "synthetic-private-code", "Check the resource or model ID.\nCheck your key's access to it."},
 		{"invalid argument", http.StatusBadRequest, "synthetic-private-code", "The API rejected the request."},
 		{"unprocessable argument", http.StatusUnprocessableEntity, "synthetic-private-code", "The API rejected the request."},
 		{"quota", http.StatusTooManyRequests, "insufficient_quota", "API usage or billing limit reached."},
-		{"rate", http.StatusTooManyRequests, "synthetic-private-code", "Rate limit reached."},
+		{"rate", http.StatusTooManyRequests, "synthetic-private-code", "Wait before trying again."},
 		{"conflict", http.StatusConflict, "synthetic-private-code", "Check its current status."},
-		{"request timeout", http.StatusRequestTimeout, "synthetic-private-code", "check its status before repeating it"},
-		{"gateway timeout", http.StatusGatewayTimeout, "synthetic-private-code", "check its status before repeating it"},
+		{"request timeout", http.StatusRequestTimeout, "synthetic-private-code", "Check its status before trying again."},
+		{"gateway timeout", http.StatusGatewayTimeout, "synthetic-private-code", "Check its status before trying again."},
 		{"server", http.StatusInternalServerError, "synthetic-private-code", "The API is temporarily unavailable."},
 		{"unknown status", 499, "synthetic-private-code", "The API could not complete the request."},
 	} {
@@ -83,12 +83,31 @@ func TestReadableAPIErrorSummaryDoesNotEchoResponseDetails(t *testing.T) {
 			var out bytes.Buffer
 			require.NoError(t, ShowCommandError(root, fmt.Errorf("synthetic-wrapper: %w", apierr), &out))
 			require.Contains(t, out.String(), test.want)
-			require.Contains(t, out.String(), fmt.Sprintf("Request failed (%d", test.status))
+			require.Contains(t, out.String(), fmt.Sprintf("HTTP %d", test.status))
 			require.Contains(t, out.String(), "--format-error json")
 			assertReadableErrorContainsNoPrivateDetails(t, out.String())
 			if test.status == http.StatusUnauthorized {
 				require.Contains(t, out.String(), "./openai help setup")
 			}
+		})
+	}
+}
+
+func TestReadableAPIErrorHeaderHandlesUnknownOrMissingStatus(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		header string
+	}{
+		{http.StatusInternalServerError, "HTTP 500: Internal Server Error.\n"},
+		{599, "HTTP 599.\n"},
+		{0, "The API could not complete the request.\n"},
+	} {
+		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
+			var out bytes.Buffer
+			require.NoError(t, ShowCommandError(readableErrorTestCommand(t), &openai.Error{StatusCode: tc.status}, &out))
+			require.True(t, strings.HasPrefix(out.String(), tc.header), out.String())
+			require.NotContains(t, out.String(), "HTTP 0")
+			require.NotContains(t, out.String(), ": .")
 		})
 	}
 }
@@ -258,7 +277,7 @@ func TestReadableStreamErrorSummaryAndCancellation(t *testing.T) {
 		flags   []string
 		want    string
 	}{
-		{"wrapped stream", fmt.Errorf("synthetic-private-wrapper: %w", streamerr), nil, "The response stream failed. Output may be incomplete."},
+		{"wrapped stream", fmt.Errorf("synthetic-private-wrapper: %w", streamerr), nil, "The response stream failed.\nOutput may be incomplete."},
 		{"canceled stream", errors.Join(streamerr, context.Canceled), nil, "Request canceled.\n"},
 		{"canceled structured stream", errors.Join(streamerr, context.Canceled), []string{"--format-error", "json"}, "Request canceled."},
 	} {
@@ -283,7 +302,7 @@ func TestStructuredStreamErrorWithoutJSONData(t *testing.T) {
 			require.NoError(t, ShowCommandError(readableErrorTestCommand(t, "--format-error", "json"), failure, &out))
 			var payload map[string]any
 			require.NoError(t, json.Unmarshal(out.Bytes(), &payload))
-			require.Contains(t, payload["message"], "The response stream failed. Output may be incomplete.")
+			require.Equal(t, "The response stream failed. Output may be incomplete.\nFor API error details, add --format-error json.", payload["message"])
 			require.NotContains(t, payload, "status_code")
 			assertReadableErrorContainsNoPrivateDetails(t, out.String())
 		})

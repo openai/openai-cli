@@ -20,12 +20,18 @@ Requested raw strings and binary data can contain escape bytes; the CLI preserve
 `--quiet` suppresses optional hints, progress, and success receipts.
 It preserves selected data, requested help, errors, and exit status.
 Saved image paths remain selected data.
+Quiet suppresses partial-image progress but preserves explicitly requested final previews.
 Quiet does not change the format or discard stdout.
+Receipts from binary file saves and manpage generation currently remain on stdout, including with `--quiet`.
 
-`--verbose` reports the command, format option, and command result on stderr.
+`--verbose` reports the command, format option, elapsed time, and command result on stderr.
+Elapsed time includes argument parsing, request setup, command work, and cleanup.
+Command work includes local operations, picker interaction, output, and saving.
+It excludes process startup and the final verbose message; it is not API-only latency.
+Verbose also reports request-setup failures that occur before the command action.
 The format option does not change an existing binary response into text.
-It excludes argument values, credentials, URLs, headers, prompts, filenames, and response bodies.
-Command completion does not imply that asynchronous API work has finished.
+Verbose excludes argument values, credentials, URLs, headers, prompts, filenames, and response bodies.
+Command completion and elapsed time do not imply that asynchronous API work has finished.
 Verbose omits its final details after cancellation, deadlines, or an existing interruption status.
 The original action error and exit status remain.
 Quiet overrides verbose when both flags are present.
@@ -39,6 +45,9 @@ Select text errors explicitly to combine verbose diagnostics with machine stdout
 openai models list --format jsonl --verbose --format-error text > models.jsonl
 openai models list --format jsonl --quiet > models.jsonl
 ```
+
+Embedded callers use `custom.RunWithOutputPolicy` to report the complete invocation and cleanup.
+Direct `Command.Run` calls retain action-scoped reporting and timing.
 
 ## Lists and streams
 
@@ -56,7 +65,8 @@ openai files list --format json --transform id --raw-output
 ```
 
 `--max-items -1` remains unlimited.
-`--max-items 0` emits no items; the SDK can still make its initial request.
+`--max-items 0` emits no items, except with `--format raw`, which retains the page envelope.
+The SDK can still make its initial request.
 GJSON extraction applies to each item. Missing paths retain the original item.
 `--raw-output` unquotes strings; `--format raw` selects original response data.
 
@@ -66,6 +76,9 @@ Explicit terminal explore retains its interactive viewer.
 Nonterminal explore retains its JSON fallback.
 Piped stdout never opens a pager or picker.
 CI does not infer a format or introduce a new output mode.
+Explicit explore still opens its viewer when CI has a real terminal.
+Quiet suppresses optional feedback; it does not disable explicitly selected interaction or prompts.
+Existing CI guards for automatic previews and shell setup remain.
 
 ## Failures and saved output
 
@@ -77,6 +90,9 @@ A broken output sink cannot guarantee a complete output document.
 Binary stdout preserves every byte.
 Redirecting stderr does not redirect selected stdout data.
 Explicit error formats control stderr data, including API error payloads.
+Human API errors show returned request IDs, including with `--quiet`.
+The CLI omits missing IDs, unusual characters, IDs over 256 bytes, and IDs accompanying a custom `X-Request-ID` request header.
+This display bound does not limit API payloads or change structured errors.
 
 Shell redirection opens or truncates its destination before the CLI starts.
 The CLI cannot restore a file truncated by `>` after a failed request.

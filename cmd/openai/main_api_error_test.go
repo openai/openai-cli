@@ -258,7 +258,7 @@ func TestMainStreamErrorsPreserveEventDetails(t *testing.T) {
 				}
 				switch {
 				case test.format == "text":
-					if !strings.Contains(result.stderr, "The response stream failed. Output may be incomplete.") || strings.Contains(result.stderr, "synthetic private stream detail") || strings.Contains(result.stderr, "200") {
+					if !strings.Contains(result.stderr, "The response stream failed.\nOutput may be incomplete.") || strings.Contains(result.stderr, "synthetic private stream detail") || strings.Contains(result.stderr, "200") {
 						t.Errorf("missing safe stream failure summary: %q", result.stderr)
 					}
 				case test.extracted != "":

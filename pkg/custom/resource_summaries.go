@@ -8,7 +8,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const resourceSummaryHint = "Summary; use --format json for full data."
+const resourceSummaryHint = "Full data: --format json."
 
 // Resource projections apply only to readable results without field extraction.
 // Report omissions so each response or list can explain them once.
