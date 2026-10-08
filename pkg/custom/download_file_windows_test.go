@@ -32,7 +32,7 @@ func TestWindowsDownloadAutomaticConsole(t *testing.T) {
 	process.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_CONSOLE, HideWindow: true}
 	process.WaitDelay = time.Second
 	output, err := process.CombinedOutput()
-	if err != nil || !strings.Contains(string(output), "automatic console save passed") {
+	if err != nil || !strings.Contains(string(output), "automatic console save passed") || !strings.Contains(string(output), "automatic console source-close passed") {
 		t.Fatalf("native automatic console save: %v\n%s", err, output)
 	}
 }
@@ -45,7 +45,8 @@ func TestShellFileAutomaticConsoleHelper(t *testing.T) {
 	if !slices.Equal(os.Args[separator+1:], []string{"console"}) {
 		t.Fatal("invalid automatic console helper arguments")
 	}
-	console, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0)
+	// GetConsoleMode requires GENERIC_READ, including for an output buffer.
+	console, err := os.OpenFile("CONOUT$", os.O_RDWR, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,11 +62,12 @@ func TestShellFileAutomaticConsoleHelper(t *testing.T) {
 		t.Fatal("CONOUT$ is not an actual Windows console")
 	}
 	TestWriteBinaryResponseAutomaticTerminalOutput(t)
+	TestAutomaticDownloadSourceCloseFailure(t)
 	if t.Skipped() {
-		t.Fatal("automatic console save did not execute")
+		t.Fatal("automatic console checks did not execute")
 	}
 	if !t.Failed() {
-		if _, err := io.WriteString(original, "automatic console save passed\n"); err != nil {
+		if _, err := io.WriteString(original, "automatic console save passed\nautomatic console source-close passed\n"); err != nil {
 			t.Fatal(err)
 		}
 	}
