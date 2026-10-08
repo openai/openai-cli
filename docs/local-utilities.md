@@ -126,6 +126,8 @@ Codex CLI and destination services handle their own sign-in and access checks.
 Default and piped output never open a browser.
 `--open` requires an explicit destination and accepts no arbitrary URL.
 The command prints the URL before requesting a browser launch.
+The system browser launcher receives only named desktop, profile, and locale settings.
+Linux retains the `BROWSER` fallback supported by `xdg-open`.
 If opening fails, the URL remains available and the command exits nonzero.
 
 Instructions and destinations were verified on October 8, 2026.

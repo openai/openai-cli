@@ -204,19 +204,55 @@ func openCodexDestination(ctx context.Context, url string) error {
 		return err
 	}
 	command := exec.CommandContext(ctx, name, args...)
-	command.Env = codexBrowserEnvironment(os.Environ())
+	command.Env = codexBrowserEnvironment(runtime.GOOS, os.Environ())
 	return command.Run()
 }
 
-func codexBrowserEnvironment(environment []string) []string {
+func codexBrowserEnvironment(goos string, environment []string) []string {
 	clean := make([]string, 0, len(environment))
 	for _, setting := range environment {
-		name, _, _ := strings.Cut(setting, "=")
-		if !strings.HasPrefix(strings.ToUpper(name), "OPENAI_") {
+		name, _, valid := strings.Cut(setting, "=")
+		if valid && codexBrowserSettingAllowed(goos, name) {
 			clean = append(clean, setting)
 		}
 	}
 	return clean
+}
+
+// Preserve desktop discovery and profile locations without copying unrelated
+// application settings. Linux retains xdg-open's documented browser fallback.
+func codexBrowserSettingAllowed(goos, name string) bool {
+	switch goos {
+	case "darwin", "linux":
+		switch name {
+		case "PATH", "HOME", "TMPDIR", "USER", "LOGNAME", "TZ",
+			"LANG", "LANGUAGE", "LC_ALL", "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES",
+			"LC_MONETARY", "LC_NUMERIC", "LC_TIME":
+			return true
+		}
+		if goos == "darwin" {
+			return name == "__CF_USER_TEXT_ENCODING"
+		}
+		switch name {
+		case "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR",
+			"BROWSER", "DESKTOP_STARTUP_ID", "XDG_ACTIVATION_TOKEN",
+			"XDG_CONFIG_HOME", "XDG_CONFIG_DIRS", "XDG_DATA_HOME", "XDG_DATA_DIRS", "XDG_CACHE_HOME", "XDG_STATE_HOME",
+			"XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "XDG_SESSION_TYPE", "DESKTOP_SESSION",
+			"KDE_FULL_SESSION", "KDE_SESSION_VERSION", "GNOME_DESKTOP_SESSION_ID", "MATE_DESKTOP_SESSION_ID",
+			"DESKTOP", "LXQT_SESSION_CONFIG", "LC_ADDRESS", "LC_IDENTIFICATION", "LC_MEASUREMENT",
+			"LC_NAME", "LC_PAPER", "LC_TELEPHONE":
+			return true
+		}
+	case "windows":
+		switch strings.ToUpper(name) {
+		case "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE",
+			"USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "ALLUSERSPROFILE",
+			"PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432",
+			"COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "COMMONPROGRAMW6432", "TEMP", "TMP":
+			return true
+		}
+	}
+	return false
 }
 
 func codexBrowserCommand(goos, url string) (string, []string, error) {
