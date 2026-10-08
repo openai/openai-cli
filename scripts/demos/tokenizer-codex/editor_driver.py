@@ -29,6 +29,7 @@ def stop_editor(pid, terminal):
         try:
             os.killpg(pid, number)
         except ProcessLookupError:
+            # The owned process group can exit before this cleanup signal.
             pass
         deadline = time.monotonic() + 1
         while time.monotonic() < deadline:
