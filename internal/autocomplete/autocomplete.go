@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
@@ -281,8 +282,24 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			continue
 		}
 		if isFlag(arg) && !literal {
-			name, _, assigned := strings.Cut(arg, "=")
+			name, value, assigned := strings.Cut(arg, "=")
 			flag := findFlag(flags, name)
+			// Accept the typed legacy help flag without offering it in discovery.
+			if flag == nil && helpTopics && (name == "--all" || name == "-all") {
+				for _, declared := range help.Flags {
+					legacy, ok := declared.(*cli.BoolFlag)
+					if !ok || legacy.Name != "all" || !slices.Contains(flags, declared) {
+						continue
+					}
+					if assigned {
+						if _, err := strconv.ParseBool(value); err != nil {
+							break
+						}
+					}
+					flag = &declared
+					break
+				}
+			}
 			if flag == nil {
 				return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 			} else if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && !assigned {

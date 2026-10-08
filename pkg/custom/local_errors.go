@@ -140,13 +140,17 @@ func knownLocalError(command *cli.Command, message string) string {
 				if flag == "--format" || flag == "--format-error" {
 					return "Invalid output format. Choose one of: " + strings.Join(OutputFormats, ", ") + "."
 				}
-				return "Invalid value for " + flag + ". Check the expected type and supported values with --help."
+				message := "Invalid value for " + flag + "."
+				if expected := parserFlagExpectedType(command, name); expected != "" {
+					message += " Expected " + expected + "."
+				}
+				return parserErrorGuidance(command, message)
 			}
 		}
 	}
 	if rest, ok := strings.CutPrefix(message, "flag needs an argument: "); ok {
 		if flag := declaredErrorFlag(command, strings.TrimLeft(rest, "-")); flag != "" {
-			return "Add a value for " + flag + "."
+			return parserErrorGuidance(command, "Add a value for "+flag+".")
 		}
 	}
 	// Required flag names originate in declarations, but verify them before
@@ -167,12 +171,12 @@ func knownLocalError(command *cli.Command, message string) string {
 				}
 				flags = append(flags, flag)
 			}
-			return "Missing required options: " + strings.Join(flags, ", ") + ". Check --help for usage."
+			return parserErrorGuidance(command, "Missing required options: "+strings.Join(flags, ", ")+".")
 		}
 	}
 	switch {
 	case strings.HasPrefix(message, "Unexpected extra arguments: "):
-		return "Unexpected extra arguments. Check the command's accepted arguments with --help."
+		return parserErrorGuidance(command, "Unexpected extra arguments.")
 	case strings.HasPrefix(message, "no shell provided for completion command. available shells are "):
 		return "Choose a shell for completion: openai @completion bash (or fish, pwsh, zsh)."
 	case strings.HasPrefix(message, "unknown shell ") && strings.Contains(message, ", available shells are "):
@@ -181,11 +185,16 @@ func knownLocalError(command *cli.Command, message string) string {
 		strings.HasPrefix(message, "Invalid format: ") && strings.HasSuffix(message, ", valid formats are: "+strings.Join(OutputFormats, ", ")):
 		return "Invalid output format. Choose one of: " + strings.Join(OutputFormats, ", ") + "."
 	case strings.HasPrefix(message, "flag provided but not defined: -"):
-		return "An option is not recognized. Check the command's available options with --help."
+		name := strings.TrimPrefix(message, "flag provided but not defined: -")
+		message := "An option is not recognized."
+		if suggestion := suggestParserFlag(command, name); suggestion != "" {
+			message += " Did you mean " + suggestion + "?"
+		}
+		return parserErrorGuidance(command, message)
 	case strings.HasPrefix(message, "No help topic for '"):
 		return unknownCommandErrorMessage(command)
 	case strings.HasPrefix(message, "Unknown help topic "):
-		return "Unknown help topic. Run openai help --all to see commands."
+		return "Unknown help topic. Run openai help to see commands."
 	case strings.HasPrefix(message, "Failed to parse piped data as YAML/JSON:\n"):
 		return "Could not parse piped input as YAML or JSON. Check the input's syntax."
 	case strings.HasPrefix(message, "Cannot merge flags with a body that is not a map:"),
@@ -195,6 +204,80 @@ func knownLocalError(command *cli.Command, message string) string {
 		return "The request body is not supported for this binary endpoint. Check the command's input options with --help."
 	}
 	return ""
+}
+
+func parserErrorGuidance(command *cli.Command, message string) string {
+	invocation := "openai"
+	if command != nil {
+		invocation = errorHelpInvocation(command.Root())
+		if path := command.Path(); len(path) > 1 {
+			invocation += " " + strings.Join(path[1:], " ")
+		}
+	}
+	return message + "\nOptions and examples: " + invocation + " --help"
+}
+
+// These flags match the parser's current scope, including inherited flags and
+// alias shadowing. Do not suggest a local flag from an ancestor command.
+func parserErrorFlags(command *cli.Command) []cli.Flag {
+	if command == nil {
+		return nil
+	}
+	return append(command.VisibleFlags(), command.VisiblePersistentFlags()...)
+}
+
+func parserFlagExpectedType(command *cli.Command, name string) string {
+	for _, flag := range parserErrorFlags(command) {
+		if !slices.Contains(flag.Names(), name) {
+			continue
+		}
+		if documented, ok := flag.(cli.DocGenerationFlag); ok {
+			switch documented.TypeName() {
+			case "int", "uint":
+				return "an integer"
+			case "float":
+				return "a number"
+			case "bool", "boolean":
+				return "a boolean (true or false)"
+			}
+		}
+		return ""
+	}
+	return ""
+}
+
+func suggestParserFlag(command *cli.Command, provided string) string {
+	// Diagnostics are untrusted. Compare a plain flag name only, then emit the
+	// canonical name from its declaration. Never copy the rejected input.
+	for _, character := range provided {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.') {
+			return ""
+		}
+	}
+	if len(provided) < 2 {
+		return ""
+	}
+	provided = strings.ToLower(provided)
+	suggestion := ""
+	for _, flag := range parserErrorFlags(command) {
+		names := flag.Names()
+		for _, name := range names {
+			if !withinOneEdit(strings.ToLower(name), provided) {
+				continue
+			}
+			canonical := "--" + names[0]
+			if len(names[0]) == 1 {
+				canonical = "-" + names[0]
+			}
+			if suggestion != "" && suggestion != canonical {
+				return ""
+			}
+			suggestion = canonical
+			break
+		}
+	}
+	return suggestion
 }
 
 func unknownCommandErrorMessage(command *cli.Command) string {
@@ -211,12 +294,12 @@ func unknownCommandErrorMessage(command *cli.Command) string {
 		}
 		return unknownCommandAt(command, name)
 	}
-	return "Unknown help topic. Run openai help --all to see commands."
+	return "Unknown help topic. Run openai help to see commands."
 }
 
 func unknownCommandAt(command *cli.Command, name string) string {
 	if command == nil {
-		return "Unknown help topic. Run openai help --all to see commands."
+		return "Unknown help topic. Run openai help to see commands."
 	}
 	if command.Suggest {
 		candidates := clihelp.VisibleCommands(command)
@@ -241,7 +324,7 @@ func unknownCommandAt(command *cli.Command, name string) string {
 		}
 	}
 	slices.Reverse(path)
-	invocation := errorHelpInvocation(command.Root()) + " help --all"
+	invocation := errorHelpInvocation(command.Root()) + " help"
 	if len(path) > 0 {
 		invocation += " " + strings.Join(path, " ")
 	}
