@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/mocktest"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -34,7 +35,7 @@ func TestAudioVoicesCreateCredentialSelection(t *testing.T) {
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				received <- r.Header.Get("Authorization")
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"id":"voice_synthetic","name":"Synthetic","type":"prompt"}`)
+				_, _ = io.WriteString(w, `{"id":"voice_synthetic","name":"Synthetic","type":"audio_sample"}`)
 			}))
 			defer server.Close()
 			originalTransport := http.DefaultTransport
@@ -58,8 +59,8 @@ func TestAudioVoicesCreateCredentialSelection(t *testing.T) {
 				Commands: []*cli.Command{{Name: "audio:voices", Commands: []*cli.Command{&create}}},
 			}
 			args := append([]string{"openai", "--base-url", server.URL + "/"}, tc.flags...)
-			args = append(args, "audio:voices", "create", "--type", "prompt",
-				"--name", "Synthetic", "--prompt", "A calm narrator")
+			args = append(args, "audio:voices", "create", "--type", "audio_sample",
+				"--name", "Synthetic", "--consent", "cons_synthetic", "--audio-sample", mocktest.TestFile(t, "Synthetic sample"))
 			require.NoError(t, command.Run(t.Context(), args))
 			select {
 			case authorization := <-received:
