@@ -127,7 +127,7 @@ func TestMainDispatchOrdinaryArguments(t *testing.T) {
 
 func TestMainDispatchEmptyArguments(t *testing.T) {
 	want := runMainDispatch(t, "bash", "openai", "--help")
-	if want.code != 0 || want.stderr != "" || !strings.Contains(want.stdout, "OpenAI CLI") {
+	if want.code != 0 || want.stderr != "" || !strings.HasPrefix(want.stdout, "NAME:\n   openai\n") {
 		t.Fatalf("root help control failed: %+v", want)
 	}
 	for _, argv := range [][]string{nil, {"openai"}, {""}, {"__complete"}, {"openai", "", "--help"}} {

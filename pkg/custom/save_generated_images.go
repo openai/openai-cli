@@ -20,10 +20,19 @@ const defaultSavedImageModel = "gpt-image-2.5-sunburst"
 const imageGenerationQuickHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}Generate an image
   {{$bin}} images generate --prompt "A tiny orange robot"
 
-Run without flags to choose settings. Ctrl+C exits.
+Run without flags to choose settings
+in an interactive terminal. Ctrl+C exits.
 Saves to ~/Downloads/gpt-images/.
 
-Full help: {{$bin}} help --all images generate
+COMMON OPTIONS
+  --model MODEL          Choose a model ID
+  --size SIZE            e.g. 1024x1024
+  --quality QUALITY      auto, low, medium, high
+  --name NAME            Name the saved image
+  --output-dir DIRECTORY Save in an existing folder
+Size and quality choices depend on the model.
+
+Help: {{$bin}} help images generate
 Key setup: {{$bin}} help setup
 `
 

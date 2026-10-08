@@ -48,11 +48,11 @@ func TestMainReadableAPIArgumentGuidance(t *testing.T) {
 		args, want            []string
 	}{
 		{"encoding choice", "encoding_format", "invalid_value", 400,
-			[]string{"embeddings", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"--encoding-format", "float or base64", "help --all embeddings create"}},
+			[]string{"embeddings", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"--encoding-format", "float or base64", "help embeddings create"}},
 		{"nested indexed field", "messages[0].content", "invalid_type", 422,
-			[]string{"chat:completions", "create", "--model", "model-synthetic", "--message", `{"role":"user","content":"synthetic"}`}, []string{"--message", "Check the value's type", "help --all chat:completions create"}},
+			[]string{"chat:completions", "create", "--model", "model-synthetic", "--message", `{"role":"user","content":"synthetic"}`}, []string{"--message", "Check the value's type", "help chat:completions create"}},
 		{"nested command flag", "session.model", "invalid_value", 400,
-			[]string{"live:sessions", "accept", "--session-id", "sess_synthetic", "--session", `{"type":"live","model":"synthetic"}`}, []string{"--session.model", "help --all live:sessions accept"}},
+			[]string{"live:sessions", "accept", "--session-id", "sess_synthetic", "--session", `{"type":"live","model":"synthetic"}`}, []string{"--session.model", "help live:sessions accept"}},
 		{"required value", "input", "missing_required_parameter", 400,
 			[]string{"embeddings", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"Add --input with a value"}},
 		{"unsupported field", "temperature", "unsupported_parameter", 400,
@@ -60,7 +60,7 @@ func TestMainReadableAPIArgumentGuidance(t *testing.T) {
 		{"model context", "input", "context_length_exceeded", 400,
 			[]string{"responses", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"Shorten the input or conversation"}},
 		{"unknown sensitive param", "input\x1b]52;c;synthetic-private-secret\a\u202e", "synthetic-private-code", 400,
-			[]string{"embeddings", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"The API rejected the request", "help --all embeddings create"}},
+			[]string{"embeddings", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"The API rejected the request", "help embeddings create"}},
 		{"wrong command flag", "temperature", "invalid_value", 400,
 			[]string{"embeddings", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"The API rejected the request"}},
 	} {
