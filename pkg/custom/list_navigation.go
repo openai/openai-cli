@@ -366,6 +366,9 @@ func (m *listNavigation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		printPage := msg.String() == "p" && len(m.pages) != 0
 		if printPage || msg.String() == "q" || msg.String() == "ctrl+c" || msg.String() == "esc" {
+			if msg.String() == "ctrl+c" && m.opts.Operation == "(resource) models > (method) list" {
+				m.err = errors.Join(m.err, &modelsListLoadingInterrupt{context.Canceled})
+			}
 			m.printPage = printPage
 			m.quitting = true
 			m.cancel()
