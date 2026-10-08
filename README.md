@@ -108,6 +108,19 @@ Use `--format json` or `--format jsonl` in scripts that parse API data.
 See [reading command results](docs/readable-output.md) for extraction, binary
 output, and the scope of readable presentation.
 
+Upload a local file with an explicit purpose, inspect its metadata, then download its contents:
+
+```sh
+openai files upload "upload space.txt" --purpose user_data
+openai files get file-example
+openai files download file-example --output "downloaded copy.txt"
+openai files download file-example > copy.txt
+```
+
+Replace `file-example` with the returned file ID. Upload takes a plain path, without an added `@`.
+`create`, `retrieve`, `content`, and their existing flags remain available.
+See [working with files](docs/files.md) for literal filenames, output formats, and script examples.
+
 `openai images generate --prompt "A tiny orange robot"` saves images to
 `~/Downloads/gpt-images/` and prints their paths, including in pipes. The CLI
 uses `gpt-image-2.5-sunburst` when saving without an explicit model or legacy
@@ -232,7 +245,11 @@ presenting the client certificate during the proxy's own TLS handshake.
 
 ### Passing files as arguments
 
-To pass files to your API, you can use the `@myfile.ext` syntax:
+For JSON input values, `@myfile.ext` reads local file contents:
+
+Binary upload flags use plain paths. For example, use `files upload --file "upload space.txt" --purpose user_data`.
+Here, `--file "@upload space.txt"` names an actual file starting with `@`; it does not expand another file reference.
+See [working with files](docs/files.md).
 
 ```bash
 openai <command> --arg @abe.jpg

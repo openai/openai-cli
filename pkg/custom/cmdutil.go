@@ -557,6 +557,9 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	if err := opts.Context.Err(); err != nil {
 		return err
 	}
+	if handled, err := showFileResult(res, opts); handled {
+		return err
+	}
 	if presentation, ok := savedImagePresentation(opts, OutputResponse); ok {
 		return presentation.output(func(out io.Writer) error {
 			return presentation.plan.save(opts.Context, []byte(res.Raw), out)
