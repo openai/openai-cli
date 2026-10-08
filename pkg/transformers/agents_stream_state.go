@@ -87,7 +87,12 @@ func AgentsStreamFailure(value gjson.Result, route Route) string {
 	if !IsAgentsStream(route) || !value.IsObject() {
 		return ""
 	}
-	switch value.Get("type").String() {
+	kind := value.Get("type")
+	// Ambiguous type fields cannot establish a permanent lifecycle failure.
+	if kind.Type != gjson.String || !agentsUniqueFields(value, "type") {
+		return ""
+	}
+	switch kind.Str {
 	case "error":
 		return "the Agents API reported an error while streaming"
 	case "agent.session.failed":
