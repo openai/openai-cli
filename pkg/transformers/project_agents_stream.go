@@ -183,6 +183,12 @@ func (s *AgentsStreamProjector) Project(ctx context.Context, value gjson.Result,
 		if !item.IsObject() {
 			break
 		}
+		if item.Get("type").Str == "reasoning" {
+			pending := *s
+			event, projected = pending.reasoningItem(ctx, value, item, kind == "agent.session.turn.item.done")
+			projectedState = &pending
+			break
+		}
 		if item.Get("type").String() == "message" && item.Get("role").String() == "assistant" {
 			// A failed multipart projection must not finalize earlier parts. Copy
 			// only bounded projector state, never the event or its text payloads.

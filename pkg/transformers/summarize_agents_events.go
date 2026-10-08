@@ -56,7 +56,7 @@ func summarizeAgentsToolEvent(ctx context.Context, value gjson.Result) (readable
 	}
 	fields, omitted := "id type status turn_id", ""
 	switch value.Get("item.type").String() {
-	case "message", "function_call_output":
+	case "message", "function_call_output", "reasoning":
 		return readable.StreamEvent{}, false, false, nil
 	case "function_call":
 		fields += " name call_id"
@@ -81,8 +81,6 @@ func summarizeAgentsToolEvent(ctx context.Context, value gjson.Result) (readable
 		fields += " sender_agent_id recipient_agent_id"
 	case "wait_for_subagents_call":
 		fields += " sender_agent_id recipient_agent_ids"
-	case "reasoning":
-		omitted = "summary"
 	default:
 		return readable.StreamEvent{}, false, false, nil
 	}

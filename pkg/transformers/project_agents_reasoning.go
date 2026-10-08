@@ -72,3 +72,98 @@ func (s *AgentsStreamProjector) reasoning(ctx context.Context, value gjson.Resul
 	}
 	return event, true
 }
+
+// reasoningItem uses summary positions as the same component keys as the four
+// summary events. Unknown parts and opaque fields remain structured data.
+func (s *AgentsStreamProjector) reasoningItem(ctx context.Context, value, item gjson.Result, final bool) (readable.StreamEvent, bool) {
+	if !agentsReasoningItemValid(ctx, value, item) {
+		return readable.StreamEvent{}, false
+	}
+	var event readable.StreamEvent
+	var residual strings.Builder
+	itemID := item.Get("id")
+	residual.WriteByte('[')
+	index, hasResidual, valid := 0, false, true
+	item.Get("summary").ForEach(func(_, part gjson.Result) bool {
+		if ctx.Err() != nil {
+			valid = false
+			return false
+		}
+		remaining := part
+		if part.Get("type").Str == "summary_text" {
+			text, ok := s.textPart(value, part.Get("text"), itemID, strconv.Itoa(index), "Reasoning", true, final)
+			if !ok {
+				valid = false
+				return false
+			}
+			if text.Key != "" {
+				event.Parts = append(event.Parts, text)
+			}
+			remaining = streamResidual(part, nil, "type", "text")
+		}
+		if index > 0 {
+			residual.WriteByte(',')
+		}
+		if remaining.Exists() {
+			hasResidual = true
+			residual.WriteString(remaining.Raw)
+		} else {
+			residual.WriteString("null")
+		}
+		index++
+		return true
+	})
+	if !valid {
+		return readable.StreamEvent{}, false
+	}
+	residual.WriteByte(']')
+	remaining := gjson.Result{}
+	if hasResidual {
+		remaining = gjson.Parse(residual.String())
+	}
+	itemDetails := streamResidual(item, map[string]gjson.Result{"summary": remaining}, "id", "type", "turn_id")
+	event.Details = streamResidual(value, map[string]gjson.Result{"item": itemDetails},
+		"type", "event_id", "session_id", "turn_id", "output_index")
+	return event, true
+}
+
+func agentsReasoningItemValid(ctx context.Context, value, item gjson.Result) bool {
+	if !agentsUniqueFields(value, "type", "event_id", "session_id", "turn_id", "output_index", "item") ||
+		!agentsUniqueFields(item, "id", "type", "turn_id", "summary", "status") || value.Get("event_id").Type != gjson.String {
+		return false
+	}
+	for _, id := range []gjson.Result{value.Get("session_id"), value.Get("turn_id"), item.Get("id"), item.Get("turn_id")} {
+		if id.Type != gjson.String || id.Str == "" {
+			return false
+		}
+	}
+	if item.Get("turn_id").Str != value.Get("turn_id").Str || !item.Get("status").Exists() {
+		return false
+	}
+	output := value.Get("output_index")
+	if output.Raw != "null" || value.Get("type").Str != "agent.session.turn.item.added" {
+		if output.Type != gjson.Number {
+			return false
+		}
+		if _, err := strconv.ParseUint(output.Raw, 10, 32); err != nil {
+			return false
+		}
+	}
+	summary := item.Get("summary")
+	if !summary.IsArray() {
+		return false
+	}
+	valid := true
+	summary.ForEach(func(_, part gjson.Result) bool {
+		if ctx.Err() != nil {
+			valid = false
+			return false
+		}
+		valid = agentsUniqueFields(part, "type") && part.Get("type").Type == gjson.String
+		if part.Get("type").Str == "summary_text" {
+			valid = valid && agentsUniqueFields(part, "text") && part.Get("text").Type == gjson.String
+		}
+		return valid
+	})
+	return valid && ctx.Err() == nil
+}
