@@ -118,3 +118,31 @@ func TestTerminalProseNormalizesOnlyAuthoredEmphasis(t *testing.T) {
 		})
 	}
 }
+
+func TestTerminalProseDistinguishesQuotedReferencesAndArguments(t *testing.T) {
+	for _, tc := range []struct{ name, source, want string }{
+		{
+			"actual service tier prose",
+			"- If set to '[flex](https://developers.openai.com/api/docs/guides/flex-processing)', then the request uses Flex Processing.",
+			"- If set to 'flex' (https://developers.openai.com/api/docs/guides/flex-processing), then the request uses Flex Processing.",
+		},
+		{"quoted prose", `See "[the guide](https://example.invalid/a_(b))" for details.`, `See "the guide" (https://example.invalid/a_(b)) for details.`},
+		{"quoted label markup", "See '[`the` **guide**](docs.md)'.", "See 'the guide' (docs.md)."},
+		{"flag value", `Use --input '[label](url)'.`, `Use --input '[label](url)'.`},
+		{"flag absolute URL", `Use --input '[label](https://example.invalid)'.`, `Use --input '[label](https://example.invalid)'.`},
+		{"assigned flag", `Use --input='[label](url)'.`, `Use --input='[label](url)'.`},
+		{"short flag", `Use -H '[label](url)'.`, `Use -H '[label](url)'.`},
+		{"GJSON string", `Use data.#(name=="[label](url)")#.`, `Use data.#(name=="[label](url)")#.`},
+		{"GJSON pattern", `Use data.#(name%"[label](url)")#.`, `Use data.#(name%"[label](url)")#.`},
+		{"command argument", `Example: openai action '[label](url)'.`, `Example: openai action '[label](url)'.`},
+		{"other command example", `Example: printf '[label](url)'.`, `Example: printf '[label](url)'.`},
+		{"JSON value", `The value is "name": "[label](url)".`, `The value is "name": "[label](url)".`},
+		{"malformed quoted link", `See '[label](unclosed'.`, `See '[label](unclosed'.`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := terminalProse(tc.source); got != tc.want {
+				t.Fatalf("quoted reference = %q; want %q", got, tc.want)
+			}
+		})
+	}
+}

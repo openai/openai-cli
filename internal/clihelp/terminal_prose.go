@@ -33,7 +33,11 @@ func terminalInlineProse(text string) string {
 				out.WriteString(text[i:])
 				return out.String()
 			}
-			out.WriteString(text[i:next])
+			if reference, ok := quotedProseReference(text, i, next); ok {
+				out.WriteString(reference)
+			} else {
+				out.WriteString(text[i:next])
+			}
 			i = next
 		case '`':
 			start, end, next := inlineCode(text, i)
@@ -86,6 +90,37 @@ func terminalInlineProse(text string) string {
 		}
 	}
 	return out.String()
+}
+
+// A quoted prose reference names the value, not its Markdown source. Keep flag
+// arguments, assignments, query strings, and authored command examples literal.
+func quotedProseReference(text string, start, next int) (string, bool) {
+	if next-start < 4 || text[start+1] != '[' {
+		return "", false
+	}
+	prefix := strings.TrimSpace(text[:start])
+	if prefix != "" {
+		if strings.ContainsRune("=:<>!~%", rune(prefix[len(prefix)-1])) ||
+			strings.Contains(prefix, "openai ") || strings.Contains(strings.ToLower(prefix), "example:") {
+			return "", false
+		}
+		words := strings.Fields(prefix)
+		if strings.HasPrefix(words[len(words)-1], "-") {
+			return "", false
+		}
+	}
+	link := text[start+1 : next-1]
+	labelEnd := inlineClosing(link, 0, '[', ']')
+	if labelEnd < 0 || labelEnd+1 >= len(link) || link[labelEnd+1] != '(' ||
+		inlineClosing(link, labelEnd+1, '(', ')') != len(link)-1 {
+		return "", false
+	}
+	label, destination := link[1:labelEnd], link[labelEnd+2:len(link)-1]
+	if strings.HasPrefix(destination, "<") && strings.HasSuffix(destination, ">") {
+		destination = destination[1 : len(destination)-1]
+	}
+	quote := text[start : start+1]
+	return quote + terminalInlineProse(label) + quote + " (" + destination + ")", true
 }
 
 // Only prose-boundary spans are emphasis. Ambiguous path and wildcard tokens

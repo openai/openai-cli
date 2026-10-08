@@ -42,6 +42,10 @@ func TestMainGcloudHelpPreservesDetailsAfterShortName(t *testing.T) {
 			t.Errorf("tool guidance lost its text or retained emphasis markers: %s", label)
 		}
 	}
+	plain := strings.Join(strings.Fields(got.stdout), " ")
+	if !strings.Contains(plain, "'flex' (https://developers.openai.com/api/docs/guides/flex-processing)") {
+		t.Error("quoted service-tier value must retain its reference outside the quotes")
+	}
 }
 
 func TestMainGcloudHelpConcreteSyntaxAndLabels(t *testing.T) {
