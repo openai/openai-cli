@@ -45,20 +45,31 @@ type adminConsoleTestFrame struct {
 	Original, Active, Restored       adminConsoleTestModes
 	Exit, Started, Completed, Phases int
 	Passed                           bool
-	ReaderType                       string `json:"reader_type"`
-	ActiveReads                      int    `json:"active_reads"`
-	ReadBytes                        int    `json:"read_bytes"`
-	CancelCalls                      int    `json:"cancel_calls"`
-	CancelReturned                   *bool  `json:"cancel_returned"`
-	CloseCalls                       int    `json:"close_calls"`
-	CloseStartedReads                int    `json:"close_started_reads"`
-	CloseCompletedReads              int    `json:"close_completed_reads"`
-	CloseActiveReads                 int    `json:"close_active_reads"`
-	ReadsCompleteAtClose             bool   `json:"reads_complete_at_close"`
-	CloseSucceeded                   *bool  `json:"close_succeeded"`
-	KeyMatches                       bool   `json:"key_matches"`
-	ContextCanceled                  bool   `json:"context_canceled"`
-	ReadsComplete                    bool   `json:"reads_complete"`
+	ReaderType                       string          `json:"reader_type"`
+	ActiveReads                      int             `json:"active_reads"`
+	ReadBytes                        int             `json:"read_bytes"`
+	LastReadBytes                    int             `json:"last_read_bytes"`
+	LastReadError                    string          `json:"last_read_error"`
+	FirstByteCategory                string          `json:"first_byte_category"`
+	LastByteCategory                 string          `json:"last_byte_category"`
+	ByteCategories                   map[string]int  `json:"byte_categories"`
+	ReadErrorCategory                string          `json:"read_error_category"`
+	KeyEmpty                         bool            `json:"key_empty"`
+	RestoredModesMatch               bool            `json:"restored_modes_match"`
+	ObserverHealthy                  bool            `json:"observer_healthy"`
+	ControlValid                     bool            `json:"control_valid"`
+	Predicates                       map[string]bool `json:"predicates"`
+	CancelCalls                      int             `json:"cancel_calls"`
+	CancelReturned                   *bool           `json:"cancel_returned"`
+	CloseCalls                       int             `json:"close_calls"`
+	CloseStartedReads                int             `json:"close_started_reads"`
+	CloseCompletedReads              int             `json:"close_completed_reads"`
+	CloseActiveReads                 int             `json:"close_active_reads"`
+	ReadsCompleteAtClose             bool            `json:"reads_complete_at_close"`
+	CloseSucceeded                   *bool           `json:"close_succeeded"`
+	KeyMatches                       bool            `json:"key_matches"`
+	ContextCanceled                  bool            `json:"context_canceled"`
+	ReadsComplete                    bool            `json:"reads_complete"`
 }
 
 // Existing Windows CI selects TestMainDispatch. The outer job owns the worker,
@@ -255,7 +266,7 @@ func adminConsoleRunCases(t *testing.T) {
 					canceled = true
 				}
 			case "read_completed":
-				t.Logf("phase=%s read_started=%d read_completed=%d active=%d bytes=%d", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads, frame.ReadBytes)
+				t.Logf("phase=%s read_started=%d read_completed=%d active=%d bytes=%d last_read_bytes=%d last_read_error=%s first_category=%s last_category=%s categories=%v", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads, frame.ReadBytes, frame.LastReadBytes, frame.LastReadError, frame.FirstByteCategory, frame.LastByteCategory, frame.ByteCategories)
 			case "cancel_result":
 				if frame.CancelReturned == nil {
 					t.Fatal("observer omitted the actual Cancel result")
@@ -267,6 +278,7 @@ func adminConsoleRunCases(t *testing.T) {
 				}
 				t.Logf("phase=%s Close calls=%d started=%d completed=%d active=%d reads_complete_at_close=%t close_succeeded=%t", frame.Phase, frame.CloseCalls, frame.CloseStartedReads, frame.CloseCompletedReads, frame.CloseActiveReads, frame.ReadsCompleteAtClose, *frame.CloseSucceeded)
 			case "phase_complete":
+				adminConsoleLogPhaseDiagnostics(t, frame)
 				if frame.CloseCalls != 1 || frame.CloseActiveReads != 0 || frame.CloseStartedReads != frame.CloseCompletedReads || !frame.ReadsCompleteAtClose || frame.CloseSucceeded == nil || !*frame.CloseSucceeded {
 					t.Fatalf("native reader Close ordering failed: phase=%s calls=%d started=%d completed=%d active=%d", frame.Phase, frame.CloseCalls, frame.CloseStartedReads, frame.CloseCompletedReads, frame.CloseActiveReads)
 				}
@@ -293,6 +305,29 @@ func adminConsoleRunCases(t *testing.T) {
 			}
 		}
 	})
+}
+
+func adminConsoleLogPhaseDiagnostics(t *testing.T, frame adminConsoleTestFrame) {
+	t.Helper()
+	// Select only observed predicates, counters, modes, and fixed categories.
+	// Exclude the control nonce and never stringify input bytes or raw errors.
+	diagnostic := map[string]any{
+		"phase": frame.Phase, "passed": frame.Passed, "predicates": frame.Predicates,
+		"read_error_category": frame.ReadErrorCategory, "key_empty": frame.KeyEmpty, "key_matches": frame.KeyMatches,
+		"context_canceled": frame.ContextCanceled, "control_valid": frame.ControlValid, "observer_healthy": frame.ObserverHealthy,
+		"original": frame.Original, "active": frame.Active, "restored": frame.Restored, "restored_modes_match": frame.RestoredModesMatch,
+		"reader_type": frame.ReaderType, "started": frame.Started, "completed": frame.Completed, "active_reads": frame.ActiveReads,
+		"read_bytes": frame.ReadBytes, "last_read_bytes": frame.LastReadBytes, "last_read_error": frame.LastReadError,
+		"first_byte_category": frame.FirstByteCategory, "last_byte_category": frame.LastByteCategory, "byte_categories": frame.ByteCategories,
+		"reads_complete": frame.ReadsComplete, "cancel_calls": frame.CancelCalls, "cancel_returned": frame.CancelReturned,
+		"close_calls": frame.CloseCalls, "close_started_reads": frame.CloseStartedReads, "close_completed_reads": frame.CloseCompletedReads,
+		"close_active_reads": frame.CloseActiveReads, "reads_complete_at_close": frame.ReadsCompleteAtClose, "close_succeeded": frame.CloseSucceeded,
+	}
+	encoded, err := json.Marshal(diagnostic)
+	if err != nil {
+		t.Fatal("could not encode sanitized phase diagnostics")
+	}
+	t.Logf("native phase diagnostics: %s", encoded)
 }
 
 // This process stays attached after the real main child exits, so restored modes

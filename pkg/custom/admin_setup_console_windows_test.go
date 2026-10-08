@@ -115,23 +115,28 @@ func (observer *adminConsoleObserver) healthy() bool {
 
 type adminConsoleObservedReader struct {
 	adminSetupKeyReader
-	mu             sync.Mutex
-	observer       *adminConsoleObserver
-	test           *testing.T
-	phase          string
-	readerType     string
-	started        int
-	completed      int
-	active         int
-	readBytes      int
-	cancelCalls    int
-	cancelReturned *bool
-	closeCalls     int
-	closeStarted   int
-	closeCompleted int
-	closeActive    int
-	closeComplete  bool
-	closeSucceeded *bool
+	mu                sync.Mutex
+	observer          *adminConsoleObserver
+	test              *testing.T
+	phase             string
+	readerType        string
+	started           int
+	completed         int
+	active            int
+	readBytes         int
+	lastReadBytes     int
+	lastReadError     string
+	firstByteCategory string
+	lastByteCategory  string
+	byteCategories    map[string]int
+	cancelCalls       int
+	cancelReturned    *bool
+	closeCalls        int
+	closeStarted      int
+	closeCompleted    int
+	closeActive       int
+	closeComplete     bool
+	closeSucceeded    *bool
 }
 
 func (reader *adminConsoleObservedReader) frame(event string) map[string]any {
@@ -141,8 +146,15 @@ func (reader *adminConsoleObservedReader) frame(event string) map[string]any {
 		"event": event, "phase": reader.phase, "reader_type": reader.readerType,
 		"started": reader.started, "completed": reader.completed,
 		"active_reads": reader.active, "read_bytes": reader.readBytes, "cancel_calls": reader.cancelCalls,
-		"close_calls": reader.closeCalls,
+		"close_calls":     reader.closeCalls,
+		"last_read_bytes": reader.lastReadBytes, "last_read_error": reader.lastReadError,
+		"first_byte_category": reader.firstByteCategory, "last_byte_category": reader.lastByteCategory,
 	}
+	categories := make(map[string]int, len(reader.byteCategories))
+	for category, count := range reader.byteCategories {
+		categories[category] = count
+	}
+	frame["byte_categories"] = categories
 	if reader.cancelReturned != nil {
 		frame["cancel_returned"] = *reader.cancelReturned
 	}
@@ -169,9 +181,71 @@ func (reader *adminConsoleObservedReader) Read(buffer []byte) (int, error) {
 	reader.completed++
 	reader.active--
 	reader.readBytes += n
+	reader.lastReadBytes, reader.lastReadError = n, adminConsoleReadErrorCategory(err)
+	for _, value := range buffer[:n] {
+		category := adminConsoleByteCategory(value)
+		if reader.firstByteCategory == "none" {
+			reader.firstByteCategory = category
+		}
+		reader.lastByteCategory = category
+		reader.byteCategories[category]++
+	}
 	reader.mu.Unlock()
 	reader.observer.send(reader.frame("read_completed"))
 	return n, err
+}
+
+// Classify input without retaining any byte values or credential fragments.
+func adminConsoleByteCategory(value byte) string {
+	switch value {
+	case '\r':
+		return "CR"
+	case '\n':
+		return "LF"
+	case 3:
+		return "ctrl-C"
+	case 4:
+		return "ctrl-D"
+	case 0x1b:
+		return "ESC"
+	default:
+		if value >= 0x20 && value <= 0x7e {
+			return "ascii-printable"
+		}
+		return "other"
+	}
+}
+
+func adminConsoleReadErrorCategory(err error) string {
+	switch {
+	case err == nil:
+		return "nil"
+	case errors.Is(err, context.Canceled):
+		return "context.Canceled"
+	case errors.Is(err, windows.ERROR_OPERATION_ABORTED):
+		return "windows-operation-aborted"
+	case errors.Is(err, io.EOF):
+		return "EOF"
+	default:
+		return "other"
+	}
+}
+
+func adminConsoleKeyErrorCategory(err error) string {
+	switch {
+	case err == nil:
+		return "nil"
+	case errors.Is(err, context.Canceled):
+		return "context.Canceled"
+	case errors.Is(err, errAdminSetupKeyEmpty):
+		return "errAdminSetupKeyEmpty"
+	case errors.Is(err, errAdminSetupKeyInvalid):
+		return "errAdminSetupKeyInvalid"
+	case errors.Is(err, errAdminSetupKeyIO):
+		return "errAdminSetupKeyIO"
+	default:
+		return "other"
+	}
 }
 
 func (reader *adminConsoleObservedReader) Cancel() bool {
@@ -303,6 +377,8 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 			}
 			reader = &adminConsoleObservedReader{
 				adminSetupKeyReader: actual, observer: observer, test: t, phase: phase, readerType: fmt.Sprintf("%T", actual),
+				lastReadError: "not-read", firstByteCategory: "none", lastByteCategory: "none",
+				byteCategories: map[string]int{"CR": 0, "LF": 0, "ctrl-C": 0, "ctrl-D": 0, "ascii-printable": 0, "ESC": 0, "other": 0},
 			}
 			frame := reader.frame("ready")
 			frame["original"], frame["active"] = before, activeModes
@@ -332,7 +408,8 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 		if cancelControl != nil {
 			controlValid = <-cancelControl
 		}
-		valid := observer.healthy() && restoreErr == nil && restored == before && readsComplete &&
+		observerHealthy := observer.healthy()
+		valid := observerHealthy && restoreErr == nil && restored == before && readsComplete &&
 			frame["started"].(int) > 0 && frame["cancel_calls"] == 1 && controlValid &&
 			frame["close_calls"] == 1 && frame["reads_complete_at_close"] == true && frame["close_succeeded"] == true &&
 			reader.readerType == "*uv.conInputReader" &&
@@ -345,6 +422,19 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 		}
 		frame["original"], frame["active"], frame["restored"] = before, activeModes, restored
 		frame["key_matches"], frame["context_canceled"], frame["reads_complete"], frame["passed"] = keyMatches, contextCanceled, readsComplete, valid
+		frame["read_error_category"], frame["key_empty"] = adminConsoleKeyErrorCategory(readErr), keyEmpty
+		frame["restored_modes_match"], frame["observer_healthy"], frame["control_valid"] = restored == before, observerHealthy, controlValid
+		frame["predicates"] = map[string]bool{
+			"observer_healthy": observerHealthy, "restore_succeeded": restoreErr == nil, "restored_modes_match": restored == before,
+			"reads_complete": readsComplete, "read_started": frame["started"].(int) > 0,
+			"cancel_called_once": frame["cancel_calls"] == 1, "control_valid": controlValid,
+			"close_called_once": frame["close_calls"] == 1, "reads_complete_at_close": frame["reads_complete_at_close"] == true,
+			"close_succeeded": frame["close_succeeded"] == true, "reader_is_native": reader.readerType == "*uv.conInputReader",
+			"echo_disabled":       activeModes.Stdin&windows.ENABLE_ECHO_INPUT == 0,
+			"line_input_disabled": activeModes.Stdin&windows.ENABLE_LINE_INPUT == 0,
+			"vt_input_enabled":    activeModes.Stdin&windows.ENABLE_VIRTUAL_TERMINAL_INPUT != 0,
+			"phase_result":        (phase == "cancel_partial" && contextCanceled && keyEmpty) || (phase != "cancel_partial" && readErr == nil && keyMatches),
+		}
 		observer.send(frame)
 		if !valid {
 			t.Fatal("console observer phase failed its lifecycle contract")
