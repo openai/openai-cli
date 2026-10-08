@@ -90,6 +90,7 @@ openai --transform status --raw-output batches retrieve batch_example --wait
 Progress and create hints use stderr only with human output and terminal stdout/stderr.
 Pipes, extraction, and machine formats receive no progress or hints.
 A successful create can show a follow-up command containing its returned batch ID.
+Interruption during final output can leave partial data on stdout.
 
 Wait continues through `validating`, `in_progress`, `finalizing`, and `cancelling`.
 It stops at `completed`, `failed`, `expired`, or `cancelled`.

@@ -195,7 +195,7 @@ func batchProgress(batch gjson.Result) string {
 	failed, failedOK := batchCount(batch.Get("request_counts.failed"))
 	total, totalOK := batchCount(batch.Get("request_counts.total"))
 	validCounts := completedOK && failedOK && totalOK && completed <= total && failed <= total-completed
-	if status == "completed" && validCounts {
+	if status == "completed" && validCounts && completed+failed == total {
 		return fmt.Sprintf("Completed: %d succeeded, %d failed.", completed, failed)
 	}
 	if status == "in_progress" && validCounts {

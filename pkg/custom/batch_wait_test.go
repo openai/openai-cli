@@ -48,6 +48,7 @@ func TestBatchProgressUsesOnlyValidReturnedCounts(t *testing.T) {
 	for _, tc := range []struct{ body, want string }{
 		{`{"status":"in_progress","request_counts":{"completed":415,"failed":5,"total":1000}}`, "Processing: 420 of 1000 requests finished."},
 		{`{"status":"completed","request_counts":{"completed":995,"failed":5,"total":1000}}`, "Completed: 995 succeeded, 5 failed."},
+		{`{"status":"completed","request_counts":{"completed":2,"failed":0,"total":3}}`, "Batch status: completed"},
 		{`{"status":"in_progress"}`, "Batch status: in_progress"},
 		{`{"status":"in_progress","request_counts":{"completed":3,"failed":1,"total":3}}`, "Batch status: in_progress"},
 		{`{"status":"in_progress","request_counts":{"completed":-1,"failed":1,"total":3}}`, "Batch status: in_progress"},
