@@ -95,11 +95,19 @@ func (m *tokenizerEditor) View() tea.View {
 		}
 		lines = append(lines, s.accent.Render(prefix)+m.editorLines(width-ansi.StringWidth(prefix), 1)[0])
 	}
-	status := fmt.Sprintf("%d tokens · %d bytes", len(m.tokens), len(m.text))
+	tokenLabel, byteLabel := "tokens", "bytes"
+	if len(m.tokens) == 1 {
+		tokenLabel = "token"
+	}
+	if len(m.text) == 1 {
+		byteLabel = "byte"
+	}
+	inputSummary := fmt.Sprintf("%d %s", len(m.text), byteLabel)
+	status := fmt.Sprintf("%d %s · %s", len(m.tokens), tokenLabel, inputSummary)
 	if m.updating {
-		status = fmt.Sprintf("Updating… · %d bytes", len(m.text))
+		status = "Updating… · " + inputSummary
 	} else if m.failed {
-		status = fmt.Sprintf("Count unavailable · %d bytes", len(m.text))
+		status = "Count unavailable · " + inputSummary
 	}
 	lines = append(lines, status)
 	var tabs []string
@@ -512,20 +520,9 @@ func (m *tokenizerEditor) modalRows(start, count int) ([]string, int) {
 		total++
 	}
 	wrap := func(text string) {
-		var row strings.Builder
-		used := 0
-		for len(text) > 0 {
-			cluster, cells := ansi.FirstGraphemeCluster(text, ansi.WcWidth)
-			if used > 0 && used+cells > width {
-				emit(row.String())
-				row.Reset()
-				used = 0
-			}
-			row.WriteString(cluster)
-			used += cells
-			text = text[len(cluster):]
+		for _, line := range strings.Split(ansi.Wrap(text, width, ""), "\n") {
+			emit(line)
 		}
-		emit(row.String())
 	}
 	if m.modal == 1 {
 		for _, line := range tokenizerEditorHelp {
