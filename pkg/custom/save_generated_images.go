@@ -121,9 +121,8 @@ func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Re
 		return nil, false, imageSavingFailure("Could not use this image filename. Try a shorter --name or another --output-dir.", err)
 	}
 	plan := &imageOutputPlan{directory: directory, name: name, defaults: make(map[string]any), partialImages: partials}
-	if prompt := body.Get("prompt"); prompt.Type == gjson.String {
-		plan.loadingPrompt = prompt.String()
-	}
+	// File, stdin, and other direct request contents are not display text.
+	plan.loadingPrompt, _ = ctx.Value(imagePickerLoadingPromptKey{}).(string)
 	set := func(field string, value any) {
 		plan.defaults[field] = value
 		plan.options = append(plan.options, option.WithJSONSet(field, value))

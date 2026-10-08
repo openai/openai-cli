@@ -20,6 +20,9 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+// Only the prompt already displayed by the picker may enter loading feedback.
+type imagePickerLoadingPromptKey struct{}
+
 // Only a bare interactive command enters the picker. Explicit flags and piped
 // bodies retain their existing validation, defaults and output behavior.
 func imagePickerWorkflow(next cli.ActionFunc) cli.ActionFunc {
@@ -67,7 +70,8 @@ func runImagePickerDrafts(ctx context.Context, command *cli.Command, next cli.Ac
 			return nil
 		}
 		options = imagePickerOptions{Prompt: result.settings.prompt, initial: &result.settings, resuming: true}
-		if err := runImagePickerAction(ctx, command, result.Args, next); err != nil {
+		requestCtx := context.WithValue(ctx, imagePickerLoadingPromptKey{}, result.settings.prompt)
+		if err := runImagePickerAction(requestCtx, command, result.Args, next); err != nil {
 			if ctx.Err() != nil || !imagePickerRecoverableRequest(err) {
 				return err
 			}

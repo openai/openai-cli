@@ -123,9 +123,10 @@ func imageLoadingSpinner(getenv func(string) string, goos string) spinner.Spinne
 	return animation
 }
 
-// The prompt reaches only ephemeral animated feedback. The caller stops this
-// worker before another writer uses the terminal. Cursor visibility and input
-// modes never change. Diagnostic writes are best effort; stop joins the worker.
+// The picker supplies only prompt text already visible in its form. Clearing
+// frames does not redact terminal captures. The caller stops this worker before
+// another writer uses the terminal. Diagnostic writes are best effort; stop joins
+// the worker without changing cursor visibility or terminal input modes.
 func startLoadingFeedback(ctx context.Context, out io.Writer, label, prompt string, animate bool, animation spinner.Spinner, size func() (int, int)) (stopFeedback func(), advance func(imageLoadingStage)) {
 	stop, done := make(chan struct{}), make(chan struct{})
 	refresh := make(chan struct{}, 1)

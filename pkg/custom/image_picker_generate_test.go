@@ -71,7 +71,7 @@ func TestImagePickerDraftRecovery(t *testing.T) {
 			second.prompt += " in space"
 			second.quality = "low"
 			app.Action = func(ctx context.Context, command *cli.Command) error {
-				return runImagePickerDrafts(ctx, command, func(context.Context, *cli.Command) error {
+				return runImagePickerDrafts(ctx, command, func(requestCtx context.Context, _ *cli.Command) error {
 					requests++
 					want := first
 					if requests == 2 {
@@ -79,12 +79,15 @@ func TestImagePickerDraftRecovery(t *testing.T) {
 					}
 					require.Equal(t, want.prompt, command.String("prompt"))
 					require.Equal(t, want.outputDir, command.String("output-dir"))
+					require.Equal(t, want.prompt, requestCtx.Value(imagePickerLoadingPromptKey{}))
+					require.Nil(t, ctx.Value(imagePickerLoadingPromptKey{}), "request display state must not modify the parent context")
 					if failedFirst && requests == 1 {
 						return &openai.Error{StatusCode: 429}
 					}
 					return nil
 				}, &diagnostics, func(options imagePickerOptions) (imagePickerResult, error) {
 					picks++
+					require.Nil(t, ctx.Value(imagePickerLoadingPromptKey{}), "a retry must not inherit the previous loading prompt")
 					require.Equal(t, picks-1, requests, "reopening must not run an action")
 					require.False(t, command.IsSet("prompt"))
 					require.False(t, command.IsSet("output-dir"))

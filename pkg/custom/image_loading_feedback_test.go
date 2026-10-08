@@ -46,6 +46,50 @@ func TestImageLoadingPromptIsQuotedEscapedAndBounded(t *testing.T) {
 	require.Equal(t, "Generating image", loadingPromptLabel("Generating image", safe, 20))
 }
 
+func TestImageLoadingPromptUsesOnlyCurrentPickerDisplay(t *testing.T) {
+	const privatePrompt = "SYNTHETIC_INDIRECT_REQUEST_CONTENT"
+	const visiblePrompt = "Synthetic prompt shown in the picker"
+	app := &cli.Command{Name: "generate"}
+	registerImageSavingFlags(app)
+	app.Action = func(ctx context.Context, command *cli.Command) error {
+		body := gjson.Parse(`{"prompt":"` + privatePrompt + `","model":"gpt-image-2"}`)
+		pickerCtx := context.WithValue(ctx, imagePickerLoadingPromptKey{}, visiblePrompt)
+		for _, test := range []struct {
+			name string
+			ctx  context.Context
+			want string
+		}{
+			{"direct request", ctx, ""},
+			{"picker request", pickerCtx, visiblePrompt},
+			{"reused parent", ctx, ""},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				plan, _, err := prepareImageSaving(test.ctx, command, body)
+				require.NoError(t, err)
+				require.NotNil(t, plan)
+				require.Equal(t, privatePrompt, body.Get("prompt").String(), "display selection must not modify request data")
+				synctest.Test(t, func(t *testing.T) {
+					var output bytes.Buffer
+					stop, _ := startLoadingFeedback(t.Context(), &output, "Generating image", plan.loadingPrompt, true, spinner.Line, func() (int, int) { return 100, 24 })
+					time.Sleep(imageLoadingDelay + time.Second)
+					stop()
+					require.NotContains(t, output.String(), privatePrompt)
+					require.Contains(t, output.String(), "Generating image")
+					require.Contains(t, output.String(), "1s elapsed")
+					if test.want == "" {
+						require.NotContains(t, output.String(), visiblePrompt)
+						require.NotContains(t, output.String(), "Generating image '")
+					} else {
+						require.Contains(t, output.String(), "Generating image '"+test.want+"'")
+					}
+				})
+			})
+		}
+		return nil
+	}
+	require.NoError(t, app.Run(t.Context(), []string{"openai", "--output-dir", t.TempDir(), "--name", "synthetic-safe-name"}))
+}
+
 func TestImageLoadingStatusKeepsElapsedAndSavingWithoutEstimates(t *testing.T) {
 	for stage := imageLoadingWaiting; stage <= imageLoadingSaved; stage++ {
 		for _, columns := range []int{10, 20, 35, 80, 100} {

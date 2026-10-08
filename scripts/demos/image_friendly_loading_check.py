@@ -33,7 +33,7 @@ PROMPTS = {
 }
 
 
-def loading_check(process, start, before, width, prompt=PROMPT):
+def loading_check(process, start, before, width, prompt=PROMPT, picker=True):
     process.pump(2.2)
     pending = bytes(process.output[start:])
     label = b"Generating image" if width >= 20 else b"Working..."
@@ -51,6 +51,10 @@ def loading_check(process, start, before, width, prompt=PROMPT):
         assert b"Ctrl+C to cancel" in pending, "cancellation guidance is missing"
     if not before and width >= 40:
         assert b"0s elapsed" in pending, "the request did not reset its elapsed timer"
+    if not before and not picker:
+        assert b"Generating image '" not in pending, "direct request content entered loading diagnostics"
+        assert prompt.encode() not in pending, "direct prompt entered loading diagnostics"
+    if not before and picker and width >= 40:
         assert re.search(rb"Generating image '(?:\\.|[^'\r\n])*'", pending), "prompt quotation is missing or broken"
         if prompt == PROMPT and width >= 80:
             assert ("'" + prompt + "'").encode() in pending, "short prompt was not retained in the loading line"
@@ -164,7 +168,7 @@ def check(binary, output, case, before=False, mirror=False):
                 else:
                     if case == "queued":
                         process.send(b"\r" * 50)
-                    loading_check(process, start, before, width, prompt)
+                    loading_check(process, start, before, width, prompt, picker=args is None)
                     if case == "cancel":
                         canceled_at = time.monotonic()
                         assert process.stop() == 130
