@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -35,6 +36,54 @@ func adminConsoleGetModes() (adminConsoleModes, error) {
 		}
 	}
 	return modes, nil
+}
+
+func adminConsoleProbeError(err error) map[string]any {
+	result := map[string]any{"failed": err != nil}
+	if err != nil {
+		var code syscall.Errno
+		if errors.As(err, &code) {
+			result["windows_error_code"] = uint64(code)
+		} else {
+			result["unclassified_error"] = true
+		}
+	}
+	return result
+}
+
+// Failure-only metadata never contains handle values, paths, or input bytes.
+func adminConsoleLogHandleFailure(t *testing.T, stage string) {
+	t.Helper()
+	var handles []map[string]any
+	for _, item := range []struct {
+		name     string
+		file     *os.File
+		standard uint32
+	}{
+		{"stdin", os.Stdin, windows.STD_INPUT_HANDLE},
+		{"stdout", os.Stdout, windows.STD_OUTPUT_HANDLE},
+		{"stderr", os.Stderr, windows.STD_ERROR_HANDLE},
+	} {
+		handle := windows.Handle(item.file.Fd())
+		fileType, fileTypeErr := windows.GetFileType(handle)
+		var mode uint32
+		modeErr := windows.GetConsoleMode(handle, &mode)
+		standard, standardErr := windows.GetStdHandle(item.standard)
+		handles = append(handles, map[string]any{
+			"name": item.name, "file_type": fileType, "get_file_type_error": adminConsoleProbeError(fileTypeErr),
+			"console_mode": mode, "get_console_mode_error": adminConsoleProbeError(modeErr),
+			"get_std_handle_error":      adminConsoleProbeError(standardErr),
+			"go_handle_equals_standard": standardErr == nil && handle == standard,
+			"go_handle_null":            handle == 0, "go_handle_invalid": handle == windows.InvalidHandle,
+			"standard_handle_null": standard == 0, "standard_handle_invalid": standard == windows.InvalidHandle,
+		})
+	}
+	encoded, err := json.Marshal(map[string]any{"stage": stage, "handles": handles})
+	if err != nil {
+		t.Error("could not encode console handle diagnostics")
+		return
+	}
+	t.Logf("console handle diagnostics: %s", encoded)
 }
 
 type adminConsoleControl struct {
@@ -173,6 +222,7 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 	}
 	original, err := adminConsoleGetModes()
 	if err != nil {
+		adminConsoleLogHandleFailure(t, "original")
 		t.Fatal("console observer requires console stdin, stdout, and stderr")
 	}
 	connection, err := net.DialTimeout("tcp", address, 3*time.Second)
@@ -216,6 +266,9 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 			expectedKey = "sk-admin-SYNTHETIC-console-next"
 		}
 		before, modeErr := adminConsoleGetModes()
+		if modeErr != nil {
+			adminConsoleLogHandleFailure(t, phase+" before")
+		}
 		if modeErr != nil || before != original {
 			t.Fatal("console modes changed before the next observer phase")
 		}
@@ -244,6 +297,7 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 			}
 			activeModes, modeErr = adminConsoleGetModes()
 			if modeErr != nil {
+				adminConsoleLogHandleFailure(t, phase+" active")
 				actual.Close()
 				return nil, modeErr
 			}
@@ -262,6 +316,9 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 			frame = reader.frame("phase_complete")
 		}
 		restored, restoreErr := adminConsoleGetModes()
+		if restoreErr != nil {
+			adminConsoleLogHandleFailure(t, phase+" restored")
+		}
 		cancel()
 		keyMatches := string(key) == expectedKey
 		keyEmpty := len(key) == 0

@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 	"unicode"
@@ -367,10 +368,40 @@ func adminConsoleGetTestModes(t *testing.T) adminConsoleTestModes {
 		mode *uint32
 	}{{os.Stdin, &modes.Stdin}, {os.Stdout, &modes.Stdout}, {os.Stderr, &modes.Stderr}} {
 		if windows.GetConsoleMode(windows.Handle(item.file.Fd()), item.mode) != nil {
+			adminConsoleLogHandleFailure(t)
 			t.Fatal("observer standard handle is not a Windows console")
 		}
 	}
 	return modes
+}
+
+func adminConsoleLogHandleFailure(t *testing.T) {
+	t.Helper()
+	for _, item := range []struct {
+		name     string
+		file     *os.File
+		standard uint32
+	}{{"stdin", os.Stdin, windows.STD_INPUT_HANDLE}, {"stdout", os.Stdout, windows.STD_OUTPUT_HANDLE}, {"stderr", os.Stderr, windows.STD_ERROR_HANDLE}} {
+		handle := windows.Handle(item.file.Fd())
+		fileType, typeErr := windows.GetFileType(handle)
+		var mode uint32
+		modeErr := windows.GetConsoleMode(handle, &mode)
+		standard, standardErr := windows.GetStdHandle(item.standard)
+		var standardMode uint32
+		standardModeErr := windows.GetConsoleMode(standard, &standardMode)
+		t.Logf("console handle=%s file_type=%d file_type_error=%d mode=%d mode_error=%d std_error=%d go_equals_std=%t std_null=%t std_invalid=%t std_mode=%d std_mode_error=%d", item.name, fileType, adminConsoleErrorCode(typeErr), mode, adminConsoleErrorCode(modeErr), adminConsoleErrorCode(standardErr), handle == standard, standard == 0, standard == windows.InvalidHandle, standardMode, adminConsoleErrorCode(standardModeErr))
+	}
+}
+
+func adminConsoleErrorCode(err error) uint32 {
+	if err == nil {
+		return 0
+	}
+	var code syscall.Errno
+	if errors.As(err, &code) {
+		return uint32(code)
+	}
+	return ^uint32(0)
 }
 
 func adminConsoleHiddenInput(mode uint32) bool {
@@ -458,17 +489,59 @@ func adminConsoleStart(t *testing.T, executable, testName string, extra []string
 	sort.Slice(environment, func(i, j int) bool { return strings.ToUpper(environment[i]) < strings.ToUpper(environment[j]) })
 	block := utf16.Encode([]rune(strings.Join(environment, "\x00") + "\x00\x00"))
 	var information windows.ProcessInformation
-	if err := windows.CreateProcess(application, command, nil, nil, false, windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT, &block[0], nil, &startup.StartupInfo, &information); err != nil {
-		t.Fatalf("start native console child: %v", err)
-	}
+	launchErr := adminConsoleWithFreshStandardHandles(func() error {
+		return windows.CreateProcess(application, command, nil, nil, false, windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT, &block[0], nil, &startup.StartupInfo, &information)
+	})
+	// A child can start successfully even if restoring the worker table fails.
+	// Transfer its ownership before reporting either launch or restoration errors.
 	session.process = information.Process
-	windows.CloseHandle(information.Thread)
+	if information.Thread != 0 {
+		windows.CloseHandle(information.Thread)
+	}
+	if launchErr != nil {
+		t.Fatalf("start native console child: %v", launchErr)
+	}
 	inputRead.Close()
 	outputWrite.Close()
 	session.connection = adminConsoleAccept(t, listener, nonce)
 	// Accept consumes hello while preserving all of its sanitized evidence.
 	session.hello = session.connection.hello
 	return session
+}
+
+// This isolated worker launches console children sequentially. Leave its Go
+// os.Std* objects untouched; only prevent redirected table entries reaching the
+// child before Windows supplies the new ConPTY's console handles.
+// https://learn.microsoft.com/en-us/windows/console/getstdhandle
+func adminConsoleWithFreshStandardHandles(start func() error) (err error) {
+	if os.Getenv("OPENAI_ADMIN_CONSOLE_WORKER") != "1" {
+		return errors.New("console standard-handle setup requires the isolated worker")
+	}
+	ids := [...]uint32{windows.STD_INPUT_HANDLE, windows.STD_OUTPUT_HANDLE, windows.STD_ERROR_HANDLE}
+	var original [3]windows.Handle
+	for i, id := range ids {
+		original[i], err = windows.GetStdHandle(id)
+		if err != nil {
+			return err
+		}
+	}
+	changed := 0
+	defer func() {
+		var restoreErr error
+		for i := 0; i < changed; i++ {
+			restoreErr = errors.Join(restoreErr, windows.SetStdHandle(ids[i], original[i]))
+		}
+		if restoreErr != nil {
+			err = errors.Join(err, errors.New("could not restore the worker standard-handle table"), restoreErr)
+		}
+	}()
+	for _, id := range ids {
+		if err = windows.SetStdHandle(id, 0); err != nil {
+			return err
+		}
+		changed++
+	}
+	return start()
 }
 
 // Keep hello with its accepted connection without global mutable test state.
