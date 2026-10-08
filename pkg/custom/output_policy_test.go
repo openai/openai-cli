@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -121,3 +122,64 @@ func TestOutputPolicyReachesLocalReceiptActions(t *testing.T) {
 type outputPolicyFailureWriter struct{ err error }
 
 func (w outputPolicyFailureWriter) Write([]byte) (int, error) { return 0, w.err }
+
+type interruptedOutputTestError struct {
+	cause error
+	code  int
+}
+
+func (e *interruptedOutputTestError) Error() string { return "" }
+func (e *interruptedOutputTestError) Unwrap() error { return e.cause }
+func (e *interruptedOutputTestError) ExitCode() int { return e.code }
+
+func TestOutputPolicyInterruptedActionSkipsVerbose(t *testing.T) {
+	closed, err := os.CreateTemp(t.TempDir(), "closed-diagnostics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	previous := os.Stderr
+	os.Stderr = closed
+	t.Cleanup(func() { os.Stderr = previous })
+	for _, tc := range []struct {
+		name         string
+		cause        error
+		code         int
+		cancelParent bool
+		wantWrite    bool
+	}{
+		{name: "child cancellation", cause: context.Canceled, code: 130},
+		{name: "child deadline", cause: context.DeadlineExceeded, code: 124},
+		{name: "joined cancellation", cause: errors.Join(errors.New("synthetic failure"), context.Canceled), code: 130},
+		{name: "deadline exit code", cause: errors.New("synthetic deadline"), code: 124},
+		{name: "interrupt exit code", cause: errors.New("synthetic interrupt"), code: 130},
+		{name: "termination exit code", cause: errors.New("synthetic termination"), code: 143},
+		{name: "parent cancellation", cause: errors.New("synthetic failure"), code: 27, cancelParent: true},
+		{name: "ordinary failure keeps diagnostics", cause: errors.New("synthetic failure"), code: 27, wantWrite: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			failure := &interruptedOutputTestError{cause: tc.cause, code: tc.code}
+			root := &cli.Command{Name: "openai", ExitErrHandler: func(context.Context, *cli.Command, error) {},
+				Action: func(context.Context, *cli.Command) error {
+					if tc.cancelParent {
+						cancel()
+					}
+					return failure
+				},
+			}
+			configureOutputPolicy(root)
+			err := root.Run(ctx, []string{"openai", "--verbose"})
+			var exit cli.ExitCoder
+			if !errors.Is(err, failure) || !errors.As(err, &exit) || exit.ExitCode() != tc.code {
+				t.Fatalf("action error or exit status changed: %v", err)
+			}
+			if errors.Is(err, os.ErrClosed) != tc.wantWrite {
+				t.Fatalf("optional verbose write ran after interruption, or ordinary diagnostics disappeared: %v", err)
+			}
+		})
+	}
+}

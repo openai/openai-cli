@@ -94,6 +94,12 @@ func configureOutputPolicy(root *cli.Command) {
 					!root.Bool("verbose") || !outputDiagnosticsAllowed(ctx) {
 					return err
 				}
+				// Optional feedback must not restart output after an interrupted action.
+				var exit cli.ExitCoder
+				if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+					errors.As(err, &exit) && (exit.ExitCode() == 124 || exit.ExitCode() == 130 || exit.ExitCode() == 143) {
+					return err
+				}
 				format := strings.ToLower(root.String("format"))
 				if format == "" {
 					format = "auto"

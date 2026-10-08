@@ -26,6 +26,8 @@ Quiet does not change the format or discard stdout.
 The format option does not change an existing binary response into text.
 It excludes argument values, credentials, URLs, headers, prompts, filenames, and response bodies.
 Command completion does not imply that asynchronous API work has finished.
+Verbose omits its final details after cancellation, deadlines, or an existing interruption status.
+The original action error and exit status remain.
 Quiet overrides verbose when both flags are present.
 `--debug` remains a separate troubleshooting control.
 `-v` still means version. There are no new JSON or raw aliases.
