@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-cli/internal/readable"
@@ -49,7 +50,17 @@ func validFileReceipt(value gjson.Result) bool {
 	}
 	for _, name := range []string{"id", "filename", "purpose"} {
 		field := value.Get(name)
-		if field.Type != gjson.String || field.Str == "" {
+		if field.Type != gjson.String || field.Str == "" || !utf8.ValidString(field.Str) {
+			return false
+		}
+	}
+	if status := value.Get("status"); status.Exists() && status.Type != gjson.Null {
+		if status.Type != gjson.String {
+			return false
+		}
+		switch status.Str {
+		case "uploaded", "processed", "error":
+		default:
 			return false
 		}
 	}
@@ -95,21 +106,31 @@ func writeFileReceipt(out io.Writer, value gjson.Result, shell string) error {
 			return err
 		}
 	}
-	if shell == "" || strings.ContainsRune(id, 0) || strings.ContainsRune(filename, 0) ||
-		strings.ContainsAny(filename, `/\`) || filename == "." || filename == ".." {
+	if shell == "" || strings.ContainsRune(id, 0) || !utf8.ValidString(id) {
 		return nil
 	}
+	verb, label := "download", "Download it: "
+	if value.Get("status").Str == "error" {
+		verb, label = "get", "Inspect it: "
+	}
 	// Reuse the existing shell quoting contracts, including control characters.
-	args := []string{"files", "download", id}
+	args := []string{"files", verb, id}
 	if strings.HasPrefix(id, "-") {
-		args = []string{"files", "download", "--file-id=" + id}
+		args = []string{"files", verb, "--file-id=" + id}
 	}
-	if filename == "-" {
-		filename = "./-"
+	if verb == "get" {
+		args = append(args, "--format", "json")
+	} else {
+		if !utf8.ValidString(filename) || strings.ContainsRune(filename, 0) || strings.ContainsAny(filename, `/\`) || filename == "." || filename == ".." {
+			return nil
+		}
+		if filename == "-" {
+			filename = "./-"
+		}
+		args = append(args, "--output", filename)
 	}
-	args = append(args, "--output", filename)
 	if command := formatImagePickerCommand(args, shell); command != "" {
-		return readable.WriteText(out, "\nDownload it: "+command)
+		return readable.WriteText(out, "\n"+label+command)
 	}
 	return nil
 }
