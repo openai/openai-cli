@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-func TestMainFiniteJSONListCancellationPreservesPartialOutput(t *testing.T) {
+func TestMainDispatchFiniteJSONListCancellationPreservesPartialOutput(t *testing.T) {
 	requested := make(chan struct{})
 	disconnected := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +58,7 @@ func TestMainFiniteJSONListCancellationPreservesPartialOutput(t *testing.T) {
 	assertFiniteJSONListPartial(t, prefix+string(rest), "file_a")
 }
 
-func TestMainFiniteJSONListClosedConsumerPreservesFailure(t *testing.T) {
+func TestMainDispatchFiniteJSONListClosedConsumerPreservesFailure(t *testing.T) {
 	for _, upstreamFailure := range []bool{false, true} {
 		t.Run(fmt.Sprintf("upstream_failure=%t", upstreamFailure), func(t *testing.T) {
 			release := make(chan struct{})
@@ -111,7 +111,7 @@ func TestMainFiniteJSONListClosedConsumerPreservesFailure(t *testing.T) {
 	}
 }
 
-func TestMainFiniteJSONListReadOnlyStdoutFails(t *testing.T) {
+func TestMainDispatchFiniteJSONListReadOnlyStdoutFails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, resourceFilePage([]string{"file_a"}, false))

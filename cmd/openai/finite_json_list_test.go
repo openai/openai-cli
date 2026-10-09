@@ -42,7 +42,7 @@ func finiteJSONValue(t *testing.T, raw string) any {
 	return value
 }
 
-func TestMainFiniteJSONListDocuments(t *testing.T) {
+func TestMainDispatchFiniteJSONListDocuments(t *testing.T) {
 	for _, tc := range []struct {
 		name, limit         string
 		first, second, want []string
@@ -101,7 +101,7 @@ func TestMainFiniteJSONListDocuments(t *testing.T) {
 	}
 }
 
-func TestMainFiniteJSONListResourceFamilies(t *testing.T) {
+func TestMainDispatchFiniteJSONListResourceFamilies(t *testing.T) {
 	// The route metadata must select finite lists, including list-like methods.
 	const item = `{"id":"synthetic_record","object":"synthetic","unknown":{"large":9007199254740993,"text":"資料-é","data":[1,2]}}`
 	for _, tc := range []struct {
@@ -165,7 +165,7 @@ func TestMainFiniteJSONListResourceFamilies(t *testing.T) {
 	}
 }
 
-func TestMainFiniteJSONListCursorVariants(t *testing.T) {
+func TestMainDispatchFiniteJSONListCursorVariants(t *testing.T) {
 	for _, tc := range []struct {
 		name, path, cursorField, cursor string
 		args                            []string
@@ -214,7 +214,7 @@ func TestMainFiniteJSONListCursorVariants(t *testing.T) {
 	}
 }
 
-func TestMainFiniteJSONListLargeRecord(t *testing.T) {
+func TestMainDispatchFiniteJSONListLargeRecord(t *testing.T) {
 	// Generate the fixture in memory. Its size probes new buffering or line caps.
 	payload := strings.Repeat("x", (2<<20)+1) + "資料\nlast"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -246,7 +246,7 @@ func TestMainFiniteJSONListLargeRecord(t *testing.T) {
 	}
 }
 
-func TestMainFiniteJSONListModelsSelection(t *testing.T) {
+func TestMainDispatchFiniteJSONListModelsSelection(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{"object":"list","data":[{"id":"model_c","object":"model"},{"id":"other_b","object":"model"},{"id":"model_a","object":"model"}]}`)
@@ -284,7 +284,7 @@ func TestMainFiniteJSONListModelsSelection(t *testing.T) {
 	}
 }
 
-func TestMainFiniteJSONListPreservesExplicitModes(t *testing.T) {
+func TestMainDispatchFiniteJSONListPreservesExplicitModes(t *testing.T) {
 	const item = `{"id":"file_synthetic","object":"file","filename":"synthetic.txt","unknown":{"keep":true}}`
 	const page = `{"object":"list","data":[` + item + `,` + item + `],"has_more":false}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -329,7 +329,7 @@ func TestMainFiniteJSONListPreservesExplicitModes(t *testing.T) {
 	}
 }
 
-func TestMainFiniteJSONListDoesNotInferDataField(t *testing.T) {
+func TestMainDispatchFiniteJSONListDoesNotInferDataField(t *testing.T) {
 	const object = `{"id":"model_synthetic","object":"model","data":[{"id":"nested"}]}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -346,7 +346,7 @@ func TestMainFiniteJSONListDoesNotInferDataField(t *testing.T) {
 	}
 }
 
-func TestMainFiniteJSONListPreservesSingleResponseListEnvelope(t *testing.T) {
+func TestMainDispatchFiniteJSONListPreservesSingleResponseListEnvelope(t *testing.T) {
 	const envelope = `{"object":"list","data":[{"type":"response.completed","description":"synthetic event"}],"unknown":{"preserved":true}}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/webhook_event_types" {
@@ -366,7 +366,7 @@ func TestMainFiniteJSONListPreservesSingleResponseListEnvelope(t *testing.T) {
 	}
 }
 
-func TestMainFiniteJSONListUpstreamFailures(t *testing.T) {
+func TestMainDispatchFiniteJSONListUpstreamFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name, failure string
 		status        int
@@ -494,7 +494,7 @@ func readFiniteJSONListFirst(t *testing.T, ctx context.Context, reader io.Reader
 	}
 }
 
-func TestMainFiniteJSONListWritesBeforeNextPageCompletes(t *testing.T) {
+func TestMainDispatchFiniteJSONListWritesBeforeNextPageCompletes(t *testing.T) {
 	release := make(chan struct{})
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
@@ -527,7 +527,7 @@ func TestMainFiniteJSONListWritesBeforeNextPageCompletes(t *testing.T) {
 	}
 }
 
-func TestMainFiniteJSONListPreservesEventStream(t *testing.T) {
+func TestMainDispatchFiniteJSONListPreservesEventStream(t *testing.T) {
 	events := []string{
 		`{"type":"response.output_text.delta","delta":"synthetic","output_index":0,"content_index":0,"sequence_number":0,"data":[1]}`,
 		`{"type":"response.completed","response":{"id":"resp_synthetic","status":"completed","output":[]},"sequence_number":1}`,
