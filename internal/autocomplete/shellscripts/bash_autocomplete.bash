@@ -10,8 +10,8 @@ ____APPNAME___bash_autocomplete() {
     local word_index previous raw source before after current_raw="$cur"
     local -a adjacent=()
     source="${COMP_LINE:0:COMP_POINT}"
-    # Bash 5 splits '=' into words. Source gaps distinguish assignments from
-    # separate '=' values. Walk backwards so earlier commands cannot interfere.
+    # Readline splits '=' and ':' into words. Preserve source gaps when joining
+    # those words. Walk backwards so earlier commands cannot interfere.
     for ((word_index = COMP_CWORD; word_index >= 0; word_index--)); do
       raw="${COMP_WORDS[word_index]}"
       if [[ $word_index -eq $COMP_CWORD && -n "$source" ]]; then
@@ -33,8 +33,8 @@ ____APPNAME___bash_autocomplete() {
       [[ $word_index -eq $COMP_CWORD ]] && raw="$current_raw"
       previous=$((word_index - 1))
       if [[ ${#completion_args[@]} -gt 0 && "${adjacent[previous]-}" == 1 &&
-            ( ( -n "$raw" && -z "${raw//=/}" ) ||
-              ( -n "${COMP_WORDS[previous]}" && -z "${COMP_WORDS[previous]//=/}" ) ) ]]; then
+            ( ( -n "$raw" && -z "${raw//[=:]/}" ) ||
+              ( -n "${COMP_WORDS[previous]}" && -z "${COMP_WORDS[previous]//[=:]/}" ) ) ]]; then
         previous=$((${#completion_args[@]} - 1))
         completion_args[previous]+="$raw"
       else
@@ -117,7 +117,7 @@ ____APPNAME___bash_autocomplete() {
         local current_value="${completion_args[${#completion_args[@]} - 1]}"
         local assignment="$completions" replacement_prefix=""
         file_part="${current_value#"$assignment"}"
-        # Readline replaces the callback word, which can follow the last '='.
+        # Readline replaces the callback word, after the last '=' or ':'.
         # Restore only the part that Readline includes in its replacement.
         if [[ $# -ge 2 && "$current_value" == *"$2" ]]; then
           replacement_prefix="${current_value%"$2"}"

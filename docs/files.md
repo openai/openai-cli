@@ -71,8 +71,14 @@ openai files upload --purpose user_data -- "-notes.txt"
 ```
 
 Use `./-` for a file named `-`. The existing `--file -` sentinel requests stdin.
-Current piped input can be consumed first as JSON/YAML and rejected before the upload starts.
-Use a local file for binary uploads until the shared stdin handling changes.
+Explicit stdin selection uploads bytes without interpreting them as whole-request JSON/YAML:
+
+```sh
+cat upload.bin | openai files upload --file - --purpose user_data
+```
+
+Only one parameter can consume stdin. File paths avoid shell conversion of binary pipelines.
+See [shell and file input](shell-file-input.md) for stdin metadata and Windows shell differences.
 
 Supply `--purpose` for each upload. The CLI does not select a purpose for you.
 The example uses `user_data`; select the purpose required by your API workflow.
@@ -88,16 +94,19 @@ Uploaded upload space.txt (13 B)
 ID: file-example
 Purpose: user_data
 
-Download it: openai files download file-example --output 'upload space.txt'
+Inspect it: openai files get file-example
 ```
 
 The receipt uses the returned filename, size, ID, and purpose.
 The CLI omits the size when the API does not supply it.
-The download suggestion appears for supported shells and unambiguous returned filenames.
-On Windows, the CLI omits suggestions for drive-relative names, alternate-stream syntax, reserved device names, and trailing dots or spaces.
-Choose an ordinary destination explicitly when the receipt omits the suggestion.
+The next command inspects metadata without writing files or overwriting the upload source.
+It preserves the executable and selected project, organization, and safe base URL.
+Keep the same environment when copying it.
+The CLI omits the suggestion when credential, header, or private-path overrides cannot be reproduced safely.
+URLs containing user information, queries, or fragments also suppress the suggestion.
+Credentials never appear in the suggested command.
 A successful upload does not mean that downstream processing has finished.
-When the returned status is `error`, the receipt suggests inspecting the metadata.
+When the returned status is `error`, the suggested inspection requests JSON to retain complete processing details.
 An upload can return success while its status reports a processing error.
 
 `files get` shows metadata, including the full ID and timestamps in UTC.
@@ -117,6 +126,9 @@ Pipes, redirected stderr, and the existing `create` and `retrieve` commands keep
 
 `--output PATH` writes the exact downloaded bytes to that path.
 Its parent directory must already exist. An existing destination file is overwritten.
+The CLI stages the complete transfer before changing an existing ordinary file.
+A failed network transfer leaves that file unchanged.
+The final local copy preserves links and permissions, but local write failures can leave partial contents.
 The `-o` alias remains available:
 
 ```sh
@@ -129,6 +141,8 @@ Upload receipts and metadata do not appear in downloaded contents.
 With terminal stdout and no destination, download keeps the existing content behavior.
 The CLI displays text safely and saves binary contents to a generated local file.
 Use `--output -` to force contents to stdout.
+Successful save receipts go to stderr. Quiet mode and structured error selection suppress these optional receipts.
+A receipt-write failure returns a nonzero status while retaining the completed download.
 
 ## Scripts and existing commands
 
@@ -190,7 +204,8 @@ Treat unexpected output as unconfirmed, even when the process succeeds.
 | HTTP 409, timeout, connection loss, or HTTP 5xx | Inspect the file before repeating an upload. The API might have received the request. |
 | Processing status `error` | Inspect the metadata and status details. Correct the underlying input or workflow before another upload. |
 | Missing destination directory | Create the parent directory or choose an existing directory. Then download to an unused filename. |
-| Interrupted download, disk full, or write failure | Treat the destination as incomplete. Correct the cause before downloading to an unused filename. |
+| Failed download transfer | An existing ordinary `--output` file stays unchanged. Redirected and automatic output can remain partial. |
+| Disk full or failure during the final local copy | The destination can contain partial bytes. Correct the cause before downloading to an unused filename. |
 | Missing or malformed upload result, cancellation, or receipt write failure | Check for an accepted upload before repeating it. An absent receipt is not an upload rollback. |
 
 If you have the file ID, inspect it without uploading again:
@@ -220,8 +235,9 @@ Do not repeat an uncertain upload just to add `--format-error json`.
 An upload can succeed even when the terminal or pipe cannot display its result.
 The CLI does not undo an accepted upload when output fails.
 
-Downloads can leave partial files after failure or interruption.
-An existing `--output` destination can be truncated when downloading begins.
+An explicit ordinary destination remains unchanged until the complete transfer reaches local staging.
+Failures during the final local copy can still leave partial files.
+Automatic destinations and special paths retain their existing streaming behavior.
 Shell redirection can truncate its destination before the CLI starts, even when the API request fails.
 Choose an unused destination when recovering:
 
@@ -233,6 +249,7 @@ The parent directory must already exist.
 Check the command's exit status before using the download.
 If you have an expected byte count or checksum, compare it with the downloaded file.
 The command does not resume a partial download.
+See [binary output guarantees](shell-file-input.md#binary-output) for concurrency, interruption, and filesystem limits.
 
 Read requests can retry transient failures. The CLI does not automatically replay streamed file uploads.
 Cancellation stops local work; it does not prove that the API discarded the upload.

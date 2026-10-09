@@ -21,7 +21,7 @@ func TestBashFileCompletionPreservesAssignments(t *testing.T) {
 	script, err := shellCompletions[CompletionStyleBash](&cli.Command{}, "openai")
 	require.NoError(t, err)
 	dir := t.TempDir()
-	for _, name := range []string{"assets/logo.png", "assets/long name.png", "assets/a=b.png", "--file=logo.png", "=literal.wav"} {
+	for _, name := range []string{"assets/logo.png", "assets/long name.png", "assets/a=b.png", "--file=logo.png", "=literal.wav", "@week:notes.txt", "@week::notes.txt", "@week:=notes.txt", ":notes.txt"} {
 		path := filepath.Join(dir, name)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 		require.NoError(t, os.WriteFile(path, nil, 0600))
@@ -45,6 +45,14 @@ func TestBashFileCompletionPreservesAssignments(t *testing.T) {
 		{"repeated earlier quoted filename", `openai --format "assets/logo.png" --file="assets/lo`, "assets/lo", []string{"--format", `"assets/logo.png"`, "--file", "=", `"assets/logo.png"`}, []string{"assets/logo.png", "assets/long name.png"}},
 		{"bash5 repeated equals", "openai --file==", "", []string{"--file", "=="}, []string{"literal.wav"}},
 		{"bash5 equals filename", "openai --file=assets/a=b", "b", []string{"--file", "=", "assets/a", "=", "b"}, []string{"b.png"}},
+		{"separated colon filename", "openai --file @week:no", "no", []string{"--file", "@week", ":", "no"}, []string{"notes.txt"}},
+		{"bash3 assigned colon filename", "openai --file=@week:no", "no", []string{"--file=@week", ":", "no"}, []string{"notes.txt"}},
+		{"bash5 assigned colon filename", "openai --file=@week:no", "no", []string{"--file", "=", "@week", ":", "no"}, []string{"notes.txt"}},
+		{"repeated colon filename", "openai --file @week::no", "no", []string{"--file", "@week", "::", "no"}, []string{"notes.txt"}},
+		{"colon and equals filename", "openai --file @week:=no", "no", []string{"--file", "@week", ":", "=", "no"}, []string{"notes.txt"}},
+		{"leading colon filename", "openai --file :no", "no", []string{"--file", ":", "no"}, []string{"notes.txt"}},
+		{"empty colon suffix", "openai --file @week:", "", []string{"--file", "@week", ":"}, []string{"notes.txt", ":notes.txt", "=notes.txt"}},
+		{"spaces around colon", "openai --file @week : no", "no", []string{"--file", "@week", ":", "no"}, nil},
 		{"separate flag-like value", "openai --file --file=lo", "lo", []string{"--file", "--file", "=", "lo"}, []string{"logo.png"}},
 		{"separate equals value", "openai --file =", "", []string{"--file", "="}, []string{"literal.wav"}},
 		{"spaces around equals", "openai --file = assets/lo", "assets/lo", []string{"--file", "=", "assets/lo"}, nil},

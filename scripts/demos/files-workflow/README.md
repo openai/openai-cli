@@ -32,6 +32,7 @@ The before scene uses `create`, `retrieve`, and `content`.
 The after scene uses positional `upload`, `get`, and `download`.
 Both scenes upload the same 13-byte file with an explicit `user_data` purpose.
 Both scenes inspect metadata and download text and binary files.
+The upload receipt suggests read-only inspection without selecting a download destination.
 Each scene downloads through an explicit destination and shell redirection.
 Actual `cmp` commands verify every downloaded byte.
 

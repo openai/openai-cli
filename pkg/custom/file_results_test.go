@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"os/exec"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -98,24 +97,20 @@ func TestFileReceiptCommandsPreserveShellArguments(t *testing.T) {
 			}
 			for _, tc := range []struct {
 				id, filename string
-				windowsHint  bool
 			}{
-				{"file-example", "upload space.txt", true},
-				{"-file-example", "-notes.txt", true},
-				{"file-example", "-", true},
-				{"file-'quote", "an owner's $HOME `literal` $(printf BAD) file.txt", true},
-				{"file-example", "@literal.txt", true},
-				{"file-example", "line\nwith\tcontrols\x1b.txt", false},
+				{"file-example", "upload space.txt"},
+				{"-file-example", "-notes.txt"},
+				{"file-example", "-"},
+				{"file-'quote", "an owner's $HOME `literal` $(printf BAD) file.txt"},
+				{"file-example", "@literal.txt"},
+				{"file-example", "line\nwith\tcontrols\x1b.txt"},
 			} {
 				data, err := json.Marshal(map[string]any{"object": "file", "id": tc.id, "filename": tc.filename, "purpose": "user_data", "bytes": 0})
 				require.NoError(t, err)
 				var out bytes.Buffer
-				require.NoError(t, writeFileReceipt(&out, gjson.ParseBytes(data), shell, fileInvocation{display: "openai"}))
-				_, command, found := strings.Cut(out.String(), "\nDownload it: ")
-				if runtime.GOOS == "windows" && !tc.windowsHint {
-					require.False(t, found, "Windows must omit the control-character destination")
-					continue
-				}
+				requestArgs := []string{"--project=project-'one", "--organization=org two", "--base-url=http://127.0.0.1:4010/custom"}
+				require.NoError(t, writeFileReceipt(&out, gjson.ParseBytes(data), shell, fileInvocation{display: "openai", requestArgs: requestArgs}))
+				_, command, found := strings.Cut(out.String(), "\nInspect it: ")
 				require.True(t, found)
 				command = strings.TrimSuffix(command, "\n")
 				require.NotContains(t, command, "\n")
@@ -129,14 +124,11 @@ func TestFileReceiptCommandsPreserveShellArguments(t *testing.T) {
 				process.Env = []string{"LC_ALL=C"}
 				got, err := process.CombinedOutput()
 				require.NoError(t, err, string(got))
-				id, filename := tc.id, tc.filename
+				id := tc.id
 				if strings.HasPrefix(id, "-") {
 					id = "--file-id=" + id
 				}
-				if filename == "-" {
-					filename = "./-"
-				}
-				want := []string{"files", "download", id, "--output", filename}
+				want := append(requestArgs, "files", "get", id)
 				require.Equal(t, strings.Join(want, "\x00")+"\x00", string(got), command)
 			}
 		})
@@ -157,42 +149,16 @@ func TestFileReceiptPropagatesOutputFailuresAndCancellation(t *testing.T) {
 	require.Empty(t, out.String())
 }
 
-func TestFileReceiptOmitsAmbiguousDestinations(t *testing.T) {
-	for _, tc := range []struct{ id, filename string }{
-		{"file-example", "../outside.txt"},
-		{"file-example", "/dev/stdout"},
-		{"file-example", `folder\file.txt`},
-		{"file-example", "."},
-		{"file-example", ".."},
-		{"file-example", "nul\x00.txt"},
-		{"file-\x00example", "safe.txt"},
-	} {
-		data, err := json.Marshal(map[string]any{"object": "file", "id": tc.id, "filename": tc.filename, "purpose": "user_data"})
+func TestFileReceiptDoesNotSelectLocalDestinations(t *testing.T) {
+	for _, filename := range []string{"upload space.txt", "../outside.txt", "/dev/stdout", `folder\file.txt`, ".", "..", "NUL", "C:report.txt", "report.txt:stream", "trailing.", "nul\x00.txt"} {
+		data, err := json.Marshal(map[string]any{"object": "file", "id": "file-example", "filename": filename, "purpose": "user_data"})
 		require.NoError(t, err)
 		var out bytes.Buffer
 		require.NoError(t, writeFileReceipt(&out, gjson.ParseBytes(data), "bash", fileInvocation{display: "openai"}))
-		require.Contains(t, out.String(), "Uploaded ")
-		require.NotContains(t, out.String(), "Download it:")
+		_, command, found := strings.Cut(out.String(), "\nInspect it: ")
+		require.True(t, found)
+		require.Equal(t, "openai files get file-example\n", command)
 		require.NotContains(t, out.String(), "\x00")
-	}
-}
-
-func TestFileReceiptDestinationRulesPreservePlatforms(t *testing.T) {
-	for _, filename := range []string{"", ".", "..", "../outside.txt", "/absolute.txt", `folder\file.txt`, "nul\x00.txt", string([]byte{0xff})} {
-		for _, goos := range []string{"windows", "linux", "darwin"} {
-			require.False(t, fileReceiptDestinationAllowed(filename, goos), "%s %q", goos, filename)
-		}
-	}
-	for _, filename := range []string{"C:report.txt", "report.txt:stream", "NUL", "CON.txt", "con .txt", "CONIN$", "CONOUT$", "COM1", "LPT9.txt", "COM¹", "LPT²", "trailing.", "trailing ", " ", `quoted".txt`, "star*.txt", "question?.txt", "pipe|.txt", "less<.txt", "greater>.txt", "line\nwith\tcontrols\x1b.txt"} {
-		require.False(t, fileReceiptDestinationAllowed(filename, "windows"), filename)
-		for _, goos := range []string{"linux", "darwin"} {
-			require.True(t, fileReceiptDestinationAllowed(filename, goos), "%s %q", goos, filename)
-		}
-	}
-	for _, filename := range []string{"ordinary.txt", "upload space.txt", "owner's file.txt", "@literal.txt", "-notes.txt", "-", ".hidden", "café-雪.txt", "COM10.txt", "lpt0", "auxiliary.txt"} {
-		for _, goos := range []string{"windows", "linux", "darwin"} {
-			require.True(t, fileReceiptDestinationAllowed(filename, goos), "%s %q", goos, filename)
-		}
 	}
 }
 
@@ -211,10 +177,7 @@ func TestFileReceiptProcessingFailureKeepsInspectionHint(t *testing.T) {
 	}
 }
 
-func TestFileReceiptPreservesUnixPowerShellFilenames(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("these literal filenames exercise Unix behavior")
-	}
+func TestFileReceiptPowerShellInspectionUsesNoDestination(t *testing.T) {
 	pwsh, err := exec.LookPath("pwsh")
 	if err != nil {
 		t.Skip("PowerShell is unavailable")
@@ -224,8 +187,9 @@ func TestFileReceiptPreservesUnixPowerShellFilenames(t *testing.T) {
 			data, err := json.Marshal(map[string]any{"object": "file", "id": "file-example", "filename": filename, "purpose": "user_data"})
 			require.NoError(t, err)
 			var out bytes.Buffer
-			require.NoError(t, writeFileReceipt(&out, gjson.ParseBytes(data), "pwsh", fileInvocation{display: "openai"}))
-			_, command, found := strings.Cut(out.String(), "\nDownload it: ")
+			requestArgs := []string{"--project=project-'one", "--organization=org two"}
+			require.NoError(t, writeFileReceipt(&out, gjson.ParseBytes(data), "pwsh", fileInvocation{display: "openai", requestArgs: requestArgs}))
+			_, command, found := strings.Cut(out.String(), "\nInspect it: ")
 			require.True(t, found)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
@@ -236,7 +200,7 @@ func TestFileReceiptPreservesUnixPowerShellFilenames(t *testing.T) {
 			require.NoError(t, err, string(output))
 			var arguments []string
 			require.NoError(t, json.Unmarshal(output, &arguments))
-			require.Equal(t, []string{"files", "download", "file-example", "--output", filename}, arguments)
+			require.Equal(t, append(requestArgs, "files", "get", "file-example"), arguments)
 		})
 	}
 }
@@ -250,7 +214,7 @@ func TestFileReceiptPreservesSafeExecutableInvocation(t *testing.T) {
 		if status == "error" {
 			require.Contains(t, out.String(), "Inspect it: "+invocation.display+" files get file-example --format json")
 		} else {
-			require.Contains(t, out.String(), "Download it: "+invocation.display+" files download file-example")
+			require.Contains(t, out.String(), "Inspect it: "+invocation.display+" files get file-example")
 		}
 	}
 }

@@ -76,19 +76,19 @@ func TestMainFilesReceiptErrorOptionsIndependent(t *testing.T) {
 				require.Empty(t, got.stdout)
 				require.JSONEq(t, apiError, got.stderr, "the complete error stream must remain one JSON value")
 				require.NotContains(t, got.stderr, "Uploaded ")
-				require.NotContains(t, got.stderr, "Download it:")
+				require.NotContains(t, got.stderr, "Inspect it:")
 				return
 			}
 			require.Zero(t, got.code, "%+v", got)
 			require.Empty(t, got.stderr)
 			if tc.output == "receipt" {
 				want := "Uploaded upload space.txt (13 B)\nID: " + filesWorkflowID + "\nPurpose: user_data\n\n" +
-					"Download it: openai files download " + filesWorkflowID + " --output 'upload space.txt'\n"
+					"Inspect it: openai files get " + filesWorkflowID + "\n"
 				require.Equal(t, want, got.stdout, "error options must not change successful stdout")
 				return
 			}
 			require.NotContains(t, got.stdout, "Uploaded ")
-			require.NotContains(t, got.stdout, "Download it:")
+			require.NotContains(t, got.stdout, "Inspect it:")
 			switch tc.output {
 			case "json":
 				require.JSONEq(t, response, got.stdout)
@@ -101,14 +101,23 @@ func TestMainFilesReceiptErrorOptionsIndependent(t *testing.T) {
 	}
 }
 
-func runFilesReceiptPTY(t *testing.T, python, bash, work, endpoint string, args []string) mainDispatchResult {
+func runFilesReceiptPTY(t *testing.T, python, bash, work, endpoint string, args []string, environment ...map[string]string) mainDispatchResult {
+	return runFilesReceiptPTYCommand(t, python, bash, work, endpoint, "", args, environment...)
+}
+
+func runFilesReceiptPTYCommand(t *testing.T, python, bash, work, endpoint, command string, args []string, environment ...map[string]string) mainDispatchResult {
 	t.Helper()
 	binary, err := os.Executable()
 	require.NoError(t, err)
+	var extraEnv map[string]string
+	if len(environment) != 0 {
+		extraEnv = environment[0]
+	}
 	input, err := json.Marshal(struct {
-		Binary, Bash, Work, Endpoint string
-		Args                         []string
-	}{binary, bash, work, endpoint, args})
+		Binary, Bash, Work, Endpoint, Command string
+		Args                                  []string
+		Env                                   map[string]string
+	}{binary, bash, work, endpoint, command, args, extraEnv})
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -146,6 +155,7 @@ env = {
     "GOMAXPROCS": "2", "OPENAI_CLI_MAIN_DISPATCH_PROCESS": "1",
     "OPENAI_API_KEY": "sk-fake-files-receipt-test", "OPENAI_BASE_URL": config["Endpoint"],
 }
+env.update(config["Env"] or {})
 selector = selectors.DefaultSelector()
 masters, slaves, output = [], [], [bytearray(), bytearray()]
 process = None
@@ -161,7 +171,13 @@ try:
     # Keep Bash alive so the production presenter detects its actual caller.
     command = [config["Bash"], "--noprofile", "--norc", "-c",
                '"$@"\nresult=$?\nexit "$result"', "files-receipt-test",
-               config["Binary"], "-test.run=^TestMainDispatchProcess$", "--", *config["Args"]]
+               config["Binary"], "-test.run=^TestMainDispatchProcess$", "--", *(config["Args"] or [])]
+    if config["Command"]:
+        script = ('dispatch_binary=$1\n'
+                  'openai() { "$dispatch_binary" -test.run=^TestMainDispatchProcess$ -- openai "$@"; }\n'
+                  + config["Command"] + '\nresult=$?\nexit "$result"')
+        command = [config["Bash"], "--noprofile", "--norc", "-c", script,
+                   "files-receipt-test", config["Binary"]]
     process = subprocess.Popen(command, cwd=config["Work"], env=env, stdin=subprocess.DEVNULL,
                                stdout=slaves[0], stderr=slaves[1], start_new_session=True)
     for slave in slaves:

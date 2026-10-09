@@ -171,6 +171,36 @@ func TestMainFilesWorkflowUploadStdinCompatibility(t *testing.T) {
 	require.EqualValues(t, 10, requests.Load())
 }
 
+func TestMainFilesWorkflowExplicitBinaryStdin(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload []byte
+	}{
+		{"empty", []byte{}},
+		{"binary", []byte{0, 255, 128, 27, 13, 10, 26, 0}},
+		{"JSON stays file bytes", []byte("{\"file\":\"missing.txt\",\"purpose\":\"batch\",\"future\":null}\n")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, requests := filesWorkflowUploadServer(t, "anonymous_file", tc.payload)
+			var want mainDispatchResult
+			for index, route := range []string{"create", "upload"} {
+				before := requests.Load()
+				got := runShellFileCommand(t, server, shellFileInput(t, tc.payload), nil,
+					"files", route, "--file", "-", "--purpose", "user_data")
+				require.Zero(t, got.code, "%s: %+v", route, got)
+				require.Empty(t, got.stderr)
+				require.JSONEq(t, filesWorkflowMetadata, got.stdout)
+				require.Equal(t, before+1, requests.Load(), "each route must upload stdin exactly once")
+				if index == 0 {
+					want = got
+				}
+				require.Equal(t, want, got, "the upload alias must preserve the legacy stdin result")
+			}
+			require.EqualValues(t, 2, requests.Load())
+		})
+	}
+}
+
 func TestMainFilesWorkflowMachineOutput(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "upload space.txt")
 	payload := []byte("hello files!\n")
@@ -261,7 +291,8 @@ func TestMainFilesWorkflowDownloadBytes(t *testing.T) {
 				for index, route := range []string{"content", "download"} {
 					got := runReadableCommand(t, server, "files", route, "--file-id", filesWorkflowID, flag, path)
 					require.Zero(t, got.code, "%+v", got)
-					require.Empty(t, got.stderr)
+					require.Empty(t, got.stdout)
+					require.Equal(t, "Wrote output to: "+path+"\n", got.stderr)
 					if index == 0 {
 						want = got
 					}
@@ -275,6 +306,44 @@ func TestMainFilesWorkflowDownloadBytes(t *testing.T) {
 			require.EqualValues(t, 14, requests.Load())
 		})
 	}
+}
+
+func TestMainFilesWorkflowDownloadReceiptModes(t *testing.T) {
+	payload := []byte{0, 255, 128, 27, 13, 10, 26, 0}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != http.MethodGet || r.URL.Path != "/files/"+filesWorkflowID+"/content" {
+			t.Errorf("download request changed: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	for _, tc := range []struct {
+		name  string
+		flags []string
+	}{
+		{"quiet", []string{"--quiet"}},
+		{"error JSON", []string{"--format-error", "json"}},
+		{"error transform", []string{"--transform-error", "message"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "saved copy's.bin")
+			for _, route := range []string{"content", "download"} {
+				before := requests.Load()
+				args := append([]string{"files", route, filesWorkflowID, "--output", path}, tc.flags...)
+				got := runReadableCommand(t, server, args...)
+				require.Equal(t, mainDispatchResult{}, got, "%s %s must save silently", route, tc.name)
+				body, err := os.ReadFile(path)
+				require.NoError(t, err)
+				require.Equal(t, payload, body, "suppressing a receipt must preserve every downloaded byte")
+				require.Equal(t, before+1, requests.Load(), "each route must download exactly once")
+				require.NoError(t, os.Remove(path))
+			}
+		})
+	}
+	require.EqualValues(t, 6, requests.Load())
 }
 
 func TestMainFilesWorkflowFailuresPreserveExits(t *testing.T) {
