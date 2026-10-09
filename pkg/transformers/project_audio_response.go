@@ -55,6 +55,16 @@ func projectTranscriptSegments(value gjson.Result, transcript string) (readable.
 	if !segments.IsArray() {
 		return readable.StreamEvent{}, false
 	}
+	segmentFields := 0
+	value.ForEach(func(key, _ gjson.Result) bool {
+		if key.Str == "segments" {
+			segmentFields++
+		}
+		return segmentFields < 2
+	})
+	if segmentFields != 1 {
+		return readable.StreamEvent{}, false
+	}
 	var lines strings.Builder
 	var residuals []gjson.Result
 	remaining := strings.Trim(transcript, " \n\t")

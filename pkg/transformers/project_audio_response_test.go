@@ -107,6 +107,14 @@ func TestProjectAudioResponseKeepsMalformedSegmentArrays(t *testing.T) {
 	}
 }
 
+func TestProjectAudioResponseKeepsDuplicateSegmentArrays(t *testing.T) {
+	const arrays = `"segments":[{"text":"Hello","start":0,"end":1}],"segments":[{"text":"Later","future":7}]`
+	event, ok := ProjectAudioResponse(gjson.Parse(`{"text":"Hello",`+arrays+`}`), audioResponseRoute("audio.transcriptions"))
+	require.True(t, ok)
+	require.Equal(t, []readable.StreamPart{{Key: "transcript", Text: "Hello", Snapshot: true}}, event.Parts)
+	require.Equal(t, `{`+arrays+`}`, event.Details.Raw)
+}
+
 func TestProjectAudioResponsePreservesNativeTextAndSubtitles(t *testing.T) {
 	for _, input := range []string{
 		`"Hello 世界\n"`,
