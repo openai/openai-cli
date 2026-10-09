@@ -92,7 +92,7 @@ def main():
     before, after = options.before.resolve(), options.after.resolve()
     options.output.mkdir(parents=True, exist_ok=False)
     cases = []
-    for width in (80, 40, 29, 28, 20):
+    for width in (80, 40, 39, 29, 28, 20):
         cases.append((f"bare-{width}", [], width, (True, True, True), {}, width >= 29))
     for name, extra, banner in (
         ("no-color", {"NO_COLOR": "anything", "CLICOLOR_FORCE": "1"}, True),
@@ -132,7 +132,8 @@ def main():
             header = plain(header)
             assert "What are we making today?" in header, (name, "missing greeting")
             assert version in header, (name, "missing runtime version")
-            assert len(header.splitlines()) == 4, (name, "header is too tall")
+            assert len(header.splitlines()) == (6 if width >= 40 else 4), (name, "unexpected header height")
+            assert "✦" not in header and ">_" not in header, (name, "unexpected signature")
             assert all(len(line) <= width for line in header.splitlines()), (name, "header overflows")
             comparable["terminal"] = body
             if name in ("no-color", "force-color-zero"):
