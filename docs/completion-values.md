@@ -16,6 +16,7 @@ batch
 Suggestions cover these existing flags:
 
 - `--format` and `--format-error` suggest the CLI's supported output formats.
+- Commands with narrower output contracts suggest only their supported `--format` values.
 - `files upload --purpose` and `files create --purpose` suggest supported upload purposes.
 - `files list --purpose` also suggests known output purposes, such as `batch_output`.
 

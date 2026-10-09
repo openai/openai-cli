@@ -308,7 +308,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			usedFlags = append(usedFlags, *flag)
 			if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && !assigned {
 				if i == len(preceding)-1 {
-					return flagValueCompletion(root, *flag, current, "", completionStyle)
+					return flagValueCompletion(root, cmd, *flag, current, "", completionStyle)
 				}
 				i += 2
 			} else {
@@ -361,7 +361,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			result := CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 			if flag := findFlag(flags, name); flag != nil {
 				if doc, ok := (*flag).(cli.DocGenerationFlag); ok && doc.TakesValue() {
-					result = flagValueCompletion(root, *flag, value, name+"=", completionStyle)
+					result = flagValueCompletion(root, cmd, *flag, value, name+"=", completionStyle)
 					if result.Behavior == ShellCompletionBehaviorFile {
 						result.FileValuePrefix = name + "="
 						result.requiresFileValueSupport = true
@@ -388,7 +388,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	if fileFlag != "" && !helpTopics && (literal || !isFlag(current)) {
 		if positionalCount == 0 {
 			if flag := findFlag(flags, fileFlag); flag != nil && !slices.Contains(usedFlags, *flag) {
-				result := flagValueCompletion(root, *flag, current, "", completionStyle)
+				result := flagValueCompletion(root, cmd, *flag, current, "", completionStyle)
 				if result.Behavior == ShellCompletionBehaviorFile {
 					result.requiresFileValueSupport = true
 					return result
@@ -421,10 +421,22 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	}
 }
 
-func flagValueCompletion(root *cli.Command, flag cli.Flag, prefix, assignment string, style CompletionStyle) CompletionResult {
+func flagValueCompletion(root, selected *cli.Command, flag cli.Flag, prefix, assignment string, style CompletionStyle) CompletionResult {
 	values, _ := root.Metadata["completion-flag-values"].(map[cli.Flag][]string)
+	choices := values[flag]
+	// Overrides apply only to this selected command and the actual root flag.
+	// A same-name local flag must keep its own completion contract.
+	overrides, _ := selected.Metadata["completion-root-flag-values"].(map[string][]string)
+	for _, rootFlag := range root.Flags {
+		if rootFlag == flag {
+			if override, ok := overrides[rootFlag.Names()[0]]; ok {
+				choices = override
+			}
+			break
+		}
+	}
 	var completions []ShellCompletion
-	for _, value := range values[flag] {
+	for _, value := range choices {
 		if strings.HasPrefix(value, prefix) {
 			name := value
 			// Readline replaces the word after '='. Other adapters replace the

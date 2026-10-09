@@ -64,3 +64,45 @@ func TestCompletionValuesLeaveRequestValuesUnrestricted(t *testing.T) {
 	require.Nil(t, purpose.Validator)
 	require.Equal(t, "purpose", purpose.BodyPath)
 }
+
+func TestCompletionValuesSelectedCommandOverrides(t *testing.T) {
+	root := &cli.Command{Name: "openai", Flags: []cli.Flag{
+		&cli.StringFlag{Name: "format", Aliases: []string{"f"}},
+		&cli.StringFlag{Name: "format-error"},
+	}, Commands: []*cli.Command{
+		{Name: "restricted", Aliases: []string{"r"},
+			Metadata: map[string]any{"completion-root-flag-values": map[string][]string{"format": {"json"}}},
+			Commands: []*cli.Command{{Name: "child"}},
+		},
+		{Name: "shadow", Flags: []cli.Flag{&cli.StringFlag{Name: "format"}},
+			Metadata: map[string]any{"completion-root-flag-values": map[string][]string{"format": {"json"}}},
+		},
+		{Name: "empty", Metadata: map[string]any{"completion-root-flag-values": map[string][]string{"format": {}}}},
+	}}
+	configureCompletionValues(root)
+	for _, tc := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"--format", "j"}, []string{"json", "jsonl"}},
+		{[]string{"restricted", "--format", "j"}, []string{"json"}},
+		{[]string{"r", "-f=j"}, []string{"json"}},
+		{[]string{"--format", "text", "restricted", "--format", "j"}, []string{"json"}},
+		{[]string{"restricted", "--format-error", "j"}, []string{"json", "jsonl"}},
+		{[]string{"restricted", "child", "--format", "j"}, []string{"json", "jsonl"}},
+		{[]string{"shadow", "--format", "j"}, nil},
+		{[]string{"empty", "--format", ""}, nil},
+	} {
+		got := autocomplete.GetCompletions(autocomplete.CompletionStyleBash, root, tc.args)
+		var names []string
+		for _, completion := range got.Completions {
+			names = append(names, completion.Name)
+		}
+		require.Equal(t, tc.want, names, tc.args)
+		if len(tc.want) == 0 {
+			require.EqualValues(t, autocomplete.ShellCompletionBehaviorNoComplete, got.Behavior, tc.args)
+		} else {
+			require.Equal(t, autocomplete.ShellCompletionBehaviorDefault, got.Behavior, tc.args)
+		}
+	}
+}

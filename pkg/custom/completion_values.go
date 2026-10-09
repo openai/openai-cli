@@ -23,6 +23,28 @@ func configureCompletionValues(root *cli.Command) {
 	}
 	bind(root, "format", OutputFormats)
 	bind(root, "format-error", OutputFormats)
+	// Local command format contracts are narrower than API output formats.
+	formats := func(command *cli.Command, choices ...string) {
+		if command == nil {
+			return
+		}
+		if command.Metadata == nil {
+			command.Metadata = map[string]any{}
+		}
+		overrides, _ := command.Metadata["completion-root-flag-values"].(map[string][]string)
+		if overrides == nil {
+			overrides = map[string][]string{}
+		}
+		overrides["format"] = choices
+		command.Metadata["completion-root-flag-values"] = overrides
+	}
+	formats(root.Command("codex"), "auto", "text", "json")
+	if tokenizer := root.Command("tokenizer"); tokenizer != nil {
+		formats(tokenizer, "auto", "text")
+		for _, name := range []string{"count", "inspect", "encodings", "licenses"} {
+			formats(tokenizer.Command(name), "auto", "text", "json")
+		}
+	}
 	if files := root.Command("files"); files != nil {
 		// The upload contract uses FilePurpose, not FileObjectPurpose. Output
 		// purposes belong only in list filters, never upload suggestions.
