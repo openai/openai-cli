@@ -109,6 +109,7 @@ for case_name, case_line, case_expected in list(CASES):
 ARGV_WRAPPER = r'''#!/bin/sh
 # Record the adapter's exact argument vector, then execute the immutable binary.
 printf '%s\0' "$#" "$@" >> "$COMPLETION_TEST_ARGV"
+printf '%s\0' "${OPENAI_CLI_COMPLETION_STATIC_VALUES+x}" "${OPENAI_CLI_COMPLETION_STATIC_VALUES-}" >> "$COMPLETION_TEST_MARKERS"
 exec "$COMPLETION_TEST_BINARY" "$@"
 '''
 
@@ -155,6 +156,21 @@ def backend_arguments(data):
         calls.append([argument.decode("utf-8", "strict") for argument in fields[index:index + count]])
         index += count
     return calls
+
+
+def backend_markers(data):
+    if not data:
+        return []
+    fields = data.split(b"\0")
+    if fields.pop() != b"" or len(fields) % 2:
+        raise ValueError("Backend marker log ended within a record.")
+    values = []
+    for index in range(0, len(fields), 2):
+        present, value = fields[index:index + 2]
+        if present not in (b"", b"x") or not present and value:
+            raise ValueError("Backend marker log has an invalid presence field.")
+        values.append(value.decode("utf-8", "strict") if present else None)
+    return values
 
 
 def terminate_group(group, number):
@@ -359,7 +375,7 @@ printf 'ready\n' > "$COMPLETION_TEST_READY"
 '''
 
 
-def report_case(report, name, line, expected, status, observed=None, detail=None, backend_argv=None, comparison=None):
+def report_case(report, name, line, expected, status, observed=None, detail=None, backend_argv=None, comparison=None, markers=None):
     result = dict(case=name, shell=report["shell"], executable=report["executable"],
                   input=line, expected=expected, observed=observed, status=status)
     if name in CONTINUATIONS:
@@ -370,6 +386,12 @@ def report_case(report, name, line, expected, status, observed=None, detail=None
         result["backend_argv"] = backend_argv
     if comparison is not None:
         result.update(comparison)
+    if markers is not None:
+        result["static_values_markers"] = markers
+        if (status == "pass" and report["shell"] == "bash"
+                and name.startswith("format-quoted-empty-") and "-closed" in name
+                and markers and all(value == "0" for value in markers)):
+            result["suggestion_status"] = "preserved-without-suggestions"
     report["cases"].append(result)
     print(json.dumps(result), flush=True)
 
@@ -397,6 +419,9 @@ def check_shell(binary, shell, executable, output):
             argument_log = output / f"{shell}-backend-argv.nul"
             argument_log.touch(mode=0o600)
             report["backend_argument_log"] = str(argument_log)
+            marker_log = output / f"{shell}-static-values-markers.nul"
+            marker_log.touch(mode=0o600)
+            report["backend_marker_log"] = str(marker_log)
             capture = root / "captured-buffers"
             capture_mode = root / "capture-mode"
             ready, version = root / "ready", root / "version"
@@ -410,6 +435,7 @@ def check_shell(binary, shell, executable, output):
                 "COMPLETION_TEST_ADAPTER": str(adapter), "COMPLETION_TEST_CAPTURE": str(capture),
                 "COMPLETION_TEST_READY": str(ready), "COMPLETION_TEST_VERSION": str(version),
                 "COMPLETION_TEST_ARGV": str(argument_log), "COMPLETION_TEST_BINARY": str(binary),
+                "COMPLETION_TEST_MARKERS": str(marker_log),
                 "COMPLETION_TEST_HISTORY": str(root / "capture-history"),
                 "COMPLETION_TEST_CAPTURE_MODE": str(capture_mode),
             }
@@ -427,8 +453,10 @@ def check_shell(binary, shell, executable, output):
                 report["capture_mode"] = capture_mode.read_text(encoding="utf-8").strip()
                 for index, (name, line, expected) in enumerate(CASES):
                     argument_offset = argument_log.stat().st_size
+                    marker_offset = marker_log.stat().st_size
                     observed = session.capture(line, capture, index, CONTINUATIONS.get(name, ""))
                     calls = backend_arguments(argument_log.read_bytes()[argument_offset:])
+                    markers = backend_markers(marker_log.read_bytes()[marker_offset:])
                     matches, comparison = compare_completion(name, expected, observed)
                     status = "pass" if matches else "fail"
                     detail = None
@@ -438,7 +466,13 @@ def check_shell(binary, shell, executable, output):
                     elif any(not call or call[0] != "__complete" for call in calls):
                         status = "error"
                         detail = "The shell invoked the binary outside the completion backend."
-                    report_case(report, name, line, expected, status, observed, detail, calls, comparison)
+                    elif len(markers) != len(calls):
+                        status = "error"
+                        detail = "Backend marker and argument logs have different call counts."
+                    elif name == "format-empty-assigned" and any(value != "1" for value in markers):
+                        status = "error"
+                        detail = "The current adapter did not enable static suggestions for the unquoted empty assignment."
+                    report_case(report, name, line, expected, status, observed, detail, calls, comparison, markers)
                     next_case = index + 1
             finally:
                 if session is not None:

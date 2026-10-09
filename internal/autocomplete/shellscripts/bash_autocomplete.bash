@@ -69,9 +69,9 @@ ____APPNAME___bash_autocomplete() {
       completion_args[argument]="$value"
     done
     local static_values=1
-    # Bash 3.2's filename mode escapes closed empty quotes when matches have
-    # no common prefix. Keep that argument intact until a value prefix exists.
-    if [[ ${BASH_VERSINFO[0]} -lt 4 && ( "${2-}" == "''" || "${2-}" == '""' ) ]]; then
+    # Filename mode can escape closed empty quotes without a common prefix.
+    # Keep that argument intact until the user supplies a value prefix.
+    if [[ "${2-}" == "''" || "${2-}" == '""' ]]; then
       static_values=0
     fi
     completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_STATIC_VALUES="$static_values" "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)

@@ -5,7 +5,7 @@ Load the existing [completion script](shell-completion.md) for your shell.
 Reload Bash and Zsh completion after upgrading to enable value suggestions.
 Older loaded Bash and Zsh scripts retain their previous value behavior.
 
-Bash 3.2 leaves closed empty quotes unchanged without suggestions.
+Bash leaves closed empty quotes unchanged without suggestions.
 Type a value prefix inside the quotes before pressing Tab.
 
 Type a prefix, then press Tab:
