@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/urfave/cli/v3"
 )
@@ -79,15 +80,39 @@ func TestOutputPolicyProtectsMachineErrors(t *testing.T) {
 func TestVerboseResultNeverIncludesFailureDetails(t *testing.T) {
 	var output bytes.Buffer
 	failure := errors.New("synthetic-secret https://example.invalid/?token=synthetic prompt=private")
-	if err := writeVerboseResult(&output, "models list", "json", failure); err != nil {
+	if err := writeVerboseResult(&output, "models list", "json", failure, 1250*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "Command: models list\nFormat option: json\nCommand result: failed\n" {
+	if output.String() != "Command: models list\nFormat option: json\nElapsed: 1.25s\nCommand result: failed\n" {
 		t.Fatalf("unexpected verbose output: %q", output.String())
 	}
 	cause := errors.New("synthetic sink failure")
-	if err := writeVerboseResult(outputPolicyFailureWriter{cause}, "models list", "json", nil); !errors.Is(err, cause) {
+	if err := writeVerboseResult(outputPolicyFailureWriter{cause}, "models list", "json", nil, 0); !errors.Is(err, cause) {
 		t.Fatalf("diagnostic write failure disappeared: %v", err)
+	}
+}
+
+func TestVerboseResultRoundsElapsedToMilliseconds(t *testing.T) {
+	for _, tc := range []struct {
+		elapsed time.Duration
+		want    string
+	}{
+		{0, "0s"},
+		{499 * time.Microsecond, "0s"},
+		{1500 * time.Microsecond, "2ms"},
+		{1250 * time.Millisecond, "1.25s"},
+		{time.Minute + 2345*time.Millisecond, "1m2.345s"},
+	} {
+		t.Run(tc.elapsed.String(), func(t *testing.T) {
+			var output bytes.Buffer
+			if err := writeVerboseResult(&output, "models list", "json", nil, tc.elapsed); err != nil {
+				t.Fatal(err)
+			}
+			want := "Command: models list\nFormat option: json\nElapsed: " + tc.want + "\nCommand result: completed\n"
+			if output.String() != want {
+				t.Fatalf("elapsed diagnostic changed: got %q, want %q", output.String(), want)
+			}
+		})
 	}
 }
 

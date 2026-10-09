@@ -31,13 +31,25 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var imageModelsFailure *imageModelsError
 	var voiceTypeFailure *voiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
+	var downloadFailure *downloadSaveError
+	var receiptFailure *saveReceiptError
+	var navigationFailure *listNavigationError
+	var modelsListFailure *modelsListError
 	switch {
+	case errors.As(failure, &downloadFailure):
+		return downloadFailure.message
+	case errors.As(failure, &receiptFailure):
+		return receiptFailure.Error()
 	case errors.Is(failure, context.Canceled):
 		return "Request canceled."
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
 		return "The request timed out. The API may have received it; check its status before repeating it."
+	case errors.As(failure, &modelsListFailure):
+		return modelsListFailure.Error()
 	case errors.As(failure, &imageFailure):
 		return imageFailure.message
+	case errors.As(failure, &navigationFailure):
+		return navigationFailure.Error()
 	case errors.As(failure, &streamFailure):
 		return streamFailure.message + "\nOutput may be incomplete."
 	case errors.As(failure, &typeError):
@@ -94,6 +106,7 @@ func knownLocalError(command *cli.Command, message string) string {
 		"cannot follow HTTP 307 redirect: streamed multipart uploads are not replayable",
 		"cannot follow HTTP 308 redirect: streamed multipart uploads are not replayable",
 		"stdin has already been read by another parameter; it can only be read once",
+		"multiple request parameters use stdin; select only one stdin consumer",
 		"cannot read from stdin: stdin is already being used for the request body",
 		"cannot read from stdin: stdin was already consumed by piped YAML/JSON input",
 		"Setup help takes no additional arguments.",

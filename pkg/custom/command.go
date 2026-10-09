@@ -21,6 +21,7 @@ func ConfigureCommand(root *cli.Command) {
 	describeRequestInputs(root)
 	registerImageModels(root)
 	configureReadableOutput(root)
+	configureModelsList(root)
 	configureImageSaving(root)
 	configureImagePickerCompletion(root)
 	configureImagePickerShellSetup(root)

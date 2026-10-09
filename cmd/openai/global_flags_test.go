@@ -93,7 +93,7 @@ func TestMainGlobalFlagsPlacementHeadersAndOutput(t *testing.T) {
 						globalFlagsAt([]string{"models", "list"}, flags, position)...)
 					wantStderr := ""
 					if format == "text" {
-						wantStderr = "Summary; use --format json for full data.\n"
+						wantStderr = "Full data: --format json.\n"
 					}
 					if got.code != 0 || got.stderr != wantStderr {
 						t.Fatalf("command failed: %+v", got)

@@ -51,6 +51,7 @@ func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 		option.WithHeader("X-Stainless-Runtime", "cli"),
 		option.WithHeader("X-Stainless-CLI-Command", cmd.FullName()),
 		option.WithMiddleware(captureAudioText),
+		option.WithMiddleware(captureSaveReceiptPolicy(cmd)),
 	}
 	if cmd.IsSet("api-key") {
 		opts = append(opts, option.WithAPIKey(cmd.String("api-key")))
@@ -263,31 +264,45 @@ func isOutputBrokenPipe(err error) bool {
 // WriteBinaryResponse writes a binary response to stdout or a file.
 //
 // Takes in a stdout reference so we can test this function without overriding os.Stdout in tests.
-func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (string, error) {
-	defer response.Body.Close()
+func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (message string, err error) {
+	body := &downloadResponseBody{ReadCloser: response.Body}
+	copyResponse := *response
+	copyResponse.Body = body
+	response = &copyResponse
+	defer func() {
+		if closeErr := body.Close(); closeErr != nil && !errors.Is(err, closeErr) {
+			if err == nil {
+				outcome := "Download incomplete. Output may contain partial bytes."
+				if message != "" {
+					outcome = "Download incomplete. The destination may contain partial output."
+					if outfile == "" {
+						outcome = "Download incomplete. An automatically selected file may remain with partial output."
+					}
+				}
+				err = &downloadSaveError{outcome, closeErr}
+			} else {
+				err = errors.Join(err, closeErr)
+			}
+		}
+		if err != nil {
+			message = ""
+		}
+		message, err = reportResponseSaveReceipt(response, message, err)
+	}()
 	if handled, message, err := writeReadableSpeech(response, stdout, outfile); handled {
 		return message, err
 	}
 
 	switch outfile {
 	case "-", "/dev/stdout":
-		_, err := io.Copy(stdout, response.Body)
-		return "", err
+		return "", copyBinaryOutput(downloadContext(response), stdout, response.Body)
 	case "":
 		if !isTerminal(os.Stdout) {
-			_, err := io.Copy(stdout, response.Body)
-			return "", err
+			return "", copyBinaryOutput(downloadContext(response), stdout, response.Body)
 		}
 		return writeAutomaticBinaryResponse(response, stdout)
 	default:
-		file, err := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-		if err != nil {
-			return "", err
-		}
-		if err := copyDownloadFile(file, response.Body); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Wrote output to: %s", outfile), nil
+		return writeManagedBinaryResponse(response, outfile)
 	}
 }
 
@@ -296,10 +311,10 @@ func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile stri
 func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (string, error) {
 	buffered := bufio.NewReader(response.Body)
 	sample, err := buffered.Peek(512 + utf8.UTFMax - 1)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", err
+	if err != nil && err != io.EOF {
+		return "", &downloadSaveError{"Download incomplete. No automatic destination file was created.", err}
 	}
-	if !errors.Is(err, io.EOF) && !utf8.Valid(sample) {
+	if err != io.EOF && !utf8.Valid(sample) {
 		for trim := 1; trim < utf8.UTFMax && trim <= len(sample); trim++ {
 			boundary := len(sample) - trim
 			if utf8.Valid(sample[:boundary]) && !utf8.FullRune(sample[boundary:]) {
@@ -309,42 +324,47 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 		}
 	}
 	if isUTF8TextFile(sample) {
-		return "", jsonview.WriteTerminalText(stdout, buffered)
+		if err := jsonview.WriteTerminalText(stdout, buffered); err != nil {
+			return "", &downloadSaveError{"Download incomplete. Output may contain partial bytes.", err}
+		}
+		return "", nil
 	}
 
 	file, err := createDownloadFile(response, sample)
 	if err != nil {
-		return "", err
+		return "", &downloadSaveError{"Download incomplete. An automatic destination file could not be created.", err}
 	}
 	filename := file.Name()
 	owned, err := file.Stat()
 	if err != nil {
-		if closeErr := file.Close(); closeErr != nil {
-			return "", errors.Join(err, closeErr)
+		return "", &downloadSaveError{
+			"Download incomplete. An automatically selected file may remain with partial output.",
+			errors.Join(err, file.Close()),
 		}
-		return "", err
 	}
-	if err := copyDownloadFile(file, buffered); err != nil {
-		return "", err
-	}
-	current, err := os.Lstat(filename)
-	if err != nil {
-		return "", err
+	copyErr := copyDownloadFile(file, buffered)
+	current, verifyErr := os.Lstat(filename)
+	if verifyErr != nil {
+		return "", &downloadSaveError{
+			"Download incomplete. The automatic destination could not be verified; partial output may remain.",
+			errors.Join(copyErr, verifyErr),
+		}
 	}
 	if !os.SameFile(current, owned) {
-		return "", fmt.Errorf("download destination changed during streaming: %w", os.ErrInvalid)
+		return "", &downloadSaveError{
+			"Download incomplete. The automatic destination changed; downloaded bytes may remain elsewhere.",
+			errors.Join(copyErr, fmt.Errorf("download destination changed during streaming: %w", os.ErrInvalid)),
+		}
+	}
+	if copyErr != nil {
+		return "", &downloadSaveError{"Download incomplete. The automatically selected file may contain partial output.", copyErr}
 	}
 	return fmt.Sprintf("Wrote output to: %s", filename), nil
 }
 
 func copyDownloadFile(file io.WriteCloser, source io.Reader) (err error) {
-	defer func() {
-		if closeErr := file.Close(); err == nil && closeErr != nil {
-			err = closeErr
-		}
-	}()
-	_, err = io.Copy(file, source)
-	return err
+	defer func() { err = errors.Join(err, file.Close()) }()
+	return copyDownloadData(context.Background(), file, source)
 }
 
 // Return a writable file handle to a new file, which attempts to choose a good filename
@@ -554,6 +574,7 @@ func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
 
 func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
+	stopModelsListLoading(opts)
 	if err := opts.Context.Err(); err != nil {
 		return err
 	}
@@ -648,6 +669,7 @@ func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, op
 
 func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectTransformer transformerSelector) (resultErr error) {
 	opts.setDefaults()
+	stopModelsListLoading(opts)
 	if presentation, ok := savedImagePresentation(opts, OutputStreamEvent); ok {
 		return presentation.output(func(out io.Writer) error {
 			return saveFinalImageStream(opts.Context, source, presentation.plan, out)
@@ -664,12 +686,18 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	if itemsToDisplay == 0 {
 		return errors.Join(opts.Context.Err(), source.Err())
 	}
+	if handled, err := showModelsListSelection(source, itemsToDisplay, opts); handled {
+		return err
+	}
 	iter := &outputIterator[T]{
 		source:    source,
 		context:   opts.Context,
 		transform: selectOutputTransformer(opts, selectTransformer),
 		route:     transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind},
 		remaining: itemsToDisplay,
+	}
+	if handled, err := showModelsListViewer(source, iter, opts); handled {
+		return err
 	}
 	opts.Format = resolvedOutputFormat(opts)
 	if opts.Format == "text" {
@@ -699,23 +727,25 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	// The existing pager writes to process stdout. Other injected destinations
 	// must stay on their own writer, including error output on stderr.
 	stdout, processStdout := opts.Stdout.(*os.File)
-	if opts.OutputKind == OutputStreamEvent || !processStdout || stdout != os.Stdout {
-		writeEvents := func(out io.Writer) error {
-			for iter.Next() {
-				formatted, err := formatJSON(iter.Current().Result, opts)
-				if err != nil {
-					return errors.Join(err, iter.Err())
-				}
-				if _, err := (outputWriter{ctx: opts.Context, out: out}).Write(formatted); err != nil {
-					return errors.Join(err, iter.Err())
-				}
+	writeUnpaged := func(destination io.Writer) error {
+		for iter.Next() {
+			formatted, err := formatJSON(iter.Current().Result, opts)
+			if err != nil {
+				return errors.Join(err, iter.Err())
 			}
-			return iter.Err()
+			if _, err := (outputWriter{ctx: opts.Context, out: destination}).Write(formatted); err != nil {
+				return errors.Join(err, iter.Err())
+			}
 		}
-		if processStdout && stdout == os.Stdout {
-			return streamToStdout(func(stdout *os.File) error { return writeEvents(stdout) })
-		}
-		return writeEvents(opts.Stdout)
+		return iter.Err()
+	}
+	if !processStdout || stdout != os.Stdout {
+		return writeUnpaged(opts.Stdout)
+	}
+	// Event streams cannot wait for a page of output. Preserve stdout's
+	// signal/error handling while delivering each formatted event.
+	if opts.OutputKind == OutputStreamEvent {
+		return streamToStdout(func(out *os.File) error { return writeUnpaged(out) })
 	}
 
 	terminalWidth, terminalHeight, err := term.GetSize(os.Stdout.Fd())

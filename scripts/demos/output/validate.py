@@ -2,6 +2,7 @@
 """Validate parser outcomes, original records, arrival order, and output routing."""
 import json
 import pathlib
+import re
 import sys
 
 
@@ -50,9 +51,12 @@ def main():
     check((controls / "quiet.txt").read_bytes() == expected_data, "quiet discarded or changed selected data")
     check((controls / "quiet.stderr").read_bytes() == b"", "quiet printed optional feedback")
     check((controls / "model.txt").read_bytes() == expected_data, "verbose contaminated stdout")
-    expected_details = ("Summary; use --format json for full data.\n"
+    expected_details = ("Full data: --format json.\n"
                         "Command: models retrieve\nFormat option: auto\nCommand result: completed\n")
-    check((controls / "details.txt").read_text() == expected_details, "verbose stderr contract changed")
+    details = (controls / "details.txt").read_text()
+    elapsed = re.findall(r"^Elapsed: (?:(?:\d+h)?(?:\d+m)?\d+(?:\.\d{1,3})?s|\d+ms)\n", details, re.MULTILINE)
+    check(len(elapsed) == 1, "verbose must report one nonnegative elapsed duration")
+    check(details.replace(elapsed[0], "", 1) == expected_details, "verbose stderr contract changed")
 
     model_request = {"method": "GET", "path": "/v1/models/demo-model"}
     stream_request = {"method": "POST", "path": "/v1/responses",

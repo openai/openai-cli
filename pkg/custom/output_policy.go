@@ -8,12 +8,106 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
 
 type outputPolicyKey struct{}
+type outputInvocationKey struct{}
+
+// One synchronous invocation owns this state. Nested actions retain its first identity.
+type outputInvocation struct {
+	command  *cli.Command
+	label    string
+	protocol bool
+	context  context.Context
+}
+
+// RunWithOutputPolicy reports after the complete CLI run and its cleanup return.
+// Direct Command.Run callers retain the existing action-scoped reporting boundary.
+func RunWithOutputPolicy(ctx context.Context, root *cli.Command, run func(context.Context) error) error {
+	invocation := &outputInvocation{}
+	ctx = context.WithValue(ctx, outputInvocationKey{}, invocation)
+	started := time.Now()
+	err := run(ctx)
+	elapsed := time.Since(started)
+	err = exposeInvocationErrors(err)
+	if invocation.command == nil {
+		// Successful help, version, and completion need no action report.
+		if err == nil || root.SkipFlagParsing {
+			return err
+		}
+		invocation.command, invocation.label, invocation.protocol = parsedOutputCommand(root)
+		if invocation.command == nil || root.Bool("help") || root.Bool("version") || invocation.command.Bool("help") {
+			return err
+		}
+	} else {
+		ctx = invocation.context
+	}
+	ctx = outputPolicyContext(ctx, invocation.command)
+	return finishOutputPolicy(ctx, invocation.command, invocation.label, invocation.protocol, err, elapsed)
+}
+
+// The framework hides combined Action/After errors behind Errors(), not Unwrap().
+// Adapt only those containers and the callback's joined cleanup errors.
+func exposeInvocationErrors(err error) error {
+	var causes []error
+	switch combined := err.(type) {
+	case cli.MultiError:
+		causes = combined.Errors()
+		for i, cause := range causes {
+			causes[i] = exposeInvocationErrors(cause)
+		}
+		// The opaque original retains its identity without hiding ordered children.
+		causes = append([]error{err}, causes...)
+	case interface{ Unwrap() []error }:
+		for _, cause := range combined.Unwrap() {
+			causes = append(causes, exposeInvocationErrors(cause))
+		}
+		// Visit normalized operation errors before joined cleanup errors.
+		causes = append(causes, err)
+	default:
+		return err
+	}
+	return &outputInvocationError{error: err, causes: causes}
+}
+
+type outputInvocationError struct {
+	error
+	causes []error
+}
+
+func (e *outputInvocationError) Unwrap() []error { return e.causes }
+
+// Read parsed selectors, but emit only names from the declared command tree.
+func parsedOutputCommand(root *cli.Command) (*cli.Command, string, bool) {
+	command := root
+	var path []string
+	for command != nil {
+		if command.Name == "help" || command.Name == "__complete" {
+			return nil, "", false
+		}
+		if command.Args() == nil || !command.Args().Present() {
+			break
+		}
+		child := command.Command(command.Args().First())
+		if child == nil {
+			break
+		}
+		path = append(path, child.Name)
+		command = child
+	}
+	if command == nil {
+		return nil, "", false
+	}
+	label := strings.Join(path, " ")
+	if label == "" {
+		label = root.Name
+	}
+	return command, label, command.Name == "@completion"
+}
 
 type outputPolicy struct {
 	quiet       bool
@@ -45,9 +139,8 @@ func outputDiagnosticsAllowed(ctx context.Context) bool {
 func outputPolicyContext(ctx context.Context, command *cli.Command) context.Context {
 	root := command.Root()
 	return context.WithValue(ctx, outputPolicyKey{}, outputPolicy{
-		quiet: root.Bool("quiet"),
-		diagnostics: !root.Bool("quiet") && errorOutputFormat(root) == "text" &&
-			root.String("transform-error") == "",
+		quiet:       root.Bool("quiet"),
+		diagnostics: commandAllowsOutputDiagnostics(command),
 	})
 }
 
@@ -87,27 +180,18 @@ func configureOutputPolicy(root *cli.Command) {
 			label := strings.Join(path, " ")
 			protocol := command.Name == "@completion"
 			command.Action = func(ctx context.Context, command *cli.Command) error {
-				root := command.Root()
 				ctx = outputPolicyContext(ctx, command)
+				if invocation, _ := ctx.Value(outputInvocationKey{}).(*outputInvocation); invocation != nil {
+					if invocation.command == nil {
+						invocation.command, invocation.label, invocation.protocol = command, label, protocol
+						invocation.context = ctx
+					}
+					return next(ctx, command)
+				}
+				started := time.Now()
 				err := next(ctx, command)
-				if protocol && !command.Bool("install-picker") && !command.Bool("uninstall-picker") ||
-					!root.Bool("verbose") || !outputDiagnosticsAllowed(ctx) {
-					return err
-				}
-				// Optional feedback must not restart output after an interrupted action.
-				var exit cli.ExitCoder
-				if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-					errors.As(err, &exit) && (exit.ExitCode() == 124 || exit.ExitCode() == 130 || exit.ExitCode() == 143) {
-					return err
-				}
-				format := strings.ToLower(root.String("format"))
-				if format == "" {
-					format = "auto"
-				}
-				if !slices.Contains(OutputFormats, format) {
-					format = "unknown"
-				}
-				return errors.Join(err, writeVerboseResult(os.Stderr, label, format, err))
+				elapsed := time.Since(started)
+				return finishOutputPolicy(ctx, command, label, protocol, err, elapsed)
 			}
 		}
 		for _, child := range command.Commands {
@@ -117,14 +201,41 @@ func configureOutputPolicy(root *cli.Command) {
 	visit(root, nil)
 }
 
-// Only static command declarations and validated format names reach this sink.
+func finishOutputPolicy(ctx context.Context, command *cli.Command, label string, protocol bool, err error, elapsed time.Duration) error {
+	root := command.Root()
+	if protocol && !command.Bool("install-picker") && !command.Bool("uninstall-picker") ||
+		!root.Bool("verbose") || !outputDiagnosticsAllowed(ctx) {
+		return err
+	}
+	// Optional feedback must not restart output after an interrupted action.
+	var exit cli.ExitCoder
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.As(err, &exit) && (exit.ExitCode() == 124 || exit.ExitCode() == 130 || exit.ExitCode() == 143) {
+		return err
+	}
+	format := strings.ToLower(root.String("format"))
+	if format == "" {
+		format = "auto"
+	}
+	if !slices.Contains(OutputFormats, format) {
+		format = "unknown"
+	}
+	diagnosticErr := writeVerboseResult(os.Stderr, label, format, err, elapsed)
+	if diagnosticErr != nil {
+		diagnosticErr = &diagnosticWriteError{diagnosticErr}
+	}
+	return errors.Join(err, diagnosticErr)
+}
+
+// Diagnostics use declared command names, validated formats, local timing, and a fixed outcome.
 // An action returning nil confirms command completion, not asynchronous API work.
-func writeVerboseResult(out io.Writer, command, format string, failure error) error {
+func writeVerboseResult(out io.Writer, command, format string, failure error, elapsed time.Duration) error {
 	result := "completed"
 	if failure != nil {
 		result = "failed"
 	}
 	_, err := fmt.Fprintf(outputWriter{ctx: context.Background(), out: out},
-		"Command: %s\nFormat option: %s\nCommand result: %s\n", command, format, result)
+		"Command: %s\nFormat option: %s\nElapsed: %s\nCommand result: %s\n",
+		command, format, elapsed.Round(time.Millisecond).String(), result)
 	return err
 }
