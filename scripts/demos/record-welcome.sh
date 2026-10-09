@@ -22,9 +22,10 @@ if [ "$demo_preview_rows" -gt "$demo_rows" ]; then
 fi
 demo_no_color="${NO_COLOR:-}"
 demo_theme="${DEMO_THEME:-dark}"
+demo_ansi_palette='000000,cd3131,0dbc79,e5e510,2472c8,bc3fbc,11a8cd,e5e5e5,666666,f14c4c,23d18b,f5f543,3b8eea,d670d6,29b8db,ffffff'
 case "$demo_theme" in
-  dark) demo_palette=dracula; demo_default_colorfgbg='15;0';;
-  light) demo_palette=github-light; demo_default_colorfgbg='0;15';;
+  dark) demo_palette="171717,eeeeee,$demo_ansi_palette"; demo_default_colorfgbg='15;0';;
+  light) demo_palette="fafafa,202020,$demo_ansi_palette"; demo_default_colorfgbg='0;15';;
   *) echo 'DEMO_THEME must be dark or light.' >&2; exit 2;;
 esac
 demo_colorfgbg="${COLORFGBG:-$demo_default_colorfgbg}"

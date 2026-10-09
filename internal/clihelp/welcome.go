@@ -73,19 +73,17 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 	if width < 29 || required+4 > width {
 		return ""
 	}
-	focus, muted, middle, depth := "#3159BC", "#657087", "#466BC6", "#6785CD"
+	focus, muted := "#3159BC", "#657087"
 	if dark {
-		focus, muted, middle, depth = "#8AA8FF", "#A4ACC2", "#7192E6", "#5675BC"
-	}
-	// Preserve the existing theme. Limit depth to terminals with enough colors.
-	if profile == colorprofile.ANSI {
-		middle, depth = focus, focus
+		focus, muted = "#8AA8FF", "#A4ACC2"
 	}
 	heading := lipgloss.NewStyle().Bold(true)
 	note := lipgloss.NewStyle().Foreground(lipgloss.Color(muted))
-	blue := lipgloss.NewStyle().Foreground(lipgloss.Color(focus))
-	mid := lipgloss.NewStyle().Foreground(lipgloss.Color(middle))
-	back := lipgloss.NewStyle().Foreground(lipgloss.Color(depth))
+	// Inherit the terminal foreground; reuse the existing muted tone for depth.
+	wordmark, depth := lipgloss.NewStyle(), note
+	if profile == colorprofile.ANSI {
+		depth = wordmark
+	}
 	padding := 1
 	if required+6 <= width {
 		padding = 2
@@ -106,9 +104,9 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 		padding, cardWidth = 2, 56
 		// Three terminal-cell rows form the wordmark. Keep literal identity and
 		// version alongside it so the art never carries essential information.
-		content = blue.Render("▄▀▀▄ █▀▀▄ █▀▀▀ █▄  █ ▄▀▀▄ ▀█▀") + "   " + heading.Render(welcomeTitle) + "\n" +
-			mid.Render("█  █ █▄▄▀ █▀▀  █ █ █ █▄▄█  █ ") + "   " + note.Render(version) + "\n" +
-			back.Render("▀▄▄▀ █    █▄▄▄ █  ▀█ █  █ ▄█▄") + "\n" +
+		content = wordmark.Render("▄▀▀▄ █▀▀▄ █▀▀▀ █▄  █ ▄▀▀▄ ▀█▀") + "   " + heading.Render(welcomeTitle) + "\n" +
+			wordmark.Render("█  █ █▄▄▀ █▀▀  █ █ █ █▄▄█  █ ") + "   " + note.Render(version) + "\n" +
+			depth.Render("▀▄▄▀ █    █▄▄▄ █  ▀█ █  █ ▄█▄") + "\n" +
 			note.Render("The OpenAI API in your terminal.")
 	}
 	frame := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color(focus)).Padding(0, padding).Width(cardWidth)

@@ -3,7 +3,9 @@
 The recorder runs bare `openai` on real before and after binaries.
 At 56 columns and wider, a six-row blue frame contains a three-row OPENAI wordmark.
 Literal OpenAI CLI text and the runtime version sit beside the decorative lettering.
-Three blue tones add depth; 16-color terminals use one blue for the lettering.
+The lettering inherits terminal foreground and uses the existing muted tone for depth.
+The full border retains the CLI focus blue. No background color is emitted.
+Sixteen-color terminals use one foreground for the lettering.
 Below 56 columns, the card uses a text layout without the wordmark.
 Below 40 columns, that layout uses four rows instead of six.
 Versions wider than 16 cells also use the text layout, preserving the complete version.
@@ -52,8 +54,9 @@ DEMO_THEME=light \
 ```
 
 `DEMO_THEME` accepts `dark` or `light` and defaults to `dark`.
-Dark captures use Dracula rendering and `COLORFGBG=15;0`.
-Light captures use GitHub Light rendering and `COLORFGBG=0;15`.
+Dark captures use neutral `#171717` with foreground `#EEEEEE` and `COLORFGBG=15;0`.
+Light captures use neutral `#FAFAFA` with foreground `#202020` and `COLORFGBG=0;15`.
+The recorder declares its ANSI palette explicitly. The CLI does not set the terminal background.
 Set `COLORFGBG` explicitly to override the application background hint.
 `COLORTERM` defaults to `truecolor`; set it explicitly to test another advertised color capability.
 The PTY always uses `TERM=xterm-256color`.
