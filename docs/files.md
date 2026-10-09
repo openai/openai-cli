@@ -99,7 +99,7 @@ Inspect it: openai files get file-example
 
 The receipt uses the returned filename, size, ID, and purpose.
 The CLI omits the size when the API does not supply it.
-The next command inspects metadata without writing files or overwriting the upload source.
+The next command inspects metadata without downloading contents or selecting a local destination.
 It preserves the executable and selected project, organization, and safe base URL.
 Keep the same environment when copying it.
 The CLI omits the suggestion when credential, header, or private-path overrides cannot be reproduced safely.
@@ -171,7 +171,7 @@ openai files get file-example --transform filename --raw-output
 
 Interactive receipts do not appear in JSON, extraction, or piped upload output.
 `--quiet` suppresses upload receipts and retains the selected metadata output.
-`--format-error` and `--transform-error` affect errors only; they do not change successful upload output.
+Error-output options do not change a successful upload's receipt or response data.
 The receipt's suggested command preserves the executable used for the upload.
 See [reading command results](readable-output.md) for output formats.
 
