@@ -659,6 +659,7 @@ func FlagOptions(
 			return nil, err
 		}
 		options = append(options, option.WithRequestBody("application/json", bodyBytes))
+		options = append(options, agentsResolvedRequestOptions(cmd, requestContents.Headers, headers, bodyBytes)...)
 		for _, observe := range observeJSON {
 			observe(bodyBytes)
 		}

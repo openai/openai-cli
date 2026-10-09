@@ -15,6 +15,9 @@ func SummarizeResource(ctx context.Context, value gjson.Result, route Route) (gj
 	if err := ctx.Err(); err != nil {
 		return gjson.Result{}, false, err
 	}
+	if summary, hidden, err := summarizeAgentsResource(ctx, value, route); summary.Exists() || err != nil {
+		return summary, hidden, err
+	}
 	operation, ok := strings.CutPrefix(route.Operation, "(resource) ")
 	resource, method, found := strings.Cut(operation, " > (method) ")
 	if !ok || !found || !(route.OutputKind == OutputResponse && method == "retrieve" ||
