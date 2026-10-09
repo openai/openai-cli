@@ -1,9 +1,14 @@
 # Welcome banner comparison
 
 The recorder runs bare `openai` on real before and after binaries.
-The blue frame uses six rows and 40 columns when space permits.
-Below 40 columns, it uses a compact four-row layout.
-If the complete version and greeting cannot fit, the CLI preserves help without a banner.
+At 56 columns and wider, a six-row blue frame contains a three-row OPENAI wordmark.
+Literal OpenAI CLI text and the runtime version sit beside the decorative lettering.
+Three blue tones add depth; 16-color terminals use one blue for the lettering.
+Below 56 columns, the card uses a text layout without the wordmark.
+Below 40 columns, that layout uses four rows instead of six.
+Versions wider than 16 cells also use the text layout, preserving the complete version.
+Terminals below 29 columns omit the optional card.
+If the complete identity and version cannot fit, the CLI preserves help without a banner.
 It uses the shared capture lifecycle and the existing rejecting loopback fixture.
 It supplies no API credentials and requires zero API requests.
 Temporary HOME, XDG directories, working directories, and PATH isolate each scene.
@@ -93,6 +98,9 @@ Stills use the complete replay's final frame so that burst output appears in the
 The crops show approximately `DEMO_PREVIEW_ROWS` rows, which defaults to 32.
 That setting cannot exceed `DEMO_ROWS`.
 The crops supplement full evidence and do not prove that all help fits an ordinary viewport.
+Complete help normally scrolls the welcome card out of an 80×24 terminal's final viewport.
+Review the final viewport and returned shell prompt as well as the opening crop.
+The recording scene prints its return-prompt marker after the actual CLI exits.
 
 Inspect both screenshots and the comparison GIF before sharing them.
 Keep generated media outside Git.

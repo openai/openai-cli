@@ -69,40 +69,50 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 	if version != "" && version[0] >= '0' && version[0] <= '9' {
 		version = "v" + version
 	}
-	const greeting = "What are we making today?"
-	required := max(ansi.StringWidth(welcomeTitle+"  "+version), ansi.StringWidth(greeting))
-	if required+4 > width {
+	required := max(ansi.StringWidth(welcomeTitle+"  "+version), ansi.StringWidth("The OpenAI API"))
+	if width < 29 || required+4 > width {
 		return ""
 	}
-	// Match the image picker and tokenizer palette without importing their
-	// private presentation helpers, which depend on this package.
-	focus, muted := "#3159BC", "#657087"
+	focus, muted, middle, depth := "#3159BC", "#657087", "#466BC6", "#6785CD"
 	if dark {
-		focus, muted = "#8AA8FF", "#A4ACC2"
+		focus, muted, middle, depth = "#8AA8FF", "#A4ACC2", "#7192E6", "#5675BC"
 	}
-	// Preserve the terminal foreground when its background hint is absent.
+	// Preserve the existing theme. Limit depth to terminals with enough colors.
+	if profile == colorprofile.ANSI {
+		middle, depth = focus, focus
+	}
 	heading := lipgloss.NewStyle().Bold(true)
 	note := lipgloss.NewStyle().Foreground(lipgloss.Color(muted))
+	blue := lipgloss.NewStyle().Foreground(lipgloss.Color(focus))
+	mid := lipgloss.NewStyle().Foreground(lipgloss.Color(middle))
+	back := lipgloss.NewStyle().Foreground(lipgloss.Color(depth))
 	padding := 1
 	if required+6 <= width {
 		padding = 2
 	}
-	// Width includes borders and padding. Keep one title/version row intact.
 	cardWidth := min(width, max(40, required+2+2*padding))
 	contentWidth := cardWidth - 2 - 2*padding
-	frame := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color(focus)).Padding(0, padding).Width(cardWidth)
 	title := heading.Render(welcomeTitle)
 	if version != "" {
-		gap := contentWidth - ansi.StringWidth(welcomeTitle) - ansi.StringWidth(version)
-		title += strings.Repeat(" ", gap) + note.Render(version)
+		title += strings.Repeat(" ", contentWidth-ansi.StringWidth(welcomeTitle)-ansi.StringWidth(version)) + note.Render(version)
 	}
-	var card string
-	// Small terminals retain the compact layout; wider terminals get breathing room.
-	if width < 40 {
-		card = frame.Render(title + "\n" + note.Render(greeting))
-	} else {
-		card = frame.Padding(1, padding).Render(title + "\n" + note.Render(greeting))
+	content := title + "\n" + note.Render("The OpenAI API")
+	if width >= 40 {
+		content = "\n" + content + "\n"
 	}
+	// Wide terminals get a six-row wordmark. Narrow terminals and long versions
+	// retain the compact text layout without truncating identity or version.
+	if width >= 56 && ansi.StringWidth(version) <= 16 {
+		padding, cardWidth = 2, 56
+		// Three terminal-cell rows form the wordmark. Keep literal identity and
+		// version alongside it so the art never carries essential information.
+		content = blue.Render("▄▀▀▄ █▀▀▄ █▀▀▀ █▄  █ ▄▀▀▄ ▀█▀") + "   " + heading.Render(welcomeTitle) + "\n" +
+			mid.Render("█  █ █▄▄▀ █▀▀  █ █ █ █▄▄█  █ ") + "   " + note.Render(version) + "\n" +
+			back.Render("▀▄▄▀ █    █▄▄▄ █  ▀█ █  █ ▄█▄") + "\n" +
+			note.Render("The OpenAI API in your terminal.")
+	}
+	frame := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color(focus)).Padding(0, padding).Width(cardWidth)
+	card := frame.Render(content)
 	var out strings.Builder
 	writer := colorprofile.Writer{Forward: &out, Profile: profile}
 	_, _ = writer.WriteString(card + "\n\n")

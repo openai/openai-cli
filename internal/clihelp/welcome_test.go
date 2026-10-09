@@ -14,7 +14,7 @@ import (
 
 func TestWelcomeLayout(t *testing.T) {
 	for _, version := range []string{"", "1.38.0", "v2.0.0", "dev", "dev-界", "1.38.0-rc.1+abc123"} {
-		for _, width := range []int{20, 28, 29, 31, 39, 40, 80} {
+		for _, width := range []int{20, 28, 29, 31, 39, 40, 55, 56, 60, 80, 100} {
 			for _, profile := range []colorprofile.Profile{colorprofile.NoTTY, colorprofile.ANSI, colorprofile.TrueColor} {
 				got := renderWelcome(version, width, profile, true)
 				if got == "" {
@@ -24,7 +24,7 @@ func TestWelcomeLayout(t *testing.T) {
 					continue
 				}
 				plain := ansi.Strip(got)
-				if !strings.Contains(plain, version) || !strings.Contains(plain, "What are we making today?") {
+				if !strings.Contains(plain, version) || !strings.Contains(plain, "The OpenAI API") {
 					t.Fatalf("missing version or greeting: %q", plain)
 				}
 				wantHeight := 4
@@ -76,35 +76,46 @@ func TestWelcomeLongVersionSizing(t *testing.T) {
 }
 
 func TestWelcomeBorderAndVersionAlignment(t *testing.T) {
-	for _, width := range []int{29, 30, 31, 39, 40, 80} {
-		got := renderWelcome("1.38.0", width, colorprofile.NoTTY, true)
+	for _, tc := range []struct{ width, card, height, titleRow, versionRow int }{
+		{29, 29, 4, 1, 1}, {30, 30, 4, 1, 1}, {31, 31, 4, 1, 1}, {39, 39, 4, 1, 1},
+		{40, 40, 6, 2, 2}, {55, 40, 6, 2, 2}, {56, 56, 6, 1, 2}, {80, 56, 6, 1, 2},
+	} {
+		got := renderWelcome("1.38.0", tc.width, colorprofile.NoTTY, true)
 		lines := strings.Split(strings.TrimSuffix(got, "\n\n"), "\n")
-		wantHeight, titleRow, padding := 4, 1, 1
-		if width >= 31 {
-			padding = 2
-		}
-		if width >= 40 {
-			wantHeight, titleRow = 6, 2
-		}
-		if len(lines) != wantHeight || !strings.HasPrefix(lines[0], "┌") || !strings.HasSuffix(lines[0], "┐") ||
-			!strings.HasPrefix(lines[wantHeight-1], "└") || !strings.HasSuffix(lines[wantHeight-1], "┘") {
-			t.Fatalf("unexpected border at width %d: %q", width, got)
-		}
-		if gotWidth := ansi.StringWidth(lines[0]); gotWidth != min(width, 40) {
-			t.Fatalf("card width = %d; want %d", gotWidth, min(width, 40))
+		if len(lines) != tc.height || !strings.HasPrefix(lines[0], "┌") || !strings.HasSuffix(lines[0], "┐") ||
+			!strings.HasPrefix(lines[tc.height-1], "└") || !strings.HasSuffix(lines[tc.height-1], "┘") {
+			t.Fatalf("unexpected border at width %d: %q", tc.width, got)
 		}
 		for _, line := range lines {
-			if ansi.StringWidth(line) != ansi.StringWidth(lines[0]) {
-				t.Fatalf("uneven border at width %d: %q", width, got)
+			if ansi.StringWidth(line) != tc.card {
+				t.Fatalf("uneven or oversized frame at width %d: %q", tc.width, got)
 			}
 		}
-		namePrefix := "│" + strings.Repeat(" ", padding) + "OpenAI CLI"
-		if !strings.HasPrefix(lines[titleRow], namePrefix) || !strings.Contains(lines[titleRow], "v1.38.0") {
-			t.Fatalf("title/version row wrapped at width %d: %q", width, got)
+		name := strings.Index(lines[tc.titleRow], welcomeTitle)
+		version := strings.Index(lines[tc.versionRow], "v1.38.0")
+		if name < 0 || version < 0 {
+			t.Fatalf("missing literal identity/version at width %d: %q", tc.width, got)
 		}
-		versionEnd := strings.Index(lines[titleRow], "v1.38.0") + len("v1.38.0")
-		if ansi.StringWidth(lines[titleRow][:versionEnd]) != ansi.StringWidth(lines[0])-padding-1 {
-			t.Fatalf("version is not right-aligned at width %d: %q", width, got)
+		if tc.titleRow != tc.versionRow {
+			if ansi.StringWidth(lines[tc.titleRow][:name]) != ansi.StringWidth(lines[tc.versionRow][:version]) {
+				t.Fatalf("wordmark metadata is misaligned: %q", got)
+			}
+		} else if !strings.HasSuffix(lines[tc.versionRow], "v1.38.0  │") {
+			t.Fatalf("compact version is not right-aligned: %q", got)
+		}
+	}
+}
+
+func TestWelcomeWordmarkFallsBackForLongVersions(t *testing.T) {
+	for _, version := range []string{"1.38.0-preview.20261009", "dev-界界界界界界界"} {
+		got := renderWelcome(version, 56, colorprofile.NoTTY, true)
+		if !strings.Contains(got, version) || strings.ContainsAny(got, "▄▀█") {
+			t.Fatalf("long version must survive in the text fallback: %q", got)
+		}
+		for _, line := range strings.Split(got, "\n") {
+			if ansi.StringWidth(line) > 56 {
+				t.Fatalf("fallback overflow: %q", got)
+			}
 		}
 	}
 }
@@ -193,7 +204,7 @@ func TestWelcomeRepeatedConfigurationInteractive(t *testing.T) {
 		if len(args) <= 1 {
 			want = 1
 		}
-		if got := strings.Count(out.String(), "What are we making today?"); got != want {
+		if got := strings.Count(out.String(), "The OpenAI API"); got != want {
 			t.Fatalf("args=%q: got %d banners; want %d", args, got, want)
 		}
 		if !strings.Contains(out.String(), "models") || want == 1 && !strings.Contains(out.String(), "v9.8.7") {

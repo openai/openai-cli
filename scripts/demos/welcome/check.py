@@ -92,7 +92,7 @@ def main():
     before, after = options.before.resolve(), options.after.resolve()
     options.output.mkdir(parents=True, exist_ok=False)
     cases = []
-    for width in (80, 40, 39, 29, 28, 20):
+    for width in (100, 80, 60, 56, 55, 40, 39, 29, 28, 20):
         cases.append((f"bare-{width}", [], width, (True, True, True), {}, width >= 29))
     for name, extra, banner in (
         ("no-color", {"NO_COLOR": "anything", "CLICOLOR_FORCE": "1"}, True),
@@ -134,7 +134,7 @@ def main():
         if banner:
             header, body = new["terminal"].split("\n\n", 1)
             header = plain(header)
-            assert "What are we making today?" in header, (name, "missing greeting")
+            assert "The OpenAI API" in header, (name, "missing greeting")
             assert version in header, (name, "missing runtime version")
             assert len(header.splitlines()) == (6 if width >= 40 else 4), (name, "unexpected header height")
             assert "✦" not in header and ">_" not in header, (name, "unexpected signature")
@@ -143,7 +143,7 @@ def main():
             if name in ("no-color", "force-color-zero"):
                 assert "\x1b" not in new["terminal"], (name, "color was not disabled")
         else:
-            assert "What are we making today?" not in str(new), (name, "unexpected banner")
+            assert "The OpenAI API" not in str(new), (name, "unexpected banner")
         assert comparable == old, (name, "existing help/output changed")
         results.append({"case": name, "args": args, "width": width, "banner": banner, "status": "pass"})
     (options.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
