@@ -3,20 +3,23 @@ set -euo pipefail
 
 if [ "$#" -ne 6 ]; then
   echo 'usage: record.sh MODE BEFORE_BINARY AFTER_BINARY BEFORE_SHA AFTER_SHA OUTPUT_DIR' >&2
-  echo 'MODE: count, inspect, codex, guide, or editor' >&2
+  echo 'MODE: count, inspect, codex, guide, editor, or details' >&2
   exit 2
 fi
 demo_mode="$1"
 case "$demo_mode" in
-  count|inspect|codex|guide|editor) ;;
-  *) echo 'MODE must be count, inspect, codex, guide, or editor.' >&2; exit 2;;
+  count|inspect|codex|guide|editor|details) ;;
+  *) echo 'MODE must be count, inspect, codex, guide, editor, or details.' >&2; exit 2;;
 esac
 shift
+demo_interactive=0
+if [ "$demo_mode" = editor ] || [ "$demo_mode" = details ]; then demo_interactive=1; fi
 demo_editor_before="${DEMO_EDITOR_BEFORE:-help}"
 case "$demo_editor_before" in
   help|legacy|options) ;;
   *) echo 'DEMO_EDITOR_BEFORE must be help, legacy, or options.' >&2; exit 2;;
 esac
+if [ "$demo_mode" = details ]; then demo_editor_before=options; fi
 demo_editor_linked="${DEMO_EDITOR_LINKED:-0}"
 case "$demo_editor_linked" in
   0|1) ;;
@@ -44,7 +47,7 @@ demo_source="$(cd "$(dirname "$0")" && pwd)"
 demo_root="$(cd "$demo_source/../../.." && pwd)"
 demo_python="$(command -v python3)"
 demo_theme="${DEMO_THEME:-no-color}"
-if [ "$demo_mode" = editor ]; then demo_theme="${DEMO_THEME:-dark}"; fi
+if [ "$demo_interactive" = 1 ]; then demo_theme="${DEMO_THEME:-dark}"; fi
 case "$demo_theme" in
   dark) demo_palette=asciinema; demo_theme_environment=('COLORFGBG=15;0' COLORTERM=truecolor);;
   light) demo_palette=github-light; demo_theme_environment=('COLORFGBG=0;15' COLORTERM=truecolor);;
@@ -61,6 +64,7 @@ if [ "$demo_mode" = editor ]; then
   demo_rows=32
   if [ "$demo_columns" = 40 ]; then demo_rows=44; fi
 fi
+if [ "$demo_mode" = details ]; then demo_rows=12; fi
 demo_window_size="${demo_columns}x${demo_rows}"
 demo_render_options=(--renderer resvg --font-family 'Menlo,Apple Color Emoji' --font-size 22 --line-height 1.2 \
   --theme "$demo_palette" --fps-cap 20 --last-frame-duration 3)
@@ -90,14 +94,14 @@ case "$DEMO_MODE" in
     printf '%s\n' '$ openai codex'
     demo_args=(codex)
     ;;
-  editor)
+  editor|details)
     printf '%s\n' '$ openai tokenizer'
     demo_args=(tokenizer)
     ;;
   *) exit 2;;
 esac
 sleep 0.4
-if [ "$DEMO_MODE" = editor ] && [ "$DEMO_EDITOR_LAYOUT" != help ]; then
+if [ "$DEMO_MODE" = details ] || { [ "$DEMO_MODE" = editor ] && [ "$DEMO_EDITOR_LAYOUT" != help ]; }; then
   if "$DEMO_PYTHON" "$DEMO_EDITOR_DRIVER"; then demo_status=0; else demo_status=$?; fi
 else
   if openai "${demo_args[@]}"; then demo_status=0; else demo_status=$?; fi
@@ -117,6 +121,7 @@ SCENE
     echo "after linked cursor and legacy tokenizers: $demo_editor_linked"
     echo "after editor presentation: $demo_editor_presentation"
   fi
+  if [ "$demo_mode" = details ]; then echo 'details: six-token source, cursor, Up navigation, exact fields, overflow rows, Home, and recovery'; fi
   echo "before commit: $demo_before_sha"
   echo "candidate commit: $demo_after_sha (check source manifest for uncommitted changes)"
   echo "before binary: $demo_before"
@@ -149,11 +154,12 @@ demo_before_status=1
 if [ "$demo_mode" = guide ]; then demo_before_status=3; fi
 if [ "$demo_mode" = editor ]; then demo_before_status=0; fi
 if [ "$demo_mode" = editor ] && [ "$demo_editor_before" != help ]; then demo_before_status=130; fi
+if [ "$demo_mode" = details ]; then demo_before_status=130; fi
 demo_before_status="${DEMO_BEFORE_STATUS:-$demo_before_status}"
 case "$demo_before_status" in
   0|1|3) ;;
   130)
-    if [ "$demo_mode" != editor ] || [ "$demo_editor_before" = help ]; then
+    if [ "$demo_interactive" != 1 ] || [ "$demo_editor_before" = help ]; then
       echo 'Status 130 requires an interactive editor baseline.' >&2
       exit 2
     fi
@@ -171,8 +177,12 @@ if [ "$demo_mode" = editor ]; then
   printf 'before\t0\nafter\t%s\n' "$demo_editor_linked" > "$demo_output/editor-linked.tsv"
   printf 'before\tencodings\nafter\t%s\n' "$demo_editor_presentation" > "$demo_output/editor-presentation.tsv"
 fi
+if [ "$demo_mode" = details ] && [ "$demo_before_status" != 130 ]; then
+  echo 'Details comparison requires an interactive baseline with status 130.' >&2
+  exit 2
+fi
 demo_after_status=0
-if [ "$demo_mode" = editor ]; then demo_after_status=130; fi
+if [ "$demo_interactive" = 1 ]; then demo_after_status=130; fi
 printf '%s\t%s\n' before "$demo_before_status" after "$demo_after_status" > "$demo_output/expected-statuses.tsv"
 demo_capture_scene before "$demo_before_status" "$demo_runtime/before" 'http://127.0.0.1:1' 'BEFORE' \
   "DEMO_MODE=$demo_mode" 'DEMO_SCENE=before' "DEMO_STATUS_LOG=$demo_output/statuses.tsv" \
@@ -186,7 +196,7 @@ demo_capture_scene after "$demo_after_status" "$demo_runtime/after" 'http://127.
   "DEMO_EDITOR_LINKED=$demo_editor_linked" "DEMO_EDITOR_PRESENTATION=$demo_editor_presentation" \
   "DEMO_THEME=$demo_theme" "${demo_theme_environment[@]}"
 "$demo_python" "$demo_source/validate.py" "$demo_output" "$demo_mode" > "$demo_output/validation.txt"
-if [ "$demo_mode" = editor ]; then
+if [ "$demo_interactive" = 1 ]; then
   demo_editor_scenes=(after)
   if [ "$demo_editor_before" != help ]; then demo_editor_scenes=(before after); fi
   for demo_scene in "${demo_editor_scenes[@]}"; do
@@ -199,20 +209,24 @@ if [ "$demo_mode" = editor ]; then
       "$demo_ffmpeg" -nostdin -hide_banner -loglevel error -y -i "$demo_output/$demo_scene-$demo_state.gif" \
         -frames:v 1 "$demo_output/$demo_scene-$demo_state.png"
     done < "$demo_snapshots"
-    for demo_state in text ids bytes results details encoding controls; do
+    demo_states=(text ids bytes results details encoding controls)
+    if [ "$demo_mode" = details ]; then demo_states=(source cursor up-navigation ordinary partial overflow-start overflow-end overflow-home recovery); fi
+    for demo_state in "${demo_states[@]}"; do
       test -s "$demo_output/$demo_scene-$demo_state.png"
     done
-    if [ "$demo_scene" = after ] || [ "$demo_editor_before" = options ]; then
+    if [ "$demo_mode" = editor ] && { [ "$demo_scene" = after ] || [ "$demo_editor_before" = options ]; }; then
       for demo_state in view-choice tokenizer-choice; do
         test -s "$demo_output/$demo_scene-$demo_state.png"
       done
     fi
-    if [ "$demo_scene" = after ] && [ "$demo_editor_linked" = 1 ]; then
+    if [ "$demo_mode" = editor ] && [ "$demo_scene" = after ] && [ "$demo_editor_linked" = 1 ]; then
       for demo_state in caret r50k p50k; do
         test -s "$demo_output/$demo_scene-$demo_state.png"
       done
     fi
-    cp "$demo_output/$demo_scene-text.png" "$demo_output/$demo_scene.png"
+    demo_cover=text
+    if [ "$demo_mode" = details ]; then demo_cover=ordinary; fi
+    cp "$demo_output/$demo_scene-$demo_cover.png" "$demo_output/$demo_scene.png"
   done
 fi
 demo_assemble_capture 300 before after

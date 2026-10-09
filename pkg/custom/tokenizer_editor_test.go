@@ -318,6 +318,40 @@ func TestTokenizerEditorPickerNavigation(t *testing.T) {
 	require.Equal(t, "one\ntwo", m.text)
 }
 
+func TestTokenizerEditorResultsSeparateVerticalAndTokenNavigation(t *testing.T) {
+	for tab := 0; tab < 3; tab++ {
+		for _, selected := range []int{0, 3, 7} {
+			m := testTokenizerEditor()
+			m.insert("abcdefgh")
+			tokens := make([]tokenizerPreviewToken, len(m.text))
+			for index := range tokens {
+				tokens[index] = tokenizerPreviewToken{ID: uint32(index), EndByte: uint32(index + 1)}
+			}
+			m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
+			m.focus, m.tab, m.selected = tokenizerFocusResults, tab, selected
+			cursor, revision := m.cursor, m.revision
+			require.Nil(t, tokenizerEditorKey(m, tea.KeyDown))
+			require.Equal(t, tokenizerFocusResults, m.focus, "Down stays at the bottom section")
+			require.Equal(t, selected, m.selected, "vertical keys must not select tokens")
+			require.Nil(t, tokenizerEditorKey(m, tea.KeyUp))
+			require.Equal(t, tokenizerFocusOptions, m.focus, "Up returns directly to settings from every token")
+			require.Equal(t, 1, m.option)
+			require.Equal(t, selected, m.selected)
+			require.Nil(t, tokenizerEditorKey(m, tea.KeyDown))
+			require.Equal(t, tokenizerFocusResults, m.focus)
+			require.Equal(t, selected, m.selected, "returning must preserve the selected token")
+			require.Nil(t, tokenizerEditorKey(m, tea.KeyLeft))
+			require.Equal(t, max(0, selected-1), m.selected)
+			require.Nil(t, tokenizerEditorKey(m, tea.KeyRight))
+			require.Equal(t, min(7, max(0, selected-1)+1), m.selected)
+			require.Equal(t, tokenizerFocusResults, m.focus)
+			require.Equal(t, cursor, m.cursor)
+			require.Equal(t, revision, m.revision)
+			require.Equal(t, "abcdefgh", m.text)
+		}
+	}
+}
+
 func TestTokenizerEditorDownFromLastLineEntersOptions(t *testing.T) {
 	for _, test := range []struct {
 		name, text   string

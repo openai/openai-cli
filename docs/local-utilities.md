@@ -22,7 +22,8 @@ The editor supports up to 1 MiB of UTF-8 input.
 - Press Enter to apply that choice.
 - Press Escape to cancel a chooser and return to text.
 - Press Tab from options to focus the tokens.
-- Use the arrow keys in the tokens to select a token.
+- Press Left or Right in the tokens to select a token.
+- Press Up from the tokens to return to Model settings.
 - Press Enter on a token to inspect its ID, byte offsets, and every byte.
 - Press F1 for all controls and script examples.
 - Press Ctrl+C to exit.
@@ -31,13 +32,17 @@ Enter inserts a newline while editing text.
 Down opens options from any column on the last line.
 On earlier lines, Down moves the text cursor. Up moves to the previous text line.
 The token marked with a dot follows the text cursor without recalculating tokens.
+The cursor highlights the character at its position without inserting a gap between letters.
 At a token boundary, the marker selects the token on the right. At the end, it selects the last token.
 Tokens can split a Unicode character; cursor movement still follows complete graphemes.
 Tab and Shift+Tab cycle through text, options, and tokens.
 Chooser focus uses the image picker's bold highlight. A checkmark identifies the applied choice.
 The main screen shows model families instead of encoding identifiers.
 It shows the token count and, for multiple tokens, the selected position.
+Colored token backgrounds reveal boundaries and stay consistent across Text, Token IDs, and Bytes.
 The Bytes view adds the input byte count; full hexadecimal details remain available through Enter.
+Details quotes text to make leading spaces and escaped characters visible.
+Scrolling controls appear when the complete details exceed the visible panel.
 Text and Token IDs are the primary reading views. Bytes supports exact-byte inspection and debugging.
 Ctrl+U removes text before the cursor, matching the image prompt editor.
 Paste preserves whitespace, line endings, and Unicode normalization.
@@ -54,6 +59,7 @@ The draft remains available until you exit; the CLI never saves it.
 The editor requires terminal input and output, automatic format, and at least 40 columns by 12 rows.
 Pipes, CI, `TERM=dumb`, and explicit text format receive command guidance without consuming stdin.
 `NO_COLOR` retains keyboard controls and visible focus markers.
+It retains the monochrome text cursor while suppressing token colors.
 Use `count` or `inspect` for JSON output and scripts.
 
 ## Count and inspect tokens

@@ -3,6 +3,7 @@
 
 import errno
 import fcntl
+import importlib.util
 import json
 import os
 import pty
@@ -47,19 +48,22 @@ def drive():
     height = int(os.environ["DEMO_ROWS"])
     theme = os.environ["DEMO_THEME"]
     report_path = os.environ["DEMO_EDITOR_REPORT"]
+    details = os.environ.get("DEMO_MODE") == "details"
+    if details and (width not in (40, 80) or height != 12 or os.environ.get("DEMO_SCENE") not in ("before", "after")):
+        raise ValueError("details recording requires before/after at 40 or 80 columns and 12 rows")
     layout = os.environ.get("DEMO_EDITOR_LAYOUT", "options")
     if layout not in ("legacy", "options"):
         raise ValueError("DEMO_EDITOR_LAYOUT must be legacy or options")
     linked_setting = os.environ.get("DEMO_EDITOR_LINKED", "0")
     if linked_setting not in ("0", "1"):
         raise ValueError("DEMO_EDITOR_LINKED must be 0 or 1")
-    linked = linked_setting == "1"
-    if linked and (layout != "options" or os.environ.get("DEMO_SCENE") != "after"):
+    linked = linked_setting == "1" or details
+    if linked and (layout != "options" or not details and os.environ.get("DEMO_SCENE") != "after"):
         raise ValueError("linked recording requires the after Options editor")
     presentation = os.environ.get("DEMO_EDITOR_PRESENTATION", "encodings")
     if presentation not in ("encodings", "models"):
         raise ValueError("DEMO_EDITOR_PRESENTATION must be encodings or models")
-    models = presentation == "models"
+    models = presentation == "models" or details
     if models and not linked:
         raise ValueError("model presentation requires the linked after Options editor")
 
@@ -138,7 +142,7 @@ def drive():
             if waited:
                 status = os.waitstatus_to_exitcode(value)
 
-    def wait_for(needle):
+    def wait_for(needle, predicate=None):
         deadline = time.monotonic() + 12
         while True:
             visible = bytes(buffer)
@@ -147,8 +151,9 @@ def drive():
                 # Do not combine a new tokenizer label with an old equal count.
                 visible = visible.rsplit(b"\r\x1b[J", 1)[-1]
             text = CSI.sub(b"", OSC.sub(b"", visible)).decode("utf-8", "replace")
-            if needle in text and (not linked or "Ctrl+C exit" in text):
-                return
+            matched = predicate(text, visible.decode("utf-8", "replace")) if predicate is not None else needle in text
+            if matched and (not linked or "Ctrl+C exit" in text):
+                return text
             if status is not None or time.monotonic() >= deadline:
                 raise RuntimeError("editor did not reach the requested state")
             pump(0.05)
@@ -167,9 +172,84 @@ def drive():
         events.append({"state": name, "observed_at": time.time()})
         pause()
 
+    def finish(result):
+        send(b"\x03")
+        deadline = time.monotonic() + 5
+        while status is None or not eof:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("editor did not exit after Ctrl+C")
+            pump(0.05)
+        if status != 130:
+            raise RuntimeError(f"editor returned {status}, expected 130")
+        result.update(theme=theme, columns=width, rows=height, layout=layout, states=events, exit_status=status)
+        with open(report_path, "w", encoding="utf-8") as report:
+            json.dump(result, report, indent=2)
+            report.write("\n")
+        return status
+
+    def record_details():
+        # Share exact row predicates with snapshot validation, including wrapping.
+        path = os.path.join(os.path.dirname(__file__), "validate.py")
+        spec = importlib.util.spec_from_file_location("tokenizer_demo_validation", path)
+        checks = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checks)
+        style = "legacy" if os.environ["DEMO_SCENE"] == "before" else "refined"
+
+        def replace_input(kind):
+            send(b"\x1b\x1b\x1b[F\x15\x1b[200~" + checks.DETAILS_INPUTS[kind].encode() + b"\x1b[201~")
+            pause(.2)
+            count = "6 tokens" if kind == "source" else "2 tokens" if kind == "partial" else "1 token"
+            wait_for(count, lambda text, raw: count in [line.strip() for line in text.splitlines()] and "Updating" not in text)
+
+        def wait_state(state):
+            return wait_for("", lambda text, raw: checks.details_state(text, state, style, width, raw, theme))
+
+        replace_input("source")
+        wait_state("source")
+        mark("source")
+        send(b"\x1b[D")
+        wait_state("cursor")
+        mark("cursor")
+        send(b"\t\t\x1b[H\x1b[C\x1b[C")
+        wait_for("Token 3 of 6", lambda text, raw: "Token 3 of 6" in [line.strip() for line in text.splitlines()] and '›["b"]' in text)
+        send(b"\x1b[A")
+        wait_state("up-navigation")
+        mark("up-navigation")
+
+        for kind in ("ordinary", "partial", "overflow"):
+            replace_input(kind)
+            send(b"\t\t\x1b[H\r")
+            state = kind if kind != "overflow" else "overflow-start"
+            plain = wait_state(state)
+            mark(state)
+            if kind == "overflow":
+                current = checks.details_frame(plain, kind, style, width)
+                covered = set(range(current["start"], current["end"] + 1))
+                for _ in range(current["total"]):
+                    if current["end"] == current["total"]:
+                        break
+                    previous = current["start"]
+                    send(b"\x1b[6~")
+                    plain = wait_for("", lambda text, raw: (value := checks.details_frame(text, kind, style, width)) and value["start"] > previous)
+                    current = checks.details_frame(plain, kind, style, width)
+                    covered.update(range(current["start"], current["end"] + 1))
+                    pause(.2)
+                if covered != set(range(1, current["total"] + 1)):
+                    raise RuntimeError("details scrolling omitted exact data rows")
+                mark("overflow-end")
+                send(b"\x1b[H")
+                wait_state("overflow-home")
+                mark("overflow-home")
+        replace_input("ordinary")
+        wait_state("recovery")
+        mark("recovery")
+        return finish({"capture_version": 5, "details_style": style, "inputs": checks.DETAILS_INPUTS})
+
     try:
         wait_for("Ctrl+C exit")
         pause(0.4)
+        if details:
+            return record_details()
         for character in "Hello, ":
             send(character.encode())
             pause(0.055)
@@ -202,7 +282,8 @@ def drive():
             wait_for("Enter details")
         # Arrow keys can leave the unchanged Results footer out of a redraw.
         # Caret-linked editors can arrive at the last token after typing.
-        send(b"\x1b[H" + b"\x1b[B" * 4, clear=False)
+        token_right = b"\x1b[C" if layout == "options" else b"\x1b[B"
+        send(b"\x1b[H" + token_right * 4, clear=False)
         wait_for("Token 5 of 10" if layout == "options" else "Token 5/10 · ID 61138")
         wait_for("›[20 f0 9f 91]")
         wait_for("Enter details")
@@ -252,14 +333,6 @@ def drive():
         send(b"\x1b")
         wait_for(encoding_row(final_encoding))
         pause(0.3)
-        send(b"\x03")
-        deadline = time.monotonic() + 5
-        while status is None or not eof:
-            if time.monotonic() >= deadline:
-                raise RuntimeError("editor did not exit after Ctrl+C")
-            pump(0.05)
-        if status != 130:
-            raise RuntimeError(f"editor returned {status}, expected 130")
         result = {"input": FIXTURE, "input_bytes": len(FIXTURE.encode()), "theme": theme,
                   "columns": width, "rows": height, "layout": layout,
                   "capture_version": 4 if models else 3 if linked else 2,
@@ -270,10 +343,7 @@ def drive():
             result["tokenizer_actions"] = ["cl100k_base", "r50k_base", "p50k_base"]
         if models:
             result["presentation"] = presentation
-        with open(report_path, "w", encoding="utf-8") as report:
-            json.dump(result, report, indent=2)
-            report.write("\n")
-        return status
+        return finish(result)
     finally:
         if status is None:
             status = stop_editor(pid, terminal)

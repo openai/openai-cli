@@ -14,6 +14,7 @@ Each process receives a rejecting loopback base URL and no personal environment 
 | `codex` | `openai codex --destination config` | 1 | 0 |
 | `guide` | `openai codex` | 3 | 0 |
 | `editor` | `openai tokenizer` | 0 for help; 130 for legacy or Options editors | 130 |
+| `details` | `openai tokenizer` | 130 | 130 |
 
 The baseline is main `da762ffff4f35732f4720ac4db531d8d764f2cbe`.
 Direct baseline execution verified these statuses before recording.
@@ -219,6 +220,41 @@ Exact-byte details retain their encoding metadata.
 The fixture, stage names, counts, cursor checks, and cleanup remain unchanged.
 `editor-presentation.tsv` records the requested presentation independently of the older capture settings.
 Earlier recipes and capture versions 1 through 3 retain their validation behavior.
+
+## Focused token-details comparison
+
+Use `details` to compare the `9e49817` modal with the refined token-details modal.
+This bounded scene uses the existing recorder lifecycle at 80×12 or 40×12.
+It does not require the linked-editor presentation flags.
+Use this scene for the current refinement; `editor` preserves the historical layouts from capture versions 1 through 4.
+
+```sh
+DEMO_THEME=dark \
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh details \
+  /absolute/path/to/openai-9e49817 /absolute/path/to/candidate \
+  "$BEFORE_SHA" "$AFTER_SHA" \
+  /absolute/path/outside/repository/token-details-dark-80
+```
+
+The scene first shows six token colors in `a!b?c.` at 80 columns.
+One Left key checks that the refined caret does not insert a display character.
+Up from the third token demonstrates the return to Model settings.
+The baseline retains its original caret and Up behavior.
+The scene then opens token details for `how`, followed by the first partial UTF-8 token in ` 👋`.
+It then inspects one token containing 128 spaces.
+Page Down visits every overflow row, including all hexadecimal bytes.
+Home returns to the first page.
+Escape returns to editing, where replacing the input with `how` verifies recovery.
+Both sessions must finish with Ctrl+C status 130.
+
+Version 5 validates complete field rows against retained official tiktoken 0.14.0 fixtures.
+It checks exact IDs, byte ranges, encoding, quoted text, hexadecimal bytes, and conditional scroll controls.
+The before modal keeps its original title and layout; the after modal uses the refined fields.
+Screenshots include `source`, `cursor`, `up-navigation`, `ordinary`, `partial`, `overflow-start`, `overflow-end`, `overflow-home`, and `recovery`.
+The no-color scene permits monochrome caret inversion but rejects color styling.
+The ordinary details screenshot becomes each scene's main image.
+Historical editor capture versions 1 through 4 remain unchanged.
 
 For the Codex presentation comparison, use `guide` with the historical published-feature baseline and `DEMO_BEFORE_STATUS=0`.
 The original main baseline still uses the guide's default status 3.

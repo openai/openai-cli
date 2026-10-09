@@ -5,6 +5,7 @@ import json
 import pathlib
 import re
 import sys
+import textwrap
 
 
 MODEL_NAMES = {"o200k_base": "GPT-5.x & o1/o3", "cl100k_base": "GPT-4 & GPT-3.5",
@@ -29,7 +30,10 @@ COMMANDS = {
     "codex": "$ openai codex --destination config",
     "guide": "$ openai codex",
     "editor": "$ openai tokenizer",
+    "details": "$ openai tokenizer",
 }
+DETAILS_INPUTS = {"source": "a!b?c.", "ordinary": "how", "partial": " 👋", "overflow": " " * 128}
+DETAILS_STAGES = ["source", "cursor", "up-navigation", "ordinary", "partial", "overflow-start", "overflow-end", "overflow-home", "recovery"]
 CONFIG_URL = "https://learn.chatgpt.com/docs/config-file/config-basic"
 
 
@@ -39,12 +43,14 @@ def check(condition, message):
 
 
 def validate(directory, mode):
-    check(mode in COMMANDS, "MODE must be count, inspect, codex, guide, or editor")
+    check(mode in COMMANDS, "MODE must be count, inspect, codex, guide, editor, or details")
     layouts = editor_layouts(directory) if mode == "editor" else {}
     before_status = 3 if mode == "guide" else 1
     if mode == "editor":
         before_status = 0 if layouts["before"] == "help" else 130
-    after_status = 130 if mode == "editor" else 0
+    if mode == "details":
+        before_status = 130
+    after_status = 130 if mode in ("editor", "details") else 0
     expected = [f"before\t{before_status}", f"after\t{after_status}"]
     if (directory / "expected-statuses.tsv").exists():
         expected = (directory / "expected-statuses.tsv").read_text().splitlines()
@@ -54,6 +60,8 @@ def validate(directory, mode):
         allowed = (0, 1, 3)
         if mode == "editor":
             allowed = (0,) if layouts["before"] == "help" else (130,)
+        elif mode == "details":
+            allowed = (130,)
         check(before_status in allowed, "unsupported baseline status")
     statuses = (directory / "statuses.tsv").read_text().splitlines()
     check(statuses == expected, "unexpected command exit statuses")
@@ -70,7 +78,9 @@ def validate(directory, mode):
     before = transcripts["before"]
     after = transcripts["after"]
     error = "Unknown help topic." if mode == "guide" else "An option is not recognized."
-    if mode == "editor" and layouts["before"] != "help":
+    if mode == "details":
+        validate_details(directory, "before")
+    elif mode == "editor" and layouts["before"] != "help":
         validate_editor(directory, "before", layouts["before"])
     elif before_status != 0:
         check(error in before, "before: expected the baseline command failure")
@@ -104,9 +114,154 @@ def validate(directory, mode):
             CONFIG_URL,
         ]:
             check(value in after, f"after: missing instruction {value!r}")
+    elif mode == "details":
+        validate_details(directory, "after")
     else:
         validate_editor(directory, "after", layouts["after"])
     print(f"PASS: {mode} command transcripts and before/after exit statuses")
+
+
+def details_expected_rows(kind, style, columns):
+    """Exact, offline reference fixtures for the two supported capture widths."""
+    width = columns - 4
+    identifier, end, count = {"ordinary": (8923, 3, 1), "partial": (61138, 4, 2), "overflow": (72056, 128, 1)}[kind]
+    raw_hex = {"ordinary": "68 6f 77", "partial": "20 f0 9f 91", "overflow": " ".join(["20"] * 128)}[kind]
+    if style == "legacy":
+        rows = [f"Token 1 of {count} · ID {identifier}", f"Encoding o200k_base · bytes [0, {end})"]
+        if kind == "partial":
+            rows += textwrap.wrap("Text: partial UTF-8; use the exact bytes below.", width)
+        else:
+            text = DETAILS_INPUTS[kind]
+            rows += ["Text (escaped):"] + [text[i:i + width] for i in range(0, len(text), width)]
+        rows += ["Hex:"]
+        per_row = (width + 1) // 3
+    else:
+        value_width = width - 10
+        value = "partial UTF-8; see Hex." if kind == "partial" else json.dumps(DETAILS_INPUTS[kind])
+        parts = [value[i:i + value_width] for i in range(0, len(value), value_width)]
+        rows = [("Text      " if i == 0 else " " * 10) + part for i, part in enumerate(parts)]
+        rows += ["", f"Token ID  {identifier}", f"Bytes     [0, {end})", "Encoding  o200k_base"]
+        per_row = (value_width + 1) // 3
+    octets = raw_hex.split()
+    for i in range(0, len(octets), per_row):
+        prefix = ("Hex       " if i == 0 else " " * 10) if style == "refined" else ""
+        rows.append(prefix + " ".join(octets[i:i + per_row]))
+    return f"Token 1 of {count}", rows
+
+
+def details_frame(plain, kind, style, columns):
+    title, expected = details_expected_rows(kind, style, columns)
+    if style == "legacy":
+        title = "Token details · exact bytes"
+    lines = [line.strip() for line in plain.splitlines()]
+    if lines.count(title) != 1:
+        return None
+    lines = lines[lines.index(title) + 1:]
+    footer = "↑↓ scroll · Esc back · Ctrl+C exit" if style == "legacy" else "Ctrl+C exit · Esc back"
+    scrolling = style == "legacy" or kind == "overflow"
+    if style == "refined" and scrolling:
+        footer += " · ↑↓ scroll"
+    if footer not in lines:
+        return None
+    body = lines[:lines.index(footer)]
+    start, end, total = 1, len(expected), len(expected)
+    if scrolling:
+        if not body or not (counter := re.fullmatch(r"Rows (\d+)–(\d+) of (\d+)", body[-1])):
+            return None
+        start, end, total = map(int, counter.groups())
+        body.pop()
+    if style == "refined":
+        if len(body) < 2 or body[0] != "" or body[-1] != "":
+            return None
+        body = body[1:-1]
+    if total != len(expected) or not 1 <= start <= end <= total:
+        return None
+    if body != [row.strip() for row in expected[start - 1:end]]:
+        return None
+    return {"start": start, "end": end, "total": total}
+
+
+def details_state(plain, state, style, columns, raw="", theme="no-color"):
+    if state in ("source", "cursor", "up-navigation"):
+        lines = [line.strip() for line in plain.splitlines()]
+        if "6 tokens" not in lines or "Model  GPT-5.x & o1/o3  Default" not in plain:
+            return False
+        if state == "up-navigation":
+            if style == "legacy":
+                return "Token 2 of 6" in lines and '›["!"]' in plain and "Enter details" in plain
+            return "Token 3 of 6" in lines and any(line.startswith("› Model  ") for line in lines) and "Enter select" in plain
+        source = "a!b?c."
+        if style == "legacy":
+            source = "a!b?c.▏" if state == "source" else "a!b?c▏."
+        elif ("\x1b[7m" + (" " if state == "source" else ".") + "\x1b[27m") not in raw:
+            return False
+        if "› Text " + source not in lines or "Token 6 of 6" not in lines or '·["."]' not in plain:
+            return False
+        if style == "refined":
+            sgr = re.findall(r"\x1b\[([0-9;:]*)m", raw)
+            if theme == "no-color":
+                return all(code in ("", "0", "7", "27") for code in sgr)
+            if columns == 80:
+                backgrounds = {match.group(1) for code in sgr
+                               for match in re.finditer(r"(?:^|;)48;2;(\d+;\d+;\d+)(?:;|$)", code)}
+                return len(backgrounds) >= 6
+        return True
+    if state == "recovery":
+        lines = [line.strip() for line in plain.splitlines()]
+        return ("1 token" in lines and "Model  GPT-5.x & o1/o3  Default" in plain and
+                '·["how"]' in plain and "Ctrl+C exit" in plain and "Esc back" not in plain)
+    kind = state if state in ("ordinary", "partial") else "overflow"
+    frame = details_frame(plain, kind, style, columns)
+    if not frame:
+        return False
+    if state in ("overflow-start", "overflow-home"):
+        return frame["start"] == 1 and frame["end"] < frame["total"]
+    if state == "overflow-end":
+        return frame["start"] > 1 and frame["end"] == frame["total"]
+    return frame["start"] == 1 and frame["end"] == frame["total"]
+
+
+def validate_details(directory, scene):
+    report_name = "before-editor-input.json" if scene == "before" else "editor-input.json"
+    report = json.loads((directory / report_name).read_text())
+    style = "legacy" if scene == "before" else "refined"
+    check(report.get("capture_version") == 5 and report.get("details_style") == style,
+          "details: wrong capture version or presentation")
+    check(report.get("inputs") == DETAILS_INPUTS and report.get("exit_status") == 130,
+          "details: fixtures or exit status changed")
+    check(report.get("columns") in (40, 80) and report.get("rows") == 12, "details: dimensions changed")
+    check(report.get("theme") in ("dark", "light", "no-color"), "details: unknown color policy")
+    check([event["state"] for event in report["states"]] == DETAILS_STAGES, "details: incomplete driver states")
+    events = [json.loads(line) for line in (directory / f"{scene}.cast").read_text().splitlines()]
+    check(events[0]["width"] == report["columns"] and events[0]["height"] == 12, "details: cast dimensions changed")
+    ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+    output, snapshots, covered = "", [], set()
+    for event in events[1:]:
+        if event[1] != "o":
+            continue
+        output = (output + event[2])[-65536:]
+        if "\r\x1b[J" not in output:
+            continue
+        frame = output.rsplit("\r\x1b[J", 1)[1]
+        plain = ansi.sub("", frame)
+        if overflow := details_frame(plain, "overflow", style, report["columns"]):
+            covered.update(range(overflow["start"], overflow["end"] + 1))
+        if len(snapshots) == len(DETAILS_STAGES):
+            continue
+        state = DETAILS_STAGES[len(snapshots)]
+        if details_state(plain, state, style, report["columns"], frame, report.get("theme", "no-color")):
+            if state == "overflow-end":
+                total = len(details_expected_rows("overflow", style, report["columns"])[1])
+                check(covered == set(range(1, total + 1)), "details: overflow omitted exact data rows")
+            timestamp = float(event[0]) + .25
+            check(not snapshots or timestamp - snapshots[-1][1] > .5, "details: stages were not held separately")
+            snapshots.append((state, timestamp))
+            output = ""
+    check(len(snapshots) == len(DETAILS_STAGES), "details: omitted an exact detail or recovery state")
+    check(snapshots[-1][1] < float(events[-1][0]), "details: snapshot exceeds the recording")
+    name = "before-editor-snapshots.tsv" if scene == "before" else "editor-snapshots.tsv"
+    (directory / name).write_text("".join(f"{state}\t{stamp:.6f}\n" for state, stamp in snapshots))
+    print(f"PASS: {scene} ordinary, partial UTF-8, complete overflow bytes, Home, and editor recovery")
 
 
 def editor_layouts(directory):

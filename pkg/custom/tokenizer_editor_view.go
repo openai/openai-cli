@@ -27,6 +27,7 @@ func (m *tokenizerEditor) resultRows() int {
 
 type tokenizerEditorStyles struct {
 	title, muted, accent, selected, focused, border, input lipgloss.Style
+	tokens                                                 [6]lipgloss.Style
 }
 
 func (m *tokenizerEditor) styles() tokenizerEditorStyles {
@@ -37,6 +38,13 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 	focus, fill, text, muted, border := "#3159BC", "#E9EFFE", "#20283B", "#657087", "#BAC4D8"
 	if m.dark {
 		focus, fill, text, muted, border = "#8AA8FF", "#343D58", "#F2F4FA", "#A4ACC2", "#51566B"
+	}
+	palette := [6]string{"#E9F1FE", "#E7F5ED", "#FBF0D9", "#F2EAFE", "#FBE8EC", "#E4F3F5"}
+	if m.dark {
+		palette = [6]string{"#263D57", "#26483F", "#51452C", "#423454", "#503438", "#294852"}
+	}
+	for i, color := range palette {
+		s.tokens[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(text)).Background(lipgloss.Color(color))
 	}
 	s.title = s.title.Bold(true)
 	s.muted = s.muted.Foreground(lipgloss.Color(muted))
@@ -83,7 +91,7 @@ func (m *tokenizerEditor) View() tea.View {
 		lines = append(lines, s.border.Render(caption+strings.Repeat("─", width-ansi.StringWidth(caption)-1)+"╮"))
 		for _, line := range m.editorLines(width-4, 3) {
 			input := s.input
-			if line == "" || line == "▏" {
+			if line == "" || line == tokenizerCaret(" ") {
 				input = lipgloss.NewStyle()
 			}
 			line = imagePickerPromptFit(line, width-4)
@@ -231,6 +239,9 @@ func (m *tokenizerEditor) footer() string {
 		if ansi.StringWidth(footer) > m.viewWidth() {
 			footer = "Ctrl+C exit · ←→ · Enter details"
 		}
+		if ansi.StringWidth(footer+" · ↑ settings") <= m.viewWidth() {
+			footer += " · ↑ settings"
+		}
 	case tokenizerFocusOptions:
 		if m.option == 0 {
 			footer = "Ctrl+C exit · ←→ view · Enter select"
@@ -338,7 +349,7 @@ func (m *tokenizerEditor) editorLines(width, count int) []string {
 		if m.text == "" && len(lines) == 0 {
 			line = "Type or paste text…"
 			if m.focus == 0 {
-				line = "▏ " + line
+				line = tokenizerCaret(" ") + line
 			}
 		}
 		lines = append(lines, tokenizerClip(line, width))
@@ -360,11 +371,15 @@ func (m *tokenizerEditor) editorLine(start, end, cursor, width int) string {
 	index := first
 	if cursor >= 0 {
 		index = sort.SearchInts(m.boundaries, cursor)
+		caretWidth := 1
+		if cursor < end && index+1 < len(m.boundaries) {
+			caretWidth = tokenizerSourceWidth(tokenizerSourceDisplay(m.text[cursor:min(m.boundaries[index+1], end)]))
+		}
 		used := 0
 		for index > first {
 			part := m.text[m.boundaries[index-1]:min(m.boundaries[index], end)]
 			cells := tokenizerSourceWidth(tokenizerSourceDisplay(part))
-			if used+cells > max(1, width-3) {
+			if used+cells > max(0, width-caretWidth-2) {
 				break
 			}
 			used += cells
@@ -378,26 +393,37 @@ func (m *tokenizerEditor) editorLine(start, end, cursor, width int) string {
 	used := tokenizerSourceWidth(out.String())
 	for index < len(m.boundaries) && m.boundaries[index] <= end {
 		offset := m.boundaries[index]
-		if offset == cursor {
-			out.WriteRune('▏')
-			used++
-		}
 		if offset == end || index == len(m.boundaries)-1 {
+			if offset == cursor {
+				out.WriteString(tokenizerCaret(" "))
+			}
 			break
 		}
 		part := m.text[offset:min(m.boundaries[index+1], end)]
 		display := tokenizerSourceDisplay(part)
 		cells := tokenizerSourceWidth(display)
 		if used+cells > width-1 {
-			out.WriteRune('…')
+			if offset == cursor {
+				out.WriteString(tokenizerCaret("…"))
+			} else {
+				out.WriteRune('…')
+			}
 			break
 		}
-		out.WriteString(display)
+		if offset == cursor {
+			out.WriteString(tokenizerCaret(display))
+		} else {
+			out.WriteString(display)
+		}
 		used += cells
 		index++
 	}
 	return out.String()
 }
+
+// Inverse video marks the existing cell without inserting a source character.
+// Keep this monochrome rendition under NO_COLOR so the caret remains visible.
+func tokenizerCaret(display string) string { return "\x1b[7m" + display + "\x1b[27m" }
 
 // Source windows and padding must share the inline painter's conservative
 // grapheme widths, including terminals that render a ZWJ cluster as scalars.
@@ -482,10 +508,12 @@ func (m *tokenizerEditor) resultWindow(s tokenizerEditorStyles, width int) ([]st
 		}
 		if m.focus == tokenizerFocusResults && i == m.selected {
 			chip = s.accent.Render("›") + s.focused.Render(strings.TrimPrefix(chip, "›"))
-		} else if m.focus == tokenizerFocusText && i == m.selected && !m.updating && !m.failed {
-			chip = s.accent.Render(chip)
-		} else if m.focus != tokenizerFocusResults {
-			chip = s.muted.Render(chip)
+		} else {
+			style := s.tokens[i%len(s.tokens)]
+			if m.color && m.focus == tokenizerFocusText && i == m.selected && !m.updating && !m.failed {
+				style = style.Bold(true)
+			}
+			chip = style.Render(chip)
 		}
 		line += strings.Repeat(" ", gap) + chip
 		used += gap + cells
@@ -597,7 +625,8 @@ var tokenizerEditorHelp = []string{
 	"On the last line, Down opens options.",
 	"Options: Up/Down move; Enter opens choices.",
 	"View: Left/Right switch Text, Token IDs, and Bytes.",
-	"Tokens: arrows select; Home/End select first/last.",
+	"Tokens: Left/Right select; Home/End select first/last.",
+	"Up returns from Tokens to the Model row.",
 	"Page Up/Page Down move by one visible page.",
 	"Enter opens every byte of the selected token.",
 	"Choices: Up/Down choose; Enter applies; Esc cancels.",
@@ -616,20 +645,53 @@ var tokenizerEditorHelp = []string{
 }
 
 func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
-	count := max(1, m.viewHeight()-3)
 	_, total := m.modalRows(0, 0)
+	count := m.modalPageSize(total)
 	start := max(0, min(m.scroll, total-count))
 	rows, _ := m.modalRows(start, count)
-	title := "Tokenizer · controls"
-	if m.modal == 2 {
-		title = "Token details · exact bytes"
+	if m.modal == tokenizerModalHelp {
+		lines := []string{s.title.Render("Tokenizer · controls")}
+		lines = append(lines, rows...)
+		lines = append(lines, s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", min(start+1, total), min(start+len(rows), total), total)))
+		lines = append(lines, s.muted.Render("↑↓ scroll · Esc back · Ctrl+C exit"))
+		return m.fit(lines, true)
 	}
-	lines := []string{s.title.Render(title)}
-	lines = append(lines, rows...)
-	lines = append(lines, s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", min(start+1, total), min(start+len(rows), total), total)))
-	lines = append(lines, s.muted.Render("↑↓ scroll · Esc back · Ctrl+C exit"))
+	title := "Token details"
+	if len(m.tokens) > 0 {
+		title = fmt.Sprintf("Token %d of %d", m.selected+1, len(m.tokens))
+	}
+	lines := []string{s.title.Render(title), ""}
+	for _, row := range rows {
+		if len(row) >= tokenizerDetailLabelWidth {
+			switch strings.TrimSpace(row[:tokenizerDetailLabelWidth]) {
+			case "Text", "Token ID", "Bytes", "Encoding", "Hex", "":
+				row = s.muted.Render(row[:tokenizerDetailLabelWidth]) + row[tokenizerDetailLabelWidth:]
+			}
+		}
+		lines = append(lines, row)
+	}
+	lines = append(lines, "")
+	footer := "Ctrl+C exit · Esc back"
+	if total > count {
+		lines = append(lines, s.muted.Render(fmt.Sprintf("Rows %d–%d of %d", start+1, start+len(rows), total)))
+		footer += " · ↑↓ scroll"
+	}
+	lines = append(lines, s.muted.Render(footer))
 	return m.fit(lines, true)
 }
+
+func (m *tokenizerEditor) modalPageSize(total int) int {
+	if m.modal == tokenizerModalHelp {
+		return max(1, m.viewHeight()-3)
+	}
+	count := max(1, m.viewHeight()-4)
+	if total > count {
+		count = max(1, count-1)
+	}
+	return count
+}
+
+const tokenizerDetailLabelWidth = 10
 
 // Retain only visible rows, even when one token contains a large byte sequence.
 func (m *tokenizerEditor) modalRows(start, count int) ([]string, int) {
@@ -647,7 +709,7 @@ func (m *tokenizerEditor) modalRows(start, count int) ([]string, int) {
 			emit(line)
 		}
 	}
-	if m.modal == 1 {
+	if m.modal == tokenizerModalHelp {
 		for _, line := range tokenizerEditorHelp {
 			line = strings.ReplaceAll(line, "openai tokenizer", readable.Text(m.invocation)+" tokenizer")
 			wrap(line)
@@ -659,33 +721,66 @@ func (m *tokenizerEditor) modalRows(start, count int) ([]string, int) {
 		return rows, total
 	}
 	fragment, begin, end := m.fragment(m.selected)
-	wrap(fmt.Sprintf("Token %d of %d · ID %d", m.selected+1, len(m.tokens), m.tokens[m.selected].ID))
-	wrap(fmt.Sprintf("Encoding %s · bytes [%d, %d)", m.encoding, begin, end))
+	padding := strings.Repeat(" ", tokenizerDetailLabelWidth)
+	valueWidth := max(1, width-tokenizerDetailLabelWidth)
+	field := func(label, value string) {
+		prefix := fmt.Sprintf("%-*s", tokenizerDetailLabelWidth, label)
+		for _, line := range strings.Split(ansi.Wrap(value, valueWidth, ""), "\n") {
+			emit(prefix + line)
+			prefix = padding
+		}
+	}
 	if utf8.ValidString(fragment) {
-		emit("Text (escaped):")
-		// Quote one rune at a time to bound temporary allocations.
+		// Quote string fragments with one reusable buffer. Single-rune quoting
+		// uses different rules for quotes and apostrophes.
+		var scratch [16]byte
 		var row strings.Builder
 		used := 0
-		for _, value := range fragment {
-			escaped := strconv.QuoteRuneToASCII(value)
-			escaped = escaped[1 : len(escaped)-1]
-			cells := ansi.StringWidth(escaped)
-			if used > 0 && used+cells > width {
-				emit(row.String())
-				row.Reset()
-				used = 0
+		prefix := fmt.Sprintf("%-*s", tokenizerDetailLabelWidth, "Text")
+		visible := func() bool { return total >= start && len(rows) < count }
+		flush := func() {
+			if visible() {
+				emit(prefix + row.String())
+			} else {
+				total++
 			}
-			row.WriteString(escaped)
-			used += cells
+			row.Reset()
+			used, prefix = 0, padding
 		}
-		emit(row.String())
+		write := func(escaped string) {
+			if used > 0 && used+len(escaped) > valueWidth {
+				flush()
+			}
+			if visible() {
+				row.WriteString(escaped)
+			}
+			used += len(escaped)
+		}
+		write(`"`)
+		for offset, value := range fragment {
+			quoted := strconv.AppendQuoteToASCII(scratch[:0], fragment[offset:offset+utf8.RuneLen(value)])
+			write(string(quoted[1 : len(quoted)-1]))
+		}
+		write(`"`)
+		flush()
 	} else {
-		wrap("Text: partial UTF-8; use the exact bytes below.")
+		field("Text", "partial UTF-8; see Hex.")
 	}
-	emit("Hex:")
-	perRow := max(1, (width+1)/3)
-	for offset := 0; offset < len(fragment); offset += perRow {
-		emit(fmt.Sprintf("% x", []byte(fragment[offset:min(len(fragment), offset+perRow)])))
+	emit("")
+	field("Token ID", strconv.FormatUint(uint64(m.tokens[m.selected].ID), 10))
+	field("Bytes", fmt.Sprintf("[%d, %d)", begin, end))
+	field("Encoding", m.encoding)
+	perRow := max(1, (valueWidth+1)/3)
+	hexRows := (len(fragment) + perRow - 1) / perRow
+	// Unseen hexadecimal rows need only arithmetic, not formatted strings.
+	for index := max(0, start-total); index < min(hexRows, start+count-total); index++ {
+		prefix := padding
+		if index == 0 {
+			prefix = fmt.Sprintf("%-*s", tokenizerDetailLabelWidth, "Hex")
+		}
+		offset := index * perRow
+		rows = append(rows, prefix+fmt.Sprintf("% x", []byte(fragment[offset:min(len(fragment), offset+perRow)])))
 	}
+	total += hexRows
 	return rows, total
 }

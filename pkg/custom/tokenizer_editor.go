@@ -216,14 +216,10 @@ func (m *tokenizerEditor) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case tokenizerFocusResults:
 			switch key {
 			case "up":
-				if m.selected == 0 {
-					m.focus, m.option = tokenizerFocusOptions, 1
-				} else {
-					m.selected--
-				}
+				m.focus, m.option = tokenizerFocusOptions, 1
 			case "left":
 				m.selected--
-			case "down", "right":
+			case "right":
 				m.selected++
 			case "pgup":
 				m.selected -= m.previousPageSize()
@@ -479,7 +475,8 @@ func (m *tokenizerEditor) moveLine(direction int) {
 
 func (m *tokenizerEditor) updateModal(key string) {
 	_, total := m.modalRows(0, 0)
-	m.scroll = min(m.scroll, max(0, total-max(1, m.viewHeight()-3)))
+	count := m.modalPageSize(total)
+	m.scroll = min(m.scroll, max(0, total-count))
 	switch key {
 	case "esc", "left", "f1":
 		m.modal, m.scroll = 0, 0
@@ -488,9 +485,9 @@ func (m *tokenizerEditor) updateModal(key string) {
 	case "down":
 		m.scroll++
 	case "pgup":
-		m.scroll -= max(1, m.viewHeight()-3)
+		m.scroll -= count
 	case "pgdown":
-		m.scroll += max(1, m.viewHeight()-3)
+		m.scroll += count
 	case "home":
 		m.scroll = 0
 	case "end":
