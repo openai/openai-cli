@@ -310,7 +310,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			usedFlags = append(usedFlags, *flag)
 			if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && !assigned {
 				if i == len(preceding)-1 {
-					return flagValueCompletion(root, cmd, *flag, current, "", completionStyle)
+					return flagValueCompletion(root, cmd, *flag, unquoteStaticValue(current, completionStyle), "", completionStyle)
 				}
 				i += 2
 			} else {
@@ -359,11 +359,12 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 
 	// Some shells retain quotes around the current argument. Only opt known
 	// static values into this path; file and free-form completion stay unchanged.
-	if !literal && completionStyle != CompletionStyleBash {
-		if unquoted := unquoteStaticValue(current); unquoted != current && isFlag(unquoted) {
+	if !literal {
+		if unquoted := unquoteStaticValue(current, completionStyle); unquoted != current && isFlag(unquoted) {
 			if name, value, assigned := strings.Cut(unquoted, "="); assigned {
 				if flag := findFlag(flags, name); flag != nil {
 					if doc, ok := (*flag).(cli.DocGenerationFlag); ok && doc.TakesValue() {
+						// Quotes inside the outer argument are literal value data.
 						result := flagValueCompletion(root, cmd, *flag, value, name+"=", completionStyle)
 						if len(result.Completions) != 0 {
 							return result
@@ -380,7 +381,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			result := CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 			if flag := findFlag(flags, name); flag != nil {
 				if doc, ok := (*flag).(cli.DocGenerationFlag); ok && doc.TakesValue() {
-					result = flagValueCompletion(root, cmd, *flag, value, name+"=", completionStyle)
+					result = flagValueCompletion(root, cmd, *flag, unquoteStaticValue(value, completionStyle), name+"=", completionStyle)
 					if result.Behavior == ShellCompletionBehaviorFile {
 						result.FileValuePrefix = name + "="
 						result.requiresFileValueSupport = true
@@ -455,9 +456,6 @@ func flagValueCompletion(root, selected *cli.Command, flag cli.Flag, prefix, ass
 		}
 	}
 	var completions []ShellCompletion
-	if style != CompletionStyleBash {
-		prefix = unquoteStaticValue(prefix)
-	}
 	for _, value := range choices {
 		if strings.HasPrefix(value, prefix) {
 			name := value
@@ -487,10 +485,11 @@ func flagValueCompletion(root, selected *cli.Command, flag cli.Flag, prefix, ass
 	return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 }
 
-// Static enum values contain no shell syntax. Remove one surrounding quote,
-// including an unfinished opening quote, without evaluating shell expressions.
-func unquoteStaticValue(value string) string {
-	if len(value) == 0 || value[0] != '\'' && value[0] != '"' {
+// Zsh and Fish retain current-word quotes. Bash and PowerShell already decode
+// that layer. Remove it once for static matching, without evaluating syntax.
+func unquoteStaticValue(value string, style CompletionStyle) string {
+	if style != CompletionStyleZsh && style != CompletionStyleFish ||
+		len(value) == 0 || value[0] != '\'' && value[0] != '"' {
 		return value
 	}
 	quote := value[:1]

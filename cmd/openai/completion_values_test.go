@@ -145,7 +145,7 @@ func TestMainCompletionValuesBashAdapterCompatibility(t *testing.T) {
 }
 
 func TestMainCompletionValuesQuotedArguments(t *testing.T) {
-	for _, style := range []string{"zsh", "fish", "pwsh"} {
+	for _, style := range []string{"zsh", "fish"} {
 		for _, quote := range []string{"'", `"`} {
 			for _, closing := range []string{"", quote} {
 				for _, tc := range []struct {
@@ -207,22 +207,76 @@ func TestMainCompletionValuesQuotesPreserveOtherInputs(t *testing.T) {
 			})
 		}
 	}
-	// Bash already removes shell quoting. Any remaining quotes are literal data.
+	// Bash and PowerShell dispatch decoded values. Remaining quotes are literal data.
+	for _, style := range []string{"bash", "pwsh"} {
+		for _, tc := range []struct {
+			args []string
+			code int
+		}{
+			{[]string{"--format", `'j`}, 11},
+			{[]string{"--format", `"j"`}, 11},
+			{[]string{`--format='j'`}, 11},
+			{[]string{`'--format=j'`}, 0},
+		} {
+			t.Run(style+" literal/"+strings.Join(tc.args, " "), func(t *testing.T) {
+				got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=1"}, mainCompletionArgs(style, tc.args...)...)
+				if got != (mainDispatchResult{code: tc.code}) {
+					t.Fatalf("completion interpreted literal quotes as shell syntax: %+v", got)
+				}
+			})
+		}
+	}
+}
+
+func TestMainCompletionValuesPreserveLiteralInnerQuotes(t *testing.T) {
 	for _, tc := range []struct {
-		args []string
-		code int
+		path        []string
+		flag, value string
 	}{
-		{[]string{"--format", `'j`}, 11},
-		{[]string{"--format", `"j"`}, 11},
-		{[]string{`--format='j'`}, 11},
-		{[]string{`'--format=j'`}, 0},
+		{nil, "--format", "y"},
+		{[]string{"files", "list"}, "--purpose", "u"},
 	} {
-		t.Run("bash literal/"+strings.Join(tc.args, " "), func(t *testing.T) {
-			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=1"}, mainCompletionArgs("bash", tc.args...)...)
-			if got != (mainDispatchResult{code: tc.code}) {
-				t.Fatalf("Bash interpreted literal quotes as shell syntax: %+v", got)
+		for _, quotes := range []struct{ outer, inner string }{{"'", `"`}, {`"`, "'"}} {
+			value := quotes.inner + tc.value + quotes.inner
+			for _, closing := range []string{"", quotes.outer} {
+				for _, form := range []string{"separated", "assigned", "whole assignment"} {
+					args := append([]string(nil), tc.path...)
+					code := 11
+					switch form {
+					case "separated":
+						args = append(args, tc.flag, quotes.outer+value+closing)
+					case "assigned":
+						args = append(args, tc.flag+"="+quotes.outer+value+closing)
+					case "whole assignment":
+						args = append(args, quotes.outer+tc.flag+"="+value+closing)
+						code = 0
+					}
+					t.Run("zsh/"+form+"/"+strings.Join(args, " "), func(t *testing.T) {
+						got := runMainDispatchWithEnv(t, "zsh", []string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=1"}, mainCompletionArgs("zsh", args...)...)
+						if got != (mainDispatchResult{code: code}) {
+							t.Fatalf("completion removed literal inner quotes: %+v", got)
+						}
+					})
+				}
 			}
-		})
+			// These adapters remove the outer shell quotes before dispatch.
+			for _, style := range []string{"bash", "pwsh"} {
+				for _, assigned := range []bool{false, true} {
+					args := append([]string(nil), tc.path...)
+					if assigned {
+						args = append(args, tc.flag+"="+value)
+					} else {
+						args = append(args, tc.flag, value)
+					}
+					t.Run(style+"/"+strings.Join(args, " "), func(t *testing.T) {
+						got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=1"}, mainCompletionArgs(style, args...)...)
+						if got != (mainDispatchResult{code: 11}) {
+							t.Fatalf("completion removed literal inner quotes: %+v", got)
+						}
+					})
+				}
+			}
+		}
 	}
 }
 

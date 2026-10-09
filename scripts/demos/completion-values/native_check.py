@@ -48,6 +48,26 @@ def quoted_cases(empty=False):
     return cases
 
 
+def literal_inner_quote_cases():
+    cases = []
+    for flag, command, value in (
+        ("format", "openai ", "y"),
+        ("purpose", "openai files list ", "u"),
+    ):
+        for quote_name, outer, inner in (("single", "'", '"'), ("double", '"', "'")):
+            for closed in (False, True):
+                argument = "--" + flag + "=" + inner + value + inner
+                line = command + outer + argument + (outer if closed else "")
+                # Inner quotes are literal data inside the outer argument.
+                # Preserve those bytes; yaml/user_data would change the value.
+                expected = [command + outer + argument + outer]
+                if not closed:
+                    expected.append(line)
+                name = f"{flag}-quoted-literal-inner-{quote_name}-{'closed' if closed else 'open'}"
+                cases.append((name, line, expected))
+    return cases
+
+
 # Expected buffers retain the shell's final space for a unique completion.
 CASES = [
     ("format-separated", "openai --format y", ["openai --format yaml "]),
@@ -56,6 +76,7 @@ CASES = [
     ("format-common-prefix", "openai --format j", ["openai --format json"]),
     *quoted_cases(),
     *quoted_cases(empty=True),
+    *literal_inner_quote_cases(),
     ("error-format", "openai --format-error y", ["openai --format-error yaml "]),
     ("purpose-upload", "openai files upload --purpose u", ["openai files upload --purpose user_data "]),
     ("purpose-assigned", "openai files upload --purpose=u", ["openai files upload --purpose=user_data "]),
@@ -84,7 +105,7 @@ exec "$COMPLETION_TEST_BINARY" "$@"
 
 
 def compare_completion(name, expected, observed):
-    quoted = name.startswith("format-quoted-")
+    quoted = name.startswith(("format-quoted-", "purpose-quoted-literal-inner-"))
     if not quoted and name not in {"at-file", "at-file-protocol"}:
         return observed in expected, {"comparison_mode": "exact"}
     # These fixtures contain literal words, quotes, and escapes only.
