@@ -16,16 +16,16 @@ Obtain the coordinator's PTY reservation before running the recipe.
 Use existing `python3`, `asciinema`, `agg`, `ffmpeg`, and `ffprobe` installations.
 Use an empty output directory outside the repository.
 Supply full source commit IDs matching both binaries.
-Keep the baseline binary unchanged:
+Use a baseline binary from this commit:
 
 ```text
-/Users/vguvvala/code/cli-work/parallel-features-20261007/linear-done-verification-20261009/bin/openai
+e68939820415144d769ed02de6aa72d5b7d32948
 ```
 
 ```sh
-PATH=/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH \
+PATH=/absolute/terminal-replay-tools:$PATH \
   bash scripts/demos/cost-reports/record.sh \
-  /Users/vguvvala/code/cli-work/parallel-features-20261007/linear-done-verification-20261009/bin/openai \
+  /absolute/task/evidence/baseline-openai \
   /absolute/task/evidence/candidate-openai \
   e68939820415144d769ed02de6aa72d5b7d32948 AFTER_COMMIT \
   /absolute/task/evidence/cost-reports-media
