@@ -146,15 +146,28 @@ ____APPNAME___bash_autocomplete() {
           while IFS= read -r file; do
             COMPREPLY+=("$value_prefix$file")
           done <<<"$completions"
-          # Filename mode would append '/' to these actual replacement words.
-          # Decline the whole set instead of choosing an unintended alternative.
-          local candidate
-          for candidate in "${COMPREPLY[@]}"; do
-            if [[ -d "$candidate" ]]; then
-              COMPREPLY=()
-              break
+          local value_flag="${current_value%%=*}" candidate
+          if [[ "$current_value" != -*=* ]]; then
+            value_flag=""
+            if [[ ${#completion_args[@]} -gt 1 ]]; then
+              value_flag="${completion_args[${#completion_args[@]} - 2]}"
             fi
-          done
+          fi
+          if [[ "$value_flag" == -* ]]; then
+            while [[ "$value_flag" == -* ]]; do value_flag="${value_flag#-}"; done
+            case "$value_flag" in
+            format|format-error|purpose)
+              # Filename mode would append '/' to static replacement words.
+              # Decline the whole set, preserving command/flag completion.
+              for candidate in "${COMPREPLY[@]}"; do
+                if [[ -d "$candidate" ]]; then
+                  COMPREPLY=()
+                  break
+                fi
+              done
+              ;;
+            esac
+          fi
         fi
         ;;
       esac

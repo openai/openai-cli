@@ -104,6 +104,8 @@ CASES = [
     ("directory-format-ambiguous", "openai --format j", ["openai --format json"]),
     ("directory-file", "openai files upload --file y", ["openai files upload --file yaml/"]),
     ("directory-command-no-collision", "openai models li", ["openai models list "]),
+    ("directory-command-collision", "openai models li", ["openai models list "]),
+    ("directory-flag-collision", "openai --forma", ["openai --format"]),
 ]
 
 CASE_DIRECTORIES = {
@@ -114,9 +116,11 @@ CASE_DIRECTORIES = {
     "directory-format-ambiguous": ("json",),
     "directory-file": ("yaml",),
     "directory-command-no-collision": ("yaml",),
+    "directory-command-collision": ("list",),
+    "directory-flag-collision": ("--format",),
 }
 
-# Bash suppresses all candidates when an actual replacement names a directory.
+# Bash suppresses static values when an actual replacement names a directory.
 # Zsh keeps the static enum suggestions declared in CASES.
 SHELL_EXPECTATIONS = {
     "bash": {
@@ -125,6 +129,7 @@ SHELL_EXPECTATIONS = {
         "format-quoted-directory-whole-assignment-single-closed": ["openai '--format=y'"],
         "format-quoted-directory-whole-assignment-double-closed": ['openai "--format=y"'],
         "directory-format-ambiguous": ["openai --format j"],
+        "directory-command-collision": ["openai models list/"],
     },
 }
 
