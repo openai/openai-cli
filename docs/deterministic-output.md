@@ -22,8 +22,10 @@ It preserves selected data, requested help, errors, and exit status.
 Saved image paths remain selected data.
 Quiet suppresses partial-image progress but preserves explicitly requested final previews.
 Quiet does not change the format or discard stdout.
-Completed API binary saves report once on stderr; quiet and machine error modes suppress those receipts.
-Manpage generation currently prints its receipt on stdout, including with `--quiet`.
+The CLI writes completion receipts to stderr after successful API binary saves or manpage writes.
+Quiet and machine error modes suppress these receipts.
+Manpage generation reports completion after all selected files finish writing and close.
+Disabling both manpage formats writes no files and emits no save receipt.
 
 `--verbose` reports the command, format option, elapsed time, and command result on stderr.
 Elapsed time includes argument parsing, request setup, command work, and cleanup.
