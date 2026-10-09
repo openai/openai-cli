@@ -340,7 +340,7 @@ After also distinguishes modern GPT-4 families from original GPT-4 and Turbo.
 DEMO_DETAILS_PRESENTATION=models DEMO_COLUMNS=80 DEMO_THEME=dark \
   scripts/demos/tokenizer-codex/record.sh details \
   /absolute/path/openai-1e4b466 /absolute/path/openai-candidate \
-  1e4b466 CANDIDATE_SHA /absolute/path/details-dark-80
+  1e4b466b58b34f27c274d70033236b8d9337b51a CANDIDATE_SHA /absolute/path/details-dark-80
 ```
 
 Repeat with `DEMO_COLUMNS=40 DEMO_THEME=no-color` for the compact monochrome comparison.
