@@ -140,14 +140,18 @@ func TestWindowsDownloadPrivateCreation(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if duplicate, err := createPrivateDownloadFile(root, "download.bin"); err == nil {
-		duplicate.Close()
-		t.Fatal("private creation replaced an existing file")
+	if duplicate, err := createPrivateDownloadFile(root, "download.bin"); !errors.Is(err, os.ErrExist) || duplicate != nil {
+		if duplicate != nil {
+			duplicate.Close()
+		}
+		t.Fatalf("duplicate creation must preserve os.ErrExist: %v", err)
 	}
 	for _, name := range []string{"../outside", `sub\outside`, `C:\outside`} {
-		if escaped, err := createPrivateDownloadFile(root, name); err == nil {
-			escaped.Close()
-			t.Fatalf("accepted nonlocal name %q", name)
+		if escaped, err := createPrivateDownloadFile(root, name); err == nil || err.Error() != "download staging requires a local filename" {
+			if escaped != nil {
+				escaped.Close()
+			}
+			t.Fatalf("nonlocal name %q diagnostic=%v", name, err)
 		}
 	}
 	if data, err := os.ReadFile(filepath.Join(directory, "download.bin")); err != nil || string(data) != "synthetic" {
