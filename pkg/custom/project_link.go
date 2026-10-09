@@ -70,8 +70,11 @@ func registerProjectLinkCommands(root *cli.Command) {
 		root.Commands = append(root.Commands, &cli.Command{
 			Name: name, Usage: usage, Description: description, HideHelpCommand: true,
 			CustomHelpTemplate: help,
-			Metadata:           map[string]any{localUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools"},
-			Action:             handleProjectLink,
+			Metadata: map[string]any{
+				localUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools",
+				"completion-root-flag-values": map[string][]string{"format": {"auto", "text", "json"}},
+			},
+			Action: handleProjectLink,
 		})
 	}
 }

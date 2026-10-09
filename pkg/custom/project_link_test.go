@@ -78,6 +78,16 @@ func TestProjectLinkSkipsFirstRunShellSetup(t *testing.T) {
 	}
 }
 
+func TestProjectLinkCompletionUsesSupportedFormats(t *testing.T) {
+	root := projectLinkTestCommand(io.Discard)
+	for _, name := range []string{"link", "unlink"} {
+		command := root.Command(name)
+		require.NotNil(t, command)
+		require.Equal(t, map[string][]string{"format": {"auto", "text", "json"}}, command.Metadata["completion-root-flag-values"])
+		require.Equal(t, true, command.Metadata[localUtilityMetadata])
+	}
+}
+
 type projectLinkBrokenWriter struct{ err error }
 
 func (w projectLinkBrokenWriter) Write([]byte) (int, error) { return 0, w.err }
