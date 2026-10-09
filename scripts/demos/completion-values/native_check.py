@@ -188,8 +188,10 @@ class ShellSession:
             self.pump()
 
     def capture(self, line, capture_path, index):
-        # Tab runs native completion. The capture widget saves and clears BUFFER.
-        # No newline reaches the line editor while a candidate occupies BUFFER.
+        # Bash 3.2 accepts only a prefixed comment. Other widgets clear BUFFER.
+        # Restrict the comment capture contract to these single-line fixtures.
+        if "\n" in line or "\r" in line:
+            raise ValueError("Native capture requires a single-line fixture.")
         self.send(line.encode("utf-8") + b"\t" + CAPTURE_KEY)
 
         def complete():
@@ -238,12 +240,40 @@ bind 'set bell-style none'
 bind 'set show-all-if-ambiguous off'
 bind '"\C-i": complete'
 source "$COMPLETION_TEST_ADAPTER" || exit 91
-completion_test_capture() {
-  printf '%s\0' "$READLINE_LINE" >> "$COMPLETION_TEST_CAPTURE"
-  READLINE_LINE=''
-  READLINE_POINT=0
-}
-bind -x '"\C-x\C-g": completion_test_capture'
+if (( BASH_VERSINFO[0] < 4 )); then
+  # Bash 3.2 bind -x does not expose READLINE_LINE or READLINE_POINT.
+  set +H
+  set -o history
+  shopt -s interactive_comments
+  HISTCONTROL=''
+  HISTIGNORE=''
+  HISTSIZE=1000
+  unset HISTTIMEFORMAT
+  completion_test_capture_history() {
+    local entry last='' marker='# __completion_capture__ '
+    builtin history -w "$COMPLETION_TEST_HISTORY" || return
+    while IFS= read -r entry; do last=$entry; done < "$COMPLETION_TEST_HISTORY"
+    case "$last" in
+      "$marker"*)
+        printf '%s\0' "${last#"$marker"}" >> "$COMPLETION_TEST_CAPTURE" || return
+        # Clear owned history to prevent duplicate capture on another prompt.
+        builtin history -c
+        ;;
+    esac
+  }
+  PROMPT_COMMAND=completion_test_capture_history
+  # Prepend the comment before accepting. Quotes and substitutions stay inert.
+  bind '"\C-x\C-g": "\C-a# __completion_capture__ \C-e\C-m"'
+  printf 'bash-history-comment\n' > "$COMPLETION_TEST_CAPTURE_MODE"
+else
+  completion_test_capture() {
+    printf '%s\0' "$READLINE_LINE" >> "$COMPLETION_TEST_CAPTURE"
+    READLINE_LINE=''
+    READLINE_POINT=0
+  }
+  bind -x '"\C-x\C-g": completion_test_capture'
+  printf 'bash-readline-buffer\n' > "$COMPLETION_TEST_CAPTURE_MODE"
+fi
 printf '%s\n' "$BASH_VERSION" > "$COMPLETION_TEST_VERSION"
 printf 'ready\n' > "$COMPLETION_TEST_READY"
 '''
@@ -263,6 +293,7 @@ completion_test_capture() {
 }
 zle -N completion_test_capture
 bindkey '^X^G' completion_test_capture
+printf 'zsh-buffer\n' > "$COMPLETION_TEST_CAPTURE_MODE"
 printf '%s\n' "$ZSH_VERSION" > "$COMPLETION_TEST_VERSION"
 printf 'ready\n' > "$COMPLETION_TEST_READY"
 '''
@@ -303,6 +334,7 @@ def check_shell(binary, shell, executable, output):
             argument_log.touch(mode=0o600)
             report["backend_argument_log"] = str(argument_log)
             capture = root / "captured-buffers"
+            capture_mode = root / "capture-mode"
             ready, version = root / "ready", root / "version"
             environment = {
                 "HOME": str(home), "ZDOTDIR": str(home), "XDG_CONFIG_HOME": str(home),
@@ -314,6 +346,8 @@ def check_shell(binary, shell, executable, output):
                 "COMPLETION_TEST_ADAPTER": str(adapter), "COMPLETION_TEST_CAPTURE": str(capture),
                 "COMPLETION_TEST_READY": str(ready), "COMPLETION_TEST_VERSION": str(version),
                 "COMPLETION_TEST_ARGV": str(argument_log), "COMPLETION_TEST_BINARY": str(binary),
+                "COMPLETION_TEST_HISTORY": str(root / "capture-history"),
+                "COMPLETION_TEST_CAPTURE_MODE": str(capture_mode),
             }
             report["adapter_sha256"] = generate_adapter(binary, shell, environment, adapter)
             script = root / "startup.sh"
@@ -326,6 +360,7 @@ def check_shell(binary, shell, executable, output):
                 session.send(("source " + shlex.quote(str(script)) + "\n").encode("utf-8"))
                 session.wait_for(lambda: ready.exists() and PROMPT in session.tail)
                 report["version"] = version.read_text(encoding="utf-8").strip()
+                report["capture_mode"] = capture_mode.read_text(encoding="utf-8").strip()
                 for index, (name, line, expected) in enumerate(CASES):
                     argument_offset = argument_log.stat().st_size
                     observed = session.capture(line, capture, index)

@@ -43,7 +43,7 @@ func TestCompletionValuesPreserveFlagOwnership(t *testing.T) {
 		{"files", "create", "--purpose", "batch_output"},
 	} {
 		got := autocomplete.GetCompletions(autocomplete.CompletionStyleBash, root, args)
-		require.Equal(t, autocomplete.ShellCompletionBehaviorNoComplete, got.Behavior, args)
+		require.EqualValues(t, autocomplete.ShellCompletionBehaviorNoComplete, got.Behavior, args)
 		require.Empty(t, got.Completions, args)
 	}
 }
