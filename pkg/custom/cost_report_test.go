@@ -1,0 +1,118 @@
+package custom
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/openai/openai-cli/pkg/transformers"
+	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v3"
+)
+
+func TestCostReportWriterFailures(t *testing.T) {
+	for _, format := range []string{"text", "json", "csv"} {
+		t.Run(format, func(t *testing.T) {
+			err := writeCostReport(t.Context(), costReportFailWriter{}, format, projectCostReport{
+				Rows: []transformers.ProjectCostRow{{Currency: "usd", Amount: "0.3"}},
+			})
+			require.ErrorIs(t, err, io.ErrClosedPipe)
+		})
+	}
+}
+
+type costReportFailWriter struct{}
+
+func (costReportFailWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestCostReportWriterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, format := range []string{"text", "json", "csv"} {
+		var out bytes.Buffer
+		err := writeCostReport(ctx, &out, format, projectCostReport{})
+		require.True(t, errors.Is(err, context.Canceled))
+		require.Empty(t, out.String())
+	}
+}
+
+func TestCostReportCSVText(t *testing.T) {
+	for _, value := range []string{"=SUM(A1)", "+1", "-2", "@cmd", "  =x", "\tplain", "a\nb", "'quoted"} {
+		require.Equal(t, "'"+value, costReportCSVText(value))
+	}
+	for _, value := range []string{"proj_example", "usd", "", "with,comma", "with\"quote"} {
+		require.Equal(t, value, costReportCSVText(value))
+	}
+}
+
+// Isolate the real signal so this regression cannot interrupt other tests.
+func TestCostReportCancellationPreservesJoinedCauses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Process.Signal cannot send os.Interrupt on Windows")
+	}
+	const childSetting = "OPENAI_COST_REPORT_CAUSE_TEST"
+	if os.Getenv(childSetting) != "1" {
+		binary, err := os.Executable()
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		child := exec.CommandContext(ctx, binary, "-test.run=^TestCostReportCancellationPreservesJoinedCauses$")
+		for _, entry := range os.Environ() {
+			if !strings.HasPrefix(entry, "OPENAI_") {
+				child.Env = append(child.Env, entry)
+			}
+		}
+		child.Env = append(child.Env, childSetting+"=1", "OPENAI_ADMIN_KEY=synthetic-cost-admin")
+		output, err := child.CombinedOutput()
+		require.NoError(t, ctx.Err())
+		require.NoError(t, err, "%s", output)
+		return
+	}
+	root := &cli.Command{
+		Name: "openai", Writer: io.Discard, ErrWriter: io.Discard,
+		Flags:    []cli.Flag{&cli.StringFlag{Name: "base-url", Value: "http://127.0.0.1:1"}},
+		Metadata: map[string]any{mtlsHTTPClientMetadata: &http.Client{Transport: costReportCancelTransport{}}},
+	}
+	registerCostReportCommands(root)
+	ConfigureCommandErrors(root)
+	err := root.Run(t.Context(), []string{"openai", "costs", "report", "--from", "2026-10-01", "--to", "2026-10-08"})
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF, "SIGINT must retain the joined transport failure")
+	var exit cli.ExitCoder
+	require.ErrorAs(t, err, &exit)
+	require.Equal(t, 130, exit.ExitCode())
+}
+
+type costReportCancelTransport struct{}
+
+func (costReportCancelTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}},
+		Body: costReportCancelBody{ctx: request.Context()}, Request: request,
+	}, nil
+}
+
+type costReportCancelBody struct{ ctx context.Context }
+
+func (costReportCancelBody) Close() error { return nil }
+
+func (body costReportCancelBody) Read([]byte) (int, error) {
+	process, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		return 0, err
+	}
+	defer process.Release()
+	if err := process.Signal(os.Interrupt); err != nil {
+		return 0, err
+	}
+	<-body.ctx.Done()
+	return 0, errors.Join(body.ctx.Err(), io.ErrUnexpectedEOF)
+}
