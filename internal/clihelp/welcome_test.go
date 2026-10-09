@@ -16,7 +16,7 @@ func TestWelcomeLayout(t *testing.T) {
 	for _, version := range []string{"1.38.0", "v2.0.0", "dev", "1.38.0-rc.1+abc123"} {
 		for _, width := range []int{20, 28, 29, 32, 40, 80} {
 			for _, profile := range []colorprofile.Profile{colorprofile.NoTTY, colorprofile.ANSI, colorprofile.TrueColor} {
-				got := renderWelcome(version, width, profile)
+				got := renderWelcome(version, width, profile, true)
 				if got == "" {
 					if width >= 40 {
 						t.Fatalf("missing header at width %d for %q", width, version)
@@ -44,9 +44,24 @@ func TestWelcomeLayout(t *testing.T) {
 }
 
 func TestWelcomeVersionEscapesControls(t *testing.T) {
-	got := renderWelcome("1.2.3\x1b]2;changed\a\u202e", 100, colorprofile.NoTTY)
+	got := renderWelcome("1.2.3\x1b]2;changed\a\u202e", 100, colorprofile.NoTTY, true)
 	if strings.ContainsAny(got, "\x1b\a\u202e") || !strings.Contains(got, "1.2.3") {
 		t.Fatalf("unsafe version: %q", got)
+	}
+}
+
+func TestWelcomeLightAndDarkThemes(t *testing.T) {
+	for _, colorfgbg := range []string{"0;7", "0;15", "0;231", "0;255", "15;0", ""} {
+		dark := welcomeDarkBackground(colorfgbg)
+		wantDark := colorfgbg == "15;0" || colorfgbg == ""
+		if dark != wantDark {
+			t.Fatalf("COLORFGBG=%q: dark=%v; want %v", colorfgbg, dark, wantDark)
+		}
+		colored := renderWelcome("1.38.0", 40, colorprofile.TrueColor, dark)
+		monochrome := renderWelcome("1.38.0", 40, colorprofile.NoTTY, dark)
+		if ansi.Strip(colored) != monochrome {
+			t.Fatal("theme changed the banner layout or content")
+		}
 	}
 }
 

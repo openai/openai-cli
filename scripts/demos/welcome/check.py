@@ -100,6 +100,8 @@ def main():
         ("dumb", {"TERM": "dumb"}, False), ("unset-term", {"TERM": ""}, False),
         ("ci", {"CI": "true"}, False), ("github-ci", {"GITHUB_ACTIONS": "true"}, False),
         ("ci-false", {"CI": "false"}, True),
+        ("light-theme", {"COLORFGBG": "0;15", "COLORTERM": "truecolor"}, True),
+        ("windows-terminal-env", {"TERM": "", "WT_SESSION": "synthetic-session"}, True),
     ):
         cases.append((name, [], 80, (True, True, True), extra, banner))
     for index, args in enumerate((

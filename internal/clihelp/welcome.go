@@ -29,7 +29,7 @@ func welcomeHeader(root *cli.Command) string {
 	if os.Getenv("NO_COLOR") != "" || os.Getenv("FORCE_COLOR") == "0" {
 		profile = colorprofile.NoTTY
 	}
-	return renderWelcome(root.Version, helpWidth(root), profile)
+	return renderWelcome(root.Version, helpWidth(root), profile, welcomeDarkBackground(os.Getenv("COLORFGBG")))
 }
 
 func welcomeTerminal(value any) bool {
@@ -51,7 +51,18 @@ func welcomeEnvironment(getenv func(string) string) bool {
 	return true
 }
 
-func renderWelcome(version string, width int, profile colorprofile.Profile) string {
+// Match the image picker, tokenizer, and Codex guide without querying stdin.
+func welcomeDarkBackground(colorfgbg string) bool {
+	parts := strings.Split(colorfgbg, ";")
+	switch parts[len(parts)-1] {
+	case "7", "15", "231", "255":
+		return false
+	default:
+		return true
+	}
+}
+
+func renderWelcome(version string, width int, profile colorprofile.Profile, dark bool) string {
 	version = strings.Join(strings.Fields(readable.Text(version)), " ")
 	if version != "" && version[0] >= '0' && version[0] <= '9' {
 		version = "v" + version
@@ -63,10 +74,25 @@ func renderWelcome(version string, width int, profile colorprofile.Profile) stri
 	if max(ansi.StringWidth(title), ansi.StringWidth(greeting))+4 > width {
 		return ""
 	}
-	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.ANSIColor(4))
-	frame := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	// Reuse the established palette; those presentation helpers are private to
+	// pkg/custom, which depends on clihelp and cannot be imported here.
+	focus, muted, border := "#3159BC", "#657087", "#BAC4D8"
+	if dark {
+		focus, muted, border = "#8AA8FF", "#A4ACC2", "#51566B"
+	}
+	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(focus))
+	note := lipgloss.NewStyle().Foreground(lipgloss.Color(muted))
+	padding := 1
+	if max(ansi.StringWidth(title), ansi.StringWidth(greeting))+6 <= width {
+		padding = 2
+	}
+	frame := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(border)).Padding(0, padding)
+	styledTitle := heading.Render(">_ OpenAI CLI")
+	if version != "" {
+		styledTitle += "  " + note.Render(version)
+	}
 	var out strings.Builder
 	writer := colorprofile.Writer{Forward: &out, Profile: profile}
-	_, _ = writer.WriteString(frame.Render(heading.Render(title)+"\n"+greeting) + "\n\n")
+	_, _ = writer.WriteString(frame.Render(styledTitle+"\n"+greeting) + "\n\n")
 	return out.String()
 }

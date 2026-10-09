@@ -33,6 +33,25 @@ The recorder needs `asciinema`, `agg`, `ffmpeg`, `ffprobe`, and `python3` on PAT
 The shared lifecycle requires a new, empty output directory outside the repository.
 Use `DEMO_API_BINARY` to select a separately built copy of the existing fixture.
 
+Record the light background:
+
+```sh
+DEMO_THEME=light \
+  bash scripts/demos/record-welcome.sh \
+  "$BEFORE_BINARY" "$AFTER_BINARY" \
+  217ff2ea1e853040ba08c3c170e05586424386aa "$AFTER_SHA" \
+  /absolute/path/outside/repository/welcome-light
+```
+
+`DEMO_THEME` accepts `dark` or `light` and defaults to `dark`.
+Dark captures use Dracula rendering and `COLORFGBG=15;0`.
+Light captures use GitHub Light rendering and `COLORFGBG=0;15`.
+Set `COLORFGBG` explicitly to override the application background hint.
+`COLORTERM` defaults to `truecolor`; set it explicitly to test another advertised color capability.
+The PTY always uses `TERM=xterm-256color`.
+`NO_COLOR` suppresses application styling with either renderer theme.
+Metadata records these exact color settings.
+
 Record the 40-column monochrome case:
 
 ```sh
@@ -73,5 +92,5 @@ The crops supplement full evidence and do not prove that all help fits an ordina
 
 Inspect both screenshots and the comparison GIF before sharing them.
 Keep generated media outside Git.
-These artifacts show Bash PTY replay through Menlo and Dracula rendering.
+These artifacts show Bash PTY replay through Menlo and the selected renderer theme.
 They do not establish native graphical terminal, Linux, Windows, or font behavior.

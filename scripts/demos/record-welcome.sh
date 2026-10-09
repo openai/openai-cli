@@ -21,13 +21,21 @@ if [ "$demo_preview_rows" -gt "$demo_rows" ]; then
   exit 2
 fi
 demo_no_color="${NO_COLOR:-}"
+demo_theme="${DEMO_THEME:-dark}"
+case "$demo_theme" in
+  dark) demo_palette=dracula; demo_default_colorfgbg='15;0';;
+  light) demo_palette=github-light; demo_default_colorfgbg='0;15';;
+  *) echo 'DEMO_THEME must be dark or light.' >&2; exit 2;;
+esac
+demo_colorfgbg="${COLORFGBG:-$demo_default_colorfgbg}"
+demo_colorterm="${COLORTERM:-truecolor}"
 demo_python="$(command -v python3)"
 source "$demo_source/capture_and_render.sh"
 demo_prepare_capture "$demo_root" "$1" "$2" "$3" "$4" "$5" \
   "${DEMO_API_BINARY:-$demo_root/dist/demos/bin/image-model-demo-api}"
 demo_window_size="${demo_columns}x${demo_rows}"
 demo_render_options=(--font-family Menlo --font-size 18 --line-height 1.2 \
-  --theme dracula --fps-cap 20 --last-frame-duration 3)
+  --theme "$demo_palette" --fps-cap 20 --last-frame-duration 3)
 demo_start_api "$demo_runtime/requests.txt"
 cat > "$demo_runtime/scene.sh" <<'SCENE'
 #!/bin/bash
@@ -54,7 +62,8 @@ SCENE
   echo 'data: no API credentials; rejecting loopback fixture records unexpected requests'
   echo 'capture: isolated Bash PTYs, temporary HOME and XDG directories, restricted PATH, no shell hooks'
   echo 'startup: existing first-run behavior remains enabled within temporary directories'
-  echo "render: asciinema + agg, Menlo 18px, Dracula, $demo_window_size, line height 1.2"
+  echo "render: asciinema + agg, Menlo 18px, $demo_palette, $demo_window_size, line height 1.2"
+  echo "application color environment: COLORFGBG=$demo_colorfgbg COLORTERM=$demo_colorterm TERM=xterm-256color"
   if [ -n "$demo_no_color" ]; then echo 'NO_COLOR: enabled'; else echo 'NO_COLOR: unset'; fi
   echo "top crops: first approximately $demo_preview_rows rows; full media and transcripts remain available"
   echo 'scope: terminal replay; not native graphical terminal, Linux, Windows, or font validation'
@@ -73,7 +82,7 @@ for demo_scene in before after; do
     "HOME=$demo_state/home" "XDG_CONFIG_HOME=$demo_state/config" \
     "XDG_CACHE_HOME=$demo_state/cache" "XDG_DATA_HOME=$demo_state/data" \
     "DEMO_WORKING_DIRECTORY=$demo_state/work" "DEMO_VERSION_FILE=$demo_output/$demo_scene-version.txt" \
-    "NO_COLOR=$demo_no_color" "GOMAXPROCS=2"
+    "NO_COLOR=$demo_no_color" "COLORFGBG=$demo_colorfgbg" "COLORTERM=$demo_colorterm" "GOMAXPROCS=2"
 done
 demo_stop_api
 cp "$demo_runtime/requests.txt" "$demo_output/requests.txt"
