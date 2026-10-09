@@ -80,7 +80,7 @@ cat upload.bin | openai files upload --file - --purpose user_data
 Only one parameter can consume stdin. File paths avoid shell conversion of binary pipelines.
 See [shell and file input](shell-file-input.md) for stdin metadata and Windows shell differences.
 
-Supply `--purpose` for each upload. The CLI does not select a purpose for you.
+Provide an explicit purpose through `--purpose` or supported JSON/YAML input. The CLI does not select a purpose for you.
 The example uses `user_data`; select the purpose required by your API workflow.
 The API applies purpose, file type, and size requirements.
 See the [Files upload reference](https://developers.openai.com/api/reference/resources/files/methods/create) for current requirements.
