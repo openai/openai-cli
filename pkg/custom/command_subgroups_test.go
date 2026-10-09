@@ -19,7 +19,7 @@ func TestCommandSubgroupsKeepActionsFlagsAndParents(t *testing.T) {
 				return nil
 			}}
 			original := &cli.Command{Name: "admin:organization:users", Category: "API RESOURCE", Commands: []*cli.Command{leaf}}
-			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard, Flags: []cli.Flag{&cli.StringFlag{Name: "format"}}, Commands: []*cli.Command{
+			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard, Flags: []cli.Flag{&cli.StringFlag{Name: "format"}, &cli.StringFlag{Name: "admin-api-key"}}, Commands: []*cli.Command{
 				{Name: "admin:organization:users:roles", Category: "API RESOURCE", Commands: []*cli.Command{{Name: "list"}}}, original,
 			}}
 			ConfigureCommand(root)
@@ -36,7 +36,7 @@ func TestCommandSubgroupsKeepActionsFlagsAndParents(t *testing.T) {
 			if nested {
 				path = []string{"admin", "organization", "users", "list"}
 			}
-			args := append([]string{"openai", "--format", "json"}, path...)
+			args := append([]string{"openai", "--format", "json", "--admin-api-key", "synthetic-admin-key"}, path...)
 			if err := root.Run(context.Background(), append(args, "--filter", "admin:organization")); err != nil {
 				t.Fatal(err)
 			}

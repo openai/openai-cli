@@ -14,7 +14,9 @@ func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 	configureGlobalFlagDescriptions(root)
 	configureHelpGroups(root)
 	configureImageHelpContent(root)
-	return clihelp.Configure(root, args)
+	args, handled, err := clihelp.Configure(root, args)
+	configureAdminSetupHelp(root)
+	return args, handled, err
 }
 
 // Apply copy to root-owned flags only. A request field with the same name keeps
