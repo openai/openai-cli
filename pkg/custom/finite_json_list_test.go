@@ -158,6 +158,7 @@ func TestFiniteJSONListFailuresKeepIncompletePrefix(t *testing.T) {
 			require.Error(t, err)
 			if want != nil {
 				require.ErrorIs(t, err, want)
+				require.Equal(t, 1, strings.Count(err.Error(), want.Error()), "report each failure once")
 			}
 			if tc == "initial" {
 				require.Empty(t, out.String())

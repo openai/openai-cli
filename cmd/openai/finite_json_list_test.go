@@ -346,6 +346,26 @@ func TestMainFiniteJSONListDoesNotInferDataField(t *testing.T) {
 	}
 }
 
+func TestMainFiniteJSONListPreservesSingleResponseListEnvelope(t *testing.T) {
+	const envelope = `{"object":"list","data":[{"type":"response.completed","description":"synthetic event"}],"unknown":{"preserved":true}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/webhook_event_types" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, envelope)
+	}))
+	defer server.Close()
+	got := runReadableCommand(t, server, "webhooks:event-types", "list", "--format", "json")
+	if got.code != 0 || got.stderr != "" {
+		t.Fatalf("single-response list failed: %+v", got)
+	}
+	var actual map[string]any
+	if err := json.Unmarshal([]byte(got.stdout), &actual); err != nil || !reflect.DeepEqual(actual, finiteJSONValue(t, envelope)) {
+		t.Fatalf("single-response list envelope changed: %+v error=%v", got, err)
+	}
+}
+
 func TestMainFiniteJSONListUpstreamFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name, failure string

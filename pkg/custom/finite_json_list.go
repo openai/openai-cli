@@ -121,7 +121,13 @@ func (list *finiteJSONList) next() ([]byte, error) {
 
 // A cancellation arriving during a failed write must survive EPIPE suppression.
 func (list *finiteJSONList) err(err error) error {
-	return errors.Join(err, list.opts.Context.Err(), list.iter.Err())
+	// The iterator's error may already contain cancellation.
+	for _, cause := range []error{list.iter.Err(), list.opts.Context.Err()} {
+		if cause != nil && !errors.Is(err, cause) {
+			err = errors.Join(err, cause)
+		}
+	}
+	return err
 }
 
 func (list *finiteJSONList) write(out io.Writer) error {

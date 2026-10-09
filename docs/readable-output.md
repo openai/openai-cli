@@ -31,8 +31,10 @@ openai --format jsonl models list | jq '.id'
 
 Explicit `json`, `jsonl`, `raw`, `yaml`, `pretty`, and `explore` preserve access
 to the original API data. Format names are case-insensitive. Lists in `raw`
-format retain their page envelope. Finite lists in `json` format produce one
-JSON array. Other data formats retain item output.
+format retain their page envelope. In `json` format, lists that normally print
+separate items now produce one JSON array. Other data formats retain item output.
+Commands returning a single response object keep that object, including list
+envelopes such as `webhooks:event-types list`.
 `explore` keeps its interactive viewer and falls back to JSON off a terminal.
 
 `--transform` and `--raw-output` keep their extraction behavior:
@@ -56,8 +58,8 @@ Models sorting retains its existing single-response collection.
 Terminal output retains automatic paging for long results. The CLI buffers at
 most one screen plus the item that crosses that screen before opening the pager.
 
-This changes the previous finite-list `json` contract, which emitted separate
-pretty-printed JSON values. Migrate record consumers to `--format jsonl`.
+This changes `json` output at finite item boundaries, which previously emitted
+separate pretty-printed values. Migrate record consumers to `--format jsonl`.
 Alternatively, update document consumers to read array elements, such as `jq '.[]'`.
 Single responses and event streams retain their existing JSON framing.
 Explicit `--transform` or `--raw-output` retains separate-record behavior.
