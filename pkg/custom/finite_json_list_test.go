@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/stretchr/testify/require"
@@ -117,7 +118,7 @@ func TestFiniteJSONListWritesBeforeRequestingNextItem(t *testing.T) {
 
 func TestFiniteJSONListFailuresKeepIncompletePrefix(t *testing.T) {
 	upstream := errors.New("synthetic upstream")
-	for _, tc := range []string{"initial", "upstream", "malformed", "suffix", "canceled"} {
+	for _, tc := range []string{"initial", "upstream", "malformed", "suffix", "invalid UTF-8", "canceled"} {
 		t.Run(tc, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -141,6 +142,9 @@ func TestFiniteJSONListFailuresKeepIncompletePrefix(t *testing.T) {
 				want = nil
 			case "suffix":
 				iter.items[1] = `{} trailing-secret`
+				want = nil
+			case "invalid UTF-8":
+				iter.items[1] = "{\"secret\":\"\xff\"}"
 				want = nil
 			case "canceled":
 				iter.next = func(n int) {
@@ -262,7 +266,7 @@ func TestFiniteJSONListClosingWriteFailure(t *testing.T) {
 }
 
 func TestFiniteJSONListTransformsOnceAndValidatesResults(t *testing.T) {
-	for _, transformed := range []string{`"selected"`, `null`, `[1,2]`, `{"invalid":`} {
+	for _, transformed := range []string{`"selected"`, `null`, `[1,2]`, `"資料-�"`, `"\ud800"`, `{"invalid":`, "\"\xff\""} {
 		var out bytes.Buffer
 		calls := 0
 		opts := finiteListOpts(&out)
@@ -274,7 +278,7 @@ func TestFiniteJSONListTransformsOnceAndValidatesResults(t *testing.T) {
 			}
 		})
 		require.Equal(t, 1, calls)
-		if !json.Valid([]byte(transformed)) {
+		if !utf8.ValidString(transformed) || !json.Valid([]byte(transformed)) {
 			require.Error(t, err)
 			require.Empty(t, out.String())
 		} else {

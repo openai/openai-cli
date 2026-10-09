@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/jsonview"
@@ -59,9 +60,12 @@ func (it *finiteJSONSource[T]) Next() bool {
 	if it.err != nil || !it.source.Next() {
 		return false
 	}
-	if raw, ok := any(it.source.Current()).(hasRawJSON); ok && !json.Valid([]byte(raw.RawJSON())) {
-		it.err = errors.New("invalid JSON list item")
-		return false
+	if raw, ok := any(it.source.Current()).(hasRawJSON); ok {
+		value := raw.RawJSON()
+		if !utf8.ValidString(value) || !json.Valid([]byte(value)) {
+			it.err = errors.New("invalid JSON list item")
+			return false
+		}
 	}
 	return true
 }
@@ -92,9 +96,15 @@ func (list *finiteJSONList) next() ([]byte, error) {
 	}
 	var item bytes.Buffer
 	item.WriteString("  ")
+	value := list.iter.Current().Raw
+	// encoding/json accepts invalid UTF-8 within strings. A JSON document must
+	// retain valid UTF-8 bytes for consumers that decode its complete output.
+	if !utf8.ValidString(value) {
+		return nil, list.err(errors.New("invalid JSON list item"))
+	}
 	// Indent validates transformed values and retains numeric spelling. Only the
 	// current item is formatted; its separator is not emitted before validation.
-	if err := json.Indent(&item, []byte(list.iter.Current().Raw), "  ", "  "); err != nil {
+	if err := json.Indent(&item, []byte(value), "  ", "  "); err != nil {
 		return nil, list.err(errors.New("invalid JSON list item"))
 	}
 	data := item.Bytes()

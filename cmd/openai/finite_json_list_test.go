@@ -356,6 +356,8 @@ func TestMainFiniteJSONListUpstreamFailures(t *testing.T) {
 		{"later API failure", `{"error":{"message":"synthetic later failure","type":"invalid_request_error"}}`, http.StatusBadRequest, false},
 		{"initial malformed page", `{"data":[`, http.StatusOK, true},
 		{"later malformed page", `{"data":[`, http.StatusOK, false},
+		{"initial invalid UTF-8 item", "{\"data\":[{\"id\":\"file_\xff\"}],\"has_more\":false}", http.StatusOK, true},
+		{"later invalid UTF-8 item", "{\"data\":[{\"id\":\"file_\xff\"}],\"has_more\":false}", http.StatusOK, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
