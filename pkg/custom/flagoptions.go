@@ -440,9 +440,18 @@ func FlagOptions(
 	if bodyMap, ok := requestContents.Body.(map[string]any); ok {
 		applyDataAliases(cmd, bodyMap)
 	}
+	// Resolve explicit consumers before attempting automatic whole-request input.
+	// FileInput values must retain their literal path semantics during inspection.
+	if err := wrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
+		return nil, err
+	}
+	explicitStdin, err := requestStdinConsumers(requestContents, ignoreStdin)
+	if err != nil {
+		return nil, err
+	}
 
 	stdinConsumedByPipe := false
-	if bodyType != ApplicationOctetStream && !ignoreStdin && isInputPiped() {
+	if bodyType != ApplicationOctetStream && !ignoreStdin && explicitStdin == 0 && isInputPiped() {
 		pipeData, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return nil, err
@@ -526,6 +535,9 @@ func FlagOptions(
 	// FileInput values are file paths, so wrap trusted values with FilePathValue
 	// for automatic expansion. In untrusted-stdin mode, reject piped values.
 	if err := wrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
+		return nil, err
+	}
+	if _, err := requestStdinConsumers(requestContents, ignoreStdin); err != nil {
 		return nil, err
 	}
 
@@ -621,6 +633,13 @@ func FlagOptions(
 		if err := prepareImageMultipartBody(cmd, bodyMap); err != nil {
 			return nil, err
 		}
+		// Multipart dispatch follows actual Booleans without consuming uploads
+		// or interpreting strings that happen to resemble scalar values.
+		if streaming, ok := bodyMap["stream"].(bool); ok {
+			if err := resolveStreamingValue(cmd, streaming); err != nil {
+				return nil, err
+			}
+		}
 		encodingFormat := apiform.FormatBrackets
 		// Saving prepares uploads before the generated action takes over. Keep
 		// an idempotent closer for failures between preparation and dispatch.
@@ -638,6 +657,9 @@ func FlagOptions(
 	case ApplicationJSON:
 		bodyBytes, err := json.Marshal(requestContents.Body)
 		if err != nil {
+			return nil, err
+		}
+		if err := resolveStreamingInput(cmd, bodyBytes); err != nil {
 			return nil, err
 		}
 		options = append(options, option.WithRequestBody("application/json", bodyBytes))

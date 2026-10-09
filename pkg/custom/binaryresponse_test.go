@@ -238,8 +238,8 @@ func TestDownloadFileCloseErrors(t *testing.T) {
 				if !errors.Is(err, copyErr) {
 					t.Errorf("copyDownloadFile(%s) error = %v, want earlier copy error %v", destination, err, copyErr)
 				}
-				if errors.Is(err, closeErr) {
-					t.Errorf("copyDownloadFile(%s) exposed close error %v instead of preserving copy error %v", destination, closeErr, copyErr)
+				if !errors.Is(err, closeErr) {
+					t.Errorf("copyDownloadFile(%s) error = %v, want both copy and close errors", destination, err)
 				}
 				if file.closeCalls != 1 {
 					t.Errorf("copyDownloadFile(%s) closed the destination %d times, want 1", destination, file.closeCalls)
@@ -320,12 +320,8 @@ func TestWriteBinaryResponsePropagatesReadErrorsAndShortWrites(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("WriteBinaryResponse(canceled file) error = %v, want %v", err, context.Canceled)
 		}
-		content, readErr := os.ReadFile(outfile)
-		if readErr != nil {
-			t.Fatalf("os.ReadFile(%q) returned error: %v", outfile, readErr)
-		}
-		if string(content) != "partial response" {
-			t.Errorf("WriteBinaryResponse(canceled file) content = %q, want %q", content, "partial response")
+		if _, statErr := os.Stat(outfile); !errors.Is(statErr, os.ErrNotExist) {
+			t.Errorf("os.Stat(%q) = %v, want no incomplete destination", outfile, statErr)
 		}
 	})
 
