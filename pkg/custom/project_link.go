@@ -3,6 +3,7 @@ package custom
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -88,6 +89,9 @@ func projectLinkPath() (string, error) {
 	directory, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
+	}
+	if !filepath.IsAbs(directory) {
+		return "", errors.New("folder links require an absolute user configuration directory")
 	}
 	return filepath.Join(directory, "openai", "project-links.json"), nil
 }

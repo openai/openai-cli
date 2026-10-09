@@ -93,6 +93,28 @@ func projectLinkCreate(t *testing.T, home, directory, project string) {
 	require.Contains(t, got.stdout, project)
 }
 
+func TestMainProjectLinkRejectsRelativeConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	registry := filepath.Join(directory, projectLinkRegistryPath("."))
+	require.NoError(t, os.MkdirAll(filepath.Dir(registry), 0700))
+	data, err := json.Marshal(map[string]string{projectLinkCanonicalDirectory(t, directory): "proj_repository"})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(registry, data, 0600))
+	server, requests := globalFlagsServer(t, globalFlagsPage)
+	got := runProjectLinkMain(t, ".", directory, globalFlagsEnv(server), "", "files", "list", "--format=raw")
+	require.Equal(t, mainDispatchResult{stdout: globalFlagsPage + "\n"}, got)
+	require.Empty(t, globalFlagsOneRequest(t, requests).header.Values("OpenAI-Project"))
+	for _, args := range [][]string{{"link"}, {"link", "--project=proj_new"}, {"unlink"}} {
+		got := runProjectLinkMain(t, ".", directory, nil, "", args...)
+		require.NotZero(t, got.code)
+		require.Empty(t, got.stdout)
+		require.Contains(t, got.stderr, "configuration folder")
+	}
+	after, err := os.ReadFile(registry)
+	require.NoError(t, err)
+	require.Equal(t, data, after)
+}
+
 func TestMainProjectLinkOfflineLifecycle(t *testing.T) {
 	server, requests := localUtilitiesRequestTrap(t)
 	for _, configuration := range []struct {

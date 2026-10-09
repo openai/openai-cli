@@ -73,6 +73,7 @@ The CLI stores it in the operating system's user configuration directory:
 - Windows: `%APPDATA%\openai\project-links.json`
 
 The CLI never reads project defaults from repository configuration.
+The user configuration directory must be an absolute path.
 On Unix, the application directory and registry must have private permissions.
 New directories use mode `0700`; new registry files use mode `0600`.
 Windows uses the user configuration directory's inherited access controls.
