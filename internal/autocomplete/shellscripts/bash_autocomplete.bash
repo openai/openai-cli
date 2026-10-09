@@ -82,7 +82,9 @@ ____APPNAME___bash_autocomplete() {
     if [[ "$current_value" == -*=* && "${2-}" == *=* ]]; then
       value_prefix="${current_value%%=*}="
     fi
-    completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_STATIC_VALUES="$static_values" OPENAI_CLI_COMPLETION_BASH_VALUE_PREFIX="$value_prefix" "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
+    local completion_directory
+    completion_directory=$(pwd -P)
+    completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_STATIC_VALUES="$static_values" OPENAI_CLI_COMPLETION_BASH_VALUE_PREFIX="$value_prefix" OPENAI_CLI_COMPLETION_BASH_CWD="$completion_directory" "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
     exit_code=$?
 
     local last_token="$cur"

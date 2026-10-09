@@ -108,6 +108,8 @@ CASES = [
     ("directory-flag-collision", "openai --forma", ["openai --format"]),
     ("directory-flag-after-data", "openai --organization --format --forma", ["openai --organization --format --format"]),
     ("directory-command-after-data", "openai --organization --format models li", ["openai --organization --format models list "]),
+    ("wrapper-caller-only-directory", "openai --format y", ["openai --format yaml "]),
+    ("wrapper-backend-only-directory", "openai --format y", ["openai --format yaml "]),
 ]
 
 CASE_DIRECTORIES = {
@@ -122,6 +124,12 @@ CASE_DIRECTORIES = {
     "directory-flag-collision": ("--format",),
     "directory-flag-after-data": ("--format",),
     "directory-command-after-data": ("list",),
+    "wrapper-caller-only-directory": ("yaml",),
+}
+
+CASE_BACKEND_DIRECTORIES = {
+    "wrapper-caller-only-directory": (),
+    "wrapper-backend-only-directory": ("yaml",),
 }
 
 # Bash suppresses static values when an actual replacement names a directory.
@@ -135,6 +143,7 @@ SHELL_EXPECTATIONS = {
         "directory-format-ambiguous": ["openai --format j"],
         "directory-command-collision": ["openai models list/"],
         "directory-command-after-data": ["openai --organization --format models list/"],
+        "wrapper-caller-only-directory": ["openai --format y"],
     },
 }
 
@@ -157,6 +166,11 @@ ARGV_WRAPPER = r'''#!/bin/sh
 # Record the adapter's exact argument vector, then execute the immutable binary.
 printf '%s\0' "$#" "$@" >> "$COMPLETION_TEST_ARGV"
 printf '%s\0' "${OPENAI_CLI_COMPLETION_STATIC_VALUES+x}" "${OPENAI_CLI_COMPLETION_STATIC_VALUES-}" >> "$COMPLETION_TEST_MARKERS"
+if [ -f "$COMPLETION_TEST_BACKEND_CWD_FILE" ]; then
+  IFS= read -r completion_test_backend_cwd < "$COMPLETION_TEST_BACKEND_CWD_FILE" || exit 93
+  cd "$completion_test_backend_cwd" || exit 94
+  pwd -P > "$COMPLETION_TEST_BACKEND_CWD_ACTUAL" || exit 95
+fi
 exec "$COMPLETION_TEST_BINARY" "$@"
 '''
 
@@ -180,6 +194,22 @@ def fixture_directories(directory, names):
         # Only remove the empty directories this case successfully created.
         for path in reversed(created):
             path.rmdir()
+
+
+@contextmanager
+def backend_directory(root, name, control, actual):
+    if name not in CASE_BACKEND_DIRECTORIES:
+        yield None
+        return
+    with tempfile.TemporaryDirectory(prefix="backend-cwd-", dir=root) as directory:
+        target = Path(directory)
+        with fixture_directories(target, CASE_BACKEND_DIRECTORIES[name]):
+            try:
+                control.write_text(str(target) + "\n", encoding="utf-8")
+                yield target
+            finally:
+                control.unlink(missing_ok=True)
+                actual.unlink(missing_ok=True)
 
 
 def compare_completion(name, expected, observed):
@@ -449,6 +479,8 @@ def report_case(report, name, line, expected, status, observed=None, detail=None
                   input=line, expected=expected, observed=observed, status=status)
     if name in CASE_DIRECTORIES:
         result["fixture_directories"] = list(CASE_DIRECTORIES[name])
+    if name in CASE_BACKEND_DIRECTORIES:
+        result["backend_fixture_directories"] = list(CASE_BACKEND_DIRECTORIES[name])
     if name in CONTINUATIONS:
         result["after_tab"] = CONTINUATIONS[name]
     if detail:
@@ -495,6 +527,7 @@ def check_shell(binary, shell, executable, output):
             report["backend_marker_log"] = str(marker_log)
             capture = root / "captured-buffers"
             capture_mode = root / "capture-mode"
+            backend_control, backend_actual = root / "backend-cwd-control", root / "backend-cwd-actual"
             ready, version = root / "ready", root / "version"
             environment = {
                 "HOME": str(home), "ZDOTDIR": str(home), "XDG_CONFIG_HOME": str(home),
@@ -509,6 +542,8 @@ def check_shell(binary, shell, executable, output):
                 "COMPLETION_TEST_MARKERS": str(marker_log),
                 "COMPLETION_TEST_HISTORY": str(root / "capture-history"),
                 "COMPLETION_TEST_CAPTURE_MODE": str(capture_mode),
+                "COMPLETION_TEST_BACKEND_CWD_FILE": str(backend_control),
+                "COMPLETION_TEST_BACKEND_CWD_ACTUAL": str(backend_actual),
             }
             report["adapter_sha256"] = generate_adapter(binary, shell, environment, adapter)
             script = root / "startup.sh"
@@ -526,11 +561,20 @@ def check_shell(binary, shell, executable, output):
                     expected = expected_for_shell(name, expected, shell)
                     argument_offset = argument_log.stat().st_size
                     marker_offset = marker_log.stat().st_size
-                    with fixture_directories(work, CASE_DIRECTORIES.get(name, ())):
-                        observed = session.capture(line, capture, index, CONTINUATIONS.get(name, ""))
-                        calls = backend_arguments(argument_log.read_bytes()[argument_offset:])
-                        markers = backend_markers(marker_log.read_bytes()[marker_offset:])
+                    observed_backend = None
+                    with backend_directory(root, name, backend_control, backend_actual) as target:
+                        with fixture_directories(work, CASE_DIRECTORIES.get(name, ())):
+                            observed = session.capture(line, capture, index, CONTINUATIONS.get(name, ""))
+                            calls = backend_arguments(argument_log.read_bytes()[argument_offset:])
+                            markers = backend_markers(marker_log.read_bytes()[marker_offset:])
+                            if target is not None:
+                                observed_backend = backend_actual.read_text(encoding="utf-8").rstrip("\n")
+                                if Path(observed_backend) != target.resolve():
+                                    raise RuntimeError("The wrapper did not enter the requested backend directory.")
                     matches, comparison = compare_completion(name, expected, observed)
+                    if observed_backend is not None:
+                        comparison["caller_working_directory"] = str(work.resolve())
+                        comparison["backend_working_directory"] = observed_backend
                     status = "pass" if matches else "fail"
                     detail = None
                     if not calls:

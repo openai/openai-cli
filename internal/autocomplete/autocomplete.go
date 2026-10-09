@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -555,8 +556,10 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 		// The adapter supplies the assignment part included in its replacement.
 		// Only static values use this safeguard; commands and flags stay unchanged.
 		prefix := os.Getenv("OPENAI_CLI_COMPLETION_BASH_VALUE_PREFIX")
+		// Launch wrappers can change directories before invoking the CLI.
+		directory := os.Getenv("OPENAI_CLI_COMPLETION_BASH_CWD")
 		for _, completion := range result.Completions {
-			if info, err := os.Stat(prefix + completion.Name); err == nil && info.IsDir() {
+			if info, err := os.Stat(filepath.Join(directory, prefix+completion.Name)); err == nil && info.IsDir() {
 				// Filtering one choice could select an unintended alternative.
 				result = CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 				break

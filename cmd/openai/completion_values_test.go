@@ -260,6 +260,39 @@ func TestMainCompletionValuesDirectoryScope(t *testing.T) {
 	}
 }
 
+func TestMainCompletionValuesCallerDirectory(t *testing.T) {
+	for _, replacementPrefix := range []string{"", "--format="} {
+		for _, collisionLocation := range []string{"caller", "backend"} {
+			t.Run(collisionLocation+"/"+replacementPrefix, func(t *testing.T) {
+				root := t.TempDir()
+				caller, backend := filepath.Join(root, "caller"), filepath.Join(root, "backend")
+				for _, directory := range []string{caller, backend} {
+					if err := os.Mkdir(directory, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.Mkdir(filepath.Join(root, collisionLocation, replacementPrefix+"yaml"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				t.Chdir(backend)
+				env := []string{
+					"OPENAI_CLI_COMPLETION_STATIC_VALUES=1",
+					"OPENAI_CLI_COMPLETION_BASH_VALUE_PREFIX=" + replacementPrefix,
+					"OPENAI_CLI_COMPLETION_BASH_CWD=" + caller,
+				}
+				want := mainDispatchResult{stdout: "yaml\n"}
+				if collisionLocation == "caller" {
+					want = mainDispatchResult{code: 11}
+				}
+				got := runMainDispatchWithEnv(t, "bash", env, mainCompletionArgs("bash", "--format=y")...)
+				if got != want {
+					t.Fatalf("completion used the wrong directory: got %+v; want %+v", got, want)
+				}
+			})
+		}
+	}
+}
+
 func TestMainCompletionValuesQuotedArguments(t *testing.T) {
 	for _, style := range []string{"zsh", "fish"} {
 		for _, quote := range []string{"'", `"`} {
