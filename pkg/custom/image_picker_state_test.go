@@ -47,11 +47,10 @@ func TestImagePickerStateRoundTripAndPrivateReplacement(t *testing.T) {
 	_, err = os.Stat(filepath.Dir(path))
 	require.ErrorIs(t, err, os.ErrNotExist, "opening the picker must not create state")
 	want := pickerStateSettings(t)
-	for _, folder := range []string{want.outputDir, "", filepath.Join(t.TempDir(), "再利用 folder")} {
+	for i, folder := range []string{want.outputDir, "", filepath.Join(t.TempDir(), "再利用 folder")} {
 		want.outputDir = folder
-		selection := want
-		selection.prompt = "  Synthetic moon over 日本語\nsecond line 🌕\t'quoted'  "
-		require.NoError(t, saveImagePickerState(t.Context(), path, selection))
+		want.prompt = []string{"  Synthetic moon over 日本語\nsecond line 🌕\t'quoted'  ", "Edited synthetic description", ""}[i]
+		require.NoError(t, saveImagePickerState(t.Context(), path, want))
 		got, found, err := loadImagePickerState(t.Context(), path)
 		require.NoError(t, err)
 		require.True(t, found)
@@ -72,33 +71,55 @@ func TestImagePickerStateRoundTripAndPrivateReplacement(t *testing.T) {
 	require.NoError(t, err)
 	var fields map[string]any
 	require.NoError(t, json.Unmarshal(data, &fields))
-	require.ElementsMatch(t, []string{"version", "model", "size", "quality", "background", "format", "count", "output_dir"}, pickerStateKeys(fields))
+	require.ElementsMatch(t, []string{"version", "prompt", "model", "size", "quality", "background", "format", "count", "output_dir"}, pickerStateKeys(fields))
+	require.Equal(t, float64(2), fields["version"])
+	require.Equal(t, "", fields["prompt"], "clearing a prompt must replace the previous draft")
 }
 
 func TestImagePickerStateIgnoresLegacyPrompt(t *testing.T) {
-	path := pickerStatePath(t)
-	want := pickerStateSettings(t)
-	want.quality = "high"
-	require.NoError(t, saveImagePickerState(t.Context(), path, want))
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	var fields map[string]any
-	require.NoError(t, json.Unmarshal(data, &fields))
-	fields["prompt"] = "Previous synthetic description 雪"
-	legacy, err := json.Marshal(fields)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, legacy, 0600))
-	got, found, err := loadImagePickerState(t.Context(), path)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, want, got)
-	unchanged, err := os.ReadFile(path)
-	require.NoError(t, err)
-	require.Equal(t, legacy, unchanged, "loading must not rewrite saved settings")
-	require.NoError(t, saveImagePickerState(t.Context(), path, got))
-	data, err = os.ReadFile(path)
-	require.NoError(t, err)
-	require.NotContains(t, string(data), "prompt")
+	for _, prompt := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy prompt=%t", prompt), func(t *testing.T) {
+			path := pickerStatePath(t)
+			want := pickerStateSettings(t)
+			want.quality = "high"
+			require.NoError(t, saveImagePickerState(t.Context(), path, want))
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			var fields map[string]any
+			require.NoError(t, json.Unmarshal(data, &fields))
+			fields["version"] = 1
+			if prompt {
+				fields["prompt"] = "Previous synthetic description 雪"
+			} else {
+				delete(fields, "prompt")
+			}
+			legacy, err := json.Marshal(fields)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, legacy, 0600))
+			got, found, err := loadImagePickerState(t.Context(), path)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, want, got)
+			unchanged, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, legacy, unchanged, "loading must not rewrite saved settings")
+			got.prompt = "New synthetic draft 雪"
+			require.NoError(t, saveImagePickerState(t.Context(), path, got))
+			data, err = os.ReadFile(path)
+			require.NoError(t, err)
+			require.NoError(t, json.Unmarshal(data, &fields))
+			require.Equal(t, float64(2), fields["version"])
+			require.Equal(t, got.prompt, fields["prompt"])
+			// Reorder fields so the decoder sees the prompt before its version.
+			reordered, err := json.Marshal(fields)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, reordered, 0600))
+			restored, found, err := loadImagePickerState(t.Context(), path)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, got, restored)
+		})
+	}
 }
 
 func pickerStateKeys(fields map[string]any) []string {
@@ -115,23 +136,31 @@ func TestImagePickerStateMalformedAndUnknownRemainUntouched(t *testing.T) {
 	require.NoError(t, saveImagePickerState(t.Context(), path, settings))
 	valid, err := os.ReadFile(path)
 	require.NoError(t, err)
+	legacy := bytes.Replace(valid, []byte(`"version":2`), []byte(`"version":1`), 1)
 	for name, data := range map[string][]byte{
 		"empty":                   {},
 		"malformed":               []byte("synthetic-private-prompt"),
-		"missing fields":          []byte(`{"version":1}`),
-		"unknown version":         bytes.Replace(valid, []byte(`"version":1`), []byte(`"version":2`), 1),
-		"duplicate":               bytes.Replace(valid, []byte(`"version":1`), []byte(`"version":1,"version":1`), 1),
-		"unknown field":           bytes.Replace(valid, []byte(`"version":1`), []byte(`"version":1,"future":true`), 1),
+		"missing fields":          []byte(`{"version":2}`),
+		"missing version":         bytes.Replace(valid, []byte(`"version":2,`), nil, 1),
+		"unknown version":         bytes.Replace(valid, []byte(`"version":2`), []byte(`"version":3`), 1),
+		"duplicate":               bytes.Replace(valid, []byte(`"version":2`), []byte(`"version":2,"version":2`), 1),
+		"unknown field":           bytes.Replace(valid, []byte(`"version":2`), []byte(`"version":2,"future":true`), 1),
 		"trailing object":         append(append([]byte{}, valid...), []byte(`{}`)...),
 		"wrong type":              bytes.Replace(valid, []byte(`"count":"1"`), []byte(`"count":1`), 1),
 		"null":                    bytes.Replace(valid, []byte(`"count":"1"`), []byte(`"count":null`), 1),
-		"legacy null prompt":      bytes.Replace(valid, []byte(`"version":1`), []byte(`"version":1,"prompt":null`), 1),
-		"legacy duplicate prompt": bytes.Replace(valid, []byte(`"version":1`), []byte(`"version":1,"prompt":"one","prompt":"two"`), 1),
+		"missing prompt":          bytes.Replace(valid, []byte(`"prompt":"",`), nil, 1),
+		"null prompt":             bytes.Replace(valid, []byte(`"prompt":""`), []byte(`"prompt":null`), 1),
+		"numeric prompt":          bytes.Replace(valid, []byte(`"prompt":""`), []byte(`"prompt":42`), 1),
+		"object prompt":           bytes.Replace(valid, []byte(`"prompt":""`), []byte(`"prompt":{}`), 1),
+		"duplicate prompt":        bytes.Replace(valid, []byte(`"prompt":""`), []byte(`"prompt":"one","prompt":"two"`), 1),
+		"legacy null prompt":      bytes.Replace(legacy, []byte(`"prompt":""`), []byte(`"prompt":null`), 1),
+		"legacy duplicate prompt": bytes.Replace(legacy, []byte(`"prompt":""`), []byte(`"prompt":"one","prompt":"two"`), 1),
 		"unknown choice":          bytes.Replace(valid, []byte(`"count":"1"`), []byte(`"count":"11"`), 1),
-		"invalid UTF8":            bytes.Replace(valid, []byte(`"count":"1"`), []byte{'"', 'c', 'o', 'u', 'n', 't', '"', ':', '"', 0xff, '"'}, 1),
+		"invalid UTF8":            bytes.Replace(valid, []byte(`"prompt":""`), []byte{'"', 'p', 'r', 'o', 'm', 'p', 't', '"', ':', '"', 0xff, '"'}, 1),
 		"oversize":                bytes.Repeat([]byte(" "), imagePickerStateLimit+1),
 	} {
 		t.Run(name, func(t *testing.T) {
+			require.NotEqual(t, valid, data, "the malformed fixture must differ from the valid record")
 			require.NoError(t, os.WriteFile(path, data, 0600))
 			_, _, err := loadImagePickerState(t.Context(), path)
 			require.Error(t, err)
@@ -232,7 +261,10 @@ func TestImagePickerStateWriteFailureKeepsPrevious(t *testing.T) {
 	}
 	path := pickerStatePath(t)
 	settings := pickerStateSettings(t)
+	settings.prompt = "Previous synthetic draft"
 	require.NoError(t, saveImagePickerState(t.Context(), path, settings))
+	before := settings
+	settings.prompt = "Unsaved replacement draft"
 	settings.quality = "high"
 	require.NoError(t, os.Chmod(filepath.Dir(path), 0500))
 	defer os.Chmod(filepath.Dir(path), 0700)
@@ -240,7 +272,7 @@ func TestImagePickerStateWriteFailureKeepsPrevious(t *testing.T) {
 	got, found, err := loadImagePickerState(t.Context(), path)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, "auto", got.quality)
+	require.Equal(t, before, got)
 }
 
 type pickerCancelAfterTemporary struct {
@@ -266,8 +298,10 @@ func (c pickerCancelAfterTemporary) Err() error {
 func TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary(t *testing.T) {
 	path := pickerStatePath(t)
 	before := pickerStateSettings(t)
+	before.prompt = "Previous synthetic draft"
 	require.NoError(t, saveImagePickerState(t.Context(), path, before))
 	after := before
+	after.prompt = "Canceled synthetic draft"
 	after.quality = "high"
 	for _, written := range []bool{false, true} {
 		t.Run(fmt.Sprintf("temporary written=%t", written), func(t *testing.T) {
@@ -291,7 +325,18 @@ func TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary(t *testing
 func TestImagePickerStateConcurrentSavesKeepWholeRecords(t *testing.T) {
 	path := pickerStatePath(t)
 	base := pickerStateSettings(t)
+	base.prompt = "Original synthetic draft"
 	require.NoError(t, saveImagePickerState(t.Context(), path, base))
+	selections := make([]imagePickerSettings, 24)
+	allowed := map[imagePickerSettings]bool{base: true}
+	for i := range selections {
+		settings := base
+		settings.prompt = fmt.Sprintf("synthetic prompt %d", i)
+		settings.count = fmt.Sprint(i%10 + 1)
+		settings.outputDir = filepath.Join(base.outputDir, settings.count)
+		selections[i] = settings
+		allowed[settings] = true
+	}
 	var workers sync.WaitGroup
 	errs := make(chan error, 25)
 	start := make(chan struct{})
@@ -310,21 +355,17 @@ func TestImagePickerStateConcurrentSavesKeepWholeRecords(t *testing.T) {
 				errs <- fmt.Errorf("concurrent read failed: found %t, %w", found, err)
 				return
 			}
-			if got.prompt != "" || (got != base && got.outputDir != filepath.Join(base.outputDir, got.count)) {
+			if !allowed[got] {
 				errs <- errors.New("concurrent reader saw a mixed record")
 				return
 			}
 		}
 	}()
-	for i := range 24 {
+	for _, settings := range selections {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
 			<-start
-			settings := base
-			settings.prompt = fmt.Sprintf("synthetic prompt %d", i)
-			settings.count = fmt.Sprint(i%10 + 1)
-			settings.outputDir = filepath.Join(base.outputDir, settings.count)
 			errs <- saveImagePickerState(t.Context(), path, settings)
 		}()
 	}
@@ -339,35 +380,77 @@ func TestImagePickerStateConcurrentSavesKeepWholeRecords(t *testing.T) {
 	got, found, err := loadImagePickerState(t.Context(), path)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Empty(t, got.prompt)
-	require.Equal(t, filepath.Join(base.outputDir, got.count), got.outputDir, "a saved record must not mix writers")
+	require.NotEqual(t, base, got)
+	require.True(t, allowed[got], "a saved record must not mix writers' prompts and settings")
 	entries, err := os.ReadDir(filepath.Dir(path))
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 }
 
-func TestImagePickerStateLimitExcludesPrompt(t *testing.T) {
+func TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration(t *testing.T) {
 	path := pickerStatePath(t)
 	before := pickerStateSettings(t)
+	before.prompt = "Previous synthetic draft"
 	require.NoError(t, saveImagePickerState(t.Context(), path, before))
+	previous, err := os.ReadFile(path)
+	require.NoError(t, err)
 	after := before
 	after.prompt = strings.Repeat("p", imagePickerStateLimit+1)
 	m := imagePicker{settings: after}
 	require.True(t, m.validPrompt(), "persistence size is not a generation limit")
 	require.Contains(t, after.args(), after.prompt)
 	after.quality = "high"
-	require.NoError(t, saveImagePickerState(t.Context(), path, after))
-	got, _, err := loadImagePickerState(t.Context(), path)
+	require.Error(t, saveImagePickerState(t.Context(), path, after))
+	got, found, err := loadImagePickerState(t.Context(), path)
 	require.NoError(t, err)
-	want := after
-	want.prompt = ""
-	require.Equal(t, want, got)
-	// The limit still applies to settings that are actually stored.
+	require.True(t, found)
+	require.Equal(t, before, got)
+	unchanged, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, previous, unchanged)
+	// JSON escaping counts toward the stored limit, even when raw text fits.
+	after.prompt = strings.Repeat("\n", imagePickerStateLimit/2)
+	require.Error(t, saveImagePickerState(t.Context(), path, after))
+	unchanged, err = os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, previous, unchanged)
+	after.prompt = string([]byte{0xff})
+	require.Error(t, saveImagePickerState(t.Context(), path, after))
+	unchanged, err = os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, previous, unchanged)
+	// Other settings still share the same local persistence bound.
+	after.prompt = "Small synthetic draft"
 	after.outputDir = filepath.Join(t.TempDir(), strings.Repeat("p", imagePickerStateLimit+1))
 	require.Error(t, saveImagePickerState(t.Context(), path, after))
-	got, _, err = loadImagePickerState(t.Context(), path)
+	unchanged, err = os.ReadFile(path)
 	require.NoError(t, err)
-	require.Equal(t, want, got)
+	require.Equal(t, previous, unchanged)
+	entries, err := os.ReadDir(filepath.Dir(path))
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "failed persistence must not leave temporary files")
+}
+
+func TestImagePickerStateAcceptsExactPersistenceLimit(t *testing.T) {
+	path := pickerStatePath(t)
+	settings := pickerStateSettings(t)
+	require.NoError(t, saveImagePickerState(t.Context(), path, settings))
+	empty, err := os.ReadFile(path)
+	require.NoError(t, err)
+	settings.prompt = strings.Repeat("p", imagePickerStateLimit-len(empty))
+	require.NoError(t, saveImagePickerState(t.Context(), path, settings))
+	previous, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Len(t, previous, imagePickerStateLimit)
+	got, found, err := loadImagePickerState(t.Context(), path)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, settings, got)
+	settings.prompt += "p"
+	require.Error(t, saveImagePickerState(t.Context(), path, settings))
+	unchanged, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, previous, unchanged)
 }
 
 func TestImagePickerStateRejectsUnstableSaveFolders(t *testing.T) {

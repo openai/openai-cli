@@ -18,34 +18,55 @@ import (
 
 var errImagePreviewUnavailable = errors.New("image cannot be displayed in this terminal")
 
+// Separate rendered batch previews without adding space after the final entry.
+// A later skipped entry can leave the gap before its existing warning.
+func displaySavedImages(ctx context.Context, saved []imageoutput.SavedImage, out io.Writer, display func(imageoutput.SavedImage) (bool, error)) error {
+	separator := outputWriter{ctx: ctx, out: out}
+	for i, file := range saved {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rendered, err := display(file)
+		if err != nil {
+			return err
+		}
+		if rendered && i+1 < len(saved) {
+			if _, err := fmt.Fprintln(separator); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // displaySavedImage previews only bytes from the completed save operation. It
-// never opens a viewer, reads stdin, or changes the saved file.
-func displaySavedImage(ctx context.Context, saved imageoutput.SavedImage, out, diagnostics io.Writer, mode string) error {
+// reports completed rendering and never opens a viewer or changes the saved file.
+func displaySavedImage(ctx context.Context, saved imageoutput.SavedImage, out, diagnostics io.Writer, mode string) (bool, error) {
 	protocol := savedImageProtocol(mode, isTerminal(out), os.Getenv)
 	if protocol == "" {
-		return nil
+		return false, nil
 	}
 	if diagnostics == nil {
 		diagnostics = os.Stderr
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	img, err := terminalimage.ReadSavedMatching(ctx, saved.Path, saved.SHA256)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return false, ctx.Err()
 		}
 		if errors.Is(err, terminalimage.ErrSavedImageChanged) {
-			return readable.WriteText(diagnostics, "Inline preview skipped: the saved file changed before it could be displayed. Check the output file.")
+			return false, readable.WriteText(diagnostics, "Inline preview skipped: the saved file changed before it could be displayed. Check the output file.")
 		}
-		return readable.WriteText(diagnostics, "Inline preview unavailable. The image is saved; open the saved file to view it. No need to generate again.")
+		return false, readable.WriteText(diagnostics, "Inline preview unavailable. The image is saved; open the saved file to view it. No need to generate again.")
 	}
 	err = displayDecodedSavedImage(ctx, img, out, diagnostics, protocol)
 	if errors.Is(err, errImagePreviewUnavailable) {
-		return nil
+		return false, nil
 	}
-	return err
+	return err == nil, err
 }
 
 // displayDecodedSavedImage shares geometry, rendering and font recovery with
@@ -77,6 +98,9 @@ func displayDecodedSavedImage(ctx context.Context, img image.Image, out, diagnos
 		}
 	}
 	err = terminalimage.Write(ctx, out, img, protocol, columns)
+	if err == nil && protocol == "font" {
+		return nil
+	}
 	var fontErr *terminalimage.FontError
 	if errors.As(err, &fontErr) && ctx.Err() == nil {
 		// A FontError guarantees no image glyphs were written. A block fallback is
