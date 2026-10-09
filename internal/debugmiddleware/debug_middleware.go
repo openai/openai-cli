@@ -1,11 +1,15 @@
 package debugmiddleware
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"slices"
 	"strings"
+	"sync/atomic"
+	"time"
 )
 
 // For the time being these type definitions are duplicated here so that we can
@@ -30,6 +34,7 @@ var sensitiveHeaders = []string{
 type RequestLogger struct {
 	logger           interface{ Printf(string, ...any) } // field for testability; usually log.Default()
 	sensitiveHeaders []string                            // field for testability; usually sensitiveHeaders
+	attempts         atomic.Uint64
 }
 
 // NewRequestLogger redacts known credential headers and any additional header names.
@@ -50,13 +55,29 @@ func (m *RequestLogger) Middleware() Middleware {
 			m.logger.Printf("Request Content:\n%s\n", reqBytes)
 		}
 
+		attempt := m.attempts.Add(1)
+		started := time.Now()
 		resp, err := mn(req)
+		elapsed := time.Since(started)
 		if err != nil || resp == nil {
+			outcome := "transport failed"
+			if req.Context().Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				outcome = "request canceled"
+			} else if err == nil {
+				outcome = "no response received"
+			}
+			m.logTiming(attempt, outcome, elapsed)
 			return resp, err
 		}
+		// Status text comes from the standard library, never an arbitrary reason phrase.
+		m.logger.Printf("HTTP attempt %d: response headers received after %d ms (%d %s)",
+			attempt, elapsed.Round(time.Millisecond).Milliseconds(), resp.StatusCode, http.StatusText(resp.StatusCode))
 
 		if respBytes, err := httputil.DumpResponse(m.redactResponse(resp), false); err == nil {
 			m.logger.Printf("Response Content:\n%s\n", respBytes)
+		}
+		if resp.Body != nil {
+			resp.Body = &timedResponseBody{body: resp.Body, context: req.Context(), logger: m, attempt: attempt, started: started}
 		}
 
 		return resp, err
