@@ -135,7 +135,7 @@ def main():
         try:
             markers = ('file_001', 'file_002')
             if args.scene == 'after':
-                markers += ('Space: more   q: quit',)
+                markers += ('Space: more   b: back   q: quit',)
             evidence['screens']['first-page'] = wait_screen(terminal, asciinema, *markers)
             mark('first-visible')
             drain(terminal, 1.5)

@@ -1,11 +1,11 @@
 # Compact list table evidence
 
-This publication head does not activate tables through public API commands.
-Generated command activation is excluded from this publication scope.
-The recorder and both checkers require a separately activated candidate from normal generated promotion.
-Do not run them against this publication head expecting table activation.
-Historical active captures are integration evidence only, not this publication head's public behavior.
-For this publication, explain that no public command output changes instead of presenting historical captures as current behavior.
+Files, batches, and organization projects still require public activation through normal generated promotion.
+This handwritten change does not activate those three command paths.
+Models already activates its separate viewer and does not need those generated adapters.
+This recipe covers only files, batches, and organization projects.
+The recorder and both checkers require an activated candidate for the selected resources.
+Historical active captures validate integration and tooling, not this publication head's three-resource behavior.
 
 The fixture serves synthetic files, batches, and projects on loopback only.
 The recorder uses the shared `scripts/demos/capture_and_render.sh` lifecycle.
@@ -50,11 +50,17 @@ It disables outer PTY output translation while relaying CLI bytes.
 It restores those settings before the recorder prints its prompt.
 The validator compares recorded CLI bytes with the driver's SHA256 digest.
 The recorder uses agg's swash renderer for incremental redraws.
-It sends `q` only after loaded content and the final-page footer appear.
+Complete first results that fit on one screen print once and exit without a key.
+The fit calculation reserves one row for the shell prompt and accounts for Unicode widths and tabs.
+Empty successful results print `No results.` and exit when that message fits.
+Longer results retain navigation, even when the API returns only one page.
+Incomplete API pages remain interactive and fetch another page only after user input.
+The footer shows `b: back` when space permits.
+The footer shows `End of results` only at the bottom of the final page.
+The recorder sends `q` only when loaded content and the final-page footer remain visible.
 For dedicated print-page probes, the driver accepts `DEMO_EXIT_KEY=p` and an optional `DEMO_READY_MARKER`.
 It sends `p` only when the loaded-page print hint and content marker appear.
-The standard recorder continues to use `q`; it does not claim print-page coverage.
-Paginated commands in the navigation baseline and candidate receive `q` after the loaded final-page footer appears.
+The standard recorder allows automatic exit or sends `q`; it does not claim print-page coverage.
 The fixtures include long Unicode names and preserve complete IDs.
 The validator compares pipe output across default text, explicit formats, extraction, and raw output.
 It also compares explicit output modes with stdin and stdout connected to a PTY.
@@ -65,11 +71,16 @@ Explicit-mode PTY checks use the same width as the recording.
 The validator retains exact stdout, stderr, and exit statuses under `machine/`.
 
 The public page checker also exercises automatic empty results, controls, unfamiliar fields, and API errors.
-It uses the existing `image_picker_harness.Terminal` helper and retains terminal bytes, casts, and request logs.
+It reuses the terminal harness and navigation checker's completion, footer, row-counting, and terminal-restoration helpers.
+It retains terminal bytes, casts, key events, final printed bytes, and request logs.
+Complete-result checks send no keys and reject missing or duplicated IDs.
+Controls and unfamiliar-field checks also repeat at a height that requires navigation.
+The unfamiliar-field check scrolls to its final detail before printing.
 For paginated resources, a 77-character ID forces a narrow viewport fallback.
 The checker resizes the loaded page without fetching another page.
 It presses `p` and checks complete logical ID lines after terminal restoration.
 The viewport can wrap IDs; the printed page supplies complete copyable lines.
+Each checker case requires exactly one API request and the expected exit status.
 
 The outputs include terminal casts, GIFs, PNGs, transcripts, request logs, and tool metadata.
 Inspect the PNGs before reporting visual success.
