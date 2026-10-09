@@ -24,9 +24,10 @@ var (
 )
 
 // Keep this record separate from preview preferences and root configuration.
-// In particular, it cannot contain prompts, connection settings or credentials.
+// It stores only the draft prompt and settings, not connection settings or credentials.
 type imagePickerState struct {
 	Version    int    `json:"version"`
+	Prompt     string `json:"prompt"`
 	Model      string `json:"model"`
 	Size       string `json:"size"`
 	Quality    string `json:"quality"`
@@ -131,7 +132,11 @@ func saveImagePickerState(ctx context.Context, path string, settings imagePicker
 	if !validImagePickerState(settings) {
 		return errImagePickerStateInvalid
 	}
-	state := imagePickerState{1, settings.model, settings.size, settings.quality, settings.background, settings.format, settings.count, settings.outputDir}
+	state := imagePickerState{
+		Version: 2, Prompt: settings.prompt, Model: settings.model, Size: settings.size,
+		Quality: settings.quality, Background: settings.background, Format: settings.format,
+		Count: settings.count, OutputDir: settings.outputDir,
+	}
 	data, err := json.Marshal(state)
 	if err != nil {
 		return err
@@ -209,7 +214,7 @@ func decodeImagePickerState(data []byte) (imagePickerSettings, bool) {
 	if !utf8.Valid(data) {
 		return s, false
 	}
-	fields := map[string]*string{"model": &s.model, "size": &s.size, "quality": &s.quality, "background": &s.background, "format": &s.format, "count": &s.count, "output_dir": &s.outputDir}
+	fields := map[string]*string{"prompt": &s.prompt, "model": &s.model, "size": &s.size, "quality": &s.quality, "background": &s.background, "format": &s.format, "count": &s.count, "output_dir": &s.outputDir}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	token, err := decoder.Token()
@@ -217,6 +222,7 @@ func decodeImagePickerState(data []byte) (imagePickerSettings, bool) {
 		return s, false
 	}
 	seen := map[string]bool{}
+	var version json.Number
 	for decoder.More() {
 		keyToken, err := decoder.Token()
 		key, ok := keyToken.(string)
@@ -229,13 +235,8 @@ func decodeImagePickerState(data []byte) (imagePickerSettings, bool) {
 			return s, false
 		}
 		if key == "version" {
-			if value != json.Number("1") {
-				return s, false
-			}
-		} else if key == "prompt" {
-			// Earlier version 1 records included the submitted prompt. Accept
-			// its old type without restoring it or writing it on the next save.
-			if _, ok := value.(string); !ok {
+			version, ok = value.(json.Number)
+			if !ok || (version != "1" && version != "2") {
 				return s, false
 			}
 		} else {
@@ -248,8 +249,14 @@ func decodeImagePickerState(data []byte) (imagePickerSettings, bool) {
 		}
 	}
 	token, err = decoder.Token()
-	delete(seen, "prompt") // Optional legacy field; all settings remain required.
-	return s, err == nil && token == json.Delim('}') && len(seen) == len(fields)+1 && decoder.Decode(new(any)) == io.EOF && validImagePickerState(s)
+	count := len(fields) + 1
+	if version == "1" {
+		// Legacy prompts were not drafts. Restore only their settings.
+		s.prompt = ""
+		delete(seen, "prompt")
+		count--
+	}
+	return s, err == nil && token == json.Delim('}') && len(seen) == count && decoder.Decode(new(any)) == io.EOF && validImagePickerState(s)
 }
 
 func validImagePickerState(settings imagePickerSettings) bool {
@@ -257,7 +264,7 @@ func validImagePickerState(settings imagePickerSettings) bool {
 		return false
 	}
 	total := 0
-	for _, value := range []string{settings.model, settings.size, settings.quality, settings.background, settings.format, settings.count, settings.outputDir} {
+	for _, value := range []string{settings.prompt, settings.model, settings.size, settings.quality, settings.background, settings.format, settings.count, settings.outputDir} {
 		if !utf8.ValidString(value) || len(value) > imagePickerStateLimit-total {
 			return false
 		}

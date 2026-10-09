@@ -14,27 +14,24 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func TestImagePickerResumesWithSettingsAndEmptyPrompt(t *testing.T) {
+func TestImagePickerResumesWithSessionPromptAndSettings(t *testing.T) {
 	original := pickerForTest(t).settings
 	original.prompt = "Previous synthetic prompt"
 	original.quality, original.outputDir = "high", t.TempDir()
-	m, err := newImagePicker(imagePickerOptions{initial: &original, resuming: true})
+	m, err := newImagePicker(imagePickerOptions{Prompt: original.prompt, initial: &original, resuming: true})
 	require.NoError(t, err)
 	m.width, m.height = 80, 24
 	require.Equal(t, "settings", m.page)
 	require.Equal(t, "prompt", m.focus)
-	want := original
-	want.prompt = ""
-	require.Equal(t, want, m.settings)
-	require.Empty(t, m.draft)
-	require.Zero(t, m.cursor)
-	require.Contains(t, ansi.Strip(m.View().Content), "Describe your image")
-	require.NotContains(t, ansi.Strip(m.View().Content), original.prompt)
-	require.Contains(t, ansi.Strip(m.View().Content), "Ctrl+C")
+	require.Equal(t, original, m.settings)
+	require.Equal(t, original.prompt, string(m.draft))
+	require.Equal(t, len([]rune(original.prompt)), m.cursor)
+	require.Contains(t, ansi.Strip(m.View().Content), original.prompt)
+	require.NotContains(t, ansi.Strip(m.View().Content), "Ctrl+C")
 	require.Empty(t, m.result.Args, "reopening alone must never submit")
-	pickerKey(m, tea.KeyEnter)
-	require.Empty(t, m.result.Args, "a new description is required")
-	require.Equal(t, "Add a prompt first.", m.note)
+	m.insertPrompt(" with edits")
+	require.Equal(t, original.prompt+" with edits", m.settings.prompt)
+	require.Empty(t, m.result.Args, "editing must never submit")
 	require.Equal(t, "Previous synthetic prompt", original.prompt, "reopening must not mutate the submitted selection")
 }
 
