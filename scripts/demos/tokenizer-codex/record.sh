@@ -102,7 +102,7 @@ case "$DEMO_MODE" in
 esac
 sleep 0.4
 if [ "$DEMO_MODE" = details ] || { [ "$DEMO_MODE" = editor ] && [ "$DEMO_EDITOR_LAYOUT" != help ]; }; then
-  if "$DEMO_PYTHON" "$DEMO_EDITOR_DRIVER"; then demo_status=0; else demo_status=$?; fi
+  if "$DEMO_PYTHON" -B "$DEMO_EDITOR_DRIVER"; then demo_status=0; else demo_status=$?; fi
 else
   if openai "${demo_args[@]}"; then demo_status=0; else demo_status=$?; fi
 fi

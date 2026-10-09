@@ -195,8 +195,19 @@ def drive():
         spec.loader.exec_module(checks)
         style = "legacy" if os.environ["DEMO_SCENE"] == "before" else "refined"
 
-        def replace_input(kind):
-            send(b"\x1b\x1b\x1b[F\x15\x1b[200~" + checks.DETAILS_INPUTS[kind].encode() + b"\x1b[201~")
+        def replace_input(kind, modal=True):
+            if kind != "source":
+                if modal:
+                    send(b"\x1b")
+                    wait_for("Enter details")
+                send(b"\x1b")
+                wait_for("Ctrl+C exit · ↓ options · Tab switch")
+                # A standalone Escape can combine with a following CSI key.
+                # Observe Text focus before End, then observe EOF before clear.
+                send(b"\x1b[F", clear=False)
+                wait_for("", lambda text, raw: "\x1b[7m \x1b[27m" in raw if style == "refined" else
+                         any(line.strip().startswith("› Text ") and line.strip().endswith("▏") for line in text.splitlines()))
+            send(b"\x15\x1b[200~" + checks.DETAILS_INPUTS[kind].encode() + b"\x1b[201~")
             pause(.2)
             count = "6 tokens" if kind == "source" else "2 tokens" if kind == "partial" else "1 token"
             wait_for(count, lambda text, raw: count in [line.strip() for line in text.splitlines()] and "Updating" not in text)
@@ -204,7 +215,7 @@ def drive():
         def wait_state(state):
             return wait_for("", lambda text, raw: checks.details_state(text, state, style, width, raw, theme))
 
-        replace_input("source")
+        replace_input("source", modal=False)
         wait_state("source")
         mark("source")
         send(b"\x1b[D")
@@ -217,7 +228,7 @@ def drive():
         mark("up-navigation")
 
         for kind in ("ordinary", "partial", "overflow"):
-            replace_input(kind)
+            replace_input(kind, modal=kind != "ordinary")
             send(b"\t\t\x1b[H\r")
             state = kind if kind != "overflow" else "overflow-start"
             plain = wait_state(state)
