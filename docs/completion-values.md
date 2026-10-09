@@ -6,7 +6,10 @@ Reload Bash and Zsh completion after upgrading to enable value suggestions.
 Older loaded Bash and Zsh scripts retain their previous value behavior.
 
 Bash leaves closed empty quotes unchanged without suggestions.
+Zsh also preserves empty quoted words and wholly quoted empty assignments, such as `'--format='`.
 Type a value prefix inside the quotes before pressing Tab.
+Bash also leaves input unchanged when a suggested insertion names a local directory.
+Type the intended value explicitly in that case. File completion still includes directories.
 
 Type a prefix, then press Tab:
 

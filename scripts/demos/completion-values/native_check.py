@@ -2,6 +2,7 @@
 """Check native completion buffers without executing the completed commands."""
 
 import argparse
+from contextlib import contextmanager
 import errno
 import fcntl
 import hashlib
@@ -94,7 +95,38 @@ CASES = [
     ("at-file", "openai responses create --input @fixture", ["openai responses create --input @fixture.txt "]),
     ("at-file-protocol", "openai responses create --input @file://fixture",
      ["openai responses create --input @file://fixture.txt "]),
+    ("directory-format-separated", "openai --format y", ["openai --format yaml "]),
+    ("directory-format-assigned", "openai --format=y", ["openai --format=yaml "]),
+    ("format-quoted-directory-whole-assignment-single-closed", "openai '--format=y'",
+     ["openai '--format=yaml'", "openai '--format=yaml' "]),
+    ("format-quoted-directory-whole-assignment-double-closed", 'openai "--format=y"',
+     ['openai "--format=yaml"', 'openai "--format=yaml" ']),
+    ("directory-format-ambiguous", "openai --format j", ["openai --format json"]),
+    ("directory-file", "openai files upload --file y", ["openai files upload --file yaml/"]),
+    ("directory-command-no-collision", "openai models li", ["openai models list "]),
 ]
+
+CASE_DIRECTORIES = {
+    "directory-format-separated": ("yaml",),
+    "directory-format-assigned": ("yaml",),
+    "format-quoted-directory-whole-assignment-single-closed": ("--format=yaml",),
+    "format-quoted-directory-whole-assignment-double-closed": ("--format=yaml",),
+    "directory-format-ambiguous": ("json",),
+    "directory-file": ("yaml",),
+    "directory-command-no-collision": ("yaml",),
+}
+
+# Bash suppresses all candidates when an actual replacement names a directory.
+# Zsh keeps the static enum suggestions declared in CASES.
+SHELL_EXPECTATIONS = {
+    "bash": {
+        "directory-format-separated": ["openai --format y"],
+        "directory-format-assigned": ["openai --format=y"],
+        "format-quoted-directory-whole-assignment-single-closed": ["openai '--format=y'"],
+        "format-quoted-directory-whole-assignment-double-closed": ['openai "--format=y"'],
+        "directory-format-ambiguous": ["openai --format j"],
+    },
+}
 
 # Continue typing after Tab to detect a cursor left inside a closing quote.
 # The new --help word must remain a separate argument in the captured buffer.
@@ -104,6 +136,11 @@ for case_name, case_line, case_expected in list(CASES):
         continuation_name = case_name + "-continue"
         CONTINUATIONS[continuation_name] = " --help"
         CASES.append((continuation_name, case_line, [value + " --help" for value in case_expected]))
+        if case_name in CASE_DIRECTORIES:
+            CASE_DIRECTORIES[continuation_name] = CASE_DIRECTORIES[case_name]
+        for shell_expectations in SHELL_EXPECTATIONS.values():
+            if case_name in shell_expectations:
+                shell_expectations[continuation_name] = [value + " --help" for value in shell_expectations[case_name]]
 
 
 ARGV_WRAPPER = r'''#!/bin/sh
@@ -112,6 +149,27 @@ printf '%s\0' "$#" "$@" >> "$COMPLETION_TEST_ARGV"
 printf '%s\0' "${OPENAI_CLI_COMPLETION_STATIC_VALUES+x}" "${OPENAI_CLI_COMPLETION_STATIC_VALUES-}" >> "$COMPLETION_TEST_MARKERS"
 exec "$COMPLETION_TEST_BINARY" "$@"
 '''
+
+
+def expected_for_shell(name, expected, shell):
+    return SHELL_EXPECTATIONS.get(shell, {}).get(name, expected)
+
+
+@contextmanager
+def fixture_directories(directory, names):
+    created = []
+    try:
+        for name in names:
+            path = directory / name
+            if path.parent != directory:
+                raise ValueError("Fixture directories must be direct children of the owned workspace.")
+            path.mkdir(mode=0o700)
+            created.append(path)
+        yield
+    finally:
+        # Only remove the empty directories this case successfully created.
+        for path in reversed(created):
+            path.rmdir()
 
 
 def compare_completion(name, expected, observed):
@@ -376,8 +434,11 @@ printf 'ready\n' > "$COMPLETION_TEST_READY"
 
 
 def report_case(report, name, line, expected, status, observed=None, detail=None, backend_argv=None, comparison=None, markers=None):
+    expected = expected_for_shell(name, expected, report["shell"])
     result = dict(case=name, shell=report["shell"], executable=report["executable"],
                   input=line, expected=expected, observed=observed, status=status)
+    if name in CASE_DIRECTORIES:
+        result["fixture_directories"] = list(CASE_DIRECTORIES[name])
     if name in CONTINUATIONS:
         result["after_tab"] = CONTINUATIONS[name]
     if detail:
@@ -452,11 +513,13 @@ def check_shell(binary, shell, executable, output):
                 report["version"] = version.read_text(encoding="utf-8").strip()
                 report["capture_mode"] = capture_mode.read_text(encoding="utf-8").strip()
                 for index, (name, line, expected) in enumerate(CASES):
+                    expected = expected_for_shell(name, expected, shell)
                     argument_offset = argument_log.stat().st_size
                     marker_offset = marker_log.stat().st_size
-                    observed = session.capture(line, capture, index, CONTINUATIONS.get(name, ""))
-                    calls = backend_arguments(argument_log.read_bytes()[argument_offset:])
-                    markers = backend_markers(marker_log.read_bytes()[marker_offset:])
+                    with fixture_directories(work, CASE_DIRECTORIES.get(name, ())):
+                        observed = session.capture(line, capture, index, CONTINUATIONS.get(name, ""))
+                        calls = backend_arguments(argument_log.read_bytes()[argument_offset:])
+                        markers = backend_markers(marker_log.read_bytes()[marker_offset:])
                     matches, comparison = compare_completion(name, expected, observed)
                     status = "pass" if matches else "fail"
                     detail = None

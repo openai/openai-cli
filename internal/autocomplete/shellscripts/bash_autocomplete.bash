@@ -146,6 +146,15 @@ ____APPNAME___bash_autocomplete() {
           while IFS= read -r file; do
             COMPREPLY+=("$value_prefix$file")
           done <<<"$completions"
+          # Filename mode would append '/' to these actual replacement words.
+          # Decline the whole set instead of choosing an unintended alternative.
+          local candidate
+          for candidate in "${COMPREPLY[@]}"; do
+            if [[ -d "$candidate" ]]; then
+              COMPREPLY=()
+              break
+            fi
+          done
         fi
         ;;
       esac
