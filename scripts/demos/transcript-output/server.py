@@ -114,6 +114,8 @@ def main():
                     try:
                         self.send_error(400)
                     except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                        # The client may disconnect or time out during the error response.
+                        # The original failure is already recorded for shutdown.
                         pass
 
         server = http.server.HTTPServer(("127.0.0.1", 0), Fixture)
