@@ -22,6 +22,7 @@ import tempfile
 import termios
 import threading
 import time
+import unicodedata
 import urllib.parse
 
 
@@ -37,9 +38,14 @@ RESOURCES = {
     'models': (['models', 'list'], '/models', 'model'),
     'vector-stores': (['vector-stores', 'list'], '/vector_stores', 'vector_store'),
 }
-FOOTER = 'Space: more   q: quit'
+FOOTER = 'Space: more   b: back   q: quit'
 PRINT_HINT = 'p: print page, quit'
 ASCIINEMA = 'asciinema'
+TABLE_HEADERS = {
+    'files': ['ID', 'FILENAME', 'PURPOSE', 'SIZE', 'STATUS'],
+    'batches': ['ID', 'STATUS'],
+    'projects': ['ID', 'NAME', 'STATUS'],
+}
 
 
 def item_id(number, length=None):
@@ -75,7 +81,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
                         if not self.connection.recv(1, socket.MSG_PEEK):
                             self.server.disconnected.set()
                             return
-            if second and self.server.mode == 'error':
+            if (second and self.server.mode == 'error') or self.server.mode == 'error-first':
                 status, value = 400, {'error': {'message': 'synthetic page failure', 'type': 'invalid_request_error'}}
             else:
                 status = 200
@@ -93,12 +99,30 @@ class Fixture(http.server.BaseHTTPRequestHandler):
                         # while the viewport wraps the long ID for display.
                         item.update(filename=f'p{number:03d}.txt', name=f'p{number:03d}',
                                     endpoint=f'/p{number:03d}')
+                if self.server.item_profile:
+                    fields = {
+                        'file': ('id', 'object', 'filename', 'purpose', 'bytes', 'status'),
+                        'batch': ('id', 'object', 'status'),
+                        'organization.project': ('id', 'object', 'name', 'status'),
+                    }[self.server.object]
+                    items = [{key: item[key] for key in fields} for item in items]
+                    if self.server.item_profile == 'unicode':
+                        for item in items:
+                            for key in ('filename', 'name'):
+                                if key in item:
+                                    item[key] = '界面-cafe\u0301-測試.txt'
+                if self.server.tab_value is not None:
+                    # Missing object metadata requires labeled fallback. Keep
+                    # the payload minimal so two/three-row boundaries matter.
+                    items = [{'id': item['id'], 'filename': self.server.tab_value} for item in items]
                 more = self.server.mode in {'stalled', 'empty-more'} or not second
-                if self.server.mode == 'empty-last' or self.server.path == '/models':
+                if self.server.mode in {'empty-last', 'complete'} or self.server.path == '/models':
                     more = False
                 value = {'object': 'list', 'data': items, 'has_more': more,
                          'first_id': items[0]['id'] if items else '',
                          'last_id': items[-1]['id'] if items else ''}
+                if self.server.mode in {'unknown-more', 'empty-unknown'}:
+                    del value['has_more']
             body = json.dumps(value).encode()
             self.send_response(status)
             self.send_header('Content-Type', 'application/json')
@@ -127,7 +151,7 @@ def reconstruct_text(events, width, height):
         header = {'version': 2, 'width': width, 'height': height}
         recording.write_text('\n'.join(json.dumps(value) for value in [header, *events])+'\n')
         result = subprocess.run([ASCIINEMA, 'convert', '-f', 'txt', str(recording), '-'],
-                                capture_output=True, text=True, check=True,
+                                capture_output=True, text=True, check=True, timeout=5,
                                 env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
                                      'HOME': temporary, 'ASCIINEMA_STATE_HOME': temporary+'/state',
                                      'ASCIINEMA_CONFIG_HOME': temporary+'/config'})
@@ -232,12 +256,71 @@ def quit_navigation(terminal):
     finish(terminal, 0)
 
 
+def navigation_footer(width, complete=False):
+    if complete:
+        footer = 'End of results   b: back   q: quit'
+        if len(footer) > width:
+            footer = 'End of results   q: quit'
+        if len(footer) > width:
+            footer = 'End q: quit'
+    else:
+        footer = FOOTER if len(FOOTER) <= width else 'Space: more   q: quit'
+    return footer.replace('   ', ' ') if width < 21 else footer
+
+
+def assert_complete_scroll_controls(terminal, width):
+    # A complete API response can still contain unread screen rows. End belongs
+    # only at the bottom; backward navigation must restore the more/back hint.
+    wait_screen(terminal, navigation_footer(width))
+    assert 'End of results' not in screen_text(terminal) and 'End q: quit' not in screen_text(terminal)
+    terminal.send(b' ')
+    wait_screen(terminal, navigation_footer(width, complete=True))
+    terminal.send(b'b')
+    wait_screen(terminal, navigation_footer(width))
+
+
+def completed_output(terminal, expected_ids):
+    """Require an automatic exit, one final result, and restored terminal modes."""
+    finish(terminal, 0)
+    restored = b'\x1b[?2004l'
+    printed = bytes(terminal.raw).rsplit(restored, 1)[-1]
+    text = terminal_module.ANSI.sub('', printed.decode('utf-8')).replace('\r\n', '\n').replace('\r', '')
+    assert 'q: quit' not in text, ('viewer footer in completed output', text)
+    assert 'p: print' not in text and 'p: all' not in text, ('viewer print hint in completed output', text)
+    assert 'End of results' not in text and 'Loading next page' not in text, text
+    for identifier in expected_ids:
+        assert text.count(identifier) == 1, ('missing or duplicated completed item', identifier, text)
+        assert terminal.raw.count(identifier.encode()) == 1, ('result rendered before final print', identifier)
+    return text
+
+
+def physical_rows(text, width):
+    # Fixtures use ordinary characters, CJK, combining accents, and default
+    # eight-column tab stops. A tab clamps at the last column and clears pending
+    # wrap; it does not behave like enough spaces to cross the right margin.
+    total = 0
+    for line in text.rstrip('\n').split('\n') if text else []:
+        rows, column = 1, 0
+        for char in line:
+            if char == '\t':
+                column = min(width-1, (min(column, width-1)//8+1)*8)
+                continue
+            cells = 0 if unicodedata.combining(char) else 2 if unicodedata.east_asian_width(char) in {'W', 'F'} else 1
+            if cells and column+cells > width:
+                rows, column = rows+1, 0
+            column += cells
+        total += rows
+    return total
+
+
 def main():
     global ASCIINEMA
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary')
     parser.add_argument('output')
     parser.add_argument('--case', action='append', dest='cases')
+    parser.add_argument('--suite', choices=('all', 'legacy', 'short'), default='all',
+                        help='Select preserved navigation checks or complete-one-screen checks')
     parser.add_argument('--asciinema', default='asciinema', help='Existing asciinema executable for screen assertions')
     parser.add_argument('--entrypoint', choices=('public', 'helper'), default='public',
                         help='Label helper-only checks without claiming public-command evidence')
@@ -252,12 +335,15 @@ def main():
 
     @contextlib.contextmanager
     def case(name, resource='files', mode='normal', rows=1, flags=(), extra=(), width=80, height=24,
-             stderr=False, env_extra=None, stdin_pipe=False, stdout_pipe=False, id_length=None):
+             stderr=False, env_extra=None, stdin_pipe=False, stdout_pipe=False, id_length=None,
+             item_profile=None, tab_value=None):
         with tempfile.TemporaryDirectory(prefix='list-navigation-') as temporary:
             command, path, object_name = RESOURCES[resource]
             server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
             server.path, server.object, server.mode, server.rows = path, object_name, mode, rows
             server.id_length = id_length
+            server.item_profile = item_profile
+            server.tab_value = tab_value
             server.requests, server.errors = [], []
             server.inflight = server.maximum_inflight = 0
             server.lock = threading.Lock()
@@ -308,7 +394,9 @@ def main():
                     (output/(name+'.requests.json')).write_text(json.dumps(server.requests, indent=2)+'\n')
 
     def enabled(name):
-        return not selected or name in selected
+        if selected:
+            return name in selected
+        return args.suite == 'all' or (name.startswith('short-') == (args.suite == 'short'))
 
     for resource in ('files', 'batches', 'projects'):
         for width in (20, 40):
@@ -416,9 +504,13 @@ def main():
     name = 'models-single-response'
     if enabled(name):
         with case(name, resource='models') as (terminal, server):
-            finish(terminal, 0)
+            text = completed_output(terminal, [item_id(1)])
             assert request_count(server) == 1
-            assert 'item_001' in terminal.text() and FOOTER not in terminal.text()
+            lines = text.splitlines()
+            assert lines[0].split() == ['ID', 'OWNER'], text
+            assert lines[1].split() == [item_id(1), '(unknown)'], text
+            assert 'Listed 1 model.' in text
+            assert not any(label in text for label in ('ID:', 'Filename:', 'Status:', 'Owned by:'))
 
     name = 'vector-stores-default-bypass'
     if enabled(name):
@@ -505,13 +597,7 @@ def main():
                     ready(terminal, server)
                     terminal.send(b' ')
                 if mode == 'empty-last':
-                    deadline = time.monotonic()+6
-                    while terminal.child.poll() is None and 'End of results' not in terminal.text():
-                        terminal.read()
-                        assert time.monotonic() < deadline, terminal.text()[-1000:]
-                    if terminal.child.poll() is None:
-                        terminal.send(b'q')
-                    finish(terminal, 0)
+                    completed_output(terminal, [])
                     assert request_count(server) == 1
                 else:
                     finish(terminal, 1)
@@ -536,6 +622,8 @@ def main():
             with case(name, rows=2, extra=('--max-items', maximum)) as (terminal, server):
                 if maximum == '0':
                     finish(terminal, 0)
+                elif maximum in {'1', '2'}:
+                    completed_output(terminal, [item_id(number) for number in range(1, int(maximum)+1)])
                 else:
                     terminal.wait('item_001')
                     if calls == 2:
@@ -547,6 +635,135 @@ def main():
                 assert request_count(server) == calls
                 if maximum in {'1', '3'}:
                     assert f'item_{int(maximum)+1:03d}' not in screen_text(terminal), 'total item limit was exceeded'
+
+    for resource in ('files', 'batches', 'projects'):
+        for mode in ('complete', 'empty-last', 'empty-unknown'):
+            name = f'short-{resource}-{mode}'
+            if enabled(name):
+                with case(name, resource=resource, mode=mode, width=110, item_profile='table') as (terminal, server):
+                    text = completed_output(terminal, [item_id(1)] if mode == 'complete' else [])
+                    (output/(name+'.txt')).write_text(text)
+                    assert request_count(server) == 1 and server.maximum_inflight == 1
+                    if mode.startswith('empty'):
+                        assert text == 'No results.\n', ('empty result message changed', text)
+                        assert not re.search(r'item_\d+', text), text
+                    else:
+                        assert text.splitlines()[0].split() == TABLE_HEADERS[resource], 'complete result lost its table'
+
+        name = f'short-{resource}-request-cap'
+        if enabled(name):
+            with case(name, resource=resource, rows=2, width=110, item_profile='table',
+                      extra=('--max-items', '1')) as (terminal, server):
+                text = completed_output(terminal, [item_id(1)])
+                assert item_id(2) not in text
+                assert request_count(server) == 1
+
+        name = f'short-{resource}-unknown-more'
+        if enabled(name):
+            with case(name, resource=resource, mode='unknown-more', width=110,
+                      item_profile='table', extra=('--max-items', '-1')) as (terminal, server):
+                ready(terminal, server)
+                quit_navigation(terminal)
+                assert request_count(server) == 1
+
+        name = f'short-{resource}-later-final-page'
+        if enabled(name):
+            with case(name, resource=resource, width=110, item_profile='table',
+                      extra=('--max-items', '-1')) as (terminal, server):
+                ready(terminal, server)
+                terminal.send(b' ')
+                wait_screen(terminal, item_id(2))
+                terminal.wait('End of results')
+                drain(terminal)
+                assert terminal.child.poll() is None, 'later final page exited without allowing revisit'
+                terminal.send(b'b')
+                wait_screen(terminal, item_id(1))
+                assert request_count(server) == 2
+                quit_navigation(terminal)
+
+        for flags in ((), ('--format-error', 'json')):
+            name = f'short-{resource}-max-zero-error'+('-json' if flags else '-text')
+            if enabled(name):
+                with case(name, resource=resource, mode='error-first', flags=flags, stderr=True,
+                          item_profile='table', extra=('--max-items', '0')) as (terminal, server):
+                    finish(terminal, 1)
+                    assert request_count(server) == 1
+                    assert not terminal.raw, 'zero item limit printed results or entered navigation'
+                    diagnostic = (output/(name+'.stderr')).read_text()
+                    if flags:
+                        assert json.loads(diagnostic)['message'] == 'synthetic page failure'
+                    else:
+                        assert 'Request failed (400 Bad Request).' in diagnostic
+                        assert 'For API error details, add --format-error json.' in diagnostic
+
+        for profile, width, id_length in [('table', 110, None), ('unicode', 20, None), ('long-id', 40, 77)]:
+            names = [f'short-{resource}-{profile}-{suffix}' for suffix in ('reference', 'exact-height', 'one-over')]
+            if not any(enabled(name) for name in names):
+                continue
+            options = dict(resource=resource, mode='complete', rows=2, width=width,
+                           item_profile='unicode' if profile == 'unicode' else 'table', id_length=id_length)
+            identifiers = [item_id(number, id_length) for number in (1, 2)]
+            with case(names[0], height=240, **options) as (terminal, server):
+                reference = completed_output(terminal, identifiers)
+                assert request_count(server) == 1
+                (output/(names[0]+'.txt')).write_text(reference)
+            rows_needed = physical_rows(reference, width)
+            assert rows_needed > 2, ('fixture did not exercise a useful height boundary', reference)
+            if profile == 'table':
+                assert reference.splitlines()[0].split() == TABLE_HEADERS[resource], 'table boundary used fallback labels'
+            if profile == 'unicode' and resource != 'batches':
+                assert '界面' in reference and 'cafe\u0301' in reference, 'Unicode fixture was lost'
+            with case(names[1], height=rows_needed+1, **options) as (terminal, server):
+                actual = completed_output(terminal, identifiers)
+                assert actual == reference, ('exact-fit result changed', actual, reference)
+                assert request_count(server) == 1
+            with case(names[2], height=rows_needed, **options) as (terminal, server):
+                assert_complete_scroll_controls(terminal, width)
+                drain(terminal)
+                assert terminal.child.poll() is None, 'one-row overflow exited automatically'
+                assert request_count(server) == 1
+                terminal.resize(width, rows_needed+20)
+                drain(terminal)
+                assert terminal.child.poll() is None, 'resize unexpectedly dismissed navigation'
+                assert request_count(server) == 1, 'resize fetched another page'
+                terminal.send(b'p')
+                finish(terminal, 0)
+                assert_printed_page(terminal, identifiers, width, output/names[2])
+
+    # Literal row counts make the two regression directions explicit. These
+    # cases preserve HT bytes in final output rather than expanding tabs.
+    for suffix, value, height, rows_needed, exits in [
+        ('expands-overflow', 'a\t123456789', 3, 3, False),
+        ('expands-fits', 'a\t123456789', 4, 3, True),
+        ('short-fits', 'a\t1', 3, 2, True),
+        ('cancels-wrap', 'abcdefghij\tZ', 3, 2, True),
+        ('after-wide-overflow', '界\t12345', 3, 3, False),
+        ('after-combining-overflow', 'e\u0301\t12345', 3, 3, False),
+        ('after-wrapped-fits', 'abcdefghijklmnopqrst\tZ', 4, 3, True),
+        ('trailing-fits', 'abcdefghij\t', 3, 2, True),
+    ]:
+        for resource in ('files', 'models'):
+            name = f'short-{resource}-tab-'+suffix
+            if not enabled(name):
+                continue
+            with case(name, resource=resource, mode='complete', width=20, height=height, tab_value=value) as (terminal, server):
+                if exits:
+                    text = completed_output(terminal, [item_id(1)])
+                else:
+                    assert_complete_scroll_controls(terminal, 20)
+                    drain(terminal)
+                    assert terminal.child.poll() is None, 'tab-expanded output exceeded the available rows but exited'
+                    assert request_count(server) == 1
+                    terminal.send(b'p')
+                    finish(terminal, 0)
+                    assert_printed_page(terminal, [item_id(1)], 20, output/name)
+                    printed = bytes(terminal.raw).rsplit(b'\x1b[?2004l', 1)[-1]
+                    text = terminal_module.ANSI.sub('', printed.decode('utf-8')).replace('\r\n', '\n').replace('\r', '')
+                expected = f'ID: {item_id(1)}\nFilename: {value}\n'
+                assert text == expected, ('tab bytes or final result changed', text, expected)
+                assert physical_rows(text, 20) == rows_needed, ('fixture terminal-row accounting changed', text, rows_needed)
+                assert request_count(server) == 1 and server.maximum_inflight == 1
+                (output/(name+'.txt')).write_text(text)
 
     unknown = selected-{result['case'] for result in results}
     assert not unknown, ('unknown cases', sorted(unknown))

@@ -1,19 +1,28 @@
 # List navigation recording
 
-This prerequisite contains handwritten navigation helpers only.
-Generated commands do not call them on this branch.
+Generated files, batches, and projects commands do not yet call the navigation helpers on this branch.
 Public activation requires the normal generator-source and SDK-promotion sequence.
-The recipe below requires a separately activated candidate and must not prove activation of this prerequisite.
+The two-page recipe below requires a separately activated candidate and does not establish activation here.
 Identify that candidate and its generated-source provenance when recording future integration evidence.
 
-Before generated activation, carry both reviewed handwritten follow-ups:
+The shared runtime now includes both completion follow-ups:
 
-- `51bac6bca356f067ee671add8bac630b8aa87658`: one-screen completion prints the complete fitting result once and exits without q.
-- `f4c1b76603b5830e61143255a3cddd25a9ee09af`: tab-aware display fitting preserves the shell prompt row.
+- Complete first results that fit print once and exit without q, preserving the shell prompt row.
+- Tab-aware display fitting retains navigation when the original output would overflow.
 
-This inert draft does not complete SDK-1178 or SDK-1179.
-Recheck the affected public commands after those fixes and normal generated promotion.
-Historical activated recordings remain integration evidence, not public behavior of this prerequisite.
+Models uses the shared fit policy through its existing single-response viewer.
+Run its public boundary checks without generated cursor adapters:
+
+```sh
+python3 -I -B scripts/check-list-navigation.py BINARY OUTPUT_DIR \
+  --case models-single-response \
+  --case short-models-tab-expands-overflow \
+  --case short-models-tab-cancels-wrap
+```
+
+The full checker and its cursor-resource short-result suite require generated activation.
+Recheck files, batches, and projects after normal generated promotion before declaring SDK-1178 or SDK-1179 complete.
+Historical activated recordings retain their original candidate identities.
 
 Record identical commands against two synthetic API pages.
 The recorder checks request counts before input and after Space.

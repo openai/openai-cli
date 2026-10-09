@@ -32,11 +32,14 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var voiceTypeFailure *voiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
 	var navigationFailure *listNavigationError
+	var modelsListFailure *modelsListError
 	switch {
 	case errors.Is(failure, context.Canceled):
 		return "Request canceled."
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
 		return "The request timed out. The API may have received it; check its status before repeating it."
+	case errors.As(failure, &modelsListFailure):
+		return modelsListFailure.Error()
 	case errors.As(failure, &imageFailure):
 		return imageFailure.message
 	case errors.As(failure, &navigationFailure):

@@ -546,6 +546,7 @@ func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
 
 func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
+	stopModelsListLoading(opts)
 	if err := opts.Context.Err(); err != nil {
 		return err
 	}
@@ -637,6 +638,7 @@ func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, op
 
 func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
+	stopModelsListLoading(opts)
 	if presentation, ok := savedImagePresentation(opts, OutputStreamEvent); ok {
 		return presentation.output(func(out io.Writer) error {
 			return saveFinalImageStream(opts.Context, source, presentation.plan, out)
@@ -645,12 +647,18 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	if itemsToDisplay == 0 {
 		return source.Err()
 	}
+	if handled, err := showModelsListSelection(source, itemsToDisplay, opts); handled {
+		return err
+	}
 	iter := &outputIterator[T]{
 		source:    source,
 		context:   opts.Context,
 		transform: selectOutputTransformer(opts, selectTransformer),
 		route:     transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind},
 		remaining: itemsToDisplay,
+	}
+	if handled, err := showModelsListViewer(source, iter, opts); handled {
+		return err
 	}
 	opts.Format = resolvedOutputFormat(opts)
 	if opts.Format == "text" {
