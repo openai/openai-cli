@@ -31,6 +31,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var imageModelsFailure *imageModelsError
 	var voiceTypeFailure *voiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
+	var utilityFailure *localUtilityError
 	var downloadFailure *downloadSaveError
 	var receiptFailure *saveReceiptError
 	var navigationFailure *listNavigationError
@@ -42,6 +43,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return receiptFailure.Error()
 	case errors.Is(failure, context.Canceled):
 		return "Request canceled."
+	case errors.As(failure, &utilityFailure):
+		return utilityFailure.Error()
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
 		return "The request timed out. The API may have received it; check its status before repeating it."
 	case errors.As(failure, &modelsListFailure):

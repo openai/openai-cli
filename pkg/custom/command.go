@@ -31,6 +31,8 @@ func ConfigureCommand(root *cli.Command) {
 	configureCommandSubgroups(root)
 	configureTaskCommands(root)
 	configureFileCommands(root)
+	registerTokenizerCommands(root)
+	registerCodexCommands(root)
 	configureCommandPresentation(root)
 	configureManpageCommands(root)
 	configureOutputPolicy(root)
@@ -44,6 +46,9 @@ func ConfigureCommand(root *cli.Command) {
 			if err != nil {
 				return ctx, err
 			}
+		}
+		if IsLocalUtilityCommand(command) {
+			return ctx, nil
 		}
 		return configureMTLS(ctx, command.Root())
 	}

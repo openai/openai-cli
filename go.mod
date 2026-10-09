@@ -10,13 +10,16 @@ require (
 	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/term v0.2.2
+	github.com/dlclark/regexp2 v1.11.5
 	github.com/goccy/go-yaml v1.19.2
 	github.com/itchyny/json2yaml v0.1.5
 	github.com/muesli/reflow v0.3.0
 	github.com/openai/openai-go/v3 v3.74.0
+	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/gjson v1.19.0
 	github.com/tidwall/pretty v1.2.1
+	github.com/tiktoken-go/tokenizer v0.7.0
 	github.com/urfave/cli-docs/v3 v3.1.0
 	github.com/urfave/cli/v3 v3.13.0
 	golang.org/x/image v0.46.0
@@ -30,6 +33,7 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/mattn/go-runewidth v0.0.27 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect

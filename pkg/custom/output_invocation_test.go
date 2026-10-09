@@ -244,6 +244,7 @@ func TestOutputInvocationInterruptionsAndDiagnosticFailures(t *testing.T) {
 		{"cancellation", context.Canceled, 27, false, false},
 		{"deadline", context.DeadlineExceeded, 27, false, false},
 		{"timeout exit", errors.New("synthetic"), 124, false, false},
+		{"hangup exit", errors.New("synthetic"), 129, false, false},
 		{"interrupt exit", errors.New("synthetic"), 130, false, false},
 		{"termination exit", errors.New("synthetic"), 143, false, false},
 		{"parent cancellation", errors.New("synthetic"), 27, true, false},
