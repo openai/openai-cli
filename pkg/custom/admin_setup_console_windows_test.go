@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -137,6 +138,8 @@ type adminConsoleObservedReader struct {
 	closeActive       int
 	closeComplete     bool
 	closeSucceeded    *bool
+	queueAtClose      bool
+	queueEvidence     *adminConsoleQueueEvidence
 }
 
 func (reader *adminConsoleObservedReader) frame(event string) map[string]any {
@@ -166,6 +169,9 @@ func (reader *adminConsoleObservedReader) frame(event string) map[string]any {
 	}
 	if reader.closeSucceeded != nil {
 		frame["close_succeeded"] = *reader.closeSucceeded
+	}
+	if reader.queueEvidence != nil {
+		frame["queue"] = reader.queueEvidence
 	}
 	return frame
 }
@@ -269,11 +275,26 @@ func (reader *adminConsoleObservedReader) Close() error {
 		// Do not abort cleanup: observe the ordering failure, then call real Close.
 		reader.test.Error("console reader close did not follow completed reads exactly once")
 	}
+	var queued *adminConsoleQueueEvidence
+	if reader.queueAtClose {
+		if validOrder {
+			queued = adminConsoleInjectQueuedRecords()
+		} else {
+			queued = &adminConsoleQueueEvidence{}
+		}
+	}
 	err := reader.adminSetupKeyReader.Close()
 	succeeded := err == nil
+	if queued != nil {
+		queued.complete(succeeded)
+	}
 	reader.mu.Lock()
 	reader.closeSucceeded = &succeeded
+	reader.queueEvidence = queued
 	reader.mu.Unlock()
+	if queued != nil {
+		reader.observer.send(reader.frame("queue_cleanup"))
+	}
 	reader.observer.send(reader.frame("close_result"))
 	return err
 }
@@ -305,6 +326,12 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 		phases = []string{"cancel_partial", "success2"}
 	case "cancel_plain", "split_final":
 		// The controller changes only its input framing for these comparisons.
+	case "queue_startup":
+		phases = []string{"success1"}
+	case "queue_success":
+		phases = []string{"success1", "success2"}
+	case "queue_cancel":
+		phases = []string{"cancel_partial", "success2"}
 	default:
 		t.Fatal("console observer received an unsupported diagnostic scenario")
 	}
@@ -317,6 +344,9 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 		expectedReaderType = adminConsoleNowaitReaderType
 	default:
 		t.Fatal("console observer received an unsupported reader mode")
+	}
+	if strings.HasPrefix(scenario, "queue_") && readerMode != "console-nowait" {
+		t.Fatal("queue diagnostics require the candidate reader")
 	}
 	original, err := adminConsoleGetModes()
 	if err != nil {
@@ -399,13 +429,23 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 		}
 		var reader *adminConsoleObservedReader
 		var activeModes adminConsoleModes
+		startupQueuePassed := true
 		key, readErr := readAdminSetupKeyWithReader(ctx, os.Stdin, os.Stderr, func(input io.Reader) (adminSetupKeyReader, error) {
+			var startupQueue *adminConsoleQueueEvidence
+			if scenario == "queue_startup" {
+				startupQueue = adminConsoleInjectQueuedRecords()
+			}
 			var actual adminSetupKeyReader
 			var createErr error
 			if readerMode == "uv" {
 				actual, createErr = uv.NewCancelReader(input)
 			} else {
 				actual, createErr = newAdminConsoleNowaitReader(input)
+			}
+			if startupQueue != nil {
+				startupQueue.complete(createErr == nil)
+				startupQueuePassed = startupQueue.Passed
+				observer.send(map[string]any{"event": "startup_queue", "phase": phase, "queue": startupQueue, "passed": startupQueuePassed})
 			}
 			if createErr != nil {
 				return nil, createErr
@@ -420,6 +460,7 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 				adminSetupKeyReader: actual, observer: observer, test: t, phase: phase, readerType: fmt.Sprintf("%T", actual),
 				lastReadError: "not-read", firstByteCategory: "none", lastByteCategory: "none",
 				byteCategories: map[string]int{"CR": 0, "LF": 0, "ctrl-C": 0, "ctrl-D": 0, "ascii-printable": 0, "ESC": 0, "other": 0},
+				queueAtClose:   (scenario == "queue_success" && phase == "success1") || (scenario == "queue_cancel" && phase == "cancel_partial"),
 			}
 			frame := reader.frame("ready")
 			frame["original"], frame["active"] = before, activeModes
@@ -450,7 +491,9 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 			controlValid = <-cancelControl
 		}
 		observerHealthy := observer.healthy()
+		queueCleanupPassed := reader.queueEvidence == nil || reader.queueEvidence.Passed
 		valid := observerHealthy && restoreErr == nil && restored == before && readsComplete &&
+			startupQueuePassed && queueCleanupPassed &&
 			frame["started"].(int) > 0 && frame["cancel_calls"] == 1 && controlValid &&
 			frame["close_calls"] == 1 && frame["reads_complete_at_close"] == true && frame["close_succeeded"] == true &&
 			reader.readerType == expectedReaderType &&
@@ -466,6 +509,7 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 		frame["read_error_category"], frame["key_empty"] = adminConsoleKeyErrorCategory(readErr), keyEmpty
 		frame["restored_modes_match"], frame["observer_healthy"], frame["control_valid"] = restored == before, observerHealthy, controlValid
 		frame["predicates"] = map[string]bool{
+			"startup_queue": startupQueuePassed, "queue_cleanup": queueCleanupPassed,
 			"observer_healthy": observerHealthy, "restore_succeeded": restoreErr == nil, "restored_modes_match": restored == before,
 			"reads_complete": readsComplete, "read_started": frame["started"].(int) > 0,
 			"cancel_called_once": frame["cancel_calls"] == 1, "control_valid": controlValid,

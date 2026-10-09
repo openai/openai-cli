@@ -62,7 +62,11 @@ func newAdminConsoleNowaitReader(input io.Reader) (adminSetupKeyReader, error) {
 	if err := windows.SetConsoleMode(reader.input, mode); err != nil {
 		return nil, err
 	}
-	// Deliberately do not flush the shared input queue.
+	if err := reader.discardPendingSnapshot(); err != nil {
+		_ = windows.SetConsoleMode(reader.input, reader.originalMode)
+		reader.clearInput()
+		return nil, errAdminSetupKeyIO
+	}
 	return reader, nil
 }
 
@@ -88,22 +92,12 @@ func (reader *adminConsoleNowaitReader) Read(output []byte) (int, error) {
 			return n, nil
 		}
 		reader.clearRecords()
-		var count uint32
-		// NOWAIT consumes only available records. No pending ReadFile request exists.
-		// https://learn.microsoft.com/en-us/windows/console/readconsoleinputex
-		result, _, callErr := adminConsoleReadInputEx.Call(uintptr(reader.input), uintptr(unsafe.Pointer(&reader.records[0])), uintptr(len(reader.records)), uintptr(unsafe.Pointer(&count)), 0x0002)
-		if result == 0 {
+		count, err := adminConsoleNowaitReadRecords(reader.input, reader.records[:])
+		if err != nil {
 			reader.clearInput()
-			if callErr != nil && callErr != windows.ERROR_SUCCESS {
-				return 0, callErr
-			}
-			return 0, errors.New("candidate console record read failed")
+			return 0, err
 		}
-		if count > uint32(len(reader.records)) {
-			reader.clearInput()
-			return 0, errors.New("candidate received an invalid record count")
-		}
-		reader.count = int(count)
+		reader.count = count
 		if reader.canceled.Load() {
 			reader.clearInput()
 			return 0, context.Canceled
@@ -136,7 +130,50 @@ func (reader *adminConsoleNowaitReader) Close() error {
 		return nil
 	}
 	reader.clearInput()
-	return windows.SetConsoleMode(reader.input, reader.originalMode)
+	drainErr := reader.discardPendingSnapshot()
+	restoreErr := windows.SetConsoleMode(reader.input, reader.originalMode)
+	if drainErr != nil || restoreErr != nil {
+		return errAdminSetupKeyIO
+	}
+	return nil
+}
+
+// Discard only a finite count snapshot. Later arrivals are outside this guarantee;
+// coalescing or competing readers can also complicate individual record identity.
+func (reader *adminConsoleNowaitReader) discardPendingSnapshot() error {
+	var remaining uint32
+	if windows.GetNumberOfConsoleInputEvents(reader.input, &remaining) != nil {
+		return errAdminSetupKeyIO
+	}
+	var batch [32]adminConsoleNowaitRecord
+	defer clear(batch[:])
+	for remaining != 0 {
+		limit := min(remaining, uint32(len(batch)))
+		count, err := adminConsoleNowaitReadRecords(reader.input, batch[:int(limit)])
+		clear(batch[:])
+		if err != nil || count == 0 {
+			return errAdminSetupKeyIO
+		}
+		remaining -= uint32(count)
+	}
+	return nil
+}
+
+func adminConsoleNowaitReadRecords(input windows.Handle, records []adminConsoleNowaitRecord) (int, error) {
+	var count uint32
+	// NOWAIT consumes only available records. No pending ReadFile request exists.
+	// https://learn.microsoft.com/en-us/windows/console/readconsoleinputex
+	result, _, callErr := adminConsoleReadInputEx.Call(uintptr(input), uintptr(unsafe.Pointer(&records[0])), uintptr(len(records)), uintptr(unsafe.Pointer(&count)), 0x0002)
+	if result == 0 {
+		if callErr != nil && callErr != windows.ERROR_SUCCESS {
+			return 0, callErr
+		}
+		return 0, errors.New("candidate console record read failed")
+	}
+	if count > uint32(len(records)) {
+		return 0, errors.New("candidate received an invalid record count")
+	}
+	return int(count), nil
 }
 
 func (reader *adminConsoleNowaitReader) clearRecords() {

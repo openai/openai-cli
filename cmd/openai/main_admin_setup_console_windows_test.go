@@ -40,11 +40,25 @@ type adminConsoleTestModes struct {
 	Stderr uint32 `json:"stderr"`
 }
 
+type adminConsoleTestQueueEvidence struct {
+	RecordsRequested     uint32 `json:"records_requested"`
+	RecordsWritten       uint32 `json:"records_written"`
+	PendingBefore        uint32 `json:"pending_before"`
+	PendingAfter         uint32 `json:"pending_after"`
+	WriteSucceeded       bool   `json:"write_succeeded"`
+	CountBeforeSucceeded bool   `json:"count_before_succeeded"`
+	CountAfterSucceeded  bool   `json:"count_after_succeeded"`
+	EchoOffBefore        bool   `json:"echo_off_before"`
+	EchoOffAfter         bool   `json:"echo_off_after"`
+	Passed               bool   `json:"passed"`
+}
+
 type adminConsoleTestFrame struct {
 	Event, Phase, Nonce              string
 	Scenario                         string
-	ReaderMode                       string          `json:"reader_mode"`
-	Checks                           map[string]bool `json:"checks"`
+	ReaderMode                       string                         `json:"reader_mode"`
+	Checks                           map[string]bool                `json:"checks"`
+	Queue                            *adminConsoleTestQueueEvidence `json:"queue"`
 	Original, Active, Restored       adminConsoleTestModes
 	Exit, Started, Completed, Phases int
 	Passed                           bool
@@ -73,6 +87,15 @@ type adminConsoleTestFrame struct {
 	KeyMatches                       bool            `json:"key_matches"`
 	ContextCanceled                  bool            `json:"context_canceled"`
 	ReadsComplete                    bool            `json:"reads_complete"`
+	FixtureClass                     string          `json:"fixture_class"`
+	ParserOutcome                    string          `json:"parser_outcome"`
+	AcceptedKeySHA256                string          `json:"accepted_key_sha256"`
+	AcceptedKeyLength                int             `json:"accepted_key_length"`
+	TimedOut                         bool            `json:"timed_out"`
+	ContextCanceledBeforeCleanup     bool            `json:"context_canceled_before_cleanup"`
+	RecordsRequested                 int             `json:"records_requested"`
+	RecordsWritten                   int             `json:"records_written"`
+	WriteSucceeded                   bool            `json:"write_succeeded"`
 }
 
 // Existing Windows CI selects TestMainDispatch. The outer job owns the worker,
@@ -249,7 +272,14 @@ func adminConsoleRunCases(t *testing.T) {
 			{"native_reader_cancel_first", "cancel_first", []string{"cancel_partial", "success2"}, false, false},
 			{"native_reader_cancel_plain", "cancel_plain", []string{"success1", "cancel_partial", "success2"}, true, false},
 			{"native_reader_split_final", "split_final", []string{"success1", "cancel_partial", "success2"}, false, true},
+			{"native_reader_queue_startup", "queue_startup", []string{"success1"}, false, false},
+			{"native_reader_queue_success", "queue_success", []string{"success1", "success2"}, false, false},
+			{"native_reader_queue_cancel", "queue_cancel", []string{"cancel_partial", "success2"}, false, false},
 		} {
+			queueScenario := strings.HasPrefix(scenario.mode, "queue_")
+			if queueScenario && readerMode == "uv" {
+				continue // These scenarios validate the candidate's snapshot boundary.
+			}
 			name := scenario.name
 			expectedReaderType := "*uv.conInputReader"
 			if readerMode == "console-nowait" {
@@ -282,6 +312,11 @@ func adminConsoleRunCases(t *testing.T) {
 				canceled, phases := false, 0
 				finalEnterSent := false
 				checksPassed := readerMode == "uv"
+				queueObserved := false
+				wantsCancel := false
+				for _, phase := range scenario.phases {
+					wantsCancel = wantsCancel || phase == "cancel_partial"
+				}
 				for {
 					frame := session.receive(t)
 					if frame.Event != "done" && frame.Event != "candidate_checks" && (phases >= len(scenario.phases) || frame.Phase != scenario.phases[phases]) {
@@ -299,9 +334,25 @@ func adminConsoleRunCases(t *testing.T) {
 							}
 						}
 						checksPassed = true
+					case "startup_queue", "queue_cleanup":
+						expectedEvent := "queue_cleanup"
+						if scenario.mode == "queue_startup" {
+							expectedEvent = "startup_queue"
+						}
+						if !queueScenario || queueObserved || frame.Event != expectedEvent || phases != 0 {
+							t.Fatal("observer reported an unexpected queue snapshot boundary")
+						}
+						adminConsoleCheckQueueEvidence(t, frame)
+						if frame.Event == "queue_cleanup" && (frame.CloseCalls != 1 || frame.CloseActiveReads != 0 || frame.CloseStartedReads != frame.CloseCompletedReads || !frame.ReadsCompleteAtClose || frame.CloseSucceeded == nil || !*frame.CloseSucceeded) {
+							t.Fatal("queue cleanup did not follow joined reads and successful Close")
+						}
+						queueObserved = true
 					case "ready":
 						if !checksPassed {
 							t.Fatal("candidate started before its focused checks completed")
+						}
+						if scenario.mode == "queue_startup" && !queueObserved {
+							t.Fatal("candidate became ready before proving startup queue cleanup")
 						}
 						if !adminConsoleHiddenInput(frame.Active.Stdin) || frame.Original != session.hello.Original {
 							t.Fatal("reader did not establish hidden input from restored modes")
@@ -370,7 +421,7 @@ func adminConsoleRunCases(t *testing.T) {
 							t.Log("success2 verifies later-key ownership in the surviving reader process; it is not a shell read")
 						}
 					case "done":
-						if !frame.Passed || !checksPassed || frame.Phases != len(scenario.phases) || phases != len(scenario.phases) || canceled != (scenario.mode != "success_only") {
+						if !frame.Passed || !checksPassed || frame.Phases != len(scenario.phases) || phases != len(scenario.phases) || canceled != wantsCancel || queueObserved != queueScenario {
 							t.Fatal("native reader did not complete the diagnostic scenario's required phases")
 						}
 						session.send(t, map[string]any{"action": "ack"})
@@ -382,6 +433,195 @@ func adminConsoleRunCases(t *testing.T) {
 				}
 			})
 		}
+	}
+	adminConsoleRunParityCases(t)
+}
+
+func adminConsoleRunParityCases(t *testing.T) {
+	for _, fixture := range []struct{ name, class string }{
+		{"printable_boundary", "accepted-input"}, {"repeat_boundary", "accepted-input"},
+		{"backspace_delete", "accepted-input"}, {"ctrl_c", "cancel-input"}, {"ctrl_d", "cancel-input"},
+		{"bracketed_paste", "accepted-input"}, {"invalid_paste_space", "rejected-input"},
+		{"invalid_paste_nested", "rejected-input"}, {"incomplete_paste_ctrl_c", "cancel-input"},
+		{"nul", "rejected-input"}, {"space", "rejected-input"}, {"tab", "rejected-input"},
+		{"unicode", "rejected-input"}, {"surrogate_pair", "rejected-input"}, {"lone_surrogate", "unsupported-record"},
+		{"modifier_transitions", "accepted-input"}, {"navigation", "rejected-input"}, {"alt_ascii", "rejected-input"},
+		{"altgr_translated_ascii", "accepted-input"}, {"altgr_physical_ascii", "accepted-input"},
+		{"alt_numpad_release", "accepted-input"}, {"malformed_alt_release", "unsupported-record"},
+	} {
+		t.Run("native_record_parity/"+fixture.name, func(t *testing.T) {
+			results := make(map[string]adminConsoleTestFrame, 2)
+			bothPassed := true
+			for _, mode := range []string{"uv", "console-nowait"} {
+				passed := t.Run(mode, func(t *testing.T) {
+					results[mode] = adminConsoleObserveParity(t, fixture.name, fixture.class, mode)
+				})
+				bothPassed = bothPassed && passed
+			}
+			if !bothPassed {
+				t.Error("parity comparison requires both native fixture and lifecycle checks to pass")
+				return
+			}
+			baseline, candidate := results["uv"], results["console-nowait"]
+			if fixture.class == "accepted-input" || fixture.class == "cancel-input" {
+				baselineExact := adminConsoleParityExpected(fixture.name, baseline)
+				candidateExact := adminConsoleParityExpected(fixture.name, candidate)
+				t.Logf("native input contract fixture=%s uv_exact=%t candidate_exact=%t", fixture.name, baselineExact, candidateExact)
+				if !baselineExact || !candidateExact {
+					t.Error("reader did not preserve the fixture's expected input contract")
+				}
+			}
+			matches := baseline.ParserOutcome == candidate.ParserOutcome && baseline.AcceptedKeySHA256 == candidate.AcceptedKeySHA256 && baseline.AcceptedKeyLength == candidate.AcceptedKeyLength
+			t.Logf("native parity fixture=%s class=%s matches=%t uv_outcome=%s candidate_outcome=%s uv_length=%d candidate_length=%d digest_matches=%t", fixture.name, fixture.class, matches, baseline.ParserOutcome, candidate.ParserOutcome, baseline.AcceptedKeyLength, candidate.AcceptedKeyLength, baseline.AcceptedKeySHA256 == candidate.AcceptedKeySHA256)
+			if !matches {
+				t.Error("candidate differs from UV for this native fixture; its fixture class does not waive the mismatch")
+			}
+		})
+	}
+}
+
+// Expected parser results are independent of the native record writer. Matching
+// readers must not turn a shared character loss into accepted-input evidence.
+func adminConsoleParityExpected(fixture string, frame adminConsoleTestFrame) bool {
+	if fixture == "ctrl_c" || fixture == "ctrl_d" || fixture == "incomplete_paste_ctrl_c" {
+		return frame.ParserOutcome == "canceled" && frame.KeyEmpty
+	}
+	const prefix = "sk-admin-SYNTHETIC-parity-"
+	var suffix string
+	switch fixture {
+	case "printable_boundary":
+		suffix = "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+	case "repeat_boundary":
+		suffix = "0123456789abcdef0123456789abcdef" + strings.Repeat("a", 37)
+	case "backspace_delete":
+		suffix = "ad"
+	case "bracketed_paste":
+		suffix = "paste"
+	case "modifier_transitions":
+		suffix = "a"
+	case "altgr_translated_ascii", "altgr_physical_ascii":
+		suffix = "@z"
+	case "alt_numpad_release":
+		suffix = "Az"
+	default:
+		return false
+	}
+	want := prefix + suffix
+	digest := sha256.Sum256([]byte(want))
+	return frame.ParserOutcome == "accepted" && frame.AcceptedKeyLength == len(want) && frame.AcceptedKeySHA256 == hex.EncodeToString(digest[:])
+}
+
+func adminConsoleObserveParity(t *testing.T, fixture, class, mode string) adminConsoleTestFrame {
+	t.Helper()
+	session := adminConsoleStart(t, os.Getenv("OPENAI_ADMIN_CONSOLE_OBSERVER"), "TestAdminSetupConsoleParityChild", []string{
+		"OPENAI_ADMIN_CONSOLE_PARITY=" + fixture, "OPENAI_ADMIN_CONSOLE_READER=" + mode,
+	})
+	if session.hello.Scenario != "parity/"+fixture || session.hello.ReaderMode != mode {
+		t.Fatal("parity observer selected a different fixture or reader")
+	}
+	if session.connection.SetDeadline(time.Now().Add(10*time.Second)) != nil {
+		t.Fatal("could not bound the native parity observer")
+	}
+	session.send(t, map[string]any{"action": "start", "nonce": session.nonce})
+	expectedReader := "*uv.conInputReader"
+	if mode == "console-nowait" {
+		expectedReader = "*custom.adminConsoleNowaitReader"
+	}
+	ready, written, promptObserved := false, false, false
+	var requested, accepted int
+	for {
+		frame := session.receive(t)
+		if frame.Phase != fixture {
+			t.Fatal("parity observer changed its fixture")
+		}
+		switch frame.Event {
+		case "ready":
+			if ready || !adminConsoleHiddenInput(frame.Active.Stdin) || frame.Original != session.hello.Original || frame.ReaderType != expectedReader {
+				t.Fatal("parity observer did not establish the required native hidden-input reader")
+			}
+			ready = true
+		case "parity_write":
+			t.Logf("native fixture acceptance requested_records=%d accepted_records=%d write_succeeded=%t", frame.RecordsRequested, frame.RecordsWritten, frame.WriteSucceeded)
+			if !ready || written || !frame.WriteSucceeded || frame.RecordsRequested <= 0 || frame.RecordsWritten != frame.RecordsRequested {
+				t.Fatal("native console did not accept the complete fixed fixture")
+			}
+			requested, accepted, written = frame.RecordsRequested, frame.RecordsWritten, true
+		case "read_started":
+			if !written {
+				t.Fatal("parity reader started before native fixture injection completed")
+			}
+			if !promptObserved {
+				session.waitPrompt(t)
+				promptObserved = true
+			}
+		case "read_completed":
+			if !written {
+				t.Fatal("parity reader completed before fixture injection")
+			}
+		case "cancel_result":
+			if frame.CancelReturned == nil {
+				t.Fatal("parity observer omitted the actual Cancel result")
+			}
+		case "close_result":
+			if frame.CloseSucceeded == nil {
+				t.Fatal("parity observer omitted the actual Close result")
+			}
+		case "parity_complete":
+			adminConsoleLogPhaseDiagnostics(t, frame)
+			t.Logf("native fixture result class=%s outcome=%s accepted_length=%d timed_out=%t context_canceled_before_cleanup=%t", frame.FixtureClass, frame.ParserOutcome, frame.AcceptedKeyLength, frame.TimedOut, frame.ContextCanceledBeforeCleanup)
+			// Always acknowledge a completed observation before asserting its result.
+			session.send(t, map[string]any{"action": "ack"})
+			session.finish(t)
+			if !ready || !written || !promptObserved || !frame.Passed || frame.FixtureClass != class || frame.Scenario != session.hello.Scenario || frame.ReaderMode != mode || frame.ReaderType != expectedReader {
+				t.Fatal("parity observer did not complete the required fixture and reader lifecycle")
+			}
+			if !frame.WriteSucceeded || frame.RecordsRequested != requested || frame.RecordsWritten != accepted || frame.TimedOut || frame.ContextCanceledBeforeCleanup || !frame.ObserverHealthy || !frame.RestoredModesMatch || frame.Restored != session.hello.Original {
+				t.Fatal("parity fixture delivery, deadline, or console restoration failed")
+			}
+			if !frame.ReadsComplete || frame.Started == 0 || frame.Started != frame.Completed || frame.ActiveReads != 0 || frame.CancelCalls != 1 || frame.CancelReturned == nil || frame.CloseCalls != 1 || frame.CloseActiveReads != 0 || frame.CloseStartedReads != frame.CloseCompletedReads || !frame.ReadsCompleteAtClose || frame.CloseSucceeded == nil || !*frame.CloseSucceeded {
+				t.Fatal("parity observer did not join its reads before successful Close")
+			}
+			if len(frame.Predicates) != 15 {
+				t.Fatal("parity observer omitted required lifecycle predicates")
+			}
+			for _, valid := range frame.Predicates {
+				if !valid {
+					t.Fatal("parity observer reported a failed lifecycle predicate")
+				}
+			}
+			switch frame.ParserOutcome {
+			case "accepted":
+				digest, err := hex.DecodeString(frame.AcceptedKeySHA256)
+				if err != nil || len(digest) != sha256.Size || frame.AcceptedKeyLength <= 0 || frame.KeyEmpty || frame.ReadErrorCategory != "nil" {
+					t.Fatal("parity observer omitted its accepted-key identity")
+				}
+			case "canceled", "empty", "invalid":
+				if frame.AcceptedKeySHA256 != "" || frame.AcceptedKeyLength != 0 || !frame.KeyEmpty {
+					t.Fatal("parity observer retained a key after a rejected or canceled result")
+				}
+				expectedError := map[string]string{"canceled": "context.Canceled", "empty": "errAdminSetupKeyEmpty", "invalid": "errAdminSetupKeyInvalid"}[frame.ParserOutcome]
+				if frame.ReadErrorCategory != expectedError {
+					t.Fatal("parity observer returned inconsistent parser outcome metadata")
+				}
+			default:
+				t.Fatal("parity observer returned an unexpected parser outcome")
+			}
+			return frame
+		default:
+			t.Fatal("parity observer sent an unexpected control event")
+		}
+	}
+}
+
+func adminConsoleCheckQueueEvidence(t *testing.T, frame adminConsoleTestFrame) {
+	t.Helper()
+	queue := frame.Queue
+	if queue == nil {
+		t.Fatal("observer omitted queue snapshot evidence")
+	}
+	t.Logf("queue boundary=%s phase=%s requested=%d accepted=%d pending_before=%d pending_after=%d write=%t count_before=%t count_after=%t echo_off_before=%t echo_off_after=%t passed=%t", frame.Event, frame.Phase, queue.RecordsRequested, queue.RecordsWritten, queue.PendingBefore, queue.PendingAfter, queue.WriteSucceeded, queue.CountBeforeSucceeded, queue.CountAfterSucceeded, queue.EchoOffBefore, queue.EchoOffAfter, queue.Passed)
+	if queue.RecordsRequested != 5000 || queue.RecordsWritten != queue.RecordsRequested || queue.PendingBefore <= 32 || queue.PendingAfter != 0 || !queue.WriteSucceeded || !queue.CountBeforeSucceeded || !queue.CountAfterSucceeded || !queue.EchoOffBefore || !queue.EchoOffAfter || !queue.Passed {
+		t.Fatal("candidate failed the finite queue snapshot boundary")
 	}
 }
 
@@ -820,7 +1060,7 @@ func (capture *adminConsoleCapture) checkedText(t *testing.T) string {
 		}
 		return r
 	}, ansi.Strip(output))
-	if strings.Contains(output, adminConsoleSyntheticKey) || strings.Contains(normalized, "sk-admin-SYNTHETIC") {
+	if strings.Contains(output, adminConsoleSyntheticKey) || strings.Contains(normalized, "sk-admin-SYNTHETIC") || strings.Contains(normalized, "QRQRQRQRQRQRQRQR") {
 		t.Error("synthetic key bytes appeared in console output")
 		return "" // Never copy a privacy failure into the enclosing test's logs.
 	}
