@@ -1,6 +1,9 @@
 # Welcome banner comparison
 
 The recorder runs bare `openai` on real before and after binaries.
+The blue frame uses six rows and 40 columns when space permits.
+Below 40 columns, it uses a compact four-row layout.
+If the complete version and greeting cannot fit, the CLI preserves help without a banner.
 It uses the shared capture lifecycle and the existing rejecting loopback fixture.
 It supplies no API credentials and requires zero API requests.
 Temporary HOME, XDG directories, working directories, and PATH isolate each scene.

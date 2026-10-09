@@ -133,15 +133,19 @@ assert report.startswith("openai version "), "unexpected runtime version report"
 version = report.removeprefix("openai version ")
 assert version, "runtime version is empty"
 display_version = "v" + version if version[0].isdigit() else version
-title = "✦  OpenAI CLI  " + display_version
+title = "OpenAI CLI  " + display_version
 greeting = "What are we making today?"
 banner_width = max(cell_width(title), cell_width(greeting)) + 4
 assert greeting not in before, "baseline already contains the welcome banner"
 if banner_width <= min(columns, 100):
     banner, help_text = after.split("\n\n", 1)
     lines = banner.splitlines()
-    assert len(lines) == 4 and lines[0].startswith("┌") and lines[-1].startswith("└"), "invalid banner frame"
-    assert "✦  OpenAI CLI" in lines[1] and display_version in lines[1] and greeting in lines[2], "missing runtime version or greeting"
+    expected_height = 6 if columns >= 40 else 4
+    title_row = 2 if columns >= 40 else 1
+    assert len(lines) == expected_height and lines[0].startswith("┌") and lines[-1].startswith("└"), "invalid banner frame"
+    assert "OpenAI CLI" in lines[title_row] and display_version in lines[title_row], "title/version row wrapped"
+    assert greeting in lines[title_row + 1], "missing greeting"
+    assert "✦" not in banner and ">_" not in banner, "unexpected signature mark"
     assert all(cell_width(line) <= columns for line in lines), "banner exceeds terminal width"
     assert help_text == before, "welcome changed existing help or command groups"
     assert after_raw.split("\r\n\r\n", 1)[1] == before_raw, "welcome changed existing help bytes"

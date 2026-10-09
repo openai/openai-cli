@@ -14,7 +14,7 @@ import (
 
 func TestWelcomeLayout(t *testing.T) {
 	for _, version := range []string{"", "1.38.0", "v2.0.0", "dev", "dev-界", "1.38.0-rc.1+abc123"} {
-		for _, width := range []int{20, 28, 29, 32, 40, 80} {
+		for _, width := range []int{20, 28, 29, 31, 39, 40, 80} {
 			for _, profile := range []colorprofile.Profile{colorprofile.NoTTY, colorprofile.ANSI, colorprofile.TrueColor} {
 				got := renderWelcome(version, width, profile, true)
 				if got == "" {
@@ -27,8 +27,12 @@ func TestWelcomeLayout(t *testing.T) {
 				if !strings.Contains(plain, version) || !strings.Contains(plain, "What are we making today?") {
 					t.Fatalf("missing version or greeting: %q", plain)
 				}
-				if strings.Count(strings.TrimSpace(plain), "\n") != 3 {
-					t.Fatalf("banner exceeds four lines: %q", plain)
+				wantHeight := 4
+				if width >= 40 {
+					wantHeight = 6
+				}
+				if strings.Count(strings.TrimSpace(plain), "\n") != wantHeight-1 {
+					t.Fatalf("banner height differs from %d: %q", wantHeight, plain)
 				}
 				for _, line := range strings.Split(plain, "\n") {
 					if ansi.StringWidth(line) > width {
@@ -50,23 +54,57 @@ func TestWelcomeVersionEscapesControls(t *testing.T) {
 	}
 }
 
+func TestWelcomeLongVersionSizing(t *testing.T) {
+	const version = "1.38.0-preview.20261009.abcdef0123456789"
+	if got := renderWelcome(version, 40, colorprofile.NoTTY, true); got != "" {
+		t.Fatalf("long version must not be clipped into a 40-column card: %q", got)
+	}
+	got := renderWelcome(version, 80, colorprofile.NoTTY, true)
+	lines := strings.Split(strings.TrimSuffix(got, "\n\n"), "\n")
+	if len(lines) != 6 || !strings.Contains(lines[2], "OpenAI CLI") || !strings.Contains(lines[2], "v"+version) {
+		t.Fatalf("expanded card lost its complete title/version row: %q", got)
+	}
+	cardWidth := ansi.StringWidth(lines[0])
+	if cardWidth <= 40 || cardWidth > 80 {
+		t.Fatalf("expanded card width = %d; want 41..80", cardWidth)
+	}
+	for _, line := range lines {
+		if ansi.StringWidth(line) != cardWidth {
+			t.Fatalf("expanded card has uneven rows: %q", got)
+		}
+	}
+}
+
 func TestWelcomeBorderAndVersionAlignment(t *testing.T) {
-	for _, width := range []int{29, 30, 31, 40, 80} {
+	for _, width := range []int{29, 30, 31, 39, 40, 80} {
 		got := renderWelcome("1.38.0", width, colorprofile.NoTTY, true)
 		lines := strings.Split(strings.TrimSuffix(got, "\n\n"), "\n")
-		if len(lines) != 4 || !strings.HasPrefix(lines[0], "┌") || !strings.HasSuffix(lines[0], "┐") ||
-			!strings.HasPrefix(lines[3], "└") || !strings.HasSuffix(lines[3], "┘") {
+		wantHeight, titleRow, padding := 4, 1, 1
+		if width >= 31 {
+			padding = 2
+		}
+		if width >= 40 {
+			wantHeight, titleRow = 6, 2
+		}
+		if len(lines) != wantHeight || !strings.HasPrefix(lines[0], "┌") || !strings.HasSuffix(lines[0], "┐") ||
+			!strings.HasPrefix(lines[wantHeight-1], "└") || !strings.HasSuffix(lines[wantHeight-1], "┘") {
 			t.Fatalf("unexpected border at width %d: %q", width, got)
+		}
+		if gotWidth := ansi.StringWidth(lines[0]); gotWidth != min(width, 40) {
+			t.Fatalf("card width = %d; want %d", gotWidth, min(width, 40))
 		}
 		for _, line := range lines {
 			if ansi.StringWidth(line) != ansi.StringWidth(lines[0]) {
 				t.Fatalf("uneven border at width %d: %q", width, got)
 			}
 		}
-		versionEnd := strings.Index(lines[1], "v1.38.0") + len("v1.38.0")
-		greetingEnd := strings.Index(lines[2], "today?") + len("today?")
-		if ansi.StringWidth(lines[1][:versionEnd]) != ansi.StringWidth(lines[2][:greetingEnd]) {
-			t.Fatalf("version does not align with content edge at width %d: %q", width, got)
+		namePrefix := "│" + strings.Repeat(" ", padding) + "OpenAI CLI"
+		if !strings.HasPrefix(lines[titleRow], namePrefix) || !strings.Contains(lines[titleRow], "v1.38.0") {
+			t.Fatalf("title/version row wrapped at width %d: %q", width, got)
+		}
+		versionEnd := strings.Index(lines[titleRow], "v1.38.0") + len("v1.38.0")
+		if ansi.StringWidth(lines[titleRow][:versionEnd]) != ansi.StringWidth(lines[0])-padding-1 {
+			t.Fatalf("version is not right-aligned at width %d: %q", width, got)
 		}
 	}
 }

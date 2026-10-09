@@ -62,43 +62,49 @@ func welcomeDarkBackground(colorfgbg string) bool {
 	}
 }
 
-const welcomeTitle = "✦  OpenAI CLI"
+const welcomeTitle = "OpenAI CLI"
 
 func renderWelcome(version string, width int, profile colorprofile.Profile, dark bool) string {
 	version = strings.Join(strings.Fields(readable.Text(version)), " ")
 	if version != "" && version[0] >= '0' && version[0] <= '9' {
 		version = "v" + version
 	}
-	title := strings.TrimSpace(welcomeTitle + "  " + version)
 	const greeting = "What are we making today?"
-	contentWidth := max(ansi.StringWidth(title), ansi.StringWidth(greeting))
-	// Keep this optional header to four lines. Narrow terminals and unusually
-	// long build versions retain complete help without clipping the version.
-	if contentWidth+4 > width {
+	required := max(ansi.StringWidth(welcomeTitle+"  "+version), ansi.StringWidth(greeting))
+	if required+4 > width {
 		return ""
 	}
-	// Reuse the established palette; those presentation helpers are private to
-	// pkg/custom, which depends on clihelp and cannot be imported here.
-	focus, muted, border := "#3159BC", "#657087", "#BAC4D8"
+	// Match the image picker and tokenizer palette without importing their
+	// private presentation helpers, which depend on this package.
+	focus, muted := "#3159BC", "#657087"
 	if dark {
-		focus, muted, border = "#8AA8FF", "#A4ACC2", "#51566B"
+		focus, muted = "#8AA8FF", "#A4ACC2"
 	}
-	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(focus))
+	// Preserve the terminal foreground when its background hint is absent.
+	heading := lipgloss.NewStyle().Bold(true)
 	note := lipgloss.NewStyle().Foreground(lipgloss.Color(muted))
 	padding := 1
-	if contentWidth+6 <= width {
+	if required+6 <= width {
 		padding = 2
 	}
-	// Square corners avoid rounded-glyph metrics that leave gaps in some
-	// renderers, without changing the frame's width or height.
-	frame := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color(border)).Padding(0, padding)
-	styledTitle := heading.Render(welcomeTitle)
+	// Width includes borders and padding. Keep one title/version row intact.
+	cardWidth := min(width, max(40, required+2+2*padding))
+	contentWidth := cardWidth - 2 - 2*padding
+	frame := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color(focus)).Padding(0, padding).Width(cardWidth)
+	title := heading.Render(welcomeTitle)
 	if version != "" {
 		gap := contentWidth - ansi.StringWidth(welcomeTitle) - ansi.StringWidth(version)
-		styledTitle += strings.Repeat(" ", gap) + note.Render(version)
+		title += strings.Repeat(" ", gap) + note.Render(version)
+	}
+	var card string
+	// Small terminals retain the compact layout; wider terminals get breathing room.
+	if width < 40 {
+		card = frame.Render(title + "\n" + note.Render(greeting))
+	} else {
+		card = frame.Padding(1, padding).Render(title + "\n" + note.Render(greeting))
 	}
 	var out strings.Builder
 	writer := colorprofile.Writer{Forward: &out, Profile: profile}
-	_, _ = writer.WriteString(frame.Render(styledTitle+"\n"+greeting) + "\n\n")
+	_, _ = writer.WriteString(card + "\n\n")
 	return out.String()
 }
