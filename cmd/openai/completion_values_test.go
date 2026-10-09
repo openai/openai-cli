@@ -1,14 +1,19 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestMainCompletionValuesProtocols(t *testing.T) {
@@ -290,6 +295,118 @@ func TestMainCompletionValuesCallerDirectory(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestMainCompletionValuesBashCallerDirectoryCapture(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("This Bash callback test requires Unix executable wrappers and newline directory names.")
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("Bash is unavailable")
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := runMainDispatch(t, "bash", "openai", "@completion", "bash")
+	if adapter.code != 0 || adapter.stderr != "" || adapter.stdout == "" {
+		t.Fatalf("adapter generation failed: %+v", adapter)
+	}
+	for _, tc := range []struct {
+		name, collision, candidates string
+		failedPwd, command          bool
+	}{
+		{"caller-only newline", "caller", "", false, false},
+		{"backend-only newline", "backend", "yaml\n", false, false},
+		{"failed pwd static", "", "", true, false},
+		{"failed pwd command", "", "list\n", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			caller, backend, bindir := filepath.Join(root, "caller\n"), filepath.Join(root, "backend"), filepath.Join(root, "bin")
+			for _, directory := range []string{caller, backend, bindir} {
+				if err := os.Mkdir(directory, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.collision != "" {
+				directory := backend
+				if tc.collision == "caller" {
+					directory = caller
+				}
+				if err := os.Mkdir(filepath.Join(directory, "yaml"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			adapterPath := filepath.Join(root, "adapter.bash")
+			if err := os.WriteFile(adapterPath, []byte(adapter.stdout), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			const wrapper = `#!/bin/sh
+printf '%s' "$OPENAI_CLI_COMPLETION_BASH_CWD" > "$COMPLETION_TEST_CWD"
+printf '%s' "$OPENAI_CLI_COMPLETION_STATIC_VALUES" > "$COMPLETION_TEST_MARKER"
+cd "$COMPLETION_TEST_BACKEND" || exit 91
+exec "$COMPLETION_TEST_BINARY" -test.run='^TestMainDispatchProcess$' -- openai "$@"
+`
+			if err := os.WriteFile(filepath.Join(bindir, "openai"), []byte(wrapper), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			const probe = `
+source "$COMPLETION_TEST_ADAPTER" || exit 92
+if [[ "$COMPLETION_TEST_FAILED_PWD" == 1 ]]; then pwd() { return 1; }; fi
+if [[ "$COMPLETION_TEST_COMMAND" == 1 ]]; then
+  COMP_LINE='openai models li'
+  COMP_WORDS=(openai models li)
+else
+  COMP_LINE='openai --format y'
+  COMP_WORDS=(openai --format y)
+fi
+COMP_CWORD=2
+COMP_POINT=${#COMP_LINE}
+__openai_bash_autocomplete openai "${COMP_WORDS[2]}" "${COMP_WORDS[1]}"
+for candidate in "${COMPREPLY[@]}"; do printf '%s\n' "$candidate"; done
+`
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			process := exec.CommandContext(ctx, bash, "--noprofile", "--norc", "-c", probe)
+			process.Dir = caller
+			process.WaitDelay = 2 * time.Second
+			process.Env = []string{
+				"PATH=" + bindir + ":/usr/bin:/bin", "HOME=" + root, "LC_ALL=C", "GOMAXPROCS=2",
+				"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "OPENAI_BASE_URL=invalid-completion-url",
+				"COMPLETION_TEST_BINARY=" + binary, "COMPLETION_TEST_BACKEND=" + backend,
+				"COMPLETION_TEST_ADAPTER=" + adapterPath,
+				"COMPLETION_TEST_CWD=" + filepath.Join(root, "cwd"),
+				"COMPLETION_TEST_MARKER=" + filepath.Join(root, "marker"),
+			}
+			if tc.failedPwd {
+				process.Env = append(process.Env, "COMPLETION_TEST_FAILED_PWD=1")
+			}
+			if tc.command {
+				process.Env = append(process.Env, "COMPLETION_TEST_COMMAND=1")
+			}
+			var stdout, stderr bytes.Buffer
+			process.Stdout, process.Stderr = &stdout, &stderr
+			if err := process.Run(); err != nil || ctx.Err() != nil || stderr.Len() != 0 || stdout.String() != tc.candidates {
+				t.Fatalf("Bash callback failed: error=%v context=%v stdout=%q stderr=%q", err, ctx.Err(), stdout.String(), stderr.String())
+			}
+			wantDirectory, err := filepath.EvalSymlinks(caller)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantMarker := "1"
+			if tc.failedPwd {
+				wantDirectory, wantMarker = "", "0"
+			}
+			for name, want := range map[string]string{"cwd": wantDirectory, "marker": wantMarker} {
+				got, err := os.ReadFile(filepath.Join(root, name))
+				if err != nil || string(got) != want {
+					t.Fatalf("callback %s bytes changed: got %q error=%v; want %q", name, got, err, want)
+				}
+			}
+		})
 	}
 }
 

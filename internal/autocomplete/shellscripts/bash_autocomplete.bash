@@ -83,7 +83,13 @@ ____APPNAME___bash_autocomplete() {
       value_prefix="${current_value%%=*}="
     fi
     local completion_directory
-    completion_directory=$(pwd -P)
+    # A sentinel preserves trailing newlines in the physical directory name.
+    if completion_directory=$(pwd -P 2>/dev/null && printf '.'); then
+      completion_directory="${completion_directory%$'\n.'}"
+    else
+      completion_directory=""
+      static_values=0
+    fi
     completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_STATIC_VALUES="$static_values" OPENAI_CLI_COMPLETION_BASH_VALUE_PREFIX="$value_prefix" OPENAI_CLI_COMPLETION_BASH_CWD="$completion_directory" "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
     exit_code=$?
 

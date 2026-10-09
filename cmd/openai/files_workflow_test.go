@@ -506,11 +506,18 @@ func TestMainFilesWorkflowPositionalCompletion(t *testing.T) {
 			{"files", "upload", "first.txt", ""},
 			{"files", "upload", "--file", "first.txt", ""},
 			{"files", "upload", "--file=first.txt", ""},
-			{"files", "upload", "--purpose", ""},
 		} {
 			got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, args...)...)
 			require.Equal(t, mainDispatchResult{code: 11}, got, "%s %q", style, args)
 		}
+		// Purpose values are static suggestions, never positional files.
+		// Older Bash/Zsh adapters omit the static-value capability marker.
+		wantPurpose := mainDispatchResult{code: 11}
+		if style == "fish" || style == "pwsh" {
+			wantPurpose = mainDispatchResult{stdout: "assistants\nbatch\nevals\nfine-tune\nuser_data\nvision\n"}
+		}
+		got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, "files", "upload", "--purpose", "")...)
+		require.Equal(t, wantPurpose, got, "%s purpose", style)
 	}
 }
 

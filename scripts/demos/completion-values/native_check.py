@@ -276,6 +276,7 @@ def terminate_group(group, number):
         try:
             os.killpg(group, number)
         except ProcessLookupError:
+            # The process group can exit before cleanup sends its signal.
             pass
 
 
@@ -314,7 +315,8 @@ class ShellSession:
             try:
                 os.chdir(directory)
                 os.execve(str(executable), arguments, environment)
-            except BaseException:
+            finally:
+                # Successful exec never returns; failed setup must exit the child.
                 os._exit(127)
         try:
             fcntl.ioctl(self.terminal, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
