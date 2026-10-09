@@ -81,6 +81,10 @@ A final Boolean `stream: true` selects stream dispatch for supported JSON and mu
 Explicit stream flags retain precedence.
 Strings that resemble Booleans do not select stream dispatch.
 
+Redirected event streams emit each formatted event without waiting for a page of output.
+This includes JSON, JSONL, and extraction with raw output.
+Terminal paging and finite-list output keep their existing behavior.
+
 For input from an untrusted producer, set `OPENAI_UNTRUSTED_STDIN=true`.
 Piped strings then remain literal instead of authorizing local file reads.
 Piped binary file paths fail in this mode.

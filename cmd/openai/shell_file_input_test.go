@@ -95,6 +95,10 @@ func TestMainShellWholeRequestAndRepeatedFlags(t *testing.T) {
 		{"YAML", "model: model_synthetic\ninput: text\nfuture: null\n", nil, map[string]any{"model": "model_synthetic", "input": "text", "future": nil}},
 		{"last scalar releases stdin", `{"model":"model_synthetic"}`, []string{"--input", "@-", "--input", "literal"}, map[string]any{"model": "model_synthetic", "input": "literal"}},
 		{"last scalar selects stdin", "exact text\n", []string{"--model", "model_synthetic", "--input", "literal", "--input", "@-"}, map[string]any{"model": "model_synthetic", "input": "exact text\n"}},
+		{"nested field selects stdin", "false\n", []string{"--model", "model_synthetic", "--input", `[{"role":"user","content":[{"type":"input_text","text":"@-"}]}]`}, map[string]any{"model": "model_synthetic", "input": []any{map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "false\n"}}}}}},
+		{"nested replacement releases stdin", `{"model":"model_synthetic","future":null}`, []string{"--metadata", `{"note":"@-"}`, "--metadata", `{"note":"literal"}`}, map[string]any{"model": "model_synthetic", "future": nil, "metadata": map[string]any{"note": "literal"}}},
+		{"empty nullable replacement releases stdin", `{"model":"model_synthetic","input":"whole request"}`, []string{"--instructions", "@-", "--instructions", ""}, map[string]any{"model": "model_synthetic", "input": "whole request", "instructions": ""}},
+		{"null nullable replacement releases stdin", `{"model":"model_synthetic","input":"whole request"}`, []string{"--instructions", "@-", "--instructions", "null"}, map[string]any{"model": "model_synthetic", "input": "whole request", "instructions": nil}},
 		{"untrusted reference remains literal", `{"model":"model_synthetic","input":"@/synthetic/private.txt"}`, nil, map[string]any{"model": "model_synthetic", "input": "@/synthetic/private.txt"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,12 +159,15 @@ func TestMainShellBinaryStdinAndLiteralPaths(t *testing.T) {
 		{"translation", []string{"audio", "translations", "create", "--model", "whisper-1"}, "file"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, source := range []string{"stdin", "literal at", "literal dash"} {
+			for _, source := range []string{"stdin", "empty stdin", "literal at", "literal dash"} {
 				t.Run(source, func(t *testing.T) {
 					input := shellFileInput(t, nil)
 					path, filename := "-", "anonymous_file"
+					want := payload
 					if source == "stdin" {
 						input = shellFileInput(t, payload)
+					} else if source == "empty stdin" {
+						want = nil
 					} else {
 						filename = "@sample.wav"
 						if source == "literal dash" {
@@ -179,10 +186,10 @@ func TestMainShellBinaryStdinAndLiteralPaths(t *testing.T) {
 					for _, p := range <-requests {
 						if p.name == tc.field {
 							found = true
-							if p.filename != filename || !bytes.Equal(p.data, payload) {
+							if p.filename != filename || !bytes.Equal(p.data, want) {
 								t.Fatalf("part=%+v", p)
 							}
-							if source == "stdin" && p.contentType != "application/octet-stream" {
+							if (source == "stdin" || source == "empty stdin") && p.contentType != "application/octet-stream" {
 								t.Fatalf("content type=%s", p.contentType)
 							}
 						}
@@ -204,6 +211,8 @@ func TestMainShellStdinConflictBeforeRead(t *testing.T) {
 		{"responses", "create", "--model", "model_synthetic", "--input", "@-", "--instructions", "@-"},
 		{"audio", "transcriptions", "create", "--model", "whisper-1", "--file", "-", "--prompt", "@-"},
 		{"images", "edit", "--model", "dall-e-2", "--prompt", "synthetic", "--image", "-", "--image", "-"},
+		{"responses", "create", "--model", "model_synthetic", "--input", `[{"role":"user","content":[{"type":"input_text","text":"@-"},{"type":"input_text","text":"@data://-"}]}]`},
+		{"chat", "completions", "create", "--model", "model_synthetic", "--message", `{"role":"user","content":"@-"}`, "--message", `{"role":"user","content":"@file://-"}`},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			read, write, err := os.Pipe()
@@ -232,6 +241,9 @@ func TestMainShellStreamingInputDispatch(t *testing.T) {
 		{"YAML true", "model: fake-model\ninput: synthetic\nstream: true\n", "true", nil},
 		{"explicit false", `{"model":"fake-model","input":"synthetic","stream":true}`, "false", []string{"--stream=false"}},
 		{"explicit null", `{"model":"fake-model","input":"synthetic","stream":true}`, "null", []string{"--stream=null"}},
+		{"last stream false", `{"model":"fake-model","input":"synthetic","stream":true}`, "false", []string{"--stream=true", "--stream=false"}},
+		{"last stream null", `{"model":"fake-model","input":"synthetic","stream":true}`, "null", []string{"--stream=true", "--stream=null"}},
+		{"last stream true", `{"model":"fake-model","input":"synthetic","stream":false}`, "true", []string{"--stream=false", "--stream=true"}},
 		{"body false", `{"model":"fake-model","input":"synthetic","stream":false}`, "false", nil},
 		{"body null", `{"model":"fake-model","input":"synthetic","stream":null}`, "null", nil},
 		{"omitted", `{"model":"fake-model","input":"synthetic"}`, "", nil},

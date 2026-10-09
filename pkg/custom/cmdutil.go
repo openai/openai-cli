@@ -708,17 +708,25 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	// The existing pager writes to process stdout. Other injected destinations
 	// must stay on their own writer, including error output on stderr.
 	stdout, processStdout := opts.Stdout.(*os.File)
-	if !processStdout || stdout != os.Stdout {
+	writeUnpaged := func(destination io.Writer) error {
 		for iter.Next() {
 			formatted, err := formatJSON(iter.Current().Result, opts)
 			if err != nil {
 				return errors.Join(err, iter.Err())
 			}
-			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stdout}).Write(formatted); err != nil {
+			if _, err := (outputWriter{ctx: opts.Context, out: destination}).Write(formatted); err != nil {
 				return errors.Join(err, iter.Err())
 			}
 		}
 		return iter.Err()
+	}
+	if !processStdout || stdout != os.Stdout {
+		return writeUnpaged(opts.Stdout)
+	}
+	// Redirected event streams cannot wait for a page of output. Preserve
+	// stdout's signal/error handling while delivering each formatted event.
+	if opts.OutputKind == OutputStreamEvent && !isTerminal(stdout) {
+		return streamToStdout(func(out *os.File) error { return writeUnpaged(out) })
 	}
 
 	terminalWidth, terminalHeight, err := term.GetSize(os.Stdout.Fd())

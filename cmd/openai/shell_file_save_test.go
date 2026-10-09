@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -267,6 +268,9 @@ func TestMainShellSpeechSaveCompletion(t *testing.T) {
 		{"API stream failure", "event: error\ndata: {\"message\":\"synthetic failure\"}\n\n", false},
 		{"incomplete stream", "data: {\"type\":\"speech.audio.delta\",\"audio\":\"YQ==\"}\n\n", false},
 		{"malformed stream", "data: malformed\n\n", false},
+		{"malformed after completion", "data: {\"type\":\"speech.audio.done\"}\n\ndata: malformed\n\n", false},
+		{"error after completion", "data: {\"type\":\"speech.audio.done\"}\n\nevent: error\ndata: {\"message\":\"synthetic failure\"}\n\n", false},
+		{"unterminated completion", "data: {\"type\":\"speech.audio.done\"}", true},
 		{"completed stream", "data: {\"type\":\"speech.audio.delta\",\"audio\":\"YQ==\"}\n\ndata: {\"type\":\"speech.audio.done\"}\n\ndata: [DONE]\n\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -289,9 +293,41 @@ func TestMainShellSpeechSaveCompletion(t *testing.T) {
 			} else if got.code != 1 || got.stdout != "" || !strings.Contains(got.stderr, "existing destination was not changed") {
 				t.Fatalf("command=%+v", got)
 			}
+			if !tc.complete && strings.Contains(got.stderr, "Wrote output to:") {
+				t.Fatalf("failed speech save emitted a success receipt: %q", got.stderr)
+			}
 			if data, err := os.ReadFile(path); err != nil || string(data) != want {
 				t.Fatalf("saved=%q err=%v", data, err)
 			}
+			assertShellCompletionStagesAbsent(t, filepath.Dir(path))
 		})
+	}
+}
+
+func TestMainShellSpeechSaveTransportFailureAfterDone(t *testing.T) {
+	const wire = "data: {\"type\":\"speech.audio.done\"}\n\ndata: [DONE]\n\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Content-Length", strconv.Itoa(len(wire)+1))
+		_, _ = io.WriteString(w, wire)
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "speech.sse")
+	if err := os.WriteFile(path, []byte("GOOD"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := runShellSaveCommand(t, server, "audio", "speech", "create", "--model", "tts-1", "--voice", "alloy", "--input", "synthetic", "--stream-format", "sse", "--output", path)
+	if got.code != 1 || got.stdout != "" || !strings.Contains(got.stderr, "existing destination was not changed") {
+		t.Fatalf("truncated completed speech=%+v", got)
+	}
+	if strings.Contains(got.stderr, "Wrote output to:") {
+		t.Fatalf("failed transfer emitted a success receipt: %q", got.stderr)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "GOOD" {
+		t.Fatalf("prior file changed: %q %v", data, err)
+	}
+	stages, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".openai-download-*"))
+	if err != nil || len(stages) != 0 {
+		t.Fatalf("stages=%v err=%v", stages, err)
 	}
 }
