@@ -110,7 +110,7 @@ type CompletionResult struct {
 	FileValuePrefix string
 	// Older adapters cannot preserve paths for newly enabled file values.
 	requiresFileValueSupport bool
-	// Older Bash adapters cannot restore wholly quoted assignment prefixes.
+	// Older Bash/Zsh adapters cannot safely insert every quoted static value.
 	requiresStaticValueSupport bool
 }
 
@@ -470,7 +470,7 @@ func flagValueCompletion(root, selected *cli.Command, flag cli.Flag, prefix, ass
 	if len(completions) != 0 {
 		return CompletionResult{
 			Completions:                completions,
-			requiresStaticValueSupport: style == CompletionStyleBash && assignment != "",
+			requiresStaticValueSupport: style == CompletionStyleBash || style == CompletionStyleZsh,
 		}
 	}
 	if wrapped, ok := flag.(interface{ CLIStringFlag() *cli.StringFlag }); ok {

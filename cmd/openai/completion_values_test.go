@@ -108,7 +108,7 @@ func TestMainCompletionValuesPreserveOtherInputs(t *testing.T) {
 	}
 }
 
-func TestMainCompletionValuesBashAdapterCompatibility(t *testing.T) {
+func TestMainCompletionValuesAdapterCompatibility(t *testing.T) {
 	for _, marker := range []struct {
 		name string
 		env  []string
@@ -131,7 +131,7 @@ func TestMainCompletionValuesBashAdapterCompatibility(t *testing.T) {
 			} {
 				t.Run(marker.name+"/"+style+"/"+strings.Join(tc.args, " "), func(t *testing.T) {
 					want := mainDispatchResult{stdout: tc.want}
-					if style == "bash" && strings.Contains(tc.args[len(tc.args)-1], "=") {
+					if style == "bash" || style == "zsh" {
 						want = mainDispatchResult{code: 11}
 					}
 					got := runMainDispatchWithEnv(t, style, marker.env, mainCompletionArgs(style, tc.args...)...)
@@ -140,6 +140,21 @@ func TestMainCompletionValuesBashAdapterCompatibility(t *testing.T) {
 					}
 				})
 			}
+			t.Run(marker.name+"/"+style+"/command", func(t *testing.T) {
+				got := runMainDispatchWithEnv(t, style, marker.env, mainCompletionArgs(style, "models", "li")...)
+				name, _, _ := strings.Cut(got.stdout, ":")
+				name, _, _ = strings.Cut(name, "\t")
+				if got.code != 0 || got.stderr != "" || strings.TrimSuffix(name, "\n") != "list" {
+					t.Fatalf("static marker changed command completion: %+v", got)
+				}
+			})
+			t.Run(marker.name+"/"+style+"/file", func(t *testing.T) {
+				env := append([]string{"OPENAI_CLI_COMPLETION_FILE_VALUES=1"}, marker.env...)
+				got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, "files", "upload", "--file", "fixture")...)
+				if got != (mainDispatchResult{code: 10}) {
+					t.Fatalf("static marker changed file completion: %+v", got)
+				}
+			})
 		}
 	}
 }

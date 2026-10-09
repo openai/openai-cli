@@ -96,6 +96,15 @@ CASES = [
      ["openai responses create --input @file://fixture.txt "]),
 ]
 
+# Continue typing after Tab to detect a cursor left inside a closing quote.
+# The new --help word must remain a separate argument in the captured buffer.
+CONTINUATIONS = {}
+for case_name, case_line, case_expected in list(CASES):
+    if case_name.endswith("-closed"):
+        continuation_name = case_name + "-continue"
+        CONTINUATIONS[continuation_name] = " --help"
+        CASES.append((continuation_name, case_line, [value + " --help" for value in case_expected]))
+
 
 ARGV_WRAPPER = r'''#!/bin/sh
 # Record the adapter's exact argument vector, then execute the immutable binary.
@@ -238,12 +247,12 @@ class ShellSession:
                 raise TimeoutError(f"shell event timed out; child status={self.status}")
             self.pump()
 
-    def capture(self, line, capture_path, index):
+    def capture(self, line, capture_path, index, continuation=""):
         # Bash 3.2 accepts only a prefixed comment. Other widgets clear BUFFER.
         # Restrict the comment capture contract to these single-line fixtures.
-        if "\n" in line or "\r" in line:
+        if "\n" in line + continuation or "\r" in line + continuation:
             raise ValueError("Native capture requires a single-line fixture.")
-        self.send(line.encode("utf-8") + b"\t" + CAPTURE_KEY)
+        self.send(line.encode("utf-8") + b"\t" + continuation.encode("utf-8") + CAPTURE_KEY)
 
         def complete():
             return capture_path.exists() and capture_path.read_bytes().count(b"\0") > index
@@ -353,6 +362,8 @@ printf 'ready\n' > "$COMPLETION_TEST_READY"
 def report_case(report, name, line, expected, status, observed=None, detail=None, backend_argv=None, comparison=None):
     result = dict(case=name, shell=report["shell"], executable=report["executable"],
                   input=line, expected=expected, observed=observed, status=status)
+    if name in CONTINUATIONS:
+        result["after_tab"] = CONTINUATIONS[name]
     if detail:
         result["detail"] = detail
     if backend_argv is not None:
@@ -416,7 +427,7 @@ def check_shell(binary, shell, executable, output):
                 report["capture_mode"] = capture_mode.read_text(encoding="utf-8").strip()
                 for index, (name, line, expected) in enumerate(CASES):
                     argument_offset = argument_log.stat().st_size
-                    observed = session.capture(line, capture, index)
+                    observed = session.capture(line, capture, index, CONTINUATIONS.get(name, ""))
                     calls = backend_arguments(argument_log.read_bytes()[argument_offset:])
                     matches, comparison = compare_completion(name, expected, observed)
                     status = "pass" if matches else "fail"

@@ -68,7 +68,13 @@ ____APPNAME___bash_autocomplete() {
       done
       completion_args[argument]="$value"
     done
-    completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_STATIC_VALUES=1 "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
+    local static_values=1
+    # Bash 3.2's filename mode escapes closed empty quotes when matches have
+    # no common prefix. Keep that argument intact until a value prefix exists.
+    if [[ ${BASH_VERSINFO[0]} -lt 4 && ( "${2-}" == "''" || "${2-}" == '""' ) ]]; then
+      static_values=0
+    fi
+    completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_STATIC_VALUES="$static_values" "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
     exit_code=$?
 
     local last_token="$cur"
