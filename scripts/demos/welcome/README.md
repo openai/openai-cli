@@ -84,6 +84,7 @@ Below the banner's required width, it requires exact baseline output.
 With `NO_COLOR` set, it rejects terminal escapes in CLI output.
 
 Full casts, transcripts, CLI output, screenshots, and GIFs remain in the output directory.
+Stills use the complete replay's final frame so that burst output appears in the screenshots.
 `validation.txt` records assertions, and `metadata.txt` records versions, hashes, dimensions, and exit statuses.
 `before-top.png`, `after-top.png`, and `comparison-top.gif` show labeled top crops for review.
 The crops show approximately `DEMO_PREVIEW_ROWS` rows, which defaults to 32.

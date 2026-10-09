@@ -159,6 +159,13 @@ demo_assemble_capture 300 before after
 # These crops supplement the full captures. They never replace evidence files.
 demo_crop="crop=iw:floor(ih*$demo_preview_rows/$demo_rows):0:0"
 for demo_scene in before after; do
+  # Select the complete replay's final frame. A separate percentage-based
+  # still render can capture an early frame when output arrives in a burst.
+  demo_frame_count="$("$demo_ffprobe" -v error -select_streams v:0 \
+    -show_entries stream=nb_frames -of csv=p=0 "$demo_output/$demo_scene.gif")"
+  [[ "$demo_frame_count" =~ ^[1-9][0-9]*$ ]]
+  "$demo_ffmpeg" -hide_banner -loglevel error -y -i "$demo_output/$demo_scene.gif" \
+    -vf "select=eq(n\\,$((demo_frame_count-1)))" -frames:v 1 "$demo_output/$demo_scene.png"
   "$demo_ffmpeg" -hide_banner -loglevel error -y -i "$demo_output/$demo_scene.png" \
     -vf "$demo_crop" -frames:v 1 "$demo_output/$demo_scene-top.png"
 done
