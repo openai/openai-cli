@@ -341,7 +341,21 @@ func TestMainResourceSummaryListFormatsAndExtractionKeepFullItems(t *testing.T) 
 				if got.stdout != page+"\n" {
 					t.Fatalf("raw page envelope changed: %q", got.stdout)
 				}
-			case "json", "jsonl", "explore":
+			case "json":
+				var actual []json.RawMessage
+				if err := json.Unmarshal([]byte(got.stdout), &actual); err != nil || len(actual) != 2 {
+					t.Fatalf("finite list must be one array: output=%q error=%v", got.stdout, err)
+				}
+				for _, record := range actual {
+					var expected, value any
+					if err := json.Unmarshal([]byte(item), &expected); err != nil {
+						t.Fatal(err)
+					}
+					if err := json.Unmarshal(record, &value); err != nil || !reflect.DeepEqual(value, expected) {
+						t.Fatalf("full API item changed: output=%q error=%v", got.stdout, err)
+					}
+				}
+			case "jsonl", "explore":
 				var expected any
 				if err := json.Unmarshal([]byte(item), &expected); err != nil {
 					t.Fatal(err)
