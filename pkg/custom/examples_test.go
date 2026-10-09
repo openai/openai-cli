@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,6 +23,16 @@ func examplesTestRoot(out io.Writer) *cli.Command {
 	}
 	registerExamplesCommands(root)
 	return root
+}
+
+func TestExamplesCompletionFormats(t *testing.T) {
+	command := examplesTestRoot(io.Discard).Command("examples")
+	for _, target := range append([]*cli.Command{command}, command.Commands...) {
+		values, ok := target.Metadata["completion-root-flag-values"].(map[string][]string)
+		if !ok || len(values) != 1 || !slices.Equal(values["format"], []string{"auto", "text", "json"}) {
+			t.Errorf("%s declares unsupported format completions: %#v", target.Name, values)
+		}
+	}
 }
 
 func TestExamplesFormatsPreserveScript(t *testing.T) {

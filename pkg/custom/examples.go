@@ -28,7 +28,10 @@ func registerExamplesCommands(root *cli.Command) {
 			"Supports --format auto, text, and json. Does not support --transform or --raw-output.",
 		HideHelpCommand:    true,
 		CustomHelpTemplate: help,
-		Metadata:           map[string]any{localUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools"},
+		Metadata: map[string]any{
+			localUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools",
+			"completion-root-flag-values": map[string][]string{"format": {"auto", "text", "json"}},
+		},
 		Action: func(ctx context.Context, command *cli.Command) error {
 			format, err := examplesOutputFormat(command)
 			if err != nil {
@@ -73,7 +76,10 @@ openai --format json --transform id --raw-output models list --max-items -1
 		command.Commands = append(command.Commands, &cli.Command{
 			Name: recipe.topic, Usage: recipe.usage, Description: command.Description,
 			HideHelpCommand: true, CustomHelpTemplate: help,
-			Metadata: map[string]any{"local-help-full": help},
+			Metadata: map[string]any{
+				"local-help-full":             help,
+				"completion-root-flag-values": map[string][]string{"format": {"auto", "text", "json"}},
+			},
 			Action: func(ctx context.Context, command *cli.Command) error {
 				format, err := examplesOutputFormat(command)
 				if err != nil {
