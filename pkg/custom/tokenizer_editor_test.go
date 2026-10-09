@@ -74,6 +74,152 @@ func TestTokenizerEditorMovesAndDeletesCompleteGraphemes(t *testing.T) {
 	}
 }
 
+func TestTokenizerEditorIncrementalIndexMatchesFreshIndex(t *testing.T) {
+	for name, source := range map[string]string{
+		"empty": "", "ASCII": "abcd", "line breaks": "a\r\nb\nc\r",
+		"nonline separators":  "a\rb\u2028c\u0085d",
+		"regional indicators": strings.Repeat("🇦", 33) + "z",
+		"joined emoji":        "x👩‍💻👨‍👩‍👧‍👦y",
+		"combining":           "e" + strings.Repeat("\u0301", 65) + "z",
+		"conjunct":            "aक्\u200dषz",
+		"large prefix":        strings.Repeat("abc\n", 4096) + "e\u0301👩‍💻\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := testTokenizerEditor()
+			base.insert(source)
+			positions := base.boundaries
+			if len(positions) > 100 {
+				positions = []int{positions[0], positions[len(positions)/2], positions[len(positions)-2], positions[len(positions)-1]}
+			}
+			check := func(m *tokenizerEditor, text string, cursor int) {
+				t.Helper()
+				fresh := testTokenizerEditor()
+				fresh.text, fresh.cursor = text, cursor
+				fresh.indexText()
+				require.Equal(t, text, m.text)
+				require.Equal(t, fresh.boundaries, m.boundaries)
+				require.Equal(t, fresh.cursor, m.cursor)
+				lines := []int{0}
+				for index := range text {
+					if text[index] == '\n' {
+						lines = append(lines, index+1)
+					}
+				}
+				require.Equal(t, lines, m.lineStarts)
+			}
+			for _, position := range positions {
+				for _, added := range []string{"x", "\r", "\n", "\u0301", "\u200d", "🇧", "💻"} {
+					m := testTokenizerEditor()
+					m.insert(source)
+					m.cursor = position
+					m.insert(added)
+					check(m, source[:position]+added+source[position:], position+len(added))
+				}
+				for _, key := range []rune{tea.KeyBackspace, tea.KeyDelete, 'u'} {
+					m := testTokenizerEditor()
+					m.insert(source)
+					m.cursor = position
+					index := m.cursorIndex()
+					text, cursor := source, position
+					switch {
+					case key == tea.KeyBackspace && index > 0:
+						cursor = m.boundaries[index-1]
+						text = source[:cursor] + source[position:]
+					case key == tea.KeyDelete && index+1 < len(m.boundaries):
+						text = source[:position] + source[m.boundaries[index+1]:]
+					case key == 'u':
+						text, cursor = source[position:], 0
+					}
+					if key == 'u' {
+						m.Update(tea.KeyPressMsg{Code: key, Mod: tea.ModCtrl})
+					} else {
+						tokenizerEditorKey(m, key)
+					}
+					check(m, text, cursor)
+				}
+			}
+		})
+	}
+}
+
+func TestTokenizerEditorTextDocumentAndPageNavigation(t *testing.T) {
+	for _, size := range [][2]int{{80, 20}, {40, 12}} {
+		m := testTokenizerEditor()
+		m.width, m.height = size[0], size[1]
+		source := "ab\r\nαβγ\n\n👩‍💻zz\nend\n"
+		m.insert(source)
+		tokens := make([]tokenizerPreviewToken, len(m.boundaries)-1)
+		for index := range tokens {
+			tokens[index] = tokenizerPreviewToken{ID: uint32(index), EndByte: uint32(m.boundaries[index+1])}
+		}
+		m.Update(tokenizerEditorResultMsg{Revision: m.revision, Tokens: tokens})
+		revision := m.revision
+		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModCtrl})
+		require.Nil(t, cmd)
+		require.Zero(t, m.cursor)
+		require.Zero(t, m.selected)
+		tokenizerEditorKey(m, tea.KeyRight)
+		require.Nil(t, tokenizerEditorKey(m, tea.KeyPgDown))
+		if size[0] == 80 {
+			require.Equal(t, len("ab\r\nαβγ\n\n👩‍💻"), m.cursor)
+			require.Equal(t, 9, m.selected)
+		} else {
+			require.Equal(t, len("ab\r\nα"), m.cursor)
+			require.Equal(t, 4, m.selected)
+		}
+		tokenizerEditorKey(m, tea.KeyPgUp)
+		require.Equal(t, 1, m.cursor)
+		tokenizerEditorKey(m, tea.KeyPgUp)
+		require.Equal(t, 1, m.cursor, "page clamping keeps the grapheme column")
+		_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModCtrl})
+		require.Nil(t, cmd)
+		require.Equal(t, len(source), m.cursor)
+		require.Equal(t, len(tokens)-1, m.selected)
+		tokenizerEditorKey(m, tea.KeyPgDown)
+		require.Equal(t, len(source), m.cursor)
+		require.Equal(t, tokenizerFocusText, m.focus)
+		require.Equal(t, source, m.text)
+		require.Equal(t, revision, m.revision)
+		tokenizerEditorKey(m, tea.KeyDown)
+		require.Equal(t, tokenizerFocusOptions, m.focus)
+	}
+}
+
+func TestTokenizerEditorWordNavigationUsesWholeGraphemes(t *testing.T) {
+	for _, test := range []struct {
+		text   string
+		starts []int
+	}{
+		{"  hello\t👩‍💻 e\u0301clair\r\n世界  ", []int{2, len("  hello\t"), len("  hello\t👩‍💻 "), len("  hello\t👩‍💻 e\u0301clair\r\n")}},
+		{"a \u0301b c", []int{0, len("a \u0301"), len("a \u0301b ")}},
+	} {
+		m := testTokenizerEditor()
+		m.insert(test.text)
+		revision := m.revision
+		for index := len(test.starts) - 1; index >= 0; index-- {
+			_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl})
+			require.Nil(t, cmd)
+			require.Equal(t, test.starts[index], m.cursor)
+			require.Contains(t, m.boundaries, m.cursor)
+		}
+		m.Update(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl})
+		require.Zero(t, m.cursor)
+		for _, next := range append(test.starts[1:], len(test.text)) {
+			if m.cursor == 0 && test.starts[0] > 0 {
+				m.Update(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl})
+				require.Equal(t, test.starts[0], m.cursor)
+			}
+			_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl})
+			require.Nil(t, cmd)
+			require.Equal(t, next, m.cursor)
+			require.Contains(t, m.boundaries, m.cursor)
+		}
+		require.Equal(t, revision, m.revision)
+		require.Equal(t, test.text, m.text)
+		require.Equal(t, tokenizerFocusText, m.focus)
+	}
+}
+
 func TestTokenizerEditorMultilineCursorAndEnter(t *testing.T) {
 	m := testTokenizerEditor()
 	m.insert("ab\r\nαβ\nxyz")

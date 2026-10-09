@@ -56,6 +56,48 @@ func TestTokenizerEditorViewFitsEverySupportedSizeAndFocus(t *testing.T) {
 	}
 }
 
+func TestTokenizerEditorTextPositionAppearsOnlyOnOverflow(t *testing.T) {
+	for _, size := range [][2]int{{80, 20}, {40, 12}} {
+		for _, overflowing := range []bool{false, true} {
+			m := testTokenizerEditor()
+			m.width, m.height = size[0], size[1]
+			lines := m.sourceRows()
+			if overflowing {
+				lines++
+			}
+			m.insert(strings.Repeat("text\n", lines-1) + "end")
+			frame := m.View().Content
+			if overflowing {
+				require.Contains(t, frame, fmt.Sprintf("Text · %d/%d", lines, lines))
+			} else {
+				require.NotContains(t, frame, "Text · ")
+			}
+			require.Equal(t, overflowing && size[0] == 80, strings.Contains(frame, "PgUp/PgDn"))
+			require.Contains(t, frame, "Ctrl+C exit")
+			require.Contains(t, frame, "↓ options")
+			require.LessOrEqual(t, len(strings.Split(frame, "\n")), m.viewHeight())
+			for _, row := range strings.Split(frame, "\n") {
+				require.Less(t, ansi.StringWidth(row), m.width)
+			}
+		}
+	}
+}
+
+func TestTokenizerEditorMaximumNewlineInputKeepsCaretAndFooter(t *testing.T) {
+	m := testTokenizerEditor()
+	m.width, m.height = 40, 12
+	source := strings.Repeat("\n", 1<<20)
+	m.insert(source)
+	require.Len(t, m.lineStarts, len(source)+1)
+	frame := m.View().Content
+	require.Contains(t, frame, "Text · 1048577/1048577")
+	require.Contains(t, frame, "\x1b[7m \x1b[27m")
+	require.Contains(t, frame, "Ctrl+C exit")
+	require.Contains(t, frame, "↓ options")
+	require.LessOrEqual(t, len(strings.Split(frame, "\n")), m.viewHeight())
+	require.Equal(t, source, m.text)
+}
+
 func TestTokenizerEditorViewsShareSelectionAndExactDetails(t *testing.T) {
 	m := tokenizerEditorExample()
 	m.focus = tokenizerFocusResults

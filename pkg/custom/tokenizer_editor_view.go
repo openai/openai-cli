@@ -18,6 +18,12 @@ import (
 func (m *tokenizerEditor) viewHeight() int { return min(18, max(0, m.height-1)) }
 func (m *tokenizerEditor) viewWidth() int  { return max(1, min(100, m.width-4)) }
 func (m *tokenizerEditor) roomy() bool     { return m.width >= 50 && m.viewHeight() >= 16 }
+func (m *tokenizerEditor) sourceRows() int {
+	if m.roomy() {
+		return 3
+	}
+	return 1
+}
 func (m *tokenizerEditor) resultRows() int {
 	if m.roomy() {
 		return 2
@@ -92,10 +98,14 @@ func (m *tokenizerEditor) View() tea.View {
 	}
 	width := m.viewWidth()
 	lines := []string{s.title.Render("Tokenizer")}
+	textLabel := "Text"
+	if len(m.lineStarts) > m.sourceRows() {
+		textLabel += fmt.Sprintf(" · %d/%d", m.lineIndex(m.cursor)+1, len(m.lineStarts))
+	}
 	if m.roomy() {
-		caption := "╭─ Text "
+		caption := "╭─ " + textLabel + " "
 		lines = append(lines, s.border.Render(caption+strings.Repeat("─", width-ansi.StringWidth(caption)-1)+"╮"))
-		for _, line := range m.editorLines(width-4, 3) {
+		for _, line := range m.editorLines(width-4, m.sourceRows()) {
 			input := s.input
 			if line == "" || line == tokenizerCaret(" ") {
 				input = lipgloss.NewStyle()
@@ -109,15 +119,15 @@ func (m *tokenizerEditor) View() tea.View {
 		}
 		lines = append(lines, s.border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
 	} else {
-		prefix := "  Text "
+		prefix := "  " + textLabel + " "
 		if m.focus == tokenizerFocusText {
-			prefix = "› Text "
+			prefix = "› " + textLabel + " "
 		}
 		caption := s.muted
 		if m.focus == tokenizerFocusText {
 			caption = s.accent
 		}
-		lines = append(lines, caption.Render(prefix)+m.editorLines(width-ansi.StringWidth(prefix), 1)[0])
+		lines = append(lines, caption.Render(prefix)+m.editorLines(width-ansi.StringWidth(prefix), m.sourceRows())[0])
 	}
 	if m.note == "" {
 		lines = append(lines, "")
@@ -236,6 +246,9 @@ func (m *tokenizerEditor) footer() string {
 		if m.lineEnd(m.cursor) == len(m.text) {
 			footer = "Ctrl+C exit · ↓ options · Tab switch"
 		}
+		if len(m.lineStarts) > m.sourceRows() && ansi.StringWidth(footer+" · PgUp/PgDn") <= m.viewWidth() {
+			footer += " · PgUp/PgDn"
+		}
 	case tokenizerFocusResults:
 		footer = "Ctrl+C exit · ←→ token · Enter details"
 		if ansi.StringWidth(footer) > m.viewWidth() {
@@ -333,15 +346,16 @@ func tokenizerSourceDisplay(value string) string {
 }
 
 func (m *tokenizerEditor) editorLines(width, count int) []string {
-	start := strings.LastIndexByte(m.text[:m.cursor], '\n') + 1
-	if count > 1 && start > 0 {
-		start = strings.LastIndexByte(m.text[:start-1], '\n') + 1
+	lineIndex := m.lineIndex(m.cursor)
+	if count > 1 && lineIndex > 0 {
+		lineIndex--
 	}
 	lines := make([]string, 0, count)
 	for len(lines) < count {
+		start := m.lineStarts[lineIndex]
 		end := len(m.text)
-		if next := strings.IndexByte(m.text[start:], '\n'); next >= 0 {
-			end = start + next
+		if lineIndex+1 < len(m.lineStarts) {
+			end = m.lineStarts[lineIndex+1] - 1
 		}
 		cursor := -1
 		if m.cursor >= start && m.cursor <= end && m.focus == 0 {
@@ -358,7 +372,7 @@ func (m *tokenizerEditor) editorLines(width, count int) []string {
 		if end == len(m.text) {
 			break
 		}
-		start = end + 1
+		lineIndex++
 	}
 	for len(lines) < count {
 		lines = append(lines, "")
@@ -634,6 +648,10 @@ var tokenizerEditorHelp = []string{
 	"Enter inserts a newline. Arrows move the cursor.",
 	"The highlighted token follows the text cursor.",
 	"Home/End move to the line boundaries.",
+	"Ctrl+Home/End move to the document boundaries.",
+	"Ctrl+Left/Right skip words separated by whitespace.",
+	"Page Up/Page Down move by one visible text page.",
+	"Overflowing text shows the current line and total lines.",
 	"Backspace/Delete remove a complete grapheme.",
 	"Ctrl+U removes all text before the cursor.",
 	"Tab and Shift+Tab switch Text, options, and tokens.",

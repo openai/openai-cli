@@ -31,11 +31,22 @@ COMMANDS = {
     "guide": "$ openai codex",
     "editor": "$ openai tokenizer",
     "details": "$ openai tokenizer",
+    "long-text": "$ openai tokenizer",
 }
 DETAILS_INPUTS = {"source": "a!b?c.", "ordinary": "how", "partial": " 👋", "overflow": " " * 128}
 DETAILS_STAGES = ["source", "cursor", "up-navigation", "ordinary", "partial", "overflow-start", "overflow-end", "overflow-home", "recovery"]
 CONTINUOUS_INPUTS = dict(DETAILS_INPUTS, source=" hello tokenization  ")
 CONTINUOUS_STAGES = DETAILS_STAGES[:2] + ["trailing-space"] + DETAILS_STAGES[2:]
+LONG_TAIL = " final-marker.  "
+LONG_INPUTS = {
+    "multiline": "\n".join(f"Line {line:03d}: café tokenization. End {line:03d}." for line in range(1, 121)),
+    "long-line": ("alpha beta tokenization " * 512)[:8192 - len(LONG_TAIL)] + LONG_TAIL,
+    "recovery": "how",
+}
+LONG_STAGES = {
+    "legacy": ["multiline-end", "line-home", "line-end", "edited", "restored", "long-line-end", "long-line-home", "recovery"],
+    "indexed": ["multiline-end", "document-home", "page-down", "page-up", "document-end", "edited", "restored", "long-line-end", "long-line-word-left", "long-line-word-right", "long-line-home", "recovery"],
+}
 CONFIG_URL = "https://learn.chatgpt.com/docs/config-file/config-basic"
 
 
@@ -45,14 +56,14 @@ def check(condition, message):
 
 
 def validate(directory, mode):
-    check(mode in COMMANDS, "MODE must be count, inspect, codex, guide, editor, or details")
+    check(mode in COMMANDS, "MODE must be count, inspect, codex, guide, editor, details, or long-text")
     layouts = editor_layouts(directory) if mode == "editor" else {}
     before_status = 3 if mode == "guide" else 1
     if mode == "editor":
         before_status = 0 if layouts["before"] == "help" else 130
-    if mode == "details":
+    if mode in ("details", "long-text"):
         before_status = 130
-    after_status = 130 if mode in ("editor", "details") else 0
+    after_status = 130 if mode in ("editor", "details", "long-text") else 0
     expected = [f"before\t{before_status}", f"after\t{after_status}"]
     if (directory / "expected-statuses.tsv").exists():
         expected = (directory / "expected-statuses.tsv").read_text().splitlines()
@@ -62,7 +73,7 @@ def validate(directory, mode):
         allowed = (0, 1, 3)
         if mode == "editor":
             allowed = (0,) if layouts["before"] == "help" else (130,)
-        elif mode == "details":
+        elif mode in ("details", "long-text"):
             allowed = (130,)
         check(before_status in allowed, "unsupported baseline status")
     statuses = (directory / "statuses.tsv").read_text().splitlines()
@@ -82,6 +93,8 @@ def validate(directory, mode):
     error = "Unknown help topic." if mode == "guide" else "An option is not recognized."
     if mode == "details":
         validate_details(directory, "before")
+    elif mode == "long-text":
+        validate_long_text(directory, "before")
     elif mode == "editor" and layouts["before"] != "help":
         validate_editor(directory, "before", layouts["before"])
     elif before_status != 0:
@@ -118,6 +131,8 @@ def validate(directory, mode):
             check(value in after, f"after: missing instruction {value!r}")
     elif mode == "details":
         validate_details(directory, "after")
+    elif mode == "long-text":
+        validate_long_text(directory, "after")
     else:
         validate_editor(directory, "after", layouts["after"])
     print(f"PASS: {mode} command transcripts and before/after exit statuses")
@@ -379,6 +394,152 @@ def validate_details(directory, scene):
     name = "before-editor-snapshots.tsv" if scene == "before" else "editor-snapshots.tsv"
     (directory / name).write_text("".join(f"{state}\t{stamp:.6f}\n" for state, stamp in snapshots))
     print(f"PASS: {scene} ordinary, partial UTF-8, complete overflow bytes, Home, and editor recovery")
+
+
+def long_text_spec(state, columns):
+    if state.startswith("long-line"):
+        text = LONG_INPUTS["long-line"]
+        if state == "long-line-word-left":
+            return text, 1367, 1, len(text) - len("final-marker.  "), 1364, " final"
+        home = state == "long-line-home"
+        return text, 1367, 1, 0 if home else len(text), 1 if home else 1367, "alpha" if home else "  "
+    if state == "recovery":
+        return "how", 1, 1, 3, 1, "how"
+    text = LONG_INPUTS["multiline"] + ("!" if state == "edited" else "")
+    line = 120
+    if state in ("document-home", "page-up"):
+        line = 1
+    elif state == "page-down":
+        line = 4 if columns == 80 else 2
+    home = state in ("line-home", "document-home", "page-down", "page-up")
+    column = 0 if home else len(text.split("\n")[line - 1])
+    return text, 1440, line, column, (line - 1) * 12 + 1 if home else 1440, "Line" if home else ".!" if state == "edited" else "."
+
+
+def long_source_excerpt(text, cursor, width):
+    # Fixtures use single-cell graphemes, including café's precomposed é.
+    start = max(0, cursor - max(0, width - 3)) if cursor >= 0 else 0
+    value, used = ("…", 1) if start else ("", 0)
+    for index in range(start, len(text)):
+        if used + 1 > width - 1:
+            return value + ("\x1b[7m…\x1b[27m" if index == cursor else "…")
+        value += "\x1b[7m" + text[index] + "\x1b[27m" if index == cursor else text[index]
+        used += 1
+    if cursor == len(text):
+        value += "\x1b[7m \x1b[27m"
+    return value
+
+
+def long_text_state(raw, state, style, columns, theme):
+    ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+    rows = inline_rows(raw, columns)
+    plain = [ansi.sub("", row) for row in rows]
+    stripped = [row.strip() for row in plain]
+    text, count, line, column, position, fragment = long_text_spec(state, columns)
+    logical = text.split("\n")
+    source_rows = 3 if columns == 80 else 1
+    overflow = len(logical) > source_rows
+    caption = "Text" + (f" · {line}/{len(logical)}" if overflow and style == "indexed" else "")
+    if columns == 80:
+        border = "╭─ " + caption + " "
+        border = "  " + border + "─" * (columns - 5 - len(border)) + "╮"
+        if plain.count(border) != 1:
+            return False
+        source_start = plain.index(border) + 1
+        first = max(0, line - 2)
+        expected_rows = []
+        for index in range(first, first + 3):
+            value = logical[index] if index < len(logical) else ""
+            excerpt = long_source_excerpt(value, column if index == line - 1 else -1, columns - 8)
+            padding = " " * (columns - 8 - len(ansi.sub("", excerpt)))
+            expected_rows.append("  │ " + excerpt + padding + " │")
+    else:
+        prefix = "  › " + caption + " "
+        excerpt = long_source_excerpt(logical[line - 1], column, columns - 4 - len(prefix) + 2)
+        expected_rows = [prefix + excerpt]
+        candidates = [index for index, row in enumerate(plain) if row.startswith(prefix)]
+        if len(candidates) != 1:
+            return False
+        source_start = candidates[0]
+    actual_rows = rows[source_start:source_start + len(expected_rows)]
+    if len(actual_rows) != len(expected_rows):
+        return False
+    for row, expected in zip(actual_rows, expected_rows):
+        expected_plain = ansi.sub("", expected)
+        if ansi.sub("", row) != expected_plain:
+            return False
+        if "\x1b[7m" in expected:
+            caret = re.search(r"\x1b\[7m([^\x1b]*)\x1b\[27m", expected)
+            if not caret or caret[0] not in row:
+                return False
+            if ansi.sub("", row.split(caret[0], 1)[0]) != ansi.sub("", expected.split(caret[0], 1)[0]):
+                return False
+    if style == "legacy" and any("Text · " in row for row in plain):
+        return False
+    if not overflow and any("Text · " in row for row in plain):
+        return False
+    count_row = f"{count} token" + ("s" if count != 1 else "")
+    if stripped.count(count_row) != 1 or any("Updating" in row or "Count unavailable" in row for row in plain):
+        return False
+    model = "Model  GPT-5.x & o1/o3  Default"
+    if not any(row in (model, model + "  ›") for row in stripped):
+        return False
+    footer = "Ctrl+C exit · ↓ options · Tab switch" if line == len(logical) else "Ctrl+C exit · Tab options"
+    if overflow and style == "indexed" and len(footer + " · PgUp/PgDn") <= columns - 4:
+        footer += " · PgUp/PgDn"
+    if stripped.count(footer) != 1:
+        return False
+    if count > 1:
+        heading = f"Token {position} of {count}"
+        if stripped.count(heading) != 1:
+            return False
+        start = stripped.index(heading) + 1
+    else:
+        start = next(index for index, row in enumerate(stripped) if row in (model, model + "  ›")) + 1
+        if any(re.fullmatch(r"(?:› )?Token \d+ of \d+", row) for row in stripped):
+            return False
+    result = "\n".join(rows[start:stripped.index(footer)])
+    if theme == "no-color":
+        cue = "\x1b[4;7m" + fragment + "\x1b[24;27m"
+        if result.count(cue) != 1:
+            return False
+        return all(code in ("", "0", "7", "27", "4;7", "24;27") for code in re.findall(r"\x1b\[([0-9;:]*)m", raw))
+    colors = "38;2;16;19;24;48;2;138;168;255" if theme == "dark" else "38;2;255;255;255;48;2;49;89;188"
+    cue = "\x1b[" + colors + "m\x1b[1;4m" + fragment + "\x1b[22;24m"
+    return result.count(cue) == 1
+
+
+def validate_long_text(directory, scene):
+    report_name = "before-editor-input.json" if scene == "before" else "editor-input.json"
+    report = json.loads((directory / report_name).read_text())
+    style = "legacy" if scene == "before" else "indexed"
+    stages = LONG_STAGES[style]
+    check(report.get("capture_version") == 7 and report.get("navigation") == style, "long-text: wrong capture version or navigation")
+    check(report.get("inputs") == LONG_INPUTS and report.get("exit_status") == 130, "long-text: input or status changed")
+    check((report.get("columns"), report.get("rows")) in ((80, 20), (40, 12)), "long-text: dimensions changed")
+    check(report.get("theme") in ("dark", "light", "no-color"), "long-text: unknown color policy")
+    check([event["state"] for event in report["states"]] == stages, "long-text: missing navigation or edit stage")
+    events = [json.loads(line) for line in (directory / f"{scene}.cast").read_text().splitlines()]
+    check((events[0]["width"], events[0]["height"]) == (report["columns"], report["rows"]), "long-text: cast dimensions changed")
+    output, snapshots = "", []
+    for event in events[1:]:
+        if event[1] != "o":
+            continue
+        output = (output + event[2])[-65536:]
+        if "\r\x1b[J" not in output or len(snapshots) == len(stages):
+            continue
+        frame = output.rsplit("\r\x1b[J", 1)[1]
+        state = stages[len(snapshots)]
+        if long_text_state(frame, state, style, report["columns"], report["theme"]):
+            stamp = float(event[0]) + .25
+            check(not snapshots or stamp - snapshots[-1][1] > .5, "long-text: stages were not held separately")
+            snapshots.append((state, stamp))
+            output = ""
+    check(len(snapshots) == len(stages), "long-text: missing exact navigation, edit, or recovery frame")
+    check(snapshots[-1][1] < float(events[-1][0]), "long-text: snapshot exceeds recording")
+    name = "before-editor-snapshots.tsv" if scene == "before" else "editor-snapshots.tsv"
+    (directory / name).write_text("".join(f"{state}\t{stamp:.6f}\n" for state, stamp in snapshots))
+    print(f"PASS: {scene} exact long-text source, navigation, edit restoration, and recovery")
 
 
 def editor_layouts(directory):

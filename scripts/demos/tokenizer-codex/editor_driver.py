@@ -49,6 +49,9 @@ def drive():
     theme = os.environ["DEMO_THEME"]
     report_path = os.environ["DEMO_EDITOR_REPORT"]
     details = os.environ.get("DEMO_MODE") == "details"
+    long_text = os.environ.get("DEMO_MODE") == "long-text"
+    if long_text and ((width, height) not in ((80, 20), (40, 12)) or os.environ.get("DEMO_SCENE") not in ("before", "after")):
+        raise ValueError("long-text recording requires before/after at 80x20 or 40x12")
     details_presentation = os.environ.get("DEMO_DETAILS_PRESENTATION", "historical")
     if details_presentation not in ("historical", "continuous") or details_presentation == "continuous" and not details:
         raise ValueError("continuous presentation requires details mode")
@@ -60,13 +63,13 @@ def drive():
     linked_setting = os.environ.get("DEMO_EDITOR_LINKED", "0")
     if linked_setting not in ("0", "1"):
         raise ValueError("DEMO_EDITOR_LINKED must be 0 or 1")
-    linked = linked_setting == "1" or details
-    if linked and (layout != "options" or not details and os.environ.get("DEMO_SCENE") != "after"):
+    linked = linked_setting == "1" or details or long_text
+    if linked and (layout != "options" or not (details or long_text) and os.environ.get("DEMO_SCENE") != "after"):
         raise ValueError("linked recording requires the after Options editor")
     presentation = os.environ.get("DEMO_EDITOR_PRESENTATION", "encodings")
     if presentation not in ("encodings", "models"):
         raise ValueError("DEMO_EDITOR_PRESENTATION must be encodings or models")
-    models = presentation == "models" or details
+    models = presentation == "models" or details or long_text
     if models and not linked:
         raise ValueError("model presentation requires the linked after Options editor")
 
@@ -280,11 +283,58 @@ def drive():
             result["token_presentation"] = tokens
         return finish(result)
 
+    def record_long_text():
+        path = os.path.join(os.path.dirname(__file__), "validate.py")
+        spec = importlib.util.spec_from_file_location("tokenizer_demo_validation", path)
+        checks = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checks)
+        style = "legacy" if os.environ["DEMO_SCENE"] == "before" else "indexed"
+
+        def observe(state):
+            return wait_for("", lambda text, raw: checks.long_text_state(raw, state, style, width, theme))
+
+        def step(state, keys):
+            send(keys)
+            observe(state)
+            mark(state)
+
+        def paste(value):
+            send(b"\x15\x1b[200~" + value.encode() + b"\x1b[201~")
+
+        paste(checks.LONG_INPUTS["multiline"])
+        observe("multiline-end")
+        mark("multiline-end")
+        if style == "legacy":
+            step("line-home", b"\x1b[H")
+            step("line-end", b"\x1b[F")
+        else:
+            step("document-home", b"\x1b[1;5H")
+            step("page-down", b"\x1b[6~")
+            step("page-up", b"\x1b[5~")
+            step("document-end", b"\x1b[1;5F")
+        step("edited", b"!")
+        step("restored", b"\x7f")
+        paste(checks.LONG_INPUTS["long-line"])
+        observe("long-line-end")
+        mark("long-line-end")
+        if style == "indexed":
+            step("long-line-word-left", b"\x1b[1;5D")
+            step("long-line-word-right", b"\x1b[1;5C")
+        step("long-line-home", b"\x1b[H")
+        send(b"\x1b[F")
+        observe("long-line-end")  # Clear only after observing the source at EOF.
+        paste(checks.LONG_INPUTS["recovery"])
+        observe("recovery")
+        mark("recovery")
+        return finish({"capture_version": 7, "navigation": style, "inputs": checks.LONG_INPUTS})
+
     try:
         wait_for("Ctrl+C exit")
         pause(0.4)
         if details:
             return record_details()
+        if long_text:
+            return record_long_text()
         for character in "Hello, ":
             send(character.encode())
             pause(0.055)

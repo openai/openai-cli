@@ -15,6 +15,7 @@ Each process receives a rejecting loopback base URL and no personal environment 
 | `guide` | `openai codex` | 3 | 0 |
 | `editor` | `openai tokenizer` | 0 for help; 130 for legacy or Options editors | 130 |
 | `details` | `openai tokenizer` | 130 | 130 |
+| `long-text` | `openai tokenizer` | 130 | 130 |
 
 The baseline is main `da762ffff4f35732f4720ac4db531d8d764f2cbe`.
 Direct baseline execution verified these statuses before recording.
@@ -286,3 +287,41 @@ For the Codex presentation comparison, use `guide` with the historical published
 The original main baseline still uses the guide's default status 3.
 The guide scene prints instructions only.
 Review every selected screenshot and the GIF before publication.
+
+## Long-text navigation comparison
+
+Use `long-text` to compare `f5e0911` with the indexed long-text editor.
+Both binaries receive the same 120-line document and 8,192-byte single-line paragraph.
+Both binaries must use the same Go version.
+The recorder reuses the existing terminal, cleanup, rendering, and status checks.
+It records version 7 at 80×20 or the minimum 40×12 size.
+
+```sh
+DEMO_THEME=dark DEMO_COLUMNS=80 \
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh long-text \
+  /absolute/path/to/openai-f5e0911 /absolute/path/to/candidate \
+  "$BEFORE_SHA" "$AFTER_SHA" \
+  /absolute/path/outside/repository/long-text-dark-80
+```
+
+Use `DEMO_THEME=no-color DEMO_COLUMNS=40` for the compact comparison.
+The Before scene uses its supported Home and End keys on the final logical line.
+The After scene uses Ctrl+Home, Page Down, Page Up, and Ctrl+End across the document.
+These scenes use different navigation keys; the recipe does not imply identical key behavior.
+The After source caption shows the current logical line only when the document exceeds the source viewport.
+
+Both scenes append `!`, then use Backspace to restore the exact document.
+That edit preserves the token count but changes the final token from `.` to `.!`.
+The validator requires the new source and selected fragment together, preventing stale-count success.
+Both scenes inspect the long paragraph at its end and beginning.
+The After scene also uses Ctrl+Left to reach the final word, then Ctrl+Right to return to EOF.
+These stages verify byte 8,177 and byte 8,192 with their exact selected tokens.
+The driver observes End before clearing the paragraph and returning to `how`.
+Both sessions finish with actual Ctrl+C status 130.
+
+The main screenshots show the multiline document at its end.
+Stage screenshots retain the navigation, temporary edit, restored text, long-line excerpt, and short-input recovery.
+The validator checks exact visible source rows, cursor cells, selected fragments, line positions, counts, and complete footers.
+Historical capture versions 1 through 6 retain their prior validation.
+Pending replacement and cancellation remain separate deterministic checks.

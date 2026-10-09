@@ -3,23 +3,23 @@ set -euo pipefail
 
 if [ "$#" -ne 6 ]; then
   echo 'usage: record.sh MODE BEFORE_BINARY AFTER_BINARY BEFORE_SHA AFTER_SHA OUTPUT_DIR' >&2
-  echo 'MODE: count, inspect, codex, guide, editor, or details' >&2
+  echo 'MODE: count, inspect, codex, guide, editor, details, or long-text' >&2
   exit 2
 fi
 demo_mode="$1"
 case "$demo_mode" in
-  count|inspect|codex|guide|editor|details) ;;
-  *) echo 'MODE must be count, inspect, codex, guide, editor, or details.' >&2; exit 2;;
+  count|inspect|codex|guide|editor|details|long-text) ;;
+  *) echo 'MODE must be count, inspect, codex, guide, editor, details, or long-text.' >&2; exit 2;;
 esac
 shift
 demo_interactive=0
-if [ "$demo_mode" = editor ] || [ "$demo_mode" = details ]; then demo_interactive=1; fi
+if [ "$demo_mode" = editor ] || [ "$demo_mode" = details ] || [ "$demo_mode" = long-text ]; then demo_interactive=1; fi
 demo_editor_before="${DEMO_EDITOR_BEFORE:-help}"
 case "$demo_editor_before" in
   help|legacy|options) ;;
   *) echo 'DEMO_EDITOR_BEFORE must be help, legacy, or options.' >&2; exit 2;;
 esac
-if [ "$demo_mode" = details ]; then demo_editor_before=options; fi
+if [ "$demo_mode" = details ] || [ "$demo_mode" = long-text ]; then demo_editor_before=options; fi
 demo_details_presentation="${DEMO_DETAILS_PRESENTATION:-historical}"
 case "$demo_details_presentation" in
   historical) ;;
@@ -76,6 +76,10 @@ if [ "$demo_mode" = editor ]; then
   if [ "$demo_columns" = 40 ]; then demo_rows=44; fi
 fi
 if [ "$demo_mode" = details ]; then demo_rows=12; fi
+if [ "$demo_mode" = long-text ]; then
+  demo_rows=20
+  if [ "$demo_columns" = 40 ]; then demo_rows=12; fi
+fi
 demo_window_size="${demo_columns}x${demo_rows}"
 demo_render_options=(--renderer resvg --font-family 'Menlo,Apple Color Emoji' --font-size 22 --line-height 1.2 \
   --theme "$demo_palette" --fps-cap 20 --last-frame-duration 3)
@@ -105,14 +109,14 @@ case "$DEMO_MODE" in
     printf '%s\n' '$ openai codex'
     demo_args=(codex)
     ;;
-  editor|details)
+  editor|details|long-text)
     printf '%s\n' '$ openai tokenizer'
     demo_args=(tokenizer)
     ;;
   *) exit 2;;
 esac
 sleep 0.4
-if [ "$DEMO_MODE" = details ] || { [ "$DEMO_MODE" = editor ] && [ "$DEMO_EDITOR_LAYOUT" != help ]; }; then
+if [ "$DEMO_MODE" = details ] || [ "$DEMO_MODE" = long-text ] || { [ "$DEMO_MODE" = editor ] && [ "$DEMO_EDITOR_LAYOUT" != help ]; }; then
   if "$DEMO_PYTHON" -B "$DEMO_EDITOR_DRIVER"; then demo_status=0; else demo_status=$?; fi
 else
   if openai "${demo_args[@]}"; then demo_status=0; else demo_status=$?; fi
@@ -134,6 +138,9 @@ SCENE
   fi
   if [ "$demo_mode" = details ]; then echo 'details: source, cursor, Up navigation, exact fields, overflow rows, Home, and recovery'; fi
   if [ "$demo_mode" = details ]; then echo "details presentation: $demo_details_presentation"; fi
+  if [ "$demo_mode" = long-text ]; then
+    echo "navigation: Before uses Home/End; After adds Ctrl+Home/End, PageUp/PageDown, and Ctrl+Left/Right"
+  fi
   echo "before commit: $demo_before_sha"
   echo "candidate commit: $demo_after_sha (check source manifest for uncommitted changes)"
   echo "before binary: $demo_before"
@@ -166,7 +173,7 @@ demo_before_status=1
 if [ "$demo_mode" = guide ]; then demo_before_status=3; fi
 if [ "$demo_mode" = editor ]; then demo_before_status=0; fi
 if [ "$demo_mode" = editor ] && [ "$demo_editor_before" != help ]; then demo_before_status=130; fi
-if [ "$demo_mode" = details ]; then demo_before_status=130; fi
+if [ "$demo_mode" = details ] || [ "$demo_mode" = long-text ]; then demo_before_status=130; fi
 demo_before_status="${DEMO_BEFORE_STATUS:-$demo_before_status}"
 case "$demo_before_status" in
   0|1|3) ;;
@@ -189,8 +196,8 @@ if [ "$demo_mode" = editor ]; then
   printf 'before\t0\nafter\t%s\n' "$demo_editor_linked" > "$demo_output/editor-linked.tsv"
   printf 'before\tencodings\nafter\t%s\n' "$demo_editor_presentation" > "$demo_output/editor-presentation.tsv"
 fi
-if [ "$demo_mode" = details ] && [ "$demo_before_status" != 130 ]; then
-  echo 'Details comparison requires an interactive baseline with status 130.' >&2
+if { [ "$demo_mode" = details ] || [ "$demo_mode" = long-text ]; } && [ "$demo_before_status" != 130 ]; then
+  echo 'This comparison requires an interactive baseline with status 130.' >&2
   exit 2
 fi
 if [ "$demo_mode" = details ]; then printf '%s\n' "$demo_details_presentation" > "$demo_output/details-presentation.txt"; fi
@@ -229,6 +236,12 @@ if [ "$demo_interactive" = 1 ]; then
     if [ "$demo_mode" = details ] && [ "$demo_details_presentation" = continuous ]; then
       demo_states=(source cursor trailing-space up-navigation ordinary partial overflow-start overflow-end overflow-home recovery)
     fi
+    if [ "$demo_mode" = long-text ]; then
+      demo_states=(multiline-end line-home line-end edited restored long-line-end long-line-home recovery)
+      if [ "$demo_scene" = after ]; then
+        demo_states=(multiline-end document-home page-down page-up document-end edited restored long-line-end long-line-word-left long-line-word-right long-line-home recovery)
+      fi
+    fi
     for demo_state in "${demo_states[@]}"; do
       test -s "$demo_output/$demo_scene-$demo_state.png"
     done
@@ -245,6 +258,7 @@ if [ "$demo_interactive" = 1 ]; then
     demo_cover=text
     if [ "$demo_mode" = details ]; then demo_cover=ordinary; fi
     if [ "$demo_mode" = details ] && [ "$demo_details_presentation" = continuous ]; then demo_cover=cursor; fi
+    if [ "$demo_mode" = long-text ]; then demo_cover=multiline-end; fi
     cp "$demo_output/$demo_scene-$demo_cover.png" "$demo_output/$demo_scene.png"
   done
 fi

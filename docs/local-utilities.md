@@ -3,6 +3,11 @@
 These commands work offline without API credentials.
 They do not save your text, edit settings, or install software.
 
+Use the editor to compare prompt wording and inspect token boundaries.
+Use `count` for a token total, or `inspect` when a script needs token IDs and exact bytes.
+You continue using the original text; saving token data is optional.
+The recovery guide below includes a failure-safe JSON export recipe.
+
 ## Explore tokens interactively
 
 ```sh
@@ -31,6 +36,12 @@ The editor supports up to 1 MiB of UTF-8 input.
 Enter inserts a newline while editing text.
 Down opens options from any column on the last line.
 On earlier lines, Down moves the text cursor. Up moves to the previous text line.
+Home and End move to the current line's boundaries.
+Ctrl+Home and Ctrl+End jump to the beginning and end of the complete draft.
+Page Up and Page Down move by one visible text page and keep focus in Text.
+Ctrl+Left and Ctrl+Right move between words separated by whitespace.
+When lines exceed the visible text area, the Text label shows the current line and total lines.
+The editor keeps the complete draft even when only part is visible.
 The highlighted token follows the text cursor without recalculating tokens.
 Its stronger fill and underline make space-only tokens visible too.
 The cursor highlights the character at its position without inserting a gap between letters.

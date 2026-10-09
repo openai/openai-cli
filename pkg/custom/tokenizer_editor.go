@@ -1,6 +1,7 @@
 package custom
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -46,6 +47,7 @@ type tokenizerEditor struct {
 	text              string
 	cursor            int
 	boundaries        []int
+	lineStarts        []int
 	encoding          string
 	invocation        string
 	option, choice    int
@@ -64,7 +66,7 @@ type tokenizerEditor struct {
 }
 
 func newTokenizerEditor() *tokenizerEditor {
-	return &tokenizerEditor{encoding: tokenizer.DefaultEncoding, invocation: "openai", boundaries: []int{0}, color: true, dark: true}
+	return &tokenizerEditor{encoding: tokenizer.DefaultEncoding, invocation: "openai", boundaries: []int{0}, lineStarts: []int{0}, color: true, dark: true}
 }
 
 func (m *tokenizerEditor) Init() tea.Cmd { return nil }
@@ -346,27 +348,48 @@ func (m *tokenizerEditor) insert(text string) tea.Cmd {
 	if text == "" {
 		return nil
 	}
-	m.text = m.text[:m.cursor] + text + m.text[m.cursor:]
+	start := m.cursor
+	m.text = m.text[:start] + text + m.text[start:]
 	m.cursor += len(text)
-	m.indexText()
+	m.reindexText(start)
 	return m.changed()
 }
 
 // Source bytes stay exact. The display can escape controls without editing them.
 func (m *tokenizerEditor) indexText() {
-	m.boundaries = append(m.boundaries[:0], 0)
-	for offset := 0; offset < len(m.text); {
+	m.reindexText(0)
+}
+
+func (m *tokenizerEditor) reindexText(editedAt int) {
+	// The preceding whole grapheme contains any context that can join the edit.
+	// Keep its unchanged prefix, then segment through EOF without reconvergence.
+	index, offset := 0, 0
+	if editedAt > 0 && len(m.boundaries) > 0 {
+		index = max(0, sort.SearchInts(m.boundaries, editedAt)-1)
+		offset = m.boundaries[index]
+	}
+	m.boundaries = append(m.boundaries[:index], offset)
+	keepLines := sort.Search(len(m.lineStarts), func(i int) bool { return m.lineStarts[i] > offset })
+	m.lineStarts = m.lineStarts[:keepLines]
+	if len(m.lineStarts) == 0 {
+		m.lineStarts = append(m.lineStarts, 0)
+	}
+	suffix := m.text[offset:]
+	if len(suffix) > cap(m.boundaries)-len(m.boundaries) && utf8.RuneCountInString(suffix) == len(suffix) {
+		// ASCII has at most one grapheme per byte. Reserve once for large pastes.
+		m.boundaries = slices.Grow(m.boundaries, len(suffix))
+	}
+	m.lineStarts = slices.Grow(m.lineStarts, strings.Count(suffix, "\n"))
+	for offset < len(m.text) {
 		cluster, _ := ansi.FirstGraphemeCluster(m.text[offset:], ansi.WcWidth)
 		offset += len(cluster)
 		m.boundaries = append(m.boundaries, offset)
-	}
-	// Inserting a combining mark or ZWJ can join neighboring graphemes.
-	for _, position := range m.boundaries {
-		if position >= m.cursor {
-			m.cursor = position
-			break
+		if strings.HasSuffix(cluster, "\n") {
+			m.lineStarts = append(m.lineStarts, offset)
 		}
 	}
+	// Inserting a combining mark or ZWJ can join neighboring graphemes.
+	m.cursor = m.boundaries[min(sort.SearchInts(m.boundaries, m.cursor), len(m.boundaries)-1)]
 }
 
 func (m *tokenizerEditor) cursorIndex() int {
@@ -398,13 +421,25 @@ func (m *tokenizerEditor) edit(msg tea.KeyPressMsg) tea.Cmd {
 	case "right":
 		m.cursor = m.boundaries[min(len(m.boundaries)-1, index+1)]
 	case "home", "ctrl+a":
-		m.cursor = strings.LastIndexByte(m.text[:m.cursor], '\n') + 1
+		m.cursor = m.lineStarts[m.lineIndex(m.cursor)]
 	case "end", "ctrl+e":
 		m.cursor = m.lineEnd(m.cursor)
+	case "ctrl+home":
+		m.cursor = 0
+	case "ctrl+end":
+		m.cursor = len(m.text)
+	case "ctrl+left":
+		m.moveWord(-1)
+	case "ctrl+right":
+		m.moveWord(1)
 	case "up":
 		m.moveLine(-1)
 	case "down":
 		m.moveLine(1)
+	case "pgup":
+		m.moveLine(-m.sourceRows())
+	case "pgdown":
+		m.moveLine(m.sourceRows())
 	case "ctrl+u":
 		if m.cursor > 0 {
 			m.text, m.cursor = m.text[m.cursor:], 0
@@ -415,13 +450,13 @@ func (m *tokenizerEditor) edit(msg tea.KeyPressMsg) tea.Cmd {
 		if index > 0 {
 			start := m.boundaries[index-1]
 			m.text, m.cursor = m.text[:start]+m.text[m.cursor:], start
-			m.indexText()
+			m.reindexText(start)
 			return m.changed()
 		}
 	case "delete":
 		if index < len(m.boundaries)-1 {
 			m.text = m.text[:m.cursor] + m.text[m.boundaries[index+1]:]
-			m.indexText()
+			m.reindexText(m.cursor)
 			return m.changed()
 		}
 	default:
@@ -434,8 +469,8 @@ func (m *tokenizerEditor) edit(msg tea.KeyPressMsg) tea.Cmd {
 
 func (m *tokenizerEditor) lineEnd(position int) int {
 	end := len(m.text)
-	if newline := strings.IndexByte(m.text[position:], '\n'); newline >= 0 {
-		end = position + newline
+	if line := m.lineIndex(position); line+1 < len(m.lineStarts) {
+		end = m.lineStarts[line+1] - 1
 		if end > 0 && m.text[end-1] == '\r' {
 			end--
 		}
@@ -443,34 +478,45 @@ func (m *tokenizerEditor) lineEnd(position int) int {
 	return end
 }
 
+func (m *tokenizerEditor) lineIndex(position int) int {
+	return max(0, sort.Search(len(m.lineStarts), func(i int) bool { return m.lineStarts[i] > position })-1)
+}
+
 func (m *tokenizerEditor) moveLine(direction int) {
-	start := strings.LastIndexByte(m.text[:m.cursor], '\n') + 1
-	column := 0
-	for _, boundary := range m.boundaries {
-		if boundary >= start && boundary < m.cursor {
-			column++
-		}
+	line := m.lineIndex(m.cursor)
+	target := max(0, min(line+direction, len(m.lineStarts)-1))
+	if target == line {
+		return
+	}
+	column := m.cursorIndex() - sort.SearchInts(m.boundaries, m.lineStarts[line])
+	start := m.lineStarts[target]
+	first := sort.SearchInts(m.boundaries, start)
+	last := sort.SearchInts(m.boundaries, m.lineEnd(start))
+	m.cursor = m.boundaries[min(first+column, last)]
+}
+
+func (m *tokenizerEditor) moveWord(direction int) {
+	index := m.cursorIndex()
+	space := func(at int) bool {
+		value, _ := utf8.DecodeRuneInString(m.text[m.boundaries[at]:])
+		return unicode.IsSpace(value)
 	}
 	if direction < 0 {
-		if start == 0 {
-			return
+		for index > 0 && space(index-1) {
+			index--
 		}
-		start = strings.LastIndexByte(m.text[:start-1], '\n') + 1
+		for index > 0 && !space(index-1) {
+			index--
+		}
 	} else {
-		newline := strings.IndexByte(m.text[m.cursor:], '\n')
-		if newline < 0 {
-			return
+		for index+1 < len(m.boundaries) && !space(index) {
+			index++
 		}
-		start = m.cursor + newline + 1
-	}
-	end := m.lineEnd(start)
-	m.cursor = start
-	for _, boundary := range m.boundaries {
-		if boundary > start && boundary <= end && column > 0 {
-			m.cursor = boundary
-			column--
+		for index+1 < len(m.boundaries) && space(index) {
+			index++
 		}
 	}
+	m.cursor = m.boundaries[index]
 }
 
 func (m *tokenizerEditor) updateModal(key string) {
