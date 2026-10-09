@@ -1,10 +1,5 @@
 # Transcript timestamp terminal replay
 
-This recipe is prepared source only.
-It has not executed, passed validation, or received a recording reservation.
-The proposed repository destination is `scripts/demos/transcript-output/`.
-Repository ownership remains pending coordinator approval.
-
 The recipe uses the existing `scripts/demos/capture_and_render.sh` lifecycle.
 It supplies a Python fixture instead of building a Go fixture.
 The fixture validates a fake audio marker, model, response format, chunking strategy, and fake authorization.
@@ -26,18 +21,16 @@ The caller must supply the actual candidate SHA and binaries.
 Use `DEMO_AFTER_SOURCE_STATE` to identify any uncommitted source precisely.
 Do not label such a recording as a committed-candidate recording.
 
-After approval and a PTY reservation, the owner can run the staged recipe:
+Run the recipe with existing before and after binaries:
 
 ```sh
-DEMO_REPO_ROOT=/absolute/path/to/openai-cli \
-PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
-  bash /absolute/path/to/demo-source/record.sh \
+bash scripts/demos/transcript-output/record.sh \
   /absolute/before/openai /absolute/after/openai \
   e68939820415144d769ed02de6aa72d5b7d32948 AFTER_FULL_SHA \
   /absolute/new/evidence-directory
 ```
 
-After moving both scripts into the approved repository destination, omit `DEMO_REPO_ROOT`.
+When running a copied recipe outside the repository, set `DEMO_REPO_ROOT` to the repository path.
 Keep `server.py` executable because the shared lifecycle invokes it directly.
 The recorder accepts exactly five arguments, matching the existing readable-audio recorder.
 It requires Python 3, asciinema 3.2.1, agg 1.9.0, ffmpeg, and ffprobe.
