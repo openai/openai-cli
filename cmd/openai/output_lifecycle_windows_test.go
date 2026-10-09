@@ -62,18 +62,31 @@ func testWindowsOutputTerminalLifecycle(t *testing.T, scenario string, quiet boo
 	t.Helper()
 	home := t.TempDir()
 	payload := imageGenerationPNG(t)
-	started, closed := make(chan struct{}), make(chan struct{})
+	started, closed, fixtureRelease := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// net/http starts disconnect observation after the request body reaches EOF.
+		// Read and close it before the parent can send cancellation or viewer input.
+		body, readErr := io.ReadAll(r.Body)
+		closeErr := r.Body.Close()
+		if readErr != nil || closeErr != nil {
+			t.Errorf("read synthetic request: %v; close: %v", readErr, closeErr)
+			return
+		}
 		close(started)
-		defer close(closed)
 		if strings.HasSuffix(scenario, "cancel") {
-			<-r.Context().Done()
+			select {
+			case <-r.Context().Done():
+				close(closed)
+			case <-fixtureRelease:
+				// Cleanup must not report a successful client-side source close.
+			}
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		if scenario == "images-progress" {
+			defer close(closed)
 			var request map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			if err := json.Unmarshal(body, &request); err != nil {
 				t.Error(err)
 				return
 			}
@@ -91,10 +104,18 @@ func testWindowsOutputTerminalLifecycle(t *testing.T, scenario string, quiet boo
 			writeStreamingTextEvent(w, fmt.Sprintf(`{"type":"response.output_text.delta","delta":"synthetic-viewer-%03d","sequence_number":%d}`, i, i))
 		}
 		w.(http.Flusher).Flush()
-		<-r.Context().Done() // q must close the source; the fixture never sends EOF.
+		select {
+		case <-r.Context().Done():
+			close(closed) // q must close the source; the fixture never sends EOF.
+		case <-fixtureRelease:
+			// Failure cleanup releases the handler without satisfying the assertion.
+		}
 	}))
-	t.Cleanup(server.Close)
-	t.Cleanup(server.CloseClientConnections)
+	t.Cleanup(func() {
+		close(fixtureRelease)
+		server.CloseClientConnections()
+		server.Close()
+	})
 	args := []string{"models", "list"}
 	if strings.HasPrefix(scenario, "images") {
 		args = []string{"images", "generate", "--prompt", "synthetic native lifecycle", "--output-dir", home, "--name", "final", "--inline", "off"}
