@@ -188,8 +188,12 @@ def details_state(plain, state, style, columns, raw="", theme="no-color"):
             return False
         if state == "up-navigation":
             if style == "legacy":
-                return "Token 2 of 6" in lines and '›["!"]' in plain and "Enter details" in plain
-            return "Token 3 of 6" in lines and any(line.startswith("› Model  ") for line in lines) and "Enter select" in plain
+                footer = "Ctrl+C exit · ←→ token · Enter details · Tab switch" if columns == 80 else "Ctrl+C exit · ←→ · Enter details"
+                return "Token 2 of 6" in lines and '›["!"]' in plain and footer in lines
+            footer = "Ctrl+C exit · ↑↓ move · Enter select" + (" · Tab switch" if columns == 80 else "")
+            return "Token 3 of 6" in lines and any(line.startswith("› Model  ") for line in lines) and footer in lines
+        if "Ctrl+C exit · ↓ options · Tab switch" not in lines:
+            return False
         source = "a!b?c."
         if style == "legacy":
             source = "a!b?c.▏" if state == "source" else "a!b?c▏."
@@ -209,7 +213,7 @@ def details_state(plain, state, style, columns, raw="", theme="no-color"):
     if state == "recovery":
         lines = [line.strip() for line in plain.splitlines()]
         return ("1 token" in lines and "Model  GPT-5.x & o1/o3  Default" in plain and
-                '·["how"]' in plain and "Ctrl+C exit" in plain and "Esc back" not in plain)
+                '·["how"]' in plain and "Ctrl+C exit · ↓ options · Tab switch" in lines and "Esc back" not in plain)
     kind = state if state in ("ordinary", "partial") else "overflow"
     frame = details_frame(plain, kind, style, columns)
     if not frame:
