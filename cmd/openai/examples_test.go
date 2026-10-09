@@ -427,13 +427,18 @@ func testExamplesFilesRecipe(t *testing.T, shell nativeShell, quoted bool, failu
 	want := []string{"POST /files", "GET /files/file_recipe", "GET /files/file_recipe/content"}
 	if failure != "" {
 		require.NotZero(t, got.code)
-		require.Contains(t, got.stderr, "synthetic recipe failure")
+		require.Empty(t, got.stdout)
+		if failure == "POST /files" {
+			require.Contains(t, got.stderr, "synthetic recipe failure")
+		} else {
+			require.Equal(t, "HTTP 400: Bad Request.\nThe API rejected the request.\nOptions and examples: openai help files get\nAPI error details: --format-error json.\n", got.stderr)
+		}
 		_, err := os.Stat(filepath.Join(work, output))
 		require.ErrorIs(t, err, os.ErrNotExist)
 		want = want[:slices.Index(want, failure)+1]
 	} else {
 		require.Zero(t, got.code, "%s", got.stderr)
-		require.Empty(t, got.stderr)
+		require.Equal(t, "Full data: --format json.\nWrote output to: ./"+output+"\n", got.stderr)
 		require.Contains(t, got.stdout, "file_recipe")
 		content, err := os.ReadFile(filepath.Join(work, output))
 		require.NoError(t, err)
