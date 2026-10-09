@@ -29,7 +29,7 @@ Obtain the coordinator's PTY reservation before recording.
 Use a new output directory outside the repository.
 
 ```sh
-PATH=/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH \
+PATH="$HOME/.cache/cli-terminal-replay/bin:$PATH" \
   bash scripts/demos/finite-json-list/record.sh \
     /path/to/evidence/bin/openai-before /path/to/evidence/bin/openai-after \
     e68939820415144d769ed02de6aa72d5b7d32948 "$AFTER_SHA" \
