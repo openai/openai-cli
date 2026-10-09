@@ -88,12 +88,19 @@ func TestMainNativeShell(t *testing.T) {
 					t.Setenv("PATH", other+string(os.PathListSeparator)+os.Getenv("PATH"))
 					for _, args := range []string{"help admin organization projcts", "admin organization projcts", "help audio:transcriptins"} {
 						got := runNativeShell(t, shell, other, home, "http://127.0.0.1:1", invocation+" "+args)
-						_, suggestion, found := strings.Cut(got.stderr, "Did you mean '")
-						suggestion = strings.TrimSuffix(strings.TrimSpace(suggestion), "'?")
+						_, suggestion, found := strings.Cut(got.stderr, "Did you mean: ")
+						suggestion = strings.TrimSuffix(strings.TrimSpace(suggestion), "?")
 						if got.code != 3 || !found || !strings.HasPrefix(suggestion, invocation+" ") {
 							t.Fatalf("suggestion changed executable identity: %+v", got)
 						}
-						copied := runNativeShell(t, shell, other, home, "http://127.0.0.1:1", suggestion+" --help")
+						if strings.HasPrefix(args, "help ") {
+							if !strings.HasPrefix(suggestion, invocation+" help ") {
+								t.Fatalf("suggestion lost help intent: %+v", got)
+							}
+						} else {
+							suggestion += " --help"
+						}
+						copied := runNativeShell(t, shell, other, home, "http://127.0.0.1:1", suggestion)
 						if copied.code != 0 || copied.stderr != "" || strings.Contains(copied.stdout, "wrong executable") {
 							t.Fatalf("copied suggestion failed: %+v", copied)
 						}
