@@ -66,7 +66,7 @@ func TestMainWebhookTestReceiverStatus(t *testing.T) {
 					outcome = "accepted"
 				}
 				want := fmt.Sprintf("Test request completed.\nDelivery %s: endpoint returned HTTP %d.\nWebhook endpoint ID: \"wh_demo\"\nEvent type: \"response.completed\"\n", outcome, status)
-				if got.code != 0 || got.stderr != "" || got.stdout != want {
+				if got.code != 0 || !strings.Contains(got.stderr, "Next:") || got.stdout != want {
 					t.Fatalf("receiver status changed process outcome: got %+v, want stdout %q and exit 0", got, want)
 				}
 			})
@@ -159,7 +159,7 @@ func TestMainWebhookTestPreservesUnrecognizedResults(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server := webhookTestServer(t, strings.Replace(webhookTestResult, tc.old, tc.replacement, 1))
 			got := runReadableCommand(t, server, webhookTestCommand()...)
-			if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, tc.want) {
+			if got.code != 0 || !strings.Contains(got.stderr, "unexpected test result. No delivery outcome was inferred.") || !strings.Contains(got.stdout, tc.want) {
 				t.Fatalf("fallback lost fields: %+v, want %q", got, tc.want)
 			}
 			if strings.Contains(got.stdout, "Test request completed.") || strings.Contains(got.stdout, "Delivery ") {
@@ -175,8 +175,11 @@ func TestMainWebhookTestContextEscapesControls(t *testing.T) {
 	server := webhookTestServer(t, response)
 	got := runReadableCommand(t, server, webhookTestCommand()...)
 	want := "Test request completed.\nDelivery failed: endpoint returned HTTP 500.\nWebhook endpoint ID: \"wh_\\x1b[31m\\r\\nforged\"\nEvent type: \"response.\\t\\a\\u202ecompleted\"\n"
-	if got.code != 0 || got.stderr != "" || got.stdout != want {
+	if got.code != 0 || !strings.Contains(got.stderr, "Next:") || got.stdout != want {
 		t.Fatalf("external context changed presentation structure: %+v, want %q", got, want)
+	}
+	if strings.Contains(got.stderr, "webhooks retrieve") || strings.Contains(got.stderr, "webhooks test") || strings.ContainsAny(got.stderr, "\x1b\r") {
+		t.Fatalf("unsafe context became a command suggestion: %q", got.stderr)
 	}
 }
 
@@ -233,7 +236,7 @@ func TestMainWebhookTestAcceptedInputs(t *testing.T) {
 			got := runMainDispatchWithStdin(t, "bash", []string{
 				"OPENAI_BASE_URL=" + server.URL, "OPENAI_API_KEY=sk-fake-webhook-test", "FORCE_COLOR=0",
 			}, stdin, append([]string{"openai"}, tc.args...)...)
-			if got.code != 0 || got.stderr != "" || got.stdout != webhookTestReadable500 {
+			if got.code != 0 || !strings.Contains(got.stderr, "Next:") || got.stdout != webhookTestReadable500 {
 				t.Fatalf("accepted input changed: %+v", got)
 			}
 		})

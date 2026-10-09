@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve synthetic test results without contacting a webhook receiver."""
+"""Serve synthetic webhook workflows without contacting a receiver."""
 
 import hashlib
 import http.server
@@ -9,34 +9,64 @@ import signal
 import sys
 import threading
 
+CATALOG = {"object": "list", "data": ["response.completed", "batch.completed", "response.failed", "future.demo_event"]}
+SETTINGS = {"name": "Response notifications", "url": "https://example.com/webhook",
+            "event_types": ["response.completed", "response.failed"]}
+
 
 def main():
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: server.py ADDRESS_FILE REQUEST_LOG")
+    if len(sys.argv) != 4:
+        raise SystemExit("usage: server.py ADDRESS_FILE REQUEST_LOG CONFIRMATION_FILE")
+    confirmation = pathlib.Path(sys.argv[3])
     stop = threading.Event()
     failures = []
+    requests = []
     lock = threading.Lock()
-    scenes = {"before": 500, "after": 500, "accepted": 200}
     with open(sys.argv[2], "x", encoding="utf-8") as log:
         class Fixture(http.server.BaseHTTPRequestHandler):
             def log_message(self, *_):
                 pass
 
+            def do_GET(self):
+                self.respond()
+
             def do_POST(self):
+                self.respond()
+
+            def respond(self):
                 self.connection.settimeout(5)
                 try:
                     scene = self.path.split("/")[1]
-                    if scene not in scenes or self.path != f"/{scene}/v1/webhook_endpoints/wh_demo/test":
-                        raise ValueError("unexpected request path")
-                    size = int(self.headers.get("Content-Length", "0"))
-                    if not 0 < size <= 256:
-                        raise ValueError("unexpected fixture request length")
-                    if json.loads(self.rfile.read(size)) != {"event_type": "response.completed"}:
-                        raise ValueError("unexpected event")
+                    prefix = f"/{scene}/v1"
+                    route = self.command + " " + self.path.removeprefix(prefix)
                     if self.headers.get("Authorization") != "Bearer synthetic-demo-key":
                         raise ValueError("unexpected fixture credentials")
-                    result = {"object": "webhook_endpoint.test", "webhook_endpoint_id": "wh_demo",
-                              "event_type": "response.completed", "status_code": scenes[scene], "success": True}
+                    data = None
+                    if self.command == "POST":
+                        size = int(self.headers.get("Content-Length", "0"))
+                        if not 0 < size <= 1024:
+                            raise ValueError("unexpected fixture request length")
+                        data = json.loads(self.rfile.read(size))
+                    if scene in {"before", "after"} and route == "POST /webhook_endpoints/wh_demo/test":
+                        if data != {"event_type": "response.completed"}:
+                            raise ValueError("unexpected test event")
+                        result = {"object": "webhook_endpoint.test", "webhook_endpoint_id": "wh_demo",
+                                  "event_type": "response.completed", "status_code": 500, "success": True}
+                        operation = "test"
+                    elif scene in {"discovery", "guided"} and route == "GET /webhook_event_types":
+                        result, operation = CATALOG, "catalog"
+                    elif scene == "guided" and route == "POST /webhook_endpoints":
+                        if not confirmation.exists() or data != SETTINGS:
+                            raise ValueError("creation preceded confirmation or changed settings")
+                        result = {"object": "webhook_endpoint", "id": "whe_demo", **SETTINGS,
+                                  "signing_secret": "whsec_fake_for_demo_only"}
+                        operation = "create"
+                    else:
+                        raise ValueError("unexpected request route")
+                    with lock:
+                        if len(requests) >= 8 or operation == "create" and "create" in requests:
+                            raise ValueError("duplicate or excessive fixture requests")
+                        requests.append(operation)
                     body = json.dumps(result, separators=(",", ":")).encode()
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
@@ -45,7 +75,7 @@ def main():
                     self.wfile.write(body)
                     self.wfile.flush()
                     with lock:
-                        log.write(json.dumps({"scene": scene, "api_status": 200, "receiver_status": scenes[scene],
+                        log.write(json.dumps({"scene": scene, "operation": operation, "api_status": 200,
                                               "response_sha256": hashlib.sha256(body).hexdigest()}) + "\n")
                         log.flush()
                 except Exception as error:
