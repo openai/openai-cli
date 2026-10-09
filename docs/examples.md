@@ -56,6 +56,8 @@ openai --format raw audio transcribe --file "./speech sample.wav" --model whispe
 Each command prints its result to stdout.
 Run only the command you need.
 `whisper-1` supports translation and SRT output.
+OpenAI has announced its shutdown for February 26, 2027.
+This date was verified on October 9, 2026; check the [deprecation notice](https://developers.openai.com/api/docs/deprecations#2026-08-26-transcription-models) before reuse.
 Explicit raw format preserves the returned text and subtitle bytes.
 Model availability and input acceptance depend on the API.
 See [audio output](readable-audio.md) and the [speech guide](https://developers.openai.com/api/docs/guides/speech-to-text).
