@@ -138,7 +138,7 @@ func handleCostReport(parent context.Context, command *cli.Command) (err error) 
 		if !more {
 			break
 		}
-		if strings.TrimSpace(cursor) == "" || seen[cursor] {
+		if cursor == "" || seen[cursor] {
 			return &localUtilityError{message: "cost report pagination stalled: missing or repeated next_page; no report was written"}
 		}
 		seen[cursor] = true

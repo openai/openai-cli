@@ -614,6 +614,23 @@ func TestMainCostReportCursorCycleStopsBeforeRepeatedRequest(t *testing.T) {
 	}
 }
 
+func TestMainCostReportForwardsOpaqueCursorExactly(t *testing.T) {
+	const cursor = " \t "
+	server, requests := costReportServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if _, present := r.URL.Query()["page"]; !present {
+			_, _ = io.WriteString(w, costReportPage("", cursor, true))
+			return
+		}
+		assert.Equal(t, cursor, r.URL.Query().Get("page"))
+		_, _ = io.WriteString(w, costReportPage(`{"amount":{"value":3,"currency":"usd"}}`, "", false))
+	})
+	got := runMainDispatchWithEnv(t, "bash", costReportEnv(server), costReportArgs("--format", "json")...)
+	require.Zero(t, got.code, "%+v", got)
+	require.Empty(t, got.stderr)
+	require.Contains(t, got.stdout, `"amount":"3"`)
+	require.EqualValues(t, 2, requests.Load())
+}
+
 func TestMainCostReportMissingCurrencyDoesNotInventTotal(t *testing.T) {
 	for _, format := range []string{"text", "json"} {
 		t.Run(format, func(t *testing.T) {
