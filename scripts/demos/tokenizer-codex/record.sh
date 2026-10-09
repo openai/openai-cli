@@ -20,6 +20,17 @@ case "$demo_editor_before" in
   *) echo 'DEMO_EDITOR_BEFORE must be help, legacy, or options.' >&2; exit 2;;
 esac
 if [ "$demo_mode" = details ]; then demo_editor_before=options; fi
+demo_details_presentation="${DEMO_DETAILS_PRESENTATION:-historical}"
+case "$demo_details_presentation" in
+  historical) ;;
+  continuous)
+    if [ "$demo_mode" != details ]; then
+      echo 'DEMO_DETAILS_PRESENTATION=continuous requires details mode.' >&2
+      exit 2
+    fi
+    ;;
+  *) echo 'DEMO_DETAILS_PRESENTATION must be historical or continuous.' >&2; exit 2;;
+esac
 demo_editor_linked="${DEMO_EDITOR_LINKED:-0}"
 case "$demo_editor_linked" in
   0|1) ;;
@@ -121,7 +132,8 @@ SCENE
     echo "after linked cursor and legacy tokenizers: $demo_editor_linked"
     echo "after editor presentation: $demo_editor_presentation"
   fi
-  if [ "$demo_mode" = details ]; then echo 'details: six-token source, cursor, Up navigation, exact fields, overflow rows, Home, and recovery'; fi
+  if [ "$demo_mode" = details ]; then echo 'details: source, cursor, Up navigation, exact fields, overflow rows, Home, and recovery'; fi
+  if [ "$demo_mode" = details ]; then echo "details presentation: $demo_details_presentation"; fi
   echo "before commit: $demo_before_sha"
   echo "candidate commit: $demo_after_sha (check source manifest for uncommitted changes)"
   echo "before binary: $demo_before"
@@ -181,6 +193,7 @@ if [ "$demo_mode" = details ] && [ "$demo_before_status" != 130 ]; then
   echo 'Details comparison requires an interactive baseline with status 130.' >&2
   exit 2
 fi
+if [ "$demo_mode" = details ]; then printf '%s\n' "$demo_details_presentation" > "$demo_output/details-presentation.txt"; fi
 demo_after_status=0
 if [ "$demo_interactive" = 1 ]; then demo_after_status=130; fi
 printf '%s\t%s\n' before "$demo_before_status" after "$demo_after_status" > "$demo_output/expected-statuses.tsv"
@@ -188,12 +201,14 @@ demo_capture_scene before "$demo_before_status" "$demo_runtime/before" 'http://1
   "DEMO_MODE=$demo_mode" 'DEMO_SCENE=before' "DEMO_STATUS_LOG=$demo_output/statuses.tsv" \
   "DEMO_PYTHON=$demo_python" "DEMO_EDITOR_DRIVER=$demo_source/editor_driver.py" \
   "DEMO_EDITOR_LAYOUT=$demo_editor_before" "DEMO_EDITOR_REPORT=$demo_output/before-editor-input.json" \
+  "DEMO_DETAILS_PRESENTATION=$demo_details_presentation" \
   "DEMO_COLUMNS=$demo_columns" "DEMO_ROWS=$demo_rows" "DEMO_THEME=$demo_theme" "${demo_theme_environment[@]}"
 demo_capture_scene after "$demo_after_status" "$demo_runtime/after" 'http://127.0.0.1:1' 'AFTER' \
   "DEMO_MODE=$demo_mode" 'DEMO_SCENE=after' "DEMO_STATUS_LOG=$demo_output/statuses.tsv" \
   "DEMO_PYTHON=$demo_python" "DEMO_EDITOR_DRIVER=$demo_source/editor_driver.py" \
   'DEMO_EDITOR_LAYOUT=options' "DEMO_EDITOR_REPORT=$demo_output/editor-input.json" "DEMO_COLUMNS=$demo_columns" "DEMO_ROWS=$demo_rows" \
   "DEMO_EDITOR_LINKED=$demo_editor_linked" "DEMO_EDITOR_PRESENTATION=$demo_editor_presentation" \
+  "DEMO_DETAILS_PRESENTATION=$demo_details_presentation" \
   "DEMO_THEME=$demo_theme" "${demo_theme_environment[@]}"
 "$demo_python" "$demo_source/validate.py" "$demo_output" "$demo_mode" > "$demo_output/validation.txt"
 if [ "$demo_interactive" = 1 ]; then
@@ -211,6 +226,9 @@ if [ "$demo_interactive" = 1 ]; then
     done < "$demo_snapshots"
     demo_states=(text ids bytes results details encoding controls)
     if [ "$demo_mode" = details ]; then demo_states=(source cursor up-navigation ordinary partial overflow-start overflow-end overflow-home recovery); fi
+    if [ "$demo_mode" = details ] && [ "$demo_details_presentation" = continuous ]; then
+      demo_states=(source cursor trailing-space up-navigation ordinary partial overflow-start overflow-end overflow-home recovery)
+    fi
     for demo_state in "${demo_states[@]}"; do
       test -s "$demo_output/$demo_scene-$demo_state.png"
     done
@@ -226,6 +244,7 @@ if [ "$demo_interactive" = 1 ]; then
     fi
     demo_cover=text
     if [ "$demo_mode" = details ]; then demo_cover=ordinary; fi
+    if [ "$demo_mode" = details ] && [ "$demo_details_presentation" = continuous ]; then demo_cover=cursor; fi
     cp "$demo_output/$demo_scene-$demo_cover.png" "$demo_output/$demo_scene.png"
   done
 fi

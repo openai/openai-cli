@@ -31,15 +31,19 @@ The editor supports up to 1 MiB of UTF-8 input.
 Enter inserts a newline while editing text.
 Down opens options from any column on the last line.
 On earlier lines, Down moves the text cursor. Up moves to the previous text line.
-The token marked with a dot follows the text cursor without recalculating tokens.
+The highlighted token follows the text cursor without recalculating tokens.
+Its stronger fill and underline make space-only tokens visible too.
 The cursor highlights the character at its position without inserting a gap between letters.
-At a token boundary, the marker selects the token on the right. At the end, it selects the last token.
+At a token boundary, the highlight selects the token on the right. At the end, it selects the last token.
 Tokens can split a Unicode character; cursor movement still follows complete graphemes.
 Tab and Shift+Tab cycle through text, options, and tokens.
 Chooser focus uses the image picker's bold highlight. A checkmark identifies the applied choice.
 The main screen shows model families instead of encoding identifiers.
 It shows the token count and, for multiple tokens, the selected position.
 Colored token backgrounds reveal boundaries and stay consistent across Text, Token IDs, and Bytes.
+Text joins printable pieces without decorative brackets, quotes, or extra gaps.
+Literal punctuation remains unchanged. Control and nonprinting fragments retain visible escapes; partial UTF-8 uses hexadecimal bytes.
+An arrow beside the token position identifies keyboard focus in the results.
 The Bytes view adds the input byte count; full hexadecimal details remain available through Enter.
 Details quotes text to make leading spaces and escaped characters visible.
 Scrolling controls appear when the complete details exceed the visible panel.
@@ -59,7 +63,7 @@ The draft remains available until you exit; the CLI never saves it.
 The editor requires terminal input and output, automatic format, and at least 40 columns by 12 rows.
 Pipes, CI, `TERM=dumb`, and explicit text format receive command guidance without consuming stdin.
 `NO_COLOR` retains keyboard controls and visible focus markers.
-It retains the monochrome text cursor while suppressing token colors.
+It retains the monochrome cursor and selected-token styling while suppressing token colors.
 Use `count` or `inspect` for JSON output and scripts.
 
 ## Count and inspect tokens

@@ -34,6 +34,8 @@ COMMANDS = {
 }
 DETAILS_INPUTS = {"source": "a!b?c.", "ordinary": "how", "partial": " 👋", "overflow": " " * 128}
 DETAILS_STAGES = ["source", "cursor", "up-navigation", "ordinary", "partial", "overflow-start", "overflow-end", "overflow-home", "recovery"]
+CONTINUOUS_INPUTS = dict(DETAILS_INPUTS, source=" hello tokenization  ")
+CONTINUOUS_STAGES = DETAILS_STAGES[:2] + ["trailing-space"] + DETAILS_STAGES[2:]
 CONFIG_URL = "https://learn.chatgpt.com/docs/config-file/config-basic"
 
 
@@ -225,17 +227,126 @@ def details_state(plain, state, style, columns, raw="", theme="no-color"):
     return frame["start"] == 1 and frame["end"] == frame["total"]
 
 
+def inline_rows(raw, columns):
+    # The painter writes CHA + one wrap-cell space, then one next-row space + CR.
+    # Remove only that explicit transport suffix, never the source's whitespace.
+    boundary = f"\x1b[{columns}G "
+    return raw.replace(boundary + " \r", "\r").replace(boundary + "\r", "\r").splitlines()
+
+
+def source_at_cursor(raw, text, cursor, columns):
+    ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+    expected = "  › Text " + text + (" " if cursor == len(text) else "")
+    caret = "\x1b[7m" + (text[cursor:cursor + 1] or " ") + "\x1b[27m"
+    return any(ansi.sub("", line) == expected and caret in line and
+               ansi.sub("", line.split(caret, 1)[0]) == "  › Text " + text[:cursor]
+               for line in inline_rows(raw, columns))
+
+
+def continuous_state(plain, state, presentation, columns, raw, theme):
+    """Version 6 retains exact source whitespace and complete selection spans."""
+    if state not in ("source", "cursor", "trailing-space", "results", "up-navigation", "recovery"):
+        return details_state(plain, state, "refined", columns, raw, theme)
+    ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+    raw_lines = inline_rows(raw, columns)
+    lines = [ansi.sub("", line) for line in raw_lines]
+    stripped = [line.strip() for line in lines]
+    recovery = state == "recovery"
+    text = "how" if recovery else CONTINUOUS_INPUTS["source"]
+    fragments = ["how"] if recovery else [" hello", " token", "ization", "  "]
+    selected = 0 if recovery else 2 if state in ("cursor", "results", "up-navigation") else 3
+    count = "1 token" if recovery else "4 tokens"
+    if count not in stripped or "Updating" in plain or "Count unavailable" in plain:
+        return False
+    model = "Model  GPT-5.x & o1/o3  Default"
+    if not any(line.removeprefix("› ") in (model, model + "  ›") for line in stripped):
+        return False
+    editing = state not in ("results", "up-navigation")
+    footer = "Ctrl+C exit · ↓ options · Tab switch"
+    if state == "results":
+        footer = "Ctrl+C exit · ←→ token · Enter details · ↑ settings · Tab switch" if columns == 80 else "Ctrl+C exit · ←→ · Enter details"
+    elif state == "up-navigation":
+        footer = "Ctrl+C exit · ↑↓ move · Enter select" + (" · Tab switch" if columns == 80 else "")
+        if not any(line.startswith("› Model  ") for line in stripped):
+            return False
+    if stripped.count(footer) != 1:
+        return False
+    cursor = len(text) if state in ("source", "recovery") else 13 if state == "cursor" else 20
+    source = "  " + ("› Text " if editing else "  Text ") + text
+    if editing and cursor == len(text):
+        source += " "  # The EOF caret occupies its own display cell.
+    if lines.count(source) != 1:
+        return False
+    if editing and not source_at_cursor(raw, text, cursor, columns):
+        return False
+    caption = f"Token {selected + 1} of {len(fragments)}"
+    if state == "results" and presentation == "continuous":
+        caption = "› " + caption
+    if recovery:
+        start = next(i for i, line in enumerate(stripped) if line.removeprefix("› ") in (model, model + "  ›")) + 1
+    else:
+        if stripped.count(caption) != 1:
+            return False
+        start = stripped.index(caption) + 1
+    end = stripped.index(footer)
+    result_raw = "\n".join(raw_lines[start:end])
+    result_plain = "\n".join(lines[start:end])
+    if presentation == "wrapped":
+        first = 1 if columns == 40 and not recovery else 0
+        expected = [("·" if editing and i == selected else "›" if state == "results" and i == selected else " ", value)
+                    for i, value in enumerate(fragments) if i >= first]
+        pattern = r'([ ·›])\["([^"\n]*)"\]'
+        remainder = re.sub(pattern, "", result_plain).strip()
+        if re.findall(pattern, result_plain) != expected or remainder != ("…" if first else ""):
+            return False
+    else:
+        if [line for line in result_plain.splitlines() if line.strip()] != ["    " + text]:
+            return False
+        result_raw = next(line for line in result_raw.splitlines() if ansi.sub("", line).strip())
+        if editing or state == "results":
+            fragment = fragments[selected]
+            position = 4 + sum(map(len, fragments[:selected]))
+            if theme == "no-color":
+                cue = "\x1b[4;7m" + fragment + "\x1b[24;27m"
+                if cue not in result_raw or len(ansi.sub("", result_raw.split(cue, 1)[0])) != position:
+                    return False
+            else:
+                colors = "38;2;16;19;24;48;2;138;168;255" if theme == "dark" else "38;2;255;255;255;48;2;49;89;188"
+                cue = "\x1b[1;4m" + fragment + "\x1b[22;24m"
+                if result_raw.count(cue) != 1:
+                    return False
+                prefix = result_raw.split(cue, 1)[0]
+                if not prefix.endswith("\x1b[" + colors + "m") or len(ansi.sub("", prefix)) != position:
+                    return False
+        if theme != "no-color" and not recovery:
+            backgrounds = set(re.findall(r"(?:^|;)48;2;(\d+;\d+;\d+)(?:;|$)", ";".join(re.findall(r"\x1b\[([0-9;]+)m", result_raw))))
+            if len(backgrounds) != 4:
+                return False
+    if theme == "no-color":
+        return all(code in ("", "0", "7", "27", "4;7", "24;27") for code in re.findall(r"\x1b\[([0-9;:]*)m", raw))
+    return True
+
+
 def validate_details(directory, scene):
     report_name = "before-editor-input.json" if scene == "before" else "editor-input.json"
     report = json.loads((directory / report_name).read_text())
-    style = "legacy" if scene == "before" else "refined"
-    check(report.get("capture_version") == 5 and report.get("details_style") == style,
+    presentation_path = directory / "details-presentation.txt"
+    presentation = presentation_path.read_text().strip() if presentation_path.exists() else "historical"
+    check(presentation in ("historical", "continuous"), "details: unknown requested presentation")
+    continuous = presentation == "continuous"
+    style = "legacy" if scene == "before" and not continuous else "refined"
+    tokens = "wrapped" if scene == "before" else "continuous"
+    inputs = CONTINUOUS_INPUTS if continuous else DETAILS_INPUTS
+    stages = CONTINUOUS_STAGES if continuous else DETAILS_STAGES
+    check(report.get("capture_version") == (6 if continuous else 5) and report.get("details_style") == style,
           "details: wrong capture version or presentation")
-    check(report.get("inputs") == DETAILS_INPUTS and report.get("exit_status") == 130,
+    if continuous:
+        check(report.get("token_presentation") == tokens, "details: wrong token presentation")
+    check(report.get("inputs") == inputs and report.get("exit_status") == 130,
           "details: fixtures or exit status changed")
     check(report.get("columns") in (40, 80) and report.get("rows") == 12, "details: dimensions changed")
     check(report.get("theme") in ("dark", "light", "no-color"), "details: unknown color policy")
-    check([event["state"] for event in report["states"]] == DETAILS_STAGES, "details: incomplete driver states")
+    check([event["state"] for event in report["states"]] == stages, "details: incomplete driver states")
     events = [json.loads(line) for line in (directory / f"{scene}.cast").read_text().splitlines()]
     check(events[0]["width"] == report["columns"] and events[0]["height"] == 12, "details: cast dimensions changed")
     ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
@@ -250,10 +361,12 @@ def validate_details(directory, scene):
         plain = ansi.sub("", frame)
         if overflow := details_frame(plain, "overflow", style, report["columns"]):
             covered.update(range(overflow["start"], overflow["end"] + 1))
-        if len(snapshots) == len(DETAILS_STAGES):
+        if len(snapshots) == len(stages):
             continue
-        state = DETAILS_STAGES[len(snapshots)]
-        if details_state(plain, state, style, report["columns"], frame, report.get("theme", "no-color")):
+        state = stages[len(snapshots)]
+        matched = (continuous_state(plain, state, tokens, report["columns"], frame, report["theme"]) if continuous else
+                   details_state(plain, state, style, report["columns"], frame, report["theme"]))
+        if matched:
             if state == "overflow-end":
                 total = len(details_expected_rows("overflow", style, report["columns"])[1])
                 check(covered == set(range(1, total + 1)), "details: overflow omitted exact data rows")
@@ -261,7 +374,7 @@ def validate_details(directory, scene):
             check(not snapshots or timestamp - snapshots[-1][1] > .5, "details: stages were not held separately")
             snapshots.append((state, timestamp))
             output = ""
-    check(len(snapshots) == len(DETAILS_STAGES), "details: omitted an exact detail or recovery state")
+    check(len(snapshots) == len(stages), "details: omitted an exact detail or recovery state")
     check(snapshots[-1][1] < float(events[-1][0]), "details: snapshot exceeds the recording")
     name = "before-editor-snapshots.tsv" if scene == "before" else "editor-snapshots.tsv"
     (directory / name).write_text("".join(f"{state}\t{stamp:.6f}\n" for state, stamp in snapshots))

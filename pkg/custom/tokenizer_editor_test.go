@@ -265,8 +265,8 @@ func TestTokenizerEditorPageKeysMoveByVisibleTokens(t *testing.T) {
 	for _, size := range [][2]int{{80, 24}, {40, 12}} {
 		m := testTokenizerEditor()
 		m.width, m.height, m.focus = size[0], size[1], tokenizerFocusResults
-		m.insert(strings.Repeat("a", 100))
-		tokens := make([]tokenizerPreviewToken, 100)
+		m.insert(strings.Repeat("a", 256))
+		tokens := make([]tokenizerPreviewToken, 256)
 		for i := range tokens {
 			tokens[i] = tokenizerPreviewToken{ID: uint32(i), EndByte: uint32(i + 1)}
 		}
@@ -275,6 +275,7 @@ func TestTokenizerEditorPageKeysMoveByVisibleTokens(t *testing.T) {
 			m.tab, m.selected = tab, 0
 			_, visible := m.resultWindow(m.styles(), m.viewWidth())
 			require.Greater(t, visible, m.resultRows())
+			require.Less(t, visible, len(tokens), "the fixture must exceed one visible page")
 			tokenizerEditorKey(m, tea.KeyPgDown)
 			require.Equal(t, visible, m.selected)
 			tokenizerEditorKey(m, tea.KeyEnd)

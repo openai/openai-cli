@@ -49,6 +49,9 @@ def drive():
     theme = os.environ["DEMO_THEME"]
     report_path = os.environ["DEMO_EDITOR_REPORT"]
     details = os.environ.get("DEMO_MODE") == "details"
+    details_presentation = os.environ.get("DEMO_DETAILS_PRESENTATION", "historical")
+    if details_presentation not in ("historical", "continuous") or details_presentation == "continuous" and not details:
+        raise ValueError("continuous presentation requires details mode")
     if details and (width not in (40, 80) or height != 12 or os.environ.get("DEMO_SCENE") not in ("before", "after")):
         raise ValueError("details recording requires before/after at 40 or 80 columns and 12 rows")
     layout = os.environ.get("DEMO_EDITOR_LAYOUT", "options")
@@ -193,9 +196,14 @@ def drive():
         spec = importlib.util.spec_from_file_location("tokenizer_demo_validation", path)
         checks = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(checks)
-        style = "legacy" if os.environ["DEMO_SCENE"] == "before" else "refined"
+        continuous = details_presentation == "continuous"
+        style = "legacy" if os.environ["DEMO_SCENE"] == "before" and not continuous else "refined"
+        tokens = ("wrapped" if os.environ["DEMO_SCENE"] == "before" else "continuous") if continuous else None
+        inputs = checks.CONTINUOUS_INPUTS if continuous else checks.DETAILS_INPUTS
+        current_input = ""
 
         def replace_input(kind, modal=True):
+            nonlocal current_input
             if kind != "source":
                 if modal:
                     send(b"\x1b")
@@ -205,24 +213,37 @@ def drive():
                 # A standalone Escape can combine with a following CSI key.
                 # Observe Text focus before End, then observe EOF before clear.
                 send(b"\x1b[F", clear=False)
-                wait_for("", lambda text, raw: "\x1b[7m \x1b[27m" in raw if style == "refined" else
-                         any(line.strip().startswith("› Text ") and line.strip().endswith("▏") for line in text.splitlines()))
-            send(b"\x15\x1b[200~" + checks.DETAILS_INPUTS[kind].encode() + b"\x1b[201~")
+                if continuous and current_input == inputs["source"]:
+                    wait_for("", lambda text, raw: checks.source_at_cursor(raw, current_input, len(current_input), width))
+                else:
+                    wait_for("", lambda text, raw: "\x1b[7m \x1b[27m" in raw if style == "refined" else
+                             any(line.strip().startswith("› Text ") and line.strip().endswith("▏") for line in text.splitlines()))
+            send(b"\x15\x1b[200~" + inputs[kind].encode() + b"\x1b[201~")
             pause(.2)
-            count = "6 tokens" if kind == "source" else "2 tokens" if kind == "partial" else "1 token"
+            count = ("4 tokens" if continuous else "6 tokens") if kind == "source" else "2 tokens" if kind == "partial" else "1 token"
             wait_for(count, lambda text, raw: count in [line.strip() for line in text.splitlines()] and "Updating" not in text)
+            current_input = inputs[kind]
 
         def wait_state(state):
+            if continuous:
+                return wait_for("", lambda text, raw: checks.continuous_state(text, state, tokens, width, raw, theme))
             return wait_for("", lambda text, raw: checks.details_state(text, state, style, width, raw, theme))
 
         replace_input("source", modal=False)
         wait_state("source")
         mark("source")
-        send(b"\x1b[D")
+        send(b"\x1b[H" + b"\x1b[C" * 13 if continuous else b"\x1b[D")
         wait_state("cursor")
         mark("cursor")
+        if continuous:
+            send(b"\x1b[F\x1b[D")
+            wait_state("trailing-space")
+            mark("trailing-space")
         send(b"\t\t\x1b[H\x1b[C\x1b[C")
-        wait_for("Token 3 of 6", lambda text, raw: "Token 3 of 6" in [line.strip() for line in text.splitlines()] and '›["b"]' in text)
+        if continuous:
+            wait_for("", lambda text, raw: checks.continuous_state(text, "results", tokens, width, raw, theme))
+        else:
+            wait_for("Token 3 of 6", lambda text, raw: "Token 3 of 6" in [line.strip() for line in text.splitlines()] and '›["b"]' in text)
         send(b"\x1b[A")
         wait_state("up-navigation")
         mark("up-navigation")
@@ -254,7 +275,10 @@ def drive():
         replace_input("ordinary")
         wait_state("recovery")
         mark("recovery")
-        return finish({"capture_version": 5, "details_style": style, "inputs": checks.DETAILS_INPUTS})
+        result = {"capture_version": 6 if continuous else 5, "details_style": style, "inputs": inputs}
+        if continuous:
+            result["token_presentation"] = tokens
+        return finish(result)
 
     try:
         wait_for("Ctrl+C exit")

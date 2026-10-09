@@ -27,6 +27,7 @@ func (m *tokenizerEditor) resultRows() int {
 
 type tokenizerEditorStyles struct {
 	title, muted, accent, selected, focused, border, input lipgloss.Style
+	tokenSelected                                          lipgloss.Style
 	tokens                                                 [6]lipgloss.Style
 }
 
@@ -51,6 +52,11 @@ func (m *tokenizerEditor) styles() tokenizerEditorStyles {
 	s.accent = s.accent.Foreground(lipgloss.Color(focus)).Bold(true)
 	s.selected = s.selected.Foreground(lipgloss.Color(text)).Background(lipgloss.Color(fill))
 	s.focused = s.selected.Bold(true)
+	selectedText := "#FFFFFF"
+	if m.dark {
+		selectedText = "#101318"
+	}
+	s.tokenSelected = lipgloss.NewStyle().Foreground(lipgloss.Color(selectedText)).Background(lipgloss.Color(focus))
 	s.border = s.border.Foreground(lipgloss.Color(border))
 	if m.focus == tokenizerFocusText {
 		s.border = s.border.Foreground(lipgloss.Color(focus))
@@ -172,14 +178,10 @@ func (m *tokenizerEditor) View() tea.View {
 			position += " · partial UTF-8"
 		}
 	}
-	if m.focus == tokenizerFocusResults && len(m.tokens) == 0 {
+	if m.focus == tokenizerFocusResults {
 		lines = append(lines, s.accent.Render("› "+position))
 	} else if len(m.tokens) != 1 {
-		caption := s.muted
-		if m.focus == tokenizerFocusResults {
-			caption = s.accent
-		}
-		lines = append(lines, "  "+caption.Render(position))
+		lines = append(lines, "  "+s.muted.Render(position))
 	}
 	lines = append(lines, m.resultLines(s, width)...)
 	if m.note != "" {
@@ -448,22 +450,48 @@ func (m *tokenizerEditor) fragment(index int) (string, int, int) {
 
 func tokenizerFragmentLabel(fragment string, width int) string {
 	if !utf8.ValidString(fragment) {
-		bytes := []byte(fragment[:min(len(fragment), max(1, (width-2)/2))])
+		available := width - 2
+		if len(fragment)*2 > available {
+			available-- // Keep complete byte pairs before a truncation marker.
+		}
+		bytes := []byte(fragment[:min(len(fragment), max(1, available/2))])
 		label := "0x" + hex.EncodeToString(bytes)
 		if len(bytes) < len(fragment) {
 			label += "…"
 		}
-		return tokenizerClip(label, width)
+		return tokenizerSegmentClip(label, width)
 	}
 	prefix := fragment[:min(len(fragment), max(1, width)*4)]
 	for !utf8.ValidString(prefix) {
 		prefix = prefix[:len(prefix)-1]
 	}
-	label := strconv.QuoteToGraphic(prefix)
+	label := tokenizerSourceControls.Replace(readable.Text(prefix))
+	if tokenizerSourceWidth(label) == 0 {
+		quoted := strconv.QuoteToASCII(prefix)
+		label = quoted[1 : len(quoted)-1]
+	}
 	if len(prefix) != len(fragment) {
 		label += "…"
 	}
-	return tokenizerClip(label, width)
+	return tokenizerSegmentClip(label, width)
+}
+
+func tokenizerSegmentClip(label string, width int) string {
+	if tokenizerSourceWidth(label) <= width {
+		return label
+	}
+	var out strings.Builder
+	used := 0
+	for len(label) > 0 {
+		sequence, cells, read := imagePickerSequence(label)
+		if used+cells > width-1 {
+			break
+		}
+		out.WriteString(sequence)
+		used += cells
+		label = label[read:]
+	}
+	return out.String() + "…"
 }
 
 func (m *tokenizerEditor) resultLines(s tokenizerEditorStyles, width int) []string {
@@ -487,42 +515,29 @@ func (m *tokenizerEditor) resultWindow(s tokenizerEditorStyles, width int) ([]st
 		return lines, 0
 	}
 	start := m.resultStart(width)
-	var lines []string
-	line, used := " ", 1
+	lines := make([]string, rows)
+	lines[0] = "  "
 	if start > 0 {
-		line, used = " … ", 3
+		lines[0] = "… "
 	}
-	for i := start; i < len(m.tokens); i++ {
-		chip := m.tokenChip(i, width)
-		cells := ansi.StringWidth(chip)
-		gap := 0
-		if used > 1 {
-			gap = 1
+	end := m.walkResultSegments(start, width, func(index, row, gap int, label string) {
+		if lines[row] == "" {
+			lines[row] = "  "
 		}
-		if used > 1 && used+gap+cells > width {
-			lines = append(lines, line)
-			if len(lines) == rows {
-				return lines, i - start
+		active := m.focus == tokenizerFocusText || m.focus == tokenizerFocusResults
+		if active && index == m.selected && !m.updating && !m.failed {
+			if m.color {
+				// Keep the whole grapheme span together, including whitespace.
+				label = s.tokenSelected.Render("\x1b[1;4m" + label + "\x1b[22;24m")
+			} else {
+				label = "\x1b[4;7m" + label + "\x1b[24;27m"
 			}
-			line, used, gap = " ", 1, 0
-		}
-		if m.focus == tokenizerFocusResults && i == m.selected {
-			chip = s.accent.Render("›") + s.focused.Render(strings.TrimPrefix(chip, "›"))
 		} else {
-			style := s.tokens[i%len(s.tokens)]
-			if m.color && m.focus == tokenizerFocusText && i == m.selected && !m.updating && !m.failed {
-				style = style.Bold(true)
-			}
-			chip = style.Render(chip)
+			label = s.tokens[index%len(s.tokens)].Render(label)
 		}
-		line += strings.Repeat(" ", gap) + chip
-		used += gap + cells
-	}
-	lines = append(lines, line)
-	for len(lines) < rows {
-		lines = append(lines, "")
-	}
-	return lines, len(m.tokens) - start
+		lines[row] += strings.Repeat(" ", gap) + label
+	})
+	return lines, end - start
 }
 
 func (m *tokenizerEditor) keepSelectionVisible() {
@@ -553,48 +568,48 @@ func (m *tokenizerEditor) resultStart(width int) int {
 }
 
 func (m *tokenizerEditor) resultEnd(start, width int) int {
-	row, used := 1, 1
-	if start > 0 {
-		used = 3 // The leading ellipsis indicates earlier tokens.
-	}
+	return m.walkResultSegments(start, width, nil)
+}
+
+// Painting and paging share a fixed gutter and the same conservative widths.
+func (m *tokenizerEditor) walkResultSegments(start, width int, visit func(index, row, gap int, label string)) int {
+	row, used := 0, 2
 	for index := start; index < len(m.tokens); index++ {
-		cells := ansi.StringWidth(m.tokenChip(index, width))
+		label := m.tokenSegment(index, width)
+		cells := tokenizerSourceWidth(label)
 		gap := 0
-		if used > 1 {
-			gap = 1
+		if used > 2 {
+			gap = m.tab // Text joins directly; IDs use one space, Bytes uses two.
 		}
-		if used > 1 && used+gap+cells > width {
+		if used > 2 && used+gap+cells > width {
 			row++
-			used, gap = 1, 0
+			used, gap = 2, 0
 		}
-		if row > m.resultRows() {
+		if row >= m.resultRows() {
 			return index
+		}
+		if visit != nil {
+			visit(index, row, gap, label)
 		}
 		used += gap + cells
 	}
 	return len(m.tokens)
 }
 
-func (m *tokenizerEditor) tokenChip(index, width int) string {
+func (m *tokenizerEditor) tokenSegment(index, width int) string {
+	if m.tab == 1 {
+		return strconv.FormatUint(uint64(m.tokens[index].ID), 10)
+	}
 	fragment, _, _ := m.fragment(index)
-	label := tokenizerFragmentLabel(fragment, min(16, width-5))
-	switch m.tab {
-	case 1:
-		label = strconv.FormatUint(uint64(m.tokens[index].ID), 10)
-	case 2:
+	if m.tab == 2 {
 		size := min(len(fragment), 5)
-		label = fmt.Sprintf("% x", []byte(fragment[:size]))
+		label := fmt.Sprintf("% x", []byte(fragment[:size]))
 		if size < len(fragment) {
 			label += "…"
 		}
+		return label
 	}
-	marker := " "
-	if m.focus == tokenizerFocusResults && index == m.selected {
-		marker = "›"
-	} else if m.focus == tokenizerFocusText && index == m.selected && !m.updating && !m.failed {
-		marker = "·"
-	}
-	return marker + "[" + label + "]"
+	return tokenizerFragmentLabel(fragment, max(1, width-2))
 }
 
 func (m *tokenizerEditor) previousPageSize() int {
@@ -617,7 +632,7 @@ func tokenizerClip(text string, width int) string {
 var tokenizerEditorHelp = []string{
 	"Text: type or paste exact UTF-8 text.",
 	"Enter inserts a newline. Arrows move the cursor.",
-	"The marked token follows the text cursor.",
+	"The highlighted token follows the text cursor.",
 	"Home/End move to the line boundaries.",
 	"Backspace/Delete remove a complete grapheme.",
 	"Ctrl+U removes all text before the cursor.",

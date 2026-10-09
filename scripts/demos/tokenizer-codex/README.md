@@ -256,6 +256,32 @@ The no-color scene permits monochrome caret inversion but rejects color styling.
 The ordinary details screenshot becomes each scene's main image.
 Historical editor capture versions 1 through 4 remain unchanged.
 
+Set `DEMO_DETAILS_PRESENTATION=continuous` to compare `219586b` with the continuous token rendering refinement.
+Build both binaries with the same Go version.
+This option keeps the existing Details scene and records capture version 6.
+Without this option, the version 5 recipe remains unchanged.
+
+```sh
+DEMO_DETAILS_PRESENTATION=continuous DEMO_THEME=dark \
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh details \
+  /absolute/path/to/openai-219586b /absolute/path/to/candidate \
+  "$BEFORE_SHA" "$AFTER_SHA" \
+  /absolute/path/outside/repository/continuous-text-dark-80
+```
+
+Both scenes use ` hello tokenization  `, including its leading space and two trailing spaces.
+Its four tokens are ` hello`, ` token`, `ization`, and two spaces.
+Their IDs are 40617, 6602, 2860, and 256.
+The middle cursor selects `ization`; the trailing-space cursor selects both spaces.
+The After scene requires continuous text and the complete selected segment's highlight.
+The no-color scene requires underline and inverse styling for that segment.
+Right selects the third token in Results; Up returns directly to Model settings.
+The existing ordinary, partial UTF-8, overflow, Home, recovery, and Ctrl+C checks remain.
+The additional `trailing-space` screenshot preserves the whitespace selection.
+The middle-cursor screenshot becomes this comparison's main image.
+`details-presentation.txt` records the requested comparison independently of capture metadata.
+
 For the Codex presentation comparison, use `guide` with the historical published-feature baseline and `DEMO_BEFORE_STATUS=0`.
 The original main baseline still uses the guide's default status 3.
 The guide scene prints instructions only.
