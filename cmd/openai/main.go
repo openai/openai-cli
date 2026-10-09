@@ -74,7 +74,8 @@ func runWithRequestConfiguration(ctx context.Context, app *cli.Command, args []s
 		if completing || command.Args().First() == "@completion" || command.Args().First() == "help" {
 			return ctx, nil
 		}
-		if explicitURL := command.Root().String("base-url"); explicitURL != "" {
+		localUtility := custom.IsLocalUtilityCommand(command)
+		if explicitURL := command.Root().String("base-url"); !localUtility && explicitURL != "" {
 			// The SDK parses environment defaults before applying explicit options.
 			if _, parseErr := url.Parse(baseURL); baseURLSet && parseErr != nil {
 				if err := os.Setenv("OPENAI_BASE_URL", explicitURL); err != nil {
@@ -82,7 +83,7 @@ func runWithRequestConfiguration(ctx context.Context, app *cli.Command, args []s
 				}
 				restoreBaseURL = true
 			}
-		} else if baseURLSet {
+		} else if !localUtility && baseURLSet {
 			if err := custom.ValidateBaseURL(baseURL, "OPENAI_BASE_URL"); err != nil {
 				return ctx, err
 			}

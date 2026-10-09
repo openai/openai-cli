@@ -1,0 +1,348 @@
+# Local tokenizer and Codex demos
+
+This recorder compares actual CLI binaries through the shared `capture_and_render.sh` lifecycle.
+It starts no API fixture, opens no browser, and executes no installation instructions.
+Its scenes remove the shared helper's synthetic API key before invoking either binary.
+Each process receives a rejecting loopback base URL and no personal environment or shell initialization.
+
+## Scenes
+
+| Mode | Command | Before status | After status |
+| --- | --- | --- | --- |
+| `count` | `openai tokenizer count --text "Hello, world!"` | 1 | 0 |
+| `inspect` | `openai tokenizer inspect --text "Hi!"` | 1 | 0 |
+| `codex` | `openai codex --destination config` | 1 | 0 |
+| `guide` | `openai codex` | 3 | 0 |
+| `editor` | `openai tokenizer` | 0 for help; 130 for legacy or Options editors | 130 |
+| `details` | `openai tokenizer` | 130 | 130 |
+| `long-text` | `openai tokenizer` | 130 | 130 |
+
+The baseline is main `da762ffff4f35732f4720ac4db531d8d764f2cbe`.
+Direct baseline execution verified these statuses before recording.
+The first three baseline commands report an unrecognized option.
+The guide baseline reports an unknown help topic.
+Recordings preserve those actual errors; they do not substitute explanatory output.
+The editor scene defaults to the historical help baseline at `6e761e71051aa260e01d189437a77dd5e9f72365`.
+That baseline prints tokenizer help and exits successfully.
+Use `DEMO_EDITOR_BEFORE=legacy` for the previous interactive editor at `30a5e9186f7b0d8129401622cd4507bf90b37d55`.
+This comparison drives both actual editors and preserves their Ctrl+C status 130.
+Use `DEMO_EDITOR_BEFORE=options` for visual refinements against `9fb91c176c9f70d09cf806648c2f17b1654a292a`.
+Both editors then use the same Options controls.
+The retained comparison binary embeds `e990b0bf4355ad0a934d0c4ffc0d5fe53628ad0d`; its runtime matches published `9fb91c1`.
+Record the actual binary's build commit in capture metadata.
+The candidate uses the current Options layout in every comparison.
+
+The default `o200k_base` count example contains 13 input bytes and four tokens.
+The inspect example contains three input bytes and two tokens.
+Its token bytes are `4869` and `21`.
+Public regression tests verify exact token IDs and boundaries separately.
+
+## Record
+
+Coordinate the shared native PTY allocation before running this script.
+Build and verify both binaries independently.
+Supply full 40-character comparison commits and an empty output directory outside the repository.
+
+```sh
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh count \
+  /absolute/path/to/openai-before /absolute/path/to/openai-after \
+  da762ffff4f35732f4720ac4db531d8d764f2cbe "$AFTER_SHA" \
+  /absolute/path/outside/repository/count-80
+```
+
+Repeat with `inspect`, `codex`, and optionally `guide` in separate output directories.
+Set `DEMO_COLUMNS=40` for a narrow recording.
+The default width is 80 columns.
+The recorder reserves additional rows for the guide and narrow recordings.
+
+```sh
+DEMO_COLUMNS=40 \
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh inspect \
+  /absolute/path/to/openai-before /absolute/path/to/openai-after \
+  da762ffff4f35732f4720ac4db531d8d764f2cbe "$AFTER_SHA" \
+  /absolute/path/outside/repository/inspect-40
+```
+
+Set `DEMO_SOURCE_MANIFEST` to a source-hash manifest for an uncommitted development candidate.
+The recorder retains that manifest and available Go build information.
+It logs binary hashes, supplied commits, platform details, capture tools, and actual process statuses.
+These records do not independently prove that a binary matches a supplied commit.
+
+The shared helper requires an executable fixture argument.
+This recorder supplies the after binary in that unused position.
+It never calls `demo_start_api` or executes that argument as a server.
+The rejecting endpoint prevents accidental use of a live API endpoint.
+Separate process-trap tests establish the local commands' zero-request contract.
+
+## Validate and inspect
+
+The recorder automatically validates transcripts and exit statuses before assembling the comparison GIF.
+Run the same validation independently:
+
+```sh
+python3 scripts/demos/tokenizer-codex/validate.py /absolute/path/to/capture inspect
+```
+
+Inspect `before.png`, `after.png`, and actual `comparison.gif` frames before sharing.
+Check wrapping, clipping, timing, complete output, and correct labels at each recorded width.
+Keep media outside Git.
+Retain only these reproducible scripts and instructions in the repository.
+
+These recordings show real macOS PTY execution with replay rendering.
+They do not prove graphical terminal appearance or native Windows/Linux execution.
+No recording has occurred merely because this recipe exists.
+
+## Interactive editor and guide refinement
+
+Use the previous Options editor when reviewing focus, alignment, and spacing refinements.
+The driver uses matching controls on both sides of that comparison.
+The recorder saves both layouts, expected statuses, and actual process statuses.
+
+```sh
+DEMO_THEME=dark DEMO_EDITOR_BEFORE=options \
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh editor \
+  /absolute/path/to/previous-options-editor /absolute/path/to/candidate \
+  e990b0bf4355ad0a934d0c4ffc0d5fe53628ad0d "$AFTER_SHA" \
+  /absolute/path/outside/repository/editor-dark-80
+```
+
+The earlier controls comparison remains available with `DEMO_EDITOR_BEFORE=legacy` and the `30a5e91` full commit above.
+That mapping follows the older editor's focus and encoding controls.
+Omit `DEMO_EDITOR_BEFORE` to retain the historical help-to-editor recipe.
+For that comparison, provide the help-only binary and its `6e761e7` full commit above.
+Do not label a help-only baseline as the previous interactive experience.
+Both interactive baseline variants require status 130; the help baseline requires status zero.
+
+Repeat with `DEMO_COLUMNS=40` for the compact layout.
+Use `DEMO_THEME=light` for a light terminal.
+Use `DEMO_THEME=no-color` to set `NO_COLOR=1`.
+The editor defaults to dark; existing scenes retain their no-color default.
+Editor dimensions are 80×32 or 40×44, also accommodating the historical baseline's help output.
+
+The Bash scene uses a small Python keyboard driver inside the shared capture lifecycle.
+The driver starts the actual CLI in a terminal with matching dimensions.
+It types `Hello, ` and pastes `tokens! 👋` and `Café.` around an Enter newline.
+Both layouts therefore receive the exact same 26-byte text.
+The candidate's default Text and Token IDs views show token count without the advanced byte count.
+The driver tabs to Options and switches to Token IDs with Right.
+Enter opens the View chooser; Down and Enter apply Bytes.
+Tab moves to Results, where arrows select the partial Unicode token.
+The driver holds that focused selection before Enter opens its details.
+Escape closes details; another Escape returns to Text.
+The driver then opens the Tokenizer chooser and applies `cl100k_base`.
+It also opens the controls reference before exiting through Ctrl+C.
+The previous editor follows its existing focus and encoding controls.
+It forwards only the CLI's actual terminal output.
+It answers terminal capability queries and stops its process group on interrupted recording.
+No fabricated application frames enter the recording.
+
+The scene retains its synthetic input actions, observed states, layout, dimensions, theme, and actual exit status.
+The validator selects screenshot times from each driven editor's actual output events.
+It requires distinct visible states before generating screenshots.
+It checks the partial token's ID, byte boundaries, and complete hexadecimal bytes.
+It also checks the candidate's View and Tokenizer labels and count-only default status.
+`after.png` shows the live Text view before exit.
+`after-ids.png`, `after-bytes.png`, `after-details.png`, `after-encoding.png`, and `after-controls.png` preserve the other states.
+`after-results.png` shows the selected token with Results focus before Details.
+`after-view-choice.png` and `after-tokenizer-choice.png` show the candidate's selection menus.
+`after-exit.png` retains the final shell frame.
+Interactive comparisons create corresponding `before-*` snapshots, including `before-results.png`.
+An Options baseline also retains both chooser snapshots.
+Historical captures retain validation support for their original state sequences.
+Its `before.png` also shows the live Text view.
+The help-only comparison retains the historical help screenshot as `before.png`.
+The comparison GIF includes the complete interaction and cleanup.
+
+## Cursor-linked selection and legacy tokenizers
+
+Set `DEMO_EDITOR_LINKED=1` when the after binary supports cursor-linked selection and all four tokenizers.
+This optional mode applies only to the after editor.
+The before binary keeps its selected help, legacy, or Options workflow.
+Earlier recipes keep their original behavior when this setting is absent.
+
+```sh
+DEMO_EDITOR_LINKED=1 DEMO_EDITOR_BEFORE=options DEMO_THEME=dark \
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh editor \
+  /absolute/path/to/previous-options-editor /absolute/path/to/candidate \
+  "$BEFORE_SHA" "$AFTER_SHA" \
+  /absolute/path/outside/repository/editor-linked-dark-80
+```
+
+Use the actual build commits for both binaries.
+For example, a verified `b542a47` Options binary provides the earlier behavior without cursor-linked selection.
+The existing width and theme settings also apply to this mode.
+
+After typing the unchanged 26-byte fixture, the driver presses Home and Right within `Café.`.
+The caret reaches byte 21 and selects token 9 of 10, containing `afé`.
+The driver requires both `C▏afé.` in the editor and the dependent `·["afé"]` token marker.
+The new `after-caret.png` captures that state before the existing Token IDs stage.
+The Results stage first presses Home, then moves four tokens to the split emoji fragment.
+This preserves its exact-byte comparison when typing initially selects the final token.
+
+After the `cl100k_base` stage, the driver selects `r50k_base` and `p50k_base` in order.
+Each legacy tokenizer produces 11 tokens and 26 input bytes for this fixture.
+The recorder retains these settled states as `after-r50k.png` and `after-p50k.png`.
+The controls stage and Ctrl+C cleanup follow normally.
+
+Linked reports use capture version 3 and record the exact caret and tokenizer actions.
+`editor-linked.tsv` records the requested mode and keeps the before scene unlinked.
+Version 3 matches stage conditions within the latest inline frame.
+This prevents an earlier equal token count from validating a later tokenizer's Updating frame.
+The driver and validator still use bounded buffers and actual CLI output.
+Versions 1 and 2 retain their historical validation paths.
+All three extra PNGs must exist before the recorder can report success.
+
+## Model-family presentation
+
+Add `DEMO_EDITOR_PRESENTATION=models` to the linked editor recipe for the model-family labels.
+This setting applies only to the after scene and requires `DEMO_EDITOR_LINKED=1`.
+The before scene retains its encoding labels, including the `8990809` baseline.
+
+```sh
+DEMO_EDITOR_PRESENTATION=models DEMO_EDITOR_LINKED=1 DEMO_EDITOR_BEFORE=options DEMO_THEME=dark \
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh editor \
+  /absolute/path/to/previous-editor /absolute/path/to/candidate \
+  "$BEFORE_SHA" "$AFTER_SHA" \
+  /absolute/path/outside/repository/editor-models-dark-80
+```
+
+Historical version 4 checks the `Model` row and `Choose model` chooser.
+The four labels are `GPT-5.x & o1/o3`, `GPT-4 & GPT-3.5`, `GPT-3`, and `Codex`.
+The first label carries `Default`; the others carry `Legacy`.
+Validation requires each complete chooser row, so `GPT-3` cannot match part of `GPT-3.5`.
+Primary frames must omit raw encoding names, the F1 hint, and the Enter-newline reminder.
+The driver still uses F1 to inspect controls.
+In that historical version, exact-byte details retain their encoding metadata.
+The fixture, stage names, counts, cursor checks, and cleanup remain unchanged.
+`editor-presentation.tsv` records the requested presentation independently of the older capture settings.
+Earlier recipes and capture versions 1 through 3 retain their validation behavior.
+
+## Focused token-details comparison
+
+Use `details` to compare the `9e49817` modal with the refined token-details modal.
+This bounded scene uses the existing recorder lifecycle at 80×12 or 40×12.
+It does not require the linked-editor presentation flags.
+Use this scene for the current refinement; `editor` preserves the historical layouts from capture versions 1 through 4.
+
+```sh
+DEMO_THEME=dark \
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh details \
+  /absolute/path/to/openai-9e49817 /absolute/path/to/candidate \
+  "$BEFORE_SHA" "$AFTER_SHA" \
+  /absolute/path/outside/repository/token-details-dark-80
+```
+
+The scene first shows six token colors in `a!b?c.` at 80 columns.
+One Left key checks that the refined caret does not insert a display character.
+Up from the third token demonstrates the return to Model settings.
+The baseline retains its original caret and Up behavior.
+The scene then opens token details for `how`, followed by the first partial UTF-8 token in ` 👋`.
+It then inspects one token containing 128 spaces.
+Page Down visits every overflow row, including all hexadecimal bytes.
+Home returns to the first page.
+Escape returns to editing, where replacing the input with `how` verifies recovery.
+Both sessions must finish with Ctrl+C status 130.
+
+Version 5 validates complete field rows against retained official tiktoken 0.14.0 fixtures.
+It checks exact IDs, byte ranges, encoding, quoted text, hexadecimal bytes, and conditional scroll controls.
+The before modal keeps its original title and layout; the after modal uses the refined fields.
+Screenshots include `source`, `cursor`, `up-navigation`, `ordinary`, `partial`, `overflow-start`, `overflow-end`, `overflow-home`, and `recovery`.
+The no-color scene permits monochrome caret inversion but rejects color styling.
+The ordinary details screenshot becomes each scene's main image.
+Historical editor capture versions 1 through 4 remain unchanged.
+
+Set `DEMO_DETAILS_PRESENTATION=continuous` to compare `219586b` with the continuous token rendering refinement.
+Build both binaries with the same Go version.
+This option keeps the existing Details scene and records capture version 6.
+Without this option, the version 5 recipe remains unchanged.
+
+```sh
+DEMO_DETAILS_PRESENTATION=continuous DEMO_THEME=dark \
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh details \
+  /absolute/path/to/openai-219586b /absolute/path/to/candidate \
+  "$BEFORE_SHA" "$AFTER_SHA" \
+  /absolute/path/outside/repository/continuous-text-dark-80
+```
+
+Both scenes use ` hello tokenization  `, including its leading space and two trailing spaces.
+Its four tokens are ` hello`, ` token`, `ization`, and two spaces.
+Their IDs are 40617, 6602, 2860, and 256.
+The middle cursor selects `ization`; the trailing-space cursor selects both spaces.
+The After scene requires continuous text and the complete selected segment's highlight.
+The no-color scene requires underline and inverse styling for that segment.
+Right selects the third token in Results; Up returns directly to Model settings.
+The existing ordinary, partial UTF-8, overflow, Home, recovery, and Ctrl+C checks remain.
+The additional `trailing-space` screenshot preserves the whitespace selection.
+The middle-cursor screenshot becomes this comparison's main image.
+`details-presentation.txt` records the requested comparison independently of capture metadata.
+
+For the Codex presentation comparison, use `guide` with the historical published-feature baseline and `DEMO_BEFORE_STATUS=0`.
+The original main baseline still uses the guide's default status 3.
+The guide scene prints instructions only.
+Review every selected screenshot and the GIF before publication.
+
+## Long-text navigation comparison
+
+Use `long-text` to compare `f5e0911` with the indexed long-text editor.
+Both binaries receive the same 120-line document and 8,192-byte single-line paragraph.
+Both binaries must use the same Go version.
+The recorder reuses the existing terminal, cleanup, rendering, and status checks.
+It records version 7 at 80×20 or the minimum 40×12 size.
+
+```sh
+DEMO_THEME=dark DEMO_COLUMNS=80 \
+PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/tokenizer-codex/record.sh long-text \
+  /absolute/path/to/openai-f5e0911 /absolute/path/to/candidate \
+  "$BEFORE_SHA" "$AFTER_SHA" \
+  /absolute/path/outside/repository/long-text-dark-80
+```
+
+Use `DEMO_THEME=no-color DEMO_COLUMNS=40` for the compact comparison.
+The Before scene uses its supported Home and End keys on the final logical line.
+The After scene uses Ctrl+Home, Page Down, Page Up, and Ctrl+End across the document.
+These scenes use different navigation keys; the recipe does not imply identical key behavior.
+The After source caption shows the current logical line only when the document exceeds the source viewport.
+
+Both scenes append `!`, then use Backspace to restore the exact document.
+That edit preserves the token count but changes the final token from `.` to `.!`.
+The validator requires the new source and selected fragment together, preventing stale-count success.
+Both scenes inspect the long paragraph at its end and beginning.
+The After scene also uses Ctrl+Left to reach the final word, then Ctrl+Right to return to EOF.
+These stages verify byte 8,177 and byte 8,192 with their exact selected tokens.
+The driver observes End before clearing the paragraph and returning to `how`.
+Both sessions finish with actual Ctrl+C status 130.
+
+The main screenshots show the multiline document at its end.
+Stage screenshots retain the navigation, temporary edit, restored text, long-line excerpt, and short-input recovery.
+The validator checks exact visible source rows, cursor cells, selected fragments, line positions, counts, and complete footers.
+Historical capture versions 1 through 6 retain their prior validation.
+Pending replacement and cancellation remain separate deterministic checks.
+
+
+### Model details refinement
+
+Use `DEMO_DETAILS_PRESENTATION=models` with Details mode to compare the new model subtitle and grouped fields.
+This reuses the shared capture lifecycle and records version 7.
+Before uses `1e4b466`; After uses the reviewed candidate.
+Both scenes retain continuous text, exact quoted fragments, complete hexadecimal rows, paging, Home, and recovery.
+The final chooser frame verifies all four families, badges, and complete controls.
+After also distinguishes modern GPT-4 families from original GPT-4 and Turbo.
+
+```sh
+DEMO_DETAILS_PRESENTATION=models DEMO_COLUMNS=80 DEMO_THEME=dark \
+  scripts/demos/tokenizer-codex/record.sh details \
+  /absolute/path/openai-1e4b466 /absolute/path/openai-candidate \
+  1e4b466b58b34f27c274d70033236b8d9337b51a CANDIDATE_SHA /absolute/path/details-dark-80
+```
+
+Repeat with `DEMO_COLUMNS=40 DEMO_THEME=no-color` for the compact monochrome comparison.
+Both binaries exit with status 130. Exact encoding names remain in scripting output.
+Byte count and starting offset replace the half-open range in the interactive Details panel.

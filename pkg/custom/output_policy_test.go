@@ -181,6 +181,7 @@ func TestOutputPolicyInterruptedActionSkipsVerbose(t *testing.T) {
 		{name: "deadline cause with ordinary exit", cause: context.DeadlineExceeded, code: 27},
 		{name: "joined cancellation", cause: errors.Join(errors.New("synthetic failure"), context.Canceled), code: 130},
 		{name: "deadline exit code", cause: errors.New("synthetic deadline"), code: 124},
+		{name: "hangup exit code", cause: errors.New("synthetic hangup"), code: 129},
 		{name: "interrupt exit code", cause: errors.New("synthetic interrupt"), code: 130},
 		{name: "termination exit code", cause: errors.New("synthetic termination"), code: 143},
 		{name: "parent cancellation", cause: errors.New("synthetic failure"), code: 27, cancelParent: true},

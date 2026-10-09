@@ -51,12 +51,18 @@ func TestMainDispatchOutputManpagesDeepSubgroups(t *testing.T) {
 		"audio transcribe",
 		"transcribe",
 		"files upload",
+		"tokenizer",
+		"tokenizer count",
+		"tokenizer inspect",
+		"tokenizer encodings",
+		"tokenizer licenses",
+		"codex",
 	} {
 		if !strings.Contains(string(text), "\n.SH "+path+"\n") {
 			t.Errorf("missing full-path heading for %s", path)
 		}
 	}
-	for _, hidden := range []string{"@manpages", "__complete", "admin:organization", "\n.SH admin organization", "\n.SH audio transcriptions"} {
+	for _, hidden := range []string{"@manpages", "__complete", "__preview", "__output", "admin:organization", "\n.SH admin organization", "\n.SH audio transcriptions"} {
 		if strings.Contains(string(text), hidden) {
 			t.Errorf("hidden command %s leaked into manpage", hidden)
 		}
