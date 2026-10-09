@@ -20,7 +20,7 @@ func renderListTablePage(ctx context.Context, operation string, items []gjson.Re
 	if !fits {
 		return "", false, nil
 	}
-	if len(rows) > 0 {
+	if len(rows) > 0 && outputDiagnosticsAllowed(ctx) {
 		content += ansi.Wrap(resourceSummaryHint, width, "") + "\n"
 	}
 	return content, true, nil
