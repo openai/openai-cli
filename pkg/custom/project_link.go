@@ -144,6 +144,13 @@ func projectLinkRequestOptions(command *cli.Command) []option.RequestOption {
 	if project, present := os.LookupEnv("OPENAI_PROJECT_ID"); present {
 		return []option.RequestOption{option.WithProject(project)}
 	}
+	// Explicit literal headers are applied by FlagOptions after client defaults.
+	// They also make implicit registry lookup unnecessary, including empty values.
+	if root.IsSet("header") {
+		if headers, err := requestHeaders(root); err == nil && len(headers.Values("OpenAI-Project")) != 0 {
+			return nil
+		}
+	}
 	path, err := projectLinkPath()
 	if err != nil {
 		// A process without a user configuration location has no folder defaults.

@@ -322,6 +322,8 @@ func TestMainProjectLinkMalformedRegistryFailsBeforeRequests(t *testing.T) {
 	}{
 		{nil, []string{"--project=proj_explicit"}, []string{"proj_explicit"}},
 		{nil, []string{"--project="}, []string{""}},
+		{nil, []string{"--header=OpenAI-Project: proj_header"}, []string{"proj_header"}},
+		{nil, []string{"--header=OpenAI-Project:"}, []string{""}},
 		{[]string{"OPENAI_PROJECT_ID=proj_environment"}, nil, []string{"proj_environment"}},
 		{[]string{"OPENAI_PROJECT_ID="}, nil, []string{""}},
 	} {

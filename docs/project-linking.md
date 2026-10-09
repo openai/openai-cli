@@ -91,6 +91,7 @@ This limit does not apply to API payloads.
 Malformed, duplicate, insecure, or nonregular registry files cause an error.
 The CLI preserves invalid settings instead of overwriting them.
 An explicit project flag or environment variable bypasses registry loading for API requests.
+An explicit `OpenAI-Project` custom header also bypasses registry loading.
 
 ## Output and recovery
 
