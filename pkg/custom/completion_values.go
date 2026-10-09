@@ -45,6 +45,13 @@ func configureCompletionValues(root *cli.Command) {
 			formats(tokenizer.Command(name), "auto", "text", "json")
 		}
 	}
+	if images := root.Command("images"); images != nil {
+		formats(images.Command("preview"), "auto", "text")
+		if inline := images.Command("inline"); inline != nil {
+			formats(inline.Command("on"), "auto", "text")
+			formats(inline.Command("off"), "auto", "text")
+		}
+	}
 	if files := root.Command("files"); files != nil {
 		// The upload contract uses FilePurpose, not FileObjectPurpose. Output
 		// purposes belong only in list filters, never upload suggestions.
