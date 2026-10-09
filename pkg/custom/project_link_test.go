@@ -68,6 +68,16 @@ func TestProjectLinkExplicitFlagDoesNotSaveEnvironment(t *testing.T) {
 	}
 }
 
+func TestProjectLinkSkipsFirstRunShellSetup(t *testing.T) {
+	for _, args := range [][]string{
+		{"openai", "link"}, {"openai", "link", "--project", "proj_work"},
+		{"openai", "--project=proj_work", "link"}, {"openai", "unlink"},
+		{"openai", "help", "link"}, {"openai", "unlink", "--help"},
+	} {
+		require.False(t, imagePickerFirstRunEligible(args, func(string) string { return "" }, true, true, true, "bash"))
+	}
+}
+
 type projectLinkBrokenWriter struct{ err error }
 
 func (w projectLinkBrokenWriter) Write([]byte) (int, error) { return 0, w.err }

@@ -43,7 +43,7 @@ for demo_scene in before after; do
   demo_capture_scene "$demo_scene" 0 "$demo_runtime/$demo_scene" \
     "$demo_api_url/$demo_scene/v1" "$demo_label" \
     "HOME=$demo_home" "USERPROFILE=$demo_home" "APPDATA=$demo_home" "XDG_CONFIG_HOME=$demo_home" \
-    NO_COLOR=1 FORCE_COLOR=0 GOMAXPROCS=2 PAGER=cat \
+    NO_COLOR=1 FORCE_COLOR=0 CI=1 GOMAXPROCS=2 PAGER=cat \
     "DEMO_SCENE=$demo_scene" "DEMO_PLATFORM=$demo_platform" "DEMO_WORK_ROOT=$demo_work" \
     "DEMO_STATUS_LOG=$demo_output/statuses.tsv"
 done
