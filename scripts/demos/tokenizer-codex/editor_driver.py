@@ -53,8 +53,8 @@ def drive():
     if long_text and ((width, height) not in ((80, 20), (40, 12)) or os.environ.get("DEMO_SCENE") not in ("before", "after")):
         raise ValueError("long-text recording requires before/after at 80x20 or 40x12")
     details_presentation = os.environ.get("DEMO_DETAILS_PRESENTATION", "historical")
-    if details_presentation not in ("historical", "continuous") or details_presentation == "continuous" and not details:
-        raise ValueError("continuous presentation requires details mode")
+    if details_presentation not in ("historical", "continuous", "models") or details_presentation != "historical" and not details:
+        raise ValueError("continuous or models presentation requires details mode")
     if details and (width not in (40, 80) or height != 12 or os.environ.get("DEMO_SCENE") not in ("before", "after")):
         raise ValueError("details recording requires before/after at 40 or 80 columns and 12 rows")
     layout = os.environ.get("DEMO_EDITOR_LAYOUT", "options")
@@ -199,9 +199,12 @@ def drive():
         spec = importlib.util.spec_from_file_location("tokenizer_demo_validation", path)
         checks = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(checks)
-        continuous = details_presentation == "continuous"
+        continuous = details_presentation in ("continuous", "models")
+        model_details = details_presentation == "models"
         style = "legacy" if os.environ["DEMO_SCENE"] == "before" and not continuous else "refined"
-        tokens = ("wrapped" if os.environ["DEMO_SCENE"] == "before" else "continuous") if continuous else None
+        tokens = ("wrapped" if os.environ["DEMO_SCENE"] == "before" and not model_details else "continuous") if continuous else None
+        if model_details and os.environ["DEMO_SCENE"] == "after":
+            style = "models"
         inputs = checks.CONTINUOUS_INPUTS if continuous else checks.DETAILS_INPUTS
         current_input = ""
 
@@ -219,7 +222,7 @@ def drive():
                 if continuous and current_input == inputs["source"]:
                     wait_for("", lambda text, raw: checks.source_at_cursor(raw, current_input, len(current_input), width))
                 else:
-                    wait_for("", lambda text, raw: "\x1b[7m \x1b[27m" in raw if style == "refined" else
+                    wait_for("", lambda text, raw: "\x1b[7m \x1b[27m" in raw if style != "legacy" else
                              any(line.strip().startswith("› Text ") and line.strip().endswith("▏") for line in text.splitlines()))
             send(b"\x15\x1b[200~" + inputs[kind].encode() + b"\x1b[201~")
             pause(.2)
@@ -229,7 +232,7 @@ def drive():
 
         def wait_state(state):
             if continuous:
-                return wait_for("", lambda text, raw: checks.continuous_state(text, state, tokens, width, raw, theme))
+                return wait_for("", lambda text, raw: checks.continuous_state(text, state, tokens, width, raw, theme, style))
             return wait_for("", lambda text, raw: checks.details_state(text, state, style, width, raw, theme))
 
         replace_input("source", modal=False)
@@ -278,7 +281,11 @@ def drive():
         replace_input("ordinary")
         wait_state("recovery")
         mark("recovery")
-        result = {"capture_version": 6 if continuous else 5, "details_style": style, "inputs": inputs}
+        if model_details:
+            send(b"\t\x1b[B\r")
+            wait_state("model-choice")
+            mark("model-choice")
+        result = {"capture_version": 7 if model_details else 6 if continuous else 5, "details_style": style, "inputs": inputs}
         if continuous:
             result["token_presentation"] = tokens
         return finish(result)

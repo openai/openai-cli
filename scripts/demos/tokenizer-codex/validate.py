@@ -12,14 +12,22 @@ MODEL_NAMES = {"o200k_base": "GPT-5.x & o1/o3", "cl100k_base": "GPT-4 & GPT-3.5"
                "r50k_base": "GPT-3", "p50k_base": "Codex"}
 
 
-def model_choices_complete(plain):
+def model_choices_complete(plain, modern=False, applied=None):
     rows = [line.strip().removeprefix("› ").strip() for line in plain.splitlines()]
     checked = 0
-    for encoding, label in MODEL_NAMES.items():
+    labels = dict(MODEL_NAMES, cl100k_base="GPT-4 / GPT-3.5") if modern else MODEL_NAMES
+    for encoding, label in labels.items():
         badge = "Default" if encoding == "o200k_base" else "Legacy"
         matches = [row for row in rows if re.fullmatch(re.escape(label) + r"(?: ✓)?[ \t]+" + badge, row)]
         if len(matches) != 1:
             return False
+        if applied is not None and (" ✓" in matches[0]) != (encoding == applied):
+            return False
+        if modern and encoding in ("o200k_base", "cl100k_base"):
+            description = "GPT-4o / 4.1 / 4.5 · o4-mini" if encoding == "o200k_base" else "Original GPT-4 / Turbo"
+            index = rows.index(matches[0]) + 1
+            if index >= len(rows) or rows[index] != description:
+                return False
         checked += " ✓" in matches[0]
     return checked == 1
 
@@ -157,11 +165,14 @@ def details_expected_rows(kind, style, columns):
         value = "partial UTF-8; see Hex." if kind == "partial" else json.dumps(DETAILS_INPUTS[kind])
         parts = [value[i:i + value_width] for i in range(0, len(value), value_width)]
         rows = [("Text      " if i == 0 else " " * 10) + part for i, part in enumerate(parts)]
-        rows += ["", f"Token ID  {identifier}", f"Bytes     [0, {end})", "Encoding  o200k_base"]
+        if style == "models":
+            rows += [f"Token ID  {identifier}", "", f"Bytes     {end} · offset 0"]
+        else:
+            rows += ["", f"Token ID  {identifier}", f"Bytes     [0, {end})", "Encoding  o200k_base"]
         per_row = (value_width + 1) // 3
     octets = raw_hex.split()
     for i in range(0, len(octets), per_row):
-        prefix = ("Hex       " if i == 0 else " " * 10) if style == "refined" else ""
+        prefix = ("Hex       " if i == 0 else " " * 10) if style != "legacy" else ""
         rows.append(prefix + " ".join(octets[i:i + per_row]))
     return f"Token 1 of {count}", rows
 
@@ -176,7 +187,7 @@ def details_frame(plain, kind, style, columns):
     lines = lines[lines.index(title) + 1:]
     footer = "↑↓ scroll · Esc back · Ctrl+C exit" if style == "legacy" else "Ctrl+C exit · Esc back"
     scrolling = style == "legacy" or kind == "overflow"
-    if style == "refined" and scrolling:
+    if style != "legacy" and scrolling:
         footer += " · ↑↓ scroll"
     if footer not in lines:
         return None
@@ -187,7 +198,10 @@ def details_frame(plain, kind, style, columns):
             return None
         start, end, total = map(int, counter.groups())
         body.pop()
-    if style == "refined":
+    if style == "models":
+        if not body or body.pop(0) != "GPT-5.x & o1/o3 · Default" or "o200k_base" in plain:
+            return None
+    if style != "legacy":
         if len(body) < 2 or body[0] != "" or body[-1] != "":
             return None
         body = body[1:-1]
@@ -199,6 +213,12 @@ def details_frame(plain, kind, style, columns):
 
 
 def details_state(plain, state, style, columns, raw="", theme="no-color"):
+    if state == "model-choice":
+        rows = [line.strip() for line in plain.splitlines()]
+        footer = ["Ctrl+C exit · ↑↓ move · Enter select · Esc cancel"] if columns == 80 else ["Ctrl+C exit · ↑↓ move", "Enter select · Esc cancel"]
+        if "Choose model" not in rows or not all(value in rows for value in footer):
+            return False
+        return model_choices_complete(plain, modern=style == "models", applied="o200k_base")
     if state in ("source", "cursor", "up-navigation"):
         lines = [line.strip() for line in plain.splitlines()]
         if "6 tokens" not in lines or "Model  GPT-5.x & o1/o3  Default" not in plain:
@@ -258,10 +278,10 @@ def source_at_cursor(raw, text, cursor, columns):
                for line in inline_rows(raw, columns))
 
 
-def continuous_state(plain, state, presentation, columns, raw, theme):
-    """Version 6 retains exact source whitespace and complete selection spans."""
+def continuous_state(plain, state, presentation, columns, raw, theme, details_style="refined"):
+    """Continuous views retain exact whitespace and complete selection spans."""
     if state not in ("source", "cursor", "trailing-space", "results", "up-navigation", "recovery"):
-        return details_state(plain, state, "refined", columns, raw, theme)
+        return details_state(plain, state, details_style, columns, raw, theme)
     ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
     raw_lines = inline_rows(raw, columns)
     lines = [ansi.sub("", line) for line in raw_lines]
@@ -347,13 +367,16 @@ def validate_details(directory, scene):
     report = json.loads((directory / report_name).read_text())
     presentation_path = directory / "details-presentation.txt"
     presentation = presentation_path.read_text().strip() if presentation_path.exists() else "historical"
-    check(presentation in ("historical", "continuous"), "details: unknown requested presentation")
-    continuous = presentation == "continuous"
+    check(presentation in ("historical", "continuous", "models"), "details: unknown requested presentation")
+    continuous = presentation in ("continuous", "models")
+    model_details = presentation == "models"
     style = "legacy" if scene == "before" and not continuous else "refined"
-    tokens = "wrapped" if scene == "before" else "continuous"
+    tokens = "wrapped" if scene == "before" and not model_details else "continuous"
+    if model_details and scene == "after":
+        style = "models"
     inputs = CONTINUOUS_INPUTS if continuous else DETAILS_INPUTS
-    stages = CONTINUOUS_STAGES if continuous else DETAILS_STAGES
-    check(report.get("capture_version") == (6 if continuous else 5) and report.get("details_style") == style,
+    stages = CONTINUOUS_STAGES + ["model-choice"] if model_details else CONTINUOUS_STAGES if continuous else DETAILS_STAGES
+    check(report.get("capture_version") == (7 if model_details else 6 if continuous else 5) and report.get("details_style") == style,
           "details: wrong capture version or presentation")
     if continuous:
         check(report.get("token_presentation") == tokens, "details: wrong token presentation")
@@ -379,7 +402,7 @@ def validate_details(directory, scene):
         if len(snapshots) == len(stages):
             continue
         state = stages[len(snapshots)]
-        matched = (continuous_state(plain, state, tokens, report["columns"], frame, report["theme"]) if continuous else
+        matched = (continuous_state(plain, state, tokens, report["columns"], frame, report["theme"], style) if continuous else
                    details_state(plain, state, style, report["columns"], frame, report["theme"]))
         if matched:
             if state == "overflow-end":

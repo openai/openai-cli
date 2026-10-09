@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -153,11 +154,17 @@ func (b *tokenizerInputBridge) pump() {
 	defer close(b.done)
 	defer b.output.Close()
 	parser := tokenizerInputParser{bridge: b}
+	timer := time.NewTimer(uv.DefaultEscTimeout)
+	timer.Stop()
+	defer timer.Stop()
+	var expired <-chan time.Time
 	var err error
 	for err == nil {
 		select {
 		case <-b.ctx.Done():
 			return
+		case <-expired:
+			err = parser.expireStart()
 		case packet, ok := <-b.packets:
 			if !ok {
 				err = io.EOF
@@ -170,6 +177,15 @@ func (b *tokenizerInputBridge) pump() {
 					err = packet.err
 				}
 			}
+		}
+		// Only this bridge owns unfinished terminal sequences. Tea receives
+		// complete bytes or decoded expiry events, never a competing ESC timer.
+		if parser.ordinary.Len() > 0 {
+			timer.Reset(uv.DefaultEscTimeout)
+			expired = timer.C
+		} else {
+			timer.Stop()
+			expired = nil
 		}
 	}
 	if b.ctx.Err() == nil {
@@ -226,11 +242,10 @@ func (p *tokenizerInputParser) feed(data []byte) error {
 				p.replacement = p.replacement[1:]
 			}
 			if bytes.Equal(p.replacement, []byte("\ufffd")) {
-				if err := p.flush(); err != nil {
+				if err := p.expireStart(); err != nil {
 					return err
 				}
 				p.replacement = nil
-				p.startMatch = 0
 				if err := p.bridge.publish(tea.KeyPressMsg{Code: '\ufffd', Text: "\ufffd"}, false); err != nil {
 					return err
 				}
@@ -241,7 +256,13 @@ func (p *tokenizerInputParser) feed(data []byte) error {
 			return err
 		}
 	}
-	return p.flush()
+	if err := p.flush(); err != nil {
+		return err
+	}
+	if p.ordinary.Len() > tokenizer.MaxInputBytes {
+		return errors.New("incomplete terminal input sequence exceeds 1 MiB")
+	}
+	return nil
 }
 
 func (p *tokenizerInputParser) ordinaryByte(value byte) error {
@@ -256,11 +277,36 @@ func (p *tokenizerInputParser) ordinaryByte(value byte) error {
 	}
 	if p.startMatch == len(tokenizerPasteStart) {
 		p.startMatch = 0
+		// A delimiter inside another control sequence is not a paste opener.
+		var decoder uv.EventDecoder
+		data := p.ordinary.Bytes()
+		opened := false
+		for len(data) > 0 {
+			n, event := decoder.Decode(data)
+			if n <= 0 || n > len(data) {
+				return errors.New("could not decode terminal input")
+			}
+			_, opened = event.(uv.PasteStartEvent)
+			data = data[n:]
+		}
+		if !opened {
+			return nil
+		}
+		p.ordinary.Truncate(p.ordinary.Len() - len(tokenizerPasteStart))
+		if err := p.expireStart(); err != nil {
+			return err
+		}
 		p.paste, p.oversized = true, false
 		p.content, p.endMatch = nil, 0
-		return p.flush()
+		_, err := io.WriteString(p.bridge.output, tokenizerPasteStart)
+		return err
 	}
 	return nil
+}
+
+func (p *tokenizerInputParser) expireStart() error {
+	p.startMatch = 0
+	return p.flushOrdinary(true)
 }
 
 func (p *tokenizerInputParser) pasteByte(value byte) error {
@@ -302,11 +348,61 @@ func (p *tokenizerInputParser) appendContent(value byte) {
 }
 
 func (p *tokenizerInputParser) flush() error {
-	if p.ordinary.Len() == 0 {
+	return p.flushOrdinary(false)
+}
+
+func (p *tokenizerInputParser) writeOrdinary(size int) error {
+	if size == 0 {
 		return nil
 	}
-	_, err := p.ordinary.WriteTo(p.bridge.output)
+	n, err := p.bridge.output.Write(p.ordinary.Bytes()[:size])
+	p.ordinary.Next(n)
+	if err == nil && n != size {
+		return io.ErrShortWrite
+	}
 	return err
+}
+
+func (p *tokenizerInputParser) flushOrdinary(expired bool) error {
+	var decoder uv.EventDecoder
+	ready := 0
+	for ready < p.ordinary.Len() {
+		data := p.ordinary.Bytes()[ready:]
+		n, event := decoder.Decode(data)
+		if n <= 0 || n > len(data) {
+			return errors.New("could not decode terminal input")
+		}
+		_, unknown := event.(uv.UnknownEvent)
+		// TerminalReader holds unknown sequences and short ESC-prefixed keys
+		// until its escape timeout. Keep those bytes here, using the same decoder.
+		ambiguous := unknown || data[0] == '\x1b' && n <= 2
+		if ambiguous && !expired {
+			break
+		}
+		if ambiguous {
+			if err := p.writeOrdinary(ready); err != nil {
+				return err
+			}
+			p.ordinary.Next(n)
+			ready = 0
+			var message tea.Msg = event
+			if key, ok := event.(uv.KeyPressEvent); ok {
+				message = tea.KeyPressMsg(key)
+			}
+			if err := p.bridge.publish(message, false); err != nil {
+				return err
+			}
+		} else {
+			ready += n
+		}
+	}
+	if err := p.writeOrdinary(ready); err != nil {
+		return err
+	}
+	if p.ordinary.Len() < p.startMatch {
+		p.startMatch = 0
+	}
+	return nil
 }
 
 func (p *tokenizerInputParser) finish() error {
@@ -316,5 +412,5 @@ func (p *tokenizerInputParser) finish() error {
 	}
 	p.ordinary.Write(p.replacement)
 	p.replacement = nil
-	return p.flush()
+	return p.expireStart()
 }

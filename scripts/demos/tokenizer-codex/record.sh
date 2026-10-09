@@ -23,13 +23,13 @@ if [ "$demo_mode" = details ] || [ "$demo_mode" = long-text ]; then demo_editor_
 demo_details_presentation="${DEMO_DETAILS_PRESENTATION:-historical}"
 case "$demo_details_presentation" in
   historical) ;;
-  continuous)
+  continuous|models)
     if [ "$demo_mode" != details ]; then
-      echo 'DEMO_DETAILS_PRESENTATION=continuous requires details mode.' >&2
+      echo 'DEMO_DETAILS_PRESENTATION requires details mode.' >&2
       exit 2
     fi
     ;;
-  *) echo 'DEMO_DETAILS_PRESENTATION must be historical or continuous.' >&2; exit 2;;
+  *) echo 'DEMO_DETAILS_PRESENTATION must be historical, continuous, or models.' >&2; exit 2;;
 esac
 demo_editor_linked="${DEMO_EDITOR_LINKED:-0}"
 case "$demo_editor_linked" in
@@ -233,9 +233,10 @@ if [ "$demo_interactive" = 1 ]; then
     done < "$demo_snapshots"
     demo_states=(text ids bytes results details encoding controls)
     if [ "$demo_mode" = details ]; then demo_states=(source cursor up-navigation ordinary partial overflow-start overflow-end overflow-home recovery); fi
-    if [ "$demo_mode" = details ] && [ "$demo_details_presentation" = continuous ]; then
+    if [ "$demo_mode" = details ] && [ "$demo_details_presentation" != historical ]; then
       demo_states=(source cursor trailing-space up-navigation ordinary partial overflow-start overflow-end overflow-home recovery)
     fi
+    if [ "$demo_mode" = details ] && [ "$demo_details_presentation" = models ]; then demo_states+=(model-choice); fi
     if [ "$demo_mode" = long-text ]; then
       demo_states=(multiline-end line-home line-end edited restored long-line-end long-line-home recovery)
       if [ "$demo_scene" = after ]; then

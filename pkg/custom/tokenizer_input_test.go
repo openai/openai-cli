@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -111,6 +112,299 @@ func TestTokenizerInputPreservesEveryDelimiterSplit(t *testing.T) {
 	require.Equal(t, []tea.Msg{tea.PasteMsg{Content: "x\r\n\ufffd\x1b[31m"}}, collectTokenizerInput(t, chunks))
 }
 
+func TestTokenizerInputExpiredEscapeCannotOpenPaste(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	raw, writer := io.Pipe()
+	defer writer.Close()
+	bridge, err := startTokenizerInputBridge(ctx, &tokenizerTestInput{PipeReader: raw})
+	require.NoError(t, err)
+	defer bridge.Close()
+	events := make(chan uv.Event)
+	decoded := make(chan error, 1)
+	go func() {
+		defer close(events)
+		decoded <- uv.NewTerminalReader(bridge.Input(), "xterm-256color").StreamEvents(ctx, events)
+	}()
+	escape := make(chan struct{})
+	written := make(chan error, 1)
+	go func() {
+		defer writer.Close()
+		if _, err := io.WriteString(writer, "\x1b"); err != nil {
+			written <- err
+			return
+		}
+		// Wait for the actual terminal decoder, not an independently timed sleep.
+		select {
+		case <-ctx.Done():
+			written <- ctx.Err()
+			return
+		case <-escape:
+		}
+		_, err := io.WriteString(writer, "[200~typed\x03")
+		written <- err
+	}()
+	var keys []tea.KeyPressMsg
+	for event := range events {
+		var message tea.Msg = event
+		switch event := event.(type) {
+		case uv.KeyPressEvent:
+			message = tea.KeyPressMsg(event)
+		case uv.PasteEvent:
+			message = tea.PasteMsg(event)
+		}
+		if key, ok := bridge.Resolve(message).(tea.KeyPressMsg); ok {
+			keys = append(keys, key)
+			if key.String() == "esc" && len(keys) == 1 {
+				close(escape)
+			}
+		}
+	}
+	require.NoError(t, ctx.Err(), "a consumed Escape must not retain an opener prefix or wait for a paste acknowledgment")
+	require.NoError(t, <-decoded)
+	require.NoError(t, <-written)
+	require.NotEmpty(t, keys)
+	require.Equal(t, "esc", keys[0].String())
+	require.Equal(t, "ctrl+c", keys[len(keys)-1].String())
+	var text strings.Builder
+	for _, key := range keys {
+		text.WriteString(key.Text)
+	}
+	require.Equal(t, "[200~typed", text.String())
+	require.ErrorIs(t, bridge.Close(), io.EOF)
+}
+
+func TestTokenizerInputExpiredPrefixesMatchTerminalReader(t *testing.T) {
+	for end := 1; end < len(tokenizerPasteStart); end++ {
+		prefix := tokenizerPasteStart[:end]
+		events := make(chan uv.Event, 4)
+		err := uv.NewTerminalReader(strings.NewReader(prefix), "xterm-256color").StreamEvents(t.Context(), events)
+		require.NoError(t, err)
+		close(events)
+		var want []tea.Msg
+		for event := range events {
+			if key, ok := event.(uv.KeyPressEvent); ok {
+				want = append(want, tea.KeyPressMsg(key))
+			} else {
+				want = append(want, event)
+			}
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		raw, writer := io.Pipe()
+		bridge, err := startTokenizerInputBridge(ctx, &tokenizerTestInput{PipeReader: raw})
+		require.NoError(t, err)
+		events = make(chan uv.Event)
+		decoded := make(chan error, 1)
+		go func() {
+			defer close(events)
+			decoded <- uv.NewTerminalReader(bridge.Input(), "xterm-256color").StreamEvents(ctx, events)
+		}()
+		written := make(chan error, 1)
+		go func() {
+			_, err := io.WriteString(writer, prefix)
+			written <- errors.Join(err, writer.Close())
+		}()
+		var got []tea.Msg
+		for event := range events {
+			var message tea.Msg = event
+			switch event := event.(type) {
+			case uv.PasteEvent:
+				message = tea.PasteMsg(event)
+			case uv.KeyPressEvent:
+				message = tea.KeyPressMsg(event)
+			}
+			message = bridge.Resolve(message)
+			switch message.(type) {
+			case tea.KeyPressMsg, uv.UnknownEvent:
+				got = append(got, message)
+			}
+		}
+		require.NoError(t, ctx.Err())
+		require.NoError(t, <-decoded)
+		require.NoError(t, <-written)
+		require.Equal(t, want, got, "expired prefix %q", prefix)
+		require.ErrorIs(t, bridge.Close(), io.EOF)
+		cancel()
+	}
+}
+
+func TestTokenizerInputKeepsEscapeKeySequences(t *testing.T) {
+	for _, input := range []string{"\x1bx", "\x1b[A", "\x1b\x1b", "\x1b\x1bx", "\x1b\x1b[A", "\x1b\x1bOA",
+		"\x1b]11;rgb:0/0/0\x1b", "\x1b]11;unfinished", "\x1b[123", "\x1b[1;5D"} {
+		events := make(chan uv.Event, 4)
+		require.NoError(t, uv.NewTerminalReader(strings.NewReader(input), "xterm-256color").StreamEvents(t.Context(), events))
+		close(events)
+		var want []tea.Msg
+		for event := range events {
+			if key, ok := event.(uv.KeyPressEvent); ok {
+				want = append(want, tea.KeyPressMsg(key))
+			}
+		}
+		require.Equal(t, want, collectTokenizerInput(t, []string{input}), "key bytes %q", input)
+	}
+}
+
+func TestTokenizerInputAdjacentEscapeThenPaste(t *testing.T) {
+	for _, prefix := range []string{"\x1b", "\x1b\x1b"} {
+		content := "a\r\n\ufffd\x03"
+		messages := collectTokenizerInput(t, []string{prefix + tokenizerPasteStart + content + tokenizerPasteEnd + "\x03"})
+		require.Len(t, messages, 3)
+		want := "esc"
+		if len(prefix) == 2 {
+			want = "alt+esc"
+		}
+		require.Equal(t, want, messages[0].(tea.KeyPressMsg).String())
+		require.Equal(t, tea.PasteMsg{Content: content}, messages[1])
+		require.Equal(t, "ctrl+c", messages[2].(tea.KeyPressMsg).String())
+	}
+}
+
+func TestTokenizerInputIncompleteSequenceBudget(t *testing.T) {
+	for _, size := range []int{tokenizer.MaxInputBytes - 1, tokenizer.MaxInputBytes, tokenizer.MaxInputBytes + 1} {
+		parser := tokenizerInputParser{bridge: &tokenizerInputBridge{}}
+		input := "\x1b]11;" + strings.Repeat("x", size-5)
+		err := parser.feed([]byte(input))
+		if size <= tokenizer.MaxInputBytes {
+			require.NoError(t, err)
+		} else {
+			require.EqualError(t, err, "incomplete terminal input sequence exceeds 1 MiB")
+		}
+		require.Equal(t, size, parser.ordinary.Len())
+		require.Nil(t, parser.bridge.pending, "incomplete input must not create an acknowledgment")
+	}
+}
+
+func TestTokenizerInputCompleteOrdinaryBytesPassUnchanged(t *testing.T) {
+	for _, input := range []string{strings.Repeat("a", tokenizer.MaxInputBytes+1),
+		"\x1b]999;" + strings.Repeat("x", tokenizer.MaxInputBytes-6) + "\a"} {
+		reader, writer, err := os.Pipe()
+		require.NoError(t, err)
+		read := make(chan []byte, 1)
+		readErr := make(chan error, 1)
+		go func() {
+			data, err := io.ReadAll(reader)
+			read <- data
+			readErr <- errors.Join(err, reader.Close())
+		}()
+		parser := tokenizerInputParser{bridge: &tokenizerInputBridge{output: writer}}
+		err = parser.feed([]byte(input))
+		closeErr := writer.Close()
+		require.NoError(t, err)
+		require.NoError(t, closeErr)
+		require.Equal(t, input, string(<-read))
+		require.NoError(t, <-readErr)
+		require.Zero(t, parser.ordinary.Len())
+	}
+}
+
+func TestTokenizerInputCancelIncompleteSequence(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	raw, writer := io.Pipe()
+	defer writer.Close()
+	source := &tokenizerTestInput{PipeReader: raw}
+	bridge, err := startTokenizerInputBridge(ctx, source)
+	require.NoError(t, err)
+	defer bridge.Close()
+	for _, chunk := range []string{"\x1b]11;", "unfinished", " response"} {
+		_, err := io.WriteString(writer, chunk)
+		require.NoError(t, err)
+	}
+	// The consumer never reads or acknowledges anything.
+	require.NoError(t, bridge.Close())
+	require.NoError(t, ctx.Err())
+	require.Equal(t, int32(1), source.closes.Load())
+}
+
+func TestTokenizerInputExpiredEscapeQueuesSuffixBeforeResolve(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	raw, writer := io.Pipe()
+	defer writer.Close()
+	bridge, err := startTokenizerInputBridge(ctx, &tokenizerTestInput{PipeReader: raw})
+	require.NoError(t, err)
+	defer bridge.Close()
+	events := make(chan uv.Event)
+	decoded := make(chan error, 1)
+	go func() {
+		defer close(events)
+		decoded <- uv.NewTerminalReader(bridge.Input(), "xterm-256color").StreamEvents(ctx, events)
+	}()
+	_, err = io.WriteString(writer, "\x1b")
+	require.NoError(t, err)
+	var text strings.Builder
+	var keys []string
+	queued := false
+	for event := range events {
+		var message tea.Msg = event
+		switch event := event.(type) {
+		case uv.PasteEvent:
+			message = tea.PasteMsg(event)
+			if !queued {
+				// The decoder has expired ESC, but the event loop has not
+				// resolved it. Queue the suffix before releasing the acknowledgment.
+				_, err = io.WriteString(writer, "[200~typed\x03")
+				require.NoError(t, err)
+				require.NoError(t, writer.Close())
+				queued = true
+			}
+		case uv.KeyPressEvent:
+			message = tea.KeyPressMsg(event)
+		}
+		if key, ok := bridge.Resolve(message).(tea.KeyPressMsg); ok {
+			keys = append(keys, key.String())
+			text.WriteString(key.Text)
+		}
+	}
+	require.NoError(t, ctx.Err())
+	require.NoError(t, <-decoded)
+	require.True(t, queued)
+	require.Equal(t, "[200~typed", text.String())
+	require.Equal(t, "esc", keys[0])
+	require.Equal(t, "ctrl+c", keys[len(keys)-1])
+	require.ErrorIs(t, bridge.Close(), io.EOF)
+}
+
+func TestTokenizerInputReplacementRetiresOpenerPrefix(t *testing.T) {
+	for end := 1; end < len(tokenizerPasteStart); end++ {
+		messages := collectTokenizerInput(t, []string{tokenizerPasteStart[:end], "\ufffd", "[200~typed\x03",
+			tokenizerPasteStart + "next" + tokenizerPasteEnd})
+		var text strings.Builder
+		var interrupted bool
+		for _, message := range messages {
+			if key, ok := message.(tea.KeyPressMsg); ok {
+				text.WriteString(key.Text)
+				interrupted = interrupted || key.String() == "ctrl+c"
+			}
+		}
+		require.Equal(t, "\ufffd[200~typed", text.String())
+		require.True(t, interrupted)
+		require.Equal(t, tea.PasteMsg{Content: "next"}, messages[len(messages)-1])
+	}
+}
+
+func TestTokenizerInputCloseWhileExpiredEscapeAwaitsResolve(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	raw, writer := io.Pipe()
+	defer writer.Close()
+	source := &tokenizerTestInput{PipeReader: raw}
+	bridge, err := startTokenizerInputBridge(ctx, source)
+	require.NoError(t, err)
+	defer bridge.Close()
+	_, err = io.WriteString(writer, "\x1b")
+	require.NoError(t, err)
+	marker := tokenizerPasteStart + tokenizerPastePlaceholder + tokenizerPasteEnd
+	seen := make([]byte, len(marker))
+	_, err = io.ReadFull(bridge.Input(), seen)
+	require.NoError(t, err)
+	require.Equal(t, marker, string(seen))
+	// No Resolve call occurs. Close must release publication and join the reader.
+	require.NoError(t, bridge.Close())
+	require.NoError(t, ctx.Err())
+	require.Equal(t, int32(1), source.closes.Load())
+}
+
 func TestTokenizerInputKeepsKeysAndPastesOrdered(t *testing.T) {
 	wire := "a\t" + tokenizerPasteStart + "first\x03" + tokenizerPasteEnd + "b" + tokenizerPasteStart + "second" + tokenizerPasteEnd + "c"
 	messages := collectTokenizerInput(t, []string{wire})
@@ -216,12 +510,59 @@ func TestTokenizerInputUnexpectedReadErrorRemainsObservable(t *testing.T) {
 
 type tokenizerInputProgramModel struct {
 	*tokenizerEditor
-	bridge *tokenizerInputBridge
+	bridge    *tokenizerInputBridge
+	onMessage func(tea.Msg)
 }
 
 func (m *tokenizerInputProgramModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	_, cmd := m.tokenizerEditor.Update(m.bridge.Resolve(message))
+	message = m.bridge.Resolve(message)
+	if m.onMessage != nil {
+		m.onMessage(message)
+	}
+	_, cmd := m.tokenizerEditor.Update(message)
 	return m, cmd
+}
+
+func TestTokenizerInputExpiredEscapeThroughBubbleTeaKeepsCtrlC(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	raw, writer := io.Pipe()
+	defer writer.Close()
+	bridge, err := startTokenizerInputBridge(ctx, &tokenizerTestInput{PipeReader: raw})
+	require.NoError(t, err)
+	defer bridge.Close()
+	escape := make(chan struct{}, 1)
+	model := &tokenizerInputProgramModel{tokenizerEditor: testTokenizerEditor(), bridge: bridge,
+		onMessage: func(message tea.Msg) {
+			if key, ok := message.(tea.KeyPressMsg); ok && key.String() == "esc" {
+				escape <- struct{}{}
+			}
+		}}
+	program := tea.NewProgram(model, tea.WithInput(bridge.Input()), tea.WithOutput(io.Discard),
+		tea.WithContext(ctx), tea.WithWindowSize(80, 24), tea.WithoutRenderer(), tea.WithoutSignalHandler())
+	written := make(chan error, 1)
+	go func() {
+		if _, err := io.WriteString(writer, "\x1b"); err != nil {
+			written <- err
+			return
+		}
+		select {
+		case <-ctx.Done():
+			written <- ctx.Err()
+			return
+		case <-escape:
+		}
+		_, err := io.WriteString(writer, "[200~typed\x03")
+		written <- err
+	}()
+	_, err = program.Run()
+	require.NoError(t, err)
+	require.NoError(t, ctx.Err())
+	require.NoError(t, <-written)
+	require.True(t, model.quit)
+	require.Equal(t, 130, model.exitCode)
+	require.Equal(t, "[200~typed", model.text)
+	require.NoError(t, bridge.Close())
 }
 
 func TestTokenizerInputThroughBubbleTeaPreservesExactText(t *testing.T) {

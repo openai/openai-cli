@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/tokenizer"
 	"github.com/urfave/cli/v3"
 )
@@ -152,7 +153,7 @@ func readTokenizerInput(ctx context.Context, command *cli.Command) (string, erro
 			defer file.Close()
 			input = file
 		}
-	} else if file, ok := input.(*os.File); ok && isTerminal(file) {
+	} else if file, ok := input.(*os.File); ok && tokenizerInputIsTerminal(file) {
 		return "", &localUtilityError{message: "Provide --text or --file, or pipe UTF-8 text into the tokenizer. Use --file - for interactive stdin."}
 	}
 	data, err := io.ReadAll(io.LimitReader(&tokenizerInputReader{ctx: ctx, input: input}, tokenizer.MaxInputBytes+1))
@@ -162,16 +163,43 @@ func readTokenizerInput(ctx context.Context, command *cli.Command) (string, erro
 	return validateTokenizerInput(string(data))
 }
 
+func tokenizerInputIsTerminal(file *os.File) bool {
+	connection, err := file.SyscallConn()
+	if err != nil {
+		return false
+	}
+	terminal := false
+	_ = connection.Control(func(fd uintptr) { terminal = term.IsTerminal(fd) })
+	return terminal
+}
+
 type tokenizerInputReader struct {
 	ctx   context.Context
 	input io.Reader
 }
 
-func (r *tokenizerInputReader) Read(data []byte) (int, error) {
+// A caller-provided reader must cooperate to cancel an active Read. The file
+// path handles exclusive-reader Unix pipes without taking input ownership.
+// Other readers retain synchronous reads; no detached read goroutine survives
+// cancellation, and the wrapper never closes input or changes its deadlines.
+func (r *tokenizerInputReader) Read(data []byte) (n int, err error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err
 	}
-	return r.input.Read(data)
+	switch input := r.input.(type) {
+	case interface {
+		ReadContext(context.Context, []byte) (int, error)
+	}:
+		n, err = input.ReadContext(r.ctx, data)
+	case *os.File:
+		n, err = readTokenizerFile(r.ctx, input, data)
+	default:
+		n, err = input.Read(data)
+	}
+	if canceled := r.ctx.Err(); canceled != nil {
+		return n, canceled
+	}
+	return n, err
 }
 
 func validateTokenizerInput(text string) (string, error) {

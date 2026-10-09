@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/tokenizer"
@@ -301,5 +302,137 @@ func TestTokenizerWriteFailureAndCancellation(t *testing.T) {
 	root := tokenizerTestRoot(tokenizerRejectReader{}, io.Discard)
 	if err := root.Run(ctx, []string{"openai", "tokenizer", "count"}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("pre-canceled command: %v", err)
+	}
+}
+
+type tokenizerCooperativeReader struct {
+	read func(context.Context, []byte) (int, error)
+}
+
+func (*tokenizerCooperativeReader) Read([]byte) (int, error) {
+	panic("context-aware input used synchronous Read")
+}
+
+func (r *tokenizerCooperativeReader) ReadContext(ctx context.Context, data []byte) (int, error) {
+	return r.read(ctx, data)
+}
+
+func (*tokenizerCooperativeReader) Close() error { panic("caller input was closed") }
+
+func TestTokenizerCooperativeInputPreservesBytes(t *testing.T) {
+	value := "\ufeffa\r\n👩\u200d💻 e\u0301\x00\x1b\t\n"
+	for _, mode := range []string{"count", "inspect"} {
+		for _, format := range []string{"text", "json"} {
+			t.Run(mode+"/"+format, func(t *testing.T) {
+				reader := strings.NewReader(value)
+				input := &tokenizerCooperativeReader{read: func(_ context.Context, data []byte) (int, error) {
+					return reader.Read(data)
+				}}
+				args := []string{"openai", "--format", format, "tokenizer", mode}
+				var got, want bytes.Buffer
+				if err := tokenizerTestRoot(input, &got).Run(t.Context(), args); err != nil {
+					t.Fatal(err)
+				}
+				literal := append(append([]string(nil), args...), "--text", value)
+				if err := tokenizerTestRoot(tokenizerRejectReader{}, &want).Run(t.Context(), literal); err != nil {
+					t.Fatal(err)
+				}
+				if got.String() != want.String() {
+					t.Fatalf("cooperative input changed output: got %q; want %q", got.String(), want.String())
+				}
+			})
+		}
+	}
+}
+
+func TestTokenizerCooperativeInputCancellation(t *testing.T) {
+	for _, mode := range []string{"count", "inspect"} {
+		t.Run(mode, func(t *testing.T) {
+			started := make(chan struct{})
+			input := &tokenizerCooperativeReader{read: func(ctx context.Context, _ []byte) (int, error) {
+				close(started)
+				<-ctx.Done()
+				return 0, ctx.Err()
+			}}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var out bytes.Buffer
+			done := make(chan error, 1)
+			go func() {
+				done <- tokenizerTestRoot(input, &out).Run(ctx, []string{"openai", "tokenizer", mode, "--file", "-"})
+			}()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("command did not enter cooperative ReadContext")
+			}
+			cancel()
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) || out.Len() != 0 {
+					t.Fatalf("cancellation changed: %v / %q", err, out.String())
+				}
+			case <-time.After(time.Second):
+				t.Fatal("cooperative cancellation did not return")
+			}
+		})
+	}
+}
+
+func TestTokenizerInputReadErrorsAndCanceledEOF(t *testing.T) {
+	failure := errors.New("private synthetic input failure")
+	for _, operation := range []string{"read error", "canceled EOF"} {
+		t.Run(operation, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			input := &tokenizerCooperativeReader{read: func(_ context.Context, data []byte) (int, error) {
+				n := copy(data, "synthetic input")
+				if operation == "canceled EOF" {
+					cancel()
+					return n, io.EOF
+				}
+				return n, failure
+			}}
+			var out bytes.Buffer
+			err := tokenizerTestRoot(input, &out).Run(ctx, []string{"openai", "--format", "json", "tokenizer", "inspect"})
+			want := failure
+			if operation == "canceled EOF" {
+				want = context.Canceled
+			}
+			if !errors.Is(err, want) || strings.Contains(err.Error(), "private synthetic") || out.Len() != 0 {
+				t.Fatalf("read error changed or escaped: %v / %q", err, out.String())
+			}
+		})
+	}
+}
+
+func TestTokenizerBorrowedRegularFileRemainsOpen(t *testing.T) {
+	value := "\ufeffexact\r\nbytes 👩\u200d💻\n"
+	path := filepath.Join(t.TempDir(), "synthetic.txt")
+	if err := os.WriteFile(path, []byte(value), 0600); err != nil {
+		t.Fatal(err)
+	}
+	input, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	for range 3 {
+		if _, err := input.Seek(0, io.SeekStart); err != nil {
+			t.Fatal(err)
+		}
+		if err := tokenizerTestRoot(input, io.Discard).Run(t.Context(), []string{"openai", "tokenizer", "count"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := input.Stat(); err != nil {
+			t.Fatalf("caller file was closed: %v", err)
+		}
+	}
+	if _, err := input.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(input)
+	if err != nil || string(data) != value {
+		t.Fatalf("caller file changed: %q / %v", data, err)
 	}
 }

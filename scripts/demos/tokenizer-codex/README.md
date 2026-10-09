@@ -211,13 +211,13 @@ PATH="/Users/vguvvala/.cache/cli-terminal-replay/bin:$PATH" \
   /absolute/path/outside/repository/editor-models-dark-80
 ```
 
-Version 4 checks the `Model` row and `Choose model` chooser.
+Historical version 4 checks the `Model` row and `Choose model` chooser.
 The four labels are `GPT-5.x & o1/o3`, `GPT-4 & GPT-3.5`, `GPT-3`, and `Codex`.
 The first label carries `Default`; the others carry `Legacy`.
 Validation requires each complete chooser row, so `GPT-3` cannot match part of `GPT-3.5`.
 Primary frames must omit raw encoding names, the F1 hint, and the Enter-newline reminder.
 The driver still uses F1 to inspect controls.
-Exact-byte details retain their encoding metadata.
+In that historical version, exact-byte details retain their encoding metadata.
 The fixture, stage names, counts, cursor checks, and cleanup remain unchanged.
 `editor-presentation.tsv` records the requested presentation independently of the older capture settings.
 Earlier recipes and capture versions 1 through 3 retain their validation behavior.
@@ -325,3 +325,24 @@ Stage screenshots retain the navigation, temporary edit, restored text, long-lin
 The validator checks exact visible source rows, cursor cells, selected fragments, line positions, counts, and complete footers.
 Historical capture versions 1 through 6 retain their prior validation.
 Pending replacement and cancellation remain separate deterministic checks.
+
+
+### Model details refinement
+
+Use `DEMO_DETAILS_PRESENTATION=models` with Details mode to compare the new model subtitle and grouped fields.
+This reuses the shared capture lifecycle and records version 7.
+Before uses `1e4b466`; After uses the reviewed candidate.
+Both scenes retain continuous text, exact quoted fragments, complete hexadecimal rows, paging, Home, and recovery.
+The final chooser frame verifies all four families, badges, and complete controls.
+After also distinguishes modern GPT-4 families from original GPT-4 and Turbo.
+
+```sh
+DEMO_DETAILS_PRESENTATION=models DEMO_COLUMNS=80 DEMO_THEME=dark \
+  scripts/demos/tokenizer-codex/record.sh details \
+  /absolute/path/openai-1e4b466 /absolute/path/openai-candidate \
+  1e4b466 CANDIDATE_SHA /absolute/path/details-dark-80
+```
+
+Repeat with `DEMO_COLUMNS=40 DEMO_THEME=no-color` for the compact monochrome comparison.
+Both binaries exit with status 130. Exact encoding names remain in scripting output.
+Byte count and starting offset replace the half-open range in the interactive Details panel.

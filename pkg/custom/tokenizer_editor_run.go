@@ -88,7 +88,7 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	}
 	// Catch signals before raw mode starts, and release them after restoration.
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(signals)
 	// Restore both sides even when console setup changes one side then fails.
 	defer func() {
@@ -137,6 +137,8 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 				code := 130
 				if received == syscall.SIGTERM {
 					code = 143
+				} else if received == syscall.SIGHUP {
+					code = 129
 				}
 				program.Send(tokenizerEditorStopMsg{Code: code})
 				return

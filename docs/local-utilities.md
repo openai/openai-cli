@@ -57,17 +57,26 @@ Literal punctuation remains unchanged. Control and nonprinting fragments retain 
 An arrow beside the token position identifies keyboard focus in the results.
 The Bytes view adds the input byte count; full hexadecimal details remain available through Enter.
 Details quotes text to make leading spaces and escaped characters visible.
+Its subtitle shows the selected model family and its Default or Legacy label.
+Text and token ID share one group. Byte count, starting offset, and hexadecimal bytes share another.
+Byte offsets start at zero. Exact encoding names remain available in script output and `tokenizer encodings`.
 Scrolling controls appear when the complete details exceed the visible panel.
 Text and Token IDs are the primary reading views. Bytes supports exact-byte inspection and debugging.
 Ctrl+U removes text before the cursor, matching the image prompt editor.
 Paste preserves whitespace, line endings, and Unicode normalization.
 The editor escapes control characters for display.
+After Escape returns to editing, literal `[200~` remains ordinary text.
+Unfinished terminal control sequences above 1 MiB stop the editor with an input error.
+This terminal-protocol limit does not change accepted paste, file, or API payload limits.
 The Bytes view exposes token fragments that split a Unicode character.
 
 Editing clears stale results immediately.
 The editor cancels superseded computations and displays only the current revision.
 Long unbroken text can take time; editing and quitting remain available during computation.
 Terminal output runs independently, so a blocked display does not stop keyboard handling.
+The editor handles SIGINT, SIGTERM, and SIGHUP through cleanup.
+Successful signal cleanup returns 130, 143, and 129 respectively.
+Cleanup attempts terminal restoration and stops owned helpers. Restoration failures remain errors, including when a terminal becomes inaccessible.
 If computation fails, edit the text or press `r` while Tokens has focus.
 The draft remains available until you exit; the CLI never saves it.
 
@@ -106,7 +115,8 @@ It performs no Unicode normalization and rejects invalid UTF-8.
 
 The default encoding remains `o200k_base`.
 The tokenizer also supports `cl100k_base`, `r50k_base`, and `p50k_base` offline.
-`cl100k_base` supports the GPT-4 and GPT-3.5 families.
+`o200k_base` supports GPT-5.x, o1/o3, o4-mini, GPT-4o, GPT-4.1, and GPT-4.5.
+`cl100k_base` supports original GPT-4, GPT-4 Turbo, and GPT-3.5.
 The legacy `r50k_base` encoding supports GPT-3 models such as `davinci`.
 The legacy `p50k_base` encoding supports original Codex models and `text-davinci-002`/`text-davinci-003`.
 These model families follow the [OpenAI tokenizer reference](https://developers.openai.com/cookbook/examples/how_to_count_tokens_with_tiktoken).
@@ -121,6 +131,11 @@ The input limit is 1 MiB.
 Long unbroken text can take minutes; Ctrl+C stops the process.
 The tokenizer processes the complete input because arbitrary chunking can change token boundaries.
 This local limit does not change API request or response limits.
+
+Embedded callers can cancel blocked Unix pipe reads through the command context.
+The tokenizer requires exclusive consumption of that pipe and preserves its ownership, flags, and deadlines.
+Custom readers can implement `ReadContext(context.Context, []byte) (int, error)` for cooperative cancellation.
+Other readers, including Windows file reads, check cancellation between synchronous reads.
 
 Default count output:
 

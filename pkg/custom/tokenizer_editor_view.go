@@ -220,7 +220,7 @@ func tokenizerModelLabel(encoding string) (string, string) {
 	case "o200k_base":
 		return "GPT-5.x & o1/o3", "Default"
 	case "cl100k_base":
-		return "GPT-4 & GPT-3.5", "Legacy"
+		return "GPT-4 / GPT-3.5", "Legacy"
 	case "r50k_base":
 		return "GPT-3", "Legacy"
 	case "p50k_base":
@@ -277,9 +277,10 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 	descriptions := []string{"Readable pieces", "Numeric token IDs", "Exact hex bytes"}
 	labelWidth := 14
 	current := m.tab
+	var encodings []string
 	if m.modal == tokenizerModalEncoding {
-		title, labelWidth = "Choose model", 20
-		encodings := tokenizer.SupportedEncodings()
+		title, labelWidth = "Choose model", 22
+		encodings = tokenizer.SupportedEncodings()
 		labels, descriptions = make([]string, len(encodings)), make([]string, len(encodings))
 		current = 0
 		for i, encoding := range encodings {
@@ -304,6 +305,14 @@ func (m *tokenizerEditor) choiceView(s tokenizerEditorStyles) string {
 			line = label
 		}
 		lines = append(lines, m.highlightRow(s, line, i == m.choice))
+		if m.modal == tokenizerModalEncoding {
+			switch encodings[i] {
+			case "o200k_base":
+				lines = append(lines, "  "+s.muted.Render("GPT-4o / 4.1 / 4.5 · o4-mini"))
+			case "cl100k_base":
+				lines = append(lines, "  "+s.muted.Render("Original GPT-4 / Turbo"))
+			}
+		}
 	}
 	footer := "Ctrl+C exit · ↑↓ move · Enter select · Esc cancel"
 	lines = append(lines, "")
@@ -693,11 +702,15 @@ func (m *tokenizerEditor) modalView(s tokenizerEditorStyles) string {
 	if len(m.tokens) > 0 {
 		title = fmt.Sprintf("Token %d of %d", m.selected+1, len(m.tokens))
 	}
-	lines := []string{s.title.Render(title), ""}
+	model, badge := tokenizerModelLabel(m.encoding)
+	if badge != "" {
+		model += " · " + badge
+	}
+	lines := []string{s.title.Render(title), s.muted.Render(model), ""}
 	for _, row := range rows {
 		if len(row) >= tokenizerDetailLabelWidth {
 			switch strings.TrimSpace(row[:tokenizerDetailLabelWidth]) {
-			case "Text", "Token ID", "Bytes", "Encoding", "Hex", "":
+			case "Text", "Token ID", "Bytes", "Hex", "":
 				row = s.muted.Render(row[:tokenizerDetailLabelWidth]) + row[tokenizerDetailLabelWidth:]
 			}
 		}
@@ -717,7 +730,7 @@ func (m *tokenizerEditor) modalPageSize(total int) int {
 	if m.modal == tokenizerModalHelp {
 		return max(1, m.viewHeight()-3)
 	}
-	count := max(1, m.viewHeight()-4)
+	count := max(1, m.viewHeight()-5)
 	if total > count {
 		count = max(1, count-1)
 	}
@@ -799,10 +812,9 @@ func (m *tokenizerEditor) modalRows(start, count int) ([]string, int) {
 	} else {
 		field("Text", "partial UTF-8; see Hex.")
 	}
-	emit("")
 	field("Token ID", strconv.FormatUint(uint64(m.tokens[m.selected].ID), 10))
-	field("Bytes", fmt.Sprintf("[%d, %d)", begin, end))
-	field("Encoding", m.encoding)
+	emit("")
+	field("Bytes", fmt.Sprintf("%d · offset %d", end-begin, begin))
 	perRow := max(1, (valueWidth+1)/3)
 	hexRows := (len(fragment) + perRow - 1) / perRow
 	// Unseen hexadecimal rows need only arithmetic, not formatted strings.
