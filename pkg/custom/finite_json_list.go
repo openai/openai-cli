@@ -135,7 +135,7 @@ func (list *finiteJSONList) showTerminal(width, height int) error {
 			prefix.Write(data)
 			lines += countTerminalLines(data, width)
 		}
-		if err != nil || data == nil {
+		if err != nil || data == nil || list.done {
 			return streamToStdout(func(out *os.File) error {
 				_, writeErr := (outputWriter{ctx: list.opts.Context, out: out}).Write(prefix.Bytes())
 				return list.err(errors.Join(err, writeErr))
