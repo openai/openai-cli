@@ -106,6 +106,8 @@ CASES = [
     ("directory-command-no-collision", "openai models li", ["openai models list "]),
     ("directory-command-collision", "openai models li", ["openai models list "]),
     ("directory-flag-collision", "openai --forma", ["openai --format"]),
+    ("directory-flag-after-data", "openai --organization --format --forma", ["openai --organization --format --format"]),
+    ("directory-command-after-data", "openai --organization --format models li", ["openai --organization --format models list "]),
 ]
 
 CASE_DIRECTORIES = {
@@ -118,6 +120,8 @@ CASE_DIRECTORIES = {
     "directory-command-no-collision": ("yaml",),
     "directory-command-collision": ("list",),
     "directory-flag-collision": ("--format",),
+    "directory-flag-after-data": ("--format",),
+    "directory-command-after-data": ("list",),
 }
 
 # Bash suppresses static values when an actual replacement names a directory.
@@ -130,6 +134,7 @@ SHELL_EXPECTATIONS = {
         "format-quoted-directory-whole-assignment-double-closed": ['openai "--format=y"'],
         "directory-format-ambiguous": ["openai --format j"],
         "directory-command-collision": ["openai models list/"],
+        "directory-command-after-data": ["openai --organization --format models list/"],
     },
 }
 

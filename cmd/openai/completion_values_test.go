@@ -159,6 +159,107 @@ func TestMainCompletionValuesAdapterCompatibility(t *testing.T) {
 	}
 }
 
+func TestMainCompletionValuesDirectoryCollisions(t *testing.T) {
+	for _, tc := range []struct {
+		name, directory, replacementPrefix string
+		args                               []string
+		values                             string
+		suppress                           bool
+	}{
+		{"separated", "yaml", "", []string{"--format", "y"}, "yaml\n", true},
+		{"assigned", "yaml", "", []string{"--format=y"}, "yaml\n", true},
+		{"whole set", "json", "", []string{"--format", "j"}, "json\njsonl\n", true},
+		{"restored assignment", "--format=yaml", "--format=", []string{"--format=y"}, "yaml\n", true},
+		{"unrestored assignment", "--format=yaml", "", []string{"--format=y"}, "yaml\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			if err := os.Mkdir(tc.directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+				t.Run(style, func(t *testing.T) {
+					env := []string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=1", "OPENAI_CLI_COMPLETION_BASH_VALUE_PREFIX=" + tc.replacementPrefix}
+					want := mainDispatchResult{stdout: tc.values}
+					if style == "bash" && tc.suppress {
+						want = mainDispatchResult{code: 11}
+					} else if style != "bash" && strings.Contains(tc.args[len(tc.args)-1], "=") {
+						want.stdout = "--format=" + strings.ReplaceAll(strings.TrimSuffix(tc.values, "\n"), "\n", "\n--format=") + "\n"
+					}
+					got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, tc.args...)...)
+					if got != want {
+						t.Fatalf("directory collision got %+v; want %+v", got, want)
+					}
+				})
+			}
+		})
+	}
+	t.Run("replacement prefix does not bypass old adapter gate", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+			want := mainDispatchResult{stdout: "--format=text\n"}
+			if style == "bash" || style == "zsh" {
+				want = mainDispatchResult{code: 11}
+			}
+			got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_BASH_VALUE_PREFIX=--format="}, mainCompletionArgs(style, "--format=t")...)
+			if got != want {
+				t.Fatalf("%s replacement prefix bypassed adapter gate: got %+v; want %+v", style, got, want)
+			}
+		}
+	})
+}
+
+func TestMainCompletionValuesDirectoryScope(t *testing.T) {
+	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+		for _, tc := range []struct {
+			name  string
+			args  []string
+			names []string
+			code  int
+		}{
+			{"flags", []string{"--forma"}, []string{"--format", "--format-error"}, 0},
+			{"commands", []string{"models", "li"}, []string{"list"}, 0},
+			{"flags after flag-like data", []string{"--organization", "--format", "--forma"}, []string{"--format", "--format-error"}, 0},
+			{"commands after flag-like data", []string{"--organization", "--format", "models", "li"}, []string{"list"}, 0},
+			{"files", []string{"files", "upload", "--file", "y"}, nil, 10},
+		} {
+			t.Run(style+"/"+tc.name, func(t *testing.T) {
+				t.Chdir(t.TempDir())
+				env := []string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=1", "OPENAI_CLI_COMPLETION_FILE_VALUES=1"}
+				args := mainCompletionArgs(style, tc.args...)
+				before := runMainDispatchWithEnv(t, style, env, args...)
+				if before.code != tc.code || before.stderr != "" {
+					t.Fatalf("completion control failed: %+v", before)
+				}
+				names := make(map[string]bool)
+				if before.stdout != "" {
+					for _, line := range strings.Split(strings.TrimSuffix(before.stdout, "\n"), "\n") {
+						name, _, _ := strings.Cut(line, ":")
+						name, _, _ = strings.Cut(name, "\t")
+						names[name] = true
+					}
+				}
+				if len(names) != len(tc.names) {
+					t.Fatalf("unexpected control candidates: %+v", before)
+				}
+				for _, name := range tc.names {
+					if !names[name] {
+						t.Fatalf("control lacks candidate %q: %+v", name, before)
+					}
+				}
+				for _, directory := range []string{"yaml", "json", "list", "--format"} {
+					if err := os.Mkdir(directory, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if got := runMainDispatchWithEnv(t, style, env, args...); got != before {
+					t.Fatalf("directories changed non-static completion: got %+v; want %+v", got, before)
+				}
+			})
+		}
+	}
+}
+
 func TestMainCompletionValuesQuotedArguments(t *testing.T) {
 	for _, style := range []string{"zsh", "fish"} {
 		for _, quote := range []string{"'", `"`} {

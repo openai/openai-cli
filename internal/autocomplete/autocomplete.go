@@ -550,6 +550,19 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	if result.requiresStaticValueSupport && os.Getenv("OPENAI_CLI_COMPLETION_STATIC_VALUES") != "1" {
 		result = CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 	}
+	if completionStyle == CompletionStyleBash && result.requiresStaticValueSupport {
+		// Readline's filename mode appends '/' when a replacement is a directory.
+		// The adapter supplies the assignment part included in its replacement.
+		// Only static values use this safeguard; commands and flags stay unchanged.
+		prefix := os.Getenv("OPENAI_CLI_COMPLETION_BASH_VALUE_PREFIX")
+		for _, completion := range result.Completions {
+			if info, err := os.Stat(prefix + completion.Name); err == nil && info.IsDir() {
+				// Filtering one choice could select an unintended alternative.
+				result = CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+				break
+			}
+		}
+	}
 	if result.FileValuePrefix != "" {
 		if _, err := fmt.Fprintln(cmd.Writer, result.FileValuePrefix); err != nil {
 			return err
