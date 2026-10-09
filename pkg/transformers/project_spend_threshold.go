@@ -44,6 +44,25 @@ func projectSpendThreshold(ctx context.Context, value gjson.Result, object strin
 	if !value.IsObject() || value.Get("object").String() != object {
 		return value, nil
 	}
+	// Get selects the first occurrence, while ForEach presents every occurrence.
+	// Preserve ambiguous responses instead of attaching one field's units/value
+	// to another field with the same name, including escaped key spellings.
+	seen := make(map[string]bool)
+	duplicate := false
+	value.ForEach(func(key, _ gjson.Result) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		duplicate = seen[key.Str]
+		seen[key.Str] = true
+		return !duplicate
+	})
+	if err := ctx.Err(); err != nil {
+		return gjson.Result{}, err
+	}
+	if duplicate {
+		return value, nil
+	}
 	amount := value.Get("threshold_amount")
 	summary := ""
 	var summaryJSON []byte

@@ -145,11 +145,46 @@ func TestSpendThresholdCancellationAndLargeValues(t *testing.T) {
 func TestSpendThresholdCancelsDuringScan(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	controlled := &cancelSummaryContext{Context: ctx, cancel: cancel, after: 4}
+	// Entry and duplicate-key checks consume six polls before amount scanning.
+	controlled := &cancelSummaryContext{Context: ctx, cancel: cancel, after: 9}
 	raw := `{"object":"organization.spend_limit","threshold_amount":` + strings.Repeat("9", 200000) + `,"currency":"USD","interval":"month"}`
 	transform := Select(Route{"(resource) admin.organization.spend_limit > (method) retrieve", OutputResponse})
 	got, err := transform(controlled, gjson.Parse(raw))
 	if !errors.Is(err, context.Canceled) || got.Raw != "" {
 		t.Fatalf("cancellation during scan returned partial output: bytes=%d error=%v", len(got.Raw), err)
+	}
+}
+
+func TestSpendThresholdPreservesDuplicateKeys(t *testing.T) {
+	for _, fields := range []string{
+		`"threshold_amount":10000,"threshold_amount":90000`,
+		`"threshold_amount":10000,"threshold\u005famount":90000`,
+		`"threshold_amount":10000,"currency":"USD","currency":"EUR"`,
+		`"threshold_amount":10000,"interval":"month","interval":"year"`,
+		`"threshold_amount":10000,"enforcement":{"status":"inactive"},"enforcement":{"status":"enforcing"}`,
+		`"threshold_amount":10000,"object":"future.spend_limit"`,
+		`"threshold_amount":10000,"future":9007199254740993,"future":0.1234567890123456789`,
+		`"threshold_amount":10000,"spend_threshold":null,"spend_threshold":"future"`,
+		`"threshold_amount":10000,"alert_behavior":null,"alert_behavior":"future"`,
+	} {
+		for _, object := range []string{"organization.spend_limit", "project.spend_alert"} {
+			raw := ` { "object":"` + object + `",` + fields + ` } `
+			value := gjson.Parse(raw)
+			got, err := projectSpendThreshold(t.Context(), value, object, strings.HasSuffix(object, "spend_alert"))
+			if err != nil || got.Raw != value.Raw {
+				t.Fatalf("ambiguous object changed: got=%s want=%s error=%v", got.Raw, value.Raw, err)
+			}
+		}
+	}
+}
+
+func TestSpendThresholdCancelsDuringDuplicateScan(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	controlled := &cancelSummaryContext{Context: ctx, cancel: cancel, after: 4}
+	value := gjson.Parse(`{"object":"organization.spend_limit","threshold_amount":10000,"currency":"USD","interval":"month"}`)
+	got, err := projectSpendThreshold(controlled, value, "organization.spend_limit", false)
+	if !errors.Is(err, context.Canceled) || got.Raw != "" {
+		t.Fatalf("cancellation during duplicate scan returned partial output: %s error=%v", got.Raw, err)
 	}
 }

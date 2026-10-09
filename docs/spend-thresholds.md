@@ -55,6 +55,8 @@ Unknown currencies retain the original amount in cents without assuming a curren
 Unknown intervals remain literal values. Missing currency or interval receives a `not reported` label.
 The CLI preserves exact large integers without floating-point conversion.
 Unexpected decimal or exponent values retain their original numeric spelling in cents.
+Responses with duplicate top-level keys retain their original readable fields instead of a summary.
+This avoids assigning ambiguous currency, interval, or enforcement information to a threshold.
 
 Existing update/create flags still accept cents. This change does not convert inputs or change validation.
 Limit inputs require at least one cent in the API schema; alert inputs allow zero.

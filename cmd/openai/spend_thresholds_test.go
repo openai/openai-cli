@@ -480,3 +480,90 @@ func TestMainSpendThresholdLargeUnknownField(t *testing.T) {
 		t.Fatalf("large extracted field changed: code=%d stderr=%q output bytes=%d", got.code, got.stderr, len(got.stdout))
 	}
 }
+
+func TestMainSpendThresholdDuplicateKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name, resource string
+		project        bool
+		fields, text   string
+	}{
+		{
+			name: "threshold amount", resource: "spend-limit",
+			fields: `{"threshold_amount":10000,"threshold_amount":90000,"currency":"USD","interval":"month"}`,
+			text:   "Threshold amount: 10000\nThreshold amount: 90000\nCurrency: USD\nInterval: month\n",
+		},
+		{
+			name: "currency", resource: "spend-limit", project: true,
+			fields: `{"threshold_amount":10000,"currency":"USD","currency":"EUR","interval":"month"}`,
+			text:   "Threshold amount: 10000\nCurrency: USD\nCurrency: EUR\nInterval: month\n",
+		},
+		{
+			name: "interval", resource: "spend-alerts",
+			fields: `{"threshold_amount":10000,"currency":"USD","interval":"month","interval":"year"}`,
+			text:   "Threshold amount: 10000\nCurrency: USD\nInterval: month\nInterval: year\n",
+		},
+		{
+			name: "enforcement", resource: "spend-limit", project: true,
+			fields: `{"threshold_amount":10000,"currency":"USD","interval":"month","enforcement":{"status":"inactive"},"enforcement":{"status":"enforcing"}}`,
+			text:   "Threshold amount: 10000\nCurrency: USD\nInterval: month\nEnforcement:\n  Status: inactive\nEnforcement:\n  Status: enforcing\n",
+		},
+		{
+			name: "object", resource: "spend-alerts", project: true,
+			fields: `{"object":"future.spend_alert","threshold_amount":10000,"currency":"USD","interval":"month"}`,
+			text:   "Object: future.spend_alert\nThreshold amount: 10000\nCurrency: USD\nInterval: month\n",
+		},
+		{
+			name: "escaped threshold key", resource: "spend-alerts", project: true,
+			fields: `{"threshold_amount":10000,"threshold_\u0061mount":90000,"currency":"USD","interval":"month"}`,
+			text:   "Threshold amount: 10000\nThreshold amount: 90000\nCurrency: USD\nInterval: month\n",
+		},
+		{
+			name: "unknown field", resource: "spend-alerts",
+			fields: `{"threshold_amount":10000,"currency":"USD","interval":"month","future":"first","future":"second"}`,
+			text:   "Threshold amount: 10000\nCurrency: USD\nInterval: month\nFuture: first\nFuture: second\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := spendThresholdBody(tc.project, tc.resource, tc.fields)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				path := spendThresholdPath(tc.project, tc.resource)
+				if tc.resource == "spend-alerts" {
+					path += "/alert_synthetic"
+				}
+				if r.Method != http.MethodGet || r.URL.Path != path {
+					t.Errorf("unexpected duplicate-key request: %s %s", r.Method, r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				io.WriteString(w, body)
+			}))
+			defer server.Close()
+			scope := "organization"
+			if tc.project {
+				scope = "project"
+			}
+			object := scope + "." + strings.TrimSuffix(strings.ReplaceAll(tc.resource, "-", "_"), "s")
+			for _, format := range []string{"", "text", "raw"} {
+				t.Run("format="+format, func(t *testing.T) {
+					args := spendThresholdArgs(tc.project, tc.resource, "retrieve")
+					if format != "" {
+						args = append([]string{"--format", format}, args...)
+					}
+					got := runSpendThresholdCommand(t, server, args...)
+					// Compare text and bytes directly: decoding into maps discards duplicates.
+					want := "Object: " + object + "\n" + tc.text
+					if format == "raw" {
+						want = body + "\n"
+					}
+					if got.code != 0 || got.stderr != "" || got.stdout != want {
+						t.Fatalf("duplicate fields changed: got=%+v; want stdout=%q", got, want)
+					}
+					for _, synthesized := range []string{"Spend threshold:", "spend_threshold", "not reported in this response", "Alert behavior:", "alert_behavior"} {
+						if strings.Contains(got.stdout, synthesized) {
+							t.Errorf("ambiguous response synthesized %q: %q", synthesized, got.stdout)
+						}
+					}
+				})
+			}
+		})
+	}
+}
