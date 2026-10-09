@@ -308,6 +308,16 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 	default:
 		t.Fatal("console observer received an unsupported diagnostic scenario")
 	}
+	readerMode := os.Getenv("OPENAI_ADMIN_CONSOLE_READER")
+	expectedReaderType := "*uv.conInputReader"
+	switch readerMode {
+	case "", "uv":
+		readerMode = "uv"
+	case "console-nowait":
+		expectedReaderType = adminConsoleNowaitReaderType
+	default:
+		t.Fatal("console observer received an unsupported reader mode")
+	}
 	original, err := adminConsoleGetModes()
 	if err != nil {
 		adminConsoleLogHandleFailure(t, "original")
@@ -322,7 +332,7 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 		t.Fatal("console observer could not bound its control channel")
 	}
 	observer := &adminConsoleObserver{encoder: json.NewEncoder(connection), controls: make(chan adminConsoleControl, 1)}
-	observer.send(map[string]any{"event": "hello", "nonce": nonce, "original": original, "scenario": scenario})
+	observer.send(map[string]any{"event": "hello", "nonce": nonce, "original": original, "scenario": scenario, "reader_mode": readerMode})
 	// This bounds test-control metadata only, never key input or API payloads.
 	decoder := json.NewDecoder(io.LimitReader(connection, 64<<10))
 	var start adminConsoleControl
@@ -347,6 +357,17 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 			}
 		}
 	}()
+	if readerMode == "console-nowait" {
+		checks := adminConsoleNowaitContractChecks()
+		passed := len(checks) == 30
+		for _, ok := range checks {
+			passed = passed && ok
+		}
+		observer.send(map[string]any{"event": "candidate_checks", "passed": passed, "checks": checks, "reader_mode": readerMode})
+		if !passed {
+			t.Fatal("test-only candidate record conversion or ABI checks failed")
+		}
+	}
 
 	for _, phase := range phases {
 		expectedKey := "sk-admin-SYNTHETIC-console-only"
@@ -379,7 +400,13 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 		var reader *adminConsoleObservedReader
 		var activeModes adminConsoleModes
 		key, readErr := readAdminSetupKeyWithReader(ctx, os.Stdin, os.Stderr, func(input io.Reader) (adminSetupKeyReader, error) {
-			actual, createErr := uv.NewCancelReader(input)
+			var actual adminSetupKeyReader
+			var createErr error
+			if readerMode == "uv" {
+				actual, createErr = uv.NewCancelReader(input)
+			} else {
+				actual, createErr = newAdminConsoleNowaitReader(input)
+			}
 			if createErr != nil {
 				return nil, createErr
 			}
@@ -426,7 +453,7 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 		valid := observerHealthy && restoreErr == nil && restored == before && readsComplete &&
 			frame["started"].(int) > 0 && frame["cancel_calls"] == 1 && controlValid &&
 			frame["close_calls"] == 1 && frame["reads_complete_at_close"] == true && frame["close_succeeded"] == true &&
-			reader.readerType == "*uv.conInputReader" &&
+			reader.readerType == expectedReaderType &&
 			activeModes.Stdin&(windows.ENABLE_ECHO_INPUT|windows.ENABLE_LINE_INPUT) == 0 &&
 			activeModes.Stdin&windows.ENABLE_VIRTUAL_TERMINAL_INPUT != 0
 		if phase == "cancel_partial" {
@@ -443,7 +470,7 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 			"reads_complete": readsComplete, "read_started": frame["started"].(int) > 0,
 			"cancel_called_once": frame["cancel_calls"] == 1, "control_valid": controlValid,
 			"close_called_once": frame["close_calls"] == 1, "reads_complete_at_close": frame["reads_complete_at_close"] == true,
-			"close_succeeded": frame["close_succeeded"] == true, "reader_is_native": reader.readerType == "*uv.conInputReader",
+			"close_succeeded": frame["close_succeeded"] == true, "reader_is_native": reader.readerType == expectedReaderType,
 			"echo_disabled":       activeModes.Stdin&windows.ENABLE_ECHO_INPUT == 0,
 			"line_input_disabled": activeModes.Stdin&windows.ENABLE_LINE_INPUT == 0,
 			"vt_input_enabled":    activeModes.Stdin&windows.ENABLE_VIRTUAL_TERMINAL_INPUT != 0,
