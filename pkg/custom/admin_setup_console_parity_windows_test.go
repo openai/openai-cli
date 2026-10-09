@@ -54,8 +54,9 @@ func adminConsoleWriteNativeRecords(records []adminConsoleNowaitRecord) (uint32,
 }
 
 type adminConsoleParityInput struct {
-	class   string
-	records []adminConsoleNowaitRecord
+	class      string
+	records    []adminConsoleNowaitRecord
+	rawStorage bool
 }
 
 // These are synthetic native records. Their classes describe fixture intent,
@@ -85,8 +86,9 @@ func adminConsoleParityFixture(name string) (adminConsoleParityInput, bool) {
 			fixture.records = append(fixture.records, key(character))
 		}
 		fixture.records = append(fixture.records, key('\r'))
-	case "repeat_boundary":
+	case "repeat_boundary", "repeat_raw_storage":
 		fixture.class = "accepted-input"
+		fixture.rawStorage = name == "repeat_raw_storage"
 		fixture.records = text(prefix + "0123456789abcdef0123456789abcdef")
 		repeated := key('a')
 		repeated.repeat = 37
@@ -162,12 +164,16 @@ func adminConsoleParityFixture(name string) (adminConsoleParityInput, bool) {
 		altgr := key('@')
 		altgr.virtualKey, altgr.controlState = 'Q', 0x0009
 		fixture.records = with(altgr, key('z'))
-	case "alt_numpad_release", "malformed_alt_release":
+	case "alt_numpad_release", "malformed_alt_release", "alt_numpad_raw_storage":
 		fixture.class = "accepted-input"
 		digit := key('6')
 		digit.virtualKey, digit.controlState = 0x66, 0x0022
 		lastDigit := digit
 		lastDigit.character, lastDigit.virtualKey = '5', 0x65
+		if name == "alt_numpad_raw_storage" {
+			fixture.rawStorage = true
+			digit.character, lastDigit.character = 0, 0
+		}
 		release := key('A')
 		release.keyDown, release.virtualKey, release.controlState = 0, 0x12, 0x0020
 		if name == "malformed_alt_release" {
@@ -256,6 +262,8 @@ func TestAdminSetupConsoleParityChild(t *testing.T) {
 	var active adminConsoleModes
 	var written uint32
 	var writeSucceeded bool
+	var peek adminConsoleFixturePeek
+	rawStorageProved := !fixture.rawStorage
 	key, readErr := readAdminSetupKeyWithReader(ctx, os.Stdin, os.Stderr, func(input io.Reader) (adminSetupKeyReader, error) {
 		var actual adminSetupKeyReader
 		var createErr error
@@ -284,12 +292,27 @@ func TestAdminSetupConsoleParityChild(t *testing.T) {
 		// Both constructors have finished their startup discard before injection.
 		// The native call acknowledges the complete write before Read starts.
 		var writeErr error
-		written, writeErr = adminConsoleWriteNativeRecords(fixture.records)
+		var injection adminConsoleFixtureInjection
+		written, injection, writeErr = adminConsoleWriteParityRecords(fixture.records, fixture.rawStorage, active.Stdin)
 		writeSucceeded = writeErr == nil && written == uint32(len(fixture.records))
-		observer.send(map[string]any{"event": "parity_write", "phase": name, "records_requested": len(fixture.records), "records_written": written, "write_succeeded": writeSucceeded})
+		observer.send(map[string]any{"event": "parity_write", "phase": name, "records_requested": len(fixture.records), "records_written": written, "write_succeeded": writeSucceeded, "injection": injection})
 		if !writeSucceeded {
 			reader.Close()
 			return nil, errors.New("parity native fixture write was incomplete")
+		}
+		peek = adminConsolePeekFixture(fixture.records)
+		if fixture.rawStorage {
+			rawStorageProved = peek.Complete && peek.RecordsMatchFixture
+			if name == "repeat_raw_storage" {
+				rawStorageProved = rawStorageProved && peek.Repeat37Records == 1 && peek.MaxRepeat == 37
+			} else {
+				rawStorageProved = rawStorageProved && peek.AltReleaseARecords == 1 && peek.ZeroCharacterAltDigits == 2
+			}
+		}
+		observer.send(map[string]any{"event": "parity_peek", "phase": name, "peek": peek, "raw_storage_proved": rawStorageProved})
+		if !peek.Complete || !rawStorageProved {
+			reader.Close()
+			return nil, errors.New("parity native queue did not preserve its required fixture")
 		}
 		return reader, nil
 	})
@@ -313,6 +336,7 @@ func TestAdminSetupConsoleParityChild(t *testing.T) {
 	cancel()
 	readsComplete := frame["started"] == frame["completed"] && frame["active_reads"] == 0
 	predicates := map[string]bool{
+		"fixture_peeked": peek.Complete, "raw_storage_proved": rawStorageProved,
 		"observer_healthy": observer.healthy(), "fixture_written": writeSucceeded, "deadline_not_exceeded": !timedOut,
 		"reader_is_native": reader.readerType == expectedReader, "read_started": frame["started"].(int) > 0,
 		"reads_complete": readsComplete, "cancel_called_once": frame["cancel_calls"] == 1,

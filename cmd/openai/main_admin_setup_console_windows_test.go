@@ -53,6 +53,32 @@ type adminConsoleTestQueueEvidence struct {
 	Passed               bool   `json:"passed"`
 }
 
+type adminConsoleTestInjection struct {
+	RawStorage         bool   `json:"raw_storage"`
+	InjectionMode      uint32 `json:"injection_mode"`
+	EchoOff            bool   `json:"echo_off"`
+	ActiveModeRestored bool   `json:"active_mode_restored"`
+}
+
+type adminConsoleTestPeek struct {
+	PendingBefore          uint32            `json:"pending_before"`
+	Peeked                 uint32            `json:"peeked"`
+	PendingAfter           uint32            `json:"pending_after"`
+	CountBeforeSucceeded   bool              `json:"count_before_succeeded"`
+	CountAfterSucceeded    bool              `json:"count_after_succeeded"`
+	PeekSucceeded          bool              `json:"peek_succeeded"`
+	Complete               bool              `json:"complete"`
+	RecordsMatchFixture    bool              `json:"records_match_fixture"`
+	KeyDownRecords         uint32            `json:"key_down_records"`
+	CharacterKeyUpRecords  uint32            `json:"character_key_up_records"`
+	RepeatTotal            uint64            `json:"repeat_total"`
+	MaxRepeat              uint16            `json:"max_repeat"`
+	Repeat37Records        uint32            `json:"repeat_37_records"`
+	AltReleaseARecords     uint32            `json:"alt_release_a_records"`
+	ZeroCharacterAltDigits uint32            `json:"zero_character_alt_digits"`
+	Categories             map[string]uint32 `json:"categories"`
+}
+
 type adminConsoleTestFrame struct {
 	Event, Phase, Nonce              string
 	Scenario                         string
@@ -62,40 +88,43 @@ type adminConsoleTestFrame struct {
 	Original, Active, Restored       adminConsoleTestModes
 	Exit, Started, Completed, Phases int
 	Passed                           bool
-	ReaderType                       string          `json:"reader_type"`
-	ActiveReads                      int             `json:"active_reads"`
-	ReadBytes                        int             `json:"read_bytes"`
-	LastReadBytes                    int             `json:"last_read_bytes"`
-	LastReadError                    string          `json:"last_read_error"`
-	FirstByteCategory                string          `json:"first_byte_category"`
-	LastByteCategory                 string          `json:"last_byte_category"`
-	ByteCategories                   map[string]int  `json:"byte_categories"`
-	ReadErrorCategory                string          `json:"read_error_category"`
-	KeyEmpty                         bool            `json:"key_empty"`
-	RestoredModesMatch               bool            `json:"restored_modes_match"`
-	ObserverHealthy                  bool            `json:"observer_healthy"`
-	ControlValid                     bool            `json:"control_valid"`
-	Predicates                       map[string]bool `json:"predicates"`
-	CancelCalls                      int             `json:"cancel_calls"`
-	CancelReturned                   *bool           `json:"cancel_returned"`
-	CloseCalls                       int             `json:"close_calls"`
-	CloseStartedReads                int             `json:"close_started_reads"`
-	CloseCompletedReads              int             `json:"close_completed_reads"`
-	CloseActiveReads                 int             `json:"close_active_reads"`
-	ReadsCompleteAtClose             bool            `json:"reads_complete_at_close"`
-	CloseSucceeded                   *bool           `json:"close_succeeded"`
-	KeyMatches                       bool            `json:"key_matches"`
-	ContextCanceled                  bool            `json:"context_canceled"`
-	ReadsComplete                    bool            `json:"reads_complete"`
-	FixtureClass                     string          `json:"fixture_class"`
-	ParserOutcome                    string          `json:"parser_outcome"`
-	AcceptedKeySHA256                string          `json:"accepted_key_sha256"`
-	AcceptedKeyLength                int             `json:"accepted_key_length"`
-	TimedOut                         bool            `json:"timed_out"`
-	ContextCanceledBeforeCleanup     bool            `json:"context_canceled_before_cleanup"`
-	RecordsRequested                 int             `json:"records_requested"`
-	RecordsWritten                   int             `json:"records_written"`
-	WriteSucceeded                   bool            `json:"write_succeeded"`
+	ReaderType                       string                     `json:"reader_type"`
+	ActiveReads                      int                        `json:"active_reads"`
+	ReadBytes                        int                        `json:"read_bytes"`
+	LastReadBytes                    int                        `json:"last_read_bytes"`
+	LastReadError                    string                     `json:"last_read_error"`
+	FirstByteCategory                string                     `json:"first_byte_category"`
+	LastByteCategory                 string                     `json:"last_byte_category"`
+	ByteCategories                   map[string]int             `json:"byte_categories"`
+	ReadErrorCategory                string                     `json:"read_error_category"`
+	KeyEmpty                         bool                       `json:"key_empty"`
+	RestoredModesMatch               bool                       `json:"restored_modes_match"`
+	ObserverHealthy                  bool                       `json:"observer_healthy"`
+	ControlValid                     bool                       `json:"control_valid"`
+	Predicates                       map[string]bool            `json:"predicates"`
+	CancelCalls                      int                        `json:"cancel_calls"`
+	CancelReturned                   *bool                      `json:"cancel_returned"`
+	CloseCalls                       int                        `json:"close_calls"`
+	CloseStartedReads                int                        `json:"close_started_reads"`
+	CloseCompletedReads              int                        `json:"close_completed_reads"`
+	CloseActiveReads                 int                        `json:"close_active_reads"`
+	ReadsCompleteAtClose             bool                       `json:"reads_complete_at_close"`
+	CloseSucceeded                   *bool                      `json:"close_succeeded"`
+	KeyMatches                       bool                       `json:"key_matches"`
+	ContextCanceled                  bool                       `json:"context_canceled"`
+	ReadsComplete                    bool                       `json:"reads_complete"`
+	FixtureClass                     string                     `json:"fixture_class"`
+	ParserOutcome                    string                     `json:"parser_outcome"`
+	AcceptedKeySHA256                string                     `json:"accepted_key_sha256"`
+	AcceptedKeyLength                int                        `json:"accepted_key_length"`
+	TimedOut                         bool                       `json:"timed_out"`
+	ContextCanceledBeforeCleanup     bool                       `json:"context_canceled_before_cleanup"`
+	RecordsRequested                 int                        `json:"records_requested"`
+	RecordsWritten                   int                        `json:"records_written"`
+	WriteSucceeded                   bool                       `json:"write_succeeded"`
+	Injection                        *adminConsoleTestInjection `json:"injection"`
+	Peek                             *adminConsoleTestPeek      `json:"peek"`
+	RawStorageProved                 bool                       `json:"raw_storage_proved"`
 }
 
 // Existing Windows CI selects TestMainDispatch. The outer job owns the worker,
@@ -440,6 +469,7 @@ func adminConsoleRunCases(t *testing.T) {
 func adminConsoleRunParityCases(t *testing.T) {
 	for _, fixture := range []struct{ name, class string }{
 		{"printable_boundary", "accepted-input"}, {"repeat_boundary", "accepted-input"},
+		{"repeat_raw_storage", "accepted-input"},
 		{"backspace_delete", "accepted-input"}, {"ctrl_c", "cancel-input"}, {"ctrl_d", "cancel-input"},
 		{"bracketed_paste", "accepted-input"}, {"invalid_paste_space", "rejected-input"},
 		{"invalid_paste_nested", "rejected-input"}, {"incomplete_paste_ctrl_c", "cancel-input"},
@@ -448,6 +478,7 @@ func adminConsoleRunParityCases(t *testing.T) {
 		{"modifier_transitions", "accepted-input"}, {"navigation", "rejected-input"}, {"alt_ascii", "rejected-input"},
 		{"altgr_translated_ascii", "accepted-input"}, {"altgr_physical_ascii", "accepted-input"},
 		{"alt_numpad_release", "accepted-input"}, {"malformed_alt_release", "unsupported-record"},
+		{"alt_numpad_raw_storage", "accepted-input"},
 	} {
 		t.Run("native_record_parity/"+fixture.name, func(t *testing.T) {
 			results := make(map[string]adminConsoleTestFrame, 2)
@@ -473,7 +504,15 @@ func adminConsoleRunParityCases(t *testing.T) {
 			}
 			matches := baseline.ParserOutcome == candidate.ParserOutcome && baseline.AcceptedKeySHA256 == candidate.AcceptedKeySHA256 && baseline.AcceptedKeyLength == candidate.AcceptedKeyLength
 			t.Logf("native parity fixture=%s class=%s matches=%t uv_outcome=%s candidate_outcome=%s uv_length=%d candidate_length=%d digest_matches=%t", fixture.name, fixture.class, matches, baseline.ParserOutcome, candidate.ParserOutcome, baseline.AcceptedKeyLength, candidate.AcceptedKeyLength, baseline.AcceptedKeySHA256 == candidate.AcceptedKeySHA256)
-			if !matches {
+			if fixture.name == "nul" || fixture.name == "surrogate_pair" {
+				// Reviewed contract: do not copy UV's silent removal or substitution.
+				// Keep its actual observed result above, and require candidate rejection.
+				strictRejection := candidate.ParserOutcome == "invalid" && candidate.KeyEmpty && candidate.AcceptedKeyLength == 0 && candidate.AcceptedKeySHA256 == ""
+				t.Logf("reviewed invalid-input contract fixture=%s candidate_rejected=%t uv_outcome_preserved=%s", fixture.name, strictRejection, baseline.ParserOutcome)
+				if !strictRejection {
+					t.Error("candidate must reject NUL and surrogate input without returning a key")
+				}
+			} else if !matches {
 				t.Error("candidate differs from UV for this native fixture; its fixture class does not waive the mismatch")
 			}
 		})
@@ -491,7 +530,7 @@ func adminConsoleParityExpected(fixture string, frame adminConsoleTestFrame) boo
 	switch fixture {
 	case "printable_boundary":
 		suffix = "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
-	case "repeat_boundary":
+	case "repeat_boundary", "repeat_raw_storage":
 		suffix = "0123456789abcdef0123456789abcdef" + strings.Repeat("a", 37)
 	case "backspace_delete":
 		suffix = "ad"
@@ -501,7 +540,7 @@ func adminConsoleParityExpected(fixture string, frame adminConsoleTestFrame) boo
 		suffix = "a"
 	case "altgr_translated_ascii", "altgr_physical_ascii":
 		suffix = "@z"
-	case "alt_numpad_release":
+	case "alt_numpad_release", "alt_numpad_raw_storage":
 		suffix = "Az"
 	default:
 		return false
@@ -527,7 +566,9 @@ func adminConsoleObserveParity(t *testing.T, fixture, class, mode string) adminC
 	if mode == "console-nowait" {
 		expectedReader = "*custom.adminConsoleNowaitReader"
 	}
-	ready, written, promptObserved := false, false, false
+	ready, written, peeked, promptObserved := false, false, false, false
+	rawStorage := fixture == "repeat_raw_storage" || fixture == "alt_numpad_raw_storage"
+	var activeInputMode uint32
 	var requested, accepted int
 	for {
 		frame := session.receive(t)
@@ -540,15 +581,45 @@ func adminConsoleObserveParity(t *testing.T, fixture, class, mode string) adminC
 				t.Fatal("parity observer did not establish the required native hidden-input reader")
 			}
 			ready = true
+			activeInputMode = frame.Active.Stdin
 		case "parity_write":
 			t.Logf("native fixture acceptance requested_records=%d accepted_records=%d write_succeeded=%t", frame.RecordsRequested, frame.RecordsWritten, frame.WriteSucceeded)
 			if !ready || written || !frame.WriteSucceeded || frame.RecordsRequested <= 0 || frame.RecordsWritten != frame.RecordsRequested {
 				t.Fatal("native console did not accept the complete fixed fixture")
 			}
+			injectionMode := activeInputMode
+			if rawStorage {
+				injectionMode &^= windows.ENABLE_VIRTUAL_TERMINAL_INPUT
+			}
+			if frame.Injection == nil || frame.Injection.RawStorage != rawStorage || frame.Injection.InjectionMode != injectionMode || !frame.Injection.EchoOff || !frame.Injection.ActiveModeRestored {
+				t.Fatal("native fixture did not preserve hidden input and restore its exact active mode")
+			}
+			t.Logf("native fixture injection raw_storage=%t mode=%d echo_off=%t active_mode_restored=%t", rawStorage, frame.Injection.InjectionMode, frame.Injection.EchoOff, frame.Injection.ActiveModeRestored)
 			requested, accepted, written = frame.RecordsRequested, frame.RecordsWritten, true
+		case "parity_peek":
+			if !written || peeked || frame.Peek == nil {
+				t.Fatal("native fixture queue observation was absent or out of order")
+			}
+			t.Logf("native fixture queue metadata: %+v", *frame.Peek)
+			peek := frame.Peek
+			if !peek.Complete || !peek.CountBeforeSucceeded || !peek.CountAfterSucceeded || !peek.PeekSucceeded || peek.PendingBefore == 0 || peek.PendingBefore > 256 || peek.Peeked != peek.PendingBefore || peek.PendingAfter != peek.PendingBefore || !frame.RawStorageProved {
+				t.Fatal("native fixture queue observation was incomplete or changed its record count")
+			}
+			if rawStorage {
+				if !peek.RecordsMatchFixture || peek.Peeked != uint32(requested) || peek.Categories["ESC"] != 0 || peek.Categories["CR"] != 1 {
+					t.Fatal("raw storage did not preserve the complete fixed native fixture")
+				}
+				if fixture == "repeat_raw_storage" && (peek.Repeat37Records != 1 || peek.MaxRepeat != 37 || peek.RepeatTotal != 96) {
+					t.Fatal("raw repeat control requires a native repeat37 record before Read")
+				}
+				if fixture == "alt_numpad_raw_storage" && (peek.AltReleaseARecords != 1 || peek.CharacterKeyUpRecords != 1 || peek.ZeroCharacterAltDigits != 2 || peek.RepeatTotal != 31) {
+					t.Fatal("raw Alt control requires zero-character digits and the character-bearing Alt release before Read")
+				}
+			}
+			peeked = true
 		case "read_started":
-			if !written {
-				t.Fatal("parity reader started before native fixture injection completed")
+			if !written || !peeked {
+				t.Fatal("parity reader started before native fixture injection and queue observation completed")
 			}
 			if !promptObserved {
 				session.waitPrompt(t)
@@ -572,7 +643,7 @@ func adminConsoleObserveParity(t *testing.T, fixture, class, mode string) adminC
 			// Always acknowledge a completed observation before asserting its result.
 			session.send(t, map[string]any{"action": "ack"})
 			session.finish(t)
-			if !ready || !written || !promptObserved || !frame.Passed || frame.FixtureClass != class || frame.Scenario != session.hello.Scenario || frame.ReaderMode != mode || frame.ReaderType != expectedReader {
+			if !ready || !written || !peeked || !promptObserved || !frame.Passed || frame.FixtureClass != class || frame.Scenario != session.hello.Scenario || frame.ReaderMode != mode || frame.ReaderType != expectedReader {
 				t.Fatal("parity observer did not complete the required fixture and reader lifecycle")
 			}
 			if !frame.WriteSucceeded || frame.RecordsRequested != requested || frame.RecordsWritten != accepted || frame.TimedOut || frame.ContextCanceledBeforeCleanup || !frame.ObserverHealthy || !frame.RestoredModesMatch || frame.Restored != session.hello.Original {
@@ -581,7 +652,7 @@ func adminConsoleObserveParity(t *testing.T, fixture, class, mode string) adminC
 			if !frame.ReadsComplete || frame.Started == 0 || frame.Started != frame.Completed || frame.ActiveReads != 0 || frame.CancelCalls != 1 || frame.CancelReturned == nil || frame.CloseCalls != 1 || frame.CloseActiveReads != 0 || frame.CloseStartedReads != frame.CloseCompletedReads || !frame.ReadsCompleteAtClose || frame.CloseSucceeded == nil || !*frame.CloseSucceeded {
 				t.Fatal("parity observer did not join its reads before successful Close")
 			}
-			if len(frame.Predicates) != 15 {
+			if len(frame.Predicates) != 17 {
 				t.Fatal("parity observer omitted required lifecycle predicates")
 			}
 			for _, valid := range frame.Predicates {
