@@ -20,6 +20,33 @@ func TestFileReceiptPreservesUnfamiliarProcessingStatus(t *testing.T) {
 	}
 }
 
+func TestFileReceiptKnownFieldShapes(t *testing.T) {
+	for _, field := range []string{"created_at", "expires_at", "status_details"} {
+		for _, malformed := range []string{`{}`, `[]`, `true`, `false`} {
+			value := gjson.Parse(strings.TrimSuffix(fileReceiptFixture, "}") + `,"` + field + `":` + malformed + `}`)
+			require.False(t, validFileReceipt(value), "%s=%s", field, malformed)
+		}
+	}
+	for _, field := range []string{"created_at", "expires_at"} {
+		for _, malformed := range []string{`"invalid"`, `"1700000000"`, `1.5`, `1e3`} {
+			value := gjson.Parse(strings.TrimSuffix(fileReceiptFixture, "}") + `,"` + field + `":` + malformed + `}`)
+			require.False(t, validFileReceipt(value), "%s=%s", field, malformed)
+		}
+		for _, integer := range []string{`0`, `-1`, `1700000000`, `9007199254740993`, `9223372036854775808`, `-9223372036854775809`} {
+			value := gjson.Parse(strings.TrimSuffix(fileReceiptFixture, "}") + `,"` + field + `":` + integer + `}`)
+			require.True(t, validFileReceipt(value), "%s=%s", field, integer)
+		}
+	}
+	for _, malformed := range []string{`0`, `1.5`, `"bad` + "\xff" + `value"`} {
+		value := gjson.Parse(strings.TrimSuffix(fileReceiptFixture, "}") + `,"status_details":` + malformed + `}`)
+		require.False(t, validFileReceipt(value), malformed)
+	}
+	require.False(t, validFileReceipt(gjson.Parse(strings.TrimSuffix(fileReceiptFixture, "}")+`,"created_at":null}`)))
+	for _, fields := range []string{`"expires_at":null`, `"status_details":null`, `"status_details":""`, `"status_details":"failed\nwith details"`} {
+		require.True(t, validFileReceipt(gjson.Parse(strings.TrimSuffix(fileReceiptFixture, "}")+`,`+fields+`}`)), fields)
+	}
+}
+
 func TestFileReceiptProcessingFailureSuggestsInspection(t *testing.T) {
 	value := gjson.Parse(strings.TrimSuffix(fileReceiptFixture, "}") + `,"status":"error","status_details":"synthetic processing failure"}`)
 	var out bytes.Buffer

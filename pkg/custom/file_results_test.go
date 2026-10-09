@@ -232,7 +232,8 @@ func TestFileReceiptQuotesExecutableNamedLikeGoRun(t *testing.T) {
 		})
 	}
 	// Only the help-selected development invocation may remain shell syntax.
-	require.Equal(t, "go run ./cmd/openai", fileReceiptInvocation(fileInvocation{
-		display: "go run ./cmd/openai", executable: "/tmp/go-build123/b001/exe/openai", goRun: true,
+	checkout := t.TempDir()
+	require.Equal(t, "go -C "+imagePickerShellQuoter("bash")(checkout)+" run ./cmd/openai", fileReceiptInvocation(fileInvocation{
+		display: "go run ./cmd/openai", executable: "/tmp/go-build123/b001/exe/openai", goRun: true, goRunDir: checkout,
 	}, "bash"))
 }

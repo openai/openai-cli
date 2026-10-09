@@ -99,6 +99,7 @@ Inspect it: openai files get file-example
 
 The receipt uses the returned filename, size, ID, and purpose.
 The CLI omits the size when the API does not supply it.
+The CLI shows complete responses for unfamiliar fields, malformed timestamps, or malformed status details.
 The next command inspects metadata without downloading contents or selecting a local destination.
 It preserves the executable and selected project, organization, and safe base URL.
 Keep the same environment when copying it.
@@ -172,7 +173,8 @@ openai files get file-example --transform filename --raw-output
 Interactive receipts do not appear in JSON, extraction, or piped upload output.
 `--quiet` suppresses upload receipts and retains the selected metadata output.
 Error-output options do not change a successful upload's receipt or response data.
-The receipt's suggested command preserves the executable used for the upload.
+Installed commands preserve the executable used for the upload.
+Development hints use `go -C CHECKOUT run ./cmd/openai` to retain the source directory.
 See [reading command results](readable-output.md) for output formats.
 
 Inspect command help without making an API request:

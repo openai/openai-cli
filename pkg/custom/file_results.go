@@ -3,6 +3,7 @@ package custom
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
@@ -43,7 +44,7 @@ func showFileResult(value gjson.Result, opts ShowJSONOpts) (bool, error) {
 			return false, nil
 		}
 		invocation, _ := opts.Context.Value(fileInvocationKey{}).(fileInvocation)
-		return true, writeFileReceipt(out, value, imagePickerParentShell(opts.Context), invocation)
+		return true, writeFileReceipt(out, value, fileReceiptShell(opts.Context, invocation), invocation)
 	default:
 		return false, nil
 	}
@@ -71,6 +72,22 @@ func validFileReceipt(value gjson.Result) bool {
 	}
 	if bytes := value.Get("bytes"); bytes.Exists() && bytes.Type != gjson.Null {
 		if bytes.Type != gjson.Number || strings.IndexFunc(bytes.Raw, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
+			return false
+		}
+	}
+	for _, name := range []string{"created_at", "expires_at"} {
+		field := value.Get(name)
+		if !field.Exists() || (name == "expires_at" && field.Type == gjson.Null) {
+			continue
+		}
+		// Inspect the decimal representation without rounding large timestamps or
+		// imposing a new date range. Full-response output preserves other shapes.
+		if field.Type != gjson.Number || strings.IndexFunc(strings.TrimPrefix(field.Raw, "-"), func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
+			return false
+		}
+	}
+	if details := value.Get("status_details"); details.Exists() && details.Type != gjson.Null {
+		if details.Type != gjson.String || !utf8.ValidString(details.Str) {
 			return false
 		}
 	}
@@ -141,11 +158,19 @@ func fileReceiptInvocation(invocation fileInvocation, shell string) string {
 	if !utf8.ValidString(invocation.executable) {
 		return ""
 	}
+	if invocation.goRun {
+		quote := imagePickerShellQuoter(shell)
+		packagePath, recognized := strings.CutPrefix(invocation.display, "go run ")
+		if quote == nil || !recognized || packagePath == "" || !filepath.IsAbs(invocation.goRunDir) || !utf8.ValidString(invocation.goRunDir) || strings.ContainsRune(invocation.goRunDir, 0) {
+			return ""
+		}
+		return "go -C " + quote(invocation.goRunDir) + " run " + quote(packagePath)
+	}
 	if invocation.display == "" {
 		return "openai"
 	}
 	plain, _ := imagePickerQuoteProperties(invocation.display)
-	if plain || invocation.goRun || invocation.executable == "" {
+	if plain || invocation.executable == "" {
 		return invocation.display
 	}
 	quote := imagePickerShellQuoter(shell)

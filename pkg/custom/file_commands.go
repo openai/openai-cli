@@ -20,6 +20,7 @@ type fileInvocation struct {
 	display     string
 	executable  string
 	goRun       bool
+	goRunDir    string
 	requestArgs []string
 	omitHint    bool
 }
@@ -91,6 +92,11 @@ func configureFileCommands(root *cli.Command) {
 					invocation.display = os.Args[0]
 					invocation.goRun = false
 				}
+			}
+			if invocation.goRun {
+				var err error
+				invocation.goRunDir, err = os.Getwd()
+				invocation.omitHint = invocation.omitHint || err != nil
 			}
 			ctx = context.WithValue(ctx, fileInvocationKey{}, invocation)
 			return next(context.WithValue(ctx, fileCommandKey{}, fileUploadCommand), command)
