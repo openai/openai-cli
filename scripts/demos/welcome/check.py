@@ -111,6 +111,10 @@ def main():
         ["models"], ["models", "list", "--help"], ["help", "models"],
         ["--format", "json", "--help"], ["--invalid-welcome-probe"],
         ["__complete", "--", "mo"],
+        ["--quiet"], ["--verbose"], ["--quiet", "--verbose"], ["--verbose", "--quiet"],
+        ["--quiet=false", "--verbose=false"], ["--verbose", "help"],
+        ["--quiet", "--format", "json", "--help"],
+        ["files", "upload", "--help"], ["files", "get", "--help"], ["files", "download", "--help"],
     )):
         cases.append((f"explicit-{index}", args, 80, (True, True, True), {}, False))
     for name, streams in (

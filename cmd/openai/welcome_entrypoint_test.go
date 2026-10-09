@@ -26,6 +26,10 @@ func TestMainWelcomeExplicitArgumentsStayPlain(t *testing.T) {
 		{"--format-error", "json", "--help"}, {"--raw-output", "--help"},
 		{"--transform", "id", "--help"}, {"models"}, {"models", "--help"},
 		{"help", "models"}, {"models", "list", "--help"},
+		{"--quiet"}, {"--verbose"}, {"--quiet", "--verbose"}, {"--verbose", "--quiet"},
+		{"--quiet=false", "--verbose=false"}, {"--verbose", "help"},
+		{"--quiet", "--format", "json", "--help"},
+		{"files", "upload", "--help"}, {"files", "get", "--help"}, {"files", "download", "--help"},
 	} {
 		t.Run(strings.Join(args, "/"), func(t *testing.T) {
 			got := runMainDispatch(t, "bash", append([]string{"openai"}, args...)...)
