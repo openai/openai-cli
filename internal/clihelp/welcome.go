@@ -79,11 +79,8 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 	}
 	heading := lipgloss.NewStyle().Bold(true)
 	note := lipgloss.NewStyle().Foreground(lipgloss.Color(muted))
-	// Inherit the terminal foreground; reuse the existing muted tone for depth.
-	wordmark, depth := lipgloss.NewStyle(), note
-	if profile == colorprofile.ANSI {
-		depth = wordmark
-	}
+	// Use the existing blue accent for the wordmark; keep metadata neutral.
+	wordmark := lipgloss.NewStyle().Foreground(lipgloss.Color(focus))
 	padding := 1
 	if required+6 <= width {
 		padding = 2
@@ -104,9 +101,9 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 		padding, cardWidth = 2, 56
 		// Three terminal-cell rows form the wordmark. Keep literal identity and
 		// version alongside it so the art never carries essential information.
-		content = wordmark.Render("▄▀▀▄ █▀▀▄ █▀▀▀ █▄  █ ▄▀▀▄ ▀█▀") + "   " + heading.Render(welcomeTitle) + "\n" +
-			wordmark.Render("█  █ █▄▄▀ █▀▀  █ █ █ █▄▄█  █ ") + "   " + note.Render(version) + "\n" +
-			depth.Render("▀▄▄▀ █    █▄▄▄ █  ▀█ █  █ ▄█▄") + "\n" +
+		content = wordmark.Render("▄▀▀▄ █▀▀▄ █▀▀▀ █▄  █ ▄▀▀▄ ▀█▀") + "     " + heading.Render(welcomeTitle) + "\n" +
+			wordmark.Render("█  █ █▄▄▀ █▀▀  █ █ █ █▄▄█  █ ") + "     " + note.Render(version) + "\n" +
+			wordmark.Render("▀▄▄▀ █    █▄▄▄ █  ▀█ █  █ ▄█▄") + "\n" +
 			note.Render("The OpenAI API in your terminal.")
 	}
 	frame := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color(focus)).Padding(0, padding).Width(cardWidth)

@@ -120,6 +120,21 @@ func TestWelcomeWordmarkFallsBackForLongVersions(t *testing.T) {
 	}
 }
 
+func TestWelcomeWordmarkMetadataUsesAvailableWidth(t *testing.T) {
+	for _, version := range []string{"v123456789012345", "v界界界界界界界x"} {
+		got := renderWelcome(version, 56, colorprofile.NoTTY, true)
+		lines := strings.Split(strings.TrimSuffix(got, "\n\n"), "\n")
+		if len(lines) != 6 || !strings.Contains(lines[1], welcomeTitle) || !strings.HasSuffix(lines[2], version+"  │") {
+			t.Fatalf("complete 16-cell version must fit beside the wordmark: %q", got)
+		}
+		for _, line := range lines {
+			if ansi.StringWidth(line) != 56 {
+				t.Fatalf("metadata changed the frame width: %q", got)
+			}
+		}
+	}
+}
+
 func TestWelcomeLightAndDarkThemes(t *testing.T) {
 	for _, colorfgbg := range []string{"0;7", "0;15", "0;231", "0;255", "15;0", ""} {
 		dark := welcomeDarkBackground(colorfgbg)

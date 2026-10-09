@@ -3,9 +3,9 @@
 The recorder runs bare `openai` on real before and after binaries.
 At 56 columns and wider, a six-row blue frame contains a three-row OPENAI wordmark.
 Literal OpenAI CLI text and the runtime version sit beside the decorative lettering.
-The lettering inherits terminal foreground and uses the existing muted tone for depth.
-The full border retains the CLI focus blue. No background color is emitted.
-Sixteen-color terminals use one foreground for the lettering.
+The lettering and full border use the existing CLI focus blue.
+Literal identity inherits terminal foreground, and the version uses the existing muted tone.
+A five-cell gap separates the lettering from identity and version. No background color is emitted.
 Below 56 columns, the card uses a text layout without the wordmark.
 Below 40 columns, that layout uses four rows instead of six.
 Versions wider than 16 cells also use the text layout, preserving the complete version.
