@@ -2,6 +2,8 @@
 
 Shell completion suggests known values without an API key or network connection.
 Load the existing [completion script](shell-completion.md) for your shell.
+Reload Bash completion after upgrading to enable assigned values such as `--format=json`.
+Older loaded Bash scripts retain their previous assigned-value behavior.
 
 Type a prefix, then press Tab:
 

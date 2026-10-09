@@ -110,6 +110,8 @@ type CompletionResult struct {
 	FileValuePrefix string
 	// Older adapters cannot preserve paths for newly enabled file values.
 	requiresFileValueSupport bool
+	// Older Bash adapters cannot restore wholly quoted assignment prefixes.
+	requiresStaticValueSupport bool
 }
 
 func isFlag(arg string) bool {
@@ -355,6 +357,23 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 		}
 	}
 
+	// Some shells retain quotes around the current argument. Only opt known
+	// static values into this path; file and free-form completion stay unchanged.
+	if !literal && completionStyle != CompletionStyleBash {
+		if unquoted := unquoteStaticValue(current); unquoted != current && isFlag(unquoted) {
+			if name, value, assigned := strings.Cut(unquoted, "="); assigned {
+				if flag := findFlag(flags, name); flag != nil {
+					if doc, ok := (*flag).(cli.DocGenerationFlag); ok && doc.TakesValue() {
+						result := flagValueCompletion(root, cmd, *flag, value, name+"=", completionStyle)
+						if len(result.Completions) != 0 {
+							return result
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Complete assigned values before matching flag names.
 	if isFlag(current) && !literal {
 		if name, value, assigned := strings.Cut(current, "="); assigned {
@@ -436,6 +455,9 @@ func flagValueCompletion(root, selected *cli.Command, flag cli.Flag, prefix, ass
 		}
 	}
 	var completions []ShellCompletion
+	if style != CompletionStyleBash {
+		prefix = unquoteStaticValue(prefix)
+	}
 	for _, value := range choices {
 		if strings.HasPrefix(value, prefix) {
 			name := value
@@ -448,7 +470,10 @@ func flagValueCompletion(root, selected *cli.Command, flag cli.Flag, prefix, ass
 		}
 	}
 	if len(completions) != 0 {
-		return CompletionResult{Completions: completions}
+		return CompletionResult{
+			Completions:                completions,
+			requiresStaticValueSupport: style == CompletionStyleBash && assignment != "",
+		}
 	}
 	if wrapped, ok := flag.(interface{ CLIStringFlag() *cli.StringFlag }); ok {
 		flag = wrapped.CLIStringFlag()
@@ -460,6 +485,16 @@ func flagValueCompletion(root, selected *cli.Command, flag cli.Flag, prefix, ass
 		return CompletionResult{Behavior: ShellCompletionBehaviorFile}
 	}
 	return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+}
+
+// Static enum values contain no shell syntax. Remove one surrounding quote,
+// including an unfinished opening quote, without evaluating shell expressions.
+func unquoteStaticValue(value string) string {
+	if len(value) == 0 || value[0] != '\'' && value[0] != '"' {
+		return value
+	}
+	quote := value[:1]
+	return strings.TrimSuffix(value[1:], quote)
 }
 
 func completionCommands(command *cli.Command) []*cli.Command {
@@ -511,6 +546,9 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	// Adapters advertise this only for their backend call. Older binaries ignore
 	// the marker; older loaded adapters keep their existing completion behavior.
 	if result.requiresFileValueSupport && os.Getenv("OPENAI_CLI_COMPLETION_FILE_VALUES") != "1" {
+		result = CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+	}
+	if result.requiresStaticValueSupport && os.Getenv("OPENAI_CLI_COMPLETION_STATIC_VALUES") != "1" {
 		result = CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 	}
 	if result.FileValuePrefix != "" {

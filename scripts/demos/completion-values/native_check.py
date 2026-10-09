@@ -25,23 +25,25 @@ CAPTURE_KEY = b"\x18\x07"
 TIMEOUT = 10
 
 
-def quoted_cases():
+def quoted_cases(empty=False):
     cases = []
     for placement, prefix, value in (
-        ("separated", "openai --format ", "y"),
-        ("assigned", "openai --format=", "y"),
-        ("whole-assignment", "openai ", "--format=y"),
+        ("separated", "openai --format ", "" if empty else "y"),
+        ("assigned", "openai --format=", "" if empty else "y"),
+        ("whole-assignment", "openai ", "--format=" if empty else "--format=y"),
     ):
         for quote_name, quote in (("single", "'"), ("double", '"')):
             for closed in (False, True):
                 line = prefix + quote + value + (quote if closed else "")
-                completed = prefix + quote + value[:-1] + "yaml"
-                # Preserve existing closing quotes. Shells may close open quotes.
-                # Either shell may omit its final space around quoted values.
+                completed = prefix + quote + (value if empty else value[:-1] + "yaml")
+                # Closed forms define the expected argv after quote removal.
+                # Exact open forms also permit completed, unclosed values.
+                # Empty prefixes have multiple choices. Preserve the empty value.
                 expected = [completed + quote + " ", completed + quote]
                 if not closed:
                     expected.append(completed)
-                name = f"format-quoted-{placement}-{quote_name}-{'closed' if closed else 'open'}"
+                kind = "empty-" if empty else ""
+                name = f"format-quoted-{kind}{placement}-{quote_name}-{'closed' if closed else 'open'}"
                 cases.append((name, line, expected))
     return cases
 
@@ -50,8 +52,10 @@ def quoted_cases():
 CASES = [
     ("format-separated", "openai --format y", ["openai --format yaml "]),
     ("format-assigned", "openai --format=y", ["openai --format=yaml "]),
+    ("format-empty-assigned", "openai --format=", ["openai --format="]),
     ("format-common-prefix", "openai --format j", ["openai --format json"]),
     *quoted_cases(),
+    *quoted_cases(empty=True),
     ("error-format", "openai --format-error y", ["openai --format-error yaml "]),
     ("purpose-upload", "openai files upload --purpose u", ["openai files upload --purpose user_data "]),
     ("purpose-assigned", "openai files upload --purpose=u", ["openai files upload --purpose=user_data "]),
@@ -77,6 +81,32 @@ ARGV_WRAPPER = r'''#!/bin/sh
 printf '%s\0' "$#" "$@" >> "$COMPLETION_TEST_ARGV"
 exec "$COMPLETION_TEST_BINARY" "$@"
 '''
+
+
+def compare_completion(name, expected, observed):
+    quoted = name.startswith("format-quoted-")
+    if not quoted and name not in {"at-file", "at-file-protocol"}:
+        return observed in expected, {"comparison_mode": "exact"}
+    # These fixtures contain literal words, quotes, and escapes only.
+    # shlex removes their quoting without executing shell expressions.
+    expected_argv = []
+    for candidate in expected:
+        try:
+            arguments = shlex.split(candidate, posix=True)
+        except ValueError:
+            continue
+        if arguments not in expected_argv:
+            expected_argv.append(arguments)
+    comparison = {"comparison_mode": "argv", "expected_argv": expected_argv}
+    try:
+        comparison["observed_argv"] = shlex.split(observed, posix=True)
+    except ValueError as error:
+        comparison["argv_parse_error"] = str(error)
+        if quoted and name.endswith("-open"):
+            comparison["comparison_mode"] = "exact-unclosed-quote"
+            return observed in expected, comparison
+        return False, comparison
+    return comparison["observed_argv"] in expected_argv, comparison
 
 
 def backend_arguments(data):
@@ -299,13 +329,15 @@ printf 'ready\n' > "$COMPLETION_TEST_READY"
 '''
 
 
-def report_case(report, name, line, expected, status, observed=None, detail=None, backend_argv=None):
+def report_case(report, name, line, expected, status, observed=None, detail=None, backend_argv=None, comparison=None):
     result = dict(case=name, shell=report["shell"], executable=report["executable"],
                   input=line, expected=expected, observed=observed, status=status)
     if detail:
         result["detail"] = detail
     if backend_argv is not None:
         result["backend_argv"] = backend_argv
+    if comparison is not None:
+        result.update(comparison)
     report["cases"].append(result)
     print(json.dumps(result), flush=True)
 
@@ -365,7 +397,8 @@ def check_shell(binary, shell, executable, output):
                     argument_offset = argument_log.stat().st_size
                     observed = session.capture(line, capture, index)
                     calls = backend_arguments(argument_log.read_bytes()[argument_offset:])
-                    status = "pass" if observed in expected else "fail"
+                    matches, comparison = compare_completion(name, expected, observed)
+                    status = "pass" if matches else "fail"
                     detail = None
                     if not calls:
                         status = "error"
@@ -373,7 +406,7 @@ def check_shell(binary, shell, executable, output):
                     elif any(not call or call[0] != "__complete" for call in calls):
                         status = "error"
                         detail = "The shell invoked the binary outside the completion backend."
-                    report_case(report, name, line, expected, status, observed, detail, calls)
+                    report_case(report, name, line, expected, status, observed, detail, calls, comparison)
                     next_case = index + 1
             finally:
                 if session is not None:

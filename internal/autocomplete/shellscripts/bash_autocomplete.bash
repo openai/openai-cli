@@ -68,7 +68,7 @@ ____APPNAME___bash_autocomplete() {
       done
       completion_args[argument]="$value"
     done
-    completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
+    completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_STATIC_VALUES=1 "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
     exit_code=$?
 
     local last_token="$cur"
@@ -131,8 +131,14 @@ ____APPNAME___bash_autocomplete() {
       0)
         COMPREPLY=()
         if [[ -n "$completions" ]]; then
+          local value_prefix="" current_value="${completion_args[${#completion_args[@]} - 1]}"
+          # Static values contain no '='. A callback word retaining '=' means
+          # Readline replaces the assignment too, including whole-word quotes.
+          if [[ "$current_value" == -*=* && "${2-}" == *=* ]]; then
+            value_prefix="${current_value%%=*}="
+          fi
           while IFS= read -r file; do
-            COMPREPLY+=("$file")
+            COMPREPLY+=("$value_prefix$file")
           done <<<"$completions"
         fi
         ;;

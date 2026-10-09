@@ -22,6 +22,7 @@ func TestMainCompletionValuesProtocols(t *testing.T) {
 			{"format prefix", []string{"--format", "j"}, []string{"json", "jsonl"}},
 			{"error format prefix", []string{"--format-error", "j"}, []string{"json", "jsonl"}},
 			{"assigned format", []string{"--format=j"}, []string{"json", "jsonl"}},
+			{"empty assigned format", []string{"--format="}, []string{"auto", "text", "explore", "json", "jsonl", "pretty", "raw", "yaml"}},
 			{"assigned error format", []string{"--format-error=r"}, []string{"raw"}},
 			{"nested root format", []string{"responses", "create", "--format", "j"}, []string{"json", "jsonl"}},
 			{"group root format", []string{"responses", "--format", "j"}, []string{"json", "jsonl"}},
@@ -47,10 +48,11 @@ func TestMainCompletionValuesProtocols(t *testing.T) {
 			{"upload purposes", []string{"files", "upload", "--purpose", ""}, []string{"assistants", "batch", "evals", "fine-tune", "user_data", "vision"}},
 			{"legacy create purposes", []string{"files", "create", "--purpose", ""}, []string{"assistants", "batch", "evals", "fine-tune", "user_data", "vision"}},
 			{"assigned purpose", []string{"files", "upload", "--purpose=u"}, []string{"user_data"}},
+			{"empty assigned purpose", []string{"files", "upload", "--purpose="}, []string{"assistants", "batch", "evals", "fine-tune", "user_data", "vision"}},
 			{"list purposes", []string{"files", "list", "--purpose", ""}, []string{"assistants", "assistants_output", "batch", "batch_output", "evals", "fine-tune", "fine-tune-results", "user_data", "vision"}},
 			{"list output purpose", []string{"files", "list", "--purpose=batch_"}, []string{"batch_output"}},
-			// Quoting belongs to adapters. Backend arguments already contain the
-			// decoded token, including spaces in a preceding quoted filename.
+			// This case models a shell-decoded preceding filename.
+			// Current-token quotes have separate coverage below.
 			{"quoted filename precedes value", []string{"files", "upload", "upload space.txt", "--purpose", "u"}, []string{"user_data"}},
 		} {
 			t.Run(style+"/"+tc.name, func(t *testing.T) {
@@ -62,7 +64,7 @@ func TestMainCompletionValuesProtocols(t *testing.T) {
 				for _, value := range tc.values {
 					want += prefix + value + "\n"
 				}
-				got := runMainDispatch(t, style, mainCompletionArgs(style, tc.args...)...)
+				got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=1"}, mainCompletionArgs(style, tc.args...)...)
 				if got != (mainDispatchResult{stdout: want}) {
 					t.Fatalf("completion got %+v; want stdout %q and status 0", got, want)
 				}
@@ -97,12 +99,130 @@ func TestMainCompletionValuesPreserveOtherInputs(t *testing.T) {
 			{[]string{"files", "upload", "--purpose", "batch", "--", "--purpose=j"}, mainDispatchResult{code: 10}},
 		} {
 			t.Run(style+"/"+strings.Join(tc.args, " "), func(t *testing.T) {
-				got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_FILE_VALUES=1"}, mainCompletionArgs(style, tc.args...)...)
+				got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_FILE_VALUES=1", "OPENAI_CLI_COMPLETION_STATIC_VALUES=1"}, mainCompletionArgs(style, tc.args...)...)
 				if got != tc.want {
 					t.Fatalf("completion got %+v; want %+v", got, tc.want)
 				}
 			})
 		}
+	}
+}
+
+func TestMainCompletionValuesBashAdapterCompatibility(t *testing.T) {
+	for _, marker := range []struct {
+		name string
+		env  []string
+	}{
+		{"missing", nil},
+		{"empty", []string{"OPENAI_CLI_COMPLETION_STATIC_VALUES="}},
+		{"zero", []string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=0"}},
+		{"true", []string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=true"}},
+		{"two", []string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=2"}},
+	} {
+		for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+			for _, tc := range []struct {
+				args []string
+				want string
+			}{
+				{[]string{"--format", "j"}, "json\njsonl\n"},
+				{[]string{"--format=j"}, "--format=json\n--format=jsonl\n"},
+				{[]string{"--format-error=y"}, "--format-error=yaml\n"},
+				{[]string{"files", "upload", "--purpose=u"}, "--purpose=user_data\n"},
+			} {
+				t.Run(marker.name+"/"+style+"/"+strings.Join(tc.args, " "), func(t *testing.T) {
+					want := mainDispatchResult{stdout: tc.want}
+					if style == "bash" && strings.Contains(tc.args[len(tc.args)-1], "=") {
+						want = mainDispatchResult{code: 11}
+					}
+					got := runMainDispatchWithEnv(t, style, marker.env, mainCompletionArgs(style, tc.args...)...)
+					if got != want {
+						t.Fatalf("adapter marker changed completion: got %+v; want %+v", got, want)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestMainCompletionValuesQuotedArguments(t *testing.T) {
+	for _, style := range []string{"zsh", "fish", "pwsh"} {
+		for _, quote := range []string{"'", `"`} {
+			for _, closing := range []string{"", quote} {
+				for _, tc := range []struct {
+					path        []string
+					flag, value string
+					completion  string
+				}{
+					{nil, "--format", "j", "json\njsonl\n"},
+					{nil, "--format", "", "auto\ntext\nexplore\njson\njsonl\npretty\nraw\nyaml\n"},
+					{[]string{"files", "upload"}, "--purpose", "u", "user_data\n"},
+					{[]string{"files", "upload"}, "--purpose", "", "assistants\nbatch\nevals\nfine-tune\nuser_data\nvision\n"},
+				} {
+					for _, form := range []string{"separated", "assigned", "whole assignment"} {
+						args := append([]string(nil), tc.path...)
+						want := tc.completion
+						switch form {
+						case "separated":
+							args = append(args, tc.flag, quote+tc.value+closing)
+						case "assigned":
+							args = append(args, tc.flag+"="+quote+tc.value+closing)
+						case "whole assignment":
+							args = append(args, quote+tc.flag+"="+tc.value+closing)
+						}
+						if form != "separated" {
+							want = tc.flag + "=" + strings.ReplaceAll(strings.TrimSuffix(want, "\n"), "\n", "\n"+tc.flag+"=") + "\n"
+						}
+						t.Run(style+"/"+form+"/"+strings.Join(args, " "), func(t *testing.T) {
+							got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=1"}, mainCompletionArgs(style, args...)...)
+							if got != (mainDispatchResult{stdout: want}) {
+								t.Fatalf("quoted completion got %+v; want stdout %q and status 0", got, want)
+							}
+						})
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestMainCompletionValuesQuotesPreserveOtherInputs(t *testing.T) {
+	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+		for _, tc := range []struct {
+			args []string
+			want mainDispatchResult
+		}{
+			{[]string{"responses", "create", "--model", `'j'`}, mainDispatchResult{code: 11}},
+			{[]string{"responses", "create", `--model="j"`}, mainDispatchResult{code: 11}},
+			{[]string{"responses", "create", `'--model=j'`}, mainDispatchResult{}},
+			{[]string{"files", "upload", "--file", `"fixture"`}, mainDispatchResult{code: 10}},
+			{[]string{"files", "upload", `--file='fixture'`}, mainDispatchResult{code: 10, stdout: "--file=\n"}},
+			{[]string{`'--mtls-client-cert-file=fixture'`}, mainDispatchResult{}},
+			{[]string{"responses", "create", "--", `'--format=j'`}, mainDispatchResult{}},
+		} {
+			t.Run(style+"/"+strings.Join(tc.args, " "), func(t *testing.T) {
+				got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_FILE_VALUES=1", "OPENAI_CLI_COMPLETION_STATIC_VALUES=1"}, mainCompletionArgs(style, tc.args...)...)
+				if got != tc.want {
+					t.Fatalf("quoted control got %+v; want %+v", got, tc.want)
+				}
+			})
+		}
+	}
+	// Bash already removes shell quoting. Any remaining quotes are literal data.
+	for _, tc := range []struct {
+		args []string
+		code int
+	}{
+		{[]string{"--format", `'j`}, 11},
+		{[]string{"--format", `"j"`}, 11},
+		{[]string{`--format='j'`}, 11},
+		{[]string{`'--format=j'`}, 0},
+	} {
+		t.Run("bash literal/"+strings.Join(tc.args, " "), func(t *testing.T) {
+			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=1"}, mainCompletionArgs("bash", tc.args...)...)
+			if got != (mainDispatchResult{code: tc.code}) {
+				t.Fatalf("Bash interpreted literal quotes as shell syntax: %+v", got)
+			}
+		})
 	}
 }
 
@@ -125,7 +245,8 @@ func TestMainCompletionValuesStayLocal(t *testing.T) {
 			}},
 		} {
 			t.Run(style+"/"+tc.name, func(t *testing.T) {
-				got := runMainDispatchWithEnv(t, style, tc.env, mainCompletionArgs(style, "files", "upload", "--purpose", "u")...)
+				env := append([]string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=1"}, tc.env...)
+				got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, "files", "upload", "--purpose", "u")...)
 				if got != (mainDispatchResult{stdout: "user_data\n"}) {
 					t.Fatalf("completion depends on request configuration: %+v", got)
 				}
