@@ -18,7 +18,7 @@ Build the existing fixture:
 GOMAXPROCS=2 go build -p 2 -o dist/demos/bin/image-model-demo-api ./scripts/demos/image-models/main.go
 ```
 
-Build the baseline binary from `217ff2ea1e853040ba08c3c170e05586424386aa` in its own checkout.
+Build the baseline binary from `e68939820415144d769ed02de6aa72d5b7d32948` in its own checkout.
 Build the candidate binary from the reviewed candidate commit.
 Verify both binary identities before supplying their full commit IDs.
 The recorder records binary hashes but cannot establish their source provenance.
@@ -28,7 +28,7 @@ Run the comparison from the candidate checkout:
 ```sh
 bash scripts/demos/record-welcome.sh \
   "$BEFORE_BINARY" "$AFTER_BINARY" \
-  217ff2ea1e853040ba08c3c170e05586424386aa "$AFTER_SHA" \
+  e68939820415144d769ed02de6aa72d5b7d32948 "$AFTER_SHA" \
   /absolute/path/outside/repository/welcome-color
 ```
 
@@ -42,7 +42,7 @@ Record the light background:
 DEMO_THEME=light \
   bash scripts/demos/record-welcome.sh \
   "$BEFORE_BINARY" "$AFTER_BINARY" \
-  217ff2ea1e853040ba08c3c170e05586424386aa "$AFTER_SHA" \
+  e68939820415144d769ed02de6aa72d5b7d32948 "$AFTER_SHA" \
   /absolute/path/outside/repository/welcome-light
 ```
 
@@ -61,7 +61,7 @@ Record the 40-column monochrome case:
 NO_COLOR=1 DEMO_COLUMNS=40 DEMO_ROWS=350 \
   bash scripts/demos/record-welcome.sh \
   "$BEFORE_BINARY" "$AFTER_BINARY" \
-  217ff2ea1e853040ba08c3c170e05586424386aa "$AFTER_SHA" \
+  e68939820415144d769ed02de6aa72d5b7d32948 "$AFTER_SHA" \
   /absolute/path/outside/repository/welcome-no-color
 ```
 
@@ -71,7 +71,7 @@ Record the narrow fallback:
 NO_COLOR=1 DEMO_COLUMNS=28 DEMO_ROWS=500 \
   bash scripts/demos/record-welcome.sh \
   "$BEFORE_BINARY" "$AFTER_BINARY" \
-  217ff2ea1e853040ba08c3c170e05586424386aa "$AFTER_SHA" \
+  e68939820415144d769ed02de6aa72d5b7d32948 "$AFTER_SHA" \
   /absolute/path/outside/repository/welcome-narrow
 ```
 
