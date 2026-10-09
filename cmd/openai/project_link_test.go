@@ -161,6 +161,25 @@ func TestMainProjectLinkOfflineLifecycle(t *testing.T) {
 	require.Zero(t, requests.Load(), "local linking or help reached the API")
 }
 
+func TestMainProjectLinkQuietPreservesInspectionAndJSON(t *testing.T) {
+	home, directory := t.TempDir(), t.TempDir()
+	for _, format := range []string{"auto", "text", "json"} {
+		for _, args := range [][]string{{"link", "--project=proj_quiet"}, {"link"}, {"unlink"}} {
+			argv := append(slices.Clone(args), "--quiet", "--format", format)
+			got := runProjectLinkMain(t, home, directory, nil, "", argv...)
+			require.Zero(t, got.code, "%v: %s", argv, got.stderr)
+			require.Empty(t, got.stderr)
+			if format == "json" {
+				require.True(t, json.Valid([]byte(got.stdout)), "%s", got.stdout)
+			} else if len(args) == 1 && args[0] == "link" {
+				require.Contains(t, got.stdout, "proj_quiet")
+			} else {
+				require.Empty(t, got.stdout, "quiet mutation confirmation")
+			}
+		}
+	}
+}
+
 func TestMainProjectLinkRequestPrecedence(t *testing.T) {
 	home, directory := t.TempDir(), t.TempDir()
 	projectLinkCreate(t, home, directory, "proj_folder")
