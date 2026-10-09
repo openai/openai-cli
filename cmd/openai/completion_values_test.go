@@ -1,0 +1,166 @@
+package main
+
+import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+)
+
+func TestMainCompletionValuesProtocols(t *testing.T) {
+	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+		for _, tc := range []struct {
+			name   string
+			args   []string
+			values []string
+		}{
+			{"all formats", []string{"--format", ""}, []string{"auto", "text", "explore", "json", "jsonl", "pretty", "raw", "yaml"}},
+			{"format prefix", []string{"--format", "j"}, []string{"json", "jsonl"}},
+			{"error format prefix", []string{"--format-error", "j"}, []string{"json", "jsonl"}},
+			{"assigned format", []string{"--format=j"}, []string{"json", "jsonl"}},
+			{"assigned error format", []string{"--format-error=r"}, []string{"raw"}},
+			{"nested root format", []string{"responses", "create", "--format", "j"}, []string{"json", "jsonl"}},
+			{"group root format", []string{"responses", "--format", "j"}, []string{"json", "jsonl"}},
+			{"earlier root flags", []string{"--format", "json", "--organization=org-synthetic", "files", "upload", "--purpose", "b"}, []string{"batch"}},
+			{"interspersed root flag", []string{"files", "--format", "json", "upload", "--purpose", "v"}, []string{"vision"}},
+			{"command alias", []string{"audio:transcriptions", "create", "--format", "j"}, []string{"json", "jsonl"}},
+			{"shortcut", []string{"transcribe", "--format-error", "t"}, []string{"text"}},
+			{"upload purposes", []string{"files", "upload", "--purpose", ""}, []string{"assistants", "batch", "evals", "fine-tune", "user_data", "vision"}},
+			{"legacy create purposes", []string{"files", "create", "--purpose", ""}, []string{"assistants", "batch", "evals", "fine-tune", "user_data", "vision"}},
+			{"assigned purpose", []string{"files", "upload", "--purpose=u"}, []string{"user_data"}},
+			{"list purposes", []string{"files", "list", "--purpose", ""}, []string{"assistants", "assistants_output", "batch", "batch_output", "evals", "fine-tune", "fine-tune-results", "user_data", "vision"}},
+			{"list output purpose", []string{"files", "list", "--purpose=batch_"}, []string{"batch_output"}},
+			// Quoting belongs to adapters. Backend arguments already contain the
+			// decoded token, including spaces in a preceding quoted filename.
+			{"quoted filename precedes value", []string{"files", "upload", "upload space.txt", "--purpose", "u"}, []string{"user_data"}},
+		} {
+			t.Run(style+"/"+tc.name, func(t *testing.T) {
+				prefix := ""
+				if name, _, assigned := strings.Cut(tc.args[len(tc.args)-1], "="); assigned && style != "bash" {
+					prefix = name + "="
+				}
+				want := ""
+				for _, value := range tc.values {
+					want += prefix + value + "\n"
+				}
+				got := runMainDispatch(t, style, mainCompletionArgs(style, tc.args...)...)
+				if got != (mainDispatchResult{stdout: want}) {
+					t.Fatalf("completion got %+v; want stdout %q and status 0", got, want)
+				}
+			})
+		}
+	}
+}
+
+func TestMainCompletionValuesPreserveOtherInputs(t *testing.T) {
+	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+		for _, tc := range []struct {
+			args []string
+			want mainDispatchResult
+		}{
+			{[]string{"--format", "unknown"}, mainDispatchResult{code: 11}},
+			{[]string{"--format=unknown"}, mainDispatchResult{code: 11}},
+			{[]string{"files", "upload", "--purpose", "batch_output"}, mainDispatchResult{code: 11}},
+			{[]string{"files", "create", "--purpose=fine-tune-results"}, mainDispatchResult{code: 11}},
+			{[]string{"responses", "create", "--model", "j"}, mainDispatchResult{code: 11}},
+			{[]string{"responses", "create", "--model=j"}, mainDispatchResult{code: 11}},
+			{[]string{"responses", "create", "--", "--format=j"}, mainDispatchResult{}},
+			{[]string{"--", "--format=j"}, mainDispatchResult{}},
+			{[]string{"files", "upload", "--purpose", "batch", "--file", "j"}, mainDispatchResult{code: 10}},
+			{[]string{"files", "upload", "--purpose", "batch", "--file=j"}, mainDispatchResult{code: 10, stdout: "--file=\n"}},
+			{[]string{"files", "upload", "--purpose", "batch", "j"}, mainDispatchResult{code: 10}},
+			{[]string{"files", "upload", "--purpose", "batch", "--", "--purpose=j"}, mainDispatchResult{code: 10}},
+		} {
+			t.Run(style+"/"+strings.Join(tc.args, " "), func(t *testing.T) {
+				got := runMainDispatchWithEnv(t, style, []string{"OPENAI_CLI_COMPLETION_FILE_VALUES=1"}, mainCompletionArgs(style, tc.args...)...)
+				if got != tc.want {
+					t.Fatalf("completion got %+v; want %+v", got, tc.want)
+				}
+			})
+		}
+	}
+}
+
+func TestMainCompletionValuesStayLocal(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+		for _, tc := range []struct {
+			name string
+			env  []string
+		}{
+			{"configured server", []string{"OPENAI_API_KEY=sk-fake-completion-test", "OPENAI_BASE_URL=" + server.URL}},
+			{"invalid configuration", []string{
+				"OPENAI_BASE_URL=invalid-completion-url", "OPENAI_CUSTOM_HEADERS=invalid-completion-headers",
+				"OPENAI_MTLS_CLIENT_CERT_FILE=/missing/completion-cert.pem", "OPENAI_MTLS_CLIENT_KEY_FILE=/missing/completion-key.pem",
+			}},
+		} {
+			t.Run(style+"/"+tc.name, func(t *testing.T) {
+				got := runMainDispatchWithEnv(t, style, tc.env, mainCompletionArgs(style, "files", "upload", "--purpose", "u")...)
+				if got != (mainDispatchResult{stdout: "user_data\n"}) {
+					t.Fatalf("completion depends on request configuration: %+v", got)
+				}
+			})
+		}
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("completion made %d requests", got)
+	}
+}
+
+func TestMainCompletionValuesDoNotRestrictPurpose(t *testing.T) {
+	for _, operation := range []string{"list", "upload", "create"} {
+		t.Run(operation, func(t *testing.T) {
+			const purpose = "synthetic_future_purpose"
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.URL.Path != "/files" {
+					t.Errorf("unexpected request path %q", r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if operation == "list" {
+					if r.Method != http.MethodGet || r.URL.Query().Get("purpose") != purpose {
+						t.Errorf("purpose filter changed: %s %s", r.Method, r.URL)
+					}
+					_, _ = io.WriteString(w, `{"object":"list","data":[],"has_more":false}`)
+					return
+				}
+				if r.Method != http.MethodPost {
+					t.Errorf("unexpected upload method %q", r.Method)
+				}
+				if err := r.ParseMultipartForm(1 << 20); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				defer r.MultipartForm.RemoveAll()
+				if got := r.FormValue("purpose"); got != purpose {
+					t.Errorf("upload purpose changed: %q", got)
+				}
+				_, _ = io.WriteString(w, `{"id":"file-synthetic","object":"file","bytes":9,"created_at":1700000000,"filename":"upload.txt","purpose":"synthetic_future_purpose","status":"uploaded"}`)
+			}))
+			defer server.Close()
+			args := []string{"openai", "--format", "json", "files", operation, "--purpose", purpose}
+			if operation != "list" {
+				path := filepath.Join(t.TempDir(), "upload.txt")
+				if err := os.WriteFile(path, []byte("synthetic"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--file", path)
+			}
+			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=sk-fake-completion-test", "OPENAI_BASE_URL=" + server.URL}, args...)
+			if got.code != 0 || got.stderr != "" || requests.Load() != 1 {
+				t.Fatalf("completion metadata restricted a request: %+v; requests=%d", got, requests.Load())
+			}
+		})
+	}
+}

@@ -308,7 +308,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			usedFlags = append(usedFlags, *flag)
 			if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && !assigned {
 				if i == len(preceding)-1 {
-					return flagValueCompletion(*flag)
+					return flagValueCompletion(root, *flag, current, "", completionStyle)
 				}
 				i += 2
 			} else {
@@ -357,11 +357,11 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 
 	// Complete assigned values before matching flag names.
 	if isFlag(current) && !literal {
-		if name, _, assigned := strings.Cut(current, "="); assigned {
+		if name, value, assigned := strings.Cut(current, "="); assigned {
 			result := CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 			if flag := findFlag(flags, name); flag != nil {
 				if doc, ok := (*flag).(cli.DocGenerationFlag); ok && doc.TakesValue() {
-					result = flagValueCompletion(*flag)
+					result = flagValueCompletion(root, *flag, value, name+"=", completionStyle)
 					if result.Behavior == ShellCompletionBehaviorFile {
 						result.FileValuePrefix = name + "="
 						result.requiresFileValueSupport = true
@@ -388,7 +388,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	if fileFlag != "" && !helpTopics && (literal || !isFlag(current)) {
 		if positionalCount == 0 {
 			if flag := findFlag(flags, fileFlag); flag != nil && !slices.Contains(usedFlags, *flag) {
-				result := flagValueCompletion(*flag)
+				result := flagValueCompletion(root, *flag, current, "", completionStyle)
 				if result.Behavior == ShellCompletionBehaviorFile {
 					result.requiresFileValueSupport = true
 					return result
@@ -421,7 +421,23 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	}
 }
 
-func flagValueCompletion(flag cli.Flag) CompletionResult {
+func flagValueCompletion(root *cli.Command, flag cli.Flag, prefix, assignment string, style CompletionStyle) CompletionResult {
+	values, _ := root.Metadata["completion-flag-values"].(map[cli.Flag][]string)
+	var completions []ShellCompletion
+	for _, value := range values[flag] {
+		if strings.HasPrefix(value, prefix) {
+			name := value
+			// Readline replaces the word after '='. Other adapters replace the
+			// complete assigned argument through their existing value protocol.
+			if style != CompletionStyleBash {
+				name = assignment + name
+			}
+			completions = append(completions, NewShellCompletion(name, ""))
+		}
+	}
+	if len(completions) != 0 {
+		return CompletionResult{Completions: completions}
+	}
 	if wrapped, ok := flag.(interface{ CLIStringFlag() *cli.StringFlag }); ok {
 		flag = wrapped.CLIStringFlag()
 	}

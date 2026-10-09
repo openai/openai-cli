@@ -36,6 +36,7 @@ func ConfigureCommand(root *cli.Command) {
 	configureCommandPresentation(root)
 	configureManpageCommands(root)
 	configureOutputPolicy(root)
+	configureCompletionValues(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, mtlsClientFlags()...)
 	previousBefore := root.Before
