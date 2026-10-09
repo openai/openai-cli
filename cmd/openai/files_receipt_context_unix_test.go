@@ -137,6 +137,8 @@ func TestMainFilesReceiptFollowupPreservesSourceAndContext(t *testing.T) {
 			require.NotContains(t, command, " download ")
 			changed := []byte("local edits after the upload\n")
 			require.NoError(t, os.WriteFile(filepath.Join(work, filename), changed, 0o600))
+			entriesBefore, err := os.ReadDir(work)
+			require.NoError(t, err)
 			inspection := runFilesReceiptPTYCommand(t, python, bash, work, inheritedEndpoint, strings.TrimSpace(command), nil, environment)
 			if name == "inspection fails" {
 				require.NotZero(t, inspection.code)
@@ -159,7 +161,7 @@ func TestMainFilesReceiptFollowupPreservesSourceAndContext(t *testing.T) {
 			require.Zero(t, downloads.Load())
 			entries, err := os.ReadDir(work)
 			require.NoError(t, err)
-			require.Len(t, entries, 1, "read-only follow-up must not create a destination")
+			require.Equal(t, entriesBefore, entries, "read-only follow-up must not create a destination")
 		})
 	}
 }
