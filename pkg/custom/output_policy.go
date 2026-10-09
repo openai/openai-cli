@@ -139,9 +139,8 @@ func outputDiagnosticsAllowed(ctx context.Context) bool {
 func outputPolicyContext(ctx context.Context, command *cli.Command) context.Context {
 	root := command.Root()
 	return context.WithValue(ctx, outputPolicyKey{}, outputPolicy{
-		quiet: root.Bool("quiet"),
-		diagnostics: !root.Bool("quiet") && errorOutputFormat(root) == "text" &&
-			root.String("transform-error") == "",
+		quiet:       root.Bool("quiet"),
+		diagnostics: commandAllowsOutputDiagnostics(command),
 	})
 }
 

@@ -21,16 +21,19 @@ available, but command printing is disabled with an explanation in the picker.
 An optional [Tab shortcut](image-picker-shortcuts.md) opens the same picker in
 Bash 4.3+, zsh and fish. Other shells use Enter.
 
-After a successful generation, the picker reopens below the saved result with
-the same image settings and an empty prompt. It remembers the last submitted
-image settings and save folder for next time; the description starts empty and
-is not saved in picker preferences. Canceled edits are discarded. Settings stay
-local to your user configuration folder and do not affect commands that supply flags.
+After generation, the picker keeps your prompt and settings below the saved result.
+Reopening restores your latest draft, including the prompt, image settings, and
+chosen save folder. Drafts save before deliberate requests and when you exit
+after editing. Clearing the prompt also clears the saved description.
+
+Drafts stay in your user configuration folder. Reopening never submits a request.
+With multiple edited sessions, the last successful save replaces the whole draft.
+Forced termination or power loss can discard unsaved edits.
 
 Choose **Save to** to use the default folder, current directory, or another
-existing folder. Tab completes folder names. Saved settings are optional: if
-they cannot be written, a warning appears and generation can still continue.
-Unknown or unreadable saved settings are left alone.
+existing folder. Tab completes folder names. Draft storage is optional: if a
+draft cannot be written, a warning appears and generation can still continue.
+Unknown or unreadable drafts are left alone.
 Explicit image flags, output formats, piped input and redirected output retain
 the direct command behavior described below.
 

@@ -69,7 +69,9 @@ func TestSavedImagePreviewSkipsNonTerminalWithoutReadingFile(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
 	for _, mode := range []string{"auto", "on", "off"} {
 		var out, diagnostic bytes.Buffer
-		require.NoError(t, displaySavedImage(t.Context(), imageoutput.SavedImage{Path: "/not-a-real-image"}, &out, &diagnostic, mode))
+		rendered, err := displaySavedImage(t.Context(), imageoutput.SavedImage{Path: "/not-a-real-image"}, &out, &diagnostic, mode)
+		require.NoError(t, err)
+		require.False(t, rendered)
 		require.Empty(t, out.String())
 		require.Empty(t, diagnostic.String())
 	}
@@ -185,7 +187,9 @@ func TestSavedImagePreviewTerminal(t *testing.T) {
 		t.Run(program, func(t *testing.T) {
 			t.Setenv("TERM_PROGRAM", program)
 			var diagnostic bytes.Buffer
-			require.NoError(t, displaySavedImage(t.Context(), imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &diagnostic, "auto"))
+			rendered, err := displaySavedImage(t.Context(), imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &diagnostic, "auto")
+			require.NoError(t, err)
+			require.True(t, rendered)
 			require.Empty(t, diagnostic.String())
 			unchanged, err := os.ReadFile(file)
 			require.NoError(t, err)
@@ -194,16 +198,22 @@ func TestSavedImagePreviewTerminal(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	require.ErrorIs(t, displaySavedImage(ctx, imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &bytes.Buffer{}, "auto"), context.Canceled)
+	rendered, err := displaySavedImage(ctx, imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &bytes.Buffer{}, "auto")
+	require.ErrorIs(t, err, context.Canceled)
+	require.False(t, rendered)
 	var diagnostic bytes.Buffer
-	require.NoError(t, displaySavedImage(t.Context(), imageoutput.SavedImage{Path: "/not-a-real-file"}, os.Stdout, &diagnostic, "auto"))
+	rendered, err = displaySavedImage(t.Context(), imageoutput.SavedImage{Path: "/not-a-real-file"}, os.Stdout, &diagnostic, "auto")
+	require.NoError(t, err)
+	require.False(t, rendered)
 	require.Contains(t, diagnostic.String(), "No need to generate again")
 	tall := image.NewNRGBA(image.Rect(0, 0, 1, 16384))
 	encoded.Reset()
 	require.NoError(t, png.Encode(&encoded, tall))
 	require.NoError(t, os.WriteFile(file, encoded.Bytes(), 0o600))
 	diagnostic.Reset()
-	require.NoError(t, displaySavedImage(t.Context(), imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &diagnostic, "auto"))
+	rendered, err = displaySavedImage(t.Context(), imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &diagnostic, "auto")
+	require.NoError(t, err)
+	require.False(t, rendered)
 	require.Contains(t, diagnostic.String(), "too tall")
 	diagnostic.Reset()
 	require.ErrorIs(t, displayDecodedSavedImage(t.Context(), tall, os.Stdout, &diagnostic, "blocks"), errImagePreviewUnavailable)

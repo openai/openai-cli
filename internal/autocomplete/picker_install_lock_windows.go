@@ -5,9 +5,8 @@ package autocomplete
 import (
 	"errors"
 	"os"
-	"path/filepath"
-	"unsafe"
 
+	"github.com/openai/openai-cli/internal/windowsfile"
 	"golang.org/x/sys/windows"
 )
 
@@ -16,44 +15,16 @@ import (
 func pickerInstallOwned(os.FileInfo) bool { return true }
 
 func createPickerInstallLock(root *os.Root, name string) (*os.File, error) {
-	if !filepath.IsLocal(name) || filepath.Base(name) != name {
+	file, err := windowsfile.CreatePrivate(root, name)
+	switch {
+	case errors.Is(err, windowsfile.ErrInvalidName):
 		return nil, errors.New("shell integration lock requires a local filename")
-	}
-	user, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil {
+	case errors.Is(err, windowsfile.ErrOwner):
 		return nil, errors.New("cannot inspect shell integration owner")
-	}
-	// Protect the new lock from inherited read grants at creation. Tightening
-	// its DACL afterward cannot revoke a reader's existing locking handle.
-	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;;FA;;;" + user.User.Sid.String() + ")(A;;FA;;;SY)(A;;FA;;;BA)")
-	if err != nil {
+	case errors.Is(err, windowsfile.ErrPermissions):
 		return nil, errors.New("cannot prepare shell integration lock permissions")
 	}
-	objectName, err := windows.NewNTUnicodeString(name)
-	if err != nil {
-		return nil, err
-	}
-	directory, err := root.Open(".")
-	if err != nil {
-		return nil, err
-	}
-	defer directory.Close()
-	attributes := windows.OBJECT_ATTRIBUTES{
-		RootDirectory: windows.Handle(directory.Fd()), ObjectName: objectName,
-		Attributes: windows.OBJ_CASE_INSENSITIVE | windows.OBJ_DONT_REPARSE, SecurityDescriptor: descriptor,
-	}
-	attributes.Length = uint32(unsafe.Sizeof(attributes))
-	var handle windows.Handle
-	err = windows.NtCreateFile(&handle, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE, &attributes, &windows.IO_STATUS_BLOCK{}, nil,
-		windows.FILE_ATTRIBUTE_NORMAL, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, windows.FILE_CREATE,
-		windows.FILE_NON_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0)
-	if err != nil {
-		if status, ok := err.(windows.NTStatus); ok {
-			err = status.Errno()
-		}
-		return nil, &os.PathError{Op: "open", Path: name, Err: err}
-	}
-	return os.NewFile(uintptr(handle), name), nil
+	return file, err
 }
 
 func tryPickerInstallLock(file *os.File) (bool, error) {
