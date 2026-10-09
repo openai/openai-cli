@@ -18,6 +18,18 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+func TestCostReportRegistrationFormatMetadata(t *testing.T) {
+	root := &cli.Command{Name: "openai"}
+	registerCostReportCommands(root)
+	costs := root.Command("costs")
+	require.NotNil(t, costs)
+	report := costs.Command("report")
+	require.NotNil(t, report)
+	require.Equal(t, map[string][]string{"format": {"auto", "text", "json"}}, report.Metadata["completion-root-flag-values"])
+	require.NotNil(t, report.Metadata["help-content"])
+	require.Nil(t, costs.Metadata["completion-root-flag-values"], "the override belongs only to the selected report command")
+}
+
 func TestCostReportWriterFailures(t *testing.T) {
 	for _, format := range []string{"text", "json", "csv"} {
 		t.Run(format, func(t *testing.T) {

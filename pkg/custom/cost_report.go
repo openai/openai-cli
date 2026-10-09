@@ -30,12 +30,15 @@ func registerCostReportCommands(root *cli.Command) {
 		Commands: []*cli.Command{{
 			Name: "report", Usage: "Total project costs over an explicit date range.", HideHelpCommand: true,
 			DisableSliceFlagSeparator: true,
-			Metadata: map[string]any{"help-content": clihelp.Content{
-				Description: "Requires OPENAI_ADMIN_KEY. Start is inclusive; end is exclusive. " +
-					"Reads every page before printing a report. Supports --format text or json, or --export csv. " +
-					"Does not read stdin or support --transform or --raw-output.",
-				Examples: []clihelp.Example{{Description: "Report one week of project costs:", Command: "costs report --from 2026-10-01 --to 2026-10-08"}},
-			}},
+			Metadata: map[string]any{
+				"completion-root-flag-values": map[string][]string{"format": {"auto", "text", "json"}},
+				"help-content": clihelp.Content{
+					Description: "Requires OPENAI_ADMIN_KEY. Start is inclusive; end is exclusive. " +
+						"Reads every page before printing a report. Supports --format text or json, or --export csv. " +
+						"Does not read stdin or support --transform or --raw-output.",
+					Examples: []clihelp.Example{{Description: "Report one week of project costs:", Command: "costs report --from 2026-10-01 --to 2026-10-08"}},
+				},
+			},
 			Flags: []cli.Flag{
 				&cli.StringFlag{Name: "from", Usage: "Inclusive start date, YYYY-MM-DD", Required: true, OnlyOnce: true},
 				&cli.StringFlag{Name: "to", Usage: "Exclusive end date, YYYY-MM-DD", Required: true, OnlyOnce: true},
