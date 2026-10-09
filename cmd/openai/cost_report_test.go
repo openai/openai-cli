@@ -566,6 +566,7 @@ func TestMainCostReportPaginationFailuresDoNotEmitPartialReport(t *testing.T) {
 		{"empty cursor", costReportPage("", "", true), http.StatusOK, 2},
 		{"repeated cursor", costReportPage("", "page-two", true), http.StatusOK, 2},
 		{"malformed page", `{"object":"page","data":`, http.StatusOK, 2},
+		{"missing result object", costReportPage(`{"project_id":"proj_bad","amount":{"value":99,"currency":"usd"}}`, "", false), http.StatusOK, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server, requests := costReportServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -622,7 +623,7 @@ func TestMainCostReportForwardsOpaqueCursorExactly(t *testing.T) {
 			return
 		}
 		assert.Equal(t, cursor, r.URL.Query().Get("page"))
-		_, _ = io.WriteString(w, costReportPage(`{"amount":{"value":3,"currency":"usd"}}`, "", false))
+		_, _ = io.WriteString(w, costReportPage(`{"object":"organization.costs.result","amount":{"value":3,"currency":"usd"}}`, "", false))
 	})
 	got := runMainDispatchWithEnv(t, "bash", costReportEnv(server), costReportArgs("--format", "json")...)
 	require.Zero(t, got.code, "%+v", got)

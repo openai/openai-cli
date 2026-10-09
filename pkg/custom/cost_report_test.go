@@ -65,6 +65,28 @@ func TestCostReportCSVText(t *testing.T) {
 	}
 }
 
+func TestCostReportInterruptHandoffWaitsForDeliveredSignal(t *testing.T) {
+	interrupts := make(chan os.Signal, 1)
+	interrupts <- os.Interrupt
+	handled := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		stopCostReportInterrupts(interrupts, handled)
+		close(stopped)
+	}()
+	t.Cleanup(func() { <-stopped })
+	defer close(handled)
+	// Model a delivered notification whose handler has not yet canceled the context.
+	require.Equal(t, os.Interrupt, <-interrupts)
+	_, open := <-interrupts
+	require.False(t, open, "handoff must stop accepting new notifications")
+	select {
+	case <-stopped:
+		t.Fatal("handoff returned before the delivered notification was handled")
+	default:
+	}
+}
+
 // Isolate the real signal so this regression cannot interrupt other tests.
 func TestCostReportCancellationPreservesJoinedCauses(t *testing.T) {
 	if runtime.GOOS == "windows" {

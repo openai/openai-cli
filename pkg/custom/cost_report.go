@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"unicode"
 
@@ -95,10 +96,23 @@ func handleCostReport(parent context.Context, command *cli.Command) (err error) 
 	if err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(parent, os.Interrupt)
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt)
+	interruptsDone := make(chan struct{})
+	go func() {
+		defer close(interruptsDone)
+		for range interrupts {
+			cancel()
+		}
+	}()
+	stop := sync.OnceFunc(func() {
+		stopCostReportInterrupts(interrupts, interruptsDone)
+	})
 	defer func() {
-		interrupted := ctx.Err() != nil && parent.Err() == nil
 		stop()
+		interrupted := ctx.Err() != nil && parent.Err() == nil
 		if interrupted && (err == nil || errors.Is(err, context.Canceled)) {
 			if err == nil {
 				err = ctx.Err()
@@ -154,12 +168,21 @@ func handleCostReport(parent context.Context, command *cli.Command) (err error) 
 	// Restore ordinary interrupt handling before a potentially blocked stdout write.
 	// The caller's context still controls output; Ctrl+C can terminate a blocked pipe.
 	stop()
-	ctx = parent
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	report := projectCostReport{costReportRange: period, GroupBy: "project", Rows: rows}
-	if err := writeCostReport(ctx, root.Writer, format, report); err != nil {
+	if err := writeCostReport(parent, root.Writer, format, report); err != nil {
 		return &localUtilityError{message: "Could not write the cost report. Output may be incomplete; check the output file or pipe.", cause: err}
 	}
-	return ctx.Err()
+	return parent.Err()
+}
+
+func stopCostReportInterrupts(interrupts chan os.Signal, handled <-chan struct{}) {
+	// Stop guarantees no later sends. Drain delivered signals before proceeding.
+	signal.Stop(interrupts)
+	close(interrupts)
+	<-handled
 }
 
 type costReportRequestError struct{ error }
@@ -193,6 +216,7 @@ func writeCostReport(ctx context.Context, destination io.Writer, format string, 
 	case "json":
 		return json.NewEncoder(out).Encode(report)
 	case "csv":
+		terminalCSV := isTerminal(destination)
 		csvOut := csv.NewWriter(out)
 		if err := csvOut.Write([]string{"project_id", "currency", "amount"}); err != nil {
 			return err
@@ -205,7 +229,13 @@ func writeCostReport(ctx context.Context, destination io.Writer, format string, 
 			if row.ProjectID != nil {
 				project = *row.ProjectID
 			}
-			if err := csvOut.Write([]string{costReportCSVText(project), costReportCSVText(row.Currency), row.Amount}); err != nil {
+			project = costReportCSVText(project)
+			currency := costReportCSVText(row.Currency)
+			if terminalCSV {
+				project = costReportCell(project)
+				currency = costReportCell(currency)
+			}
+			if err := csvOut.Write([]string{project, currency, row.Amount}); err != nil {
 				return err
 			}
 		}

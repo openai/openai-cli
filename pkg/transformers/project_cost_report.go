@@ -107,9 +107,15 @@ func projectCostResult(ctx context.Context, raw []byte) (projectCostKey, costDec
 	if err := decodeCostObject(ctx, raw, &result, "object", "project_id", "amount"); err != nil {
 		return key, costDecimal{}, err
 	}
-	if result.Object != nil && string(result.Object) != `"organization.costs.result"` {
+	if len(result.Object) == 0 {
+		return key, costDecimal{}, errors.New("cost result requires object")
+	}
+	if string(result.Object) != `"organization.costs.result"` {
 		var object string
-		if err := decodeCostJSON(ctx, result.Object, &object); err != nil || object != "organization.costs.result" {
+		if err := decodeCostJSON(ctx, result.Object, &object); err != nil {
+			return key, costDecimal{}, err
+		}
+		if object != "organization.costs.result" {
 			return key, costDecimal{}, errors.New("unsupported cost result object")
 		}
 	}
@@ -163,7 +169,29 @@ func (a *ProjectCostAccumulator) Rows(ctx context.Context) ([]ProjectCostRow, er
 		}
 		rows = append(rows, row)
 	}
+	if err := sortProjectCostRows(ctx, rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func sortProjectCostRows(ctx context.Context, rows []ProjectCostRow) (err error) {
+	// The standard sorter cannot return comparator errors. Recover only this call's
+	// cancellation sentinel, following the imagefont cancellation wrapper pattern.
+	stop := &struct{ err error }{}
+	defer func() {
+		if cause := recover(); cause != nil {
+			if cause != stop {
+				panic(cause)
+			}
+			err = stop.err
+		}
+	}()
 	sort.Slice(rows, func(i, j int) bool {
+		if err := ctx.Err(); err != nil {
+			stop.err = err
+			panic(stop)
+		}
 		left, right := rows[i], rows[j]
 		if left.ProjectID == nil || right.ProjectID == nil {
 			if (left.ProjectID == nil) != (right.ProjectID == nil) {
@@ -174,7 +202,7 @@ func (a *ProjectCostAccumulator) Rows(ctx context.Context) ([]ProjectCostRow, er
 		}
 		return left.Currency < right.Currency
 	})
-	return rows, ctx.Err()
+	return ctx.Err()
 }
 
 func decodeCostJSON(ctx context.Context, raw []byte, target any) error {

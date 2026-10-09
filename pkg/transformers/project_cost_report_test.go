@@ -36,7 +36,7 @@ func TestProjectCostAccumulatorExactTotalsAndStableRows(t *testing.T) {
 	more, next, err = accumulator.AddPage(t.Context(), costTestPage(strings.Join([]string{
 		costTestResult(`"proj_b"`, "usd", "0.00999999999999999999"),
 		costTestResult(`"proj_a"`, "usd", "2e-1"),
-		`{"amount":{"currency":"eur","value":-0.5}}`,
+		`{"object":"organization.costs.result","amount":{"currency":"eur","value":-0.5}}`,
 		costTestResult(`""`, "usd", "-0e20"),
 	}, ",")))
 	require.NoError(t, err)
@@ -176,13 +176,18 @@ func TestProjectCostAccumulatorRejectsIncompletePages(t *testing.T) {
 
 func TestProjectCostAccumulatorRejectsIncompleteMoneyAndUnknownObjects(t *testing.T) {
 	for _, input := range []string{
-		`null`, `[]`, `{}`, `{"amount":null}`,
-		`{"amount":{"value":1}}`, `{"amount":{"currency":"","value":1}}`,
-		`{"amount":{"currency":null,"value":1}}`, `{"amount":{"currency":123,"value":1}}`,
-		`{"amount":{"currency":"usd"}}`, `{"amount":{"currency":"usd","value":null}}`,
-		`{"amount":{"currency":"usd","value":"1.25"}}`, `{"amount":{"currency":"usd","value":true}}`,
-		`{"amount":{"currency":"usd","value":[]}}`, `{"amount":{"currency":"usd","value":{}}}`,
-		`{"project_id":12,"amount":{"currency":"usd","value":1}}`,
+		`null`, `[]`, `{}`, `{"object":"organization.costs.result","amount":null}`,
+		`{"object":"organization.costs.result","amount":{"value":1}}`,
+		`{"object":"organization.costs.result","amount":{"currency":"","value":1}}`,
+		`{"object":"organization.costs.result","amount":{"currency":null,"value":1}}`,
+		`{"object":"organization.costs.result","amount":{"currency":123,"value":1}}`,
+		`{"object":"organization.costs.result","amount":{"currency":"usd"}}`,
+		`{"object":"organization.costs.result","amount":{"currency":"usd","value":null}}`,
+		`{"object":"organization.costs.result","amount":{"currency":"usd","value":"1.25"}}`,
+		`{"object":"organization.costs.result","amount":{"currency":"usd","value":true}}`,
+		`{"object":"organization.costs.result","amount":{"currency":"usd","value":[]}}`,
+		`{"object":"organization.costs.result","amount":{"currency":"usd","value":{}}}`,
+		`{"object":"organization.costs.result","project_id":12,"amount":{"currency":"usd","value":1}}`,
 		`{"object":null,"amount":{"currency":"usd","value":1}}`,
 		`{"object":"organization.usage.future.result","amount":{"currency":"usd","value":1}}`,
 	} {
@@ -197,6 +202,16 @@ func TestProjectCostAccumulatorRejectsIncompleteMoneyAndUnknownObjects(t *testin
 			require.ErrorIs(t, nextErr, err)
 		})
 	}
+}
+
+func TestProjectCostAccumulatorRequiresResultObject(t *testing.T) {
+	accumulator := NewProjectCostAccumulator()
+	missingObject := `{"project_id":"proj_a","amount":{"currency":"usd","value":3}}`
+	_, _, err := accumulator.AddPage(t.Context(), costTestPage(costTestResult(`"proj_a"`, "usd", "2")+","+missingObject))
+	require.ErrorContains(t, err, "cost result requires object")
+	rows, rowsErr := accumulator.Rows(t.Context())
+	require.Nil(t, rows)
+	require.ErrorIs(t, rowsErr, err)
 }
 
 func TestProjectCostAccumulatorLargeExactCoefficient(t *testing.T) {
@@ -245,6 +260,53 @@ func TestProjectCostAccumulatorCancellation(t *testing.T) {
 		require.ErrorIs(t, err, context.Canceled)
 	})
 }
+
+func TestProjectCostAccumulatorCancellationDuringSorting(t *testing.T) {
+	const count = 1024
+	accumulator := NewProjectCostAccumulator()
+	for i := count - 1; i >= 0; i-- {
+		key := projectCostKey{project: fmt.Sprintf("proj_%04d", i), assigned: true, currency: "usd"}
+		accumulator.totals[key] = costDecimal{digits: "1"}
+	}
+	// Rows checks once, then each one-digit amount checks twice before sorting.
+	// Trigger cancellation only after the sorter has completed several comparisons.
+	ctx := costTestCancelAfter(t, 1+2*count+32)
+	var rows []ProjectCostRow
+	var err error
+	require.NotPanics(t, func() { rows, err = accumulator.Rows(ctx) })
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, rows, "discard the partially sorted projection")
+
+	rows, err = accumulator.Rows(t.Context())
+	require.NoError(t, err)
+	require.Len(t, rows, count)
+	for i, row := range rows {
+		require.Equal(t, fmt.Sprintf("proj_%04d", i), *row.ProjectID)
+		require.Equal(t, "1", row.Amount)
+	}
+}
+
+func TestProjectCostAccumulatorSortingPropagatesOtherPanics(t *testing.T) {
+	accumulator := NewProjectCostAccumulator()
+	accumulator.totals[projectCostKey{currency: "usd"}] = costDecimal{digits: "1"}
+	accumulator.totals[projectCostKey{currency: "eur"}] = costDecimal{digits: "1"}
+	checks := 0
+	ctx := costTestErrContext{Context: t.Context(), err: func() error {
+		checks++
+		if checks == 6 {
+			panic("unrelated sort panic")
+		}
+		return nil
+	}}
+	require.PanicsWithValue(t, "unrelated sort panic", func() { _, _ = accumulator.Rows(ctx) })
+}
+
+type costTestErrContext struct {
+	context.Context
+	err func() error
+}
+
+func (ctx costTestErrContext) Err() error { return ctx.err() }
 
 func TestProjectCostAccumulatorUnrepresentableExponent(t *testing.T) {
 	for _, value := range []string{"1e999999999999999999999999999", "1e-999999999999999999999999999"} {

@@ -62,6 +62,8 @@ Use `--export csv` without `--format`; global `--format csv` remains unsupported
 CSV quotes commas, quotes, and newlines.
 Formula-sensitive text cells receive an apostrophe prefix, including formulas after leading whitespace.
 Text containing tabs or line breaks also receives that prefix.
+Direct terminal output escapes display controls in text cells.
+Redirected CSV preserves those characters after formula protection.
 Numeric amounts remain exact decimal text.
 Spreadsheet applications can round imported numbers. Use an exact decimal parser when consuming amounts.
 CSV represents both null and empty project IDs as empty cells; JSON preserves their distinction.
@@ -78,7 +80,7 @@ The command requests up to 180 daily buckets per page and follows every continua
 It continues across empty pages when the API reports more pages.
 Missing or repeated cursors fail instead of silently returning an incomplete total.
 Missing amounts, values, or currencies also fail instead of becoming zero.
-Unknown result types fail; unrelated new fields are ignored.
+Missing or unknown result types fail; unrelated new fields are ignored.
 Repeated report fields fail, including repeated `data`, `amount`, or `value` keys.
 
 Each project/currency total permits at most 1,048,576 extra digits beyond its longest original API coefficient.
