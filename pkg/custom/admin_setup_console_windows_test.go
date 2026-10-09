@@ -10,13 +10,11 @@ import (
 	"io"
 	"net"
 	"os"
-	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
-	uv "github.com/charmbracelet/ultraviolet"
 	"golang.org/x/sys/windows"
 )
 
@@ -336,18 +334,11 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 		t.Fatal("console observer received an unsupported diagnostic scenario")
 	}
 	readerMode := os.Getenv("OPENAI_ADMIN_CONSOLE_READER")
-	expectedReaderType := "*uv.conInputReader"
-	switch readerMode {
-	case "", "uv":
-		readerMode = "uv"
-	case "console-nowait":
-		expectedReaderType = adminConsoleNowaitReaderType
-	default:
-		t.Fatal("console observer received an unsupported reader mode")
+	if readerMode != "" && readerMode != "production" {
+		t.Fatal("console observer requires the production reader")
 	}
-	if strings.HasPrefix(scenario, "queue_") && readerMode != "console-nowait" {
-		t.Fatal("queue diagnostics require the candidate reader")
-	}
+	readerMode = "production"
+	expectedReaderType := adminSetupConsoleReaderType
 	original, err := adminConsoleGetModes()
 	if err != nil {
 		adminConsoleLogHandleFailure(t, "original")
@@ -387,16 +378,14 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 			}
 		}
 	}()
-	if readerMode == "console-nowait" {
-		checks := adminConsoleNowaitContractChecks()
-		passed := len(checks) == 30
-		for _, ok := range checks {
-			passed = passed && ok
-		}
-		observer.send(map[string]any{"event": "candidate_checks", "passed": passed, "checks": checks, "reader_mode": readerMode})
-		if !passed {
-			t.Fatal("test-only candidate record conversion or ABI checks failed")
-		}
+	checks := adminSetupConsoleReaderContractChecks()
+	passed := len(checks) == 37
+	for _, ok := range checks {
+		passed = passed && ok
+	}
+	observer.send(map[string]any{"event": "reader_checks", "passed": passed, "checks": checks, "reader_mode": readerMode})
+	if !passed {
+		t.Fatal("production reader record conversion or ABI checks failed")
 	}
 
 	for _, phase := range phases {
@@ -435,13 +424,7 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 			if scenario == "queue_startup" {
 				startupQueue = adminConsoleInjectQueuedRecords()
 			}
-			var actual adminSetupKeyReader
-			var createErr error
-			if readerMode == "uv" {
-				actual, createErr = uv.NewCancelReader(input)
-			} else {
-				actual, createErr = newAdminConsoleNowaitReader(input)
-			}
+			actual, createErr := newAdminSetupKeyReader(input)
 			if startupQueue != nil {
 				startupQueue.complete(createErr == nil)
 				startupQueuePassed = startupQueue.Passed

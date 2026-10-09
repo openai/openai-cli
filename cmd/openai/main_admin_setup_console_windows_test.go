@@ -290,247 +290,222 @@ func adminConsoleRunCases(t *testing.T) {
 			t.Logf("console handles verified; original=%+v active=%+v restored=%+v exit=%d requests=%d", hello.Original, active.Active, completed.Restored, completed.Exit, requests.Load())
 		})
 	}
-	for _, readerMode := range []string{"uv", "console-nowait"} {
-		for _, scenario := range []struct {
-			name, mode              string
-			phases                  []string
-			plainCancel, splitFinal bool
-		}{
-			{"native_reader_lifecycle", "original", []string{"success1", "cancel_partial", "success2"}, false, false},
-			{"native_reader_success_only", "success_only", []string{"success1", "success2"}, false, false},
-			{"native_reader_cancel_first", "cancel_first", []string{"cancel_partial", "success2"}, false, false},
-			{"native_reader_cancel_plain", "cancel_plain", []string{"success1", "cancel_partial", "success2"}, true, false},
-			{"native_reader_split_final", "split_final", []string{"success1", "cancel_partial", "success2"}, false, true},
-			{"native_reader_queue_startup", "queue_startup", []string{"success1"}, false, false},
-			{"native_reader_queue_success", "queue_success", []string{"success1", "success2"}, false, false},
-			{"native_reader_queue_cancel", "queue_cancel", []string{"cancel_partial", "success2"}, false, false},
-		} {
-			queueScenario := strings.HasPrefix(scenario.mode, "queue_")
-			if queueScenario && readerMode == "uv" {
-				continue // These scenarios validate the candidate's snapshot boundary.
+	const readerMode = "production"
+	for _, scenario := range []struct {
+		name, mode              string
+		phases                  []string
+		plainCancel, splitFinal bool
+	}{
+		{"native_reader_lifecycle", "original", []string{"success1", "cancel_partial", "success2"}, false, false},
+		{"native_reader_success_only", "success_only", []string{"success1", "success2"}, false, false},
+		{"native_reader_cancel_first", "cancel_first", []string{"cancel_partial", "success2"}, false, false},
+		{"native_reader_cancel_plain", "cancel_plain", []string{"success1", "cancel_partial", "success2"}, true, false},
+		{"native_reader_split_final", "split_final", []string{"success1", "cancel_partial", "success2"}, false, true},
+		{"native_reader_queue_startup", "queue_startup", []string{"success1"}, false, false},
+		{"native_reader_queue_success", "queue_success", []string{"success1", "success2"}, false, false},
+		{"native_reader_queue_cancel", "queue_cancel", []string{"cancel_partial", "success2"}, false, false},
+	} {
+		queueScenario := strings.HasPrefix(scenario.mode, "queue_")
+		name := scenario.name
+		expectedReaderType := "*custom.adminSetupConsoleReader"
+		t.Run(name, func(t *testing.T) {
+			var extra []string
+			if scenario.mode != "original" {
+				extra = []string{"OPENAI_ADMIN_CONSOLE_SCENARIO=" + scenario.mode}
 			}
-			name := scenario.name
-			expectedReaderType := "*uv.conInputReader"
-			if readerMode == "console-nowait" {
-				name += "_console_nowait"
-				expectedReaderType = "*custom.adminConsoleNowaitReader"
+			extra = append(extra, "OPENAI_ADMIN_CONSOLE_READER="+readerMode)
+			session := adminConsoleStart(t, os.Getenv("OPENAI_ADMIN_CONSOLE_OBSERVER"), "TestAdminSetupConsoleObserverChild", extra)
+			if session.hello.Scenario != scenario.mode || session.hello.ReaderMode != readerMode {
+				t.Fatal("observer selected a different diagnostic scenario")
 			}
-			t.Run(name, func(t *testing.T) {
-				var extra []string
-				if scenario.mode != "original" {
-					extra = []string{"OPENAI_ADMIN_CONSOLE_SCENARIO=" + scenario.mode}
+			if session.connection.SetDeadline(time.Now().Add(10*time.Second)) != nil {
+				t.Fatal("could not bound the production observer scenario")
+			}
+			session.send(t, map[string]any{"action": "start", "nonce": session.nonce})
+			sent := map[string]bool{}
+			partialPaste := "\x1b[200~sk-admin-SYNTHETIC"
+			if scenario.plainCancel {
+				partialPaste = "sk-admin-SYNTHETIC"
+			}
+			canceled, phases := false, 0
+			finalEnterSent := false
+			checksPassed := false
+			queueObserved := false
+			wantsCancel := false
+			for _, phase := range scenario.phases {
+				wantsCancel = wantsCancel || phase == "cancel_partial"
+			}
+			for {
+				frame := session.receive(t)
+				if frame.Event != "done" && frame.Event != "reader_checks" && (phases >= len(scenario.phases) || frame.Phase != scenario.phases[phases]) {
+					t.Fatal("observer phase order differs from the diagnostic scenario")
 				}
-				if readerMode != "uv" {
-					extra = append(extra, "OPENAI_ADMIN_CONSOLE_READER="+readerMode)
-				}
-				session := adminConsoleStart(t, os.Getenv("OPENAI_ADMIN_CONSOLE_OBSERVER"), "TestAdminSetupConsoleObserverChild", extra)
-				if session.hello.Scenario != scenario.mode || session.hello.ReaderMode != readerMode {
-					t.Fatal("observer selected a different diagnostic scenario")
-				}
-				if scenario.mode != "original" || readerMode != "uv" {
-					if session.connection.SetDeadline(time.Now().Add(10*time.Second)) != nil {
-						t.Fatal("could not bound the diagnostic observer scenario")
+				switch frame.Event {
+				case "reader_checks":
+					if frame.ReaderMode != readerMode || checksPassed || len(frame.Checks) != 37 || !frame.Passed {
+						t.Fatal("production reader did not execute the required record-conversion and ABI checks")
 					}
-				}
-				session.send(t, map[string]any{"action": "start", "nonce": session.nonce})
-				sent := map[string]bool{}
-				partialPaste := "\x1b[200~sk-admin-SYNTHETIC"
-				if scenario.plainCancel {
-					partialPaste = "sk-admin-SYNTHETIC"
-				}
-				canceled, phases := false, 0
-				finalEnterSent := false
-				checksPassed := readerMode == "uv"
-				queueObserved := false
-				wantsCancel := false
-				for _, phase := range scenario.phases {
-					wantsCancel = wantsCancel || phase == "cancel_partial"
-				}
-				for {
-					frame := session.receive(t)
-					if frame.Event != "done" && frame.Event != "candidate_checks" && (phases >= len(scenario.phases) || frame.Phase != scenario.phases[phases]) {
-						t.Fatal("observer phase order differs from the diagnostic scenario")
+					t.Logf("production reader record-conversion and ABI checks: count=%d results=%v", len(frame.Checks), frame.Checks)
+					for _, passed := range frame.Checks {
+						if !passed {
+							t.Fatal("production reader record-conversion or ABI check failed")
+						}
 					}
-					switch frame.Event {
-					case "candidate_checks":
-						if readerMode != "console-nowait" || frame.ReaderMode != readerMode || checksPassed || len(frame.Checks) != 30 || !frame.Passed {
-							t.Fatal("candidate did not execute the required record-conversion and ABI checks")
-						}
-						t.Logf("candidate record-conversion and ABI checks: count=%d results=%v", len(frame.Checks), frame.Checks)
-						for _, passed := range frame.Checks {
-							if !passed {
-								t.Fatal("candidate record-conversion or ABI check failed")
-							}
-						}
-						checksPassed = true
-					case "startup_queue", "queue_cleanup":
-						expectedEvent := "queue_cleanup"
-						if scenario.mode == "queue_startup" {
-							expectedEvent = "startup_queue"
-						}
-						if !queueScenario || queueObserved || frame.Event != expectedEvent || phases != 0 {
-							t.Fatal("observer reported an unexpected queue snapshot boundary")
-						}
-						adminConsoleCheckQueueEvidence(t, frame)
-						if frame.Event == "queue_cleanup" && (frame.CloseCalls != 1 || frame.CloseActiveReads != 0 || frame.CloseStartedReads != frame.CloseCompletedReads || !frame.ReadsCompleteAtClose || frame.CloseSucceeded == nil || !*frame.CloseSucceeded) {
-							t.Fatal("queue cleanup did not follow joined reads and successful Close")
-						}
-						queueObserved = true
-					case "ready":
-						if !checksPassed {
-							t.Fatal("candidate started before its focused checks completed")
-						}
-						if scenario.mode == "queue_startup" && !queueObserved {
-							t.Fatal("candidate became ready before proving startup queue cleanup")
-						}
-						if !adminConsoleHiddenInput(frame.Active.Stdin) || frame.Original != session.hello.Original {
-							t.Fatal("reader did not establish hidden input from restored modes")
-						}
-					case "read_started":
-						t.Logf("phase=%s read_started=%d read_completed=%d active=%d bytes=%d", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads, frame.ReadBytes)
-						if !sent[frame.Phase] {
-							session.waitPrompt(t)
-							input := adminConsoleSyntheticKey + "\r"
-							label := frame.Phase + "/combined"
-							if frame.Phase == "success2" {
-								input = "sk-admin-SYNTHETIC-console-next\r"
-								if scenario.splitFinal {
-									input = strings.TrimSuffix(input, "\r")
-									label = frame.Phase + "/prefix"
-								}
-							}
-							if frame.Phase == "cancel_partial" {
-								input = partialPaste
-							}
-							session.write(t, label, input)
-							sent[frame.Phase] = true
-						} else if frame.Phase == "cancel_partial" && frame.ReadBytes == len(partialPaste) && !canceled {
-							session.send(t, map[string]any{"action": "cancel", "phase": frame.Phase})
-							canceled = true
-						}
-					case "read_completed":
-						t.Logf("phase=%s read_started=%d read_completed=%d active=%d bytes=%d last_read_bytes=%d last_read_error=%s first_category=%s last_category=%s categories=%v", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads, frame.ReadBytes, frame.LastReadBytes, frame.LastReadError, frame.FirstByteCategory, frame.LastByteCategory, frame.ByteCategories)
-						if scenario.splitFinal && frame.Phase == "success2" && !finalEnterSent {
-							if frame.ByteCategories["CR"] != 0 {
-								t.Error("CR reached the final reader before the controller sent this phase's Enter")
-							}
-							if frame.ReadBytes == 31 && frame.ByteCategories["ascii-printable"] == 31 && frame.LastReadError == "nil" {
-								t.Log("final printable prefix consumed; now sending the separate Enter")
-								session.write(t, frame.Phase+"/enter", "\r")
-								finalEnterSent = true
-							}
-						}
-					case "cancel_result":
-						if frame.CancelReturned == nil {
-							t.Fatal("observer omitted the actual Cancel result")
-						}
-						t.Logf("phase=%s actual Cancel=%t", frame.Phase, *frame.CancelReturned)
-					case "close_result":
-						if frame.CloseSucceeded == nil {
-							t.Fatal("observer omitted the actual Close result")
-						}
-						t.Logf("phase=%s Close calls=%d started=%d completed=%d active=%d reads_complete_at_close=%t close_succeeded=%t", frame.Phase, frame.CloseCalls, frame.CloseStartedReads, frame.CloseCompletedReads, frame.CloseActiveReads, frame.ReadsCompleteAtClose, *frame.CloseSucceeded)
-					case "phase_complete":
-						adminConsoleLogPhaseDiagnostics(t, frame)
-						if scenario.splitFinal && frame.Phase == "success2" && !finalEnterSent {
-							t.Error("final helper returned before the controller sent this phase's Enter")
-						}
-						if frame.CloseCalls != 1 || frame.CloseActiveReads != 0 || frame.CloseStartedReads != frame.CloseCompletedReads || !frame.ReadsCompleteAtClose || frame.CloseSucceeded == nil || !*frame.CloseSucceeded {
-							t.Fatalf("native reader Close ordering failed: phase=%s calls=%d started=%d completed=%d active=%d", frame.Phase, frame.CloseCalls, frame.CloseStartedReads, frame.CloseCompletedReads, frame.CloseActiveReads)
-						}
-						if !frame.Passed || !frame.ReadsComplete || frame.Started != frame.Completed || frame.ActiveReads != 0 || frame.CancelCalls != 1 || frame.CancelReturned == nil || frame.Restored != session.hello.Original || frame.ReaderType != expectedReaderType {
-							t.Fatalf("native reader lifecycle failed: phase=%s started=%d completed=%d active=%d", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads)
-						}
-						if (frame.Phase == "cancel_partial") != frame.ContextCanceled || (frame.Phase != "cancel_partial") != frame.KeyMatches {
-							t.Fatal("native reader returned the wrong phase result")
-						}
-						phases++
-						t.Logf("phase=%s reader=%s started=%d completed=%d active=%d modes_restored=true", frame.Phase, frame.ReaderType, frame.Started, frame.Completed, frame.ActiveReads)
+					checksPassed = true
+				case "startup_queue", "queue_cleanup":
+					expectedEvent := "queue_cleanup"
+					if scenario.mode == "queue_startup" {
+						expectedEvent = "startup_queue"
+					}
+					if !queueScenario || queueObserved || frame.Event != expectedEvent || phases != 0 {
+						t.Fatal("observer reported an unexpected queue snapshot boundary")
+					}
+					adminConsoleCheckQueueEvidence(t, frame)
+					if frame.Event == "queue_cleanup" && (frame.CloseCalls != 1 || frame.CloseActiveReads != 0 || frame.CloseStartedReads != frame.CloseCompletedReads || !frame.ReadsCompleteAtClose || frame.CloseSucceeded == nil || !*frame.CloseSucceeded) {
+						t.Fatal("queue cleanup did not follow joined reads and successful Close")
+					}
+					queueObserved = true
+				case "ready":
+					if !checksPassed {
+						t.Fatal("production reader started before its focused checks completed")
+					}
+					if scenario.mode == "queue_startup" && !queueObserved {
+						t.Fatal("production reader became ready before proving startup queue cleanup")
+					}
+					if !adminConsoleHiddenInput(frame.Active.Stdin) || frame.Original != session.hello.Original {
+						t.Fatal("reader did not establish hidden input from restored modes")
+					}
+				case "read_started":
+					t.Logf("phase=%s read_started=%d read_completed=%d active=%d bytes=%d", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads, frame.ReadBytes)
+					if !sent[frame.Phase] {
+						session.waitPrompt(t)
+						input := adminConsoleSyntheticKey + "\r"
+						label := frame.Phase + "/combined"
 						if frame.Phase == "success2" {
-							t.Log("success2 verifies later-key ownership in the surviving reader process; it is not a shell read")
+							input = "sk-admin-SYNTHETIC-console-next\r"
+							if scenario.splitFinal {
+								input = strings.TrimSuffix(input, "\r")
+								label = frame.Phase + "/prefix"
+							}
 						}
-					case "done":
-						if !frame.Passed || !checksPassed || frame.Phases != len(scenario.phases) || phases != len(scenario.phases) || canceled != wantsCancel || queueObserved != queueScenario {
-							t.Fatal("native reader did not complete the diagnostic scenario's required phases")
+						if frame.Phase == "cancel_partial" {
+							input = partialPaste
 						}
-						session.send(t, map[string]any{"action": "ack"})
-						session.finish(t)
-						return
-					default:
-						t.Fatal("observer sent an unexpected control event")
+						session.write(t, label, input)
+						sent[frame.Phase] = true
+					} else if frame.Phase == "cancel_partial" && frame.ReadBytes == len(partialPaste) && !canceled {
+						session.send(t, map[string]any{"action": "cancel", "phase": frame.Phase})
+						canceled = true
 					}
+				case "read_completed":
+					t.Logf("phase=%s read_started=%d read_completed=%d active=%d bytes=%d last_read_bytes=%d last_read_error=%s first_category=%s last_category=%s categories=%v", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads, frame.ReadBytes, frame.LastReadBytes, frame.LastReadError, frame.FirstByteCategory, frame.LastByteCategory, frame.ByteCategories)
+					if scenario.splitFinal && frame.Phase == "success2" && !finalEnterSent {
+						if frame.ByteCategories["CR"] != 0 {
+							t.Error("CR reached the final reader before the controller sent this phase's Enter")
+						}
+						if frame.ReadBytes == 31 && frame.ByteCategories["ascii-printable"] == 31 && frame.LastReadError == "nil" {
+							t.Log("final printable prefix consumed; now sending the separate Enter")
+							session.write(t, frame.Phase+"/enter", "\r")
+							finalEnterSent = true
+						}
+					}
+				case "cancel_result":
+					if frame.CancelReturned == nil {
+						t.Fatal("observer omitted the actual Cancel result")
+					}
+					t.Logf("phase=%s actual Cancel=%t", frame.Phase, *frame.CancelReturned)
+				case "close_result":
+					if frame.CloseSucceeded == nil {
+						t.Fatal("observer omitted the actual Close result")
+					}
+					t.Logf("phase=%s Close calls=%d started=%d completed=%d active=%d reads_complete_at_close=%t close_succeeded=%t", frame.Phase, frame.CloseCalls, frame.CloseStartedReads, frame.CloseCompletedReads, frame.CloseActiveReads, frame.ReadsCompleteAtClose, *frame.CloseSucceeded)
+				case "phase_complete":
+					adminConsoleLogPhaseDiagnostics(t, frame)
+					if scenario.splitFinal && frame.Phase == "success2" && !finalEnterSent {
+						t.Error("final helper returned before the controller sent this phase's Enter")
+					}
+					if frame.CloseCalls != 1 || frame.CloseActiveReads != 0 || frame.CloseStartedReads != frame.CloseCompletedReads || !frame.ReadsCompleteAtClose || frame.CloseSucceeded == nil || !*frame.CloseSucceeded {
+						t.Fatalf("native reader Close ordering failed: phase=%s calls=%d started=%d completed=%d active=%d", frame.Phase, frame.CloseCalls, frame.CloseStartedReads, frame.CloseCompletedReads, frame.CloseActiveReads)
+					}
+					if !frame.Passed || !frame.ReadsComplete || frame.Started != frame.Completed || frame.ActiveReads != 0 || frame.CancelCalls != 1 || frame.CancelReturned == nil || frame.Restored != session.hello.Original || frame.ReaderType != expectedReaderType {
+						t.Fatalf("native reader lifecycle failed: phase=%s started=%d completed=%d active=%d", frame.Phase, frame.Started, frame.Completed, frame.ActiveReads)
+					}
+					if (frame.Phase == "cancel_partial") != frame.ContextCanceled || (frame.Phase != "cancel_partial") != frame.KeyMatches {
+						t.Fatal("native reader returned the wrong phase result")
+					}
+					phases++
+					t.Logf("phase=%s reader=%s started=%d completed=%d active=%d modes_restored=true", frame.Phase, frame.ReaderType, frame.Started, frame.Completed, frame.ActiveReads)
+					if frame.Phase == "success2" {
+						t.Log("success2 verifies later-key ownership in the surviving reader process; it is not a shell read")
+					}
+				case "done":
+					if !frame.Passed || !checksPassed || frame.Phases != len(scenario.phases) || phases != len(scenario.phases) || canceled != wantsCancel || queueObserved != queueScenario {
+						t.Fatal("native reader did not complete the diagnostic scenario's required phases")
+					}
+					session.send(t, map[string]any{"action": "ack"})
+					session.finish(t)
+					return
+				default:
+					t.Fatal("observer sent an unexpected control event")
 				}
-			})
-		}
+			}
+		})
 	}
 	adminConsoleRunParityCases(t)
 }
 
 func adminConsoleRunParityCases(t *testing.T) {
 	for _, fixture := range []struct{ name, class string }{
-		{"printable_boundary", "accepted-input"}, {"repeat_boundary", "accepted-input"},
+		{"printable_boundary", "accepted-input"}, {"repeat_boundary", "normalization-control"},
 		{"repeat_raw_storage", "accepted-input"},
 		{"backspace_delete", "accepted-input"}, {"ctrl_c", "cancel-input"}, {"ctrl_d", "cancel-input"},
 		{"bracketed_paste", "accepted-input"}, {"invalid_paste_space", "rejected-input"},
 		{"invalid_paste_nested", "rejected-input"}, {"incomplete_paste_ctrl_c", "cancel-input"},
 		{"nul", "rejected-input"}, {"space", "rejected-input"}, {"tab", "rejected-input"},
-		{"unicode", "rejected-input"}, {"surrogate_pair", "rejected-input"}, {"lone_surrogate", "unsupported-record"},
+		{"unicode", "rejected-input"}, {"surrogate_pair", "rejected-input"}, {"lone_surrogate", "normalization-control"},
 		{"modifier_transitions", "accepted-input"}, {"navigation", "rejected-input"}, {"alt_ascii", "rejected-input"},
 		{"altgr_translated_ascii", "accepted-input"}, {"altgr_physical_ascii", "accepted-input"},
-		{"alt_numpad_release", "accepted-input"}, {"malformed_alt_release", "unsupported-record"},
+		{"alt_numpad_release", "normalization-control"}, {"malformed_alt_release", "unsupported-record"},
 		{"alt_numpad_raw_storage", "accepted-input"},
 	} {
-		t.Run("native_record_parity/"+fixture.name, func(t *testing.T) {
-			results := make(map[string]adminConsoleTestFrame, 2)
-			bothPassed := true
-			for _, mode := range []string{"uv", "console-nowait"} {
-				passed := t.Run(mode, func(t *testing.T) {
-					results[mode] = adminConsoleObserveParity(t, fixture.name, fixture.class, mode)
-				})
-				bothPassed = bothPassed && passed
-			}
-			if !bothPassed {
-				t.Error("parity comparison requires both native fixture and lifecycle checks to pass")
-				return
-			}
-			baseline, candidate := results["uv"], results["console-nowait"]
-			if fixture.class == "accepted-input" || fixture.class == "cancel-input" {
-				baselineExact := adminConsoleParityExpected(fixture.name, baseline)
-				candidateExact := adminConsoleParityExpected(fixture.name, candidate)
-				t.Logf("native input contract fixture=%s uv_exact=%t candidate_exact=%t", fixture.name, baselineExact, candidateExact)
-				if !baselineExact || !candidateExact {
-					t.Error("reader did not preserve the fixture's expected input contract")
-				}
-			}
-			matches := baseline.ParserOutcome == candidate.ParserOutcome && baseline.AcceptedKeySHA256 == candidate.AcceptedKeySHA256 && baseline.AcceptedKeyLength == candidate.AcceptedKeyLength
-			t.Logf("native parity fixture=%s class=%s matches=%t uv_outcome=%s candidate_outcome=%s uv_length=%d candidate_length=%d digest_matches=%t", fixture.name, fixture.class, matches, baseline.ParserOutcome, candidate.ParserOutcome, baseline.AcceptedKeyLength, candidate.AcceptedKeyLength, baseline.AcceptedKeySHA256 == candidate.AcceptedKeySHA256)
-			if fixture.name == "nul" || fixture.name == "surrogate_pair" {
-				// Reviewed contract: do not copy UV's silent removal or substitution.
-				// Keep its actual observed result above, and require candidate rejection.
-				strictRejection := candidate.ParserOutcome == "invalid" && candidate.KeyEmpty && candidate.AcceptedKeyLength == 0 && candidate.AcceptedKeySHA256 == ""
-				t.Logf("reviewed invalid-input contract fixture=%s candidate_rejected=%t uv_outcome_preserved=%s", fixture.name, strictRejection, baseline.ParserOutcome)
-				if !strictRejection {
-					t.Error("candidate must reject NUL and surrogate input without returning a key")
-				}
-			} else if !matches {
-				t.Error("candidate differs from UV for this native fixture; its fixture class does not waive the mismatch")
+		t.Run("native_input/"+fixture.name, func(t *testing.T) {
+			frame := adminConsoleObserveParity(t, fixture.name, fixture.class, "production")
+			exact := adminConsoleParityExpected(fixture.name, frame)
+			t.Logf("production input contract fixture=%s class=%s exact=%t outcome=%s length=%d", fixture.name, fixture.class, exact, frame.ParserOutcome, frame.AcceptedKeyLength)
+			if !exact {
+				t.Error("production reader did not preserve the fixture's expected input contract")
 			}
 		})
 	}
 }
 
-// Expected parser results are independent of the native record writer. Matching
-// readers must not turn a shared character loss into accepted-input evidence.
+// Expected keys are independent of the native record writer. Normalization
+// controls require the queue shape observed before Read; raw controls retain
+// the full repeated-key and Alt-release contracts. Legacy UV evidence stays
+// pinned at 4ef1a0ee instead of remaining a mandatory product success gate.
 func adminConsoleParityExpected(fixture string, frame adminConsoleTestFrame) bool {
 	if fixture == "ctrl_c" || fixture == "ctrl_d" || fixture == "incomplete_paste_ctrl_c" {
 		return frame.ParserOutcome == "canceled" && frame.KeyEmpty
+	}
+	switch fixture {
+	case "invalid_paste_space", "invalid_paste_nested", "nul", "space", "tab", "unicode", "surrogate_pair", "navigation", "alt_ascii", "malformed_alt_release":
+		return frame.ParserOutcome == "invalid" && frame.KeyEmpty
+	case "alt_numpad_release":
+		// The native VT writer adds ESC prefixes before either reader starts.
+		return frame.ParserOutcome == "invalid" && frame.KeyEmpty && frame.Peek != nil &&
+			frame.Peek.Peeked == 33 && frame.Peek.Categories["ESC"] == 2 && frame.Peek.Categories["ascii-printable"] == 30
 	}
 	const prefix = "sk-admin-SYNTHETIC-parity-"
 	var suffix string
 	switch fixture {
 	case "printable_boundary":
 		suffix = "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
-	case "repeat_boundary", "repeat_raw_storage":
+	case "repeat_boundary":
+		if frame.Peek == nil || frame.Peek.Peeked != 60 || frame.Peek.MaxRepeat != 1 || frame.Peek.Repeat37Records != 0 || frame.Peek.RepeatTotal != 60 {
+			return false
+		}
+		suffix = "0123456789abcdef0123456789abcdefa"
+	case "repeat_raw_storage":
 		suffix = "0123456789abcdef0123456789abcdef" + strings.Repeat("a", 37)
 	case "backspace_delete":
 		suffix = "ad"
@@ -540,8 +515,13 @@ func adminConsoleParityExpected(fixture string, frame adminConsoleTestFrame) boo
 		suffix = "a"
 	case "altgr_translated_ascii", "altgr_physical_ascii":
 		suffix = "@z"
-	case "alt_numpad_release", "alt_numpad_raw_storage":
+	case "alt_numpad_raw_storage":
 		suffix = "Az"
+	case "lone_surrogate":
+		// VT normalization removed these records before the production reader.
+		if frame.Peek == nil || frame.Peek.Peeked != 27 || frame.Peek.Categories["surrogate"] != 0 || frame.Peek.Categories["ascii-printable"] != 26 {
+			return false
+		}
 	default:
 		return false
 	}
@@ -562,14 +542,12 @@ func adminConsoleObserveParity(t *testing.T, fixture, class, mode string) adminC
 		t.Fatal("could not bound the native parity observer")
 	}
 	session.send(t, map[string]any{"action": "start", "nonce": session.nonce})
-	expectedReader := "*uv.conInputReader"
-	if mode == "console-nowait" {
-		expectedReader = "*custom.adminConsoleNowaitReader"
-	}
+	expectedReader := "*custom.adminSetupConsoleReader"
 	ready, written, peeked, promptObserved := false, false, false, false
 	rawStorage := fixture == "repeat_raw_storage" || fixture == "alt_numpad_raw_storage"
 	var activeInputMode uint32
 	var requested, accepted int
+	var observedPeek *adminConsoleTestPeek
 	for {
 		frame := session.receive(t)
 		if frame.Phase != fixture {
@@ -616,7 +594,7 @@ func adminConsoleObserveParity(t *testing.T, fixture, class, mode string) adminC
 					t.Fatal("raw Alt control requires zero-character digits and the character-bearing Alt release before Read")
 				}
 			}
-			peeked = true
+			observedPeek, peeked = peek, true
 		case "read_started":
 			if !written || !peeked {
 				t.Fatal("parity reader started before native fixture injection and queue observation completed")
@@ -677,6 +655,7 @@ func adminConsoleObserveParity(t *testing.T, fixture, class, mode string) adminC
 			default:
 				t.Fatal("parity observer returned an unexpected parser outcome")
 			}
+			frame.Peek = observedPeek
 			return frame
 		default:
 			t.Fatal("parity observer sent an unexpected control event")
@@ -692,7 +671,7 @@ func adminConsoleCheckQueueEvidence(t *testing.T, frame adminConsoleTestFrame) {
 	}
 	t.Logf("queue boundary=%s phase=%s requested=%d accepted=%d pending_before=%d pending_after=%d write=%t count_before=%t count_after=%t echo_off_before=%t echo_off_after=%t passed=%t", frame.Event, frame.Phase, queue.RecordsRequested, queue.RecordsWritten, queue.PendingBefore, queue.PendingAfter, queue.WriteSucceeded, queue.CountBeforeSucceeded, queue.CountAfterSucceeded, queue.EchoOffBefore, queue.EchoOffAfter, queue.Passed)
 	if queue.RecordsRequested != 5000 || queue.RecordsWritten != queue.RecordsRequested || queue.PendingBefore <= 32 || queue.PendingAfter != 0 || !queue.WriteSucceeded || !queue.CountBeforeSucceeded || !queue.CountAfterSucceeded || !queue.EchoOffBefore || !queue.EchoOffAfter || !queue.Passed {
-		t.Fatal("candidate failed the finite queue snapshot boundary")
+		t.Fatal("production reader failed the finite queue snapshot boundary")
 	}
 }
 

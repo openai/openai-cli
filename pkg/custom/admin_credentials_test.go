@@ -135,7 +135,10 @@ func TestAdminCredentialsStandardServiceAuthentication(t *testing.T) {
 		{name: "environment header survives ordinary key", env: map[string]string{"OPENAI_CUSTOM_HEADERS": "Authorization: Basic synthetic-token"}, args: []string{"--api-key", "synthetic-project-key"}, wantAllowed: true},
 		{name: "environment header survives empty admin", env: map[string]string{"OPENAI_CUSTOM_HEADERS": "Authorization: Basic synthetic-token", "OPENAI_ADMIN_KEY": "synthetic-admin-key"}, args: []string{"--admin-api-key", ""}, wantAllowed: true},
 		{name: "flag header replaces environment", env: map[string]string{"OPENAI_CUSTOM_HEADERS": "Authorization: Basic synthetic-token"}, args: []string{"-H", "Authorization:"}},
-		{name: "mtls client", mtlsClient: &http.Client{}, wantAllowed: true},
+		{name: "mtls client still needs admin authorization", mtlsClient: &http.Client{}},
+		{name: "mtls client with admin key", mtlsClient: &http.Client{}, env: map[string]string{"OPENAI_ADMIN_KEY": "synthetic-admin-key"}, wantAllowed: true},
+		{name: "mtls client with explicit authorization", mtlsClient: &http.Client{}, args: []string{"-H", "Authorization: Custom synthetic-token"}, wantAllowed: true},
+		{name: "mtls client with empty authorization overrides key", mtlsClient: &http.Client{}, env: map[string]string{"OPENAI_ADMIN_KEY": "synthetic-admin-key"}, args: []string{"-H", "Authorization:"}},
 		{name: "typed nil mtls client"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,6 +180,9 @@ func TestAdminCredentialsEndpointOverrides(t *testing.T) {
 		{name: "standard flag", args: []string{"--base-url", "https://api.openai.com/v1"}},
 		{name: "standard case and port", args: []string{"--base-url", "https://API.OpenAI.com:443/v1"}},
 		{name: "standard environment", envURL: "https://api.openai.com/v1"},
+		{name: "standard mtls flag", args: []string{"--base-url", "https://mtls.api.openai.com/v1"}},
+		{name: "standard mtls case and port", args: []string{"--base-url", "https://MTLS.API.OpenAI.com:443/v1"}},
+		{name: "standard mtls environment", envURL: "https://mtls.api.openai.com/v1"},
 		{name: "custom flag", args: []string{"--base-url", "https://gateway.example.test/v1"}, wantAllowed: true},
 		{name: "custom environment", envURL: "https://gateway.example.test/v1", wantAllowed: true},
 		{name: "standard flag overrides custom environment", envURL: "https://gateway.example.test/v1", args: []string{"--base-url", "https://api.openai.com/v1"}},
@@ -184,7 +190,10 @@ func TestAdminCredentialsEndpointOverrides(t *testing.T) {
 		{name: "empty flag retains custom environment", envURL: "https://gateway.example.test/v1", args: []string{"--base-url", ""}, wantAllowed: true},
 		{name: "custom HTTP endpoint", args: []string{"--base-url", "http://api.openai.com/v1"}, wantAllowed: true},
 		{name: "custom port", args: []string{"--base-url", "https://api.openai.com:8443/v1"}, wantAllowed: true},
+		{name: "custom mtls port", args: []string{"--base-url", "https://mtls.api.openai.com:8443/v1"}, wantAllowed: true},
+		{name: "custom mtls suffix", args: []string{"--base-url", "https://mtls.api.openai.com.example.test/v1"}, wantAllowed: true},
 		{name: "URL basic authentication", args: []string{"--base-url", "https://synthetic-user:synthetic-password@api.openai.com/v1"}, wantAllowed: true},
+		{name: "mtls URL basic authentication", args: []string{"--base-url", "https://synthetic-user:synthetic-password@mtls.api.openai.com/v1"}, wantAllowed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0

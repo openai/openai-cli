@@ -16,7 +16,6 @@ import (
 	"time"
 	"unsafe"
 
-	uv "github.com/charmbracelet/ultraviolet"
 	"golang.org/x/sys/windows"
 )
 
@@ -24,7 +23,7 @@ var adminConsoleWriteInput = windows.NewLazySystemDLL("kernel32.dll").NewProc("W
 
 // Native fixture writer shared by parity and queue tests. The count describes
 // records accepted by Windows, not bytes delivered to a particular reader.
-func adminConsoleWriteNativeRecords(records []adminConsoleNowaitRecord) (uint32, error) {
+func adminConsoleWriteNativeRecords(records []adminSetupConsoleInputRecord) (uint32, error) {
 	if len(records) == 0 {
 		return 0, nil
 	}
@@ -55,25 +54,25 @@ func adminConsoleWriteNativeRecords(records []adminConsoleNowaitRecord) (uint32,
 
 type adminConsoleParityInput struct {
 	class      string
-	records    []adminConsoleNowaitRecord
+	records    []adminSetupConsoleInputRecord
 	rawStorage bool
 }
 
-// These are synthetic native records. Their classes describe fixture intent,
-// not an assumed outcome: the controller compares each actual UV result.
+// Synthetic native records exercise the production reader. The controller
+// checks exact accepted keys, rejected inputs, and observed VT normalization.
 func adminConsoleParityFixture(name string) (adminConsoleParityInput, bool) {
-	key := func(character uint16) adminConsoleNowaitRecord {
-		return adminConsoleNowaitRecord{eventType: 1, keyDown: 1, repeat: 1, character: character}
+	key := func(character uint16) adminSetupConsoleInputRecord {
+		return adminSetupConsoleInputRecord{eventType: 1, keyDown: 1, repeat: 1, character: character}
 	}
-	text := func(value string) []adminConsoleNowaitRecord {
-		records := make([]adminConsoleNowaitRecord, 0, len(value))
+	text := func(value string) []adminSetupConsoleInputRecord {
+		records := make([]adminSetupConsoleInputRecord, 0, len(value))
 		for _, character := range value {
 			records = append(records, key(uint16(character)))
 		}
 		return records
 	}
 	const prefix = "sk-admin-SYNTHETIC-parity-"
-	with := func(extra ...adminConsoleNowaitRecord) []adminConsoleNowaitRecord {
+	with := func(extra ...adminSetupConsoleInputRecord) []adminSetupConsoleInputRecord {
 		records := append(text(prefix), extra...)
 		return append(records, key('\r'))
 	}
@@ -88,6 +87,9 @@ func adminConsoleParityFixture(name string) (adminConsoleParityInput, bool) {
 		fixture.records = append(fixture.records, key('\r'))
 	case "repeat_boundary", "repeat_raw_storage":
 		fixture.class = "accepted-input"
+		if name == "repeat_boundary" {
+			fixture.class = "normalization-control"
+		}
 		fixture.rawStorage = name == "repeat_raw_storage"
 		fixture.records = text(prefix + "0123456789abcdef0123456789abcdef")
 		repeated := key('a')
@@ -124,7 +126,7 @@ func adminConsoleParityFixture(name string) (adminConsoleParityInput, bool) {
 	case "surrogate_pair":
 		fixture.records = with(key(0xd83d), key(0xde00), key('z'))
 	case "lone_surrogate":
-		fixture.class = "unsupported-record"
+		fixture.class = "normalization-control"
 		fixture.records = with(key(0xd800), key('z'))
 	case "modifier_transitions":
 		fixture.class = "accepted-input"
@@ -165,7 +167,10 @@ func adminConsoleParityFixture(name string) (adminConsoleParityInput, bool) {
 		altgr.virtualKey, altgr.controlState = 'Q', 0x0009
 		fixture.records = with(altgr, key('z'))
 	case "alt_numpad_release", "malformed_alt_release", "alt_numpad_raw_storage":
-		fixture.class = "accepted-input"
+		fixture.class = "normalization-control"
+		if name == "alt_numpad_raw_storage" {
+			fixture.class = "accepted-input"
+		}
 		digit := key('6')
 		digit.virtualKey, digit.controlState = 0x66, 0x0022
 		lastDigit := digit
@@ -206,7 +211,7 @@ func adminConsoleParityOutcome(err error, timedOut bool) string {
 	}
 }
 
-// Each process observes one fixture and one reader in its own fresh ConPTY.
+// Each process observes one fixture through the production reader in a fresh ConPTY.
 // This intentionally does not use helper-only conversion as parity evidence.
 func TestAdminSetupConsoleParityChild(t *testing.T) {
 	address := os.Getenv("OPENAI_ADMIN_CONSOLE_CONTROL")
@@ -229,12 +234,10 @@ func TestAdminSetupConsoleParityChild(t *testing.T) {
 	}
 	defer clear(fixture.records)
 	mode := os.Getenv("OPENAI_ADMIN_CONSOLE_READER")
-	expectedReader := "*uv.conInputReader"
-	if mode == "console-nowait" {
-		expectedReader = adminConsoleNowaitReaderType
-	} else if mode != "uv" {
-		t.Fatal("parity observer received an unsupported reader")
+	if mode != "production" {
+		t.Fatal("input observer requires the production reader")
 	}
+	expectedReader := adminSetupConsoleReaderType
 	original, err := adminConsoleGetModes()
 	if err != nil {
 		adminConsoleLogHandleFailure(t, "parity original")
@@ -265,13 +268,7 @@ func TestAdminSetupConsoleParityChild(t *testing.T) {
 	var peek adminConsoleFixturePeek
 	rawStorageProved := !fixture.rawStorage
 	key, readErr := readAdminSetupKeyWithReader(ctx, os.Stdin, os.Stderr, func(input io.Reader) (adminSetupKeyReader, error) {
-		var actual adminSetupKeyReader
-		var createErr error
-		if mode == "uv" {
-			actual, createErr = uv.NewCancelReader(input)
-		} else {
-			actual, createErr = newAdminConsoleNowaitReader(input)
-		}
+		actual, createErr := newAdminSetupKeyReader(input)
 		if createErr != nil {
 			return nil, createErr
 		}
@@ -289,7 +286,7 @@ func TestAdminSetupConsoleParityChild(t *testing.T) {
 		ready := reader.frame("ready")
 		ready["original"], ready["active"] = original, active
 		observer.send(ready)
-		// Both constructors have finished their startup discard before injection.
+		// The production constructor finishes its startup discard before injection.
 		// The native call acknowledges the complete write before Read starts.
 		var writeErr error
 		var injection adminConsoleFixtureInjection

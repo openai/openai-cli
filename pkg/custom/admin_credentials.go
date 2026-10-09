@@ -1,7 +1,6 @@
 package custom
 
 import (
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -64,9 +63,8 @@ func checkAdminCredentials(command *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	if client, ok := command.Root().Metadata[mtlsHTTPClientMetadata].(*http.Client); ok && client != nil {
-		return nil
-	}
+	// OpenAI mTLS adds client-certificate authentication; it does not replace
+	// the admin API key or an explicit Authorization header.
 	// Method-level Authorization overrides SDK credentials, even when empty.
 	if values, ok := headers["Authorization"]; ok {
 		if values[0] != "" {
@@ -112,6 +110,6 @@ func usesStandardAdminService(command *cli.Command) bool {
 	}
 	// URL userinfo can provide HTTP Basic authentication through Go's client.
 	return endpoint.User == nil && strings.EqualFold(endpoint.Scheme, "https") &&
-		strings.EqualFold(endpoint.Hostname(), "api.openai.com") &&
+		(strings.EqualFold(endpoint.Hostname(), "api.openai.com") || strings.EqualFold(endpoint.Hostname(), "mtls.api.openai.com")) &&
 		(endpoint.Port() == "" || endpoint.Port() == "443")
 }

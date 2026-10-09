@@ -31,11 +31,11 @@ func adminConsoleInjectQueuedRecords() *adminConsoleQueueEvidence {
 	if !evidence.EchoOffBefore {
 		return evidence
 	}
-	records := make([]adminConsoleNowaitRecord, adminConsoleQueuedRecordCount)
+	records := make([]adminSetupConsoleInputRecord, adminConsoleQueuedRecordCount)
 	defer clear(records)
 	for i := range records {
 		// Alternating characters prevent adjacent repeat coalescing.
-		records[i] = adminConsoleNowaitRecord{eventType: 1, keyDown: 1, repeat: 1, character: uint16('Q' + i%2)}
+		records[i] = adminSetupConsoleInputRecord{eventType: 1, keyDown: 1, repeat: 1, character: uint16('Q' + i%2)}
 	}
 	evidence.RecordsWritten, err = adminConsoleWriteNativeRecords(records)
 	evidence.WriteSucceeded = err == nil && evidence.RecordsWritten == evidence.RecordsRequested

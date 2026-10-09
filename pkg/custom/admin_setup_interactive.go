@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -175,7 +176,9 @@ func adminSetupRequestOptions(command *cli.Command) ([]option.RequestOption, str
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	options = append(options, option.WithBaseURL(baseURL), option.WithHTTPClient(&client), option.WithMaxRetries(0))
-	return options, endpoint.Scheme + "://" + endpoint.Host, nil
+	// Spell Unicode and terminal controls explicitly without changing the URL.
+	origin := strconv.QuoteToASCII(endpoint.Scheme + "://" + endpoint.Host)
+	return options, origin[1 : len(origin)-1], nil
 }
 
 func verifyAdminSetup(ctx context.Context, options []option.RequestOption, key []byte) error {

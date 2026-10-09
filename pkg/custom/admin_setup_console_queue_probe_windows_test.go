@@ -21,7 +21,7 @@ type adminConsoleFixtureInjection struct {
 
 // The raw controls change only write-time VT translation. Both readers receive
 // their exact original active mode before the observer peeks or starts Read.
-func adminConsoleWriteParityRecords(records []adminConsoleNowaitRecord, raw bool, active uint32) (written uint32, evidence adminConsoleFixtureInjection, err error) {
+func adminConsoleWriteParityRecords(records []adminSetupConsoleInputRecord, raw bool, active uint32) (written uint32, evidence adminConsoleFixtureInjection, err error) {
 	evidence.RawStorage, evidence.InjectionMode = raw, active
 	input, handleErr := windows.GetStdHandle(windows.STD_INPUT_HANDLE)
 	if handleErr != nil {
@@ -81,14 +81,14 @@ type adminConsoleFixturePeek struct {
 
 // This reads metadata before any reader starts. It never consumes, reinserts,
 // prints, or retains fixture contents. The fixed bound applies only to tests.
-func adminConsolePeekFixture(expected []adminConsoleNowaitRecord) adminConsoleFixturePeek {
+func adminConsolePeekFixture(expected []adminSetupConsoleInputRecord) adminConsoleFixturePeek {
 	evidence := adminConsoleFixturePeek{Categories: map[string]uint32{}}
 	input, err := windows.GetStdHandle(windows.STD_INPUT_HANDLE)
 	if err != nil || adminConsolePeekInput.Find() != nil {
 		return evidence
 	}
 	evidence.CountBeforeSucceeded = windows.GetNumberOfConsoleInputEvents(input, &evidence.PendingBefore) == nil
-	var records [256]adminConsoleNowaitRecord
+	var records [256]adminSetupConsoleInputRecord
 	defer clear(records[:])
 	if !evidence.CountBeforeSucceeded || evidence.PendingBefore == 0 || evidence.PendingBefore > uint32(len(records)) {
 		return evidence

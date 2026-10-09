@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 
-	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/term"
 )
 
@@ -26,9 +25,7 @@ type adminSetupKeyReader interface {
 // readAdminSetupKey returns a caller-owned buffer. The caller must clear it after use.
 // It does not store the key in the environment, command flags, or persistent storage.
 func readAdminSetupKey(ctx context.Context, input, output *os.File) (key []byte, err error) {
-	return readAdminSetupKeyWithReader(ctx, input, output, func(reader io.Reader) (adminSetupKeyReader, error) {
-		return uv.NewCancelReader(reader)
-	})
+	return readAdminSetupKeyWithReader(ctx, input, output, newAdminSetupKeyReader)
 }
 
 func readAdminSetupKeyWithReader(ctx context.Context, input, output *os.File, newReader func(io.Reader) (adminSetupKeyReader, error)) (key []byte, err error) {
@@ -61,7 +58,9 @@ func readAdminSetupKeyWithReader(ctx context.Context, input, output *os.File, ne
 		return nil, errAdminSetupKeyIO
 	}
 	defer func() {
-		if reader.Close() != nil {
+		closeErr := reader.Close()
+		flushErr := flushAdminSetupInput(input)
+		if closeErr != nil || flushErr != nil {
 			err = errAdminSetupKeyIO
 		}
 	}()
