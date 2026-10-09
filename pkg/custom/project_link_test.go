@@ -39,6 +39,7 @@ func projectLinkTestEnvironment(t *testing.T) string {
 	t.Setenv("APPDATA", directory)
 	t.Setenv("XDG_CONFIG_HOME", directory)
 	t.Setenv("OPENAI_PROJECT_ID", "")
+	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:1")
 	require.NoError(t, os.Unsetenv("OPENAI_PROJECT_ID"))
 	t.Chdir(t.TempDir())
 	path, err := projectLinkPath()
