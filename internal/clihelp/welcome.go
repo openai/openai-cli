@@ -69,9 +69,10 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 	}
 	title := strings.TrimSpace(">_ OpenAI CLI  " + version)
 	const greeting = "What are we making today?"
+	contentWidth := max(ansi.StringWidth(title), ansi.StringWidth(greeting))
 	// Keep this optional header to four lines. Narrow terminals and unusually
 	// long build versions retain complete help without clipping the version.
-	if max(ansi.StringWidth(title), ansi.StringWidth(greeting))+4 > width {
+	if contentWidth+4 > width {
 		return ""
 	}
 	// Reuse the established palette; those presentation helpers are private to
@@ -83,13 +84,16 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(focus))
 	note := lipgloss.NewStyle().Foreground(lipgloss.Color(muted))
 	padding := 1
-	if max(ansi.StringWidth(title), ansi.StringWidth(greeting))+6 <= width {
+	if contentWidth+6 <= width {
 		padding = 2
 	}
-	frame := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(border)).Padding(0, padding)
+	// Square corners avoid rounded-glyph metrics that leave gaps in some
+	// renderers, without changing the frame's width or height.
+	frame := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color(border)).Padding(0, padding)
 	styledTitle := heading.Render(">_ OpenAI CLI")
 	if version != "" {
-		styledTitle += "  " + note.Render(version)
+		gap := contentWidth - ansi.StringWidth(">_ OpenAI CLI") - ansi.StringWidth(version)
+		styledTitle += strings.Repeat(" ", gap) + note.Render(version)
 	}
 	var out strings.Builder
 	writer := colorprofile.Writer{Forward: &out, Profile: profile}

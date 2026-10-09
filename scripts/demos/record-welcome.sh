@@ -117,7 +117,7 @@ def read_scene(name):
     full_scene = csi.sub("", recorded).replace("\r\n", "\n")
     occupied = sum(max(1, math.ceil(cell_width(line) / columns)) for line in full_scene.split("\n"))
     assert occupied < rows, f"{name} needs more than {occupied} rows; raise DEMO_ROWS"
-    assert plain.startswith("NAME:\n") or plain.startswith("╭"), "missing help start"
+    assert plain.startswith("NAME:\n") or plain.startswith("┌"), "missing help start"
     for expected in ("START HERE\n", "GLOBAL OPTIONS:\n", "Key setup: openai help setup\n"):
         assert expected in plain, f"{name} missing {expected!r}"
     if no_color:
@@ -140,8 +140,8 @@ assert greeting not in before, "baseline already contains the welcome banner"
 if banner_width <= min(columns, 100):
     banner, help_text = after.split("\n\n", 1)
     lines = banner.splitlines()
-    assert len(lines) == 4 and lines[0].startswith("╭") and lines[-1].startswith("╰"), "invalid banner frame"
-    assert title in lines[1] and greeting in lines[2], "missing runtime version or greeting"
+    assert len(lines) == 4 and lines[0].startswith("┌") and lines[-1].startswith("└"), "invalid banner frame"
+    assert ">_ OpenAI CLI" in lines[1] and display_version in lines[1] and greeting in lines[2], "missing runtime version or greeting"
     assert all(cell_width(line) <= columns for line in lines), "banner exceeds terminal width"
     assert help_text == before, "welcome changed existing help or command groups"
     assert after_raw.split("\r\n\r\n", 1)[1] == before_raw, "welcome changed existing help bytes"

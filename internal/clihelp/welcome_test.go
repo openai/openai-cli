@@ -13,7 +13,7 @@ import (
 )
 
 func TestWelcomeLayout(t *testing.T) {
-	for _, version := range []string{"1.38.0", "v2.0.0", "dev", "1.38.0-rc.1+abc123"} {
+	for _, version := range []string{"", "1.38.0", "v2.0.0", "dev", "dev-界", "1.38.0-rc.1+abc123"} {
 		for _, width := range []int{20, 28, 29, 32, 40, 80} {
 			for _, profile := range []colorprofile.Profile{colorprofile.NoTTY, colorprofile.ANSI, colorprofile.TrueColor} {
 				got := renderWelcome(version, width, profile, true)
@@ -47,6 +47,27 @@ func TestWelcomeVersionEscapesControls(t *testing.T) {
 	got := renderWelcome("1.2.3\x1b]2;changed\a\u202e", 100, colorprofile.NoTTY, true)
 	if strings.ContainsAny(got, "\x1b\a\u202e") || !strings.Contains(got, "1.2.3") {
 		t.Fatalf("unsafe version: %q", got)
+	}
+}
+
+func TestWelcomeBorderAndVersionAlignment(t *testing.T) {
+	for _, width := range []int{29, 30, 31, 40, 80} {
+		got := renderWelcome("1.38.0", width, colorprofile.NoTTY, true)
+		lines := strings.Split(strings.TrimSuffix(got, "\n\n"), "\n")
+		if len(lines) != 4 || !strings.HasPrefix(lines[0], "┌") || !strings.HasSuffix(lines[0], "┐") ||
+			!strings.HasPrefix(lines[3], "└") || !strings.HasSuffix(lines[3], "┘") {
+			t.Fatalf("unexpected border at width %d: %q", width, got)
+		}
+		for _, line := range lines {
+			if ansi.StringWidth(line) != ansi.StringWidth(lines[0]) {
+				t.Fatalf("uneven border at width %d: %q", width, got)
+			}
+		}
+		versionEnd := strings.Index(lines[1], "v1.38.0") + len("v1.38.0")
+		greetingEnd := strings.Index(lines[2], "today?") + len("today?")
+		if versionEnd != greetingEnd {
+			t.Fatalf("version does not align with content edge at width %d: %q", width, got)
+		}
 	}
 }
 
