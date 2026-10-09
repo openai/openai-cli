@@ -26,6 +26,7 @@ def main():
                 compact = "".join(text.split())
                 header = json.loads((root / f"{scene}.cast").read_text().splitlines()[0])
                 check(header["width"] == width, f"{scene}: incorrect PTY width")
+                check(header["height"] == (24 if width == 40 else 22), f"{scene}: incorrect PTY height")
                 check("Terminalreplay.Syntheticdata." in compact, f"{scene}: missing evidence label")
                 check(f"{scene} exit status: 0 (expected 0)" in metadata, f"{scene}: missing successful exit")
                 path = "/v1/organization/spend_limit"

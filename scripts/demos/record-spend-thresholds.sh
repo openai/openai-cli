@@ -20,7 +20,7 @@ cp "$record_recipe/scene.sh" "$demo_output/scene.sh"
   echo "before commit: $demo_before_sha"
   echo "after commit: $demo_after_sha"
   echo 'scope: Bash PTY terminal replay; synthetic loopback API; no native graphical terminal validation'
-  echo 'render: 100x42 and 40x56; Menlo 18px; asciinema theme; NO_COLOR=1'
+  echo 'render: 100x22 and 40x24; Menlo 18px; asciinema theme; NO_COLOR=1'
   echo 'data: synthetic USD amounts in integer cents; fake admin credentials; isolated HOME'
   demo_capture_metadata
   "$demo_python" --version
@@ -35,8 +35,8 @@ fi
 demo_render_options=(--renderer resvg --font-family Menlo --font-size 18 --line-height 1.2 \
   --theme asciinema --fps-cap 15 --last-frame-duration 2)
 for record_width in 100 40; do
-  demo_window_size="${record_width}x42"
-  if [ "$record_width" -eq 40 ]; then demo_window_size=40x56; fi
+  demo_window_size="${record_width}x22"
+  if [ "$record_width" -eq 40 ]; then demo_window_size=40x24; fi
   record_scenes=()
   for record_case in limit alerts json missing; do
     for record_phase in before after; do
