@@ -81,13 +81,16 @@ Missing amounts, values, or currencies also fail instead of becoming zero.
 Unknown result types fail; unrelated new fields are ignored.
 Repeated report fields fail, including repeated `data`, `amount`, or `value` keys.
 
-Exact addition permits at most 1,048,576 extra alignment digits beyond the larger input coefficient.
-The report checks this arithmetic budget before allocating those digits.
+Each project/currency total permits at most 1,048,576 extra digits beyond its longest original API coefficient.
+The report tracks original coefficient lengths across every page.
+Previously accumulated digits cannot enlarge this arithmetic budget.
+The report checks the budget before allocating alignment digits.
 Source coefficient lengths and API response sizes have no new limit.
 Output switches to exact scientific notation when plain output would insert more than 1,048,576 zeros.
 For example, `1e1000000000` remains compact, and two equal opposite amounts cancel exactly.
 Adding `1` to that amount exceeds the report's arithmetic budget and fails without output.
 The generated Costs command preserves raw API access for records that exceed this report-specific budget.
+This limits each total's precision expansion. Overall memory still depends on response sizes and the number of distinct totals.
 
 No report reaches stdout until every page succeeds.
 Any request, parsing, or pagination failure exits nonzero without a partial total.

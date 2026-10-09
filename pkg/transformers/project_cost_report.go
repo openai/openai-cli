@@ -254,14 +254,16 @@ func (r *costJSONReader) Read(p []byte) (int, error) {
 // Arithmetic expands only digits required by the exact sum and polls cancellation.
 // Raw coefficients are uncapped. Exponent expansion has a report-local bound.
 type costDecimal struct {
-	digits   string
-	scale    int
-	negative bool
+	digits       string
+	scale        int
+	negative     bool
+	sourceDigits int // Largest original API coefficient contributing to this total.
 }
 
 const costMaxInt = int(^uint(0) >> 1)
 
-// Bound only newly inserted digits, never coefficients supplied by the API.
+// Bound each total against its largest original API coefficient, across all pages.
+// Expanded totals never increase this baseline. Raw coefficients remain uncapped.
 const costMaxExpansion = 1 << 20
 
 var errCostPrecision = errors.New("cost amount exceeds addressable decimal precision")
@@ -293,6 +295,7 @@ func parseCostDecimal(ctx context.Context, raw string) (costDecimal, error) {
 		}
 	}
 	value.digits = digits.String()
+	value.sourceDigits = len(value.digits)
 	value, err := value.normalize(ctx)
 	if err != nil || value.digits == "0" || exponentText == "" {
 		return value, err
@@ -309,6 +312,7 @@ func parseCostDecimal(ctx context.Context, raw string) (costDecimal, error) {
 }
 
 func (v costDecimal) normalize(ctx context.Context) (costDecimal, error) {
+	v.sourceDigits = v.originalDigits()
 	first, last := 0, len(v.digits)
 	for first < last && v.digits[first] == '0' {
 		if first%4096 == 0 {
@@ -319,7 +323,7 @@ func (v costDecimal) normalize(ctx context.Context) (costDecimal, error) {
 		first++
 	}
 	if first == last {
-		return costDecimal{digits: "0"}, ctx.Err()
+		return costDecimal{digits: "0", sourceDigits: v.originalDigits()}, ctx.Err()
 	}
 	for last > first && v.digits[last-1] == '0' {
 		if last%4096 == 0 {
@@ -338,6 +342,13 @@ func (v costDecimal) normalize(ctx context.Context) (costDecimal, error) {
 	return v, ctx.Err()
 }
 
+func (v costDecimal) originalDigits() int {
+	if v.sourceDigits != 0 {
+		return v.sourceDigits
+	}
+	return len(v.digits)
+}
+
 func (v costDecimal) span(scale int) (int, int, error) {
 	if v.scale < 0 && scale > costMaxInt+v.scale {
 		return 0, 0, errCostPrecision
@@ -353,10 +364,13 @@ func (v costDecimal) add(ctx context.Context, other costDecimal) (costDecimal, e
 	if err := ctx.Err(); err != nil {
 		return v, err
 	}
+	sourceDigits := max(v.originalDigits(), other.originalDigits())
 	if v.digits == "0" {
+		other.sourceDigits = sourceDigits
 		return other, nil
 	}
 	if other.digits == "0" {
+		v.sourceDigits = sourceDigits
 		return v, nil
 	}
 	scale := max(v.scale, other.scale)
@@ -368,7 +382,7 @@ func (v costDecimal) add(ctx context.Context, other costDecimal) (costDecimal, e
 	if err != nil {
 		return v, err
 	}
-	if max(leftSize, rightSize)-max(len(v.digits), len(other.digits)) > costMaxExpansion {
+	if max(leftSize, rightSize)-sourceDigits > costMaxExpansion {
 		return v, ErrProjectCostExpansion
 	}
 	subtract := v.negative != other.negative
@@ -378,7 +392,7 @@ func (v costDecimal) add(ctx context.Context, other costDecimal) (costDecimal, e
 			comparison = strings.Compare(v.digits, other.digits)
 		}
 		if comparison == 0 {
-			return costDecimal{digits: "0"}, nil
+			return costDecimal{digits: "0", sourceDigits: sourceDigits}, nil
 		}
 		if comparison < 0 {
 			v, other = other, v
@@ -411,6 +425,9 @@ func (v costDecimal) add(ctx context.Context, other costDecimal) (costDecimal, e
 		if len(reversed) == costMaxInt {
 			return v, errCostPrecision
 		}
+		if len(reversed)+1-sourceDigits > costMaxExpansion {
+			return v, ErrProjectCostExpansion
+		}
 		reversed = append(reversed, byte('0'+carry))
 	}
 	for i, j := 0, len(reversed)-1; i < j; i, j = i+1, j-1 {
@@ -421,7 +438,7 @@ func (v costDecimal) add(ctx context.Context, other costDecimal) (costDecimal, e
 		}
 		reversed[i], reversed[j] = reversed[j], reversed[i]
 	}
-	return (costDecimal{digits: string(reversed), scale: scale, negative: v.negative}).normalize(ctx)
+	return (costDecimal{digits: string(reversed), scale: scale, negative: v.negative, sourceDigits: sourceDigits}).normalize(ctx)
 }
 
 func (v costDecimal) digit(position int) int {

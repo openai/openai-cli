@@ -219,6 +219,38 @@ func TestMainCostReportCompactExtremeExponents(t *testing.T) {
 	}
 }
 
+func TestMainCostReportPrecisionBudgetDoesNotGrowAcrossPages(t *testing.T) {
+	values := []string{"1", "1e1048576", "1e2097152", "1e3145728"}
+	cursors := []string{"", "page-two", "page-three", "page-four"}
+	server, requests := costReportServer(t, func(w http.ResponseWriter, r *http.Request) {
+		cursor := r.URL.Query().Get("page")
+		for i, known := range cursors {
+			if cursor != known {
+				continue
+			}
+			result := fmt.Sprintf(`{"object":"organization.costs.result","project_id":"proj_example","amount":{"value":%s,"currency":"usd"}}`, values[i])
+			more, next := i+1 < len(values), ""
+			if more {
+				next = cursors[i+1]
+			}
+			_, _ = io.WriteString(w, costReportPage(result, next, more))
+			return
+		}
+		t.Errorf("unexpected cost report cursor: %q", cursor)
+		w.WriteHeader(http.StatusBadRequest)
+	})
+	got := runMainDispatchWithEnv(t, "bash", costReportEnv(server), costReportArgs("--format", "json")...)
+	require.Equal(t, 1, got.code, "%+v", got)
+	require.Empty(t, got.stdout, "cumulative alignment failure must not expose incomplete totals")
+	require.EqualValues(t, 3, requests.Load(), "the third page must exhaust the budget before fetching page four")
+	var diagnostic struct {
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(got.stderr), &diagnostic))
+	require.Contains(t, diagnostic.Message, "additional decimal digits")
+	require.Contains(t, diagnostic.Message, "No report was written.")
+}
+
 func TestMainCostReportLegacyRawKeepsExtremeAndDuplicateFields(t *testing.T) {
 	response := costReportPage(`{"object":"organization.costs.result","project_id":"proj_example","amount":{"value":1e1000000000,"value":2,"currency":"usd"}}`, "", false)
 	server, requests := costReportServer(t, func(w http.ResponseWriter, _ *http.Request) {

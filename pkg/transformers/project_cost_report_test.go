@@ -65,6 +65,7 @@ func TestProjectCostAccumulatorDecimalArithmetic(t *testing.T) {
 		{"zero", "-0.000000", "0e-30", "0"},
 		{"zero with huge exponent", "-0e999999999999999999999999999", "0e-999999999999999999999999999", "0"},
 		{"large exponent addition", "1e1000000000", "2e1000000000", "3e1000000000"},
+		{"large exponent carry", "9e1000000000", "9e1000000000", "18e1000000000"},
 		{"large exponent credits", "1e1000000000", "-2e1000000000", "-1e1000000000"},
 		{"large exponent cancellation", "1e1000000000", "-1e1000000000", "0"},
 		{"small exponent addition", "1e-1000000000", "2e-1000000000", "3e-1000000000"},
@@ -311,6 +312,69 @@ func TestProjectCostAccumulatorAdditionExpansionBoundary(t *testing.T) {
 			rows, err := accumulator.Rows(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, "1"+strings.Repeat("0", inserted-1)+"1", rows[0].Amount)
+		})
+	}
+}
+
+func TestProjectCostAccumulatorExpansionBudgetPersistsAcrossPages(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		values []string
+		failAt int
+	}{
+		{"repeated expansion", []string{"1", "1e1048576", "1e2097152", "1e3145728"}, 2},
+		{"credits and zero", []string{"1", "1e1048576", "-1", "0", "1e2097152", "1e3145728"}, 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			accumulator := NewProjectCostAccumulator()
+			for index, value := range tc.values {
+				_, _, err := accumulator.AddPage(t.Context(), costTestPage(costTestResult(`null`, "usd", value)))
+				if index < tc.failAt {
+					require.NoError(t, err, "page %d", index+1)
+				} else {
+					require.ErrorIs(t, err, ErrProjectCostExpansion, "page %d", index+1)
+				}
+			}
+			rows, err := accumulator.Rows(t.Context())
+			require.Nil(t, rows)
+			require.ErrorIs(t, err, ErrProjectCostExpansion)
+		})
+	}
+}
+
+func TestProjectCostAccumulatorRetainsOriginalCoefficientAfterCancellation(t *testing.T) {
+	accumulator := NewProjectCostAccumulator()
+	// The five original coefficient digits survive normalization, credits, and zero.
+	for _, value := range []string{"100.00", "-100.00", "0", "1", fmt.Sprintf("1e%d", costMaxExpansion+4)} {
+		_, _, err := accumulator.AddPage(t.Context(), costTestPage(costTestResult(`null`, "usd", value)))
+		require.NoError(t, err)
+	}
+	rows, err := accumulator.Rows(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, "1"+strings.Repeat("0", costMaxExpansion+3)+"1", rows[0].Amount)
+}
+
+func TestProjectCostAccumulatorCarryRespectsExpansionBudget(t *testing.T) {
+	for _, exponent := range []int{costMaxExpansion - 1, costMaxExpansion} {
+		t.Run(fmt.Sprintf("exponent=%d", exponent), func(t *testing.T) {
+			accumulator := NewProjectCostAccumulator()
+			large := "9e" + strconv.Itoa(exponent)
+			for _, value := range []string{large, "9"} {
+				_, _, err := accumulator.AddPage(t.Context(), costTestPage(costTestResult(`null`, "usd", value)))
+				require.NoError(t, err)
+			}
+			_, _, err := accumulator.AddPage(t.Context(), costTestPage(costTestResult(`null`, "usd", large)))
+			if exponent == costMaxExpansion {
+				require.ErrorIs(t, err, ErrProjectCostExpansion)
+				rows, rowsErr := accumulator.Rows(t.Context())
+				require.Nil(t, rows)
+				require.ErrorIs(t, rowsErr, ErrProjectCostExpansion)
+				return
+			}
+			require.NoError(t, err)
+			rows, err := accumulator.Rows(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, "18"+strings.Repeat("0", exponent-1)+"9", rows[0].Amount)
 		})
 	}
 }
