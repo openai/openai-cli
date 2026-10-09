@@ -29,10 +29,10 @@ func runWithModelsListLoading(ctx context.Context, command *cli.Command, next cl
 	parent := ctx
 	ctx, stopSignals := signal.NotifyContext(ctx, os.Interrupt)
 	stopReset := context.AfterFunc(ctx, stopSignals)
-	stop := startLoadingFeedback(ctx, os.Stderr, "Loading models", loadingAnimationSupported(os.Getenv),
-		imageLoadingSpinner(os.Getenv, runtime.GOOS), func() int {
-			width, _, _ := term.GetSize(os.Stderr.Fd())
-			return width
+	stop, _ := startLoadingFeedback(ctx, os.Stderr, "Loading models", "", loadingAnimationSupported(os.Getenv),
+		imageLoadingSpinner(os.Getenv, runtime.GOOS), func() (int, int) {
+			width, height, _ := term.GetSize(os.Stderr.Fd())
+			return width, height
 		})
 	ctx = context.WithValue(ctx, modelsListLoadingKey{}, stop)
 	defer func() {
