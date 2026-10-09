@@ -17,7 +17,7 @@ The pinned baseline is `e68939820415144d769ed02de6aa72d5b7d32948`.
 Its retained binary is:
 
 ```text
-/Users/vguvvala/code/cli-work/parallel-features-20261007/linear-done-verification-20261009/bin/openai
+/absolute/path/to/baseline/openai
 SHA256: 23414722af83f1d4acfd1e80b1723448fc711083d7b76b9bcf36ee7813ff3df2
 ```
 
@@ -31,7 +31,7 @@ export DEMO_AFTER_SHA256=CANDIDATE_BINARY_SHA256
 export DEMO_SOURCE_MANIFEST=/absolute/path/to/source-manifest.txt
 PATH="$HOME/.cache/cli-terminal-replay/bin:$PATH" \
   bash scripts/demos/workflow-examples/record.sh --run-authorized-pty-slot \
-  /Users/vguvvala/code/cli-work/parallel-features-20261007/linear-done-verification-20261009/bin/openai \
+  /absolute/path/to/baseline/openai \
   /absolute/path/to/candidate/openai \
   e68939820415144d769ed02de6aa72d5b7d32948 \
   CANDIDATE_FULL_COMMIT \
