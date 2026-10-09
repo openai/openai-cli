@@ -62,12 +62,14 @@ func welcomeDarkBackground(colorfgbg string) bool {
 	}
 }
 
+const welcomeTitle = "✦  OpenAI CLI"
+
 func renderWelcome(version string, width int, profile colorprofile.Profile, dark bool) string {
 	version = strings.Join(strings.Fields(readable.Text(version)), " ")
 	if version != "" && version[0] >= '0' && version[0] <= '9' {
 		version = "v" + version
 	}
-	title := strings.TrimSpace(">_ OpenAI CLI  " + version)
+	title := strings.TrimSpace(welcomeTitle + "  " + version)
 	const greeting = "What are we making today?"
 	contentWidth := max(ansi.StringWidth(title), ansi.StringWidth(greeting))
 	// Keep this optional header to four lines. Narrow terminals and unusually
@@ -90,9 +92,9 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 	// Square corners avoid rounded-glyph metrics that leave gaps in some
 	// renderers, without changing the frame's width or height.
 	frame := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color(border)).Padding(0, padding)
-	styledTitle := heading.Render(">_ OpenAI CLI")
+	styledTitle := heading.Render(welcomeTitle)
 	if version != "" {
-		gap := contentWidth - ansi.StringWidth(">_ OpenAI CLI") - ansi.StringWidth(version)
+		gap := contentWidth - ansi.StringWidth(welcomeTitle) - ansi.StringWidth(version)
 		styledTitle += strings.Repeat(" ", gap) + note.Render(version)
 	}
 	var out strings.Builder

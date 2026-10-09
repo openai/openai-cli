@@ -65,7 +65,7 @@ func TestWelcomeBorderAndVersionAlignment(t *testing.T) {
 		}
 		versionEnd := strings.Index(lines[1], "v1.38.0") + len("v1.38.0")
 		greetingEnd := strings.Index(lines[2], "today?") + len("today?")
-		if versionEnd != greetingEnd {
+		if ansi.StringWidth(lines[1][:versionEnd]) != ansi.StringWidth(lines[2][:greetingEnd]) {
 			t.Fatalf("version does not align with content edge at width %d: %q", width, got)
 		}
 	}
