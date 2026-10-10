@@ -101,7 +101,7 @@ func imagePickerFirstRunEligible(args []string, getenv func(string) string, inpu
 	// these fixed tokens never parses, consumes, or rewrites request arguments.
 	for _, argument := range args[1:] {
 		switch argument {
-		case "__complete", "@completion", "@manpages", "--generate-shell-completion", "tokenizer", "codex":
+		case "__complete", "@completion", "@manpages", "--generate-shell-completion", "tokenizer", "codex", "examples":
 			return false
 		}
 	}
