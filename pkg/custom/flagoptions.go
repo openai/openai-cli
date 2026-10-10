@@ -393,6 +393,9 @@ func FlagOptions(
 	ignoreStdin bool,
 	observeJSON ...func([]byte),
 ) (options []option.RequestOption, err error) {
+	if skillUploadState(cmd) != nil {
+		bodyType = MultipartFormEncoded
+	}
 	if prepared, ok, err := consumeImageSavingRequest(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin); ok {
 		return prepared, err
 	}
@@ -546,6 +549,9 @@ func FlagOptions(
 	} else {
 		stdinReader = onceStdinReader{stdinReader: os.Stdin}
 	}
+	if err := prepareSkillUploadInputs(cmd, requestContents.Body, &stdinReader); err != nil {
+		return nil, err
+	}
 
 	// Embed files passed as "@file.jpg" in the request body, headers, and query:
 	embedStyle := EmbedText
@@ -641,6 +647,9 @@ func FlagOptions(
 		// an idempotent closer for failures between preparation and dispatch.
 		var observers []func(io.Closer)
 		if state, ok := cmd.Metadata[imageMultipartMetadata].(*imageMultipartPreparation); ok {
+			observers = append(observers, func(body io.Closer) { state.body = body })
+		}
+		if state := skillUploadState(cmd); state != nil {
 			observers = append(observers, func(body io.Closer) { state.body = body })
 		}
 		multipartOptions, err := multipartRequestOptions(bodyMap, encodingFormat, observers...)
