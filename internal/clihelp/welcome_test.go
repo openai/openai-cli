@@ -31,6 +31,13 @@ func TestWelcomeLayout(t *testing.T) {
 				if width >= 40 {
 					wantHeight = 6
 				}
+				displayVersion := version
+				if displayVersion != "" && displayVersion[0] >= '0' && displayVersion[0] <= '9' {
+					displayVersion = "v" + displayVersion
+				}
+				if width >= 56 && profile > colorprofile.ASCII && ansi.StringWidth(displayVersion) <= 7 {
+					wantHeight = 7
+				}
 				if strings.Count(strings.TrimSpace(plain), "\n") != wantHeight-1 {
 					t.Fatalf("banner height differs from %d: %q", wantHeight, plain)
 				}

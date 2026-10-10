@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import termios
 import time
+import unicodedata
 
 
 def run(binary, args, width=80, streams=(True, True, True), extra=None):
@@ -123,6 +124,10 @@ def main():
     ):
         cases.append((name, [], 80, streams, {}, False))
     version = run(after, ["--version"], streams=(False, False, False))["stdout"].strip().split()[-1]
+    display_version = "v" + version if version[0].isdigit() else version
+    version_cells = sum(0 if unicodedata.combining(char) else
+                        2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+                        for char in display_version)
     results = []
     for name, args, width, streams, extra, banner in cases:
         old = run(before, args, width, streams, extra)
@@ -136,7 +141,10 @@ def main():
             header = plain(header)
             assert "The OpenAI API" in header, (name, "missing greeting")
             assert version in header, (name, "missing runtime version")
-            assert len(header.splitlines()) == (6 if width >= 40 else 4), (name, "unexpected header height")
+            height = 6 if width >= 40 else 4
+            if width >= 56 and version_cells <= 7 and name not in ("no-color", "force-color-zero"):
+                height = 7
+            assert len(header.splitlines()) == height, (name, "unexpected header height")
             assert "✦" not in header and ">_" not in header, (name, "unexpected signature")
             assert all(len(line) <= width for line in header.splitlines()), (name, "header overflows")
             comparable["terminal"] = body

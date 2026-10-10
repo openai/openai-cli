@@ -88,7 +88,7 @@ done
 demo_stop_api
 cp "$demo_runtime/requests.txt" "$demo_output/requests.txt"
 test ! -s "$demo_output/requests.txt"
-"$demo_python" -I -B - "$demo_output" "$demo_columns" "$demo_rows" "$demo_no_color" <<'PY'
+"$demo_python" -I -B - "$demo_output" "$demo_columns" "$demo_rows" "$demo_no_color" "${FORCE_COLOR:-}" <<'PY'
 import json
 import math
 import pathlib
@@ -143,6 +143,8 @@ if banner_width <= min(columns, 100):
     lines = banner.splitlines()
     expected_height = 6 if columns >= 40 else 4
     wordmark = columns >= 56 and cell_width(display_version) <= 16
+    if wordmark and cell_width(display_version) <= 7 and not no_color and sys.argv[5] != "0":
+        expected_height = 7
     title_row = 1 if wordmark else 2 if columns >= 40 else 1
     version_row = 2 if wordmark else title_row
     assert len(lines) == expected_height and lines[0].startswith("┌") and lines[-1].startswith("└"), "invalid banner frame"

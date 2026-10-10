@@ -1,15 +1,18 @@
 # Welcome banner comparison
 
 The recorder runs bare `openai` on real before and after binaries.
-At 56 columns and wider, a six-row blue frame contains a three-row OPENAI wordmark.
+At 56 columns and wider, a blue frame contains a three-row OPENAI wordmark.
 Literal OpenAI CLI text and the runtime version sit beside the decorative lettering.
 The lettering uses three blue shades. The full border uses the existing CLI focus blue.
 Literal identity inherits terminal foreground, and the version uses the existing muted tone.
 A three-cell gap separates the lettering from identity and version.
 A small static Eightbit peeks from the bottom-right corner when enough space remains.
 Its purple head, green goggles, and white eyes adapt the user-supplied mascot reference.
-The nine-cell sprite uses three terminal rows and does not enlarge the card.
+The fifteen-cell sprite uses four terminal rows for a rounded head, expressive face, waving arm, and curled tentacles.
+The card gains one row when the sprite fits. Its width remains 56 columns.
+Each sprite row preserves a gap after existing text, including the complete version.
 It disappears when the version needs its space or color is disabled.
+The card keeps its original six rows when the sprite is omitted.
 The terminal background remains inherited outside painted sprite half-cells.
 Below 56 columns, the card uses a text layout without the wordmark.
 Below 40 columns, that layout uses four rows instead of six.

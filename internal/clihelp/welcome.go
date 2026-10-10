@@ -100,7 +100,7 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 	if width >= 40 {
 		content = "\n" + content + "\n"
 	}
-	// Wide terminals get a six-row wordmark. Narrow terminals and long versions
+	// Wide terminals get a wordmark. Narrow terminals and long versions
 	// retain the compact text layout without truncating identity or version.
 	if width >= 56 && ansi.StringWidth(version) <= 16 {
 		padding, cardWidth = 2, 56
