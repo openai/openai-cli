@@ -24,13 +24,13 @@ func TestVectorStoreSearchEmptyOutputFailures(t *testing.T) {
 		require.Empty(t, out.String())
 	})
 	t.Run("canceled", func(t *testing.T) {
+		opts := opts
 		var out bytes.Buffer
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		opts.Context, opts.Stdout = ctx, &out
 		require.ErrorIs(t, ShowJSONIterator(&transformTestIterator{}, -1, opts), context.Canceled)
 		require.Empty(t, out.String())
-		opts.Context = t.Context()
 	})
 	t.Run("write error", func(t *testing.T) {
 		failure := errors.New("output failed")
