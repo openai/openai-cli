@@ -206,6 +206,9 @@ func knownLocalError(command *cli.Command, message string) string {
 	case strings.HasPrefix(message, "flag provided but not defined: -"):
 		name := strings.TrimPrefix(message, "flag provided but not defined: -")
 		message := "An option is not recognized."
+		if flag := unavailableParserFlag(command, name); flag != "" {
+			message = "The " + flag + " option is not available for this command."
+		}
 		if suggestion := suggestParserFlag(command, name); suggestion != "" {
 			message += " Did you mean " + suggestion + "?"
 		}

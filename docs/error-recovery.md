@@ -10,6 +10,10 @@ Unknown command. Did you mean: openai models list?
 $ openai help modles list
 Unknown help topic. Did you mean: openai help models list?
 
+$ openai models list --file missing.txt
+The --file option is not available for this command.
+Options and examples: openai models list --help
+
 $ openai files upload missing.txt --purpose user_data
 Could not open the file for --file. Check the path and permissions.
 
@@ -21,6 +25,10 @@ A suggestion can retain declared subcommands after the corrected command.
 Suggestions omit options and their values.
 They stop before any remaining argument that is not a declared subcommand.
 It never repeats option values, private paths, credentials, or request contents.
+
+If an option belongs to another public command, the error identifies that option.
+It links to help for the current command without guessing a different command.
+Existing suggestions for similar options in the current command remain available.
 
 File errors identify the declared option that supplied the failed file input.
 This includes file references in request options and piped JSON or YAML.
