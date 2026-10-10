@@ -290,6 +290,30 @@ def terminate_group(group, number):
             pass
 
 
+def raise_cleanup_errors(errors):
+    # Control exceptions must remain outside check_shell's ordinary error handler.
+    control = next((error for error in errors if not isinstance(error, Exception)), None)
+    if control is not None:
+        secondary = list(getattr(control, "cleanup_errors", ()))
+        secondary.extend(error for error in errors if error is not control)
+        if secondary:
+            message = "Completion cleanup: " + "; ".join(f"{type(error).__name__}: {error}" for error in secondary)
+            if hasattr(control, "add_note"):
+                control.add_note(message)
+            try:
+                # SystemExit does not display exception notes automatically.
+                sys.stderr.write(message + "\n")
+                sys.stderr.flush()
+            except BaseException as diagnostic_error:
+                secondary.append(diagnostic_error)
+            control.cleanup_errors = tuple(secondary)
+        raise control
+    if len(errors) == 1:
+        raise errors[0]
+    message = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
+    raise RuntimeError(message) from errors[0]
+
+
 def generate_adapter(binary, shell, environment, destination):
     process = subprocess.Popen([str(binary), "@completion", shell], env=environment,
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -304,18 +328,24 @@ def generate_adapter(binary, shell, environment, destination):
                 terminate_group(process.pid, signal.SIGKILL)
             except BaseException as cleanup_error:
                 failures.append(cleanup_error)
-        try:
-            process.communicate(timeout=TIMEOUT)
-        except BaseException as cleanup_error:
-            failures.append(cleanup_error)
-            for stream in (process.stdout, process.stderr):
-                try:
-                    stream.close()
-                except BaseException as close_error:
-                    failures.append(close_error)
+        deadline = time.monotonic() + TIMEOUT
+        while True:
+            try:
+                process.communicate(timeout=max(0, deadline - time.monotonic()))
+                break
+            except BaseException as cleanup_error:
+                failures.append(cleanup_error)
+                interrupted = not isinstance(cleanup_error, Exception) or isinstance(cleanup_error, InterruptedError)
+                if interrupted and process.returncode is None and time.monotonic() < deadline:
+                    continue
+                for stream in (process.stdout, process.stderr):
+                    try:
+                        stream.close()
+                    except BaseException as close_error:
+                        failures.append(close_error)
+                break
         if failures:
-            errors = [error, *failures]
-            raise RuntimeError("; ".join(f"{type(item).__name__}: {item}" for item in errors)) from error
+            raise_cleanup_errors([error, *failures])
         raise
     destination.write_bytes(stdout)
     destination.with_suffix(".stderr").write_bytes(stderr)
@@ -450,6 +480,8 @@ class ShellSession:
                             time.sleep(0.01)
                     except BaseException as error:
                         failures.append(error)
+                        if not isinstance(error, Exception) or isinstance(error, InterruptedError):
+                            continue
                         break
                 if self.status is None:
                     failures.append(RuntimeError("shell did not exit within the cleanup deadline"))
@@ -463,11 +495,8 @@ class ShellSession:
             except BaseException as error:
                 failures.append(error)
         if failures:
-            if len(failures) == 1 and prior_error is None:
-                raise failures[0]
             errors = ([prior_error] if prior_error is not None else []) + failures
-            message = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-            raise RuntimeError(message) from errors[0]
+            raise_cleanup_errors(errors)
 
 
 def startup(shell):

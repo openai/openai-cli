@@ -9,7 +9,7 @@ from pathlib import Path
 import signal
 import subprocess
 import unittest
-from unittest import mock
+import unittest.mock as mock
 
 spec = importlib.util.spec_from_file_location("completion_native_driver", Path(__file__).with_name("native_check.py"))
 driver = importlib.util.module_from_spec(spec)
@@ -139,6 +139,74 @@ class NativeCleanupTests(unittest.TestCase):
         self.assertTrue(self.transcript.closed)
         self.kill.assert_not_called()
 
+    def check_close_cancellation(self, control):
+        cleanup_error = OSError("synthetic descriptor cleanup failure")
+        self.close_fd.side_effect = cleanup_error
+        stderr = io.StringIO()
+        with mock.patch.object(driver.sys, "stderr", stderr):
+            try:
+                raise control
+            except BaseException:
+                with self.assertRaises(type(control)) as caught:
+                    self.session.close()
+        self.assertIs(caught.exception, control)
+        self.assertIn(cleanup_error, control.cleanup_errors)
+        self.assertIn("synthetic descriptor cleanup failure", stderr.getvalue())
+        self.assertEqual(self.events[-1], ("reap", self.pid))
+        self.assert_closed()
+
+    def test_close_preserves_system_exit_with_cleanup_failure(self):
+        control = SystemExit(143)
+        self.check_close_cancellation(control)
+        self.assertEqual(control.code, 143)
+
+    def test_close_preserves_keyboard_interrupt_with_cleanup_failure(self):
+        self.check_close_cancellation(KeyboardInterrupt())
+
+    def check_interrupted_reap(self, control):
+        attempts = 0
+
+        def interrupted_once(pid, options):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise control
+            return self.reap(pid, options)
+
+        self.wait.side_effect = interrupted_once
+        with self.assertRaises(type(control)) as caught:
+            self.session.close()
+        self.assertIs(caught.exception, control)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(self.session.status, 7)
+        self.assertEqual(self.events[-1], ("reap", self.pid))
+        self.assert_closed()
+
+    def test_reap_retries_system_exit_then_preserves_status(self):
+        control = SystemExit(143)
+        self.check_interrupted_reap(control)
+        self.assertEqual(control.code, 143)
+
+    def test_reap_retries_keyboard_interrupt(self):
+        self.check_interrupted_reap(KeyboardInterrupt())
+
+    def test_diagnostic_write_failure_does_not_replace_cancellation(self):
+        control = SystemExit(143)
+        self.close_fd.side_effect = OSError("synthetic descriptor cleanup failure")
+        stderr = mock.Mock()
+        denied = OSError("synthetic diagnostic failure")
+        stderr.write.side_effect = denied
+        with mock.patch.object(driver.sys, "stderr", stderr):
+            try:
+                raise control
+            except BaseException:
+                with self.assertRaises(SystemExit) as caught:
+                    self.session.close()
+        self.assertIs(caught.exception, control)
+        self.assertEqual(control.code, 143)
+        self.assertIn(denied, control.cleanup_errors)
+        self.assert_closed()
+
     def test_adapter_success_does_not_signal_reaped_child(self):
         process = mock.Mock(pid=self.pid, returncode=None)
 
@@ -175,6 +243,81 @@ class NativeCleanupTests(unittest.TestCase):
                     self.kill.assert_not_called()
                 else:
                     self.kill.assert_called_once_with(self.pid, signal.SIGKILL)
+
+    def check_adapter_cancellation(self, control):
+        process = mock.Mock(pid=self.pid, returncode=None)
+        calls = 0
+
+        def communicate(**_kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise control
+            process.returncode = 0
+            self.reaped = True
+            process.stdout.close()
+            process.stderr.close()
+            return b"synthetic adapter", b""
+
+        process.communicate.side_effect = communicate
+        self.popen.side_effect = None
+        self.popen.return_value = process
+        denied = PermissionError("synthetic adapter cleanup denial")
+
+        def deny_kill(group, number):
+            self.signal_group(group, number)
+            raise denied
+
+        self.kill.side_effect = deny_kill
+        stderr = io.StringIO()
+        with mock.patch.object(driver.sys, "stderr", stderr):
+            with self.assertRaises(type(control)) as caught:
+                driver.generate_adapter("synthetic-openai", "bash", {}, mock.Mock())
+        self.assertIs(caught.exception, control)
+        self.assertIn(denied, control.cleanup_errors)
+        self.assertIn("synthetic adapter cleanup denial", stderr.getvalue())
+        self.assertTrue(self.reaped)
+        process.stdout.close.assert_called_once()
+        process.stderr.close.assert_called_once()
+        self.kill.assert_called_once_with(self.pid, signal.SIGKILL)
+
+    def test_adapter_preserves_system_exit_with_cleanup_failure(self):
+        control = SystemExit(143)
+        self.check_adapter_cancellation(control)
+        self.assertEqual(control.code, 143)
+
+    def test_adapter_preserves_keyboard_interrupt_with_cleanup_failure(self):
+        self.check_adapter_cancellation(KeyboardInterrupt())
+
+    def test_adapter_retries_interrupted_cleanup_without_more_signals(self):
+        original = SystemExit(143)
+        interruption = KeyboardInterrupt()
+        process = mock.Mock(pid=self.pid, returncode=None)
+        calls = 0
+
+        def communicate(**_kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise original
+            if calls == 2:
+                raise interruption
+            process.returncode = 0
+            self.reaped = True
+            return b"synthetic adapter", b""
+
+        process.communicate.side_effect = communicate
+        self.popen.side_effect = None
+        self.popen.return_value = process
+        with mock.patch.object(driver.sys, "stderr", io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                driver.generate_adapter("synthetic-openai", "bash", {}, mock.Mock())
+        self.assertIs(caught.exception, original)
+        self.assertEqual(original.code, 143)
+        self.assertIn(interruption, original.cleanup_errors)
+        self.assertEqual(calls, 3)
+        self.assertTrue(self.reaped)
+        self.kill.assert_called_once_with(self.pid, signal.SIGKILL)
 
 
 if __name__ == "__main__":
