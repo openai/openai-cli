@@ -509,7 +509,12 @@ func completionCommands(command *cli.Command) []*cli.Command {
 
 func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	root := cmd.Root()
-	args := rebuildColonSeparatedArgs(root.Args().Slice()[1:])
+	args := root.Args().Slice()[1:]
+	// Current adapters preserve shell word boundaries. Older loaded adapters
+	// can still send colon fragments, so retain their reconstruction fallback.
+	if os.Getenv("OPENAI_CLI_COMPLETION_PRESERVE_WORDS") != "1" {
+		args = rebuildColonSeparatedArgs(args)
+	}
 
 	var completionStyle CompletionStyle
 	if style, ok := os.LookupEnv("COMPLETION_STYLE"); ok {
@@ -595,10 +600,10 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	return cli.Exit("", int(result.Behavior))
 }
 
-// When CLI arguments are passed in, they are separated on word barriers.
-// Most commonly this is whitespace but in some cases that may also be colons.
-// We wish to allow arguments with colons. To handle this, we append/prepend colons to their neighboring
-// arguments.
+// rebuildColonSeparatedArgs supports older adapters that send standalone colon
+// fragments. Current adapters must preserve word boundaries before calling the
+// backend: a literal ":" value cannot be distinguished from a split colon here.
+// A trailing colon alone never joins the next argument; it may end a flag value.
 //
 // Example: `rebuildColonSeparatedArgs(["a", "b", ":", "c", "d"])` => `["a", "b:c", "d"]`
 func rebuildColonSeparatedArgs(args []string) []string {
@@ -612,18 +617,12 @@ func rebuildColonSeparatedArgs(args []string) []string {
 	for i < len(args) {
 		current := args[i]
 
-		// Keep joining while the next element is ":" or the current element ends with ":"
-		for i+1 < len(args) && (args[i+1] == ":" || strings.HasSuffix(current, ":")) {
-			if args[i+1] == ":" {
-				current += ":"
+		for i+1 < len(args) && args[i+1] == ":" {
+			current += ":"
+			i++
+			if i+1 < len(args) && args[i+1] != ":" {
+				current += args[i+1]
 				i++
-				// Check if there's a following element after the ":"
-				if i+1 < len(args) && args[i+1] != ":" {
-					current += args[i+1]
-					i++
-				}
-			} else {
-				break
 			}
 		}
 

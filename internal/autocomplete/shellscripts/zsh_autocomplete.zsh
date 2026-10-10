@@ -14,7 +14,7 @@ ____APPNAME___zsh_autocomplete() {
   fi
 
   # The backend completes the last argument, so stop at the cursor's word.
-  temp=$(COMPLETION_STYLE=zsh OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_STATIC_VALUES="$static_values" "${words[1]}" __complete "${words[@]:1:$((CURRENT - 1))}")
+  temp=$(COMPLETION_STYLE=zsh OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_PRESERVE_WORDS=1 OPENAI_CLI_COMPLETION_STATIC_VALUES="$static_values" "${words[1]}" __complete "${words[@]:1:$((CURRENT - 1))}")
   exit_code=$?
 
   # Check for custom file completion patterns

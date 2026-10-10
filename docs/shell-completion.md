@@ -1,6 +1,7 @@
 # Shell completion
 
 Completion lists commands, help topics, flags, and file-input paths without an API key or network connection.
+It also suggests [known format and Files purpose values](completion-values.md).
 
 After upgrading, reload completion in your current shell to enable the new file-path behavior.
 Older loaded scripts keep their previous behavior until refreshed.

@@ -4,6 +4,7 @@ Shell completion suggests known values without an API key or network connection.
 Load the existing [completion script](shell-completion.md) for your shell.
 Reload Bash and Zsh completion after upgrading to enable value suggestions.
 Older loaded Bash and Zsh scripts retain their previous value behavior.
+Current scripts preserve literal colon arguments alongside static value suggestions.
 
 Bash leaves closed empty quotes unchanged without suggestions.
 Zsh also preserves empty quoted words and wholly quoted empty assignments, such as `'--format='`.
@@ -35,5 +36,10 @@ Suggestions do not restrict request values or choose a default purpose.
 
 Both `--format json` and `--format=json` support completion.
 Root flags also complete after nested commands, such as `openai responses create --format j`.
+Colon arguments keep their boundaries, such as `openai responses create --input : --format j`.
 Existing file completion, command aliases, and free-form flags keep their behavior.
 No new command, flag, shell setup, or request validation is added.
+
+This feature covers only the flags listed above.
+Profile names, remote resource IDs, and permission-aware suggestions remain outside this static feature.
+Completion does not fetch resource lists or confirm access to an API operation.

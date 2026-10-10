@@ -78,6 +78,37 @@ func TestMainCompletionValuesProtocols(t *testing.T) {
 	}
 }
 
+func TestMainCompletionValuesPreserveWordBoundaries(t *testing.T) {
+	env := []string{
+		"OPENAI_CLI_COMPLETION_STATIC_VALUES=1",
+		"OPENAI_CLI_COMPLETION_PRESERVE_WORDS=1",
+		"OPENAI_CLI_COMPLETION_FILE_VALUES=1",
+	}
+	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+		for _, tc := range []struct {
+			name string
+			args []string
+			want mainDispatchResult
+		}{
+			{"colon input before format", []string{"responses", "create", "--input", ":", "--format", "j"}, mainDispatchResult{stdout: "json\njsonl\n"}},
+			{"colon organization before purpose", []string{"--organization", ":", "files", "upload", "--purpose", "u"}, mainDispatchResult{stdout: "user_data\n"}},
+			{"alias before format", []string{"chat:completions", "create", "--format", "j"}, mainDispatchResult{stdout: "json\njsonl\n"}},
+			{"literal colon format value", []string{"--format", ":"}, mainDispatchResult{code: 11}},
+			{"separate command colon", []string{"chat", ":", "comple"}, mainDispatchResult{code: 11}},
+			{"root end of options", []string{"--", "--format=j"}, mainDispatchResult{}},
+			{"nested end of options", []string{"responses", "create", "--", "--format=j"}, mainDispatchResult{}},
+			{"literal upload path", []string{"files", "upload", "--", "--purpose=u"}, mainDispatchResult{code: 10}},
+		} {
+			t.Run(style+"/"+tc.name, func(t *testing.T) {
+				got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, tc.args...)...)
+				if got != tc.want {
+					t.Fatalf("combined capabilities changed argument boundaries: got %+v; want %+v", got, tc.want)
+				}
+			})
+		}
+	}
+}
+
 func TestMainCompletionValuesPreserveOtherInputs(t *testing.T) {
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
 		for _, tc := range []struct {
@@ -565,10 +596,20 @@ func TestMainCompletionValuesStayLocal(t *testing.T) {
 			}},
 		} {
 			t.Run(style+"/"+tc.name, func(t *testing.T) {
-				env := append([]string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=1"}, tc.env...)
-				got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, "files", "upload", "--purpose", "u")...)
-				if got != (mainDispatchResult{stdout: "user_data\n"}) {
-					t.Fatalf("completion depends on request configuration: %+v", got)
+				env := append([]string{"OPENAI_CLI_COMPLETION_STATIC_VALUES=1", "OPENAI_CLI_COMPLETION_PRESERVE_WORDS=1"}, tc.env...)
+				for _, probe := range []struct {
+					args []string
+					want string
+				}{
+					{[]string{"files", "upload", "--purpose", "u"}, "user_data\n"},
+					{[]string{"responses", "create", "--input", ":", "--format", "y"}, "yaml\n"},
+					{[]string{"--organization", ":", "files", "upload", "--purpose", "u"}, "user_data\n"},
+					{[]string{"chat:completions", "create", "--format", "y"}, "yaml\n"},
+				} {
+					got := runMainDispatchWithEnv(t, style, env, mainCompletionArgs(style, probe.args...)...)
+					if got != (mainDispatchResult{stdout: probe.want}) {
+						t.Fatalf("completion depends on request configuration for %q: %+v", probe.args, got)
+					}
 				}
 			})
 		}

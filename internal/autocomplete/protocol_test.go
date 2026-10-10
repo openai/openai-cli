@@ -170,6 +170,8 @@ func TestZshCompletionRespectsCursor(t *testing.T) {
 		{"empty end-of-line word", []string{"models", ""}, 3, 0, allModelCommands},
 		{"spaced preceding value", []string{"--format", "two words", "models", "li", "--file", "unused"}, 5, 0, "list\n"},
 		{"empty preceding value", []string{"--format", "", "models", "li", "--file", "unused"}, 5, 0, "list\n"},
+		{"colon preceding value", []string{"--file", ":", "models", "li"}, 5, 0, "list\n"},
+		{"trailing colon preceding value", []string{"--format", "X-Test:", "models", "li"}, 5, 0, "list\n"},
 		{"mid-line file value", []string{"--file", "candidate-", "models", "list"}, 3, 0, "files\n"},
 		{"end-of-line file value", []string{"--file", "candidate-"}, 3, 0, "files\n"},
 		{"request file value", []string{"--image", "candidate-"}, 3, 0, "files\n"},
