@@ -501,12 +501,15 @@ func TestMainSkillUploadRedirectsDoNotReplay(t *testing.T) {
 func TestMainSkillUploadFailureCleansPreparedArchive(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("# Synthetic skill\n"), 0o600))
+	missingPath := filepath.Join(t.TempDir(), "missing-synthetic-skill-input")
+	missingInput, err := json.Marshal(map[string]string{"note": "@file://" + missingPath})
+	require.NoError(t, err)
 	for _, tc := range []struct {
 		name, input string
 		status      int
 		requests    int
 	}{
-		{"later embed failure", `{"note":"@missing-synthetic-skill-input"}`, http.StatusOK, 0},
+		{"later embed failure", string(missingInput), http.StatusOK, 0},
 		{"API failure", "", http.StatusInternalServerError, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
