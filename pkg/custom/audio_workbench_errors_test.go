@@ -115,6 +115,37 @@ func TestAudioWorkbenchPlaybackCompletionOwnsOnlyItsActiveNote(t *testing.T) {
 	}
 }
 
+func TestAudioWorkbenchPlaybackContextsReleasePerOperation(t *testing.T) {
+	m := audioReviewModel(t)
+	session, cancelSession := context.WithCancel(t.Context())
+	defer cancelSession()
+	m.ctx = session
+	result := audioReviewResult("retained", false)
+	m.result = &result
+	for _, outcome := range []error{nil, errors.New("synthetic player failure"), context.Canceled, nil} {
+		require.NotNil(t, m.togglePlayback())
+		cancel := m.playCancel
+		calls := 0
+		m.playCancel = func() { calls++; cancel() }
+		id := m.playID
+		m.Update(audioWorkMessage{kind: "play", playID: id - 1})
+		require.Zero(t, calls, "stale completion canceled the active playback")
+		m.Update(audioWorkMessage{kind: "play", playID: id, err: outcome})
+		require.Equal(t, 1, calls, "completed playback retained its context")
+		require.Nil(t, m.playCancel)
+		require.NoError(t, session.Err(), "playback completion canceled the session")
+	}
+	require.NotNil(t, m.togglePlayback())
+	cancel := m.playCancel
+	calls := 0
+	m.playCancel = func() { calls++; cancel() }
+	m.stopPlayback()
+	m.stopPlayback()
+	require.Equal(t, 1, calls)
+	require.Nil(t, m.playCancel)
+	require.NoError(t, session.Err())
+}
+
 func TestAudioWorkbenchStopKeysPreserveNewerFeedbackAndErrors(t *testing.T) {
 	for _, width := range []int{40, 90} {
 		for _, key := range []rune{'x', tea.KeyEscape, tea.KeySpace} {

@@ -164,6 +164,10 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.playID != m.playID {
 				return m, nil
 			}
+			if m.playCancel != nil {
+				m.playCancel()
+				m.playCancel = nil
+			}
 			m.playing = false
 			if msg.err != nil && !errors.Is(msg.err, context.Canceled) {
 				m.lastErr = msg.err
@@ -567,6 +571,7 @@ func (m *audioWorkbench) history() tea.Cmd {
 func (m *audioWorkbench) stopPlayback() {
 	if m.playCancel != nil {
 		m.playCancel()
+		m.playCancel = nil
 	}
 	m.playID++
 	m.playing = false
