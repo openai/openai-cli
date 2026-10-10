@@ -36,5 +36,10 @@ func Identity(_ context.Context, value gjson.Result) (gjson.Result, error) {
 // Select is the SDK-owned hook for command-specific default transformations.
 // Only known API fields are summarized; unfamiliar routes preserve their values.
 func Select(route Route) Transformer {
+	switch route {
+	case Route{"(resource) admin.organization.projects.rate_limits > (method) list_rate_limits", OutputPageItem},
+		Route{"(resource) admin.organization.projects.rate_limits > (method) update_rate_limit", OutputResponse}:
+		return ProjectRateLimit
+	}
 	return selectReadableTransformer(route)
 }
