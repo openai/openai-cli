@@ -140,7 +140,11 @@ func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts)
 		return err
 	}
 	if !emitted {
-		return readable.WriteText(out, "No results.")
+		text := "No results."
+		if message, ok := vectorStoreSearchEmptyText(opts); ok {
+			text = message
+		}
+		return readable.WriteText(out, text)
 	}
 	return opts.Context.Err()
 }
