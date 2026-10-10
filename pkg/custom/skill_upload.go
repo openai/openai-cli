@@ -147,6 +147,9 @@ func finishSkillUploadSignalWatcher(ctx context.Context, cancel context.CancelCa
 	default:
 	}
 	cause := context.Cause(ctx)
+	if cause != nil {
+		cause = errors.Join(ctx.Err(), cause)
+	}
 	cancel(nil)
 	return cause
 }

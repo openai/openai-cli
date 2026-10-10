@@ -197,6 +197,22 @@ func TestSkillUploadOutputRestoresParentContext(t *testing.T) {
 	require.ErrorIs(t, correct.Context.Err(), context.Canceled)
 }
 
+func TestSkillUploadParentCancellationRetainsCause(t *testing.T) {
+	parent, cancelParent := context.WithCancelCause(t.Context())
+	defer cancelParent(nil)
+	ctx, stop := skillUploadSignalContext(parent)
+	state := &skillUploadPreparation{ctx: ctx, parent: parent, stopSignals: stop}
+	ctx = context.WithValue(ctx, skillUploadContextKey{}, state)
+	defer state.finish()
+	cause := errors.New("synthetic parent cancellation")
+	cancelParent(cause)
+	opts := ShowJSONOpts{Context: ctx, Operation: "(resource) skills > (method) create"}
+	err := finishSkillUploadBeforeOutput(&opts)
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, err, cause)
+	require.Same(t, parent, opts.Context)
+}
+
 func TestSkillUploadDiagnosticPreservesCauseAndHidesParent(t *testing.T) {
 	for _, cause := range []error{os.ErrNotExist, os.ErrPermission, context.Canceled, context.DeadlineExceeded} {
 		failure := skillInputFailure(1, filepath.Join("private-parent", "bad\x1b-name.zip"), cause)
