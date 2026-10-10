@@ -320,6 +320,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			case "s":
 				if m.result != nil {
 					m.modal = "save"
+					m.note = ""
 					m.path.SetValue("speech-" + m.result.entry.ID + "." + m.result.entry.Settings.Format)
 					return m, m.path.Focus()
 				}

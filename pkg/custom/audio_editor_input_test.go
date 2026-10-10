@@ -59,3 +59,24 @@ func TestAudioEditorNarrowValidationRemainsVisible(t *testing.T) {
 	require.Contains(t, m.View().Content, "Enter text before generating speech.")
 	require.False(t, m.busy)
 }
+
+func TestAudioEditorSaveValidationRemainsVisible(t *testing.T) {
+	for _, width := range []int{40, 90} {
+		m := audioReviewModel(t)
+		m.Update(tea.WindowSizeMsg{Width: width, Height: 12})
+		result := audioReviewResult("synthetic", false)
+		m.result, m.focus, m.note = &result, 4, "Previous result status"
+		m.Update(tea.KeyPressMsg{Code: 's'})
+		require.Equal(t, "save", m.modal)
+		require.NotContains(t, m.View().Content, "Previous result status")
+		for _, value := range []string{"", "-", "/dev/stdout"} {
+			m.path.SetValue(value)
+			_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			require.Nil(t, cmd)
+			require.Equal(t, "save", m.modal)
+			require.Equal(t, value, m.path.Value())
+			require.Contains(t, m.View().Content, "Enter a file path for saving.")
+			require.False(t, m.busy)
+		}
+	}
+}

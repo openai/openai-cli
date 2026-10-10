@@ -335,6 +335,10 @@ def main():
                     wait(terminal, "Stopped.")
                     terminal.send(b"s")
                     wait(terminal, "Save original audio to:")
+                    terminal.send(b"\x01\x0b-\r")
+                    wait(terminal, "Enter a file path for saving.")
+                    assert len(server.records) == 1, "Invalid save path generated speech"
+                    mark(terminal, "save-validation", result)
                     destination = private / "saved speech.wav"
                     terminal.send(b"\x01\x0b")
                     paste(terminal, str(destination))

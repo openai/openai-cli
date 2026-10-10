@@ -88,7 +88,7 @@ demo_stop_api
 test "$demo_before_digest" = "$(shasum -a 256 "$demo_before" | cut -d ' ' -f 1)"
 test "$demo_after_digest" = "$(shasum -a 256 "$demo_after" | cut -d ' ' -f 1)"
 shasum -a 256 -c "$demo_output/source-sha256.txt" > "$demo_output/source-validation.txt"
-for demo_state in initial-form model-choices voice-choices format-choices selected-settings generated-result saved-result history compact-40x12 too-small voice-audition cleared-form; do
+for demo_state in initial-form model-choices voice-choices format-choices selected-settings generated-result save-validation saved-result history compact-40x12 too-small voice-audition cleared-form; do
   "$demo_agg" --quiet "${demo_render_options[@]}" --select 100% \
     "$demo_output/after-harness/$demo_state.cast" "$demo_output/after-$demo_state-frame.gif"
   "$demo_ffmpeg" -nostdin -hide_banner -loglevel error -y \

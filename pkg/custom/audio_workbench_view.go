@@ -87,6 +87,9 @@ func (m *audioWorkbench) View() tea.View {
 	}
 	if m.modal == "save" {
 		lines = append(lines, "Save original audio to:", m.editorView(m.path), "Enter saves · Esc returns")
+		if m.note != "" {
+			lines = append(lines, readable.Text(m.note))
+		}
 		return tea.NewView(m.fitAudio(lines))
 	}
 	if m.modal == "speed" {
