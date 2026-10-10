@@ -61,7 +61,8 @@ after = (output / 'after.txt').read_text()
 for text in (before, after):
     assert 'Terminal replay | synthetic settings' in text
     assert 'synthetic-demo-key' not in text
-assert 'Invalid settings were kept.' in before
+assert 'Could not resolve folder project defaults.' in before
+assert 'invalid JSON or entries' not in before
 assert 'invalid JSON or entries' in after
 assert 'Inspect with openai link.' in after
 assert 'This command did not change saved links.' in after
