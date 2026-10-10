@@ -31,7 +31,7 @@ Empty bodies have no first-data diagnostic. The CLI never reads ahead to collect
 Streaming output continues as data arrives. The caller retains responsibility for closing the response body.
 
 Binary-response commands record body timings during reads and report them after body closure and consumer cleanup.
-This includes downloads and speech responses. Their timestamps measure the original reads, not the later reporting time.
+This includes downloads and speech responses. Their elapsed durations measure the original reads, not the later reporting time.
 This ordering lets managed downloads remove temporary files before diagnostic output can block.
 Writing diagnostics can still wait for stderr. The CLI does not make stderr globally nonblocking.
 
@@ -42,9 +42,9 @@ The CLI retains its existing response-header redaction policy; debug output can 
 
 ## Interpret a stalled request
 
-- No headers diagnostic yet: the SDK dispatch has not returned response headers. This alone does not identify the cause.
-- For immediate diagnostics, headers without body data mean no nonempty body read has returned yet.
-- First data without EOF means the response remains open, or the consumer has not finished reading it.
+- Missing diagnostics do not establish the current request stage. Stalled stderr can delay any diagnostic.
+- For immediate diagnostics with draining stderr, headers without first data mean the observer has not recorded a nonempty read.
+- First data without EOF does not establish whether the body remains open. Check for closure, failure, or cancellation diagnostics.
 - Failure or cancellation: inspect the command's normal error and exit status. A timing line does not replace that error.
 
 Binary responses defer body diagnostics until cleanup. Missing body lines during a download therefore do not identify its current read stage.
