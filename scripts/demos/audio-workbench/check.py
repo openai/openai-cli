@@ -35,7 +35,8 @@ def main():
     parser.add_argument("--source", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repo-root", type=Path, default=os.environ.get("DEMO_REPO_ROOT"))
-    parser.add_argument("--case", choices=("workflow", "ctrl-c", "sigterm", "stopped-reader", "startup", "all"), default="all")
+    parser.add_argument("--case", choices=("workflow", "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
+                                          "stopped-reader", "startup", "all"), default="all")
     parser.add_argument("--theme", choices=("dark", "light", "no-color"), default="dark")
     parser.add_argument("--asciinema", default=shutil.which("asciinema"))
     parser.add_argument("--emit", action="store_true", help="Forward actual PTY bytes for the shared recorder")
@@ -333,7 +334,8 @@ def main():
         result.update(pass_=True, exit_status=0, requests=[])
         result["pass"] = result.pop("pass_")
 
-    cases = ("workflow", "ctrl-c", "sigterm", "stopped-reader", "startup") if args.case == "all" else (args.case,)
+    cases = ("workflow", "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
+             "stopped-reader", "startup") if args.case == "all" else (args.case,)
     for case in cases:
         result = {"case": case, "states": [], "pass": False}
         report["cases"].append(result)
@@ -351,7 +353,8 @@ def main():
                       "time.sleep(2)\n")
             (programs / "ffplay").write_text(helper)
             (programs / "ffplay").chmod(0o700)
-            server = fixture.SpeechFixture()
+            busy = case in ("busy-ctrl-c", "busy-sigterm")
+            server = fixture.SpeechFixture(partial=busy)
             worker = threading.Thread(target=server.serve_forever)
             worker.start()
             env = {"PATH": str(programs) + ":/usr/bin:/bin", "HOME": temporary,
@@ -481,6 +484,42 @@ def main():
                     assert destination.read_bytes() == fixture.WAV and len(server.records) == 2
                     terminal.send(b"\x03")
                     terminal.finish(130)
+                elif busy:
+                    paste(terminal, fixture.TEXT)
+                    assert not server.records, "Typing generated speech"
+                    terminal.send(b"\x07")
+                    deadline = time.monotonic() + 12
+                    while not server.partial_ready.is_set():
+                        terminal.read(.03)
+                        assert terminal.child.poll() is None, "Audio form exited before the partial response"
+                        assert time.monotonic() < deadline, "Fixture did not flush the partial response"
+                    assert len(server.records) == 1, "Busy cancellation must receive exactly one request"
+                    assert 0 < server.partial_bytes < server.records[0]["response_bytes"]
+                    assert not server.partial_release.is_set(), "Fixture released the response before cancellation"
+                    result["partial_response"] = {"ready_before_signal": True, "delivered_bytes": server.partial_bytes,
+                                                  "total_bytes": server.records[0]["response_bytes"],
+                                                  "peer_closed_before_release": False, "handler_finished": False}
+                    started = time.monotonic()
+                    if case == "busy-ctrl-c":
+                        terminal.send(b"\x03")
+                    else:
+                        os.kill(terminal.child.pid, signal.SIGTERM)
+                    terminal.finish(130 if case == "busy-ctrl-c" else 143, timeout=5)
+                    result["busy_cancel_seconds"] = round(time.monotonic()-started, 4)
+                    assert time.monotonic()-started < 5, "Busy cancellation exceeded five seconds"
+                    assert server.partial_closed.wait(2), "Cancellation did not close the partial response stream"
+                    assert not server.partial_release.is_set(), "Cleanup released the response before observing cancellation"
+                    result["partial_response"]["peer_closed_before_release"] = True
+                    assert server.partial_done.wait(2), "Partial response handler did not finish after cancellation"
+                    result["partial_response"]["handler_finished"] = True
+                    assert json.loads(public(["--format", "json", "audio", "history"])) == [], "Partial audio entered history"
+                    cache = private / "Library/Caches" if sys.platform == "darwin" else Path(env["XDG_CACHE_HOME"])
+                    history = cache / "openai/audio"
+                    artifacts = sorted(str(path.relative_to(history)) for path in history.rglob("*"))
+                    result["partial_response"]["remaining_history_artifacts"] = artifacts
+                    assert not artifacts, "Cancellation retained partial history artifacts"
+                    assert len(server.records) == 1, "Cancellation retried generation"
+                    result["partial_response"]["history_entries"] = 0
                 elif case == "ctrl-c":
                     terminal.send(b"\x03")
                     terminal.finish(130)
@@ -528,7 +567,7 @@ def main():
                 if case != "stopped-reader":
                     assert result["final_form_rows_cleared"], "Exited form left active rows in the final screen"
                 assert not server.failures, "Fixture rejected a request"
-                if case != "workflow":
+                if case != "workflow" and not busy:
                     assert not server.records, "Cancellation generated speech"
                 result.update(exit_status=terminal.child.returncode, requests=server.records, pass_=True)
                 result["pass"] = result.pop("pass_")
@@ -536,14 +575,26 @@ def main():
                 try:
                     if terminal is not None:
                         try:
+                            if terminal.child.poll() is not None:
+                                result["exit_status"] = terminal.child.returncode
                             terminal.save(args.output / (case + "-latest"))
                         finally:
                             terminal.close()
                 finally:
                     try:
+                        server.partial_release.set()
                         server.shutdown()
                         server.server_close()
                         worker.join(5)
+                        with server.lock:
+                            handler_threads = list(server.handler_threads)
+                        result["server_cleanup"] = {"serve_thread_joined": not worker.is_alive(),
+                                                    "handler_threads_observed": len(handler_threads),
+                                                    "handler_threads_joined": all(not thread.is_alive() for thread in handler_threads)}
+                        if worker.is_alive() or any(thread.is_alive() for thread in handler_threads):
+                            result["pass"] = False
+                        assert result["server_cleanup"]["serve_thread_joined"], "Fixture server thread did not stop"
+                        assert result["server_cleanup"]["handler_threads_joined"], "Fixture handler threads did not stop"
                     finally:
                         (args.output / "results.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     if not args.emit:

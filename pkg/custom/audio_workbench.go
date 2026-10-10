@@ -170,7 +170,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastFinished = time.Now()
 		if msg.err != nil {
 			m.lastErr = msg.err
-			m.note = "Audio action failed. Esc exits with the error. Your retained audio remains available."
+			m.note = "Audio action failed. Esc exits with the error."
 		}
 		if msg.result.entry.ID != "" {
 			if msg.result.entry.Settings.Preview {
@@ -202,6 +202,10 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.entries = msg.entries
 			m.modal = "history"
 			m.choice = 0
+			m.note = ""
+			if msg.err != nil {
+				m.note = "Some audio history could not be read."
+			}
 		}
 		if msg.kind == "export" && msg.err == nil {
 			m.note = "Saved original audio bytes."

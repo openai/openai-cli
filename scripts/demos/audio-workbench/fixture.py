@@ -6,7 +6,9 @@ import http.server
 import json
 import math
 from pathlib import Path
+import select
 import signal
+import socket
 import struct
 import sys
 import threading
@@ -37,10 +39,26 @@ WAV = (b"RIFF" + struct.pack("<I", 36 + len(PCM)) + b"WAVEfmt " +
 class SpeechFixture(http.server.ThreadingHTTPServer):
     daemon_threads = False
 
-    def __init__(self, log=None):
+    def __init__(self, log=None, partial=False):
         super().__init__(("127.0.0.1", 0), SpeechHandler)
         self.records, self.failures = [], []
         self.lock, self.log = threading.Lock(), log
+        self.partial = partial
+        self.partial_ready = threading.Event()
+        self.partial_release = threading.Event()
+        self.partial_closed = threading.Event()
+        self.partial_done = threading.Event()
+        self.partial_bytes = 0
+        self.handler_threads = set()
+
+    def process_request_thread(self, request, client_address):
+        with self.lock:
+            self.handler_threads.add(threading.current_thread())
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            if self.partial:
+                self.partial_done.set()
 
     @property
     def endpoint(self):
@@ -94,9 +112,24 @@ class SpeechHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "audio/wav" if body["response_format"] == "wav" else "application/octet-stream")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
-            self.wfile.write(payload)
+            if self.server.partial:
+                self.wfile.write(payload[:2048])
+                self.wfile.flush()
+                self.server.partial_bytes = 2048
+                self.server.partial_ready.set()
+                # Hold the rest until cancellation. Cleanup releases this gate
+                # after failed assertions, so server_close can join the handler.
+                while not self.server.partial_release.is_set():
+                    if select.select([self.connection], [], [], .05)[0]:
+                        if self.connection.recv(1, socket.MSG_PEEK) == b"":
+                            self.server.partial_closed.set()
+                            return
+                        raise ValueError("unexpected data during partial response")
+            else:
+                self.wfile.write(payload)
         except (BrokenPipeError, ConnectionResetError):
-            pass  # Cancellation can close this owned synthetic response.
+            if self.server.partial_ready.is_set():
+                self.server.partial_closed.set()
         except (ValueError, KeyError, TypeError, json.JSONDecodeError):
             self.server.failures.append("Synthetic speech request validation failed")
             self.send_error(400, "Synthetic fixture request rejected")
@@ -116,6 +149,7 @@ def main():
                 signal.signal(number, lambda *_: stopped.set())
             stopped.wait()
         finally:
+            server.partial_release.set()
             server.shutdown()
             server.server_close()
             worker.join(5)

@@ -23,7 +23,7 @@ python3 -I -B scripts/demos/audio-workbench/check.py \
   --theme dark
 ```
 
-The default run checks workflow, Ctrl+C, SIGTERM, stopped-reader cancellation, and optional-startup isolation.
+The default run checks workflow, idle and busy cancellation, stopped-reader cancellation, and optional-startup isolation.
 Use `--case NAME` to repeat one affected case.
 Use `--theme light` or `--theme no-color` for the additional palette checks.
 
@@ -63,6 +63,8 @@ Actual FFplay and audible device behavior require separate native evidence.
 No microphone, real credential, paid API, or remote account is used.
 
 The harness checks exit 130 for Ctrl+C and exit 143 for SIGTERM.
+Busy cancellation waits for a flushed partial response before sending either signal.
+It requires one request, client disconnection, no retained partial audio, and joined fixture threads.
 Stopped-reader cancellation must finish without releasing terminal backpressure.
 The stopped-reader case checks bounded exit, native terminal modes, and observed helper cleanup.
 It records direct CLI children through `/bin/ps` before blocking output.

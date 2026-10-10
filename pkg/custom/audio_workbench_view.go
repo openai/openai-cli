@@ -83,6 +83,9 @@ func (m *audioWorkbench) View() tea.View {
 			lines = append(lines, "Legacy snapshot; current API access unverified.")
 		}
 		lines = append(lines, hint, "Choosing never generates speech.")
+		if m.modal == "history" && m.note != "" {
+			lines = append(lines, readable.Text(m.note))
+		}
 		return tea.NewView(m.fitAudio(lines))
 	}
 	if m.modal == "save" {
