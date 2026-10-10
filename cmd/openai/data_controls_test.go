@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -397,7 +399,10 @@ func TestMainDataControlsReadCancellation(t *testing.T) {
 			}
 			output, readErr := io.ReadAll(stdout)
 			err := child.Wait()
-			if ctx.Err() != nil || err == nil || readErr != nil || len(output) != 0 || requests.Load() != 1 {
+			// These generated reads retain default SIGINT termination. Shells
+			// report 130; os/exec reports -1 and records the terminating signal.
+			status, signaled := child.ProcessState.Sys().(syscall.WaitStatus)
+			if ctx.Err() != nil || err == nil || !signaled || !status.Signaled() || status.Signal() != syscall.SIGINT || readErr != nil || len(output) != 0 || requests.Load() != 1 {
 				t.Fatalf("cancellation lost: exit=%v read=%v stdout=%q stderr=%q requests=%d", err, readErr, output, stderr.String(), requests.Load())
 			}
 			select {
@@ -406,6 +411,56 @@ func TestMainDataControlsReadCancellation(t *testing.T) {
 				t.Fatal("cancelled inspection left its HTTP response open")
 			}
 		})
+	}
+}
+
+func TestMainDataControlsLargeStorageResponse(t *testing.T) {
+	// This sequential regression probe exceeds 64 MiB. Its size is not an API
+	// limit; preserve the supported payload instead of reducing the fixture.
+	const payloadSize = 65 << 20
+	payload := strings.Repeat("x", payloadSize)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != http.MethodGet || r.URL.Path != "/organization/external_storage/extstorage_requested" {
+			t.Errorf("unexpected large-response request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		for _, part := range []string{strings.TrimSuffix(dataControlsStorage, "}") + `,"future_payload":"`, payload, `"}`} {
+			if _, err := io.WriteString(w, part); err != nil {
+				t.Errorf("write synthetic response: %v", err)
+				return
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+	child, stdout, stderr, ctx := startStreamingTextCommand(t, server,
+		"--admin-api-key", "synthetic-admin-large", "admin", "external-storage", "retrieve", "extstorage_requested")
+	reader := bufio.NewReader(stdout)
+	var foundPayload, foundStatus bool
+	for {
+		line, err := reader.ReadString('\n')
+		if value, ok := strings.CutPrefix(line, "Future payload: "); ok {
+			value = strings.TrimSuffix(value, "\n")
+			if len(value) != payloadSize || value != payload {
+				t.Errorf("large unknown field changed: got %d bytes, want %d", len(value), payloadSize)
+			}
+			foundPayload = true
+		}
+		if line == "Validation status: pending\n" {
+			foundStatus = true
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read large response output: %v", err)
+		}
+	}
+	err := child.Wait()
+	if ctx.Err() != nil || err != nil || stderr.Len() != 0 || requests.Load() != 1 || !foundPayload || !foundStatus {
+		t.Fatalf("large response failed: exit=%v timeout=%v stderr_bytes=%d requests=%d payload=%t status=%t",
+			err, ctx.Err(), stderr.Len(), requests.Load(), foundPayload, foundStatus)
 	}
 }
 

@@ -28,7 +28,7 @@ def main():
     print("\033[2J\033[H" + os.environ["DEMO_SCENE_LABEL"], flush=True)
     print("Synthetic loopback API | no cloud changes\n", flush=True)
     if name == "pending":
-        print("Live validate writes cloud test objects and activates retention.\n", flush=True)
+        print("Live validate writes cloud test objects; successful validation activates retention.\n", flush=True)
     print("$ " + " ".join(command), flush=True)
     result = subprocess.run(command, timeout=15, check=False)
     with (output / "statuses.jsonl").open("a", encoding="utf-8") as log:

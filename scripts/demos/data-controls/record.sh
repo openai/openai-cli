@@ -5,6 +5,16 @@ if [ "$#" -ne 5 ]; then
   echo 'usage: record.sh BEFORE_BINARY AFTER_BINARY BEFORE_SHA AFTER_SHA OUTPUT_DIR' >&2
   exit 2
 fi
+demo_window_size="${DEMO_WINDOW_SIZE:-120x32}"
+case "$demo_window_size" in
+  120x32|80x40|40x60) ;;
+  *) echo 'DEMO_WINDOW_SIZE must be 120x32, 80x40, or 40x60.' >&2; exit 2;;
+esac
+demo_theme="${DEMO_THEME:-dracula}"
+case "$demo_theme" in
+  dracula|github-light) ;;
+  *) echo 'DEMO_THEME must be dracula or github-light.' >&2; exit 2;;
+esac
 demo_source="$(cd "$(dirname "$0")" && pwd)"
 demo_root="$(cd "$demo_source/../../.." && pwd)"
 demo_python="$(command -v python3)"
@@ -12,12 +22,31 @@ demo_go="$(command -v go)"
 source "$demo_source/../capture_and_render.sh"
 demo_prepare_capture "$demo_root" "$1" "$2" "$3" "$4" "$5" "$demo_source/server.py"
 "$demo_python" -I -B - "$demo_go" "$demo_before" "$demo_before_sha" "$demo_after" "$demo_after_sha" "$demo_output" <<'PY'
-import os, pathlib, subprocess, sys
+import hashlib, json, os, pathlib, subprocess, sys
 go, before, before_sha, after, after_sha, directory = sys.argv[1:]
 output = pathlib.Path(directory)
 for label, binary, expected in (("before", before, before_sha), ("after", after, after_sha)):
     result = subprocess.run([go, "version", "-m", binary], capture_output=True, text=True, timeout=15, check=True)
     (output / (label + "-build.txt")).write_text(result.stdout)
+    manifest_path = os.environ.get("DEMO_BEFORE_BUILD_MANIFEST") if label == "before" else None
+    if manifest_path:
+        manifest_bytes = pathlib.Path(manifest_path).read_bytes()
+        manifest = json.loads(manifest_bytes)
+        if manifest.get("source_sha") != expected:
+            raise SystemExit("baseline build manifest source_sha does not match the supplied source revision")
+        recorded_binary = pathlib.Path(manifest.get("binary_path", "")).resolve(strict=True)
+        if recorded_binary != pathlib.Path(binary).resolve(strict=True):
+            raise SystemExit("baseline build manifest binary_path does not match the supplied binary")
+        digest = hashlib.sha256()
+        with open(binary, "rb") as binary_file:
+            for chunk in iter(lambda: binary_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if manifest.get("binary_sha256") != digest.hexdigest():
+            raise SystemExit("baseline binary does not match its build manifest hash")
+        if type(manifest.get("exit_code")) is not int or manifest["exit_code"] != 0 or manifest.get("result") != "pass":
+            raise SystemExit("baseline build manifest does not report a successful build")
+        (output / "before-build-manifest.json").write_bytes(manifest_bytes)
+        continue
     settings = {}
     for line in result.stdout.splitlines():
         fields = line.strip().split("\t", 1)
@@ -47,14 +76,20 @@ SCENE
   echo "before source commit supplied by caller: $demo_before_sha"
   echo "after source commit supplied by caller: $demo_after_sha"
   echo "after source state: ${DEMO_AFTER_SOURCE_STATE:-committed source supplied by caller}"
-  echo 'source checks: go version -m revision matches supplied SHA; build metadata retained'
+  if [ -n "${DEMO_BEFORE_BUILD_MANIFEST:-}" ]; then
+    echo 'before source: caller-supplied archive-build manifest; source SHA, binary path/hash, and successful build result verified'
+    echo 'before provenance: copied before-build-manifest.json retains archive hash and build commands; no baseline VCS metadata claim'
+  else
+    echo 'before source: go version -m revision matches supplied SHA and source is clean'
+  fi
+  echo 'after source: go version -m revision matches supplied SHA; build metadata retained'
   echo 'data: loopback synthetic responses only; no cloud or retention changes'
   echo 'pending validation requests ext_requested; the response ID is ext_returned'
   echo 'validated retrieval uses ext_returned; it does not perform validation'
   echo 'every scene captures default output and separately verifies explicit JSON'
   echo 'capture: real CLI processes in a PTY; each command has a 15-second deadline'
   echo 'settings: isolated HOME, synthetic Admin key, NO_COLOR=1, FORCE_COLOR=0, PAGER=cat'
-  echo 'render: agg swash, Menlo 18px, Dracula, 120 columns x 32 rows'
+  echo "render: agg swash, Menlo 18px, theme $demo_theme, window $demo_window_size"
   echo 'scope: terminal replay; no native terminal appearance or real-provider acceptance claim'
   demo_capture_metadata
   "$demo_python" --version
@@ -62,9 +97,8 @@ SCENE
 shasum -a 256 "$demo_source/record.sh" "$demo_source/server.py" "$demo_source/scene.py" \
   "$demo_source/validate.py" "$demo_root/scripts/demos/capture_and_render.sh" \
   > "$demo_output/source-sha256.txt"
-demo_window_size=120x32
 demo_render_options=(--renderer swash --font-family Menlo --font-size 18 --line-height 1.2 \
-  --theme dracula --fps-cap 20 --last-frame-duration 2)
+  --theme "$demo_theme" --fps-cap 20 --last-frame-duration 2)
 demo_scenes=()
 for demo_case in retention pending validated; do
   for demo_mode in before after; do

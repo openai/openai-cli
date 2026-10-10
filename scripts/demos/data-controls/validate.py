@@ -24,7 +24,9 @@ def main():
         assert (output / f"{scene}.stderr").read_bytes() == b"", scene
         records = [item for item in requests if item["scene"] == scene]
         assert all(item["status"] == 200 and item["response_sha256"] == fixture[name]["sha256"] for item in records)
-        captured = (output / f"{scene}.txt").read_text()
+        recording = [json.loads(line) for line in (output / f"{scene}.cast").read_text().splitlines()]
+        # Check emitted bytes independently from terminal wrapping at narrow widths.
+        captured = "".join(item[2] for item in recording[1:] if item[1] == "o")
         assert "Synthetic loopback API" in captured and "$ openai" in captured, scene
         if name == "retention":
             assert "organization_default" in captured, scene

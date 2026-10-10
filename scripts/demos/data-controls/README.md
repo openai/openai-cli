@@ -91,8 +91,15 @@ It compares actual binaries using identical response bytes.
 
 Provide Bash, Python 3, Go, asciinema, agg, ffmpeg, ffprobe, and shasum on `PATH`.
 Provide verified baseline and candidate binaries with their full source commit IDs.
-Build both binaries with Go VCS metadata enabled.
 The recorder verifies source revisions through `go version -m` and records binary hashes.
+The candidate binary must include Go VCS metadata.
+The baseline normally requires clean Go VCS metadata.
+For an archived baseline build, set `DEMO_BEFORE_BUILD_MANIFEST` to its reviewed build manifest.
+That manifest must record matching `source_sha`, `binary_path`, and `binary_sha256` values.
+It must also record `exit_code: 0` and `result: "pass"`.
+The recorder verifies those fields and copies the manifest into the output directory.
+The copied manifest retains archive provenance and build commands supplied by the caller.
+This alternative does not establish baseline VCS metadata or live behavior.
 For dirty candidate builds, set `DEMO_AFTER_SOURCE_STATE` to the reviewed source manifest identity.
 Choose an empty output directory outside the repository.
 
@@ -100,6 +107,23 @@ Choose an empty output directory outside the repository.
 scripts/demos/data-controls/record.sh \
   /tmp/f42-before/openai /tmp/f42-after/openai \
   "$BEFORE_SHA" "$AFTER_SHA" /tmp/f42-data-controls-demo
+```
+
+`DEMO_WINDOW_SIZE` accepts `120x32` (default), `80x40`, or `40x60`.
+`DEMO_THEME` accepts `dracula` (default) or `github-light`.
+All captures disable CLI color through `NO_COLOR=1` and `FORCE_COLOR=0`.
+Metadata records the actual window size and theme.
+
+```sh
+DEMO_WINDOW_SIZE=80x40 DEMO_THEME=dracula \
+  scripts/demos/data-controls/record.sh \
+  /tmp/f42-before/openai /tmp/f42-after/openai \
+  "$BEFORE_SHA" "$AFTER_SHA" /tmp/f42-data-controls-dark
+
+DEMO_WINDOW_SIZE=40x60 DEMO_THEME=github-light \
+  scripts/demos/data-controls/record.sh \
+  /tmp/f42-before/openai /tmp/f42-after/openai \
+  "$BEFORE_SHA" "$AFTER_SHA" /tmp/f42-data-controls-light
 ```
 
 The recorder captures before/after retention, pending validation, and validated inspection scenes.

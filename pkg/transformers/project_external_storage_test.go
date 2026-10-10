@@ -1,7 +1,6 @@
 package transformers
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -50,15 +49,4 @@ func TestExternalStoragePreservesUnfamiliarResponses(t *testing.T) {
 	result, err := projectExternalStorage(t.Context(), input)
 	require.NoError(t, err)
 	require.Equal(t, input.Raw, result.Raw)
-}
-
-func TestExternalStorageLargeUnknownField(t *testing.T) {
-	// Recent CLI releases accept large JSON bodies. Keep this sequential probe
-	// above 64 MiB without introducing an API body or field limit.
-	field := strings.Repeat("x", 65<<20)
-	input := gjson.Parse(`{"object":"organization.external_storage","status":"pending","future":"` + field + `"}`)
-	result, err := projectExternalStorage(t.Context(), input)
-	require.NoError(t, err)
-	require.Equal(t, field, result.Get("future").Str)
-	require.Equal(t, "pending", result.Get("validation_status").Str)
 }
