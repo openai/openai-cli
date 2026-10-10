@@ -82,7 +82,13 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 	isStream := !errors.Is(failure, context.Canceled) && errors.As(failure, &streamerr)
 	if format == "text" && root.String("transform-error") == "" {
 		message := ""
-		if isAPI && !errors.Is(failure, context.Canceled) {
+		var exportFailure *storedCompletionExportError
+		if errors.As(failure, &exportFailure) {
+			message = storedCompletionExportMessage(failure, exportFailure)
+			if isAPI && !errors.Is(failure, context.Canceled) {
+				message += "\n" + readableAPIErrorMessage(root, failure, apierr)
+			}
+		} else if isAPI && !errors.Is(failure, context.Canceled) {
 			message = readableAPIErrorMessage(root, failure, apierr)
 		} else if isStream {
 			message = readableStreamErrorText
