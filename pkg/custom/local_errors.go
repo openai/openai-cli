@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/urfave/cli/v3"
 )
 
@@ -47,6 +48,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return utilityFailure.Error()
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
 		return "The request timed out. The API may have received it; check its status before repeating it."
+	case errors.Is(failure, transformers.ErrInvalidKeyInventoryResponse):
+		return "The API returned an invalid key inventory response.\nRetry this read command."
 	case errors.As(failure, &modelsListFailure):
 		return modelsListFailure.Error()
 	case errors.As(failure, &imageFailure):

@@ -3,10 +3,15 @@ package transformers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/tidwall/gjson"
 )
+
+// ErrInvalidKeyInventoryResponse identifies rejected inventory data without
+// retaining response bytes, which can contain credentials.
+var ErrInvalidKeyInventoryResponse = errors.New("invalid JSON inventory response")
 
 // KeyInventoryResource recognizes only read-only inventory boundaries. Create
 // responses can carry one-time secrets and must never use this projection.
@@ -41,10 +46,10 @@ func ProjectKeyInventory(ctx context.Context, value gjson.Result, route Route) (
 	if !valid {
 		// GJSON can read partial objects. Reject them before a fallback can
 		// print an incomplete record containing a one-time secret slot.
-		return gjson.Result{}, false, errors.New("invalid JSON inventory response")
+		return gjson.Result{}, false, ErrInvalidKeyInventoryResponse
 	}
 	if !value.IsObject() {
-		return gjson.Result{}, false, errors.New("unexpected JSON inventory response: expected object")
+		return gjson.Result{}, false, fmt.Errorf("%w: expected object", ErrInvalidKeyInventoryResponse)
 	}
 	type field struct{ key, encodedKey, raw string }
 	var fields []field

@@ -65,6 +65,79 @@ func keyInventoryEnv(server *httptest.Server) []string {
 	return []string{"OPENAI_BASE_URL=" + server.URL, "OPENAI_API_KEY=synthetic-inventory-api-key", "OPENAI_ADMIN_KEY=synthetic-inventory-admin-key", "FORCE_COLOR=0"}
 }
 
+func TestMainKeyInventoryInvalidResponseRecovery(t *testing.T) {
+	const guidance = "The API returned an invalid key inventory response.\nRetry this read command."
+	for _, resource := range keyInventoryResources {
+		for _, shape := range []string{"malformed", "nonobject"} {
+			for _, errorFormat := range []string{"text", "json"} {
+				t.Run(resource.name+"/"+shape+"/"+errorFormat, func(t *testing.T) {
+					record := keyInventoryRecord(resource, "inventory_001")
+					invalid := record[:len(record)-1]
+					if shape == "nonobject" {
+						invalid = "[" + record + "]"
+					}
+					var state struct {
+						sync.Mutex
+						healthy bool
+						calls   int
+					}
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if r.Method != http.MethodGet || r.URL.Path != resource.path+"/inventory_001" {
+							t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+						}
+						state.Lock()
+						healthy := state.healthy
+						state.calls++
+						state.Unlock()
+						w.Header().Set("Content-Type", "application/json")
+						body := invalid
+						if healthy {
+							body = record
+						}
+						if _, err := io.WriteString(w, body); err != nil {
+							t.Errorf("fixture response: %v", err)
+						}
+					}))
+					t.Cleanup(server.Close)
+					args := append([]string{"openai"}, resource.command(resource.routes[len(resource.routes)-1], "retrieve")...)
+					args = append(args, "--format-error", errorFormat)
+					got := runMainDispatchWithEnv(t, "bash", keyInventoryEnv(server), args...)
+					if got.code != 1 || got.stdout != "" {
+						t.Fatalf("invalid inventory did not fail privately: %+v", got)
+					}
+					if errorFormat == "json" {
+						var diagnostic map[string]string
+						if err := json.Unmarshal([]byte(got.stderr), &diagnostic); err != nil || !reflect.DeepEqual(diagnostic, map[string]string{"message": guidance}) {
+							t.Fatalf("unsafe structured diagnostic: %q, error %v", got.stderr, err)
+						}
+					} else if got.stderr != guidance+"\n" {
+						t.Fatalf("wrong recovery diagnostic: %q", got.stderr)
+					}
+					for _, marker := range []string{"synthetic-inventory-secret", "synthetic-nested-secret", "inventory_001", "\x1b"} {
+						if strings.Contains(got.stdout+got.stderr, marker) {
+							t.Fatalf("diagnostic disclosed response marker %q", marker)
+						}
+					}
+					// Follow the recovery instruction without changing the command or context.
+					state.Lock()
+					state.healthy = true
+					state.Unlock()
+					recovered := runMainDispatchWithEnv(t, "bash", keyInventoryEnv(server), args...)
+					if recovered.code != 0 || recovered.stderr != "" || !strings.Contains(recovered.stdout, "inventory_001") {
+						t.Fatalf("retry did not recover: %+v", recovered)
+					}
+					state.Lock()
+					calls := state.calls
+					state.Unlock()
+					if calls != 2 {
+						t.Fatalf("got %d requests, want one failed read and one retry", calls)
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestMainKeyInventoryRoutesPreserveRequestConfiguration(t *testing.T) {
 	for _, resource := range keyInventoryResources {
 		for _, route := range resource.routes {

@@ -69,14 +69,16 @@ func TestKeyInventoryMalformedResponseDoesNotExposeSecret(t *testing.T) {
 	input := gjson.Parse(`{"id":"key_demo","value":"synthetic-secret"`)
 	route := Route{"(resource) admin.organization.admin_api_keys > (method) retrieve", OutputResponse}
 	got, _, err := ProjectKeyInventory(t.Context(), input, route)
-	require.EqualError(t, err, "invalid JSON inventory response")
+	require.ErrorIs(t, err, ErrInvalidKeyInventoryResponse)
+	require.NotContains(t, err.Error(), "synthetic-secret")
 	require.Empty(t, got.Raw)
 	got, _, err = ProjectKeyInventory(t.Context(), input, Route{"(resource) admin.organization.admin_api_keys > (method) create", OutputResponse})
 	require.NoError(t, err)
 	require.Equal(t, input.Raw, got.Raw)
 	for _, raw := range []string{`[{"value":"synthetic-secret"}]`, `"synthetic-secret"`, `null`, `0`} {
 		got, _, err := ProjectKeyInventory(t.Context(), gjson.Parse(raw), route)
-		require.EqualError(t, err, "unexpected JSON inventory response: expected object")
+		require.ErrorIs(t, err, ErrInvalidKeyInventoryResponse)
+		require.NotContains(t, err.Error(), "synthetic-secret")
 		require.Empty(t, got.Raw)
 	}
 }
