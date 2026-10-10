@@ -11,7 +11,7 @@ scripts/demos/fine-tuning/record.sh \
 ```
 
 Run from the repository root. The evidence directory must be empty and outside the repository.
-Use `DEMO_WIDTH=40` for a narrow recording and `DEMO_THEME=github` for a light replay.
+Use `DEMO_WIDTH=40` for a narrow recording and `DEMO_THEME=github-light` for a light replay.
 The default replay uses 80 columns and the Dracula theme. Both use `NO_COLOR=1`.
 
 The first request returns an empty jobs page. The second returns HTTP 403 and must exit 1.

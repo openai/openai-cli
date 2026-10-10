@@ -10,7 +10,7 @@ demo_python="$(command -v python3)"
 demo_width="${DEMO_WIDTH:-80}"
 demo_theme="${DEMO_THEME:-dracula}"
 case "$demo_width" in 40|80) ;; *) exit 2;; esac
-case "$demo_theme" in dracula|github) ;; *) exit 2;; esac
+case "$demo_theme" in dracula|github-light) ;; *) exit 2;; esac
 source "$demo_source/../capture_and_render.sh"
 demo_prepare_capture "$demo_root" "$1" "$2" "$3" "$4" "$5" "$demo_source/server.py"
 demo_start_api "$demo_output/requests.jsonl"
