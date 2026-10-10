@@ -1,14 +1,17 @@
 package custom
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
@@ -36,6 +39,85 @@ func TestSkillUploadActionPreservesCleanupFailures(t *testing.T) {
 	require.Contains(t, err.Error(), "synthetic close failure")
 	require.Equal(t, 1, source.count)
 	require.Nil(t, skillUploadState(command))
+}
+
+func TestSkillUploadCleanupFailurePreservesReturnedID(t *testing.T) {
+	for _, operation := range []string{"(resource) skills > (method) create", "(resource) skills.versions > (method) create"} {
+		t.Run(operation, func(t *testing.T) {
+			var output bytes.Buffer
+			var sources []*skillCloseFailure
+			command := &cli.Command{Name: "create", Action: func(ctx context.Context, cmd *cli.Command) error {
+				source := &skillCloseFailure{}
+				sources = append(sources, source)
+				skillUploadState(cmd).owned = append(skillUploadState(cmd).owned, source)
+				err := ShowJSON(gjson.Parse(`{"id":"skill_returned"}`), ShowJSONOpts{
+					Context: ctx, Operation: operation, Format: "json", Stdout: &output, Stderr: io.Discard,
+				})
+				require.NoError(t, err, "cleanup failure must not hide the successful response")
+				require.Equal(t, 1, source.count, "cleanup must finish before output")
+				return err
+			}}
+			root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "skills", Commands: []*cli.Command{command}}}}
+			configureSkillUploads(root)
+			for range 2 {
+				output.Reset()
+				err := command.Action(t.Context(), command)
+				require.ErrorContains(t, err, "synthetic close failure")
+				require.NotErrorIs(t, err, context.Canceled)
+				require.JSONEq(t, `{"id":"skill_returned"}`, output.String())
+				require.Nil(t, skillUploadState(command))
+			}
+			for _, source := range sources {
+				require.Equal(t, 1, source.count)
+			}
+		})
+	}
+}
+
+func TestSkillUploadSignalShutdownRetainsPendingDelivery(t *testing.T) {
+	for _, pending := range []os.Signal{nil, os.Interrupt, syscall.SIGTERM} {
+		ctx, cancel := context.WithCancelCause(t.Context())
+		signals, stop, done := make(chan os.Signal, 1), make(chan struct{}), make(chan struct{})
+		if pending != nil {
+			signals <- pending
+		}
+		// Model the watcher selecting stop while a delivered signal stays queued.
+		close(done)
+		cause := finishSkillUploadSignalWatcher(ctx, cancel, signals, stop, done)
+		if pending == nil {
+			require.NoError(t, cause, "intentional cancellation is not a process interrupt")
+		} else {
+			var interrupted *skillUploadInterrupt
+			require.ErrorAs(t, cause, &interrupted)
+			want := 130
+			if pending == syscall.SIGTERM {
+				want = 143
+			}
+			require.Equal(t, want, interrupted.ExitCode())
+		}
+		require.Empty(t, signals)
+	}
+}
+
+func TestSkillUploadOutputRestoresParentContext(t *testing.T) {
+	parent, cancelParent := context.WithCancel(t.Context())
+	ctx, stop := skillUploadSignalContext(parent)
+	state := &skillUploadPreparation{ctx: ctx, parent: parent, stopSignals: stop}
+	ctx = context.WithValue(ctx, skillUploadContextKey{}, state)
+	defer state.finish()
+	wrong := ShowJSONOpts{Context: ctx, Operation: "(resource) models > (method) list"}
+	wrong.setDefaults()
+	assertions := func(opts *ShowJSONOpts) { require.NoError(t, finishSkillUploadBeforeOutput(opts)) }
+	assertions(&wrong)
+	assertions(&ShowJSONOpts{Context: parent, Operation: "(resource) skills > (method) create"})
+	correct := ShowJSONOpts{Context: ctx, Operation: "(resource) skills > (method) create"}
+	assertions(&correct)
+	assertions(&correct)
+	assertions(&wrong)
+	require.Same(t, parent, correct.Context)
+	require.NoError(t, parent.Err())
+	cancelParent()
+	require.ErrorIs(t, correct.Context.Err(), context.Canceled)
 }
 
 func TestSkillUploadDiagnosticPreservesCauseAndHidesParent(t *testing.T) {

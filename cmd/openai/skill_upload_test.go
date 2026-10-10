@@ -855,6 +855,77 @@ func TestMainSkillUploadInterruptDuringPackaging(t *testing.T) {
 	runSkillUploadCancellationSignals(t, checkSkillUploadInterruptDuringPackaging)
 }
 
+func TestMainSkillUploadInterruptDuringBlockedOutput(t *testing.T) {
+	runSkillUploadCancellationSignals(t, func(t *testing.T, processSignal os.Signal, exitCode int) {
+		for _, route := range skillUploadRoutes() {
+			t.Run(route.name, func(t *testing.T) {
+				root, scratch, home := t.TempDir(), t.TempDir(), t.TempDir()
+				require.NoError(t, os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("# Synthetic skill\n"), 0o600))
+				payload := `{"id":"skill_returned","padding":"` + strings.Repeat("x", 1024*1024) + `"}`
+				server, requests := skillUploadServer(t, http.StatusOK, payload)
+				binary, err := os.Executable()
+				require.NoError(t, err)
+				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+				defer cancel()
+				args := append([]string{"-test.run=^TestMainDispatchProcess$", "--", "openai"}, route.args...)
+				args = append(args, "--files", root, "--format", "json")
+				child := exec.CommandContext(ctx, binary, args...)
+				for _, entry := range os.Environ() {
+					name, _, _ := strings.Cut(entry, "=")
+					if !strings.HasPrefix(strings.ToUpper(name), "OPENAI_") {
+						child.Env = append(child.Env, entry)
+					}
+				}
+				child.Env = append(child.Env, "HOME="+home, "XDG_CONFIG_HOME="+home,
+					"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "OPENAI_API_KEY=synthetic-skill-key",
+					"OPENAI_BASE_URL="+server.URL, "TMPDIR="+scratch, "NO_COLOR=1")
+				reader, writer, err := os.Pipe()
+				require.NoError(t, err)
+				defer reader.Close()
+				defer writer.Close()
+				child.Stdout = writer
+				var stderr bytes.Buffer
+				child.Stderr = &stderr
+				require.NoError(t, child.Start())
+				require.NoError(t, writer.Close())
+				done := make(chan error, 1)
+				go func() { done <- child.Wait() }()
+				waited := false
+				defer func() {
+					cancel()
+					if !waited {
+						<-done
+					}
+				}()
+				require.NoError(t, reader.SetReadDeadline(time.Now().Add(3*time.Second)))
+				var first [1]byte
+				_, err = io.ReadFull(reader, first[:])
+				require.NoError(t, err, "result output did not start")
+				// Leave the remaining large result undrained. The upload state must
+				// already be released before any output becomes observable.
+				entries, err := os.ReadDir(scratch)
+				require.NoError(t, err)
+				require.Empty(t, entries)
+				require.NoError(t, child.Process.Signal(processSignal))
+				select {
+				case err := <-done:
+					waited = true
+					var exit *exec.ExitError
+					require.ErrorAs(t, err, &exit)
+					status := exit.ExitCode()
+					if signalStatus, ok := exit.Sys().(syscall.WaitStatus); ok && signalStatus.Signaled() {
+						status = 128 + int(signalStatus.Signal())
+					}
+					require.Equal(t, exitCode, status, "stderr=%s", stderr.String())
+				case <-time.After(2 * time.Second):
+					t.Fatal("first signal did not stop blocked Skills output")
+				}
+				require.Len(t, requests(), 1)
+			})
+		}
+	})
+}
+
 func checkSkillUploadInterruptDuringPackaging(t *testing.T, signal os.Signal, exitCode int) {
 	root, tmp, home := t.TempDir(), t.TempDir(), t.TempDir()
 	source := filepath.Join(root, "large-synthetic.bin")

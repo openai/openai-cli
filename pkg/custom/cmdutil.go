@@ -574,6 +574,9 @@ func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
 
 func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformerSelector) error {
 	opts.setDefaults()
+	if err := finishSkillUploadBeforeOutput(&opts); err != nil {
+		return err
+	}
 	stopModelsListLoading(opts)
 	if err := opts.Context.Err(); err != nil {
 		return err

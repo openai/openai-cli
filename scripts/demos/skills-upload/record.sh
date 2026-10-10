@@ -33,9 +33,15 @@ cp "$demo_source/scene.sh" "$demo_runtime/scene.sh"
   demo_capture_metadata
   shasum -a 256 "$demo_source/server.py" "$demo_source/record.sh" "$demo_source/scene.sh"
 } > "$demo_output/metadata.txt"
-demo_window_size=100x40
+demo_columns="${SKILL_DEMO_COLUMNS:-100}"
+demo_rows="${SKILL_DEMO_ROWS:-40}"
+demo_theme="${SKILL_DEMO_THEME:-asciinema}"
+[[ "$demo_columns" =~ ^[0-9]+$ && "$demo_rows" =~ ^[0-9]+$ ]]
+((demo_columns >= 40 && demo_rows >= 40))
+case "$demo_theme" in asciinema|github-light) ;; *) echo 'Unsupported demo theme.' >&2; exit 2;; esac
+demo_window_size="${demo_columns}x${demo_rows}"
 demo_render_options=(--renderer resvg --font-family Menlo --font-size 18 --line-height 1.2 \
-  --theme asciinema --fps-cap 20 --last-frame-duration 3)
+  --theme "$demo_theme" --fps-cap 20 --last-frame-duration 3)
 for demo_scene in before after; do
   mkdir -p "$demo_runtime/$demo_scene-home"
   demo_expected_status=1

@@ -20,9 +20,52 @@ const skillUploadMetadata = "openai-skill-upload"
 
 // A separate preparation belongs to each invocation, including cloned routes.
 type skillUploadPreparation struct {
-	ctx   context.Context
-	owned []io.Closer
-	body  io.Closer
+	ctx          context.Context
+	parent       context.Context
+	stopSignals  func() error
+	owned        []io.Closer
+	body         io.Closer
+	finishOnce   sync.Once
+	cleanupErr   error
+	cancellation error
+}
+
+type skillUploadContextKey struct{}
+
+// Finish owned upload work before result output can block. Cleanup failures stay
+// available to the action defer, so an already-created skill ID remains visible.
+func (s *skillUploadPreparation) finish() {
+	s.finishOnce.Do(func() {
+		if s.body != nil {
+			s.cleanupErr = errors.Join(s.cleanupErr, s.body.Close())
+		}
+		for _, owned := range s.owned {
+			s.cleanupErr = errors.Join(s.cleanupErr, owned.Close())
+		}
+		s.cancellation = s.stopSignals()
+	})
+}
+
+func (s *skillUploadPreparation) result(err error) error {
+	s.finish()
+	if s.cancellation != nil && (err == nil || errors.Is(err, context.Canceled)) {
+		err = errors.Join(err, s.cancellation)
+	}
+	return errors.Join(err, s.cleanupErr)
+}
+
+func finishSkillUploadBeforeOutput(opts *ShowJSONOpts) error {
+	if opts.Operation != "(resource) skills > (method) create" &&
+		opts.Operation != "(resource) skills.versions > (method) create" {
+		return nil
+	}
+	state, _ := opts.Context.Value(skillUploadContextKey{}).(*skillUploadPreparation)
+	if state == nil {
+		return nil
+	}
+	state.finish()
+	opts.Context = state.parent
+	return state.cancellation
 }
 
 func configureSkillUploads(root *cli.Command) {
@@ -37,29 +80,17 @@ func configureSkillUploads(root *cli.Command) {
 			"Symlinks and special files inside directories are rejected. ZIP files are sent unchanged; the API validates skill contents."
 		next := command.Action
 		command.Action = func(ctx context.Context, command *cli.Command) (err error) {
+			parent := ctx
 			ctx, stopSignals := skillUploadSignalContext(ctx)
-			defer func() {
-				// Observe the cause before intentional watcher cleanup cancels ctx.
-				cause := context.Cause(ctx)
-				stopSignals()
-				var interrupted *skillUploadInterrupt
-				if errors.As(cause, &interrupted) && (err == nil || errors.Is(err, context.Canceled)) {
-					err = errors.Join(err, cause)
-				}
-			}()
+			state := &skillUploadPreparation{ctx: ctx, parent: parent, stopSignals: stopSignals}
+			ctx = context.WithValue(ctx, skillUploadContextKey{}, state)
 			if command.Metadata == nil {
 				command.Metadata = make(map[string]any)
 			}
-			state := &skillUploadPreparation{ctx: ctx}
 			command.Metadata[skillUploadMetadata] = state
 			defer func() {
+				err = state.result(err)
 				delete(command.Metadata, skillUploadMetadata)
-				if state.body != nil {
-					err = errors.Join(err, state.body.Close())
-				}
-				for _, owned := range state.owned {
-					err = errors.Join(err, owned.Close())
-				}
 			}()
 			return next(ctx, command)
 		}
@@ -74,7 +105,7 @@ func (e *skillUploadInterrupt) ExitCode() int { return e.code }
 
 // Restore normal signal handling before cleanup so a second signal can stop a
 // blocked filesystem. Join the watcher on every exit, including setup failures.
-func skillUploadSignalContext(parent context.Context) (context.Context, func()) {
+func skillUploadSignalContext(parent context.Context) (context.Context, func() error) {
 	ctx, cancel := context.WithCancelCause(parent)
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
@@ -93,12 +124,29 @@ func skillUploadSignalContext(parent context.Context) (context.Context, func()) 
 		case <-stop:
 		}
 	}()
-	return ctx, func() {
-		signal.Stop(signals)
-		close(stop)
-		<-done
-		cancel(nil)
+	return ctx, func() error {
+		return finishSkillUploadSignalWatcher(ctx, cancel, signals, stop, done)
 	}
+}
+
+// signal.Stop prevents later deliveries. Join before draining so the watcher and
+// shutdown cannot race to consume a previously delivered signal.
+func finishSkillUploadSignalWatcher(ctx context.Context, cancel context.CancelCauseFunc, signals chan os.Signal, stop, done chan struct{}) error {
+	signal.Stop(signals)
+	close(stop)
+	<-done
+	select {
+	case received := <-signals:
+		code := 130
+		if received == syscall.SIGTERM {
+			code = 143
+		}
+		cancel(&skillUploadInterrupt{code: code})
+	default:
+	}
+	cause := context.Cause(ctx)
+	cancel(nil)
+	return cause
 }
 
 func skillUploadState(cmd *cli.Command) *skillUploadPreparation {

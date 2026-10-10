@@ -44,3 +44,8 @@ It creates a small skill with nested binary data and an executable helper.
 The fixture compares supplied ZIP bytes and inspects packaged entries before returning success.
 All files, request logs, captures and screenshots stay outside Git.
 The recording proves local wire behavior. It does not prove live API acceptance or stored-content fidelity.
+
+The default replay uses 100 columns and 40 rows with an inherited monochrome CLI palette.
+Set `SKILL_DEMO_COLUMNS=40 SKILL_DEMO_ROWS=60` for a narrow terminal.
+Set `SKILL_DEMO_THEME=github-light` for a light-background replay.
+Use a fresh output directory for each recording.
