@@ -24,7 +24,8 @@ demo_render_options=(--renderer resvg --font-family Menlo --font-size 18 --line-
 for demo_scene in before after; do
   mkdir -p "$demo_runtime/$demo_scene-home"
   demo_capture_scene "$demo_scene" 0 "$demo_runtime/$demo_scene" "$demo_api_url" "${demo_scene}: project rate limits" \
-    "HOME=$demo_runtime/$demo_scene-home" "DEMO_SCENE=$demo_scene" NO_COLOR=1 FORCE_COLOR=0
+    "HOME=$demo_runtime/$demo_scene-home" "DEMO_SCENE=$demo_scene" \
+    OPENAI_ADMIN_KEY=synthetic-demo-key NO_COLOR=1 FORCE_COLOR=0
 done
 demo_stop_api
 "$demo_python" - "$demo_output" <<'PY'
