@@ -74,7 +74,7 @@ ____APPNAME___bash_autocomplete() {
         current_word="$value"
       fi
     done
-    completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
+    completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_PRESERVE_WORDS=1 "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
     exit_code=$?
 
     local last_token="$cur"
