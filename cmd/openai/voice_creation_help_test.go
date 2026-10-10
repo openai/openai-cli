@@ -156,7 +156,8 @@ func TestMainVoiceCreationPreservesErrors(t *testing.T) {
 		server, requests := voiceCreationServer(t, filepath.Base(file), []byte("synthetic\x00sample"), nil)
 		args = append(append([]string{"openai", "--base-url", server.URL}, args...), "--prompt", "A described voice")
 		got = runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=fake-voice-key"}, args...)
-		if got.code == 0 || got.stdout != "" || !strings.Contains(got.stderr, "--prompt") || requests.Load() != 0 {
+		if got.code != 1 || got.stdout != "" || !strings.Contains(got.stderr, "An option is not recognized.") ||
+			!strings.Contains(got.stderr, "Options and examples:") || requests.Load() != 0 {
 			t.Fatalf("unsupported prompt did not fail before the request: result=%+v requests=%d", got, requests.Load())
 		}
 	}
