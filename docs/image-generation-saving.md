@@ -217,6 +217,35 @@ saved originals. See [VS Code image support](https://code.visualstudio.com/docs/
 VS Code requires ConPTY v2 or later for these images on Windows. Windows and
 remote sessions require separate rendering checks; an opt-in or successful write
 is not proof of visible rendering there.
+
+Konsole also requires an explicit opt-in. Use a build containing the resize and
+scrolling fix from [Konsole merge request !1339](https://invent.kde.org/utilities/konsole/-/merge_requests/1339).
+Unpatched builds can crop earlier previews after resizing or lose previews
+during scrolling. No released minimum version for this fix is established.
+Inside that patched Konsole, opt in for a command:
+
+```sh
+env OPENAI_KONSOLE_IMAGES=1 openai images preview "photo.png" # Bash, zsh or fish
+```
+
+`OPENAI_KONSOLE_IMAGES` must be exactly `1`. This asserts that the current Konsole
+contains the fix; the CLI cannot verify the patch from the terminal version.
+Konsole must supply its own `KONSOLE_VERSION`, with `TERM_PROGRAM` unset.
+The CLI accepts six-digit versions starting at `220400` for protocol support.
+That check does not establish resize compatibility. Existing Kitty, Ghostty,
+and explicit `TERM_PROGRAM` identities retain their own selection rules.
+Use the assertion only in the patched Konsole, rather than exporting it globally.
+
+The opt-in applies to local preview, generation, and progress previews.
+Without it, `auto` and `on` retain the existing color-block fallback when available.
+`--inline off`, redirected output, CI, and multiplexer restrictions still apply.
+The CLI reuses the iTerm PNG protocol with its usual 64-column maximum and
+viewport sizing. Saved originals remain unchanged. Patched Konsole fits existing
+previews after resizing, including after the CLI exits.
+The CLI does not read terminal replies or change Konsole settings.
+Native validation covers Linux/X11; Wayland, remote sessions, and other desktop
+platforms require separate rendering checks.
+
 Other color terminals show a labeled color-block approximation. `NO_COLOR` or
 `CLICOLOR=0` disables that approximation, while native image graphics remain
 available. Basic terminals keep the saved path without a preview.
