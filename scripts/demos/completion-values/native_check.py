@@ -296,13 +296,27 @@ def generate_adapter(binary, shell, environment, destination):
                                stderr=subprocess.PIPE, start_new_session=True)
     try:
         stdout, stderr = process.communicate(timeout=TIMEOUT)
-    except BaseException:
-        terminate_group(process.pid, signal.SIGKILL)
-        process.communicate(timeout=TIMEOUT)
+    except BaseException as error:
+        failures = []
+        # communicate can reap the child before reporting another failure.
+        if process.returncode is None:
+            try:
+                terminate_group(process.pid, signal.SIGKILL)
+            except BaseException as cleanup_error:
+                failures.append(cleanup_error)
+        try:
+            process.communicate(timeout=TIMEOUT)
+        except BaseException as cleanup_error:
+            failures.append(cleanup_error)
+            for stream in (process.stdout, process.stderr):
+                try:
+                    stream.close()
+                except BaseException as close_error:
+                    failures.append(close_error)
+        if failures:
+            errors = [error, *failures]
+            raise RuntimeError("; ".join(f"{type(item).__name__}: {item}" for item in errors)) from error
         raise
-    finally:
-        # Reap descendants even if their leader already exited.
-        terminate_group(process.pid, signal.SIGKILL)
     destination.write_bytes(stdout)
     destination.with_suffix(".stderr").write_bytes(stderr)
     if process.returncode != 0 or stderr:
@@ -361,14 +375,13 @@ class ShellSession:
                 del self.tail[:-65536]
             else:
                 self.eof = True
-        if self.status is None:
-            waited, status = os.waitpid(self.pid, os.WNOHANG)
-            if waited:
-                self.status = os.waitstatus_to_exitcode(status)
+        # Keep the session leader unreaped until close finishes group signaling.
 
     def wait_for(self, predicate):
         deadline = time.monotonic() + TIMEOUT
         while not predicate():
+            if self.eof:
+                raise RuntimeError("shell terminal reached EOF before the expected event")
             if self.status is not None or time.monotonic() >= deadline:
                 raise TimeoutError(f"shell event timed out; child status={self.status}")
             self.pump()
@@ -390,28 +403,71 @@ class ShellSession:
         if self.closed:
             return
         self.closed = True
+        prior_error = sys.exc_info()[1]
+        failures = []
+        groups = [self.pid]
+
+        def signal_groups(number):
+            for group in groups:
+                try:
+                    if group != self.pid:
+                        # Only the direct child's PID remains reserved for us.
+                        # Recheck distinct groups; these checks are not atomic.
+                        if os.getsid(group) != self.pid or os.getpgid(group) != group:
+                            raise RuntimeError("foreground process-group ownership is uncertain")
+                    terminate_group(group, number)
+                except BaseException as error:
+                    failures.append(error)
+
         try:
-            # Completion can run in the terminal's foreground process group.
-            try:
-                foreground = os.tcgetpgrp(self.terminal)
-            except OSError:
-                foreground = self.pid
-            for number in (signal.SIGTERM, signal.SIGKILL):
-                terminate_group(foreground, number)
-                terminate_group(self.pid, number)
+            # A previously reaped child cannot anchor further group signals.
+            if self.status is None:
+                try:
+                    foreground = os.tcgetpgrp(self.terminal)
+                    if foreground != self.pid:
+                        if foreground <= 0:
+                            raise RuntimeError("foreground process-group ownership is uncertain")
+                        groups.insert(0, foreground)
+                except BaseException as error:
+                    failures.append(error)
+                try:
+                    signal_groups(signal.SIGTERM)
+                    deadline = time.monotonic() + 2
+                    while not self.eof and time.monotonic() < deadline:
+                        self.pump()
+                except BaseException as error:
+                    failures.append(error)
+                finally:
+                    # Kill surviving descendants before releasing the PID anchor.
+                    signal_groups(signal.SIGKILL)
                 deadline = time.monotonic() + 2
                 while self.status is None and time.monotonic() < deadline:
-                    self.pump()
-                if self.status is not None:
-                    # Also remove descendants after the session leader exits.
-                    terminate_group(foreground, signal.SIGKILL)
-                    terminate_group(self.pid, signal.SIGKILL)
-                    break
-            if self.status is None:
-                raise RuntimeError("shell did not exit within the cleanup deadline")
+                    try:
+                        waited, status = os.waitpid(self.pid, os.WNOHANG)
+                        if waited:
+                            self.status = os.waitstatus_to_exitcode(status)
+                        else:
+                            time.sleep(0.01)
+                    except BaseException as error:
+                        failures.append(error)
+                        break
+                if self.status is None:
+                    failures.append(RuntimeError("shell did not exit within the cleanup deadline"))
         finally:
-            os.close(self.terminal)
-            self.transcript.close()
+            try:
+                os.close(self.terminal)
+            except BaseException as error:
+                failures.append(error)
+            try:
+                self.transcript.close()
+            except BaseException as error:
+                failures.append(error)
+        if failures:
+            if len(failures) == 1 and prior_error is None:
+                raise failures[0]
+            errors = ([prior_error] if prior_error is not None else []) + failures
+            message = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
+            raise RuntimeError(message) from errors[0]
 
 
 def startup(shell):

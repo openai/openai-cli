@@ -27,3 +27,9 @@ The native check opens isolated Bash and Zsh PTYs.
 It captures the command buffer after Tab without executing that command.
 Machine protocol tests separately cover Bash, Zsh, Fish, and PowerShell payloads.
 Native shell execution on macOS does not establish native Windows behavior.
+
+Check driver cleanup without native processes, signals, or PTYs:
+
+```sh
+python3 -B scripts/demos/completion-values/native_check_test.py
+```
