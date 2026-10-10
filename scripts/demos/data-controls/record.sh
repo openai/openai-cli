@@ -25,34 +25,56 @@ demo_prepare_capture "$demo_root" "$1" "$2" "$3" "$4" "$5" "$demo_source/server.
 import hashlib, json, os, pathlib, subprocess, sys
 go, before, before_sha, after, after_sha, directory = sys.argv[1:]
 output = pathlib.Path(directory)
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate build manifest key")
+        result[key] = value
+    return result
+
 for label, binary, expected in (("before", before, before_sha), ("after", after, after_sha)):
     result = subprocess.run([go, "version", "-m", binary], capture_output=True, text=True, timeout=15, check=True)
     (output / (label + "-build.txt")).write_text(result.stdout)
-    manifest_path = os.environ.get("DEMO_BEFORE_BUILD_MANIFEST") if label == "before" else None
-    if manifest_path:
-        manifest_bytes = pathlib.Path(manifest_path).read_bytes()
-        manifest = json.loads(manifest_bytes)
-        if manifest.get("source_sha") != expected:
-            raise SystemExit("baseline build manifest source_sha does not match the supplied source revision")
-        recorded_binary = pathlib.Path(manifest.get("binary_path", "")).resolve(strict=True)
-        if recorded_binary != pathlib.Path(binary).resolve(strict=True):
-            raise SystemExit("baseline build manifest binary_path does not match the supplied binary")
-        digest = hashlib.sha256()
-        with open(binary, "rb") as binary_file:
-            for chunk in iter(lambda: binary_file.read(1024 * 1024), b""):
-                digest.update(chunk)
-        if manifest.get("binary_sha256") != digest.hexdigest():
-            raise SystemExit("baseline binary does not match its build manifest hash")
-        if type(manifest.get("exit_code")) is not int or manifest["exit_code"] != 0 or manifest.get("result") != "pass":
-            raise SystemExit("baseline build manifest does not report a successful build")
-        (output / "before-build-manifest.json").write_bytes(manifest_bytes)
-        continue
     settings = {}
     for line in result.stdout.splitlines():
         fields = line.strip().split("\t", 1)
         if len(fields) == 2 and fields[0] == "build" and "=" in fields[1]:
             key, value = fields[1].split("=", 1)
             settings[key] = value
+    manifest_path = os.environ.get("DEMO_BEFORE_BUILD_MANIFEST" if label == "before" else "DEMO_AFTER_BUILD_MANIFEST")
+    if manifest_path:
+        manifest_bytes = pathlib.Path(manifest_path).read_bytes()
+        manifest = json.loads(manifest_bytes, object_pairs_hook=unique_object)
+        if not isinstance(manifest, dict):
+            raise SystemExit(label + " build manifest must be an object")
+        if any(key == "vcs" or key.startswith("vcs.") for key in settings):
+            if settings.get("vcs.revision") != expected or settings.get("vcs.modified") != "false":
+                raise SystemExit(label + " build manifest contradicts embedded VCS metadata")
+        if label == "after":
+            for phase in ("source_before", "source_after"):
+                state = manifest.get(phase)
+                if not isinstance(state, dict) or state.get("revision") != expected or state.get("clean") is not True:
+                    raise SystemExit("candidate manifest must record the same clean source before and after the build")
+            command = manifest.get("build_command")
+            if not isinstance(command, list) or not command or any(not isinstance(arg, str) or not arg for arg in command):
+                raise SystemExit("candidate manifest must record the successful build command")
+        if manifest.get("source_sha") != expected:
+            raise SystemExit(label + " build manifest source_sha does not match the supplied source revision")
+        recorded_binary = pathlib.Path(manifest.get("binary_path", "")).resolve(strict=True)
+        if recorded_binary != pathlib.Path(binary).resolve(strict=True):
+            raise SystemExit(label + " build manifest binary_path does not match the supplied binary")
+        digest = hashlib.sha256()
+        with open(binary, "rb") as binary_file:
+            for chunk in iter(lambda: binary_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if manifest.get("binary_sha256") != digest.hexdigest():
+            raise SystemExit(label + " binary does not match its build manifest hash")
+        if type(manifest.get("exit_code")) is not int or manifest["exit_code"] != 0 or manifest.get("result") != "pass":
+            raise SystemExit(label + " build manifest does not report a successful build")
+        (output / (label + "-build-manifest.json")).write_bytes(manifest_bytes)
+        continue
     if settings.get("vcs.revision") != expected:
         raise SystemExit(label + " binary lacks the supplied source revision; rebuild with VCS metadata")
     if settings.get("vcs.modified") != "false":
@@ -82,7 +104,12 @@ SCENE
   else
     echo 'before source: go version -m revision matches supplied SHA and source is clean'
   fi
-  echo 'after source: go version -m revision matches supplied SHA; build metadata retained'
+  if [ -n "${DEMO_AFTER_BUILD_MANIFEST:-}" ]; then
+    echo 'after source: reviewed build manifest; matching clean before/after source, build command/result, and binary path/hash verified'
+    echo 'after provenance: copied after-build-manifest.json; embedded VCS metadata is not required when absent'
+  else
+    echo 'after source: go version -m revision matches supplied SHA; build metadata retained'
+  fi
   echo 'data: loopback synthetic responses only; no cloud or retention changes'
   echo 'pending validation requests ext_requested; the response ID is ext_returned'
   echo 'validated retrieval uses ext_returned; it does not perform validation'

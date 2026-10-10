@@ -92,7 +92,7 @@ It compares actual binaries using identical response bytes.
 Provide Bash, Python 3, Go, asciinema, agg, ffmpeg, ffprobe, and shasum on `PATH`.
 Provide verified baseline and candidate binaries with their full source commit IDs.
 The recorder verifies source revisions through `go version -m` and records binary hashes.
-The candidate binary must include Go VCS metadata.
+The candidate normally requires clean Go VCS metadata.
 The baseline normally requires clean Go VCS metadata.
 For an archived baseline build, set `DEMO_BEFORE_BUILD_MANIFEST` to its reviewed build manifest.
 That manifest must record matching `source_sha`, `binary_path`, and `binary_sha256` values.
@@ -100,7 +100,15 @@ It must also record `exit_code: 0` and `result: "pass"`.
 The recorder verifies those fields and copies the manifest into the output directory.
 The copied manifest retains archive provenance and build commands supplied by the caller.
 This alternative does not establish baseline VCS metadata or live behavior.
-For dirty candidate builds, set `DEMO_AFTER_SOURCE_STATE` to the reviewed source manifest identity.
+For candidate binaries without VCS metadata, set `DEMO_AFTER_BUILD_MANIFEST` to a reviewed build record.
+It requires matching `source_sha`, `binary_path`, `binary_sha256`, integer zero `exit_code`, and `result: "pass"`.
+`source_before` and `source_after` must each record the expected `revision` and Boolean `clean: true`.
+`build_command` must record the actual build arguments as a nonempty string array.
+The recorder copies this record and rejects contradictory embedded VCS metadata.
+The manifest records build evidence; it does not insert metadata into the binary.
+Keep the binary's runtime source revision separate from later recording-only changes.
+
+For dirty candidate builds with embedded metadata, set `DEMO_AFTER_SOURCE_STATE` to the reviewed source manifest identity.
 Choose an empty output directory outside the repository.
 
 ```sh
