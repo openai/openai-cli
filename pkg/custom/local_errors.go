@@ -36,13 +36,19 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var receiptFailure *saveReceiptError
 	var navigationFailure *listNavigationError
 	var modelsListFailure *modelsListError
+	var webhookFailure *webhookWorkflowError
+	var webhookCanceled *webhookCreateCanceledError
 	switch {
 	case errors.As(failure, &downloadFailure):
 		return downloadFailure.message
 	case errors.As(failure, &receiptFailure):
 		return receiptFailure.Error()
+	case errors.As(failure, &webhookCanceled):
+		return webhookCanceled.Error()
 	case errors.Is(failure, context.Canceled):
 		return "Request canceled."
+	case errors.As(failure, &webhookFailure):
+		return webhookFailure.message
 	case errors.As(failure, &utilityFailure):
 		return utilityFailure.Error()
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():

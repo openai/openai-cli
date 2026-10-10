@@ -17,6 +17,8 @@ func selectReadableTransformer(route Route) Transformer {
 	var fields func(gjson.Result) []gjson.Result
 	vectors := false
 	switch route {
+	case Route{"(resource) webhooks > (method) test", OutputResponse}:
+		return ProjectWebhookTestResult
 	case Route{"(resource) images > (method) generate", OutputResponse},
 		Route{"(resource) images > (method) edit", OutputResponse},
 		Route{"(resource) images > (method) create_variation", OutputResponse}:
