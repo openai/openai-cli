@@ -37,6 +37,7 @@ func TestSkillUploadBlockedCleanupFirstSignal(t *testing.T) {
 	if os.Getenv("OPENAI_CLI_SKILL_BLOCKED_CLOSE_HELPER") == "1" {
 		command := &cli.Command{Name: "create", Action: func(_ context.Context, cmd *cli.Command) error {
 			state := skillUploadState(cmd)
+			state.startSignals()
 			state.owned = append(state.owned, &skillBlockingCloser{})
 			return nil
 		}}
@@ -126,9 +127,10 @@ func TestSkillUploadCleanupFailurePreservesReturnedID(t *testing.T) {
 			command := &cli.Command{Name: "create", Action: func(ctx context.Context, cmd *cli.Command) error {
 				source := &skillCloseFailure{}
 				sources = append(sources, source)
+				skillUploadState(cmd).startSignals()
 				skillUploadState(cmd).owned = append(skillUploadState(cmd).owned, source)
 				err := ShowJSON(gjson.Parse(`{"id":"skill_returned"}`), ShowJSONOpts{
-					Context: ctx, Operation: operation, Format: "json", Stdout: &output, Stderr: io.Discard,
+					Context: ctx, Operation: operation, OutputKind: OutputResponse, Format: "json", Stdout: &output, Stderr: io.Discard,
 				})
 				require.NoError(t, err, "cleanup failure must not hide the successful response")
 				require.Equal(t, 1, source.count, "cleanup must finish before output")
@@ -178,16 +180,17 @@ func TestSkillUploadSignalShutdownRetainsPendingDelivery(t *testing.T) {
 
 func TestSkillUploadOutputRestoresParentContext(t *testing.T) {
 	parent, cancelParent := context.WithCancel(t.Context())
-	ctx, stop := skillUploadSignalContext(parent)
-	state := &skillUploadPreparation{ctx: ctx, parent: parent, stopSignals: stop}
-	ctx = context.WithValue(ctx, skillUploadContextKey{}, state)
+	state := newSkillUploadPreparation(parent)
+	ctx := context.WithValue(state.ctx, skillUploadContextKey{}, state)
 	defer state.finish()
-	wrong := ShowJSONOpts{Context: ctx, Operation: "(resource) models > (method) list"}
+	wrong := ShowJSONOpts{Context: ctx, Operation: "(resource) models > (method) list", OutputKind: OutputResponse}
 	wrong.setDefaults()
 	assertions := func(opts *ShowJSONOpts) { require.NoError(t, finishSkillUploadBeforeOutput(opts)) }
 	assertions(&wrong)
-	assertions(&ShowJSONOpts{Context: parent, Operation: "(resource) skills > (method) create"})
-	correct := ShowJSONOpts{Context: ctx, Operation: "(resource) skills > (method) create"}
+	assertions(&ShowJSONOpts{Context: ctx, Operation: "(resource) skills > (method) create", OutputKind: OutputPageItem})
+	require.NoError(t, ctx.Err(), "unrelated output must not finish upload state")
+	assertions(&ShowJSONOpts{Context: parent, Operation: "(resource) skills > (method) create", OutputKind: OutputResponse})
+	correct := ShowJSONOpts{Context: ctx, Operation: "(resource) skills > (method) create", OutputKind: OutputResponse}
 	assertions(&correct)
 	assertions(&correct)
 	assertions(&wrong)
@@ -200,13 +203,12 @@ func TestSkillUploadOutputRestoresParentContext(t *testing.T) {
 func TestSkillUploadParentCancellationRetainsCause(t *testing.T) {
 	parent, cancelParent := context.WithCancelCause(t.Context())
 	defer cancelParent(nil)
-	ctx, stop := skillUploadSignalContext(parent)
-	state := &skillUploadPreparation{ctx: ctx, parent: parent, stopSignals: stop}
-	ctx = context.WithValue(ctx, skillUploadContextKey{}, state)
+	state := newSkillUploadPreparation(parent)
+	ctx := context.WithValue(state.ctx, skillUploadContextKey{}, state)
 	defer state.finish()
 	cause := errors.New("synthetic parent cancellation")
 	cancelParent(cause)
-	opts := ShowJSONOpts{Context: ctx, Operation: "(resource) skills > (method) create"}
+	opts := ShowJSONOpts{Context: ctx, Operation: "(resource) skills > (method) create", OutputKind: OutputResponse}
 	err := finishSkillUploadBeforeOutput(&opts)
 	require.ErrorIs(t, err, context.Canceled)
 	require.ErrorIs(t, err, cause)

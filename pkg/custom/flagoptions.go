@@ -549,9 +549,7 @@ func FlagOptions(
 	} else {
 		stdinReader = onceStdinReader{stdinReader: os.Stdin}
 	}
-	if err := prepareSkillUploadInputs(cmd, requestContents.Body, &stdinReader); err != nil {
-		return nil, err
-	}
+	deferSkillUploadInputs(cmd, requestContents.Body)
 
 	// Embed files passed as "@file.jpg" in the request body, headers, and query:
 	embedStyle := EmbedText
@@ -577,6 +575,9 @@ func FlagOptions(
 		return nil, err
 	} else {
 		requestContents.Queries = queriesWithFiles.(map[string]any)
+	}
+	if err := prepareSkillUploadInputs(cmd, requestContents.Body, &stdinReader); err != nil {
+		return nil, err
 	}
 
 	querySettings := apiquery.QuerySettings{
@@ -650,7 +651,10 @@ func FlagOptions(
 			observers = append(observers, func(body io.Closer) { state.body = body })
 		}
 		if state := skillUploadState(cmd); state != nil {
-			observers = append(observers, func(body io.Closer) { state.body = body })
+			observers = append(observers, func(body io.Closer) {
+				state.body = body
+				state.startSignals()
+			})
 		}
 		multipartOptions, err := multipartRequestOptions(bodyMap, encodingFormat, observers...)
 		if err != nil {

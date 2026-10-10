@@ -23,6 +23,7 @@ type skillUploadPreparation struct {
 	ctx          context.Context
 	parent       context.Context
 	stopSignals  func() error
+	cancel       context.CancelCauseFunc
 	owned        []io.Closer
 	body         io.Closer
 	finishOnce   sync.Once
@@ -32,13 +33,35 @@ type skillUploadPreparation struct {
 
 type skillUploadContextKey struct{}
 
+func newSkillUploadPreparation(parent context.Context) *skillUploadPreparation {
+	ctx, cancel := context.WithCancelCause(parent)
+	state := &skillUploadPreparation{ctx: ctx, parent: parent, cancel: cancel}
+	return state
+}
+
+func (s *skillUploadPreparation) startSignals() {
+	if s.stopSignals == nil && s.ctx.Err() == nil {
+		s.stopSignals = startSkillUploadSignalWatcher(s.ctx, s.cancel)
+	}
+}
+
+func (s *skillUploadPreparation) pauseSignals() error {
+	if s.stopSignals == nil {
+		return skillUploadCancellation(s.ctx)
+	}
+	stop := s.stopSignals
+	s.stopSignals = nil
+	return stop()
+}
+
 // Finish owned upload work before result output can block. Cleanup failures stay
 // available to the action defer, so an already-created skill ID remains visible.
 func (s *skillUploadPreparation) finish() {
 	s.finishOnce.Do(func() {
 		// A filesystem close can block. Restore first-signal process termination
 		// before cleanup, after retaining any signal already delivered.
-		s.cancellation = s.stopSignals()
+		s.cancellation = s.pauseSignals()
+		s.cancel(nil)
 		if s.body != nil {
 			s.cleanupErr = errors.Join(s.cleanupErr, s.body.Close())
 		}
@@ -57,6 +80,9 @@ func (s *skillUploadPreparation) result(err error) error {
 }
 
 func finishSkillUploadBeforeOutput(opts *ShowJSONOpts) error {
+	if opts.OutputKind != OutputResponse {
+		return nil
+	}
 	if opts.Operation != "(resource) skills > (method) create" &&
 		opts.Operation != "(resource) skills.versions > (method) create" {
 		return nil
@@ -82,10 +108,8 @@ func configureSkillUploads(root *cli.Command) {
 			"Symlinks and special files inside directories are rejected. ZIP files are sent unchanged; the API validates skill contents."
 		next := command.Action
 		command.Action = func(ctx context.Context, command *cli.Command) (err error) {
-			parent := ctx
-			ctx, stopSignals := skillUploadSignalContext(ctx)
-			state := &skillUploadPreparation{ctx: ctx, parent: parent, stopSignals: stopSignals}
-			ctx = context.WithValue(ctx, skillUploadContextKey{}, state)
+			state := newSkillUploadPreparation(ctx)
+			ctx = context.WithValue(state.ctx, skillUploadContextKey{}, state)
 			if command.Metadata == nil {
 				command.Metadata = make(map[string]any)
 			}
@@ -107,8 +131,7 @@ func (e *skillUploadInterrupt) ExitCode() int { return e.code }
 
 // Restore normal signal handling before cleanup so a second signal can stop a
 // blocked filesystem. Join the watcher on every exit, including setup failures.
-func skillUploadSignalContext(parent context.Context) (context.Context, func() error) {
-	ctx, cancel := context.WithCancelCause(parent)
+func startSkillUploadSignalWatcher(ctx context.Context, cancel context.CancelCauseFunc) func() error {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	stop, done := make(chan struct{}), make(chan struct{})
@@ -126,7 +149,7 @@ func skillUploadSignalContext(parent context.Context) (context.Context, func() e
 		case <-stop:
 		}
 	}()
-	return ctx, func() error {
+	return func() error {
 		return finishSkillUploadSignalWatcher(ctx, cancel, signals, stop, done)
 	}
 }
@@ -146,12 +169,14 @@ func finishSkillUploadSignalWatcher(ctx context.Context, cancel context.CancelCa
 		cancel(&skillUploadInterrupt{code: code})
 	default:
 	}
-	cause := context.Cause(ctx)
-	if cause != nil {
-		cause = errors.Join(ctx.Err(), cause)
+	return skillUploadCancellation(ctx)
+}
+
+func skillUploadCancellation(ctx context.Context) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return errors.Join(ctx.Err(), cause)
 	}
-	cancel(nil)
-	return cause
+	return nil
 }
 
 func skillUploadState(cmd *cli.Command) *skillUploadPreparation {
@@ -159,8 +184,31 @@ func skillUploadState(cmd *cli.Command) *skillUploadPreparation {
 	return state
 }
 
-// Run after input merging and stdin security, before generic file embedding.
-// Only trusted FileInput paths are expanded here. Other values retain their semantics.
+// Only a trusted FilePathValue can become this private marker. Generic embedding
+// leaves it intact while expanding every other body, header and query reference.
+type deferredSkillFile struct{ path FilePathValue }
+
+func deferSkillUploadInputs(cmd *cli.Command, body any) {
+	if skillUploadState(cmd) == nil {
+		return
+	}
+	fields, ok := body.(map[string]any)
+	if !ok {
+		return
+	}
+	if values, ok := fields["files"].([]any); ok {
+		for index, value := range values {
+			if path, ok := value.(FilePathValue); ok {
+				values[index] = deferredSkillFile{path: path}
+			}
+		}
+	} else if path, ok := fields["files"].(FilePathValue); ok {
+		fields["files"] = deferredSkillFile{path: path}
+	}
+}
+
+// Run after generic embedding, so blocking text references never retain a
+// prepared directory archive. Remove every private marker before serialization.
 func prepareSkillUploadInputs(cmd *cli.Command, body any, stdin *onceStdinReader) error {
 	state := skillUploadState(cmd)
 	if state == nil {
@@ -177,6 +225,11 @@ func prepareSkillUploadInputs(cmd *cli.Command, body any, stdin *onceStdinReader
 	values, array := value.([]any)
 	if !array {
 		values = []any{value}
+	}
+	for index, value := range values {
+		if deferred, ok := value.(deferredSkillFile); ok {
+			values[index] = deferred.path
+		}
 	}
 	commonDirectory := skillInputCommonDirectory(values)
 	singular := !array
@@ -208,6 +261,7 @@ func prepareSkillUploadInputs(cmd *cli.Command, body any, stdin *onceStdinReader
 			if len(values) != 1 {
 				return &skillUploadError{message: "Skill upload: use one directory with --files. Upload separate skills in separate commands."}
 			}
+			state.startSignals()
 			archive, err := skillarchive.Prepare(state.ctx, path)
 			if err != nil {
 				return skillInputFailure(index, path, err)
@@ -217,6 +271,8 @@ func prepareSkillUploadInputs(cmd *cli.Command, body any, stdin *onceStdinReader
 			singular = true
 			continue
 		}
+		// Keep normal signal handling while an explicit FIFO waits for its writer.
+		// The body observer starts request cancellation after input opening.
 		upload, err := openFileUpload(path)
 		if err != nil {
 			return skillInputFailure(index, path, err)
