@@ -141,6 +141,10 @@ CASE_BACKEND_DIRECTORIES = {
 # Bash suppresses static values when an actual replacement names a directory.
 # Zsh keeps the static enum suggestions declared in CASES.
 SHELL_EXPECTATIONS = {
+    "zsh": {
+        # Existing Zsh adapters retain quotes on preceding command aliases.
+        "boundary-quoted-alias": ["openai 'chat:completions' create --format y"],
+    },
     "bash": {
         "directory-format-separated": ["openai --format y"],
         "directory-format-assigned": ["openai --format=y"],

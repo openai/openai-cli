@@ -9,6 +9,7 @@ Current scripts preserve literal colon arguments alongside static value suggesti
 Bash leaves closed empty quotes unchanged without suggestions.
 Zsh also preserves empty quoted words and wholly quoted empty assignments, such as `'--format='`.
 Type a value prefix inside the quotes before pressing Tab.
+Zsh leaves completion unchanged after a quoted command alias. Leave command aliases unquoted in Zsh.
 Bash also leaves input unchanged when a suggested insertion names a local directory.
 Type the intended value explicitly in that case. File completion still includes directories.
 
