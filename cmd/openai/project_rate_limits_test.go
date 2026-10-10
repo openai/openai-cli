@@ -66,7 +66,7 @@ func TestMainProjectRateLimitRoutesPreserveRequests(t *testing.T) {
 					}
 				}))
 				defer server.Close()
-				args := []string{"openai", "--base-url", server.URL + "/v1", "--api-key", "synthetic-explicit-key", "--project", "proj_context", "--organization", "org_context", "--header", "X-Rate-Limit-Test: explicit"}
+				args := []string{"openai", "--base-url", server.URL + "/v1", "--admin-api-key", "synthetic-explicit-key", "--api-key", "synthetic-user-key", "--project", "proj_context", "--organization", "org_context", "--header", "X-Rate-Limit-Test: explicit"}
 				args = append(args, strings.Fields(route)...)
 				args = append(args, verb, "--project-id", "proj_limits")
 				if update {
@@ -74,7 +74,7 @@ func TestMainProjectRateLimitRoutesPreserveRequests(t *testing.T) {
 				} else {
 					args = append(args, "--limit", "2", "--after", "rl_before")
 				}
-				got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=synthetic-environment-key", "OPENAI_ADMIN_KEY=synthetic-admin-key", "OPENAI_PROJECT=proj_environment", "OPENAI_ORG_ID=org_environment", "OPENAI_CUSTOM_HEADERS=X-Environment-Test: preserved", "FORCE_COLOR=0"}, args...)
+				got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=synthetic-environment-key", "OPENAI_ADMIN_KEY=synthetic-admin-key", "OPENAI_PROJECT_ID=proj_environment", "OPENAI_ORG_ID=org_environment", "OPENAI_CUSTOM_HEADERS=X-Environment-Test: preserved", "FORCE_COLOR=0"}, args...)
 				if got.code != 0 || requests.Load() != 1 || got.stderr != "" {
 					t.Fatalf("result=%+v requests=%d", got, requests.Load())
 				}
