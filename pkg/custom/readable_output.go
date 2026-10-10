@@ -140,6 +140,9 @@ func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts)
 		return err
 	}
 	if !emitted {
+		if message := keyInventoryEmptyMessage(opts); message != "" {
+			return readable.WriteText(out, message)
+		}
 		return readable.WriteText(out, "No results.")
 	}
 	return opts.Context.Err()

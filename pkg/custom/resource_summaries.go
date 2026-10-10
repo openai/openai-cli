@@ -15,6 +15,9 @@ const resourceSummaryHint = "Full data: --format json."
 func writeReadableResource(out io.Writer, value gjson.Result, opts ShowJSONOpts) (bool, error) {
 	omitted := false
 	if opts.Transform == "" && !opts.RawOutput {
+		if handled, err := writeKeyInventory(out, value, opts); handled {
+			return false, err
+		}
 		summary, hidden, err := transformers.SummarizeResource(opts.Context, value, transformers.Route{
 			Operation: opts.Operation, OutputKind: opts.OutputKind,
 		})
