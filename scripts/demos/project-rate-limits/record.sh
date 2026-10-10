@@ -33,7 +33,7 @@ p = pathlib.Path(sys.argv[1])
 before, after = ((p / (name + '.txt')).read_text() for name in ('before', 'after'))
 assert 'An option is not recognized.' in before, before
 assert 'No rate limits returned for proj_empty.' in after, after
-assert 'Max tokens per 1 minute: 1000' in before, before
+assert '"max_tokens_per_1_minute": 1000' in before, before
 assert 'Max tokens per minute: 1000' in after, after
 assert 'Max batch input tokens per day: 20000' in after, after
 assert 'Model: model_demo' in before and 'Model: model_demo' in after
