@@ -33,10 +33,13 @@ func registerStoredCompletionExport(root *cli.Command) {
 	resource.Commands = append(resource.Commands, &cli.Command{
 		Name: "export", Usage: "Export all matching stored Chat Completions to JSONL.",
 		Description: description, HideHelpCommand: true, Suggest: true,
-		Metadata: map[string]any{"help-content": clihelp.Content{
-			Description: description,
-			Examples:    []clihelp.Example{{Description: "Export stored completions:", Command: "chat completions export --model model-demo --output completions.jsonl"}},
-		}},
+		Metadata: map[string]any{
+			"completion-root-flag-values": map[string][]string{"format": {"auto", "jsonl"}},
+			"help-content": clihelp.Content{
+				Description: description,
+				Examples:    []clihelp.Example{{Description: "Export stored completions:", Command: "chat completions export --model model-demo --output completions.jsonl"}},
+			},
+		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Required: true, Usage: "New JSONL file, or - for stdout. Existing paths are rejected."},
 			&requestflag.Flag[string]{Name: "after", QueryPath: "after", Usage: "Start after this completion ID; export every following matching page."},
