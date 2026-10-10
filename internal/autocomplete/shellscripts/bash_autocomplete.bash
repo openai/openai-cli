@@ -42,9 +42,11 @@ ____APPNAME___bash_autocomplete() {
       fi
     done
     # Remove shell quoting without evaluating substitutions or expressions.
-    local token value quote char next offset argument
-    for ((argument = 0; argument < ${#completion_args[@]}; argument++)); do
-      token="${completion_args[argument]}"
+    local token value quote char next offset argument current_word=""
+    # Decode Readline's replacement word separately from the rejoined arguments.
+    local -a words_to_decode=("${completion_args[@]}" "${2-$current_raw}")
+    for ((argument = 0; argument < ${#words_to_decode[@]}; argument++)); do
+      token="${words_to_decode[argument]}"
       value="" quote=""
       for ((offset = 0; offset < ${#token}; offset++)); do
         char="${token:offset:1}"
@@ -66,7 +68,11 @@ ____APPNAME___bash_autocomplete() {
           value+="$char"
         fi
       done
-      completion_args[argument]="$value"
+      if [[ $argument -lt ${#completion_args[@]} ]]; then
+        completion_args[argument]="$value"
+      else
+        current_word="$value"
+      fi
     done
     completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
     exit_code=$?
@@ -131,8 +137,15 @@ ____APPNAME___bash_autocomplete() {
       0)
         COMPREPLY=()
         if [[ -n "$completions" ]]; then
+          local command_prefix=""
+          # The backend returns only the suffix after the last colon.
+          # Restore colons inside the word Readline replaces, including quoted
+          # or escaped colons. Separate ':' words already stay on the line.
+          if [[ "$current_word" == *:* && -n "${current_word//:}" ]]; then
+            command_prefix="${current_word%:*}:"
+          fi
           while IFS= read -r file; do
-            COMPREPLY+=("$file")
+            COMPREPLY+=("$command_prefix$file")
           done <<<"$completions"
         fi
         ;;
