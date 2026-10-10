@@ -6,9 +6,12 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -19,6 +22,80 @@ type skillCloseFailure struct{ count int }
 
 func (s *skillCloseFailure) Read([]byte) (int, error) { return 0, io.EOF }
 func (s *skillCloseFailure) Close() error             { s.count++; return errors.New("synthetic close failure") }
+
+type skillBlockingCloser struct{}
+
+func (*skillBlockingCloser) Close() error {
+	if _, err := io.WriteString(os.Stdout, "ready\n"); err != nil {
+		return err
+	}
+	_, err := io.Copy(io.Discard, os.Stdin)
+	return err
+}
+
+func TestSkillUploadBlockedCleanupFirstSignal(t *testing.T) {
+	if os.Getenv("OPENAI_CLI_SKILL_BLOCKED_CLOSE_HELPER") == "1" {
+		command := &cli.Command{Name: "create", Action: func(_ context.Context, cmd *cli.Command) error {
+			state := skillUploadState(cmd)
+			state.owned = append(state.owned, &skillBlockingCloser{})
+			return nil
+		}}
+		root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "skills", Commands: []*cli.Command{command}}}}
+		configureSkillUploads(root)
+		require.NoError(t, command.Action(t.Context(), command))
+		return
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Process.Signal does not send SIGINT or SIGTERM on Windows")
+	}
+	for _, tc := range []struct {
+		signal os.Signal
+		status int
+	}{{os.Interrupt, 130}, {syscall.SIGTERM, 143}} {
+		t.Run(tc.signal.String(), func(t *testing.T) {
+			binary, err := os.Executable()
+			require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			child := exec.CommandContext(ctx, binary, "-test.run=^TestSkillUploadBlockedCleanupFirstSignal$")
+			child.Env = append(os.Environ(), "OPENAI_CLI_SKILL_BLOCKED_CLOSE_HELPER=1")
+			stdin, err := child.StdinPipe()
+			require.NoError(t, err)
+			defer stdin.Close()
+			stdout, err := child.StdoutPipe()
+			require.NoError(t, err)
+			var stderr bytes.Buffer
+			child.Stderr = &stderr
+			require.NoError(t, child.Start())
+			done := make(chan error, 1)
+			go func() { done <- child.Wait() }()
+			waited := false
+			defer func() {
+				cancel()
+				if !waited {
+					<-done
+				}
+			}()
+			var ready [6]byte
+			_, err = io.ReadFull(stdout, ready[:])
+			require.NoError(t, err)
+			require.Equal(t, "ready\n", string(ready[:]))
+			require.NoError(t, child.Process.Signal(tc.signal))
+			select {
+			case err := <-done:
+				waited = true
+				var exit *exec.ExitError
+				require.ErrorAs(t, err, &exit)
+				status, ok := exit.Sys().(syscall.WaitStatus)
+				require.True(t, ok)
+				require.True(t, status.Signaled(), "stderr=%s", stderr.String())
+				require.Equal(t, tc.status, 128+int(status.Signal()))
+			case <-time.After(2 * time.Second):
+				t.Fatal("first signal did not stop blocked upload cleanup")
+			}
+		})
+	}
+}
 
 func TestSkillUploadActionPreservesCleanupFailures(t *testing.T) {
 	source := &skillCloseFailure{}

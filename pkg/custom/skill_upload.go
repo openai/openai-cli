@@ -36,13 +36,15 @@ type skillUploadContextKey struct{}
 // available to the action defer, so an already-created skill ID remains visible.
 func (s *skillUploadPreparation) finish() {
 	s.finishOnce.Do(func() {
+		// A filesystem close can block. Restore first-signal process termination
+		// before cleanup, after retaining any signal already delivered.
+		s.cancellation = s.stopSignals()
 		if s.body != nil {
 			s.cleanupErr = errors.Join(s.cleanupErr, s.body.Close())
 		}
 		for _, owned := range s.owned {
 			s.cleanupErr = errors.Join(s.cleanupErr, owned.Close())
 		}
-		s.cancellation = s.stopSignals()
 	})
 }
 
