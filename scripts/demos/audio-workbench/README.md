@@ -1,7 +1,8 @@
 Audio workbench integration and replay recipe
 
 The coordinator delegated these feature-local files on October 9, 2026.
-No harness or PTY capture has run yet.
+Keep each result manifest with its binary hash, source identity, and recorded environment.
+A pass applies only to the recorded cases and environment.
 
 Read these references before execution or review:
 
@@ -52,6 +53,7 @@ Choices and typing must make no request.
 Ctrl+G starts one explicit synthetic generation.
 The harness checks request fields, measured duration, varying peaks, and exact saved audio bytes.
 It exercises play/stop, save, History, 40×12, too-small blocking, an explicit audition, restoration, and Clear.
+Save coverage rejects `-`, then verifies the corrected destination contains the original audio bytes.
 Audition entries must remain absent from ordinary History.
 Clear must preserve retained results and exported files.
 
@@ -62,13 +64,24 @@ No microphone, real credential, paid API, or remote account is used.
 
 The harness checks exit 130 for Ctrl+C and exit 143 for SIGTERM.
 Stopped-reader cancellation must finish without releasing terminal backpressure.
-The inherited PTY helper checks terminal modes, cursor visibility, and bracketed-paste restoration.
-It also rejects alternate-screen use and whole-screen or scrollback clearing by the CLI.
+The stopped-reader case checks bounded exit, native terminal modes, and observed helper cleanup.
+It records direct CLI children through `/bin/ps` before blocking output.
+It checks those PIDs disappear after exit, without sending them signals.
+Missing helper observations fail coverage; they do not count as cleanup passes.
+Blocked output can prevent the CLI's bounded cursor, bracketed-paste, and row cleanup.
+The result records those visual limits without claiming full terminal restoration.
+Normally draining cases retain strict cursor, bracketed-paste, and cleared-row assertions.
+All cases reject alternate-screen use and whole-screen or scrollback clearing by the CLI.
 Asciinema reconstructs visible terminal state; ANSI stripping alone does not prove row cleanup.
-The final screen must contain no active audio-form title.
+Normally draining final screens must contain no active audio-form title.
+Each terminal uses one incremental UTF-8 decoder across reads and intermediate capture checkpoints.
+Raw captures preserve the original bytes.
+Screenshots require captures from the corrected decoder; older per-read captures can contain artificial replacement characters.
 
 The startup case leaves `OPENAI_PICKER_SHELL` unset.
 It keeps a native Bash or Zsh parent alive around every CLI process.
+It checks native terminal modes and ANSI cleanup before releasing that parent.
+It then releases and reaps the parent, preserving the CLI status.
 Its PATH resolves `openai` to the exact candidate executable.
 Temporary HOME, cache, config, and ZDOTDIR paths isolate all local writes.
 Canary `.zshrc`, `.bashrc`, and `.bash_profile` files must remain byte-identical.
@@ -101,9 +114,10 @@ The baseline finishes with status 0; the candidate exits through Ctrl+C with sta
 The recorder retains source hashes, process statuses, request evidence, casts, GIFs, and PNG checkpoints.
 Every recorded frame comes from the actual CLI PTY.
 
-Limitations remain explicit until execution:
+Keep these evidence limits explicit:
 
-- The staged source has no behavioral or rendering pass yet.
 - This recipe is a terminal replay, not graphical Terminal or font acceptance.
 - Native Windows/Linux, audible playback, and live API acceptance remain separate evidence.
-- UI labels can evolve before the first run; update exact assertions rather than weakening behavior checks.
+- Preserve earlier failed captures when rerunning corrected fixture checks.
+- A stopped-reader pass does not establish visual reset or row cleanup under permanent output backpressure.
+- Source and fixture changes require affected reruns before screenshots or result claims use the new source identity.

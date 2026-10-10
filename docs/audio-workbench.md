@@ -93,6 +93,8 @@ History lists ordinary results and hides cached auditions.
 Damaged history records produce an error while valid records remain available.
 
 Ctrl+C cancels pending work. The CLI closes owned media helpers before exiting.
+If terminal output remains blocked, cancellation still restores native terminal modes without waiting indefinitely.
+The blocked output can prevent cursor, bracketed-paste, and screen cleanup sequences from reaching the terminal.
 Failed analysis or playback never triggers another generation request.
 The CLI retains completed audio when optional analysis fails.
 

@@ -2,6 +2,7 @@
 """Drive real audio commands in owned PTYs. Requires a prior PTY reservation."""
 
 import argparse
+import codecs
 import errno
 import hashlib
 import importlib.util
@@ -16,6 +17,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import termios
 import threading
 import time
 
@@ -53,6 +55,18 @@ def main():
               "scope": "PTY terminal replay; synthetic audio; fake player; no audible playback claim", "cases": []}
 
     class Terminal(picker.Terminal):
+        def __init__(self, *arguments, **options):
+            super().__init__(*arguments, **options)
+            self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
+            self.decoder_finished = False
+
+        def finish_decode(self):
+            if not self.decoder_finished:
+                tail = self.decoder.decode(b"", final=True)
+                if tail:
+                    self.events.append([time.monotonic()-self.started, "o", tail])
+                self.decoder_finished = True
+
         def read(self, duration=.05):
             if not select.select([self.master], [], [], duration)[0]:
                 return
@@ -60,12 +74,16 @@ def main():
                 fresh = os.read(self.master, 65536)
             except OSError as error:
                 if error.errno == errno.EIO:
+                    self.finish_decode()
                     return
                 raise
             if not fresh:
+                self.finish_decode()
                 return
             self.raw.extend(fresh)
-            self.events.append([time.monotonic()-self.started, "o", fresh.decode("utf-8", "replace")])
+            decoded = self.decoder.decode(fresh)
+            if decoded:
+                self.events.append([time.monotonic()-self.started, "o", decoded])
             pending = getattr(self, "queries", b"") + fresh
             pattern = rb"\x1b\[(?:6n|0?c|\?7\$p)|\x1b\]11;\?(?:\x07|\x1b\\)"
             while match := re.search(pattern, pending):
@@ -126,6 +144,74 @@ def main():
 
     def paste(terminal, text):
         terminal.send(b"\x1b[200~" + text.encode() + b"\x1b[201~")
+
+    def check_native_modes(terminal):
+        restored = termios.tcgetattr(terminal.slave)
+        initial = list(terminal.initial)
+        if sys.platform == "darwin":
+            restored[3] &= ~termios.PENDIN
+            initial[3] &= ~termios.PENDIN
+        assert restored == initial, "CLI did not restore native terminal modes"
+
+    def check_frame_boundaries(terminal):
+        assert not re.search(rb"\x1b\[\?(?:47|1047|1049)[hl]", terminal.raw), "CLI used an alternate screen"
+        assert not re.search(rb"\x1b\[[23]J", terminal.raw), "CLI cleared the screen or scrollback"
+
+    def check_live_parent_terminal(terminal, form):
+        # The CLI has exited, but its native parent still owns a live session.
+        # Darwin can reject tcgetattr after that parent exits, even on our fd.
+        check_native_modes(terminal)
+        check_frame_boundaries(terminal)
+        if form:
+            assert terminal.raw.rfind(b"\x1b[?2004l") > terminal.raw.rfind(b"\x1b[?2004h") >= 0, "CLI did not restore bracketed paste"
+            assert terminal.raw.rfind(b"\x1b[?25h") > terminal.raw.rfind(b"\x1b[?25l") >= 0, "CLI did not restore cursor visibility"
+        else:
+            assert b"\x1b[?2004h" not in terminal.raw, "Local command entered an interactive form"
+
+    def process_snapshot():
+        completed = subprocess.run(["/bin/ps", "-axo", "pid=,ppid=,comm="], capture_output=True,
+                                   text=True, check=True, timeout=2,
+                                   env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
+        processes = []
+        for line in completed.stdout.splitlines():
+            fields = line.split(None, 2)
+            assert len(fields) >= 2, "Cannot parse process identity snapshot"
+            processes.append({"pid": int(fields[0]), "ppid": int(fields[1]),
+                              "comm": fields[2] if len(fields) == 3 else ""})
+        return processes
+
+    def check_children_exited(children, result):
+        started = time.monotonic()
+        pids = {child["pid"] for child in children}
+        while True:
+            remaining = [process for process in process_snapshot() if process["pid"] in pids]
+            result["owned_child_cleanup"] = {
+                "observed": children, "remaining": remaining, "checked_without_signals": True,
+                "seconds": round(time.monotonic()-started, 4), "pass": bool(children) and not remaining,
+            }
+            if not remaining or time.monotonic()-started >= 2:
+                break
+            time.sleep(.03)
+        assert children, "No owned helper was observed; cleanup coverage is missing"
+        assert not remaining, "An observed CLI helper survived cancellation"
+
+    def drain_after_exit(terminal, result):
+        started = last_output = time.monotonic()
+        initial_bytes = len(terminal.raw)
+        reason = "deadline"
+        while time.monotonic()-started < 2:
+            before = len(terminal.raw)
+            terminal.read(.02)
+            if len(terminal.raw) != before:
+                last_output = time.monotonic()
+            elif terminal.decoder_finished:
+                reason = "EOF"
+                break
+            elif time.monotonic()-last_output >= .2:
+                reason = "quiet-200ms"
+                break
+        result["post_exit_drain"] = {"bytes": len(terminal.raw)-initial_bytes, "reason": reason,
+                                     "seconds": round(time.monotonic()-started, 4)}
 
     def startup_case(private, env, programs, server, result):
         startup_env = dict(env)
@@ -198,12 +284,24 @@ def main():
                     code = int(statuses[-1])
                     assert code == (130 if form else 0), (name, label, code)
                     assert child.child.poll() is None, "Native parent exited before its release handshake"
+                    check_live_parent_terminal(child, form)
                     output = child.text().split("__AUDIO_STARTUP_STATUS__=", 1)[0].strip()
                     child.send(b"release-parent\n")
-                    child.finish(code, expect_picker=form)
+                    deadline = time.monotonic() + 12
+                    while child.child.poll() is None:
+                        child.read(.03)
+                        if time.monotonic() >= deadline:
+                            raise AssertionError("Native parent did not exit after its release handshake")
+                    child.child.wait(timeout=1)
+                    for _ in range(3):
+                        child.read(.03)
+                    assert child.child.returncode == code, "Native parent changed the CLI exit status"
                     child.save(args.output / ("startup-" + name + "-" + label))
                     result["commands"].append({"shell": name, "case": label, "exit_status": code,
-                                               "native_parent_alive_after_cli": True})
+                                               "native_parent_alive_after_cli": True,
+                                               "native_modes_checked_before_release": True,
+                                               "ansi_modes_checked_before_release": True,
+                                               "native_parent_exit_status": child.child.returncode})
                     return output
                 finally:
                     child.close()
@@ -390,6 +488,12 @@ def main():
                     os.kill(terminal.child.pid, signal.SIGTERM)
                     terminal.finish(143)
                 else:
+                    children = [process for process in process_snapshot() if process["ppid"] == terminal.child.pid]
+                    worker_names = {args.binary.name, args.binary.resolve().name}
+                    observed_worker = any(Path(child["comm"]).name in worker_names for child in children)
+                    result["owned_children_before_blocking"] = children
+                    result["terminal_worker_observed"] = observed_worker
+                    assert observed_worker, "No self-executable terminal helper was observed; cleanup coverage is missing"
                     # Deliberately stop consuming stdout while triggering redraws.
                     # Only the owned PTY and child receive these resize signals.
                     for index in range(80):
@@ -401,11 +505,28 @@ def main():
                     os.kill(terminal.child.pid, signal.SIGINT)
                     terminal.child.wait(timeout=5)  # No reads release terminal backpressure.
                     result["stopped_reader_cancel_seconds"] = round(time.monotonic()-started, 4)
-                    terminal.finish(130)
+                    result["exit_status"] = terminal.child.returncode
+                    assert terminal.child.returncode == 130, "Stopped-reader cancellation changed exit status"
+                    check_native_modes(terminal)
+                    result["native_modes_restored"] = True
+                    check_children_exited(children, result)
+                    drain_after_exit(terminal, result)
+                    check_frame_boundaries(terminal)
+                    paste_on, paste_off = terminal.raw.rfind(b"\x1b[?2004h"), terminal.raw.rfind(b"\x1b[?2004l")
+                    cursor_off, cursor_on = terminal.raw.rfind(b"\x1b[?25l"), terminal.raw.rfind(b"\x1b[?25h")
+                    result["ansi_cleanup"] = {
+                        "paste_on_offset": paste_on, "paste_off_offset": paste_off,
+                        "cursor_off_offset": cursor_off, "cursor_on_offset": cursor_on,
+                        "bracketed_paste_restored": paste_off > paste_on >= 0,
+                        "cursor_visibility_restored": cursor_on > cursor_off >= 0,
+                        "scope": "Observed only. Blocked output can prevent bounded visual cleanup.",
+                    }
                 terminal.save(args.output / case)
                 final = screen(terminal)
                 (args.output / (case + "-final.txt")).write_text(final)
-                assert "Text to speech" not in final, "Exited form left active rows in the final screen"
+                result["final_form_rows_cleared"] = "Text to speech" not in final
+                if case != "stopped-reader":
+                    assert result["final_form_rows_cleared"], "Exited form left active rows in the final screen"
                 assert not server.failures, "Fixture rejected a request"
                 if case != "workflow":
                     assert not server.records, "Cancellation generated speech"
