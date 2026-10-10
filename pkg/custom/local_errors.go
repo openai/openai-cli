@@ -36,7 +36,10 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var receiptFailure *saveReceiptError
 	var navigationFailure *listNavigationError
 	var modelsListFailure *modelsListError
+	var exportFailure *storedCompletionExportError
 	switch {
+	case errors.As(failure, &exportFailure):
+		return storedCompletionExportMessage(failure, exportFailure)
 	case errors.As(failure, &downloadFailure):
 		return downloadFailure.message
 	case errors.As(failure, &receiptFailure):
