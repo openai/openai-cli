@@ -34,7 +34,7 @@ func registerCostReportCommands(root *cli.Command) {
 			Metadata: map[string]any{
 				"completion-root-flag-values": map[string][]string{"format": {"auto", "text", "json"}},
 				"help-content": clihelp.Content{
-					Description: "Requires OPENAI_ADMIN_KEY. Start is inclusive; end is exclusive. " +
+					Description: "Requires an organization Admin API key. Start is inclusive; end is exclusive. " +
 						"Reads every page before printing a report. Supports --format text or json, or --export csv. " +
 						"Does not read stdin or support --transform or --raw-output.",
 					Examples: []clihelp.Example{{Description: "Report one week of project costs:", Command: "costs report --from 2026-10-01 --to 2026-10-08"}},
@@ -142,8 +142,11 @@ func handleCostReport(parent context.Context, command *cli.Command) (err error) 
 		if err != nil {
 			if errors.Is(err, transformers.ErrProjectCostExpansion) {
 				return &localUtilityError{
-					message: "Exact aggregation needs too many additional decimal digits. " +
-						"Use admin organization usage costs for raw records. No report was written.",
+					message: fmt.Sprintf("Exact aggregation needs too many additional decimal digits. No report was written.\n"+
+						"Inspect raw Costs options:\n%s admin organization usage costs --help\n"+
+						"For raw records, use --start-time %d --end-time %d --group-by project_id --format raw.\n"+
+						"Reapply the same project filters and request settings. Each request returns one page; "+
+						"pass next_page as --page while has_more is true.", errorHelpInvocation(root), period.StartTime, period.EndTime),
 					cause: err,
 				}
 			}
@@ -197,9 +200,12 @@ func costReportAPIErrorMessage(failure error, apierr *openai.Error) string {
 	}
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
-		return "Cost reports require an organization Admin API key.\nSet OPENAI_ADMIN_KEY; a project API key cannot replace it."
+		return "Cost reports require an organization Admin API key.\n" +
+			"Replace an explicit --admin-api-key value; otherwise set OPENAI_ADMIN_KEY.\n" +
+			"A project API key cannot replace an Admin key."
 	case http.StatusForbidden:
-		return "Check your Admin API key's access to organization costs.\nConfirm OPENAI_ADMIN_KEY and the selected organization."
+		return "Check your Admin API key's access to organization costs and the selected organization.\n" +
+			"An explicit --admin-api-key overrides OPENAI_ADMIN_KEY."
 	default:
 		return ""
 	}

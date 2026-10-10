@@ -44,3 +44,19 @@ Inspect `before.png`, `after.png`, and `comparison.gif` before sharing them.
 Terminal captures combine stdout and stderr; public tests verify separate streams.
 These captures establish terminal replay behavior, not native graphical appearance or live account acceptance.
 Keep generated media and executables outside Git.
+
+## Snapshot comparison
+
+For a two-frame comparison, assemble the clean labeled screenshots with Python and Pillow:
+
+```sh
+python3 scripts/demos/cost-reports/assemble_snapshot_gif.py \
+  /absolute/task/evidence/cost-reports-media/before.png \
+  /absolute/task/evidence/cost-reports-media/after.png \
+  /absolute/task/evidence/cost-reports-media/comparison-snapshots.gif
+```
+
+The output path must be new. The script verifies every composited GIF frame against its source screenshot.
+It rejects unequal dimensions or more than 256 combined colors instead of silently approximating them.
+Label this artifact as static snapshots from a terminal replay, with both original source commits.
+It is not a new recording of later changes. Retain any earlier defective media alongside its review findings.

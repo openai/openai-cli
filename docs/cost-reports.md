@@ -3,6 +3,8 @@
 `openai costs report` totals organization costs by project over an explicit date range.
 It reads the public Costs API with your existing Admin key configuration.
 Set `OPENAI_ADMIN_KEY` through your normal secret manager or environment.
+An explicit `--admin-api-key` overrides `OPENAI_ADMIN_KEY`.
+For authentication or permission failures, correct that explicit value when present; otherwise check the environment setting.
 A project API key cannot replace an Admin key.
 
 ```sh
@@ -94,6 +96,15 @@ Adding `1` to that amount exceeds the report's arithmetic budget and fails witho
 The generated Costs command preserves raw API access for records that exceed this report-specific budget.
 This limits each total's precision expansion. Overall memory still depends on response sizes and the number of distinct totals.
 
+When this budget is exceeded, the error prints a runnable command to inspect raw Costs options.
+It also prints the report's converted `--start-time` and `--end-time` values.
+Use those values with `--group-by project_id --format raw` to inspect the original records.
+Reapply the same project filters and request settings, including the endpoint, organization, credentials, headers, and TLS options.
+The error does not copy those settings into a command because they can contain secrets.
+Each generated Costs request returns one page.
+Pass its `next_page` value as `--page` while `has_more` is true.
+Do not treat one raw page as a complete report.
+
 No report reaches stdout until every page succeeds.
 Any request, parsing, or pagination failure exits nonzero without a partial total.
 Ctrl+C cancels requests and aggregation, then exits with status 130.
@@ -102,7 +113,7 @@ Shell redirection can create or truncate its destination before the command runs
 
 This feature reports money returned by the Costs API.
 It does not report token usage, estimate prices, change billing, resolve project names, or reconcile invoices.
-It does not implement the complete Notion F28 usage-and-costs scope.
+Other usage and billing workflows remain separate.
 No live organization account was used for the synthetic client tests.
 
 API contract: [Costs reference](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs).

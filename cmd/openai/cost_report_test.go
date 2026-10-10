@@ -675,12 +675,12 @@ func TestMainCostReportAdminAPIErrorsPreserveFormatsAndLegacyGuidance(t *testing
 	}{
 		{
 			http.StatusUnauthorized,
-			"Cost reports require an organization Admin API key.\nSet OPENAI_ADMIN_KEY; a project API key cannot replace it.",
+			"Cost reports require an organization Admin API key.\nReplace an explicit --admin-api-key value; otherwise set OPENAI_ADMIN_KEY.\nA project API key cannot replace an Admin key.",
 			"Check API key, organization and project.\nKey setup: openai help setup",
 		},
 		{
 			http.StatusForbidden,
-			"Check your Admin API key's access to organization costs.\nConfirm OPENAI_ADMIN_KEY and the selected organization.",
+			"Check your Admin API key's access to organization costs and the selected organization.\nAn explicit --admin-api-key overrides OPENAI_ADMIN_KEY.",
 			"Check your key's permissions.\nCheck project access to this resource.",
 		},
 	} {
