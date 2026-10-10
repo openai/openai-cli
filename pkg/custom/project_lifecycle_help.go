@@ -25,7 +25,7 @@ func configureProjectLifecycle(root *cli.Command) {
 			Examples: []clihelp.Example{{Description: "Rename a project:", Command: `admin projects update --project-id proj_demo --name "Renamed"`}},
 		},
 		"archive": {
-			Description: "Archived projects cannot be used or updated. Archive is not a delete operation.\n" +
+			Description: "Archive is not a delete operation.\n" +
 				"After an interrupted request, retrieve the project to check its status.\n" +
 				"Use list --include-archived to include archived projects.",
 			Examples: []clihelp.Example{{Description: "Archive a project:", Command: `admin projects archive --project-id proj_demo`}},
