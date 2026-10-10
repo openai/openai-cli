@@ -22,7 +22,7 @@ var commandGroupDescriptions = map[string]string{
 	"audio transcriptions":                    "Convert audio to text.",
 	"audio translations":                      "Translate supported audio to English text.",
 	"audio speech":                            "Generate spoken audio from text.",
-	"audio voices":                            "Create voices from descriptions or audio samples.",
+	"audio voices":                            "Create a voice from an audio sample and consent.",
 	"videos":                                  "Generate, edit, and download videos.",
 	"live":                                    "Handle Live calls and stored sessions.",
 	"live sessions":                           "Accept and manage Live sessions and recordings.",
