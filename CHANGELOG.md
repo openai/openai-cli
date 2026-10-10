@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.38.1](https://github.com/openai/openai-cli/compare/v1.38.0...v1.38.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **autocomplete:** preserve colon argument boundaries ([#413](https://github.com/openai/openai-cli/issues/413)) ([5739ce0](https://github.com/openai/openai-cli/commit/5739ce0f3a6cc5887092554a403bf53357eca9a4))
+* **autocomplete:** preserve quoted Bash command prefixes ([#399](https://github.com/openai/openai-cli/issues/399)) ([c3c66c4](https://github.com/openai/openai-cli/commit/c3c66c4c014e7759a6f3b61a595d1c54fd542db9))
+
+
+### Chores
+
+* **api:** document 128-character safety identifiers ([#428](https://github.com/openai/openai-cli/issues/428)) ([a6bf1af](https://github.com/openai/openai-cli/commit/a6bf1af6633fa4d49d8adf5283343b5814134f65))
+* **api:** document billing_not_active session errors ([#429](https://github.com/openai/openai-cli/issues/429)) ([8f26fe4](https://github.com/openai/openai-cli/commit/8f26fe41d00ab021d63195fa6f9561349ff2bf39))
+* **api:** document Files API rate-limit responses ([#427](https://github.com/openai/openai-cli/issues/427)) ([88cd309](https://github.com/openai/openai-cli/commit/88cd309619677d90528c23af8b8871edd219a8c0))
+* **api:** document snapshot lifecycle status values and events ([#415](https://github.com/openai/openai-cli/issues/415)) ([53828f0](https://github.com/openai/openai-cli/commit/53828f030b5b74f5ca3da44ba341865228827ffb))
+* **api:** document vault updates and metadata filters ([#426](https://github.com/openai/openai-cli/issues/426)) ([b724518](https://github.com/openai/openai-cli/commit/b724518c69b00cb70c0c3487ed021392b606b5b0))
+* **deps:** update openai-go to v3.74.0 ([#393](https://github.com/openai/openai-cli/issues/393)) ([e32158e](https://github.com/openai/openai-cli/commit/e32158e57f05eae260ebb7a0bd0cacc6b2961ce1))
+* **deps:** update openai-go to v3.75.0 ([#412](https://github.com/openai/openai-cli/issues/412)) ([077ae69](https://github.com/openai/openai-cli/commit/077ae69604621bf0c6814c7c66c8a6906177c06d))
+
 ## [1.38.0](https://github.com/openai/openai-cli/compare/v1.37.0...v1.38.0) (2026-10-08)
 
 
