@@ -7,7 +7,7 @@ function ____APPNAME___fish_autocomplete
     set -l cmd $tokens[1]
     set -l args $tokens[2..-1]
 
-    set -l completions (env COMPLETION_STYLE=fish OPENAI_CLI_COMPLETION_FILE_VALUES=1 $cmd __complete -- $args $current 2>/dev/null)
+    set -l completions (env COMPLETION_STYLE=fish OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_PRESERVE_WORDS=1 $cmd __complete -- $args $current 2>/dev/null)
     set -l exit_code $status
 
     # Check for custom file completion patterns
