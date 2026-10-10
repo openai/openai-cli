@@ -60,7 +60,16 @@ func (m *audioWorkbench) View() tea.View {
 			count = len(m.choices)
 		}
 		lines = append(lines, title)
-		visible := max(1, m.height-7)
+		hint := "Up/Down choose · Enter apply · Esc back"
+		if m.modal == "choice" && m.setting == 1 {
+			hint = "Enter chooses · P generates and plays"
+		}
+		footer := []string{hint, "Choosing never generates speech."}
+		if m.modal == "choice" && m.setting == 0 && strings.HasSuffix(m.choices[m.choice], "1106") {
+			footer = append([]string{"Legacy snapshot; API access unverified."}, footer...)
+		}
+		footer = append(footer, m.feedbackLines()...)
+		visible := max(1, m.height-1-len(lines)-len(footer))
 		start := max(0, min(m.choice-visible+1, count-visible))
 		for i := start; i < min(count, start+visible); i++ {
 			var label string
@@ -75,31 +84,16 @@ func (m *audioWorkbench) View() tea.View {
 		if count == 0 {
 			lines = append(lines, "No retained results.")
 		}
-		hint := "Up/Down choose · Enter apply · Esc back"
-		if m.modal == "choice" && m.setting == 1 {
-			hint = "Enter chooses · P generates and plays"
-		}
-		if m.modal == "choice" && m.setting == 0 && strings.HasSuffix(m.choices[m.choice], "1106") {
-			lines = append(lines, "Legacy snapshot; current API access unverified.")
-		}
-		lines = append(lines, hint, "Choosing never generates speech.")
-		if m.modal == "history" && m.note != "" {
-			lines = append(lines, readable.Text(m.note))
-		}
-		return tea.NewView(m.fitAudio(lines))
+		return tea.NewView(m.fitAudio(append(lines, footer...)))
 	}
 	if m.modal == "save" {
 		lines = append(lines, "Save original audio to:", m.editorView(m.path), "Enter saves · Esc returns")
-		if m.note != "" {
-			lines = append(lines, readable.Text(m.note))
-		}
+		lines = append(lines, m.feedbackLines()...)
 		return tea.NewView(m.fitAudio(lines))
 	}
 	if m.modal == "speed" {
 		lines = append(lines, "Speed from 0.25 to 4:", m.editorView(m.speedInput), "Enter applies · Esc returns")
-		if m.note != "" {
-			lines = append(lines, readable.Text(m.note))
-		}
+		lines = append(lines, m.feedbackLines()...)
 		return tea.NewView(m.fitAudio(lines))
 	}
 	compact := m.height < 24
@@ -178,11 +172,7 @@ func (m *audioWorkbench) View() tea.View {
 		footer = append(footer, hint, "History saves audio, text, instructions.")
 	}
 	if m.note != "" && !m.busy {
-		note := strings.Split(ansi.Wrap(readable.Text(m.note), max(1, m.width-1), ""), "\n")
-		if len(note) > 2 {
-			note = []string{note[0], ansi.Truncate(strings.Join(note[1:], " "), max(1, m.width-1), "…")}
-		}
-		footer = append(footer, note...)
+		footer = append(footer, m.feedbackLines()...)
 	}
 	budget := max(1, m.height-1-len(footer))
 	// Keep the focused result visible when the terminal contracts.
@@ -198,6 +188,30 @@ func (m *audioWorkbench) View() tea.View {
 		}
 	}
 	return tea.NewView(m.fitAudio(append(flat, footer...)))
+}
+
+func (m *audioWorkbench) feedbackLines() []string {
+	note := m.note
+	if note == "" {
+		return nil
+	}
+	if note == audioActionFailedNote {
+		switch {
+		case m.modal != "":
+			note += " Esc returns."
+		case m.focus == 4 && m.result != nil && m.result.entry.Settings.Preview && m.priorResult != nil:
+			note += " Esc restores your previous result."
+		case m.focus == 4:
+			note += " Esc returns to Text."
+		default:
+			note += " Esc exits with the error."
+		}
+	}
+	lines := strings.Split(ansi.Wrap(readable.Text(note), max(1, m.width-1), ""), "\n")
+	if len(lines) > 2 {
+		lines = []string{lines[0], ansi.Truncate(strings.Join(lines[1:], " "), max(1, m.width-1), "…")}
+	}
+	return lines
 }
 
 func (m *audioWorkbench) fitAudio(lines []string) string {

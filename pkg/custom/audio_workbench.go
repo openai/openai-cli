@@ -35,6 +35,11 @@ type audioWorkMessage struct {
 }
 type audioWorkTick time.Time
 
+const (
+	audioPlayingNote      = "Playing. Space or X stops."
+	audioActionFailedNote = "Audio action failed."
+)
+
 // Closing prevents late Bubble Tea commands from starting work after teardown.
 type audioWorkers struct {
 	mu     sync.Mutex
@@ -163,6 +168,11 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.err != nil && !errors.Is(msg.err, context.Canceled) {
 				m.lastErr = msg.err
 				m.note = "Playback failed. FFplay is required; compressed audio also needs FFmpeg."
+			} else if m.note == audioPlayingNote {
+				m.note = "Finished."
+				if msg.err != nil {
+					m.note = "Stopped."
+				}
 			}
 			return m, nil
 		}
@@ -170,7 +180,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastFinished = time.Now()
 		if msg.err != nil {
 			m.lastErr = msg.err
-			m.note = "Audio action failed. Esc exits with the error."
+			m.note = audioActionFailedNote
 		}
 		if msg.result.entry.ID != "" {
 			if msg.result.entry.Settings.Preview {
@@ -191,11 +201,8 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.lastErr = nil
 				m.note = "Audio retained. Space plays or stops. S saves the original bytes."
 			}
-			if msg.result.entry.Settings.Preview {
-				m.note = "Voice audition retained. Esc restores your previous result."
-				if msg.err == nil {
-					return m, m.togglePlayback()
-				}
+			if msg.result.entry.Settings.Preview && msg.err == nil {
+				return m, m.togglePlayback()
 			}
 		}
 		if msg.kind == "history" {
@@ -563,6 +570,9 @@ func (m *audioWorkbench) stopPlayback() {
 	}
 	m.playID++
 	m.playing = false
+	if m.note == audioPlayingNote {
+		m.note = "Stopped."
+	}
 }
 
 func (m *audioWorkbench) togglePlayback() tea.Cmd {
@@ -571,7 +581,6 @@ func (m *audioWorkbench) togglePlayback() tea.Cmd {
 	}
 	if m.playing {
 		m.stopPlayback()
-		m.note = "Stopped. Space replays from the start."
 		return nil
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
@@ -583,7 +592,7 @@ func (m *audioWorkbench) togglePlayback() tea.Cmd {
 	done := make(chan struct{})
 	m.playDone = done
 	m.playing = true
-	m.note = "Playing. Space or X stops."
+	m.note = audioPlayingNote
 	return tea.Batch(m.workers.command(ctx, func(ctx context.Context) audioWorkMessage {
 		defer close(done)
 		message := audioWorkMessage{kind: "play", playID: id}
