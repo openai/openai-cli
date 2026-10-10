@@ -28,6 +28,7 @@ func ConfigureCommand(root *cli.Command) {
 	registerImagePreviewCommands(root)
 	configureReadableAudio(root)
 	configureReadableSpeech(root)
+	configureDataControlsHelp(root)
 	configureCommandSubgroups(root)
 	configureTaskCommands(root)
 	configureFileCommands(root)
