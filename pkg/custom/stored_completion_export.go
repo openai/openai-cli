@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/clihelp"
@@ -297,9 +298,14 @@ func saveStoredCompletionExport(ctx context.Context, path string, write func(io.
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, stage.cleanup()) }()
+	// Capture the writer before cancellation can close the file and clear the
+	// stage fields. Only the transaction owner and cleanup access the stage.
+	file := stage.file
+	cleanup := sync.OnceValue(stage.cleanup)
+	defer func() { err = errors.Join(err, cleanup()) }()
 	outcome = "Export incomplete. No destination file was created. Check the error and retry to a new destination."
-	if err = write(stage.file); err != nil {
+	writeErr := writeStoredCompletionStage(ctx, func() error { return write(file) }, cleanup)
+	if err = errors.Join(writeErr, downloadContextError(ctx)); err != nil {
 		return err
 	}
 	if err = errors.Join(stage.file.Sync(), stage.closeWriter(), downloadContextError(ctx)); err != nil {
@@ -327,4 +333,24 @@ func saveStoredCompletionExport(ctx context.Context, path string, write func(io.
 		return errors.Join(errDownloadDestinationChanged, err)
 	}
 	return nil
+}
+
+// Cancellation owns cleanup only while the writer runs. Stop or join it before
+// the transaction owner can inspect the stage or publish the completed file.
+// The caller shares a once-only cleanup function with its final defer.
+func writeStoredCompletionStage(ctx context.Context, write func() error, cleanup func() error) error {
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(done)
+		_ = cleanup()
+	})
+	defer func() {
+		if !stop() {
+			<-done
+		}
+	}()
+	if err := downloadContextError(ctx); err != nil {
+		return err
+	}
+	return write()
 }

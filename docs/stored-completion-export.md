@@ -80,6 +80,10 @@ The command removes partial files it still owns when cleanup succeeds.
 
 Existing destinations remain unchanged, including destinations created by another process during export.
 An API, cancellation, or staging-write failure leaves no new destination after successful cleanup.
+Cancellation during the write phase starts owned staging-file cleanup, even if request diagnostics are still waiting.
+Command completion can still wait for diagnostics or filesystem operations.
+This requires cancellation of the export context; a separate request timeout may not cancel that context.
+Cancellation after publication leaves the completed destination intact.
 A final publication, verification, or cleanup failure can leave a file; the error describes that outcome.
 Forceful termination can leave a private `.openai-download-*.tmp` staging file.
 Inspect such files before removing them.
