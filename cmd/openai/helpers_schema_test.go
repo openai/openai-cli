@@ -161,8 +161,25 @@ func TestMainSchemaHelperPreflightAndRecovery(t *testing.T) {
 
 func TestMainSchemaHelperCancellation(t *testing.T) {
 	ready := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { close(ready); <-r.Context().Done() }))
-	defer server.Close()
+	release := make(chan struct{})
+	disconnected := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// net/http starts disconnect monitoring after the POST body reaches EOF.
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Error(err)
+			return
+		}
+		close(ready)
+		select {
+		case <-r.Context().Done():
+			close(disconnected)
+		case <-release:
+		}
+	}))
+	defer func() {
+		close(release)
+		server.Close()
+	}()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "canceled.json")
 	executable, err := os.Executable()
@@ -181,6 +198,13 @@ func TestMainSchemaHelperCancellation(t *testing.T) {
 	child.Stdout = &stdout
 	child.Stderr = &stderr
 	require.NoError(t, child.Start())
+	waited := false
+	defer func() {
+		if !waited {
+			_ = child.Process.Kill()
+			_ = child.Wait()
+		}
+	}()
 	select {
 	case <-ready:
 	case <-ctx.Done():
@@ -189,15 +213,22 @@ func TestMainSchemaHelperCancellation(t *testing.T) {
 	if err := child.Process.Signal(os.Interrupt); err != nil {
 		_ = child.Process.Kill()
 		_ = child.Wait()
+		waited = true
 		t.Skipf("interrupt unavailable: %v", err)
 	}
 	err = child.Wait()
+	waited = true
 	require.Error(t, err)
 	require.Equal(t, 130, child.ProcessState.ExitCode(), stderr.String())
 	require.Empty(t, stdout.String())
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	require.Empty(t, entries)
+	select {
+	case <-disconnected:
+	case <-time.After(3 * time.Second):
+		t.Fatal("synthetic service did not observe request cancellation")
+	}
 }
 
 func TestMainSchemaHelperHelp(t *testing.T) {
