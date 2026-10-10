@@ -8,6 +8,7 @@ openai --debug models list
 
 Each HTTP attempt reports when response headers arrive. Retries and additional pages receive separate attempt numbers.
 Numbers increase within the request logger used by the command.
+An attempt covers one SDK dispatch. Redirected HTTP hops share that attempt number and contribute to its headers latency.
 For example, measured output can look like this:
 
 ```text
@@ -28,6 +29,34 @@ Retry delays before that attempt are excluded.
 Body durations include time between caller reads. They can include parsing, output backpressure, and pauses in the consumer.
 Empty bodies have no first-data diagnostic. The CLI never reads ahead to collect timing.
 Streaming output continues as data arrives. The caller retains responsibility for closing the response body.
+
+Binary-response commands record body timings during reads and report them after body closure and consumer cleanup.
+This includes downloads and speech responses. Their timestamps measure the original reads, not the later reporting time.
+This ordering lets managed downloads remove temporary files before diagnostic output can block.
+Writing diagnostics can still wait for stderr. The CLI does not make stderr globally nonblocking.
+
+For SSE streams, a comment or an incomplete event can trigger the first-data diagnostic.
+The CLI cannot display a parsed event until enough data arrives to decode it.
+These client measurements also differ from the server's `openai-processing-ms` header.
+The CLI retains its existing response-header redaction policy; debug output can redact that server header.
+
+## Interpret a stalled request
+
+- No headers diagnostic yet: the SDK dispatch has not returned response headers. This alone does not identify the cause.
+- For immediate diagnostics, headers without body data mean no nonempty body read has returned yet.
+- First data without EOF means the response remains open, or the consumer has not finished reading it.
+- Failure or cancellation: inspect the command's normal error and exit status. A timing line does not replace that error.
+
+Binary responses defer body diagnostics until cleanup. Missing body lines during a download therefore do not identify its current read stage.
+
+Use the returned `x-request-id` when investigating a request with support.
+Missing request IDs do not prove the API received the request.
+See the official [request debugging guidance](https://developers.openai.com/api/reference/overview#debugging-requests).
+
+For Responses, `--stream true --format jsonl` exposes parsed events on stdout through the existing streaming interface.
+`--raw-output` changes string formatting; it does not expose raw SSE frames.
+Timing does not add request-body capture, response-body capture, or per-event tracing.
+See the official [streaming guide](https://developers.openai.com/api/docs/guides/streaming-responses) for event semantics.
 
 ## Output and privacy
 

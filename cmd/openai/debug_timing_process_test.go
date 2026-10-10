@@ -157,6 +157,85 @@ func TestMainDebugTimingStreamingBeforeCompletion(t *testing.T) {
 	}
 }
 
+func TestMainDebugTimingFirstDataPrecedesCompleteSSEEvent(t *testing.T) {
+	const event = `{"type":"response.output_text.delta","delta":"synthetic-private-event","sequence_number":0}`
+	const frame = "data: " + event + "\n\n"
+	for _, initial := range []struct{ name, prefix, continuation string }{
+		{"comment", ": synthetic-private-keepalive\n\n", frame},
+		{"partial frame", frame[:len(frame)/2], frame[len(frame)/2:]},
+	} {
+		for _, format := range []struct {
+			name, firstOutput string
+			flags             []string
+		}{
+			{"jsonl", event + "\n", []string{"--format", "jsonl"}},
+			{"raw text", "synthetic-private-event\n", []string{"--format", "text", "--transform", "delta", "--raw-output"}},
+		} {
+			t.Run(initial.name+"/"+format.name, func(t *testing.T) {
+				continuation, final := make(chan struct{}), make(chan struct{})
+				var continuationOnce, finalOnce sync.Once
+				releaseContinuation := func() { continuationOnce.Do(func() { close(continuation) }) }
+				releaseFinal := func() { finalOnce.Do(func() { close(final) }) }
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "text/event-stream")
+					io.WriteString(w, initial.prefix)
+					w.(http.Flusher).Flush()
+					// No complete data event exists until stderr confirms the first read.
+					select {
+					case <-continuation:
+					case <-r.Context().Done():
+						return
+					}
+					io.WriteString(w, initial.continuation)
+					w.(http.Flusher).Flush()
+					select {
+					case <-final:
+					case <-r.Context().Done():
+						return
+					}
+					writeStreamingTextEvent(w, `{"type":"response.completed","response":{"id":"resp_synthetic","status":"completed","output":[]}}`)
+				}))
+				t.Cleanup(server.Close)
+				t.Cleanup(releaseFinal)
+				t.Cleanup(releaseContinuation)
+				args := streamingTextArgs("responses", append([]string{"--debug"}, format.flags...)...)
+				child, stdout, stderr, ctx := startDebugTimingProcess(t, server, args...)
+				stderr.waitFor(t, ctx, "first response data read after")
+				log := stderr.String()
+				assertDebugTimingStage(t, log, 1, "response headers received", "200 OK")
+				assertDebugTimingStage(t, log, 1, "first response data read", "")
+				if strings.Contains(log, "response body fully consumed") {
+					t.Fatalf("partial stream was labeled complete: %q", log)
+				}
+				releaseContinuation()
+				readStreamingTextPrefix(t, ctx, stdout, format.firstOutput)
+				releaseFinal()
+				rest, err := io.ReadAll(stdout)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := child.Wait(); err != nil {
+					t.Fatalf("stream failed: %v; stderr=%q", err, stderr.String())
+				}
+				log = stderr.String()
+				assertDebugTimingStage(t, log, 1, "first response data read", "")
+				assertDebugTimingStage(t, log, 1, "response body fully consumed", "")
+				for _, private := range []string{"synthetic-private-keepalive", "synthetic-private-event", "synthetic input", "sk-fake-debug-timing"} {
+					if strings.Contains(log, private) {
+						t.Errorf("debug disclosed stream content %q: %q", private, log)
+					}
+				}
+				control := runMainDispatchWithEnv(t, "bash", []string{
+					"OPENAI_API_KEY=sk-fake-debug-timing", "OPENAI_BASE_URL=" + server.URL, "FORCE_COLOR=0",
+				}, append([]string{"openai"}, streamingTextArgs("responses", format.flags...)...)...)
+				if control.code != 0 || control.stderr != "" || control.stdout != format.firstOutput+string(rest) {
+					t.Fatalf("debug changed event output: stdout=%q control=%+v", format.firstOutput+string(rest), control)
+				}
+			})
+		}
+	}
+}
+
 func TestMainDebugTimingEarlyStreamClose(t *testing.T) {
 	closed := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

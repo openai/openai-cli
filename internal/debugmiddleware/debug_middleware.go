@@ -77,7 +77,15 @@ func (m *RequestLogger) Middleware() Middleware {
 			m.logger.Printf("Response Content:\n%s\n", respBytes)
 		}
 		if resp.Body != nil {
-			resp.Body = &timedResponseBody{body: resp.Body, context: req.Context(), logger: m, attempt: attempt, started: started}
+			timing := &responseTiming{logger: m, attempt: attempt, started: started}
+			resp.Body = &timedResponseBody{body: resp.Body, context: req.Context(), responseTiming: timing}
+			// Keep the final request's context, including redirects and deadlines.
+			// A clone carries only timing metadata; the transport's request stays intact.
+			finalRequest := resp.Request
+			if finalRequest == nil {
+				finalRequest = req
+			}
+			resp.Request = finalRequest.WithContext(context.WithValue(finalRequest.Context(), responseTimingKey{}, timing))
 		}
 
 		return resp, err
