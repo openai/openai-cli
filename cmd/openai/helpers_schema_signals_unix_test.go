@@ -34,14 +34,15 @@ func TestMainSchemaHelperSignalWhilePreflightStderrBlocked(t *testing.T) {
 			defer server.Close()
 			directory := t.TempDir()
 			path := filepath.Join(directory, "schema.json")
-			pipe := schemaSignalBlockedPipe(t)
+			output := schemaSignalBlockedOutput(t)
 			child := schemaSignalCommand(t, server.URL, path, "text")
-			child.Stdout, child.Stderr = io.Discard, pipe
+			child.Stdout, child.Stderr = io.Discard, output.writer
 			process := startSchemaSignalProcess(t, child)
-			waitForSchemaSignalPipeBlock(t, process, pipe)
+			waitForSchemaSignalOutputBlock(t, process, output.writer)
 			require.Zero(t, requests.Load(), "blocked preflight must not send a paid request")
 			requireSchemaSignalDirectory(t, directory)
 			interruptSchemaSignalProcess(t, process, signal)
+			output.requirePartialModel(t)
 			require.Zero(t, requests.Load())
 			requireSchemaSignalDirectory(t, directory)
 		})
@@ -65,10 +66,10 @@ func TestMainSchemaHelperSignalWhileSavedReceiptStdoutBlocked(t *testing.T) {
 			defer server.Close()
 			directory := t.TempDir()
 			path := filepath.Join(directory, "schema.json")
-			pipe := schemaSignalBlockedPipe(t)
+			output := schemaSignalBlockedOutput(t)
 			child := schemaSignalCommand(t, server.URL, path, "json")
 			var stderr bytes.Buffer
-			child.Stdout, child.Stderr = pipe, &stderr
+			child.Stdout, child.Stderr = output.writer, &stderr
 			process := startSchemaSignalProcess(t, child)
 			select {
 			case err := <-responseWritten:
@@ -78,12 +79,13 @@ func TestMainSchemaHelperSignalWhileSavedReceiptStdoutBlocked(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("schema command did not reach the synthetic service")
 			}
-			waitForSchemaSignalPipeBlock(t, process, pipe)
+			waitForSchemaSignalOutputBlock(t, process, output.writer)
 			data, err := os.ReadFile(path)
 			require.NoError(t, err, "receipt output must follow publication")
 			require.Equal(t, helperSchemaFixture, string(data))
 			requireSchemaSignalDirectory(t, directory, "schema.json")
 			interruptSchemaSignalProcess(t, process, signal)
+			output.requirePartialModel(t)
 			require.EqualValues(t, 1, requests.Load())
 			require.Empty(t, stderr.String())
 			data, err = os.ReadFile(path)
@@ -94,19 +96,54 @@ func TestMainSchemaHelperSignalWhileSavedReceiptStdoutBlocked(t *testing.T) {
 	}
 }
 
-// Fill the pipe before launch, then free one writable slot. The child has a
-// larger output, so loss of writability proves that its write reached the pipe.
-func schemaSignalBlockedPipe(t *testing.T) *os.File {
+const schemaSignalModelStart = "schema-signal-model-start-"
+const schemaSignalModelEnd = "-schema-signal-model-end"
+const schemaSignalModelPadding = 96 * 1024
+
+type schemaSignalOutput struct {
+	reader, writer *os.File
+	prefilled      int
+	remaining      int
+	writerClosed   bool
+}
+
+// A socketpair gives these os.File writes bounded buffers and observable
+// backpressure. Darwin pipe readiness can overstate a small pipe's capacity.
+func schemaSignalBlockedOutput(t *testing.T) *schemaSignalOutput {
 	t.Helper()
-	reader, writer, err := os.Pipe()
+	syscall.ForkLock.RLock()
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+	if err == nil {
+		unix.CloseOnExec(fds[0])
+		unix.CloseOnExec(fds[1])
+	}
+	syscall.ForkLock.RUnlock()
 	require.NoError(t, err)
+	if err := unix.SetNonblock(fds[0], true); err != nil {
+		_ = unix.Close(fds[0])
+		_ = unix.Close(fds[1])
+		t.Fatalf("prepare deadline-capable output reader: %v", err)
+	}
+	reader := os.NewFile(uintptr(fds[0]), "schema-signal-reader")
+	writer := os.NewFile(uintptr(fds[1]), "schema-signal-writer")
+	output := &schemaSignalOutput{reader: reader, writer: writer}
 	t.Cleanup(func() {
 		require.NoError(t, reader.Close())
-		require.NoError(t, writer.Close())
+		if !output.writerClosed {
+			require.NoError(t, writer.Close())
+		}
 	})
-	fd := int(writer.Fd())
+	require.NoError(t, reader.SetReadDeadline(time.Now().Add(3*time.Second)))
+	require.NoError(t, unix.SetsockoptInt(fds[0], unix.SOL_SOCKET, unix.SO_RCVBUF, 1024))
+	require.NoError(t, unix.SetsockoptInt(fds[1], unix.SOL_SOCKET, unix.SO_SNDBUF, 1024))
+	receiveBuffer, err := unix.GetsockoptInt(fds[0], unix.SOL_SOCKET, unix.SO_RCVBUF)
+	require.NoError(t, err)
+	sendBuffer, err := unix.GetsockoptInt(fds[1], unix.SOL_SOCKET, unix.SO_SNDBUF)
+	require.NoError(t, err)
+	require.Less(t, sendBuffer+receiveBuffer, schemaSignalModelPadding, "model output must exceed the effective socket buffers")
+	fd := fds[1]
 	require.NoError(t, unix.SetNonblock(fd, true))
-	// A large initial write also exercises adaptive pipe capacity before launch.
+	// Measure the actual buffered bytes; kernel buffer minima vary by platform.
 	filler := bytes.Repeat([]byte("f"), 128*1024)
 	total := 0
 	for {
@@ -121,24 +158,53 @@ func schemaSignalBlockedPipe(t *testing.T) *os.File {
 			continue
 		}
 		require.NoError(t, err)
-		require.Less(t, total, 8*1024*1024, "unexpectedly large pipe capacity")
+		require.Positive(t, n, "prefill must make progress")
+		require.Less(t, total, 8*1024*1024, "unexpectedly large output buffer")
 	}
 	require.NoError(t, unix.SetNonblock(fd, false))
-	require.GreaterOrEqual(t, total, 4096)
-	_, err = io.ReadFull(reader, make([]byte, 4096))
-	require.NoError(t, err)
-	require.True(t, schemaSignalPipeWritable(t, writer), "readiness needs one writable slot")
-	return writer
+	require.Positive(t, total)
+	require.False(t, schemaSignalOutputWritable(t, writer), "prefill must establish actual backpressure")
+	output.prefilled, output.remaining = total, total
+	for !schemaSignalOutputWritable(t, writer) {
+		require.Positive(t, output.remaining, "empty output buffer must become writable")
+		size := min(512, output.remaining)
+		_, err := io.ReadFull(reader, make([]byte, size))
+		require.NoError(t, err)
+		output.remaining -= size
+	}
+	t.Logf("output buffer: send=%d receive=%d prefilled=%d retained=%d", sendBuffer, receiveBuffer, total, output.remaining)
+	return output
 }
 
-func schemaSignalPipeWritable(t *testing.T, writer *os.File) bool {
+func (output *schemaSignalOutput) requirePartialModel(t *testing.T) {
+	t.Helper()
+	output.writerClosed = true
+	require.NoError(t, output.writer.Close())
+	require.NoError(t, output.reader.SetReadDeadline(time.Now().Add(3*time.Second)))
+	data, err := io.ReadAll(output.reader)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(data), output.remaining)
+	require.True(t, bytes.Equal(data[:output.remaining], bytes.Repeat([]byte("f"), output.remaining)), "fixture prefix changed")
+	actual := string(data[output.remaining:])
+	require.Contains(t, actual, schemaSignalModelStart, "the CLI must reach the blocked output write")
+	require.NotContains(t, actual, schemaSignalModelEnd, "the CLI must not finish model output before interruption")
+	t.Logf("partial CLI output: bytes=%d prefilled=%d retained=%d", len(actual), output.prefilled, output.remaining)
+}
+
+func schemaSignalOutputWritable(t *testing.T, writer *os.File) bool {
 	t.Helper()
 	fd := int(writer.Fd())
 	var writable unix.FdSet
 	writable.Set(fd)
-	count, err := unix.Select(fd+1, nil, &writable, nil, &unix.Timeval{})
-	require.NoError(t, err)
-	return count != 0
+	for {
+		count, err := unix.Select(fd+1, nil, &writable, nil, &unix.Timeval{})
+		if errors.Is(err, unix.EINTR) {
+			writable.Set(fd)
+			continue
+		}
+		require.NoError(t, err)
+		return count != 0
+	}
 }
 
 func schemaSignalCommand(t *testing.T, endpoint, output, format string) *exec.Cmd {
@@ -151,7 +217,7 @@ func schemaSignalCommand(t *testing.T, endpoint, output, format string) *exec.Cm
 		"-test.run=^TestMainDispatchProcess$", "--", "openai",
 		"--base-url", endpoint, "--api-key", "sk-fake-schema-signals",
 		"--format", format, "helpers", "schema", "--description", "An invoice",
-		"--model", strings.Repeat("synthetic-model-", 2300), "--output", output,
+		"--model", schemaSignalModelStart + strings.Repeat("x", schemaSignalModelPadding) + schemaSignalModelEnd, "--output", output,
 	}
 	child := exec.CommandContext(ctx, executable, args...)
 	home := t.TempDir()
@@ -193,7 +259,7 @@ func startSchemaSignalProcess(t *testing.T, command *exec.Cmd) *schemaSignalProc
 	return process
 }
 
-func waitForSchemaSignalPipeBlock(t *testing.T, process *schemaSignalProcess, writer *os.File) {
+func waitForSchemaSignalOutputBlock(t *testing.T, process *schemaSignalProcess, writer *os.File) {
 	t.Helper()
 	deadline := time.NewTimer(10 * time.Second)
 	defer deadline.Stop()
@@ -205,12 +271,12 @@ func waitForSchemaSignalPipeBlock(t *testing.T, process *schemaSignalProcess, wr
 			t.Fatalf("schema command exited before blocking output: %v", process.err)
 		default:
 		}
-		if !schemaSignalPipeWritable(t, writer) {
+		if !schemaSignalOutputWritable(t, writer) {
 			return
 		}
 		select {
 		case <-deadline.C:
-			t.Fatal("schema command did not fill the writable pipe slot")
+			t.Fatal("schema command did not consume the available output capacity")
 		case <-tick.C:
 		}
 	}
