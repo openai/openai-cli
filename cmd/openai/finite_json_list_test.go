@@ -376,8 +376,6 @@ func TestMainDispatchFiniteJSONListUpstreamFailures(t *testing.T) {
 		{"later API failure", `{"error":{"message":"synthetic later failure","type":"invalid_request_error"}}`, http.StatusBadRequest, false},
 		{"initial malformed page", `{"data":[`, http.StatusOK, true},
 		{"later malformed page", `{"data":[`, http.StatusOK, false},
-		{"initial invalid UTF-8 item", "{\"data\":[{\"id\":\"file_\xff\"}],\"has_more\":false}", http.StatusOK, true},
-		{"later invalid UTF-8 item", "{\"data\":[{\"id\":\"file_\xff\"}],\"has_more\":false}", http.StatusOK, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -406,6 +404,114 @@ func TestMainDispatchFiniteJSONListUpstreamFailures(t *testing.T) {
 			}
 			assertFiniteJSONListPartial(t, got.stdout, "file_a")
 		})
+	}
+}
+
+func TestMainDispatchFiniteJSONListInvalidItemRecovery(t *testing.T) {
+	const message = "The API returned an invalid JSON list item. Output may be incomplete. Check the response source before repeating the command."
+	// The JSON syntax remains valid. Invalid UTF-8 must reach list-item validation,
+	// rather than failing in the SDK's page decoder before presentation starts.
+	const invalidItem = "{\"id\":\"file_invalid\",\"object\":\"file\",\"filename\":\"synthetic-private-file_\xff\",\"private_note\":\"sk-fake-private-list-marker https://synthetic.invalid/?token=fake\\u001b]52;c;synthetic-private-secret\\u0007\\u202e\"}"
+	for _, partial := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, format string
+			flags        []string
+			extracted    bool
+		}{
+			{name: "inherited JSON", format: "json"},
+			{name: "text override", format: "text", flags: []string{"--format-error", "text"}},
+			{name: "JSONL", format: "jsonl", flags: []string{"--format-error", "jsonl"}},
+			{name: "YAML", format: "yaml", flags: []string{"--format-error", "yaml"}},
+			{name: "raw error", format: "raw", flags: []string{"--format-error", "raw"}},
+			{name: "extracted JSON", format: "json", flags: []string{"--transform-error", "message"}, extracted: true},
+			{name: "extracted raw error", format: "raw", flags: []string{"--format-error", "raw", "--transform-error", "message"}, extracted: true},
+			{name: "extracted text", format: "text", flags: []string{"--format-error", "text", "--transform-error", "message"}, extracted: true},
+			{name: "quiet JSON", format: "json", flags: []string{"--quiet"}},
+			{name: "quiet text", format: "text", flags: []string{"--quiet", "--format-error", "text"}},
+		} {
+			t.Run(fmt.Sprintf("partial=%t/%s", partial, tc.name), func(t *testing.T) {
+				var requests atomic.Int32
+				var corrected atomic.Bool
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					if r.Method != http.MethodGet || r.URL.Path != "/files" {
+						t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					if partial && r.URL.Query().Get("after") == "" {
+						io.WriteString(w, resourceFilePage([]string{"file_a"}, true))
+						return
+					}
+					if corrected.Load() {
+						io.WriteString(w, resourceFilePage([]string{"file_recovered"}, false))
+						return
+					}
+					fmt.Fprintf(w, `{"object":"list","data":[%s],"has_more":false}`, invalidItem)
+				}))
+				defer server.Close()
+				args := append([]string{"--format", "json"}, tc.flags...)
+				args = append(args, "files", "list")
+				got := runReadableCommand(t, server, args...)
+				wantRequests := int32(1)
+				if partial {
+					wantRequests = 2
+				}
+				if got.code != 1 || requests.Load() != wantRequests {
+					t.Fatalf("invalid item status/retries changed: result=%+v requests=%d want=%d", got, requests.Load(), wantRequests)
+				}
+				if partial {
+					assertFiniteJSONListPartial(t, got.stdout, "file_a")
+				} else if got.stdout != "" {
+					t.Fatalf("initial invalid item wrote stdout: %q", got.stdout)
+				}
+				for _, private := range []string{"file_invalid", "synthetic-private-", "sk-fake-private-", "synthetic.invalid", "token=fake", "\x1b", "\a", "\u202e", "\xff"} {
+					if strings.Contains(got.stdout+got.stderr, private) {
+						t.Fatalf("invalid item leaked fixture content %q: %+v", private, got)
+					}
+				}
+				switch {
+				case tc.format == "text":
+					if got.stderr != message+"\n" {
+						t.Fatalf("text recovery guidance=%q", got.stderr)
+					}
+				case tc.extracted:
+					var actual string
+					if err := json.Unmarshal([]byte(got.stderr), &actual); err != nil || actual != message {
+						t.Fatalf("error extraction changed: stderr=%q error=%v", got.stderr, err)
+					}
+				default:
+					actual := decodeMainStructuredError(t, tc.format, got.stderr)
+					if !reflect.DeepEqual(actual, map[string]any{"message": message}) {
+						t.Fatalf("structured recovery guidance=%#v", actual)
+					}
+				}
+
+				// Correct the controlled response source, then repeat this read-only GET.
+				// The CLI must not repair the fixture or repeat the failed request itself.
+				corrected.Store(true)
+				recovered := runReadableCommand(t, server, args...)
+				if recovered.code != 0 || recovered.stderr != "" || requests.Load() != 2*wantRequests {
+					t.Fatalf("corrected source did not recover: result=%+v requests=%d", recovered, requests.Load())
+				}
+				var ids []string
+				for _, record := range finiteJSONListRecords(t, recovered.stdout) {
+					var item struct {
+						ID string `json:"id"`
+					}
+					if err := json.Unmarshal(record, &item); err != nil {
+						t.Fatal(err)
+					}
+					ids = append(ids, item.ID)
+				}
+				wantIDs := []string{"file_recovered"}
+				if partial {
+					wantIDs = append([]string{"file_a"}, wantIDs...)
+				}
+				if !slices.Equal(ids, wantIDs) {
+					t.Fatalf("corrected list IDs=%q want=%q", ids, wantIDs)
+				}
+			})
+		}
 	}
 }
 

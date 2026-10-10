@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -16,6 +17,32 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestFiniteJSONListErrorClassification(t *testing.T) {
+	const want = "The API returned an invalid JSON list item. Output may be incomplete. Check the response source before repeating the command."
+	failure := &finiteJSONListError{}
+	private := errors.New("synthetic-private-detail\x1b[2J")
+	for _, err := range []error{failure, fmt.Errorf("synthetic-private-wrapper: %w", failure), errors.Join(failure, private)} {
+		require.Equal(t, want, localErrorMessage(nil, err))
+		var origin *finiteJSONListError
+		require.ErrorAs(t, err, &origin)
+		require.Same(t, failure, origin)
+		var out bytes.Buffer
+		require.NoError(t, ShowCommandError(readableErrorTestCommand(t, "--format-error", "json"), err, &out))
+		require.JSONEq(t, `{"message":"`+want+`"}`, out.String())
+	}
+	joined := errors.Join(failure, private)
+	require.ErrorIs(t, joined, private)
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		joined := errors.Join(failure, cause)
+		require.ErrorIs(t, joined, cause)
+		if cause == context.Canceled {
+			require.Equal(t, "Request canceled.", localErrorMessage(nil, joined))
+		} else {
+			require.Contains(t, localErrorMessage(nil, joined), "The request timed out.")
+		}
+	}
+}
 
 type finiteListRecord string
 
@@ -159,6 +186,9 @@ func TestFiniteJSONListFailuresKeepIncompletePrefix(t *testing.T) {
 			if want != nil {
 				require.ErrorIs(t, err, want)
 				require.Equal(t, 1, strings.Count(err.Error(), want.Error()), "report each failure once")
+			} else {
+				var malformed *finiteJSONListError
+				require.ErrorAs(t, err, &malformed)
 			}
 			if tc == "initial" {
 				require.Empty(t, out.String())

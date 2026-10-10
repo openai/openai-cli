@@ -15,6 +15,12 @@ import (
 	"github.com/tidwall/pretty"
 )
 
+type finiteJSONListError struct{}
+
+func (*finiteJSONListError) Error() string {
+	return "The API returned an invalid JSON list item. Output may be incomplete. Check the response source before repeating the command."
+}
+
 // Only finite-item boundaries produce arrays. Extraction and raw output retain
 // their record contracts, even when their selected format is JSON.
 func showFiniteJSONList[T any](source jsonview.Iterator[T], maximum int64, opts ShowJSONOpts, selectTransformer transformerSelector) (bool, error) {
@@ -63,7 +69,7 @@ func (it *finiteJSONSource[T]) Next() bool {
 	if raw, ok := any(it.source.Current()).(hasRawJSON); ok {
 		value := raw.RawJSON()
 		if !utf8.ValidString(value) || !json.Valid([]byte(value)) {
-			it.err = errors.New("invalid JSON list item")
+			it.err = &finiteJSONListError{}
 			return false
 		}
 	}
@@ -100,12 +106,12 @@ func (list *finiteJSONList) next() ([]byte, error) {
 	// encoding/json accepts invalid UTF-8 within strings. A JSON document must
 	// retain valid UTF-8 bytes for consumers that decode its complete output.
 	if !utf8.ValidString(value) {
-		return nil, list.err(errors.New("invalid JSON list item"))
+		return nil, list.err(&finiteJSONListError{})
 	}
 	// Indent validates transformed values and retains numeric spelling. Only the
 	// current item is formatted; its separator is not emitted before validation.
 	if err := json.Indent(&item, []byte(value), "  ", "  "); err != nil {
-		return nil, list.err(errors.New("invalid JSON list item"))
+		return nil, list.err(&finiteJSONListError{})
 	}
 	data := item.Bytes()
 	if shouldUseColors(list.opts.Stdout) {
