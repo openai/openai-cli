@@ -136,7 +136,7 @@ func TestMainDataControlsStorageProviders(t *testing.T) {
 	for _, tc := range []struct{ provider, input string }{
 		{`{"type":"aws","bucket":"synthetic-bucket","role_arn":"arn:aws:iam::123456789012:role/Synthetic"}`, "flags"},
 		{`{"type":"azure","tenant_id":"synthetic-tenant","subscription_id":"synthetic-subscription","resource_group":"synthetic-group","account_name":"syntheticaccount","container":"synthetic-container"}`, "stdin"},
-		{`{"type":"gcp","bucket":"synthetic-bucket","workload_identity_project_number":"123456789012","workload_identity_pool_id":"synthetic-pool","workload_identity_provider_id":"synthetic-provider"}`, "file"},
+		{`{"type":"gcp","bucket":"synthetic-bucket","workload_identity_project_number":"123456789012","workload_identity_pool_id":"synthetic-pool","workload_identity_provider_id":"synthetic-provider"}`, "request file"},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
 			body := `{"project_id":"proj_target","provider":` + tc.provider + `}`
@@ -153,12 +153,17 @@ func TestMainDataControlsStorageProviders(t *testing.T) {
 			switch tc.input {
 			case "stdin":
 				input = shellFileInput(t, []byte(body))
-			case "file":
-				name := filepath.Join(t.TempDir(), "provider.json")
-				if err := os.WriteFile(name, []byte(tc.provider), 0o600); err != nil {
+			case "request file":
+				name := filepath.Join(t.TempDir(), "request.json")
+				if err := os.WriteFile(name, []byte(body), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				args = append(args, "--project-id", "proj_target", "--provider", "@"+name)
+				var err error
+				input, err = os.Open(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { input.Close() })
 			default:
 				args = append(args, "--project-id", "proj_target", "--provider", tc.provider)
 			}
