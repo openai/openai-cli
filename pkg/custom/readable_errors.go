@@ -76,6 +76,9 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 	if !slices.Contains(OutputFormats, format) {
 		format = "text"
 	}
+	if handled, err := showSchemaCleanupError(root, failure, out, format); handled {
+		return err
+	}
 	var apierr *openai.Error
 	isAPI := errors.As(failure, &apierr)
 	var streamerr *ssestream.StreamError

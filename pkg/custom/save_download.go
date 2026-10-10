@@ -471,6 +471,19 @@ func downloadSignalContext(parent context.Context) (context.Context, func()) {
 	ctx, cancel := context.WithCancelCause(parent)
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	return ctx, watchDownloadSignals(ctx, cancel, signals, func() { signal.Stop(signals) })
+}
+
+// Own the notification channel until the watcher has exited. The notification
+// source stops new deliveries before shutdown inspects any queued signal.
+func watchDownloadSignals(ctx context.Context, cancel context.CancelCauseFunc, signals <-chan os.Signal, stopNotifications func()) func() {
+	cancelSignal := func(received os.Signal) {
+		code := 130
+		if received == syscall.SIGTERM {
+			code = 143
+		}
+		cancel(&downloadSignalError{exitCode: code})
+	}
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -478,22 +491,25 @@ func downloadSignalContext(parent context.Context) (context.Context, func()) {
 		select {
 		case received := <-signals:
 			// Restore ordinary signal handling while cancellation cleans up.
-			signal.Stop(signals)
-			code := 130
-			if received == syscall.SIGTERM {
-				code = 143
-			}
-			cancel(&downloadSignalError{exitCode: code})
+			stopNotifications()
+			cancelSignal(received)
 		case <-ctx.Done():
 		case <-stop:
 		}
 	}()
-	return ctx, func() {
-		signal.Stop(signals)
+	return sync.OnceFunc(func() {
+		stopNotifications()
 		close(stop)
 		<-done
+		// The watcher can select stop even when a delivered signal is queued.
+		// Preserve that cause before intentional context cleanup.
+		select {
+		case received := <-signals:
+			cancelSignal(received)
+		default:
+		}
 		cancel(nil)
-	}
+	})
 }
 
 // Use the existing process SIGPIPE protection only for actual stdout. Keep the
