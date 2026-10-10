@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -115,8 +116,65 @@ func TestSkillUploadActionPreservesCleanupFailures(t *testing.T) {
 	require.ErrorIs(t, err, operationErr)
 	require.NotErrorIs(t, err, context.Canceled, "intentional signal cleanup must preserve the original failure")
 	require.Contains(t, err.Error(), "synthetic close failure")
+	require.Equal(t, 1, strings.Count(err.Error(), "synthetic close failure"))
 	require.Equal(t, 1, source.count)
 	require.Nil(t, skillUploadState(command))
+}
+
+func TestSkillUploadCleanupDeduplicatesObservedFailure(t *testing.T) {
+	state := newSkillUploadPreparation(t.Context())
+	source := &skillCloseFailure{}
+	reader := &skillUploadReader{ReadCloser: source}
+	state.body, state.owned = reader, []io.Closer{reader}
+	observed := reader.Close()
+	err := state.result(errors.Join(errors.New("request failed"), observed))
+	require.ErrorIs(t, err, observed)
+	require.Equal(t, 1, strings.Count(err.Error(), "synthetic close failure"))
+	require.Equal(t, 1, source.count)
+}
+
+func TestSkillUploadPreparationSignalPhases(t *testing.T) {
+	for _, directory := range []bool{false, true} {
+		state := newSkillUploadPreparation(t.Context())
+		defer state.finish()
+		root := t.TempDir()
+		path := filepath.Join(root, "SKILL.md")
+		require.NoError(t, os.WriteFile(path, []byte("synthetic skill"), 0o600))
+		if directory {
+			path = root
+		}
+		text := filepath.Join(t.TempDir(), "note.txt")
+		require.NoError(t, os.WriteFile(text, []byte("@literal content"), 0o600))
+		command := &cli.Command{Metadata: map[string]any{skillUploadMetadata: state}}
+		body := map[string]any{"files": []any{FilePathValue(path)}, "note": "@file://" + text}
+		deferSkillUploadInputs(command, body)
+		require.IsType(t, deferredSkillFile{}, body["files"].([]any)[0])
+		require.Nil(t, state.stopSignals)
+		require.Empty(t, state.owned)
+		stdin := &onceStdinReader{}
+		embedded, err := embedFiles(body, EmbedIOReader, stdin)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, closeFileUploads(embedded)) })
+		require.Nil(t, state.stopSignals, "ordinary embedding must retain normal signals")
+		require.Empty(t, state.owned, "ordinary embedding must precede archive preparation")
+		fields := embedded.(map[string]any)
+		note, err := io.ReadAll(fields["note"].(fileUpload))
+		require.NoError(t, err)
+		require.Equal(t, "@literal content", string(note))
+		require.NoError(t, prepareSkillUploadInputs(command, embedded, stdin))
+		if directory {
+			require.NotNil(t, state.stopSignals, "directory packaging requires cancellation")
+			require.IsType(t, fileUpload{}, fields["files"])
+		} else {
+			require.Nil(t, state.stopSignals, "file opening retains ordinary signals")
+			require.IsType(t, fileUpload{}, fields["files"].([]any)[0])
+		}
+		state.startSignals()
+		require.NotNil(t, state.stopSignals)
+		state.finish()
+		require.Nil(t, state.stopSignals)
+		require.Empty(t, state.cleanupErrors)
+	}
 }
 
 func TestSkillUploadCleanupFailurePreservesReturnedID(t *testing.T) {

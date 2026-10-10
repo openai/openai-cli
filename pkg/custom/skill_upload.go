@@ -20,15 +20,15 @@ const skillUploadMetadata = "openai-skill-upload"
 
 // A separate preparation belongs to each invocation, including cloned routes.
 type skillUploadPreparation struct {
-	ctx          context.Context
-	parent       context.Context
-	stopSignals  func() error
-	cancel       context.CancelCauseFunc
-	owned        []io.Closer
-	body         io.Closer
-	finishOnce   sync.Once
-	cleanupErr   error
-	cancellation error
+	ctx           context.Context
+	parent        context.Context
+	stopSignals   func() error
+	cancel        context.CancelCauseFunc
+	owned         []io.Closer
+	body          io.Closer
+	finishOnce    sync.Once
+	cleanupErrors []error
+	cancellation  error
 }
 
 type skillUploadContextKey struct{}
@@ -63,10 +63,10 @@ func (s *skillUploadPreparation) finish() {
 		s.cancellation = s.pauseSignals()
 		s.cancel(nil)
 		if s.body != nil {
-			s.cleanupErr = errors.Join(s.cleanupErr, s.body.Close())
+			s.recordCleanup(s.body.Close())
 		}
 		for _, owned := range s.owned {
-			s.cleanupErr = errors.Join(s.cleanupErr, owned.Close())
+			s.recordCleanup(owned.Close())
 		}
 	})
 }
@@ -76,7 +76,24 @@ func (s *skillUploadPreparation) result(err error) error {
 	if s.cancellation != nil && (err == nil || errors.Is(err, context.Canceled)) {
 		err = errors.Join(err, s.cancellation)
 	}
-	return errors.Join(err, s.cleanupErr)
+	for _, cleanup := range s.cleanupErrors {
+		if !errors.Is(err, cleanup) {
+			err = errors.Join(err, cleanup)
+		}
+	}
+	return err
+}
+
+func (s *skillUploadPreparation) recordCleanup(err error) {
+	if err == nil {
+		return
+	}
+	for _, prior := range s.cleanupErrors {
+		if errors.Is(prior, err) {
+			return
+		}
+	}
+	s.cleanupErrors = append(s.cleanupErrors, err)
 }
 
 func finishSkillUploadBeforeOutput(opts *ShowJSONOpts) error {
