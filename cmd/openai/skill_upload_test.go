@@ -174,6 +174,42 @@ func TestMainSkillUploadZIPStdin(t *testing.T) {
 	}
 }
 
+func TestMainSkillUploadMixedStdinAndFileBytes(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "SKILL.md")
+	fileBytes := []byte("# Synthetic local skill\n")
+	stdinBytes := []byte("streamed\x00\xff\n")
+	require.NoError(t, os.WriteFile(path, fileBytes, 0o600))
+	for _, route := range skillUploadRoutes() {
+		t.Run(route.name, func(t *testing.T) {
+			for _, stdinFirst := range []bool{true, false} {
+				server, requests := skillUploadServer(t, http.StatusOK, skillUploadResponse)
+				paths := []string{"-", path}
+				if !stdinFirst {
+					paths[0], paths[1] = paths[1], paths[0]
+				}
+				args := append(append([]string(nil), route.args...), "--files", paths[0], "--files", paths[1])
+				got := runShellFileCommand(t, server, shellFileInput(t, stdinBytes), []string{"OPENAI_UNTRUSTED_STDIN=true"}, args...)
+				require.Zero(t, got.code, "%+v", got)
+				require.Empty(t, got.stderr)
+				wire := requests()
+				require.Len(t, wire, 1)
+				require.Equal(t, route.path, wire[0].path)
+				require.Len(t, wire[0].parts, 2)
+				stdinIndex := 0
+				if !stdinFirst {
+					stdinIndex = 1
+				}
+				require.Equal(t, skillUploadPart{"files[]", "anonymous_file", "application/octet-stream", stdinBytes}, wire[0].parts[stdinIndex])
+				local := wire[0].parts[1-stdinIndex]
+				require.Equal(t, "files[]", local.name)
+				require.Equal(t, filepath.Base(root)+"/SKILL.md", local.filename)
+				require.Equal(t, fileBytes, local.data)
+			}
+		})
+	}
+}
+
 func TestMainSkillUploadDuplicateStdinFailsBeforeRead(t *testing.T) {
 	server, requests := skillUploadServer(t, http.StatusOK, skillUploadResponse)
 	read, write, err := os.Pipe()

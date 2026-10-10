@@ -240,13 +240,15 @@ func prepareSkillUploadInputs(cmd *cli.Command, body any, stdin *onceStdinReader
 		}
 		path := string(pathValue)
 		if isStdinPath(path) {
+			reader, err := stdin.read()
+			if err != nil {
+				return err
+			}
 			if len(values) == 1 {
-				reader, err := stdin.read()
-				if err != nil {
-					return err
-				}
 				values[index] = fileUpload{Reader: io.NopCloser(reader), filename: "skill.zip", contentType: "application/zip"}
 				singular = true
+			} else {
+				values[index] = io.NopCloser(reader)
 			}
 			continue
 		}
