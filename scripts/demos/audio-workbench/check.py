@@ -1,0 +1,430 @@
+#!/usr/bin/env python3
+"""Drive real audio commands in owned PTYs. Requires a prior PTY reservation."""
+
+import argparse
+import errno
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import select
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--source", required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--repo-root", type=Path, default=os.environ.get("DEMO_REPO_ROOT"))
+    parser.add_argument("--case", choices=("workflow", "ctrl-c", "sigterm", "stopped-reader", "startup", "all"), default="all")
+    parser.add_argument("--theme", choices=("dark", "light", "no-color"), default="dark")
+    parser.add_argument("--asciinema", default=shutil.which("asciinema"))
+    parser.add_argument("--emit", action="store_true", help="Forward actual PTY bytes for the shared recorder")
+    args = parser.parse_args()
+    root = args.repo_root or Path(__file__).resolve().parents[3]
+    picker = load("audio_terminal", root / "scripts/image_picker_harness.py")
+    fixture = load("audio_fixture", Path(__file__).with_name("fixture.py"))
+    if not args.asciinema:
+        raise SystemExit("asciinema is required for real terminal-screen reconstruction")
+    if not re.fullmatch(r"[0-9a-f]{40}", args.source):
+        raise SystemExit("source must be a complete commit identity")
+    if args.emit and args.case != "workflow":
+        raise SystemExit("--emit records only the workflow case")
+    args.output.mkdir(parents=True, exist_ok=False)
+    report = {"source": args.source, "binary_sha256": hashlib.sha256(args.binary.read_bytes()).hexdigest(),
+              "platform": platform.system() + " " + platform.machine(), "theme": args.theme,
+              "scope": "PTY terminal replay; synthetic audio; fake player; no audible playback claim", "cases": []}
+
+    class Terminal(picker.Terminal):
+        def read(self, duration=.05):
+            if not select.select([self.master], [], [], duration)[0]:
+                return
+            try:
+                fresh = os.read(self.master, 65536)
+            except OSError as error:
+                if error.errno == errno.EIO:
+                    return
+                raise
+            if not fresh:
+                return
+            self.raw.extend(fresh)
+            self.events.append([time.monotonic()-self.started, "o", fresh.decode("utf-8", "replace")])
+            pending = getattr(self, "queries", b"") + fresh
+            pattern = rb"\x1b\[(?:6n|0?c|\?7\$p)|\x1b\]11;\?(?:\x07|\x1b\\)"
+            while match := re.search(pattern, pending):
+                query = match.group()
+                if query.startswith(b"\x1b]11"):
+                    rgb = b"ffff/ffff/ffff" if args.theme == "light" else b"1818/1818/1818"
+                    reply = b"\x1b]11;rgb:" + rgb + b"\x1b\\"
+                elif query == b"\x1b[6n":
+                    reply = b"\x1b[1;1R"
+                elif query == b"\x1b[?7$p":
+                    reply = b"\x1b[?7;1$y"
+                else:
+                    reply = b"\x1b[?1;2c"
+                self.send(reply)
+                pending = pending[match.end():]
+            self.queries = pending[-128:]
+            if args.emit:
+                sys.stdout.buffer.write(fresh)
+                sys.stdout.buffer.flush()
+
+        def save(self, path):
+            path.with_suffix(".raw").write_bytes(self.raw)
+            header = {"version": 2, "width": self.initial_size[0], "height": self.initial_size[1],
+                      "title": "Audio workbench | synthetic loopback API", "env": {"TERM": "xterm-256color"}}
+            path.with_suffix(".cast").write_text("\n".join(json.dumps(event) for event in [header, *self.events]) + "\n")
+
+    def screen(terminal):
+        terminal.save(args.output / "current-screen")
+        converted = subprocess.run([args.asciinema, "convert", "--overwrite", "-f", "txt",
+                                    str(args.output / "current-screen.cast"), "-"],
+                                   capture_output=True, text=True, check=True, timeout=5,
+                                   env={"PATH": "/usr/bin:/bin", "HOME": str(args.output),
+                                        "ASCIINEMA_STATE_HOME": str(args.output / "asciinema-state"),
+                                        "ASCIINEMA_CONFIG_HOME": str(args.output / "asciinema-config")})
+        return converted.stdout
+
+    def drain(terminal, duration=.15):
+        deadline = time.monotonic() + duration
+        while time.monotonic() < deadline:
+            terminal.read(min(.03, max(0, deadline-time.monotonic())))
+
+    def wait(terminal, marker, absent=(), timeout=12):
+        deadline = time.monotonic() + timeout
+        while True:
+            drain(terminal, .06)
+            visible = screen(terminal)
+            if marker in visible and not any(value in visible for value in absent):
+                return visible
+            if terminal.child.poll() is not None or time.monotonic() > deadline:
+                raise AssertionError("Audio form did not reach state " + repr(marker) + ": " + visible[-1800:])
+
+    def mark(terminal, state, result):
+        drain(terminal, .9)  # Also respects the form's documented repeat-submit guard.
+        terminal.save(args.output / state)
+        (args.output / (state + ".txt")).write_text(screen(terminal))
+        result["states"].append({"name": state, "seconds": round(time.monotonic()-terminal.started, 4),
+                                 "recorded_at": time.time()})
+
+    def paste(terminal, text):
+        terminal.send(b"\x1b[200~" + text.encode() + b"\x1b[201~")
+
+    def startup_case(private, env, programs, server, result):
+        startup_env = dict(env)
+        startup_env.pop("OPENAI_PICKER_SHELL", None)
+        zdotdir = private / "zsh"
+        zdotdir.mkdir(mode=0o700)
+        startup_env["ZDOTDIR"] = str(zdotdir)
+        config = Path(env["XDG_CONFIG_HOME"])
+        config.mkdir(mode=0o700)
+        canaries = [private / name for name in (".zshrc", ".bashrc", ".bash_profile")]
+        canaries.append(zdotdir / ".zshrc")
+        for canary in canaries:
+            canary.write_text("# Synthetic audio startup canary. Preserve these bytes.\n")
+            canary.chmod(0o600)
+        on_path = programs / "openai"
+        on_path.symlink_to(args.binary.resolve())
+        assert os.path.samefile(on_path, args.binary), "PATH selected a different executable"
+        startup_env["AUDIO_EXPECTED_COMMAND"] = str(on_path)
+        cache = private / "Library/Caches" if sys.platform == "darwin" else Path(env["XDG_CACHE_HOME"])
+        history = cache / "openai/audio"
+        identity = "0123456789abcdef0123456789abcdef"
+        artifact = history / identity
+        artifact.mkdir(mode=0o700, parents=True)
+        history.chmod(0o700)
+        settings = {"input": fixture.TEXT, "instructions": fixture.INSTRUCTIONS,
+                    "model": "gpt-4o-mini-tts", "voice": "coral", "format": "wav", "speed": 1}
+        entry = {"id": identity, "created_at": "2026-10-09T00:00:00Z", "settings": settings,
+                 "bytes": len(fixture.WAV), "sha256": hashlib.sha256(fixture.WAV).hexdigest()}
+        (artifact / "audio").write_bytes(fixture.WAV)
+        (artifact / "manifest.json").write_text(json.dumps({"version": 1, "entry": entry}) + "\n")
+        for path in artifact.iterdir():
+            path.chmod(0o600)
+
+        def files(directory):
+            snapshot = []
+            for path in sorted(directory.rglob("*")):
+                kind = "directory" if path.is_dir() else "file"
+                assert not path.is_symlink(), "Startup created an unexpected symlink"
+                digest = None if path.is_dir() else hashlib.sha256(path.read_bytes()).hexdigest()
+                snapshot.append((str(path.relative_to(directory)), kind, path.stat().st_mode & 0o777, digest))
+            return snapshot
+
+        expected_profiles = {str(path): path.read_bytes() for path in canaries}
+        expected_config, expected_cache = files(config), files(cache)
+        parent_script = ('[ "$(command -v openai)" = "$AUDIO_EXPECTED_COMMAND" ] || exit 90\n'
+                         'openai "$@"\naudio_status=$?\n'
+                         'printf "\\n__AUDIO_STARTUP_STATUS__=%s\\n" "$audio_status"\n'
+                         'IFS= read -r audio_release\nexit "$audio_status"\n')
+        result["coverage_limit"] = "Fake HOME reaches the later real-home guard; no-write coverage does not prove early eligibility exclusion."
+        result["commands"], result["shells_not_run"] = [], []
+        for name, path, options in (("bash", "/bin/bash", ["--noprofile", "--norc"]), ("zsh", "/bin/zsh", ["-f"])):
+            if not Path(path).is_file():
+                result["shells_not_run"].append(name)
+                continue
+
+            def native(arguments, label, form=False):
+                command_env = dict(startup_env, SHELL=path)
+                if not form:
+                    command_env.update(OPENAI_BASE_URL="://synthetic-private-endpoint",
+                                       OPENAI_MTLS_CLIENT_CERT_FILE=str(private / "missing-cert"))
+                child = Terminal(path, [*options, "-c", parent_script, "audio-startup", *arguments], command_env,
+                                 width=90, height=34)
+                try:
+                    if form:
+                        wait(child, "Text to speech")
+                        child.send(b"\x03")
+                    child.wait("__AUDIO_STARTUP_STATUS__=", timeout=12)
+                    statuses = re.findall(r"__AUDIO_STARTUP_STATUS__=(\d+)", child.text())
+                    assert statuses, "Native parent did not report the CLI status"
+                    code = int(statuses[-1])
+                    assert code == (130 if form else 0), (name, label, code)
+                    assert child.child.poll() is None, "Native parent exited before its release handshake"
+                    output = child.text().split("__AUDIO_STARTUP_STATUS__=", 1)[0].strip()
+                    child.send(b"release-parent\n")
+                    child.finish(code, expect_picker=form)
+                    child.save(args.output / ("startup-" + name + "-" + label))
+                    result["commands"].append({"shell": name, "case": label, "exit_status": code,
+                                               "native_parent_alive_after_cli": True})
+                    return output
+                finally:
+                    child.close()
+
+            native(["audio", "speak"], "form", form=True)
+            for position in ("before", "group", "leaf"):
+                for command in ("history", "inspect", "export", "play"):
+                    leaf = [command] + ([] if command == "history" else [identity])
+                    destination = private / ("startup-export-" + name + "-" + position + ".wav")
+                    if command == "export":
+                        leaf += ["--output", str(destination)]
+                    argv = (["--format", "json", "audio", *leaf] if position == "before" else
+                            ["audio", "--format", "json", *leaf] if position == "group" else
+                            ["audio", *leaf, "--format", "json"])
+                    output = native(argv, command + "-" + position)
+                    if command == "history":
+                        assert json.loads(output) == [entry], "Startup changed history machine output"
+                    elif command == "inspect":
+                        assert json.loads(output)["analysis"]["duration"] == 2
+                    else:
+                        assert output == "", "Startup decorated a local operation"
+                        if command == "export":
+                            assert destination.read_bytes() == fixture.WAV
+                    assert {str(p): p.read_bytes() for p in canaries} == expected_profiles, "Startup changed a profile canary"
+                    assert files(config) == expected_config, "Startup wrote optional shell configuration"
+                    assert files(cache) == expected_cache, "Startup changed existing private history"
+            assert not server.records, "Local startup coverage reached the synthetic API"
+        assert result["commands"], "No supported native shell was available"
+        result.update(pass_=True, exit_status=0, requests=[])
+        result["pass"] = result.pop("pass_")
+
+    cases = ("workflow", "ctrl-c", "sigterm", "stopped-reader", "startup") if args.case == "all" else (args.case,)
+    for case in cases:
+        result = {"case": case, "states": [], "pass": False}
+        report["cases"].append(result)
+        with tempfile.TemporaryDirectory(prefix="audio-workbench-demo-") as temporary:
+            private = Path(temporary)
+            programs = private / "bin"
+            programs.mkdir(mode=0o700)
+            playback = private / "playback.json"
+            # The fake player receives actual generated bytes. It emits no sound.
+            helper = ("#!" + sys.executable + "\nimport hashlib,json,os,sys,time\n"
+                      "assert 'OPENAI_API_KEY' not in os.environ and 'FFREPORT' not in os.environ\n"
+                      "data=sys.stdin.buffer.read()\n"
+                      "with open(" + repr(str(playback)) + ", 'a') as out:\n"
+                      " out.write(json.dumps({'pid':os.getpid(),'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()})+'\\n')\n"
+                      "time.sleep(2)\n")
+            (programs / "ffplay").write_text(helper)
+            (programs / "ffplay").chmod(0o700)
+            server = fixture.SpeechFixture()
+            worker = threading.Thread(target=server.serve_forever)
+            worker.start()
+            env = {"PATH": str(programs) + ":/usr/bin:/bin", "HOME": temporary,
+                   "XDG_CACHE_HOME": str(private / "cache"), "XDG_CONFIG_HOME": str(private / "config"),
+                   "TERM": "xterm-256color", "LANG": "en_US.UTF-8", "GOMAXPROCS": "2",
+                   "OPENAI_PICKER_SHELL": "off", "OPENAI_API_KEY": "synthetic-demo-key",
+                   "OPENAI_BASE_URL": server.endpoint, "FORCE_COLOR": "1",
+                   "COLORTERM": "truecolor", "COLORFGBG": "0;15" if args.theme == "light" else "15;0"}
+            if args.theme == "no-color":
+                env.update(NO_COLOR="1", FORCE_COLOR="0")
+            terminal = None
+
+            def public(arguments):
+                command = subprocess.run([str(args.binary), *arguments], env=env, stdin=subprocess.DEVNULL,
+                                         capture_output=True, timeout=12)
+                assert command.returncode == 0 and command.stderr == b"", "Local audio command failed"
+                return command.stdout
+
+            try:
+                if case == "startup":
+                    startup_case(private, env, programs, server, result)
+                    continue
+                terminal = Terminal(str(args.binary), ["audio", "speak"], env, width=90, height=34)
+                wait(terminal, "Text to speech")
+                if case == "workflow":
+                    mark(terminal, "initial-form", result)
+                    paste(terminal, fixture.TEXT)
+                    terminal.send(b"\t")
+                    wait(terminal, "> Instructions")
+                    paste(terminal, fixture.INSTRUCTIONS)
+                    terminal.send(b"\t\r")
+                    wait(terminal, "gpt-4o-mini-tts-2025-12-15")
+                    terminal.send(picker.DOWN * 2)
+                    mark(terminal, "model-choices", result)
+                    terminal.send(b"\r")
+                    wait(terminal, "Model: gpt-4o-mini-tts-2025-12-15")
+                    terminal.send(picker.DOWN + b"\r")
+                    wait(terminal, "Enter chooses")
+                    terminal.send(picker.UP * 3)
+                    mark(terminal, "voice-choices", result)
+                    terminal.send(b"\r")
+                    wait(terminal, "Voice: ash")
+                    terminal.send(picker.DOWN + b"\r")
+                    wait(terminal, "Response format")
+                    mark(terminal, "format-choices", result)
+                    terminal.send(picker.DOWN + b"\r")
+                    wait(terminal, "Format: PCM")
+                    terminal.send(b"\r" + picker.UP + b"\r")
+                    wait(terminal, "Format: WAV")
+                    terminal.send(picker.DOWN + b"\x1b[C")
+                    wait(terminal, "Speed: 1.25 x")
+                    mark(terminal, "selected-settings", result)
+                    assert not server.records, "Choosing or typing generated speech"
+                    terminal.send(b"\x07")
+                    wait(terminal, "Duration 00:02.000")
+                    mark(terminal, "generated-result", result)
+                    assert len(server.records) == 1, "Generation request count changed"
+                    request = server.records[0]["body"]
+                    assert request["input"] == fixture.TEXT and request["instructions"] == fixture.INSTRUCTIONS
+                    assert (request["model"], request["voice"], request["response_format"], request["speed"]) == (
+                        "gpt-4o-mini-tts-2025-12-15", "ash", "wav", 1.25)
+                    entries = json.loads(public(["--format", "json", "audio", "history"]))
+                    assert len(entries) == 1 and not entries[0]["settings"].get("preview", False)
+                    entry = entries[0]
+                    inspection = json.loads(public(["--format", "json", "audio", "inspect", entry["id"]]))
+                    assert inspection["analysis"]["duration"] == 2
+                    peaks = inspection["analysis"]["peaks"]
+                    assert len(peaks) > 8 and max(peaks)-min(peaks) > .5, "Waveform did not use varying samples"
+                    (args.output / "inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
+                    terminal.send(b" ")
+                    wait(terminal, "Playing.")
+                    deadline = time.monotonic() + 3
+                    while not playback.exists() and time.monotonic() < deadline:
+                        drain(terminal, .05)
+                    assert playback.exists(), "The fake player never received generated audio"
+                    played = json.loads(playback.read_text().splitlines()[0])
+                    assert played["sha256"] == hashlib.sha256(fixture.WAV).hexdigest()
+                    terminal.send(b" ")
+                    wait(terminal, "Stopped.")
+                    terminal.send(b"s")
+                    wait(terminal, "Save original audio to:")
+                    destination = private / "saved speech.wav"
+                    terminal.send(b"\x01\x0b")
+                    paste(terminal, str(destination))
+                    terminal.send(b"\r")
+                    wait(terminal, "Saved original audio bytes.")
+                    assert destination.read_bytes() == fixture.WAV
+                    (args.output / "exported.wav").write_bytes(destination.read_bytes())
+                    mark(terminal, "saved-result", result)
+                    terminal.send(b"h")
+                    wait(terminal, entry["id"])
+                    mark(terminal, "history", result)
+                    terminal.send(b"\r")
+                    wait(terminal, "Duration 00:02.000")
+                    terminal.resize(40, 12)
+                    wait(terminal, "00:02.000")
+                    mark(terminal, "compact-40x12", result)
+                    terminal.resize(28, 8)
+                    wait(terminal, "Resize to 40 x 12.")
+                    terminal.send(b"\x07discarded")
+                    drain(terminal)
+                    assert len(server.records) == 1, "Small terminal accepted a hidden submission"
+                    mark(terminal, "too-small", result)
+                    terminal.resize(90, 34)
+                    wait(terminal, "Duration 00:02.000")
+                    terminal.send(b"\x1b")
+                    wait(terminal, "> Text")
+                    terminal.send(b"\t\t" + picker.UP * 2 + b"\r")
+                    wait(terminal, "Enter chooses")
+                    terminal.send(picker.DOWN + b"p")
+                    wait(terminal, "Result: ballad")
+                    mark(terminal, "voice-audition", result)
+                    assert len(server.records) == 2 and server.records[1]["body"]["input"] == fixture.AUDITION
+                    assert json.loads(public(["--format", "json", "audio", "history"])) == entries
+                    terminal.send(b"\x1b")
+                    wait(terminal, "Result: ash")
+                    terminal.send(b"\t\t" + picker.UP * 2)
+                    wait(terminal, "> Clear form")
+                    terminal.send(b"\r")
+                    wait(terminal, "Form cleared.", absent=("Result:", fixture.TEXT.splitlines()[0]))
+                    mark(terminal, "cleared-form", result)
+                    assert json.loads(public(["--format", "json", "audio", "history"])) == entries
+                    assert destination.read_bytes() == fixture.WAV and len(server.records) == 2
+                    terminal.send(b"\x03")
+                    terminal.finish(130)
+                elif case == "ctrl-c":
+                    terminal.send(b"\x03")
+                    terminal.finish(130)
+                elif case == "sigterm":
+                    os.kill(terminal.child.pid, signal.SIGTERM)
+                    terminal.finish(143)
+                else:
+                    # Deliberately stop consuming stdout while triggering redraws.
+                    # Only the owned PTY and child receive these resize signals.
+                    for index in range(80):
+                        if terminal.child.poll() is not None:
+                            raise AssertionError("Audio form failed before cancellation")
+                        terminal.resize(180 + index % 2, 60)
+                        time.sleep(.02)
+                    started = time.monotonic()
+                    os.kill(terminal.child.pid, signal.SIGINT)
+                    terminal.child.wait(timeout=5)  # No reads release terminal backpressure.
+                    result["stopped_reader_cancel_seconds"] = round(time.monotonic()-started, 4)
+                    terminal.finish(130)
+                terminal.save(args.output / case)
+                final = screen(terminal)
+                (args.output / (case + "-final.txt")).write_text(final)
+                assert "Text to speech" not in final, "Exited form left active rows in the final screen"
+                assert not server.failures, "Fixture rejected a request"
+                if case != "workflow":
+                    assert not server.records, "Cancellation generated speech"
+                result.update(exit_status=terminal.child.returncode, requests=server.records, pass_=True)
+                result["pass"] = result.pop("pass_")
+            finally:
+                try:
+                    if terminal is not None:
+                        try:
+                            terminal.save(args.output / (case + "-latest"))
+                        finally:
+                            terminal.close()
+                finally:
+                    try:
+                        server.shutdown()
+                        server.server_close()
+                        worker.join(5)
+                    finally:
+                        (args.output / "results.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+    if not args.emit:
+        print(json.dumps({"passed": len(report["cases"]), "source": args.source, "binary_sha256": report["binary_sha256"]}))
+    return 130 if args.emit else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

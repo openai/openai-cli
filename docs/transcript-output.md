@@ -1,6 +1,7 @@
 # Transcript timestamps
 
-Finite transcription and translation responses show each text segment on its own line.
+Finite transcription and translation responses show the complete transcript first.
+Each segment then groups its text, speaker, timestamps, and details together.
 Readable output applies in terminals and pipes.
 These examples use existing commands and flags.
 
@@ -8,28 +9,41 @@ These examples use existing commands and flags.
 openai audio transcribe --file meeting.wav --model gpt-4o-transcribe-diarize --response-format diarized_json --chunking-strategy auto
 ```
 
-For example, matching aggregate text and segments produce:
+For example, the readable output includes:
 
 ```text
-[00:00.000–00:05.200] A: Thanks for calling.
-[00:05.200–00:12.800] B: I need help.
+Thanks for calling. I need help.
+
+Segments:
+  1.
+    Speaker: A
+    Start: 00:00.000 (0 s)
+    End: 00:05.200 (5.2 s)
+    Text: Thanks for calling.
+
+  2.
+    Speaker: B
+    Start: 00:05.200 (5.2 s)
+    End: 00:12.800 (12.8 s)
+    Text: I need help.
 ```
 
 The API supplies the timestamps and speaker labels.
 The CLI preserves segment order, including overlaps.
 It rounds displayed timestamps to milliseconds and includes hours when needed.
-Sub-millisecond values remain in metadata.
-Unknown fields, segment IDs, word timestamps, confidence details, and usage remain available below the transcript.
+Each timestamp includes its original numeric seconds, including sub-millisecond precision.
+Segment IDs, confidence details, and unknown fields remain beside their segment's text and speaker.
+Word timestamps, usage, and other response metadata remain below the transcript.
+The API's field order determines each group's field order.
 
 Missing speakers receive no invented label.
-Missing, malformed, reversed, or unusually represented timestamps remain in metadata without a formatted range.
+Missing, malformed, negative, reversed, or unusually represented timestamps retain their original values.
 Malformed segment arrays retain the previous readable presentation.
 Readable output escapes terminal controls without truncating long text.
 
-Matching segments replace the full transcript to avoid repetition.
-The comparison ignores spaces, tabs, and newlines at segment boundaries.
-If the full transcript differs, the CLI preserves it before the labeled segments.
-This includes aggregate text with speaker annotations or additional words.
+The aggregate transcript remains available even when its words also appear in segments.
+This repetition keeps the complete transcript readable while each segment retains its associated details.
+Segment text preserves its original spaces, tabs, and newlines.
 
 ```sh
 # Verbose segment timestamps use the existing timestamp option.
@@ -50,7 +64,7 @@ openai --format raw audio transcribe --file meeting.wav --model whisper-1 --resp
 
 JSON, JSONL, YAML, pretty, explore, raw output, and extraction keep their existing behavior.
 Plain text, SRT, VTT, and streaming retain the [existing audio presentation](readable-audio.md).
-This feature changes no model defaults, request inputs, audio capture, playback, or Live behavior.
+These transcript formatting rules do not change model defaults, request inputs, or streaming behavior.
 
 The [speech-to-text guide](https://developers.openai.com/api/docs/guides/speech-to-text#speaker-diarization) documents these API options.
 Diarization requires chunking for inputs longer than 30 seconds; `auto` selects server chunking.

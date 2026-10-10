@@ -11,7 +11,8 @@ Invalid requests or evidence-write failures make fixture shutdown fail.
 Both scenes use the same finite response and command.
 The response contains two speaker segments and the complete aggregate transcript.
 Segment IDs, types, duration, and task exercise retained details.
-The after scene requires both timestamped sentences exactly once.
+The after scene retains aggregate text and grouped segment text with explicit speaker labels.
+Start and End show readable timestamps beside exact seconds.
 The recipe records actual command exits through the shared lifecycle.
 It verifies source and binary hashes after capture.
 It preserves requests, scene source, metadata, and validation output outside Git.

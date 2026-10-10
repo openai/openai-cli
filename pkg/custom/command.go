@@ -30,6 +30,7 @@ func ConfigureCommand(root *cli.Command) {
 	configureReadableSpeech(root)
 	configureCommandSubgroups(root)
 	configureTaskCommands(root)
+	registerAudioCommands(root)
 	configureFileCommands(root)
 	registerTokenizerCommands(root)
 	registerCodexCommands(root)

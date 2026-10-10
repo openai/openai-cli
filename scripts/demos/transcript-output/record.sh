@@ -70,7 +70,7 @@ demo_render_options=(--renderer resvg --font-family Menlo --font-size 22 --line-
   --theme dracula --fps-cap 20 --last-frame-duration 2)
 for demo_scene in before after; do
   demo_command_dir="$demo_runtime/after"
-  demo_label='After: timestamped speaker lines'
+  demo_label='After: grouped speaker details and readable timestamps'
   if [ "$demo_scene" = before ]; then
     demo_command_dir="$demo_runtime/before"
     demo_label='Before: transcript and nested segment fields'
@@ -93,11 +93,14 @@ before = (output / "before.txt").read_text(encoding="utf-8")
 after = (output / "after.txt").read_text(encoding="utf-8")
 assert "Thanks for calling. I need help." in before, before
 assert "Segments:" in before and "Start: 0" in before and "End: 5.2" in before, before
-assert "[00:00.000–00:05.200] A: Thanks for calling." in after, after
-assert "[00:05.200–00:12.800] B: I need help." in after, after
+assert "Start: 00:00.000 (0 s)" in after, after
+assert "End: 00:05.200 (5.2 s)" in after, after
+assert "Start: 00:05.200 (5.2 s)" in after, after
+assert "End: 00:12.800 (12.8 s)" in after, after
+assert "Speaker: A" in after and "Speaker: B" in after, after
 for phrase in ("Thanks for calling.", "I need help."):
     assert before.count(phrase) == 2, before
-    assert after.count(phrase) == 1, after
+    assert after.count(phrase) == 2, after
 for marker in ("demo_seg_001", "demo_seg_002", "transcript.text.segment", "12.8", "transcribe"):
     assert marker in before and marker in after, marker
 requests = [json.loads(line) for line in (output / "requests.jsonl").read_text().splitlines()]
@@ -117,7 +120,7 @@ for scene in ("before", "after"):
     assert text.count("$ openai audio transcribe") == 1
     assert text.endswith("\r\n$ "), "missing final shell prompt"
 print("PASS: identical validated synthetic requests and response bytes; both process exits zero.")
-print("PASS: baseline nested fields; candidate timestamped speakers; transcript appears once after the change.")
+print("PASS: grouped speaker fields remain together; candidate labels timestamps and preserves exact seconds.")
 print("PASS: segment IDs, types, duration, and task remain visible; both recordings use 90x30 PTYs.")
 PY
 demo_assemble_capture 200 before after

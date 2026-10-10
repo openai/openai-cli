@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/autocomplete"
+	"github.com/urfave/cli/v3"
 )
 
 const imagePickerFirstRunTimeout = 250 * time.Millisecond
@@ -20,9 +21,14 @@ var imagePickerFirstRunWorker = make(chan struct{}, 1)
 // SetupImagePickerShellOnFirstRun quietly prepares future interactive shells.
 // It does not change the current command, terminal bindings, or exit status.
 // Failures remain optional, and later ordinary runs may safely retry setup.
-func SetupImagePickerShellOnFirstRun(ctx context.Context, args []string) {
+func SetupImagePickerShellOnFirstRun(ctx context.Context, args []string, roots ...*cli.Command) {
 	inputTTY, outputTTY, errorTTY := term.IsTerminal(os.Stdin.Fd()), term.IsTerminal(os.Stdout.Fd()), term.IsTerminal(os.Stderr.Fd())
 	if ctx.Err() != nil || !inputTTY || !outputTTY || !errorTTY {
+		return
+	}
+	// Read command declarations before the optional worker starts. CLI parsing
+	// may mutate them after the foreground timeout, so the worker borrows none.
+	if len(roots) > 0 && skipAudioFirstRunSetup(roots[0], args) {
 		return
 	}
 	args = append([]string(nil), args...)

@@ -34,16 +34,28 @@ func TestMainTranscriptTimestampsReadableOrderAndDetails(t *testing.T) {
 						t.Fatalf("readable transcript failed: %+v", got)
 					}
 					previous := -1
-					for _, line := range []string{
-						"[01:00:00.125–01:00:05.200] A: First.",
-						"[00:00.125–00:01.500] B: Second.",
-						"[00:00.875–00:02.000] 李: Third.",
+					for _, group := range []struct{ id, speaker, start, end, text string }{
+						{"seg_hour", "A", "01:00:00.125 (3600.125 s)", "01:00:05.200 (3605.2 s)", "First."},
+						{"seg_overlap_a", "B", "00:00.125 (0.125 s)", "00:01.500 (1.5 s)", "Second."},
+						{"seg_overlap_b", "李", "00:00.875 (0.875 s)", "00:02.000 (2 s)", "Third."},
 					} {
-						position := strings.Index(got.stdout, line)
+						position := strings.Index(got.stdout, "ID: "+group.id)
 						if position <= previous {
-							t.Fatalf("segment missing or reordered: %q in %q", line, got.stdout)
+							t.Fatalf("segment missing or reordered: %q", got.stdout)
 						}
 						previous = position
+						block := got.stdout[position:]
+						if next := strings.Index(block, "\n\n"); next >= 0 {
+							block = block[:next]
+						}
+						for _, field := range []string{"Speaker: " + group.speaker, "Start: " + group.start, "End: " + group.end, "Text: " + group.text} {
+							if !strings.Contains(block, field) {
+								t.Fatalf("segment %s lost grouped field %q: %q", group.id, field, block)
+							}
+						}
+					}
+					if !strings.HasPrefix(got.stdout, "First. Second. Third.\n") {
+						t.Fatalf("complete transcript missing: %q", got.stdout)
 					}
 					for _, detail := range []string{"seg_hour", "seg_overlap_a", "seg_overlap_b", "Confidence: 0.875", "9007199254740993", "Total tokens: 7"} {
 						if !strings.Contains(got.stdout, detail) {
@@ -51,8 +63,8 @@ func TestMainTranscriptTimestampsReadableOrderAndDetails(t *testing.T) {
 						}
 					}
 					for _, text := range []string{"First.", "Second.", "Third."} {
-						if strings.Count(got.stdout, text) != 1 {
-							t.Fatalf("transcript text duplicated: %q", got.stdout)
+						if strings.Count(got.stdout, text) != 2 {
+							t.Fatalf("complete transcript or grouped segment text lost: %q", got.stdout)
 						}
 					}
 				})
@@ -104,7 +116,7 @@ func TestMainTranscriptTimestampsDiarizedRequest(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	got := runReadableCommand(t, server, "audio", "transcribe", "--file", path, "--model", "gpt-4o-transcribe-diarize", "--response-format", "diarized_json", "--chunking-strategy", "auto")
-	if got.code != 0 || got.stderr != "" || got.stdout != "[00:00.000–00:05.200] A: Thanks for calling.\n" {
+	if got.code != 0 || got.stderr != "" || got.stdout != "Thanks for calling.\n\nSegments:\n  1.\n    Text: Thanks for calling.\n    Speaker: A\n    Start: 00:00.000 (0 s)\n    End: 00:05.200 (5.2 s)\n" {
 		t.Fatalf("documented diarized command changed: %+v", got)
 	}
 }
@@ -118,57 +130,57 @@ func TestMainTranscriptTimestampsFallbacks(t *testing.T) {
 		{
 			name: "missing speaker and rounded times",
 			body: `{"text":"Fractional.","segments":[{"text":"Fractional.","start":0.1234,"end":1.2346}]}`,
-			want: []string{"[00:00.123–00:01.235] Fractional.", "0.1234", "1.2346"},
+			want: []string{"Text: Fractional.", "Start: 00:00.123 (0.1234 s)", "End: 00:01.235 (1.2346 s)"},
 		},
 		{
 			name: "precise decimal timestamps",
 			body: `{"text":"Exact.","segments":[{"text":"Exact.","start":0.0005,"end":1.00000000000000001}]}`,
-			want: []string{"[00:00.001–00:01.000] Exact.", "Start: 0.0005", "End: 1.00000000000000001"},
+			want: []string{"Text: Exact.", "Start: 00:00.001 (0.0005 s)", "End: 00:01.000 (1.00000000000000001 s)"},
 		},
 		{
 			name: "reversed close decimal timestamps",
 			body: `{"text":"Reversed.","segments":[{"text":"Reversed.","start":1.00000000000000002,"end":1.00000000000000001}]}`,
-			want: []string{"Reversed.", "Start: 1.00000000000000002", "End: 1.00000000000000001"}, absent: []string{"[00:"},
+			want: []string{"Reversed.", "Start: 1.00000000000000002", "End: 1.00000000000000001"}, absent: []string{"Start: 00:", "End: 00:"},
 		},
 		{
 			name: "boundary controls remain visible",
 			body: `{"text":"\rHello 世界\u2028","segments":[{"text":"\rHello 世界\u2028","start":0,"end":1}]}`,
-			want: []string{`[00:00.000–00:01.000] \rHello 世界\u2028`}, absent: []string{"\r", "\u2028"},
+			want: []string{`Text: \rHello 世界\u2028`, "Start: 00:00.000 (0 s)", "End: 00:01.000 (1 s)"}, absent: []string{"\r", "\u2028"},
 		},
 		{
 			name: "missing time",
 			body: `{"text":"Untimed.","segments":[{"speaker":"A","text":"Untimed.","start":0.25}]}`,
-			want: []string{"A: Untimed.", "0.25"}, absent: []string{"[00:"},
+			want: []string{"Speaker: A", "Text: Untimed.", "Start: 0.25"}, absent: []string{"Start: 00:", "End: 00:"},
 		},
 		{
 			name: "reversed time",
 			body: `{"text":"Reversed.","segments":[{"speaker":"B","text":"Reversed.","start":9,"end":2}]}`,
-			want: []string{"B: Reversed.", "Start: 9", "End: 2"}, absent: []string{"[00:"},
+			want: []string{"Speaker: B", "Text: Reversed.", "Start: 9", "End: 2"}, absent: []string{"Start: 00:", "End: 00:"},
 		},
 		{
 			name: "malformed time and speaker",
 			body: `{"text":"Malformed.","segments":[{"speaker":{"future":"speaker value"},"text":"Malformed.","start":"later","end":null}]}`,
-			want: []string{"Malformed.", "speaker value", "later", "End: (null)"}, absent: []string{"[00:"},
+			want: []string{"Malformed.", "speaker value", "later", "End: (null)"}, absent: []string{"Start: 00:", "End: 00:"},
 		},
 		{
 			name: "incomplete segment text",
 			body: `{"text":"Complete transcript.","segments":[{"speaker":"A","text":"Complete","start":0,"end":1},{"speaker":"B","text":7,"start":1,"end":2}]}`,
-			want: []string{"Complete transcript.\n", "Text: 7", "Speaker: B"}, absent: []string{"[00:"},
+			want: []string{"Complete transcript.\n", "Text: 7", "Speaker: B"}, absent: []string{"Start: 00:", "End: 00:"},
 		},
 		{
 			name: "unfamiliar segment shape",
 			body: `{"text":"Complete transcript.","segments":[null,{"future":"segment value"}]}`,
-			want: []string{"Complete transcript.\n", "segment value", "null"}, absent: []string{"[00:"},
+			want: []string{"Complete transcript.\n", "segment value", "null"}, absent: []string{"Start: 00:", "End: 00:"},
 		},
 		{
 			name: "aggregate contains additional text",
 			body: `{"text":"Complete transcript with extra words.","segments":[{"speaker":"A","text":"Partial segment.","start":0,"end":1}]}`,
-			want: []string{"Complete transcript with extra words.\n", "Segments:", "[00:00.000–00:01.000] A: Partial segment."},
+			want: []string{"Complete transcript with extra words.\n", "Segments:", "Text: Partial segment.", "Speaker: A", "Start: 00:00.000 (0 s)"},
 		},
 		{
 			name: "empty segments preserve metadata",
 			body: `{"text":"","segments":[],"future":"empty detail"}`,
-			want: []string{"empty detail"}, absent: []string{"[00:"},
+			want: []string{"empty detail"}, absent: []string{"Start: 00:", "End: 00:"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -242,13 +254,13 @@ func TestMainTranscriptTimestampsEscapesControls(t *testing.T) {
 	if got.code != 0 || got.stderr != "" || strings.ContainsAny(got.stdout, "\x1b\a\r\u202e") {
 		t.Fatalf("readable transcript emitted controls or failed: %+v", got)
 	}
-	for _, detail := range []string{"[00:00.125–00:01.500]", `A\u001b]52;c;synthetic\u0007`, `Hello 世界\u001b[2J\r\u202e!`} {
+	for _, detail := range []string{"Start: 00:00.125 (0.125 s)", "End: 00:01.500 (1.5 s)", `A\u001b]52;c;synthetic\u0007`, `Hello 世界\u001b[2J\r\u202e!`} {
 		if !strings.Contains(got.stdout, detail) {
 			t.Fatalf("escaped transcript detail %q lost: %q", detail, got.stdout)
 		}
 	}
-	if strings.Count(got.stdout, "Hello 世界") != 1 {
-		t.Fatalf("readable transcript duplicated complete segment text: %q", got.stdout)
+	if strings.Count(got.stdout, "Hello 世界") != 2 {
+		t.Fatalf("readable aggregate or grouped segment text lost: %q", got.stdout)
 	}
 	got = runReadableCommand(t, server, append([]string{"--format", "raw"}, args...)...)
 	if got.code != 0 || got.stderr != "" || got.stdout != string(body)+"\n" {
@@ -312,12 +324,12 @@ func TestMainTranscriptTimestampsLargeText(t *testing.T) {
 	body := `{"text":"` + transcript + `","segments":[{"text":"` + transcript + `","speaker":"A","start":0,"end":1}],"future":"after large segment"}`
 	server := readableAudioServer(t, "audio:transcriptions", "application/json", body)
 	got := runReadableCommand(t, server, readableAudioArgs(t, "audio:transcriptions")...)
-	prefix := "[00:00.000–00:01.000] A: "
-	if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, prefix) {
+	if got.code != 0 || got.stderr != "" || !strings.HasPrefix(got.stdout, transcript+"\n") {
 		t.Fatalf("large transcript failed: code=%d bytes=%d stderr=%q", got.code, len(got.stdout), got.stderr)
 	}
-	rest := got.stdout[len(prefix):]
-	if !strings.HasPrefix(rest, transcript+"\n") || !strings.Contains(rest[len(transcript):], "after large segment") || strings.Count(rest, transcript) != 1 {
-		t.Fatalf("large transcript lost or duplicated text: code=%d bytes=%d stderr=%q", got.code, len(got.stdout), got.stderr)
+	if !strings.Contains(got.stdout, "Text: "+transcript+"\n") ||
+		!strings.Contains(got.stdout, "Speaker: A") || !strings.Contains(got.stdout, "Start: 00:00.000 (0 s)") ||
+		!strings.Contains(got.stdout, "after large segment") || strings.Count(got.stdout, transcript) != 2 {
+		t.Fatalf("large aggregate or grouped segment lost: code=%d bytes=%d stderr=%q", got.code, len(got.stdout), got.stderr)
 	}
 }

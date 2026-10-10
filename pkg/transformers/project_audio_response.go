@@ -48,8 +48,8 @@ func ProjectAudioResponse(value gjson.Result, route Route) (readable.StreamEvent
 	}, true
 }
 
-// Only complete arrays of text segments can replace the ordinary transcript.
-// Unknown shapes retain the original readable fallback without dropping fields.
+// Keep each segment's text, speaker, and details together below the complete
+// transcript. Only timestamp labels change; unknown shapes retain their fallback.
 func projectTranscriptSegments(value gjson.Result, transcript string) (readable.StreamEvent, bool) {
 	segments := value.Get("segments")
 	if !segments.IsArray() {
@@ -65,10 +65,8 @@ func projectTranscriptSegments(value gjson.Result, transcript string) (readable.
 	if segmentFields != 1 {
 		return readable.StreamEvent{}, false
 	}
-	var lines strings.Builder
 	var residuals []gjson.Result
-	remaining := strings.Trim(transcript, " \n\t")
-	matched, valid := true, true
+	valid := true
 	segments.ForEach(func(_, segment gjson.Result) bool {
 		text := segment.Get("text")
 		if !segment.IsObject() || text.Type != gjson.String {
@@ -89,52 +87,28 @@ func projectTranscriptSegments(value gjson.Result, transcript string) (readable.
 		if !valid {
 			return false
 		}
-		line := strings.Trim(text.Str, " \n\t")
-		if matched {
-			if strings.HasPrefix(remaining, line) {
-				remaining = strings.TrimLeft(remaining[len(line):], " \n\t")
-			} else {
-				matched = false
-			}
-		}
-		if len(residuals) > 0 {
-			lines.WriteByte('\n')
-		}
-		omitted := []string{"text"}
+		var replacements map[string]gjson.Result
 		start, end := segment.Get("start"), segment.Get("end")
 		startLabel, startNumber := transcriptTimestamp(start)
 		endLabel, endNumber := transcriptTimestamp(end)
 		if startNumber != nil && endNumber != nil && endNumber.Cmp(startNumber) >= 0 {
-			lines.WriteString("[" + startLabel + "–" + endLabel + "] ")
-			// Keep precision that the millisecond labels cannot represent.
-			if new(big.Rat).Mul(startNumber, big.NewRat(1000, 1)).IsInt() {
-				omitted = append(omitted, "start")
-			}
-			if new(big.Rat).Mul(endNumber, big.NewRat(1000, 1)).IsInt() {
-				omitted = append(omitted, "end")
+			// Preserve the exact seconds spelling beside the millisecond label.
+			// Explicit formats still receive the original numeric JSON values.
+			replacements = map[string]gjson.Result{
+				"start": gjson.Parse(strconv.Quote(startLabel + " (" + start.Raw + " s)")),
+				"end":   gjson.Parse(strconv.Quote(endLabel + " (" + end.Raw + " s)")),
 			}
 		}
-		if speaker := segment.Get("speaker"); speaker.Type == gjson.String && speaker.Str != "" {
-			lines.WriteString(speaker.Str + ": ")
-			omitted = append(omitted, "speaker")
-		}
-		lines.WriteString(line)
-		residuals = append(residuals, streamResidual(segment, nil, omitted...))
+		residuals = append(residuals, streamResidual(segment, replacements))
 		return true
 	})
 	if !valid || len(residuals) == 0 {
 		return readable.StreamEvent{}, false
 	}
-	part := readable.StreamPart{Key: "transcript", Text: lines.String(), Snapshot: true}
-	event := readable.StreamEvent{}
-	if !matched || remaining != "" {
-		// Revised or incomplete segment text cannot stand in for the aggregate.
-		event.Parts = append(event.Parts, readable.StreamPart{Key: "transcript", Text: transcript, Snapshot: true})
-		part.Key, part.Label = "transcript:segments", "Segments"
-	}
-	event.Parts = append(event.Parts, part)
-	event.Details = streamResidual(value, map[string]gjson.Result{"segments": streamResidualArray(residuals)}, "text")
-	return event, true
+	return readable.StreamEvent{
+		Parts:   []readable.StreamPart{{Key: "transcript", Text: transcript, Snapshot: true}},
+		Details: streamResidual(value, map[string]gjson.Result{"segments": streamResidualArray(residuals)}, "text"),
+	}, true
 }
 
 // Timestamps are presentation labels, not new bounds on accepted API payloads.
