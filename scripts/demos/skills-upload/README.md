@@ -28,6 +28,7 @@ Use `--files -` for one ZIP from stdin; its multipart filename is `skill.zip`.
 Trusted piped JSON/YAML inputs remain available.
 
 Upload streams do not retry automatically. Check remote state before repeating an interrupted request.
+ZIP and individual-file read errors identify `--files`. Cleanup guidance remains visible beside preparation failures.
 Existing readable results, explicit formats, extraction, lifecycle commands and content downloads remain available.
 
 ## Local reproduction

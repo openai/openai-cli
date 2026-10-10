@@ -292,7 +292,7 @@ func prepareSkillUploadInputs(cmd *cli.Command, body any, stdin *onceStdinReader
 		}
 		// Keep normal signal handling while an explicit FIFO waits for its writer.
 		// The body observer starts request cancellation after input opening.
-		upload, err := openFileUpload(path)
+		upload, err := requestFileSource(cmd, "body").child("files").openUpload(path)
 		if err != nil {
 			return skillInputFailure(index, path, err)
 		}
