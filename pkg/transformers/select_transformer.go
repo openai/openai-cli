@@ -36,5 +36,8 @@ func Identity(_ context.Context, value gjson.Result) (gjson.Result, error) {
 // Select is the SDK-owned hook for command-specific default transformations.
 // Only known API fields are summarized; unfamiliar routes preserve their values.
 func Select(route Route) Transformer {
+	if transform := selectDataControlsTransformer(route); transform != nil {
+		return transform
+	}
 	return selectReadableTransformer(route)
 }
