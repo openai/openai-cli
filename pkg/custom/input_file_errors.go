@@ -156,6 +156,12 @@ func inputFileErrorMessage(command *cli.Command, failure error) string {
 		if err == nil {
 			return
 		}
+		// Skills preparation supplies safe primary guidance. Preserve it while
+		// the outer traversal continues through any sibling cleanup failures.
+		if skill, ok := err.(*skillUploadError); ok {
+			add(skill.Error())
+			return
+		}
 		if input, ok := err.(*inputFileError); ok {
 			add("Could not " + input.operation + " the file for " + input.option + ". Check the path and permissions.")
 			return

@@ -37,6 +37,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var receiptFailure *saveReceiptError
 	var navigationFailure *listNavigationError
 	var modelsListFailure *modelsListError
+	var skillUploadFailure *skillUploadError
 	switch {
 	case errors.As(failure, &downloadFailure):
 		return downloadFailure.message
@@ -48,6 +49,11 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return utilityFailure.Error()
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
 		return "The request timed out. The API may have received it; check its status before repeating it."
+	case errors.As(failure, &skillUploadFailure):
+		if errors.As(failure, &inputFailure) {
+			return inputFileErrorMessage(root, failure)
+		}
+		return skillUploadFailure.Error()
 	case errors.As(failure, &modelsListFailure):
 		return modelsListFailure.Error()
 	case errors.As(failure, &imageFailure):

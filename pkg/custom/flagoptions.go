@@ -397,6 +397,9 @@ func FlagOptions(
 	ignoreStdin bool,
 	observeJSON ...func([]byte),
 ) (options []option.RequestOption, err error) {
+	if skillUploadState(cmd) != nil {
+		bodyType = MultipartFormEncoded
+	}
 	if prepared, ok, err := consumeImageSavingRequest(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin); ok {
 		return prepared, err
 	}
@@ -550,6 +553,7 @@ func FlagOptions(
 	} else {
 		stdinReader = onceStdinReader{stdinReader: os.Stdin}
 	}
+	deferSkillUploadInputs(cmd, requestContents.Body)
 
 	// Embed files passed as "@file.jpg" in the request body, headers, and query:
 	embedStyle := EmbedText
@@ -575,6 +579,9 @@ func FlagOptions(
 		return nil, err
 	} else {
 		requestContents.Queries = queriesWithFiles.(map[string]any)
+	}
+	if err := prepareSkillUploadInputs(cmd, requestContents.Body, &stdinReader); err != nil {
+		return nil, err
 	}
 
 	querySettings := apiquery.QuerySettings{
@@ -646,6 +653,12 @@ func FlagOptions(
 		var observers []func(io.Closer)
 		if state, ok := cmd.Metadata[imageMultipartMetadata].(*imageMultipartPreparation); ok {
 			observers = append(observers, func(body io.Closer) { state.body = body })
+		}
+		if state := skillUploadState(cmd); state != nil {
+			observers = append(observers, func(body io.Closer) {
+				state.body = body
+				state.startSignals()
+			})
 		}
 		multipartOptions, err := multipartRequestOptions(bodyMap, encodingFormat, observers...)
 		if err != nil {
