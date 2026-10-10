@@ -245,6 +245,7 @@ func TestMainProjectLifecycleRecoveryReads(t *testing.T) {
 
 func TestMainProjectLifecycleUncertainResponses(t *testing.T) {
 	for _, tc := range []struct{ name, response, retained string }{
+		{"malformed response", strings.TrimSuffix(projectLifecycleActive, "}"), "Returned name"},
 		{"unknown field", strings.TrimSuffix(projectLifecycleActive, "}") + `,"future_field":"preserved value"}`, "preserved value"},
 		{"error-bearing response", strings.TrimSuffix(projectLifecycleActive, "}") + `,"error":{"message":"synthetic failure"}}`, "synthetic failure"},
 		{"unexpected status", strings.Replace(projectLifecycleActive, `"active"`, `"pending"`, 1), "pending"},
@@ -273,7 +274,6 @@ func TestMainProjectLifecycleFailures(t *testing.T) {
 		truncated      bool
 	}{
 		{"API rejection", `{"error":{"message":"synthetic rejection","type":"invalid_request_error","code":"invalid_value"}}`, http.StatusBadRequest, false},
-		{"malformed response", `{"id":"proj_returned","object":"organization.project",`, http.StatusOK, false},
 		{"interrupted response", projectLifecycleArchived, http.StatusOK, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
