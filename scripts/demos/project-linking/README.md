@@ -40,3 +40,23 @@ The fixture does not establish live API access or backend authorization behavior
 Inspect `before.png`, `after.png`, and `comparison.gif` before sharing.
 Check complete command output, file IDs, and terminal clipping.
 Keep GIFs, screenshots, casts, and binaries outside Git.
+
+## Inspection and recovery follow-up
+
+The follow-up recorder compares the original published draft against the inspection and recovery fixes.
+Both binaries already support folder linking.
+The existing loopback server acts as a trap; these scenes must make no API requests.
+
+```sh
+bash scripts/demos/project-linking/record-context-review.sh \
+  /absolute/evidence/published-draft/openai \
+  /absolute/evidence/candidate/openai \
+  BEFORE_COMMIT AFTER_COMMIT \
+  /absolute/evidence/context-normal normal
+```
+
+Run the same command with a fresh output directory and `narrow` for a 40-column recovery capture.
+The normal capture shows custom-header inspection and a controlled malformed-registry failure.
+The narrow capture isolates recovery output at 40x24.
+Both use isolated homes and `NO_COLOR`, with actual command statuses and no live credentials.
+The invalid registry is a synthetic fixture. The recorder deletes its temporary configuration after capture.

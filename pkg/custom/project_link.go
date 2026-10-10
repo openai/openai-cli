@@ -177,7 +177,7 @@ func projectLinkRequestOptions(command *cli.Command) []option.RequestOption {
 		directory, err = projectLinkDirectory()
 	}
 	if err != nil {
-		failure := projectLinkFailure("Could not resolve folder project defaults. Inspect with openai link, or override with --project.", err)
+		failure := projectLinkStoreFailure(root, "resolve", err)
 		return []option.RequestOption{option.WithMaxRetries(0), option.WithMiddleware(func(*http.Request, option.MiddlewareNext) (*http.Response, error) {
 			return nil, failure
 		})}
@@ -238,22 +238,16 @@ func handleProjectLink(ctx context.Context, command *cli.Command) error {
 		links, err = loadProjectLinks(ctx, path)
 	}
 	if err != nil {
-		return projectLinkFailure("Could not read or save folder links. Check the user configuration folder's permissions and project-links.json. Invalid settings were kept.", err)
+		return projectLinkStoreFailure(root, status.Action, err)
 	}
 	status.LinkedDirectory, status.Project = nearestProjectLink(links, directory)
 	status.Inherited = status.LinkedDirectory != "" && status.LinkedDirectory != directory
-	status.EffectiveProject, status.Source = status.Project, "folder"
-	if status.Project == "" {
-		status.Source = "default"
-	}
-	if environment, present := os.LookupEnv("OPENAI_PROJECT_ID"); present {
-		status.EffectiveProject, status.Source = environment, "environment"
-		if environment != "" && !validLinkedProject(environment) {
-			status.EffectiveProject, status.ProjectRedacted = "", true
-		}
-	}
 	// The --project on link saves a future default; this invocation has no API
 	// request. Show the environment override that future commands retain.
+	status.EffectiveProject, status.Source = projectLinkEffectiveProject(root, status.Project)
+	if status.EffectiveProject != "" && !validLinkedProject(status.EffectiveProject) {
+		status.EffectiveProject, status.ProjectRedacted = "", true
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -264,9 +258,36 @@ func handleProjectLink(ctx context.Context, command *cli.Command) error {
 		_, err = io.WriteString(writer, projectLinkText(status))
 	}
 	if err != nil {
-		return projectLinkFailure("Could not write folder-link output. The saved link may already have changed; inspect with openai link.", err)
+		return projectLinkOutputFailure(root, status.Action, err)
 	}
 	return nil
+}
+
+// Inspect the same project sources as request construction without creating a
+// client or validating unrelated remote configuration. Keep SDK header parsing
+// here limited to the project header; never retain or display other headers.
+func projectLinkEffectiveProject(root *cli.Command, folder string) (project, source string) {
+	source = "default"
+	for _, line := range strings.Split(os.Getenv("OPENAI_CUSTOM_HEADERS"), "\n") {
+		name, value, ok := strings.Cut(line, ":")
+		if ok && strings.EqualFold(strings.TrimSpace(name), "OpenAI-Project") {
+			project, source = strings.TrimSpace(value), "custom_headers"
+		}
+	}
+	if folder != "" {
+		project, source = folder, "folder"
+	}
+	if environment, present := os.LookupEnv("OPENAI_PROJECT_ID"); present {
+		project, source = environment, "environment"
+	}
+	if root.IsSet("header") {
+		if headers, err := requestHeaders(root); err == nil {
+			if values := headers.Values("OpenAI-Project"); len(values) != 0 {
+				project, source = values[0], "header"
+			}
+		}
+	}
+	return project, source
 }
 
 func projectLinkText(status projectLinkStatus) string {
@@ -296,6 +317,18 @@ func projectLinkText(status projectLinkStatus) string {
 			out.WriteString("OPENAI_PROJECT_ID is empty and disables the folder default.\n")
 		} else {
 			fmt.Fprintf(&out, "Effective project: %s (OPENAI_PROJECT_ID overrides the folder default)\n", readable.Text(status.EffectiveProject))
+		}
+	} else if status.Source == "header" || status.Source == "custom_headers" {
+		setting, relationship := "--header", "overrides the folder default"
+		if status.Source == "custom_headers" {
+			setting, relationship = "OPENAI_CUSTOM_HEADERS", "fallback"
+		}
+		if status.ProjectRedacted {
+			fmt.Fprintf(&out, "The project value from %s is hidden because it does not match the project ID format.\n", setting)
+		} else if status.EffectiveProject == "" {
+			fmt.Fprintf(&out, "%s sets an empty project header.\n", setting)
+		} else {
+			fmt.Fprintf(&out, "Effective project: %s (%s %s)\n", readable.Text(status.EffectiveProject), setting, relationship)
 		}
 	}
 	out.WriteString("Your API key and its project access stay unchanged.\n")

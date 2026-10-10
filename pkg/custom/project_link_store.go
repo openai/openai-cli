@@ -17,7 +17,17 @@ import (
 // This limit applies only to local project links, never API request or response data.
 const maxProjectLinkBytes = 1 << 20
 
-var errProjectLinksChanged = errors.New("project links changed while reading; retry the command")
+var (
+	errProjectLinksChanged         = errors.New("project links changed while reading; retry the command")
+	errProjectLinksTooLarge        = errors.New("project links exceed the 1 MiB local registry limit; existing links were kept")
+	errProjectLinksInvalid         = errors.New("invalid project links; existing links were kept")
+	errProjectLinkInputInvalid     = errors.New("invalid folder or project identifier; existing links were kept")
+	errProjectLinkFileUnsafe       = errors.New("project links must be a private regular file owned by the current user")
+	errProjectLinkDirectoryUnsafe  = errors.New("project links require a private configuration directory owned by the current user")
+	errProjectLinkLockUnsafe       = errors.New("project link lock must be a private regular file owned by the current user")
+	errProjectLinkLockChanged      = errors.New("project link lock changed while opening or waiting")
+	errProjectLinkDirectoryChanged = errors.New("configuration directory changed while opening")
+)
 
 func loadProjectLinks(ctx context.Context, path string) (map[string]string, error) {
 	if err := ctx.Err(); err != nil {
@@ -61,7 +71,7 @@ func readProjectLinks(ctx context.Context, root *os.Root, name string) (map[stri
 
 func readProjectLinkSnapshot(ctx context.Context, root *os.Root, name string, expected os.FileInfo) (map[string]string, error) {
 	if !privateProjectLinkFile(expected) {
-		return nil, errors.New("project links must be a private regular file owned by the current user")
+		return nil, errProjectLinkFileUnsafe
 	}
 	file, err := root.OpenFile(name, os.O_RDONLY|projectLinkOpenFlags(), 0)
 	if err != nil {
@@ -93,7 +103,7 @@ func readProjectLinkSnapshot(ctx context.Context, root *os.Root, name string, ex
 		return nil, errProjectLinksChanged
 	}
 	if len(data) > maxProjectLinkBytes {
-		return nil, errors.New("project links exceed the 1 MiB local registry limit; existing links were kept")
+		return nil, errProjectLinksTooLarge
 	}
 	return decodeProjectLinks(data)
 }
@@ -107,7 +117,7 @@ func privateProjectLinkFile(info os.FileInfo) bool {
 }
 
 func decodeProjectLinks(data []byte) (map[string]string, error) {
-	invalid := errors.New("invalid project links; existing links were kept")
+	invalid := errProjectLinksInvalid
 	if !utf8.Valid(data) {
 		return nil, invalid
 	}
@@ -154,7 +164,7 @@ func lockProjectLinks(ctx context.Context, root *os.Root, name string) (*os.File
 			return nil, statErr
 		}
 		if !privateProjectLinkFile(info) {
-			return nil, errors.New("project link lock must be a private regular file owned by the current user")
+			return nil, errProjectLinkLockUnsafe
 		}
 		file, err = root.OpenFile(name, os.O_RDWR|projectLinkOpenFlags(), 0)
 	}
@@ -177,7 +187,7 @@ func lockProjectLinks(ctx context.Context, root *os.Root, name string) (*os.File
 			return err
 		}
 		if !privateProjectLinkFile(identity) || !privateProjectLinkFile(current) || !os.SameFile(identity, current) {
-			return errors.New("project link lock changed while opening or waiting")
+			return errProjectLinkLockChanged
 		}
 		return nil
 	}
@@ -219,7 +229,7 @@ func updateProjectLink(ctx context.Context, path, directory, project string) (ma
 		return nil, err
 	}
 	if !validProjectLinkDirectory(directory) || (project != "" && !validLinkedProject(project)) {
-		return nil, errors.New("invalid folder or project identifier; existing links were kept")
+		return nil, errProjectLinkInputInvalid
 	}
 	root, name, err := openProjectLinkDirectory(path, true)
 	if err != nil {
@@ -246,7 +256,7 @@ func updateProjectLink(ctx context.Context, path, directory, project string) (ma
 	}
 	data = append(data, '\n')
 	if len(data) > maxProjectLinkBytes {
-		return nil, errors.New("project links exceed the 1 MiB local registry limit; existing links were kept")
+		return nil, errProjectLinksTooLarge
 	}
 	temporary := ".project-links-" + rand.Text()
 	file, err := root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -281,7 +291,7 @@ func openProjectLinkDirectory(path string, create bool) (*os.Root, string, error
 		return nil, "", err
 	}
 	if !info.IsDir() {
-		return nil, "", errors.New("project links require a private configuration directory owned by the current user")
+		return nil, "", errProjectLinkDirectoryUnsafe
 	}
 	root, err := os.OpenRoot(directory)
 	if err != nil {
@@ -291,7 +301,7 @@ func openProjectLinkDirectory(path string, create bool) (*os.Root, string, error
 	if err != nil || !os.SameFile(info, actual) {
 		root.Close()
 		if err == nil {
-			err = errors.New("configuration directory changed while opening")
+			err = errProjectLinkDirectoryChanged
 		}
 		return nil, "", err
 	}
@@ -308,7 +318,7 @@ func openProjectLinkDirectory(path string, create bool) (*os.Root, string, error
 	}
 	if !privateProjectLinkPermissions(info) || !privateProjectLinkPermissions(actual) {
 		root.Close()
-		return nil, "", errors.New("project links require a private configuration directory owned by the current user")
+		return nil, "", errProjectLinkDirectoryUnsafe
 	}
 	return root, name, nil
 }

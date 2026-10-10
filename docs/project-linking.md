@@ -11,6 +11,10 @@ openai files list
 `files list` lists remote OpenAI files in that project. It does not list local files.
 Linking does not authenticate, create a remote project, or grant project access.
 Your API key must already have access to the selected project.
+Saving a link does not verify that the project exists, remains active, or permits access with your key.
+Find the project ID in [dashboard project settings](https://platform.openai.com/settings/organization/projects).
+The [API authentication reference](https://developers.openai.com/api/reference/overview) explains the `OpenAI-Project` header.
+The [access guide](https://developers.openai.com/api/docs/guides/rbac) explains project permissions and API-key restrictions.
 
 Inspect the saved link and its effective project:
 
@@ -18,6 +22,14 @@ Inspect the saved link and its effective project:
 openai link
 openai link --format json
 ```
+
+Existing extraction options still select remote API data:
+
+```sh
+openai files list --transform filename --raw-output
+```
+
+This prints remote filenames. It does not scan your local folder.
 
 Remove the current folder's link:
 
@@ -44,10 +56,15 @@ For example, `openai --project= files list` sends an empty project header.
 Root request flags work before or after commands, subject to existing endpoint flag ownership.
 An endpoint's own `--project` request field does not change request-header selection.
 Explicit custom `OpenAI-Project` headers retain their existing override behavior.
+An explicit `--header 'OpenAI-Project: ...'` takes priority over these project defaults, including an empty header value.
+Without a flag, environment project, or folder default, the SDK can use `OpenAI_CUSTOM_HEADERS` as a fallback.
+For repeated project headers in that environment variable, the last matching header wins.
 
 `link --project` saves a future folder default.
 An existing `OPENAI_PROJECT_ID` still overrides that default on later API commands.
 Link output identifies this override.
+Inspection also identifies a supplied custom project header or the SDK's custom-header fallback.
+Custom headers are never saved in the folder registry.
 
 ## Folders and storage
 
@@ -100,13 +117,17 @@ They reject positional arguments, `--transform`, and `--raw-output` before chang
 `--quiet` suppresses readable save/remove confirmations and preserves inspection and JSON output.
 JSON reports the action, current directory, linked directory, saved project, inheritance, effective project, and source.
 An empty effective project means the request uses an empty override or the existing default.
-The `source` field distinguishes these cases.
-Inspection hides environment values that do not match the project ID format.
+The `source` field distinguishes these cases: `folder`, `environment`, `header`, `custom_headers`, or `default`.
+`environment` means `OPENAI_PROJECT_ID`; `header` means an explicit `--header`; `custom_headers` means the SDK environment fallback.
+Inspection hides external project values that do not match the project ID format.
 JSON marks these values with `effective_project_redacted: true`.
 This prevents inspection from printing accidentally pasted credentials.
 API requests preserve the existing environment behavior.
+Inspection reports project selection, not full authentication status or validation of every request setting.
+Malformed unrelated remote settings do not prevent local linking.
 
 If output fails after saving, inspect the link before retrying.
 If the registry cannot be read, check its file type, permissions, and JSON syntax.
+The error identifies known size, ownership, permission, or concurrent-change problems without exposing registry contents or private paths.
 Move an invalid registry aside only when you intend to discard its saved links.
 To remove a stale entry for a deleted directory, edit that entry while no CLI process writes the registry.
