@@ -191,16 +191,21 @@ func TestMainExamplesScriptsRunHelp(t *testing.T) {
 	}
 	env = append(env, "OPENAI_BASE_URL="+server.URL, "GOTOOLCHAIN=local", "GOMAXPROCS=2", "GOFLAGS=-p=2", "FORCE_COLOR=0", "NO_COLOR=1",
 		"PATH="+strings.Join([]string{filepath.Join(runtime.GOROOT(), "bin"), decoy, os.Getenv("PATH")}, string(os.PathListSeparator)))
-	run := func(t *testing.T, executable string, args ...string) string {
+	run := func(t *testing.T, executable string, args ...string) mainDispatchResult {
 		t.Helper()
 		child := exec.CommandContext(ctx, executable, args...)
 		child.Dir, child.Env = root, env
 		var stdout, stderr bytes.Buffer
 		child.Stdout, child.Stderr = &stdout, &stderr
 		err := child.Run()
-		require.NoError(t, err, "%s %v: %s", executable, args, stderr.String())
-		require.Empty(t, stderr.String())
-		return stdout.String()
+		require.NoError(t, ctx.Err(), "%s %v timed out", executable, args)
+		code := 0
+		if exit, ok := err.(*exec.ExitError); ok {
+			code = exit.ExitCode()
+		} else {
+			require.NoError(t, err, "%s %v: %s", executable, args, stderr.String())
+		}
+		return mainDispatchResult{code, stdout.String(), stderr.String()}
 	}
 	want := runMainDispatchWithEnv(t, "bash", append(localUtilitiesEnvironment(t), "OPENAI_BASE_URL="+server.URL), "openai", "examples", "files")
 	require.Zero(t, want.code, "%s", want.stderr)
@@ -208,21 +213,53 @@ func TestMainExamplesScriptsRunHelp(t *testing.T) {
 	required := strings.Split(os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS"), ",")
 	// Repeat both help routes to cover Go's fresh and cached executable paths.
 	for _, attempt := range []string{"first", "repeat"} {
-		for _, args := range [][]string{{"examples", "--help"}, {"help", "examples", "files"}} {
-			output := run(t, "./scripts/run", args...)
+		var index mainDispatchResult
+		for _, route := range []struct {
+			kind string
+			args []string
+		}{
+			{"help", []string{"examples", "--help"}},
+			{"help", []string{"help", "examples", "files"}},
+			{"index", []string{"examples"}},
+			{"recovery", []string{"examples", "synthetic-private-topic"}},
+		} {
+			output := run(t, "./scripts/run", route.args...)
+			expected := want
 			var command string
-			for line := range strings.SplitSeq(output, "\n") {
-				if strings.TrimSpace(line) == "go run ./cmd/openai examples files" {
-					command = strings.TrimSpace(line)
-					break
+			if route.kind == "recovery" {
+				require.NotZero(t, output.code)
+				require.Empty(t, output.stdout)
+				require.NotContains(t, output.stderr, "synthetic-private-")
+				require.Equal(t, 1, strings.Count(output.stderr, "\nTry: "))
+				_, command, _ = strings.Cut(output.stderr, "\nTry: ")
+				// go run can append its own exit-status diagnostic after the CLI error.
+				command, _, _ = strings.Cut(command, "\n")
+				command = strings.TrimSpace(command)
+				require.Equal(t, "go run ./cmd/openai examples", command)
+				expected = index
+			} else {
+				require.Zero(t, output.code, "%s", output.stderr)
+				require.Empty(t, output.stderr)
+				if route.kind == "index" {
+					index = output
+				}
+				for line := range strings.SplitSeq(output.stdout, "\n") {
+					candidate := strings.TrimSpace(line)
+					if route.kind == "index" {
+						candidate, _, _ = strings.Cut(candidate, " #")
+					}
+					if strings.TrimSpace(candidate) == "go run ./cmd/openai examples files" {
+						command = strings.TrimSpace(line)
+						break
+					}
 				}
 			}
-			require.NotEmpty(t, command, "source help lost its copyable invocation: %s", output)
+			require.NotEmpty(t, command, "source guidance lost its copyable invocation: %+v", output)
 			for _, shell := range []nativeShell{
 				{name: "bash", executable: "bash", args: []string{"--noprofile", "--norc", "-c"}},
 				{name: "zsh", executable: "zsh", args: []string{"-f", "-c"}},
 			} {
-				name := strings.Join(args, "/") + "/" + shell.name + "/" + attempt
+				name := strings.Join(route.args, "/") + "/" + shell.name + "/" + attempt
 				t.Run(name, func(t *testing.T) {
 					path, err := exec.LookPath(shell.executable)
 					if err != nil {
@@ -232,7 +269,7 @@ func TestMainExamplesScriptsRunHelp(t *testing.T) {
 						t.Skipf("%s is not installed", shell.name)
 					}
 					copied := run(t, path, append(slices.Clone(shell.args), command)...)
-					require.Equal(t, want.stdout, copied)
+					require.Equal(t, expected, copied)
 				})
 			}
 		}
