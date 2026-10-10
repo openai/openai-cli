@@ -175,7 +175,7 @@ func TestAnalyzeCancellationWhileScanning(t *testing.T) {
 
 func TestWaveformShowsMeasuredShapeWithoutANSI(t *testing.T) {
 	got := Waveform([]float64{0, 1, 0}, 3, 5)
-	want := " █ \n █ \n─█─\n █ \n █ "
+	want := " ⣿ \n ⣿ \n─⣿─\n ⣿ \n ⣿ "
 	if got != want {
 		t.Fatalf("shape: %q", got)
 	}

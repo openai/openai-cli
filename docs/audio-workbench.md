@@ -21,7 +21,7 @@ Existing `@file` expansion and escaped `\@` literal input rules still apply to d
 Choosing a model or voice does not generate speech.
 Preview voice explicitly generates and plays a short sample using the selected settings.
 An identical retained sample can play again without another API request.
-With the result focused, Esc restores the previous result after an audition.
+With the audition result focused, Esc restores a previous result if one exists, then returns to Text.
 Normal generation also requires an explicit action.
 
 The form retains completed audio, text, instructions, and settings in private local history.
