@@ -25,7 +25,7 @@ func registerSchemaHelperCommands(root *cli.Command) {
 One paid Responses request, without retries. Results vary between runs.
 Compiles JSON Schema locally; does not verify Structured Outputs compatibility.
 
-` + cli.CommandHelpTemplate
+` + cli.CommandHelpTemplate + localUtilityGlobalHelp
 	root.Commands = append(root.Commands, &cli.Command{
 		Name: "helpers", Usage: "Generate and validate development artifacts", HideHelpCommand: true,
 		Commands: []*cli.Command{{

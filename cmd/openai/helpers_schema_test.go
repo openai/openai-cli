@@ -235,7 +235,7 @@ func TestMainSchemaHelperHelp(t *testing.T) {
 	for _, args := range [][]string{{"openai", "helpers", "schema", "--help"}, {"openai", "help", "helpers", "schema"}, {"openai", "--project", "proj-fixture", "helpers", "schema", "-h"}} {
 		got := runMainDispatch(t, "", args...)
 		require.Zero(t, got.code, "%+v", got)
-		for _, word := range []string{"--model", "--description", "--output", "paid", "Structured Outputs", "--max-output-tokens"} {
+		for _, word := range []string{"--model", "--description", "--output", "paid", "Structured Outputs", "--max-output-tokens", "Global option details: openai --help"} {
 			require.Contains(t, got.stdout, word)
 		}
 		require.Empty(t, got.stderr)
