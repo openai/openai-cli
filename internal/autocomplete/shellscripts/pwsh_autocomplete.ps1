@@ -33,14 +33,17 @@ Register-ArgumentCompleter -Native -CommandName __APPNAME__ -ScriptBlock {
 
   $previousStyle = $env:COMPLETION_STYLE
   $previousFileValues = $env:OPENAI_CLI_COMPLETION_FILE_VALUES
+  $previousPreserveWords = $env:OPENAI_CLI_COMPLETION_PRESERVE_WORDS
   try {
     $env:COMPLETION_STYLE = 'pwsh'
     $env:OPENAI_CLI_COMPLETION_FILE_VALUES = '1'
+    $env:OPENAI_CLI_COMPLETION_PRESERVE_WORDS = '1'
     $output = __APPNAME__ __complete @completionArgs 2>&1
     $exitCode = $LASTEXITCODE
   } finally {
     $env:COMPLETION_STYLE = $previousStyle
     $env:OPENAI_CLI_COMPLETION_FILE_VALUES = $previousFileValues
+    $env:OPENAI_CLI_COMPLETION_PRESERVE_WORDS = $previousPreserveWords
   }
 
   # Check for custom file completion patterns
