@@ -214,7 +214,7 @@ func TestMainCommandSubgroupsPreserveAudioAndErrors(t *testing.T) {
 		}
 	}
 	got = runMainDispatch(t, "bash", "openai", "admin", "organizatio")
-	if got.code == 0 || !strings.Contains(got.stderr, "openai admin organization") {
+	if got.code != 3 || got.stdout != "" || got.stderr != "Unknown command. Did you mean: openai admin organization?\n" {
 		t.Fatalf("nested typo suggestion failed: %+v", got)
 	}
 }

@@ -367,10 +367,11 @@ func legacyHelpNotice(command *cli.Command) string {
 func showHelpTopics(ctx context.Context, command *cli.Command) error {
 	root := command.Root()
 	parent, target := root, root
-	for _, topic := range command.Args().Slice() {
+	topics := command.Args().Slice()
+	for i, topic := range topics {
 		next := target.Command(topic)
 		if next == nil || !allowsHelpTopic(next) || topic == "help" {
-			return &UnknownTopicError{Parent: target, Topic: topic}
+			return &UnknownTopicError{Parent: target, Topic: topic, Remaining: append([]string(nil), topics[i+1:]...)}
 		}
 		parent, target = target, next
 	}
@@ -383,8 +384,9 @@ func showHelpTopics(ctx context.Context, command *cli.Command) error {
 // UnknownTopicError retains the last valid group for safe local recovery guidance.
 // Presenters can suggest declared commands without echoing an untrusted topic.
 type UnknownTopicError struct {
-	Parent *cli.Command
-	Topic  string
+	Parent    *cli.Command
+	Topic     string
+	Remaining []string
 }
 
 func (e *UnknownTopicError) Error() string {
