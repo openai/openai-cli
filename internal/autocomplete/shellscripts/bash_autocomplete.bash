@@ -74,7 +74,29 @@ ____APPNAME___bash_autocomplete() {
         current_word="$value"
       fi
     done
-    completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_PRESERVE_WORDS=1 "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
+    local static_values=1
+    # Filename mode can escape closed empty quotes without a common prefix.
+    # Keep that argument intact until the user supplies a value prefix.
+    if [[ "${2-}" == "''" || "${2-}" == '""' ]]; then
+      static_values=0
+    fi
+    local value_prefix="" current_value=""
+    if [[ ${#completion_args[@]} -gt 0 ]]; then
+      current_value="${completion_args[${#completion_args[@]} - 1]}"
+    fi
+    # Readline replaces the assignment too when its callback retains '='.
+    if [[ "$current_value" == -*=* && "${2-}" == *=* ]]; then
+      value_prefix="${current_value%%=*}="
+    fi
+    local completion_directory
+    # A sentinel preserves trailing newlines in the physical directory name.
+    if completion_directory=$(pwd -P 2>/dev/null && printf '.'); then
+      completion_directory="${completion_directory%$'\n.'}"
+    else
+      completion_directory=""
+      static_values=0
+    fi
+    completions=$(COMPLETION_STYLE=bash OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_PRESERVE_WORDS=1 OPENAI_CLI_COMPLETION_STATIC_VALUES="$static_values" OPENAI_CLI_COMPLETION_BASH_VALUE_PREFIX="$value_prefix" OPENAI_CLI_COMPLETION_BASH_CWD="$completion_directory" "${COMP_WORDS[0]}" __complete -- "${completion_args[@]}" 2>/dev/null)
     exit_code=$?
 
     local last_token="$cur"
@@ -145,7 +167,8 @@ ____APPNAME___bash_autocomplete() {
             command_prefix="${current_word%:*}:"
           fi
           while IFS= read -r file; do
-            COMPREPLY+=("$command_prefix$file")
+            # Assigned values retain their flag; command aliases retain colons.
+            COMPREPLY+=("${value_prefix:-$command_prefix}$file")
           done <<<"$completions"
         fi
         ;;
