@@ -582,13 +582,14 @@ func TestMainStoredCompletionExportCancellation(t *testing.T) {
 					path = filepath.Join(directory, "canceled.jsonl")
 				}
 				child, stdout, stderr, ctx := startStreamingTextCommand(t, server, "chat", "completions", "export", "--output", path)
+				if output == "stdout" {
+					// Drain page one before awaiting page two; a small pipe can block its final write.
+					readStreamingTextPrefix(t, ctx, stdout, storedExportFirst+"\n")
+				}
 				select {
 				case <-ready:
 				case <-ctx.Done():
 					t.Fatal("export did not request its second page")
-				}
-				if output == "stdout" {
-					readStreamingTextPrefix(t, ctx, stdout, storedExportFirst+"\n")
 				}
 				require.NoError(t, child.Process.Signal(signal.value))
 				rest, readErr := io.ReadAll(stdout)
