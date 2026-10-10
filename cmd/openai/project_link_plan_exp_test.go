@@ -240,8 +240,10 @@ func TestMainProjectLinkPlanExpCopiedRecoveryPreservesInvocation(t *testing.T) {
 	require.NoError(t, os.WriteFile(registry, []byte("{"), 0o600))
 	server, requests := globalFlagsServer(t, globalFlagsPage)
 	shell := nativeShell{name: "bash", executable: bash, args: []string{"--noprofile", "--norc", "-c"}}
+	// Raw data output also selects raw errors unless explicitly overridden.
+	// Copy the displayed text command, not its JSON string representation.
 	got := runNativeShell(t, shell, directory, home, server.URL,
-		"export OPENAI_API_KEY=synthetic-recovery-key; "+quote(executable)+" files list --format=raw")
+		"export OPENAI_API_KEY=synthetic-recovery-key; "+quote(executable)+" files list --format=raw --format-error=text")
 	require.NotZero(t, got.code)
 	require.Empty(t, got.stdout)
 	recovery := regexp.MustCompile(`Inspect with (.+? link)\.`).FindStringSubmatch(got.stderr)
