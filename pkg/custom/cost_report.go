@@ -200,6 +200,14 @@ func costReportAPIErrorMessage(failure error, apierr *openai.Error) string {
 	}
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
+		var contextual *commandError
+		if errors.As(failure, &contextual) && contextual != nil && contextual.command != nil {
+			headers, err := requestHeaders(contextual.command)
+			if _, overridden := headers["Authorization"]; err == nil && overridden {
+				return "An Authorization override from --header controls this cost report request.\n" +
+					"Correct or remove that override, then retry the report."
+			}
+		}
 		return "Cost reports require an organization Admin API key.\n" +
 			"Replace an explicit --admin-api-key value; otherwise set OPENAI_ADMIN_KEY.\n" +
 			"A project API key cannot replace an Admin key."

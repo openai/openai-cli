@@ -4,7 +4,10 @@
 It reads the public Costs API with your existing Admin key configuration.
 Set `OPENAI_ADMIN_KEY` through your normal secret manager or environment.
 An explicit `--admin-api-key` overrides `OPENAI_ADMIN_KEY`.
-For authentication or permission failures, correct that explicit value when present; otherwise check the environment setting.
+An explicit `--header` Authorization value overrides both, including when its value is empty.
+For authentication failures with that header, correct or remove the header override first.
+Otherwise, check the explicit Admin key when present, or its environment setting.
+For permission failures, check the Admin key's access to organization costs and the selected organization.
 A project API key cannot replace an Admin key.
 
 ```sh

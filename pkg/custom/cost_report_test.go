@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/openai/openai-cli/pkg/transformers"
+	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -28,6 +29,42 @@ func TestCostReportRegistrationFormatMetadata(t *testing.T) {
 	require.Equal(t, map[string][]string{"format": {"auto", "text", "json"}}, report.Metadata["completion-root-flag-values"])
 	require.NotNil(t, report.Metadata["help-content"])
 	require.Nil(t, costs.Metadata["completion-root-flag-values"], "the override belongs only to the selected report command")
+}
+
+func TestCostReportAuthGuidanceContextFallbacks(t *testing.T) {
+	const fallback = "Cost reports require an organization Admin API key.\n" +
+		"Replace an explicit --admin-api-key value; otherwise set OPENAI_ADMIN_KEY.\n" +
+		"A project API key cannot replace an Admin key."
+	for _, tc := range []struct {
+		name       string
+		contextual bool
+		nilCommand bool
+		headers    []string
+	}{
+		{name: "absent command context"},
+		{name: "nil command", contextual: true, nilCommand: true},
+		{name: "unrelated header", contextual: true, headers: []string{"--header", "X-Cost-Recovery: synthetic-safe-value"}},
+		{name: "malformed header", contextual: true, headers: []string{"-H", "Authorization: Bearer synthetic-unused-header",
+			"--header", "synthetic-malformed-header"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			apierr := &openai.Error{StatusCode: http.StatusUnauthorized}
+			var failure error = &costReportRequestError{apierr}
+			if tc.contextual {
+				var command *cli.Command
+				if !tc.nilCommand {
+					command = &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard,
+						Flags: []cli.Flag{NewRequestHeaderFlag()}, Action: func(context.Context, *cli.Command) error { return nil }}
+					require.NoError(t, command.Run(t.Context(), append([]string{"openai"}, tc.headers...)))
+				}
+				failure = &commandError{command: command, err: failure}
+			}
+			require.NotPanics(t, func() {
+				require.Equal(t, fallback, costReportAPIErrorMessage(failure, apierr))
+			})
+			require.ErrorIs(t, failure, apierr, "presentation must preserve the original API error")
+		})
+	}
 }
 
 func TestCostReportWriterFailures(t *testing.T) {

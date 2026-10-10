@@ -91,6 +91,111 @@ func TestMainCostReportAuthRecoveryPreservesExplicitContext(t *testing.T) {
 	}
 }
 
+func TestMainCostReportAuthorizationHeaderRecoveryPreservesContext(t *testing.T) {
+	const replacementAdmin = "synthetic-recovery-replacement-admin"
+	const invalidHeader = "Bearer synthetic-recovery-invalid-header"
+	const guidance = "An Authorization override from --header controls this cost report request.\n" +
+		"Correct or remove that override, then retry the report."
+	for _, tc := range []struct {
+		name    string
+		headers []string
+		wire    string
+	}{
+		{"mixed case alias", []string{"-H", "aUtHoRiZaTiOn: " + invalidHeader}, invalidHeader},
+		{"explicit empty", []string{"--header", "Authorization: \t "}, ""},
+		{"last duplicate wins", []string{"--header", "Authorization: Bearer " + costRecoveryValidAdmin,
+			"-H", "AUTHORIZATION: " + invalidHeader}, invalidHeader},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			observed := make(chan string, 4)
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				assertCostRecoveryContext(t, r)
+				assert.Len(t, r.Header.Values("Authorization"), 1, "repeated flags must resolve to one effective header")
+				authorization := r.Header.Get("Authorization")
+				select {
+				case observed <- authorization:
+				default:
+					t.Error("unexpected extra cost report request")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if authorization != "Bearer "+costRecoveryValidAdmin && authorization != "Bearer "+replacementAdmin {
+					w.Header().Set("X-Should-Retry", "false")
+					w.WriteHeader(http.StatusUnauthorized)
+					_, _ = io.WriteString(w, `{"error":{"message":"synthetic header rejection","type":"authentication_error"}}`)
+					return
+				}
+				_, _ = io.WriteString(w, costReportPage(`{"object":"organization.costs.result","project_id":"proj_scope","amount":{"currency":"usd","value":12.34}}`, "", false))
+			}))
+			t.Cleanup(server.Close)
+			args := append(costReportArgs(), costRecoveryContextArgs(server.URL+"/recovery-context/v1")...)
+			run := func(admin string, headers []string, wantWire string, success bool) {
+				t.Helper()
+				attempt := append(slices.Clone(args), "--admin-api-key", admin)
+				attempt = append(attempt, headers...)
+				got := runMainDispatchWithEnv(t, "bash", nil, attempt...)
+				select {
+				case wire := <-observed:
+					require.Equal(t, wantWire, wire)
+				default:
+					t.Fatal("cost report sent no request")
+				}
+				for _, value := range []string{costRecoveryValidAdmin, replacementAdmin, "synthetic-recovery-invalid-header"} {
+					require.NotContains(t, got.stdout+got.stderr, value)
+				}
+				if success {
+					require.Zero(t, got.code, "%+v", got)
+					require.Empty(t, got.stderr)
+					require.Contains(t, got.stdout, "proj_scope")
+					require.Contains(t, got.stdout, "12.34")
+					return
+				}
+				require.Equal(t, 1, got.code, "%+v", got)
+				require.Empty(t, got.stdout)
+				require.Contains(t, got.stderr, guidance)
+				require.NotContains(t, got.stderr, "--admin-api-key", "the controlling header must receive the recovery guidance")
+			}
+			run(costRecoveryValidAdmin, tc.headers, tc.wire, false)
+			// Replacing only the Admin key cannot change an explicit Authorization header.
+			run(replacementAdmin, tc.headers, tc.wire, false)
+			// Removing only the Authorization flags restores the replacement Admin key.
+			run(replacementAdmin, nil, "Bearer "+replacementAdmin, true)
+			// A final corrected header also recovers, including repeated mixed-case flags.
+			corrected := append(slices.Clone(tc.headers), "-H", "authorization: Bearer "+replacementAdmin)
+			run(replacementAdmin, corrected, "Bearer "+replacementAdmin, true)
+			require.Empty(t, observed, "each process must issue exactly one request")
+			require.EqualValues(t, 4, requests.Load())
+		})
+	}
+}
+
+func TestMainCostReportAuthorizationHeaderJSONPreservesAPIError(t *testing.T) {
+	const details = `{"message":"synthetic header rejection","type":"authentication_error","code":"synthetic_auth","param":null,"future":{"sequence":9007199254740993}}`
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		assertCostRecoveryContext(t, r)
+		assert.Equal(t, "Bearer synthetic-recovery-invalid-header", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Should-Retry", "false")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":`+details+`}`)
+	}))
+	t.Cleanup(server.Close)
+	args := append(costReportArgs(), costRecoveryContextArgs(server.URL+"/recovery-context/v1")...)
+	args = append(args, "--admin-api-key", costRecoveryValidAdmin,
+		"-H", "aUtHoRiZaTiOn: Bearer synthetic-recovery-invalid-header", "--format", "json")
+	got := runMainDispatchWithEnv(t, "bash", nil, args...)
+	require.Equal(t, 1, got.code)
+	require.Empty(t, got.stdout)
+	require.Equal(t, decodeMainErrorObject(t, "json", details), decodeMainErrorObject(t, "json", got.stderr))
+	for _, value := range []string{"--header", "--admin-api-key", "OPENAI_ADMIN_KEY", costRecoveryValidAdmin, "synthetic-recovery-invalid-header"} {
+		require.NotContains(t, got.stderr, value)
+	}
+	require.EqualValues(t, 1, requests.Load())
+}
+
 func TestMainCostReportExpansionRecoveryThroughNativeShell(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("this focused recovery check uses native Bash and zsh")
