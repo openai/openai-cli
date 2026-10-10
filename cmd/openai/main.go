@@ -14,6 +14,9 @@ import (
 )
 
 func main() {
+	if handled, code := custom.RunSchemaValidationHelper(os.Args, os.Stdin, os.Stdout); handled {
+		os.Exit(code)
+	}
 	if handled, err := terminalimage.RunKittyOutputHelper(os.Args); handled {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Image output helper failed.")

@@ -16,6 +16,7 @@ require (
 	github.com/muesli/reflow v0.3.0
 	github.com/openai/openai-go/v3 v3.75.0
 	github.com/pkoukk/tiktoken-go v0.1.8
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/gjson v1.19.0
 	github.com/tidwall/pretty v1.2.1
