@@ -611,8 +611,8 @@ func TestMainImageModelsPreservesExistingModelListing(t *testing.T) {
 	if got.code != 0 || got.stderr != "" {
 		t.Fatalf("existing model listing changed: %+v", got)
 	}
-	var model map[string]any
-	if err := json.Unmarshal([]byte(got.stdout), &model); err != nil || model["id"] != "synthetic-text-model" || model["object"] != "model" || model["owned_by"] != "system" || model["created"] != float64(1) {
+	var models []map[string]any
+	if err := json.Unmarshal([]byte(got.stdout), &models); err != nil || len(models) != 1 || models[0]["id"] != "synthetic-text-model" || models[0]["object"] != "model" || models[0]["owned_by"] != "system" || models[0]["created"] != float64(1) {
 		t.Fatalf("existing model-list API fields changed: %q, %v", got.stdout, err)
 	}
 	if routes := requests(); len(routes) != 1 || routes["GET /models"] != 1 {

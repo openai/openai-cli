@@ -111,8 +111,8 @@ func TestMainGlobalFlagsPlacementHeadersAndOutput(t *testing.T) {
 					}
 					switch format {
 					case "json":
-						var item map[string]any
-						if err := json.Unmarshal([]byte(got.stdout), &item); err != nil || item["id"] != "model_synthetic" || item["created"] != float64(17) {
+						var items []map[string]any
+						if err := json.Unmarshal([]byte(got.stdout), &items); err != nil || len(items) != 1 || items[0]["id"] != "model_synthetic" || items[0]["created"] != float64(17) {
 							t.Fatalf("JSON items changed: %q; error=%v", got.stdout, err)
 						}
 					case "text":

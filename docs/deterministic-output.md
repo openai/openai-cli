@@ -54,21 +54,24 @@ Direct `Command.Run` calls retain action-scoped reporting and timing.
 
 ## Lists and streams
 
-Lists retain their existing record formats.
-`json` emits independent JSON values, not one JSON array.
+Finite item lists with `--format json` emit one JSON array, including `[]` for an empty list.
+This changes the earlier independent-value contract. Use `--format jsonl` when a consumer needs independent records.
 `jsonl` emits one compact JSON value per line.
-Empty structured lists emit no bytes.
+Empty JSONL lists emit no bytes.
 `raw` retains the page envelope and its existing pagination behavior.
 `yaml` retains its existing independently converted values; it does not add document separators.
-Use JSONL when a consumer requires unambiguous record boundaries.
+JSON extraction and `--raw-output` retain their independent-value behavior.
+Single-response list envelopes retain their response objects.
 
 ```sh
 openai files list --format jsonl --max-items 100 > files.jsonl
+openai files list --format json > files.json
 openai files list --format json --transform id --raw-output
 ```
 
 `--max-items -1` remains unlimited.
-`--max-items 0` emits no items, except with `--format raw`, which retains the page envelope.
+`--max-items 0` emits `[]` for finite JSON arrays.
+Other item formats emit no items; `--format raw` retains the page envelope.
 The SDK can still make its initial request.
 GJSON extraction applies to each item. Missing paths retain the original item.
 `--raw-output` unquotes strings; `--format raw` selects original response data.
@@ -86,6 +89,9 @@ Existing CI guards for automatic previews and shell setup remain.
 ## Failures and saved output
 
 A later page or stream failure leaves earlier output available and returns nonzero.
+Failed JSON lists can leave an incomplete array. Check the exit status before consuming saved output.
+For an invalid-record error, check the API service or configured proxy that supplied the response.
+Confirm the outcome before repeating commands that change remote state.
 The CLI preserves source errors when an output sink also fails.
 Existing handling of a lone closed stdout pipe remains unchanged.
 A broken output sink cannot guarantee a complete output document.
