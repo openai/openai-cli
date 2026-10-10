@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -30,7 +32,12 @@ func TestMainSkillUploadFIFOFirstSignal(t *testing.T) {
 				skill := filepath.Join(root, "skill")
 				require.NoError(t, os.Mkdir(skill, 0o700))
 				require.NoError(t, os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("synthetic"), 0o600))
-				server, requests := skillUploadServer(t, http.StatusOK, skillUploadResponse)
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					requests.Add(1)
+					w.WriteHeader(http.StatusBadRequest)
+				}))
+				defer server.Close()
 				binary, err := os.Executable()
 				require.NoError(t, err)
 				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -90,7 +97,7 @@ func TestMainSkillUploadFIFOFirstSignal(t *testing.T) {
 					t.Fatal("first signal did not stop a blocked Skills input")
 				}
 				require.Empty(t, stdout.String())
-				require.Empty(t, requests())
+				require.Zero(t, requests.Load(), "no HTTP handler may start before FIFO input opens")
 			})
 		}
 	})
