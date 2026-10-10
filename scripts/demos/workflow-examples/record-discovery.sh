@@ -83,12 +83,19 @@ for demo_profile in dark light no-color; do
       demo_role_label=BEFORE
       if [ "$demo_role" = after ]; then demo_role_label=AFTER; fi
       mkdir -p "$demo_runtime/$demo_profile-$demo_role-home"
+      demo_registration=""
+      if [ -n "${DEMO_CAPTURE_REGISTRY:-}" ]; then
+        # Record the launch intent before asciinema can create a separate PTY group.
+        test ! -e "$DEMO_CAPTURE_REGISTRY/closed"
+        demo_registration="$DEMO_CAPTURE_REGISTRY/$demo_profile-$demo_scene"
+        mkdir "$demo_registration"
+      fi
       demo_capture_scene "$demo_scene" "$demo_expected" "$demo_runtime/$demo_role" '://offline-discovery-demo' \
         "$demo_role_label: $demo_mode ($demo_profile)" "HOME=$demo_runtime/$demo_profile-$demo_role-home" \
         "DEMO_DISCOVERY_MODE=$demo_mode" "DEMO_ROLE=$demo_role" "DEMO_ROLE_LABEL=$demo_role_label" \
         "DEMO_STATUS_FILE=$demo_output/$demo_scene.status" "DEMO_RECOVERY_FILE=$discovery_output/recovery-command.txt" \
         GOMAXPROCS=2 OPENAI_MTLS_CLIENT_CERT_FILE=/missing-demo-cert OPENAI_MTLS_CLIENT_KEY_FILE=/missing-demo-key \
-        "${demo_theme_environment[@]}"
+        "${demo_theme_environment[@]}" "DEMO_CAPTURE_REGISTRATION=$demo_registration"
     done
   done
   demo_assemble_capture 300 before after before-recovery after-recovery

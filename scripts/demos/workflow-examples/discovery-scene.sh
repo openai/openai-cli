@@ -1,5 +1,24 @@
 #!/bin/bash
 set -euo pipefail
+if [ -n "${DEMO_CAPTURE_REGISTRATION:-}" ]; then
+  # The bounded supervisor owns this private directory and acknowledges this exact group.
+  demo_group="$(/bin/ps -o pgid= -p "$$")"
+  demo_group="${demo_group//[[:space:]]/}"
+  [[ "$demo_group" =~ ^[1-9][0-9]*$ ]] || exit 95
+  printf '%s %s\n' "$$" "$demo_group" > "$DEMO_CAPTURE_REGISTRATION/request.pending"
+  mv "$DEMO_CAPTURE_REGISTRATION/request.pending" "$DEMO_CAPTURE_REGISTRATION/request"
+  demo_registered=0
+  for ((demo_attempt=0; demo_attempt<100; demo_attempt++)); do
+    test ! -e "$DEMO_CAPTURE_REGISTRATION/../closed" || exit 95
+    if [ -f "$DEMO_CAPTURE_REGISTRATION/ack" ]; then
+      cmp -s "$DEMO_CAPTURE_REGISTRATION/request" "$DEMO_CAPTURE_REGISTRATION/ack" || exit 95
+      demo_registered=1
+      break
+    fi
+    sleep 0.05
+  done
+  test "$demo_registered" -eq 1 || exit 95
+fi
 test -t 0 && test -t 1 && test -t 2 || exit 99
 unset OPENAI_API_KEY OPENAI_ADMIN_KEY OPENAI_WEBHOOK_SECRET
 cd "$HOME"

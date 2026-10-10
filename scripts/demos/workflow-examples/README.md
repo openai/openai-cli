@@ -122,4 +122,7 @@ Each profile directory contains its comparison GIF and labeled screenshots.
 The top-level `validation.json` records the checks.
 Inspect all media before publication, including narrow recovery scrolling.
 Release the PTY slot immediately after all recorder processes finish.
+An optional supervisor registry records each launch intent before the PTY starts.
+Each scene registers its process group and waits for acknowledgment before executing CLI commands.
+The supervisor must retain unresolved registrations instead of claiming complete cleanup.
 The screenshots remain terminal replays, without native graphical terminal or live API claims.
