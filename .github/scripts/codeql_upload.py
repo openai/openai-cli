@@ -18,6 +18,8 @@ WORKFLOW = ".github/workflows/codeql.yml"
 CATEGORIES = {
     "actions": WORKFLOW + ":analyze/build-mode:none/language:actions",
     "go": WORKFLOW + ":analyze/build-mode:autobuild/language:go",
+    "javascript-typescript": WORKFLOW + ":analyze/build-mode:none/language:javascript-typescript",
+    "python": WORKFLOW + ":analyze/build-mode:none/language:python",
 }
 SHA = re.compile(r"[0-9a-f]{40}")
 
@@ -212,7 +214,7 @@ def publish(get, repository, repository_id, source, sleep=time.sleep):
 
 
 def report(get, repository, repository_id, source, sleep=time.sleep):
-    """Required statuses stay pending until both SARIF uploads are processed."""
+    """Required statuses stay pending until all SARIF uploads are processed."""
     run, target = destination(get, repository, repository_id, source)
 
     def status(state):
