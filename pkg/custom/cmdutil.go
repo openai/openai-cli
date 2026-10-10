@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"unicode/utf8"
 
+	"github.com/openai/openai-cli/internal/debugmiddleware"
 	"github.com/openai/openai-cli/internal/jsonview"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/pkg/transformers"
@@ -265,6 +266,7 @@ func isOutputBrokenPipe(err error) bool {
 //
 // Takes in a stdout reference so we can test this function without overriding os.Stdout in tests.
 func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (message string, err error) {
+	finishTiming := debugmiddleware.DeferResponseBodyTiming(response)
 	body := &downloadResponseBody{ReadCloser: response.Body}
 	copyResponse := *response
 	copyResponse.Body = body
@@ -284,6 +286,7 @@ func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile stri
 				err = errors.Join(err, closeErr)
 			}
 		}
+		finishTiming()
 		if err != nil {
 			message = ""
 		}
