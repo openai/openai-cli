@@ -66,6 +66,32 @@ func TestExamplesFormatsPreserveScript(t *testing.T) {
 	}
 }
 
+func TestExamplesIndexStaysConcise(t *testing.T) {
+	var want string
+	for _, format := range []string{"auto", "text"} {
+		var out strings.Builder
+		if err := examplesTestRoot(&out).Run(t.Context(), []string{"openai", "--format", format, "examples"}); err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+		if len(lines) != 6 || !strings.HasPrefix(lines[0], "#") || !strings.HasPrefix(lines[4], "#") {
+			t.Fatalf("expected six lines with commented guidance: %q", out.String())
+		}
+		for index, topic := range []string{"files", "audio", "models"} {
+			if !strings.HasPrefix(lines[index+1], "openai examples "+topic+" ") {
+				t.Errorf("index omitted %s: %q", topic, lines[index+1])
+			}
+		}
+		if lines[5] != "openai examples --help" || strings.ContainsRune(out.String(), '\x1b') {
+			t.Fatalf("index lost complete help or emitted controls: %q", out.String())
+		}
+		if want != "" && out.String() != want {
+			t.Fatal("automatic and text index output differ")
+		}
+		want = out.String()
+	}
+}
+
 func TestExamplesRejectUnsupportedInput(t *testing.T) {
 	for _, args := range [][]string{
 		{"examples", "private-topic\x1b"}, {"examples", "files", "private-path"},
@@ -80,6 +106,8 @@ func TestExamplesRejectUnsupportedInput(t *testing.T) {
 		err := examplesTestRoot(&out).Run(t.Context(), append([]string{"openai"}, args...))
 		if err == nil || out.Len() != 0 || strings.Contains(err.Error(), "private-") {
 			t.Errorf("args %q: output=%q, error=%v", args, out.String(), err)
+		} else if strings.Count(err.Error(), "\nTry: ") != 1 {
+			t.Errorf("args %q: missing one recovery command: %v", args, err)
 		}
 	}
 }

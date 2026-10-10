@@ -73,3 +73,53 @@ Check readable command rows, complete text, timing, and sensitive information.
 Label these assets as terminal replays.
 They do not prove graphical terminal, font, Windows, or Linux behavior.
 Keep media outside Git and attach reviewed assets to the PR.
+
+## Discovery and recovery follow-up
+
+`record-discovery.sh` compares the published draft with its discovery follow-up.
+Its baseline is draft `e0e2c883800bae202151061778be6c598d0a1341`.
+The retained baseline binary uses identical runtime source `664118a4021c4cba4b7b56ad6366eb12627c9107`.
+The original main baseline `e6893982` belongs to the separate recipe demo above.
+This recorder preserves the original demo sources and media.
+
+Reserve a bounded PTY slot of at most five minutes before execution.
+Provide a new output directory and independently verified source manifest.
+Use the candidate's actual binary build commit as `CANDIDATE_FULL_COMMIT`.
+
+```sh
+export DEMO_BEFORE_SHA256=65878893f32bb115a01ea29a58d18019dafc1edd115ce10018eb360a5c817bed
+export DEMO_AFTER_SHA256=CANDIDATE_BINARY_SHA256
+export DEMO_SOURCE_MANIFEST=/absolute/path/to/follow-up-source-manifest.txt
+PATH="$HOME/.cache/cli-terminal-replay/bin:$PATH" \
+  bash scripts/demos/workflow-examples/record-discovery.sh --run-authorized-pty-slot \
+  /absolute/path/to/prior-draft/openai \
+  /absolute/path/to/candidate/openai \
+  664118a4021c4cba4b7b56ad6366eb12627c9107 \
+  CANDIDATE_FULL_COMMIT \
+  /absolute/path/outside/repository/discovery-follow-up-demo
+```
+
+The fixed twelve scenes cover dark and light 80×24 viewports, plus a `NO_COLOR` 40×24 viewport.
+Each profile compares bare `openai examples` and an unsupported YAML format.
+The candidate scene copies its `Try:` command and prints the Files recipe.
+Recording pauses one second after candidate failure guidance, before recovery scrolls the narrow viewport.
+This pause belongs to the recorder; the CLI adds no delay.
+The recorder copies that command from a separate diagnostic capture of the same immutable binary.
+It verifies that the PTY prints identical guidance before validating the recovered recipe bytes.
+It allows only `openai examples files --format text`; it never evaluates the printed API recipe.
+Each failed command retains status 1, even when the subsequent recovery succeeds.
+
+The baseline prints all 64 discovery lines directly into the PTY.
+Its final screenshot shows the actual scrolled viewport, without filtering or cropping.
+Complete casts and transcripts retain the earlier lines.
+The candidate prints six discovery lines.
+Each scene ends with a Before or After label that remains visible after scrolling.
+
+All commands use empty homes, no credentials, and malformed remote configuration.
+The recorder preserves exact stdout, stderr, command statuses, source hashes, and provenance.
+It checks unchanged Files text and JSON output against the prior draft.
+Each profile directory contains its comparison GIF and labeled screenshots.
+The top-level `validation.json` records the checks.
+Inspect all media before publication, including narrow recovery scrolling.
+Release the PTY slot immediately after all recorder processes finish.
+The screenshots remain terminal replays, without native graphical terminal or live API claims.

@@ -38,13 +38,18 @@ func registerExamplesCommands(root *cli.Command) {
 				return err
 			}
 			if format == "json" {
-				return &localUtilityError{message: "Choose an examples topic: files, audio, or models."}
+				return examplesRecoveryError(command, "Examples JSON requires a topic.", "examples files --format json")
 			}
-			// The help printer cannot return sink errors. Render first so this
-			// action preserves cancellation and the final write failure.
-			var help strings.Builder
-			cli.HelpPrinter(&help, command.CustomHelpTemplate, command)
-			_, err = io.WriteString(outputWriter{ctx: ctx, out: command.Root().Writer}, help.String())
+			invocation := errorHelpInvocation(command.Root())
+			index := strings.Join([]string{
+				"# Choose a recipe to print. These commands stay offline.",
+				invocation + " examples files   # upload, metadata, download",
+				invocation + " examples audio   # transcription, translation, subtitles",
+				invocation + " examples models  # model IDs for scripts",
+				"# Show complete help and output options.",
+				invocation + " examples --help",
+			}, "\n") + "\n"
+			_, err = io.WriteString(outputWriter{ctx: ctx, out: command.Root().Writer}, index)
 			return examplesOutputFailure(err)
 		},
 	}
@@ -107,17 +112,27 @@ func examplesOutputFailure(err error) error {
 
 func examplesOutputFormat(command *cli.Command) (string, error) {
 	if command.Args().Present() {
-		return "", &localUtilityError{message: "Choose one examples topic: files, audio, or models. Topics take no positional arguments."}
+		return "", examplesRecoveryError(command, "Choose one examples topic with no extra arguments.", "examples")
 	}
 	root := command.Root()
+	path := "examples"
+	switch command.Name {
+	case "files", "audio", "models":
+		path += " " + command.Name
+	}
 	if root.IsSet("transform") || root.IsSet("raw-output") {
-		return "", &localUtilityError{message: "Examples do not support --transform or --raw-output. Use --format text or json."}
+		return "", examplesRecoveryError(command, "Examples cannot apply --transform or --raw-output.", path+" --format text")
 	}
 	format := strings.ToLower(root.String("format"))
 	switch format {
 	case "auto", "text", "json":
 		return format, nil
 	default:
-		return "", &localUtilityError{message: "Examples support --format auto, text, or json."}
+		return "", examplesRecoveryError(command, "Examples support --format auto, text, or json.", path+" --format text")
 	}
+}
+
+// Recovery only prints local guidance; it never replays arguments or API work.
+func examplesRecoveryError(command *cli.Command, message, path string) error {
+	return &localUtilityError{message: message + "\nTry: " + errorHelpInvocation(command.Root()) + " " + path}
 }

@@ -121,6 +121,9 @@ Replace `file-example` with the returned file ID. Upload takes a plain path, wit
 `create`, `retrieve`, `content`, and their existing flags remain available.
 See [working with files](docs/files.md) for literal filenames, output formats, and script examples.
 
+Run `openai examples` to find offline Files, audio, and model recipes.
+See [runnable workflow examples](docs/examples.md) for prerequisites, output formats, and recovery steps.
+
 `openai images generate --prompt "A tiny orange robot"` saves images to
 `~/Downloads/gpt-images/` and prints their paths, including in pipes. The CLI
 uses `gpt-image-2.5-sunburst` when saving without an explicit model or legacy

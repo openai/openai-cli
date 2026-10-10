@@ -330,6 +330,7 @@ const examplesFakeCredentials = "export OPENAI_API_KEY='sk-synthetic-examples-te
 
 func testExamplesHelpCommands(t *testing.T, shell nativeShell, binary string) {
 	t.Helper()
+	server, requests := localUtilitiesRequestTrap(t)
 	for _, otherCLI := range []bool{false, true} {
 		name := "empty PATH"
 		if otherCLI {
@@ -364,8 +365,105 @@ func testExamplesHelpCommands(t *testing.T, shell nativeShell, binary string) {
 					require.NotContains(t, copied.stdout, "wrong executable")
 				})
 			}
+			t.Run("copy index commands", func(t *testing.T) {
+				var want string
+				for _, flags := range []string{"", " --format auto", " --format text", " --quiet", " --verbose"} {
+					got := runNativeShell(t, shell, work, home, server.URL, invocation+" examples"+flags)
+					require.Zero(t, got.code, "%s", got.stderr)
+					if flags != " --verbose" {
+						require.Empty(t, got.stderr)
+					}
+					if want == "" {
+						want = got.stdout
+					}
+					require.Equal(t, want, got.stdout, "index flags must not change command bytes")
+				}
+				lines := strings.Split(strings.TrimSuffix(want, "\n"), "\n")
+				require.Len(t, lines, 6, "discovery must stay concise")
+				var commands []string
+				for _, line := range lines {
+					if !strings.HasPrefix(line, "#") {
+						commands = append(commands, line)
+					}
+				}
+				require.Len(t, commands, 4)
+				for index, topic := range []string{"files", "audio", "models", "--help"} {
+					command, _, _ := strings.Cut(commands[index], " #")
+					require.Equal(t, invocation+" examples "+topic, strings.TrimSpace(command))
+					// Execute the complete displayed line, including its inline comment.
+					copied := runNativeShell(t, shell, work, home, server.URL, commands[index])
+					require.Zero(t, copied.code, "%s", copied.stderr)
+					require.Empty(t, copied.stderr)
+					if topic == "--help" {
+						require.Contains(t, copied.stdout, "--format")
+					} else {
+						require.True(t, strings.HasPrefix(copied.stdout, "# POSIX shell."))
+					}
+					require.NotContains(t, copied.stdout, "wrong executable")
+				}
+			})
+			for _, test := range []struct {
+				name, recovery, topic string
+				args                  []string
+				json                  bool
+			}{
+				{"unknown topic", "examples", "", []string{"examples", "synthetic-private-topic'$(touch sentinel)\n\x1b[31m"}, false},
+				{"extra argument", "examples", "", []string{"examples", "files", "synthetic-private-path'$(touch sentinel)"}, false},
+				{"bare JSON", "examples files --format json", "files", []string{"examples", "--format", "json"}, true},
+				{"unsupported format", "examples models --format text", "models", []string{"examples", "models", "--format", "yaml"}, false},
+				{"transform", "examples files --format text", "files", []string{"examples", "files", "--transform", "synthetic-private-value'$(touch sentinel)"}, false},
+				{"empty transform", "examples files --format text", "files", []string{"examples", "files", "--transform="}, false},
+				{"raw output", "examples audio --format text", "audio", []string{"examples", "audio", "--raw-output"}, false},
+				{"raw output false", "examples audio --format text", "audio", []string{"examples", "audio", "--raw-output=false"}, false},
+			} {
+				for _, format := range []string{"text", "json"} {
+					t.Run("copy recovery/"+test.name+"/"+format, func(t *testing.T) {
+						command := invocation + " --format-error " + format
+						for _, arg := range test.args {
+							command += " " + examplesShellQuote(arg)
+						}
+						got := runNativeShell(t, shell, work, home, server.URL, command)
+						require.NotZero(t, got.code)
+						require.Empty(t, got.stdout)
+						require.NotContains(t, got.stderr, "synthetic-private-")
+						require.NotContains(t, got.stderr, "\x1b")
+						message := got.stderr
+						if format == "json" {
+							payload := decodeMainStructuredError(t, format, got.stderr)
+							require.NotContains(t, payload, "status_code")
+							message, _ = payload["message"].(string)
+						}
+						require.Equal(t, 1, strings.Count(message, "\nTry: "), "recovery must contain one command")
+						_, recovery, found := strings.Cut(message, "\nTry: ")
+						require.True(t, found)
+						recovery = strings.TrimSpace(recovery)
+						require.Equal(t, invocation+" "+test.recovery, recovery, "recovery must not replay rejected input")
+						copied := runNativeShell(t, shell, work, home, server.URL, recovery)
+						require.Zero(t, copied.code, "%s", copied.stderr)
+						require.Empty(t, copied.stderr)
+						require.NotContains(t, copied.stdout, "wrong executable")
+						if test.json {
+							var result map[string]string
+							require.NoError(t, json.Unmarshal([]byte(copied.stdout), &result))
+							require.Equal(t, test.topic, result["topic"])
+							require.Equal(t, "sh", result["shell"])
+							require.True(t, strings.HasPrefix(result["script"], "# POSIX shell."))
+						} else if test.topic == "" {
+							require.Contains(t, copied.stdout, "# Choose a recipe to print.")
+						} else {
+							require.True(t, strings.HasPrefix(copied.stdout, "# POSIX shell."))
+						}
+					})
+				}
+			}
+			for _, directory := range []string{work, home} {
+				entries, err := os.ReadDir(directory)
+				require.NoError(t, err)
+				require.Empty(t, entries, "discovery and recovery must not create files")
+			}
 		})
 	}
+	require.Zero(t, requests.Load(), "discovery and recovery must not call the API")
 }
 
 func examplesPrintedScript(t *testing.T, shell nativeShell, work, home, topic string) string {
