@@ -14,6 +14,7 @@ func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 	configureGlobalFlagDescriptions(root)
 	configureHelpGroups(root)
 	configureImageHelpContent(root)
+	configureFineTuningHelpContent(root)
 	return clihelp.Configure(root, args)
 }
 
