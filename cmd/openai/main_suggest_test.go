@@ -12,12 +12,12 @@ func TestMainUnknownCommandSuggestions(t *testing.T) {
 		args   []string
 		stderr string
 	}{
-		{[]string{"fine-tuning:alpha:graders", "rn"}, "Unknown help topic. Did you mean 'openai fine-tuning:alpha:graders run'?\n"},
-		{[]string{"fine-tuning:alpha:graders", "rnu"}, "Unknown help topic. Did you mean 'openai fine-tuning:alpha:graders run'?\n"},
-		{[]string{"responses", "creat"}, "Unknown help topic. Did you mean 'openai responses create'?\n"},
-		{[]string{"RESPONSES"}, "Unknown help topic. Did you mean 'openai responses'?\n"},
-		{[]string{"totallybogus"}, "Unknown help topic. Run openai help to see commands.\n"},
-		{[]string{"responses", "zzzzz"}, "Unknown help topic. Run openai help responses to see commands.\n"},
+		{[]string{"fine-tuning:alpha:graders", "rn"}, "Unknown command. Did you mean: openai fine-tuning:alpha:graders run?\n"},
+		{[]string{"fine-tuning:alpha:graders", "rnu"}, "Unknown command. Did you mean: openai fine-tuning:alpha:graders run?\n"},
+		{[]string{"responses", "creat"}, "Unknown command. Did you mean: openai responses create?\n"},
+		{[]string{"RESPONSES"}, "Unknown command. Did you mean: openai responses?\n"},
+		{[]string{"totallybogus"}, "Unknown command. Run openai help to see commands.\n"},
+		{[]string{"responses", "zzzzz"}, "Unknown command. Run openai help responses to see commands.\n"},
 	} {
 		for _, flags := range [][]string{nil, {"--format-error", "json"}, {"--format", "json"}} {
 			t.Run(strings.Join(append(append([]string{}, tc.args...), flags...), "/"), func(t *testing.T) {

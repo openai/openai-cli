@@ -25,6 +25,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var typeError *json.UnmarshalTypeError
 	var syntaxError *json.SyntaxError
 	var pathError *os.PathError
+	var inputFailure *inputFileError
 	var pagerFailure *pagerError
 	var imageFailure *imageSavingError
 	var streamFailure *streamResultError
@@ -69,8 +70,11 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	case errors.As(failure, &voiceTypeFailure):
 		return voiceTypeFailure.Error()
 	case errors.As(failure, &helpTopicFailure):
-		return unknownCommandAt(helpTopicFailure.Parent, helpTopicFailure.Topic)
-	case errors.As(failure, &pathError):
+		return commandRecoveryAt(helpTopicFailure.Parent, helpTopicFailure.Topic, helpTopicFailure.Remaining, true)
+	case errors.As(failure, &inputFailure), errors.As(failure, &pathError):
+		if inputFailure != nil {
+			return inputFileErrorMessage(root, failure)
+		}
 		switch {
 		case errors.Is(pathError, os.ErrNotExist):
 			return "A local file could not be found. Check your file arguments and @file references."
@@ -205,12 +209,15 @@ func knownLocalError(command *cli.Command, message string) string {
 	case strings.HasPrefix(message, "flag provided but not defined: -"):
 		name := strings.TrimPrefix(message, "flag provided but not defined: -")
 		message := "An option is not recognized."
+		if flag := unavailableParserFlag(command, name); flag != "" {
+			message = "The " + flag + " option is not available for this command."
+		}
 		if suggestion := suggestParserFlag(command, name); suggestion != "" {
 			message += " Did you mean " + suggestion + "?"
 		}
 		return parserErrorGuidance(command, message)
 	case strings.HasPrefix(message, "No help topic for '"):
-		return unknownCommandErrorMessage(command)
+		return commandRecoveryMessage(command)
 	case strings.HasPrefix(message, "Unknown help topic "):
 		return "Unknown help topic. Run openai help to see commands."
 	case strings.HasPrefix(message, "Failed to parse piped data as YAML/JSON:\n"):
@@ -296,57 +303,6 @@ func suggestParserFlag(command *cli.Command, provided string) string {
 		}
 	}
 	return suggestion
-}
-
-func unknownCommandErrorMessage(command *cli.Command) string {
-	// Reuse the matcher with parsed arguments, never a suggestion copied from
-	// the error string. It emits only names from the local command declarations.
-	if command != nil {
-		command = command.Root()
-	}
-	for command != nil && command.Args() != nil && command.Args().Present() {
-		name := command.Args().First()
-		if next := command.Command(name); next != nil {
-			command = next
-			continue
-		}
-		return unknownCommandAt(command, name)
-	}
-	return "Unknown help topic. Run openai help to see commands."
-}
-
-func unknownCommandAt(command *cli.Command, name string) string {
-	if command == nil {
-		return "Unknown help topic. Run openai help to see commands."
-	}
-	if command.Suggest {
-		candidates := clihelp.VisibleCommands(command)
-		for _, child := range command.Commands {
-			compatibility, _ := child.Metadata["command-compatibility-alias"].(bool)
-			if child.Hidden && compatibility && (strings.Contains(name, ":") || withinOneEdit(strings.ToLower(name), strings.ToLower(child.Name))) {
-				candidates = append(candidates, child)
-			}
-		}
-		if suggestion := suggestCommand(candidates, name); suggestion != "" {
-			prefix := "Did you mean '" + command.Root().Name
-			if strings.HasPrefix(suggestion, prefix+" ") {
-				suggestion = "Did you mean '" + errorHelpInvocation(command.Root()) + strings.TrimPrefix(suggestion, prefix)
-			}
-			return "Unknown help topic. " + suggestion
-		}
-	}
-	var path []string
-	for _, ancestor := range command.Lineage() {
-		if ancestor != command.Root() {
-			path = append(path, ancestor.Name)
-		}
-	}
-	slices.Reverse(path)
-	invocation := errorHelpInvocation(command.Root()) + " help"
-	if len(path) > 0 {
-		invocation += " " + strings.Join(path, " ")
-	}
-	return "Unknown help topic. Run " + invocation + " to see commands."
 }
 
 func afterQuotedValue(message, prefix string) (string, bool) {

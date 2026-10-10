@@ -137,14 +137,27 @@ func withinOneEdit(a, b string) bool {
 // empty string when no command is sufficiently similar; the upstream urfave/cli
 // error formatter omits the suggestion clause in that case.
 func suggestCommand(commands []*cli.Command, provided string) string {
+	target := suggestCommandTarget(commands, provided)
+	if target == nil {
+		return ""
+	}
+	var parts []string
+	for _, command := range target.Lineage() {
+		parts = append(parts, command.Name)
+	}
+	slices.Reverse(parts)
+	return fmt.Sprintf("Did you mean '%s'?", strings.Join(parts, " "))
+}
+
+func suggestCommandTarget(commands []*cli.Command, provided string) *cli.Command {
 	provided = strings.ToLower(provided)
 	if provided == "" {
-		return ""
+		return nil
 	}
 	// An exact 7/10 jaro score computes as 0.7000000000000001, so allow for
 	// float error before counting the threshold as passed.
 	distance := suggestionThreshold + 1e-9
-	var lineage []*cli.Command
+	var target *cli.Command
 	for _, command := range commands {
 		for _, name := range command.Names() {
 			name = strings.ToLower(name)
@@ -154,18 +167,9 @@ func suggestCommand(commands []*cli.Command, provided string) string {
 			}
 			if newDistance > distance {
 				distance = newDistance
-				lineage = command.Lineage()
+				target = command
 			}
 		}
 	}
-	if lineage == nil {
-		return ""
-	}
-
-	var parts []string
-	for _, command := range lineage {
-		parts = append(parts, command.Name)
-	}
-	slices.Reverse(parts)
-	return fmt.Sprintf("Did you mean '%s'?", strings.Join(parts, " "))
+	return target
 }

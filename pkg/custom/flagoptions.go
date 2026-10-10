@@ -89,12 +89,12 @@ func embedFiles(obj any, embedStyle FileEmbedStyle, stdin *onceStdinReader) (any
 	return embedFilesForOS(obj, embedStyle, stdin, runtime.GOOS)
 }
 
-func embedFilesForOS(obj any, embedStyle FileEmbedStyle, stdin *onceStdinReader, goos string) (any, error) {
+func embedFilesForOS(obj any, embedStyle FileEmbedStyle, stdin *onceStdinReader, goos string, sources ...fileInputSource) (any, error) {
 	if obj == nil {
 		return obj, nil
 	}
 	v := reflect.ValueOf(obj)
-	result, err := embedFilesValue(v, embedStyle, stdin, goos)
+	result, err := embedFilesValue(v, embedStyle, stdin, goos, sources...)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +102,11 @@ func embedFilesForOS(obj any, embedStyle FileEmbedStyle, stdin *onceStdinReader,
 }
 
 // Replace "@file.txt" with the file's contents inside a value
-func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdinReader, goos string) (reflect.Value, error) {
+func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdinReader, goos string, sources ...fileInputSource) (reflect.Value, error) {
+	var source fileInputSource
+	if len(sources) != 0 {
+		source = sources[0]
+	}
 	// Unwrap interface values to get the concrete type
 	if v.Kind() == reflect.Interface {
 		if v.IsNil() {
@@ -128,7 +132,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 		for iter.Next() {
 			key := iter.Key()
 			val := iter.Value()
-			newVal, err := embedFilesValue(val, embedStyle, stdin, goos)
+			newVal, err := embedFilesValue(val, embedStyle, stdin, goos, source.child(key.String()))
 			if err != nil {
 				return reflect.Value{}, errors.Join(err, closeFileUploads(result.Interface()))
 			}
@@ -143,7 +147,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 		// Use `[]any` to allow for types to change when embedding files
 		result := reflect.MakeSlice(reflect.TypeOf([]any{}), v.Len(), v.Len())
 		for i := 0; i < v.Len(); i++ {
-			newVal, err := embedFilesValue(v.Index(i), embedStyle, stdin, goos)
+			newVal, err := embedFilesValue(v.Index(i), embedStyle, stdin, goos, source)
 			if err != nil {
 				return reflect.Value{}, errors.Join(err, closeFileUploads(result.Slice(0, i).Interface()))
 			}
@@ -172,7 +176,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 					}
 					return reflect.ValueOf(io.NopCloser(r)), nil
 				}
-				upload, err := openFileUpload(s)
+				upload, err := source.openUpload(s)
 				if err != nil {
 					return v, err
 				}
@@ -185,7 +189,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 				}
 				return reflect.ValueOf(string(content)), nil
 			}
-			content, err := os.ReadFile(s)
+			content, err := source.readFile(s)
 			if err != nil {
 				return v, err
 			}
@@ -209,7 +213,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 					}
 					return reflect.ValueOf(base64.StdEncoding.EncodeToString(content)), nil
 				}
-				content, err := os.ReadFile(filename)
+				content, err := source.readFile(filename)
 				if err != nil {
 					return v, err
 				}
@@ -225,7 +229,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 					}
 					return reflect.ValueOf(string(content)), nil
 				}
-				content, err := os.ReadFile(filename)
+				content, err := source.readFile(filename)
 				if err != nil {
 					return v, err
 				}
@@ -241,7 +245,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 					}
 					return reflect.ValueOf(base64.StdEncoding.EncodeToString(content)), nil
 				}
-				content, err := os.ReadFile(filename)
+				content, err := source.readFile(filename)
 				if err != nil {
 					// If the string is "@username", it's probably supposed to be a
 					// string literal and not a file reference. However, if the
@@ -286,7 +290,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 					return reflect.ValueOf(io.NopCloser(r)), nil
 				}
 
-				upload, err := openFileUpload(filename)
+				upload, err := source.openUpload(filename)
 				if err != nil {
 					if !expectsFile && errors.Is(err, fs.ErrNotExist) {
 						// For strings that start with "@" and don't look like a filename, return the string
@@ -557,7 +561,7 @@ func FlagOptions(
 		embedStyle = EmbedIOReader
 	}
 
-	if embedded, err := embedFiles(requestContents.Body, embedStyle, &stdinReader); err != nil {
+	if embedded, err := embedRequestFiles(cmd, requestContents.Body, "body", embedStyle, &stdinReader); err != nil {
 		return nil, err
 	} else {
 		requestContents.Body = embedded
@@ -566,12 +570,12 @@ func FlagOptions(
 		}
 	}
 
-	if headersWithFiles, err := embedFiles(requestContents.Headers, EmbedText, &stdinReader); err != nil {
+	if headersWithFiles, err := embedRequestFiles(cmd, requestContents.Headers, "header", EmbedText, &stdinReader); err != nil {
 		return nil, err
 	} else {
 		requestContents.Headers = headersWithFiles.(map[string]any)
 	}
-	if queriesWithFiles, err := embedFiles(requestContents.Queries, EmbedText, &stdinReader); err != nil {
+	if queriesWithFiles, err := embedRequestFiles(cmd, requestContents.Queries, "query", EmbedText, &stdinReader); err != nil {
 		return nil, err
 	} else {
 		requestContents.Queries = queriesWithFiles.(map[string]any)
