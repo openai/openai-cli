@@ -120,11 +120,11 @@ func TestWelcomeWordmarkFallsBackForLongVersions(t *testing.T) {
 	}
 }
 
-func TestWelcomeWordmarkMetadataUsesAvailableWidth(t *testing.T) {
+func TestWelcomeWordmarkMetadataFitsBeforePadding(t *testing.T) {
 	for _, version := range []string{"v123456789012345", "v界界界界界界界x"} {
 		got := renderWelcome(version, 56, colorprofile.NoTTY, true)
 		lines := strings.Split(strings.TrimSuffix(got, "\n\n"), "\n")
-		if len(lines) != 6 || !strings.Contains(lines[1], welcomeTitle) || !strings.HasSuffix(lines[2], version+"  │") {
+		if len(lines) != 6 || !strings.Contains(lines[1], welcomeTitle) || !strings.HasSuffix(lines[2], version+"    │") {
 			t.Fatalf("complete 16-cell version must fit beside the wordmark: %q", got)
 		}
 		for _, line := range lines {

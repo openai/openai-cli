@@ -73,14 +73,19 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 	if width < 29 || required+4 > width {
 		return ""
 	}
-	focus, muted := "#3159BC", "#657087"
+	focus, muted, middle, depth := "#3159BC", "#657087", "#466BC6", "#6785CD"
 	if dark {
-		focus, muted = "#8AA8FF", "#A4ACC2"
+		focus, muted, middle, depth = "#8AA8FF", "#A4ACC2", "#7192E6", "#5675BC"
+	}
+	// Preserve the existing theme. Limit depth to terminals with enough colors.
+	if profile == colorprofile.ANSI {
+		middle, depth = focus, focus
 	}
 	heading := lipgloss.NewStyle().Bold(true)
 	note := lipgloss.NewStyle().Foreground(lipgloss.Color(muted))
-	// Use the existing blue accent for the wordmark; keep metadata neutral.
-	wordmark := lipgloss.NewStyle().Foreground(lipgloss.Color(focus))
+	blue := lipgloss.NewStyle().Foreground(lipgloss.Color(focus))
+	mid := lipgloss.NewStyle().Foreground(lipgloss.Color(middle))
+	back := lipgloss.NewStyle().Foreground(lipgloss.Color(depth))
 	padding := 1
 	if required+6 <= width {
 		padding = 2
@@ -101,10 +106,11 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 		padding, cardWidth = 2, 56
 		// Three terminal-cell rows form the wordmark. Keep literal identity and
 		// version alongside it so the art never carries essential information.
-		content = wordmark.Render("▄▀▀▄ █▀▀▄ █▀▀▀ █▄  █ ▄▀▀▄ ▀█▀") + "     " + heading.Render(welcomeTitle) + "\n" +
-			wordmark.Render("█  █ █▄▄▀ █▀▀  █ █ █ █▄▄█  █ ") + "     " + note.Render(version) + "\n" +
-			wordmark.Render("▀▄▄▀ █    █▄▄▄ █  ▀█ █  █ ▄█▄") + "\n" +
+		content = blue.Render("▄▀▀▄ █▀▀▄ █▀▀▀ █▄  █ ▄▀▀▄ ▀█▀") + "   " + heading.Render(welcomeTitle) + "\n" +
+			mid.Render("█  █ █▄▄▀ █▀▀  █ █ █ █▄▄█  █ ") + "   " + note.Render(version) + "\n" +
+			back.Render("▀▄▄▀ █    █▄▄▄ █  ▀█ █  █ ▄█▄") + "\n" +
 			note.Render("The OpenAI API in your terminal.")
+		content = addWelcomeEightbit(content, cardWidth-2-2*padding, profile, dark)
 	}
 	frame := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color(focus)).Padding(0, padding).Width(cardWidth)
 	card := frame.Render(content)
