@@ -21,10 +21,10 @@ def main():
 
             def do_GET(self):
                 try:
-                    if self.path == "/fine_tuning/jobs?limit=20":
+                    if self.path == "/fine_tuning/jobs":
                         status = 200
                         body = {"object": "list", "data": [], "has_more": False}
-                    elif self.path == "/denied/fine_tuning/jobs?limit=20":
+                    elif self.path == "/denied/fine_tuning/jobs":
                         status = 403
                         body = {"error": {"message": "Synthetic project access denied.",
                                           "type": "invalid_request_error", "code": "permission_denied"}}

@@ -42,7 +42,8 @@ assert [item["status"] for item in requests] == [200, 403, 200, 403], requests
 for scene in ("before", "after"):
     cast = [json.loads(line) for line in (root / (scene + ".cast")).read_text().splitlines()]
     text = "".join(item[2] for item in cast[1:] if item[1] == "o")
-    assert "Synthetic project access denied." in text, text
+    assert "HTTP 403: Forbidden." in text, text
+    assert "Check project access to this resource." in text, text
     assert text.count("Training eligibility was not checked.") == (1 if scene == "after" else 0), text
     assert ("No results." if scene == "before" else "No fine-tuning jobs returned.") in text, text
 (root / "validation.txt").write_text("PASS: identical fixtures; successful empty result; denied request exits 1 without empty wording.\n")
