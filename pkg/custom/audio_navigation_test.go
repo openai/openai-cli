@@ -458,3 +458,24 @@ func TestAudioNavigationSubmissionRemainsExplicit(t *testing.T) {
 		})
 	}
 }
+
+func TestAudioNavigationTextareaPaddingControl(t *testing.T) {
+	// Control for the pinned dependency: bypass audio Update and its workaround.
+	editor := textarea.New()
+	editor.ShowLineNumbers = false
+	editor.Prompt = ""
+	editor.SetWidth(32)
+	editor.SetHeight(1)
+	editor.SetValue(strings.Repeat("界🙂", 24))
+	editor.Focus()
+	require.Equal(t, 3, editor.LineInfo().RowOffset)
+	editor, _ = editor.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	require.Equal(t, 2, editor.LineInfo().RowOffset)
+	for range 2 {
+		editor, _ = editor.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		require.Equal(t, 2, editor.LineInfo().RowOffset, "dependency control must reproduce the unreachable padding row")
+	}
+	editor, _ = editor.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	require.Equal(t, 3, editor.LineInfo().RowOffset)
+	require.Equal(t, 0, editor.LineInfo().RowOffset-editor.ScrollYOffset())
+}
