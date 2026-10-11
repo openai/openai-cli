@@ -638,6 +638,8 @@ def main():
                         mark(terminal, "history", result)
                         terminal.send(b"\r")
                         wait(terminal, "Duration 00:02.000")
+                        wait(terminal, "Audio retained.", absent=("Working: open",))
+                        mark(terminal, "restored-result", result)
                         if not args.no_resize:
                             terminal.resize(40, 12)
                             wait(terminal, "00:02.000")
