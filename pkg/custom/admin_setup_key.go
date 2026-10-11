@@ -11,10 +11,11 @@ import (
 )
 
 var (
-	errAdminSetupTerminal   = errors.New("Admin setup requires terminal input and error output.")
-	errAdminSetupKeyEmpty   = errors.New("No admin API key entered.")
-	errAdminSetupKeyInvalid = errors.New("Enter one admin API key without spaces, line breaks, or control characters.")
-	errAdminSetupKeyIO      = errors.New("Could not read the admin API key or restore the terminal.")
+	errAdminSetupTerminal    = errors.New("Admin setup requires terminal input and error output.")
+	errAdminSetupKeyEmpty    = errors.New("No admin API key entered.")
+	errAdminSetupKeyInvalid  = errors.New("Enter one admin API key without spaces, line breaks, or control characters.")
+	errAdminSetupKeyIO       = errors.New("Could not read the admin API key or restore the terminal.")
+	errAdminSetupUnsupported = errors.New("Interactive admin setup is unavailable on this platform.")
 )
 
 type adminSetupKeyReader interface {
@@ -31,6 +32,9 @@ func readAdminSetupKey(ctx context.Context, input, output *os.File) (key []byte,
 func readAdminSetupKeyWithReader(ctx context.Context, input, output *os.File, newReader func(io.Reader) (adminSetupKeyReader, error)) (key []byte, err error) {
 	if ctx.Err() != nil {
 		return nil, context.Canceled
+	}
+	if !adminSetupInputSupported {
+		return nil, errAdminSetupUnsupported
 	}
 	if input == nil || output == nil || !term.IsTerminal(input.Fd()) || !term.IsTerminal(output.Fd()) {
 		return nil, errAdminSetupTerminal

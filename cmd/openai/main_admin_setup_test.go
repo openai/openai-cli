@@ -186,6 +186,23 @@ func TestMainAdminSetupCopiedVerificationCommand(t *testing.T) {
 			if missing.code != 1 || missing.stdout != "" || guideCommand != invocation+" help setup admin" || unexpectedRequests.Load() != 0 {
 				t.Fatalf("missing-key error lacks a runnable guide command: %+v; requests=%d", missing, unexpectedRequests.Load())
 			}
+			setup := runNativeShell(t, shell, directory, home, proxy.URL, invocation+" setup admin")
+			if setup.code != 3 || setup.stdout != "" || unexpectedRequests.Load() != 0 {
+				t.Fatalf("noninteractive setup unexpectedly ran verification: %+v; requests=%d", setup, unexpectedRequests.Load())
+			}
+			if strings.HasPrefix(setup.stderr, adminInteractiveUnsupportedMessage+"\n") {
+				want := adminInteractiveUnsupportedMessage + "\n" + adminInteractiveManualPrefix + guideCommand
+				if strings.TrimSpace(setup.stderr) != want {
+					t.Fatalf("unsupported setup changed the copied executable or quoting: %q", setup.stderr)
+				}
+				_, recovery, found := strings.Cut(strings.TrimSpace(setup.stderr), adminInteractiveManualPrefix)
+				if !found || recovery != guideCommand {
+					t.Fatal("unsupported setup did not provide the exact manual recovery command")
+				}
+				guideCommand = recovery
+			} else if strings.TrimSpace(setup.stderr) != adminInteractiveTerminalMessage {
+				t.Fatalf("setup returned an unexpected capability diagnostic: %q", setup.stderr)
+			}
 			guide := runNativeShell(t, shell, directory, home, "not-a-request-url", guideCommand)
 			var command string
 			for line := range strings.SplitSeq(guide.stdout, "\n") {

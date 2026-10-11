@@ -22,6 +22,9 @@ import (
 )
 
 func TestMainAdminSetupQuietTerminal(t *testing.T) {
+	if adminSetupUnavailable(t) {
+		t.Skip("interactive input is unavailable on this platform")
+	}
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("Python 3 is required for the Unix Admin setup PTY cases")

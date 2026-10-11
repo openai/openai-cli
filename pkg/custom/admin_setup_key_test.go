@@ -21,9 +21,13 @@ func TestAdminSetupKeyRejectsNonTerminal(t *testing.T) {
 	file, err := os.CreateTemp(t.TempDir(), "not-a-terminal")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = file.Close() })
+	wantError := errAdminSetupTerminal
+	if !adminSetupInputSupported {
+		wantError = errAdminSetupUnsupported
+	}
 	for _, files := range [][2]*os.File{{nil, file}, {file, nil}, {file, file}} {
 		key, err := readAdminSetupKey(context.Background(), files[0], files[1])
-		require.ErrorIs(t, err, errAdminSetupTerminal)
+		require.ErrorIs(t, err, wantError)
 		require.Nil(t, key)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -34,6 +38,47 @@ func TestAdminSetupKeyRejectsNonTerminal(t *testing.T) {
 	content, err := os.ReadFile(file.Name())
 	require.NoError(t, err)
 	require.Empty(t, content)
+}
+
+func TestAdminSetupKeyUnsupportedPlatform(t *testing.T) {
+	if adminSetupInputSupported {
+		t.Skip("interactive input is supported on this platform")
+	}
+	input, err := os.CreateTemp(t.TempDir(), "untouched-input")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = input.Close() })
+	const content = "synthetic-admin-input-never-read\n"
+	_, err = input.WriteString(content)
+	require.NoError(t, err)
+	_, err = input.Seek(0, io.SeekStart)
+	require.NoError(t, err)
+	output, err := os.CreateTemp(t.TempDir(), "untouched-output")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = output.Close() })
+	closed, err := os.CreateTemp(t.TempDir(), "closed-terminal")
+	require.NoError(t, err)
+	require.NoError(t, closed.Close())
+	created := false
+	newReader := func(io.Reader) (adminSetupKeyReader, error) {
+		created = true
+		return nil, errors.New("unsupported input must not create a reader")
+	}
+	for _, files := range [][2]*os.File{{nil, nil}, {closed, closed}, {input, output}} {
+		key, err := readAdminSetupKeyWithReader(context.Background(), files[0], files[1], newReader)
+		require.ErrorIs(t, err, errAdminSetupUnsupported, "capability rejection must precede terminal inspection")
+		require.Nil(t, key)
+	}
+	require.False(t, created, "unsupported input created a reader")
+	offset, err := input.Seek(0, io.SeekCurrent)
+	require.NoError(t, err)
+	require.Zero(t, offset, "unsupported input consumed credential bytes")
+	data, err := os.ReadFile(input.Name())
+	require.NoError(t, err)
+	require.True(t, string(data) == content, "unsupported input changed the input file")
+	data, err = os.ReadFile(output.Name())
+	require.NoError(t, err)
+	require.Empty(t, data, "unsupported input wrote a prompt or terminal controls")
+	require.ErrorIs(t, flushAdminSetupInput(nil), errAdminSetupUnsupported)
 }
 
 func TestAdminSetupKeyRejectsUnsafePaste(t *testing.T) {
@@ -114,6 +159,9 @@ func (reader *adminSetupQueuedInputReader) Close() (err error) {
 }
 
 func TestAdminSetupKeyTerminal(t *testing.T) {
+	if !adminSetupInputSupported {
+		t.Skip("interactive input is unavailable on this platform")
+	}
 	if scenario := os.Getenv("OPENAI_ADMIN_SETUP_KEY_TEST_CASE"); scenario != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()

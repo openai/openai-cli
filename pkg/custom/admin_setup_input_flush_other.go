@@ -2,10 +2,17 @@
 
 package custom
 
-import "os"
+import (
+	"os"
+	"runtime"
+)
+
+const adminSetupInputSupported = runtime.GOOS == "windows"
 
 func flushAdminSetupInput(_ *os.File) error {
-	// Windows drains its record queue in the reader. Other platforms retain
-	// their existing cleanup behavior.
+	if !adminSetupInputSupported {
+		return errAdminSetupUnsupported
+	}
+	// Windows drains its record queue in the native reader before Close returns.
 	return nil
 }

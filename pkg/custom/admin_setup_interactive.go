@@ -35,6 +35,7 @@ If you are not an owner, ask an owner to perform the admin operation.
 Do not ask the owner to share a key.
 
 Setup requires a terminal and text output. Ctrl+C cancels.
+Interactive entry is available on macOS, Linux, and Windows.
 Verification stops after 15 seconds, without retries or redirects.
 The displayed destination follows --base-url or OPENAI_BASE_URL.
 HTTPS is required except for a local loopback server.
@@ -101,6 +102,12 @@ func handleAdminSetup(ctx context.Context, command *cli.Command) error {
 	if resolvedOutputFormat(ShowJSONOpts{Format: root.String("format")}) != "text" || errorOutputFormat(root) != "text" ||
 		root.String("transform") != "" || root.String("transform-error") != "" || root.Bool("raw-output") {
 		return &adminSetupError{message: "Interactive admin setup requires text output. Use help setup admin for noninteractive instructions.", code: 3}
+	}
+	if !adminSetupInputSupported {
+		return &adminSetupError{
+			message: errAdminSetupUnsupported.Error() + "\nFor manual setup, run: " + errorHelpInvocation(root) + " help setup admin",
+			code:    3,
+		}
 	}
 	options, destination, err := adminSetupRequestOptions(command)
 	if err != nil {
