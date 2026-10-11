@@ -41,13 +41,17 @@ def main():
                                           "stopped-reader", "startup", "all"), default="all")
     parser.add_argument("--theme", choices=("dark", "light", "no-color"), default="dark")
     parser.add_argument("--asciinema", default=shutil.which("asciinema"))
+    parser.add_argument("--navigation-observer", type=Path,
+                        help="External reviewed observer adapter for fixed-size navigation checks")
     parser.add_argument("--emit", action="store_true", help="Forward actual PTY bytes for the shared recorder")
     parser.add_argument("--no-resize", action="store_true", help="Keep the emitted comparison workflow at 90x34")
     args = parser.parse_args()
     root = args.repo_root or Path(__file__).resolve().parents[3]
     picker = load("audio_terminal", root / "scripts/image_picker_harness.py")
     fixture = load("audio_fixture", Path(__file__).with_name("fixture.py"))
-    if not args.asciinema:
+    navigation_cases = ("navigation", "navigation-compact")
+    needs_navigation_observer = args.case in (*navigation_cases, "all")
+    if not args.asciinema and args.case not in navigation_cases:
         raise SystemExit("asciinema is required for real terminal-screen reconstruction")
     if not re.fullmatch(r"[0-9a-f]{40}", args.source):
         raise SystemExit("source must be a complete commit identity")
@@ -55,6 +59,18 @@ def main():
         raise SystemExit("--emit records only the workflow case")
     if args.no_resize and not (args.emit and args.case == "workflow"):
         raise SystemExit("--no-resize applies only to the emitted comparison workflow")
+    navigation_adapter = None
+    if needs_navigation_observer:
+        if args.navigation_observer is None or not args.navigation_observer.is_file():
+            raise SystemExit("Navigation cases require --navigation-observer pointing to the reviewed adapter")
+        adapter_sha256 = hashlib.sha256(args.navigation_observer.read_bytes()).hexdigest()
+        if adapter_sha256 != "6b97dfa956642d7fe3c26bde091b9e932775e72c20973b128923389de4dae79e":
+            raise SystemExit("Navigation observer adapter does not match the reviewed source")
+        navigation_adapter = load("audio_navigation_observer", args.navigation_observer)
+        if not callable(getattr(navigation_adapter, "create_observer", None)):
+            raise SystemExit("Navigation observer adapter has no supported factory")
+    elif args.navigation_observer is not None:
+        raise SystemExit("--navigation-observer applies only to navigation cases or --case all")
     args.output.mkdir(parents=True, exist_ok=False)
     report = {"source": args.source, "binary_sha256": hashlib.sha256(args.binary.read_bytes()).hexdigest(),
               "platform": platform.system() + " " + platform.machine(), "theme": args.theme,
@@ -198,6 +214,18 @@ def main():
                                 "case": result["case"]}
                 owned_terminals.append(self)
                 report["owned_terminal_cleanup"].append(self.cleanup)
+                self.navigation_observer = None
+                if result["case"] in navigation_cases:
+                    self.navigation_observer = navigation_adapter.create_observer(*self.initial_size)
+                    required = ("feed", "viewport_text", "scrollback_lines", "provenance")
+                    if not all(callable(getattr(self.navigation_observer, method, None)) for method in required):
+                        raise ValueError("Navigation observer adapter has an unsupported interface")
+                    self.case_result["navigation_observer"] = self.navigation_observer.provenance()
+
+        def resize(self, width, height, notify=True):
+            if getattr(self, "navigation_observer", None) is not None:
+                raise ValueError("Navigation observer requires fixed-size sessions; resize was rejected")
+            super().resize(width, height, notify=notify)
 
         def close(self):
             if self.harness_closed:
@@ -260,6 +288,8 @@ def main():
             decoded = self.decoder.decode(fresh)
             if decoded:
                 self.events.append([time.monotonic()-self.started, "o", decoded])
+            if self.navigation_observer is not None:
+                self.navigation_observer.feed(fresh)
             pending = getattr(self, "queries", b"") + fresh
             pattern = rb"\x1b\[(?:6n|0?c|\?7\$p)|\x1b\]11;\?(?:\x07|\x1b\\)"
             while match := re.search(pattern, pending):
@@ -285,9 +315,13 @@ def main():
             header = {"version": 2, "width": self.initial_size[0], "height": self.initial_size[1],
                       "title": "Audio workbench | synthetic loopback API", "env": {"TERM": "xterm-256color"}}
             path.with_suffix(".cast").write_text("\n".join(json.dumps(event) for event in [header, *self.events]) + "\n")
+            if self.navigation_observer is not None:
+                self.case_result["navigation_observer"] = self.navigation_observer.provenance()
 
     def screen(terminal):
         terminal.save(args.output / "current-screen")
+        if terminal.navigation_observer is not None:
+            return terminal.navigation_observer.viewport_text()
         converted = subprocess.run([args.asciinema, "convert", "--overwrite", "-f", "txt",
                                     str(args.output / "current-screen.cast"), "-"],
                                    capture_output=True, text=True, check=True, timeout=5,
@@ -905,9 +939,22 @@ def main():
                     terminal.save(args.output / case)
                     final = screen(terminal)
                     (args.output / (case + "-final.txt")).write_text(final)
+                    if navigation:
+                        observer = terminal.navigation_observer
+                        retained = observer.scrollback_lines()
+                        (args.output / (case + "-scrollback.json")).write_text(json.dumps(retained, ensure_ascii=False, indent=2) + "\n")
+                        result["navigation_observer"] = observer.provenance()
+                        result["navigation_viewport_clear"] = not final.strip()
+                        result["navigation_scrollback_clear"] = all(not line.strip() for lines in retained.values() for line in lines)
+                        result["navigation_scrollback_rows"] = {name: len(lines) for name, lines in retained.items()}
+                        assert not any(event[1] == "r" for event in terminal.events), "Navigation capture unexpectedly resized"
+                        assert result["navigation_observer"]["bytes_observed"] == len(terminal.raw), "Navigation observer missed captured bytes"
                     result["final_form_rows_cleared"] = "Text to speech" not in final
                     if case != "stopped-reader":
                         assert result["final_form_rows_cleared"], "Exited form left active rows in the final screen"
+                    if navigation:
+                        assert result["navigation_viewport_clear"], "Navigation left content in its final viewport"
+                        assert result["navigation_scrollback_clear"], "Navigation left owned content in terminal scrollback"
                     assert not server.failures, "Fixture rejected a request"
                     if case not in ("workflow", "compact") and not busy:
                         assert not server.records, "Cancellation generated speech"

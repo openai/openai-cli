@@ -19,6 +19,7 @@ python3 -I -B scripts/demos/audio-workbench/check.py \
   --binary /absolute/path/to/openai \
   --source CANDIDATE_COMMIT_SHA \
   --repo-root /Users/vguvvala/.codex/worktrees/1f6c/openai-cli \
+  --navigation-observer /Users/vguvvala/code/cli-work/new-features-20261009/transcript-timestamps/audio-parity/navigation_observer_pyte.py \
   --output /absolute/evidence/audio-workbench-dark \
   --theme dark
 ```
@@ -80,6 +81,37 @@ The ordinary workflow selects Clear with End; it does not depend on settings wra
 The navigation cases test Alt+Enter without submitting editor text.
 They leave Enter generation and the existing repeat-submit guard unchanged.
 
+Navigation requires the explicit reviewed `--navigation-observer` adapter.
+The default all-cases run also requires that argument because it includes navigation.
+The checker verifies the adapter hash before loading it.
+Observer construction verifies pinned pyte 0.8.2 and wcwidth 0.2.13 sources before importing them.
+No package installation or project dependency change is required.
+The adapter remains outside the repository beside its reviewed package directory.
+
+This local command uses the immutable navigation runtime from source `d024992`:
+
+```sh
+python3 -I -B /Users/vguvvala/.codex/worktrees/1f6c/openai-cli/scripts/demos/audio-workbench/check.py \
+  --binary /Users/vguvvala/code/cli-work/new-features-20261009/transcript-timestamps/audio-parity/source-run-14-navigation/openai-navigation \
+  --source d024992aa2ec3457c1f1131e96105a199048b223 \
+  --case navigation \
+  --navigation-observer /Users/vguvvala/code/cli-work/new-features-20261009/transcript-timestamps/audio-parity/navigation_observer_pyte.py \
+  --output /Users/vguvvala/code/cli-work/new-features-20261009/transcript-timestamps/audio-parity/navigation-observer-wide-review
+```
+
+Use `--case navigation-compact` with a different fresh output directory for the 40×12 case.
+Record the checker commit separately from the binary runtime commit.
+The observer directory must retain the sources and manifest described in its external `REVIEW.md`.
+
+Every navigation focus assertion reads a persistent combining-aware viewport.
+Final navigation checks separately require a blank viewport and no retained owned scrollback rows.
+Results record `navigation_observer` provenance and `navigation_scrollback_clear`.
+Product History preservation remains a separate assertion.
+The checker rejects navigation resizing and preserves all original raw bytes and cast events.
+Other cases retain the existing asciinema observer, including the ordinary resize workflow.
+pyte has a combining-at-right-margin limitation and does not establish universal grapheme or native-terminal behavior.
+Reaching the adapter's scrollback bound fails the check instead of allowing a cleanup pass.
+
 Playback uses a private fake FFplay executable.
 That helper consumes the real fixture bytes, records their hash, and produces no sound.
 Actual FFplay and audible device behavior require separate native evidence.
@@ -97,7 +129,7 @@ Blocked output can prevent the CLI's bounded cursor, bracketed-paste, and row cl
 The result records those visual limits without claiming full terminal restoration.
 Normally draining cases retain strict cursor, bracketed-paste, and cleared-row assertions.
 All cases reject alternate-screen use and whole-screen or scrollback clearing by the CLI.
-Asciinema reconstructs visible terminal state; ANSI stripping alone does not prove row cleanup.
+The selected terminal observer checks retained display state; ANSI stripping alone does not prove row cleanup.
 Normally draining final screens must contain no active audio-form title.
 Each terminal uses one incremental UTF-8 decoder across reads and intermediate capture checkpoints.
 Raw captures preserve the original bytes.
