@@ -57,6 +57,10 @@ func readAdminSetupKeyWithReader(ctx context.Context, input, output *os.File, ne
 	if _, rawErr := term.MakeRaw(input.Fd()); rawErr != nil {
 		return nil, errAdminSetupKeyIO
 	}
+	// Discard pending input before starting a new key prompt.
+	if flushErr := flushAdminSetupInput(input); flushErr != nil {
+		return nil, errAdminSetupKeyIO
+	}
 	reader, readerErr := newReader(input)
 	if readerErr != nil {
 		return nil, errAdminSetupKeyIO

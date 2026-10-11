@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMainAdminSetupQuietTerminal(t *testing.T) {
+func TestMainAdminSetupTerminal(t *testing.T) {
 	if adminSetupUnavailable(t) {
 		t.Skip("interactive input is unavailable on this platform")
 	}
@@ -36,12 +36,15 @@ func TestMainAdminSetupQuietTerminal(t *testing.T) {
 		status, exit int
 		cancel       bool
 		progress     bool
+		queued       string
 	}{
-		{"default success", nil, http.StatusOK, 0, false, true},
-		{"quiet success", []string{"--quiet"}, http.StatusOK, 0, false, false},
-		{"quiet overrides verbose", []string{"--quiet", "--verbose"}, http.StatusOK, 0, false, false},
-		{"quiet forbidden", []string{"--quiet"}, http.StatusForbidden, 1, false, false},
-		{"quiet cancellation", []string{"--quiet"}, http.StatusOK, 130, true, false},
+		{"default success", nil, http.StatusOK, 0, false, true, ""},
+		{"quiet success", []string{"--quiet"}, http.StatusOK, 0, false, false, ""},
+		{"quiet overrides verbose", []string{"--quiet", "--verbose"}, http.StatusOK, 0, false, false, ""},
+		{"quiet forbidden", []string{"--quiet"}, http.StatusForbidden, 1, false, false, ""},
+		{"quiet cancellation", []string{"--quiet"}, http.StatusOK, 130, true, false, ""},
+		{"prequeued complete line", nil, http.StatusOK, 0, false, true, "line"},
+		{"prequeued partial prefix", nil, http.StatusOK, 0, false, true, "prefix"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var requests atomic.Int32
@@ -65,7 +68,7 @@ func TestMainAdminSetupQuietTerminal(t *testing.T) {
 			work := t.TempDir()
 			args := append([]string{"openai"}, test.flags...)
 			args = append(args, "setup", "admin")
-			got := runAdminSetupQuietPTY(t, python, work, server.URL+"/v1", args, test.cancel)
+			got := runAdminSetupTerminalPTY(t, python, work, server.URL+"/v1", args, test.cancel, test.queued)
 			wantRequests := int32(1)
 			if test.cancel {
 				wantRequests = 0
@@ -102,12 +105,12 @@ func TestMainAdminSetupQuietTerminal(t *testing.T) {
 }
 
 // Drain subprocess pipes even after the small control-output allowance is exceeded.
-type adminSetupQuietCapture struct {
+type adminSetupTerminalCapture struct {
 	buffer   bytes.Buffer
 	overflow bool
 }
 
-func (capture *adminSetupQuietCapture) Write(data []byte) (int, error) {
+func (capture *adminSetupTerminalCapture) Write(data []byte) (int, error) {
 	const limit = 512 << 10
 	original := len(data)
 	if remaining := limit - capture.buffer.Len(); len(data) > remaining {
@@ -118,7 +121,7 @@ func (capture *adminSetupQuietCapture) Write(data []byte) (int, error) {
 	return original, nil
 }
 
-func runAdminSetupQuietPTY(t *testing.T, python, work, endpoint string, args []string, cancelInput bool) mainDispatchResult {
+func runAdminSetupTerminalPTY(t *testing.T, python, work, endpoint string, args []string, cancelInput bool, queued string) mainDispatchResult {
 	t.Helper()
 	binary, err := os.Executable()
 	require.NoError(t, err)
@@ -126,18 +129,19 @@ func runAdminSetupQuietPTY(t *testing.T, python, work, endpoint string, args []s
 		Binary, Work, Endpoint string
 		Args                   []string
 		Cancel                 bool
-	}{binary, work, endpoint, args, cancelInput})
+		Queued                 string
+	}{binary, work, endpoint, args, cancelInput, queued})
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	child := exec.CommandContext(ctx, python, "-I", "-B", "-c", adminSetupQuietPTYScript)
+	child := exec.CommandContext(ctx, python, "-I", "-B", "-c", adminSetupTerminalPTYScript)
 	child.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "LANG=en_US.UTF-8"}
 	child.Dir = work
 	child.Stdin = bytes.NewReader(input)
 	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	child.Cancel = func() error { return child.Process.Signal(syscall.SIGTERM) }
 	child.WaitDelay = 4 * time.Second
-	var stdout, stderr adminSetupQuietCapture
+	var stdout, stderr adminSetupTerminalCapture
 	child.Stdout, child.Stderr = &stdout, &stderr
 	err = child.Run()
 	if child.Process != nil && syscall.Kill(-child.Process.Pid, 0) != syscall.ESRCH {
@@ -159,15 +163,19 @@ func runAdminSetupQuietPTY(t *testing.T, python, work, endpoint string, args []s
 		Code                     int
 		Stdout, Stderr, Failure  string
 		Hidden, Restored, Reaped bool
+		QueuedBefore             int
 	}
 	require.NoError(t, json.Unmarshal(stdout.buffer.Bytes(), &result), "invalid PTY control result")
 	require.Empty(t, result.Failure)
 	require.True(t, result.Hidden && result.Restored && result.Reaped, "hidden input or owned cleanup was not established")
+	if queued != "" {
+		require.Positive(t, result.QueuedBefore, "startup input was not queued before the command started")
+	}
 	return mainDispatchResult{result.Code, result.Stdout, result.Stderr}
 }
 
-const adminSetupQuietPTYScript = `
-import errno, json, os, pty, re, selectors, signal, subprocess, sys, termios, time
+const adminSetupTerminalPTYScript = `
+import errno, fcntl, json, os, pty, re, selectors, signal, struct, subprocess, sys, termios, time
 
 def check(condition, label):
     if not condition:
@@ -175,6 +183,9 @@ def check(condition, label):
 
 def interrupted(signum, frame):
     raise TimeoutError("harness interrupted")
+
+def queued_bytes(fd):
+    return struct.unpack("i", fcntl.ioctl(fd, termios.FIONREAD, struct.pack("i", 0)))[0]
 
 signal.signal(signal.SIGTERM, interrupted)
 config = json.load(sys.stdin)
@@ -191,7 +202,7 @@ selector = selectors.DefaultSelector()
 masters, slaves, output = [], [], [bytearray(), bytearray(), bytearray()]
 process = None
 result = {"Code": -1, "Stdout": "", "Stderr": "", "Failure": "",
-          "Hidden": False, "Restored": False, "Reaped": False}
+          "Hidden": False, "Restored": False, "Reaped": False, "QueuedBefore": 0}
 
 def pump(timeout):
     ready = selector.select(timeout)
@@ -217,8 +228,26 @@ try:
         slaves.append(slave)
         os.set_blocking(master, False)
         selector.register(master, selectors.EVENT_READ, stream)
+    if config["Queued"]:
+        mode = termios.tcgetattr(slaves[0])
+        check(mode[3] & termios.ICANON, "startup fixture did not start canonical")
+        mode[3] &= ~(termios.ECHO | termios.ECHONL)
+        data = b"sk-admin-SYNTHETIC-queued-stale\n"
+        if config["Queued"] == "prefix":
+            mode[3] &= ~termios.ICANON
+            data = b"sk-admin-SYNTHETIC-queued-prefix-"
+        else:
+            check(config["Queued"] == "line", "unknown startup queue fixture")
+        termios.tcsetattr(slaves[0], termios.TCSANOW, mode)
+        check(os.write(masters[0], data) == len(data), "startup queue write was incomplete")
+        queue_deadline = time.monotonic() + 1
+        while queued_bytes(slaves[0]) != len(data):
+            check(time.monotonic() < queue_deadline, "startup bytes did not reach the input queue")
+            time.sleep(0.005)
+        result["QueuedBefore"] = queued_bytes(slaves[0])
     original = [termios.tcgetattr(slave) for slave in slaves]
-    check(original[0][3] & termios.ECHO, "input did not start with echo")
+    if not config["Queued"]:
+        check(original[0][3] & termios.ECHO, "input did not start with echo")
     command = [config["Binary"], "-test.run=^TestMainDispatchProcess$", "--", *config["Args"]]
     process = subprocess.Popen(command, cwd=config["Work"], env=env,
                                stdin=slaves[0], stdout=slaves[1], stderr=slaves[2])
@@ -227,6 +256,7 @@ try:
         check(time.monotonic() < deadline, "command exceeded deadline")
         pump(0.02)
         if not result["Hidden"] and b"Admin API key (hidden): " in output[2]:
+            check(process.poll() is None, "command completed before fresh prompt input")
             mode = termios.tcgetattr(slaves[0])
             check(not mode[3] & (termios.ECHO | termios.ICANON), "prompt preceded hidden input")
             result["Hidden"] = True
@@ -237,6 +267,7 @@ try:
     drain_deadline = time.monotonic() + 1
     while pump(0.05):
         check(time.monotonic() < drain_deadline, "terminal output did not drain")
+    check(queued_bytes(slaves[0]) == 0, "input remains after command cleanup")
     restored = [termios.tcgetattr(slave) for slave in slaves]
     if sys.platform == "darwin":
         for modes in original + restored:
