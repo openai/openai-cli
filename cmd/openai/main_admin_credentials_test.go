@@ -242,9 +242,9 @@ func TestMainAdminCredentialsPreservesRejectedCredentials(t *testing.T) {
 						t.Errorf("API error fields changed: %#v", payload)
 					}
 				} else {
-					want := "Authentication failed."
+					want := "HTTP 401: Unauthorized."
 					if test.status == http.StatusForbidden {
-						want = "Access denied."
+						want = "HTTP 403: Forbidden."
 					}
 					if !strings.Contains(got.stderr, want) {
 						t.Errorf("API error = %q, want %q", got.stderr, want)

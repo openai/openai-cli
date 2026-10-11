@@ -128,8 +128,10 @@ func handleAdminSetup(ctx context.Context, command *cli.Command) error {
 	if len(key) == 0 {
 		return &adminSetupError{message: "No key was entered. Run setup admin again to retry."}
 	}
-	if _, err := fmt.Fprintln(os.Stderr, "Verifying admin access..."); err != nil {
-		return &adminSetupError{message: "Could not display admin setup. No verification request was sent."}
+	if commandAllowsOutputDiagnostics(command) {
+		if _, err := fmt.Fprintln(os.Stderr, "Verifying admin access..."); err != nil {
+			return &adminSetupError{message: "Could not display admin setup. No verification request was sent."}
+		}
 	}
 	if err := verifyAdminSetup(ctx, options, key); err != nil {
 		if ctx.Err() != nil {
