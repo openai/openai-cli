@@ -229,6 +229,7 @@ func TestAudioCommandPreviewFullTextAndHorizontalScroll(t *testing.T) {
 	require.Contains(t, preview, "INSTRUCTION_TAIL_MARKER")
 	initial := model.View().Content
 	require.Contains(t, ansi.Strip(initial), "› printf", "command preview lost its selected row")
+	require.Contains(t, ansi.Strip(initial), "Bash/zsh", "the copyable preview must identify its supported shells")
 	_, command := model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	require.Nil(t, command, "scrolling must never generate speech")
 	require.Greater(t, model.previewOffset, 0)

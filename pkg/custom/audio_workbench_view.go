@@ -153,7 +153,7 @@ func (m *audioWorkbench) footerRows(compact bool) []string {
 			hint = "Space play/stop · X stop · S save · H history"
 		}
 		if m.focus == 3 {
-			hint = "↑↓ scroll command · Enter generates"
+			hint = "Bash/zsh · ↑↓ scroll · Enter run"
 		}
 		footer = append(footer, hint, "History keeps audio/text/instructions")
 	}
