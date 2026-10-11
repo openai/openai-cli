@@ -187,6 +187,15 @@ func (p *audioWorkbenchInline) draw() {
 		p.cancel()
 		return
 	}
+	p.drawFrame(w, h)
+}
+
+func (p *audioWorkbenchInline) drawFrame(w, h int) {
+	// Non-key events can arrive before the size listener. Render the model at
+	// the same observed dimensions used for the terminal frame boundaries.
+	if w != p.model.width || h != p.model.height {
+		p.model.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	}
 	var converted strings.Builder
 	_, _ = io.WriteString(&colorprofile.Writer{Forward: &converted, Profile: max(p.profile, colorprofile.ASCII)}, p.model.View().Content)
 	content := converted.String()

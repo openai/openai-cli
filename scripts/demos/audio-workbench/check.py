@@ -36,11 +36,12 @@ def main():
     parser.add_argument("--source", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repo-root", type=Path, default=os.environ.get("DEMO_REPO_ROOT"))
-    parser.add_argument("--case", choices=("workflow", "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
+    parser.add_argument("--case", choices=("workflow", "compact", "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
                                           "stopped-reader", "startup", "all"), default="all")
     parser.add_argument("--theme", choices=("dark", "light", "no-color"), default="dark")
     parser.add_argument("--asciinema", default=shutil.which("asciinema"))
     parser.add_argument("--emit", action="store_true", help="Forward actual PTY bytes for the shared recorder")
+    parser.add_argument("--no-resize", action="store_true", help="Keep the emitted comparison workflow at 90x34")
     args = parser.parse_args()
     root = args.repo_root or Path(__file__).resolve().parents[3]
     picker = load("audio_terminal", root / "scripts/image_picker_harness.py")
@@ -51,6 +52,8 @@ def main():
         raise SystemExit("source must be a complete commit identity")
     if args.emit and args.case != "workflow":
         raise SystemExit("--emit records only the workflow case")
+    if args.no_resize and not (args.emit and args.case == "workflow"):
+        raise SystemExit("--no-resize applies only to the emitted comparison workflow")
     args.output.mkdir(parents=True, exist_ok=False)
     report = {"source": args.source, "binary_sha256": hashlib.sha256(args.binary.read_bytes()).hexdigest(),
               "platform": platform.system() + " " + platform.machine(), "theme": args.theme,
@@ -506,7 +509,7 @@ def main():
         result.update(pass_=True, exit_status=0, requests=[])
         result["pass"] = result.pop("pass_")
 
-    cases = ("workflow", "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
+    cases = ("workflow", "compact", "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
              "stopped-reader", "startup") if args.case == "all" else (args.case,)
     with harness_lifecycle():
         for case in cases:
@@ -556,9 +559,12 @@ def main():
                     if case == "startup":
                         startup_case(private, env, programs, server, result)
                         continue
-                    terminal = Terminal(str(args.binary), ["audio", "speak"], env, width=90, height=34)
+                    width, height = (40, 12) if case == "compact" else (90, 34)
+                    terminal = Terminal(str(args.binary), ["audio", "speak"], env, width=width, height=height)
+                    result["initial_size"] = [width, height]
                     wait(terminal, "Text to speech")
                     if case == "workflow":
+                        result["resize_checkpoints"] = not args.no_resize
                         mark(terminal, "initial-form", result)
                         paste(terminal, fixture.TEXT)
                         terminal.send(b"\t")
@@ -632,17 +638,18 @@ def main():
                         mark(terminal, "history", result)
                         terminal.send(b"\r")
                         wait(terminal, "Duration 00:02.000")
-                        terminal.resize(40, 12)
-                        wait(terminal, "00:02.000")
-                        mark(terminal, "compact-40x12", result)
-                        terminal.resize(28, 8)
-                        wait(terminal, "Resize to 40 x 12.")
-                        terminal.send(b"\x07discarded")
-                        drain(terminal)
-                        assert len(server.records) == 1, "Small terminal accepted a hidden submission"
-                        mark(terminal, "too-small", result)
-                        terminal.resize(90, 34)
-                        wait(terminal, "Duration 00:02.000")
+                        if not args.no_resize:
+                            terminal.resize(40, 12)
+                            wait(terminal, "00:02.000")
+                            mark(terminal, "compact-40x12", result)
+                            terminal.resize(28, 8)
+                            wait(terminal, "Resize to 40 x 12.")
+                            terminal.send(b"\x07discarded")
+                            drain(terminal)
+                            assert len(server.records) == 1, "Small terminal accepted a hidden submission"
+                            mark(terminal, "too-small", result)
+                            terminal.resize(90, 34)
+                            wait(terminal, "Duration 00:02.000")
                         terminal.send(b"\x1b")
                         wait(terminal, ("╭ Text ", "› Text"))
                         terminal.send(b"\t\t" + picker.UP * 2 + b"\r")
@@ -663,6 +670,36 @@ def main():
                         assert destination.read_bytes() == fixture.WAV and len(server.records) == 2
                         terminal.send(b"\x03")
                         terminal.finish(130)
+                    elif case == "compact":
+                        mark(terminal, "compact-initial-form", result)
+                        paste(terminal, fixture.TEXT)
+                        assert not server.records, "Typing generated speech"
+                        terminal.send(b"\x07")
+                        wait(terminal, "Duration 00:02.000")
+                        assert len(server.records) == 1, "Compact generation request count changed"
+                        request = server.records[0]["body"]
+                        assert request["input"] == fixture.TEXT and request.get("instructions", "") == ""
+                        assert (request["model"], request["voice"], request["response_format"], request.get("speed", 1)) == (
+                            "gpt-4o-mini-tts", "coral", "wav", 1)
+                        entries = json.loads(public(["--format", "json", "audio", "history"]))
+                        assert len(entries) == 1 and not entries[0]["settings"].get("preview", False)
+                        entry = entries[0]
+                        inspection = json.loads(public(["--format", "json", "audio", "inspect", entry["id"]]))
+                        assert inspection["analysis"]["duration"] == 2
+                        peaks = inspection["analysis"]["peaks"]
+                        assert len(peaks) > 8 and max(peaks)-min(peaks) > .5, "Compact waveform did not use varying samples"
+                        original = public(["audio", "export", entry["id"], "--output", "-"])
+                        assert original == fixture.WAV, "Compact export changed original audio bytes"
+                        (args.output / "compact-exported.wav").write_bytes(original)
+                        (args.output / "compact-inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
+                        mark(terminal, "compact-40x12", result)
+                        assert not any(event[1] == "r" for event in terminal.events), "Fixed-size capture contains a resize"
+                        result["fixed_geometry"] = True
+                        result["original_audio_sha256"] = hashlib.sha256(original).hexdigest()
+                        terminal.send(b"\x03")
+                        terminal.finish(130)
+                        assert json.loads(public(["--format", "json", "audio", "history"])) == entries
+                        assert len(server.records) == 1, "Compact cancellation generated speech"
                     elif busy:
                         paste(terminal, fixture.TEXT)
                         assert not server.records, "Typing generated speech"
@@ -746,7 +783,7 @@ def main():
                     if case != "stopped-reader":
                         assert result["final_form_rows_cleared"], "Exited form left active rows in the final screen"
                     assert not server.failures, "Fixture rejected a request"
-                    if case != "workflow" and not busy:
+                    if case not in ("workflow", "compact") and not busy:
                         assert not server.records, "Cancellation generated speech"
                     result.update(exit_status=terminal.child.returncode, requests=server.records, pass_=True)
                     result["pass"] = result.pop("pass_")

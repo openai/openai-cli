@@ -40,7 +40,7 @@ else
   printf '%s\n' '$ openai audio speak'
   if "$DEMO_PYTHON" -I -B "$DEMO_DRIVER" --binary "$(command -v openai)" \
     --source "$DEMO_AFTER_SHA" --repo-root "$DEMO_REPO_ROOT" \
-    --asciinema "$DEMO_ASCIINEMA" --case workflow --theme dark --emit \
+    --asciinema "$DEMO_ASCIINEMA" --case workflow --theme dark --emit --no-resize \
     --output "$DEMO_DRIVER_OUTPUT"; then
     demo_status=0
   else
@@ -63,7 +63,10 @@ SCENE
   echo 'playback: fake FFplay consumes verified audio; this replay does not establish audible playback'
   echo 'capture: owned PTYs; isolated fake credentials; owned caches; no remote API or microphone'
   echo 'scope: terminal replay; no graphical Terminal, native Windows/Linux, or live API acceptance claim'
-  echo 'render: asciinema 3.2.1, agg 1.9.0, Menlo 22px, 90x34, dark palette'
+  echo 'render: asciinema 3.2.1, agg 1.9.0, 22px, dark palette'
+  echo 'font chain: Menlo,Apple Symbols; Menlo text metrics with Apple Symbols glyph fallback'
+  echo 'geometry: fixed 90x34 comparison; separate actual 40x12 compact PTY capture'
+  echo 'resize coverage: separate ordinary workflow; agg 1.9.0 does not render resize events'
   demo_capture_metadata
   "$demo_python" --version
 } > "$demo_output/metadata.txt"
@@ -72,7 +75,7 @@ shasum -a 256 "$demo_source/fixture.py" "$demo_source/check.py" "$demo_source/re
   > "$demo_output/source-sha256.txt"
 cp "$demo_runtime/scene.sh" "$demo_output/scene.sh"
 demo_window_size=90x34
-demo_render_options=(--renderer resvg --font-family Menlo --font-size 22 --line-height 1.2 \
+demo_render_options=(--renderer resvg --font-family 'Menlo,Apple Symbols' --font-size 22 --line-height 1.2 \
   --theme dracula --fps-cap 20 --last-frame-duration 2)
 demo_capture_scene before 0 "$demo_runtime/before" "$demo_api_url" 'Before: explicit speech generation and file save' \
   DEMO_SCENE=before "DEMO_STATUS_LOG=$demo_output/statuses.tsv" "DEMO_FIXTURE_DIR=$demo_runtime" \
@@ -85,14 +88,26 @@ demo_capture_scene after 130 "$demo_runtime/after" "$demo_api_url" 'After: speec
   "HOME=$demo_runtime/home" "XDG_CACHE_HOME=$demo_runtime/cache" "XDG_CONFIG_HOME=$demo_runtime/config" \
   OPENAI_PICKER_SHELL=off GOMAXPROCS=2 COLORTERM=truecolor 'COLORFGBG=15;0'
 demo_stop_api
+"$demo_python" -I -B "$demo_source/check.py" --binary "$demo_after" \
+  --source "$demo_after_sha" --repo-root "$demo_root" --asciinema "$demo_asciinema" \
+  --case compact --theme dark --output "$demo_output/compact-harness" &
+demo_capture_pid=$!
+if wait "$demo_capture_pid"; then demo_status=0; else demo_status=$?; fi
+demo_capture_pid=""
+echo "compact harness exit status: $demo_status (expected 0; CLI cancellation 130)" >> "$demo_output/metadata.txt"
+test "$demo_status" -eq 0
 test "$demo_before_digest" = "$(shasum -a 256 "$demo_before" | cut -d ' ' -f 1)"
 test "$demo_after_digest" = "$(shasum -a 256 "$demo_after" | cut -d ' ' -f 1)"
 shasum -a 256 -c "$demo_output/source-sha256.txt" > "$demo_output/source-validation.txt"
-for demo_state in initial-form model-choices voice-choices format-choices selected-settings generated-result save-validation saved-result history compact-40x12 too-small voice-audition cleared-form; do
+for demo_state in initial-form model-choices voice-choices format-choices selected-settings generated-result save-validation saved-result history voice-audition cleared-form; do
   "$demo_agg" --quiet "${demo_render_options[@]}" --select 100% \
     "$demo_output/after-harness/$demo_state.cast" "$demo_output/after-$demo_state-frame.gif"
   "$demo_ffmpeg" -nostdin -hide_banner -loglevel error -y \
     -i "$demo_output/after-$demo_state-frame.gif" -frames:v 1 "$demo_output/after-$demo_state.png"
 done
+"$demo_agg" --quiet "${demo_render_options[@]}" --select 100% \
+  "$demo_output/compact-harness/compact-40x12.cast" "$demo_output/after-compact-40x12-frame.gif"
+"$demo_ffmpeg" -nostdin -hide_banner -loglevel error -y \
+  -i "$demo_output/after-compact-40x12-frame.gif" -frames:v 1 "$demo_output/after-compact-40x12.png"
 demo_assemble_capture 200 before after
 printf 'Recorded audio workbench terminal replay in %s\n' "$demo_output"

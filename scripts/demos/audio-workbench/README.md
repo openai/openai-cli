@@ -23,7 +23,7 @@ python3 -I -B scripts/demos/audio-workbench/check.py \
   --theme dark
 ```
 
-The default run checks workflow, idle and busy cancellation, stopped-reader cancellation, and optional-startup isolation.
+The default run checks workflow, compact generation, idle and busy cancellation, stopped-reader cancellation, and optional-startup isolation.
 Use `--case NAME` to repeat one affected case.
 Use `--theme light` or `--theme no-color` for the additional palette checks.
 
@@ -38,6 +38,8 @@ bash scripts/demos/audio-workbench/record.sh \
 The recorder sources `scripts/demos/capture_and_render.sh` without modifying its lifecycle.
 It requires Python 3, asciinema 3.2.1, agg 1.9.0, ffmpeg, and ffprobe.
 The helper files must retain executable permission after placement.
+The renderer uses the exact font chain `Menlo,Apple Symbols` at 22 pixels.
+Menlo supplies the text metrics; Apple Symbols supplies missing glyphs, including Braille waveform cells.
 
 The fixture serves only the loopback speech endpoint.
 It validates the fake credential and known synthetic request fields.
@@ -56,6 +58,17 @@ It exercises play/stop, save, History, 40×12, too-small blocking, an explicit a
 Save coverage rejects `-`, then verifies the corrected destination contains the original audio bytes.
 Audition entries must remain absent from ordinary History.
 Clear must preserve retained results and exported files.
+
+The `compact` case launches its actual PTY at 40×12 and keeps that size throughout.
+It generates one synthetic result without navigating wide settings labels.
+It verifies measured duration, varying peaks, exact exported audio bytes, and strict cancellation cleanup.
+Its original cast header records 40×12; the recorder does not rewrite headers or extract a final frame's output bytes.
+
+The wide comparison uses `--emit --no-resize` and stays at 90×34.
+The `--no-resize` option is restricted to that emitted workflow.
+The ordinary workflow retains all resize checkpoints and strict Clear and absence assertions.
+The recorder renders a separate `compact` capture for the 40×12 screenshot.
+This separation avoids replaying resize events that agg 1.9.0 ignores.
 
 Playback uses a private fake FFplay executable.
 That helper consumes the real fixture bytes, records their hash, and produces no sound.
@@ -115,6 +128,7 @@ It labels fake playback and synthetic data throughout.
 The baseline finishes with status 0; the candidate exits through Ctrl+C with status 130.
 The recorder retains source hashes, process statuses, request evidence, casts, GIFs, and PNG checkpoints.
 Every recorded frame comes from the actual CLI PTY.
+The wide comparison does not establish resize behavior; the separate ordinary workflow supplies that evidence.
 
 Keep these evidence limits explicit:
 
