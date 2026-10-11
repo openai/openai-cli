@@ -49,7 +49,7 @@ func TestAudioWorkbenchPartialHistoryFailureIsVisibleWithUsableEntries(t *testin
 		require.Equal(t, "history", m.modal)
 		require.Equal(t, []audiohistory.Entry{entry}, m.entries)
 		require.ErrorIs(t, m.lastErr, failure)
-		require.Contains(t, m.View().Content, "Some audio history could not be read.")
+		require.Contains(t, audioFeedbackView(t, m), "Some audio history could not be read.")
 		_, command := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		require.NotNil(t, command, "valid history selection was disabled by its corrupt neighbor")
 	}
