@@ -9,10 +9,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -525,18 +527,35 @@ func declaredErrorCoverageCases(manifest errorCoverageManifest) []errorCoverageC
 	return cases
 }
 
+type errorCoverageWorker struct {
+	environment []string
+	server      *httptest.Server
+	requests    atomic.Int32
+}
+
+func newErrorCoverageWorker(t *testing.T, aggregate *atomic.Int32) *errorCoverageWorker {
+	t.Helper()
+	worker := &errorCoverageWorker{}
+	worker.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		worker.requests.Add(1)
+		aggregate.Add(1)
+		w.WriteHeader(http.StatusTeapot) // Do not trigger automatic HTTP retries.
+	}))
+	t.Cleanup(worker.server.Close)
+	worker.environment = errorCoverageEnvironment(t.TempDir(), worker.server.URL)
+	return worker
+}
+
 // Cover every public declaration and intentionally retained compatibility route.
 // Each error uses a fresh public main process. Focused tests cover the format
 // cross-product; this audit uses JSON once per declaration to bound runtime.
 func TestMainErrorCoverageAcrossCommandTree(t *testing.T) {
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.WriteHeader(http.StatusTeapot) // Do not trigger automatic HTTP retries.
-	}))
-	t.Cleanup(server.Close)
-	environment := errorCoverageEnvironment(t.TempDir(), server.URL)
-	manifest := readErrorCoverageManifest(t, environment)
+	workers := [2]*errorCoverageWorker{
+		newErrorCoverageWorker(t, &requests),
+		newErrorCoverageWorker(t, &requests),
+	}
+	manifest := readErrorCoverageManifest(t, workers[0].environment)
 	cases := declaredErrorCoverageCases(manifest)
 	counts := map[string]int{}
 	types := map[string]int{}
@@ -583,32 +602,112 @@ func TestMainErrorCoverageAcrossCommandTree(t *testing.T) {
 	}
 	t.Logf("effective inventory: flags=%d shadowed=%d inherited-groups=%d; every scope maps to an owner and representative", effective, shadowed, len(manifest.Groups))
 	t.Log("Inherited scopes map to executable equivalence groups. Synthetic guards verify shadowing. Literal and -- boundaries use focused recovery and native-shell tests.")
-	for index := start; index < end; index++ {
-		test := cases[index]
-		t.Run(fmt.Sprintf("%05d/%s", index, test.Name), func(t *testing.T) {
-			before := requests.Load()
-			args := append([]string{"openai", "--format-error", "json"}, test.Args...)
-			got := runMainDispatchWithEnv(t, "bash", environment, args...)
-			if got.code != test.Code || got.stdout != "" {
-				t.Fatalf("public error changed status or streams: %+v; want status %d", got, test.Code)
+	indices := make(chan int)
+	var running sync.WaitGroup
+	for _, worker := range workers {
+		running.Add(1)
+		go func(worker *errorCoverageWorker) {
+			defer running.Done()
+			for index := range indices {
+				test := cases[index]
+				t.Run(fmt.Sprintf("%05d/%s", index, test.Name), func(t *testing.T) {
+					before := worker.requests.Load()
+					args := append([]string{"openai", "--format-error", "json"}, test.Args...)
+					got := runMainDispatchWithEnv(t, "bash", worker.environment, args...)
+					if got.code != test.Code || got.stdout != "" {
+						t.Fatalf("public error changed status or streams: %+v; want status %d", got, test.Code)
+					}
+					if worker.requests.Load() != before {
+						t.Fatal("local diagnostic made an HTTP request")
+					}
+					if strings.Contains(got.stderr, "synthetic-private") || strings.ContainsAny(got.stderr, "\x1b\a\r") {
+						t.Fatalf("diagnostic exposed rejected input: %q", got.stderr)
+					}
+					var payload map[string]any
+					if err := json.Unmarshal([]byte(got.stderr), &payload); err != nil {
+						t.Fatalf("entire stderr is not one JSON error: %v; %q", err, got.stderr)
+					}
+					if len(payload) != 1 || payload["message"] != test.Message {
+						t.Fatalf("incomplete declared recovery: got %#v; want %q", payload, test.Message)
+					}
+				})
 			}
-			if requests.Load() != before {
-				t.Fatal("local diagnostic made an HTTP request")
-			}
-			if strings.Contains(got.stderr, "synthetic-private") || strings.ContainsAny(got.stderr, "\x1b\a\r") {
-				t.Fatalf("diagnostic exposed rejected input: %q", got.stderr)
-			}
-			var payload map[string]any
-			if err := json.Unmarshal([]byte(got.stderr), &payload); err != nil {
-				t.Fatalf("entire stderr is not one JSON error: %v; %q", err, got.stderr)
-			}
-			if len(payload) != 1 || payload["message"] != test.Message {
-				t.Fatalf("incomplete declared recovery: got %#v; want %q", payload, test.Message)
-			}
-		})
+		}(worker)
 	}
+	for index := start; index < end; index++ {
+		indices <- index
+	}
+	close(indices)
+	// Concurrent T.Run calls must finish before the parent checks requests or
+	// returns. Do not use t.Parallel, which would defer children past this check.
+	running.Wait()
 	if requests.Load() != 0 {
 		t.Fatalf("declaration audit made %d HTTP requests", requests.Load())
+	}
+}
+
+func TestErrorCoverageWorkerIsolation(t *testing.T) {
+	var aggregate atomic.Int32
+	workers := [2]*errorCoverageWorker{
+		newErrorCoverageWorker(t, &aggregate),
+		newErrorCoverageWorker(t, &aggregate),
+	}
+	var environments [2]map[string]string
+	for index, worker := range workers {
+		values := map[string]string{}
+		for _, entry := range worker.environment {
+			name, value, _ := strings.Cut(entry, "=")
+			values[strings.ToUpper(name)] = value
+		}
+		home := values["HOME"]
+		if home == "" || values["OPENAI_BASE_URL"] != worker.server.URL {
+			t.Fatalf("worker %d lost its isolated home or endpoint", index)
+		}
+		for _, name := range []string{"USERPROFILE", "XDG_CONFIG_HOME", "APPDATA", "ZDOTDIR"} {
+			if values[name] != home {
+				t.Fatalf("worker %d: %s escaped the isolated home", index, name)
+			}
+		}
+		environments[index] = values
+	}
+	if environments[0]["HOME"] == environments[1]["HOME"] {
+		t.Fatal("workers share their home or configuration directory")
+	}
+	const marker = "synthetic-worker-state"
+	if err := os.WriteFile(filepath.Join(environments[0]["XDG_CONFIG_HOME"], marker), []byte("worker one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(environments[1]["XDG_CONFIG_HOME"], marker)); !os.IsNotExist(err) {
+		t.Fatalf("worker state was not isolated: %v", err)
+	}
+	request := func(index int) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, environments[index]["OPENAI_BASE_URL"], nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := workers[index].server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := response.Body.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusTeapot {
+			t.Fatalf("unexpected fixture status: %d", response.StatusCode)
+		}
+	}
+	before := workers[0].requests.Load()
+	request(1)
+	if workers[0].requests.Load() != before || workers[1].requests.Load() != 1 || aggregate.Load() != 1 {
+		t.Fatal("another worker's request changed local attribution or aggregate accounting")
+	}
+	request(0)
+	request(0)
+	if workers[0].requests.Load() != 2 || workers[1].requests.Load() != 1 || aggregate.Load() != 3 {
+		t.Fatal("repeated requests lost worker isolation or aggregate accounting")
 	}
 }
 
