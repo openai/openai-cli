@@ -26,6 +26,7 @@ python3 -I -B scripts/demos/audio-workbench/check.py \
 
 The default run checks workflow, compact generation, idle and busy cancellation, stopped-reader cancellation, and optional-startup isolation.
 It also checks zero-request navigation at 90×34 and 40×12.
+The `failure` and `failure-compact` cases cover one synthetic HTTP 401 followed by an explicit successful retry.
 Use `--case NAME` to repeat one affected case.
 Use `--theme light` or `--theme no-color` for the additional palette checks.
 
@@ -81,8 +82,8 @@ The ordinary workflow selects Clear with End; it does not depend on settings wra
 The navigation cases test Alt+Enter without submitting editor text.
 They leave Enter generation and the existing repeat-submit guard unchanged.
 
-Navigation requires the explicit reviewed `--navigation-observer` adapter.
-The default all-cases run also requires that argument because it includes navigation.
+Navigation and failure cases require the explicit reviewed `--navigation-observer` adapter.
+The default all-cases run also requires that argument because it includes these cases.
 The checker verifies the adapter hash before loading it.
 Observer construction verifies pinned pyte 0.8.2 and wcwidth 0.2.13 sources before importing them.
 No package installation or project dependency change is required.
@@ -108,9 +109,53 @@ Final navigation checks separately require a blank viewport and no retained owne
 Results record `navigation_observer` provenance and `navigation_scrollback_clear`.
 Product History preservation remains a separate assertion.
 The checker rejects navigation resizing and preserves all original raw bytes and cast events.
+Failure cases also use the current viewport for safe-error and obsolete-feedback assertions.
 Other cases retain the existing asciinema observer, including the ordinary resize workflow.
 pyte has a combining-at-right-margin limitation and does not establish universal grapheme or native-terminal behavior.
 Reaching the adapter's scrollback bound fails the check instead of allowing a cleanup pass.
+
+Failure recovery cases
+
+Use `--case failure` at 90×34 or `--case failure-compact` at an actual fixed 40×12.
+Pass the reviewed `--navigation-observer` adapter and a different fresh output directory for each case.
+These cases do not resize, rewrite cast headers, or alter captured bytes.
+
+The first explicit Ctrl+G sends the known synthetic text and instructions.
+The fixture returns HTTP 401 with valid Request ID `req_audio_demo_401` and malicious synthetic message canaries.
+The form must show `HTTP 401: Unauthorized.`, `Check key, project, organization.`, and `Setup: openai help setup`.
+The fixture's message does not justify claiming a particular credential is invalid.
+SS3 F1 must open `Audio error` with safe details; End must make the valid Request ID visible.
+Escape must return to the form without quitting or sending another request.
+Tab navigation and a model chooser round trip must not repeat generation.
+The failed response must not enter History.
+The harness follows the printed `openai help setup` instruction through the same immutable candidate and isolated synthetic HOME.
+It requires useful API-key setup help, zero added requests, unchanged synthetic HOME, and no canary or fake credential value.
+The harness does not run setup instructions, enter a credential, or modify live configuration.
+
+Only another explicit Ctrl+G receives the synthetic WAV response.
+The second request must preserve the exact original input, instructions, and settings.
+Successful recovery must remove obsolete HTTP 401, authentication guidance, Request ID, and F1-error hints from the current viewport.
+The harness verifies two-second measurement, one retained result, and byte-identical WAV export.
+It rejects every API-message canary across the complete raw terminal capture, including earlier erased frames.
+The successful-retry session finishes through Ctrl+C with exit 130, blank viewport, and empty owned scrollback.
+Each case then launches a second owned session and returns one fresh synthetic 401.
+Escape must exit that failed form with status 1 and a safe HTTP 401 diagnostic after terminal restoration.
+That diagnostic may remain visible. Owned form rows must be cleared from the viewport and scrollback.
+The second session must preserve the first session's retained History and send no implicit retry.
+Both sessions retain strict native-mode, ANSI, exact-byte observer, and process-group cleanup checks.
+
+Each size therefore requires exactly three speech requests across two owned PTY sessions: 401, WAV, then 401.
+The setup-help child is a separate read-only command with zero speech requests.
+Nine capture checkpoints use the existing 900-ms settling interval, for 8.1 seconds of deliberate capture settling per case.
+Allow roughly 20–30 seconds per healthy case before rendering; this estimate is not measured execution evidence.
+Existing per-command and cleanup deadlines remain in force; the outer runner must retain its total execution bound.
+
+The capture checkpoints are `failure-initial-form`, `failure-ready`, `failure-form`, `failure-details`,
+`failure-returned-form`, `failure-settings-no-retry`, and `failure-recovered-result`.
+The second session adds `failure-error-exit-form` and `failure-error-exit-summary`.
+Results retain all three synthetic request records and the original audio hash; they do not record the malicious response text.
+The fixture uses only fake credentials and fake secrets. It reads no real credential source and calls no remote API.
+As with other cases, source preparation alone does not establish these checks passed; execution needs a reserved slot.
 
 Playback uses a private fake FFplay executable.
 That helper consumes the real fixture bytes, records their hash, and produces no sound.

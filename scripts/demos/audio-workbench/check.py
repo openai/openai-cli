@@ -13,6 +13,7 @@ from pathlib import Path
 import platform
 import re
 import select
+import shlex
 import shutil
 import signal
 import subprocess
@@ -36,13 +37,13 @@ def main():
     parser.add_argument("--source", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repo-root", type=Path, default=os.environ.get("DEMO_REPO_ROOT"))
-    parser.add_argument("--case", choices=("workflow", "compact", "navigation", "navigation-compact",
+    parser.add_argument("--case", choices=("workflow", "compact", "navigation", "navigation-compact", "failure", "failure-compact",
                                           "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
                                           "stopped-reader", "startup", "all"), default="all")
     parser.add_argument("--theme", choices=("dark", "light", "no-color"), default="dark")
     parser.add_argument("--asciinema", default=shutil.which("asciinema"))
     parser.add_argument("--navigation-observer", type=Path,
-                        help="External reviewed observer adapter for fixed-size navigation checks")
+                        help="External reviewed observer adapter for fixed-size navigation or failure checks")
     parser.add_argument("--emit", action="store_true", help="Forward actual PTY bytes for the shared recorder")
     parser.add_argument("--no-resize", action="store_true", help="Keep the emitted comparison workflow at 90x34")
     args = parser.parse_args()
@@ -50,8 +51,10 @@ def main():
     picker = load("audio_terminal", root / "scripts/image_picker_harness.py")
     fixture = load("audio_fixture", Path(__file__).with_name("fixture.py"))
     navigation_cases = ("navigation", "navigation-compact")
-    needs_navigation_observer = args.case in (*navigation_cases, "all")
-    if not args.asciinema and args.case not in navigation_cases:
+    failure_cases = ("failure", "failure-compact")
+    observed_cases = (*navigation_cases, *failure_cases)
+    needs_navigation_observer = args.case in (*observed_cases, "all")
+    if not args.asciinema and args.case not in observed_cases:
         raise SystemExit("asciinema is required for real terminal-screen reconstruction")
     if not re.fullmatch(r"[0-9a-f]{40}", args.source):
         raise SystemExit("source must be a complete commit identity")
@@ -62,7 +65,7 @@ def main():
     navigation_adapter = None
     if needs_navigation_observer:
         if args.navigation_observer is None or not args.navigation_observer.is_file():
-            raise SystemExit("Navigation cases require --navigation-observer pointing to the reviewed adapter")
+            raise SystemExit("Navigation and failure cases require --navigation-observer pointing to the reviewed adapter")
         adapter_sha256 = hashlib.sha256(args.navigation_observer.read_bytes()).hexdigest()
         if adapter_sha256 != "6b97dfa956642d7fe3c26bde091b9e932775e72c20973b128923389de4dae79e":
             raise SystemExit("Navigation observer adapter does not match the reviewed source")
@@ -70,7 +73,7 @@ def main():
         if not callable(getattr(navigation_adapter, "create_observer", None)):
             raise SystemExit("Navigation observer adapter has no supported factory")
     elif args.navigation_observer is not None:
-        raise SystemExit("--navigation-observer applies only to navigation cases or --case all")
+        raise SystemExit("--navigation-observer applies only to navigation/failure cases or --case all")
     args.output.mkdir(parents=True, exist_ok=False)
     report = {"source": args.source, "binary_sha256": hashlib.sha256(args.binary.read_bytes()).hexdigest(),
               "platform": platform.system() + " " + platform.machine(), "theme": args.theme,
@@ -215,7 +218,7 @@ def main():
                 owned_terminals.append(self)
                 report["owned_terminal_cleanup"].append(self.cleanup)
                 self.navigation_observer = None
-                if result["case"] in navigation_cases:
+                if result["case"] in observed_cases:
                     self.navigation_observer = navigation_adapter.create_observer(*self.initial_size)
                     required = ("feed", "viewport_text", "scrollback_lines", "provenance")
                     if not all(callable(getattr(self.navigation_observer, method, None)) for method in required):
@@ -355,6 +358,183 @@ def main():
 
     def paste(terminal, text):
         terminal.send(b"\x1b[200~" + text.encode() + b"\x1b[201~")
+
+    def failure_case(terminal, server, result, public, env):
+        summary = "HTTP 401: Unauthorized."
+        action = "Check key, project, organization."
+        setup = "Setup: openai help setup"
+
+        def safe_screen(target=terminal):
+            visible = screen(target)
+            for canary in fixture.FAILURE_CANARIES:
+                assert canary.encode() not in target.raw, "Untrusted API message reached terminal output"
+            return " ".join(visible.split())
+
+        def visible_failure(required, absent=(), timeout=12, target=terminal):
+            deadline = time.monotonic() + timeout
+            while True:
+                drain(target, .06)
+                visible = safe_screen(target)
+                if all(text in visible for text in required) and all(text not in visible for text in absent):
+                    return visible
+                if target.child.poll() is not None or time.monotonic() > deadline:
+                    raise AssertionError("Audio failure state did not expose the required safe feedback")
+
+        def home_snapshot():
+            home = Path(env["HOME"])
+            snapshot = {}
+            for path in home.rglob("*"):
+                relative = str(path.relative_to(home))
+                if path.is_file():
+                    snapshot[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+                elif path.is_dir():
+                    snapshot[relative] = "directory"
+                else:
+                    raise AssertionError("Unexpected synthetic HOME entry during recovery help check")
+            return snapshot
+
+        mark(terminal, "failure-initial-form", result)
+        paste(terminal, fixture.TEXT)
+        terminal.send(b"\t")
+        wait(terminal, ("╭ Instructions ", "› Instructions"))
+        paste(terminal, fixture.INSTRUCTIONS)
+        terminal.send(b"\x1b[Z")  # Return to Text before the explicit submission.
+        mark(terminal, "failure-ready", result)
+        assert not server.records, "Editing submitted speech before explicit generation"
+        terminal.send(b"\x07")
+        visible_failure((summary, action, setup, "F1 details"))
+        mark(terminal, "failure-form", result)
+        assert len(server.records) == 1 and server.records[0].get("response_status") == 401
+        failed_request = server.records[0]["body"]
+        assert failed_request["input"] == fixture.TEXT and failed_request["instructions"] == fixture.INSTRUCTIONS
+        assert json.loads(public(["--format", "json", "audio", "history"])) == [], "Failed speech entered History"
+
+        # Follow the actual displayed instruction through the exact candidate,
+        # without a shell, real HOME, credential input, or setup mutation.
+        displayed = safe_screen()
+        assert setup in displayed
+        printed_setup = displayed[displayed.index(setup):][:len(setup)]
+        recovery_command = shlex.split(printed_setup.removeprefix("Setup: "))
+        assert recovery_command == ["openai", "help", "setup"], "Unexpected advertised setup command"
+        before_help = home_snapshot()
+        help_output = public(recovery_command[1:])
+        help_text = help_output.decode("utf-8", errors="strict")
+        assert "Set up your API key" in help_text and "OPENAI_API_KEY" in help_text
+        assert "This is a guide only." in help_text, "Setup recovery did not explain its read-only scope"
+        assert b"synthetic-demo-key" not in help_output, "Setup help disclosed the fake credential value"
+        assert all(canary.encode() not in help_output for canary in fixture.FAILURE_CANARIES)
+        assert home_snapshot() == before_help, "Reading setup recovery help changed synthetic HOME"
+        assert len(server.records) == 1, "Reading setup help reached the speech API"
+        (args.output / "failure-setup-help.txt").write_bytes(help_output)
+        result["setup_recovery"] = {"printed_command": " ".join(recovery_command),
+                                    "executed_arguments": [str(args.binary), *recovery_command[1:]],
+                                    "exit_status": 0, "requests_added": 0, "synthetic_home_unchanged": True}
+
+        terminal.send(b"\x1bOP")  # SS3 F1 opens the explicit safe-detail view.
+        visible_failure(("Audio error", summary, action, setup))
+        terminal.send(b"\x1b[F")
+        visible_failure(("Audio error", "Request ID: " + fixture.FAILURE_REQUEST_ID, "Esc back"))
+        mark(terminal, "failure-details", result)
+        assert len(server.records) == 1, "Viewing error details retried speech"
+        terminal.send(b"\x1b")
+        visible_failure(("Text to speech", summary, action, setup), absent=("Audio error",))
+        assert terminal.child.poll() is None, "Escape from error details quit the form"
+        assert len(server.records) == 1, "Escape from error details retried speech"
+        mark(terminal, "failure-returned-form", result)
+
+        terminal.send(b"\t\t\r")  # Text -> Instructions -> Settings -> Model choices.
+        wait(terminal, "gpt-4o-mini-tts-2025-03-20")
+        terminal.send(picker.DOWN + picker.UP + b"\r")  # Explicitly retain the original model.
+        visible_failure(("Text to speech", summary, action, setup))
+        mark(terminal, "failure-settings-no-retry", result)
+        assert len(server.records) == 1, "Navigation or model selection retried speech"
+        assert json.loads(public(["--format", "json", "audio", "history"])) == []
+        result["requests_before_explicit_retry"] = len(server.records)
+
+        terminal.send(b"\x07")
+        obsolete = (summary, action, setup, fixture.FAILURE_REQUEST_ID, "F1 details")
+        visible_failure(("Duration 00:02.000",), absent=obsolete)
+        mark(terminal, "failure-recovered-result", result)
+        assert len(server.records) == 2, "Explicit retry did not produce exactly one new request"
+        assert server.records[1]["body"] == failed_request, "Failure recovery changed the retained draft or settings"
+        assert server.records[1].get("response_status", 200) == 200
+        assert server.records[1]["response_sha256"] == hashlib.sha256(fixture.WAV).hexdigest()
+        entries = json.loads(public(["--format", "json", "audio", "history"]))
+        assert len(entries) == 1 and not entries[0]["settings"].get("preview", False)
+        entry = entries[0]
+        assert entry["settings"]["input"] == fixture.TEXT and entry["settings"]["instructions"] == fixture.INSTRUCTIONS
+        inspection = json.loads(public(["--format", "json", "audio", "inspect", entry["id"]]))
+        assert inspection["analysis"]["duration"] == 2
+        original = public(["audio", "export", entry["id"], "--output", "-"])
+        assert original == fixture.WAV, "Successful retry did not retain original WAV bytes"
+        (args.output / "failure-inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
+        (args.output / "failure-recovered.wav").write_bytes(original)
+        assert all(text not in safe_screen() for text in obsolete), "Successful retry retained obsolete failure feedback"
+        result["failure_checks"] = {
+            "http_status": 401, "request_id": fixture.FAILURE_REQUEST_ID,
+            "safe_details_visible": True, "untrusted_message_canaries_absent": True,
+            "escape_returned_without_retry": True, "navigation_did_not_retry": True,
+            "draft_preserved": True, "explicit_retry_succeeded": True,
+            "obsolete_feedback_cleared": True, "retained_results": len(entries),
+            "original_audio_sha256": hashlib.sha256(original).hexdigest(),
+        }
+        terminal.send(b"\x03")
+        terminal.finish(130)
+        safe_screen()
+        assert len(server.records) == 2, "Cancellation retried speech"
+
+        # A second owned session proves the original failure remains a safe,
+        # nonzero public exit when the user chooses Esc instead of retrying.
+        server.queue_auth_failure()
+        failed_terminal = None
+        try:
+            width, height = terminal.initial_size
+            failed_terminal = Terminal(str(args.binary), ["audio", "speak"], env, width=width, height=height)
+            wait(failed_terminal, "Text to speech")
+            paste(failed_terminal, fixture.TEXT)
+            failed_terminal.send(b"\x07")
+            visible_failure((summary, action, setup, "Esc exits"), target=failed_terminal)
+            mark(failed_terminal, "failure-error-exit-form", result)
+            assert len(server.records) == 3 and server.records[2].get("response_status") == 401
+            failed_terminal.send(b"\x1b")
+            failed_terminal.finish(1)
+            check_frame_boundaries(failed_terminal)
+            safe_screen(failed_terminal)
+            restored = bytes(failed_terminal.raw).rsplit(b"\x1b[?2004l", 1)
+            assert len(restored) == 2, "Error exit omitted terminal restoration"
+            diagnostic = picker.ANSI.sub("", restored[1].decode("utf-8", errors="strict"))
+            assert summary in diagnostic, "Error exit omitted its real HTTP status after terminal restoration"
+            assert "Request ID: " + fixture.FAILURE_REQUEST_ID in diagnostic
+            assert "Check API key, organization and project." in diagnostic
+            assert "Key setup:" in diagnostic and "help setup" in diagnostic
+            mark(failed_terminal, "failure-error-exit-summary", result)
+            observer = failed_terminal.navigation_observer
+            retained = observer.scrollback_lines()
+            visible = observer.viewport_text()
+            all_rows = visible + "\n" + "\n".join(line for lines in retained.values() for line in lines)
+            assert "Text to speech" not in all_rows, "Error exit retained owned form rows"
+            assert not any(event[1] == "r" for event in failed_terminal.events)
+            assert observer.provenance()["bytes_observed"] == len(failed_terminal.raw)
+            failed_terminal.save(args.output / "failure-error-exit")
+            (args.output / "failure-error-exit-final.txt").write_text(visible)
+            (args.output / "failure-error-exit-scrollback.json").write_text(json.dumps(retained, ensure_ascii=False, indent=2) + "\n")
+            assert len(server.records) == 3, "Escape from the failed form retried speech"
+            assert json.loads(public(["--format", "json", "audio", "history"])) == entries
+            result["failure_error_exit"] = {
+                "exit_status": failed_terminal.child.returncode, "request_count": 1,
+                "safe_summary_after_terminal_restoration": True, "owned_form_rows_cleared": True,
+                "final_diagnostic_allowed": True, "untrusted_message_canaries_absent": True,
+                "history_preserved": True, "observer": observer.provenance(),
+            }
+        finally:
+            if failed_terminal is not None:
+                try:
+                    failed_terminal.save(args.output / "failure-error-exit-latest")
+                finally:
+                    failed_terminal.close()
+        result["failure_session_count"] = 2
+        result["failure_total_request_count"] = len(server.records)
+        assert result["failure_total_request_count"] == 3
 
     def check_native_modes(terminal):
         restored = termios.tcgetattr(terminal.slave)
@@ -657,7 +837,8 @@ def main():
         result.update(pass_=True, exit_status=0, requests=[])
         result["pass"] = result.pop("pass_")
 
-    cases = ("workflow", "compact", "navigation", "navigation-compact", "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
+    cases = ("workflow", "compact", "navigation", "navigation-compact", "failure", "failure-compact",
+             "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
              "stopped-reader", "startup") if args.case == "all" else (args.case,)
     with harness_lifecycle():
         for case in cases:
@@ -678,8 +859,9 @@ def main():
                 (programs / "ffplay").write_text(helper)
                 (programs / "ffplay").chmod(0o700)
                 busy = case in ("busy-ctrl-c", "busy-sigterm")
+                failure = case in failure_cases
                 with protect_ownership():
-                    server = OwnedSpeechFixture(partial=busy)
+                    server = OwnedSpeechFixture(partial=busy, auth_failure=failure)
                     server.timeout = .1
                     stopped = threading.Event()
                     worker = threading.Thread(target=serve_fixture, args=(server, stopped))
@@ -713,7 +895,7 @@ def main():
                         continue
                     if navigation:
                         seeded_entry = seed_history(private, env)
-                    width, height = (40, 12) if case in ("compact", "navigation-compact") else (90, 34)
+                    width, height = (40, 12) if case in ("compact", "navigation-compact", "failure-compact") else (90, 34)
                     terminal = Terminal(str(args.binary), ["audio", "speak"], env, width=width, height=height)
                     result["initial_size"] = [width, height]
                     wait(terminal, "Text to speech")
@@ -826,6 +1008,8 @@ def main():
                         assert destination.read_bytes() == fixture.WAV and len(server.records) == 2
                         terminal.send(b"\x03")
                         terminal.finish(130)
+                    elif failure:
+                        failure_case(terminal, server, result, public, env)
                     elif case == "compact":
                         mark(terminal, "compact-initial-form", result)
                         paste(terminal, fixture.TEXT)
@@ -939,24 +1123,25 @@ def main():
                     terminal.save(args.output / case)
                     final = screen(terminal)
                     (args.output / (case + "-final.txt")).write_text(final)
-                    if navigation:
+                    if navigation or failure:
                         observer = terminal.navigation_observer
                         retained = observer.scrollback_lines()
                         (args.output / (case + "-scrollback.json")).write_text(json.dumps(retained, ensure_ascii=False, indent=2) + "\n")
-                        result["navigation_observer"] = observer.provenance()
-                        result["navigation_viewport_clear"] = not final.strip()
-                        result["navigation_scrollback_clear"] = all(not line.strip() for lines in retained.values() for line in lines)
-                        result["navigation_scrollback_rows"] = {name: len(lines) for name, lines in retained.items()}
-                        assert not any(event[1] == "r" for event in terminal.events), "Navigation capture unexpectedly resized"
-                        assert result["navigation_observer"]["bytes_observed"] == len(terminal.raw), "Navigation observer missed captured bytes"
+                        prefix = "navigation" if navigation else "failure"
+                        result[prefix + "_observer"] = observer.provenance()
+                        result[prefix + "_viewport_clear"] = not final.strip()
+                        result[prefix + "_scrollback_clear"] = all(not line.strip() for lines in retained.values() for line in lines)
+                        result[prefix + "_scrollback_rows"] = {name: len(lines) for name, lines in retained.items()}
+                        assert not any(event[1] == "r" for event in terminal.events), "Fixed-size observed capture unexpectedly resized"
+                        assert result[prefix + "_observer"]["bytes_observed"] == len(terminal.raw), "Observer missed captured bytes"
                     result["final_form_rows_cleared"] = "Text to speech" not in final
                     if case != "stopped-reader":
                         assert result["final_form_rows_cleared"], "Exited form left active rows in the final screen"
-                    if navigation:
-                        assert result["navigation_viewport_clear"], "Navigation left content in its final viewport"
-                        assert result["navigation_scrollback_clear"], "Navigation left owned content in terminal scrollback"
+                    if navigation or failure:
+                        assert result[prefix + "_viewport_clear"], "Observed case left content in its final viewport"
+                        assert result[prefix + "_scrollback_clear"], "Observed case left owned content in terminal scrollback"
                     assert not server.failures, "Fixture rejected a request"
-                    if case not in ("workflow", "compact") and not busy:
+                    if case not in ("workflow", "compact", *failure_cases) and not busy:
                         assert not server.records, "Cancellation generated speech"
                     result.update(exit_status=terminal.child.returncode, requests=server.records, pass_=True)
                     result["pass"] = result.pop("pass_")

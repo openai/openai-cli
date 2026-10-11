@@ -111,6 +111,9 @@ func (m *audioWorkbench) editorRows(name string, editor textarea.Model, active b
 }
 
 func (m *audioWorkbench) previewRows(compact bool) []string {
+	if m.focus != 3 {
+		return []string{m.muted().Render(m.label("Command preview   Focus to inspect", false))}
+	}
 	preview := readable.Text(m.commandPreview())
 	// Preserve the existing byte-exact, shell-quoted command and horizontal navigation.
 	if m.focus == 3 {
@@ -158,9 +161,16 @@ func (m *audioWorkbench) footerRows(compact bool) []string {
 		if m.focus == 3 {
 			hint = "Bash/zsh · ↑↓ scroll · Enter run"
 		}
-		footer = append(footer, hint, "History keeps audio/text/instructions")
+		if m.activeFailure() {
+			hint = "F1 details · " + m.failureEscapeHint()
+			if m.focus == 3 {
+				hint = "Bash/zsh · " + hint
+			}
+			footer = append(footer, m.feedbackLines()...)
+		}
+		footer = append(footer, m.muted().Render(hint), m.muted().Render("History keeps audio/text/instructions"))
 	}
-	if m.note != "" && !m.busy {
+	if m.note != "" && !m.busy && !m.activeFailure() {
 		footer = append(footer, m.feedbackLines()...)
 	}
 	return footer
@@ -172,6 +182,9 @@ func (m *audioWorkbench) View() tea.View {
 	}
 	if !m.usable() {
 		return tea.NewView(m.fitAudio([]string{"Resize to 40 x 12.", "Ctrl+C exits."}))
+	}
+	if m.modal == "error" {
+		return m.failureView()
 	}
 	lines := []string{m.strong().Render("Text to speech")}
 	if m.modal == "choice" || m.modal == "history" {
@@ -185,6 +198,9 @@ func (m *audioWorkbench) View() tea.View {
 		hint := "Up/Down choose · Enter apply · Esc back"
 		if m.modal == "choice" && m.setting == 1 {
 			hint = "Enter chooses · P generates and plays"
+		}
+		if m.activeFailure() {
+			hint = "Enter apply · F1 details · Esc back"
 		}
 		footer := []string{hint, "Choosing never generates speech."}
 		if m.modal == "choice" && m.setting == 0 && strings.HasSuffix(m.choices[m.choice], "1106") {
@@ -232,7 +248,7 @@ func (m *audioWorkbench) View() tea.View {
 					value = "(empty)"
 				}
 			}
-			lines = append(lines, m.label(fmt.Sprintf("%-14s %s", name, value), false))
+			lines = append(lines, m.label(m.muted().Render(fmt.Sprintf("%-14s", name))+" "+value, false))
 		}
 	}
 	settings := []string{
@@ -244,6 +260,13 @@ func (m *audioWorkbench) View() tea.View {
 	}
 	for i := range settings {
 		settings[i] = readable.Text(settings[i])
+		if !(m.focus == 2 && m.setting == i) {
+			if i < 4 {
+				settings[i] = m.muted().Render(settings[i][:14]) + settings[i][14:]
+			} else if i == 4 {
+				settings[i] = "Preview voice  " + m.muted().Render("Generate and play a sample")
+			}
+		}
 	}
 	if compact {
 		lines = append(lines, m.label(settings[m.setting], m.focus == 2))
@@ -263,6 +286,9 @@ func (m *audioWorkbench) View() tea.View {
 			start = max(0, selected-available+1)
 		}
 		for i := start; i < min(count, start+available); i++ {
+			if i == 4 && available > count && start == 0 {
+				lines = append(lines, m.muted().Render("  Actions"))
+			}
 			text, active := settings[i], m.focus == 2 && m.setting == i
 			if m.result != nil && i == 4 {
 				if m.focus == 2 && m.setting >= 4 {
@@ -316,6 +342,9 @@ func (m *audioWorkbench) View() tea.View {
 }
 
 func (m *audioWorkbench) feedbackLines() []string {
+	if m.activeFailure() {
+		return m.failureSummaryRows()
+	}
 	note := m.note
 	if note == "" {
 		return nil

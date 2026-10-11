@@ -16,6 +16,16 @@ import threading
 TEXT = "Hello from the audio workbench.\nThis clip is synthetic."
 INSTRUCTIONS = "Read clearly. Keep @literal and \\@literal unchanged."
 AUDITION = "Hello. This is a preview of this voice."
+FAILURE_REQUEST_ID = "req_audio_demo_401"
+FAILURE_CANARIES = ("SYNTHETIC_API_MESSAGE_CANARY", "sk-synthetic-do-not-print",
+                    "synthetic-query-canary", "/synthetic/private-audio.wav")
+AUTH_FAILURE = json.dumps({"error": {
+    "message": ("SYNTHETIC_API_MESSAGE_CANARY sk-synthetic-do-not-print "
+                "/synthetic/private-audio.wav "
+                "https://example.invalid/private?token=synthetic-query-canary\n"
+                "\x1b[2JUntrusted response text must never become terminal output."),
+    "type": "authentication_error", "code": "invalid_api_key", "param": None,
+}}).encode()
 RATE = 24000
 FRAMES = RATE * 2
 
@@ -39,11 +49,12 @@ WAV = (b"RIFF" + struct.pack("<I", 36 + len(PCM)) + b"WAVEfmt " +
 class SpeechFixture(http.server.ThreadingHTTPServer):
     daemon_threads = False
 
-    def __init__(self, log=None, partial=False):
+    def __init__(self, log=None, partial=False, auth_failure=False):
         super().__init__(("127.0.0.1", 0), SpeechHandler)
         self.records, self.failures = [], []
         self.lock, self.log = threading.Lock(), log
         self.partial = partial
+        self.auth_failure_pending = bool(auth_failure)
         self.partial_ready = threading.Event()
         self.partial_release = threading.Event()
         self.partial_closed = threading.Event()
@@ -70,6 +81,18 @@ class SpeechFixture(http.server.ThreadingHTTPServer):
             if self.log is not None:
                 self.log.write(json.dumps(value, ensure_ascii=False) + "\n")
                 self.log.flush()
+
+    def claim_auth_failure(self):
+        with self.lock:
+            fail = self.auth_failure_pending
+            self.auth_failure_pending = False
+            return fail
+
+    def queue_auth_failure(self):
+        with self.lock:
+            if self.auth_failure_pending:
+                raise ValueError("Synthetic authentication failure is already pending")
+            self.auth_failure_pending = True
 
 
 class SpeechHandler(http.server.BaseHTTPRequestHandler):
@@ -104,6 +127,18 @@ class SpeechHandler(http.server.BaseHTTPRequestHandler):
                 raise ValueError("unexpected audio settings")
             if body.get("stream_format", "audio") != "audio":
                 raise ValueError("expected finite audio")
+            if self.server.claim_auth_failure():
+                self.server.record({"method": "POST", "path": self.path, "body": body,
+                                    "response_status": 401, "request_id": FAILURE_REQUEST_ID,
+                                    "response_bytes": len(AUTH_FAILURE),
+                                    "response_sha256": hashlib.sha256(AUTH_FAILURE).hexdigest()})
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(AUTH_FAILURE)))
+                self.send_header("X-Request-ID", FAILURE_REQUEST_ID)
+                self.end_headers()
+                self.wfile.write(AUTH_FAILURE)
+                return
             payload = WAV if body["response_format"] == "wav" else PCM
             self.server.record({"method": "POST", "path": self.path, "body": body,
                                 "response_bytes": len(payload), "response_sha256": hashlib.sha256(payload).hexdigest(),

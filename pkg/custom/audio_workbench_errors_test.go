@@ -33,8 +33,11 @@ func TestAudioWorkbenchFailurePreservesKnownResultWithoutInventingRetention(t *t
 		require.Equal(t, "Keep the draft text.", m.input.Value())
 		require.Equal(t, "Keep these instructions.", m.instructions.Value())
 		require.Equal(t, settings, m.settings)
-		require.Contains(t, m.View().Content, "Audio action failed.")
-		require.NotContains(t, m.View().Content, "retained audio remains available")
+		view := audioFeedbackView(t, m)
+		require.Contains(t, view, "Speech request failed.")
+		require.Contains(t, view, "Check History and API usage before generating again.")
+		require.NotContains(t, view, "Retained audio remains available")
+		require.NotContains(t, view, "synthetic request failure")
 		require.False(t, m.busy)
 	}
 }
@@ -44,12 +47,15 @@ func TestAudioWorkbenchPartialHistoryFailureIsVisibleWithUsableEntries(t *testin
 		m := audioReviewModel(t)
 		m.Update(tea.WindowSizeMsg{Width: width, Height: 12})
 		entry := audioReviewResult("retained", false).entry
-		failure := errors.New("synthetic corrupt neighbor")
+		failure := errors.Join(audiohistory.ErrInvalid, errors.New("synthetic corrupt neighbor"))
 		m.Update(audioWorkMessage{kind: "history", entries: []audiohistory.Entry{entry}, err: failure})
 		require.Equal(t, "history", m.modal)
 		require.Equal(t, []audiohistory.Entry{entry}, m.entries)
 		require.ErrorIs(t, m.lastErr, failure)
-		require.Contains(t, audioFeedbackView(t, m), "Some audio history could not be read.")
+		view := audioFeedbackView(t, m)
+		require.Contains(t, view, "History could not be verified.")
+		require.Contains(t, view, "Check private cache permissions and retained records.")
+		require.Contains(t, view, "Enter apply · F1 details · Esc back")
 		_, command := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		require.NotNil(t, command, "valid history selection was disabled by its corrupt neighbor")
 	}
@@ -88,16 +94,18 @@ func TestAudioWorkbenchPlaybackCompletionOwnsOnlyItsActiveNote(t *testing.T) {
 					case "history failure":
 						m.Update(audioWorkMessage{kind: "history", entries: []audiohistory.Entry{result.entry}, err: errors.New("synthetic history failure")})
 					}
-					note, failure := m.note, m.lastErr
+					note, failure, feedback := m.note, m.lastErr, m.failure
 					_, command := m.Update(audioWorkMessage{kind: "play", playID: id - 1, err: errors.New("stale failure")})
 					require.Nil(t, command)
 					require.True(t, m.playing)
 					require.Equal(t, note, m.note)
 					require.Equal(t, failure, m.lastErr)
+					require.Equal(t, feedback, m.failure, "stale playback replaced newer feedback")
 					_, command = m.Update(audioWorkMessage{kind: "play", playID: id, err: completion})
 					require.Nil(t, command)
 					require.False(t, m.playing)
 					require.Equal(t, failure, m.lastErr, "playback completion cleared an unrelated failure")
+					require.Equal(t, feedback, m.failure, "playback completion replaced newer feedback")
 					require.Same(t, &result, m.result)
 					if newer == "none" {
 						expected := "Finished."
@@ -108,7 +116,17 @@ func TestAudioWorkbenchPlaybackCompletionOwnsOnlyItsActiveNote(t *testing.T) {
 					} else {
 						require.Equal(t, note, m.note)
 					}
-					require.Contains(t, audioFeedbackView(t, m), m.note)
+					view := audioFeedbackView(t, m)
+					switch newer {
+					case "save failure":
+						require.Contains(t, view, "Save failed.")
+						require.Contains(t, view, "Check the destination before saving again.")
+					case "history failure":
+						require.Contains(t, view, "History failed.")
+						require.Contains(t, view, "Check retained records and private cache permissions.")
+					default:
+						require.Contains(t, view, m.note)
+					}
 				})
 			}
 		}
@@ -166,11 +184,12 @@ func TestAudioWorkbenchStopKeysPreserveNewerFeedbackAndErrors(t *testing.T) {
 						m.Update(audioWorkMessage{kind: "export", err: failure})
 						m.lastFinished = time.Time{}
 					}
-					note := m.note
+					note, feedback := m.note, m.failure
 					require.Nil(t, audioReviewKey(m, key))
 					require.ErrorIs(t, playContext.Err(), context.Canceled)
 					require.False(t, m.playing)
 					require.ErrorIs(t, m.lastErr, failure)
+					require.Equal(t, feedback, m.failure)
 					require.Same(t, &result, m.result)
 					if newer {
 						require.Equal(t, note, m.note)
@@ -183,7 +202,15 @@ func TestAudioWorkbenchStopKeysPreserveNewerFeedbackAndErrors(t *testing.T) {
 					}
 					m.Update(audioWorkMessage{kind: "play", playID: id, err: errors.New("late canceled worker")})
 					require.ErrorIs(t, m.lastErr, failure)
-					require.Contains(t, audioFeedbackView(t, m), m.note)
+					require.Equal(t, feedback, m.failure, "late playback replaced newer feedback")
+					view := audioFeedbackView(t, m)
+					if newer {
+						require.Contains(t, view, "Save failed.")
+						require.Contains(t, view, "Check the destination before saving again.")
+					} else {
+						require.Contains(t, view, "Stopped.")
+						require.NotContains(t, view, "Save failed.")
+					}
 				})
 			}
 		}
@@ -214,9 +241,9 @@ func TestAudioWorkbenchChoiceDialogsShowAsynchronousPlaybackFailure(t *testing.T
 				for range len(m.choices) {
 					view := audioFeedbackView(t, m)
 					require.Contains(t, view, "Playback failed.")
-					require.Contains(t, view, "FFplay")
-					require.Contains(t, view, "FFmpeg.")
-					require.Contains(t, view, "Enter")
+					require.Contains(t, view, "Check History, the player, and audio output.")
+					require.NotContains(t, view, "Retained audio remains available.")
+					require.Contains(t, view, "Enter apply · F1 details · Esc back")
 					require.Contains(t, view, "Choosing never generates speech.")
 					require.Contains(t, view, "› "+m.choices[m.choice])
 					require.NotContains(t, m.View().Content, "\x1b[2J")
@@ -251,6 +278,7 @@ func TestAudioWorkbenchFailureGuidanceFollowsEscapeTransitions(t *testing.T) {
 				m.instructions.SetValue("Keep the instructions.")
 				settings := m.settings
 				failure := errors.New("synthetic " + kind + " failure")
+				summary, action := "Save failed.", "Check the destination before saving again."
 				if kind == "export" {
 					audioReviewKey(m, 's')
 					m.path.SetValue("synthetic.wav")
@@ -259,16 +287,23 @@ func TestAudioWorkbenchFailureGuidanceFollowsEscapeTransitions(t *testing.T) {
 					require.Same(t, &result, m.result)
 				} else {
 					result.measured = false
-					m.Update(audioWorkMessage{kind: "generate", result: result, err: failure})
+					m.Update(audioWorkMessage{kind: "generate", result: result, err: audioFailure("Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.", failure)})
+					summary, action = "Measurement failed.", "Retained audio remains available. Export the file for inspection."
 				}
-				require.Contains(t, audioFeedbackView(t, m), "Audio action failed. Esc returns to Text.")
+				view := audioFeedbackView(t, m)
+				require.Contains(t, view, summary)
+				require.Contains(t, view, action)
+				require.Contains(t, view, "F1 details · Esc returns to Text")
 				require.Equal(t, result.entry, m.result.entry)
 				// A choice dialog adds its own return transition before result focus.
 				for range 4 {
 					audioReviewKey(m, tea.KeyTab)
 				}
 				require.Nil(t, audioReviewKey(m, tea.KeyEnter))
-				require.Contains(t, audioFeedbackView(t, m), "Audio action failed. Esc returns.")
+				view = audioFeedbackView(t, m)
+				require.Contains(t, view, summary)
+				require.Contains(t, view, action)
+				require.Contains(t, view, "Enter apply · F1 details · Esc back")
 				require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 				require.Empty(t, m.modal)
 				audioReviewKey(m, tea.KeyTab)
@@ -276,7 +311,10 @@ func TestAudioWorkbenchFailureGuidanceFollowsEscapeTransitions(t *testing.T) {
 				require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 				require.Equal(t, 0, m.focus)
 				require.False(t, m.quit)
-				require.Contains(t, audioFeedbackView(t, m), "Audio action failed. Esc exits with the error.")
+				view = audioFeedbackView(t, m)
+				require.Contains(t, view, summary)
+				require.Contains(t, view, action)
+				require.Contains(t, view, "F1 details · Esc exits")
 				require.ErrorIs(t, m.lastErr, failure)
 				require.Equal(t, "Keep the draft.", m.input.Value())
 				require.Equal(t, "Keep the instructions.", m.instructions.Value())
@@ -306,7 +344,7 @@ func TestAudioWorkbenchFailedAuditionPreservesFailureAndKnownPriorResult(t *test
 				for _, id := range []string{"first_audition", "second_audition"} {
 					audition := audioReviewResult(id, true)
 					audition.measured = false
-					_, command := m.Update(audioWorkMessage{kind: "generate", result: audition, err: failure})
+					_, command := m.Update(audioWorkMessage{kind: "generate", result: audition, err: audioFailure("Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.", failure)})
 					require.Nil(t, command, "failed measurement automatically started playback")
 					require.Equal(t, audition, *m.result)
 					require.Equal(t, 4, m.focus)
@@ -314,14 +352,15 @@ func TestAudioWorkbenchFailedAuditionPreservesFailureAndKnownPriorResult(t *test
 					require.False(t, m.playing)
 					require.ErrorIs(t, m.lastErr, failure)
 					view := audioFeedbackView(t, m)
-					require.Contains(t, view, "Audio action failed.")
+					require.Contains(t, view, "Measurement failed.")
+					require.Contains(t, view, "Retained audio remains available. Export the file for inspection.")
 					if hasPrior {
 						require.Same(t, &prior, m.priorResult)
-						require.Contains(t, view, "Esc restores your previous result.")
+						require.Contains(t, view, "F1 details · Esc restores result")
 					} else {
 						require.Nil(t, m.priorResult)
 						require.NotContains(t, view, "previous result")
-						require.Contains(t, view, "Esc returns to Text.")
+						require.Contains(t, view, "F1 details · Esc returns to Text")
 					}
 				}
 				require.Nil(t, audioReviewKey(m, tea.KeyEscape))
@@ -336,7 +375,10 @@ func TestAudioWorkbenchFailedAuditionPreservesFailureAndKnownPriorResult(t *test
 				require.Equal(t, "Keep the draft.", m.input.Value())
 				require.Equal(t, "Keep the instructions.", m.instructions.Value())
 				require.Equal(t, settings, m.settings)
-				require.Contains(t, audioFeedbackView(t, m), "Esc exits with the error.")
+				view := audioFeedbackView(t, m)
+				require.Contains(t, view, "Measurement failed.")
+				require.Contains(t, view, "Retained audio remains available. Export the file for inspection.")
+				require.Contains(t, view, "F1 details · Esc exits")
 				require.NotNil(t, audioReviewKey(m, tea.KeyEscape))
 				require.True(t, m.quit)
 				require.ErrorIs(t, m.lastErr, failure)

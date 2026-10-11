@@ -18,6 +18,8 @@ Enter opens a choice or starts generation from an editor.
 Enter on Speed accepts an exact number from 0.25 to 4. Left and Right adjust speed by 0.25.
 Alt+Enter adds a newline. Ctrl+G generates from any ordinary form section.
 The form follows the image picker’s bordered editor, aligned settings, selection colors, and muted command preview.
+Settings and actions have separate visual groups when space permits.
+The command preview stays compact until focused, keeping the editors and result easier to read.
 The focused command preview supports Up/Down scrolling and Left/Right adjustments.
 PageUp/PageDown scroll the preview. Home/End select its start or end.
 Up at the preview start returns to Result or the last setting.
@@ -38,6 +40,13 @@ The form retains completed audio, text, instructions, and settings in private lo
 It stores history under the operating system's user cache directory, within `openai/audio`.
 History can contain sensitive text. The form states what it stores before generation.
 Clear resets the form and current result. It preserves history and exported files.
+
+Failed actions show a safe cause and recovery guidance inside the form.
+For example, HTTP 401 reports an authentication rejection and points to key, project, and organization setup.
+F1 opens complete error details, including a validated request ID when available.
+Up/Down scroll the details. Escape returns to the previous form or dialog.
+Opening details or changing settings never retries the request.
+The form keeps the original error for its existing exit diagnostics and status.
 
 Completed results show their format and byte count.
 When analysis succeeds, they also show a waveform derived from decoded samples and duration.

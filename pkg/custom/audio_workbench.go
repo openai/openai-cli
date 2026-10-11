@@ -69,33 +69,36 @@ func (w *audioWorkers) close(cancel context.CancelFunc) {
 }
 
 type audioWorkbench struct {
-	ctx                       context.Context
-	command                   *cli.Command
-	next                      cli.ActionFunc
-	store                     audiohistory.Store
-	workers                   *audioWorkers
-	settings                  audiohistory.Settings
-	input, instructions, path textarea.Model
-	speedInput                textarea.Model
-	focus, setting, choice    int
-	modal                     string
-	choices                   []string
-	entries                   []audiohistory.Entry
-	result                    *audioWorkResult
-	priorResult               *audioWorkResult
-	previewOffset             int
-	invocation                string
-	width, height             int
-	color, dark               bool
-	busy, quit, playing       bool
-	note                      string
-	lastErr                   error
-	exitCode                  int
-	lastFinished              time.Time
-	started                   time.Time
-	playID                    uint64
-	playCancel                context.CancelFunc
-	playDone                  <-chan struct{}
+	ctx                        context.Context
+	command                    *cli.Command
+	next                       cli.ActionFunc
+	store                      audiohistory.Store
+	workers                    *audioWorkers
+	settings                   audiohistory.Settings
+	input, instructions, path  textarea.Model
+	speedInput                 textarea.Model
+	focus, setting, choice     int
+	modal                      string
+	choices                    []string
+	entries                    []audiohistory.Entry
+	result                     *audioWorkResult
+	priorResult                *audioWorkResult
+	previewOffset              int
+	invocation                 string
+	width, height              int
+	color, dark                bool
+	busy, quit, playing        bool
+	note                       string
+	failure                    audioFeedback
+	failureNote, failureParent string
+	failureOffset              int
+	lastErr                    error
+	exitCode                   int
+	lastFinished               time.Time
+	started                    time.Time
+	playID                     uint64
+	playCancel                 context.CancelFunc
+	playDone                   <-chan struct{}
 }
 
 func newAudioWorkbench(ctx context.Context, command *cli.Command, next cli.ActionFunc, store audiohistory.Store) *audioWorkbench {
@@ -181,6 +184,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.err != nil && !errors.Is(msg.err, context.Canceled) {
 				m.lastErr = msg.err
 				m.note = "Playback failed. FFplay is required; compressed audio also needs FFmpeg."
+				m.rememberFailure("play", msg.err)
 			} else if m.note == audioPlayingNote {
 				m.note = "Finished."
 				if msg.err != nil {
@@ -234,6 +238,9 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.lastErr = nil
 		}
+		if msg.err != nil {
+			m.rememberFailure(msg.kind, msg.err)
+		}
 	case tea.KeyPressMsg:
 		key := msg.String()
 		if key == "ctrl+c" {
@@ -246,6 +253,19 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if key == "esc" {
+			if m.modal == "error" {
+				m.modal, m.failureParent = m.failureParent, ""
+				m.failureOffset = 0
+				switch m.modal {
+				case "save":
+					return m, m.path.Focus()
+				case "speed":
+					return m, m.speedInput.Focus()
+				case "":
+					return m, m.focusSection(m.focus)
+				}
+				return m, nil
+			}
 			if m.modal != "" {
 				m.modal = ""
 				m.path.Blur()
@@ -269,6 +289,10 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if m.busy {
+			return m, nil
+		}
+		if key == "f1" && m.activeFailure() && m.modal != "error" {
+			m.failureParent, m.modal, m.failureOffset = m.modal, "error", 0
 			return m, nil
 		}
 		if m.modal != "" {
@@ -400,6 +424,25 @@ func (m *audioWorkbench) activateSetting() tea.Cmd {
 }
 
 func (m *audioWorkbench) updateModal(message tea.Msg, key string) tea.Cmd {
+	if m.modal == "error" {
+		limit := max(0, len(m.failureDetailRows())-m.failureDetailHeight())
+		m.failureOffset = min(m.failureOffset, limit)
+		switch key {
+		case "up":
+			m.failureOffset = max(0, m.failureOffset-1)
+		case "down":
+			m.failureOffset = min(limit, m.failureOffset+1)
+		case "pgup":
+			m.failureOffset = max(0, m.failureOffset-m.failureDetailHeight())
+		case "pgdown":
+			m.failureOffset = min(limit, m.failureOffset+m.failureDetailHeight())
+		case "home":
+			m.failureOffset = 0
+		case "end":
+			m.failureOffset = limit
+		}
+		return nil
+	}
 	if m.modal == "speed" {
 		if key != "enter" {
 			var cmd tea.Cmd
