@@ -38,6 +38,24 @@ func audioReviewKey(m *audioWorkbench, code rune) tea.Cmd {
 	return command
 }
 
+func audioReviewMore(t *testing.T, m *audioWorkbench, action string) tea.Cmd {
+	t.Helper()
+	require.Empty(t, m.modal)
+	m.focusSection(2)
+	m.setting = 5
+	require.Nil(t, audioReviewKey(m, tea.KeyEnter))
+	require.Equal(t, "more", m.modal)
+	for index, item := range m.moreItems() {
+		if item == action {
+			require.Equal(t, index, m.moreChoice)
+			return audioReviewKey(m, tea.KeyEnter)
+		}
+		require.Nil(t, audioReviewKey(m, tea.KeyDown))
+	}
+	t.Fatalf("More action %q was unavailable", action)
+	return nil
+}
+
 func audioReviewResult(id string, preview bool) audioWorkResult {
 	settings := audioDefaultSettings()
 	settings.Input, settings.Instructions, settings.Preview = "Synthetic text 世界", "Calm delivery", preview
@@ -90,8 +108,7 @@ func TestAudioReviewClearPreservesHistoryAndExports(t *testing.T) {
 	m.instructions.SetValue("New instructions")
 	playContext, cancel := context.WithCancel(t.Context())
 	m.playing, m.playCancel = true, cancel
-	m.focus, m.setting = 2, 7
-	require.Nil(t, audioReviewKey(m, tea.KeyEnter))
+	require.Nil(t, audioReviewMore(t, m, "Clear form"))
 	require.ErrorIs(t, playContext.Err(), context.Canceled)
 	require.False(t, m.playing)
 	require.Nil(t, m.result)
@@ -244,12 +261,18 @@ func TestAudioReviewMetadataCannotControlTheTerminal(t *testing.T) {
 	retained.entry.Settings.Model = "model\x1b[2J"
 	retained.entry.Settings.Voice = "voice\x1b]52;c;c3ludGhldGlj\x07"
 	m.Update(audioWorkMessage{kind: "open", result: retained})
-	for _, focus := range []int{0, 2, 3, 4} {
+	for _, focus := range []int{0, 1, 2, 4} {
 		m.focus = focus
 		view := m.View().Content
 		require.NotContains(t, view, "\x1b[2J", "retained model executed a terminal control")
 		require.NotContains(t, view, "\x1b]52", "retained voice executed a clipboard control")
 		require.NotContains(t, view, "\x07")
+	}
+	require.Nil(t, audioReviewMore(t, m, "Show command"))
+	for _, row := range m.infoRows() {
+		require.NotContains(t, row, "\x1b[2J")
+		require.NotContains(t, row, "\x1b]52")
+		require.NotContains(t, row, "\x07")
 	}
 }
 
@@ -266,7 +289,7 @@ func TestAudioReviewLayoutsRespectCellsAndColorOptOut(t *testing.T) {
 					result := audioReviewResult("synthetic", false)
 					m.result = &result
 					m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-					for focus := range 5 {
+					for _, focus := range []int{0, 1, 2, 4} {
 						m.focus = focus
 						view := m.View().Content
 						require.True(t, utf8.ValidString(view))

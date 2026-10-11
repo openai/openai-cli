@@ -219,49 +219,57 @@ func TestAudioCommandPreviewSuppressesPrivateOverrides(t *testing.T) {
 	require.NotContains(t, model.commandPreview(), "sk-fake-inherited")
 }
 
-func TestAudioCommandPreviewFullTextAndHorizontalScroll(t *testing.T) {
+func TestAudioCommandPreviewFullTextAndVerticalScroll(t *testing.T) {
 	model := audioPreviewModel(t, "openai")
 	model.input.SetValue(strings.Repeat("long 世界 input ", 80) + "INPUT_TAIL_MARKER")
 	model.instructions.SetValue(strings.Repeat("delivery guidance ", 60) + "INSTRUCTION_TAIL_MARKER")
-	model.width, model.height, model.focus = 60, 18, 3
+	model.Update(tea.WindowSizeMsg{Width: 60, Height: 18})
 	preview := model.commandPreview()
 	require.Contains(t, preview, "INPUT_TAIL_MARKER")
 	require.Contains(t, preview, "INSTRUCTION_TAIL_MARKER")
+	require.Nil(t, audioReviewMore(t, model, "Show command"))
+	require.Equal(t, "info", model.modal)
+	require.Equal(t, preview, model.infoText, "the command modal changed the executable bytes")
 	initial := model.View().Content
-	require.Contains(t, ansi.Strip(initial), "› printf", "command preview lost its selected row")
-	require.Contains(t, ansi.Strip(initial), "Bash/zsh", "the copyable preview must identify its supported shells")
-	_, command := model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
-	require.Nil(t, command, "scrolling must never generate speech")
-	require.Greater(t, model.previewOffset, 0)
+	require.Contains(t, ansi.Strip(initial), "printf")
+	require.Contains(t, ansi.Strip(initial), "Bash/zsh", "the copyable command must identify its supported shells")
+	require.Nil(t, audioReviewKey(model, tea.KeyDown), "scrolling must never generate speech")
+	require.Positive(t, model.infoOffset)
 	require.NotEqual(t, initial, model.View().Content)
 	for _, marker := range []string{"INPUT_TAIL_MARKER", "INSTRUCTION_TAIL_MARKER"} {
-		prefix := preview[:strings.Index(preview, marker)]
-		model.previewOffset = ansi.StringWidth(prefix)
-		view := model.View().Content
-		require.Contains(t, view, marker, "complete command must remain reachable through horizontal scrolling")
-		for _, row := range strings.Split(view, "\n") {
-			require.LessOrEqual(t, ansi.StringWidth(row), model.width-1)
+		require.Nil(t, audioReviewKey(model, tea.KeyHome))
+		found := false
+		for range len(model.infoRows()) {
+			view := audioFeedbackView(t, model)
+			if strings.Contains(view, marker) {
+				found = true
+				break
+			}
+			require.Nil(t, audioReviewKey(model, tea.KeyDown))
+			require.False(t, model.busy)
 		}
+		require.True(t, found, "complete command must remain reachable through vertical scrolling: %s", marker)
 	}
-	_, command = model.Update(tea.KeyPressMsg{Code: tea.KeyHome})
-	require.Nil(t, command)
-	require.Zero(t, model.previewOffset)
+	require.Nil(t, audioReviewKey(model, tea.KeyHome))
+	require.Zero(t, model.infoOffset)
+	require.Nil(t, audioReviewKey(model, tea.KeyEnter), "viewing a command must not generate speech")
+	require.False(t, model.busy)
+	require.Equal(t, "info", model.modal)
 }
 
-func TestAudioCommandPreviewSupportsPickerScrollKeys(t *testing.T) {
+func TestAudioCommandPreviewSupportsInformationScrollKeys(t *testing.T) {
 	model := audioPreviewModel(t, "openai")
-	model.input.SetValue(strings.Repeat("Synthetic speech ", 30))
+	model.input.SetValue(strings.Repeat("Synthetic speech ", 130))
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	model.focus = 3
+	require.Nil(t, audioReviewMore(t, model, "Show command"))
 	first := model.View().Content
 	for _, key := range []rune{tea.KeyDown, tea.KeyUp} {
-		_, command := model.Update(tea.KeyPressMsg{Code: key})
-		require.Nil(t, command, "command scrolling generated speech")
+		require.Nil(t, audioReviewKey(model, key), "command scrolling generated speech")
 		require.False(t, model.busy)
 		if key == tea.KeyDown {
 			require.NotEqual(t, first, model.View().Content)
 		}
 	}
-	require.Zero(t, model.previewOffset)
+	require.Zero(t, model.infoOffset)
 	require.Equal(t, first, model.View().Content)
 }

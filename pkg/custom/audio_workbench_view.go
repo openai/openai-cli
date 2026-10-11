@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
@@ -110,72 +109,6 @@ func (m *audioWorkbench) editorRows(name string, editor textarea.Model, active b
 	return append(rows, border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
 }
 
-func (m *audioWorkbench) previewRows(compact bool) []string {
-	if m.focus != 3 {
-		return []string{m.muted().Render(m.label("Command preview   Focus to inspect", false))}
-	}
-	preview := readable.Text(m.commandPreview())
-	// Preserve the existing byte-exact, shell-quoted command and horizontal navigation.
-	if m.focus == 3 {
-		offset := min(m.previewOffset, max(0, ansi.StringWidth(preview)-m.audioWidth()+2))
-		preview = ansi.Cut(preview, offset, ansi.StringWidth(preview))
-	}
-	height := 3
-	if compact {
-		height = 1
-	}
-	var rows []string
-	for preview != "" && len(rows) < height {
-		line := ansi.Cut(preview, 0, m.audioWidth()-2)
-		preview = ansi.Cut(preview, ansi.StringWidth(line), ansi.StringWidth(preview))
-		row := m.label(line, m.focus == 3 && len(rows) == 0)
-		if m.focus != 3 {
-			row = m.muted().Render(row)
-		}
-		rows = append(rows, row)
-	}
-	return rows
-}
-
-func (m *audioWorkbench) footerRows(compact bool) []string {
-	footer := m.previewRows(compact)
-	if !compact {
-		footer = append([]string{""}, footer...)
-	}
-	if m.busy {
-		footer = append(footer, fmt.Sprintf("%s · %.1f s · Ctrl+C cancels", m.note, time.Since(m.started).Seconds()))
-	} else {
-		hint := "↑↓/Tab move · Enter applies · Ctrl+G generates"
-		if m.focus < 2 {
-			hint = "↑↓/Tab move · Enter generates · Alt+Enter newline"
-			if compact {
-				hint = "↑↓/Tab move · Enter run · Alt+Enter ↵"
-			}
-		}
-		if m.focus == 2 {
-			hint = "↑↓ move · Enter chooses · ←→ speed"
-		}
-		if m.focus == 4 {
-			hint = "Space play/stop · X stop · S save · H history"
-		}
-		if m.focus == 3 {
-			hint = "Bash/zsh · ↑↓ scroll · Enter run"
-		}
-		if m.activeFailure() {
-			hint = "F1 details · " + m.failureEscapeHint()
-			if m.focus == 3 {
-				hint = "Bash/zsh · " + hint
-			}
-			footer = append(footer, m.feedbackLines()...)
-		}
-		footer = append(footer, m.muted().Render(hint), m.muted().Render("History keeps audio/text/instructions"))
-	}
-	if m.note != "" && !m.busy && !m.activeFailure() {
-		footer = append(footer, m.feedbackLines()...)
-	}
-	return footer
-}
-
 func (m *audioWorkbench) View() tea.View {
 	if m.quit {
 		return tea.NewView("")
@@ -183,62 +116,38 @@ func (m *audioWorkbench) View() tea.View {
 	if !m.usable() {
 		return tea.NewView(m.fitAudio([]string{"Resize to 40 x 12.", "Ctrl+C exits."}))
 	}
-	if m.modal == "error" {
+	switch m.modal {
+	case "recovery":
+		return m.recoveryView()
+	case "error":
 		return m.failureView()
+	case "info":
+		return m.informationView()
+	case "more":
+		return m.moreView()
+	case "choice", "history":
+		return m.choiceView()
+	case "save":
+		lines := []string{m.strong().Render("Save audio"), "", "Save original audio to:", m.editorView(m.path), "Enter saves · Esc back"}
+		return tea.NewView(m.fitAudio(append(lines, m.feedbackLines()...)))
+	case "speed":
+		lines := []string{m.strong().Render("Speed"), "", "Choose a speed from 0.25 to 4:", m.editorView(m.speedInput), "Enter applies · Esc back"}
+		return tea.NewView(m.fitAudio(append(lines, m.feedbackLines()...)))
 	}
+
+	compact := m.height < 24 || m.width < 60
 	lines := []string{m.strong().Render("Text to speech")}
-	if m.modal == "choice" || m.modal == "history" {
-		title := "History"
-		count := len(m.entries)
-		if m.modal == "choice" {
-			title = []string{"Model", "Voice", "Response format"}[m.setting]
-			count = len(m.choices)
-		}
-		lines = append(lines, title)
-		hint := "Up/Down choose · Enter apply · Esc back"
-		if m.modal == "choice" && m.setting == 1 {
-			hint = "Enter chooses · P generates and plays"
-		}
-		if m.activeFailure() {
-			hint = "Enter apply · F1 details · Esc back"
-		}
-		footer := []string{hint, "Choosing never generates speech."}
-		if m.modal == "choice" && m.setting == 0 && strings.HasSuffix(m.choices[m.choice], "1106") {
-			footer = append([]string{"Legacy snapshot; API access unverified."}, footer...)
-		}
-		footer = append(footer, m.feedbackLines()...)
-		visible := max(1, m.height-1-len(lines)-len(footer))
-		start := max(0, min(m.choice-visible+1, count-visible))
-		for i := start; i < min(count, start+visible); i++ {
-			var label string
-			if m.modal == "choice" {
-				label = m.choices[i]
-			} else {
-				e := m.entries[i]
-				label = e.CreatedAt.Local().Format("Jan 02 15:04") + "  " + e.Settings.Voice + "  " + e.ID
-			}
-			lines = append(lines, m.label(readable.Text(label), i == m.choice))
-		}
-		if count == 0 {
-			lines = append(lines, "No retained results.")
-		}
-		return tea.NewView(m.fitAudio(append(lines, footer...)))
+	if !compact {
+		lines = append(lines, "")
 	}
-	if m.modal == "save" {
-		lines = append(lines, "Save original audio to:", m.editorView(m.path), "Enter saves · Esc returns")
-		lines = append(lines, m.feedbackLines()...)
-		return tea.NewView(m.fitAudio(lines))
-	}
-	if m.modal == "speed" {
-		lines = append(lines, "Speed from 0.25 to 4:", m.editorView(m.speedInput), "Enter applies · Esc returns")
-		lines = append(lines, m.feedbackLines()...)
-		return tea.NewView(m.fitAudio(lines))
-	}
-	compact := m.height < 24
-	footer := m.footerRows(compact)
 	for i, editor := range []textarea.Model{m.input, m.instructions} {
 		name := []string{"Text", "Instructions"}[i]
-		if m.focus == i || i == 0 && !compact && m.width >= 50 && m.result == nil {
+		if i == 1 && !m.instructionsSupported() {
+			lines = append(lines, m.label(m.muted().Render("Instructions   Not used by this model"), false))
+			if !compact && editor.Value() != "" {
+				lines = append(lines, "  "+m.muted().Render(readable.Text(strings.ReplaceAll(editor.Value(), "\n", " "))))
+			}
+		} else if m.focus == i || !compact && m.result == nil {
 			lines = append(lines, m.editorRows(name, editor, m.focus == i)...)
 		} else {
 			value := readable.Text(strings.ReplaceAll(editor.Value(), "\n", " "))
@@ -250,95 +159,139 @@ func (m *audioWorkbench) View() tea.View {
 			}
 			lines = append(lines, m.label(m.muted().Render(fmt.Sprintf("%-14s", name))+" "+value, false))
 		}
-	}
-	settings := []string{
-		fmt.Sprintf("%-14s %s", "Model", m.settings.Model),
-		fmt.Sprintf("%-14s %s", "Voice", imagePickerTitle(m.settings.Voice)),
-		fmt.Sprintf("%-14s %s", "Format", strings.ToUpper(m.settings.Format)),
-		fmt.Sprintf("%-14s %.2f x", "Speed", m.settings.Speed),
-		"Preview voice  Generate and play a sample", "Generate speech", "History", "Clear form",
-	}
-	for i := range settings {
-		settings[i] = readable.Text(settings[i])
-		if !(m.focus == 2 && m.setting == i) {
-			if i < 4 {
-				settings[i] = m.muted().Render(settings[i][:14]) + settings[i][14:]
-			} else if i == 4 {
-				settings[i] = "Preview voice  " + m.muted().Render("Generate and play a sample")
-			}
+		if !compact {
+			lines = append(lines, "")
 		}
 	}
-	if compact {
-		lines = append(lines, m.label(settings[m.setting], m.focus == 2))
-	} else {
+	if !compact {
 		lines = append(lines, m.strong().Render("  Settings"))
-		count := len(settings)
-		if m.result != nil {
-			count = 5
+	}
+	values := []string{m.settings.Model, imagePickerTitle(m.settings.Voice), strings.ToUpper(m.settings.Format), fmt.Sprintf("%.2f x", m.settings.Speed)}
+	if !audioSupportsVoice(m.settings.Model, m.settings.Voice) {
+		values[1] += " (unavailable)"
+	}
+	for index, name := range []string{"Model", "Voice", "Format", "Speed"} {
+		active := m.focus == 2 && m.setting == index
+		label := fmt.Sprintf("%-14s", name)
+		if !active {
+			label = m.muted().Render(label)
 		}
-		available := max(1, m.height-1-len(footer)-len(lines))
-		selected := m.setting
-		if m.result != nil {
-			selected = min(selected, 4)
-		}
-		start := 0
-		if m.focus == 2 {
-			start = max(0, selected-available+1)
-		}
-		for i := start; i < min(count, start+available); i++ {
-			if i == 4 && available > count && start == 0 {
-				lines = append(lines, m.muted().Render("  Actions"))
-			}
-			text, active := settings[i], m.focus == 2 && m.setting == i
-			if m.result != nil && i == 4 {
-				if m.focus == 2 && m.setting >= 4 {
-					text, active = settings[m.setting], true
-				} else {
-					text = "Preview voice · Generate · History · Clear"
-				}
-			}
-			lines = append(lines, m.label(text, active))
-		}
+		lines = append(lines, m.label(label+" "+readable.Text(values[index]), active))
+	}
+	if !compact {
+		lines = append(lines, "")
+	}
+	generate := "[ Generate speech ]"
+	if m.busy {
+		generate = m.progressText()
+	}
+	lines = append(lines, m.actionRow(generate, m.focus == 2 && m.setting == 4, true),
+		"  "+m.muted().Render("Saves audio + inputs locally."),
+		m.actionRow("More actions…", m.focus == 2 && m.setting == 5, false))
 
-	}
 	if m.result != nil {
-		r := m.result
-		lines = append(lines, m.label(readable.Text("Result: "+r.entry.Settings.Voice+" · "+strings.ToUpper(r.entry.Settings.Format)+fmt.Sprintf(" · %d bytes", r.entry.Bytes)), m.focus == 4))
-		if !compact || m.focus == 4 {
-			if !compact {
-				lines = append(lines, "  Model: "+readable.Text(r.entry.Settings.Model))
-			}
-			if r.measured {
-				height := 5
-				if compact {
-					height = 1
-				}
-				for _, row := range strings.Split(audiomedia.Waveform(r.analysis.Peaks, max(1, m.audioWidth()-2), height), "\n") {
-					lines = append(lines, "  "+m.accent().Render(row))
-				}
-				lines = append(lines, "  Duration "+audioDuration(r.analysis.Duration)+" · Space play/stop · S save")
-			} else {
-				lines = append(lines, "  Duration/waveform unavailable. S still saves.")
-			}
-			for _, path := range r.savedPaths {
-				lines = append(lines, "  Saved: "+readable.Text(path))
-			}
+		if !compact {
+			lines = append(lines, "")
 		}
+		full := m.focus == 4 || !compact && m.height >= 32
+		lines = append(lines, m.resultRows(compact, full)...)
 	}
-	budget := max(1, m.height-1-len(footer))
-	// Keep the focused result visible when the terminal contracts.
-	var flat []string
-	for _, line := range lines {
-		flat = append(flat, strings.Split(line, "\n")...)
-	}
-	if len(flat) > budget {
+	limit := m.height - 1
+	if len(lines) > limit {
 		if m.focus == 4 {
-			flat = append(flat[:1], flat[len(flat)-(budget-1):]...)
+			lines = append(lines[:1], lines[len(lines)-(limit-1):]...)
 		} else {
-			flat = flat[:budget]
+			lines = lines[:limit]
 		}
 	}
-	return tea.NewView(m.fitAudio(append(flat, footer...)))
+	return tea.NewView(m.fitAudio(lines))
+}
+
+func (m *audioWorkbench) actionRow(label string, active, primary bool) string {
+	if !active {
+		if primary {
+			label = m.accent().Render(label)
+		} else {
+			label = m.muted().Render(label)
+		}
+	}
+	return m.label(label, active)
+}
+
+func (m *audioWorkbench) resultRows(compact, full bool) []string {
+	r := m.result
+	lines := []string{m.strong().Render("  Result: " + readable.Text(imagePickerTitle(r.entry.Settings.Voice)) + " · " + strings.ToUpper(r.entry.Settings.Format) + fmt.Sprintf(" · %d bytes", r.entry.Bytes))}
+	if !full {
+		return lines
+	}
+	if !compact {
+		lines = append(lines, "  "+m.muted().Render(readable.Text(r.entry.Settings.Model)))
+	}
+	if r.measured {
+		height := 5
+		if compact {
+			height = 1
+		}
+		for _, row := range strings.Split(audiomedia.Waveform(r.analysis.Peaks, max(1, m.audioWidth()-2), height), "\n") {
+			lines = append(lines, "  "+m.accent().Render(row))
+		}
+		lines = append(lines, "  Duration "+audioDuration(r.analysis.Duration))
+	} else {
+		lines = append(lines, "  Audio preview unavailable.")
+	}
+	play := "Play audio"
+	if m.playing {
+		play = "Stop audio"
+	}
+	lines = append(lines, m.actionRow(play, m.focus == 4 && m.resultAction == 0, false),
+		m.actionRow("Save audio…", m.focus == 4 && m.resultAction == 1, false))
+	for _, path := range r.savedPaths {
+		lines = append(lines, "  Saved: "+readable.Text(path))
+	}
+	return lines
+}
+
+func (m *audioWorkbench) moreView() tea.View {
+	lines := []string{m.strong().Render("More actions"), ""}
+	for index, label := range m.moreItems() {
+		lines = append(lines, m.label(label, index == m.moreChoice))
+	}
+	if m.moreChoice == 0 {
+		lines = append(lines, m.muted().Render("History keeps audio, text, and"), m.muted().Render("instructions on this device."))
+	}
+	return tea.NewView(m.fitAudio(lines))
+}
+
+func (m *audioWorkbench) choiceView() tea.View {
+	title, count := "History", len(m.entries)
+	if m.modal == "choice" {
+		title = []string{"Model", "Voice", "Response format"}[m.setting]
+		count = len(m.choices)
+	}
+	lines := []string{m.strong().Render(title), ""}
+	footer := []string{m.muted().Render("Enter select · Esc back")}
+	if m.modal == "history" {
+		footer = append([]string{m.muted().Render("Audio and inputs saved on this device.")}, footer...)
+	}
+	if m.modal == "choice" && m.setting == 0 && strings.HasSuffix(m.choices[m.choice], "1106") {
+		footer = append([]string{"Legacy model; API access unverified."}, footer...)
+	}
+	visible := max(1, m.height-1-len(lines)-len(footer))
+	start := max(0, min(m.choice-visible+1, count-visible))
+	for i := start; i < min(count, start+visible); i++ {
+		label := ""
+		if m.modal == "choice" {
+			label = m.choices[i]
+		} else {
+			entry := m.entries[i]
+			label = entry.CreatedAt.Local().Format("Jan 02 15:04") + "  " + entry.Settings.Voice + "  " + entry.ID
+		}
+		lines = append(lines, m.label(readable.Text(label), i == m.choice))
+	}
+	if count == 0 {
+		lines = append(lines, "No saved audio yet.")
+	}
+	return tea.NewView(m.fitAudio(append(lines, footer...)))
 }
 
 func (m *audioWorkbench) feedbackLines() []string {
@@ -388,14 +341,14 @@ func (m *audioWorkbench) fitAudio(lines []string) string {
 // Bash/zsh preview uses protected piped JSON for exact literal editor text.
 // The complete command remains horizontally scrollable, including instructions.
 func (m *audioWorkbench) commandPreview() string {
-	s := m.settings
+	s := m.effectiveSettings()
 	requestArgs, omit := fileReceiptRequestOptions(m.command.Root())
 	if omit {
 		return "Command preview unavailable with private request overrides."
 	}
-	body := map[string]any{"model": s.Model, "voice": s.Voice, "response_format": s.Format, "speed": s.Speed, "input": m.input.Value()}
-	if m.instructions.Value() != "" {
-		body["instructions"] = m.instructions.Value()
+	body := map[string]any{"model": s.Model, "voice": s.Voice, "response_format": s.Format, "speed": s.Speed, "input": s.Input}
+	if s.Instructions != "" {
+		body["instructions"] = s.Instructions
 	}
 	data, _ := json.Marshal(body)
 	invocation := m.invocation

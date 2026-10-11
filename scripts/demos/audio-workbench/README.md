@@ -26,7 +26,7 @@ python3 -I -B scripts/demos/audio-workbench/check.py \
 
 The default run checks workflow, compact generation, idle and busy cancellation, stopped-reader cancellation, and optional-startup isolation.
 It also checks zero-request navigation at 90×34 and 40×12.
-The `failure` and `failure-compact` cases cover one synthetic HTTP 401 followed by an explicit successful retry.
+The `failure` and `failure-compact` cases cover recovery, explicit retry, and a second session's legacy-model error exit.
 Use `--case NAME` to repeat one affected case.
 Use `--theme light` or `--theme no-color` for the additional palette checks.
 
@@ -52,12 +52,15 @@ Eight amplitude sections create a measured waveform with exactly two seconds of 
 The fixture does not synthesize spoken words.
 
 The workflow drives the actual bare `openai audio speak` form.
-It types multiline text and instructions with literal `@` and backslash-`@` values.
+New drafts contain the editable Instructions example `Speak warmly and clearly.`
+The workflow replaces that example with multiline instructions containing literal `@` and backslash-`@` values.
 It opens model, voice, and format choices, then changes speed to 1.25.
 Choices and typing must make no request.
 Ctrl+G starts one explicit synthetic generation.
 The harness checks request fields, measured duration, varying peaks, and exact saved audio bytes.
-It exercises play/stop, save, History, 40×12, too-small blocking, an explicit audition, restoration, and Clear.
+It exercises Play and Save controls, History, 40×12, too-small blocking, explicit audition, restoration, and Clear.
+History, voice Preview, and Clear use the More actions menu.
+The ordinary form contains no command-preview row or keyboard footer.
 Save coverage rejects `-`, then verifies the corrected destination contains the original audio bytes.
 Audition entries must remain absent from ordinary History.
 Clear must preserve retained results and exported files.
@@ -75,10 +78,16 @@ This separation avoids replaying resize events that agg 1.9.0 ignores.
 
 The `navigation` and `navigation-compact` cases use monochrome focus markers.
 They cover CSI and SS3 arrows, editor visual boundaries, multiline text, wrapped Unicode, modifiers, and active selection.
-They check forward and reverse Tab, settings boundaries, chooser navigation, and command-preview scrolling.
+They check forward and reverse Tab, settings boundaries, chooser navigation, and the More actions menu.
+Command inspection opens a separate scrollable modal through More actions.
+A long synthetic draft proves command scrolling at both terminal sizes.
+Help opens locally without submitting speech.
+The Result section exposes separate Play and Save actions.
 A private synthetic History entry supplies Result navigation without generation.
 Both cases require zero accepted or rejected fixture requests and strict cancellation cleanup.
-The ordinary workflow selects Clear with End; it does not depend on settings wraparound.
+Settings End selects More actions. Clear is the third More action.
+Clear empties Text and Instructions without reseeding the constructor example.
+The navigation inventory contains 185 current-viewport checkpoints at each size.
 The navigation cases test Alt+Enter without submitting editor text.
 They leave Enter generation and the existing repeat-submit guard unchanged.
 
@@ -89,19 +98,10 @@ Observer construction verifies pinned pyte 0.8.2 and wcwidth 0.2.13 sources befo
 No package installation or project dependency change is required.
 The adapter remains outside the repository beside its reviewed package directory.
 
-This local command uses the immutable navigation runtime from source `d024992`:
-
-```sh
-python3 -I -B /Users/vguvvala/.codex/worktrees/1f6c/openai-cli/scripts/demos/audio-workbench/check.py \
-  --binary /Users/vguvvala/code/cli-work/new-features-20261009/transcript-timestamps/audio-parity/source-run-14-navigation/openai-navigation \
-  --source d024992aa2ec3457c1f1131e96105a199048b223 \
-  --case navigation \
-  --navigation-observer /Users/vguvvala/code/cli-work/new-features-20261009/transcript-timestamps/audio-parity/navigation_observer_pyte.py \
-  --output /Users/vguvvala/code/cli-work/new-features-20261009/transcript-timestamps/audio-parity/navigation-observer-wide-review
-```
-
-Use `--case navigation-compact` with a different fresh output directory for the 40×12 case.
-Record the checker commit separately from the binary runtime commit.
+Use a binary built from the current reviewed source with a fresh evidence directory.
+Older source14/PTY10 and source16/PTY11 records retain their original checker and runtime identities.
+Those runs passed their previous contracts. They do not establish acceptance of this revised interface.
+Record the checker commit separately if it differs from the binary runtime commit.
 The observer directory must retain the sources and manifest described in its external `REVIEW.md`.
 
 Every navigation focus assertion reads a persistent combining-aware viewport.
@@ -120,42 +120,63 @@ Use `--case failure` at 90×34 or `--case failure-compact` at an actual fixed 40
 Pass the reviewed `--navigation-observer` adapter and a different fresh output directory for each case.
 These cases do not resize, rewrite cast headers, or alter captured bytes.
 
-The first explicit Ctrl+G sends the known synthetic text and instructions.
+The first explicit Ctrl+G sends synthetic Text with the actual seeded Instructions example.
 The fixture returns HTTP 401 with valid Request ID `req_audio_demo_401` and malicious synthetic message canaries.
-The form must show `HTTP 401: Unauthorized.`, `Check key, project, organization.`, and `Setup: openai help setup`.
-The fixture's message does not justify claiming a particular credential is invalid.
-SS3 F1 must open `Audio error` with safe details; End must make the valid Request ID visible.
-Escape must return to the form without quitting or sending another request.
-Tab navigation and a model chooser round trip must not repeat generation.
+The fixture supplies the exact error code `invalid_api_key`.
+The recovery panel therefore uses `The API did not accept this key.`
+A generic HTTP 401 without that code retains `The API could not verify your access.`
+Its selectable actions are API setup, Error details, and Back to form.
+The message does not identify the credential source or claim expiration.
+Raw HTTP status, Request ID, setup commands, and error shortcuts must not appear on the ordinary form.
+
+API setup opens the real scrollable canonical guide inside the form.
+The guide explains that users must close the form before setup and reopen audio speak afterward.
+The checker reads the guide through its final scroll position.
+It verifies useful setup content against the same binary's read-only `help setup` output.
+The guide and verification command must add zero requests and leave synthetic HOME unchanged.
+They must not expose any malicious canary or fake credential value.
+The checker does not execute credential setup steps or change live configuration.
+Escape returns from API setup to recovery.
+
+Error details opens a separate panel with `HTTP status: 401` and the safe Request ID.
+Escape returns from details to recovery.
+Back to form returns to the More actions setting without quitting or sending another request.
+A model chooser round trip and More actions' Last error entry must not repeat generation.
 The failed response must not enter History.
-The harness follows the printed `openai help setup` instruction through the same immutable candidate and isolated synthetic HOME.
-It requires useful API-key setup help, zero added requests, unchanged synthetic HOME, and no canary or fake credential value.
-The harness does not run setup instructions, enter a credential, or modify live configuration.
 
 Only another explicit Ctrl+G receives the synthetic WAV response.
-The second request must preserve the exact original input, instructions, and settings.
-Successful recovery must remove obsolete HTTP 401, authentication guidance, Request ID, and F1-error hints from the current viewport.
-The harness verifies two-second measurement, one retained result, and byte-identical WAV export.
-It rejects every API-message canary across the complete raw terminal capture, including earlier erased frames.
-The successful-retry session finishes through Ctrl+C with exit 130, blank viewport, and empty owned scrollback.
-Each case then launches a second owned session and returns one fresh synthetic 401.
-Escape must exit that failed form with status 1 and a safe HTTP 401 diagnostic after terminal restoration.
-That diagnostic may remain visible. Owned form rows must be cleared from the viewport and scrollback.
-The second session must preserve the first session's retained History and send no implicit retry.
+The second request must preserve the original Text, default Instructions, and settings exactly.
+Successful recovery must remove the active error and the Last error action.
+The checker verifies two-second measurement, one retained result, and byte-identical WAV export.
+It rejects API-message canaries across the complete raw capture, including erased frames.
+The successful session finishes through Ctrl+C with exit 130, a blank viewport, and empty owned scrollback.
+
+Each case then launches a second owned session with a new default Instructions draft.
+This session selects `tts-1` and the supported Alloy voice.
+Instructions become disabled; changing back to a supported model restores the unchanged draft.
+The session reselects `tts-1` before one explicit request.
+That request must omit the `instructions` field entirely.
+The fixture rejects legacy requests that contain Instructions or use another voice.
+
+The second session receives one synthetic HTTP 401.
+Escape first returns from recovery to the ordinary More actions setting.
+A second Escape exits with status 1 and the original safe diagnostic after terminal restoration.
+The final diagnostic may remain visible. Owned form and recovery rows must be cleared.
+The session preserves earlier History and sends no implicit retry.
 Both sessions retain strict native-mode, ANSI, exact-byte observer, and process-group cleanup checks.
 
-Each size therefore requires exactly three speech requests across two owned PTY sessions: 401, WAV, then 401.
-The setup-help child is a separate read-only command with zero speech requests.
-Nine capture checkpoints use the existing 900-ms settling interval, for 8.1 seconds of deliberate capture settling per case.
-Allow roughly 20–30 seconds per healthy case before rendering; this estimate is not measured execution evidence.
-Existing per-command and cleanup deadlines remain in force; the outer runner must retain its total execution bound.
+Each size requires three speech requests across two owned sessions: 401, WAV, then 401.
+The setup verification command is a separate read-only process with zero speech requests.
+Twelve capture checkpoints retain the existing 900-ms settling interval.
+They require 10.8 seconds of deliberate capture settling per case.
+Existing operation and cleanup deadlines remain unchanged. The outer runner must enforce its total execution bound.
 
-The capture checkpoints are `failure-initial-form`, `failure-ready`, `failure-form`, `failure-details`,
-`failure-returned-form`, `failure-settings-no-retry`, and `failure-recovered-result`.
-The second session adds `failure-error-exit-form` and `failure-error-exit-summary`.
-Results retain all three synthetic request records and the original audio hash; they do not record the malicious response text.
-The fixture uses only fake credentials and fake secrets. It reads no real credential source and calls no remote API.
-As with other cases, source preparation alone does not establish these checks passed; execution needs a reserved slot.
+First-session checkpoints are `failure-initial-form`, `failure-ready`, `failure-recovery`, `failure-api-setup`, and `failure-details`.
+They continue with `failure-returned-form`, `failure-settings-no-retry`, and `failure-recovered-result`.
+Second-session checkpoints are `failure-legacy-ready`, `failure-error-exit-recovery`, `failure-error-exit-form`, and `failure-error-exit-summary`.
+Results retain three request records and the original audio hash. They omit the malicious response text.
+The fixture uses fake credentials and fake secrets. It reads no real credentials and calls no remote API.
+Source preparation does not establish passing behavior. Execution requires a reserved slot.
 
 Playback uses a private fake FFplay executable.
 That helper consumes the real fixture bytes, records their hash, and produces no sound.

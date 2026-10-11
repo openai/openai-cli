@@ -83,7 +83,6 @@ type audioWorkbench struct {
 	entries                    []audiohistory.Entry
 	result                     *audioWorkResult
 	priorResult                *audioWorkResult
-	previewOffset              int
 	invocation                 string
 	width, height              int
 	color, dark                bool
@@ -92,6 +91,13 @@ type audioWorkbench struct {
 	failure                    audioFeedback
 	failureNote, failureParent string
 	failureOffset              int
+	moreChoice, recoveryChoice int
+	resultAction               int
+	recoveryParent             string
+	infoTitle, infoText        string
+	infoParent                 string
+	infoOffset                 int
+	recoveryInfo               *audioInformationState
 	lastErr                    error
 	exitCode                   int
 	lastFinished               time.Time
@@ -117,7 +123,8 @@ func newAudioWorkbench(ctx context.Context, command *cli.Command, next cli.Actio
 		return t
 	}
 	m := &audioWorkbench{ctx: ctx, command: command, next: next, store: store, workers: &audioWorkers{}, settings: audioDefaultSettings(), color: os.Getenv("NO_COLOR") == "", dark: true,
-		input: newEditor("Enter text to speak"), instructions: newEditor("Tone, delivery, or pronunciation instructions"), path: newEditor("Path for the original audio file"), speedInput: newEditor("Speed from 0.25 to 4")}
+		input: newEditor("Enter text to speak"), instructions: newEditor("Add speaking instructions (optional)"), path: newEditor("Path for the original audio file"), speedInput: newEditor("Speed from 0.25 to 4")}
+	m.instructions.SetValue(audioInstructionsExample)
 	m.invocation, _ = command.Root().Metadata["help-invocation"].(string)
 	if m.invocation == "" {
 		m.invocation = "openai"
@@ -153,8 +160,9 @@ func (m *audioWorkbench) resizeEditors() {
 	}
 }
 
-func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.Cmd) {
 	defer m.resizeEditors()
+	defer func() { command = tea.Batch(command, m.reconcileRecovery()) }()
 	if m.quit {
 		return m, nil
 	}
@@ -208,6 +216,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.priorResult = nil
 			}
 			m.result = &msg.result
+			m.resultAction = 0
 			m.focusSection(4)
 			if msg.kind == "open" {
 				m.settings = msg.result.entry.Settings
@@ -253,23 +262,25 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if key == "esc" {
+			if m.modal == "recovery" {
+				return m, m.leaveRecovery()
+			}
+			if m.modal == "info" {
+				m.modal, m.infoParent = m.infoParent, ""
+				m.lastFinished = time.Now()
+				return m, m.restoreEditorFocus()
+			}
 			if m.modal == "error" {
 				m.modal, m.failureParent = m.failureParent, ""
 				m.failureOffset = 0
-				switch m.modal {
-				case "save":
-					return m, m.path.Focus()
-				case "speed":
-					return m, m.speedInput.Focus()
-				case "":
-					return m, m.focusSection(m.focus)
-				}
-				return m, nil
+				m.lastFinished = time.Now()
+				return m, m.restoreEditorFocus()
 			}
 			if m.modal != "" {
 				m.modal = ""
 				m.path.Blur()
 				m.speedInput.Blur()
+				m.lastFinished = time.Now()
 				return m, nil
 			}
 			if m.busy {
@@ -323,27 +334,18 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.focus == 3 {
-			switch key {
-			case "enter":
-				return m, m.generate(false)
-			}
-			return m, nil
-		}
 		if m.focus == 4 {
 			switch key {
 			case "space", "enter":
 				if time.Since(m.lastFinished) < 750*time.Millisecond {
 					return m, nil
 				}
+				if key == "enter" && m.resultAction == 1 {
+					return m, m.openSave()
+				}
 				return m, m.togglePlayback()
 			case "s":
-				if m.result != nil {
-					m.modal = "save"
-					m.note = ""
-					m.path.SetValue("speech-" + m.result.entry.ID + "." + m.result.entry.Settings.Format)
-					return m, m.path.Focus()
-				}
+				return m, m.openSave()
 			case "x":
 				m.stopPlayback()
 			case "h":
@@ -394,7 +396,7 @@ func (m *audioWorkbench) activateSetting() tea.Cmd {
 	case 0:
 		m.choices = audioModels
 	case 1:
-		m.choices = audioVoices
+		m.choices = audioModelVoices(m.settings.Model)
 	case 2:
 		m.choices = audioFormats
 	case 3:
@@ -402,19 +404,9 @@ func (m *audioWorkbench) activateSetting() tea.Cmd {
 		m.speedInput.SetValue(strconv.FormatFloat(m.settings.Speed, 'f', -1, 64))
 		return m.speedInput.Focus()
 	case 4:
-		return m.generate(true)
-	case 5:
 		return m.generate(false)
-	case 6:
-		return m.history()
-	case 7:
-		m.stopPlayback()
-		m.input.SetValue("")
-		m.instructions.SetValue("")
-		m.settings = audioDefaultSettings()
-		m.result = nil
-		m.priorResult = nil
-		m.note = "Form cleared. History and exported files remain."
+	case 5:
+		m.modal, m.moreChoice = "more", 0
 		return nil
 	}
 	m.modal = "choice"
@@ -424,6 +416,16 @@ func (m *audioWorkbench) activateSetting() tea.Cmd {
 }
 
 func (m *audioWorkbench) updateModal(message tea.Msg, key string) tea.Cmd {
+	if m.modal == "more" {
+		return m.updateMore(key)
+	}
+	if m.modal == "recovery" {
+		return m.updateRecovery(key)
+	}
+	if m.modal == "info" {
+		m.infoOffset = audioScrollOffset(m.infoOffset, len(m.infoRows()), m.informationHeight(), key)
+		return nil
+	}
 	if m.modal == "error" {
 		limit := max(0, len(m.failureDetailRows())-m.failureDetailHeight())
 		m.failureOffset = min(m.failureOffset, limit)
@@ -533,15 +535,16 @@ func (m *audioWorkbench) generate(preview bool) tea.Cmd {
 	if time.Since(m.lastFinished) < 750*time.Millisecond {
 		return nil
 	}
-	settings := m.settings
-	settings.Input = m.input.Value()
-	settings.Instructions = m.instructions.Value()
+	settings := m.effectiveSettings()
 	settings.Preview = preview
 	if preview {
 		settings.Input = audioAuditionText
 	}
 	if err := validateAudioSettings(settings); err != nil {
 		m.note = err.Error()
+		m.failure = audioFailureFeedback(m.command, "generate", err)
+		m.failureNote = m.note
+		m.openRecovery()
 		return nil
 	}
 	m.stopPlayback()

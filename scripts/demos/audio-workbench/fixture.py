@@ -15,6 +15,7 @@ import threading
 
 TEXT = "Hello from the audio workbench.\nThis clip is synthetic."
 INSTRUCTIONS = "Read clearly. Keep @literal and \\@literal unchanged."
+DEFAULT_INSTRUCTIONS = "Speak warmly and clearly."
 AUDITION = "Hello. This is a preview of this voice."
 FAILURE_REQUEST_ID = "req_audio_demo_401"
 FAILURE_CANARIES = ("SYNTHETIC_API_MESSAGE_CANARY", "sk-synthetic-do-not-print",
@@ -117,11 +118,13 @@ class SpeechHandler(http.server.BaseHTTPRequestHandler):
                 raise ValueError("unexpected request fields")
             if body.get("input") not in (TEXT, AUDITION):
                 raise ValueError("expected synthetic text")
-            if body.get("instructions", "") not in ("", INSTRUCTIONS):
+            if body.get("instructions", "") not in ("", INSTRUCTIONS, DEFAULT_INSTRUCTIONS):
                 raise ValueError("expected synthetic instructions")
-            if body.get("model") not in ("gpt-4o-mini-tts", "gpt-4o-mini-tts-2025-12-15"):
+            if body.get("model") not in ("gpt-4o-mini-tts", "gpt-4o-mini-tts-2025-12-15", "tts-1"):
                 raise ValueError("unexpected fixture model")
-            if body.get("voice") not in ("coral", "ash", "ballad"):
+            if body.get("model") == "tts-1" and ("instructions" in body or body.get("voice") != "alloy"):
+                raise ValueError("legacy fixture requires Alloy and omitted Instructions")
+            if body.get("voice") not in ("coral", "ash", "ballad", "alloy"):
                 raise ValueError("unexpected fixture voice")
             if body.get("response_format") not in ("wav", "pcm") or body.get("speed", 1) not in (1, 1.25):
                 raise ValueError("unexpected audio settings")

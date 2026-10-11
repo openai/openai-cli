@@ -11,7 +11,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
-	"github.com/openai/openai-cli/internal/readable"
 	"github.com/stretchr/testify/require"
 )
 
@@ -252,11 +251,11 @@ func TestAudioNavigationTabUsesVisibleSectionOrder(t *testing.T) {
 		t.Run(fmt.Sprintf("result_%t", withResult), func(t *testing.T) {
 			m := audioReviewModel(t)
 			m.input.SetValue("Do not generate while traversing")
-			order := []int{0, 1, 2, 3}
+			order := []int{0, 1, 2}
 			if withResult {
 				result := audioReviewResult("retained", false)
 				m.result = &result
-				order = []int{0, 1, 2, 4, 3}
+				order = []int{0, 1, 2, 4}
 			}
 			for range 2 {
 				for step := 1; step <= len(order); step++ {
@@ -282,7 +281,7 @@ func TestAudioNavigationSettingsArrowsDoNotWrapOrActivate(t *testing.T) {
 				result := audioReviewResult("retained", false)
 				m.result = &result
 			}
-			for setting := 1; setting <= 7; setting++ {
+			for setting := 1; setting <= 5; setting++ {
 				audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 				require.Equal(t, 2, m.focus)
 				require.Equal(t, setting, m.setting)
@@ -291,21 +290,20 @@ func TestAudioNavigationSettingsArrowsDoNotWrapOrActivate(t *testing.T) {
 				audioNavigationKey(t, m, tea.KeyPressMsg{Code: key})
 				expected := 0
 				if key == tea.KeyEnd {
-					expected = 7
+					expected = 5
 				}
 				require.Equal(t, expected, m.setting)
 				require.Equal(t, 2, m.focus)
 			}
-			m.previewOffset = 50
 			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 			if withResult {
 				require.Equal(t, 4, m.focus)
 			} else {
-				require.Equal(t, 3, m.focus)
-				require.Zero(t, m.previewOffset)
+				require.Equal(t, 2, m.focus)
+				require.Equal(t, 5, m.setting)
 			}
-			m.focus, m.setting = 2, 7
-			for setting := 6; setting >= 0; setting-- {
+			m.focus, m.setting = 2, 5
+			for setting := 4; setting >= 0; setting-- {
 				audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
 				require.Equal(t, 2, m.focus)
 				require.Equal(t, setting, m.setting)
@@ -317,49 +315,53 @@ func TestAudioNavigationSettingsArrowsDoNotWrapOrActivate(t *testing.T) {
 	}
 }
 
-func TestAudioNavigationPreviewScrollingStaysBounded(t *testing.T) {
+func TestAudioNavigationCommandScrollingStaysBounded(t *testing.T) {
 	m := audioReviewModel(t)
-	m.input.SetValue(strings.Repeat("Preview 世界 ", 40))
+	m.input.SetValue(strings.Repeat("Preview 世界 ", 200))
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
-	m.focus = 3
+	require.Nil(t, audioReviewMore(t, m, "Show command"))
+	require.Equal(t, "info", m.modal)
 	limit := func() int {
-		return max(0, ansi.StringWidth(readable.Text(m.commandPreview()))-m.audioWidth()+2)
+		return max(0, len(m.infoRows())-m.informationHeight())
 	}
 	require.Positive(t, limit())
 	for range 100 {
 		audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-		require.LessOrEqual(t, m.previewOffset, limit())
+		require.LessOrEqual(t, m.infoOffset, limit())
 	}
-	require.Equal(t, limit(), m.previewOffset)
+	require.Equal(t, limit(), m.infoOffset)
 	for _, key := range []rune{tea.KeyDown, tea.KeyPgDown, tea.KeyRight, tea.KeyEnd} {
 		audioNavigationKey(t, m, tea.KeyPressMsg{Code: key})
-		require.Equal(t, limit(), m.previewOffset)
+		require.Equal(t, limit(), m.infoOffset)
 	}
 	for _, width := range []int{160, 40, 80} {
 		m.Update(tea.WindowSizeMsg{Width: width, Height: 24})
 		audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
-		require.GreaterOrEqual(t, m.previewOffset, 0)
-		require.LessOrEqual(t, m.previewOffset, limit())
+		require.GreaterOrEqual(t, m.infoOffset, 0)
+		require.LessOrEqual(t, m.infoOffset, limit())
 		for _, line := range strings.Split(m.View().Content, "\n") {
 			require.LessOrEqual(t, ansi.StringWidth(line), width)
 		}
 		audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
-		require.Equal(t, limit(), m.previewOffset)
+		require.Equal(t, limit(), m.infoOffset)
 	}
 	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyHome})
 	for _, key := range []rune{tea.KeyHome, tea.KeyPgUp, tea.KeyLeft} {
 		audioNavigationKey(t, m, tea.KeyPressMsg{Code: key})
-		require.Zero(t, m.previewOffset)
-		require.Equal(t, 3, m.focus)
+		require.Zero(t, m.infoOffset)
+		require.Equal(t, "info", m.modal)
 	}
 	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-	require.Positive(t, m.previewOffset)
+	require.Positive(t, m.infoOffset)
 	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
-	require.Zero(t, m.previewOffset)
-	require.Equal(t, 3, m.focus)
+	require.Zero(t, m.infoOffset)
+	require.Equal(t, "info", m.modal)
 	audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
+	require.Equal(t, "info", m.modal)
+	require.Nil(t, audioReviewKey(m, tea.KeyEscape))
+	require.Equal(t, "more", m.modal)
 	require.Equal(t, 2, m.focus)
-	require.Equal(t, 7, m.setting)
+	require.Equal(t, 5, m.setting)
 }
 
 func TestAudioNavigationRespectsBusyTinyAndModalGuards(t *testing.T) {
@@ -369,7 +371,7 @@ func TestAudioNavigationRespectsBusyTinyAndModalGuards(t *testing.T) {
 		t.Run(guard, func(t *testing.T) {
 			m := audioReviewModel(t)
 			m.input.SetValue("Keep guarded draft")
-			m.focus, m.setting, m.previewOffset = 2, 3, 20
+			m.focus, m.setting, m.infoOffset = 2, 3, 20
 			if guard == "busy" {
 				m.busy = true
 			} else {
@@ -380,13 +382,13 @@ func TestAudioNavigationRespectsBusyTinyAndModalGuards(t *testing.T) {
 				require.Nil(t, command)
 				require.Equal(t, 2, m.focus)
 				require.Equal(t, 3, m.setting)
-				require.Equal(t, 20, m.previewOffset)
+				require.Equal(t, 20, m.infoOffset)
 				require.Equal(t, guard == "busy", m.busy)
 				require.Equal(t, "Keep guarded draft", m.input.Value())
 			}
 		})
 	}
-	for _, modal := range []string{"choice", "history", "save", "speed"} {
+	for _, modal := range []string{"choice", "history", "save", "speed", "more", "info", "recovery"} {
 		t.Run(modal, func(t *testing.T) {
 			m := audioReviewModel(t)
 			m.input.SetValue("Keep modal draft")
@@ -417,16 +419,18 @@ func TestAudioNavigationResultArrowsPreservePlayback(t *testing.T) {
 	defer cancel()
 	m.playCancel = cancel
 	for _, step := range []struct {
-		key   rune
-		focus int
+		key           rune
+		focus, action int
 	}{
-		{tea.KeyUp, 2},
-		{tea.KeyDown, 4},
-		{tea.KeyDown, 3},
-		{tea.KeyUp, 4},
+		{tea.KeyUp, 2, 0},
+		{tea.KeyDown, 4, 0},
+		{tea.KeyDown, 4, 1},
+		{tea.KeyDown, 4, 1},
+		{tea.KeyUp, 4, 0},
 	} {
 		audioNavigationKey(t, m, tea.KeyPressMsg{Code: step.key})
 		require.Equal(t, step.focus, m.focus)
+		require.Equal(t, step.action, m.resultAction)
 		require.True(t, m.playing)
 		require.Equal(t, uint64(42), m.playID)
 		require.Same(t, &result, m.result)

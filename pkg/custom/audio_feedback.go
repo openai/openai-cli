@@ -3,7 +3,6 @@ package custom
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -20,9 +19,10 @@ import (
 // audioFeedback contains only authored guidance and validated response metadata.
 // It does not replace the original error or determine its exit status.
 type audioFeedback struct {
-	Summary   string
-	Action    string
-	RequestID string
+	Summary    string
+	Action     string
+	RequestID  string
+	StatusCode int
 }
 
 func audioFailureFeedback(command *cli.Command, operation string, failure error) audioFeedback {
@@ -118,24 +118,22 @@ func audioFailureFeedback(command *cli.Command, operation string, failure error)
 }
 
 func audioAPIErrorFeedback(command *cli.Command, apierr *openai.Error) audioFeedback {
-	feedback := audioFeedback{Summary: "Speech request failed.", Action: "The cause is unavailable. Check settings and API status before generating again.", RequestID: readableAPIRequestID(apierr)}
-	reason := "Speech request failed"
+	feedback := audioFeedback{Summary: "The API could not complete the request.", Action: "The cause is unavailable. Check settings and API status before generating again.", RequestID: readableAPIRequestID(apierr)}
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
-		reason = "Unauthorized"
-		invocation := "openai"
-		if command != nil {
-			invocation = errorHelpInvocation(command.Root())
+		feedback.Summary = "The API could not verify your access."
+		if apierr.Code == "invalid_api_key" {
+			feedback.Summary = "The API did not accept this key."
 		}
-		feedback.Action = "Check key, project, organization.\nSetup: " + invocation + " help setup"
+		feedback.Action = "Check your API key and project access."
 	case http.StatusForbidden:
-		reason = "Access denied"
-		feedback.Action = "Check key permissions and project access."
+		feedback.Summary = "The API denied access to this request."
+		feedback.Action = "Check your API key's permissions and project access."
 	case http.StatusNotFound:
-		reason = "Model/API not found"
+		feedback.Summary = "The model or service was not found."
 		feedback.Action = "Check Model, project access, and the configured API endpoint."
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
-		reason = "Invalid speech settings"
+		feedback.Summary = "The API could not use these settings."
 		feedback.Action = "Review Text, Instructions, and Settings."
 		_, path := readableParameterFlag(command, apierr.Param)
 		label := map[string]string{"input": "Text", "instructions": "Instructions", "model": "Model", "voice": "Voice", "response_format": "Format", "speed": "Speed"}[path]
@@ -152,35 +150,35 @@ func audioAPIErrorFeedback(command *cli.Command, apierr *openai.Error) audioFeed
 		case "context_length_exceeded", "string_above_max_length", "array_above_max_length", "too_many_items":
 			feedback.Action = "Shorten Text or Instructions to fit the Model's limits."
 		case "content_policy_violation":
-			reason = "Request declined by policy"
+			feedback.Summary = "The API declined this content."
 			feedback.Action = "Review Text and Instructions before generating again."
 		}
 	case http.StatusTooManyRequests:
-		reason = "Too many requests"
-		feedback.Action = "Wait before another explicit generation."
+		feedback.Summary = "The API is limiting requests right now."
+		feedback.Action = "Wait before generating again."
 		switch apierr.Code {
 		case "insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded":
-			reason = "API usage limit reached"
+			feedback.Summary = "An API usage or billing limit was reached."
 			feedback.Action = "Check project billing and usage limits."
 		}
 	case http.StatusConflict:
-		reason = "Request conflict"
+		feedback.Summary = "The request conflicts with the current service state."
 		feedback.Action = "Check API status before generating again."
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
-		reason = "Request timed out"
+		feedback.Summary = "The speech request took too long."
 		feedback.Action = "The API may have received the request. Check usage before generating again."
 	default:
 		if apierr.StatusCode >= 500 && apierr.StatusCode <= 599 {
-			reason = "Service unavailable"
+			feedback.Summary = "The speech service had a problem."
 			feedback.Action = "Check API status and usage before generating again."
 		}
 	}
 	if (apierr.StatusCode == 400 || apierr.StatusCode == 404 || apierr.StatusCode == 422) && apierr.Code == "model_not_found" {
-		reason = "Model unavailable"
+		feedback.Summary = "This model is unavailable to your project."
 		feedback.Action = "Check Model and project access."
 	}
 	if apierr.StatusCode >= 100 && apierr.StatusCode <= 599 {
-		feedback.Summary = fmt.Sprintf("HTTP %d: %s.", apierr.StatusCode, reason)
+		feedback.StatusCode = apierr.StatusCode
 	}
 	return feedback
 }

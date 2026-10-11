@@ -13,7 +13,6 @@ from pathlib import Path
 import platform
 import re
 import select
-import shlex
 import shutil
 import signal
 import subprocess
@@ -360,14 +359,14 @@ def main():
         terminal.send(b"\x1b[200~" + text.encode() + b"\x1b[201~")
 
     def failure_case(terminal, server, result, public, env):
-        summary = "HTTP 401: Unauthorized."
-        action = "Check key, project, organization."
-        setup = "Setup: openai help setup"
+        summary = "The API did not accept this key."
+        protocol_summary = "HTTP 401: Unauthorized."
 
         def safe_screen(target=terminal):
             visible = screen(target)
             for canary in fixture.FAILURE_CANARIES:
                 assert canary.encode() not in target.raw, "Untrusted API message reached terminal output"
+            assert b"synthetic-demo-key" not in target.raw, "Terminal disclosed the fake credential value"
             return " ".join(visible.split())
 
         def visible_failure(required, absent=(), timeout=12, target=terminal):
@@ -378,7 +377,12 @@ def main():
                 if all(text in visible for text in required) and all(text not in visible for text in absent):
                     return visible
                 if target.child.poll() is not None or time.monotonic() > deadline:
-                    raise AssertionError("Audio failure state did not expose the required safe feedback")
+                    raise AssertionError("Audio recovery did not expose the required safe state")
+
+        def main_form(target=terminal):
+            return visible_failure(("Text to speech", "More actions…"),
+                                   absent=(summary, protocol_summary, "HTTP status:", "Request ID:",
+                                           "Setup: openai", "Command preview", "F1 details"), target=target)
 
         def home_snapshot():
             home = Path(env["HOME"])
@@ -393,109 +397,165 @@ def main():
                     raise AssertionError("Unexpected synthetic HOME entry during recovery help check")
             return snapshot
 
-        mark(terminal, "failure-initial-form", result)
-        paste(terminal, fixture.TEXT)
         terminal.send(b"\t")
         wait(terminal, ("╭ Instructions ", "› Instructions"))
-        paste(terminal, fixture.INSTRUCTIONS)
-        terminal.send(b"\x1b[Z")  # Return to Text before the explicit submission.
+        visible_failure((fixture.DEFAULT_INSTRUCTIONS,))
+        terminal.send(b"\x1b[Z")
+        main_form()
+        mark(terminal, "failure-initial-form", result)
+        paste(terminal, fixture.TEXT)
         mark(terminal, "failure-ready", result)
         assert not server.records, "Editing submitted speech before explicit generation"
         terminal.send(b"\x07")
-        visible_failure((summary, action, setup, "F1 details"))
-        mark(terminal, "failure-form", result)
+        visible_failure((summary, "› API setup", "Error details", "Back to form"),
+                        absent=(protocol_summary, "HTTP status:", fixture.FAILURE_REQUEST_ID))
+        mark(terminal, "failure-recovery", result)
         assert len(server.records) == 1 and server.records[0].get("response_status") == 401
         failed_request = server.records[0]["body"]
-        assert failed_request["input"] == fixture.TEXT and failed_request["instructions"] == fixture.INSTRUCTIONS
+        assert failed_request["input"] == fixture.TEXT
+        assert failed_request["instructions"] == fixture.DEFAULT_INSTRUCTIONS, "New draft omitted its actual Instructions example"
         assert json.loads(public(["--format", "json", "audio", "history"])) == [], "Failed speech entered History"
 
-        # Follow the actual displayed instruction through the exact candidate,
-        # without a shell, real HOME, credential input, or setup mutation.
-        displayed = safe_screen()
-        assert setup in displayed
-        printed_setup = displayed[displayed.index(setup):][:len(setup)]
-        recovery_command = shlex.split(printed_setup.removeprefix("Setup: "))
-        assert recovery_command == ["openai", "help", "setup"], "Unexpected advertised setup command"
+        # Inspect the actual in-form canonical guide. This action must neither
+        # run setup steps nor mutate HOME, credentials, or request state.
         before_help = home_snapshot()
-        help_output = public(recovery_command[1:])
-        help_text = help_output.decode("utf-8", errors="strict")
-        assert "Set up your API key" in help_text and "OPENAI_API_KEY" in help_text
-        assert "This is a guide only." in help_text, "Setup recovery did not explain its read-only scope"
-        assert b"synthetic-demo-key" not in help_output, "Setup help disclosed the fake credential value"
+        terminal.send(b"\r")
+        visible_failure(("API setup", "Close this form before following these steps.", "Then reopen audio speak in that shell."))
+        mark(terminal, "failure-api-setup", result)
+        guide_frames = [safe_screen()]
+        for _ in range(32):
+            terminal.send(b"\x1b[6~")
+            drain(terminal, .08)
+            current = safe_screen()
+            guide_frames.append(current)
+            if current == guide_frames[-2]:
+                break
+        else:
+            raise AssertionError("API setup guide did not reach a bounded scroll endpoint")
+        guide = " ".join(guide_frames)
+        help_output = public(["help", "setup"])
+        help_text = picker.ANSI.sub("", help_output.decode("utf-8", errors="strict"))
+        for phrase in ("Set up your API key", "OPENAI_API_KEY", "This is a guide only."):
+            assert phrase in guide and phrase in help_text, "API setup panel omitted canonical setup guidance"
+        assert b"synthetic-demo-key" not in help_output
         assert all(canary.encode() not in help_output for canary in fixture.FAILURE_CANARIES)
-        assert home_snapshot() == before_help, "Reading setup recovery help changed synthetic HOME"
-        assert len(server.records) == 1, "Reading setup help reached the speech API"
+        assert home_snapshot() == before_help, "Reading API setup changed synthetic HOME"
+        assert len(server.records) == 1, "Reading API setup reached the speech API"
         (args.output / "failure-setup-help.txt").write_bytes(help_output)
-        result["setup_recovery"] = {"printed_command": " ".join(recovery_command),
-                                    "executed_arguments": [str(args.binary), *recovery_command[1:]],
+        (args.output / "failure-setup-panel.json").write_text(json.dumps(guide_frames, ensure_ascii=False, indent=2) + "\n")
+        result["setup_recovery"] = {"panel_title": "API setup", "canonical_panel_visible": True,
+                                    "close_and_reopen_guidance_visible": True,
+                                    "verification_arguments": [str(args.binary), "help", "setup"],
                                     "exit_status": 0, "requests_added": 0, "synthetic_home_unchanged": True}
-
-        terminal.send(b"\x1bOP")  # SS3 F1 opens the explicit safe-detail view.
-        visible_failure(("Audio error", summary, action, setup))
-        terminal.send(b"\x1b[F")
-        visible_failure(("Audio error", "Request ID: " + fixture.FAILURE_REQUEST_ID, "Esc back"))
-        mark(terminal, "failure-details", result)
-        assert len(server.records) == 1, "Viewing error details retried speech"
         terminal.send(b"\x1b")
-        visible_failure(("Text to speech", summary, action, setup), absent=("Audio error",))
-        assert terminal.child.poll() is None, "Escape from error details quit the form"
-        assert len(server.records) == 1, "Escape from error details retried speech"
+        visible_failure((summary, "› API setup"))
+        terminal.send(picker.DOWN + b"\r")
+        visible_failure(("Error details",))
+        terminal.send(picker.END)
+        visible_failure(("Error details", "HTTP status: 401", "Request ID: " + fixture.FAILURE_REQUEST_ID, "Esc back"))
+        mark(terminal, "failure-details", result)
+        assert len(server.records) == 1, "Viewing recovery details retried speech"
+        terminal.send(b"\x1b")
+        visible_failure((summary, "› Error details"))
+        terminal.send(picker.END + b"\r")
+        main_form()
+        visible_failure(("› More actions…",))
+        assert terminal.child.poll() is None, "Back to form quit the application"
+        assert len(server.records) == 1, "Back to form retried speech"
         mark(terminal, "failure-returned-form", result)
 
-        terminal.send(b"\t\t\r")  # Text -> Instructions -> Settings -> Model choices.
+        terminal.send(picker.HOME + b"\r")
         wait(terminal, "gpt-4o-mini-tts-2025-03-20")
-        terminal.send(picker.DOWN + picker.UP + b"\r")  # Explicitly retain the original model.
-        visible_failure(("Text to speech", summary, action, setup))
+        terminal.send(picker.DOWN + picker.UP + b"\r")
+        main_form()
+        terminal.send(picker.END + b"\r" + picker.END + picker.UP + b"\r")
+        visible_failure((summary, "› API setup"))  # More -> Last error.
+        terminal.send(b"\x1b")
+        visible_failure(("More actions", "› Last error"))
+        terminal.send(b"\x1b")
+        main_form()
+        visible_failure(("› More actions…",))
         mark(terminal, "failure-settings-no-retry", result)
-        assert len(server.records) == 1, "Navigation or model selection retried speech"
+        assert len(server.records) == 1, "Navigation or Last error retried speech"
         assert json.loads(public(["--format", "json", "audio", "history"])) == []
         result["requests_before_explicit_retry"] = len(server.records)
 
         terminal.send(b"\x07")
-        obsolete = (summary, action, setup, fixture.FAILURE_REQUEST_ID, "F1 details")
-        visible_failure(("Duration 00:02.000",), absent=obsolete)
+        visible_failure(("Duration 00:02.000", "Play audio"),
+                        absent=(summary, protocol_summary, "HTTP status:", fixture.FAILURE_REQUEST_ID))
         mark(terminal, "failure-recovered-result", result)
         assert len(server.records) == 2, "Explicit retry did not produce exactly one new request"
-        assert server.records[1]["body"] == failed_request, "Failure recovery changed the retained draft or settings"
+        assert server.records[1]["body"] == failed_request, "Recovery changed the retained draft or settings"
         assert server.records[1].get("response_status", 200) == 200
         assert server.records[1]["response_sha256"] == hashlib.sha256(fixture.WAV).hexdigest()
         entries = json.loads(public(["--format", "json", "audio", "history"]))
         assert len(entries) == 1 and not entries[0]["settings"].get("preview", False)
         entry = entries[0]
-        assert entry["settings"]["input"] == fixture.TEXT and entry["settings"]["instructions"] == fixture.INSTRUCTIONS
+        assert entry["settings"]["input"] == fixture.TEXT
+        assert entry["settings"]["instructions"] == fixture.DEFAULT_INSTRUCTIONS
         inspection = json.loads(public(["--format", "json", "audio", "inspect", entry["id"]]))
         assert inspection["analysis"]["duration"] == 2
         original = public(["audio", "export", entry["id"], "--output", "-"])
         assert original == fixture.WAV, "Successful retry did not retain original WAV bytes"
         (args.output / "failure-inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
         (args.output / "failure-recovered.wav").write_bytes(original)
-        assert all(text not in safe_screen() for text in obsolete), "Successful retry retained obsolete failure feedback"
+        terminal.send(b"\x1b[Z" + picker.END + b"\r")
+        visible_failure(("More actions", "Back to form"), absent=("Last error",))
+        terminal.send(b"\x1b\t")
+        visible_failure(("Duration 00:02.000", "Play audio"))
         result["failure_checks"] = {
             "http_status": 401, "request_id": fixture.FAILURE_REQUEST_ID,
             "safe_details_visible": True, "untrusted_message_canaries_absent": True,
             "escape_returned_without_retry": True, "navigation_did_not_retry": True,
-            "draft_preserved": True, "explicit_retry_succeeded": True,
-            "obsolete_feedback_cleared": True, "retained_results": len(entries),
-            "original_audio_sha256": hashlib.sha256(original).hexdigest(),
+            "default_instructions_sent": True, "draft_preserved": True,
+            "explicit_retry_succeeded": True, "obsolete_feedback_cleared": True,
+            "retained_results": len(entries), "original_audio_sha256": hashlib.sha256(original).hexdigest(),
         }
         terminal.send(b"\x03")
         terminal.finish(130)
         safe_screen()
         assert len(server.records) == 2, "Cancellation retried speech"
 
-        # A second owned session proves the original failure remains a safe,
-        # nonzero public exit when the user chooses Esc instead of retrying.
+        # A second session proves legacy Instructions omission and the two-step
+        # recovery/form Escape path without adding a fourth request.
         server.queue_auth_failure()
         failed_terminal = None
         try:
             width, height = terminal.initial_size
             failed_terminal = Terminal(str(args.binary), ["audio", "speak"], env, width=width, height=height)
             wait(failed_terminal, "Text to speech")
+            failed_terminal.send(b"\t")
+            wait(failed_terminal, ("╭ Instructions ", "› Instructions"))
+            visible_failure((fixture.DEFAULT_INSTRUCTIONS,), target=failed_terminal)
+            failed_terminal.send(b"\x1b[Z")
             paste(failed_terminal, fixture.TEXT)
+            failed_terminal.send(b"\t\t\r" + picker.DOWN * 3 + b"\r")
+            visible_failure(("tts-1", "Not used by this model"), target=failed_terminal)
+            failed_terminal.send(picker.DOWN + b"\r")
+            wait(failed_terminal, "alloy")
+            failed_terminal.send(b"\r")
+            visible_failure(("Alloy",), target=failed_terminal)
+            failed_terminal.send(picker.UP + b"\r" + picker.UP * 3 + b"\r")
+            failed_terminal.send(b"\x1b[Z")
+            wait(failed_terminal, ("╭ Instructions ", "› Instructions"))
+            visible_failure((fixture.DEFAULT_INSTRUCTIONS,), target=failed_terminal)
+            failed_terminal.send(b"\t\r" + picker.DOWN * 3 + b"\r")
+            visible_failure(("Not used by this model", "Alloy"), target=failed_terminal)
+            assert len(server.records) == 2, "Legacy model selection submitted speech"
+            mark(failed_terminal, "failure-legacy-ready", result)
             failed_terminal.send(b"\x07")
-            visible_failure((summary, action, setup, "Esc exits"), target=failed_terminal)
-            mark(failed_terminal, "failure-error-exit-form", result)
+            visible_failure((summary, "API setup", "Back to form"), target=failed_terminal)
+            mark(failed_terminal, "failure-error-exit-recovery", result)
             assert len(server.records) == 3 and server.records[2].get("response_status") == 401
+            legacy = server.records[2]["body"]
+            assert legacy["model"] == "tts-1" and legacy["voice"] == "alloy"
+            assert legacy["input"] == fixture.TEXT and "instructions" not in legacy
+            failed_terminal.send(b"\x1b")
+            main_form(failed_terminal)
+            visible_failure(("› More actions…",), target=failed_terminal)
+            assert failed_terminal.child.poll() is None, "First Escape bypassed the recovery return"
+            assert len(server.records) == 3, "Recovery Escape retried speech"
+            mark(failed_terminal, "failure-error-exit-form", result)
             failed_terminal.send(b"\x1b")
             failed_terminal.finish(1)
             check_frame_boundaries(failed_terminal)
@@ -503,7 +563,7 @@ def main():
             restored = bytes(failed_terminal.raw).rsplit(b"\x1b[?2004l", 1)
             assert len(restored) == 2, "Error exit omitted terminal restoration"
             diagnostic = picker.ANSI.sub("", restored[1].decode("utf-8", errors="strict"))
-            assert summary in diagnostic, "Error exit omitted its real HTTP status after terminal restoration"
+            assert protocol_summary in diagnostic, "Error exit omitted its HTTP status after terminal restoration"
             assert "Request ID: " + fixture.FAILURE_REQUEST_ID in diagnostic
             assert "Check API key, organization and project." in diagnostic
             assert "Key setup:" in diagnostic and "help setup" in diagnostic
@@ -512,7 +572,7 @@ def main():
             retained = observer.scrollback_lines()
             visible = observer.viewport_text()
             all_rows = visible + "\n" + "\n".join(line for lines in retained.values() for line in lines)
-            assert "Text to speech" not in all_rows, "Error exit retained owned form rows"
+            assert "Text to speech" not in all_rows and summary not in all_rows, "Error exit retained owned form rows"
             assert not any(event[1] == "r" for event in failed_terminal.events)
             assert observer.provenance()["bytes_observed"] == len(failed_terminal.raw)
             failed_terminal.save(args.output / "failure-error-exit")
@@ -522,6 +582,8 @@ def main():
             assert json.loads(public(["--format", "json", "audio", "history"])) == entries
             result["failure_error_exit"] = {
                 "exit_status": failed_terminal.child.returncode, "request_count": 1,
+                "legacy_instructions_omitted": True, "instruction_draft_restored_on_supported_model": True,
+                "recovery_escape_returned_before_exit": True,
                 "safe_summary_after_terminal_restoration": True, "owned_form_rows_cleared": True,
                 "final_diagnostic_allowed": True, "untrusted_message_canaries_absent": True,
                 "history_preserved": True, "observer": observer.provenance(),
@@ -625,7 +687,8 @@ def main():
         up, down, ss3_up, ss3_down = b"\x1b[A", b"\x1b[B", b"\x1bOA", b"\x1bOB"
         backtab = b"\x1b[Z"
         focus = {"text": "› Text", "instructions": "› Instructions", "model": "› Model",
-                 "clear": "› Clear form", "history": "› History", "result": "› Result:", "preview": "Bash/zsh"}
+                 "more": "› More actions…", "generate": "› [ Generate speech ]", "history": "› History",
+                 "play": "› Play audio", "save": "› Save audio…", "command": "Command · Bash/zsh"}
         result["navigation_checks"] = []
 
         def zero_requests():
@@ -642,28 +705,59 @@ def main():
             zero_requests()
             result["navigation_checks"].append({"name": name, "focus": target})
 
+        def open_more(name):
+            check(name + " select More", "more", picker.END)
+            check(name + " open More", "history", b"\r")
+
         mark(terminal, result["case"] + "-initial", result)
         check("empty text CSI Down", "instructions", down)
+        check("initial Instructions example", fixture.DEFAULT_INSTRUCTIONS)
+        check("clear seeded Instructions for empty boundary", "instructions", b"\x01\x0b")
         check("empty instructions SS3 Down", "model", ss3_down)
         check("Model CSI Up", "instructions", up)
         check("empty instructions SS3 Up", "text", ss3_up)
         check("Tab Text to Instructions", "instructions", b"\t")
         check("Tab Instructions to Settings", "model", b"\t")
-        check("Tab Settings to preview without result", "preview", b"\t")
-        check("reverse Tab preview to Settings", "model", backtab)
+        check("Tab Settings wraps to Text without result", "text", b"\t")
+        check("reverse Tab Text to Settings", "model", backtab)
         check("reverse Tab Settings to Instructions", "instructions", backtab)
         check("reverse Tab Instructions to Text", "text", backtab)
         check("open settings", "model", b"\t\t")
-        check("open model chooser", "Choosing never generates speech.", b"\r")
-        check("CSI Down remains in chooser", "Choosing never generates speech.", down)
-        check("SS3 Up remains in chooser", "Choosing never generates speech.", ss3_up)
-        check("Tab remains in chooser", "Choosing never generates speech.", b"\t")
+        check("open model chooser", "Enter select · Esc back", b"\r")
+        check("CSI Down remains in chooser", "Enter select · Esc back", down)
+        check("SS3 Up remains in chooser", "Enter select · Esc back", ss3_up)
+        check("Tab remains in chooser", "Enter select · Esc back", b"\t")
         check("Escape returns to Model", "model", b"\x1b")
-        check("End selects Clear", "clear", picker.END)
-        check("Clear Down enters preview", "preview", down)
-        check("preview Right scrolls", "preview", b"\x1b[C", absent=("› printf",))
-        check("preview Up first returns to zero", "› printf", up)
-        check("preview Up at zero leaves", "clear", ss3_up)
+        check("End selects More", "more", picker.END)
+        check("More Down stays bounded without result", "more", down)
+        check("More Up selects Generate", "generate", up)
+        check("Generate Down selects More", "more", ss3_down)
+        check("Tab More to Text for long command", "text", b"\t")
+        paste(terminal, "Command inspection sample. " * 180)
+        check("long command draft stays local", "text")
+        check("return to More for command inspection", "more", b"\t\t")
+        check("open More command route", "history", b"\r")
+        check("select Show command", "› Show command", down * 3)
+        check("open Command information", "command", b"\r")
+        check("Command starts with printf", "printf")
+        initial_command = screen(terminal)
+        check("Command End scrolls", "command", picker.END)
+        assert screen(terminal) != initial_command, "Command modal did not scroll through its complete command"
+        check("Command Down stays at bottom", "command", down * 4)
+        check("Command Home returns to first rows", "printf", picker.HOME)
+        check("Command Up stays in its modal", "command", up * 4)
+        check("Command Escape returns to More", "› Show command", b"\x1b")
+        check("More Home selects History", "history", picker.HOME)
+        check("More Help is selectable", "› Help", down * 4)
+        check("Help opens locally", "Use Tab to move between sections.", b"\r")
+        check("Help End remains local", "Help", picker.END)
+        check("Help Escape returns to More", "› Help", b"\x1b")
+        check("More End selects Back", "› Back to form", picker.END)
+        check("More Down stays at last action", "› Back to form", down)
+        check("Back returns to Settings More", "more", b"\r")
+        check("open More to clear long command draft", "history", b"\r")
+        check("select Clear for long command draft", "› Clear form", down * 2)
+        check("clear long command draft locally", "more", b"\r")
         check("Home selects Model", "model", picker.HOME)
         check("Model Up enters Instructions", "instructions", up)
         check("Instructions Up enters Text", "text", up)
@@ -679,8 +773,7 @@ def main():
                 paste(terminal, value)
                 check(prefix + " paste keeps editor", editor)
                 if name == "exact-width-unicode":
-                    # Each character occupies two cells. Two complete visual
-                    # rows leave the textarea's synthetic end-padding row.
+                    # Two complete visual rows leave the editor's padding row.
                     check(prefix + " End reaches padding row", editor, picker.END)
                 if name == "single-line":
                     for label, keys in (("Shift Down", b"\x1b[1;2B"), ("Alt Down", b"\x1b[1;3B"),
@@ -697,32 +790,42 @@ def main():
                 check(prefix + " last-row Down leaves editor", "instructions" if editor == "text" else "model", ss3_down)
                 if editor == "text":
                     check(prefix + " Tab returns to Settings", "model", b"\t")
-                check(prefix + " select Clear", "clear", picker.END)
-                check(prefix + " clear remains local", "clear", b"\r")
+                open_more(prefix + " clear")
+                check(prefix + " select Clear", "› Clear form", down * 2)
+                check(prefix + " Clear returns to More setting", "more", b"\r")
+                visible = screen(terminal)
+                assert value.splitlines()[0] not in visible and fixture.DEFAULT_INSTRUCTIONS not in visible
                 check(prefix + " return to Model", "model", picker.HOME)
                 check(prefix + " return to Instructions", "instructions", up)
                 check(prefix + " return to Text", "text", up)
 
         check("select Settings for History", "model", b"\t\t")
-        check("select Clear before History", "clear", picker.END)
-        check("Up selects History", "history", up)
-        check("open local History", "Choosing never generates speech.", b"\r")
-        check("restore local result", "result", b"\r")
+        open_more("History")
+        check("open local History", "Enter select · Esc back", b"\r")
+        check("restore local result", "play", b"\r")
         wait(terminal, "Duration 00:02.000")
-        wait(terminal, "Audio retained.", absent=("Working: open",))
         mark(terminal, result["case"] + "-restored-result", result)
-        check("reverse Tab Result to Settings", "history", backtab)
-        check("End selects Clear with result", "clear", picker.END)
-        check("Clear Down enters Result", "result", down)
-        check("Result Down enters preview", "preview", ss3_down)
-        check("preview Up returns to Result", "result", up)
-        check("Tab Result to preview", "preview", b"\t")
-        check("Tab preview wraps to Text", "text", b"\t")
+        check("reverse Tab Result to Settings", "more", backtab)
+        check("More Down enters Play", "play", down)
+        check("Result Down selects Save", "save", ss3_down)
+        check("Result Down stays on Save", "save", down)
+        check("Result Up returns to Play", "play", up)
+        check("Result Up enters Settings More", "more", ss3_up)
+        check("Tab Settings to Result", "play", b"\t")
+        check("Result End selects Save", "save", picker.END)
+        check("Result Home selects Play", "play", picker.HOME)
+        check("Tab Result wraps to Text", "text", b"\t")
+        check("reverse Tab Text returns to Result", "play", backtab)
+        check("Tab Result wraps again", "text", b"\t")
         check("Tab Text to Instructions with result", "instructions", b"\t")
-        check("Tab Instructions to Settings with result", "clear", b"\t")
-        check("Tab Settings to Result", "result", b"\t")
-        check("reverse Tab Result to Settings again", "clear", backtab)
+        check("Tab Instructions to Settings with result", "more", b"\t")
+        check("Tab Settings to Result again", "play", b"\t")
+        check("reverse Tab Result to Settings again", "more", backtab)
+        visible = screen(terminal)
+        assert "Command preview" not in visible and "printf" not in visible, "Main form retained advanced command content"
         mark(terminal, result["case"] + "-complete", result)
+        result["navigation_check_count"] = len(result["navigation_checks"])
+        assert result["navigation_check_count"] == 185, "Navigation inventory changed"
         zero_requests()
         terminal.send(b"\x03")
         terminal.finish(130)
@@ -905,6 +1008,7 @@ def main():
                         paste(terminal, fixture.TEXT)
                         terminal.send(b"\t")
                         wait(terminal, ("╭ Instructions ", "› Instructions"))
+                        terminal.send(b"\x01\x0b")
                         paste(terminal, fixture.INSTRUCTIONS)
                         terminal.send(b"\t\r")
                         wait(terminal, "gpt-4o-mini-tts-2025-12-15")
@@ -913,7 +1017,7 @@ def main():
                         terminal.send(b"\r")
                         wait(terminal, "Model          gpt-4o-mini-tts-2025-12-15")
                         terminal.send(picker.DOWN + b"\r")
-                        wait(terminal, "Enter chooses")
+                        wait(terminal, "Enter select · Esc back")
                         terminal.send(picker.UP * 3)
                         mark(terminal, "voice-choices", result)
                         terminal.send(b"\r")
@@ -946,7 +1050,7 @@ def main():
                         assert len(peaks) > 8 and max(peaks)-min(peaks) > .5, "Waveform did not use varying samples"
                         (args.output / "inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
                         terminal.send(b" ")
-                        wait(terminal, "Playing.")
+                        wait(terminal, "Stop audio")
                         deadline = time.monotonic() + 3
                         while not playback.exists() and time.monotonic() < deadline:
                             drain(terminal, .05)
@@ -954,7 +1058,7 @@ def main():
                         played = json.loads(playback.read_text().splitlines()[0])
                         assert played["sha256"] == hashlib.sha256(fixture.WAV).hexdigest()
                         terminal.send(b" ")
-                        wait(terminal, "Stopped.")
+                        wait(terminal, "Play audio")
                         terminal.send(b"s")
                         wait(terminal, "Save original audio to:")
                         terminal.send(b"\x01\x0b-\r")
@@ -965,16 +1069,18 @@ def main():
                         terminal.send(b"\x01\x0b")
                         paste(terminal, str(destination))
                         terminal.send(b"\r")
-                        wait(terminal, "Saved original audio bytes.")
+                        wait(terminal, "Saved:")
                         assert destination.read_bytes() == fixture.WAV
                         (args.output / "exported.wav").write_bytes(destination.read_bytes())
                         mark(terminal, "saved-result", result)
-                        terminal.send(b"h")
+                        terminal.send(b"\x1b[Z" + picker.END + b"\r")
+                        wait(terminal, "› History")
+                        terminal.send(b"\r")
                         wait(terminal, entry["id"])
                         mark(terminal, "history", result)
                         terminal.send(b"\r")
                         wait(terminal, "Duration 00:02.000")
-                        wait(terminal, "Audio retained.", absent=("Working: open",))
+                        wait(terminal, "Play audio", absent=("Opening audio",))
                         mark(terminal, "restored-result", result)
                         if not args.no_resize:
                             terminal.resize(40, 12)
@@ -990,19 +1096,27 @@ def main():
                             wait(terminal, "Duration 00:02.000")
                         terminal.send(b"\x1b")
                         wait(terminal, ("╭ Text ", "› Text"))
-                        terminal.send(b"\t\t" + picker.UP * 2 + b"\r")
-                        wait(terminal, "Enter chooses")
-                        terminal.send(picker.DOWN + b"p")
-                        wait(terminal, "Result: ballad")
+                        terminal.send(b"\t\t" + picker.HOME + picker.DOWN + b"\r")
+                        wait(terminal, "Enter select · Esc back")
+                        terminal.send(picker.DOWN + b"\r")
+                        wait(terminal, "Voice          Ballad")
+                        assert len(server.records) == 1, "Selecting an audition voice generated speech"
+                        terminal.send(picker.END + b"\r")
+                        wait(terminal, "› History")
+                        terminal.send(picker.DOWN + b"\r")
+                        wait(terminal, "Result: Ballad")
                         mark(terminal, "voice-audition", result)
                         assert len(server.records) == 2 and server.records[1]["body"]["input"] == fixture.AUDITION
                         assert json.loads(public(["--format", "json", "audio", "history"])) == entries
                         terminal.send(b"\x1b")
-                        wait(terminal, "Result: ash")
-                        terminal.send(b"\t\t" + picker.END)
+                        wait(terminal, "Result: Ash")
+                        terminal.send(b"\t\t" + picker.END + b"\r")
+                        wait(terminal, "› History")
+                        terminal.send(picker.DOWN * 2)
                         wait(terminal, "› Clear form")
                         terminal.send(b"\r")
-                        wait(terminal, "Form cleared.", absent=("Result:", fixture.TEXT.splitlines()[0]))
+                        wait(terminal, "› More actions…", absent=("Result:", fixture.TEXT.splitlines()[0], fixture.INSTRUCTIONS,
+                                                                    fixture.DEFAULT_INSTRUCTIONS))
                         mark(terminal, "cleared-form", result)
                         assert json.loads(public(["--format", "json", "audio", "history"])) == entries
                         assert destination.read_bytes() == fixture.WAV and len(server.records) == 2

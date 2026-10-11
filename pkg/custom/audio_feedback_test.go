@@ -26,21 +26,22 @@ func TestAudioFeedbackAPIStatusAndPrivacy(t *testing.T) {
 		status                int
 		code, summary, action string
 	}{
-		{401, "", "HTTP 401: Unauthorized.", "Check key, project, organization.\nSetup: openai help setup"},
-		{403, "", "HTTP 403: Access denied.", "Check key permissions and project access."},
-		{404, "", "HTTP 404: Model/API not found.", "Check Model, project access, and the configured API endpoint."},
-		{404, "model_not_found", "HTTP 404: Model unavailable.", "Check Model and project access."},
-		{400, "model_not_found", "HTTP 400: Model unavailable.", "Check Model and project access."},
-		{400, "", "HTTP 400: Invalid speech settings.", "Review Text, Instructions, and Settings."},
-		{422, "", "HTTP 422: Invalid speech settings.", "Review Text, Instructions, and Settings."},
-		{429, "", "HTTP 429: Too many requests.", "Wait before another explicit generation."},
-		{429, "insufficient_quota", "HTTP 429: API usage limit reached.", "Check project billing and usage limits."},
-		{409, "", "HTTP 409: Request conflict.", "Check API status before generating again."},
-		{408, "", "HTTP 408: Request timed out.", "The API may have received the request. Check usage before generating again."},
-		{504, "", "HTTP 504: Request timed out.", "The API may have received the request. Check usage before generating again."},
-		{503, "", "HTTP 503: Service unavailable.", "Check API status and usage before generating again."},
-		{499, "", "HTTP 499: Speech request failed.", "The cause is unavailable. Check settings and API status before generating again."},
-		{0, "", "Speech request failed.", "The cause is unavailable. Check settings and API status before generating again."},
+		{401, "", "The API could not verify your access.", "Check your API key and project access."},
+		{401, "invalid_api_key", "The API did not accept this key.", "Check your API key and project access."},
+		{403, "", "The API denied access to this request.", "Check your API key's permissions and project access."},
+		{404, "", "The model or service was not found.", "Check Model, project access, and the configured API endpoint."},
+		{404, "model_not_found", "This model is unavailable to your project.", "Check Model and project access."},
+		{400, "model_not_found", "This model is unavailable to your project.", "Check Model and project access."},
+		{400, "", "The API could not use these settings.", "Review Text, Instructions, and Settings."},
+		{422, "", "The API could not use these settings.", "Review Text, Instructions, and Settings."},
+		{429, "", "The API is limiting requests right now.", "Wait before generating again."},
+		{429, "insufficient_quota", "An API usage or billing limit was reached.", "Check project billing and usage limits."},
+		{409, "", "The request conflicts with the current service state.", "Check API status before generating again."},
+		{408, "", "The speech request took too long.", "The API may have received the request. Check usage before generating again."},
+		{504, "", "The speech request took too long.", "The API may have received the request. Check usage before generating again."},
+		{503, "", "The speech service had a problem.", "Check API status and usage before generating again."},
+		{499, "", "The API could not complete the request.", "The cause is unavailable. Check settings and API status before generating again."},
+		{0, "", "The API could not complete the request.", "The cause is unavailable. Check settings and API status before generating again."},
 	} {
 		t.Run(fmt.Sprintf("%d/%s", tc.status, tc.code), func(t *testing.T) {
 			request, err := http.NewRequest(http.MethodPost, "https://synthetic-user:synthetic-password@synthetic.invalid/?token=synthetic-private", nil)
@@ -51,9 +52,11 @@ func TestAudioFeedbackAPIStatusAndPrivacy(t *testing.T) {
 				Response: &http.Response{Header: http.Header{"X-Request-Id": {"req_synthetic"}, "Set-Cookie": {private}, "Location": {private}}}}
 			for _, failure := range []error{apierr, fmt.Errorf("%s: %w", private, apierr), errors.Join(errors.New(private), apierr)} {
 				feedback := audioFailureFeedback(nil, "generate", failure)
-				require.Equal(t, audioFeedback{Summary: tc.summary, Action: tc.action, RequestID: "req_synthetic"}, feedback)
+				require.Equal(t, audioFeedback{Summary: tc.summary, Action: tc.action, RequestID: "req_synthetic", StatusCode: tc.status}, feedback)
+				require.NotContains(t, feedback.Summary+feedback.Action, "HTTP")
 				require.ErrorIs(t, failure, apierr)
 				require.Equal(t, private, apierr.Message)
+				require.Equal(t, tc.status, apierr.StatusCode)
 			}
 		})
 	}
@@ -80,15 +83,18 @@ func TestAudioFeedbackUsesSafeParameterLabels(t *testing.T) {
 		require.Equal(t, action, feedback.Action)
 	}
 	// Matching a code at an unrelated status must not invent a model failure.
-	require.Equal(t, "HTTP 401: Unauthorized.", audioFailureFeedback(command, "generate", &openai.Error{StatusCode: 401, Code: "model_not_found"}).Summary)
+	require.Equal(t, "The API could not verify your access.", audioFailureFeedback(command, "generate", &openai.Error{StatusCode: 401, Code: "model_not_found"}).Summary)
 }
 
-func TestAudioFeedbackRequestIDAndInvocation(t *testing.T) {
+func TestAudioFeedbackRequestIDStaysSeparateFromGuidance(t *testing.T) {
 	command := audioGenerateTestCommand()
 	command.Metadata = map[string]any{"help-invocation": "'/tmp/CLI trial/openai'"}
 	apierr := requestIDError(t, 401, "req_synthetic")
 	feedback := audioFailureFeedback(command, "generate", apierr)
-	require.Equal(t, "Check key, project, organization.\nSetup: '/tmp/CLI trial/openai' help setup", feedback.Action)
+	require.Equal(t, "Check your API key and project access.", feedback.Action)
+	require.NotContains(t, feedback.Summary+feedback.Action, "req_synthetic")
+	require.NotContains(t, feedback.Summary+feedback.Action, "/tmp/CLI trial")
+	require.Equal(t, 401, feedback.StatusCode)
 	require.Equal(t, "req_synthetic", feedback.RequestID)
 	for _, id := range []string{"req_bad\rforged", "https://synthetic.invalid/?key=private", strings.Repeat("a", 257), ""} {
 		apierr.Response.Header.Set("X-Request-ID", id)
@@ -97,6 +103,17 @@ func TestAudioFeedbackRequestIDAndInvocation(t *testing.T) {
 	apierr.Response.Header.Set("X-Request-ID", "req_synthetic")
 	apierr.Request = &http.Request{Header: http.Header{"x-request-id": {"synthetic-private"}}}
 	require.Empty(t, audioFailureFeedback(command, "generate", apierr).RequestID)
+}
+
+func TestAudioFeedbackInvalidStatusRemainsUnknown(t *testing.T) {
+	for _, status := range []int{-1, 0, 99, 600, 1000} {
+		apierr := &openai.Error{StatusCode: status, Code: "synthetic-private", Message: "synthetic-private"}
+		feedback := audioFailureFeedback(nil, "generate", apierr)
+		require.Zero(t, feedback.StatusCode)
+		require.Equal(t, "The API could not complete the request.", feedback.Summary)
+		require.Equal(t, "The cause is unavailable. Check settings and API status before generating again.", feedback.Action)
+		require.Equal(t, status, apierr.StatusCode, "presentation changed the original error")
+	}
 }
 
 func TestAudioFeedbackPreservesRetainedOperationProvenance(t *testing.T) {
@@ -130,6 +147,7 @@ func TestAudioFeedbackPreservesRetainedOperationProvenance(t *testing.T) {
 			require.NotContains(t, feedback.Summary+feedback.Action, "synthetic-private")
 			require.NotContains(t, feedback.Summary, "Speech request")
 			require.Empty(t, feedback.RequestID)
+			require.Zero(t, feedback.StatusCode)
 		})
 	}
 }
@@ -179,10 +197,36 @@ func TestAudioFeedbackPlaybackDoesNotInventRetention(t *testing.T) {
 }
 
 func TestAudioFeedbackAuthDoesNotInferCredentialCause(t *testing.T) {
-	feedback := audioFailureFeedback(nil, "generate", &openai.Error{StatusCode: 401, Code: "invalid_api_key", Message: "The synthetic key is expired"})
-	require.Equal(t, "HTTP 401: Unauthorized.", feedback.Summary)
-	for _, unsupported := range []string{"expired", "invalid", "wrong", "rejected", "environment", "OPENAI_API_KEY"} {
-		require.NotContains(t, feedback.Summary+feedback.Action, unsupported)
+	for _, tc := range []struct {
+		status        int
+		code, summary string
+	}{
+		{401, "invalid_api_key", "The API did not accept this key."},
+		{401, "", "The API could not verify your access."},
+		{401, "synthetic-private-unknown", "The API could not verify your access."},
+		{401, "INVALID_API_KEY", "The API could not verify your access."},
+		{401, "invalid_api_key ", "The API could not verify your access."},
+		{401, "invalid_api_key\nsynthetic-private", "The API could not verify your access."},
+		{403, "invalid_api_key", "The API denied access to this request."},
+		{429, "invalid_api_key", "The API is limiting requests right now."},
+		{400, "invalid_api_key", "The API could not use these settings."},
+		{503, "invalid_api_key", "The speech service had a problem."},
+	} {
+		t.Run(fmt.Sprintf("%d/%q", tc.status, tc.code), func(t *testing.T) {
+			apierr := &openai.Error{StatusCode: tc.status, Code: tc.code, Message: "The synthetic-private key is expired\x1b[2J"}
+			failure := errors.Join(errors.New("synthetic-private wrapper"), apierr)
+			feedback := audioFailureFeedback(nil, "generate", failure)
+			require.Equal(t, tc.summary, feedback.Summary)
+			require.Equal(t, tc.status, feedback.StatusCode)
+			if tc.status == 401 {
+				require.Equal(t, "Check your API key and project access.", feedback.Action)
+			}
+			for _, unsupported := range []string{"expired", "invalid", "wrong", "rejected", "environment", "OPENAI_API_KEY", "synthetic-private", "\x1b"} {
+				require.NotContains(t, feedback.Summary+feedback.Action, unsupported)
+			}
+			require.ErrorIs(t, failure, apierr)
+			require.Equal(t, tc.code, apierr.Code)
+		})
 	}
 }
 
@@ -207,6 +251,7 @@ func TestAudioFeedbackValidationAndUnknownFailures(t *testing.T) {
 		feedback := audioFailureFeedback(nil, "synthetic-private-operation", failure)
 		require.Equal(t, "Audio operation failed.", feedback.Summary)
 		require.Equal(t, "The cause is unavailable. Review this action before repeating it.", feedback.Action)
+		require.Zero(t, feedback.StatusCode)
 	}
 	require.Equal(t, audioFeedback{}, audioFailureFeedback(nil, "generate", nil))
 }
@@ -219,15 +264,18 @@ func (audioFeedbackOpaqueError) Error() string { panic("audio feedback called ar
 func TestAudioFeedbackPreservesJoinedExitAndCancellation(t *testing.T) {
 	apierr := &openai.Error{StatusCode: 401}
 	failure := errors.Join(cli.Exit("synthetic-private", 27), apierr)
-	require.Equal(t, "HTTP 401: Unauthorized.", audioFailureFeedback(nil, "generate", failure).Summary)
+	feedback := audioFailureFeedback(nil, "generate", failure)
+	require.Equal(t, "The API could not verify your access.", feedback.Summary)
+	require.Equal(t, 401, feedback.StatusCode)
 	var exit cli.ExitCoder
 	require.ErrorAs(t, failure, &exit)
 	require.Equal(t, 27, exit.ExitCode())
 	require.ErrorIs(t, failure, apierr)
 	failure = errors.Join(failure, context.Canceled)
-	feedback := audioFailureFeedback(nil, "generate", failure)
+	feedback = audioFailureFeedback(nil, "generate", failure)
 	require.Equal(t, "Audio operation canceled.", feedback.Summary)
 	require.Empty(t, feedback.RequestID)
+	require.Zero(t, feedback.StatusCode)
 	require.ErrorIs(t, failure, context.Canceled)
 	require.ErrorIs(t, failure, apierr)
 	require.ErrorAs(t, failure, &exit)

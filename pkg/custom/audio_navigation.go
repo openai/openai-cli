@@ -4,8 +4,6 @@ import (
 	"slices"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/openai/openai-cli/internal/readable"
 )
 
 // Keep keyboard traversal in the same order as the visible form.
@@ -18,26 +16,23 @@ func (m *audioWorkbench) focusSection(focus int) tea.Cmd {
 		return m.input.Focus()
 	case 1:
 		return m.instructions.Focus()
-	case 3:
-		m.previewOffset = min(m.previewOffset, m.previewLimit())
 	}
 	return nil
 }
 
 func (m *audioWorkbench) cycleSection(backward bool) tea.Cmd {
-	order := []int{0, 1, 2, 3}
+	order := []int{0, 1, 2}
+	if !m.instructionsSupported() {
+		order = []int{0, 2}
+	}
 	if m.result != nil {
-		order = []int{0, 1, 2, 4, 3}
+		order = append(order, 4)
 	}
 	step := 1
 	if backward {
 		step = -1
 	}
 	return m.focusSection(order[(slices.Index(order, m.focus)+step+len(order))%len(order)])
-}
-
-func (m *audioWorkbench) previewLimit() int {
-	return max(0, ansi.StringWidth(readable.Text(m.commandPreview()))-m.audioWidth()+2)
 }
 
 // Call after busy, minimum-size, and modal guards. Editing keeps modified arrows
@@ -75,31 +70,35 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			return true, m.focusSection(0)
 		}
 		if key == "down" && editor.Line() == editor.LineCount()-1 && line.RowOffset == line.Height-1 {
-			if m.focus == 1 {
+			if m.focus == 1 || !m.instructionsSupported() {
 				m.setting = 0
+				return true, m.focusSection(2)
 			}
-			return true, m.focusSection(m.focus + 1)
+			return true, m.focusSection(1)
 		}
 	case 2:
 		switch key {
 		case "up":
 			if m.setting == 0 {
+				if !m.instructionsSupported() {
+					return true, m.focusSection(0)
+				}
 				return true, m.focusSection(1)
 			}
 			m.setting--
 		case "down":
-			if m.setting == 7 {
+			if m.setting == 5 {
 				if m.result != nil {
+					m.resultAction = 0
 					return true, m.focusSection(4)
 				}
-				m.previewOffset = 0
-				return true, m.focusSection(3)
+				return true, nil
 			}
 			m.setting++
 		case "home":
 			m.setting = 0
 		case "end":
-			m.setting = 7
+			m.setting = 5
 		default:
 			return false, nil
 		}
@@ -107,38 +106,18 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 	case 4:
 		switch key {
 		case "up":
-			m.setting = 7
-			return true, m.focusSection(2)
-		case "down":
-			m.previewOffset = 0
-			return true, m.focusSection(3)
-		}
-	case 3:
-		limit := m.previewLimit()
-		m.previewOffset = min(m.previewOffset, limit)
-		width := m.audioWidth() - 2
-		switch key {
-		case "up":
-			if m.previewOffset == 0 {
-				if m.result != nil {
-					return true, m.focusSection(4)
-				}
-				m.setting = 7
+			if m.resultAction > 0 {
+				m.resultAction--
+			} else {
+				m.setting = 5
 				return true, m.focusSection(2)
 			}
-			m.previewOffset = max(0, m.previewOffset-width)
-		case "down", "pgdown":
-			m.previewOffset = min(limit, m.previewOffset+width)
-		case "pgup":
-			m.previewOffset = max(0, m.previewOffset-width)
-		case "left":
-			m.previewOffset = max(0, m.previewOffset-10)
-		case "right":
-			m.previewOffset = min(limit, m.previewOffset+10)
+		case "down":
+			m.resultAction = min(1, m.resultAction+1)
 		case "home":
-			m.previewOffset = 0
+			m.resultAction = 0
 		case "end":
-			m.previewOffset = limit
+			m.resultAction = 1
 		default:
 			return false, nil
 		}

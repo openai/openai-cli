@@ -25,6 +25,20 @@ func audioDefaultSettings() audiohistory.Settings {
 	return audiohistory.Settings{Model: "gpt-4o-mini-tts", Voice: "coral", Format: "wav", Speed: 1}
 }
 
+func audioSupportsVoice(model, voice string) bool {
+	return !strings.HasPrefix(model, "tts-1") || !slices.Contains([]string{"ballad", "cedar", "marin", "verse"}, voice)
+}
+
+func audioModelVoices(model string) []string {
+	var voices []string
+	for _, voice := range audioVoices {
+		if audioSupportsVoice(model, voice) {
+			voices = append(voices, voice)
+		}
+	}
+	return voices
+}
+
 func audioWorkbenchRequested(command *cli.Command) bool {
 	if command.Args().Present() {
 		return false
@@ -138,7 +152,7 @@ func validateAudioSettings(s audiohistory.Settings) error {
 		if s.Instructions != "" {
 			return audioFailure("This model does not support instructions. Clear instructions or choose gpt-4o-mini-tts.", nil)
 		}
-		if slices.Contains([]string{"ballad", "cedar", "marin", "verse"}, s.Voice) {
+		if !audioSupportsVoice(s.Model, s.Voice) {
 			return audioFailure("This voice needs gpt-4o-mini-tts. Choose another voice or model.", nil)
 		}
 	}
