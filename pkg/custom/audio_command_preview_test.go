@@ -250,7 +250,8 @@ func TestAudioCommandPreviewFullTextAndHorizontalScroll(t *testing.T) {
 func TestAudioCommandPreviewSupportsPickerScrollKeys(t *testing.T) {
 	model := audioPreviewModel(t, "openai")
 	model.input.SetValue(strings.Repeat("Synthetic speech ", 30))
-	model.width, model.height, model.focus = 80, 24, 3
+	model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model.focus = 3
 	first := model.View().Content
 	for _, key := range []rune{tea.KeyDown, tea.KeyUp} {
 		_, command := model.Update(tea.KeyPressMsg{Code: key})

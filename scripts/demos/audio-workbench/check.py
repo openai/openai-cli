@@ -3,6 +3,7 @@
 
 import argparse
 import codecs
+from contextlib import contextmanager
 import errno
 import hashlib
 import importlib.util
@@ -53,13 +54,183 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     report = {"source": args.source, "binary_sha256": hashlib.sha256(args.binary.read_bytes()).hexdigest(),
               "platform": platform.system() + " " + platform.machine(), "theme": args.theme,
-              "scope": "PTY terminal replay; synthetic audio; fake player; no audible playback claim", "cases": []}
+              "scope": "PTY terminal replay; synthetic audio; fake player; no audible playback claim", "cases": [],
+              "owned_terminal_cleanup": [], "all_owned_terminal_groups_absent": False, "interruption_signal": None}
+    owned_terminals, owned_servers = [], []
+    interruption = {"signal": None, "protected": 0, "finalizing": False}
+
+    class HarnessInterrupted(BaseException):
+        pass
+
+    def interrupt_harness(number, _frame):
+        if interruption["signal"] is None:
+            interruption["signal"] = number
+            report["interruption_signal"] = number
+        if not interruption["protected"] and not interruption["finalizing"]:
+            raise HarnessInterrupted()
+
+    @contextmanager
+    def protect_ownership():
+        # Defer Python interruption during launch and cleanup. Do not change
+        # the signal mask inherited by the CLI or its helpers.
+        interruption["protected"] += 1
+        try:
+            yield
+        finally:
+            interruption["protected"] -= 1
+        if interruption["signal"] is not None and not interruption["protected"] and not interruption["finalizing"]:
+            raise HarnessInterrupted()
+
+    def group_exists(pgid):
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    def serve_fixture(server, stopped):
+        while not stopped.is_set():
+            server.handle_request()
+
+    class OwnedSpeechFixture(fixture.SpeechFixture):
+        # Set this before requests. ThreadingMixIn.server_close joins its
+        # existing registry even if this flag changes during cleanup.
+        block_on_close = False
+
+        def process_request(self, request, client_address):
+            handler = threading.Thread(target=self.process_request_thread, args=(request, client_address))
+            handler.daemon = self.daemon_threads
+            with self.lock:
+                self.handler_threads.add(handler)
+            try:
+                handler.start()
+            except BaseException:
+                with self.lock:
+                    self.handler_threads.discard(handler)
+                self.shutdown_request(request)
+                raise
+
+    def close_fixture(state):
+        if state.get("cleanup_attempted", False):
+            return
+        with protect_ownership():
+            state["cleanup_attempted"] = True
+            server, worker, case_result = state["server"], state["worker"], state["result"]
+            deadline = time.monotonic() + 5
+            state["stopped"].set()
+            server.partial_release.set()
+            if worker.ident is not None:
+                worker.join(max(0, deadline-time.monotonic()))
+            # The request loop has a finite timeout. No shutdown worker or
+            # BaseServer.shutdown wait can outlive this cleanup deadline.
+            server.server_close()
+            with server.lock:
+                handlers = list(server.handler_threads)
+            for handler in handlers:
+                handler.join(max(0, deadline-time.monotonic()))
+            cleanup = {"serve_thread_joined": not worker.is_alive(), "handler_threads_observed": len(handlers),
+                       "handler_threads_joined": all(not handler.is_alive() for handler in handlers)}
+            case_result["server_cleanup"] = cleanup
+            state["closed"] = cleanup["serve_thread_joined"] and cleanup["handler_threads_joined"]
+            if not state["closed"]:
+                case_result["pass"] = False
+                raise AssertionError("Fixture threads did not stop within the cleanup deadline")
+
+    @contextmanager
+    def harness_lifecycle():
+        previous = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+        try:
+            for number in previous:
+                signal.signal(number, interrupt_harness)
+            yield
+        except HarnessInterrupted:
+            if report["cases"]:
+                report["cases"][-1]["pass"] = False
+        finally:
+            interruption["finalizing"] = True
+            failures = []
+            for terminal in owned_terminals:
+                try:
+                    terminal.close()
+                except Exception as error:
+                    failures.append(type(error).__name__)
+                if terminal.cleanup["forced_harness_cleanup"] or terminal.cleanup["error"] is not None:
+                    terminal.case_result["pass"] = False
+            for state in owned_servers:
+                try:
+                    close_fixture(state)
+                    if not state["closed"]:
+                        raise AssertionError("Fixture cleanup did not complete")
+                except Exception as error:
+                    state["result"]["pass"] = False
+                    failures.append(type(error).__name__)
+            report["all_owned_terminal_groups_absent"] = all(
+                entry["group_absent_verified"] for entry in report["owned_terminal_cleanup"])
+            report["interruption_signal"] = interruption["signal"]
+            if interruption["signal"] is not None and report["cases"]:
+                report["cases"][-1]["pass"] = False
+            try:
+                (args.output / "results.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+            finally:
+                for number, handler in previous.items():
+                    signal.signal(number, handler)
+            if failures or not report["all_owned_terminal_groups_absent"]:
+                raise AssertionError("Owned harness cleanup failed: " + ", ".join(failures))
+            if interruption["signal"] is not None:
+                raise SystemExit(128 + interruption["signal"])
+            if any(entry["forced_harness_cleanup"] for entry in report["owned_terminal_cleanup"]):
+                raise AssertionError("Harness cleanup forced a CLI process group to stop; product cancellation did not pass")
 
     class Terminal(picker.Terminal):
         def __init__(self, *arguments, **options):
-            super().__init__(*arguments, **options)
-            self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
-            self.decoder_finished = False
+            with protect_ownership():
+                super().__init__(*arguments, **options)
+                self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
+                self.decoder_finished = False
+                self.harness_closed = False
+                self.case_result = result
+                self.cleanup = {"child_pid": self.child.pid, "pgid": self.child.pid, "close_called": False,
+                                "forced_harness_cleanup": False, "group_absent_verified": False, "error": None,
+                                "case": result["case"]}
+                owned_terminals.append(self)
+                report["owned_terminal_cleanup"].append(self.cleanup)
+
+        def close(self):
+            if self.harness_closed:
+                return
+            with protect_ownership():
+                self.cleanup["close_called"] = True
+                self.cleanup["product_exit_status_before_cleanup"] = self.child.poll()
+                self.cleanup["forced_harness_cleanup"] = self.child.returncode is None
+                failure = None
+                try:
+                    super().close()
+                except Exception as error:
+                    failure = error
+                finally:
+                    self.harness_closed = True
+                try:
+                    pgid = self.cleanup["pgid"]
+                    assert pgid > 0 and pgid != os.getpgrp(), "Refusing cleanup outside the owned CLI group"
+                    if group_exists(pgid):
+                        self.cleanup["forced_harness_cleanup"] = True
+                        try:
+                            os.killpg(pgid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    self.child.wait(timeout=1)
+                    deadline = time.monotonic() + 2
+                    while group_exists(pgid) and time.monotonic() < deadline:
+                        time.sleep(.03)
+                    self.cleanup["group_absent_verified"] = not group_exists(pgid)
+                    assert self.cleanup["group_absent_verified"], "Owned CLI process group survived harness cleanup"
+                except Exception as error:
+                    failure = error
+                if self.cleanup["forced_harness_cleanup"] or failure is not None:
+                    self.case_result["pass"] = False
+                if failure is not None:
+                    self.cleanup["error"] = type(failure).__name__ + ": " + str(failure)
+                    raise failure
 
         def finish_decode(self):
             if not self.decoder_finished:
@@ -128,10 +299,11 @@ def main():
 
     def wait(terminal, marker, absent=(), timeout=12):
         deadline = time.monotonic() + timeout
+        markers = (marker,) if isinstance(marker, str) else marker
         while True:
             drain(terminal, .06)
             visible = screen(terminal)
-            if marker in visible and not any(value in visible for value in absent):
+            if any(value in visible for value in markers) and not any(value in visible for value in absent):
                 return visible
             if terminal.child.poll() is not None or time.monotonic() > deadline:
                 raise AssertionError("Audio form did not reach state " + repr(marker) + ": " + visible[-1800:])
@@ -336,267 +508,270 @@ def main():
 
     cases = ("workflow", "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
              "stopped-reader", "startup") if args.case == "all" else (args.case,)
-    for case in cases:
-        result = {"case": case, "states": [], "pass": False}
-        report["cases"].append(result)
-        with tempfile.TemporaryDirectory(prefix="audio-workbench-demo-") as temporary:
-            private = Path(temporary)
-            programs = private / "bin"
-            programs.mkdir(mode=0o700)
-            playback = private / "playback.json"
-            # The fake player receives actual generated bytes. It emits no sound.
-            helper = ("#!" + sys.executable + "\nimport hashlib,json,os,sys,time\n"
-                      "assert 'OPENAI_API_KEY' not in os.environ and 'FFREPORT' not in os.environ\n"
-                      "data=sys.stdin.buffer.read()\n"
-                      "with open(" + repr(str(playback)) + ", 'a') as out:\n"
-                      " out.write(json.dumps({'pid':os.getpid(),'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()})+'\\n')\n"
-                      "time.sleep(2)\n")
-            (programs / "ffplay").write_text(helper)
-            (programs / "ffplay").chmod(0o700)
-            busy = case in ("busy-ctrl-c", "busy-sigterm")
-            server = fixture.SpeechFixture(partial=busy)
-            worker = threading.Thread(target=server.serve_forever)
-            worker.start()
-            env = {"PATH": str(programs) + ":/usr/bin:/bin", "HOME": temporary,
-                   "XDG_CACHE_HOME": str(private / "cache"), "XDG_CONFIG_HOME": str(private / "config"),
-                   "TERM": "xterm-256color", "LANG": "en_US.UTF-8", "GOMAXPROCS": "2",
-                   "OPENAI_PICKER_SHELL": "off", "OPENAI_API_KEY": "synthetic-demo-key",
-                   "OPENAI_BASE_URL": server.endpoint, "FORCE_COLOR": "1",
-                   "COLORTERM": "truecolor", "COLORFGBG": "0;15" if args.theme == "light" else "15;0"}
-            if args.theme == "no-color":
-                env.update(NO_COLOR="1", FORCE_COLOR="0")
-            terminal = None
+    with harness_lifecycle():
+        for case in cases:
+            result = {"case": case, "states": [], "pass": False}
+            report["cases"].append(result)
+            with tempfile.TemporaryDirectory(prefix="audio-workbench-demo-") as temporary:
+                private = Path(temporary)
+                programs = private / "bin"
+                programs.mkdir(mode=0o700)
+                playback = private / "playback.json"
+                # The fake player receives actual generated bytes. It emits no sound.
+                helper = ("#!" + sys.executable + "\nimport hashlib,json,os,sys,time\n"
+                          "assert 'OPENAI_API_KEY' not in os.environ and 'FFREPORT' not in os.environ\n"
+                          "data=sys.stdin.buffer.read()\n"
+                          "with open(" + repr(str(playback)) + ", 'a') as out:\n"
+                          " out.write(json.dumps({'pid':os.getpid(),'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()})+'\\n')\n"
+                          "time.sleep(2)\n")
+                (programs / "ffplay").write_text(helper)
+                (programs / "ffplay").chmod(0o700)
+                busy = case in ("busy-ctrl-c", "busy-sigterm")
+                with protect_ownership():
+                    server = OwnedSpeechFixture(partial=busy)
+                    server.timeout = .1
+                    stopped = threading.Event()
+                    worker = threading.Thread(target=serve_fixture, args=(server, stopped))
+                    server_state = {"server": server, "worker": worker, "stopped": stopped,
+                                    "result": result, "closed": False}
+                    owned_servers.append(server_state)
+                    worker.start()
+                env = {"PATH": str(programs) + ":/usr/bin:/bin", "HOME": temporary,
+                       "XDG_CACHE_HOME": str(private / "cache"), "XDG_CONFIG_HOME": str(private / "config"),
+                       "TERM": "xterm-256color", "LANG": "en_US.UTF-8", "GOMAXPROCS": "2",
+                       "OPENAI_PICKER_SHELL": "off", "OPENAI_API_KEY": "synthetic-demo-key",
+                       "OPENAI_BASE_URL": server.endpoint, "FORCE_COLOR": "1",
+                       "COLORTERM": "truecolor", "COLORFGBG": "0;15" if args.theme == "light" else "15;0"}
+                if args.theme == "no-color":
+                    env.update(NO_COLOR="1", FORCE_COLOR="0")
+                terminal = None
 
-            def public(arguments):
-                command = subprocess.run([str(args.binary), *arguments], env=env, stdin=subprocess.DEVNULL,
-                                         capture_output=True, timeout=12)
-                assert command.returncode == 0 and command.stderr == b"", "Local audio command failed"
-                return command.stdout
+                def public(arguments):
+                    command = subprocess.run([str(args.binary), *arguments], env=env, stdin=subprocess.DEVNULL,
+                                             capture_output=True, timeout=12)
+                    assert command.returncode == 0 and command.stderr == b"", "Local audio command failed"
+                    return command.stdout
 
-            try:
-                if case == "startup":
-                    startup_case(private, env, programs, server, result)
-                    continue
-                terminal = Terminal(str(args.binary), ["audio", "speak"], env, width=90, height=34)
-                wait(terminal, "Text to speech")
-                if case == "workflow":
-                    mark(terminal, "initial-form", result)
-                    paste(terminal, fixture.TEXT)
-                    terminal.send(b"\t")
-                    wait(terminal, "> Instructions")
-                    paste(terminal, fixture.INSTRUCTIONS)
-                    terminal.send(b"\t\r")
-                    wait(terminal, "gpt-4o-mini-tts-2025-12-15")
-                    terminal.send(picker.DOWN * 2)
-                    mark(terminal, "model-choices", result)
-                    terminal.send(b"\r")
-                    wait(terminal, "Model: gpt-4o-mini-tts-2025-12-15")
-                    terminal.send(picker.DOWN + b"\r")
-                    wait(terminal, "Enter chooses")
-                    terminal.send(picker.UP * 3)
-                    mark(terminal, "voice-choices", result)
-                    terminal.send(b"\r")
-                    wait(terminal, "Voice: ash")
-                    terminal.send(picker.DOWN + b"\r")
-                    wait(terminal, "Response format")
-                    mark(terminal, "format-choices", result)
-                    terminal.send(picker.DOWN + b"\r")
-                    wait(terminal, "Format: PCM")
-                    terminal.send(b"\r" + picker.UP + b"\r")
-                    wait(terminal, "Format: WAV")
-                    terminal.send(picker.DOWN + b"\x1b[C")
-                    wait(terminal, "Speed: 1.25 x")
-                    mark(terminal, "selected-settings", result)
-                    assert not server.records, "Choosing or typing generated speech"
-                    terminal.send(b"\x07")
-                    wait(terminal, "Duration 00:02.000")
-                    mark(terminal, "generated-result", result)
-                    assert len(server.records) == 1, "Generation request count changed"
-                    request = server.records[0]["body"]
-                    assert request["input"] == fixture.TEXT and request["instructions"] == fixture.INSTRUCTIONS
-                    assert (request["model"], request["voice"], request["response_format"], request["speed"]) == (
-                        "gpt-4o-mini-tts-2025-12-15", "ash", "wav", 1.25)
-                    entries = json.loads(public(["--format", "json", "audio", "history"]))
-                    assert len(entries) == 1 and not entries[0]["settings"].get("preview", False)
-                    entry = entries[0]
-                    inspection = json.loads(public(["--format", "json", "audio", "inspect", entry["id"]]))
-                    assert inspection["analysis"]["duration"] == 2
-                    peaks = inspection["analysis"]["peaks"]
-                    assert len(peaks) > 8 and max(peaks)-min(peaks) > .5, "Waveform did not use varying samples"
-                    (args.output / "inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
-                    terminal.send(b" ")
-                    wait(terminal, "Playing.")
-                    deadline = time.monotonic() + 3
-                    while not playback.exists() and time.monotonic() < deadline:
-                        drain(terminal, .05)
-                    assert playback.exists(), "The fake player never received generated audio"
-                    played = json.loads(playback.read_text().splitlines()[0])
-                    assert played["sha256"] == hashlib.sha256(fixture.WAV).hexdigest()
-                    terminal.send(b" ")
-                    wait(terminal, "Stopped.")
-                    terminal.send(b"s")
-                    wait(terminal, "Save original audio to:")
-                    terminal.send(b"\x01\x0b-\r")
-                    wait(terminal, "Enter a file path for saving.")
-                    assert len(server.records) == 1, "Invalid save path generated speech"
-                    mark(terminal, "save-validation", result)
-                    destination = private / "saved speech.wav"
-                    terminal.send(b"\x01\x0b")
-                    paste(terminal, str(destination))
-                    terminal.send(b"\r")
-                    wait(terminal, "Saved original audio bytes.")
-                    assert destination.read_bytes() == fixture.WAV
-                    (args.output / "exported.wav").write_bytes(destination.read_bytes())
-                    mark(terminal, "saved-result", result)
-                    terminal.send(b"h")
-                    wait(terminal, entry["id"])
-                    mark(terminal, "history", result)
-                    terminal.send(b"\r")
-                    wait(terminal, "Duration 00:02.000")
-                    terminal.resize(40, 12)
-                    wait(terminal, "00:02.000")
-                    mark(terminal, "compact-40x12", result)
-                    terminal.resize(28, 8)
-                    wait(terminal, "Resize to 40 x 12.")
-                    terminal.send(b"\x07discarded")
-                    drain(terminal)
-                    assert len(server.records) == 1, "Small terminal accepted a hidden submission"
-                    mark(terminal, "too-small", result)
-                    terminal.resize(90, 34)
-                    wait(terminal, "Duration 00:02.000")
-                    terminal.send(b"\x1b")
-                    wait(terminal, "> Text")
-                    terminal.send(b"\t\t" + picker.UP * 2 + b"\r")
-                    wait(terminal, "Enter chooses")
-                    terminal.send(picker.DOWN + b"p")
-                    wait(terminal, "Result: ballad")
-                    mark(terminal, "voice-audition", result)
-                    assert len(server.records) == 2 and server.records[1]["body"]["input"] == fixture.AUDITION
-                    assert json.loads(public(["--format", "json", "audio", "history"])) == entries
-                    terminal.send(b"\x1b")
-                    wait(terminal, "Result: ash")
-                    terminal.send(b"\t\t" + picker.UP * 2)
-                    wait(terminal, "> Clear form")
-                    terminal.send(b"\r")
-                    wait(terminal, "Form cleared.", absent=("Result:", fixture.TEXT.splitlines()[0]))
-                    mark(terminal, "cleared-form", result)
-                    assert json.loads(public(["--format", "json", "audio", "history"])) == entries
-                    assert destination.read_bytes() == fixture.WAV and len(server.records) == 2
-                    terminal.send(b"\x03")
-                    terminal.finish(130)
-                elif busy:
-                    paste(terminal, fixture.TEXT)
-                    assert not server.records, "Typing generated speech"
-                    terminal.send(b"\x07")
-                    deadline = time.monotonic() + 12
-                    while not server.partial_ready.is_set():
-                        terminal.read(.03)
-                        assert terminal.child.poll() is None, "Audio form exited before the partial response"
-                        assert time.monotonic() < deadline, "Fixture did not flush the partial response"
-                    assert len(server.records) == 1, "Busy cancellation must receive exactly one request"
-                    assert 0 < server.partial_bytes < server.records[0]["response_bytes"]
-                    assert not server.partial_release.is_set(), "Fixture released the response before cancellation"
-                    result["partial_response"] = {"ready_before_signal": True, "delivered_bytes": server.partial_bytes,
-                                                  "total_bytes": server.records[0]["response_bytes"],
-                                                  "peer_closed_before_release": False, "handler_finished": False}
-                    started = time.monotonic()
-                    if case == "busy-ctrl-c":
-                        terminal.send(b"\x03")
-                    else:
-                        os.kill(terminal.child.pid, signal.SIGTERM)
-                    terminal.finish(130 if case == "busy-ctrl-c" else 143, timeout=5)
-                    result["busy_cancel_seconds"] = round(time.monotonic()-started, 4)
-                    assert time.monotonic()-started < 5, "Busy cancellation exceeded five seconds"
-                    assert server.partial_closed.wait(2), "Cancellation did not close the partial response stream"
-                    assert not server.partial_release.is_set(), "Cleanup released the response before observing cancellation"
-                    result["partial_response"]["peer_closed_before_release"] = True
-                    assert server.partial_done.wait(2), "Partial response handler did not finish after cancellation"
-                    result["partial_response"]["handler_finished"] = True
-                    assert json.loads(public(["--format", "json", "audio", "history"])) == [], "Partial audio entered history"
-                    cache = private / "Library/Caches" if sys.platform == "darwin" else Path(env["XDG_CACHE_HOME"])
-                    history = cache / "openai/audio"
-                    artifacts = sorted(str(path.relative_to(history)) for path in history.rglob("*"))
-                    result["partial_response"]["remaining_history_artifacts"] = artifacts
-                    assert not artifacts, "Cancellation retained partial history artifacts"
-                    assert len(server.records) == 1, "Cancellation retried generation"
-                    result["partial_response"]["history_entries"] = 0
-                elif case == "ctrl-c":
-                    terminal.send(b"\x03")
-                    terminal.finish(130)
-                elif case == "sigterm":
-                    os.kill(terminal.child.pid, signal.SIGTERM)
-                    terminal.finish(143)
-                else:
-                    children = [process for process in process_snapshot() if process["ppid"] == terminal.child.pid]
-                    worker_names = {args.binary.name, args.binary.resolve().name}
-                    observed_worker = any(Path(child["comm"]).name in worker_names for child in children)
-                    result["owned_children_before_blocking"] = children
-                    result["terminal_worker_observed"] = observed_worker
-                    assert observed_worker, "No self-executable terminal helper was observed; cleanup coverage is missing"
-                    # Deliberately stop consuming stdout while triggering redraws.
-                    # Only the owned PTY and child receive these resize signals.
-                    for index in range(80):
-                        if terminal.child.poll() is not None:
-                            raise AssertionError("Audio form failed before cancellation")
-                        terminal.resize(180 + index % 2, 60)
-                        time.sleep(.02)
-                    started = time.monotonic()
-                    os.kill(terminal.child.pid, signal.SIGINT)
-                    terminal.child.wait(timeout=5)  # No reads release terminal backpressure.
-                    result["stopped_reader_cancel_seconds"] = round(time.monotonic()-started, 4)
-                    result["exit_status"] = terminal.child.returncode
-                    assert terminal.child.returncode == 130, "Stopped-reader cancellation changed exit status"
-                    check_native_modes(terminal)
-                    result["native_modes_restored"] = True
-                    check_children_exited(children, result)
-                    drain_after_exit(terminal, result)
-                    check_frame_boundaries(terminal)
-                    paste_on, paste_off = terminal.raw.rfind(b"\x1b[?2004h"), terminal.raw.rfind(b"\x1b[?2004l")
-                    cursor_off, cursor_on = terminal.raw.rfind(b"\x1b[?25l"), terminal.raw.rfind(b"\x1b[?25h")
-                    result["ansi_cleanup"] = {
-                        "paste_on_offset": paste_on, "paste_off_offset": paste_off,
-                        "cursor_off_offset": cursor_off, "cursor_on_offset": cursor_on,
-                        "bracketed_paste_restored": paste_off > paste_on >= 0,
-                        "cursor_visibility_restored": cursor_on > cursor_off >= 0,
-                        "scope": "Observed only. Blocked output can prevent bounded visual cleanup.",
-                    }
-                terminal.save(args.output / case)
-                final = screen(terminal)
-                (args.output / (case + "-final.txt")).write_text(final)
-                result["final_form_rows_cleared"] = "Text to speech" not in final
-                if case != "stopped-reader":
-                    assert result["final_form_rows_cleared"], "Exited form left active rows in the final screen"
-                assert not server.failures, "Fixture rejected a request"
-                if case != "workflow" and not busy:
-                    assert not server.records, "Cancellation generated speech"
-                result.update(exit_status=terminal.child.returncode, requests=server.records, pass_=True)
-                result["pass"] = result.pop("pass_")
-            finally:
                 try:
-                    if terminal is not None:
-                        try:
+                    if case == "startup":
+                        startup_case(private, env, programs, server, result)
+                        continue
+                    terminal = Terminal(str(args.binary), ["audio", "speak"], env, width=90, height=34)
+                    wait(terminal, "Text to speech")
+                    if case == "workflow":
+                        mark(terminal, "initial-form", result)
+                        paste(terminal, fixture.TEXT)
+                        terminal.send(b"\t")
+                        wait(terminal, ("╭ Instructions ", "› Instructions"))
+                        paste(terminal, fixture.INSTRUCTIONS)
+                        terminal.send(b"\t\r")
+                        wait(terminal, "gpt-4o-mini-tts-2025-12-15")
+                        terminal.send(picker.DOWN * 2)
+                        mark(terminal, "model-choices", result)
+                        terminal.send(b"\r")
+                        wait(terminal, "Model          gpt-4o-mini-tts-2025-12-15")
+                        terminal.send(picker.DOWN + b"\r")
+                        wait(terminal, "Enter chooses")
+                        terminal.send(picker.UP * 3)
+                        mark(terminal, "voice-choices", result)
+                        terminal.send(b"\r")
+                        wait(terminal, "Voice          Ash")
+                        terminal.send(picker.DOWN + b"\r")
+                        wait(terminal, "Response format")
+                        mark(terminal, "format-choices", result)
+                        terminal.send(picker.DOWN + b"\r")
+                        wait(terminal, "Format         PCM")
+                        terminal.send(b"\r" + picker.UP + b"\r")
+                        wait(terminal, "Format         WAV")
+                        terminal.send(picker.DOWN + b"\x1b[C")
+                        wait(terminal, "Speed          1.25 x")
+                        mark(terminal, "selected-settings", result)
+                        assert not server.records, "Choosing or typing generated speech"
+                        terminal.send(b"\x07")
+                        wait(terminal, "Duration 00:02.000")
+                        mark(terminal, "generated-result", result)
+                        assert len(server.records) == 1, "Generation request count changed"
+                        request = server.records[0]["body"]
+                        assert request["input"] == fixture.TEXT and request["instructions"] == fixture.INSTRUCTIONS
+                        assert (request["model"], request["voice"], request["response_format"], request["speed"]) == (
+                            "gpt-4o-mini-tts-2025-12-15", "ash", "wav", 1.25)
+                        entries = json.loads(public(["--format", "json", "audio", "history"]))
+                        assert len(entries) == 1 and not entries[0]["settings"].get("preview", False)
+                        entry = entries[0]
+                        inspection = json.loads(public(["--format", "json", "audio", "inspect", entry["id"]]))
+                        assert inspection["analysis"]["duration"] == 2
+                        peaks = inspection["analysis"]["peaks"]
+                        assert len(peaks) > 8 and max(peaks)-min(peaks) > .5, "Waveform did not use varying samples"
+                        (args.output / "inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
+                        terminal.send(b" ")
+                        wait(terminal, "Playing.")
+                        deadline = time.monotonic() + 3
+                        while not playback.exists() and time.monotonic() < deadline:
+                            drain(terminal, .05)
+                        assert playback.exists(), "The fake player never received generated audio"
+                        played = json.loads(playback.read_text().splitlines()[0])
+                        assert played["sha256"] == hashlib.sha256(fixture.WAV).hexdigest()
+                        terminal.send(b" ")
+                        wait(terminal, "Stopped.")
+                        terminal.send(b"s")
+                        wait(terminal, "Save original audio to:")
+                        terminal.send(b"\x01\x0b-\r")
+                        wait(terminal, "Enter a file path for saving.")
+                        assert len(server.records) == 1, "Invalid save path generated speech"
+                        mark(terminal, "save-validation", result)
+                        destination = private / "saved speech.wav"
+                        terminal.send(b"\x01\x0b")
+                        paste(terminal, str(destination))
+                        terminal.send(b"\r")
+                        wait(terminal, "Saved original audio bytes.")
+                        assert destination.read_bytes() == fixture.WAV
+                        (args.output / "exported.wav").write_bytes(destination.read_bytes())
+                        mark(terminal, "saved-result", result)
+                        terminal.send(b"h")
+                        wait(terminal, entry["id"])
+                        mark(terminal, "history", result)
+                        terminal.send(b"\r")
+                        wait(terminal, "Duration 00:02.000")
+                        terminal.resize(40, 12)
+                        wait(terminal, "00:02.000")
+                        mark(terminal, "compact-40x12", result)
+                        terminal.resize(28, 8)
+                        wait(terminal, "Resize to 40 x 12.")
+                        terminal.send(b"\x07discarded")
+                        drain(terminal)
+                        assert len(server.records) == 1, "Small terminal accepted a hidden submission"
+                        mark(terminal, "too-small", result)
+                        terminal.resize(90, 34)
+                        wait(terminal, "Duration 00:02.000")
+                        terminal.send(b"\x1b")
+                        wait(terminal, ("╭ Text ", "› Text"))
+                        terminal.send(b"\t\t" + picker.UP * 2 + b"\r")
+                        wait(terminal, "Enter chooses")
+                        terminal.send(picker.DOWN + b"p")
+                        wait(terminal, "Result: ballad")
+                        mark(terminal, "voice-audition", result)
+                        assert len(server.records) == 2 and server.records[1]["body"]["input"] == fixture.AUDITION
+                        assert json.loads(public(["--format", "json", "audio", "history"])) == entries
+                        terminal.send(b"\x1b")
+                        wait(terminal, "Result: ash")
+                        terminal.send(b"\t\t" + picker.UP * 2)
+                        wait(terminal, "› Clear form")
+                        terminal.send(b"\r")
+                        wait(terminal, "Form cleared.", absent=("Result:", fixture.TEXT.splitlines()[0]))
+                        mark(terminal, "cleared-form", result)
+                        assert json.loads(public(["--format", "json", "audio", "history"])) == entries
+                        assert destination.read_bytes() == fixture.WAV and len(server.records) == 2
+                        terminal.send(b"\x03")
+                        terminal.finish(130)
+                    elif busy:
+                        paste(terminal, fixture.TEXT)
+                        assert not server.records, "Typing generated speech"
+                        terminal.send(b"\x07")
+                        deadline = time.monotonic() + 12
+                        while not server.partial_ready.is_set():
+                            terminal.read(.03)
+                            assert terminal.child.poll() is None, "Audio form exited before the partial response"
+                            assert time.monotonic() < deadline, "Fixture did not flush the partial response"
+                        assert len(server.records) == 1, "Busy cancellation must receive exactly one request"
+                        assert 0 < server.partial_bytes < server.records[0]["response_bytes"]
+                        assert not server.partial_release.is_set(), "Fixture released the response before cancellation"
+                        result["partial_response"] = {"ready_before_signal": True, "delivered_bytes": server.partial_bytes,
+                                                      "total_bytes": server.records[0]["response_bytes"],
+                                                      "peer_closed_before_release": False, "handler_finished": False}
+                        started = time.monotonic()
+                        if case == "busy-ctrl-c":
+                            terminal.send(b"\x03")
+                        else:
+                            os.kill(terminal.child.pid, signal.SIGTERM)
+                        terminal.finish(130 if case == "busy-ctrl-c" else 143, timeout=5)
+                        result["busy_cancel_seconds"] = round(time.monotonic()-started, 4)
+                        assert time.monotonic()-started < 5, "Busy cancellation exceeded five seconds"
+                        assert server.partial_closed.wait(2), "Cancellation did not close the partial response stream"
+                        assert not server.partial_release.is_set(), "Cleanup released the response before observing cancellation"
+                        result["partial_response"]["peer_closed_before_release"] = True
+                        assert server.partial_done.wait(2), "Partial response handler did not finish after cancellation"
+                        result["partial_response"]["handler_finished"] = True
+                        assert json.loads(public(["--format", "json", "audio", "history"])) == [], "Partial audio entered history"
+                        cache = private / "Library/Caches" if sys.platform == "darwin" else Path(env["XDG_CACHE_HOME"])
+                        history = cache / "openai/audio"
+                        artifacts = sorted(str(path.relative_to(history)) for path in history.rglob("*"))
+                        result["partial_response"]["remaining_history_artifacts"] = artifacts
+                        assert not artifacts, "Cancellation retained partial history artifacts"
+                        assert len(server.records) == 1, "Cancellation retried generation"
+                        result["partial_response"]["history_entries"] = 0
+                    elif case == "ctrl-c":
+                        terminal.send(b"\x03")
+                        terminal.finish(130)
+                    elif case == "sigterm":
+                        os.kill(terminal.child.pid, signal.SIGTERM)
+                        terminal.finish(143)
+                    else:
+                        children = [process for process in process_snapshot() if process["ppid"] == terminal.child.pid]
+                        worker_names = {args.binary.name, args.binary.resolve().name}
+                        observed_worker = any(Path(child["comm"]).name in worker_names for child in children)
+                        result["owned_children_before_blocking"] = children
+                        result["terminal_worker_observed"] = observed_worker
+                        assert observed_worker, "No self-executable terminal helper was observed; cleanup coverage is missing"
+                        # Deliberately stop consuming stdout while triggering redraws.
+                        # Only the owned PTY and child receive these resize signals.
+                        for index in range(80):
                             if terminal.child.poll() is not None:
-                                result["exit_status"] = terminal.child.returncode
-                            terminal.save(args.output / (case + "-latest"))
-                        finally:
-                            terminal.close()
+                                raise AssertionError("Audio form failed before cancellation")
+                            terminal.resize(180 + index % 2, 60)
+                            time.sleep(.02)
+                        started = time.monotonic()
+                        os.kill(terminal.child.pid, signal.SIGINT)
+                        terminal.child.wait(timeout=5)  # No reads release terminal backpressure.
+                        result["stopped_reader_cancel_seconds"] = round(time.monotonic()-started, 4)
+                        result["exit_status"] = terminal.child.returncode
+                        assert terminal.child.returncode == 130, "Stopped-reader cancellation changed exit status"
+                        check_native_modes(terminal)
+                        result["native_modes_restored"] = True
+                        check_children_exited(children, result)
+                        drain_after_exit(terminal, result)
+                        check_frame_boundaries(terminal)
+                        paste_on, paste_off = terminal.raw.rfind(b"\x1b[?2004h"), terminal.raw.rfind(b"\x1b[?2004l")
+                        cursor_off, cursor_on = terminal.raw.rfind(b"\x1b[?25l"), terminal.raw.rfind(b"\x1b[?25h")
+                        result["ansi_cleanup"] = {
+                            "paste_on_offset": paste_on, "paste_off_offset": paste_off,
+                            "cursor_off_offset": cursor_off, "cursor_on_offset": cursor_on,
+                            "bracketed_paste_restored": paste_off > paste_on >= 0,
+                            "cursor_visibility_restored": cursor_on > cursor_off >= 0,
+                            "scope": "Observed only. Blocked output can prevent bounded visual cleanup.",
+                        }
+                    terminal.save(args.output / case)
+                    final = screen(terminal)
+                    (args.output / (case + "-final.txt")).write_text(final)
+                    result["final_form_rows_cleared"] = "Text to speech" not in final
+                    if case != "stopped-reader":
+                        assert result["final_form_rows_cleared"], "Exited form left active rows in the final screen"
+                    assert not server.failures, "Fixture rejected a request"
+                    if case != "workflow" and not busy:
+                        assert not server.records, "Cancellation generated speech"
+                    result.update(exit_status=terminal.child.returncode, requests=server.records, pass_=True)
+                    result["pass"] = result.pop("pass_")
                 finally:
                     try:
-                        server.partial_release.set()
-                        server.shutdown()
-                        server.server_close()
-                        worker.join(5)
-                        with server.lock:
-                            handler_threads = list(server.handler_threads)
-                        result["server_cleanup"] = {"serve_thread_joined": not worker.is_alive(),
-                                                    "handler_threads_observed": len(handler_threads),
-                                                    "handler_threads_joined": all(not thread.is_alive() for thread in handler_threads)}
-                        if worker.is_alive() or any(thread.is_alive() for thread in handler_threads):
-                            result["pass"] = False
-                        assert result["server_cleanup"]["serve_thread_joined"], "Fixture server thread did not stop"
-                        assert result["server_cleanup"]["handler_threads_joined"], "Fixture handler threads did not stop"
+                        if terminal is not None:
+                            try:
+                                if terminal.child.poll() is not None:
+                                    result["exit_status"] = terminal.child.returncode
+                                terminal.save(args.output / (case + "-latest"))
+                            finally:
+                                terminal.close()
                     finally:
-                        (args.output / "results.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+                        try:
+                            try:
+                                # Launch can be interrupted before the caller
+                                # receives the registered Terminal instance.
+                                with protect_ownership():
+                                    for owned in owned_terminals:
+                                        if owned.case_result is result:
+                                            owned.close()
+                            finally:
+                                close_fixture(server_state)
+                        finally:
+                            (args.output / "results.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     if not args.emit:
         print(json.dumps({"passed": len(report["cases"]), "source": args.source, "binary_sha256": report["binary_sha256"]}))
     return 130 if args.emit else 0
