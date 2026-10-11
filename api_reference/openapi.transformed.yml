@@ -77721,6 +77721,11 @@ components:
           - type: string
             description: A customer-safe description derived from error_type, or null for zero data retention requests.
           - type: 'null'
+        detailed_explanation:
+          anyOf:
+          - type: string
+            description: A generated explanation, temporarily available for eligible zero data retention alerts. Omitted when unavailable.
+          - type: 'null'
       type: object
       required:
       - id
