@@ -68,8 +68,10 @@ func renderModelsListTable(opts ShowJSONOpts, items []gjson.Result, width int) (
 		noun = "model"
 	}
 	fmt.Fprintf(&content, "\nListed %d %s.\n", len(models), noun)
-	content.WriteString(ansi.Wrap("Details: --format json", max(1, width), ""))
-	content.WriteByte('\n')
+	if outputDiagnosticsAllowed(opts.Context) {
+		content.WriteString(ansi.Wrap("Details: --format json", max(1, width), ""))
+		content.WriteByte('\n')
+	}
 	return content.String(), true, opts.Context.Err()
 }
 

@@ -491,7 +491,7 @@ func renderListNavigationLabels(opts ShowJSONOpts, items []gjson.Result) (string
 	}
 	if len(items) == 0 {
 		content.WriteString("No results.\n")
-	} else if omitted {
+	} else if omitted && outputDiagnosticsAllowed(opts.Context) {
 		fmt.Fprintln(&content, resourceSummaryHint)
 	}
 	return content.String(), opts.Context.Err()

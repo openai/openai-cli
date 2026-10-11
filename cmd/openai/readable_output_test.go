@@ -146,7 +146,11 @@ func TestMainReadableListPreservesItemsAndRawPage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			requests.Store(0)
 			got := runReadableCommand(t, server, tc.args...)
-			if got.code != 0 || got.stderr != "" || int(requests.Load()) != tc.calls {
+			wantDiagnostics := ""
+			if tc.count > 0 {
+				wantDiagnostics = resourceSummaryHint + "\n"
+			}
+			if got.code != 0 || got.stderr != wantDiagnostics || int(requests.Load()) != tc.calls || strings.Contains(got.stdout, resourceSummaryHint) {
 				t.Fatalf("result=%+v requests=%d; want %d", got, requests.Load(), tc.calls)
 			}
 			if tc.rawPage {
@@ -303,7 +307,7 @@ func TestMainReadableKeepsAPIErrorOnStderr(t *testing.T) {
 			t.Fatalf("error routing changed: %+v", got)
 		}
 		if len(prefix) == 0 || prefix[0] == "--format" {
-			if !strings.HasPrefix(got.stderr, "Request failed (400 Bad Request).\n") || strings.Contains(got.stderr, "synthetic invalid request") {
+			if !strings.HasPrefix(got.stderr, "HTTP 400: Bad Request.\n") || strings.Contains(got.stderr, "synthetic invalid request") {
 				t.Fatalf("expected a safe readable error summary: %+v", got)
 			}
 			continue

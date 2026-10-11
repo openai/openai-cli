@@ -59,10 +59,14 @@ func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageO
 	// Restore normal signal handling once cancellation starts. A second Ctrl-C
 	// can still terminate the process if a terminal write or cleanup is blocked.
 	stopReset := context.AfterFunc(ctx, stopSignals)
-	stopLoading, advance := startLoadingFeedback(ctx, feedback, label, plan.loadingPrompt, loadingAnimationSupported(os.Getenv), imageLoadingSpinner(os.Getenv, runtime.GOOS), func() (int, int) {
-		width, height, _ := term.GetSize(feedback.Fd())
-		return width, height
-	})
+	stopLoading := func() {}
+	advance := func(imageLoadingStage) {}
+	if outputDiagnosticsAllowed(ctx) {
+		stopLoading, advance = startLoadingFeedback(ctx, feedback, label, plan.loadingPrompt, loadingAnimationSupported(os.Getenv), imageLoadingSpinner(os.Getenv, runtime.GOOS), func() (int, int) {
+			width, height, _ := term.GetSize(feedback.Fd())
+			return width, height
+		})
+	}
 	plan.stopLoading = stopLoading
 	plan.loadingStage = advance
 	defer func() {

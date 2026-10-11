@@ -24,9 +24,9 @@ func TestMainReadableErrorsStayOnStderr(t *testing.T) {
 		name, contentType, body, want string
 		status                        int
 	}{
-		{"API error", "application/json", `{"error":{"message":"synthetic private response detail","code":"model_not_found","param":"model"}}`, "Request failed (404", http.StatusNotFound},
-		{"gateway text", "text/plain", "synthetic private response detail", "Request failed (502", http.StatusBadGateway},
-		{"malformed JSON", "application/json", `{"error":{"message":"synthetic private response detail"`, "Request failed (502", http.StatusBadGateway},
+		{"API error", "application/json", `{"error":{"message":"synthetic private response detail","code":"model_not_found","param":"model"}}`, "HTTP 404:", http.StatusNotFound},
+		{"gateway text", "text/plain", "synthetic private response detail", "HTTP 502:", http.StatusBadGateway},
+		{"malformed JSON", "application/json", `{"error":{"message":"synthetic private response detail"`, "HTTP 502:", http.StatusBadGateway},
 		{"unexpected shape", "application/json", `{"error":"synthetic private response detail"}`, "Could not decode JSON", http.StatusBadGateway},
 	} {
 		t.Run(test.name, func(t *testing.T) {

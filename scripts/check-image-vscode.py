@@ -220,7 +220,7 @@ def main():
 
         def tty(name, arguments, case=None, extra=None, expected=0, images=1, shape=normal_shape,
                 width=80, height=24, interact=None, home_name=None, input_data=None, saved=1, stderr_tty=False,
-                executable=None):
+                executable=None, success_stderr=b''):
             executable = executable or binary
             home, env = environment(home_name or name, extra)
             server.case = case or Response('ok', normal)
@@ -245,7 +245,7 @@ def main():
                     require(case.requests[0].get('stream') is True and case.requests[0].get('partial_images') == 2,
                             'progress request fields changed')
                 if expected == 0:
-                    require(not error, f'unexpected stderr: {error!r}')
+                    require(error == success_stderr, f'unexpected stderr: {error!r}')
                 elif not stderr_tty:
                     require(error and b'\x1b]1337;' not in error, f'error missing from stderr: {error!r}')
                 if expected == 130:
@@ -359,7 +359,11 @@ def main():
                 if name == 'unknown-color':
                     require('▀'.encode() in raw, 'unknown capability lost the existing color-block fallback')
 
-            tty('remember-off', ['images', 'inline', 'off'], home_name='preferences', images=0, saved=0)
+            _, _, settings_stdout, _ = tty('remember-off', ['images', 'inline', 'off'],
+                home_name='preferences', images=0, saved=0, success_stderr=(
+                    b'Automatic image previews off.\nOverride once: --inline auto|on|off\n'
+                    b'View a saved image: openai images preview FILE\n'))
+            require(not settings_stdout, 'local setting receipt contaminated stdout')
             tty('persisted-off', generate, home_name='preferences', images=0)
             tty('override-off-with-on', generate + ['--inline', 'on'], home_name='preferences', saved=2)
             tty('override-off-with-auto', generate + ['--inline', 'auto'], home_name='preferences', saved=3)
@@ -440,7 +444,7 @@ def main():
             tty('cancel-after-partial', stream, case=Response('stream-ok', normal, True),
                 interact=interrupt_after_partial, expected=130, images=1, saved=0, stderr_tty=True)
             _, _, _, error = tty('api-error-tty', generate, case=Response('error', normal), expected=1, images=0, saved=0)
-            require(b'400 Bad Request' in error and b'--format-error json' in error, 'readable API error lost')
+            require(b'HTTP 400: Bad Request.' in error and b'--format-error json' in error, 'readable API error lost')
 
             tty('format-text-saving', ['--format', 'text', *generate])
             for name, flags in [('format-json', ['--format', 'json']), ('format-jsonl', ['--format', 'jsonl']),

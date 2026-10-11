@@ -31,7 +31,7 @@ func TestMainPickerShellSetupRoundTrip(t *testing.T) {
 			}
 			for _, action := range []string{"--install-picker", "--install-picker", "--uninstall-picker", "--uninstall-picker"} {
 				got := runMainDispatchWithEnv(t, shell, pickerSetupProcessEnv(home), "openai", "@completion", shell, action, "--profile", profile)
-				if got.code != 0 || got.stderr != "" {
+				if got.code != 0 || got.stdout != "" {
 					t.Fatalf("setup failed: %+v", got)
 				}
 				data, err := os.ReadFile(profile)
@@ -39,11 +39,11 @@ func TestMainPickerShellSetupRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				if action == "--install-picker" {
-					if !strings.Contains(got.stdout, "for future terminals") || !strings.HasPrefix(string(data), original) || strings.Count(string(data), "# >>> openai image picker") != 1 {
-						t.Fatalf("installation lost content or duplicated setup: %q, %q", got.stdout, data)
+					if got.stderr != "Tab setup saved for future terminals. Existing custom bindings are preserved.\n" || !strings.HasPrefix(string(data), original) || strings.Count(string(data), "# >>> openai image picker") != 1 {
+						t.Fatalf("installation lost content or duplicated setup: %q, %q", got.stderr, data)
 					}
-				} else if string(data) != original || !strings.Contains(got.stdout, "setup removed") {
-					t.Fatalf("removal lost original content: %q, %q", got.stdout, data)
+				} else if string(data) != original || got.stderr != "Tab shortcut setup removed. Open a new terminal to finish.\n" {
+					t.Fatalf("removal lost original content: %q, %q", got.stderr, data)
 				}
 			}
 		})
@@ -59,7 +59,7 @@ func TestMainPickerShellSetupBashRemovalAfterLoginPrecedenceChanges(t *testing.T
 		t.Fatal(err)
 	}
 	got := runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--install-picker")
-	if got.code != 0 || got.stderr != "" {
+	if got.code != 0 || got.stdout != "" || got.stderr != "Tab setup saved for future terminals. Existing custom bindings are preserved.\n" {
 		t.Fatalf("installation failed: %+v", got)
 	}
 	if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte(preferred), 0600); err != nil {
@@ -67,7 +67,7 @@ func TestMainPickerShellSetupBashRemovalAfterLoginPrecedenceChanges(t *testing.T
 	}
 	for range 2 {
 		got = runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--uninstall-picker")
-		if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "setup removed") {
+		if got.code != 0 || got.stdout != "" || got.stderr != "Tab shortcut setup removed. Open a new terminal to finish.\n" {
 			t.Fatalf("removal failed: %+v", got)
 		}
 		for name, want := range map[string]string{".profile": original, ".bash_profile": preferred} {
@@ -93,7 +93,7 @@ func TestMainPickerShellSetupBashRemovalRestoresAbsentLoginProfile(t *testing.T)
 	home := t.TempDir()
 	env := pickerSetupProcessEnv(home)
 	got := runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--install-picker")
-	if got.code != 0 || got.stderr != "" {
+	if got.code != 0 || got.stdout != "" || got.stderr != "Tab setup saved for future terminals. Existing custom bindings are preserved.\n" {
 		t.Fatalf("installation failed: %+v", got)
 	}
 	personal := "# later login settings\n"
@@ -102,7 +102,7 @@ func TestMainPickerShellSetupBashRemovalRestoresAbsentLoginProfile(t *testing.T)
 	}
 	for range 2 {
 		got = runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--uninstall-picker")
-		if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "setup removed") {
+		if got.code != 0 || got.stdout != "" || got.stderr != "Tab shortcut setup removed. Open a new terminal to finish.\n" {
 			t.Fatalf("removal failed: %+v", got)
 		}
 		for _, name := range []string{".bash_profile", ".bashrc"} {
@@ -264,7 +264,7 @@ func TestMainPickerShellSetupPartialRemovalReportsFailureAfterCleanup(t *testing
 				t.Fatal(err)
 			}
 			got := runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--install-picker")
-			if got.code != 0 || got.stderr != "" {
+			if got.code != 0 || got.stdout != "" || got.stderr != "Tab setup saved for future terminals. Existing custom bindings are preserved.\n" {
 				t.Fatalf("installation failed: %+v", got)
 			}
 			if err := os.Symlink(profile, filepath.Join(home, ".bash_profile")); err != nil {
@@ -315,8 +315,14 @@ func TestMainPickerShellSetupIgnoresRequestConfiguration(t *testing.T) {
 				}
 				for _, action := range []string{spelling.install, spelling.remove} {
 					got := runMainDispatchWithEnv(t, "zsh", env, "openai", "--format-error", "json", "@completion", "zsh", action, spelling.profile, profile)
-					if got.code != 0 || got.stderr != "" || got.stdout == "" {
+					if got.code != 0 || got.stderr != "" || got.stdout != "" {
 						t.Fatalf("local setup depended on request configuration: %+v", got)
+					}
+					if action == spelling.install {
+						data, err := os.ReadFile(profile)
+						if err != nil || strings.Count(string(data), "# >>> openai image picker") != 1 {
+							t.Fatalf("silent installation did not create setup: %q, %v", data, err)
+						}
 					}
 				}
 				if _, err := os.Lstat(profile); !os.IsNotExist(err) {

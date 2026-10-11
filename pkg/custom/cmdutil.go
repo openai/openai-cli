@@ -237,6 +237,9 @@ type outputWriteError struct{ error }
 func (e *outputWriteError) Unwrap() error { return e.error }
 
 func isOutputBrokenPipe(err error) bool {
+	if _, diagnostic := err.(*diagnosticWriteError); diagnostic {
+		return false
+	}
 	if outputErr, ok := err.(*outputWriteError); ok {
 		return strings.Contains(outputErr.Error(), "broken pipe")
 	}
@@ -430,6 +433,9 @@ func guessExtension(data []byte) string {
 }
 
 func shouldUseColors(w io.Writer) bool {
+	if !isTerminal(w) || os.Getenv("NO_COLOR") != "" {
+		return false
+	}
 	force, ok := os.LookupEnv("FORCE_COLOR")
 	if ok {
 		if force == "1" {
@@ -446,9 +452,11 @@ func shouldUseColors(w io.Writer) bool {
 // to w. Lipgloss v2 styles always render full color escapes, so the output must
 // be downsampled for its destination. This matches the lipgloss v1 behavior the
 // CLI had before: plain text when w is not a terminal or NO_COLOR is set, and
-// color on a terminal. CLICOLOR_FORCE is honored, and FORCE_COLOR works the same
-// way as it does for the json and jsonl formats.
+// color on a terminal. Color overrides never decorate pipes or files.
 func prettyColorProfile(w io.Writer, environ []string) colorprofile.Profile {
+	if !isTerminal(w) {
+		return colorprofile.NoTTY
+	}
 	lookup := func(name string) string {
 		value := ""
 		for _, kv := range environ {
@@ -570,6 +578,9 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	if err := opts.Context.Err(); err != nil {
 		return err
 	}
+	if handled, err := showFileResult(res, opts); handled {
+		return err
+	}
 	if presentation, ok := savedImagePresentation(opts, OutputResponse); ok {
 		return presentation.output(func(out io.Writer) error {
 			return presentation.plan.save(opts.Context, []byte(res.Raw), out)
@@ -618,7 +629,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 				return err
 			}
 			if omitted {
-				return readable.WriteText(out, resourceSummaryHint)
+				return writeOutputHint(opts, resourceSummaryHint)
 			}
 			return nil
 		}
@@ -626,7 +637,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 		if isTerminal(opts.Stdout) {
 			return jsonview.ExploreJSONWithOutput(opts.Title, res, opts.Stdout)
 		}
-		if opts.ExplicitFormat {
+		if opts.ExplicitFormat && outputDiagnosticsAllowed(opts.Context) {
 			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stderr}).WriteString(warningExploreNotSupported); err != nil {
 				return err
 			}
@@ -656,7 +667,7 @@ func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, op
 	return showJSONIterator(iter, itemsToDisplay, opts, transformers.Select)
 }
 
-func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectTransformer transformerSelector) error {
+func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectTransformer transformerSelector) (resultErr error) {
 	opts.setDefaults()
 	stopModelsListLoading(opts)
 	if presentation, ok := savedImagePresentation(opts, OutputStreamEvent); ok {
@@ -664,8 +675,16 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 			return saveFinalImageStream(opts.Context, source, presentation.plan, out)
 		})
 	}
+	// SDK streams own response bodies and timers. Close even when presentation
+	// stops at a limit, cancellation, or an output failure. Saved-image streams
+	// retain their cleanup owner above; list iterators remain caller-owned.
+	if opts.OutputKind == OutputStreamEvent {
+		if closer, ok := any(source).(io.Closer); ok {
+			defer func() { resultErr = errors.Join(resultErr, closer.Close()) }()
+		}
+	}
 	if itemsToDisplay == 0 {
-		return source.Err()
+		return errors.Join(opts.Context.Err(), source.Err())
 	}
 	if handled, err := showModelsListSelection(source, itemsToDisplay, opts); handled {
 		return err
@@ -697,7 +716,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 			}
 			return err
 		}
-		if opts.ExplicitFormat {
+		if opts.ExplicitFormat && outputDiagnosticsAllowed(opts.Context) {
 			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stderr}).WriteString(warningExploreNotSupported); err != nil {
 				return err
 			}
@@ -723,9 +742,9 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	if !processStdout || stdout != os.Stdout {
 		return writeUnpaged(opts.Stdout)
 	}
-	// Redirected event streams cannot wait for a page of output. Preserve
-	// stdout's signal/error handling while delivering each formatted event.
-	if opts.OutputKind == OutputStreamEvent && !isTerminal(stdout) {
+	// Event streams cannot wait for a page of output. Preserve stdout's
+	// signal/error handling while delivering each formatted event.
+	if opts.OutputKind == OutputStreamEvent {
 		return streamToStdout(func(out *os.File) error { return writeUnpaged(out) })
 	}
 

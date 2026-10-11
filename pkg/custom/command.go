@@ -32,10 +32,12 @@ func ConfigureCommand(root *cli.Command) {
 	configureAdminCredentials(root)
 	configureCommandSubgroups(root)
 	configureTaskCommands(root)
+	configureFileCommands(root)
 	registerTokenizerCommands(root)
 	registerCodexCommands(root)
 	configureCommandPresentation(root)
 	configureManpageCommands(root)
+	configureOutputPolicy(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, mtlsClientFlags()...)
 	previousBefore := root.Before

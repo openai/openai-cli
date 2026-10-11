@@ -92,7 +92,7 @@ func commandHelpAtWidth(command *cli.Command, invocation, path string, width int
 			out.WriteString(wrapDescription(example.Description, "   ", width))
 			fmt.Fprintf(&out, "     %s %s\n", invocation, example.Command)
 		}
-		if path == "files create" || path == "files upload" {
+		if !supplied && (path == "files create" || path == "files upload") {
 			out.WriteString(wrapDescription("example.txt is the path to your existing file. Replace it with your file's path.", "   ", width))
 		}
 	}

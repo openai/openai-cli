@@ -19,7 +19,19 @@ import (
 func runShellSaveCommand(t *testing.T, server *httptest.Server, args ...string) mainDispatchResult {
 	t.Helper()
 	home := t.TempDir()
-	return runMainDispatchWithEnv(t, "", []string{"HOME=" + home, "USERPROFILE=" + home, "XDG_CONFIG_HOME=" + home, "OPENAI_API_KEY=sk-fake-shell-save", "OPENAI_BASE_URL=" + server.URL, "FORCE_COLOR=0"}, append([]string{"openai"}, args...)...)
+	return runMainDispatchWithEnv(t, "", []string{"HOME=" + home, "USERPROFILE=" + home, "APPDATA=" + home, "LOCALAPPDATA=" + home, "XDG_CONFIG_HOME=" + home, "OPENAI_API_KEY=sk-fake-shell-save", "OPENAI_BASE_URL=" + server.URL, "FORCE_COLOR=0", "GOMAXPROCS=2"}, append([]string{"openai"}, args...)...)
+}
+
+func shellBinarySaveCommands() [][]string {
+	return [][]string{
+		{"files", "content", "file_synthetic"},
+		{"audio", "speech", "create", "--model", "tts-1", "--voice", "alloy", "--input", "synthetic"},
+		{"containers", "files", "content", "retrieve", "cntr_synthetic", "file_synthetic"},
+		{"live", "sessions", "download-recording", "sess_synthetic"},
+		{"skills", "content", "retrieve", "skill_synthetic"},
+		{"skills", "versions", "content", "retrieve", "skill_synthetic", "1"},
+		{"videos", "download-content", "video_synthetic"},
+	}
 }
 
 func TestMainShellBinarySaveCallers(t *testing.T) {
@@ -29,15 +41,7 @@ func TestMainShellBinarySaveCallers(t *testing.T) {
 		_, _ = w.Write(payload)
 	}))
 	defer server.Close()
-	for _, args := range [][]string{
-		{"files", "content", "file_synthetic"},
-		{"audio", "speech", "create", "--model", "tts-1", "--voice", "alloy", "--input", "synthetic"},
-		{"containers", "files", "content", "retrieve", "cntr_synthetic", "file_synthetic"},
-		{"live", "sessions", "download-recording", "sess_synthetic"},
-		{"skills", "content", "retrieve", "skill_synthetic"},
-		{"skills", "versions", "content", "retrieve", "skill_synthetic", "1"},
-		{"videos", "download-content", "video_synthetic"},
-	} {
+	for _, args := range shellBinarySaveCommands() {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			for _, output := range []string{"", "-", "/dev/stdout", "managed", "alias", "structured", "transformed error"} {
 				t.Run(output, func(t *testing.T) {

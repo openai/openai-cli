@@ -19,7 +19,7 @@ root.mkdir(parents=True, exist_ok=True)
 binaries = {'custom': str(pathlib.Path(custom_binary).resolve()), 'main': str(pathlib.Path(main_binary).resolve()), 'resize': str(pathlib.Path(custom_binary).resolve())}
 results = {}
 apple_font_names = {'apple-on', 'apple-persisted-on', 'apple-no-color', 'apple-error-json'}
-gated_names = {'generate', 'edit', 'stdin', 'iterm', 'explicit-on', 'failure', 'apple-auto'} | apple_font_names
+gated_names = {'generate', 'edit', 'stdin', 'iterm', 'explicit-on', 'failure', 'error-json', 'apple-auto'} | apple_font_names
 darwin = sys.platform == 'darwin'
 gates = tempfile.TemporaryDirectory(prefix='image-progress-gates-')
 for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS'), ('main', 'TestMainImageProgressTerminal', 'MAIN-PROGRESS'), ('resize', 'TestSavedImageFallbackResizeTerminal', 'FONT-FALLBACK-RESIZE')]:
@@ -56,6 +56,7 @@ for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS')
         'apple-persisted-on':1 if darwin else 2, 'apple-no-color':1 if darwin else 0,
         'apple-error-json':1 if darwin else 2, 'ci':0, 'api':0, 'malformed':0,
         'malformed-error-json':0, 'failure':2, 'final-first':0,
+        'quiet':0, 'quiet-malformed':0, 'quiet-api':0, 'error-json':2, 'quiet-error-json':0,
     }
     for name, count in expected.items():
         start = text.index(prefix + '-CASE ' + name + '\r\n')
@@ -72,7 +73,7 @@ for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS')
                 progress = section[:final_send]
                 assert '▀' not in progress and 'Saved image:' not in progress and 'The image is saved' not in progress
                 assert 'Sharp progress preview unavailable;' in progress
-        if binary == 'main' and name == 'api':
+        if binary == 'main' and name in ('api', 'quiet-api'):
             assert len(re.findall(r'"partial_image_index":\s*0', section)) == 2
             assert '"image_generation.completed"' in section and 'Saved image:' not in section
         if binary == 'custom' and name == 'apple-auto':
@@ -83,6 +84,11 @@ for binary, test, prefix in [('custom', 'TestImageProgressTerminal', 'PROGRESS')
             assert '\x1b_G' not in section and '\x1b]1337;' not in section and '▀' not in section
         if binary == 'main' and name == 'explicit-on':
             assert section.count('\x1b_G') == 3, (name, 'expected two previews and the final image')
+        if binary == 'main' and name in ('quiet', 'quiet-malformed'):
+            before_save, saved = section.split('Saved image:', 1)
+            assert '\x1b_G' not in before_save and '\x1b_G' in saved, (name, 'quiet must keep only the final preview')
+        if binary == 'main' and name == 'quiet-error-json':
+            assert '\x1b_G' not in section and 'Saved image:' not in section, (name, 'quiet failure must not emit a partial preview')
     assert '\x1b_G' in text and '\x1b]1337;' in text
     results[binary] = {'passed': len(expected), 'exit_code':code, 'bytes':len(captured), 'skipped':False}
 (root / 'pty-results.json').write_text(json.dumps(results, indent=2) + '\n')

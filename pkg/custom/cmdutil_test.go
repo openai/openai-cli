@@ -760,7 +760,7 @@ func TestFormatJSONForOutputUsesFinalDestinationForColors(t *testing.T) {
 	}{
 		{name: "terminal destination behind pager", stdout: writePipe, destination: os.Stdout, wantColor: true},
 		{name: "nonterminal final destination", stdout: os.Stdout, destination: writePipe, wantColor: false},
-		{name: "forced color for nonterminal", stdout: writePipe, destination: writePipe, forceColor: "1", wantColor: true},
+		{name: "forced color for nonterminal", stdout: writePipe, destination: writePipe, forceColor: "1", wantColor: false},
 		{name: "disabled color for terminal", stdout: writePipe, destination: os.Stdout, forceColor: "0", wantColor: false},
 	}
 

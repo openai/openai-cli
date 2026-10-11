@@ -7,7 +7,7 @@ function ____APPNAME___fish_autocomplete
     set -l cmd $tokens[1]
     set -l args $tokens[2..-1]
 
-    set -l completions (env COMPLETION_STYLE=fish OPENAI_CLI_COMPLETION_FILE_VALUES=1 $cmd __complete -- $args $current 2>/dev/null)
+    set -l completions (env COMPLETION_STYLE=fish OPENAI_CLI_COMPLETION_FILE_VALUES=1 OPENAI_CLI_COMPLETION_PRESERVE_WORDS=1 $cmd __complete -- $args $current 2>/dev/null)
     set -l exit_code $status
 
     # Check for custom file completion patterns
@@ -16,7 +16,7 @@ function ____APPNAME___fish_autocomplete
     set -l file_part "$current"
     set -l force_file_completion 0
 
-    if string match -gqr '^(?<before>.*)@(?<protocol>file://|data://)?(?<file_part>.*)$' -- $current
+    if test $exit_code -ne 10; and string match -gqr '^(?<before>.*)@(?<protocol>file://|data://)?(?<file_part>.*)$' -- $current
         if string match -qr '^[\'"]' -- $before
             # Ensures we don't insert an extra quote when the user is building an argument in quotes
             set before (string sub -s 2 -- $before)

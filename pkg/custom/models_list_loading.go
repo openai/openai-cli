@@ -21,7 +21,7 @@ func runWithModelsListLoading(ctx context.Context, command *cli.Command, next cl
 	root := command.Root()
 	format := strings.ToLower(root.String("format"))
 	if format != "" && format != "auto" && format != "text" ||
-		root.String("transform") != "" || root.Bool("raw-output") || root.Bool("debug") || root.Bool("quiet") ||
+		root.String("transform") != "" || root.Bool("raw-output") || root.Bool("debug") ||
 		errorOutputFormat(root) != "text" || root.String("transform-error") != "" || os.Getenv("CI") != "" ||
 		!term.IsTerminal(os.Stdin.Fd()) || !isTerminal(os.Stdout) || !isTerminal(os.Stderr) {
 		return next(ctx, command)
@@ -29,11 +29,14 @@ func runWithModelsListLoading(ctx context.Context, command *cli.Command, next cl
 	parent := ctx
 	ctx, stopSignals := signal.NotifyContext(ctx, os.Interrupt)
 	stopReset := context.AfterFunc(ctx, stopSignals)
-	stop, _ := startLoadingFeedback(ctx, os.Stderr, "Loading models", "", loadingAnimationSupported(os.Getenv),
-		imageLoadingSpinner(os.Getenv, runtime.GOOS), func() (int, int) {
-			width, height, _ := term.GetSize(os.Stderr.Fd())
-			return width, height
-		})
+	stop := func() {}
+	if commandAllowsOutputDiagnostics(command) {
+		stop, _ = startLoadingFeedback(ctx, os.Stderr, "Loading models", "", loadingAnimationSupported(os.Getenv),
+			imageLoadingSpinner(os.Getenv, runtime.GOOS), func() (int, int) {
+				width, height, _ := term.GetSize(os.Stderr.Fd())
+				return width, height
+			})
+	}
 	ctx = context.WithValue(ctx, modelsListLoadingKey{}, stop)
 	defer func() {
 		stop()

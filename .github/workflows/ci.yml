@@ -208,4 +208,6 @@ jobs:
         run: go test ./internal/autocomplete -run '^TestPicker(InstallRetainsLinuxSELinuxLabel|SecurityLabel.*|InstallPreservesLinuxFileMetadata|LinuxMetadataAddedAfterSnapshotIsKept|UnixProfileIdentityKeepsDistinctCaseNames)$' -count=1 -v
 
       - name: Run tests
-        run: ./scripts/test
+        # Large-payload and subprocess suites share this runner. Avoid running
+        # packages concurrently; retain every test, payload and deadline.
+        run: ./scripts/test -p 1

@@ -30329,6 +30329,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
+        '429':
+          description: The Files API rate limit for your user has been exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse-2'
   /agents/sessions/{session_id}/subagents:
     get:
       operationId: listAgentSessionSubagents
@@ -31877,6 +31883,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
+        '429':
+          description: The Files API rate limit for your user has been exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse-2'
       x-oai-streaming:
         request_field: stream
         response_status_code: 201
@@ -33023,6 +33035,24 @@ paths:
           minLength: 0
           maxLength: 1048576
         description: Return resources after this resource ID in the selected order.
+      - name: metadata
+        in: query
+        required: false
+        schema:
+          type: object
+          additionalProperties:
+            type: string
+            minLength: 0
+            maxLength: 512
+          propertyNames:
+            type: string
+            minLength: 1
+            maxLength: 64
+          minProperties: 0
+          maxProperties: 16
+        description: Exact string matches supplied as `metadata[key]=value`. All supplied pairs must match. Up to 16 pairs, with keys from 1 to 64 characters and values up to 512 characters. Filtering is eventually consistent; metadata changes may take time to appear.
+        style: deepObject
+        explode: true
       responses:
         '200':
           description: A page of vaults.
@@ -33262,6 +33292,76 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse-2'
+    post:
+      operationId: updateVault
+      summary: Update a vault
+      description: Updates the name or metadata of an active vault. Omitted fields remain unchanged. See [vaults](https://developers.openai.com/api/docs/guides/agents-api/tools/vaults).
+      tags:
+      - Vaults
+      parameters:
+      - name: vault_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 0
+          maxLength: 1048576
+        description: The ID of the vault.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateVaultParams'
+        required: true
+      responses:
+        '200':
+          description: The updated vault.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultResource'
+        '400':
+          description: The request was invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse-2'
+        '401':
+          description: Authentication or project context was missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse-2'
+        '403':
+          description: The API key lacks the required management permission.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse-2'
+        '404':
+          description: The requested vault was not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse-2'
+        '409':
+          description: The request conflicted with the current vault state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse-2'
+        '500':
+          description: An internal error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse-2'
+        '503':
+          description: The service is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse-2'
   /vaults/{vault_id}/credentials:
     get:
       operationId: listVaultCredentials
@@ -33309,6 +33409,24 @@ paths:
           minLength: 0
           maxLength: 1048576
         description: Return resources after this resource ID in the selected order.
+      - name: metadata
+        in: query
+        required: false
+        schema:
+          type: object
+          additionalProperties:
+            type: string
+            minLength: 0
+            maxLength: 512
+          propertyNames:
+            type: string
+            minLength: 1
+            maxLength: 64
+          minProperties: 0
+          maxProperties: 16
+        description: Exact string matches supplied as `metadata[key]=value`. All supplied pairs must match. Up to 16 pairs, with keys from 1 to 64 characters and values up to 512 characters. Filtering is eventually consistent; metadata changes may take time to appear.
+        style: deepObject
+        explode: true
       responses:
         '200':
           description: A page of vault credentials.
@@ -35965,6 +36083,36 @@ paths:
               "input_tokens": 11
             }
 webhooks:
+  agent_environment_expired:
+    post:
+      description: |
+        Sent when an agent environment expires and can no longer resume from a snapshot.
+      requestBody:
+        description: The event payload sent by the API.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookAgentEnvironmentExpired'
+      responses:
+        '200':
+          description: |
+            Return a 200 status code to acknowledge receipt of the event. Non-200
+            status codes will be retried.
+  agent_environment_suspended:
+    post:
+      description: |
+        Sent when an agent environment is suspended and can resume from a snapshot.
+      requestBody:
+        description: The event payload sent by the API.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookAgentEnvironmentSuspended'
+      responses:
+        '200':
+          description: |
+            Return a 200 status code to acknowledge receipt of the event. Non-200
+            status codes will be retried.
   agent_session_action_required:
     post:
       description: |
@@ -51457,11 +51605,11 @@ components:
         safety_identifier:
           anyOf:
           - type: string
-            maxLength: 64
+            maxLength: 128
             example: safety-identifier-1234
             description: |
               A stable identifier used to help detect users of your application that may be violating OpenAI's usage policies.
-              The IDs should be a string that uniquely identifies each user, with a maximum length of 64 characters. We recommend hashing their username or email address, in order to avoid sending us any identifying information. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
+              The IDs should be a string that uniquely identifies each user, with a maximum length of 128 characters. We recommend hashing their username or email address, in order to avoid sending us any identifying information. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
           - type: 'null'
         prompt_cache_key:
           anyOf:
@@ -79965,12 +80113,14 @@ components:
       - pending
       - connected
       - disconnected
+      - suspended
       - expired
       - failed
       x-enumDescriptions:
       - ''
       - ''
       - ''
+      - The sandbox is stopped and can be resumed from its private checkpoint.
       - ''
       - ''
       description: The public lifecycle status of an execution environment.
@@ -81862,6 +82012,7 @@ components:
       - project_spend_limit_exceeded
       - organization_spend_limit_exceeded
       - organization_usage_limit_exceeded
+      - billing_not_active
       - credit_balance_exhausted
       - rate_limit_exceeded
       - flex_unavailable
@@ -81885,6 +82036,7 @@ components:
       - The project has reached its enforced spend limit.
       - The organization has reached its enforced spend limit.
       - The organization has reached its OpenAI-assigned usage limit.
+      - Billing is not active for the account.
       - The organization has no API credits remaining.
       - The request exceeds the available rate limit.
       - Flex processing is temporarily unavailable.
@@ -85700,12 +85852,16 @@ components:
       - ready
       - connected
       - disconnected
+      - suspended
+      - expired
       - failed
       x-enumDescriptions:
       - The environment is being prepared.
       - The environment is ready to connect.
       - The environment is connected.
       - The environment is disconnected.
+      - The environment is stopped and can be resumed from its private checkpoint.
+      - The environment and its private checkpoint have expired.
       - The environment failed to connect.
       description: The connection status of a session environment.
     SessionEnvironmentErrorResource:
@@ -87025,6 +87181,8 @@ components:
         mapping:
           error: '#/components/schemas/SessionEventError'
           agent.session.environment.ready: '#/components/schemas/SessionEventAgentSessionEnvironmentReady'
+          agent.session.environment.suspended: '#/components/schemas/SessionEventAgentSessionEnvironmentSuspended'
+          agent.session.environment.expired: '#/components/schemas/SessionEventAgentSessionEnvironmentExpired'
           agent.session.environment.reset: '#/components/schemas/SessionEventAgentSessionEnvironmentReset'
           agent.output.command_execution_output.delta: '#/components/schemas/SessionEventAgentOutputCommandExecutionOutputDelta'
           agent.session.created: '#/components/schemas/SessionEventAgentSessionCreated'
@@ -87057,6 +87215,8 @@ components:
       x-oai-discriminator-values:
       - error
       - agent.session.environment.ready
+      - agent.session.environment.suspended
+      - agent.session.environment.expired
       - agent.session.environment.reset
       - agent.output.command_execution_output.delta
       - agent.session.created
@@ -87089,6 +87249,8 @@ components:
       anyOf:
       - $ref: '#/components/schemas/SessionEventError'
       - $ref: '#/components/schemas/SessionEventAgentSessionEnvironmentReady'
+      - $ref: '#/components/schemas/SessionEventAgentSessionEnvironmentSuspended'
+      - $ref: '#/components/schemas/SessionEventAgentSessionEnvironmentExpired'
       - $ref: '#/components/schemas/SessionEventAgentSessionEnvironmentReset'
       - $ref: '#/components/schemas/SessionEventAgentOutputCommandExecutionOutputDelta'
       - $ref: '#/components/schemas/SessionEventAgentSessionCreated'
@@ -88747,6 +88909,8 @@ components:
       - realtime.call.incoming
       - video.completed
       - video.failed
+      - agent.environment.suspended
+      - agent.environment.expired
       - agent.session.created
       - agent.session.action_required
       - agent.session.in_progress
@@ -98390,11 +98554,11 @@ components:
         safety_identifier:
           anyOf:
           - type: string
-            maxLength: 64
+            maxLength: 128
             example: safety-identifier-1234
             description: |
               A stable identifier used to help detect users of your application that may be violating OpenAI's usage policies.
-              The IDs should be a string that uniquely identifies each user, with a maximum length of 64 characters. We recommend hashing their username or email address, in order to avoid sending us any identifying information. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
+              The IDs should be a string that uniquely identifies each user, with a maximum length of 128 characters. We recommend hashing their username or email address, in order to avoid sending us any identifying information. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
           - type: 'null'
         prompt_cache_key:
           anyOf:
@@ -103314,6 +103478,174 @@ components:
       x-oai-default-discriminator-value: audio_sample
       anyOf:
       - $ref: '#/components/schemas/CreateVoiceFromConsentRequest'
+    SessionEventAgentSessionEnvironmentExpired:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+          - agent.session.environment.expired
+          default: agent.session.environment.expired
+          x-stainless-const: true
+          description: The type of the object. Always `agent.session.environment.expired`.
+        event_id:
+          type: string
+          minLength: 0
+          description: The unique ID of the event.
+        session_id:
+          type: string
+          minLength: 0
+          description: The ID of the session associated with the event.
+        turn_id:
+          type:
+          - string
+          - 'null'
+          minLength: 0
+          description: The ID of the turn associated with the event, when applicable.
+        environment:
+          $ref: '#/components/schemas/SessionEnvironmentStateResource'
+          description: The current environment state.
+      required:
+      - type
+      - event_id
+      - session_id
+      - turn_id
+      - environment
+      additionalProperties: false
+      description: Emitted after a suspended hosted session environment and its checkpoint expire.
+    SessionEventAgentSessionEnvironmentSuspended:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+          - agent.session.environment.suspended
+          default: agent.session.environment.suspended
+          x-stainless-const: true
+          description: The type of the object. Always `agent.session.environment.suspended`.
+        event_id:
+          type: string
+          minLength: 0
+          description: The unique ID of the event.
+        session_id:
+          type: string
+          minLength: 0
+          description: The ID of the session associated with the event.
+        turn_id:
+          type:
+          - string
+          - 'null'
+          minLength: 0
+          description: The ID of the turn associated with the event, when applicable.
+        environment:
+          $ref: '#/components/schemas/SessionEnvironmentStateResource'
+          description: The current environment state.
+      required:
+      - type
+      - event_id
+      - session_id
+      - turn_id
+      - environment
+      additionalProperties: false
+      description: Emitted after an idle hosted session environment is checkpointed and stopped.
+    AgentEnvironmentEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 0
+          description: The ID of the environment.
+      required:
+      - id
+      additionalProperties: false
+      description: Identifies the environment whose lifecycle changed.
+    WebhookAgentEnvironmentSuspended:
+      type: object
+      title: agent.environment.suspended
+      description: |
+        Sent when an agent environment is suspended and can resume from a snapshot.
+      allOf:
+      - $ref: '#/components/schemas/WebhookAgentSessionEnvelope'
+      - type: object
+        required:
+        - type
+        - data
+        properties:
+          type:
+            type: string
+            description: The event type. Always `agent.environment.suspended`.
+            enum:
+            - agent.environment.suspended
+            x-stainless-const: true
+          data:
+            $ref: '#/components/schemas/AgentEnvironmentEvent'
+      x-oaiMeta:
+        name: agent.environment.suspended
+        group: webhook-events
+        example: |
+          {
+            "id": "evt_123",
+            "object": "event",
+            "created_at": 1719168000,
+            "type": "agent.environment.suspended",
+            "data": {"id": "ccarenv_123"}
+          }
+    WebhookAgentEnvironmentExpired:
+      type: object
+      title: agent.environment.expired
+      description: |
+        Sent when an agent environment expires and can no longer resume from a snapshot.
+      allOf:
+      - $ref: '#/components/schemas/WebhookAgentSessionEnvelope'
+      - type: object
+        required:
+        - type
+        - data
+        properties:
+          type:
+            type: string
+            description: The event type. Always `agent.environment.expired`.
+            enum:
+            - agent.environment.expired
+            x-stainless-const: true
+          data:
+            $ref: '#/components/schemas/AgentEnvironmentEvent'
+      x-oaiMeta:
+        name: agent.environment.expired
+        group: webhook-events
+        example: |
+          {
+            "id": "evt_123",
+            "object": "event",
+            "created_at": 1719168000,
+            "type": "agent.environment.expired",
+            "data": {"id": "ccarenv_123"}
+          }
+    UpdateVaultParams:
+      type: object
+      properties:
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+            minLength: 0
+            maxLength: 512
+          propertyNames:
+            type: string
+            minLength: 1
+            maxLength: 64
+          minProperties: 0
+          maxProperties: 16
+          description: Replaces all metadata. Omit to leave unchanged, or pass {} to clear it. Up to 16 string key-value pairs, with keys up to 64 and values up to 512 characters.
+        name:
+          type:
+          - string
+          - 'null'
+          minLength: 1
+          maxLength: 1048576
+          description: A replacement name. Omit to leave unchanged, or pass null to clear it. The name is trimmed before storage. It must contain 1 to 256 UTF-8 bytes after trimming.
+      additionalProperties: false
+      description: Fields to replace on an active vault.
     OAuthErrorCode:
       anyOf:
       - enum:
@@ -103703,8 +104035,8 @@ components:
       - quartz
       - ripple
       - sage
+      - shida
       - shimmer
-      - shitan
       - sillage
       - stone
       - tempo
