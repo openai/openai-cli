@@ -525,6 +525,10 @@ def main():
         failed_terminal = None
         try:
             width, height = terminal.initial_size
+            disabled_instructions = {
+                40: "Instructions Not used by this m…",
+                90: "Instructions Not used by this model",
+            }[width]
             failed_terminal = Terminal(str(args.binary), ["audio", "speak"], env, width=width, height=height)
             wait(failed_terminal, "Text to speech")
             failed_terminal.send(b"\t")
@@ -533,7 +537,7 @@ def main():
             failed_terminal.send(b"\x1b[Z")
             paste(failed_terminal, fixture.TEXT)
             failed_terminal.send(b"\t\t\r" + picker.DOWN * 3 + b"\r")
-            visible_failure(("tts-1", "Not used by this model"), target=failed_terminal)
+            visible_failure(("tts-1", disabled_instructions), target=failed_terminal)
             failed_terminal.send(picker.DOWN + b"\r")
             visible_failure(("› coral",), target=failed_terminal)
             failed_terminal.send(picker.UP * 2)
@@ -545,7 +549,7 @@ def main():
             wait(failed_terminal, ("╭ Instructions ", "› Instructions"))
             visible_failure((fixture.DEFAULT_INSTRUCTIONS,), target=failed_terminal)
             failed_terminal.send(b"\t\r" + picker.DOWN * 3 + b"\r")
-            visible_failure(("Not used by this model", "Alloy"), target=failed_terminal)
+            visible_failure((disabled_instructions, "Alloy"), target=failed_terminal)
             assert len(server.records) == 2, "Legacy model selection submitted speech"
             mark(failed_terminal, "failure-legacy-ready", result)
             failed_terminal.send(b"\x07")
