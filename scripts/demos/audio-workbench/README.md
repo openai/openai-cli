@@ -24,6 +24,7 @@ python3 -I -B scripts/demos/audio-workbench/check.py \
 ```
 
 The default run checks workflow, compact generation, idle and busy cancellation, stopped-reader cancellation, and optional-startup isolation.
+It also checks zero-request navigation at 90×34 and 40×12.
 Use `--case NAME` to repeat one affected case.
 Use `--theme light` or `--theme no-color` for the additional palette checks.
 
@@ -69,6 +70,15 @@ The `--no-resize` option is restricted to that emitted workflow.
 The ordinary workflow retains all resize checkpoints and strict Clear and absence assertions.
 The recorder renders a separate `compact` capture for the 40×12 screenshot.
 This separation avoids replaying resize events that agg 1.9.0 ignores.
+
+The `navigation` and `navigation-compact` cases use monochrome focus markers.
+They cover CSI and SS3 arrows, editor visual boundaries, multiline text, wrapped Unicode, modifiers, and active selection.
+They check forward and reverse Tab, settings boundaries, chooser navigation, and command-preview scrolling.
+A private synthetic History entry supplies Result navigation without generation.
+Both cases require zero accepted or rejected fixture requests and strict cancellation cleanup.
+The ordinary workflow selects Clear with End; it does not depend on settings wraparound.
+The navigation cases test Alt+Enter without submitting editor text.
+They leave Enter generation and the existing repeat-submit guard unchanged.
 
 Playback uses a private fake FFplay executable.
 That helper consumes the real fixture bytes, records their hash, and produces no sound.

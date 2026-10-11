@@ -36,7 +36,8 @@ def main():
     parser.add_argument("--source", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repo-root", type=Path, default=os.environ.get("DEMO_REPO_ROOT"))
-    parser.add_argument("--case", choices=("workflow", "compact", "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
+    parser.add_argument("--case", choices=("workflow", "compact", "navigation", "navigation-compact",
+                                          "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
                                           "stopped-reader", "startup", "all"), default="all")
     parser.add_argument("--theme", choices=("dark", "light", "no-color"), default="dark")
     parser.add_argument("--asciinema", default=shutil.which("asciinema"))
@@ -389,6 +390,123 @@ def main():
         result["post_exit_drain"] = {"bytes": len(terminal.raw)-initial_bytes, "reason": reason,
                                      "seconds": round(time.monotonic()-started, 4)}
 
+    def seed_history(private, env):
+        cache = private / "Library/Caches" if sys.platform == "darwin" else Path(env["XDG_CACHE_HOME"])
+        history = cache / "openai/audio"
+        identity = "0123456789abcdef0123456789abcdef"
+        artifact = history / identity
+        artifact.mkdir(mode=0o700, parents=True)
+        history.chmod(0o700)
+        settings = {"input": fixture.TEXT, "instructions": fixture.INSTRUCTIONS,
+                    "model": "gpt-4o-mini-tts", "voice": "coral", "format": "wav", "speed": 1}
+        entry = {"id": identity, "created_at": "2026-10-09T00:00:00Z", "settings": settings,
+                 "bytes": len(fixture.WAV), "sha256": hashlib.sha256(fixture.WAV).hexdigest()}
+        (artifact / "audio").write_bytes(fixture.WAV)
+        (artifact / "manifest.json").write_text(json.dumps({"version": 1, "entry": entry}) + "\n")
+        for path in artifact.iterdir():
+            path.chmod(0o600)
+        return entry
+
+    def navigation_case(terminal, server, result):
+        up, down, ss3_up, ss3_down = b"\x1b[A", b"\x1b[B", b"\x1bOA", b"\x1bOB"
+        backtab = b"\x1b[Z"
+        focus = {"text": "› Text", "instructions": "› Instructions", "model": "› Model",
+                 "clear": "› Clear form", "history": "› History", "result": "› Result:", "preview": "Bash/zsh"}
+        result["navigation_checks"] = []
+
+        def zero_requests():
+            with server.lock:
+                count = len(server.handler_threads)
+            result["navigation_request_count"] = count
+            assert count == 0 and not server.records and not server.failures, "Navigation reached the speech fixture"
+
+        def check(name, target, keys=None, absent=()):
+            if keys is not None:
+                terminal.send(keys)
+            drain(terminal, .15)
+            wait(terminal, focus.get(target, target), absent=absent)
+            zero_requests()
+            result["navigation_checks"].append({"name": name, "focus": target})
+
+        mark(terminal, result["case"] + "-initial", result)
+        check("empty text CSI Down", "instructions", down)
+        check("empty instructions SS3 Down", "model", ss3_down)
+        check("Model CSI Up", "instructions", up)
+        check("empty instructions SS3 Up", "text", ss3_up)
+        check("Tab Text to Instructions", "instructions", b"\t")
+        check("Tab Instructions to Settings", "model", b"\t")
+        check("Tab Settings to preview without result", "preview", b"\t")
+        check("reverse Tab preview to Settings", "model", backtab)
+        check("reverse Tab Settings to Instructions", "instructions", backtab)
+        check("reverse Tab Instructions to Text", "text", backtab)
+        check("open settings", "model", b"\t\t")
+        check("open model chooser", "Choosing never generates speech.", b"\r")
+        check("CSI Down remains in chooser", "Choosing never generates speech.", down)
+        check("SS3 Up remains in chooser", "Choosing never generates speech.", ss3_up)
+        check("Tab remains in chooser", "Choosing never generates speech.", b"\t")
+        check("Escape returns to Model", "model", b"\x1b")
+        check("End selects Clear", "clear", picker.END)
+        check("Clear Down enters preview", "preview", down)
+        check("preview Right scrolls", "preview", b"\x1b[C", absent=("› printf",))
+        check("preview Up first returns to zero", "› printf", up)
+        check("preview Up at zero leaves", "clear", ss3_up)
+        check("Home selects Model", "model", picker.HOME)
+        check("Model Up enters Instructions", "instructions", up)
+        check("Instructions Up enters Text", "text", up)
+
+        for editor in ("text", "instructions"):
+            for name, value in (("single-line", "Boundary"), ("multiline", "First line\nSecond line\nThird line"),
+                                ("wrapped-unicode", "界🙂e\u0301 " * 26)):
+                prefix = editor + " " + name
+                if editor == "instructions":
+                    check(prefix + " enter editor", "instructions", down)
+                paste(terminal, value)
+                check(prefix + " paste keeps editor", editor)
+                if name == "single-line":
+                    for label, keys in (("Shift Down", b"\x1b[1;2B"), ("Alt Down", b"\x1b[1;3B"),
+                                        ("Ctrl Down", b"\x1b[1;5B"), ("selection Down", b"\x1b[1;2D" + down)):
+                        check(editor + " " + label + " remains editing", editor, keys)
+                        check(editor + " " + label + " deselect", editor, b"\x1b[C")
+                    check(editor + " Alt Enter inserts a newline", editor, b"\x1b\r")
+                    paste(terminal, "Second")
+                check(prefix + " Up stays within visual rows", editor, ss3_up)
+                check(prefix + " Down returns to last visual row", editor, down)
+                if name == "wrapped-unicode" and editor == "text":
+                    mark(terminal, result["case"] + "-wrapped-unicode", result)
+                check(prefix + " last-row Down leaves editor", "instructions" if editor == "text" else "model", ss3_down)
+                if editor == "text":
+                    check(prefix + " Tab returns to Settings", "model", b"\t")
+                check(prefix + " select Clear", "clear", picker.END)
+                check(prefix + " clear remains local", "clear", b"\r")
+                check(prefix + " return to Model", "model", picker.HOME)
+                check(prefix + " return to Instructions", "instructions", up)
+                check(prefix + " return to Text", "text", up)
+
+        check("select Settings for History", "model", b"\t\t")
+        check("select Clear before History", "clear", picker.END)
+        check("Up selects History", "history", up)
+        check("open local History", "Choosing never generates speech.", b"\r")
+        check("restore local result", "result", b"\r")
+        wait(terminal, "Duration 00:02.000")
+        wait(terminal, "Audio retained.", absent=("Working: open",))
+        mark(terminal, result["case"] + "-restored-result", result)
+        check("reverse Tab Result to Settings", "history", backtab)
+        check("End selects Clear with result", "clear", picker.END)
+        check("Clear Down enters Result", "result", down)
+        check("Result Down enters preview", "preview", ss3_down)
+        check("preview Up returns to Result", "result", up)
+        check("Tab Result to preview", "preview", b"\t")
+        check("Tab preview wraps to Text", "text", b"\t")
+        check("Tab Text to Instructions with result", "instructions", b"\t")
+        check("Tab Instructions to Settings with result", "clear", b"\t")
+        check("Tab Settings to Result", "result", b"\t")
+        check("reverse Tab Result to Settings again", "clear", backtab)
+        mark(terminal, result["case"] + "-complete", result)
+        zero_requests()
+        terminal.send(b"\x03")
+        terminal.finish(130)
+        zero_requests()
+
     def startup_case(private, env, programs, server, result):
         startup_env = dict(env)
         startup_env.pop("OPENAI_PICKER_SHELL", None)
@@ -407,19 +525,8 @@ def main():
         assert os.path.samefile(on_path, args.binary), "PATH selected a different executable"
         startup_env["AUDIO_EXPECTED_COMMAND"] = str(on_path)
         cache = private / "Library/Caches" if sys.platform == "darwin" else Path(env["XDG_CACHE_HOME"])
-        history = cache / "openai/audio"
-        identity = "0123456789abcdef0123456789abcdef"
-        artifact = history / identity
-        artifact.mkdir(mode=0o700, parents=True)
-        history.chmod(0o700)
-        settings = {"input": fixture.TEXT, "instructions": fixture.INSTRUCTIONS,
-                    "model": "gpt-4o-mini-tts", "voice": "coral", "format": "wav", "speed": 1}
-        entry = {"id": identity, "created_at": "2026-10-09T00:00:00Z", "settings": settings,
-                 "bytes": len(fixture.WAV), "sha256": hashlib.sha256(fixture.WAV).hexdigest()}
-        (artifact / "audio").write_bytes(fixture.WAV)
-        (artifact / "manifest.json").write_text(json.dumps({"version": 1, "entry": entry}) + "\n")
-        for path in artifact.iterdir():
-            path.chmod(0o600)
+        entry = seed_history(private, env)
+        identity = entry["id"]
 
         def files(directory):
             snapshot = []
@@ -509,7 +616,7 @@ def main():
         result.update(pass_=True, exit_status=0, requests=[])
         result["pass"] = result.pop("pass_")
 
-    cases = ("workflow", "compact", "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
+    cases = ("workflow", "compact", "navigation", "navigation-compact", "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
              "stopped-reader", "startup") if args.case == "all" else (args.case,)
     with harness_lifecycle():
         for case in cases:
@@ -547,6 +654,10 @@ def main():
                        "COLORTERM": "truecolor", "COLORFGBG": "0;15" if args.theme == "light" else "15;0"}
                 if args.theme == "no-color":
                     env.update(NO_COLOR="1", FORCE_COLOR="0")
+                navigation = case in ("navigation", "navigation-compact")
+                if navigation:
+                    env.update(NO_COLOR="1", FORCE_COLOR="0")
+                    result["effective_theme"] = "no-color"
                 terminal = None
 
                 def public(arguments):
@@ -559,7 +670,9 @@ def main():
                     if case == "startup":
                         startup_case(private, env, programs, server, result)
                         continue
-                    width, height = (40, 12) if case == "compact" else (90, 34)
+                    if navigation:
+                        seeded_entry = seed_history(private, env)
+                    width, height = (40, 12) if case in ("compact", "navigation-compact") else (90, 34)
                     terminal = Terminal(str(args.binary), ["audio", "speak"], env, width=width, height=height)
                     result["initial_size"] = [width, height]
                     wait(terminal, "Text to speech")
@@ -663,7 +776,7 @@ def main():
                         assert json.loads(public(["--format", "json", "audio", "history"])) == entries
                         terminal.send(b"\x1b")
                         wait(terminal, "Result: ash")
-                        terminal.send(b"\t\t" + picker.UP * 2)
+                        terminal.send(b"\t\t" + picker.END)
                         wait(terminal, "› Clear form")
                         terminal.send(b"\r")
                         wait(terminal, "Form cleared.", absent=("Result:", fixture.TEXT.splitlines()[0]))
@@ -702,6 +815,10 @@ def main():
                         terminal.finish(130)
                         assert json.loads(public(["--format", "json", "audio", "history"])) == entries
                         assert len(server.records) == 1, "Compact cancellation generated speech"
+                    elif navigation:
+                        navigation_case(terminal, server, result)
+                        assert json.loads(public(["--format", "json", "audio", "history"])) == [seeded_entry]
+                        result["seeded_history_preserved"] = True
                     elif busy:
                         paste(terminal, fixture.TEXT)
                         assert not server.records, "Typing generated speech"

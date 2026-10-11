@@ -7,12 +7,21 @@ openai audio speak
 ```
 
 The form exposes text, instructions, model, voice, response format, and speed.
-Tab moves between editors, settings, the command preview, and the result.
-Up and Down select settings. Enter opens a choice or starts generation from an editor.
+Tab follows the visible order: Text, Instructions, Settings, Result when present, and command preview.
+Shift+Tab reverses that order.
+Up and Down move between sections at their boundaries.
+Inside an editor, arrows move through multiline and wrapped text before leaving the first or last visual row.
+Modified arrows and active selections remain inside the editor.
+Up from Model returns to Instructions. Down from Clear moves to Result or command preview.
+Home and End select the first and last settings.
+Enter opens a choice or starts generation from an editor.
 Enter on Speed accepts an exact number from 0.25 to 4. Left and Right adjust speed by 0.25.
 Alt+Enter adds a newline. Ctrl+G generates from any ordinary form section.
 The form follows the image picker’s bordered editor, aligned settings, selection colors, and muted command preview.
 The focused command preview supports Up/Down scrolling and Left/Right adjustments.
+PageUp/PageDown scroll the preview. Home/End select its start or end.
+Up at the preview start returns to Result or the last setting.
+Navigation preserves draft text and playback. Navigation never generates speech.
 The preview uses Bash/zsh syntax and preserves supported project, organization, and endpoint overrides.
 Private credential overrides suppress the preview instead of exposing their values.
 The editors normalize line endings, expand tabs, and remove unsupported control and replacement characters.

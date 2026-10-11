@@ -201,7 +201,7 @@ func TestAudioWorkbenchChoiceDialogsShowAsynchronousPlaybackFailure(t *testing.T
 				m.input.SetValue("Keep the draft.")
 				m.instructions.SetValue("Keep the instructions.")
 				require.NotNil(t, audioReviewKey(m, tea.KeySpace))
-				for range 3 {
+				for range 4 {
 					audioReviewKey(m, tea.KeyTab)
 				}
 				require.Equal(t, 2, m.focus)
@@ -264,16 +264,14 @@ func TestAudioWorkbenchFailureGuidanceFollowsEscapeTransitions(t *testing.T) {
 				require.Contains(t, audioFeedbackView(t, m), "Audio action failed. Esc returns to Text.")
 				require.Equal(t, result.entry, m.result.entry)
 				// A choice dialog adds its own return transition before result focus.
-				for range 3 {
+				for range 4 {
 					audioReviewKey(m, tea.KeyTab)
 				}
 				require.Nil(t, audioReviewKey(m, tea.KeyEnter))
 				require.Contains(t, audioFeedbackView(t, m), "Audio action failed. Esc returns.")
 				require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 				require.Empty(t, m.modal)
-				for range 2 {
-					audioReviewKey(m, tea.KeyTab)
-				}
+				audioReviewKey(m, tea.KeyTab)
 				require.Equal(t, 4, m.focus)
 				require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 				require.Equal(t, 0, m.focus)

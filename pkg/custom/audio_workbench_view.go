@@ -142,12 +142,15 @@ func (m *audioWorkbench) footerRows(compact bool) []string {
 	if m.busy {
 		footer = append(footer, fmt.Sprintf("%s · %.1f s · Ctrl+C cancels", m.note, time.Since(m.started).Seconds()))
 	} else {
-		hint := "Tab moves · Enter applies · Ctrl+G generates"
+		hint := "↑↓/Tab move · Enter applies · Ctrl+G generates"
 		if m.focus < 2 {
-			hint = "Enter generates · Alt+Enter newline · Tab moves"
+			hint = "↑↓/Tab move · Enter generates · Alt+Enter newline"
+			if compact {
+				hint = "↑↓/Tab move · Enter run · Alt+Enter ↵"
+			}
 		}
 		if m.focus == 2 {
-			hint = "Up/Down settings · Enter chooses · Left/Right speed"
+			hint = "↑↓ move · Enter chooses · ←→ speed"
 		}
 		if m.focus == 4 {
 			hint = "Space play/stop · X stop · S save · H history"

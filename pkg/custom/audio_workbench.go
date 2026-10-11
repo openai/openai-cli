@@ -204,7 +204,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.priorResult = nil
 			}
 			m.result = &msg.result
-			m.focus = 4
+			m.focusSection(4)
 			if msg.kind == "open" {
 				m.settings = msg.result.entry.Settings
 				m.input.SetValue(audioEditorText(m.settings.Input))
@@ -261,8 +261,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					m.result = m.priorResult
 					m.priorResult = nil
 				}
-				m.focus = 0
-				m.input.Focus()
+				m.focusSection(0)
 				return m, nil
 			}
 			m.quit = true
@@ -275,35 +274,14 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.modal != "" {
 			return m, m.updateModal(message, key)
 		}
-		if key == "tab" || key == "shift+tab" {
-			m.input.Blur()
-			m.instructions.Blur()
-			step := 1
-			if key == "shift+tab" {
-				step = -1
-			}
-			count := 5
-			if m.result == nil {
-				count = 4
-			}
-			m.focus = (m.focus + step + count) % count
-			if m.focus == 0 {
-				return m, m.input.Focus()
-			}
-			if m.focus == 1 {
-				return m, m.instructions.Focus()
-			}
-			return m, nil
+		if handled, command := m.navigateSection(key); handled {
+			return m, command
 		}
 		if key == "ctrl+g" {
 			return m, m.generate(false)
 		}
 		if m.focus == 2 {
 			switch key {
-			case "up":
-				m.setting = (m.setting + 7) % 8
-			case "down":
-				m.setting = (m.setting + 1) % 8
 			case "left", "right":
 				if m.setting == 3 {
 					step := .25
@@ -325,16 +303,6 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			switch key {
 			case "enter":
 				return m, m.generate(false)
-			case "left":
-				m.previewOffset = max(0, m.previewOffset-10)
-			case "right":
-				m.previewOffset += 10
-			case "up":
-				m.previewOffset = max(0, m.previewOffset-m.audioWidth()+2)
-			case "down":
-				m.previewOffset += m.audioWidth() - 2
-			case "home":
-				m.previewOffset = 0
 			}
 			return m, nil
 		}
