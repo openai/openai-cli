@@ -393,6 +393,12 @@ func TestAudioNavigationRespectsBusyTinyAndModalGuards(t *testing.T) {
 			m := audioReviewModel(t)
 			m.input.SetValue("Keep modal draft")
 			m.focus, m.setting, m.modal = 2, 1, modal
+			if modal == "recovery" {
+				m.modal = ""
+				_, command := m.Update(audioWorkMessage{kind: "generate", err: audioUnauthorizedFailure()})
+				require.Nil(t, command)
+				require.True(t, m.activeFailure())
+			}
 			m.choices = []string{"coral", "ash"}
 			m.entries = []audiohistory.Entry{audioReviewResult("first", false).entry, audioReviewResult("second", false).entry}
 			m.path.Focus()
@@ -402,6 +408,10 @@ func TestAudioNavigationRespectsBusyTinyAndModalGuards(t *testing.T) {
 				require.Equal(t, 2, m.focus)
 				require.Equal(t, 1, m.setting)
 				require.Equal(t, modal, m.modal)
+				if modal == "recovery" {
+					require.True(t, m.activeFailure())
+					require.Equal(t, []int{0, 1, 0, 2, 2, 2}[index], m.recoveryChoice)
+				}
 				if (modal == "choice" || modal == "history") && index < 2 {
 					require.Equal(t, 1-index, m.choice, "modal must retain arrow navigation")
 				}

@@ -47,7 +47,7 @@ func TestAudioWorkbenchDrawSynchronizesGeometryAfterNonKeyMessage(t *testing.T) 
 			require.NotContains(t, frame, "\x1b[3J")
 			if size[0] == 40 {
 				require.Contains(t, frame, "Text to speech")
-				require.Contains(t, frame, "Result: coral")
+				require.Contains(t, frame, "Result: Coral")
 				require.Contains(t, frame, "Duration 00:01.000")
 			} else {
 				require.Contains(t, frame, "Resize to 40 x 12.")

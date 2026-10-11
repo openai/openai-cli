@@ -17,7 +17,7 @@ func TestAudioEditorPastesWindowsLinesOnce(t *testing.T) {
 	require.Equal(t, "@literal\nSecond 世界\nThird", m.input.Value())
 	m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	m.Update(tea.PasteMsg{Content: "\\@instructions\r\nDelivery"})
-	require.Equal(t, "\\@instructions\nDelivery", m.instructions.Value())
+	require.Equal(t, audioInstructionsExample+"\\@instructions\nDelivery", m.instructions.Value())
 }
 
 func TestAudioEditorRestoresOneNewlinePerWindowsLine(t *testing.T) {
