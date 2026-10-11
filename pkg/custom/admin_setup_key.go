@@ -54,6 +54,15 @@ func readAdminSetupKeyWithReader(ctx context.Context, input, output *os.File, ne
 			key = nil
 		}
 	}()
+	restoreOutput, outputErr := prepareAdminSetupOutput(output)
+	if outputErr != nil {
+		return nil, errAdminSetupKeyIO
+	}
+	defer func() {
+		if restoreOutput() != nil {
+			err = errAdminSetupKeyIO
+		}
+	}()
 	if _, rawErr := term.MakeRaw(input.Fd()); rawErr != nil {
 		return nil, errAdminSetupKeyIO
 	}

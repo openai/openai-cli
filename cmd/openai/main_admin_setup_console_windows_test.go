@@ -86,6 +86,9 @@ type adminConsoleTestFrame struct {
 	Checks                           map[string]bool                `json:"checks"`
 	Queue                            *adminConsoleTestQueueEvidence `json:"queue"`
 	Original, Active, Restored       adminConsoleTestModes
+	ExpectedActive                   adminConsoleTestModes `json:"expected_active"`
+	PromptVisible                    bool                  `json:"prompt_visible"`
+	PasteControlsLiteral             bool                  `json:"paste_controls_literal"`
 	Exit, Started, Completed, Phases int
 	Passed                           bool
 	ReaderType                       string                     `json:"reader_type"`
@@ -239,12 +242,16 @@ func adminConsoleRunCases(t *testing.T) {
 	}
 	adminConsoleLogExecutable(t, "actual main via TestMainDispatchProcess", executable)
 	for _, test := range []struct {
-		name, input    string
-		exit, requests int
+		name, input     string
+		exit, requests  int
+		disableOutputVT bool
 	}{
-		{"success", adminConsoleSyntheticKey + "\r", 0, 1},
-		{"ctrl_c", "\x03", 130, 0},
-		{"incomplete_paste_ctrl_c", "\x1b[200~sk-admin-SYNTHETIC\x03", 130, 0},
+		{"success", adminConsoleSyntheticKey + "\r", 0, 1, false},
+		{"ctrl_c", "\x03", 130, 0, false},
+		{"incomplete_paste_ctrl_c", "\x1b[200~sk-admin-SYNTHETIC\x03", 130, 0, false},
+		{"output_vt_disabled_success", adminConsoleSyntheticKey + "\r", 0, 1, true},
+		{"output_vt_disabled_ctrl_c", "\x03", 130, 0, true},
+		{"output_vt_disabled_multiline_paste", "\x1b[200~" + adminConsoleSyntheticKey + "\n" + adminConsoleSyntheticKey + "\x1b[201~\r", 1, 0, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var requests atomic.Int32
@@ -259,21 +266,39 @@ func adminConsoleRunCases(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			session := adminConsoleStart(t, executable, "TestMainDispatchAdminSetupConsoleHost", []string{"OPENAI_BASE_URL=" + server.URL + "/v1"})
+			extra := []string{"OPENAI_BASE_URL=" + server.URL + "/v1"}
+			if test.disableOutputVT {
+				extra = append(extra, "OPENAI_ADMIN_CONSOLE_OUTPUT_VT=disabled")
+			}
+			session := adminConsoleStart(t, executable, "TestMainDispatchAdminSetupConsoleHost", extra)
 			hello := session.hello
 			if hello.Original.Stdin&windows.ENABLE_ECHO_INPUT == 0 {
 				t.Fatal("fresh console did not start with echo enabled")
+			}
+			if test.disableOutputVT && hello.Original.Stderr&(windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING|windows.ENABLE_PROCESSED_OUTPUT) != 0 {
+				t.Fatal("fixture did not disable output VT and processed output before CLI startup")
 			}
 			session.send(t, map[string]any{"action": "start", "nonce": session.nonce})
 			active := session.receive(t)
 			if active.Event != "active" || !adminConsoleHiddenInput(active.Active.Stdin) {
 				t.Fatal("CLI did not establish hidden console input")
 			}
+			if test.disableOutputVT {
+				if active.Active != hello.ExpectedActive {
+					t.Errorf("CLI active console modes=%+v, want %+v", active.Active, hello.ExpectedActive)
+				}
+				if !active.PromptVisible || active.PasteControlsLiteral {
+					t.Error("native console screen did not interpret startup paste controls before the prompt")
+				}
+			}
 			session.waitPrompt(t)
 			session.write(t, test.name, test.input)
 			completed := session.receive(t)
 			if completed.Event != "completed" || completed.Exit != test.exit || completed.Restored != hello.Original {
 				t.Fatalf("CLI console lifecycle failed: exit=%d, expected=%d, modes_restored=%t", completed.Exit, test.exit, completed.Restored == hello.Original)
+			}
+			if test.disableOutputVT && completed.PasteControlsLiteral {
+				t.Error("native console screen displayed literal paste controls during cleanup")
 			}
 			session.send(t, map[string]any{"action": "ack"})
 			output := session.finish(t)
@@ -283,11 +308,16 @@ func adminConsoleRunCases(t *testing.T) {
 			want := "Admin setup canceled."
 			if test.exit == 0 {
 				want = "Admin access verified."
+			} else if test.exit == 1 {
+				want = "Could not read the key securely."
 			}
 			if !strings.Contains(ansi.Strip(output), want) {
 				t.Error("CLI did not display its expected result")
 			}
 			t.Logf("console handles verified; original=%+v active=%+v restored=%+v exit=%d requests=%d", hello.Original, active.Active, completed.Restored, completed.Exit, requests.Load())
+			if test.disableOutputVT {
+				t.Log("native output VT activation/restoration and screen parsing checked; paste markers were injected, not clipboard-generated")
+			}
 		})
 	}
 	const readerMode = "production"
@@ -707,8 +737,34 @@ func TestMainDispatchAdminSetupConsoleHost(t *testing.T) {
 	connection := adminConsoleDial(t, os.Getenv("OPENAI_ADMIN_CONSOLE_CONTROL"))
 	defer connection.Close()
 	original := adminConsoleGetTestModes(t)
+	var expectedActive adminConsoleTestModes
+	disabledOutputVT := os.Getenv("OPENAI_ADMIN_CONSOLE_OUTPUT_VT") == "disabled"
+	if disabledOutputVT {
+		output := windows.Handle(os.Stderr.Fd())
+		const required = windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING | windows.ENABLE_PROCESSED_OUTPUT
+		fixtureMode := original.Stderr &^ required
+		if windows.SetConsoleMode(output, fixtureMode) != nil {
+			t.Fatal("console host could not disable output VT and processed output")
+		}
+		original = adminConsoleGetTestModes(t)
+		if original.Stderr != fixtureMode {
+			t.Fatal("console host did not establish its exact output fixture mode")
+		}
+		// Observe whether stdout shares stderr's screen buffer, then restore the fixture.
+		if windows.SetConsoleMode(output, fixtureMode|required) != nil {
+			t.Fatal("console host could not establish expected output modes")
+		}
+		expectedActive = adminConsoleGetTestModes(t)
+		if expectedActive.Stderr != fixtureMode|required {
+			t.Fatal("console host did not observe enabled output VT and processed output")
+		}
+		expectedActive.Stdin = windows.ENABLE_VIRTUAL_TERMINAL_INPUT | windows.ENABLE_WINDOW_INPUT | windows.ENABLE_EXTENDED_FLAGS
+		if windows.SetConsoleMode(output, fixtureMode) != nil || adminConsoleGetTestModes(t) != original {
+			t.Fatal("console host did not restore disabled output modes before CLI startup")
+		}
+	}
 	nonce := os.Getenv("OPENAI_ADMIN_CONSOLE_NONCE")
-	adminConsoleSend(t, connection, map[string]any{"event": "hello", "nonce": nonce, "original": original})
+	adminConsoleSend(t, connection, map[string]any{"event": "hello", "nonce": nonce, "original": original, "expected_active": expectedActive})
 	decoder := connection.decoder
 	var control struct{ Action, Nonce string }
 	if decoder.Decode(&control) != nil || control.Action != "start" || control.Nonce != nonce {
@@ -748,7 +804,15 @@ func TestMainDispatchAdminSetupConsoleHost(t *testing.T) {
 				}
 				exit = status.ExitCode()
 			}
-			adminConsoleSend(t, connection, map[string]any{"event": "completed", "exit": exit, "restored": adminConsoleGetTestModes(t)})
+			frame := map[string]any{"event": "completed", "exit": exit, "restored": adminConsoleGetTestModes(t)}
+			if disabledOutputVT {
+				screen, err := readOutputConsole(os.Stderr)
+				if err != nil {
+					t.Fatal("console host could not inspect the completed native screen")
+				}
+				frame["paste_controls_literal"] = strings.Contains(screen, "?2004h") || strings.Contains(screen, "?2004l")
+			}
+			adminConsoleSend(t, connection, frame)
 			if decoder.Decode(&control) != nil || control.Action != "ack" {
 				t.Fatal("console host did not receive teardown acknowledgement")
 			}
@@ -756,7 +820,20 @@ func TestMainDispatchAdminSetupConsoleHost(t *testing.T) {
 		case <-ticker.C:
 			active := adminConsoleGetTestModes(t)
 			if !activeSent && adminConsoleHiddenInput(active.Stdin) {
-				adminConsoleSend(t, connection, map[string]any{"event": "active", "active": active})
+				frame := map[string]any{"event": "active", "active": active}
+				if disabledOutputVT {
+					screen, err := readOutputConsole(os.Stderr)
+					if err != nil {
+						t.Fatal("console host could not inspect the pending native screen")
+					}
+					if !strings.Contains(screen, "Admin API key (hidden):") {
+						continue
+					}
+					frame["active"] = adminConsoleGetTestModes(t)
+					frame["prompt_visible"] = true
+					frame["paste_controls_literal"] = strings.Contains(screen, "?2004h") || strings.Contains(screen, "?2004l")
+				}
+				adminConsoleSend(t, connection, frame)
 				activeSent = true
 			}
 		}
