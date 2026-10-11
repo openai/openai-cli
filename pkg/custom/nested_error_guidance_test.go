@@ -193,17 +193,21 @@ func TestNestedParserErrorGuidanceTypes(t *testing.T) {
 }
 
 func TestNestedParserErrorGuidancePreservesLocalAliasPrecedence(t *testing.T) {
-	for _, innerFirst := range []bool{true, false} {
-		name := "ordinary before inner"
-		if innerFirst {
-			name = "inner before ordinary"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name                       string
+		innerFirst, ordinaryHidden bool
+	}{
+		{"inner before ordinary", true, false},
+		{"ordinary before inner", false, false},
+		{"hidden ordinary before inner", false, true},
+		{"inner before hidden ordinary", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			outer := &requestflag.Flag[map[string]any]{Name: "settings", BodyPath: "settings"}
 			inner := &observedNestedAliasErrorFlag{InnerFlag: &requestflag.InnerFlag[bool]{Name: "settings.enabled", Aliases: []string{"v"}, InnerField: "enabled", OuterFlag: outer}}
-			ordinary := &observedOrdinaryAliasErrorFlag{IntFlag: &cli.IntFlag{Name: "count", Aliases: []string{"v"}}}
+			ordinary := &observedOrdinaryAliasErrorFlag{IntFlag: &cli.IntFlag{Name: "count", Aliases: []string{"v"}, Hidden: tc.ordinaryHidden}}
 			flags := []cli.Flag{outer, ordinary, inner}
-			if innerFirst {
+			if tc.innerFirst {
 				flags = []cli.Flag{outer, inner, ordinary}
 			}
 			actionRan := false
@@ -239,8 +243,16 @@ func TestNestedParserErrorGuidancePreservesLocalAliasPrecedence(t *testing.T) {
 			default:
 				t.Fatalf("unexpected winning parser: %s", parsed.Func)
 			}
+			if winner == ordinary && tc.ordinaryHidden {
+				// Direct hidden-option naming is preserved, but its visible loser must not supply a type.
+				expected = ""
+			}
 			t.Logf("alias -v used %s for %s", parsed.Func, option)
-			want := "Invalid value for " + option + ". Expected " + expected + ".\nOptions and examples: openai create --help"
+			want := "Invalid value for " + option + "."
+			if expected != "" {
+				want += " Expected " + expected + "."
+			}
+			want += "\nOptions and examples: openai create --help"
 			if got := localErrorMessage(root, err); got != want {
 				t.Fatalf("guidance disagrees with the winning alias parser: got %q, want %q", got, want)
 			}

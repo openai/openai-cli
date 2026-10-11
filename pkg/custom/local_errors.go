@@ -270,7 +270,9 @@ func parserErrorFlags(command *cli.Command) []cli.Flag {
 	if command == nil {
 		return nil
 	}
-	flags := append(command.VisibleFlags(), command.VisiblePersistentFlags()...)
+	visible := command.VisibleFlags()
+	inherited := command.VisiblePersistentFlags()
+	eligible := append(slices.Clone(visible), inherited...)
 	// InnerFlag is a valid parser declaration without cli.VisibleFlag. Follow
 	// its actual outer declarations, excluding hidden and unrelated chains.
 	visibleOuter := func(flag cli.Flag) bool {
@@ -279,7 +281,7 @@ func parserErrorFlags(command *cli.Command) []cli.Flag {
 			if visible, ok := flag.(cli.VisibleFlag); ok && !visible.IsVisible() {
 				return false
 			}
-			if slices.Contains(flags, flag) {
+			if slices.Contains(eligible, flag) {
 				return true
 			}
 			if seen[flag] || !slices.Contains(command.Flags, flag) {
@@ -294,8 +296,16 @@ func parserErrorFlags(command *cli.Command) []cli.Flag {
 		}
 		return false
 	}
+	var flags []cli.Flag
+	// Local declaration order decides which declaration owns a shared alias.
 	for _, flag := range command.Flags {
-		if !slices.Contains(flags, flag) && visibleOuter(flag) {
+		if visibleOuter(flag) {
+			flags = append(flags, flag)
+		}
+	}
+	// Preserve any framework-visible flags outside the ordinary flag slice.
+	for _, flag := range append(visible, inherited...) {
+		if !slices.Contains(flags, flag) {
 			flags = append(flags, flag)
 		}
 	}
@@ -303,10 +313,8 @@ func parserErrorFlags(command *cli.Command) []cli.Flag {
 }
 
 func parserFlagExpectedType(command *cli.Command, name string) string {
-	for _, flag := range parserErrorFlags(command) {
-		if !slices.Contains(flag.Names(), name) {
-			continue
-		}
+	flag := declaredErrorFlagDefinition(command, name)
+	if flag != nil && slices.Contains(parserErrorFlags(command), flag) {
 		return parserFlagTypeDescription(flag)
 	}
 	return ""
@@ -373,22 +381,32 @@ func afterQuotedValue(message, prefix string) (string, bool) {
 }
 
 func declaredErrorFlag(command *cli.Command, name string) string {
+	if flag := declaredErrorFlagDefinition(command, name); flag != nil {
+		names := flag.Names()
+		prefix := "--"
+		if len(names[0]) == 1 {
+			prefix = "-"
+		}
+		return prefix + names[0]
+	}
+	return ""
+}
+
+// Keep the existing declaration-name lookup. Type guidance additionally
+// requires the same declaration to belong to the eligible parser scope.
+func declaredErrorFlagDefinition(command *cli.Command, name string) cli.Flag {
 	if command == nil {
-		return ""
+		return nil
 	}
 	for _, ancestor := range command.Lineage() {
 		for _, flag := range ancestor.Flags {
 			names := flag.Names()
 			for _, candidate := range names {
 				if candidate == name {
-					prefix := "--"
-					if len(names[0]) == 1 {
-						prefix = "-"
-					}
-					return prefix + names[0]
+					return flag
 				}
 			}
 		}
 	}
-	return ""
+	return nil
 }
