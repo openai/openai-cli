@@ -2,8 +2,10 @@ package custom
 
 import (
 	"context"
+	"errors"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -24,6 +26,33 @@ type hiddenNestedOuterErrorFlag struct {
 }
 
 func (*hiddenNestedOuterErrorFlag) IsVisible() bool { return false }
+
+// The framework formats parser causes with %v. Observe Set without changing its behavior.
+type observedNestedAliasErrorFlag struct {
+	*requestflag.InnerFlag[bool]
+	failure error
+}
+
+func (flag *observedNestedAliasErrorFlag) Set(name, value string) error {
+	err := flag.InnerFlag.Set(name, value)
+	if err != nil {
+		flag.failure = err
+	}
+	return err
+}
+
+type observedOrdinaryAliasErrorFlag struct {
+	*cli.IntFlag
+	failure error
+}
+
+func (flag *observedOrdinaryAliasErrorFlag) Set(name, value string) error {
+	err := flag.IntFlag.Set(name, value)
+	if err != nil {
+		flag.failure = err
+	}
+	return err
+}
 
 func TestNestedParserErrorGuidanceRequiresVisibleOuterIdentity(t *testing.T) {
 	for _, scope := range []string{"visible outer", "hidden outer", "hidden inner", "absent outer", "different outer", "ancestor local", "shadowed inherited alias", "multilevel chain", "hidden intermediate", "absent intermediate", "nil outer", "cycle"} {
@@ -158,6 +187,65 @@ func TestNestedParserErrorGuidanceTypes(t *testing.T) {
 			}
 			if got := parserFlagExpectedType(leaf, "v"); got != tc.expected {
 				t.Fatalf("alias type=%q, want %q", got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestNestedParserErrorGuidancePreservesLocalAliasPrecedence(t *testing.T) {
+	for _, innerFirst := range []bool{true, false} {
+		name := "ordinary before inner"
+		if innerFirst {
+			name = "inner before ordinary"
+		}
+		t.Run(name, func(t *testing.T) {
+			outer := &requestflag.Flag[map[string]any]{Name: "settings", BodyPath: "settings"}
+			inner := &observedNestedAliasErrorFlag{InnerFlag: &requestflag.InnerFlag[bool]{Name: "settings.enabled", Aliases: []string{"v"}, InnerField: "enabled", OuterFlag: outer}}
+			ordinary := &observedOrdinaryAliasErrorFlag{IntFlag: &cli.IntFlag{Name: "count", Aliases: []string{"v"}}}
+			flags := []cli.Flag{outer, ordinary, inner}
+			if innerFirst {
+				flags = []cli.Flag{outer, inner, ordinary}
+			}
+			actionRan := false
+			leaf := &cli.Command{Name: "create", Flags: flags, Action: func(context.Context, *cli.Command) error { actionRan = true; return nil }}
+			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard, Commands: []*cli.Command{leaf}}
+			ConfigureCommandErrors(root)
+			err := root.Run(t.Context(), []string{"openai", "create", "-v=synthetic-private-invalid"})
+			if err == nil || actionRan {
+				t.Fatalf("invalid alias value reached the action: err=%v, action=%t", err, actionRan)
+			}
+			var winner cli.Flag
+			var parseFailure error
+			if inner.failure != nil {
+				winner, parseFailure = inner, inner.failure
+			}
+			if ordinary.failure != nil {
+				if winner != nil {
+					t.Fatal("two declarations rejected one alias value")
+				}
+				winner, parseFailure = ordinary, ordinary.failure
+			}
+			var parsed *strconv.NumError
+			if !errors.As(parseFailure, &parsed) {
+				t.Fatalf("alias parse cause is unavailable: %T %v", parseFailure, parseFailure)
+			}
+			option := "--" + winner.Names()[0]
+			var expected string
+			switch parsed.Func {
+			case "ParseBool":
+				expected = "a boolean (true or false)"
+			case "ParseInt":
+				expected = "an integer, such as 1"
+			default:
+				t.Fatalf("unexpected winning parser: %s", parsed.Func)
+			}
+			t.Logf("alias -v used %s for %s", parsed.Func, option)
+			want := "Invalid value for " + option + ". Expected " + expected + ".\nOptions and examples: openai create --help"
+			if got := localErrorMessage(root, err); got != want {
+				t.Fatalf("guidance disagrees with the winning alias parser: got %q, want %q", got, want)
+			}
+			if got := parserFlagExpectedType(leaf, "v"); got != expected {
+				t.Fatalf("alias type=%q, actual parser requires %q", got, expected)
 			}
 		})
 	}

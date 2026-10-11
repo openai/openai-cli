@@ -33,6 +33,7 @@ type errorCoverageFlag struct {
 	Persistent bool
 	Hidden     bool
 	Policy     string
+	Origin     string
 }
 
 type errorCoverageCommand struct {
@@ -75,6 +76,52 @@ func errorCoverageTypePolicy(name string) (string, bool) {
 	}
 }
 
+// Match the framework-owned booleans before modeling setup. A dependency or
+// application change must update this policy instead of silently losing probes.
+func errorCoverageFrameworkFlag(flag cli.Flag, name, alias, owner string) (errorCoverageFlag, error) {
+	boolean, ok := flag.(*cli.BoolFlag)
+	if !ok || boolean == nil || !slices.Equal(boolean.Names(), []string{name, alias}) ||
+		boolean.TypeName() != "bool" || !boolean.IsLocal() || boolean.TakesValue() || boolean.Hidden {
+		return errorCoverageFlag{}, fmt.Errorf("classify framework %s flag: expected local visible boolean --%s/-%s", name, name, alias)
+	}
+	return errorCoverageFlag{Name: name, Aliases: []string{alias}, Type: "bool", Owner: owner,
+		Origin: "urfave " + name, Policy: "framework local boolean; invalid values retain parser guidance"}, nil
+}
+
+func errorCoverageFrameworkDeclarations(command *cli.Command, path string, root, hideHelp bool, declared []errorCoverageFlag) ([]errorCoverageFlag, error) {
+	help, err := errorCoverageFrameworkFlag(cli.HelpFlag, "help", "h", path)
+	if err != nil {
+		return nil, err
+	}
+	version, err := errorCoverageFrameworkFlag(cli.VersionFlag, "version", "v", path)
+	if err != nil {
+		return nil, err
+	}
+	claimed := map[string]bool{}
+	for _, flag := range declared {
+		for _, name := range append([]string{flag.Name}, flag.Aliases...) {
+			claimed[name] = true
+		}
+	}
+	var flags []errorCoverageFlag
+	if !hideHelp {
+		if claimed["help"] || claimed["h"] {
+			return nil, fmt.Errorf("classify framework help collision on command %q before adding help probes", path)
+		}
+		flags = append(flags, help)
+		claimed["help"], claimed["h"] = true, true
+	}
+	// urfave disables version for empty Version, injects it only on the root,
+	// and removes aliases already claimed by an application declaration.
+	if root && !command.HideVersion && command.Version != "" {
+		version.Aliases = slices.DeleteFunc(version.Aliases, func(alias string) bool { return claimed[alias] && alias != version.Name })
+		if !claimed[version.Name] {
+			flags = append(flags, version)
+		}
+	}
+	return flags, nil
+}
+
 // Build from declarations only. Do not Run, parse, alter flags, or execute
 // actions: a caller can safely audit synthetic and production registrations.
 func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error) {
@@ -98,8 +145,9 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 		"admin:organization:certificates create/--content": "Hidden compatibility field; explicit-use errors retain its declared name, but suggestions omit it.",
 	}
 	groups := map[string]*errorCoverageGroup{}
-	var visit func(*cli.Command, []string, bool, [][]errorCoverageFlag) error
-	visit = func(command *cli.Command, path []string, compatibility bool, ancestors [][]errorCoverageFlag) error {
+	var visit func(*cli.Command, []string, bool, [][]errorCoverageFlag, bool) error
+	visit = func(command *cli.Command, path []string, compatibility bool, ancestors [][]errorCoverageFlag, inheritedHideHelp bool) error {
+		hideHelp := inheritedHideHelp || command.HideHelp
 		name := strings.Join(path, " ")
 		marked, _ := command.Metadata["command-compatibility-alias"].(bool)
 		compatibility = compatibility || marked
@@ -114,6 +162,9 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 			} else {
 				return fmt.Errorf("classify hidden command %q and name its executable contract tests", name)
 			}
+		}
+		if command.AllowExtFlags {
+			return fmt.Errorf("classify external runtime flags on command %q before inventorying their error contracts", name)
 		}
 		if command.SkipFlagParsing || command.StopOnNthArg != nil {
 			return fmt.Errorf("classify nonstandard flag parsing on command %q before adding public error probes", name)
@@ -141,7 +192,7 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 			if len(names) == 0 || names[0] == "" {
 				return fmt.Errorf("classify unnamed flag on command %q", name)
 			}
-			declared := errorCoverageFlag{Name: names[0], Aliases: slices.Clone(names[1:]), Owner: name}
+			declared := errorCoverageFlag{Name: names[0], Aliases: slices.Clone(names[1:]), Owner: name, Origin: "application declaration"}
 			if visible, ok := flag.(cli.VisibleFlag); ok {
 				declared.Hidden = !visible.IsVisible()
 			}
@@ -173,6 +224,11 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 			}
 			entry.Flags = append(entry.Flags, declared)
 		}
+		framework, err := errorCoverageFrameworkDeclarations(command, name, len(path) == 0, hideHelp, entry.Flags)
+		if err != nil {
+			return err
+		}
+		entry.Flags = append(entry.Flags, framework...)
 		entry.Effective = slices.Clone(entry.Flags)
 		localNames := map[string]bool{}
 		for _, flag := range entry.Flags {
@@ -222,13 +278,13 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 		}
 		manifest.Commands = append(manifest.Commands, entry)
 		for _, child := range command.Commands {
-			if err := visit(child, append(slices.Clone(path), child.Name), compatibility, append(slices.Clone(ancestors), entry.Flags)); err != nil {
+			if err := visit(child, append(slices.Clone(path), child.Name), compatibility, append(slices.Clone(ancestors), entry.Flags), hideHelp); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	if err := visit(root, nil, false, nil); err != nil {
+	if err := visit(root, nil, false, nil, false); err != nil {
 		return manifest, err
 	}
 	for _, group := range groups {
@@ -288,7 +344,7 @@ func readErrorCoverageManifest(t *testing.T, environment []string) errorCoverage
 	var stdout, stderr bytes.Buffer
 	child.Stdout, child.Stderr = &stdout, &stderr
 	if err := child.Run(); err != nil {
-		t.Fatalf("read production command declarations: %v; stderr=%q", err, stderr.String())
+		t.Fatalf("read production command declarations: %v; stdout=%q stderr=%q", err, stdout.String(), stderr.String())
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("declaration helper wrote stderr: %q", stderr.String())
@@ -341,6 +397,12 @@ func errorCoverageTypeDescription(name string) string {
 func declaredErrorCoverageCases(manifest errorCoverageManifest) []errorCoverageCase {
 	var cases []errorCoverageCase
 	const private = "synthetic-private-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+	rootVersion, builtinScope := false, map[string]bool{}
+	for _, command := range manifest.Commands {
+		if len(command.Path) == 0 {
+			rootVersion = slices.ContainsFunc(command.Flags, func(flag errorCoverageFlag) bool { return flag.Origin == "urfave version" })
+		}
+	}
 	for _, command := range manifest.Commands {
 		path := strings.Join(command.Path, " ")
 		invocation := strings.TrimSpace("openai " + path)
@@ -352,6 +414,17 @@ func declaredErrorCoverageCases(manifest errorCoverageManifest) []errorCoverageC
 			})
 		}
 		add("unknown-option", "", []string{"--" + private + "=synthetic-private-value\x1b[31m"}, 1, "An option is not recognized."+help)
+		if rootVersion && len(command.Path) != 0 && command.EffectiveNames["version"] == "" {
+			group := "nested"
+			if strings.Contains(command.Path[0], ":") {
+				group = "compatibility"
+			}
+			if !builtinScope[group] && !command.HasChildren {
+				add("framework-version-scope", "version", []string{"--version=synthetic-private-value"}, 1,
+					"The --version option is not available for this command."+help)
+				builtinScope[group] = true
+			}
+		}
 		for _, alias := range command.Aliases {
 			if len(command.Path) == 0 {
 				continue
@@ -553,6 +626,8 @@ func TestErrorCoverageRejectsUnclassifiedDeclarations(t *testing.T) {
 		{"new hidden route", &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "future-hidden", Hidden: true}}}, "classify hidden command \"future-hidden\""},
 		{"new hidden flag", &cli.Command{Name: "openai", Flags: []cli.Flag{&cli.StringFlag{Name: "future-hidden", Hidden: true}}}, "classify hidden flag --future-hidden"},
 		{"new parser contract", &cli.Command{Name: "openai", SkipFlagParsing: true}, "classify nonstandard flag parsing"},
+		{"new external flags", &cli.Command{Name: "openai", AllowExtFlags: true}, "classify external runtime flags"},
+		{"new help collision", &cli.Command{Name: "openai", Flags: []cli.Flag{&cli.StringFlag{Name: "host", Aliases: []string{"h"}}}}, "classify framework help collision"},
 		{"new flag group", &cli.Command{Name: "openai", MutuallyExclusiveFlags: []cli.MutuallyExclusiveFlags{{Flags: [][]cli.Flag{{&cli.StringFlag{Name: "future-grouped-flag"}}}}}}, "classify mutually exclusive flags"},
 		{"new action group", &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "future-group", Commands: []*cli.Command{{Name: "child"}}, Action: func(context.Context, *cli.Command) error { t.Fatal("the inventory executed an action"); return nil }}}}, "classify action-bearing group \"future-group\""},
 	} {
@@ -613,5 +688,67 @@ func TestErrorCoverageInventoriesInheritanceAndAliasShadowing(t *testing.T) {
 	}
 	if root.Flags[0].IsSet() || root.Commands[0].Flags[0].IsSet() {
 		t.Fatal("inventory changed parser state")
+	}
+}
+
+func TestErrorCoverageModelsFrameworkFlags(t *testing.T) {
+	root := &cli.Command{Name: "openai", Version: "synthetic", Flags: []cli.Flag{&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}}},
+		Commands: []*cli.Command{{Name: "group", Commands: []*cli.Command{{Name: "leaf"}}},
+			{Name: "group:legacy", Hidden: true, Metadata: map[string]any{"command-compatibility-alias": true}, Commands: []*cli.Command{{Name: "leaf"}}},
+			{Name: "no-help", HideHelp: true, Commands: []*cli.Command{{Name: "leaf"}}}}}
+	manifest, err := buildErrorCoverageManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range manifest.Commands {
+		var help, version *errorCoverageFlag
+		for index := range command.Flags {
+			flag := &command.Flags[index]
+			if flag.Origin == "urfave help" {
+				help = flag
+			}
+			if flag.Origin == "urfave version" {
+				version = flag
+			}
+		}
+		hideHelp := len(command.Path) > 0 && command.Path[0] == "no-help"
+		if (help == nil) != hideHelp {
+			t.Fatalf("wrong inherited help policy: %+v", command)
+		}
+		if help != nil && (help.Persistent || help.TakesValue || !slices.Equal(help.Aliases, []string{"h"})) {
+			t.Fatalf("wrong framework help shape: %+v", help)
+		}
+		if len(command.Path) == 0 {
+			if version == nil || version.Persistent || len(version.Aliases) != 0 || command.EffectiveNames["v"] != "/--verbose" {
+				t.Fatalf("version alias collision was not preserved: %+v", command)
+			}
+		} else if version != nil || command.EffectiveNames["version"] != "" {
+			t.Fatalf("local version leaked into nested scope: %+v", command)
+		}
+	}
+	for _, root := range []*cli.Command{{Name: "openai"}, {Name: "openai", Version: "synthetic", HideVersion: true}} {
+		got, err := buildErrorCoverageManifest(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.ContainsFunc(got.Commands[0].Flags, func(flag errorCoverageFlag) bool { return flag.Origin == "urfave version" }) {
+			t.Fatal("disabled version entered the inventory")
+		}
+	}
+	cases := declaredErrorCoverageCases(manifest)
+	for _, path := range [][]string{nil, {"group", "leaf"}, {"group:legacy", "leaf"}} {
+		if !slices.ContainsFunc(cases, func(test errorCoverageCase) bool {
+			return test.Kind == "invalid-type" && slices.Equal(test.Args, append(slices.Clone(path), "--help=synthetic-private-value\x1b[31m"))
+		}) {
+			t.Fatalf("framework help has no public invalid-bool probe: %q", path)
+		}
+	}
+	if len(root.Flags) != 1 || len(root.Commands[0].Flags) != 0 {
+		t.Fatal("framework accounting mutated declarations")
+	}
+	for _, flag := range []cli.Flag{&cli.StringFlag{Name: "help", Aliases: []string{"h"}}, &cli.BoolFlag{Name: "help", Aliases: []string{"h"}}, &cli.BoolFlag{Name: "help", Aliases: []string{"x"}, Local: true}} {
+		if _, err := errorCoverageFrameworkFlag(flag, "help", "h", ""); err == nil {
+			t.Fatal("unsupported framework flag change bypassed the guard")
+		}
 	}
 }
