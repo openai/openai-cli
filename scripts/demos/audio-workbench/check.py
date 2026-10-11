@@ -501,8 +501,11 @@ def main():
         (args.output / "failure-recovered.wav").write_bytes(original)
         terminal.send(b"\x1b[Z" + picker.END + b"\r")
         visible_failure(("More actions", "Back to form"), absent=("Last error",))
-        terminal.send(b"\x1b\t")
-        visible_failure(("Duration 00:02.000", "Play audio"))
+        terminal.send(b"\x1b")
+        main_form()
+        visible_failure(("› More actions…",))
+        terminal.send(b"\t")
+        visible_failure(("Duration 00:02.000", "› Play audio"))
         result["failure_checks"] = {
             "http_status": 401, "request_id": fixture.FAILURE_REQUEST_ID,
             "safe_details_visible": True, "untrusted_message_canaries_absent": True,
