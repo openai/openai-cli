@@ -149,7 +149,9 @@ func TestAudioFailureDetailsScrollAndResizeRemainBounded(t *testing.T) {
 	for range 100 {
 		audioReviewKey(m, tea.KeyDown)
 	}
-	require.Contains(t, audioFeedbackView(t, m), "_tail")
+	// Reconstruct the wrapped identifier before checking that every cell remains visible.
+	visible := strings.Join(strings.Fields(audioFeedbackView(t, m)), "")
+	require.Contains(t, visible, failure.Response.Header.Get("X-Request-Id"))
 	require.LessOrEqual(t, m.failureOffset, len(m.failureDetailRows())-m.failureDetailHeight())
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 32})
 	audioReviewKey(m, tea.KeyUp)
