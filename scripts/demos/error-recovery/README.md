@@ -1,7 +1,7 @@
 # Error recovery replay
 
 The scenes run actual CLI binaries with isolated configuration and synthetic inputs.
-They make no API calls and show real failing exit statuses.
+They show real exit statuses. Recovery scenes use a local synthetic API fixture.
 Use matching binaries and record their full commit IDs.
 
 ```sh
@@ -36,3 +36,17 @@ bash scripts/demos/error-recovery/record-scope.sh \
 
 Use a separate output directory with `narrow` for the 40-column light replay.
 Both profiles set `NO_COLOR=1`. The shared recorder owns server shutdown and capture cleanup.
+
+The numeric replay compares published `18ae8487` with the reviewed candidate.
+It shows explicit and piped invalid values, then a corrected piped request.
+Each phase makes exactly one synthetic GET request.
+
+```sh
+bash scripts/demos/error-recovery/record-numeric.sh \
+  /absolute/path/before/openai /absolute/path/after/openai \
+  18ae848748d96e9b7f0d57378f9d89b981277816 AFTER_COMMIT \
+  /absolute/path/new-numeric-output normal
+```
+
+Use `narrow` for a separate 40-column replay. Both profiles disable color.
+The script checks the earlier executable hash, current source, request counts, and complete recovery text.

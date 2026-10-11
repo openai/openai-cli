@@ -2,6 +2,9 @@
 
 Command errors go to stderr and keep their failing exit status.
 The CLI suggests a correction but never runs it.
+The shell must first find the `openai` executable.
+For example, `opneai images generate` fails inside the shell before the CLI starts.
+Correct the executable name to `openai`; keep the remaining arguments unchanged.
 
 ```text
 $ openai modles list
@@ -47,6 +50,12 @@ Read and cleanup failures retain their underlying causes.
 
 Existing flag guidance still identifies missing values, expected types, and required options.
 Use the suggested help command to inspect options in the correct scope.
+Nested options inherit the same recovery through their declared parent options.
+
+New registered commands and flags enter the shared recovery path automatically.
+The declaration audit checks the production command tree, including compatibility routes.
+Its coverage guard rejects unclassified declarations during testing, without rejecting new API fields at runtime.
+Operation-specific failures still need caller-supplied context when the shared handler cannot determine a safe repair.
 
 Local utility errors preserve their specific repair instructions.
 Manpage errors identify `--output` and report potentially incomplete files.

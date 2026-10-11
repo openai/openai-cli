@@ -102,7 +102,7 @@ func TestMainRecoveryManpageOutput(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				failed := runLocalRecovery(t, env, mode, "@manpages", "--output", failedPath)
+				failed := runLocalRecovery(t, env, mode, "@manpages", "--text", "--gzip", "--output", failedPath)
 				message := localRecoveryMessage(t, failed, mode, 1)
 				if !strings.Contains(message, "--output") || !strings.Contains(message, "permissions") {
 					t.Fatalf("missing destination repair: %q", message)
@@ -122,7 +122,7 @@ func TestMainRecoveryManpageOutput(t *testing.T) {
 				}
 				// Follow --output guidance with a new isolated writable destination.
 				recoveredPath := filepath.Join(home, "recovered")
-				recovered := runLocalRecovery(t, env, mode, "@manpages", "--output", recoveredPath)
+				recovered := runLocalRecovery(t, env, mode, "@manpages", "--text", "--gzip", "--output", recoveredPath)
 				if recovered.code != 0 || recovered.stdout != "" {
 					t.Fatalf("manpage retry failed: %+v", recovered)
 				}
@@ -161,6 +161,41 @@ func TestMainRecoveryManpageOutput(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestMainRecoveryManpageGzipDefault(t *testing.T) {
+	for _, mode := range localRecoveryModes() {
+		t.Run(mode.name, func(t *testing.T) {
+			home, env, requests := localRecoveryEnvironment(t)
+			destination := filepath.Join(home, "manpages")
+			got := runLocalRecovery(t, env, mode, "@manpages", "--output", destination)
+			if got.code != 0 || got.stdout != "" {
+				t.Fatalf("default manpage output failed: %+v", got)
+			}
+			if mode.name != "text" && got.stderr != "" {
+				t.Fatalf("default save receipt polluted a suppressed stream: %+v", got)
+			}
+			if _, err := os.Stat(filepath.Join(destination, "man1", "openai.1")); !os.IsNotExist(err) {
+				t.Fatalf("default unexpectedly created an uncompressed manpage: %v", err)
+			}
+			compressed, err := os.ReadFile(filepath.Join(destination, "man1", "openai.1.gz"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader, err := gzip.NewReader(bytes.NewReader(compressed))
+			if err != nil {
+				t.Fatal(err)
+			}
+			content, readErr := io.ReadAll(reader)
+			closeErr := reader.Close()
+			if readErr != nil || closeErr != nil || !bytes.Contains(content, []byte("openai")) {
+				t.Fatalf("default gzip manpage is unusable: %v, %v", readErr, closeErr)
+			}
+			if requests.Load() != 0 {
+				t.Fatalf("default manpage output made %d requests", requests.Load())
+			}
+		})
 	}
 }
 

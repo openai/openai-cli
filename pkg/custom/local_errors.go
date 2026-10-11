@@ -78,7 +78,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 				name = "-" + flag.Names()[0]
 			}
 			message = "Invalid piped input for " + name + "."
-			if expected := parserFlagExpectedType(command, stdinFailure.FlagName()); expected != "" {
+			if expected := parserFlagTypeDescription(flag); expected != "" {
 				message += " Expected " + expected + "."
 			}
 			break
@@ -270,7 +270,36 @@ func parserErrorFlags(command *cli.Command) []cli.Flag {
 	if command == nil {
 		return nil
 	}
-	return append(command.VisibleFlags(), command.VisiblePersistentFlags()...)
+	flags := append(command.VisibleFlags(), command.VisiblePersistentFlags()...)
+	// InnerFlag is a valid parser declaration without cli.VisibleFlag. Follow
+	// its actual outer declarations, excluding hidden and unrelated chains.
+	visibleOuter := func(flag cli.Flag) bool {
+		seen := map[cli.Flag]bool{}
+		for flag != nil {
+			if visible, ok := flag.(cli.VisibleFlag); ok && !visible.IsVisible() {
+				return false
+			}
+			if slices.Contains(flags, flag) {
+				return true
+			}
+			if seen[flag] || !slices.Contains(command.Flags, flag) {
+				return false
+			}
+			inner, ok := flag.(requestflag.HasOuterFlag)
+			if !ok {
+				return false
+			}
+			seen[flag] = true
+			flag = inner.GetOuterFlag()
+		}
+		return false
+	}
+	for _, flag := range command.Flags {
+		if !slices.Contains(flags, flag) && visibleOuter(flag) {
+			flags = append(flags, flag)
+		}
+	}
+	return flags
 }
 
 func parserFlagExpectedType(command *cli.Command, name string) string {
@@ -278,17 +307,21 @@ func parserFlagExpectedType(command *cli.Command, name string) string {
 		if !slices.Contains(flag.Names(), name) {
 			continue
 		}
-		if documented, ok := flag.(cli.DocGenerationFlag); ok {
-			switch documented.TypeName() {
-			case "int", "uint":
-				return "an integer, such as 1"
-			case "float":
-				return "a number, such as 0.5"
-			case "bool", "boolean":
-				return "a boolean (true or false)"
-			}
+		return parserFlagTypeDescription(flag)
+	}
+	return ""
+}
+
+func parserFlagTypeDescription(flag cli.Flag) string {
+	if documented, ok := flag.(cli.DocGenerationFlag); ok {
+		switch documented.TypeName() {
+		case "int", "uint":
+			return "an integer, such as 1"
+		case "float":
+			return "a number, such as 0.5"
+		case "bool", "boolean":
+			return "a boolean (true or false)"
 		}
-		return ""
 	}
 	return ""
 }

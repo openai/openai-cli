@@ -19,7 +19,7 @@ func unavailableParserFlag(command *cli.Command, provided string) string {
 	}
 	var find func(*cli.Command) string
 	find = func(current *cli.Command) string {
-		for _, flag := range current.VisibleFlags() {
+		for _, flag := range parserErrorFlags(current) {
 			for _, name := range flag.Names() {
 				if name == provided {
 					if len(name) == 1 {
