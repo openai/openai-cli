@@ -27,8 +27,8 @@ func TestMainParserErrorGuidance(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{"integer", []string{"models", "list", "--max-items", "synthetic-private-value"}, []string{"Invalid value for --max-items. Expected an integer.", "openai models list --help"}},
-		{"number", []string{"responses", "create", "--temperature", "synthetic-private-value"}, []string{"Invalid value for --temperature. Expected a number.", "openai responses create --help"}},
+		{"integer", []string{"models", "list", "--max-items", "synthetic-private-value"}, []string{"Invalid value for --max-items. Expected an integer, such as 1.", "openai models list --help"}},
+		{"number", []string{"responses", "create", "--temperature", "synthetic-private-value"}, []string{"Invalid value for --temperature. Expected a number, such as 0.5.", "openai responses create --help"}},
 		{"boolean", []string{"responses", "create", "--background", "synthetic-private-value"}, []string{"Invalid value for --background. Expected a boolean (true or false).", "openai responses create --help"}},
 		{"transposed flag", []string{"models", "list", "--max-itmes=synthetic-private-value"}, []string{"Did you mean --max-items?", "openai models list --help"}},
 		{"inherited flag", []string{"models", "list", "--formta=synthetic-private-value"}, []string{"Did you mean --format?", "openai models list --help"}},

@@ -71,7 +71,7 @@ func TestUnavailableParserFlagPreservesAliasShadowing(t *testing.T) {
 		t.Fatal("expected integer parsing failure")
 	}
 	got := localErrorMessage(root, err)
-	if !strings.Contains(got, "Invalid value for --project. Expected an integer.") || strings.Contains(got, "not available") {
+	if !strings.Contains(got, "Invalid value for --project. Expected an integer, such as 1.") || strings.Contains(got, "not available") {
 		t.Fatalf("wrong local flag classification: %q", got)
 	}
 	for _, name := range []string{"project", "p"} {
@@ -95,7 +95,7 @@ func TestUnavailableParserFlagPreservesDifferentNameAliasShadowing(t *testing.T)
 		t.Fatal("expected integer parsing failure")
 	}
 	got := localErrorMessage(root, err)
-	if !strings.Contains(got, "Invalid value for --count. Expected an integer.") || strings.Contains(got, "not available") {
+	if !strings.Contains(got, "Invalid value for --count. Expected an integer, such as 1.") || strings.Contains(got, "not available") {
 		t.Fatalf("wrong local alias classification: %q", got)
 	}
 	for _, name := range []string{"count", "p"} {

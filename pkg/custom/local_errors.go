@@ -13,12 +13,18 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
 
 // Local diagnostics can contain rejected values, file names, and credentialed
 // URLs. Classify them into local prose; terminal escaping is not redaction.
 func localErrorMessage(root *cli.Command, failure error) string {
+	command := root
+	var contextual *commandError
+	if errors.As(failure, &contextual) && contextual.command != nil {
+		command = contextual.command
+	}
 	var timeout net.Error
 	var networkError *url.Error
 	var connectionError *net.OpError
@@ -26,6 +32,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var syntaxError *json.SyntaxError
 	var pathError *os.PathError
 	var inputFailure *inputFileError
+	var stdinFailure *requestflag.StdinValueError
 	var pagerFailure *pagerError
 	var imageFailure *imageSavingError
 	var streamFailure *streamResultError
@@ -56,6 +63,23 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return navigationFailure.Error()
 	case errors.As(failure, &streamFailure):
 		return streamFailure.message + "\nOutput may be incomplete."
+	case errors.As(failure, &stdinFailure):
+		message := "Could not apply piped input. Check the input's field names and value types."
+		for _, flag := range parserErrorFlags(command) {
+			if !slices.Contains(flag.Names(), stdinFailure.FlagName()) {
+				continue
+			}
+			name := "--" + flag.Names()[0]
+			if len(flag.Names()[0]) == 1 {
+				name = "-" + flag.Names()[0]
+			}
+			message = "Invalid piped input for " + name + "."
+			if expected := parserFlagExpectedType(command, stdinFailure.FlagName()); expected != "" {
+				message += " Expected " + expected + "."
+			}
+			break
+		}
+		return parserErrorGuidance(command, message)
 	case errors.As(failure, &typeError):
 		return "Could not decode JSON: a value has an unexpected type."
 	case errors.As(failure, &syntaxError):
@@ -80,11 +104,6 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		default:
 			return "A local file could not be read or written. Check your file arguments and permissions."
 		}
-	}
-	command := root
-	var contextual *commandError
-	if errors.As(failure, &contextual) && contextual.command != nil {
-		command = contextual.command
 	}
 	for err := failure; err != nil; err = errors.Unwrap(err) {
 		if message := knownLocalError(command, err.Error()); message != "" {
@@ -256,9 +275,9 @@ func parserFlagExpectedType(command *cli.Command, name string) string {
 		if documented, ok := flag.(cli.DocGenerationFlag); ok {
 			switch documented.TypeName() {
 			case "int", "uint":
-				return "an integer"
+				return "an integer, such as 1"
 			case "float":
-				return "a number"
+				return "a number, such as 0.5"
 			case "bool", "boolean":
 				return "a boolean (true or false)"
 			}
