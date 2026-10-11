@@ -161,6 +161,71 @@ func TestAudioNavigationWrappedUnicodeUsesVisualRows(t *testing.T) {
 	}
 }
 
+func TestAudioNavigationWrappedPaddingBeforeNextLogicalLine(t *testing.T) {
+	for _, focus := range []int{0, 1} {
+		t.Run(fmt.Sprintf("focus_%d", focus), func(t *testing.T) {
+			m, editor := audioNavigationEditor(t, focus, "Initial text")
+			require.Zero(t, editor.Width()%4, "fixture needs complete wide-character pairs")
+			firstLine := strings.Repeat("界🙂", 3*editor.Width()/4)
+			const nextLine = "Next logical row"
+			editor.SetValue(firstLine + "\n" + nextLine)
+			m.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
+			editor.MoveToBegin()
+			require.Equal(t, 2, editor.LineCount())
+			require.Equal(t, 4, editor.LineInfo().Height, "exact-width text must retain its cursor-only padding row")
+			for _, row := range []int{1, 2, 3} {
+				audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+				require.Equal(t, focus, m.focus, "padding navigation left the editor")
+				require.Zero(t, editor.Line(), "padding row was skipped for the next logical line")
+				require.Equal(t, row, editor.LineInfo().RowOffset)
+			}
+			require.Equal(t, len([]rune(firstLine)), editor.Column())
+			require.Equal(t, editor.Column(), editor.LineInfo().StartColumn)
+			require.Positive(t, editor.ScrollYOffset(), "padding caret did not scroll into the viewport")
+			visibleCaretRow := editor.LineInfo().RowOffset - editor.ScrollYOffset()
+			require.GreaterOrEqual(t, visibleCaretRow, 0)
+			require.Less(t, visibleCaretRow, editor.Height())
+
+			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+			require.Equal(t, focus, m.focus)
+			require.Equal(t, 1, editor.Line(), "Down did not reach the next logical line")
+			require.Zero(t, editor.LineInfo().RowOffset)
+			require.Contains(t, ansi.Strip(editor.View()), nextLine, "next logical line is outside the visible viewport")
+			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+			require.Equal(t, focus+1, m.focus, "Down did not leave after the final logical line")
+		})
+	}
+}
+
+func TestAudioNavigationAdjacentWrapWidths(t *testing.T) {
+	for _, delta := range []int{-1, 0, 1} {
+		t.Run(fmt.Sprintf("width_delta_%d", delta), func(t *testing.T) {
+			m, editor := audioNavigationEditor(t, 0, "Initial text")
+			text := strings.Repeat("x", editor.Width()+delta)
+			editor.SetValue(text)
+			m.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
+			editor.MoveToBegin()
+			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+			if delta < 0 {
+				require.Equal(t, 1, m.focus, "unwrapped text did not reach Instructions")
+				return
+			}
+			require.Zero(t, m.focus, "wrapped text left before its final visual row")
+			require.Equal(t, 1, editor.LineInfo().RowOffset)
+			require.Equal(t, editor.Width(), editor.Column(), "Down skipped the last visual row's first cell")
+			if delta == 0 {
+				require.Equal(t, len(text), editor.Column(), "exact-width padding caret is missing")
+			} else {
+				require.Less(t, editor.Column(), len(text), "ordinary wrapped text incorrectly used the padding fallback")
+			}
+			require.Equal(t, 0, editor.LineInfo().RowOffset-editor.ScrollYOffset(), "final visual row is outside the one-row editor")
+			require.Equal(t, 1, editor.Height())
+			audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+			require.Equal(t, 1, m.focus)
+		})
+	}
+}
+
 func TestAudioNavigationPreservesSelectionAndModifiedArrows(t *testing.T) {
 	for _, focus := range []int{0, 1} {
 		for _, direction := range []rune{tea.KeyUp, tea.KeyDown} {

@@ -454,14 +454,20 @@ def main():
         check("Model Up enters Instructions", "instructions", up)
         check("Instructions Up enters Text", "text", up)
 
+        editor_columns = terminal.initial_size[0] - 8
+        result["exact_width_editor_columns"] = editor_columns
         for editor in ("text", "instructions"):
             for name, value in (("single-line", "Boundary"), ("multiline", "First line\nSecond line\nThird line"),
-                                ("wrapped-unicode", "界🙂e\u0301 " * 26)):
+                                ("wrapped-unicode", "界🙂e\u0301 " * 26), ("exact-width-unicode", "界" * editor_columns)):
                 prefix = editor + " " + name
                 if editor == "instructions":
                     check(prefix + " enter editor", "instructions", down)
                 paste(terminal, value)
                 check(prefix + " paste keeps editor", editor)
+                if name == "exact-width-unicode":
+                    # Each character occupies two cells. Two complete visual
+                    # rows leave the textarea's synthetic end-padding row.
+                    check(prefix + " End reaches padding row", editor, picker.END)
                 if name == "single-line":
                     for label, keys in (("Shift Down", b"\x1b[1;2B"), ("Alt Down", b"\x1b[1;3B"),
                                         ("Ctrl Down", b"\x1b[1;5B"), ("selection Down", b"\x1b[1;2D" + down)):
@@ -470,7 +476,8 @@ def main():
                     check(editor + " Alt Enter inserts a newline", editor, b"\x1b\r")
                     paste(terminal, "Second")
                 check(prefix + " Up stays within visual rows", editor, ss3_up)
-                check(prefix + " Down returns to last visual row", editor, down)
+                row = "padding row" if name == "exact-width-unicode" else "last visual row"
+                check(prefix + " Down returns to " + row, editor, down)
                 if name == "wrapped-unicode" and editor == "text":
                     mark(terminal, result["case"] + "-wrapped-unicode", result)
                 check(prefix + " last-row Down leaves editor", "instructions" if editor == "text" else "model", ss3_down)

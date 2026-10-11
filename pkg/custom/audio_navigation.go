@@ -59,6 +59,18 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			return false, nil
 		}
 		line := editor.LineInfo()
+		// Bubbles cannot move Down into a cursor-only wrap row. Reach it
+		// through the editor so its viewport and cursor refresh together.
+		if key == "down" {
+			end := *editor
+			end.CursorEnd()
+			last := end.LineInfo()
+			if line.RowOffset+1 == last.RowOffset && last.StartColumn == end.Column() {
+				var command tea.Cmd
+				*editor, command = editor.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+				return true, command
+			}
+		}
 		if key == "up" && editor.Line() == 0 && line.RowOffset == 0 && m.focus == 1 {
 			return true, m.focusSection(0)
 		}
