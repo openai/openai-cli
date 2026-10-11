@@ -14,34 +14,153 @@ import (
 	"github.com/openai/openai-cli/internal/readable"
 )
 
+// Keep the audio form aligned with the image picker's palette and cell budgets.
+func (m *audioWorkbench) audioWidth() int { return max(1, min(100, m.width-4)) }
+
 func (m *audioWorkbench) accent() lipgloss.Style {
 	s := lipgloss.NewStyle()
 	if m.color {
+		s = s.Bold(true)
 		color := "#3159BC"
 		if m.dark {
 			color = "#8AA8FF"
 		}
-		s = s.Foreground(lipgloss.Color(color)).Bold(true)
+		s = s.Foreground(lipgloss.Color(color))
+	}
+	return s
+}
+
+func (m *audioWorkbench) strong() lipgloss.Style {
+	s := lipgloss.NewStyle()
+	if m.color {
+		s = s.Bold(true)
+	}
+	return s
+}
+
+func (m *audioWorkbench) muted() lipgloss.Style {
+	s := lipgloss.NewStyle()
+	if m.color {
+		color := "#657087"
+		if m.dark {
+			color = "#A4ACC2"
+		}
+		s = s.Foreground(lipgloss.Color(color))
 	}
 	return s
 }
 
 func (m *audioWorkbench) label(text string, active bool) string {
-	if active {
-		return m.accent().Render("> " + text)
+	if !active {
+		return "  " + text
 	}
-	return "  " + text
+	text = ansi.Truncate(text, max(1, m.audioWidth()-2), "…")
+	selected, accent := lipgloss.NewStyle(), m.accent()
+	if m.color {
+		fill, foreground := "#E9EFFE", "#20283B"
+		if m.dark {
+			fill, foreground = "#343D58", "#F2F4FA"
+		}
+		selected = selected.Bold(true).Foreground(lipgloss.Color(foreground)).Background(lipgloss.Color(fill))
+		accent = accent.Background(lipgloss.Color(fill))
+	}
+	return accent.Render("› ") + selected.Render(text+strings.Repeat(" ", max(0, m.audioWidth()-2-ansi.StringWidth(text))))
 }
 
 func (m *audioWorkbench) editorView(editor textarea.Model) string {
-	// Keep colors within the shared palette. NO_COLOR also clears library defaults.
 	style := textarea.Styles{}
+	style.Focused.Placeholder, style.Blurred.Placeholder = m.muted(), m.muted()
 	if m.color {
-		style.Focused.Prompt = m.accent()
-		style.Focused.CursorLine = lipgloss.NewStyle()
+		fill, foreground := "#E9EFFE", "#20283B"
+		if m.dark {
+			fill, foreground = "#343D58", "#F2F4FA"
+		}
+		style.Focused.CursorLine = lipgloss.NewStyle().Foreground(lipgloss.Color(foreground)).Background(lipgloss.Color(fill))
+		style.Focused.Text = lipgloss.NewStyle().Foreground(lipgloss.Color(foreground))
 	}
 	editor.SetStyles(style)
 	return editor.View()
+}
+
+func (m *audioWorkbench) editorRows(name string, editor textarea.Model, active bool) []string {
+	if m.height < 24 || m.width < 50 {
+		return []string{m.label(name, active), "  " + m.editorView(editor)}
+	}
+	border := lipgloss.NewStyle()
+	if m.color {
+		color := "#BAC4D8"
+		if m.dark {
+			color = "#51566B"
+		}
+		border = border.Foreground(lipgloss.Color(color))
+		if active {
+			border = m.accent().Bold(false)
+		}
+	}
+	caption := "╭ " + name + " "
+	if active && !m.color {
+		caption = "╭ › " + name + " "
+	}
+	width := m.audioWidth()
+	rows := []string{border.Render(caption + strings.Repeat("─", max(0, width-ansi.StringWidth(caption)-1)) + "╮")}
+	for _, line := range strings.Split(m.editorView(editor), "\n") {
+		line = ansi.Truncate(line, width-4, "…")
+		rows = append(rows, border.Render("│")+" "+line+strings.Repeat(" ", max(0, width-4-ansi.StringWidth(line)))+" "+border.Render("│"))
+	}
+	return append(rows, border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
+}
+
+func (m *audioWorkbench) previewRows(compact bool) []string {
+	preview := readable.Text(m.commandPreview())
+	// Preserve the existing byte-exact, shell-quoted command and horizontal navigation.
+	if m.focus == 3 {
+		offset := min(m.previewOffset, max(0, ansi.StringWidth(preview)-m.audioWidth()+2))
+		preview = ansi.Cut(preview, offset, ansi.StringWidth(preview))
+	}
+	height := 3
+	if compact {
+		height = 1
+	}
+	var rows []string
+	for preview != "" && len(rows) < height {
+		line := ansi.Cut(preview, 0, m.audioWidth()-2)
+		preview = ansi.Cut(preview, ansi.StringWidth(line), ansi.StringWidth(preview))
+		row := m.label(line, m.focus == 3 && len(rows) == 0)
+		if m.focus != 3 {
+			row = m.muted().Render(row)
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func (m *audioWorkbench) footerRows(compact bool) []string {
+	footer := m.previewRows(compact)
+	if !compact {
+		footer = append([]string{""}, footer...)
+	}
+	if m.busy {
+		footer = append(footer, fmt.Sprintf("%s · %.1f s · Ctrl+C cancels", m.note, time.Since(m.started).Seconds()))
+	} else {
+		hint := "Tab moves · Enter applies · Ctrl+G generates"
+		if m.focus < 2 {
+			hint = "Enter generates · Alt+Enter newline · Tab moves"
+		}
+		if m.focus == 2 {
+			hint = "Up/Down settings · Enter chooses · Left/Right speed"
+		}
+		if m.focus == 4 {
+			hint = "Space play/stop · X stop · S save · H history"
+		}
+		if m.focus == 3 {
+			hint = "↑↓ scroll command · Enter generates"
+		}
+		footer = append(footer, hint, "History keeps audio/text/instructions")
+	}
+	if m.note != "" && !m.busy {
+		footer = append(footer, m.feedbackLines()...)
+	}
+	return footer
 }
 
 func (m *audioWorkbench) View() tea.View {
@@ -51,7 +170,7 @@ func (m *audioWorkbench) View() tea.View {
 	if !m.usable() {
 		return tea.NewView(m.fitAudio([]string{"Resize to 40 x 12.", "Ctrl+C exits."}))
 	}
-	lines := []string{m.accent().Render("Text to speech")}
+	lines := []string{m.strong().Render("Text to speech")}
 	if m.modal == "choice" || m.modal == "history" {
 		title := "History"
 		count := len(m.entries)
@@ -97,33 +216,61 @@ func (m *audioWorkbench) View() tea.View {
 		return tea.NewView(m.fitAudio(lines))
 	}
 	compact := m.height < 24
+	footer := m.footerRows(compact)
 	for i, editor := range []textarea.Model{m.input, m.instructions} {
 		name := []string{"Text", "Instructions"}[i]
-		if m.focus == i {
-			lines = append(lines, m.label(name, true), m.editorView(editor))
+		if m.focus == i || i == 0 && !compact && m.width >= 50 && m.result == nil {
+			lines = append(lines, m.editorRows(name, editor, m.focus == i)...)
 		} else {
 			value := readable.Text(strings.ReplaceAll(editor.Value(), "\n", " "))
 			if value == "" {
-				value = "(empty)"
+				value = "(optional)"
+				if i == 0 {
+					value = "(empty)"
+				}
 			}
-			lines = append(lines, m.label(name+": "+value, false))
+			lines = append(lines, m.label(fmt.Sprintf("%-14s %s", name, value), false))
 		}
 	}
-	settings := []string{"Model: " + m.settings.Model, "Voice: " + m.settings.Voice, "Format: " + strings.ToUpper(m.settings.Format), fmt.Sprintf("Speed: %.2f x", m.settings.Speed), "Preview voice (generates and plays)", "Generate speech", "History", "Clear form"}
+	settings := []string{
+		fmt.Sprintf("%-14s %s", "Model", m.settings.Model),
+		fmt.Sprintf("%-14s %s", "Voice", imagePickerTitle(m.settings.Voice)),
+		fmt.Sprintf("%-14s %s", "Format", strings.ToUpper(m.settings.Format)),
+		fmt.Sprintf("%-14s %.2f x", "Speed", m.settings.Speed),
+		"Preview voice  Generate and play a sample", "Generate speech", "History", "Clear form",
+	}
 	for i := range settings {
 		settings[i] = readable.Text(settings[i])
 	}
 	if compact {
 		lines = append(lines, m.label(settings[m.setting], m.focus == 2))
 	} else {
-		for i := 0; i < 4; i++ {
-			lines = append(lines, m.label(settings[i], m.focus == 2 && m.setting == i))
+		lines = append(lines, m.strong().Render("  Settings"))
+		count := len(settings)
+		if m.result != nil {
+			count = 5
 		}
-		if m.setting >= 4 && m.focus == 2 {
-			lines = append(lines, m.label(settings[m.setting], true))
-		} else {
-			lines = append(lines, "  Preview voice · Generate · History · Clear")
+		available := max(1, m.height-1-len(footer)-len(lines))
+		selected := m.setting
+		if m.result != nil {
+			selected = min(selected, 4)
 		}
+		start := 0
+		if m.focus == 2 {
+			start = max(0, selected-available+1)
+		}
+		for i := start; i < min(count, start+available); i++ {
+			text, active := settings[i], m.focus == 2 && m.setting == i
+			if m.result != nil && i == 4 {
+				if m.focus == 2 && m.setting >= 4 {
+					text, active = settings[m.setting], true
+				} else {
+					text = "Preview voice · Generate · History · Clear"
+				}
+			}
+			lines = append(lines, m.label(text, active))
+		}
+
 	}
 	if m.result != nil {
 		r := m.result
@@ -137,7 +284,9 @@ func (m *audioWorkbench) View() tea.View {
 				if compact {
 					height = 1
 				}
-				lines = append(lines, m.accent().Render(audiomedia.Waveform(r.analysis.Peaks, min(94, m.width-4), height)))
+				for _, row := range strings.Split(audiomedia.Waveform(r.analysis.Peaks, max(1, m.audioWidth()-2), height), "\n") {
+					lines = append(lines, "  "+m.accent().Render(row))
+				}
 				lines = append(lines, "  Duration "+audioDuration(r.analysis.Duration)+" · Space play/stop · S save")
 			} else {
 				lines = append(lines, "  Duration/waveform unavailable. S still saves.")
@@ -146,33 +295,6 @@ func (m *audioWorkbench) View() tea.View {
 				lines = append(lines, "  Saved: "+readable.Text(path))
 			}
 		}
-	}
-	preview := "Bash/zsh: " + readable.Text(m.commandPreview())
-	if m.focus == 3 {
-		offset := min(m.previewOffset, max(0, ansi.StringWidth(preview)-m.width+4))
-		preview = ansi.Cut(preview, offset, ansi.StringWidth(preview))
-	}
-	footer := []string{m.label(preview, m.focus == 3)}
-	if m.busy {
-		footer = append(footer, fmt.Sprintf("%s · %.1f s · Ctrl+C cancels", m.note, time.Since(m.started).Seconds()))
-	} else {
-		hint := "Tab moves · Enter applies · Ctrl+G generates"
-		if m.focus < 2 {
-			hint = "Enter generates · Alt+Enter newline · Tab moves"
-		}
-		if m.focus == 2 {
-			hint = "Up/Down settings · Enter chooses · Left/Right speed"
-		}
-		if m.focus == 4 {
-			hint = "Space play/stop · X stop · S save · H history"
-		}
-		if m.focus == 3 {
-			hint = "Left/Right scroll command · Enter generates"
-		}
-		footer = append(footer, hint, "History saves audio, text, instructions.")
-	}
-	if m.note != "" && !m.busy {
-		footer = append(footer, m.feedbackLines()...)
 	}
 	budget := max(1, m.height-1-len(footer))
 	// Keep the focused result visible when the terminal contracts.
@@ -207,9 +329,9 @@ func (m *audioWorkbench) feedbackLines() []string {
 			note += " Esc exits with the error."
 		}
 	}
-	lines := strings.Split(ansi.Wrap(readable.Text(note), max(1, m.width-1), ""), "\n")
+	lines := strings.Split(ansi.Wrap(readable.Text(note), max(1, m.audioWidth()), ""), "\n")
 	if len(lines) > 2 {
-		lines = []string{lines[0], ansi.Truncate(strings.Join(lines[1:], " "), max(1, m.width-1), "…")}
+		lines = []string{lines[0], ansi.Truncate(strings.Join(lines[1:], " "), m.audioWidth(), "…")}
 	}
 	return lines
 }
@@ -218,7 +340,11 @@ func (m *audioWorkbench) fitAudio(lines []string) string {
 	var rows []string
 	for _, line := range lines {
 		for _, row := range strings.Split(line, "\n") {
-			rows = append(rows, ansi.Truncate(row, max(1, m.width-1), "…"))
+			if m.usable() {
+				rows = append(rows, "  "+ansi.Truncate(row, m.audioWidth(), "…"))
+			} else {
+				rows = append(rows, ansi.Truncate(row, max(1, m.width-1), "…"))
+			}
 		}
 	}
 	if len(rows) > max(1, m.height-1) {

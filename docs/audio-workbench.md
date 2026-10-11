@@ -11,7 +11,8 @@ Tab moves between editors, settings, the command preview, and the result.
 Up and Down select settings. Enter opens a choice or starts generation from an editor.
 Enter on Speed accepts an exact number from 0.25 to 4. Left and Right adjust speed by 0.25.
 Alt+Enter adds a newline. Ctrl+G generates from any ordinary form section.
-The command preview supports horizontal scrolling when focused.
+The form follows the image picker’s bordered editor, aligned settings, selection colors, and muted command preview.
+The focused command preview supports Up/Down scrolling and Left/Right adjustments.
 The preview uses Bash/zsh syntax and preserves supported project, organization, and endpoint overrides.
 Private credential overrides suppress the preview instead of exposing their values.
 The editors normalize line endings, expand tabs, and remove unsupported control and replacement characters.

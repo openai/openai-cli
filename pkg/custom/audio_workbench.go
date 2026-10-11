@@ -134,7 +134,24 @@ func audioTick() tea.Cmd {
 }
 func (m *audioWorkbench) usable() bool { return m.width >= 40 && m.height >= 12 }
 
+func (m *audioWorkbench) resizeEditors() {
+	for _, editor := range []*textarea.Model{&m.input, &m.instructions, &m.path, &m.speedInput} {
+		width := max(1, m.audioWidth()-4)
+		if editor.Width() != width {
+			editor.SetWidth(width)
+		}
+		height := 1
+		if m.height >= 24 && (editor == &m.input || editor == &m.instructions) {
+			height = min(3, 1+strings.Count(editor.Value(), "\n"))
+		}
+		if editor.Height() != height {
+			editor.SetHeight(height)
+		}
+	}
+}
+
 func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	defer m.resizeEditors()
 	if m.quit {
 		return m, nil
 	}
@@ -145,14 +162,6 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		for _, editor := range []*textarea.Model{&m.input, &m.instructions, &m.path, &m.speedInput} {
-			editor.SetWidth(max(1, min(96, m.width-4)))
-			editor.SetHeight(1)
-		}
-		if m.height >= 24 {
-			m.input.SetHeight(3)
-			m.instructions.SetHeight(3)
-		}
 	case tea.BackgroundColorMsg:
 		m.dark = msg.IsDark()
 	case audioWorkTick:
@@ -320,6 +329,10 @@ func (m *audioWorkbench) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.previewOffset = max(0, m.previewOffset-10)
 			case "right":
 				m.previewOffset += 10
+			case "up":
+				m.previewOffset = max(0, m.previewOffset-m.audioWidth()+2)
+			case "down":
+				m.previewOffset += m.audioWidth() - 2
 			case "home":
 				m.previewOffset = 0
 			}

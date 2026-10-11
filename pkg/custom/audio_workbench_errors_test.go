@@ -218,7 +218,7 @@ func TestAudioWorkbenchChoiceDialogsShowAsynchronousPlaybackFailure(t *testing.T
 					require.Contains(t, view, "FFmpeg.")
 					require.Contains(t, view, "Enter")
 					require.Contains(t, view, "Choosing never generates speech.")
-					require.Contains(t, view, "> "+m.choices[m.choice])
+					require.Contains(t, view, "› "+m.choices[m.choice])
 					require.NotContains(t, m.View().Content, "\x1b[2J")
 					require.Nil(t, audioReviewKey(m, tea.KeyDown))
 				}

@@ -282,7 +282,11 @@ func TestAudioReviewLayoutsRespectCellsAndColorOptOut(t *testing.T) {
 							}
 						}
 						if size[0] >= 40 && size[1] >= 12 {
-							require.Contains(t, ansi.Strip(view), "> ", "focus disappeared")
+							if focus < 2 && size[0] >= 50 && size[1] >= 24 && color {
+								require.Contains(t, ansi.Strip(view), "╭ "+[]string{"Text", "Instructions"}[focus]+" ", "focused editor disappeared")
+							} else {
+								require.Contains(t, ansi.Strip(view), "› ", "focus disappeared")
+							}
 						}
 					}
 				})
