@@ -497,6 +497,7 @@ func init() {
 					&adminOrganizationUsageCodeInterpreterSessions,
 					&adminOrganizationUsageCompletions,
 					&adminOrganizationUsageCosts,
+					&adminOrganizationUsageDecisions,
 					&adminOrganizationUsageEmbeddings,
 					&adminOrganizationUsageFileSearchCalls,
 					&adminOrganizationUsageImages,
