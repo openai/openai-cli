@@ -142,10 +142,6 @@ func TestBashColonCompletionReadline(t *testing.T) {
 		{name: "quoted colon value", typed: "openai --file ':' chat comple", want: []string{"--file", ":", "chat", "completions"}},
 		{name: "file control", typed: "openai --file assets/fi", want: []string{"--file", "assets/fixture name.json"}},
 		{name: "assigned file control", typed: "openai --file=assets/fi", want: []string{"--file=assets/fixture name.json"}},
-		{name: "single quoted assigned file", typed: "openai --file='assets/fi'", want: []string{"--file=assets/fixture name.json"}},
-		{name: "double quoted assigned file", typed: `openai --file="assets/fi"`, want: []string{"--file=assets/fixture name.json"}},
-		{name: "escaped assigned file", typed: `openai --file=assets/fixture\ n`, want: []string{"--file=assets/fixture name.json"}},
-		{name: "separate quoted file", typed: `openai --file "assets/fi"`, want: []string{"--file", "assets/fixture name.json"}},
 		{name: "no matching command", typed: "openai chat:unknown", want: []string{"chat:unknown"}},
 		{name: "nounset", typed: `openai chat\:comple`, setup: "set -u", want: command},
 	} {

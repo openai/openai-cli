@@ -49,7 +49,8 @@ func TestMainCompleteHelpAfterOptions(t *testing.T) {
 	}
 }
 
-func TestMainCompleteHelpPreservesFlagValues(t *testing.T) {
+// Keep the TestMainDispatch prefix selected by the native OS help matrix.
+func TestMainDispatchHelpPreservesFlagValues(t *testing.T) {
 	server, requests := localUtilitiesRequestTrap(t)
 	env := []string{"OPENAI_BASE_URL=" + server.URL, "OPENAI_API_KEY="}
 	want := runMainDispatchWithEnv(t, "bash", env, "openai", "help", "models", "list")
