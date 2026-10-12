@@ -26,7 +26,25 @@ func (s *StreamCompletionState) Observe(value gjson.Result, route Route) {
 			s.responseFinished = true
 		case "response.created", "response.queued", "response.in_progress", "response.output_item.added", "response.output_item.done",
 			"response.content_part.added", "response.content_part.done", "response.output_text.delta", "response.output_text.done",
-			"response.refusal.delta", "response.refusal.done", "response.function_call_arguments.delta", "response.function_call_arguments.done":
+			"response.refusal.delta", "response.refusal.done", "response.function_call_arguments.delta", "response.function_call_arguments.done",
+			"response.audio.delta", "response.audio.done", "response.audio.transcript.delta", "response.audio.transcript.done",
+			"response.code_interpreter_call_code.delta", "response.code_interpreter_call_code.done",
+			"response.code_interpreter_call.completed", "response.code_interpreter_call.in_progress", "response.code_interpreter_call.interpreting",
+			"response.compaction.compacting",
+			"response.file_search_call.completed", "response.file_search_call.in_progress", "response.file_search_call.searching",
+			"response.shell_call_command.added", "response.shell_call_command.delta", "response.shell_call_command.done",
+			"response.shell_call_output_content.delta", "response.shell_call_output_content.done",
+			"response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
+			"response.reasoning_summary_text.delta", "response.reasoning_summary_text.done", "response.reasoning_text.delta", "response.reasoning_text.done",
+			"response.web_search_call.completed", "response.web_search_call.in_progress", "response.web_search_call.searching",
+			"response.image_generation_call.completed", "response.image_generation_call.generating",
+			"response.image_generation_call.in_progress", "response.image_generation_call.partial_image",
+			"response.mcp_call_arguments.delta", "response.mcp_call_arguments.done",
+			"response.mcp_call.completed", "response.mcp_call.failed", "response.mcp_call.in_progress",
+			"response.mcp_list_tools.completed", "response.mcp_list_tools.failed", "response.mcp_list_tools.in_progress",
+			"response.output_text.annotation.added", "response.custom_tool_call_input.delta", "response.custom_tool_call_input.done":
+			// Resumed streams can omit response.created. Known tool completion
+			// events finish only that tool, not the enclosing response.
 			s.responseStarted = true
 		}
 	case "chat", "completions":
