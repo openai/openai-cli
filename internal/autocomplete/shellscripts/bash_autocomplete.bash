@@ -125,8 +125,8 @@ ____APPNAME___bash_autocomplete() {
         file_part="${current_value#"$assignment"}"
         # Readline replaces the callback word, after the last '=' or ':'.
         # Restore only the part that Readline includes in its replacement.
-        if [[ $# -ge 2 && "$current_value" == *"$2" ]]; then
-          replacement_prefix="${current_value%"$2"}"
+        if [[ $# -ge 2 && "$current_value" == *"$current_word" ]]; then
+          replacement_prefix="${current_value%"$current_word"}"
         fi
         while IFS= read -r file; do
           file="$assignment$file"
