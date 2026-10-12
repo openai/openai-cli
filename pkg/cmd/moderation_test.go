@@ -16,7 +16,7 @@ func TestModerationsCreate(t *testing.T) {
 			"--admin-api-key", "string",
 			"moderations", "create",
 			"--input", "I want to kill them.",
-			"--model", "omni-moderation-latest",
+			"--model", "omni-moderation-2024-09-26",
 		)
 	})
 
@@ -24,7 +24,7 @@ func TestModerationsCreate(t *testing.T) {
 		// Test piping YAML data over stdin
 		pipeData := []byte("" +
 			"input: I want to kill them.\n" +
-			"model: omni-moderation-latest\n")
+			"model: omni-moderation-2024-09-26\n")
 		mocktest.TestRunMockTestWithPipeAndFlags(
 			t, pipeData,
 			"--api-key", "string",

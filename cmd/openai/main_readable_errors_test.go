@@ -24,9 +24,9 @@ func TestMainReadableErrorsStayOnStderr(t *testing.T) {
 		name, contentType, body, want string
 		status                        int
 	}{
-		{"API error", "application/json", `{"error":{"message":"synthetic private response detail","code":"model_not_found","param":"model"}}`, "Request failed (404", http.StatusNotFound},
-		{"gateway text", "text/plain", "synthetic private response detail", "Request failed (502", http.StatusBadGateway},
-		{"malformed JSON", "application/json", `{"error":{"message":"synthetic private response detail"`, "Request failed (502", http.StatusBadGateway},
+		{"API error", "application/json", `{"error":{"message":"synthetic private response detail","code":"model_not_found","param":"model"}}`, "HTTP 404:", http.StatusNotFound},
+		{"gateway text", "text/plain", "synthetic private response detail", "HTTP 502:", http.StatusBadGateway},
+		{"malformed JSON", "application/json", `{"error":{"message":"synthetic private response detail"`, "HTTP 502:", http.StatusBadGateway},
 		{"unexpected shape", "application/json", `{"error":"synthetic private response detail"}`, "Could not decode JSON", http.StatusBadGateway},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -48,11 +48,11 @@ func TestMainReadableAPIArgumentGuidance(t *testing.T) {
 		args, want            []string
 	}{
 		{"encoding choice", "encoding_format", "invalid_value", 400,
-			[]string{"embeddings", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"--encoding-format", "float or base64", "help --all embeddings create"}},
+			[]string{"embeddings", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"--encoding-format", "float or base64", "help embeddings create"}},
 		{"nested indexed field", "messages[0].content", "invalid_type", 422,
-			[]string{"chat:completions", "create", "--model", "model-synthetic", "--message", `{"role":"user","content":"synthetic"}`}, []string{"--message", "Check the value's type", "help --all chat:completions create"}},
+			[]string{"chat:completions", "create", "--model", "model-synthetic", "--message", `{"role":"user","content":"synthetic"}`}, []string{"--message", "Check the value's type", "help chat:completions create"}},
 		{"nested command flag", "session.model", "invalid_value", 400,
-			[]string{"live:sessions", "accept", "--session-id", "sess_synthetic", "--session", `{"type":"live","model":"synthetic"}`}, []string{"--session.model", "help --all live:sessions accept"}},
+			[]string{"live:sessions", "accept", "--session-id", "sess_synthetic", "--session", `{"type":"live","model":"synthetic"}`}, []string{"--session.model", "help live:sessions accept"}},
 		{"required value", "input", "missing_required_parameter", 400,
 			[]string{"embeddings", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"Add --input with a value"}},
 		{"unsupported field", "temperature", "unsupported_parameter", 400,
@@ -60,7 +60,7 @@ func TestMainReadableAPIArgumentGuidance(t *testing.T) {
 		{"model context", "input", "context_length_exceeded", 400,
 			[]string{"responses", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"Shorten the input or conversation"}},
 		{"unknown sensitive param", "input\x1b]52;c;synthetic-private-secret\a\u202e", "synthetic-private-code", 400,
-			[]string{"embeddings", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"The API rejected the request", "help --all embeddings create"}},
+			[]string{"embeddings", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"The API rejected the request", "help embeddings create"}},
 		{"wrong command flag", "temperature", "invalid_value", 400,
 			[]string{"embeddings", "create", "--model", "model-synthetic", "--input", "synthetic"}, []string{"The API rejected the request"}},
 	} {
@@ -149,9 +149,13 @@ func TestMainSensitiveLocalErrors(t *testing.T) {
 		env, args         []string
 	}{
 		{
-			name: "invalid base URL", want: "OPENAI_BASE_URL",
+			name: "invalid environment base URL", want: "OPENAI_BASE_URL",
 			env:  []string{"OPENAI_BASE_URL=synthetic-private-host/?token=fake-secret"},
 			args: []string{"models", "list"},
+		},
+		{
+			name: "invalid explicit base URL", want: "--base-url",
+			args: []string{"--base-url", "synthetic-private-host/?token=fake-secret", "models", "list"},
 		},
 		{
 			name: "missing file", want: "local file",
@@ -181,9 +185,9 @@ func TestMainSensitiveLocalErrors(t *testing.T) {
 					}
 					t.Cleanup(func() { _ = stdin.Close() })
 				}
-				args := []string{"openai", "--base-url", server.URL, "--format-error", format}
+				args := []string{"openai", "--format-error", format}
 				args = append(args, test.args...)
-				env := append([]string{"OPENAI_API_KEY=synthetic-private-key"}, test.env...)
+				env := append([]string{"OPENAI_API_KEY=synthetic-private-key", "OPENAI_BASE_URL=" + server.URL}, test.env...)
 				result := runMainDispatchWithStdin(t, "bash", env, stdin, args...)
 				if result.code == 0 || result.stdout != "" || !strings.Contains(result.stderr, test.want) {
 					t.Errorf("local error = %+v; want failure, empty stdout and guidance containing %q", result, test.want)

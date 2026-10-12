@@ -16,7 +16,7 @@ func TestBetaAssistantsCreate(t *testing.T) {
 			"--api-key", "string",
 			"--admin-api-key", "string",
 			"beta:assistants", "create",
-			"--model", "gpt-5",
+			"--model", "gpt-4.1",
 			"--description", "description",
 			"--instructions", "instructions",
 			"--metadata", "{foo: string}",
@@ -40,7 +40,7 @@ func TestBetaAssistantsCreate(t *testing.T) {
 			"--api-key", "string",
 			"--admin-api-key", "string",
 			"beta:assistants", "create",
-			"--model", "gpt-5",
+			"--model", "gpt-4.1",
 			"--description", "description",
 			"--instructions", "instructions",
 			"--metadata", "{foo: string}",
@@ -58,7 +58,7 @@ func TestBetaAssistantsCreate(t *testing.T) {
 	t.Run("piping data", func(t *testing.T) {
 		// Test piping YAML data over stdin
 		pipeData := []byte("" +
-			"model: gpt-5\n" +
+			"model: gpt-4.1\n" +
 			"description: description\n" +
 			"instructions: instructions\n" +
 			"metadata:\n" +

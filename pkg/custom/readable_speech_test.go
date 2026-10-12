@@ -114,18 +114,25 @@ func TestSpeechOutputPreservesExactRawBytesAndStatus(t *testing.T) {
 				message, err := WriteBinaryResponse(response, &out, outfile)
 				if tc.wantError == "" {
 					require.NoError(t, err)
+				} else if mode == "file" {
+					var saveErr *downloadSaveError
+					require.ErrorAs(t, err, &saveErr)
+					require.ErrorContains(t, saveErr.cause, tc.wantError)
+					require.Empty(t, message)
 				} else {
 					require.EqualError(t, err, tc.wantError)
 					require.Empty(t, message)
 				}
 				require.True(t, body.closed)
 				if mode == "file" {
-					data, err := os.ReadFile(outfile)
-					require.NoError(t, err)
-					require.Equal(t, wire, string(data))
 					require.Empty(t, out.String())
 					if tc.wantError == "" {
+						data, err := os.ReadFile(outfile)
+						require.NoError(t, err)
+						require.Equal(t, wire, string(data))
 						require.Equal(t, "Wrote output to: "+outfile, message)
+					} else {
+						require.NoFileExists(t, outfile)
 					}
 				} else {
 					require.Equal(t, wire, out.String())

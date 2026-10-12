@@ -69,9 +69,65 @@ func TestSavedImagePreviewSkipsNonTerminalWithoutReadingFile(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
 	for _, mode := range []string{"auto", "on", "off"} {
 		var out, diagnostic bytes.Buffer
-		require.NoError(t, displaySavedImage(t.Context(), imageoutput.SavedImage{Path: "/not-a-real-image"}, &out, &diagnostic, mode))
+		rendered, err := displaySavedImage(t.Context(), imageoutput.SavedImage{Path: "/not-a-real-image"}, &out, &diagnostic, mode)
+		require.NoError(t, err)
+		require.False(t, rendered)
 		require.Empty(t, out.String())
 		require.Empty(t, diagnostic.String())
+	}
+}
+
+func TestWarpImageProtocolSelection(t *testing.T) {
+	native, withoutColor := "blocks", ""
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+		native, withoutColor = "kitty", "kitty"
+	}
+	for _, tc := range []struct {
+		name, mode, want string
+		tty              bool
+		extra            map[string]string
+	}{
+		{"automatic", "auto", native, true, nil},
+		{"explicit on", "on", native, true, nil},
+		{"off", "off", "", true, nil},
+		{"pipe cannot be forced", "on", "", false, nil},
+		{"ci", "on", "", true, map[string]string{"CI": "true"}},
+		{"ci false", "auto", native, true, map[string]string{"CI": "false"}},
+		{"dumb", "on", "", true, map[string]string{"TERM": "dumb"}},
+		{"tmux", "on", "blocks", true, map[string]string{"TMUX": "active"}},
+		{"tmux term", "on", "blocks", true, map[string]string{"TERM": "tmux-256color"}},
+		{"screen", "on", "blocks", true, map[string]string{"STY": "active"}},
+		{"screen term", "on", "blocks", true, map[string]string{"TERM": "screen-256color"}},
+		{"zellij", "on", "blocks", true, map[string]string{"ZELLIJ": "active"}},
+		{"no color preserves native", "auto", withoutColor, true, map[string]string{"NO_COLOR": "1"}},
+		{"clicolor preserves native", "auto", withoutColor, true, map[string]string{"CLICOLOR": "0"}},
+		{"no color disables mux fallback", "on", "", true, map[string]string{"TMUX": "active", "NO_COLOR": "1"}},
+		{"missing identity", "auto", "blocks", true, map[string]string{"TERM_PROGRAM": ""}},
+		{"different identity", "auto", "blocks", true, map[string]string{"TERM_PROGRAM": "unknown"}},
+		{"wsl distro auto", "auto", "blocks", true, map[string]string{"WSL_DISTRO_NAME": "Ubuntu"}},
+		{"wsl distro on", "on", "blocks", true, map[string]string{"WSL_DISTRO_NAME": "Ubuntu"}},
+		{"wsl interop auto", "auto", "blocks", true, map[string]string{"WSL_INTEROP": "/run/WSL/42_interop"}},
+		{"wsl interop on", "on", "blocks", true, map[string]string{"WSL_INTEROP": "/run/WSL/42_interop"}},
+		{"ssh connection auto", "auto", "blocks", true, map[string]string{"SSH_CONNECTION": "192.0.2.1 1234 192.0.2.2 22"}},
+		{"ssh connection on", "on", "blocks", true, map[string]string{"SSH_CONNECTION": "192.0.2.1 1234 192.0.2.2 22"}},
+		{"ssh client auto", "auto", "blocks", true, map[string]string{"SSH_CLIENT": "192.0.2.1 1234 22"}},
+		{"ssh client on", "on", "blocks", true, map[string]string{"SSH_CLIENT": "192.0.2.1 1234 22"}},
+		{"ssh tty auto", "auto", "blocks", true, map[string]string{"SSH_TTY": "/dev/pts/1"}},
+		{"ssh tty on", "on", "blocks", true, map[string]string{"SSH_TTY": "/dev/pts/1"}},
+		{"no color disables wsl fallback", "on", "", true, map[string]string{"WSL_DISTRO_NAME": "Ubuntu", "NO_COLOR": "1"}},
+		{"clicolor disables wsl fallback", "auto", "", true, map[string]string{"WSL_INTEROP": "/run/WSL/42_interop", "CLICOLOR": "0"}},
+		{"no color disables ssh fallback", "auto", "", true, map[string]string{"SSH_TTY": "/dev/pts/1", "NO_COLOR": "1"}},
+		{"clicolor disables ssh fallback", "on", "", true, map[string]string{"SSH_CONNECTION": "192.0.2.1 1234 192.0.2.2 22", "CLICOLOR": "0"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := map[string]string{"TERM_PROGRAM": "WarpTerminal", "TERM": "xterm-256color"}
+			for key, value := range tc.extra {
+				env[key] = value
+			}
+			getenv := func(key string) string { return env[key] }
+			require.Equal(t, tc.want, savedImageProtocol(tc.mode, tc.tty, getenv))
+			require.Equal(t, tc.want, imageProgressProtocol(tc.mode, tc.tty, getenv))
+		})
 	}
 }
 
@@ -188,7 +244,9 @@ func TestSavedImagePreviewTerminal(t *testing.T) {
 		t.Run(program, func(t *testing.T) {
 			t.Setenv("TERM_PROGRAM", program)
 			var diagnostic bytes.Buffer
-			require.NoError(t, displaySavedImage(t.Context(), imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &diagnostic, "auto"))
+			rendered, err := displaySavedImage(t.Context(), imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &diagnostic, "auto")
+			require.NoError(t, err)
+			require.True(t, rendered)
 			require.Empty(t, diagnostic.String())
 			unchanged, err := os.ReadFile(file)
 			require.NoError(t, err)
@@ -197,16 +255,22 @@ func TestSavedImagePreviewTerminal(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	require.ErrorIs(t, displaySavedImage(ctx, imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &bytes.Buffer{}, "auto"), context.Canceled)
+	rendered, err := displaySavedImage(ctx, imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &bytes.Buffer{}, "auto")
+	require.ErrorIs(t, err, context.Canceled)
+	require.False(t, rendered)
 	var diagnostic bytes.Buffer
-	require.NoError(t, displaySavedImage(t.Context(), imageoutput.SavedImage{Path: "/not-a-real-file"}, os.Stdout, &diagnostic, "auto"))
+	rendered, err = displaySavedImage(t.Context(), imageoutput.SavedImage{Path: "/not-a-real-file"}, os.Stdout, &diagnostic, "auto")
+	require.NoError(t, err)
+	require.False(t, rendered)
 	require.Contains(t, diagnostic.String(), "No need to generate again")
 	tall := image.NewNRGBA(image.Rect(0, 0, 1, 16384))
 	encoded.Reset()
 	require.NoError(t, png.Encode(&encoded, tall))
 	require.NoError(t, os.WriteFile(file, encoded.Bytes(), 0o600))
 	diagnostic.Reset()
-	require.NoError(t, displaySavedImage(t.Context(), imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &diagnostic, "auto"))
+	rendered, err = displaySavedImage(t.Context(), imageoutput.SavedImage{Path: file, SHA256: sha256.Sum256(encoded.Bytes())}, os.Stdout, &diagnostic, "auto")
+	require.NoError(t, err)
+	require.False(t, rendered)
 	require.Contains(t, diagnostic.String(), "too tall")
 	diagnostic.Reset()
 	require.ErrorIs(t, displayDecodedSavedImage(t.Context(), tall, os.Stdout, &diagnostic, "blocks"), errImagePreviewUnavailable)
@@ -420,3 +484,45 @@ func TestSavedImageFallbackResizeTerminal(t *testing.T) {
 type previewNoticeWriter func([]byte) (int, error)
 
 func (w previewNoticeWriter) Write(data []byte) (int, error) { return w(data) }
+
+func TestSavedImageProtocolKittyInheritedAppleIdentity(t *testing.T) {
+	apple := "blocks"
+	if runtime.GOOS == "darwin" {
+		apple = "font"
+	}
+	for _, tc := range []struct {
+		name, mode, want string
+		tty              bool
+		extra            map[string]string
+	}{
+		{"auto", "auto", "kitty", true, nil},
+		{"on", "on", "kitty", true, nil},
+		{"off", "off", "", true, nil},
+		{"pipe", "on", "", false, nil},
+		{"ci", "on", "", true, map[string]string{"CI": "true"}},
+		{"dumb", "on", "", true, map[string]string{"TERM": "dumb"}},
+		{"tmux", "on", "blocks", true, map[string]string{"TMUX": "active"}},
+		{"screen", "on", "blocks", true, map[string]string{"STY": "active"}},
+		{"zellij", "on", "blocks", true, map[string]string{"ZELLIJ": "active"}},
+		{"tmux term", "on", "blocks", true, map[string]string{"TERM": "tmux-256color"}},
+		{"screen term", "on", "blocks", true, map[string]string{"TERM": "screen-256color"}},
+		{"no window identity", "on", apple, true, map[string]string{"KITTY_WINDOW_ID": ""}},
+		{"inherited window identity", "on", apple, true, map[string]string{"TERM": "xterm-256color"}},
+		{"vscode identity", "on", "blocks", true, map[string]string{"TERM_PROGRAM": "vscode"}},
+		{"vscode opt in", "on", "iterm-auto", true, map[string]string{"TERM_PROGRAM": "vscode", "OPENAI_VSCODE_IMAGES": "1"}},
+		{"iterm identity", "on", "iterm", true, map[string]string{"TERM_PROGRAM": "iTerm.app"}},
+		{"no color", "auto", "kitty", true, map[string]string{"NO_COLOR": "1"}},
+		{"ssh", "auto", "kitty", true, map[string]string{"SSH_TTY": "/dev/pts/1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := map[string]string{
+				"TERM": "xterm-kitty", "TERM_PROGRAM": "Apple_Terminal",
+				"KITTY_WINDOW_ID": "1", "COLORTERM": "truecolor",
+			}
+			for key, value := range tc.extra {
+				env[key] = value
+			}
+			require.Equal(t, tc.want, savedImageProtocol(tc.mode, tc.tty, func(key string) string { return env[key] }))
+		})
+	}
+}

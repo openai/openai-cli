@@ -79,10 +79,31 @@ func TestMainNativeShell(t *testing.T) {
 			} else if shell.name == "powershell" || shell.name == "pwsh" {
 				invocation = "& '" + strings.ReplaceAll(executable, "'", "''") + "'"
 			}
+			if runtime.GOOS != "windows" {
+				t.Run("copy typo suggestion with another openai on PATH", func(t *testing.T) {
+					other := t.TempDir()
+					if err := os.WriteFile(filepath.Join(other, "openai"), []byte("#!/bin/sh\nprintf 'wrong executable\\n'\nexit 99\n"), 0o700); err != nil {
+						t.Fatal(err)
+					}
+					t.Setenv("PATH", other+string(os.PathListSeparator)+os.Getenv("PATH"))
+					for _, args := range []string{"help admin organization projcts", "admin organization projcts", "help audio:transcriptins"} {
+						got := runNativeShell(t, shell, other, home, "http://127.0.0.1:1", invocation+" "+args)
+						_, suggestion, found := strings.Cut(got.stderr, "Did you mean '")
+						suggestion = strings.TrimSuffix(strings.TrimSpace(suggestion), "'?")
+						if got.code != 3 || !found || !strings.HasPrefix(suggestion, invocation+" ") {
+							t.Fatalf("suggestion changed executable identity: %+v", got)
+						}
+						copied := runNativeShell(t, shell, other, home, "http://127.0.0.1:1", suggestion+" --help")
+						if copied.code != 0 || copied.stderr != "" || strings.Contains(copied.stdout, "wrong executable") {
+							t.Fatalf("copied suggestion failed: %+v", copied)
+						}
+					}
+				})
+			}
 			t.Run("installed help uses command name", func(t *testing.T) {
 				t.Setenv("PATH", work+string(os.PathListSeparator)+os.Getenv("PATH"))
 				directory := t.TempDir()
-				for _, topic := range []string{"", "--help", "images --help", "images generate --help", "help --all images generate", "help setup"} {
+				for _, topic := range []string{"", "--help", "images --help", "images generate --help", "help images generate", "help setup"} {
 					got := runNativeShell(t, shell, directory, home, "not-a-url", invocation+" "+topic)
 					if got.code != 0 || got.stderr != "" || strings.Contains(got.stdout, work) || !strings.Contains(got.stdout, "openai ") {
 						t.Fatalf("installed %s includes a path or fails: %+v", topic, got)
@@ -90,18 +111,18 @@ func TestMainNativeShell(t *testing.T) {
 				}
 				got := runNativeShell(t, shell, directory, home, "not-a-url", invocation+" images generate --help")
 				for line := range strings.SplitSeq(got.stdout, "\n") {
-					if command, found := strings.CutPrefix(strings.TrimSpace(line), "Full help: "); found {
-						if command != "openai help --all images generate" {
-							t.Fatalf("installed full-help link = %q", command)
+					if command, found := strings.CutPrefix(strings.TrimSpace(line), "Key setup: "); found {
+						if command != "openai help setup" {
+							t.Fatalf("installed setup-help link = %q", command)
 						}
 						copied := runNativeShell(t, shell, directory, home, "not-a-url", command)
-						if copied.code != 0 || copied.stderr != "" || !strings.Contains(copied.stdout, "--output-compression") {
+						if copied.code != 0 || copied.stderr != "" || !strings.Contains(copied.stdout, "OPENAI_API_KEY") {
 							t.Fatalf("copied installed help failed: %+v", copied)
 						}
 						return
 					}
 				}
-				t.Fatalf("no full-help link: %+v", got)
+				t.Fatalf("no setup-help link: %+v", got)
 			})
 			t.Run("copy local help with implicit lookup enabled", func(t *testing.T) {
 				t.Setenv("GODEBUG", os.Getenv("GODEBUG")+",execerrdot=0")
@@ -115,16 +136,16 @@ func TestMainNativeShell(t *testing.T) {
 					short := runNativeShell(t, shell, work, home, "not-a-url", invocation+" images generate --help")
 					var command string
 					for line := range strings.SplitSeq(short.stdout, "\n") {
-						if after, found := strings.CutPrefix(strings.TrimSpace(line), "Full help: "); found {
+						if after, found := strings.CutPrefix(strings.TrimSpace(line), "Key setup: "); found {
 							command = after
 							break
 						}
 					}
-					if short.code != 0 || short.stderr != "" || command != shell.binary+" help --all images generate" {
+					if short.code != 0 || short.stderr != "" || command != shell.binary+" help setup" {
 						t.Fatalf("local help with PATH=%q must retain its relative path: %+v", searchPath, short)
 					}
 					copied := runNativeShell(t, shell, work, home, "not-a-url", command)
-					if copied.code != 0 || copied.stderr != "" || !strings.Contains(copied.stdout, "--output-compression") {
+					if copied.code != 0 || copied.stderr != "" || !strings.Contains(copied.stdout, "OPENAI_API_KEY") {
 						t.Fatalf("copied local help with PATH=%q failed: %+v", searchPath, copied)
 					}
 				}
@@ -133,16 +154,16 @@ func TestMainNativeShell(t *testing.T) {
 				for _, command := range []string{"", "images generate "} {
 					t.Run(command+flag, func(t *testing.T) {
 						got := runNativeShell(t, shell, work, home, "not-a-url", shell.binary+" "+command+flag)
-						if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "help --all") {
+						if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "GLOBAL OPTIONS:") {
 							t.Fatalf("help failed: %+v", got)
 						}
 					})
 				}
 			}
 			for _, tc := range []struct{ args, want string }{
-				{"help --all images generate", "--output-compression"},
-				{"help --all admin organization audit-logs list", "--event-type"},
-				{"help --all admin:organization:audit-logs list", "--event-type"},
+				{"help images generate", "--output-compression"},
+				{"help admin organization audit-logs list", "--event-type"},
+				{"help admin:organization:audit-logs list", "--event-type"},
 				{"help setup", "OPENAI_API_KEY"},
 			} {
 				t.Run(tc.args, func(t *testing.T) {
@@ -169,25 +190,30 @@ func TestMainNativeShell(t *testing.T) {
 				}
 				t.Run(name, func(t *testing.T) {
 					short := runNativeShell(t, shell, directory, home, "not-a-url", invocation+" images generate --help")
-					var command string
-					for line := range strings.SplitSeq(short.stdout, "\n") {
-						if after, ok := strings.CutPrefix(strings.TrimSpace(line), "Full help: "); ok {
-							command = after
-							break
+					for _, link := range []struct{ label, content string }{
+						{"Key setup: ", "OPENAI_API_KEY"},
+						{"Global option details: ", "--api-key KEY"},
+					} {
+						var command string
+						for line := range strings.SplitSeq(short.stdout, "\n") {
+							if after, ok := strings.CutPrefix(strings.TrimSpace(line), link.label); ok {
+								command = after
+								break
+							}
 						}
-					}
-					if short.code != 0 || command == "" {
-						t.Fatalf("short help lacks a copyable full-help command: %+v", short)
-					}
-					got := runNativeShell(t, shell, directory, home, "not-a-url", command)
-					if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "--output-compression") {
-						t.Fatalf("displayed command %q failed: %+v", command, got)
+						if short.code != 0 || command == "" {
+							t.Fatalf("help lacks a copyable %s command: %+v", link.label, short)
+						}
+						got := runNativeShell(t, shell, directory, home, "not-a-url", command)
+						if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, link.content) {
+							t.Fatalf("displayed command %q failed: %+v", command, got)
+						}
 					}
 				})
 				for _, full := range []bool{false, true} {
-					exampleName, helpArgs, prompt := "copy brief image example", " images generate --help", "A tiny orange robot"
+					exampleName, helpArgs, prompt := "copy flag-help image example", " images generate --help", "A tiny cat"
 					if full {
-						exampleName, helpArgs, prompt = "copy full image example", " help --all images generate", "A tiny cat"
+						exampleName, helpArgs, prompt = "copy command-help image example", " help images generate", "A tiny cat"
 					}
 					if elsewhere {
 						exampleName += " from another directory"
@@ -196,7 +222,12 @@ func TestMainNativeShell(t *testing.T) {
 						home := t.TempDir()
 						short := runNativeShell(t, shell, directory, home, "not-a-url", invocation+helpArgs)
 						var command string
-						for line := range strings.SplitSeq(short.stdout, "\n") {
+						_, examples, found := strings.Cut(short.stdout, "EXAMPLES:\n")
+						if !found {
+							t.Fatalf("help omitted its executable examples: %+v", short)
+						}
+						examples, _, _ = strings.Cut(examples, "\nOPTIONS:")
+						for line := range strings.SplitSeq(examples, "\n") {
 							if strings.Contains(line, " images generate --prompt ") {
 								command = strings.TrimSpace(line)
 								break
@@ -247,7 +278,7 @@ func TestMainNativeShell(t *testing.T) {
 						t.Run("explicit inline off preserves remembered on", func(t *testing.T) {
 							home := t.TempDir()
 							got := runNativeShell(t, shell, directory, home, server.URL, invocation+" images inline on")
-							if got.code != 0 || got.stderr != "" {
+							if got.code != 0 || got.stdout != "" || !strings.Contains(got.stderr, "Automatic image previews on.") {
 								t.Fatalf("remember inline on: %+v", got)
 							}
 							assertNativeShellImagePreference(t, home, true)
@@ -270,7 +301,7 @@ func TestMainNativeShell(t *testing.T) {
 				defer server.Close()
 				for _, mode := range []string{"off", "on", "off"} {
 					got := runNativeShell(t, shell, work, home, server.URL, shell.binary+" images inline "+mode)
-					if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "Automatic image previews "+mode+".") {
+					if got.code != 0 || got.stdout != "" || !strings.Contains(got.stderr, "Automatic image previews "+mode+".") {
 						t.Fatalf("remember inline %s: %+v", mode, got)
 					}
 					assertNativeShellImagePreference(t, home, mode == "on")
@@ -299,7 +330,7 @@ func TestMainNativeShell(t *testing.T) {
 				}
 				output, err := os.ReadFile(filepath.Join(work, "help-output.txt"))
 				// Windows PowerShell 5.1 writes redirected text as UTF-16LE.
-				if err != nil || (!bytes.Contains(output, []byte("OpenAI CLI")) && !bytes.Contains(output, []byte("O\x00p\x00e\x00n\x00A\x00I\x00 \x00C\x00L\x00I\x00"))) {
+				if err != nil || (!bytes.Contains(output, []byte("GLOBAL OPTIONS:")) && !bytes.Contains(output, []byte("G\x00L\x00O\x00B\x00A\x00L\x00 \x00O\x00P\x00T\x00I\x00O\x00N\x00S\x00:\x00"))) {
 					t.Fatalf("redirected help is missing: %v", err)
 				}
 			})

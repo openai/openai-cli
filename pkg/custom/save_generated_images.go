@@ -20,10 +20,19 @@ const defaultSavedImageModel = "gpt-image-2.5-sunburst"
 const imageGenerationQuickHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}Generate an image
   {{$bin}} images generate --prompt "A tiny orange robot"
 
-Run without flags to choose settings. Ctrl+C exits.
+Run without flags to choose settings
+in an interactive terminal. Ctrl+C exits.
 Saves to ~/Downloads/gpt-images/.
 
-Full help: {{$bin}} help --all images generate
+COMMON OPTIONS
+  --model MODEL          Choose a model ID
+  --size SIZE            e.g. 1024x1024
+  --quality QUALITY      auto, low, medium, high
+  --name NAME            Name the saved image
+  --output-dir DIRECTORY Save in an existing folder
+Size and quality choices depend on the model.
+
+Help: {{$bin}} help images generate
 Key setup: {{$bin}} help setup
 `
 
@@ -46,6 +55,8 @@ type imageOutputPlan struct {
 	diagnostics     io.Writer
 	partialImages   int64
 	stopLoading     func()
+	loadingPrompt   string
+	loadingStage    func(imageLoadingStage)
 }
 
 // A private classification carries locally authored guidance through the shared
@@ -119,6 +130,8 @@ func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Re
 		return nil, false, imageSavingFailure("Could not use this image filename. Try a shorter --name or another --output-dir.", err)
 	}
 	plan := &imageOutputPlan{directory: directory, name: name, defaults: make(map[string]any), partialImages: partials}
+	// File, stdin, and other direct request contents are not display text.
+	plan.loadingPrompt, _ = ctx.Value(imagePickerLoadingPromptKey{}).(string)
 	set := func(field string, value any) {
 		plan.defaults[field] = value
 		plan.options = append(plan.options, option.WithJSONSet(field, value))
@@ -162,7 +175,11 @@ func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Re
 }
 
 func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writer) error {
+	p.setLoadingStage(imageLoadingSaving)
 	saved, saveErr := imageoutput.SaveResponse(ctx, response, p.directory, p.name)
+	if saveErr == nil && len(saved) > 0 {
+		p.setLoadingStage(imageLoadingSaved)
+	}
 	p.stopLoadingFeedback()
 	previewOutput := out
 	out = outputWriter{ctx: context.WithoutCancel(ctx), out: out}
@@ -187,10 +204,10 @@ func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writ
 	if saveErr != nil {
 		return saveErr
 	}
-	for _, file := range saved {
-		if err := displaySavedImage(ctx, file, previewOutput, p.diagnostics, p.inline); err != nil {
-			return imageSavingFailure("Images were saved, but the preview could not finish. Use the saved files; no need to generate again.", err)
-		}
+	if err := displaySavedImages(ctx, saved, previewOutput, func(file imageoutput.SavedImage) (bool, error) {
+		return displaySavedImage(ctx, file, previewOutput, p.diagnostics, p.inline)
+	}); err != nil {
+		return imageSavingFailure("Images were saved, but the preview could not finish. Use the saved files; no need to generate again.", err)
 	}
 	return nil
 }

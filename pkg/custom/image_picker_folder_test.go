@@ -59,7 +59,12 @@ func TestImagePickerSaveFolder(t *testing.T) {
 	for _, size := range [][2]int{{40, 12}, {80, 24}} {
 		m.width, m.height = size[0], size[1]
 		// Short terminals scroll settings; focusing the folder keeps it visible.
-		m.focus, m.selected = "options", 3
+		m.focus = "options"
+		for i, row := range m.rows() {
+			if row.id == "folder" {
+				m.selected = i
+			}
+		}
 		require.Contains(t, ansi.Strip(m.View().Content), "Save to")
 		require.Contains(t, ansi.Strip(m.View().Content), "Ctrl+C exit")
 	}

@@ -153,19 +153,28 @@ func writeKittyFrames(ctx context.Context, out io.Writer, encoded *bytes.Buffer,
 			err = errors.Join(err, cleanupErr)
 		}
 	}()
-	const rawChunk = kitty.MaxChunkSize / 4 * 3
 	first := true
 	for encoded.Len() > 0 {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		data := encoded.Next(rawChunk)
-		payload := make([]byte, base64.StdEncoding.EncodedLen(len(data)))
-		base64.StdEncoding.Encode(payload, data)
 		opts := []string{"q=2"}
 		if first {
 			opts = append([]string(nil), options...)
 		}
+		rawChunk := kitty.MaxChunkSize / 4 * 3
+		if framed, ok := out.(interface{ kittyFrameSize() int }); ok {
+			// Include the first frame's options and ST in the transport budget.
+			// An empty payload omits the semicolon. Measure a nonempty frame.
+			header := len(ansi.KittyGraphics([]byte{'x'}, append(opts, "m=1")...)) - 1
+			rawChunk = min(rawChunk, (framed.kittyFrameSize()-header)/4*3)
+			if rawChunk <= 0 {
+				return errors.New("Kitty frame options exceed the transport budget")
+			}
+		}
+		data := encoded.Next(rawChunk)
+		payload := make([]byte, base64.StdEncoding.EncodedLen(len(data)))
+		base64.StdEncoding.Encode(payload, data)
 		if encoded.Len() > 0 {
 			opts = append(opts, "m=1")
 		} else {

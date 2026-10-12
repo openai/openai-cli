@@ -340,21 +340,14 @@ func isUTF8TextFile(content []byte) bool {
 
 const audioVoicesContextMetadata = "openai-audio-voices-create-context"
 
-// Constructed only from the selected built-in variant and its declared field
-// names, never from request values.
-type voiceVariantError struct {
-	voiceType string
-	flags     []string
+// Do not echo request values in validation errors.
+type voiceTypeError struct{}
+
+func (e *voiceTypeError) Error() string {
+	return "Invalid voice type: --type must be audio_sample. Omit it to use audio_sample."
 }
 
-func (e *voiceVariantError) Error() string {
-	if e.voiceType == "" {
-		return "Invalid voice type: --type must be audio_sample or prompt. Omit it to use audio_sample."
-	}
-	return "Options not supported for voice type " + e.voiceType + ": " + strings.Join(e.flags, ", ") + "."
-}
-
-// Voice variant checks require the actual request context when type is an
+// Voice type checks require the actual request context when type is an
 // uploaded scalar. Keep preparation scoped to this action, as for image uploads.
 func AudioVoicesFlagOptions(ctx context.Context, cmd *cli.Command) ([]option.RequestOption, error) {
 	if cmd.Metadata == nil {
@@ -383,39 +376,8 @@ func prepareAudioVoicesMultipartBody(cmd *cli.Command, bodyMap map[string]any) e
 	if inspectErr != nil {
 		return inspectErr
 	}
-	var needed, inactive []string
-	var selectedType string
-	switch voiceType {
-	case "prompt":
-		selectedType = "prompt"
-		needed = []string{"prompt"}
-		inactive = []string{"audio_sample", "consent"}
-	case "audio_sample":
-		selectedType = "audio_sample"
-		needed = []string{"audio_sample", "consent"}
-		inactive = []string{"prompt", "model", "script_hint"}
-	default:
-		return &voiceVariantError{}
-	}
-	var missing []string
-	for _, name := range needed {
-		if bodyMap[name] == nil {
-			missing = append(missing, strings.ReplaceAll(name, "_", "-"))
-		}
-	}
-	if len(missing) == 1 {
-		return fmt.Errorf("Required flag %q not set\nRun '%s --help' for usage information", missing[0], cmd.FullName())
-	} else if len(missing) > 1 {
-		return fmt.Errorf("Required flags %q not set\nRun '%s --help' for usage information", strings.Join(missing, ", "), cmd.FullName())
-	}
-	var conflicts []string
-	for _, name := range inactive {
-		if _, present := bodyMap[name]; present {
-			conflicts = append(conflicts, "--"+strings.ReplaceAll(name, "_", "-"))
-		}
-	}
-	if len(conflicts) != 0 {
-		return &voiceVariantError{voiceType: selectedType, flags: conflicts}
+	if voiceType != "audio_sample" {
+		return &voiceTypeError{}
 	}
 	return nil
 }
@@ -478,9 +440,18 @@ func FlagOptions(
 	if bodyMap, ok := requestContents.Body.(map[string]any); ok {
 		applyDataAliases(cmd, bodyMap)
 	}
+	// Resolve explicit consumers before attempting automatic whole-request input.
+	// FileInput values must retain their literal path semantics during inspection.
+	if err := wrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
+		return nil, err
+	}
+	explicitStdin, err := requestStdinConsumers(requestContents, ignoreStdin)
+	if err != nil {
+		return nil, err
+	}
 
 	stdinConsumedByPipe := false
-	if bodyType != ApplicationOctetStream && !ignoreStdin && isInputPiped() {
+	if bodyType != ApplicationOctetStream && !ignoreStdin && explicitStdin == 0 && isInputPiped() {
 		pipeData, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return nil, err
@@ -557,9 +528,16 @@ func FlagOptions(
 		}
 	}
 
+	if err := checkAdminCredentials(cmd); err != nil {
+		return nil, err
+	}
+
 	// FileInput values are file paths, so wrap trusted values with FilePathValue
 	// for automatic expansion. In untrusted-stdin mode, reject piped values.
 	if err := wrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
+		return nil, err
+	}
+	if _, err := requestStdinConsumers(requestContents, ignoreStdin); err != nil {
 		return nil, err
 	}
 
@@ -655,6 +633,13 @@ func FlagOptions(
 		if err := prepareImageMultipartBody(cmd, bodyMap); err != nil {
 			return nil, err
 		}
+		// Multipart dispatch follows actual Booleans without consuming uploads
+		// or interpreting strings that happen to resemble scalar values.
+		if streaming, ok := bodyMap["stream"].(bool); ok {
+			if err := resolveStreamingValue(cmd, streaming); err != nil {
+				return nil, err
+			}
+		}
 		encodingFormat := apiform.FormatBrackets
 		// Saving prepares uploads before the generated action takes over. Keep
 		// an idempotent closer for failures between preparation and dispatch.
@@ -672,6 +657,9 @@ func FlagOptions(
 	case ApplicationJSON:
 		bodyBytes, err := json.Marshal(requestContents.Body)
 		if err != nil {
+			return nil, err
+		}
+		if err := resolveStreamingInput(cmd, bodyBytes); err != nil {
 			return nil, err
 		}
 		options = append(options, option.WithRequestBody("application/json", bodyBytes))

@@ -13,9 +13,8 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// Prompt creation uses the same multipart SDK endpoint as audio samples, but
-// must transmit text fields without requiring a consent ID or an uploaded file.
-func TestAudioVoicesCreatePromptContract(t *testing.T) {
+// Consent-based creation must preserve text fields and the uploaded sample.
+func TestAudioVoicesCreateSampleContract(t *testing.T) {
 	type voiceRequest struct {
 		method, path string
 		fields       map[string][]string
@@ -31,7 +30,7 @@ func TestAudioVoicesCreatePromptContract(t *testing.T) {
 		defer r.MultipartForm.RemoveAll()
 		received <- voiceRequest{r.Method, r.URL.Path, r.MultipartForm.Value, len(r.MultipartForm.File)}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"voice_synthetic","name":"Synthetic narrator","type":"prompt"}`)
+		_, _ = io.WriteString(w, `{"id":"voice_synthetic","name":"Synthetic narrator","type":"audio_sample"}`)
 	}))
 	t.Cleanup(server.Close)
 
@@ -55,24 +54,21 @@ func TestAudioVoicesCreatePromptContract(t *testing.T) {
 	}
 	require.NoError(t, command.Run(t.Context(), []string{
 		"openai", "--base-url", server.URL + "/", "--api-key", "synthetic-test-key",
-		"audio:voices", "create", "--type", "prompt", "--name", "Synthetic narrator",
-		"--prompt", "A calm narrator with clear delivery", "--model", "2026-10-01",
-		"--script-hint", "This is a long enough synthetic script for voice creation.",
+		"audio:voices", "create", "--type", "audio_sample", "--name", "Synthetic narrator",
+		"--consent", "cons_synthetic", "--audio-sample", mocktest.TestFile(t, "Synthetic voice sample"),
 	}))
 	select {
 	case got := <-received:
 		require.Equal(t, http.MethodPost, got.method)
 		require.Equal(t, "/audio/voices", got.path)
 		require.Equal(t, map[string][]string{
-			"type":        {"prompt"},
-			"name":        {"Synthetic narrator"},
-			"prompt":      {"A calm narrator with clear delivery"},
-			"model":       {"2026-10-01"},
-			"script_hint": {"This is a long enough synthetic script for voice creation."},
+			"type":    {"audio_sample"},
+			"name":    {"Synthetic narrator"},
+			"consent": {"cons_synthetic"},
 		}, got.fields)
-		require.Zero(t, got.fileCount)
+		require.Equal(t, 1, got.fileCount)
 	default:
-		t.Fatal("voice prompt command sent no request")
+		t.Fatal("voice command sent no request")
 	}
 }
 
@@ -81,7 +77,6 @@ func TestAudioVoicesCreateRequiresName(t *testing.T) {
 		name  string
 		flags []string
 	}{
-		{"prompt", []string{"--type", "prompt", "--prompt", "A calm synthetic narrator"}},
 		{"audio_sample", []string{"--type", "audio_sample", "--consent", "cons_synthetic",
 			"--audio-sample", mocktest.TestFile(t, "Synthetic voice sample")}},
 	} {
@@ -93,7 +88,7 @@ func TestAudioVoicesCreateRequiresName(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"id":"voice_synthetic","name":"Synthetic","type":"prompt"}`)
+				_, _ = io.WriteString(w, `{"id":"voice_synthetic","name":"Synthetic","type":"audio_sample"}`)
 			}))
 			defer server.Close()
 

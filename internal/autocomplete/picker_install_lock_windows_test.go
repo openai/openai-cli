@@ -122,7 +122,7 @@ func TestPickerWindowsPrivateLockRejectsNonlocalNames(t *testing.T) {
 	defer root.Close()
 	for _, name := range []string{"", "..", "../outside", `..\outside`, "nested/lock", `nested\lock`, "file:stream", `C:\lock`} {
 		file, err := createPickerInstallLock(root, name)
-		require.Error(t, err, name)
+		require.EqualError(t, err, "shell integration lock requires a local filename", name)
 		require.Nil(t, file, name)
 	}
 	entries, err := os.ReadDir(options.Directory)

@@ -29,6 +29,17 @@ type mainDispatchResult struct {
 	stdout, stderr string
 }
 
+// Match the argument shape sent by each bundled shell adapter.
+func mainCompletionArgs(style string, args ...string) []string {
+	argv := []string{"openai", "__complete"}
+	if style == "bash" || style == "fish" {
+		argv = append(argv, "--")
+	} else if style == "pwsh" {
+		argv = append(argv, "openai")
+	}
+	return append(argv, args...)
+}
+
 // Run the production entrypoint in a fresh process: its command tree and flag
 // state must not be shared between ordinary invocations and completion probes.
 func runMainDispatch(t *testing.T, style string, argv ...string) mainDispatchResult {
@@ -116,7 +127,7 @@ func TestMainDispatchOrdinaryArguments(t *testing.T) {
 
 func TestMainDispatchEmptyArguments(t *testing.T) {
 	want := runMainDispatch(t, "bash", "openai", "--help")
-	if want.code != 0 || want.stderr != "" || !strings.Contains(want.stdout, "OpenAI CLI") {
+	if want.code != 0 || want.stderr != "" || !strings.HasPrefix(want.stdout, "NAME:\n   openai\n") {
 		t.Fatalf("root help control failed: %+v", want)
 	}
 	for _, argv := range [][]string{nil, {"openai"}, {""}, {"__complete"}, {"openai", "", "--help"}} {
@@ -129,25 +140,26 @@ func TestMainDispatchEmptyArguments(t *testing.T) {
 func TestMainDispatchCompletionForms(t *testing.T) {
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
 		t.Run(style, func(t *testing.T) {
+			modelCompletions := "models\nmoderations\n"
+			if style == "zsh" {
+				modelCompletions = "models:List and inspect available models.\nmoderations:Classify potentially harmful text and image inputs.\n"
+			} else if style == "fish" {
+				modelCompletions = "models\tList and inspect available models.\nmoderations\tClassify potentially harmful text and image inputs.\n"
+			}
 			// Match the bundled scripts' argument shapes. Native shell execution
 			// is separate from these production-entrypoint protocol checks.
-			prefix := []string{"openai", "__complete"}
-			if style == "bash" || style == "fish" {
-				prefix = append(prefix, "--")
-			} else if style == "pwsh" {
-				prefix = append(prefix, "openai")
-			}
+			prefix := mainCompletionArgs(style)
 			for _, tc := range []struct {
 				args []string
 				want mainDispatchResult
 			}{
-				{[]string{"mo"}, mainDispatchResult{0, "moderations\nmodels\n", ""}},
+				{[]string{"mo"}, mainDispatchResult{0, modelCompletions, ""}},
 				{[]string{"--format", "__complete"}, mainDispatchResult{11, "", ""}},
 				{[]string{"models", "retrieve", "--model", "__complete"}, mainDispatchResult{11, "", ""}},
 				{[]string{"--mtls-client-cert-file", "candidate-"}, mainDispatchResult{10, "", ""}},
-				{[]string{"--format", "__complete", "mo"}, mainDispatchResult{0, "moderations\nmodels\n", ""}},
-				{[]string{"--format", "two words", "mo"}, mainDispatchResult{0, "moderations\nmodels\n", ""}},
-				{[]string{"--format", "", "mo"}, mainDispatchResult{0, "moderations\nmodels\n", ""}},
+				{[]string{"--format", "__complete", "mo"}, mainDispatchResult{0, modelCompletions, ""}},
+				{[]string{"--format", "two words", "mo"}, mainDispatchResult{0, modelCompletions, ""}},
+				{[]string{"--format", "", "mo"}, mainDispatchResult{0, modelCompletions, ""}},
 				{[]string{"models", "retrieve", "--model", "@candidate-"}, mainDispatchResult{11, "", ""}},
 			} {
 				t.Run(strings.Join(tc.args, "/"), func(t *testing.T) {

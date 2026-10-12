@@ -29,16 +29,40 @@ func pickerShellSetupHome(t *testing.T) string {
 
 func runPickerShellSetup(t *testing.T, ctx context.Context, args ...string) (string, error) {
 	t.Helper()
-	var output, diagnostics bytes.Buffer
+	output, _, err := runPickerShellSetupWithDiagnostics(t, ctx, args...)
+	return output, err
+}
+
+// Tests call this serially because receipts use the actual process stderr.
+func runPickerShellSetupWithDiagnostics(t *testing.T, ctx context.Context, args ...string) (string, string, error) {
+	t.Helper()
+	diagnostics, err := os.CreateTemp(t.TempDir(), "picker-setup-stderr-")
+	require.NoError(t, err)
+	previousStderr := os.Stderr
+	os.Stderr = diagnostics
+	closed := false
+	defer func() {
+		os.Stderr = previousStderr
+		if !closed {
+			require.NoError(t, diagnostics.Close())
+		}
+	}()
+	var output bytes.Buffer
 	root := &cli.Command{
-		Name: "openai", Writer: &output, ErrWriter: &diagnostics,
+		Name: "openai", Writer: &output, ErrWriter: diagnostics,
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 		Commands:       []*cli.Command{{Name: "@completion", Action: autocomplete.OutputCompletionScript}},
 	}
 	configureImagePickerCompletion(root)
 	configureImagePickerShellSetup(root)
-	err := root.Run(ctx, append([]string{"openai", "@completion"}, args...))
-	return output.String(), err
+	err = root.Run(ctx, append([]string{"openai", "@completion"}, args...))
+	os.Stderr = previousStderr
+	closeErr := diagnostics.Close()
+	closed = true
+	require.NoError(t, closeErr)
+	diagnosticBytes, readErr := os.ReadFile(diagnostics.Name())
+	require.NoError(t, readErr)
+	return output.String(), string(diagnosticBytes), err
 }
 
 func TestImagePickerShellSetupInstallRemoveExplicitProfile(t *testing.T) {
@@ -50,9 +74,10 @@ func TestImagePickerShellSetupInstallRemoveExplicitProfile(t *testing.T) {
 			require.NoError(t, os.WriteFile(profile, original, 0600))
 			require.NoError(t, declineImagePickerTab(t.Context(), shell))
 			for range 2 {
-				output, err := runPickerShellSetup(t, t.Context(), shell, "--install-picker", "--profile", profile)
+				output, diagnostic, err := runPickerShellSetupWithDiagnostics(t, t.Context(), shell, "--install-picker", "--profile", profile)
 				require.NoError(t, err)
-				require.Contains(t, output, "for future terminals")
+				require.Empty(t, output)
+				require.Equal(t, "Tab setup saved for future terminals. Existing custom bindings are preserved.\n", diagnostic)
 				targets, err := imagePickerShellTarget(t.Context(), shell, false, profile)
 				require.NoError(t, err)
 				installed, err := autocomplete.IsPickerInstalled(t.Context(), targets[0])
@@ -67,9 +92,10 @@ func TestImagePickerShellSetupInstallRemoveExplicitProfile(t *testing.T) {
 				require.False(t, declined, "explicit installation must clear an old opt-out")
 			}
 			for range 2 {
-				output, err := runPickerShellSetup(t, t.Context(), shell, "--uninstall-picker", "--profile", profile)
+				output, diagnostic, err := runPickerShellSetupWithDiagnostics(t, t.Context(), shell, "--uninstall-picker", "--profile", profile)
 				require.NoError(t, err)
-				require.Contains(t, output, "setup removed")
+				require.Empty(t, output)
+				require.Equal(t, "Tab shortcut setup removed. Open a new terminal to finish.\n", diagnostic)
 				data, err := os.ReadFile(profile)
 				require.NoError(t, err)
 				require.Equal(t, original, data)
@@ -90,13 +116,14 @@ func TestImagePickerShellSetupRejectsPowerShellWithoutWriting(t *testing.T) {
 			if explicit {
 				args = append(args, "--profile", profile)
 			}
-			output, err := runPickerShellSetup(t, t.Context(), args...)
+			output, diagnostic, err := runPickerShellSetupWithDiagnostics(t, t.Context(), args...)
 			var exit cli.ExitCoder
 			require.ErrorAs(t, err, &exit)
 			require.Equal(t, 2, exit.ExitCode())
 			require.Contains(t, err.Error(), "PowerShell uses normal Tab completion")
 			require.Contains(t, err.Error(), "openai images generate")
 			require.Empty(t, output)
+			require.Empty(t, diagnostic)
 			entries, err := os.ReadDir(home)
 			require.NoError(t, err)
 			require.Empty(t, entries)
@@ -107,9 +134,10 @@ func TestImagePickerShellSetupRejectsPowerShellWithoutWriting(t *testing.T) {
 func TestImagePickerShellSetupAutomaticPowerShellIsQuietAndDoesNotWrite(t *testing.T) {
 	home := pickerShellSetupHome(t)
 	t.Setenv("SHELL", filepath.Join(home, "pwsh"))
-	output, err := runPickerShellSetup(t, t.Context(), "--install-picker", "--automatic")
+	output, diagnostic, err := runPickerShellSetupWithDiagnostics(t, t.Context(), "--install-picker", "--automatic")
 	require.NoError(t, err)
 	require.Empty(t, output)
+	require.Empty(t, diagnostic)
 	entries, err := os.ReadDir(home)
 	require.NoError(t, err)
 	require.Empty(t, entries)
@@ -151,9 +179,10 @@ func TestImagePickerShellSetupBashRemovalAfterLoginPrecedenceChanges(t *testing.
 			unmanaged, err := os.Stat(filepath.Join(home, ".bash_profile"))
 			require.NoError(t, err)
 			for range 2 {
-				output, err := runPickerShellSetup(t, t.Context(), "bash", "--uninstall-picker")
+				output, diagnostic, err := runPickerShellSetupWithDiagnostics(t, t.Context(), "bash", "--uninstall-picker")
 				require.NoError(t, err)
-				require.Contains(t, output, "setup removed")
+				require.Empty(t, output)
+				require.Equal(t, "Tab shortcut setup removed. Open a new terminal to finish.\n", diagnostic)
 				for name, original := range originals {
 					data, err := os.ReadFile(filepath.Join(home, name))
 					require.NoError(t, err)
@@ -207,9 +236,10 @@ func TestImagePickerShellSetupPartialFailureIsRetryable(t *testing.T) {
 	modified := []byte("# >>> openai image picker modified\n")
 	require.NoError(t, os.WriteFile(interactive, original, 0600))
 	require.NoError(t, os.WriteFile(login, modified, 0600))
-	output, err := runPickerShellSetup(t, t.Context(), "bash", "--install-picker")
+	output, diagnostic, err := runPickerShellSetupWithDiagnostics(t, t.Context(), "bash", "--install-picker")
 	require.ErrorContains(t, err, "Some startup files may already be configured")
 	require.Empty(t, output)
+	require.Empty(t, diagnostic)
 	data, err := os.ReadFile(interactive)
 	require.NoError(t, err)
 	require.Contains(t, string(data), "# >>> openai image picker v1 >>>")
@@ -261,9 +291,10 @@ func TestImagePickerShellSetupBashRemovalContinuesAfterUnrelatedFailure(t *testi
 			modified := "# >>> openai image picker modified\n"
 			require.NoError(t, os.WriteFile(filepath.Join(home, ".bash_login"), []byte(modified), 0600))
 			for range 2 {
-				output, err := runPickerShellSetup(t, t.Context(), "bash", "--uninstall-picker")
+				output, diagnostic, err := runPickerShellSetupWithDiagnostics(t, t.Context(), "bash", "--uninstall-picker")
 				require.ErrorContains(t, err, "Could not finish Tab shortcut setup")
 				require.Empty(t, output, "partial cleanup must not claim success")
+				require.Empty(t, diagnostic, "partial cleanup must not print a success receipt")
 				data, readErr := os.ReadFile(profile)
 				require.NoError(t, readErr)
 				require.Equal(t, original, string(data), "an independent unsafe file must not stop intact profile cleanup")
@@ -315,9 +346,10 @@ func TestImagePickerShellSetupRemovalRetainsPreferenceAndCleanupFailures(t *test
 			preference, err := imagePickerTabChoicePath("zsh")
 			require.NoError(t, err)
 			require.NoError(t, os.MkdirAll(preference, 0700))
-			output, err := runPickerShellSetup(t, t.Context(), "zsh", "--uninstall-picker")
+			output, diagnostic, err := runPickerShellSetupWithDiagnostics(t, t.Context(), "zsh", "--uninstall-picker")
 			require.Error(t, err)
 			require.Empty(t, output)
+			require.Empty(t, diagnostic)
 			var failure *imageSavingError
 			require.ErrorAs(t, err, &failure)
 			require.ErrorContains(t, failure.cause, "invalid Tab shortcut preference")
@@ -359,9 +391,10 @@ func TestImagePickerShellSetupUnknownShellAndAutomaticHomeDoNotWrite(t *testing.
 	for _, args := range [][]string{{"unknown", "--install-picker"}, {"--automatic", "--install-picker"}} {
 		home := pickerShellSetupHome(t)
 		t.Setenv("SHELL", "/bin/zsh")
-		output, err := runPickerShellSetup(t, t.Context(), args...)
+		output, diagnostic, err := runPickerShellSetupWithDiagnostics(t, t.Context(), args...)
 		require.Error(t, err)
 		require.NotContains(t, output, "enabled")
+		require.Empty(t, diagnostic)
 		entries, err := os.ReadDir(home)
 		require.NoError(t, err)
 		require.Empty(t, entries)
@@ -427,10 +460,12 @@ func TestImagePickerShellSetupCancellationWhileAnotherSetupHoldsLock(t *testing.
 
 func TestImagePickerShellSetupPreservesCompletionOutput(t *testing.T) {
 	home := pickerShellSetupHome(t)
-	normal, err := runPickerShellSetup(t, t.Context(), "zsh")
+	normal, normalDiagnostic, err := runPickerShellSetupWithDiagnostics(t, t.Context(), "zsh")
 	require.NoError(t, err)
-	picker, err := runPickerShellSetup(t, t.Context(), "zsh", "--picker")
+	require.Empty(t, normalDiagnostic)
+	picker, pickerDiagnostic, err := runPickerShellSetupWithDiagnostics(t, t.Context(), "zsh", "--picker")
 	require.NoError(t, err)
+	require.Empty(t, pickerDiagnostic)
 	require.NotEmpty(t, normal)
 	require.True(t, strings.HasPrefix(picker, normal))
 	require.Greater(t, len(picker), len(normal))

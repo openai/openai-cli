@@ -25,19 +25,31 @@ func TestMainImageSettingsHelpScope(t *testing.T) {
 			short := runMainDispatchWithEnv(t, "bash", env, "openai", "images", operation, "--help")
 			require.Zero(t, short.code, short.stderr)
 			require.Empty(t, short.stderr)
-			require.LessOrEqual(t, len(strings.Split(strings.TrimSpace(short.stdout), "\n")), 8)
-			require.Contains(t, short.stdout, "~/Downloads/gpt-images/")
-			require.NotContains(t, short.stdout, "--name")
-			require.Contains(t, short.stdout, "Full help: openai help --all images "+operation)
-			full := runMainDispatchWithEnv(t, "bash", env, "openai", "help", "--all", "images", operation)
+			require.Contains(t, short.stdout, "OPTIONS:")
+			require.NotContains(t, short.stdout, "Full help:")
+			if operation != "create-variation" {
+				require.Contains(t, short.stdout, "~/Downloads/gpt-images/")
+			}
+			if operation != "create-variation" {
+				require.Contains(t, short.stdout, "--name NAME")
+				require.Contains(t, short.stdout, "--output-dir DIRECTORY")
+				if operation == "generate" {
+					require.Contains(t, short.stdout, "choose settings in an interactive terminal")
+				}
+			}
+
+			full := runMainDispatchWithEnv(t, "bash", env, "openai", "help", "images", operation)
 			require.Zero(t, full.code, full.stderr)
 			require.Empty(t, full.stderr)
+			require.Equal(t, short.stdout, full.stdout)
 			_, description, found := strings.Cut(full.stdout, "\nDESCRIPTION:\n")
 			require.True(t, found, "full help must include the command description")
-			description, _, found = strings.Cut(description, "\nOPTIONS:")
+			description, _, found = strings.Cut(description, "\nEXAMPLES:")
 			require.True(t, found, "full help must retain the separate option reference")
-			require.LessOrEqual(t, len(strings.Fields(description)), 65, "keep the introduction concise; details belong in the option reference")
-			require.Equal(t, 1, strings.Count(description, "openai images "), "lead with one useful example")
+			require.NotEmpty(t, description, "preserve the detailed command guidance")
+			name := helpSection(full.stdout, "NAME", "SYNOPSIS")
+			require.LessOrEqual(t, len(strings.Fields(name)), 30, "keep NAME concise; preserve detail in DESCRIPTION")
+			require.Equal(t, 1, strings.Count(full.stdout, "--prompt \""), "lead with one useful example")
 			text := strings.Join(strings.Fields(full.stdout), " ")
 			for _, want := range []string{"--name", "-2, -3", "Uses your saved preference unless set", "Pipes and CI never show previews"} {
 				require.Contains(t, text, want)
@@ -88,7 +100,7 @@ func TestMainImageSettingsCompleteExamples(t *testing.T) {
 				}
 				settings[strings.TrimPrefix(flag, "--")] = value
 			}
-			help := runMainDispatch(t, "bash", "openai", "help", "--all", "images", tc.helpTopic)
+			help := runMainDispatch(t, "bash", "openai", "help", "images", tc.helpTopic)
 			require.Zero(t, help.code, help.stderr)
 			require.Contains(t, help.stdout, example.String(), "the exact example must remain copyable")
 			home := t.TempDir()

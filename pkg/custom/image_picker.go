@@ -36,10 +36,12 @@ type imagePickerResult struct {
 	Args      []string
 	Canceled  bool
 	PrintOnly bool
-	// ExitCode preserves external SIGINT/SIGTERM status after terminal cleanup.
-	ExitCode int
-	settings imagePickerSettings
-	shell    string
+	// ExitCode preserves external signal status after terminal cleanup.
+	ExitCode   int
+	settings   imagePickerSettings
+	shell      string
+	changed    bool
+	draftSaved bool
 }
 
 func runImagePicker(parent context.Context, input, output *os.File, options imagePickerOptions) (result imagePickerResult, err error) {
@@ -50,6 +52,7 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	if err != nil {
 		return imagePickerResult{}, err
 	}
+	initialSettings := model.settings
 	defer model.cancelFolderWork()
 	if input == nil || output == nil || !term.IsTerminal(input.Fd()) || !term.IsTerminal(output.Fd()) {
 		return imagePickerResult{}, errors.New("the image picker needs terminal input and output")
@@ -97,7 +100,7 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 	// Route OS signals through the model so cleanup and exit status match
 	// keyboard cancellation, without treating a write failure as cancellation.
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	listenerDone := make(chan struct{})
 	defer func() {
 		signal.Stop(signals)
@@ -116,6 +119,8 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 				code := 130
 				if received == syscall.SIGTERM {
 					code = 143
+				} else if received == syscall.SIGHUP {
+					code = 129
 				}
 				program.Send(imagePickerStopMsg{code: code})
 				return
@@ -148,7 +153,15 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 		}
 		writeErr = imageSavingFailure("Could not display the image picker. No new image request was started.", writeErr)
 	}
-	return model.result, errors.Join(runErr, writeErr, inline.err, parent.Err())
+	return model.snapshotResult(initialSettings), errors.Join(runErr, writeErr, inline.err, parent.Err())
+}
+
+// Capture the live draft even when cancellation intentionally discards Args.
+func (m *imagePicker) snapshotResult(initial imagePickerSettings) imagePickerResult {
+	result := m.result
+	result.settings = m.settings
+	result.changed = m.settings != initial
+	return result
 }
 
 type imagePickerStopMsg struct{ code int }
@@ -203,9 +216,13 @@ type imagePicker struct {
 	cursor         int
 	selected       int
 	commandOffset  int
+	optionOffset   int
+	optionPage     string
+	optionField    string
 	width, height  int
 	color          bool
 	dark           bool
+	hidePromptHint bool
 	note           string
 	result         imagePickerResult
 	folder         imagePickerFolder
@@ -223,11 +240,12 @@ func newImagePicker(options imagePickerOptions) (*imagePicker, error) {
 	}
 	if options.initial != nil {
 		m.settings = *options.initial
-		// Carry image settings forward, but require a fresh description for
-		// each image. Only an explicitly supplied prompt may prefill it.
+		// Session restoration supplies Prompt explicitly. Direct callers can
+		// still override the restored description, including clearing it.
 		m.settings.prompt = options.Prompt
 	}
 	m.shell = options.Shell
+	m.hidePromptHint = options.resuming
 	m.note = options.initialNote
 	return m, nil
 }
@@ -399,14 +417,16 @@ func (m *imagePicker) rows() []imagePickerRow {
 	case "choose":
 		return m.choices(m.field)
 	case "more":
-		return []imagePickerRow{{id: "background", label: "Background", value: s.background}, {id: "format", label: "File type", value: strings.ToUpper(s.format)}, {id: "count", label: "Images", value: s.count}, {id: "back", label: "Back to settings"}}
+		return []imagePickerRow{{id: "format", label: "File type", value: strings.ToUpper(s.format)}, {id: "back", label: "Back to settings"}}
 	}
 	rows := []imagePickerRow{
 		{id: "model", label: "Model", value: s.model},
-		{id: "size", label: "Size", value: imagePickerSizeLabel(s.size)},
+		{id: "size", label: "Size / aspect", value: imagePickerSizeLabel(s.size)},
 		{id: "quality", label: "Quality", value: imagePickerTitle(s.quality)},
+		{id: "count", label: "Images", value: s.count},
+		{id: "background", label: "Background", value: imagePickerTitle(s.background)},
 	}
-	return append(rows, m.folderRow(), imagePickerRow{id: "more", label: "More options", value: strings.ToUpper(s.format) + " / " + s.count + " image(s)"})
+	return append(rows, m.folderRow(), imagePickerRow{id: "more", label: "More options", value: strings.ToUpper(s.format)})
 }
 
 func (m *imagePicker) cycleFocus(backwards bool) {
@@ -638,5 +658,6 @@ func (m *imagePicker) editPrompt(key tea.KeyPressMsg) {
 	m.settings.prompt = string(m.draft)
 	if m.settings.prompt != previous {
 		m.commandOffset = 0
+		m.note = ""
 	}
 }

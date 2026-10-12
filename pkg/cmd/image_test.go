@@ -121,7 +121,7 @@ func TestImagesGenerate(t *testing.T) {
 			"--partial-images", "1",
 			"--quality", "medium",
 			"--response-format", "url",
-			"--size", "auto",
+			"--size", "1024x1024",
 			"--stream=false",
 			"--style", "vivid",
 			"--user", "user-1234",
@@ -141,7 +141,7 @@ func TestImagesGenerate(t *testing.T) {
 			"partial_images: 1\n" +
 			"quality: medium\n" +
 			"response_format: url\n" +
-			"size: auto\n" +
+			"size: 1024x1024\n" +
 			"stream: false\n" +
 			"style: vivid\n" +
 			"user: user-1234\n")

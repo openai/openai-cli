@@ -31,7 +31,7 @@ func TestMainPickerShellSetupRoundTrip(t *testing.T) {
 			}
 			for _, action := range []string{"--install-picker", "--install-picker", "--uninstall-picker", "--uninstall-picker"} {
 				got := runMainDispatchWithEnv(t, shell, pickerSetupProcessEnv(home), "openai", "@completion", shell, action, "--profile", profile)
-				if got.code != 0 || got.stderr != "" {
+				if got.code != 0 || got.stdout != "" {
 					t.Fatalf("setup failed: %+v", got)
 				}
 				data, err := os.ReadFile(profile)
@@ -39,11 +39,11 @@ func TestMainPickerShellSetupRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				if action == "--install-picker" {
-					if !strings.Contains(got.stdout, "for future terminals") || !strings.HasPrefix(string(data), original) || strings.Count(string(data), "# >>> openai image picker") != 1 {
-						t.Fatalf("installation lost content or duplicated setup: %q, %q", got.stdout, data)
+					if got.stderr != "Tab setup saved for future terminals. Existing custom bindings are preserved.\n" || !strings.HasPrefix(string(data), original) || strings.Count(string(data), "# >>> openai image picker") != 1 {
+						t.Fatalf("installation lost content or duplicated setup: %q, %q", got.stderr, data)
 					}
-				} else if string(data) != original || !strings.Contains(got.stdout, "setup removed") {
-					t.Fatalf("removal lost original content: %q, %q", got.stdout, data)
+				} else if string(data) != original || got.stderr != "Tab shortcut setup removed. Open a new terminal to finish.\n" {
+					t.Fatalf("removal lost original content: %q, %q", got.stderr, data)
 				}
 			}
 		})
@@ -59,7 +59,7 @@ func TestMainPickerShellSetupBashRemovalAfterLoginPrecedenceChanges(t *testing.T
 		t.Fatal(err)
 	}
 	got := runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--install-picker")
-	if got.code != 0 || got.stderr != "" {
+	if got.code != 0 || got.stdout != "" || got.stderr != "Tab setup saved for future terminals. Existing custom bindings are preserved.\n" {
 		t.Fatalf("installation failed: %+v", got)
 	}
 	if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte(preferred), 0600); err != nil {
@@ -67,7 +67,7 @@ func TestMainPickerShellSetupBashRemovalAfterLoginPrecedenceChanges(t *testing.T
 	}
 	for range 2 {
 		got = runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--uninstall-picker")
-		if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "setup removed") {
+		if got.code != 0 || got.stdout != "" || got.stderr != "Tab shortcut setup removed. Open a new terminal to finish.\n" {
 			t.Fatalf("removal failed: %+v", got)
 		}
 		for name, want := range map[string]string{".profile": original, ".bash_profile": preferred} {
@@ -93,7 +93,7 @@ func TestMainPickerShellSetupBashRemovalRestoresAbsentLoginProfile(t *testing.T)
 	home := t.TempDir()
 	env := pickerSetupProcessEnv(home)
 	got := runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--install-picker")
-	if got.code != 0 || got.stderr != "" {
+	if got.code != 0 || got.stdout != "" || got.stderr != "Tab setup saved for future terminals. Existing custom bindings are preserved.\n" {
 		t.Fatalf("installation failed: %+v", got)
 	}
 	personal := "# later login settings\n"
@@ -102,7 +102,7 @@ func TestMainPickerShellSetupBashRemovalRestoresAbsentLoginProfile(t *testing.T)
 	}
 	for range 2 {
 		got = runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--uninstall-picker")
-		if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "setup removed") {
+		if got.code != 0 || got.stdout != "" || got.stderr != "Tab shortcut setup removed. Open a new terminal to finish.\n" {
 			t.Fatalf("removal failed: %+v", got)
 		}
 		for _, name := range []string{".bash_profile", ".bashrc"} {
@@ -234,7 +234,7 @@ func TestMainPickerShellSetupReadOnlyModesDoNotWrite(t *testing.T) {
 	for _, args := range [][]string{
 		{"--help"}, {"images", "generate", "--help"}, {"--format", "json", "images", "generate", "--help"},
 		{"@completion", "zsh"}, {"@completion", "zsh", "--picker"},
-		{"__complete", "--", "images", ""}, {"@completion", "--install-picker", "--help"},
+		{"__complete", "images", ""}, {"@completion", "--install-picker", "--help"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			home := t.TempDir()
@@ -264,7 +264,7 @@ func TestMainPickerShellSetupPartialRemovalReportsFailureAfterCleanup(t *testing
 				t.Fatal(err)
 			}
 			got := runMainDispatchWithEnv(t, "bash", env, "openai", "@completion", "bash", "--install-picker")
-			if got.code != 0 || got.stderr != "" {
+			if got.code != 0 || got.stdout != "" || got.stderr != "Tab setup saved for future terminals. Existing custom bindings are preserved.\n" {
 				t.Fatalf("installation failed: %+v", got)
 			}
 			if err := os.Symlink(profile, filepath.Join(home, ".bash_profile")); err != nil {
@@ -315,8 +315,14 @@ func TestMainPickerShellSetupIgnoresRequestConfiguration(t *testing.T) {
 				}
 				for _, action := range []string{spelling.install, spelling.remove} {
 					got := runMainDispatchWithEnv(t, "zsh", env, "openai", "--format-error", "json", "@completion", "zsh", action, spelling.profile, profile)
-					if got.code != 0 || got.stderr != "" || got.stdout == "" {
+					if got.code != 0 || got.stderr != "" || got.stdout != "" {
 						t.Fatalf("local setup depended on request configuration: %+v", got)
+					}
+					if action == spelling.install {
+						data, err := os.ReadFile(profile)
+						if err != nil || strings.Count(string(data), "# >>> openai image picker") != 1 {
+							t.Fatalf("silent installation did not create setup: %q, %v", data, err)
+						}
 					}
 				}
 				if _, err := os.Lstat(profile); !os.IsNotExist(err) {
@@ -332,21 +338,12 @@ func TestMainPickerShellSetupDoesNotExemptAPIArguments(t *testing.T) {
 		{"images", "generate", "--prompt", "--install-picker"},
 		{"images", "generate", "--prompt", "@completion --uninstall-picker"},
 		{"--project", "@completion", "images", "generate", "--prompt", "--install-picker"},
-		{"@completion", "zsh", "--install-picker=false"},
-		{"@completion", "zsh", "-install-picker=false"},
-		{"@completion", "zsh", "-install-picker", "-install-picker=false"},
-		{"@completion", "zsh", "--install-picker", "-install-picker=false"},
-		{"@completion", "zsh", "--uninstall-picker", "-uninstall-picker=false"},
-		{"@completion", "zsh", "-profile", "-install-picker"},
-		{"@completion", "zsh", "-profile", "--install-picker"},
-		{"@completion", "zsh", "-profile=-install-picker"},
-		{"@completion", "zsh", "--", "-install-picker"},
-		{"@completion", "zsh", " -- ", "-install-picker"},
-		{"@completion", "zsh", "-", "--install-picker"},
-		{"@completion", "zsh", "-1", "--install-picker"},
-		{"@completion", "zsh", "-@", "--install-picker"},
-		{"@completion", "zsh", "--profile", "--install-picker"},
-		{"@completion", "zsh", "--", "--install-picker"},
+		{"--project=@completion", "images", "generate", "--prompt", "--install-picker"},
+		{"--project", "__complete", "images", "generate", "--prompt", "--install-picker"},
+		{"images", "generate", "--prompt", "__complete --install-picker"},
+		{"models", "retrieve", "--model", "@completion"},
+		{"models", "retrieve", "--model=__complete"},
+		{"models", "list", "--", "@completion", "--install-picker"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			home := t.TempDir()
@@ -358,6 +355,76 @@ func TestMainPickerShellSetupDoesNotExemptAPIArguments(t *testing.T) {
 			entries, err := os.ReadDir(home)
 			if err != nil || len(entries) != 0 {
 				t.Fatalf("non-setup arguments wrote files: %v, %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestMainCompletionArgumentsIgnoreRequestConfiguration(t *testing.T) {
+	server, requests := globalFlagsServer(t, globalFlagsPage)
+	missing := filepath.Join(t.TempDir(), "missing.pem")
+	run := func(t *testing.T, args, configuration []string) mainDispatchResult {
+		t.Helper()
+		home := t.TempDir()
+		env := append(pickerSetupProcessEnv(home), "OPENAI_BASE_URL="+server.URL)
+		env = append(env, configuration...)
+		got := runMainDispatchWithEnv(t, "zsh", env, append([]string{"openai", "@completion", "zsh"}, args...)...)
+		entries, err := os.ReadDir(home)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("local completion wrote files: %v, %v", entries, err)
+		}
+		if len(requests) != 0 {
+			t.Fatalf("local completion made %d requests", len(requests))
+		}
+		return got
+	}
+	script := run(t, nil, nil)
+	if script.code != 0 || script.stderr != "" || !strings.Contains(script.stdout, "__openai_zsh_autocomplete") {
+		t.Fatalf("completion script control failed: %+v", script)
+	}
+	for _, test := range []struct {
+		args     []string
+		wantCode int
+	}{
+		{[]string{"--install-picker=false"}, 0},
+		{[]string{"-install-picker=false"}, 0},
+		{[]string{"-install-picker", "-install-picker=false"}, 0},
+		{[]string{"--install-picker", "-install-picker=false"}, 0},
+		{[]string{"--uninstall-picker", "-uninstall-picker=false"}, 0},
+		{[]string{"-profile", "-install-picker"}, 2},
+		{[]string{"-profile", "--install-picker"}, 2},
+		{[]string{"-profile=-install-picker"}, 2},
+		{[]string{"--", "-install-picker"}, 0},
+		{[]string{" -- ", "-install-picker"}, 0},
+		{[]string{"-", "--install-picker"}, 0},
+		{[]string{"-1", "--install-picker"}, 0},
+		{[]string{"-@", "--install-picker"}, 0},
+		{[]string{"--profile", "--install-picker"}, 2},
+		{[]string{"--", "--install-picker"}, 0},
+	} {
+		t.Run(strings.Join(test.args, " "), func(t *testing.T) {
+			want := run(t, test.args, nil)
+			if want.code != test.wantCode {
+				t.Fatalf("clean configuration returned exit %d, want %d: %+v", want.code, test.wantCode, want)
+			}
+			if test.wantCode == 0 && want != script {
+				t.Fatalf("non-setup arguments changed the completion script: %+v", want)
+			}
+			if test.wantCode != 0 && (want.stdout != "" || !strings.Contains(want.stderr, "Check your arguments with --help.")) {
+				t.Fatalf("invalid profile arguments lost their local diagnostic: %+v", want)
+			}
+			for _, configuration := range []struct {
+				name string
+				env  []string
+			}{
+				{"invalid URL", []string{"OPENAI_BASE_URL=invalid"}},
+				{"missing mTLS files", []string{"OPENAI_MTLS_CLIENT_CERT_FILE=" + missing, "OPENAI_MTLS_CLIENT_KEY_FILE=" + missing}},
+			} {
+				t.Run(configuration.name, func(t *testing.T) {
+					if got := run(t, test.args, configuration.env); got != want {
+						t.Fatalf("request configuration changed local completion: got %+v; want %+v", got, want)
+					}
+				})
 			}
 		})
 	}

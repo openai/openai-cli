@@ -61,7 +61,7 @@ the feature branch. Both commands use `openai files list --max-items 2`. The
 records have distinct IDs, filenames and sizes, with seven fields each so the
 complete before output fits in the 90-column by 24-row capture. The after scene
 retains ID, filename, purpose, bytes and status, followed by
-one `Summary; use --format json for full data.` notice after the list.
+one `Full data: --format json.` notice after the list.
 
 Two more scenes retrieve the first file before and after the change. The last
 scene uses `openai --format json files retrieve file_training`, demonstrating
@@ -158,6 +158,68 @@ sharing. `comparison.gif`, `before.png` and `after.png` are replay media, not
 native terminal validation. The output also preserves transcripts, captures,
 the exact scene, tool versions, hashes, commit IDs and the empty request log.
 Keep this output outside Git; rerun after changing the demonstrated help.
+
+### Command navigation
+
+`record-command-navigation.sh` compares command discovery in a 105-column, 45-row PTY.
+The `root` mode records the first 38 lines of full help and labels both scenes as excerpts.
+The `projects` mode records complete help for `openai admin organization projects`.
+
+Build the existing fixture:
+
+```sh
+go build -o dist/demos/bin/image-model-demo-api ./scripts/demos/image-models
+```
+
+Record the root comparison against a pinned main binary:
+
+```sh
+bash scripts/demos/record-command-navigation.sh root \
+  /path/to/main/openai /path/to/candidate/openai \
+  MAIN_COMMIT CANDIDATE_COMMIT /path/outside/repository/root-demo
+```
+
+Record the project comparison against a verified main binary with truncated group help:
+
+```sh
+bash scripts/demos/record-command-navigation.sh projects \
+  /path/to/main/openai /path/to/candidate/openai \
+  MAIN_COMMIT CANDIDATE_COMMIT /path/outside/repository/projects-demo
+```
+
+Supply full commit IDs and an empty output directory for each mode.
+Use a clean candidate build for PR evidence and verify both binaries against their supplied commit IDs.
+Check each binary's build information; record archive provenance when its build information lacks a commit ID.
+For local development, set `DEMO_SOURCE_MANIFEST` when the candidate contains uncommitted changes.
+The recorder copies this manifest, captures available Go build information, and hashes both binaries.
+
+The recorder checks exit status, expected help text, and an empty loopback request log.
+It removes the API key before running each command.
+Inspect both PNG files and `comparison.gif` before sharing.
+These files show actual PTY execution through asciinema/agg replay, not graphical terminal validation.
+
+### Grouped actions and root shortcuts
+
+`record-command-shortcuts.sh` compares audio actions, root discovery, and root shortcut help.
+Build the existing `image-model-demo-api` fixture, then run:
+
+```sh
+bash scripts/demos/record-command-shortcuts.sh audio \
+  /path/to/before/openai /path/to/candidate/openai \
+  BEFORE_COMMIT CANDIDATE_COMMIT /path/outside/repository/audio-demo
+```
+
+Use `root` for a labeled 32-line root help excerpt containing shortcuts and grouped commands.
+Use `transcribe` for `openai transcribe --help`; this expects status 3 before and status 0 after.
+Each mode requires a separate empty output directory and verified full commit IDs.
+Use `DEMO_API_BINARY` for a separately built fixture and `DEMO_SOURCE_MANIFEST` for uncommitted development sources.
+
+The recorder uses isolated Bash PTYs, no API key, and a rejecting loopback fixture.
+It checks real exit statuses and requires zero API requests.
+The 105-column replay uses 28 rows, or 40 rows for root help, with Menlo at 18 pixels.
+Inspect PNGs and individual GIF frames before sharing; exclude any combined GIF with rendering artifacts.
+Build information, hashes, transcripts, and raw captures remain beside the media.
+This records actual local CLI execution, not native graphical terminal appearance or API behavior.
 
 ### Installed command paths
 

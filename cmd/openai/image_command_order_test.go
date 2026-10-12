@@ -21,7 +21,7 @@ func TestMainImageCommandHelpOrder(t *testing.T) {
 			var names []string
 			inCommands := false
 			for _, line := range strings.Split(result.stdout, "\n") {
-				if strings.TrimRight(line, ":") == "COMMANDS" {
+				if slices.Contains([]string{"ACTIONS", "SETTINGS", "RETIRED COMMANDS"}, strings.TrimRight(line, ":")) {
 					inCommands = true
 					continue
 				}
@@ -37,6 +37,8 @@ func TestMainImageCommandHelpOrder(t *testing.T) {
 				}
 			}
 			require.Equal(t, want, names, result.stdout)
+			require.Less(t, strings.Index(result.stdout, "ACTIONS\n"), strings.Index(result.stdout, "SETTINGS\n"))
+			require.Less(t, strings.Index(result.stdout, "SETTINGS\n"), strings.Index(result.stdout, "RETIRED COMMANDS\n"))
 		})
 	}
 }

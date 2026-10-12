@@ -60,20 +60,19 @@ func TestImagePickerSelectionHistoryFollowsSuccessfulEcho(t *testing.T) {
 	model.settings.quality = "high"
 	result := imagePickerResult{Args: model.settings.args(), settings: model.settings, PrintOnly: true, shell: "bash"}
 	var diagnostic bytes.Buffer
-	err = finishImagePickerSelection(ctx, failedImagePickerWriter{}, &diagnostic, path, result)
+	err = finishImagePickerSelection(ctx, failedImagePickerWriter{}, &diagnostic, path, &result)
 	require.ErrorIs(t, err, io.ErrClosedPipe)
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, before, after)
 	require.Empty(t, diagnostic.String())
 	var output bytes.Buffer
-	require.NoError(t, finishImagePickerSelection(ctx, &output, &diagnostic, path, result))
+	require.NoError(t, finishImagePickerSelection(ctx, &output, &diagnostic, path, &result))
 	require.Equal(t, formatImagePickerCommand(result.Args, "bash")+"\n", output.String())
 	got, found, err := loadImagePickerState(ctx, path)
 	require.NoError(t, err)
 	require.True(t, found)
 	want := model.settings
-	want.prompt = ""
 	require.Equal(t, want, got)
 }
 
@@ -85,12 +84,12 @@ func TestImagePickerOptionalHistoryFailureDoesNotBlockSelection(t *testing.T) {
 	require.NoError(t, err)
 	result := imagePickerResult{Args: model.settings.args(), settings: model.settings, shell: "bash"}
 	var output, diagnostics bytes.Buffer
-	require.NoError(t, finishImagePickerSelection(context.Background(), &output, &diagnostics, path, result))
-	require.Equal(t, "Could not remember these settings.\n", diagnostics.String())
+	require.NoError(t, finishImagePickerSelection(context.Background(), &output, &diagnostics, path, &result))
+	require.Equal(t, "Could not save the draft.\n", diagnostics.String())
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, invalid, after)
-	err = finishImagePickerSelection(context.Background(), &output, failedImagePickerWriter{}, path, result)
+	err = finishImagePickerSelection(context.Background(), &output, failedImagePickerWriter{}, path, &result)
 	require.ErrorIs(t, err, io.ErrClosedPipe)
 }
 
@@ -99,7 +98,7 @@ func TestImagePickerCanceledSelectionHasNoPersistenceOrOutput(t *testing.T) {
 	cancel()
 	path := filepath.Join(t.TempDir(), "image-picker.json")
 	var output bytes.Buffer
-	err := finishImagePickerSelection(ctx, &output, &output, path, imagePickerResult{})
+	err := finishImagePickerSelection(ctx, &output, &output, path, &imagePickerResult{})
 	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, output.String())
 	_, err = os.Stat(path)
@@ -113,28 +112,27 @@ func TestImagePickerUnsupportedShellSelection(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "image-picker.json")
 			result := imagePickerResult{Args: m.settings.args(), settings: m.settings, shell: shell}
 			var output, diagnostics bytes.Buffer
-			require.NoError(t, finishImagePickerSelection(context.Background(), &output, &diagnostics, path, result))
+			require.NoError(t, finishImagePickerSelection(context.Background(), &output, &diagnostics, path, &result))
 			require.Empty(t, output.String(), "generation must not echo a command for the wrong shell")
 			require.Empty(t, diagnostics.String())
 			got, found, err := loadImagePickerState(t.Context(), path)
 			require.NoError(t, err)
 			require.True(t, found, "generation still remembers settings without a printable command")
 			want := m.settings
-			want.prompt = ""
 			require.Equal(t, want, got)
 			before, err := os.ReadFile(path)
 			require.NoError(t, err)
 			result.settings.quality = "high"
 			result.Args = result.settings.args()
 			result.PrintOnly = true
-			require.ErrorContains(t, finishImagePickerSelection(context.Background(), &output, &diagnostics, path, result), imagePickerUnsupportedShell)
+			require.ErrorContains(t, finishImagePickerSelection(context.Background(), &output, &diagnostics, path, &result), imagePickerUnsupportedShell)
 			require.Empty(t, output.String())
 			after, err := os.ReadFile(path)
 			require.NoError(t, err)
 			require.Equal(t, before, after, "unsupported command printing must not save a selection")
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			require.ErrorIs(t, finishImagePickerSelection(ctx, &output, &diagnostics, path, result), context.Canceled)
+			require.ErrorIs(t, finishImagePickerSelection(ctx, &output, &diagnostics, path, &result), context.Canceled)
 		})
 	}
 }

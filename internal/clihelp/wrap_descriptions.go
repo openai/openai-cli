@@ -26,19 +26,19 @@ func helpWidth(command *cli.Command) int {
 
 // Wrap prose without splitting words, paths, flags or copyable commands.
 func wrapDescription(text, indent string, width int) string {
+	return wrapPlainDescription(terminalProse(text), indent, width)
+}
+
+// Already normalized prose must not reinterpret literal markup from code spans.
+func wrapPlainDescription(text, indent string, width int) string {
 	if text == "" {
 		return ""
 	}
 	var out strings.Builder
-	fenced := false
+	var fence descriptionFence
 	for _, line := range reflowDescription(text) {
-		trimmed := strings.TrimSpace(line)
-		fence := strings.HasPrefix(trimmed, "```")
-		if fenced || fence || isCodeLine(line) {
+		if fence.contains(line) || isCodeLine(line) {
 			out.WriteString(indent + line + "\n")
-			if fence {
-				fenced = !fenced
-			}
 			continue
 		}
 		out.WriteString(indent)
@@ -80,17 +80,13 @@ func reflowDescription(text string) []string {
 			paragraph = ""
 		}
 	}
-	fenced := false
+	var fence descriptionFence
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
-		fence := strings.HasPrefix(trimmed, "```")
-		code := fenced || fence || isCodeLine(line)
+		code := fence.contains(line) || isCodeLine(line)
 		if trimmed == "" || code || strings.HasSuffix(trimmed, ":") {
 			flush()
 			lines = append(lines, line)
-			if fence {
-				fenced = !fenced
-			}
 			continue
 		}
 		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") || strings.HasPrefix(trimmed, "• ") {

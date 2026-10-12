@@ -17,16 +17,27 @@ func ConfigureCommand(root *cli.Command) {
 		return
 	}
 	root.Metadata[configuredCommandMetadata] = true
+	configureRootRequestFlags(root)
+	describeRequestInputs(root)
 	registerImageModels(root)
 	configureReadableOutput(root)
+	configureModelsList(root)
 	configureImageSaving(root)
 	configureImagePickerCompletion(root)
 	configureImagePickerShellSetup(root)
 	registerImagePreviewCommands(root)
 	configureReadableAudio(root)
 	configureReadableSpeech(root)
+	registerAdminSetup(root)
+	configureAdminCredentials(root)
 	configureCommandSubgroups(root)
+	configureTaskCommands(root)
+	configureFileCommands(root)
+	registerTokenizerCommands(root)
+	registerCodexCommands(root)
+	configureCommandPresentation(root)
 	configureManpageCommands(root)
+	configureOutputPolicy(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, mtlsClientFlags()...)
 	previousBefore := root.Before
@@ -37,6 +48,9 @@ func ConfigureCommand(root *cli.Command) {
 			if err != nil {
 				return ctx, err
 			}
+		}
+		if IsLocalUtilityCommand(command) {
+			return ctx, nil
 		}
 		return configureMTLS(ctx, command.Root())
 	}

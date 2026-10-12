@@ -8,9 +8,11 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/urfave/cli/v3"
 )
 
@@ -27,14 +29,34 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var imageFailure *imageSavingError
 	var streamFailure *streamResultError
 	var imageModelsFailure *imageModelsError
-	var voiceVariantFailure *voiceVariantError
+	var voiceTypeFailure *voiceTypeError
+	var helpTopicFailure *clihelp.UnknownTopicError
+	var adminCredentialsFailure *adminCredentialsError
+	var adminSetupFailure *adminSetupError
+	var utilityFailure *localUtilityError
+	var downloadFailure *downloadSaveError
+	var receiptFailure *saveReceiptError
+	var navigationFailure *listNavigationError
+	var modelsListFailure *modelsListError
 	switch {
+	case errors.As(failure, &adminSetupFailure):
+		return adminSetupFailure.Error()
+	case errors.As(failure, &downloadFailure):
+		return downloadFailure.message
+	case errors.As(failure, &receiptFailure):
+		return receiptFailure.Error()
 	case errors.Is(failure, context.Canceled):
 		return "Request canceled."
+	case errors.As(failure, &utilityFailure):
+		return utilityFailure.Error()
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
 		return "The request timed out. The API may have received it; check its status before repeating it."
+	case errors.As(failure, &modelsListFailure):
+		return modelsListFailure.Error()
 	case errors.As(failure, &imageFailure):
 		return imageFailure.message
+	case errors.As(failure, &navigationFailure):
+		return navigationFailure.Error()
 	case errors.As(failure, &streamFailure):
 		return streamFailure.message + "\nOutput may be incomplete."
 	case errors.As(failure, &typeError):
@@ -45,8 +67,12 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return "The output pager failed. Check PAGER or use --format text to display the result without a pager."
 	case errors.As(failure, &imageModelsFailure):
 		return imageModelsFailure.Error()
-	case errors.As(failure, &voiceVariantFailure):
-		return voiceVariantFailure.Error()
+	case errors.As(failure, &voiceTypeFailure):
+		return voiceTypeFailure.Error()
+	case errors.As(failure, &helpTopicFailure):
+		return unknownCommandAt(helpTopicFailure.Parent, helpTopicFailure.Topic)
+	case errors.As(failure, &adminCredentialsFailure):
+		return adminCredentialsFailure.Error()
 	case errors.As(failure, &pathError):
 		switch {
 		case errors.Is(pathError, os.ErrNotExist):
@@ -89,9 +115,12 @@ func knownLocalError(command *cli.Command, message string) string {
 		"cannot follow HTTP 307 redirect: streamed multipart uploads are not replayable",
 		"cannot follow HTTP 308 redirect: streamed multipart uploads are not replayable",
 		"stdin has already been read by another parameter; it can only be read once",
+		"multiple request parameters use stdin; select only one stdin consumer",
 		"cannot read from stdin: stdin is already being used for the request body",
 		"cannot read from stdin: stdin was already consumed by piped YAML/JSON input",
 		"Setup help takes no additional arguments.",
+		"Use either a positional upload path or --file, not both.",
+		"The upload path must not be empty.",
 		"PowerShell uses normal Tab completion. Type openai images generate and press Enter to open the image picker.",
 		"COMPLETION_STYLE must be set to 'bash', 'zsh', 'pwsh', or 'fish'",
 		"COMPLETION_STYLE must be set to 'bash', 'zsh', 'pwsh', 'fish'":
@@ -132,13 +161,17 @@ func knownLocalError(command *cli.Command, message string) string {
 				if flag == "--format" || flag == "--format-error" {
 					return "Invalid output format. Choose one of: " + strings.Join(OutputFormats, ", ") + "."
 				}
-				return "Invalid value for " + flag + ". Check the expected type and supported values with --help."
+				message := "Invalid value for " + flag + "."
+				if expected := parserFlagExpectedType(command, name); expected != "" {
+					message += " Expected " + expected + "."
+				}
+				return parserErrorGuidance(command, message)
 			}
 		}
 	}
 	if rest, ok := strings.CutPrefix(message, "flag needs an argument: "); ok {
 		if flag := declaredErrorFlag(command, strings.TrimLeft(rest, "-")); flag != "" {
-			return "Add a value for " + flag + "."
+			return parserErrorGuidance(command, "Add a value for "+flag+".")
 		}
 	}
 	// Required flag names originate in declarations, but verify them before
@@ -159,12 +192,12 @@ func knownLocalError(command *cli.Command, message string) string {
 				}
 				flags = append(flags, flag)
 			}
-			return "Missing required options: " + strings.Join(flags, ", ") + ". Check --help for usage."
+			return parserErrorGuidance(command, "Missing required options: "+strings.Join(flags, ", ")+".")
 		}
 	}
 	switch {
 	case strings.HasPrefix(message, "Unexpected extra arguments: "):
-		return "Unexpected extra arguments. Check the command's accepted arguments with --help."
+		return parserErrorGuidance(command, "Unexpected extra arguments.")
 	case strings.HasPrefix(message, "no shell provided for completion command. available shells are "):
 		return "Choose a shell for completion: openai @completion bash (or fish, pwsh, zsh)."
 	case strings.HasPrefix(message, "unknown shell ") && strings.Contains(message, ", available shells are "):
@@ -173,11 +206,16 @@ func knownLocalError(command *cli.Command, message string) string {
 		strings.HasPrefix(message, "Invalid format: ") && strings.HasSuffix(message, ", valid formats are: "+strings.Join(OutputFormats, ", ")):
 		return "Invalid output format. Choose one of: " + strings.Join(OutputFormats, ", ") + "."
 	case strings.HasPrefix(message, "flag provided but not defined: -"):
-		return "An option is not recognized. Check the command's available options with --help."
+		name := strings.TrimPrefix(message, "flag provided but not defined: -")
+		message := "An option is not recognized."
+		if suggestion := suggestParserFlag(command, name); suggestion != "" {
+			message += " Did you mean " + suggestion + "?"
+		}
+		return parserErrorGuidance(command, message)
 	case strings.HasPrefix(message, "No help topic for '"):
 		return unknownCommandErrorMessage(command)
 	case strings.HasPrefix(message, "Unknown help topic "):
-		return "Unknown help topic. Run openai help --all to see commands."
+		return "Unknown help topic. Run openai help to see commands."
 	case strings.HasPrefix(message, "Failed to parse piped data as YAML/JSON:\n"):
 		return "Could not parse piped input as YAML or JSON. Check the input's syntax."
 	case strings.HasPrefix(message, "Cannot merge flags with a body that is not a map:"),
@@ -187,6 +225,80 @@ func knownLocalError(command *cli.Command, message string) string {
 		return "The request body is not supported for this binary endpoint. Check the command's input options with --help."
 	}
 	return ""
+}
+
+func parserErrorGuidance(command *cli.Command, message string) string {
+	invocation := "openai"
+	if command != nil {
+		invocation = errorHelpInvocation(command.Root())
+		if path := command.Path(); len(path) > 1 {
+			invocation += " " + strings.Join(path[1:], " ")
+		}
+	}
+	return message + "\nOptions and examples: " + invocation + " --help"
+}
+
+// These flags match the parser's current scope, including inherited flags and
+// alias shadowing. Do not suggest a local flag from an ancestor command.
+func parserErrorFlags(command *cli.Command) []cli.Flag {
+	if command == nil {
+		return nil
+	}
+	return append(command.VisibleFlags(), command.VisiblePersistentFlags()...)
+}
+
+func parserFlagExpectedType(command *cli.Command, name string) string {
+	for _, flag := range parserErrorFlags(command) {
+		if !slices.Contains(flag.Names(), name) {
+			continue
+		}
+		if documented, ok := flag.(cli.DocGenerationFlag); ok {
+			switch documented.TypeName() {
+			case "int", "uint":
+				return "an integer"
+			case "float":
+				return "a number"
+			case "bool", "boolean":
+				return "a boolean (true or false)"
+			}
+		}
+		return ""
+	}
+	return ""
+}
+
+func suggestParserFlag(command *cli.Command, provided string) string {
+	// Diagnostics are untrusted. Compare a plain flag name only, then emit the
+	// canonical name from its declaration. Never copy the rejected input.
+	for _, character := range provided {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.') {
+			return ""
+		}
+	}
+	if len(provided) < 2 {
+		return ""
+	}
+	provided = strings.ToLower(provided)
+	suggestion := ""
+	for _, flag := range parserErrorFlags(command) {
+		names := flag.Names()
+		for _, name := range names {
+			if !withinOneEdit(strings.ToLower(name), provided) {
+				continue
+			}
+			canonical := "--" + names[0]
+			if len(names[0]) == 1 {
+				canonical = "-" + names[0]
+			}
+			if suggestion != "" && suggestion != canonical {
+				return ""
+			}
+			suggestion = canonical
+			break
+		}
+	}
+	return suggestion
 }
 
 func unknownCommandErrorMessage(command *cli.Command) string {
@@ -201,14 +313,43 @@ func unknownCommandErrorMessage(command *cli.Command) string {
 			command = next
 			continue
 		}
-		if command.Suggest {
-			if suggestion := suggestCommand(command.Commands, name); suggestion != "" {
-				return "Unknown help topic. " + suggestion
+		return unknownCommandAt(command, name)
+	}
+	return "Unknown help topic. Run openai help to see commands."
+}
+
+func unknownCommandAt(command *cli.Command, name string) string {
+	if command == nil {
+		return "Unknown help topic. Run openai help to see commands."
+	}
+	if command.Suggest {
+		candidates := clihelp.VisibleCommands(command)
+		for _, child := range command.Commands {
+			compatibility, _ := child.Metadata["command-compatibility-alias"].(bool)
+			if child.Hidden && compatibility && (strings.Contains(name, ":") || withinOneEdit(strings.ToLower(name), strings.ToLower(child.Name))) {
+				candidates = append(candidates, child)
 			}
 		}
-		break
+		if suggestion := suggestCommand(candidates, name); suggestion != "" {
+			prefix := "Did you mean '" + command.Root().Name
+			if strings.HasPrefix(suggestion, prefix+" ") {
+				suggestion = "Did you mean '" + errorHelpInvocation(command.Root()) + strings.TrimPrefix(suggestion, prefix)
+			}
+			return "Unknown help topic. " + suggestion
+		}
 	}
-	return "Unknown help topic. Run openai help --all to see commands."
+	var path []string
+	for _, ancestor := range command.Lineage() {
+		if ancestor != command.Root() {
+			path = append(path, ancestor.Name)
+		}
+	}
+	slices.Reverse(path)
+	invocation := errorHelpInvocation(command.Root()) + " help"
+	if len(path) > 0 {
+		invocation += " " + strings.Join(path, " ")
+	}
+	return "Unknown help topic. Run " + invocation + " to see commands."
 }
 
 func afterQuotedValue(message, prefix string) (string, bool) {

@@ -85,7 +85,7 @@ var imagesEdit = cli.Command{
 		},
 		&requestflag.Flag[*string]{
 			Name:     "input-fidelity",
-			Usage:    "Control how much effort the model will exert to match the style and features, especially facial features, of input images. This parameter is only supported for `gpt-image-1` and `gpt-image-1.5` and later models, unsupported for `gpt-image-1-mini`. Supports `high` and `low`. Defaults to `low`.",
+			Usage:    "Control how much effort the model will exert to match the style and features, especially facial features, of input images. Supports `high` and `low` on `gpt-image-1` and `gpt-image-1.5`; `gpt-image-1-mini` supports only `low`. For `gpt-image-2`, omit this parameter. Defaults to `low` on supported models.",
 			BodyPath: "input_fidelity",
 		},
 		&requestflag.Flag[string]{
@@ -234,11 +234,9 @@ var imagesGenerate = cli.Command{
 			BodyPath: "stream",
 		},
 		&requestflag.Flag[*string]{
-			Name:        "style",
-			Usage:       "Legacy style parameter for retired image models. Unsupported for GPT image models; describe the desired style in the prompt instead.",
-			Default:     requestflag.Ptr[string]("vivid"),
-			HideDefault: true,
-			BodyPath:    "style",
+			Name:     "style",
+			Usage:    "Legacy style parameter for retired image models. Unsupported for GPT image models; describe the desired style in the prompt instead.",
+			BodyPath: "style",
 		},
 		&requestflag.Flag[string]{
 			Name:     "user",

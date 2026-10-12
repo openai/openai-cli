@@ -89,11 +89,11 @@ func RunKittyOutputHelper(args []string) (bool, error) {
 			}
 			return true, err
 		}
-		if command != 'J' || len(descriptors) != 1 {
+		if (command != 'J' && command != 'K') || len(descriptors) != 1 {
 			closeKittyDescriptors(descriptors)
 			return true, errors.New("invalid image output job")
 		}
-		jobErr := runKittyJob(control, descriptors[0])
+		jobErr := runKittyJob(control, descriptors[0], command)
 		status := byte('0')
 		if jobErr != nil {
 			status = '1'
@@ -104,7 +104,7 @@ func RunKittyOutputHelper(args []string) (bool, error) {
 	}
 }
 
-func runKittyJob(control *net.UnixConn, fd int) error {
+func runKittyJob(control *net.UnixConn, fd int, command byte) error {
 	input := os.NewFile(uintptr(fd), "image-output-data")
 	defer input.Close()
 	if err := kittyReadPipe(fd); err != nil {
@@ -119,7 +119,11 @@ func runKittyJob(control *net.UnixConn, fd int) error {
 	_, _, readyErr := control.WriteMsgUnix([]byte{'A'}, nil, nil)
 	var writeErr error
 	if readyErr == nil {
-		_, writeErr = io.Copy(os.Stdout, input)
+		if command == 'K' {
+			writeErr = copyKittyFrames(os.Stdout, input)
+		} else {
+			_, writeErr = io.Copy(os.Stdout, input)
+		}
 	}
 	// Ignore only while idle, including the spare reserved for protocol reset.
 	// Restoring a Go handler/trampoline is unnecessary and deliberately avoided.

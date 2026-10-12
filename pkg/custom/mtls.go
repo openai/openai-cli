@@ -28,20 +28,20 @@ const (
 
 func mtlsClientFlags() []cli.Flag {
 	return []cli.Flag{
-		&cli.StringFlag{
-			Name:      mtlsClientCertFileFlag,
-			Usage:     "Path to a PEM client certificate chain for mutual TLS (leaf first, followed by intermediates)",
-			Sources:   cli.EnvVars(mtlsClientCertFileEnv),
-			TakesFile: true,
-			OnlyOnce:  true,
-		},
-		&cli.StringFlag{
-			Name:      mtlsClientKeyFileFlag,
-			Usage:     "Path to the PEM private key for the mutual TLS client certificate",
-			Sources:   cli.EnvVars(mtlsClientKeyFileEnv),
-			TakesFile: true,
-			OnlyOnce:  true,
-		},
+		&mtlsClientFlag{StringFlag: cli.StringFlag{
+			Name:        mtlsClientCertFileFlag,
+			Usage:       "Path to a PEM client certificate chain for mutual TLS (leaf first, followed by intermediates)",
+			Sources:     cli.EnvVars(mtlsClientCertFileEnv),
+			TakesFile:   true,
+			HideDefault: true,
+		}},
+		&mtlsClientFlag{StringFlag: cli.StringFlag{
+			Name:        mtlsClientKeyFileFlag,
+			Usage:       "Path to the PEM private key for the mutual TLS client certificate",
+			Sources:     cli.EnvVars(mtlsClientKeyFileEnv),
+			TakesFile:   true,
+			HideDefault: true,
+		}},
 	}
 }
 

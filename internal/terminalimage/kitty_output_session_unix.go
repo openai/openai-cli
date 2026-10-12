@@ -3,6 +3,7 @@
 package terminalimage
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -70,9 +71,13 @@ func (s *kittyOutputSession) Close() error {
 }
 
 func (s *kittyOutputSession) write(ctx context.Context, write func(io.Writer) error) (bool, error) {
+	return s.writeJob(ctx, 'J', write)
+}
+
+func (s *kittyOutputSession) writeJob(ctx context.Context, job byte, write func(io.Writer) error) (bool, error) {
 	for _, worker := range s.workers {
 		if !worker.retired.Load() {
-			return worker.write(ctx, write)
+			return worker.writeJob(ctx, job, write)
 		}
 	}
 	return false, errors.New("native image output workers have stopped")
@@ -186,6 +191,10 @@ func (s *kittyOutputWorker) retire() {
 }
 
 func (s *kittyOutputWorker) write(ctx context.Context, write func(io.Writer) error) (written bool, err error) {
+	return s.writeJob(ctx, 'J', write)
+}
+
+func (s *kittyOutputWorker) writeJob(ctx context.Context, job byte, write func(io.Writer) error) (written bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -222,7 +231,7 @@ func (s *kittyOutputWorker) write(ctx context.Context, write func(io.Writer) err
 		}
 	}()
 	s.used.Store(true)
-	_, _, err = s.control.WriteMsgUnix([]byte{'J'}, unix.UnixRights(int(dataRead.Fd())), nil)
+	_, _, err = s.control.WriteMsgUnix([]byte{job}, unix.UnixRights(int(dataRead.Fd())), nil)
 	if err != nil {
 		return false, err
 	}
@@ -246,7 +255,17 @@ func (s *kittyOutputWorker) write(ctx context.Context, write func(io.Writer) err
 		done <- readErr
 	}()
 	writer := &kittyPipeWriter{Writer: dataWrite}
-	writeErr := write(writer)
+	var writeErr error
+	if job == 'K' {
+		// Batch the private pipe without losing individual terminal write boundaries.
+		buffer := bufio.NewWriterSize(writer, 32*1024)
+		writeErr = write(kittyFramePipeWriter{buffer})
+		if writeErr == nil {
+			writeErr = buffer.Flush()
+		}
+	} else {
+		writeErr = write(writer)
+	}
 	if writeErr != nil {
 		s.retire()
 	}

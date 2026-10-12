@@ -136,7 +136,9 @@ func (p *imagePickerInline) draw() {
 	p.model.clampCommandOffset()
 	content := p.model.View().Content
 	var converted strings.Builder
-	_, _ = io.WriteString(&colorprofile.Writer{Forward: &converted, Profile: p.profile}, content)
+	// The picker already requires cursor support. A colorless profile must
+	// preserve layout controls instead of stripping them as nonterminal output.
+	_, _ = io.WriteString(&colorprofile.Writer{Forward: &converted, Profile: max(p.profile, colorprofile.ASCII)}, content)
 	content = converted.String()
 	if content == p.content && width == p.width && height == p.height {
 		return

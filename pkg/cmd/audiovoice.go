@@ -16,18 +16,20 @@ import (
 
 var audioVoicesCreate = cli.Command{
 	Name:    "create",
-	Usage:   "Creates a voice from a text prompt or from a consent recording and an audio\nsample.",
+	Usage:   "Create a custom voice you can use for audio output (for example, in\nText-to-Speech and the Realtime API). This requires an audio sample and a\npreviously uploaded consent recording.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
 			Name:      "audio-sample",
 			Usage:     "The sample audio recording file. Maximum size is 10 MiB.\n\nSupported MIME types:\n`audio/mpeg`, `audio/wav`, `audio/x-wav`, `audio/ogg`, `audio/aac`, `audio/flac`, `audio/webm`, `audio/mp4`.\n",
+			Required:  true,
 			BodyPath:  "audio_sample",
 			FileInput: true,
 		},
 		&requestflag.Flag[string]{
 			Name:     "consent",
 			Usage:    "The consent recording ID (for example, `cons_1234`).",
+			Required: true,
 			BodyPath: "consent",
 		},
 		&requestflag.Flag[string]{
@@ -41,22 +43,6 @@ var audioVoicesCreate = cli.Command{
 			Usage:    "The voice creation method. Defaults to `audio_sample` when omitted.",
 			Default:  "audio_sample",
 			BodyPath: "type",
-		},
-		&requestflag.Flag[string]{
-			Name:     "prompt",
-			Usage:    "A description of the desired voice. Must not contain only whitespace.",
-			BodyPath: "prompt",
-		},
-		&requestflag.Flag[any]{
-			Name:     "model",
-			Usage:    "The voice creation model to use. Defaults to `auto`.",
-			Default:  "auto",
-			BodyPath: "model",
-		},
-		&requestflag.Flag[string]{
-			Name:     "script-hint",
-			Usage:    "Optional text for the voice to speak during creation. If omitted, a script is generated from the prompt. Must not be blank after trimming whitespace; scripts that are too short are rejected.",
-			BodyPath: "script_hint",
 		},
 	},
 	Action:          handleAudioVoicesCreate,

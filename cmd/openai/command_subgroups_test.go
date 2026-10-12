@@ -27,8 +27,8 @@ func TestMainCommandSubgroupsCoverGeneratedRoutes(t *testing.T) {
 				t.Fatalf("missing nested route for %s", old.Name)
 			}
 		}
-		if !old.Hidden || nested.Hidden {
-			t.Fatalf("discovery should prefer the nested route for %s", old.Name)
+		if !old.Hidden || nested.Hidden && nested.Metadata["command-compatibility-alias"] != true {
+			t.Fatalf("nested route must stay available for %s", old.Name)
 		}
 		for _, action := range old.Commands {
 			copy := nested.Command(action.Name)
@@ -45,11 +45,11 @@ func TestMainCommandSubgroupsCoverGeneratedRoutes(t *testing.T) {
 
 func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 	for _, tc := range []struct{ path, child string }{
-		{"admin", "organization"}, {"admin organization", "audit-logs"},
+		{"admin", "projects"}, {"admin organization", "audit-logs"},
 		{"admin organization projects", "service-accounts"},
 		{"admin organization projects service-accounts", "api-keys"},
 		{"chat", "completions"}, {"chat completions", "messages"},
-		{"audio", "transcriptions"}, {"beta threads runs", "steps"},
+		{"audio", "transcribe"}, {"beta threads runs", "steps"},
 		{"containers files", "content"}, {"skills versions", "content"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
@@ -68,7 +68,7 @@ func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 				}
 			}
 			for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
-				args := append([]string{"openai", "__complete", "--"}, strings.Fields(tc.path)...)
+				args := mainCompletionArgs(style, strings.Fields(tc.path)...)
 				got := runMainDispatch(t, style, append(args, "")...)
 				if got.stderr != "" || !strings.Contains(got.stdout, tc.child) {
 					t.Fatalf("%s completion failed: %+v", style, got)
@@ -77,7 +77,7 @@ func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 		})
 	}
 	for _, resource := range [][]string{{"admin:organization:audit-logs"}, {"admin", "organization", "audit-logs"}} {
-		got := runMainDispatch(t, "zsh", append(append([]string{"openai", "__complete", "--"}, resource...), "list", "--eff")...)
+		got := runMainDispatch(t, "zsh", append(mainCompletionArgs("zsh", resource...), "list", "--eff")...)
 		if got.stderr != "" || !strings.Contains(got.stdout, "--effective-at") {
 			t.Fatalf("compatibility flag completion failed: %+v", got)
 		}
@@ -98,13 +98,21 @@ func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 			t.Fatalf("internal command exposed as a help topic: %+v", got)
 		}
 	}
-	got := runMainDispatch(t, "zsh", "openai", "__complete", "--", "")
+	got := runMainDispatch(t, "zsh", mainCompletionArgs("zsh", "")...)
 	if strings.Contains(got.stdout, "admin:organization") || !strings.Contains(got.stdout, "admin") {
 		t.Fatalf("root completion does not prefer subgroups: %+v", got)
 	}
 }
 
 func TestMainCommandSubgroupsLegacyPrefixCompletion(t *testing.T) {
+	summaries := map[string]string{
+		"audio":                         "Transcribe audio, generate speech, and create voices.",
+		"audio:transcriptions":          "Convert audio to text.",
+		"audio:translations":            "Translate supported audio to English text.",
+		"admin:organization:audit-logs": "List organization actions and configuration changes.",
+		"beta:threads:runs":             "Create and manage runs on a beta thread.",
+		"beta:threads:runs:steps":       "Inspect the steps of a beta thread run.",
+	}
 	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
 		t.Run(style, func(t *testing.T) {
 			for _, tc := range []struct {
@@ -128,10 +136,18 @@ func TestMainCommandSubgroupsLegacyPrefixCompletion(t *testing.T) {
 					want := tc.want
 					if style == "bash" {
 						want = tc.bashWant
-					} else if style == "zsh" {
-						want = strings.ReplaceAll(want, ":", `\:`)
+					} else if (style == "zsh" || style == "fish") && want != "" {
+						var records []string
+						for _, name := range strings.Split(strings.TrimSuffix(want, "\n"), "\n") {
+							if style == "zsh" {
+								records = append(records, strings.ReplaceAll(name, ":", `\:`)+":"+summaries[name])
+							} else {
+								records = append(records, name+"\t"+summaries[name])
+							}
+						}
+						want = strings.Join(records, "\n") + "\n"
 					}
-					args := append([]string{"openai", "__complete", "--"}, tc.args...)
+					args := mainCompletionArgs(style, tc.args...)
 					got := runMainDispatch(t, style, args...)
 					if got != (mainDispatchResult{code: tc.code, stdout: want}) {
 						t.Fatalf("legacy prefix completion: got %+v, want exit %d stdout %q and empty stderr", got, tc.code, want)
@@ -187,7 +203,7 @@ func TestMainCommandSubgroupsPreserveAudioAndErrors(t *testing.T) {
 	for _, resource := range [][]string{{"audio:transcriptions"}, {"audio", "transcriptions"}} {
 		command := append(append([]string{}, resource...), args[1:]...)
 		failure := runMainCommandAPIErrorResponse(t, 400, "application/json", `{"error":{"message":"synthetic","type":"invalid_request_error","code":"invalid_value","param":"response_format"}}`, command)
-		if failure.code == 0 || failure.stdout != "" || !strings.Contains(failure.stderr, "json, text, srt") || !strings.Contains(failure.stderr, "help --all "+strings.Join(resource, " ")+" create") {
+		if failure.code == 0 || failure.stdout != "" || !strings.Contains(failure.stderr, "json, text, srt") || !strings.Contains(failure.stderr, "help "+strings.Join(resource, " ")+" create") {
 			t.Fatalf("audio error context changed: %+v", failure)
 		}
 	}
