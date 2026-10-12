@@ -62,13 +62,21 @@ type imageOutputPlan struct {
 // A private classification carries locally authored guidance through the shared
 // error presenter. Causes remain available to errors.Is without printing data.
 type imageSavingError struct {
-	message string
-	cause   error
+	message          string
+	cause            error
+	preserveOnCancel bool
 }
 
-func (e *imageSavingError) Error() string                  { return e.message }
-func (e *imageSavingError) Unwrap() error                  { return e.cause }
-func imageSavingFailure(message string, cause error) error { return &imageSavingError{message, cause} }
+func (e *imageSavingError) Error() string { return e.message }
+func (e *imageSavingError) Unwrap() error { return e.cause }
+func imageSavingFailure(message string, cause error) error {
+	return &imageSavingError{message: message, cause: cause}
+}
+
+// Only path-free saving outcomes opt in; other image errors can include private paths.
+func imageSavingResultFailure(message string, cause error) error {
+	return &imageSavingError{message: message, cause: cause, preserveOnCancel: true}
+}
 
 func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Result) (*imageOutputPlan, bool, error) {
 	streaming := body.Get("stream").Type == gjson.True
@@ -188,7 +196,7 @@ func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writ
 		if len(saved) > 0 {
 			message = fmt.Sprintf("Saved %d image(s), but could not save the entire response. The listed files are kept; do not generate those images again.", len(saved))
 		}
-		saveErr = imageSavingFailure(message, saveErr)
+		saveErr = imageSavingResultFailure(message, saveErr)
 	}
 	for _, file := range saved {
 		// Quoting keeps paths useful without allowing terminal control injection.
@@ -198,7 +206,7 @@ func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writ
 			if saveErr != nil {
 				message = fmt.Sprintf("Saved %d image(s), but could not save the entire response or print all saved paths. Check the output folder before generating again.", len(saved))
 			}
-			return imageSavingFailure(message, errors.Join(saveErr, err))
+			return imageSavingResultFailure(message, errors.Join(saveErr, err))
 		}
 	}
 	if saveErr != nil {
@@ -207,7 +215,7 @@ func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writ
 	if err := displaySavedImages(ctx, saved, previewOutput, func(file imageoutput.SavedImage) (bool, error) {
 		return displaySavedImage(ctx, file, previewOutput, p.diagnostics, p.inline)
 	}); err != nil {
-		return imageSavingFailure("Images were saved, but the preview could not finish. Use the saved files; no need to generate again.", err)
+		return imageSavingResultFailure("Images were saved, but the preview could not finish. Use the saved files; no need to generate again.", err)
 	}
 	return nil
 }
