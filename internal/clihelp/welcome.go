@@ -55,7 +55,7 @@ func welcomeUnicode(getenv func(string) string) bool {
 
 func welcomeTerminal(value any) bool {
 	file, ok := value.(interface{ Fd() uintptr })
-	return ok && term.IsTerminal(file.Fd())
+	return ok && (term.IsTerminal(file.Fd()) || welcomePseudoTerminal(file.Fd()))
 }
 
 func welcomeEnvironment(getenv func(string) string, goos string) bool {

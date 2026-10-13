@@ -34,6 +34,8 @@ Other or unknown encodings retain the ASCII frame and literal-title fallback at 
 Windows Terminal advertises Unicode when no locale is set.
 Classic Windows consoles without `TERM` or `WT_SESSION` use unstyled output.
 Their unknown encoding selects the ASCII fallback without enabling console modes.
+MSYS/Cygwin PTY pipe handles also qualify; ordinary pipes and files remain redirected streams.
+When Windows cannot report a pipe terminal's dimensions, the existing help renderer uses its 80-column fallback.
 The ASCII fallback escapes non-ASCII revision characters without losing their values.
 Color selection remains independent from character encoding.
 The 16-color fallback retains its single-color fills, earlier metadata positions, left-aligned tagline, and plain border.
