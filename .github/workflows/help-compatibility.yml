@@ -169,6 +169,22 @@ jobs:
           go test ./pkg/custom -count=1 -timeout=2m -v -json \
             -run '^TestImagePickerNativeShellQuoting/(zsh|fish)$' \
             | tee "$RUNNER_TEMP/shell-quoting-tests.jsonl"
+      - name: Test Windows Files upload and download routes
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainFilesWorkflow(UploadPaths|UploadValidation|UploadStdinCompatibility|ExplicitBinaryStdin|MachineOutput|DownloadBytes|DownloadReceiptModes|FailuresPreserveExits)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'files-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows image upload scalar inputs
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageUploadQuotedCountPreservesMultipart|TestMainImageEditQuotedStreamScalars|TestMainImageUploadMalformedScalarTextFailsBeforeRequest|TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-scalar-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test request environment restoration
         if: matrix.environment
         shell: bash
@@ -250,6 +266,42 @@ jobs:
           def required_cases(root, children):
               return {root} | {f"{root}/{child}" for child in children}
 
+          if os.environ["RUNNER_OS"] == "Windows":
+              files_cases = {
+                  "UploadPaths": ["spaces", "options_first", "apostrophe", "literal_at", "literal_dash",
+                                  "literal_double_dash", "empty", "binary", "upload_flag", "create_flag",
+                                  "upload_assigned_flag", "upload_repeated_flag", "create_repeated_flag"],
+                  "UploadValidation": ["missing_purpose", "missing_path", "missing_local_file", "extra_positional",
+                                       "positional_and_file_flag", "file_flag_and_positional", "create_keeps_flag_syntax"],
+                  "UploadStdinCompatibility": ["JSON_purpose", "YAML_purpose", "JSON_request",
+                                               "flag_overrides_purpose", "path_overrides_JSON_file"],
+                  "ExplicitBinaryStdin": ["empty", "binary", "JSON_stays_file_bytes"],
+                  "MachineOutput": ["piped_default", "explicit_auto", "explicit_text", "json", "jsonl", "raw",
+                                    "extract_ID", "raw_ID", "raw_timestamp"],
+                  "DownloadBytes": ["text", "binary"],
+                  "DownloadReceiptModes": ["quiet", "error_JSON", "error_transform"],
+                  "FailuresPreserveExits": [],
+              }
+              suites["files-tests.jsonl"] = set().union(*(
+                  required_cases("TestMainFilesWorkflow" + suffix, children)
+                  for suffix, children in files_cases.items()
+              ))
+              suites["image-scalar-tests.jsonl"] = required_cases(
+                  "TestMainImageUploadQuotedCountPreservesMultipart",
+                  [f"{operation}/{source}/API={api}" for operation in ["edit", "create-variation"]
+                   for source in ["JSON", "YAML", "whitespace"] for api in ["false", "true"]],
+              ) | required_cases(
+                  "TestMainImageEditQuotedStreamScalars",
+                  [f"{source}/API={api}" for source in ["JSON", "YAML", "false_with_whitespace"]
+                   for api in ["false", "true"]],
+              ) | required_cases(
+                  "TestMainImageUploadMalformedScalarTextFailsBeforeRequest",
+                  [f"{source}/API={api}" for source in ["invalid_count", "fractional_count", "zero_count",
+                   "array_count", "invalid_stream", "too_many_partials", "boolean_partials"]
+                   for api in ["false", "true"]],
+              ) | required_cases(
+                  "TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues", ["native_null", "text_null"],
+              )
           if os.environ["CHECK_ENVIRONMENT"] == "true":
               suites["environment-tests.jsonl"] = required_cases(
                   "TestRequestConfigurationRestoresEnvironment",
@@ -293,7 +345,9 @@ jobs:
                       elif event["Action"] == "pass":
                           package_passed = True
               missing = required - passed
-              unexpected = passed - required if filename in {"dispatch-tests.jsonl", "bash-prefix-tests.jsonl"} else set()
+              unexpected = passed - required if filename in {
+                  "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-scalar-tests.jsonl",
+              } else set()
               children = sum("/" in name for name in passed)
               if missing or unexpected or not package_passed:
                   raise SystemExit(f"{filename}: missing required tests: {sorted(missing)}; unexpected tests: {sorted(unexpected)}; package passed: {package_passed}")
