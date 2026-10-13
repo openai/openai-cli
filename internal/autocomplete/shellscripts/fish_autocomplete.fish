@@ -1,7 +1,8 @@
 #!/usr/bin/env fish
 
 function ____APPNAME___fish_autocomplete
-    set -l tokens (commandline -xpc)
+    # Fish 3 lacks expanded tokens; retain its literal tokenization fallback.
+    set -l tokens (commandline -xpc 2>/dev/null; or commandline -opc)
     set -l current (commandline -ct)
 
     set -l cmd $tokens[1]
