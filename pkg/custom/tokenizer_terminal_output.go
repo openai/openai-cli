@@ -179,6 +179,7 @@ func startTokenizerTerminalWorker(ctx context.Context, executable string, output
 	}
 	defer ackWrite.Close()
 	command := exec.Command(executable, "tokenizer", "__output")
+	configureInteractiveImageDiagnostic(ctx, command)
 	command.Stdin, command.Stdout, command.Stderr = inputRead, output, ackWrite
 	command.Env = tokenizerTerminalEnvironment()
 	if err := command.Start(); err != nil {
