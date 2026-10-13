@@ -27,7 +27,15 @@ func apiErrorValue(apierr *openai.Error) gjson.Result {
 	raw := apierr.RawJSON()
 	if gjson.Valid(raw) {
 		value := gjson.Parse(raw)
-		if value.Type != gjson.Null {
+		hasDetails := value.Type != gjson.Null
+		if value.IsObject() {
+			hasDetails = false
+			value.ForEach(func(_, _ gjson.Result) bool {
+				hasDetails = true
+				return false
+			})
+		}
+		if hasDetails {
 			return value
 		}
 	}

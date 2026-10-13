@@ -24,7 +24,7 @@ type nativeShell struct {
 }
 
 // These checks execute installed shells and the built CLI. They do not cover
-// terminal-app rendering, interactive hidden input, or installed completion.
+// terminal-app rendering, interactive hidden input, or profile installation.
 func TestMainNativeShell(t *testing.T) {
 	work := filepath.Join(t.TempDir(), "CLI with spaces & apostrophe's")
 	if err := os.Mkdir(work, 0o700); err != nil {
@@ -71,6 +71,36 @@ func TestMainNativeShell(t *testing.T) {
 				t.Skipf("%s is not installed", shell.executable)
 			}
 			shell.executable = path
+			if shell.name == "bash" {
+				t.Run("file completion Readline", func(t *testing.T) {
+					python, err := exec.LookPath("python3")
+					if err != nil {
+						if slices.Contains(required, "bash") {
+							t.Fatalf("required native Bash completion needs Python 3 for its PTY driver: %v", err)
+						}
+						t.Skip("Python 3 is unavailable; native Bash Readline completion was not tested")
+					}
+					ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+					defer cancel()
+					probe := exec.CommandContext(ctx, python, "-I", "-B", "../../scripts/check-bash-completion.py", filepath.Join(work, binary), path)
+					// Let the PTY driver's finally block stop and reap its Bash child.
+					probe.Cancel = func() error { return probe.Process.Signal(os.Interrupt) }
+					probe.WaitDelay = 7 * time.Second
+					out, err := probe.CombinedOutput()
+					if err != nil {
+						t.Fatalf("native Bash completion failed: %v\n%s", err, out)
+					}
+					for _, name := range []string{
+						"single quoted assigned file", "double quoted assigned file", "escaped assigned file",
+						"separate quoted file", "unquoted assigned control",
+					} {
+						if !strings.Contains(string(out), "PASS: "+name+"\n") {
+							t.Fatalf("native Bash completion did not execute %q:\n%s", name, out)
+						}
+					}
+					t.Logf("%s", out)
+				})
+			}
 			home := t.TempDir()
 			executable := filepath.Join(work, binary)
 			invocation := "'" + strings.ReplaceAll(executable, "'", "'\\''") + "'"

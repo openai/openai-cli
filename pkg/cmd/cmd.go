@@ -101,6 +101,14 @@ func init() {
 		},
 		Commands: []*cli.Command{
 			{
+				Name:     "decisions",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&decisionsCreate,
+				},
+			},
+			{
 				Name:     "completions",
 				Category: "API RESOURCE",
 				Suggest:  true,
@@ -497,6 +505,7 @@ func init() {
 					&adminOrganizationUsageCodeInterpreterSessions,
 					&adminOrganizationUsageCompletions,
 					&adminOrganizationUsageCosts,
+					&adminOrganizationUsageDecisions,
 					&adminOrganizationUsageEmbeddings,
 					&adminOrganizationUsageFileSearchCalls,
 					&adminOrganizationUsageImages,

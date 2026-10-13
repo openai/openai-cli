@@ -10,6 +10,7 @@ import (
 // than API schema prose. Applying them after decoration keeps generated routes,
 // request contracts, and future authored resource descriptions intact.
 var commandGroupDescriptions = map[string]string{
+	"decisions":                               "Classify or score text and image inputs with structured questions.",
 	"responses":                               "Generate and manage model responses.",
 	"responses input-items":                   "List the input items of a response.",
 	"responses input-tokens":                  "Count input tokens for a response request.",

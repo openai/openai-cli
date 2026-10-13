@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
@@ -180,8 +182,35 @@ func runListNavigation(opts ShowJSONOpts, fetch func() (listNavigationPage, erro
 		outputWriter: outputWriter{ctx: context.Background(), out: opts.Stdout}, file: opts.Stdout.(*os.File),
 	}, stop: stop}
 	program := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(out),
-		tea.WithContext(programContext), tea.WithWindowSize(width, height))
+		tea.WithContext(programContext), tea.WithWindowSize(width, height), tea.WithoutSignalHandler())
+	// Models can cancel the program context while the same signal reaches Tea.
+	// Forward through Send, which stops when the program exits. Tea's built-in
+	// signal handler can block sending after its event loop has already stopped.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	listenerDone := make(chan struct{})
+	stopSignals := func() {
+		signal.Stop(signals)
+		stop()
+		<-listenerDone
+	}
+	defer stopSignals()
+	go func() {
+		defer close(listenerDone)
+		defer signal.Stop(signals)
+		select {
+		case <-programContext.Done():
+		case received := <-signals:
+			if received == os.Interrupt {
+				program.Send(tea.InterruptMsg{})
+			} else {
+				program.Send(tea.QuitMsg{})
+			}
+		}
+	}()
 	_, runErr := program.Run()
+	// Final printing has no Tea event loop. Restore signal ownership first.
+	stopSignals()
 	return m.finish(out, runErr)
 }
 
@@ -207,6 +236,11 @@ func (m *listNavigation) finish(out *listNavigationOutput, runErr error) error {
 	}
 	if m.quitting && errors.Is(runErr, tea.ErrProgramKilled) {
 		runErr = nil
+	}
+	if m.opts.Operation == "(resource) models > (method) list" && errors.Is(runErr, tea.ErrInterrupted) {
+		// An OS interrupt can reach the viewer before the loading context.
+		// Add this explicit cancellation after filtering cleanup-only causes.
+		runErr = errors.Join(runErr, &modelsListLoadingInterrupt{context.Canceled})
 	}
 	var printErr error
 	if m.printPage || m.printComplete {

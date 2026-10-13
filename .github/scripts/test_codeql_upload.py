@@ -129,7 +129,7 @@ class PublisherTest(unittest.TestCase):
             self.responses[f"actions/artifacts/{index}/zip"] = self.archive(language)
         self.responses["actions/runs/42/artifacts?per_page=100&page=1"] = {"artifacts": artifacts}
         publisher.publish(self.get, "test/cli", 1, {"id": 42, "run_attempt": 2})
-        self.assertEqual(len(self.writes), 2)
+        self.assertEqual(len(self.writes), len(publisher.CATEGORIES))
         for payload in self.writes:
             self.assertEqual(payload["commit_sha"], MERGE)
             self.assertEqual(payload["ref"], self.target["ref"])
@@ -140,19 +140,19 @@ class PublisherTest(unittest.TestCase):
         self.assertEqual(self.writes, [])
 
     def test_required_statuses_wait_for_successful_publication(self):
-        for language, index in [("actions", 0), ("go", 1)]:
+        for index, language in enumerate(publisher.CATEGORIES):
             self.responses[f"actions/artifacts/{index}/zip"] = self.archive(language)
         self.responses["actions/runs/42/artifacts?per_page=100&page=1"] = {"artifacts": [
             dict(id=i, name=f"codeql-sarif-42-2-{lang}", expired=False)
             for i, lang in enumerate(publisher.CATEGORIES)]}
         publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
         self.assertEqual([p.get("state", "sarif") for p in self.writes],
-                         ["pending", "pending", "sarif", "sarif", "success", "success"])
+                         ["pending"] * len(publisher.CATEGORIES) + ["sarif"] * len(publisher.CATEGORIES) + ["success"] * len(publisher.CATEGORIES))
         self.writes.clear()
         self.responses["actions/artifacts/1/zip"] = self.archive(extra=True)
         with self.assertRaises(RuntimeError):
             publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
-        self.assertEqual([p["state"] for p in self.writes], ["pending", "pending", "failure", "failure"])
+        self.assertEqual([p["state"] for p in self.writes], ["pending"] * len(publisher.CATEGORIES) + ["failure"] * len(publisher.CATEGORIES))
 
     def test_regenerated_merge_still_requires_exact_analyzed_sha(self):
         for index, language in enumerate(publisher.CATEGORIES):
@@ -165,7 +165,7 @@ class PublisherTest(unittest.TestCase):
         # cannot be attributed to its different commit object.
         with self.assertRaises(publisher.StaleRun):
             publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
-        self.assertEqual([p["state"] for p in self.writes], ["pending", "pending"])
+        self.assertEqual([p["state"] for p in self.writes], ["pending"] * len(publisher.CATEGORIES))
 
     def test_merge_ref_moving_during_artifact_download_cannot_publish(self):
         for index, language in enumerate(publisher.CATEGORIES):
@@ -185,7 +185,7 @@ class PublisherTest(unittest.TestCase):
 
         with self.assertRaises(publisher.StaleRun):
             publisher.report(get, "test/cli", 1, dict(id=42, run_attempt=2))
-        self.assertEqual([p["state"] for p in self.writes], ["pending", "pending"])
+        self.assertEqual([p["state"] for p in self.writes], ["pending"] * len(publisher.CATEGORIES))
 
     def test_pending_and_failed_analysis_cannot_pass_required_status(self):
         for status, conclusion in [("in_progress", None), ("completed", "failure"), ("completed", "cancelled")]:
@@ -195,10 +195,10 @@ class PublisherTest(unittest.TestCase):
                 if status == "completed":
                     with self.assertRaises(RuntimeError):
                         publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
-                    self.assertEqual([p["state"] for p in self.writes], ["pending", "pending", "failure", "failure"])
+                    self.assertEqual([p["state"] for p in self.writes], ["pending"] * len(publisher.CATEGORIES) + ["failure"] * len(publisher.CATEGORIES))
                 else:
                     publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
-                    self.assertEqual([p["state"] for p in self.writes], ["pending", "pending"])
+                    self.assertEqual([p["state"] for p in self.writes], ["pending"] * len(publisher.CATEGORIES))
 
     def test_processing_error_and_timeout_never_pass(self):
         self.responses["actions/runs/42/artifacts?per_page=100&page=1"] = {"artifacts": [
@@ -239,13 +239,21 @@ class PublisherTest(unittest.TestCase):
             dict(id=1, name="codeql-sarif-42-2-go", expired=False)]}
         self.responses["actions/artifacts/0/zip"] = self.archive("actions", mutate=lambda c, r: c.update(run_attempt=1))
         self.responses["actions/artifacts/1/zip"] = self.archive("go")
+        # Other languages completed in attempt 1 and were not rerun.
+        for index, language in enumerate(list(publisher.CATEGORIES)[2:], start=2):
+            self.responses["actions/runs/42/attempts/1/jobs?per_page=100&page=1"]["jobs"].append(
+                dict(actions, name=f"CodeQL analysis ({language})"))
+            self.responses["actions/runs/42/artifacts?per_page=100&page=1"]["artifacts"].append(
+                dict(id=index, name=f"codeql-sarif-42-1-{language}", expired=False))
+            self.responses[f"actions/artifacts/{index}/zip"] = self.archive(
+                language, mutate=lambda c, r: c.update(run_attempt=1))
         return actions, go
 
     def test_partial_rerun_reuses_only_successful_language_execution(self):
         actions, go = self.partial_rerun()
         publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
         self.assertEqual([p.get("state", "sarif") for p in self.writes],
-                         ["pending", "pending", "sarif", "sarif", "success", "success"])
+                         ["pending"] * len(publisher.CATEGORIES) + ["sarif"] * len(publisher.CATEGORIES) + ["success"] * len(publisher.CATEGORIES))
         # Some job listings retain successful jobs with their original attempt.
         self.responses["actions/runs/42/attempts/2/jobs?per_page=100&page=1"]["jobs"].append(actions)
         self.writes.clear()
@@ -270,7 +278,7 @@ class PublisherTest(unittest.TestCase):
             mutation(actions)
             with self.assertRaises(RuntimeError):
                 publisher.report(self.get, "test/cli", 1, dict(id=42, run_attempt=2))
-            self.assertEqual([p["state"] for p in self.writes], ["pending", "pending", "failure", "failure"])
+            self.assertEqual([p["state"] for p in self.writes], ["pending"] * len(publisher.CATEGORIES) + ["failure"] * len(publisher.CATEGORIES))
 
     def test_new_successful_job_cannot_fall_back_to_older_artifact(self):
         actions, _ = self.partial_rerun()

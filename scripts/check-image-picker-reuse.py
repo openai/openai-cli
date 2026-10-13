@@ -64,13 +64,6 @@ def check_body(body, prompt, model):
     assert 'output_dir' not in body and 'output-dir' not in body, body
 
 
-def wait_resumed(terminal, mark):
-    terminal.wait('Saved image:', after=mark)
-    saved = terminal.raw.index(b'Saved image:', mark)
-    terminal.wait('Create image', after=saved)
-    terminal.wait('Describe your image', after=saved)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary')
@@ -151,7 +144,7 @@ def main():
                 mark = len(terminal.raw)
                 terminal.send(b'\x07')
                 picker.wait_for_request(terminal, server.request_started)
-                wait_resumed(terminal, mark)
+                picker.wait_resumed(terminal, mark, prompt)
                 # Capture submission output before the resumed picker's own
                 # teardown becomes the final bracketed-paste marker.
                 flags = picker.printed_flags(terminal)
@@ -162,51 +155,54 @@ def main():
                 check_images(folder, 1)
                 assert flags['--output-dir'] == str(folder), flags
                 saved = json.loads(path.read_bytes())
-                assert 'prompt' not in saved and saved['model'] == model, saved
+                assert saved['version'] == 2 and saved['prompt'] == prompt and saved['model'] == model, saved
                 assert saved['output_dir'] == str(folder), saved
                 assert not (home/'Downloads'/'gpt-images').exists()
 
             previous_state = path.read_bytes()
             before = len(server.requests)
             with terminal_case('restore-print-changed-cwd', env, cwd=next_cwd) as terminal:
-                terminal.wait('Describe your image')
+                terminal.wait(prompt)
                 terminal.wait(model)
-                assert prompt not in terminal.text()
-                mark = len(terminal.raw)
-                terminal.send(b'\r')
-                terminal.wait('Add a prompt first.', after=mark)
+                picker.wait_submit_guard(terminal)
                 assert len(server.requests) == before
                 assert path.read_bytes() == previous_state
                 print_prompt = 'An entirely new synthetic print prompt'
+                terminal.send(picker.END+b'\x15')
                 paste(terminal, print_prompt)
                 terminal.send(picker.PRINT)
                 terminal.finish(0)
                 restored_flags = picker.printed_flags(terminal)
                 assert restored_flags == dict(flags, **{'--prompt': print_prompt}), (flags, restored_flags)
-                assert path.read_bytes() == previous_state
+                assert json.loads(path.read_bytes()) == dict(saved, prompt=print_prompt)
                 assert len(server.requests) == before
                 assert not list(next_cwd.iterdir())
 
             with terminal_case('restore-generation-changed-cwd', env, cwd=next_cwd) as terminal:
-                terminal.wait('Describe your image')
-                assert prompt not in terminal.text() and print_prompt not in terminal.text()
+                terminal.wait(print_prompt)
+                picker.wait_submit_guard(terminal)
                 next_prompt = 'Another synthetic image with the remembered settings'
+                terminal.send(picker.END+b'\x15')
                 paste(terminal, next_prompt)
                 mark = len(terminal.raw)
                 terminal.send(b'\r')
                 picker.wait_for_request(terminal, server.request_started)
-                wait_resumed(terminal, mark)
+                picker.wait_resumed(terminal, mark, next_prompt)
                 terminal.send(b'\x03')
                 terminal.finish(130)
                 assert len(server.requests) == before+1
                 check_body(server.requests[-1], next_prompt, model)
                 check_images(folder, 2)
                 assert not list(next_cwd.iterdir())
-                assert path.read_bytes() == previous_state
+                assert json.loads(path.read_bytes()) == dict(saved, prompt=next_prompt)
 
             before = len(server.requests)
-            with terminal_case('cancel-keeps-previous-state', env) as terminal:
-                paste(terminal, 'Changed synthetic draft discarded on cancel')
+            with terminal_case('cancel-keeps-edited-draft', env) as terminal:
+                terminal.wait(next_prompt)
+                picker.wait_submit_guard(terminal)
+                terminal.send(picker.END+b'\x15')
+                canceled_prompt = 'Changed synthetic draft retained on cancel'
+                paste(terminal, canceled_prompt)
                 terminal.wait('Changed synthetic draft')
                 terminal.send(picker.DOWN+b'\r')
                 terminal.wait('Choose model')
@@ -215,10 +211,13 @@ def main():
                 terminal.wait('Settings', after=mark)
                 terminal.send(b'\x03')
                 terminal.finish(130)
-                assert path.read_bytes() == previous_state
+                assert json.loads(path.read_bytes()) == dict(saved, prompt=canceled_prompt, model='gpt-image-2.5-sunburst')
                 assert len(server.requests) == before
 
+            previous_state = path.read_bytes()
             with terminal_case('invalid-folder-keeps-previous-state', env) as terminal:
+                terminal.wait(canceled_prompt)
+                picker.wait_submit_guard(terminal)
                 missing = root/'folder that does not exist 雪'
                 open_folder_editor(terminal)
                 paste(terminal, str(missing))
@@ -244,20 +243,23 @@ def main():
                 terminal.wait('Describe your image')
                 terminal.wait(model)
                 assert legacy_prompt not in terminal.text()
-                assert 'Could not restore saved settings' not in terminal.text()
+                assert 'Could not restore the draft' not in terminal.text()
                 mark = len(terminal.raw)
                 terminal.send(b'\r')
                 terminal.wait('Add a prompt first.', after=mark)
                 assert legacy_path.read_bytes() == legacy_bytes
                 assert len(server.requests) == before
-                paste(terminal, 'Legacy synthetic draft discarded on cancel')
+                legacy_draft = 'Legacy synthetic draft retained on cancel'
+                paste(terminal, legacy_draft)
                 terminal.send(b'\x03')
                 terminal.finish(130)
-                assert legacy_path.read_bytes() == legacy_bytes
+                assert json.loads(legacy_path.read_bytes()) == dict(saved, prompt=legacy_draft)
                 assert len(server.requests) == before
                 assert legacy_prompt not in terminal.text()
 
-            with terminal_case('legacy-state-submit-removes-prompt', legacy_env) as terminal:
+            # Start from version 1 again to check a submitted legacy migration.
+            legacy_path.write_bytes(legacy_bytes)
+            with terminal_case('legacy-state-submit-retains-new-prompt', legacy_env) as terminal:
                 terminal.wait('Describe your image')
                 legacy_replacement = 'A fresh synthetic prompt with legacy settings'
                 paste(terminal, legacy_replacement)
@@ -266,10 +268,10 @@ def main():
                 terminal.send(picker.PRINT)
                 terminal.finish(0)
                 assert picker.printed_flags(terminal) == dict(flags, **{'--prompt': legacy_replacement})
-                assert json.loads(legacy_path.read_bytes()) == saved
+                assert json.loads(legacy_path.read_bytes()) == dict(saved, prompt=legacy_replacement)
                 assert legacy_prompt not in terminal.text()
-                assert 'Could not restore saved settings' not in terminal.text()
-                assert 'Could not remember these settings' not in terminal.text()
+                assert 'Could not restore the draft' not in terminal.text()
+                assert 'Could not save the draft' not in terminal.text()
                 assert len(server.requests) == before
 
             completion_home, completion_env = environment('completion')
@@ -322,8 +324,9 @@ def main():
                     terminal.finish(0, expect_picker=False)
                     assert len(server.requests) == before+int(generates)
                     assert poison_path.read_bytes() == poison
-                    assert 'Could not restore saved settings' not in terminal.text()
-                    assert 'Could not remember these settings' not in terminal.text()
+                    assert 'Could not restore the draft' not in terminal.text()
+                    assert 'Could not read the draft' not in terminal.text()
+                    assert 'Could not save the draft' not in terminal.text()
                     assert 'SYNTHETIC_POISON_STATE' not in terminal.text()
                     if generates:
                         assert server.requests[-1]['prompt'] == arguments[arguments.index('--prompt')+1]

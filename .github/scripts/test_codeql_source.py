@@ -82,7 +82,7 @@ class SourceSelectionTest(unittest.TestCase):
         with tarfile.open(self.root / "ci-source.tar.gz") as archive:
             self.assertEqual(archive.extractfile("./.git/HEAD").read().decode().strip(), self.current)
         # The existing recorder must bind actual Git HEAD, not stale GITHUB_SHA.
-        for language in ["actions", "go"]:
+        for language in ["actions", "go", "javascript-typescript", "python"]:
             env = dict(self.env, CODEQL_LANGUAGE=language, SARIF_DIRECTORY=str(self.root),
                        GITHUB_RUN_ID="42", GITHUB_RUN_ATTEMPT="1")
             subprocess.run([sys.executable, "-I", str(ROOT / ".github/scripts/codeql_upload.py"), "record"],
