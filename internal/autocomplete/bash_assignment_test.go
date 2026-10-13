@@ -53,6 +53,7 @@ func TestBashFileCompletionPreservesAssignments(t *testing.T) {
 		{"balanced double quoted apostrophe", `openai --file="quote's"`, `"quote's"`, []string{"--file", "=", `"quote's"`}, []string{"quote's recording.wav", "quote's second.wav"}},
 		{"bash3 balanced apostrophe", `openai --file="quote's"`, `"quote's"`, []string{`--file="quote's"`}, []string{"quote's recording.wav", "quote's second.wav"}},
 		{"open double quoted apostrophe", `openai --file="quote's`, "quote's", []string{"--file", "=", `"quote's`}, []string{"quote's recording.wav", "quote's second.wav"}},
+		{"bash3 open double quoted apostrophe", `openai --file="quote's`, "quote's", []string{`--file="quote's`}, []string{"quote's recording.wav", "quote's second.wav"}},
 		{"single quoted double quote", `openai --file='say"'`, `'say"'`, []string{"--file", "=", `'say"'`}, []string{`say"hello.txt`}},
 		{"escaped backslash", `openai --file=back\\s`, `back\\s`, []string{"--file", "=", `back\\s`}, []string{`back\slash.txt`}},
 		{"quoted directory", `openai --file="dir's/quote's"`, `"dir's/quote's"`, []string{"--file", "=", `"dir's/quote's"`}, []string{"dir's/quote's recording.wav"}},

@@ -111,8 +111,6 @@ func TestBashColonCompletionReadline(t *testing.T) {
 	completion, err := shellCompletions[CompletionStyleBash](&cli.Command{}, "openai")
 	require.NoError(t, err)
 	completion = strings.Replace(completion, "__openai_bash_autocomplete()", "__colon_original_completion()", 1)
-	settings, err := exec.Command(bash, "--noprofile", "--norc", "-c", "bind -v 2>/dev/null").Output()
-	require.NoError(t, err)
 	command := []string{"chat:completions"}
 	messages := []string{"chat:completions:messages"}
 	for _, tc := range []struct {
@@ -147,7 +145,7 @@ func TestBashColonCompletionReadline(t *testing.T) {
 		{name: "file control", typed: "openai --file assets/fi", want: []string{"--file", "assets/fixture name.json"}},
 		{name: "assigned file control", typed: "openai --file=assets/fi", want: []string{"--file=assets/fixture name.json"}},
 		{name: "literal balanced apostrophe", typed: `openai --file="quote's"`, want: []string{"--file=quote's recording.wav"}},
-		{name: "literal open apostrophe", typed: `openai --file="quote's`, after: `"`, want: []string{"--file=quote's recording.wav"}},
+		{name: "literal open apostrophe", typed: `openai --file="quote's`, want: []string{"--file=quote's recording.wav"}},
 		{name: "literal before closing quote", typed: `openai --file="quote's"`, before: "\x02", after: "\x05", want: []string{"--file=quote's recording.wav"}},
 		{name: "literal escaped apostrophe", typed: `openai --file=quote\'s`, want: []string{"--file=quote's recording.wav"}},
 		{name: "literal separated apostrophe", typed: `openai --file "quote's"`, want: []string{"--file", "quote's recording.wav"}},
@@ -171,9 +169,6 @@ func TestBashColonCompletionReadline(t *testing.T) {
 		{name: "nounset", typed: `openai chat\:comple`, setup: "set -u", want: command},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.requiresMapCase && !strings.Contains(string(settings), "set completion-map-case ") {
-				t.Skip("This Bash Readline does not expose completion-map-case")
-			}
 			directory := t.TempDir()
 			for _, name := range []string{"assets/fixture name.json", "quote's recording.wav", "dir's/quote's recording.wav", `say"hello.txt`, "glob[dir]/file[1].txt", "literal*.txt", "literal-other.txt", "case-File.txt", "map_under.txt", ".hidden.txt", "ignore'keep.txt", "ignore'drop.bak", "$(touch sentinel).txt"} {
 				path := filepath.Join(directory, name)
@@ -184,6 +179,19 @@ func TestBashColonCompletionReadline(t *testing.T) {
 PS1='COLON_TEST> '; PS2='COLON_MORE> '
 set +o history
 bind 'set bell-style none'
+if [[ $COLON_REQUIRES_MAP_CASE == true ]]; then
+  if builtin bind -v > "$COLON_READLINE_SETTINGS"; then
+    colon_readline_settings=$(<"$COLON_READLINE_SETTINGS")
+    case $colon_readline_settings in
+      *'set completion-map-case '*) ;;
+      *) printf '\nCOLON_MAP_CASE_UNSUPPORTED\n'; return 0 ;;
+    esac
+  else
+    printf '\nCOLON_CAPABILITY_FAILED\n'
+    return 1
+  fi
+  unset colon_readline_settings
+fi
 openai() {
   if [[ "${1-}" == __complete ]]; then
     printf '%s\0' "$@" > "$COLON_BACKEND_ARGS"
@@ -215,8 +223,24 @@ match_max 100000
 spawn -noecho $env(COLON_BASH) --noprofile --norc -i
 expect_after timeout { puts stderr "Bash completion probe timed out"; exit 1 }
 send -- "source \"\$COLON_STARTUP\"\r"
-expect -exact "\r\nCOLON_READY\r\n"
+set capability_exit 0
+expect {
+  -exact "\r\nCOLON_READY\r\n" {}
+  -exact "\r\nCOLON_MAP_CASE_UNSUPPORTED\r\n" { set capability_exit 77 }
+  -exact "\r\nCOLON_CAPABILITY_FAILED\r\n" { set capability_exit 1 }
+  eof { puts stderr "Bash exited before the completion probe started"; exit 1 }
+}
 expect -exact "COLON_TEST> "
+if {$capability_exit != 0} {
+  send -- "exit 0\r"
+  expect eof
+  set child_status [wait]
+  if {[llength $child_status] != 4 || [lindex $child_status 2] != 0 || [lindex $child_status 3] != 0} {
+    puts stderr "Bash capability probe did not exit normally: $child_status"
+    exit 1
+  }
+  exit $capability_exit
+}
 send -- $env(COLON_TYPED)
 send -- $env(COLON_BEFORE)
 send -- "\t"
@@ -240,8 +264,17 @@ expect eof
 				"COLON_BACKEND_ARGS=" + filepath.Join(directory, "backend-argv"), "COLON_BACKEND_STATUS=" + filepath.Join(directory, "backend-status"),
 				"COLON_SHELL_STATE=" + filepath.Join(directory, "shell-state"), "COLON_CANDIDATES=" + filepath.Join(directory, "candidates"),
 				"COLON_TYPED=" + tc.typed, "COLON_BEFORE=" + tc.before, "COLON_AFTER=" + tc.after,
+				"COLON_REQUIRES_MAP_CASE=" + fmt.Sprint(tc.requiresMapCase),
+				"COLON_READLINE_SETTINGS=" + filepath.Join(directory, "readline-settings"),
 			}
 			out, err := cmd.CombinedOutput()
+			if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 77 {
+				require.True(t, tc.requiresMapCase, string(out))
+				require.Contains(t, string(out), "\r\nCOLON_MAP_CASE_UNSUPPORTED\r\n")
+				require.NoFileExists(t, filepath.Join(directory, "backend-argv"))
+				require.NoFileExists(t, filepath.Join(directory, "argv"))
+				t.Skip("This interactive Bash Readline does not expose completion-map-case")
+			}
 			require.NoError(t, err, string(out))
 			accepted, err := os.ReadFile(filepath.Join(directory, "argv"))
 			require.NoError(t, err, string(out))

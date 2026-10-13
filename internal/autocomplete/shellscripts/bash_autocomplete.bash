@@ -106,18 +106,32 @@ ____APPNAME___bash_autocomplete() {
     done
     # Remove shell quoting without evaluating substitutions or expressions.
     local token value quote char next offset argument current_word=""
+    local callback_raw="${2-$current_raw}" callback_start=-1 file_word_start=-1 file_current_word=""
+    local last_argument=$((${#completion_args[@]} - 1))
+    # Map the callback's raw suffix into the fully decoded last argument.
+    # An open quote can omit its opening delimiter from the callback word.
+    if [[ $# -ge 2 && $last_argument -ge 0 && "${completion_args[last_argument]}" == *"$callback_raw" ]]; then
+      callback_start=$((${#completion_args[last_argument]} - ${#callback_raw}))
+    fi
     # Decode Readline's replacement word separately from the rejoined arguments.
-    local -a words_to_decode=("${completion_args[@]}" "${2-$current_raw}")
+    local -a words_to_decode=("${completion_args[@]}" "$callback_raw")
     for ((argument = 0; argument < ${#words_to_decode[@]}; argument++)); do
       token="${words_to_decode[argument]}"
       value="" quote=""
       for ((offset = 0; offset < ${#token}; offset++)); do
+        if [[ $argument -eq $last_argument && $offset -eq $callback_start ]]; then
+          file_word_start=${#value}
+        fi
         char="${token:offset:1}"
         if [[ "$quote" == "'" ]]; then
           if [[ "$char" == "'" ]]; then quote=""; else value+="$char"; fi
         elif [[ "$char" == "\\" && "$quote" != "'" ]]; then
           next="${token:offset+1:1}"
           if [[ -z "$quote" || "$next" == "\\" || "$next" == '"' || "$next" == '$' || "$next" == '`' ]]; then
+            # Both raw characters of an escape produce the same decoded character.
+            if [[ $argument -eq $last_argument && $callback_start -eq $((offset + 1)) ]]; then
+              file_word_start=${#value}
+            fi
             value+="$next"
             ((offset++))
           else
@@ -133,6 +147,10 @@ ____APPNAME___bash_autocomplete() {
       done
       if [[ $argument -lt ${#completion_args[@]} ]]; then
         completion_args[argument]="$value"
+        if [[ $argument -eq $last_argument ]]; then
+          [[ $callback_start -eq ${#token} ]] && file_word_start=${#value}
+          if [[ $file_word_start -ge 0 ]]; then file_current_word="${value:file_word_start}"; fi
+        fi
       else
         current_word="$value"
       fi
@@ -184,12 +202,13 @@ ____APPNAME___bash_autocomplete() {
       10) # File completion, including Bash 3.2 (which has no mapfile).
         COMPREPLY=()
         local current_value="${completion_args[${#completion_args[@]} - 1]}"
-        local assignment="$completions" replacement_prefix=""
+        local assignment="$completions" replacement_prefix="" replacement_word="$current_word"
+        [[ $file_word_start -ge 0 ]] && replacement_word="$file_current_word"
         file_part="${current_value#"$assignment"}"
         # Readline replaces the callback word, after the last '=' or ':'.
         # Restore only the part that Readline includes in its replacement.
-        if [[ $# -ge 2 && "$current_value" == *"$current_word" ]]; then
-          replacement_prefix="${current_value%"$current_word"}"
+        if [[ $# -ge 2 && "$current_value" == *"$replacement_word" ]]; then
+          replacement_prefix="${current_value%"$replacement_word"}"
         fi
         while IFS= read -r file; do
           file="$assignment$file"
