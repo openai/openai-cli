@@ -13,7 +13,7 @@ func TestWelcomeEncodingPreservesLayoutAndVersion(t *testing.T) {
 		for _, unicode := range []bool{false, true} {
 			for _, profile := range []colorprofile.Profile{colorprofile.NoTTY, colorprofile.ANSI, colorprofile.TrueColor} {
 				for _, version := range []string{"1.38.0", "v123456789012345"} {
-					got := renderWelcome(version, width, profile, true, unicode)
+					got := renderWelcome(version, width, profile, true, unicode, "")
 					if got == "" && width < 40 {
 						continue // Complete identity/version can exceed the narrow fallback.
 					}
@@ -50,7 +50,7 @@ func TestWelcomeASCIIKeepsNonASCIIRevisionReadable(t *testing.T) {
 		{"dev-é", `dev-\u00e9`},
 		{"dev-🐙", `dev-\U0001f419`},
 	} {
-		got := renderWelcome(tc.version, 80, colorprofile.NoTTY, true, false)
+		got := renderWelcome(tc.version, 80, colorprofile.NoTTY, true, false, "")
 		if !strings.Contains(got, tc.displayed) {
 			t.Fatalf("ASCII fallback lost the revision: %q", got)
 		}

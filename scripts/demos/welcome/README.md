@@ -15,6 +15,8 @@ Color-capable UTF-8 terminals below the required artwork width also use the comp
 They never show a clipped wordmark or substitute partial block glyphs.
 The tagline is `What are we making today?`, centered beneath the artwork in the last interior row.
 The bottom border contains the original `>_` cursor stamp, with two spaces on each side.
+Apple Terminal uses a font-drawn bottom stroke to match the stamp's baseline.
+A box-drawn end cap keeps that stroke inside the right corner. Other terminals retain their existing border.
 The card contains no mascot or added outline.
 In dark mode, the border uses `#5675BC`, matching the approved color swatch.
 Underlined fractional blocks soften the top and bottom edges and balance the P/E/A bars.

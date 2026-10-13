@@ -26,18 +26,52 @@ func TestWelcomeApprovedAppearance(t *testing.T) {
 		}
 		want := welcomeAppearanceCells(t, reference.String())
 		for _, width := range []int{76, 80, 100} {
-			t.Run(profile.String()+"/"+strconv.Itoa(width), func(t *testing.T) {
-				got := welcomeAppearanceCells(t, renderWelcome("1.38.0", width, profile, true, true))
-				if len(got) != len(want) {
-					t.Fatalf("approved cell count changed: got %d, want %d", len(got), len(want))
+			for _, terminalProgram := range []string{"", "Apple_Terminal", "vscode", "iTerm.app"} {
+				name := terminalProgram
+				if name == "" {
+					name = "default"
 				}
-				for i := range want {
-					if got[i] != want[i] {
-						t.Fatalf("approved appearance changed at row %d column %d: got %+v, want %+v", i/77, i%77, got[i], want[i])
+				t.Run(profile.String()+"/"+strconv.Itoa(width)+"/"+name, func(t *testing.T) {
+					got := welcomeAppearanceCells(t, renderWelcome("1.38.0", width, profile, true, true, terminalProgram))
+					if len(got) != len(want) {
+						t.Fatalf("approved cell count changed: got %d, want %d", len(got), len(want))
 					}
-				}
-			})
+					for i, cell := range want {
+						column := i % 77
+						if terminalProgram == "Apple_Terminal" && i/77 == 8 &&
+							(column >= 1 && column <= 64 || column >= 71 && column <= 73) {
+							cell.char = '⎯'
+						}
+						if got[i] != cell {
+							t.Fatalf("approved appearance changed at row %d column %d: got %+v, want %+v", i/77, column, got[i], cell)
+						}
+					}
+				})
+			}
 		}
+	}
+}
+
+func TestWelcomeAppleTerminalPreservesFallbacks(t *testing.T) {
+	for _, tc := range []struct {
+		name, version string
+		width         int
+		profile       colorprofile.Profile
+		unicode       bool
+	}{
+		{"narrow", "1.38.0", 75, colorprofile.TrueColor, true},
+		{"ASCII", "1.38.0", 80, colorprofile.TrueColor, false},
+		{"no color", "1.38.0", 80, colorprofile.NoTTY, true},
+		{"16 colors", "1.38.0", 80, colorprofile.ANSI, true},
+		{"long version", "1.38.0-preview.20261013", 100, colorprofile.TrueColor, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want := renderWelcome(tc.version, tc.width, tc.profile, true, tc.unicode, "")
+			got := renderWelcome(tc.version, tc.width, tc.profile, true, tc.unicode, "Apple_Terminal")
+			if got != want {
+				t.Fatalf("Apple Terminal changed the fallback: got %q, want %q", got, want)
+			}
+		})
 	}
 }
 

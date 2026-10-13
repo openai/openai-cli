@@ -30,7 +30,8 @@ func welcomeHeader(root *cli.Command) string {
 	if os.Getenv("NO_COLOR") != "" || os.Getenv("FORCE_COLOR") == "0" || os.Getenv("CLICOLOR") == "0" {
 		profile = colorprofile.NoTTY
 	}
-	return renderWelcome(root.Version, helpWidth(root), profile, welcomeDarkBackground(os.Getenv("COLORFGBG")), welcomeUnicode(os.Getenv))
+	return renderWelcome(root.Version, helpWidth(root), profile,
+		welcomeDarkBackground(os.Getenv("COLORFGBG")), welcomeUnicode(os.Getenv), os.Getenv("TERM_PROGRAM"))
 }
 
 // Character encoding and color support are independent. Unknown encodings use
@@ -81,7 +82,7 @@ const (
 	welcomeTagline = "What are we making today?"
 )
 
-func renderWelcome(version string, width int, profile colorprofile.Profile, dark, unicode bool) string {
+func renderWelcome(version string, width int, profile colorprofile.Profile, dark, unicode bool, terminalProgram string) string {
 	version = welcomeVersion(version)
 	if !unicode {
 		var ascii strings.Builder
@@ -182,9 +183,15 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 		// The cursor stamp stays within the last row, without cursor movement.
 		edge := lipgloss.NewStyle().Foreground(lipgloss.Color(frameColor))
 		stamp := lipgloss.NewStyle().Foreground(lipgloss.Color(focus))
+		stroke, rightEdge := "─", "────┘"
+		if terminalProgram == "Apple_Terminal" {
+			// Match the stamp's font baseline. The box-drawn end cap contains
+			// the fallback stroke's ink before it reaches the right corner.
+			stroke, rightEdge = "⎯", "⎯⎯⎯─┘"
+		}
 		card = card[:strings.LastIndexByte(card, '\n')+1] +
-			edge.Render("└"+strings.Repeat("─", cardWidth-12)) + "  " +
-			stamp.Render(">_") + "  " + edge.Render("────┘")
+			edge.Render("└"+strings.Repeat(stroke, cardWidth-12)) + "  " +
+			stamp.Render(">_") + "  " + edge.Render(rightEdge)
 	}
 	var out strings.Builder
 	writer := colorprofile.Writer{Forward: &out, Profile: profile}
