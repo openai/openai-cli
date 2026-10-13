@@ -4,11 +4,8 @@ ____APPNAME___bash_literal_files() (
   local prefix="$1" directory=. lead="" basename="$1" pattern=""
   local ignore_case=off map_case=off match_hidden=on setting file char index
 
-  # Keep Bash's existing expansion path for named users and special directories.
+  # Keep Bash's existing tilde expansion and special-directory handling.
   case "$prefix" in
-    '~/'*)
-      if [[ -z "${HOME-}" ]]; then builtin compgen -f -- "$prefix"; return; fi
-      ;;
     '~'*) builtin compgen -f -- "$prefix"; return ;;
   esac
   if [[ "$prefix" == */* ]]; then
@@ -17,8 +14,6 @@ ____APPNAME___bash_literal_files() (
   fi
   case "$directory" in
     *'$'*|..|../*|*/..|*/../*) builtin compgen -f -- "$prefix"; return ;;
-    '~') directory="$HOME" ;;
-    '~/'*) directory="$HOME/${directory:2}" ;;
   esac
 
   # Scope directory and option changes to this subshell. Keep the typed spelling.
