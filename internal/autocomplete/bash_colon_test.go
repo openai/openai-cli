@@ -255,7 +255,8 @@ expect eof
 			require.NoError(t, os.WriteFile(filepath.Join(directory, "driver.exp"), []byte(driver), 0600))
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, expect, filepath.Join(directory, "driver.exp"))
+			// Skip Expect's personal startup file in these isolated shell tests.
+			cmd := exec.CommandContext(ctx, expect, "-n", filepath.Join(directory, "driver.exp"))
 			cmd.Dir = directory
 			cmd.Env = []string{
 				"HOME=" + directory, "PATH=" + os.Getenv("PATH"), "LC_ALL=C", "TERM=xterm",
