@@ -142,6 +142,9 @@ The recording scene prints its return-prompt marker after the actual CLI exits.
 Inspect both screenshots and the comparison GIF before sharing them.
 Keep generated media outside Git.
 These artifacts show Bash PTY replay through Menlo and the selected renderer theme.
+The recorder uses Menlo 18px with agg's default line height of 1.4.
+At this setting, the original `>` aligns with the border midpoint and `_` retains its lower baseline.
+The previous 1.2 setting compressed replay rows and placed `>` below the border.
 They do not establish native graphical terminal, Linux, Windows, or font behavior.
 
 Use DEMO_ENCODING=ascii to exercise the ASCII frame and literal-title fallback.

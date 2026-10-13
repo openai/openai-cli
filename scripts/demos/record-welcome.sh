@@ -42,7 +42,8 @@ source "$demo_source/capture_and_render.sh"
 demo_prepare_capture "$demo_root" "$1" "$2" "$3" "$4" "$5" \
   "${DEMO_API_BINARY:-$demo_root/dist/demos/bin/image-model-demo-api}"
 demo_window_size="${demo_columns}x${demo_rows}"
-demo_render_options=(--font-family Menlo --font-size 18 --line-height 1.2 \
+# Keep agg's default row height so Menlo's > matches the border midpoint.
+demo_render_options=(--font-family Menlo --font-size 18 --line-height 1.4 \
   --theme "$demo_palette" --fps-cap 20 --last-frame-duration 3)
 demo_start_api "$demo_runtime/requests.txt"
 cat > "$demo_runtime/scene.sh" <<'SCENE'
@@ -77,7 +78,7 @@ SCENE
   echo 'data: no API credentials; rejecting loopback fixture records unexpected requests'
   echo 'capture: isolated Bash PTYs, temporary HOME and XDG directories, restricted PATH, no shell hooks'
   echo 'startup: existing first-run behavior remains enabled within temporary directories'
-  echo "render: asciinema + agg, Menlo 18px, $demo_palette, $demo_window_size, line height 1.2"
+  echo "render: asciinema + agg, Menlo 18px, $demo_palette, $demo_window_size, line height 1.4"
   echo "application color environment: COLORFGBG=$demo_colorfgbg COLORTERM=$demo_colorterm TERM=xterm-256color"
   echo "character encoding environment: LC_ALL=$demo_locale"
   if [ -n "$demo_no_color" ]; then echo 'NO_COLOR: enabled'; else echo 'NO_COLOR: unset'; fi
