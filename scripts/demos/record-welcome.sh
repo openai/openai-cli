@@ -22,6 +22,7 @@ if [ "$demo_preview_rows" -gt "$demo_rows" ]; then
 fi
 demo_no_color="${NO_COLOR:-}"
 demo_source_manifest="${DEMO_SOURCE_MANIFEST:-}"
+demo_term_program="${DEMO_TERM_PROGRAM:-}"
 demo_encoding="${DEMO_ENCODING:-utf8}"
 case "$demo_encoding" in
   utf8) demo_locale='en_US.UTF-8';;
@@ -80,6 +81,7 @@ SCENE
   echo 'startup: existing first-run behavior remains enabled within temporary directories'
   echo "render: asciinema + agg, Menlo 18px, $demo_palette, $demo_window_size, line height 1.4"
   echo "application color environment: COLORFGBG=$demo_colorfgbg COLORTERM=$demo_colorterm TERM=xterm-256color"
+  echo "application terminal hint: TERM_PROGRAM=$demo_term_program"
   echo "character encoding environment: LC_ALL=$demo_locale"
   if [ -n "$demo_no_color" ]; then echo 'NO_COLOR: enabled'; else echo 'NO_COLOR: unset'; fi
   echo "top crops: first approximately $demo_preview_rows rows; full media and transcripts remain available"
@@ -99,12 +101,13 @@ for demo_scene in before after; do
     "HOME=$demo_state/home" "XDG_CONFIG_HOME=$demo_state/config" \
     "XDG_CACHE_HOME=$demo_state/cache" "XDG_DATA_HOME=$demo_state/data" \
     "DEMO_WORKING_DIRECTORY=$demo_state/work" "DEMO_VERSION_FILE=$demo_output/$demo_scene-version.txt" \
-    "NO_COLOR=$demo_no_color" "COLORFGBG=$demo_colorfgbg" "COLORTERM=$demo_colorterm" "GOMAXPROCS=2" "LC_ALL=$demo_locale"
+    "NO_COLOR=$demo_no_color" "COLORFGBG=$demo_colorfgbg" "COLORTERM=$demo_colorterm" "GOMAXPROCS=2" "LC_ALL=$demo_locale" \
+    "TERM_PROGRAM=$demo_term_program"
 done
 demo_stop_api
 cp "$demo_runtime/requests.txt" "$demo_output/requests.txt"
 test ! -s "$demo_output/requests.txt"
-"$demo_python" -I -B - "$demo_output" "$demo_columns" "$demo_rows" "$demo_no_color" "$demo_encoding" <<'PY'
+"$demo_python" -I -B - "$demo_output" "$demo_columns" "$demo_rows" "$demo_no_color" "$demo_encoding" "$demo_term_program" <<'PY'
 import json
 import math
 import pathlib
@@ -116,6 +119,7 @@ output = pathlib.Path(sys.argv[1])
 columns, rows = map(int, sys.argv[2:4])
 no_color = bool(sys.argv[4])
 unicode_frame = sys.argv[5] == "utf8"
+terminal_program = sys.argv[6]
 csi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 def cell_width(text):
@@ -177,6 +181,9 @@ if banner_width <= min(columns, 100):
         assert all(cell_width(line) == filled_width for line in lines), "incorrect filled-card width"
         assert cell_width(lines[7].split(description, 1)[0]) == 20, "tagline moved"
         assert cell_width(lines[8].split(">_", 1)[0]) == filled_width - 9, "cursor stamp moved"
+        if terminal_program == "Apple_Terminal":
+            assert lines[8].count("⎯") == filled_width - 9, "Apple Terminal bottom stroke missing"
+            assert lines[8].endswith("  ⎯⎯⎯─┘"), "Apple Terminal corner cap missing"
         raw_lines = after_raw.split("\r\n\r\n", 1)[0].split("\r\n")
         assert all(re.search(r"\x1b\[(?:[0-9]+;)*48[;:](?:2|5)[;:]", line) for line in raw_lines[2:6]), "missing filled pixel row"
         for row, glyph in ((raw_lines[1], "▇"), (raw_lines[6], "▂")):

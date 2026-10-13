@@ -76,6 +76,10 @@ bash scripts/demos/record-welcome.sh \
 The recorder needs `asciinema`, `agg`, `ffmpeg`, `ffprobe`, and `python3` on PATH.
 The shared lifecycle requires a new, empty output directory outside the repository.
 Use `DEMO_API_BINARY` to select a separately built copy of the existing fixture.
+Set `DEMO_TERM_PROGRAM=Apple_Terminal` to record the CLI's Apple Terminal bottom-stroke correction.
+The default is empty, which records the general-terminal border.
+The recorder records this hint and checks the selected stroke and right-corner cap in the actual CLI output.
+This selects the application output path; the recording remains a terminal replay, not an Apple Terminal screen capture.
 
 Record the light background:
 
