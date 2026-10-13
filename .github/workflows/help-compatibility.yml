@@ -131,11 +131,22 @@ jobs:
       - name: Test help
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
       - name: Test command dispatch and native shells
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
           go test ./cmd/openai -run '^(TestMainHelp|TestMainDispatch|TestMainNativeShell)' -count=1 -v -json \
             | tee "$RUNNER_TEMP/dispatch-tests.jsonl"
+        env:
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
+      - name: Test Windows command dispatch and native shells
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test ./cmd/openai -run '^(TestMainHelp|TestMainDispatch|TestMainNativeShell)' -count=1 -v -json |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'dispatch-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
       - name: Test Linux Fish completion
