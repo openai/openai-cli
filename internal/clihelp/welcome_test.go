@@ -351,8 +351,11 @@ func TestWelcomeEnvironment(t *testing.T) {
 				}
 				return ""
 			}
-			if got := welcomeEnvironment(getenv); got != tc.want {
-				t.Fatalf("eligible = %v; want %v", got, tc.want)
+			for _, goos := range []string{"darwin", "linux", "windows"} {
+				want := tc.want || goos == "windows" && tc.name == "TERM" && tc.value == ""
+				if got := welcomeEnvironment(getenv, goos); got != want {
+					t.Errorf("%s eligible = %v; want %v", goos, got, want)
+				}
 			}
 		})
 	}
@@ -361,7 +364,7 @@ func TestWelcomeEnvironment(t *testing.T) {
 			return "synthetic-session"
 		}
 		return ""
-	}) {
+	}, "windows") {
 		t.Fatal("Windows Terminal without TERM should remain eligible")
 	}
 }

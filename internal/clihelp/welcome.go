@@ -2,6 +2,7 @@ package clihelp
 
 import (
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -23,10 +24,15 @@ func welcomeHeader(root *cli.Command) string {
 	if output == nil {
 		output = os.Stdout
 	}
-	if !welcomeTerminal(input) || !welcomeTerminal(output) || !welcomeTerminal(os.Stderr) || !welcomeEnvironment(os.Getenv) {
+	if !welcomeTerminal(input) || !welcomeTerminal(output) || !welcomeTerminal(os.Stderr) || !welcomeEnvironment(os.Getenv, runtime.GOOS) {
 		return ""
 	}
 	profile := colorprofile.Env(os.Environ()) // Environment only; Detect can launch tmux.
+	if runtime.GOOS == "windows" && os.Getenv("TERM") == "" && os.Getenv("WT_SESSION") == "" {
+		// Classic consoles do not advertise VT processing. The OS version alone
+		// cannot establish that ANSI escapes are enabled on this console.
+		profile = colorprofile.NoTTY
+	}
 	if os.Getenv("NO_COLOR") != "" || os.Getenv("FORCE_COLOR") == "0" || os.Getenv("CLICOLOR") == "0" {
 		profile = colorprofile.NoTTY
 	}
@@ -52,9 +58,9 @@ func welcomeTerminal(value any) bool {
 	return ok && term.IsTerminal(file.Fd())
 }
 
-func welcomeEnvironment(getenv func(string) string) bool {
+func welcomeEnvironment(getenv func(string) string, goos string) bool {
 	terminal := getenv("TERM")
-	if terminal == "" && getenv("WT_SESSION") == "" || strings.EqualFold(terminal, "dumb") {
+	if terminal == "" && getenv("WT_SESSION") == "" && goos != "windows" || strings.EqualFold(terminal, "dumb") {
 		return false
 	}
 	for _, name := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "TF_BUILD", "BUILDKITE", "JENKINS_URL", "TEAMCITY_VERSION"} {

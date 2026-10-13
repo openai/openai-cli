@@ -32,12 +32,14 @@ That fallback stays 56 columns by six rows. Its full and half-block glyphs remai
 Other or unknown encodings retain the ASCII frame and literal-title fallback at those widths.
 `LC_ALL` takes precedence over `LC_CTYPE` and `LANG`.
 Windows Terminal advertises Unicode when no locale is set.
+Classic Windows consoles without `TERM` or `WT_SESSION` use unstyled output.
+Their unknown encoding selects the ASCII fallback without enabling console modes.
 The ASCII fallback escapes non-ASCII revision characters without losing their values.
 Color selection remains independent from character encoding.
 The 16-color fallback retains its single-color fills, earlier metadata positions, left-aligned tagline, and plain border.
 `NO_COLOR`, `FORCE_COLOR=0`, and `CLICOLOR=0` disable styling.
 The header performs no terminal query, starts no helper process, and requires no setup or image file.
-Existing bare-interactive eligibility remains unchanged, including quiet mode, pipes, CI, and dumb-terminal behavior.
+Quiet mode, pipes, CI, and `TERM=dumb` preserve existing help without the card.
 Font shapes and color rendering can still differ between terminals.
 The compact text layout uses six rows from 40 columns, or four rows below 40 columns.
 Terminals below 29 columns omit the optional card.
