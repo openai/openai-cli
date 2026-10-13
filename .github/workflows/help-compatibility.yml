@@ -193,6 +193,22 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainReadableAudioJSONPreservesTextAndMetadata|TestMainReadableAudioTextAndSubtitles|TestMainReadableAudioTranscriptionStreamsBeforeDone|TestMainReadableAudioTranscriptionKeepsEventsAndMetadata|TestMainReadableAudioStreamFailuresKeepPartialOutput|TestMainReadableAudioSpeechFormatsAndDownloads|TestMainReadableAudioSpeechPreservesBinary|TestMainReadableAudioLargePayloads)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'audio-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Windows resource output and pagination
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainResourceSummariesRetainActionFields|TestMainResourceSummaryListFilesInVectorBatch|TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits|TestMainResourceSummaryListNoticeForMixedRecords|TestMainResourceSummaryEmptyList|TestMainResourceSummaryUnknownFieldsAndShapesFallBack|TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData|TestMainResourceSummaryListFormatsAndExtractionKeepFullItems|TestMainResourceSummaryLeavesOtherOperationsUnchanged|TestMainResourceSummaryPreservesLargeActionArguments|TestMainResourceSummaryPreservesPartialPageOnFailure|TestMainResourceSummaryWritesBeforeNextPageArrives|TestMainListNavigationNoninteractive)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'resource-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows streaming text output
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainStreamingTextArrivesBeforeCompletion|TestMainStreamingTextKeepsPartIdentityAndSnapshots|TestMainStreamingTextRetainsNontextDetails|TestMainStreamingExplicitFormatsPreserveEveryEvent|TestMainStreamingTextInterleavedChoicesKeepDetails|TestMainStreamingFailuresPreservePartialOutput|TestMainStreamingInterruptedTransportPreservesPartialOutput|TestMainStreamingFailureDiagnostics|TestMainStreamingTextDistinguishesEarlyEOFAndEmptyCompletion|TestMainStreamingTextLargeEvent)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'streaming-text-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test request environment restoration
         if: matrix.environment
         shell: bash
@@ -340,6 +356,68 @@ jobs:
                   required_cases("TestMainReadableAudio" + suffix, children)
                   for suffix, children in audio_cases.items()
               ))
+              resource_cases = {
+                  "TestMainResourceSummariesRetainActionFields": ["model", "file", "batch", "vector_store",
+                      "vector_file", "vector_file_batch", "fine_tuning_job", "assistant", "thread_run"],
+                  "TestMainResourceSummaryListFilesInVectorBatch": [],
+                  "TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits": ["-1", "3", "1", "0"],
+                  "TestMainResourceSummaryListNoticeForMixedRecords": ["fallback_only", "summary_then_fallback",
+                      "fallback_then_summary", "mixed_repeated_summaries"],
+                  "TestMainResourceSummaryEmptyList": [],
+                  "TestMainResourceSummaryUnknownFieldsAndShapesFallBack": [
+                      '{"id":"model_synthetic","object":"model","created":17',
+                      '{"id":"model_synthetic","object":"model"_"created":17}',
+                      '{"id":"model_synthetic","object":"model","created":17,"future_field":null}',
+                      '{"id":"model_synthetic","object":"model","created":17,"future_field":{"note":"retained"}}',
+                      '{"id":"model_synthetic","object":"model","created":17,"created":18}',
+                      '{"object":"model","created":17}',
+                      '{"id":null,"object":"model","created":17}',
+                      '{"id":"","object":"model","created":17}',
+                      '{"id":12,"object":"model","created":17}',
+                      '{"id":"model_synthetic","created":17}',
+                      '{"id":"model_synthetic","object":null,"created":17}',
+                      '{"id":"model_synthetic","object":"unfamiliar","created":17}',
+                  ],
+                  "TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData": ["auto", "text", "TeXt",
+                      "json", "jsonl", "raw", "yaml", "pretty", "explore", "--transform_created",
+                      "--format_auto_--transform_owned_by", "--transform_owned_by_--raw-output",
+                      "--format_text_--transform_@this", "--format_text_--transform_absent", "--format_text_--raw-output"],
+                  "TestMainResourceSummaryListFormatsAndExtractionKeepFullItems": ["json", "jsonl", "raw", "yaml",
+                      "pretty", "explore", "--transform_created_at", "--transform_filename_--raw-output",
+                      "--format_text_--transform_@this"],
+                  "TestMainResourceSummaryLeavesOtherOperationsUnchanged": ["create", "delete", "cancel"],
+                  "TestMainResourceSummaryPreservesLargeActionArguments": [],
+                  "TestMainResourceSummaryPreservesPartialPageOnFailure": ["text", "json"],
+                  "TestMainResourceSummaryWritesBeforeNextPageArrives": [],
+                  "TestMainListNavigationNoninteractive": [f"{resource}/{mode}"
+                      for resource in ["files", "batches", "projects"]
+                      for mode in ["default", "auto", "text", "json", "jsonl", "raw", "extraction", "raw_extraction",
+                                   "raw_output", "unlimited", "zero", "one", "page_boundary", "partial_second_page"]],
+              }
+              suites["resource-tests.jsonl"] = set().union(*(
+                  required_cases(root, children) for root, children in resource_cases.items()
+              ))
+              streaming_text_cases = {
+                  "TestMainStreamingTextArrivesBeforeCompletion": [f"{command}/{format}"
+                      for command in ["responses", "chat:completions", "completions"] for format in ["", "text"]],
+                  "TestMainStreamingTextKeepsPartIdentityAndSnapshots": [],
+                  "TestMainStreamingTextRetainsNontextDetails": [],
+                  "TestMainStreamingExplicitFormatsPreserveEveryEvent": [f"{command}/{format}"
+                      for command in ["responses", "chat:completions", "completions"] for format in ["raw", "json", "jsonl"]],
+                  "TestMainStreamingTextInterleavedChoicesKeepDetails": ["chat:completions", "completions"],
+                  "TestMainStreamingFailuresPreservePartialOutput": [f"{failure}/{format}"
+                      for failure in ["ordinary_failed_event", "ordinary_incomplete_event", "SDK_error_event", "malformed_event"]
+                      for format in ["text", "jsonl"]],
+                  "TestMainStreamingInterruptedTransportPreservesPartialOutput": [],
+                  "TestMainStreamingFailureDiagnostics": [f"{failure}/{format}"
+                      for failure in ["failed", "incomplete", "cancelled", "early_EOF"] for format in ["text", "json"]],
+                  "TestMainStreamingTextDistinguishesEarlyEOFAndEmptyCompletion": ["responses_early_EOF", "chat_early_EOF",
+                      "completion_early_EOF", "empty_transport", "completed_empty_response", "completed_empty_chat"],
+                  "TestMainStreamingTextLargeEvent": ["responses", "chat:completions"],
+              }
+              suites["streaming-text-tests.jsonl"] = set().union(*(
+                  required_cases(root, children) for root, children in streaming_text_cases.items()
+              ))
           if os.environ["CHECK_ENVIRONMENT"] == "true":
               suites["environment-tests.jsonl"] = required_cases(
                   "TestRequestConfigurationRestoresEnvironment",
@@ -385,7 +463,7 @@ jobs:
               missing = required - passed
               unexpected = passed - required if filename in {
                   "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-tests.jsonl",
-                  "audio-tests.jsonl",
+                  "audio-tests.jsonl", "resource-tests.jsonl", "streaming-text-tests.jsonl",
               } else set()
               children = sum("/" in name for name in passed)
               if missing or unexpected or not package_passed:
