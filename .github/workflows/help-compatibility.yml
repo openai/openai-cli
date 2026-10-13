@@ -25,10 +25,34 @@ jobs:
       matrix:
         include:
           - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            runner-arch: ARM64
             shells: bash,zsh
           - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            runner-arch: X64
             shells: bash
           - os: windows-latest
+            goos: windows
+            goarch: amd64
+            runner-arch: X64
+            shells: cmd,powershell,pwsh
+          - os: macos-15-intel
+            goos: darwin
+            goarch: amd64
+            runner-arch: X64
+            shells: bash,zsh
+          - os: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            runner-arch: ARM64
+            shells: bash
+          - os: windows-11-arm
+            goos: windows
+            goarch: arm64
+            runner-arch: ARM64
             shells: cmd,powershell,pwsh
     steps:
       - name: Download prepared source
@@ -44,6 +68,19 @@ jobs:
         with:
           go-version-file: .go-version
           check-latest: true
+      - name: Verify native Go platform
+        shell: bash
+        env:
+          EXPECTED_GOOS: ${{ matrix.goos }}
+          EXPECTED_GOARCH: ${{ matrix.goarch }}
+          EXPECTED_RUNNER_ARCH: ${{ matrix.runner-arch }}
+        run: |
+          set -euo pipefail
+          echo "Runner: $RUNNER_OS/$RUNNER_ARCH"
+          go env GOOS GOARCH GOHOSTOS GOHOSTARCH
+          test "$RUNNER_ARCH" = "$EXPECTED_RUNNER_ARCH"
+          test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "$EXPECTED_GOOS/$EXPECTED_GOARCH"
+          test "$(go env GOOS)/$(go env GOARCH)" = "$EXPECTED_GOOS/$EXPECTED_GOARCH"
       - uses: ./.github/actions/link-go-sdk
       - name: Test help
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
