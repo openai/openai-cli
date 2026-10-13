@@ -102,8 +102,8 @@ def main():
     before, after = options.before.resolve(), options.after.resolve()
     options.output.mkdir(parents=True, exist_ok=False)
     cases = []
-    for width in (100, 82, 81, 80, 76, 75, 66, 56, 55, 40, 39, 29, 28, 20):
-        cases.append((f"bare-{width}", [], width, (True, True, True), {}, width >= 29))
+    for width in (100, 82, 81, 80, 76, 75, 66, 56, 55, 40, 39, 32, 31, 29, 28, 20):
+        cases.append((f"bare-{width}", [], width, (True, True, True), {}, True))
     for name, extra, banner in (
         ("no-color", {"NO_COLOR": "anything", "CLICOLOR_FORCE": "1"}, True),
         ("force-color-zero", {"FORCE_COLOR": "0"}, True),
@@ -150,6 +150,13 @@ def main():
     version = run(after, ["--version"], streams=(False, False, False))["stdout"].strip().split()[-1]
     results = []
     for name, args, width, streams, extra, banner in cases:
+        expect_ascii = name in ("ascii-locale", "unknown-locale", "ctype-ascii")
+        displayed_version = "v" + version if version[0].isdigit() else version
+        if expect_ascii:
+            displayed_version = "".join(char if ord(char) < 128 else
+                ("\\u%04x" if ord(char) <= 0xffff else "\\U%08x") % ord(char)
+                for char in displayed_version)
+        banner = banner and width >= max(29, cell_width("OpenAI CLI  " + displayed_version) + 4)
         old = run(before, args, width, streams, extra)
         new = run(after, args, width, streams, extra)
         (options.output / f"{name}.json").write_text(json.dumps({"before": old, "after": new}, indent=2))
@@ -160,13 +167,7 @@ def main():
             raw_header, body = new["terminal"].split("\n\n", 1)
             header = plain(raw_header)
             lines = header.splitlines()
-            expect_ascii = name in ("ascii-locale", "unknown-locale", "ctype-ascii")
             no_color = name in ("no-color", "force-color-zero", "clicolor-zero")
-            displayed_version = "v" + version if version[0].isdigit() else version
-            if expect_ascii:
-                displayed_version = "".join(char if ord(char) < 128 else
-                    ("\\u%04x" if ord(char) <= 0xffff else "\\U%08x") % ord(char)
-                    for char in displayed_version)
             version_width = cell_width(displayed_version)
             filled_width = max(76, 66 + version_width)
             filled = not expect_ascii and not no_color and width >= filled_width and version_width <= 16

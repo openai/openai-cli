@@ -122,6 +122,7 @@ Increase `DEMO_ROWS` if the validation reports insufficient rows.
 These tall captures preserve full help; they do not demonstrate ordinary viewport height.
 
 The recorder checks the banner version against `openai --version`.
+The comparison checker also accounts for the complete displayed version, including ASCII escapes, when deciding whether the card fits.
 It verifies all six filled pixel rows, the nine-row card, and the complete metadata layout.
 It separately checks the unchanged monochrome and ASCII fallback dimensions.
 It compares complete help and command groups with the baseline after removing the banner.
