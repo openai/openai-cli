@@ -92,7 +92,8 @@ func TestMainNativeShell(t *testing.T) {
 					}
 					for _, name := range []string{
 						"single quoted assigned file", "double quoted assigned file", "escaped assigned file",
-						"separate quoted file", "unquoted assigned control",
+						"separate quoted file", "unquoted assigned control", "double quoted apostrophe",
+						"UTF-8 midline file with later flag",
 					} {
 						if !strings.Contains(string(out), "PASS: "+name+"\n") {
 							t.Fatalf("native Bash completion did not execute %q:\n%s", name, out)

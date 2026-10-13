@@ -1,5 +1,63 @@
 #!/bin/bash
 
+____APPNAME___bash_literal_files() (
+  local prefix="$1" directory=. lead="" basename="$1" pattern=""
+  local ignore_case=off map_case=off match_hidden=on setting file char index
+
+  # Keep Bash's existing tilde expansion and special-directory handling.
+  case "$prefix" in
+    '~'*) builtin compgen -f -- "$prefix"; return ;;
+  esac
+  if [[ "$prefix" == */* ]]; then
+    lead="${prefix%/*}/" directory="${prefix%/*}" basename="${prefix##*/}"
+    [[ -n "$directory" ]] || directory=/
+  fi
+  case "$directory" in
+    *'$'*|..|../*|*/..|*/../*) builtin compgen -f -- "$prefix"; return ;;
+  esac
+
+  # Scope directory and option changes to this subshell. Keep the typed spelling.
+  builtin shopt -u cdspell cdable_vars
+  CDPATH= builtin cd -P -- "$directory" 2>/dev/null || return 0
+  while IFS= read -r setting; do
+    case "$setting" in
+      'set completion-ignore-case on') ignore_case=on ;;
+      'set completion-map-case on') map_case=on ;;
+      'set match-hidden-files off') match_hidden=off ;;
+    esac
+  done < <(builtin bind -v 2>/dev/null)
+  builtin shopt -u nocaseglob dotglob
+  [[ "$ignore_case" == on ]] && builtin shopt -s nocaseglob
+  [[ "$match_hidden" == on ]] && builtin shopt -s dotglob
+
+  # compgen -f can dequote an already decoded filename during active completion.
+  # Escape its basename as a glob instead, with one intentional trailing wildcard.
+  for ((index = 0; index < ${#basename}; index++)); do
+    char="${basename:index:1}"
+    case "$char" in
+      '\'|'*'|'?'|'['|']'|'('|')'|'|'|'!'|'+'|'@') pattern+="\\$char" ;;
+      '-'|'_')
+        if [[ "$ignore_case" == on && "$map_case" == on ]]; then
+          pattern+='[-_]'
+        else
+          pattern+="$char"
+        fi
+        ;;
+      *) pattern+="$char" ;;
+    esac
+  done
+  if [[ -z "$basename" || "$basename" == . || "$basename" == .. ]]; then
+    while IFS= read -r file; do
+      [[ -z "$basename" && "$match_hidden" == off && "$file" == .* ]] && continue
+      printf '%s\n' "$lead$file"
+    done < <(builtin compgen -f -- "$basename")
+  else
+    while IFS= read -r file; do
+      printf '%s\n' "$lead$file"
+    done < <(builtin compgen -G "$pattern*")
+  fi
+)
+
 ____APPNAME___bash_autocomplete() {
   if [[ "${COMP_WORDS[0]}" != "source" ]]; then
     local cur completions exit_code file
@@ -9,7 +67,13 @@ ____APPNAME___bash_autocomplete() {
     local -a completion_args=()
     local word_index previous raw source before after current_raw="$cur"
     local -a adjacent=()
-    source="${COMP_LINE:0:COMP_POINT}"
+    if [[ ${BASH_VERSINFO[0]} -lt 4 ||
+          ( ${BASH_VERSINFO[0]} -eq 4 && ${BASH_VERSINFO[1]} -lt 3 ) ]]; then
+      # Before Bash 4.3, COMP_POINT counts bytes; substring expansion counts characters.
+      builtin printf -v source '%.*s' "$COMP_POINT" "$COMP_LINE"
+    else
+      source="${COMP_LINE:0:COMP_POINT}"
+    fi
     # Readline splits '=' and ':' into words. Preserve source gaps when joining
     # those words. Walk backwards so earlier commands cannot interfere.
     for ((word_index = COMP_CWORD; word_index >= 0; word_index--)); do
@@ -43,18 +107,32 @@ ____APPNAME___bash_autocomplete() {
     done
     # Remove shell quoting without evaluating substitutions or expressions.
     local token value quote char next offset argument current_word=""
+    local callback_raw="${2-$current_raw}" callback_start=-1 file_word_start=-1 file_current_word=""
+    local last_argument=$((${#completion_args[@]} - 1))
+    # Map the callback's raw suffix into the fully decoded last argument.
+    # An open quote can omit its opening delimiter from the callback word.
+    if [[ $# -ge 2 && $last_argument -ge 0 && "${completion_args[last_argument]}" == *"$callback_raw" ]]; then
+      callback_start=$((${#completion_args[last_argument]} - ${#callback_raw}))
+    fi
     # Decode Readline's replacement word separately from the rejoined arguments.
-    local -a words_to_decode=("${completion_args[@]}" "${2-$current_raw}")
+    local -a words_to_decode=("${completion_args[@]}" "$callback_raw")
     for ((argument = 0; argument < ${#words_to_decode[@]}; argument++)); do
       token="${words_to_decode[argument]}"
       value="" quote=""
       for ((offset = 0; offset < ${#token}; offset++)); do
+        if [[ $argument -eq $last_argument && $offset -eq $callback_start ]]; then
+          file_word_start=${#value}
+        fi
         char="${token:offset:1}"
         if [[ "$quote" == "'" ]]; then
           if [[ "$char" == "'" ]]; then quote=""; else value+="$char"; fi
         elif [[ "$char" == "\\" && "$quote" != "'" ]]; then
           next="${token:offset+1:1}"
           if [[ -z "$quote" || "$next" == "\\" || "$next" == '"' || "$next" == '$' || "$next" == '`' ]]; then
+            # Both raw characters of an escape produce the same decoded character.
+            if [[ $argument -eq $last_argument && $callback_start -eq $((offset + 1)) ]]; then
+              file_word_start=${#value}
+            fi
             value+="$next"
             ((offset++))
           else
@@ -70,6 +148,10 @@ ____APPNAME___bash_autocomplete() {
       done
       if [[ $argument -lt ${#completion_args[@]} ]]; then
         completion_args[argument]="$value"
+        if [[ $argument -eq $last_argument ]]; then
+          [[ $callback_start -eq ${#token} ]] && file_word_start=${#value}
+          if [[ $file_word_start -ge 0 ]]; then file_current_word="${value:file_word_start}"; fi
+        fi
       else
         current_word="$value"
       fi
@@ -121,17 +203,18 @@ ____APPNAME___bash_autocomplete() {
       10) # File completion, including Bash 3.2 (which has no mapfile).
         COMPREPLY=()
         local current_value="${completion_args[${#completion_args[@]} - 1]}"
-        local assignment="$completions" replacement_prefix=""
+        local assignment="$completions" replacement_prefix="" replacement_word="$current_word"
+        [[ $file_word_start -ge 0 ]] && replacement_word="$file_current_word"
         file_part="${current_value#"$assignment"}"
         # Readline replaces the callback word, after the last '=' or ':'.
         # Restore only the part that Readline includes in its replacement.
-        if [[ $# -ge 2 && "$current_value" == *"$current_word" ]]; then
-          replacement_prefix="${current_value%"$current_word"}"
+        if [[ $# -ge 2 && "$current_value" == *"$replacement_word" ]]; then
+          replacement_prefix="${current_value%"$replacement_word"}"
         fi
         while IFS= read -r file; do
           file="$assignment$file"
           COMPREPLY+=("${file#"$replacement_prefix"}")
-        done < <(compgen -f -- "$file_part")
+        done < <(____APPNAME___bash_literal_files "$file_part")
         ;;
       11) COMPREPLY=() ;; # no completion
       0)
