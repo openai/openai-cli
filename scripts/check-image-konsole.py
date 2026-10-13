@@ -45,6 +45,18 @@ IIP = re.compile(rb'\x1b\]1337;File=([^:\x07]+):([A-Za-z0-9+/=]*)(?:\x07|\x1b\\)
 KITTY = re.compile(rb'\x1b_G([^;]*);([A-Za-z0-9+/=]*)\x1b\\')
 
 
+def large_png():
+    """An incompressible fixture keeps output active after its first PTY read."""
+    pixels = hashlib.shake_256(b'konsole-blocked-output').digest(1024 * 1024 * 3)
+
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+
+    rows = b''.join(b'\0' + pixels[y * 3072:(y + 1) * 3072] for y in range(1024))
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 1024, 1024, 8, 2, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
+
+
 def check_frames(raw, widths, shape, protocol='iterm'):
     frames = IIP.findall(raw)
     require(raw.count(b'\x1b]1337;File=') == len(frames), 'incomplete IIP frame')
@@ -169,16 +181,7 @@ def main():
         def blocked_preview(name, extra=None):
             home, env = environment(name, extra)
             source = home / 'synthetic large image.png'
-            pixels = hashlib.shake_256(b'konsole-blocked-output').digest(1024 * 1024 * 3)
-
-            def chunk(kind, data):
-                return (struct.pack('>I', len(data)) + kind + data
-                        + struct.pack('>I', zlib.crc32(kind + data)))
-
-            rows = b''.join(b'\0' + pixels[y * 3072:(y + 1) * 3072] for y in range(1024))
-            image = (b'\x89PNG\r\n\x1a\n'
-                     + chunk(b'IHDR', struct.pack('>IIBBBBB', 1024, 1024, 8, 2, 0, 0, 0))
-                     + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
+            image = large_png()
             source.write_bytes(image)
             stderr_path = output / (name + '.stderr')
             # A controlling session can delay Darwin's exit while unread data
@@ -231,6 +234,50 @@ def main():
                             terminal.save(output / name)
                         finally:
                             terminal.close()
+
+        def cancel_after_saved_receipt():
+            name = 'cancel-after-saved-receipt'
+            home, env = environment(name)
+            image = large_png()
+            server.case = case = Response('ok', image)
+            terminal = Terminal(str(binary), generate, env)
+            try:
+                deadline = time.monotonic() + 12
+                while b'\x1b]1337;File=' not in terminal.raw:
+                    require(terminal.child.poll() is None and time.monotonic() < deadline,
+                            'saved native preview did not start')
+                    terminal.read()
+                before = bytes(terminal.raw)
+                receipt, frame = before.find(b'Saved image:'), before.index(b'\x1b]1337;File=')
+                require(0 <= receipt < frame, 'native preview started before its saved receipt')
+                require(b'\x07' not in before[frame:] and b'\x1b\\' not in before[frame:],
+                        'preview completed before the cancellation gate')
+                saved_files(home, 1, image)
+                started = time.monotonic()
+                terminal.child.send_signal(signal.SIGINT)
+                terminal.finish(130, expect_picker=False)
+                elapsed = time.monotonic() - started
+                require(elapsed < 5, 'saved-image cancellation was not prompt')
+                raw = bytes(terminal.raw)
+                message = (b'Images were saved, but the command was canceled. '
+                           b'Use the saved files; no need to generate again.')
+                recovery = raw.find(message)
+                terminator = raw.find(b'\x1b\\', frame)
+                require(recovery >= 0, 'canceled generation lost saved-image recovery guidance')
+                require(frame < terminator < recovery, 'saved-image recovery did not follow a terminated frame')
+                saved_files(home, 1, image)
+                require(len(case.requests) == 1 and not case.errors, 'cancellation changed the API request lifecycle')
+                passed(name, exit=130, saved=1, cancellation_seconds=round(elapsed, 3),
+                       original_preserved=True, recovery_after_terminated_frame=True)
+            except Exception as exc:
+                results.append(dict(case=name, result='fail', error=str(exc)))
+                raise
+            finally:
+                case.release.set()
+                try:
+                    terminal.save(output / name)
+                finally:
+                    terminal.close()
 
         generate = ['images', 'generate', '--prompt', 'Synthetic Konsole fixture']
         stream = [*generate, '--partial-images', '2', '--max-items', '-1']
@@ -391,6 +438,7 @@ def main():
             passed('stdout-pipe', exit=0, frames=0, saved=1)
             blocked_preview('cancel-blocked-vscode-control', {'TERM_PROGRAM': 'vscode', 'OPENAI_VSCODE_IMAGES': '1'})
             blocked_preview('cancel-blocked-preview')
+            cancel_after_saved_receipt()
         except Exception as exc:
             evidence['failure'] = str(exc)
             raise
