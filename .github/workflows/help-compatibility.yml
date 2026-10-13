@@ -34,26 +34,36 @@ jobs:
             goarch: amd64
             runner-arch: X64
             shells: bash,zsh
+            bash-prefixes: true
           - os: windows-latest
             goos: windows
             goarch: amd64
             runner-arch: X64
             shells: cmd,powershell,pwsh
+            environment: true
           - os: macos-15-intel
             goos: darwin
             goarch: amd64
             runner-arch: X64
             shells: bash,zsh
+            environment: true
+            pager: true
+            gallery: true
+            bash-prefixes: true
           - os: ubuntu-24.04-arm
             goos: linux
             goarch: arm64
             runner-arch: ARM64
             shells: bash,zsh
+            environment: true
+            pager: true
+            bash-prefixes: true
           - os: windows-11-arm
             goos: windows
             goarch: arm64
             runner-arch: ARM64
             shells: cmd,powershell,pwsh
+            environment: true
     steps:
       - name: Download prepared source
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -121,7 +131,11 @@ jobs:
       - name: Test help
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
       - name: Test command dispatch and native shells
-        run: go test ./cmd/openai -run '^(TestMainHelp|TestMainDispatch|TestMainNativeShell)' -count=1 -v
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./cmd/openai -run '^(TestMainHelp|TestMainDispatch|TestMainNativeShell)' -count=1 -v -json \
+            | tee "$RUNNER_TEMP/dispatch-tests.jsonl"
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
       - name: Test Linux Fish completion
@@ -144,38 +158,123 @@ jobs:
           go test ./pkg/custom -count=1 -timeout=2m -v -json \
             -run '^TestImagePickerNativeShellQuoting/(zsh|fish)$' \
             | tee "$RUNNER_TEMP/shell-quoting-tests.jsonl"
-      - name: Verify Linux shell test execution
-        if: runner.os == 'Linux'
+      - name: Test request environment restoration
+        if: matrix.environment
         shell: bash
+        run: |
+          set -euo pipefail
+          go test ./cmd/openai -count=1 -timeout=2m -v -json \
+            -run '^TestRequestConfiguration(RestoresEnvironment|LeavesOtherEnvironmentCasesUnchanged)$' \
+            | tee "$RUNNER_TEMP/environment-tests.jsonl"
+      - name: Test gallery cleanup
+        if: matrix.gallery
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./internal/imagegallery -count=1 -timeout=2m -v -json \
+            -run '^TestCleanup(PreservesMalformedMetadata|ResumesAfterPartialArtifactRemoval)$' \
+            | tee "$RUNNER_TEMP/gallery-tests.jsonl"
+      - name: Test pager descriptor ownership
+        if: matrix.pager
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./pkg/custom -count=1 -timeout=2m -v -json \
+            -run '^TestSocketPairPagerFailureKeepsReusedDescriptorOpen$' \
+            | tee "$RUNNER_TEMP/pager-tests.jsonl"
+      - name: Test Bash command prefixes
+        if: matrix.bash-prefixes
+        shell: bash
+        env:
+          OPENAI_CLI_TEST_BASH: /bin/bash
+        run: |
+          set -euo pipefail
+          command -v "$OPENAI_CLI_TEST_BASH"
+          "$OPENAI_CLI_TEST_BASH" --version
+          command -v expect
+          expect -v
+          go test ./internal/autocomplete -count=1 -timeout=2m -v -json \
+            -run '^TestBashColonCompletionReadline$/^(ordinary|escaped|single_quoted|double_quoted|partially_quoted|open_single_quote|open_double_quote|before_closing_quote|colon_not_a_word_break|multiple_quoted_colons|partially_escaped_colons|first_colon_escaped)$' \
+            | tee "$RUNNER_TEMP/bash-prefix-tests.jsonl"
+      - name: Verify selected compatibility test execution
+        shell: bash
+        env:
+          CHECK_ENVIRONMENT: ${{ matrix.environment || false }}
+          CHECK_GALLERY: ${{ matrix.gallery || false }}
+          CHECK_PAGER: ${{ matrix.pager || false }}
+          CHECK_BASH_PREFIXES: ${{ matrix.bash-prefixes || false }}
         run: |
           python3 - <<'PY'
           import json
           import os
           from pathlib import Path
 
+          completion_root = "TestMainDispatchCompletionEmpty"
           suites = {
-              "fish-tests.jsonl": {
-                  "TestFishFileCompletionPreservesAssignments",
-                  "TestFishPackagePickerFirstPrompt",
-                  "TestFishPackagePreservesOrdinaryCompletions",
-                  "TestPickerFishTabAndLifecycle",
-                  "TestPickerFishBindingsAndResourcing",
-                  "TestPickerFishRejectsOtherCommandLines",
-                  "TestPickerInstalledFishHonorsSharedOptOut",
-                  "TestPickerInstalledFishRunsAfterUserConfiguration",
-              },
-              "shell-quoting-tests.jsonl": {
-                  "TestImagePickerNativeShellQuoting",
-                  "TestImagePickerNativeShellQuoting/zsh",
-                  "TestImagePickerNativeShellQuoting/fish",
+              "dispatch-tests.jsonl": {completion_root} | {
+                  f"{completion_root}/{style}/{form}"
+                  for style in ["bash", "zsh", "fish", "pwsh"]
+                  for form in ["no_words", "empty_word"]
               },
           }
+          if os.environ["RUNNER_OS"] == "Linux":
+              suites.update({
+                  "fish-tests.jsonl": {
+                      "TestFishFileCompletionPreservesAssignments",
+                      "TestFishPackagePickerFirstPrompt",
+                      "TestFishPackagePreservesOrdinaryCompletions",
+                      "TestPickerFishTabAndLifecycle",
+                      "TestPickerFishBindingsAndResourcing",
+                      "TestPickerFishRejectsOtherCommandLines",
+                      "TestPickerInstalledFishHonorsSharedOptOut",
+                      "TestPickerInstalledFishRunsAfterUserConfiguration",
+                  },
+                  "shell-quoting-tests.jsonl": {
+                      "TestImagePickerNativeShellQuoting",
+                      "TestImagePickerNativeShellQuoting/zsh",
+                      "TestImagePickerNativeShellQuoting/fish",
+                  },
+              })
+
+          def required_cases(root, children):
+              return {root} | {f"{root}/{child}" for child in children}
+
+          if os.environ["CHECK_ENVIRONMENT"] == "true":
+              suites["environment-tests.jsonl"] = required_cases(
+                  "TestRequestConfigurationRestoresEnvironment",
+                  ["success", "setup_error", "action_error", "cancellation", "panic"],
+              ) | required_cases(
+                  "TestRequestConfigurationLeavesOtherEnvironmentCasesUnchanged",
+                  ["valid_environment", "empty_environment", "unset_environment", "omitted_override", "empty_override"],
+              )
+          if os.environ["CHECK_GALLERY"] == "true":
+              suites["gallery-tests.jsonl"] = required_cases(
+                  "TestCleanupPreservesMalformedMetadata",
+                  ["identity", "font", "allocation", "duplicate", "receipt", "unknown_field", "trailing_data"],
+              ) | required_cases(
+                  "TestCleanupResumesAfterPartialArtifactRemoval",
+                  ["images", "fonts", "images_and_fonts"],
+              )
+          if os.environ["CHECK_PAGER"] == "true":
+              suites["pager-tests.jsonl"] = required_cases(
+                  "TestSocketPairPagerFailureKeepsReusedDescriptorOpen", ["LookPath", "ForkExec"],
+              )
+          if os.environ["CHECK_BASH_PREFIXES"] == "true":
+              suites["bash-prefix-tests.jsonl"] = required_cases(
+                  "TestBashColonCompletionReadline",
+                  ["ordinary", "escaped", "single_quoted", "double_quoted", "partially_quoted",
+                   "open_single_quote", "open_double_quote", "before_closing_quote", "colon_not_a_word_break",
+                   "multiple_quoted_colons", "partially_escaped_colons", "first_colon_escaped"],
+              )
           for filename, required in suites.items():
               passed = set()
               package_passed = False
               with (Path(os.environ["RUNNER_TEMP"]) / filename).open() as events:
                   for line in events:
                       event = json.loads(line)
+                      test = event.get("Test", "")
+                      if filename == "dispatch-tests.jsonl" and test and test != completion_root and not test.startswith(completion_root + "/"):
+                          continue
                       if event["Action"] in {"skip", "fail"}:
                           raise SystemExit(f"{filename}: unexpected {event['Action']}: {event.get('Test', 'package')}")
                       if event["Action"] == "pass" and "Test" in event:
@@ -183,8 +282,9 @@ jobs:
                       elif event["Action"] == "pass":
                           package_passed = True
               missing = required - passed
+              unexpected = passed - required if filename in {"dispatch-tests.jsonl", "bash-prefix-tests.jsonl"} else set()
               children = sum("/" in name for name in passed)
-              if missing or not package_passed:
-                  raise SystemExit(f"{filename}: missing required tests: {sorted(missing)}; package passed: {package_passed}")
+              if missing or unexpected or not package_passed:
+                  raise SystemExit(f"{filename}: missing required tests: {sorted(missing)}; unexpected tests: {sorted(unexpected)}; package passed: {package_passed}")
               print(f"{filename}: {len(passed) - children} roots and {children} children passed; no skips")
           PY
