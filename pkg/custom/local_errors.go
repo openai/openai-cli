@@ -46,6 +46,9 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	case errors.As(failure, &receiptFailure):
 		return receiptFailure.Error()
 	case errors.Is(failure, context.Canceled):
+		if errors.As(failure, &imageFailure) && imageFailure.preserveOnCancel {
+			return imageFailure.message
+		}
 		return "Request canceled."
 	case errors.As(failure, &utilityFailure):
 		return utilityFailure.Error()
