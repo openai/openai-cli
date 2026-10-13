@@ -7,26 +7,13 @@ import (
 	"io"
 	"os"
 	"sync/atomic"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-// INPUT_RECORD contains a WORD tag, padding, and a 16-byte KEY_EVENT_RECORD.
-// https://learn.microsoft.com/en-us/windows/console/input-record-str
-// https://learn.microsoft.com/en-us/windows/console/key-event-record-str
-type adminSetupConsoleInputRecord struct {
-	eventType    uint16
-	_            uint16
-	keyDown      int32
-	repeat       uint16
-	virtualKey   uint16
-	scanCode     uint16
-	character    uint16
-	controlState uint32
-}
+type adminSetupConsoleInputRecord = consoleInputRecord
 
-var adminSetupReadConsoleInputEx = windows.NewLazySystemDLL("kernel32.dll").NewProc("ReadConsoleInputExW")
+var adminSetupReadConsoleInputEx = consoleReadInputEx
 
 type adminSetupConsoleReader struct {
 	input        windows.Handle // Borrowed. Never close shared stdin.
@@ -156,17 +143,11 @@ func (reader *adminSetupConsoleReader) discardPendingSnapshot() error {
 }
 
 func readAdminSetupConsoleRecords(input windows.Handle, records []adminSetupConsoleInputRecord) (int, error) {
-	var count uint32
-	// NOWAIT consumes only available records. No pending ReadFile request exists.
-	// https://learn.microsoft.com/en-us/windows/console/readconsoleinputex
-	result, _, _ := adminSetupReadConsoleInputEx.Call(uintptr(input), uintptr(unsafe.Pointer(&records[0])), uintptr(len(records)), uintptr(unsafe.Pointer(&count)), 0x0002)
-	if result == 0 {
+	count, err := readConsoleInputRecords(input, records)
+	if err != nil {
 		return 0, errAdminSetupKeyIO
 	}
-	if count > uint32(len(records)) {
-		return 0, errAdminSetupKeyIO
-	}
-	return int(count), nil
+	return count, nil
 }
 
 func (reader *adminSetupConsoleReader) clearRecords() {
