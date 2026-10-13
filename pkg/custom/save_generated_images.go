@@ -217,7 +217,11 @@ func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writ
 	if err := displaySavedImages(ctx, saved, previewOutput, func(file imageoutput.SavedImage) (bool, error) {
 		return displaySavedImage(ctx, file, previewOutput, p.diagnostics, p.inline)
 	}); err != nil {
-		return imageSavingResultFailure("Images were saved, but the preview could not finish. Use the saved files; no need to generate again.", err)
+		message := "Images were saved, but the preview could not finish. Use the saved files; no need to generate again."
+		if errors.Is(err, context.Canceled) {
+			message = "Images were saved, but the command was canceled. Use the saved files; no need to generate again."
+		}
+		return imageSavingResultFailure(message, err)
 	}
 	return nil
 }

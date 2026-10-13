@@ -369,41 +369,103 @@ func TestSavedImageCancellationOutputModes(t *testing.T) {
 	}
 }
 
-func TestSavedImagePreviewCancellationKeepsRecovery(t *testing.T) {
+func TestSavedImageCancellationAfterReceiptKeepsSavedResult(t *testing.T) {
 	var fixture bytes.Buffer
 	require.NoError(t, png.Encode(&fixture, image.NewRGBA(image.Rect(0, 0, 1, 1))))
-	response := []byte(fmt.Sprintf(`{"data":[{"b64_json":%q}]}`, base64.StdEncoding.EncodeToString(fixture.Bytes())))
-	for _, format := range []string{"text", "json"} {
-		t.Run(format, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			plan := &imageOutputPlan{directory: t.TempDir(), name: "robot", inline: "off"}
-			var receipt bytes.Buffer
-			writer := loadingTestWriter(func(data []byte) (int, error) {
-				n, err := receipt.Write(data)
-				cancel()
-				return n, err
+	encoded := base64.StdEncoding.EncodeToString(fixture.Bytes())
+	response := gjson.Parse(fmt.Sprintf(`{"data":[{"b64_json":%q}]}`, encoded))
+	for _, inline := range []string{"off", "auto"} {
+		for _, test := range []struct {
+			name, format string
+			args         []string
+		}{
+			{"text", "text", []string{"--format-error", "text"}},
+			{"JSON", "json", []string{"--format-error", "json"}},
+			{"auto", "text", []string{"--format-error", "auto"}},
+			{"JSON lines", "json", []string{"--format-error", "jsonl"}},
+			{"raw JSON", "json", []string{"--format-error", "raw"}},
+			{"YAML", "yaml", []string{"--format-error", "yaml"}},
+			{"extracted message", "string", []string{"--format-error", "json", "--transform-error", "message"}},
+		} {
+			t.Run(inline+"/"+test.name, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				plan := &imageOutputPlan{directory: t.TempDir(), name: "synthetic-private-image", inline: inline}
+				path := filepath.Join(plan.directory, "synthetic-private-image.png")
+				var receipt bytes.Buffer
+				receiptCalls := 0
+				// This writer is nonterminal, so auto does not request a preview.
+				writer := loadingTestWriter(func(data []byte) (int, error) {
+					receiptCalls++
+					require.NoError(t, ctx.Err(), "cancel only after saving and printing the completed path")
+					completed, err := os.ReadFile(path)
+					require.NoError(t, err)
+					require.Equal(t, fixture.Bytes(), completed)
+					n, err := receipt.Write(data)
+					cancel()
+					return n, err
+				})
+				presentation := context.WithValue(ctx, imagePresentationKey{}, imagePresentation{plan, writer})
+				failure := ShowJSON(response, ShowJSONOpts{
+					Context: presentation, Operation: imageGenerationOperation, OutputKind: OutputResponse,
+					Format: "auto", Stdout: writer, Stderr: io.Discard,
+				})
+				require.ErrorIs(t, failure, context.Canceled)
+				require.Equal(t, 1, receiptCalls)
+				require.Equal(t, fmt.Sprintf("Saved image: %q\n", path), receipt.String())
+				completed, err := os.ReadFile(path)
+				require.NoError(t, err)
+				require.Equal(t, fixture.Bytes(), completed)
+				entries, err := os.ReadDir(plan.directory)
+				require.NoError(t, err)
+				require.Len(t, entries, 1)
+				require.Equal(t, filepath.Base(path), entries[0].Name())
+				root := readableErrorTestCommand(t, test.args...)
+				for _, interrupted := range []bool{false, true} {
+					wrapped := failure
+					wantStatus := 1 // main's fallback; no native process execution is claimed here.
+					if interrupted {
+						wrapped = &imageLoadingInterrupt{failure}
+						wantStatus = 130
+					}
+					wrapped = withCommandError(root, wrapped)
+					require.ErrorIs(t, wrapped, context.Canceled)
+					status := 1
+					var exit cli.ExitCoder
+					if errors.As(wrapped, &exit) {
+						status = exit.ExitCode()
+					}
+					require.Equal(t, wantStatus, status)
+					var diagnostic bytes.Buffer
+					require.NoError(t, ShowCommandError(root, wrapped, &diagnostic))
+					assertReadableErrorContainsNoPrivateDetails(t, diagnostic.String())
+					require.NotContains(t, diagnostic.String(), plan.directory)
+					require.NotContains(t, diagnostic.String(), encoded)
+					message := diagnostic.String()
+					want := "Images were saved, but the command was canceled. Use the saved files; no need to generate again."
+					switch test.format {
+					case "text":
+						want += "\n"
+					case "string":
+						require.NoError(t, json.Unmarshal(diagnostic.Bytes(), &message))
+					default:
+						var document map[string]any
+						if test.format == "yaml" {
+							require.NoError(t, yaml.Unmarshal(diagnostic.Bytes(), &document))
+						} else {
+							require.NoError(t, json.Unmarshal(diagnostic.Bytes(), &document))
+						}
+						require.Len(t, document, 1, "do not invent an HTTP status")
+						var ok bool
+						message, ok = document["message"].(string)
+						require.True(t, ok)
+					}
+					t.Logf("interrupted=%t status_contract=%d kept_bytes=%d receipt_calls=%d diagnostic=%q", interrupted, status, len(completed), receiptCalls, message)
+					if message != want {
+						t.Errorf("saved-result cancellation claimed a preview failure: got %q; want %q", message, want)
+					}
+				}
 			})
-			failure := plan.save(ctx, response, writer)
-			require.ErrorIs(t, failure, context.Canceled)
-			path := filepath.Join(plan.directory, "robot.png")
-			completed, err := os.ReadFile(path)
-			require.NoError(t, err)
-			require.Equal(t, fixture.Bytes(), completed)
-			require.Equal(t, fmt.Sprintf("Saved image: %q\n", path), receipt.String())
-			want := "Images were saved, but the preview could not finish. Use the saved files; no need to generate again."
-			require.Equal(t, want, failure.Error())
-			root := readableErrorTestCommand(t, "--format-error", format)
-			var diagnostic bytes.Buffer
-			require.NoError(t, ShowCommandError(root, withCommandError(root, failure), &diagnostic))
-			if format == "json" {
-				var document map[string]any
-				require.NoError(t, json.Unmarshal(diagnostic.Bytes(), &document))
-				require.Equal(t, map[string]any{"message": want}, document)
-			} else {
-				require.Equal(t, want+"\n", diagnostic.String())
-			}
-			require.ErrorIs(t, failure, context.Canceled)
-		})
+		}
 	}
 }
