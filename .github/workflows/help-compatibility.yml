@@ -144,8 +144,16 @@ jobs:
           go test ./pkg/custom -count=1 -timeout=2m -v -json \
             -run '^TestImagePickerNativeShellQuoting/(zsh|fish)$' \
             | tee "$RUNNER_TEMP/shell-quoting-tests.jsonl"
-      - name: Verify Linux shell test execution
-        if: runner.os == 'Linux'
+      - name: Test Windows tokenizer console reader
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes)' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'tokenizer-reader-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Verify selected compatibility test execution
+        if: runner.os == 'Linux' || runner.os == 'Windows'
         shell: bash
         run: |
           python3 - <<'PY'
@@ -170,6 +178,18 @@ jobs:
                   "TestImagePickerNativeShellQuoting/fish",
               },
           }
+          if os.environ["RUNNER_OS"] == "Windows":
+              suites = {
+                  "tokenizer-reader-tests.jsonl": {
+                      "TestTokenizerConsoleInputPreservesUnicode",
+                      "TestTokenizerConsoleInputRecordSemantics",
+                      "TestTokenizerConsoleInputRejectsMalformedUTF16",
+                      "TestTokenizerConsoleInputBoundedRepeatsAndCancellation",
+                      "TestTokenizerConsoleInputClosePreservesBorrowedHandle",
+                      "TestTokenizerConsoleInputReadFailure",
+                      "TestTokenizerInputSourcePreservesNonConsoleBytes",
+                  },
+              }
           for filename, required in suites.items():
               passed = set()
               package_passed = False
