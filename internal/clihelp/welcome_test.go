@@ -252,8 +252,14 @@ func TestWelcomeBorderAndVersionAlignment(t *testing.T) {
 			if ansi.StringWidth(lines[tc.titleRow][:name]) != ansi.StringWidth(lines[tc.versionRow][:version]) {
 				t.Fatalf("wordmark metadata is misaligned: %q", got)
 			}
-		} else if !strings.HasSuffix(lines[tc.versionRow], "v1.38.0  │") {
-			t.Fatalf("compact version is not right-aligned: %q", got)
+		} else {
+			padding := 2
+			if tc.width < 31 {
+				padding = 1 // The complete 25-column tagline still fits at width 29.
+			}
+			if !strings.HasSuffix(lines[tc.versionRow], "v1.38.0"+strings.Repeat(" ", padding)+"│") {
+				t.Fatalf("compact version is not right-aligned: %q", got)
+			}
 		}
 	}
 }

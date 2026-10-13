@@ -176,7 +176,7 @@ if banner_width <= min(columns, 100):
         assert all(cell_width(line) == filled_width for line in lines), "incorrect filled-card width"
         assert "What are we making today?" in lines[7], "tagline moved"
         raw_lines = after_raw.split("\r\n\r\n", 1)[0].split("\r\n")
-        assert all(re.search(r"\x1b\[(?:(?:4[0-7]|10[0-7])(?:[;m])|48[;:])", line) for line in raw_lines[1:7]), "missing filled pixel row"
+        assert all(re.search(r"\x1b\[(?:(?:4[0-7]|10[0-7])(?:[;m])|(?:[0-9]+;)*48[;:](?:2|5)[;:])", line) for line in raw_lines[1:7]), "missing filled pixel row"
     elif legacy_wide:
         assert all(cell_width(line) == 56 for line in lines), "legacy fallback width changed"
         if unicode_frame:

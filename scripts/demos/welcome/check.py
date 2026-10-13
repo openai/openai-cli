@@ -184,7 +184,7 @@ def main():
             if filled:
                 assert all(cell_width(line) == filled_width for line in lines), (name, "incorrect filled-card width")
                 assert "What are we making today?" in lines[7], (name, "tagline moved")
-                assert all(re.search(r"\x1b\[(?:(?:4[0-7]|10[0-7])(?:[;m])|48[;:])", line) for line in raw_header.splitlines()[1:7]), (name, "missing filled pixel row")
+                assert all(re.search(r"\x1b\[(?:(?:4[0-7]|10[0-7])(?:[;m])|(?:[0-9]+;)*48[;:](?:2|5)[;:])", line) for line in raw_header.splitlines()[1:7]), (name, "missing filled pixel row")
             elif legacy_wide:
                 assert all(cell_width(line) == 56 for line in lines), (name, "legacy fallback width changed")
                 if not expect_ascii:
