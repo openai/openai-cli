@@ -1,23 +1,25 @@
 # Welcome banner comparison
 
 The recorder runs bare `openai` on real before and after binaries.
-Color-capable UTF-8 terminals show a six-row OPENAI wordmark with continuous background fills.
+Color-capable UTF-8 terminals show a six-row OPENAI wordmark.
 Each face pixel occupies two terminal columns. The 58-column face bitmap uses six gradual blue shades.
 Truecolor and 256-color output add one-column right shadows, extending the artwork to at most 59 columns.
 Literal OpenAI CLI text and the complete runtime version start at zero-based column 63.
-The title starts one row below the artwork's top edge, with the version directly below it.
+Truecolor and 256-color output place the title two rows below the artwork's top edge.
+The version follows directly below the title.
 The card includes two columns of padding on each side and a blue border.
 The colored card occupies nine rows and at least 76 columns.
 Its width is `max(76, 66 + displayed version width)`, measured in terminal cells.
 Versions wider than 16 cells use the compact text layout.
 Color-capable UTF-8 terminals below the required artwork width also use the compact text layout.
 They never show a clipped wordmark or substitute partial block glyphs.
-The tagline is `What are we making today?` and occupies the last interior row.
+The tagline is `What are we making today?`, centered beneath the artwork in the last interior row.
+The bottom border contains the original `>_` cursor stamp, with two spaces on each side.
 The card contains no mascot or added outline.
 In dark mode, the border uses `#5675BC`, matching the approved color swatch.
-The last face row uses lower-one-eighth masks with a subtle `#2B3039` charcoal edge.
-The shadow masks inherit the terminal background, avoiding bright protruding ends.
-The border and bottom masks depend on font rendering; faces and side shadows use continuous background fills.
+Underlined fractional blocks soften the top and bottom edges and balance the P/E/A bars.
+Reverse masks inherit the terminal background, avoiding bright protruding ends.
+The border and fractional blocks depend on font rendering; other faces and shadows use continuous background fills.
 The approved ANSI fixture is `internal/clihelp/testdata/welcome-approved.ansi`.
 It preserves the user-selected design for comparison with the actual renderer.
 Native appearance outside the user's Apple Terminal preview still needs separate verification.
@@ -30,7 +32,7 @@ Other or unknown encodings retain the ASCII frame and literal-title fallback at 
 Windows Terminal advertises Unicode when no locale is set.
 The ASCII fallback escapes non-ASCII revision characters without losing their values.
 Color selection remains independent from character encoding.
-The 16-color fallback retains a single-color filled wordmark without shadows or bottom masks.
+The 16-color fallback retains its single-color fills, earlier metadata positions, left-aligned tagline, and plain border.
 `NO_COLOR`, `FORCE_COLOR=0`, and `CLICOLOR=0` disable styling.
 The header performs no terminal query, starts no helper process, and requires no setup or image file.
 Existing bare-interactive eligibility remains unchanged, including quiet mode, pipes, CI, and dumb-terminal behavior.

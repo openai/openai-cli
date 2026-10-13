@@ -54,7 +54,7 @@ func TestWelcomeLayout(t *testing.T) {
 
 func TestWelcomePixelRowFallbackUsesOnlyBackgroundCells(t *testing.T) {
 	for _, row := range []string{"", ".", "#", ".##.#."} {
-		got := welcomePixelRow(row, "#8AA8FF", "", "", false)
+		got := welcomePixelRow(row, "#8AA8FF", "", 0)
 		var cells strings.Builder
 		background := false
 		for remaining := got; remaining != ""; {
@@ -115,7 +115,7 @@ func TestWelcomeColoredWordmarkFitsCompleteMetadata(t *testing.T) {
 				plain := ansi.Strip(got)
 				lines := strings.Split(strings.TrimSuffix(plain, "\n\n"), "\n")
 				if len(lines) != tc.height || strings.ContainsAny(plain, "█▀▄") {
-					t.Fatalf("profile %v: wrong color layout or glyph-dependent wordmark: %q", profile, got)
+					t.Fatalf("profile %v: wrong color layout or legacy block glyphs: %q", profile, got)
 				}
 				for _, line := range lines {
 					if ansi.StringWidth(line) != tc.card {
@@ -126,15 +126,28 @@ func TestWelcomeColoredWordmarkFitsCompleteMetadata(t *testing.T) {
 					t.Fatalf("complete identity/version lost: %q", got)
 				}
 				if tc.height == 9 {
-					for row, text := range map[int]string{2: welcomeTitle, 3: tc.displayed} {
+					titleRow, captionColumn := 2, 3
+					if profile > colorprofile.ANSI {
+						titleRow, captionColumn = 3, 20
+					}
+					for row, text := range map[int]string{titleRow: welcomeTitle, titleRow + 1: tc.displayed} {
 						index := strings.Index(lines[row], text)
 						if index < 0 || ansi.StringWidth(lines[row][:index]) != 63 {
 							t.Fatalf("metadata overlaps artwork or shifts columns: %q", got)
 						}
 					}
-					if !strings.HasSuffix(lines[3], tc.displayed+strings.Repeat(" ", tc.card-64-ansi.StringWidth(tc.displayed))+"│") ||
-						!strings.Contains(lines[7], welcomeTagline) {
+					if !strings.HasSuffix(lines[titleRow+1], tc.displayed+strings.Repeat(" ", tc.card-64-ansi.StringWidth(tc.displayed))+"│") ||
+						strings.Index(lines[7], welcomeTagline) < 0 ||
+						ansi.StringWidth(strings.Split(lines[7], welcomeTagline)[0]) != captionColumn {
 						t.Fatalf("version padding or tagline changed: %q", got)
+					}
+					stampColumn := strings.Index(lines[8], ">_")
+					if profile > colorprofile.ANSI {
+						if stampColumn < 0 || ansi.StringWidth(lines[8][:stampColumn]) != tc.card-9 {
+							t.Fatalf("cursor stamp shifted: %q", got)
+						}
+					} else if stampColumn >= 0 || strings.ContainsAny(plain, "▇▂") {
+						t.Fatalf("ANSI16 fallback gained detailed decoration: %q", got)
 					}
 				}
 			}
@@ -156,8 +169,17 @@ func TestWelcomePixelWordmarkGradient(t *testing.T) {
 			t.Fatalf("missing six-row pixel wordmark: %q", got)
 		}
 		for row, color := range tc.colors {
-			if !regexp.MustCompile("(?:\x1b\\[|;)48;2;" + color + "(?:;|m)").MatchString(lines[row+1]) {
-				t.Fatalf("pixel row %d lost its background color: %q", row, lines[row+1])
+			column := 3
+			if row == 0 || row == 5 {
+				column = 5
+			}
+			cell := welcomeAppearanceCells(t, got)[(row+1)*77+column]
+			paint := cell.background
+			if row == 0 {
+				paint = cell.foreground
+			}
+			if paint != strings.ReplaceAll(color, ";", ",") {
+				t.Fatalf("pixel row %d lost its visible color: %+v", row, cell)
 			}
 		}
 	}

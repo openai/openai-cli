@@ -165,8 +165,8 @@ if banner_width <= min(columns, 100):
     filled = unicode_frame and not no_color and columns >= filled_width and version_width <= 16
     legacy_wide = (not unicode_frame or no_color) and columns >= 56 and version_width <= 16
     expected_height = 9 if filled else 6 if columns >= 40 else 4
-    title_row = 2 if filled else 1 if legacy_wide else 2 if columns >= 40 else 1
-    version_row = 3 if filled else 2 if legacy_wide else title_row
+    title_row = 3 if filled else 1 if legacy_wide else 2 if columns >= 40 else 1
+    version_row = 4 if filled else 2 if legacy_wide else title_row
     top, bottom = ("┌", "└") if unicode_frame else ("+", "+")
     assert len(lines) == expected_height and lines[0].startswith(top) and lines[-1].startswith(bottom), "invalid banner frame"
     assert "OpenAI CLI" in lines[title_row] and display_version in lines[version_row], "identity/version wrapped"
@@ -174,16 +174,20 @@ if banner_width <= min(columns, 100):
     assert len({cell_width(line) for line in lines}) == 1, "unequal frame widths"
     if filled:
         assert all(cell_width(line) == filled_width for line in lines), "incorrect filled-card width"
-        assert "What are we making today?" in lines[7], "tagline moved"
+        assert cell_width(lines[7].split(description, 1)[0]) == 20, "tagline moved"
+        assert cell_width(lines[8].split(">_", 1)[0]) == filled_width - 9, "cursor stamp moved"
         raw_lines = after_raw.split("\r\n\r\n", 1)[0].split("\r\n")
-        assert all(re.search(r"\x1b\[(?:(?:4[0-7]|10[0-7])(?:[;m])|(?:[0-9]+;)*48[;:](?:2|5)[;:])", line) for line in raw_lines[1:7]), "missing filled pixel row"
+        assert all(re.search(r"\x1b\[(?:[0-9]+;)*48[;:](?:2|5)[;:]", line) for line in raw_lines[2:6]), "missing filled pixel row"
+        for row, glyph in ((raw_lines[1], "▇"), (raw_lines[6], "▂")):
+            assert glyph in row and re.search(r"\x1b\[(?:[0-9]+;)*4(?:;|m)", row), "missing underlined cap"
+            assert re.search(r"\x1b\[(?:[0-9]+;)*38;(?:2|5);", row), "missing cap color"
     elif legacy_wide:
         assert all(cell_width(line) == 56 for line in lines), "legacy fallback width changed"
         if unicode_frame:
             assert "█" in banner, "monochrome wordmark missing"
     if unicode_frame and not no_color:
         assert not any(glyph in banner for glyph in "█▀▄"), "colored artwork contains block glyphs"
-    assert "✦" not in banner and ">_" not in banner, "unexpected signature mark"
+    assert "✦" not in banner and (">_" in banner) == filled, "incorrect signature mark"
     assert "(o u o)" not in banner and "~U U U U~" not in banner, "unexpected mascot"
     if not unicode_frame:
         assert banner.isascii(), "non-ASCII decoration in the portable fallback"

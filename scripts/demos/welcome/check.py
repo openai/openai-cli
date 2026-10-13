@@ -111,6 +111,7 @@ def main():
         ("ci", {"CI": "true"}, False), ("github-ci", {"GITHUB_ACTIONS": "true"}, False),
         ("ci-false", {"CI": "false"}, True),
         ("light-theme", {"COLORFGBG": "0;15", "COLORTERM": "truecolor"}, True),
+        ("ansi16", {"TERM": "xterm-color"}, True),
         ("windows-terminal-env", {"TERM": "", "WT_SESSION": "synthetic-session"}, True),
         ("clicolor-zero", {"CLICOLOR": "0"}, True),
         ("ascii-locale", {"LC_ALL": "C"}, True),
@@ -169,22 +170,30 @@ def main():
             version_width = cell_width(displayed_version)
             filled_width = max(76, 66 + version_width)
             filled = not expect_ascii and not no_color and width >= filled_width and version_width <= 16
+            detailed = filled and name != "ansi16"
             legacy_wide = (expect_ascii or no_color) and width >= 56 and version_width <= 16
             height = 9 if filled else 6 if width >= 40 else 4
-            title_row = 2 if filled else 1 if legacy_wide else 2 if width >= 40 else 1
-            version_row = 3 if filled else 2 if legacy_wide else title_row
+            title_row = 3 if detailed else 2 if filled else 1 if legacy_wide else 2 if width >= 40 else 1
+            version_row = title_row + 1 if filled else 2 if legacy_wide else title_row
             assert "What are we making today?" in header, (name, "missing greeting")
             assert len(lines) == height, (name, "unexpected header height")
             assert "OpenAI CLI" in lines[title_row] and displayed_version in lines[version_row], (name, "identity/version wrapped")
             assert len({cell_width(line) for line in lines}) == 1, (name, "unequal frame widths")
             assert all(cell_width(line) <= width for line in lines), (name, "header overflows")
-            assert "✦" not in header and ">_" not in header, (name, "unexpected signature")
+            assert "✦" not in header and (">_" in header) == detailed, (name, "incorrect signature")
             assert "\x1b" not in header, (name, "non-color terminal controls")
             assert "(o u o)" not in header and "~U U U U~" not in header, (name, "unexpected mascot")
             if filled:
                 assert all(cell_width(line) == filled_width for line in lines), (name, "incorrect filled-card width")
-                assert "What are we making today?" in lines[7], (name, "tagline moved")
-                assert all(re.search(r"\x1b\[(?:(?:4[0-7]|10[0-7])(?:[;m])|(?:[0-9]+;)*48[;:](?:2|5)[;:])", line) for line in raw_header.splitlines()[1:7]), (name, "missing filled pixel row")
+                assert cell_width(lines[7].split("What are we making today?", 1)[0]) == (20 if detailed else 3), (name, "tagline moved")
+                raw_rows = raw_header.splitlines()[1:7]
+                fill_rows = raw_rows[1:5] if detailed else raw_rows
+                assert all(re.search(r"\x1b\[(?:(?:4[0-7]|10[0-7])(?:[;m])|(?:[0-9]+;)*48[;:](?:2|5)[;:])", line) for line in fill_rows), (name, "missing filled pixel row")
+                if detailed:
+                    assert cell_width(lines[8].split(">_", 1)[0]) == filled_width - 9, (name, "cursor stamp moved")
+                    for row, glyph in ((raw_rows[0], "▇"), (raw_rows[-1], "▂")):
+                        assert glyph in row and re.search(r"\x1b\[(?:[0-9]+;)*4(?:;|m)", row), (name, "missing underlined cap")
+                        assert re.search(r"\x1b\[(?:[0-9]+;)*38;(?:2|5);", row), (name, "missing cap color")
             elif legacy_wide:
                 assert all(cell_width(line) == 56 for line in lines), (name, "legacy fallback width changed")
                 if not expect_ascii:

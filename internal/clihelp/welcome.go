@@ -128,6 +128,7 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 	if filled {
 		wordmark = width >= filledWidth && versionWidth <= 16
 	}
+	detailed := wordmark && filled && profile > colorprofile.ANSI
 	if wordmark {
 		padding, cardWidth = 2, 56
 		content = "▄▀▀▄ █▀▀▄ █▀▀▀ █▄  █ ▄▀▀▄ ▀█▀   " + heading.Render(welcomeTitle) + "\n" +
@@ -149,22 +150,24 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 			// Smaller color steps soften the artwork without changing its pixels.
 			colors := []string{focus, "#3C62BF", "#476BC3", "#5173C6", "#5C7CCA", "#6785CD"}
 			shadows := []string{"#D8DFF2", "#DAE1F3", "#DCE3F4", "#DEE4F5", "#E0E6F5", "#E2E8F6"}
-			trim := "#CDD1D8"
 			if dark {
 				colors = []string{focus, "#809EF2", "#7594E4", "#6B89D7", "#607FC9", "#5675BC"}
 				shadows = []string{"#333D57", "#313B54", "#2F3951", "#2D364E", "#2B344C", "#293249"}
-				trim = "#2B3039"
 			}
 			for i, row := range rows {
 				if profile == colorprofile.ANSI {
 					colors[i] = focus
-					shadows[i], trim = "", ""
+					shadows[i] = ""
 				}
-				rows[i] = welcomePixelRow(row, colors[i], shadows[i], trim, i == len(rows)-1)
+				rows[i] = welcomePixelRow(row, colors[i], shadows[i], i)
 			}
-			rows[1] += "  " + heading.Render(welcomeTitle)
-			rows[2] += "  " + note.Render(version)
-			content = strings.Join(rows, "\n") + "\n" + note.Render(welcomeTagline)
+			metadataRow, captionPadding := 1, 0
+			if detailed {
+				metadataRow, captionPadding = 2, (59-ansi.StringWidth(welcomeTagline))/2
+			}
+			rows[metadataRow] += "  " + heading.Render(welcomeTitle)
+			rows[metadataRow+1] += "  " + note.Render(version)
+			content = strings.Join(rows, "\n") + "\n" + strings.Repeat(" ", captionPadding) + note.Render(welcomeTagline)
 		} else if !unicode {
 			content = heading.Render(welcomeTitle) + "\n" + note.Render(version) + "\n\n" + note.Render(welcomeTagline)
 		}
@@ -175,41 +178,68 @@ func renderWelcome(version string, width int, profile colorprofile.Profile, dark
 	}
 	frame := lipgloss.NewStyle().Border(border).BorderForeground(lipgloss.Color(frameColor)).Padding(0, padding).Width(cardWidth)
 	card := frame.Render(content)
+	if detailed {
+		// The cursor stamp stays within the last row, without cursor movement.
+		edge := lipgloss.NewStyle().Foreground(lipgloss.Color(frameColor))
+		stamp := lipgloss.NewStyle().Foreground(lipgloss.Color(focus))
+		card = card[:strings.LastIndexByte(card, '\n')+1] +
+			edge.Render("└"+strings.Repeat("─", cardWidth-12)) + "  " +
+			stamp.Render(">_") + "  " + edge.Render("────┘")
+	}
 	var out strings.Builder
 	writer := colorprofile.Writer{Forward: &out, Profile: profile}
 	_, _ = writer.WriteString(card + "\n\n")
 	return out.String()
 }
 
-// Background fills keep the faces and side shadows continuous between rows.
-// Only the bottom edge uses a single-cell glyph; no cursor or font changes occur.
-func welcomePixelRow(row, color, shadow, trim string, bottom bool) string {
-	face := lipgloss.NewStyle().Background(lipgloss.Color(color))
-	pixel := face.Render("  ")
-	side := ""
-	if shadow != "" {
-		side = lipgloss.NewStyle().Background(lipgloss.Color(shadow)).Render(" ")
-	}
-	if bottom && trim != "" {
-		pixel = face.Foreground(lipgloss.Color(trim)).Render("▁▁")
-		if shadow != "" {
-			// The side mask inherits the terminal background, avoiding bright tails.
-			side = lipgloss.NewStyle().Foreground(lipgloss.Color(shadow)).Reverse(true).Render("▁")
-		}
-	}
+// Fractional caps and selected P/E/A bars balance the fixed bitmap's weights.
+// Reverse masks inherit the terminal background; ANSI16 keeps plain fills.
+func welcomePixelRow(row, color, shadow string, line int) string {
 	var out strings.Builder
+	if shadow == "" {
+		pixel := lipgloss.NewStyle().Background(lipgloss.Color(color)).Render("  ")
+		for _, cell := range row {
+			if cell == '#' {
+				out.WriteString(pixel)
+			} else {
+				out.WriteString("  ")
+			}
+		}
+		return out.String()
+	}
+	pixel := func(column int, paint string) string {
+		style := lipgloss.NewStyle()
+		upperBar := line == 2 && column >= 22 && column <= 26 || line == 3 && column >= 44 && column <= 47
+		lowerBar := line == 3 && column >= 12 && column <= 16
+		if line == 0 || upperBar {
+			style = style.Foreground(lipgloss.Color(paint)).Underline(true)
+			if upperBar && (column == 22 || column == 44) {
+				style = style.Background(lipgloss.Color(shadow))
+			}
+			return style.Render("▇")
+		}
+		if line == 5 || lowerBar {
+			style = style.Foreground(lipgloss.Color(paint)).Reverse(true).Underline(true)
+			if lowerBar && column == 12 {
+				style = style.Reverse(false).Foreground(lipgloss.Color(shadow)).Background(lipgloss.Color(paint))
+			}
+			return style.Render("▂")
+		}
+		return style.Background(lipgloss.Color(paint)).Render(" ")
+	}
 	for i, cell := range row {
 		if cell == '#' {
-			out.WriteString(pixel)
-		} else if side != "" && i > 0 && row[i-1] == '#' {
-			out.WriteString(side)
+			out.WriteString(pixel(i*2, color))
+			out.WriteString(pixel(i*2+1, color))
+		} else if i > 0 && row[i-1] == '#' {
+			out.WriteString(pixel(i*2, shadow))
 			out.WriteByte(' ')
 		} else {
 			out.WriteString("  ")
 		}
 	}
 	if strings.HasSuffix(row, "#") {
-		out.WriteString(side)
+		out.WriteString(pixel(len(row)*2, shadow))
 	}
 	return out.String()
 }

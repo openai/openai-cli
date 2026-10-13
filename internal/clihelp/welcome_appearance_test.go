@@ -18,19 +18,26 @@ func TestWelcomeApprovedAppearance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := welcomeAppearanceCells(t, string(approved))
-	for _, width := range []int{76, 80, 100} {
-		t.Run(strconv.Itoa(width), func(t *testing.T) {
-			got := welcomeAppearanceCells(t, renderWelcome("1.38.0", width, colorprofile.TrueColor, true, true))
-			if len(got) != len(want) {
-				t.Fatalf("approved cell count changed: got %d, want %d", len(got), len(want))
-			}
-			for i := range want {
-				if got[i] != want[i] {
-					t.Fatalf("approved appearance changed at row %d column %d: got %+v, want %+v", i/77, i%77, got[i], want[i])
+	for _, profile := range []colorprofile.Profile{colorprofile.TrueColor, colorprofile.ANSI256} {
+		var reference strings.Builder
+		writer := colorprofile.Writer{Forward: &reference, Profile: profile}
+		if _, err := writer.Write(approved); err != nil {
+			t.Fatal(err)
+		}
+		want := welcomeAppearanceCells(t, reference.String())
+		for _, width := range []int{76, 80, 100} {
+			t.Run(profile.String()+"/"+strconv.Itoa(width), func(t *testing.T) {
+				got := welcomeAppearanceCells(t, renderWelcome("1.38.0", width, profile, true, true))
+				if len(got) != len(want) {
+					t.Fatalf("approved cell count changed: got %d, want %d", len(got), len(want))
 				}
-			}
-		})
+				for i := range want {
+					if got[i] != want[i] {
+						t.Fatalf("approved appearance changed at row %d column %d: got %+v, want %+v", i/77, i%77, got[i], want[i])
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -39,12 +46,13 @@ type welcomeAppearanceCell struct {
 	foreground string
 	background string
 	bold       bool
+	underline  bool
 }
 
 func welcomeAppearanceCells(t *testing.T, text string) []welcomeAppearanceCell {
 	t.Helper()
 	fg, bg := "default-fg", "default-bg"
-	bold, reverse := false, false
+	bold, reverse, underline := false, false, false
 	var cells []welcomeAppearanceCell
 	for rest := strings.TrimRight(text, "\n"); rest != ""; {
 		if strings.HasPrefix(rest, "\x1b[") {
@@ -67,13 +75,17 @@ func welcomeAppearanceCells(t *testing.T, text string) []welcomeAppearanceCell {
 			for i := 0; i < len(codes); i++ {
 				switch codes[i] {
 				case 0:
-					fg, bg, bold, reverse = "default-fg", "default-bg", false, false
+					fg, bg, bold, reverse, underline = "default-fg", "default-bg", false, false, false
 				case 1:
 					bold = true
+				case 4:
+					underline = true
 				case 7:
 					reverse = true
 				case 22:
 					bold = false
+				case 24:
+					underline = false
 				case 27:
 					reverse = false
 				case 39:
@@ -81,16 +93,22 @@ func welcomeAppearanceCells(t *testing.T, text string) []welcomeAppearanceCell {
 				case 49:
 					bg = "default-bg"
 				case 38, 48:
-					if i+4 >= len(codes) || codes[i+1] != 2 {
-						t.Fatalf("expected RGB color in %q", rest[:end+1])
+					kind := codes[i]
+					var color string
+					if i+4 < len(codes) && codes[i+1] == 2 {
+						color = fmt.Sprintf("%d,%d,%d", codes[i+2], codes[i+3], codes[i+4])
+						i += 4
+					} else if i+2 < len(codes) && codes[i+1] == 5 {
+						color = fmt.Sprintf("indexed-%d", codes[i+2])
+						i += 2
+					} else {
+						t.Fatalf("expected RGB or indexed color in %q", rest[:end+1])
 					}
-					color := fmt.Sprintf("%d,%d,%d", codes[i+2], codes[i+3], codes[i+4])
-					if codes[i] == 38 {
+					if kind == 38 {
 						fg = color
 					} else {
 						bg = color
 					}
-					i += 4
 				default:
 					t.Fatalf("unexpected SGR %d", codes[i])
 				}
@@ -102,17 +120,20 @@ func welcomeAppearanceCells(t *testing.T, text string) []welcomeAppearanceCell {
 		if char == utf8.RuneError || char == '\x1b' {
 			t.Fatalf("invalid character or non-SGR control: %q", rest)
 		}
-		cell := welcomeAppearanceCell{char, fg, bg, bold}
+		cell := welcomeAppearanceCell{char, fg, bg, bold, underline}
 		if reverse {
 			cell.foreground, cell.background = bg, fg
 		}
-		if char == ' ' {
+		if char == ' ' && !underline {
 			cell.foreground, cell.bold = "", false
 		} else if char == '\n' {
-			cell.foreground, cell.background, cell.bold = "", "", false
+			cell.foreground, cell.background, cell.bold, cell.underline = "", "", false, false
 		}
 		cells = append(cells, cell)
 		rest = rest[size:]
+	}
+	if bold || reverse || underline || fg != "default-fg" || bg != "default-bg" {
+		t.Fatalf("welcome leaves terminal styles active: bold=%t reverse=%t underline=%t fg=%s bg=%s", bold, reverse, underline, fg, bg)
 	}
 	return cells
 }
