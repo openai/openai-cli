@@ -156,6 +156,7 @@ def main():
                     try:
                         os.killpg(child.pid, signal.SIGTERM)
                     except ProcessLookupError:
+                        # The process group can exit between poll() and SIGTERM.
                         pass
                     try:
                         child.wait(timeout=2)
@@ -164,6 +165,7 @@ def main():
                         try:
                             os.killpg(child.pid, signal.SIGKILL)
                         except ProcessLookupError:
+                            # The process group can exit after the wait times out.
                             pass
                         child.wait(timeout=2)
                 raise
