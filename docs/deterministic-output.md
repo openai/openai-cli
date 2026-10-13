@@ -100,3 +100,17 @@ This display bound does not limit API payloads or change structured errors.
 Shell redirection opens or truncates its destination before the CLI starts.
 The CLI cannot restore a file truncated by `>` after a failed request.
 Explicit `--output` files follow the download command's save contract.
+
+Windows PowerShell 5.1 can format redirected native stderr as PowerShell error records.
+This shell formatting can surround JSON diagnostics with `NativeCommandError` text.
+To capture the CLI's JSON directly, place `2>` inside a `cmd.exe` command:
+
+```powershell
+cmd.exe /d /c 'openai --format json setup admin 1> admin-output.txt 2> admin-error.json'
+$code = $LASTEXITCODE
+Get-Content -Raw -Encoding UTF8 .\admin-error.json | ConvertFrom-Json
+```
+
+This offline example returns exit code `3` because interactive Admin setup requires text output.
+`$code` preserves that status before PowerShell parses the file.
+For binary downloads, use `--output PATH`; see [Windows shell guidance](shell-file-input.md#windows-shells).
