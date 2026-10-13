@@ -67,7 +67,13 @@ ____APPNAME___bash_autocomplete() {
     local -a completion_args=()
     local word_index previous raw source before after current_raw="$cur"
     local -a adjacent=()
-    source="${COMP_LINE:0:COMP_POINT}"
+    if [[ ${BASH_VERSINFO[0]} -lt 4 ||
+          ( ${BASH_VERSINFO[0]} -eq 4 && ${BASH_VERSINFO[1]} -lt 3 ) ]]; then
+      # Before Bash 4.3, COMP_POINT counts bytes; substring expansion counts characters.
+      builtin printf -v source '%.*s' "$COMP_POINT" "$COMP_LINE"
+    else
+      source="${COMP_LINE:0:COMP_POINT}"
+    fi
     # Readline splits '=' and ':' into words. Preserve source gaps when joining
     # those words. Walk backwards so earlier commands cannot interfere.
     for ((word_index = COMP_CWORD; word_index >= 0; word_index--)); do

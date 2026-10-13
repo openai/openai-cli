@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func TestBashFileCompletionPreservesAssignments(t *testing.T) {
 	require.NoError(t, err)
 	dir := t.TempDir()
 	for _, name := range []string{
-		"assets/logo.png", "assets/long name.png", "assets/a=b.png", "--file=logo.png", "=literal.wav",
+		"assets/logo.png", "assets/long name.png", "assets/a=b.png", "assets/雪-file.txt", "--file=logo.png", "=literal.wav",
 		"@week:notes.txt", "@week::notes.txt", "@week:=notes.txt", ":notes.txt",
 		"quote's recording.wav", "quote's second.wav", `say"hello.txt`, `back\slash.txt`,
 		"dir's/quote's recording.wav", "glob[dir]/file[1].txt", "glob[dir]/file1.txt",
@@ -88,10 +89,14 @@ func TestBashFileCompletionPreservesAssignments(t *testing.T) {
 test_binary=$1
 COMP_LINE=$2
 callback=$3
-shift 3
+point_bytes=$4
+shift 4
 openai() { "$test_binary" '-test.run=^TestShellCompletionProtocolHelper$' -- openai "$@"; }
 ` + script + `
 COMP_POINT=${#COMP_LINE}
+# Native COMP_POINT counts bytes before Bash 4.3 and characters in later versions.
+if [[ ${BASH_VERSINFO[0]} -lt 4 ||
+      ( ${BASH_VERSINFO[0]} -eq 4 && ${BASH_VERSINFO[1]} -lt 3 ) ]]; then COMP_POINT=$point_bytes; fi
 COMP_WORDS=(openai "$@")
 COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
 __openai_bash_autocomplete openai "$callback" ""
@@ -99,7 +104,7 @@ if [[ ${#COMPREPLY[@]} -gt 0 ]]; then
   for item in "${COMPREPLY[@]}"; do printf '%s\n' "$item"; done
 fi
 `
-				args := append([]string{"-c", probe, "completion-probe", binary, tc.line, tc.callback}, tc.words...)
+				args := append([]string{"-c", probe, "completion-probe", binary, tc.line, tc.callback, strconv.Itoa(len(tc.line))}, tc.words...)
 				if mode == "nounset" {
 					args = append([]string{"-u"}, args...)
 				}
@@ -116,6 +121,100 @@ fi
 				require.NoFileExists(t, filepath.Join(dir, "sentinel"))
 			})
 		}
+	}
+	localeBinary, localeErr := exec.LookPath("locale")
+	utf8Locale := ""
+	if localeErr == nil {
+		localeContext, cancelLocale := context.WithTimeout(t.Context(), 5*time.Second)
+		command := exec.CommandContext(localeContext, localeBinary, "-a")
+		command.Env = append(os.Environ(), "LC_ALL=C")
+		available, err := command.Output()
+		cancelLocale()
+		require.NoError(t, err, "list installed locales")
+		for _, value := range strings.Fields(string(available)) {
+			normalized := strings.ToLower(strings.ReplaceAll(value, "-", ""))
+			if !strings.HasSuffix(normalized, "utf8") {
+				continue
+			}
+			if utf8Locale == "" {
+				utf8Locale = value
+			}
+			if normalized == "c.utf8" || normalized == "en_us.utf8" {
+				utf8Locale = value
+				break
+			}
+		}
+	}
+	for _, mode := range []string{"default", "nounset"} {
+		t.Run("UTF-8 cursor before later flag/"+mode, func(t *testing.T) {
+			if localeErr != nil {
+				t.Skipf("UTF-8 locale discovery is unavailable: %v", localeErr)
+			}
+			if utf8Locale == "" {
+				t.Skip("An installed UTF-8 locale is required for the cursor control")
+			}
+			t.Logf("UTF-8 locale: %s", utf8Locale)
+			const prefix = "openai --file=assets/雪-fi"
+			records := t.TempDir()
+			probe := `
+test_binary=$1
+COMP_LINE=$2
+cursor_prefix=$3
+point_bytes=$4
+records=$5
+readonly LC_ALL LC_CTYPE LANG
+character=雪
+[[ ${#character} -eq 1 ]] || exit 90
+openai() {
+  printf '%s\0' "$@" > "$records/backend.argv"
+  printf '%s\0' "$LC_ALL" "$LC_CTYPE" "$LANG" > "$records/backend.locale"
+  "$test_binary" '-test.run=^TestShellCompletionProtocolHelper$' -- openai "$@"
+  local status=$?
+  printf '%s\n' "$status" > "$records/backend.status"
+  return "$status"
+}
+` + script + `
+COMP_POINT=${#cursor_prefix}
+if [[ ${BASH_VERSINFO[0]} -lt 4 ||
+      ( ${BASH_VERSINFO[0]} -eq 4 && ${BASH_VERSINFO[1]} -lt 3 ) ]]; then COMP_POINT=$point_bytes; fi
+# Preserve the word layouts observed in native Bash 3.2 and Bash 5.3 callbacks.
+if [[ ${BASH_VERSINFO[0]} -eq 3 ]]; then
+  COMP_WORDS=(openai --file=assets/雪-fi --format=json)
+  COMP_CWORD=1
+  previous=openai
+else
+  COMP_WORDS=(openai --file = assets/雪-fi --format = json)
+  COMP_CWORD=3
+  previous==
+fi
+__openai_bash_autocomplete openai assets/雪-fi "$previous"
+printf '%s\0' "$LC_ALL" "$LC_CTYPE" "$LANG" > "$records/caller.locale"
+if [[ ${#COMPREPLY[@]} -gt 0 ]]; then printf '%s\0' "${COMPREPLY[@]}"; fi
+`
+			args := []string{"--noprofile", "--norc"}
+			if mode == "nounset" {
+				args = append(args, "-u")
+			}
+			args = append(args, "-c", probe, "cursor-probe", binary,
+				prefix+" --format=json", prefix, strconv.Itoa(len(prefix)), records)
+			command := exec.Command(bash, args...)
+			command.Dir = dir
+			command.Env = append(os.Environ(), "OPENAI_CLI_COMPLETION_HELPER=1",
+				"LC_ALL="+utf8Locale, "LC_CTYPE="+utf8Locale, "LANG="+utf8Locale)
+			out, err := command.CombinedOutput()
+			require.NoError(t, err, string(out))
+			require.Equal(t, "assets/雪-file.txt\x00", string(out))
+			for name, want := range map[string]string{
+				"backend.argv":   "__complete\x00--\x00--file=assets/雪-fi\x00",
+				"backend.status": "10\n",
+				"backend.locale": strings.Repeat(utf8Locale+"\x00", 3),
+				"caller.locale":  strings.Repeat(utf8Locale+"\x00", 3),
+			} {
+				got, err := os.ReadFile(filepath.Join(records, name))
+				require.NoError(t, err)
+				require.Equal(t, want, string(got), name)
+			}
+		})
 	}
 }
 
