@@ -237,7 +237,9 @@ and explicit `TERM_PROGRAM` identities retain their own selection rules.
 Use the assertion only in the patched Konsole, rather than exporting it globally.
 
 The opt-in applies to local preview, generation, and progress previews.
-Without it, `auto` and `on` retain the existing color-block fallback when available.
+Native Konsole previews require the CLI to run on macOS or Linux.
+Other CLI platforms retain the existing fallback, including when the opt-in is set.
+Without the opt-in, `auto` and `on` retain the existing color-block fallback when available.
 `--inline off`, redirected output, CI, and multiplexer restrictions still apply.
 The CLI reuses the iTerm PNG protocol with its usual 64-column maximum and
 viewport sizing. Saved originals remain unchanged. Patched Konsole fits existing
