@@ -1,18 +1,20 @@
 package autocomplete
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
 
 func TestBashFileCompletionPreservesAssignments(t *testing.T) {
-	bash, err := exec.LookPath("bash")
+	bash, err := exec.LookPath(pickerTestShell("bash"))
 	if err != nil {
 		t.Skip("Bash is not available")
 	}
@@ -21,7 +23,14 @@ func TestBashFileCompletionPreservesAssignments(t *testing.T) {
 	script, err := shellCompletions[CompletionStyleBash](&cli.Command{}, "openai")
 	require.NoError(t, err)
 	dir := t.TempDir()
-	for _, name := range []string{"assets/logo.png", "assets/long name.png", "assets/a=b.png", "--file=logo.png", "=literal.wav", "@week:notes.txt", "@week::notes.txt", "@week:=notes.txt", ":notes.txt"} {
+	for _, name := range []string{
+		"assets/logo.png", "assets/long name.png", "assets/a=b.png", "--file=logo.png", "=literal.wav",
+		"@week:notes.txt", "@week::notes.txt", "@week:=notes.txt", ":notes.txt",
+		"quote's recording.wav", "quote's second.wav", `say"hello.txt`, `back\slash.txt`,
+		"dir's/quote's recording.wav", "glob[dir]/file[1].txt", "glob[dir]/file1.txt",
+		"literal*.txt", "literal-other.txt", "question?.txt", "questionX.txt", "雪's file.txt",
+		"$(touch sentinel).txt", "`touch sentinel`.txt",
+	} {
 		path := filepath.Join(dir, name)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 		require.NoError(t, os.WriteFile(path, nil, 0600))
@@ -41,6 +50,18 @@ func TestBashFileCompletionPreservesAssignments(t *testing.T) {
 		{"bash5 quoted", `openai --file="assets/long `, "assets/long ", []string{"--file", "=", `"assets/long `}, []string{"assets/long name.png"}},
 		{"bash3 equals filename", "openai --file=assets/a=b", "b", []string{"--file=assets/a=b"}, []string{"b.png"}},
 		{"bash5 closed quote", `openai --file="assets/lo`, "assets/lo", []string{"--file", "=", `"assets/lo"`}, []string{"assets/logo.png", "assets/long name.png"}},
+		{"balanced double quoted apostrophe", `openai --file="quote's"`, `"quote's"`, []string{"--file", "=", `"quote's"`}, []string{"quote's recording.wav", "quote's second.wav"}},
+		{"bash3 balanced apostrophe", `openai --file="quote's"`, `"quote's"`, []string{`--file="quote's"`}, []string{"quote's recording.wav", "quote's second.wav"}},
+		{"open double quoted apostrophe", `openai --file="quote's`, "quote's", []string{"--file", "=", `"quote's`}, []string{"quote's recording.wav", "quote's second.wav"}},
+		{"single quoted double quote", `openai --file='say"'`, `'say"'`, []string{"--file", "=", `'say"'`}, []string{`say"hello.txt`}},
+		{"escaped backslash", `openai --file=back\\s`, `back\\s`, []string{"--file", "=", `back\\s`}, []string{`back\slash.txt`}},
+		{"quoted directory", `openai --file="dir's/quote's"`, `"dir's/quote's"`, []string{"--file", "=", `"dir's/quote's"`}, []string{"dir's/quote's recording.wav"}},
+		{"literal brackets", `openai --file='glob[dir]/file['`, `'glob[dir]/file['`, []string{"--file", "=", `'glob[dir]/file['`}, []string{"glob[dir]/file[1].txt"}},
+		{"literal star", `openai --file='literal*'`, `'literal*'`, []string{"--file", "=", `'literal*'`}, []string{"literal*.txt"}},
+		{"literal question", `openai --file='question?'`, `'question?'`, []string{"--file", "=", `'question?'`}, []string{"question?.txt"}},
+		{"unicode apostrophe", `openai --file="雪's"`, `"雪's"`, []string{"--file", "=", `"雪's"`}, []string{"雪's file.txt"}},
+		{"inert dollar substitution", `openai --file='$(touch sentinel)'`, `'$(touch sentinel)'`, []string{"--file", "=", `'$(touch sentinel)'`}, []string{"$(touch sentinel).txt"}},
+		{"inert backticks", "openai --file='`touch sentinel`'", "'`touch sentinel`'", []string{"--file", "=", "'`touch sentinel`'"}, []string{"`touch sentinel`.txt"}},
 		{"repeated earlier filename", "openai --format assets/logo.png --file=assets/lo", "assets/lo", []string{"--format", "assets/logo.png", "--file", "=", "assets/logo.png"}, []string{"assets/logo.png", "assets/long name.png"}},
 		{"repeated earlier quoted filename", `openai --format "assets/logo.png" --file="assets/lo`, "assets/lo", []string{"--format", `"assets/logo.png"`, "--file", "=", `"assets/logo.png"`}, []string{"assets/logo.png", "assets/long name.png"}},
 		{"bash5 repeated equals", "openai --file==", "", []string{"--file", "=="}, []string{"literal.wav"}},
@@ -91,6 +112,62 @@ fi
 					got = strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
 				}
 				require.ElementsMatch(t, tc.want, got)
+				require.NoFileExists(t, filepath.Join(dir, "sentinel"))
+			})
+		}
+	}
+}
+
+func TestBashLiteralFileCompletionPreservesExpansionFallback(t *testing.T) {
+	bash, err := exec.LookPath(pickerTestShell("bash"))
+	if err != nil {
+		t.Skip("Bash is not available")
+	}
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	script, err := shellCompletions[CompletionStyleBash](&cli.Command{}, "openai")
+	require.NoError(t, err)
+	for _, mode := range []string{"logical", "physical"} {
+		for _, prefix := range []string{"alias/../pick", "assets/$PART/fi", "assets/${PART}/fi", "~/assets/$PART/fi"} {
+			t.Run(mode+"/"+prefix, func(t *testing.T) {
+				dir := t.TempDir()
+				for _, name := range []string{"physical/child/unused.txt", "physical/pick-physical.txt", "pick-logical.txt", "assets/child/file.txt"} {
+					path := filepath.Join(dir, name)
+					require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+					require.NoError(t, os.WriteFile(path, nil, 0600))
+				}
+				if err := os.Symlink(filepath.Join("physical", "child"), filepath.Join(dir, "alias")); err != nil && prefix == "alias/../pick" {
+					t.Skipf("Symlink fixture is unavailable: %v", err)
+				}
+				probe := `
+prefix=$1
+PART=child
+export PART
+if [[ $2 == physical ]]; then set -P; else set +P; fi
+openai() { OPENAI_CLI_COMPLETION_HELPER=1 "$COMPLETION_BINARY" '-test.run=^TestShellCompletionProtocolHelper$' -- openai "$@"; }
+` + script + `
+while IFS= read -r file; do printf '%s\0' "$file"; done < <(builtin compgen -f -- "$prefix") > expected
+COMP_LINE="openai --file $prefix"
+COMP_POINT=${#COMP_LINE}
+COMP_WORDS=(openai --file "$prefix")
+COMP_CWORD=2
+__openai_bash_autocomplete openai "$prefix" --file
+if [[ ${#COMPREPLY[@]} -gt 0 ]]; then printf '%s\0' "${COMPREPLY[@]}"; fi
+`
+				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+				defer cancel()
+				command := exec.CommandContext(ctx, bash, "--noprofile", "--norc", "-c", probe, "fallback-probe", prefix, mode)
+				command.Dir = dir
+				command.Env = []string{"HOME=" + dir, "PATH=" + os.Getenv("PATH"), "LC_ALL=C", "COMPLETION_BINARY=" + binary}
+				out, err := command.CombinedOutput()
+				require.NoError(t, ctx.Err())
+				require.NoError(t, err, string(out))
+				want, err := os.ReadFile(filepath.Join(dir, "expected"))
+				require.NoError(t, err)
+				require.Equal(t, string(want), string(out), "preserve this Bash's existing directory lookup and spelling")
+				if len(want) == 0 {
+					t.Log("The legacy lookup produced no candidate in this shell context")
+				}
 			})
 		}
 	}

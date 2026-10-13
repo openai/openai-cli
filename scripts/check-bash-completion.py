@@ -19,6 +19,8 @@ def main():
     cases = [
         ("single quoted assigned file", "--file='assets/fi'", assigned),
         ("double quoted assigned file", '--file="assets/fi"', assigned),
+        ("double quoted apostrophe", '--file="assets/quote\'s"',
+         [b"transcribe", b"--file=assets/quote's recording.wav"]),
         ("escaped assigned file", r"--file=assets/fixture\ n", assigned),
         ("separate quoted file", '--file "assets/fi"', [b"transcribe", b"--file", b"assets/fixture name.json"]),
         ("unquoted assigned control", "--file=assets/fi", assigned),
@@ -40,6 +42,7 @@ def main():
         (root / "completion.bash").write_bytes(emitted.stdout)
         (root / "assets").mkdir()
         (root / "assets" / "fixture name.json").write_bytes(b"")
+        (root / "assets" / "quote's recording.wav").write_bytes(b"")
         (root / "startup.bash").write_text(r'''
 PS1='COMPLETION_TEST> '
 set +o history
@@ -89,6 +92,8 @@ printf '\nCOMPLETION_READY\n'
                 accepted = (root / "accepted.argv").read_bytes()
                 assert accepted == b"\0".join(wanted) + b"\0", (name, accepted, terminal.text())
                 value = "assets/fixture n" if name == "escaped assigned file" else "assets/fi"
+                if name == "double quoted apostrophe":
+                    value = "assets/quote's"
                 args = [b"__complete", b"--", b"transcribe"]
                 args += [b"--file", value.encode()] if name == "separate quoted file" else [("--file=" + value).encode()]
                 assert (root / "backend.argv").read_bytes() == b"\0".join(args) + b"\0", name

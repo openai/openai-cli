@@ -1,5 +1,68 @@
 #!/bin/bash
 
+____APPNAME___bash_literal_files() (
+  local prefix="$1" directory=. lead="" basename="$1" pattern=""
+  local ignore_case=off map_case=off match_hidden=on setting file char index
+
+  # Keep Bash's existing expansion path for named users and special directories.
+  case "$prefix" in
+    '~/'*)
+      if [[ -z "${HOME-}" ]]; then builtin compgen -f -- "$prefix"; return; fi
+      ;;
+    '~'*) builtin compgen -f -- "$prefix"; return ;;
+  esac
+  if [[ "$prefix" == */* ]]; then
+    lead="${prefix%/*}/" directory="${prefix%/*}" basename="${prefix##*/}"
+    [[ -n "$directory" ]] || directory=/
+  fi
+  case "$directory" in
+    *'$'*|..|../*|*/..|*/../*) builtin compgen -f -- "$prefix"; return ;;
+    '~') directory="$HOME" ;;
+    '~/'*) directory="$HOME/${directory:2}" ;;
+  esac
+
+  # Scope directory and option changes to this subshell. Keep the typed spelling.
+  builtin shopt -u cdspell cdable_vars
+  CDPATH= builtin cd -P -- "$directory" 2>/dev/null || return 0
+  while IFS= read -r setting; do
+    case "$setting" in
+      'set completion-ignore-case on') ignore_case=on ;;
+      'set completion-map-case on') map_case=on ;;
+      'set match-hidden-files off') match_hidden=off ;;
+    esac
+  done < <(builtin bind -v 2>/dev/null)
+  builtin shopt -u nocaseglob dotglob
+  [[ "$ignore_case" == on ]] && builtin shopt -s nocaseglob
+  [[ "$match_hidden" == on ]] && builtin shopt -s dotglob
+
+  # compgen -f can dequote an already decoded filename during active completion.
+  # Escape its basename as a glob instead, with one intentional trailing wildcard.
+  for ((index = 0; index < ${#basename}; index++)); do
+    char="${basename:index:1}"
+    case "$char" in
+      '\'|'*'|'?'|'['|']'|'('|')'|'|'|'!'|'+'|'@') pattern+="\\$char" ;;
+      '-'|'_')
+        if [[ "$ignore_case" == on && "$map_case" == on ]]; then
+          pattern+='[-_]'
+        else
+          pattern+="$char"
+        fi
+        ;;
+      *) pattern+="$char" ;;
+    esac
+  done
+  if [[ -z "$basename" || "$basename" == . || "$basename" == .. ]]; then
+    while IFS= read -r file; do
+      [[ -z "$basename" && "$match_hidden" == off && "$file" == .* ]] && continue
+      printf '%s\n' "$lead$file"
+    done < <(builtin compgen -f -- "$basename")
+  else
+    while IFS= read -r file; do
+      printf '%s\n' "$lead$file"
+    done < <(builtin compgen -G "$pattern*")
+  fi
+)
+
 ____APPNAME___bash_autocomplete() {
   if [[ "${COMP_WORDS[0]}" != "source" ]]; then
     local cur completions exit_code file
@@ -131,7 +194,7 @@ ____APPNAME___bash_autocomplete() {
         while IFS= read -r file; do
           file="$assignment$file"
           COMPREPLY+=("${file#"$replacement_prefix"}")
-        done < <(compgen -f -- "$file_part")
+        done < <(____APPNAME___bash_literal_files "$file_part")
         ;;
       11) COMPREPLY=() ;; # no completion
       0)

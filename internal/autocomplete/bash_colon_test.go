@@ -111,11 +111,15 @@ func TestBashColonCompletionReadline(t *testing.T) {
 	completion, err := shellCompletions[CompletionStyleBash](&cli.Command{}, "openai")
 	require.NoError(t, err)
 	completion = strings.Replace(completion, "__openai_bash_autocomplete()", "__colon_original_completion()", 1)
+	settings, err := exec.Command(bash, "--noprofile", "--norc", "-c", "bind -v 2>/dev/null").Output()
+	require.NoError(t, err)
 	command := []string{"chat:completions"}
 	messages := []string{"chat:completions:messages"}
 	for _, tc := range []struct {
 		name, typed, setup, before, after string
 		want                              []string
+		requiresMapCase                   bool
+		hiddenSetting                     string
 	}{
 		{name: "ordinary", typed: "openai chat:comple", want: command},
 		{name: "trailing colon", typed: "openai chat:", want: command},
@@ -142,20 +146,51 @@ func TestBashColonCompletionReadline(t *testing.T) {
 		{name: "quoted colon value", typed: "openai --file ':' chat comple", want: []string{"--file", ":", "chat", "completions"}},
 		{name: "file control", typed: "openai --file assets/fi", want: []string{"--file", "assets/fixture name.json"}},
 		{name: "assigned file control", typed: "openai --file=assets/fi", want: []string{"--file=assets/fixture name.json"}},
+		{name: "literal balanced apostrophe", typed: `openai --file="quote's"`, want: []string{"--file=quote's recording.wav"}},
+		{name: "literal open apostrophe", typed: `openai --file="quote's`, after: `"`, want: []string{"--file=quote's recording.wav"}},
+		{name: "literal before closing quote", typed: `openai --file="quote's"`, before: "\x02", after: "\x05", want: []string{"--file=quote's recording.wav"}},
+		{name: "literal escaped apostrophe", typed: `openai --file=quote\'s`, want: []string{"--file=quote's recording.wav"}},
+		{name: "literal separated apostrophe", typed: `openai --file "quote's"`, want: []string{"--file", "quote's recording.wav"}},
+		{name: "literal quoted directory", typed: `openai --file="dir's/quote's"`, want: []string{"--file=dir's/quote's recording.wav"}},
+		{name: "literal quoted double quote", typed: `openai --file='say"'`, want: []string{`--file=say"hello.txt`}},
+		{name: "literal brackets", typed: `openai --file='glob[dir]/file['`, want: []string{"--file=glob[dir]/file[1].txt"}},
+		{name: "literal star", typed: `openai --file='literal*'`, want: []string{"--file=literal*.txt"}},
+		{name: "literal no match", typed: `openai --file="missing's"`, want: []string{"--file=missing's"}},
+		{name: "literal case sensitive", typed: `openai --file="case-fi"`, setup: "bind 'set completion-ignore-case off'", want: []string{"--file=case-fi"}},
+		{name: "literal ignore case", typed: `openai --file="case-fi"`, setup: "bind 'set completion-ignore-case on'", want: []string{"--file=case-File.txt"}},
+		{name: "literal map case", typed: `openai --file="map-under"`, setup: "bind 'set completion-ignore-case on'; bind 'set completion-map-case on'", want: []string{"--file=map_under.txt"}, requiresMapCase: true},
+		{name: "literal map case disabled", typed: `openai --file="map-under"`, setup: "bind 'set completion-ignore-case on'; bind 'set completion-map-case off'", want: []string{"--file=map-under"}, requiresMapCase: true},
+		{name: "literal current home", typed: "openai --file=~/assets/fi", want: []string{"--file=HOME/assets/fixture name.json"}},
+		{name: "literal empty hidden on", typed: "openai --file=", setup: "bind 'set match-hidden-files on'", want: []string{"--file="}, hiddenSetting: "on"},
+		{name: "literal empty hidden off", typed: "openai --file=", setup: "bind 'set match-hidden-files off'", want: []string{"--file="}, hiddenSetting: "off"},
+		{name: "literal explicit hidden", typed: "openai --file=.hid", setup: "bind 'set match-hidden-files off'", want: []string{"--file=.hidden.txt"}},
+		{name: "literal filename ignore", typed: `openai --file="ignore'"`, setup: "FIGNORE=.bak; shopt -s force_fignore", want: []string{"--file=ignore'keep.txt"}},
+		{name: "literal inherited glob settings", typed: `openai --file="quote's"`, setup: "GLOBIGNORE='*'; shopt -s failglob nullglob extglob; set -f", want: []string{"--file=quote's recording.wav"}},
+		{name: "literal inert substitution", typed: `openai --file='$(touch sentinel)'`, want: []string{"--file=$(touch sentinel).txt"}},
 		{name: "no matching command", typed: "openai chat:unknown", want: []string{"chat:unknown"}},
 		{name: "nounset", typed: `openai chat\:comple`, setup: "set -u", want: command},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.requiresMapCase && !strings.Contains(string(settings), "set completion-map-case ") {
+				t.Skip("This Bash Readline does not expose completion-map-case")
+			}
 			directory := t.TempDir()
-			require.NoError(t, os.Mkdir(filepath.Join(directory, "assets"), 0700))
-			require.NoError(t, os.WriteFile(filepath.Join(directory, "assets", "fixture name.json"), nil, 0600))
+			for _, name := range []string{"assets/fixture name.json", "quote's recording.wav", "dir's/quote's recording.wav", `say"hello.txt`, "glob[dir]/file[1].txt", "literal*.txt", "literal-other.txt", "case-File.txt", "map_under.txt", ".hidden.txt", "ignore'keep.txt", "ignore'drop.bak", "$(touch sentinel).txt"} {
+				path := filepath.Join(directory, name)
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+				require.NoError(t, os.WriteFile(path, nil, 0600))
+			}
 			startup := `
 PS1='COLON_TEST> '; PS2='COLON_MORE> '
 set +o history
 bind 'set bell-style none'
 openai() {
   if [[ "${1-}" == __complete ]]; then
+    printf '%s\0' "$@" > "$COLON_BACKEND_ARGS"
     OPENAI_CLI_COLON_HELPER=1 "$COLON_BINARY" -test.run='^TestBashColonCompletionHelper$' -- openai "$@"
+    local backend_status=$?
+    printf '%s\n' "$backend_status" > "$COLON_BACKEND_STATUS"
+    return "$backend_status"
   else
     printf '%s\0' "$@" > "$COLON_RESULT"
     printf '\nCOLON_ENTERED\n'
@@ -163,7 +198,13 @@ openai() {
 }
 ` + completion + `
 __openai_bash_autocomplete() {
+  local old_directory=$PWD old_options old_flags=$- old_glob_ignore=${GLOBIGNORE-} old_file_ignore=${FIGNORE-}
+  old_options=$(shopt -p nocaseglob dotglob nullglob failglob extglob cdspell cdable_vars force_fignore)
   __colon_original_completion "$@"
+  if [[ $PWD == "$old_directory" && $- == "$old_flags" && ${GLOBIGNORE-} == "$old_glob_ignore" && ${FIGNORE-} == "$old_file_ignore" && $(shopt -p nocaseglob dotglob nullglob failglob extglob cdspell cdable_vars force_fignore) == "$old_options" ]]; then
+    printf 'unchanged\n' > "$COLON_SHELL_STATE"
+  fi
+  if [[ ${#COMPREPLY[@]} -gt 0 ]]; then printf '%s\0' "${COMPREPLY[@]}" > "$COLON_CANDIDATES"; fi
   printf '\nCOLON_COMPLETED\n'
 }
 ` + tc.setup + "\nprintf '\\nCOLON_READY\\n'\n"
@@ -196,13 +237,35 @@ expect eof
 				"HOME=" + directory, "PATH=" + os.Getenv("PATH"), "LC_ALL=C", "TERM=xterm",
 				"BASH_SILENCE_DEPRECATION_WARNING=1", "COLON_BASH=" + bash, "COLON_BINARY=" + binary,
 				"COLON_STARTUP=" + filepath.Join(directory, "startup"), "COLON_RESULT=" + filepath.Join(directory, "argv"),
+				"COLON_BACKEND_ARGS=" + filepath.Join(directory, "backend-argv"), "COLON_BACKEND_STATUS=" + filepath.Join(directory, "backend-status"),
+				"COLON_SHELL_STATE=" + filepath.Join(directory, "shell-state"), "COLON_CANDIDATES=" + filepath.Join(directory, "candidates"),
 				"COLON_TYPED=" + tc.typed, "COLON_BEFORE=" + tc.before, "COLON_AFTER=" + tc.after,
 			}
 			out, err := cmd.CombinedOutput()
 			require.NoError(t, err, string(out))
 			accepted, err := os.ReadFile(filepath.Join(directory, "argv"))
 			require.NoError(t, err, string(out))
-			require.Equal(t, strings.Join(tc.want, "\x00")+"\x00", string(accepted), string(out))
+			want := strings.ReplaceAll(strings.Join(tc.want, "\x00")+"\x00", "HOME/", directory+"/")
+			require.Equal(t, want, string(accepted), string(out))
+			require.NoFileExists(t, filepath.Join(directory, "sentinel"))
+			state, err := os.ReadFile(filepath.Join(directory, "shell-state"))
+			require.NoError(t, err)
+			require.Equal(t, "unchanged\n", string(state))
+			if tc.hiddenSetting != "" {
+				candidates, err := os.ReadFile(filepath.Join(directory, "candidates"))
+				require.NoError(t, err)
+				require.Equal(t, tc.hiddenSetting == "on", slices.Contains(strings.Split(string(candidates), "\x00"), ".hidden.txt"))
+			}
+			if strings.HasPrefix(tc.name, "literal ") {
+				status, err := os.ReadFile(filepath.Join(directory, "backend-status"))
+				require.NoError(t, err)
+				require.Equal(t, "10\n", string(status), "file lookup must retain the backend protocol status")
+			}
+			if tc.name == "literal balanced apostrophe" {
+				arguments, err := os.ReadFile(filepath.Join(directory, "backend-argv"))
+				require.NoError(t, err)
+				require.Equal(t, "__complete\x00--\x00--file=quote's\x00", string(arguments))
+			}
 		})
 	}
 }
