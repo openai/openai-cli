@@ -33,7 +33,7 @@ jobs:
             goos: linux
             goarch: amd64
             runner-arch: X64
-            shells: bash
+            shells: bash,zsh
           - os: windows-latest
             goos: windows
             goarch: amd64
@@ -48,7 +48,7 @@ jobs:
             goos: linux
             goarch: arm64
             runner-arch: ARM64
-            shells: bash
+            shells: bash,zsh
           - os: windows-11-arm
             goos: windows
             goarch: arm64
@@ -81,6 +81,42 @@ jobs:
           test "$RUNNER_ARCH" = "$EXPECTED_RUNNER_ARCH"
           test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "$EXPECTED_GOOS/$EXPECTED_GOARCH"
           test "$(go env GOOS)/$(go env GOARCH)" = "$EXPECTED_GOOS/$EXPECTED_GOARCH"
+      - name: Install Linux shells
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -r /etc/apt/sources.list.d/ubuntu.sources
+          ubuntu_sources=(
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources
+            -o Dir::Etc::sourceparts=/dev/null
+          )
+          cat /etc/apt/sources.list.d/ubuntu.sources
+          if test -r /etc/apt/apt-mirrors.txt; then
+            cat /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get "${ubuntu_sources[@]}" -o APT::Update::Error-Mode=any update
+          sudo apt-get "${ubuntu_sources[@]}" install --yes --no-install-recommends zsh fish expect
+          apt-cache "${ubuntu_sources[@]}" policy zsh fish expect
+          dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' zsh fish expect
+          for tool in zsh fish expect; do
+            test "$(dpkg-query -W -f='${Architecture}' "$tool")" = "$(dpkg --print-architecture)"
+            executable=$(command -v "$tool")
+            printf '%s executable: %s\n' "$tool" "$executable"
+            package_files=$(dpkg-query -L "$tool")
+            package_path=
+            while IFS= read -r candidate_path; do
+              if test -f "$candidate_path" && test "$executable" -ef "$candidate_path"; then
+                package_path=$candidate_path
+                break
+              fi
+            done <<< "$package_files"
+            test -n "$package_path"
+            printf '%s package executable: %s\n' "$tool" "$package_path"
+          done
+          zsh --version
+          fish --version
+          expect -v
       - uses: ./.github/actions/link-go-sdk
       - name: Test help
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
@@ -88,3 +124,67 @@ jobs:
         run: go test ./cmd/openai -run '^(TestMainHelp|TestMainDispatch|TestMainNativeShell)' -count=1 -v
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
+      - name: Test Linux Fish completion
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: fish
+        run: |
+          set -euo pipefail
+          go test ./internal/autocomplete -count=1 -timeout=5m -v -json \
+            -run '^(TestFish(FileCompletionPreservesAssignments|PackagePickerFirstPrompt|PackagePreservesOrdinaryCompletions)|TestPickerFish(TabAndLifecycle|BindingsAndResourcing|RejectsOtherCommandLines)|TestPickerInstalledFish(HonorsSharedOptOut|RunsAfterUserConfiguration))$' \
+            | tee "$RUNNER_TEMP/fish-tests.jsonl"
+      - name: Test Linux native command quoting
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: zsh,fish
+        run: |
+          set -euo pipefail
+          go test ./pkg/custom -count=1 -timeout=2m -v -json \
+            -run '^TestImagePickerNativeShellQuoting/(zsh|fish)$' \
+            | tee "$RUNNER_TEMP/shell-quoting-tests.jsonl"
+      - name: Verify Linux shell test execution
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          suites = {
+              "fish-tests.jsonl": {
+                  "TestFishFileCompletionPreservesAssignments",
+                  "TestFishPackagePickerFirstPrompt",
+                  "TestFishPackagePreservesOrdinaryCompletions",
+                  "TestPickerFishTabAndLifecycle",
+                  "TestPickerFishBindingsAndResourcing",
+                  "TestPickerFishRejectsOtherCommandLines",
+                  "TestPickerInstalledFishHonorsSharedOptOut",
+                  "TestPickerInstalledFishRunsAfterUserConfiguration",
+              },
+              "shell-quoting-tests.jsonl": {
+                  "TestImagePickerNativeShellQuoting",
+                  "TestImagePickerNativeShellQuoting/zsh",
+                  "TestImagePickerNativeShellQuoting/fish",
+              },
+          }
+          for filename, required in suites.items():
+              passed = set()
+              package_passed = False
+              with (Path(os.environ["RUNNER_TEMP"]) / filename).open() as events:
+                  for line in events:
+                      event = json.loads(line)
+                      if event["Action"] in {"skip", "fail"}:
+                          raise SystemExit(f"{filename}: unexpected {event['Action']}: {event.get('Test', 'package')}")
+                      if event["Action"] == "pass" and "Test" in event:
+                          passed.add(event["Test"])
+                      elif event["Action"] == "pass":
+                          package_passed = True
+              missing = required - passed
+              children = sum("/" in name for name in passed)
+              if missing or not package_passed:
+                  raise SystemExit(f"{filename}: missing required tests: {sorted(missing)}; package passed: {package_passed}")
+              print(f"{filename}: {len(passed) - children} roots and {children} children passed; no skips")
+          PY
