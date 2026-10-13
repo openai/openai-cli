@@ -314,7 +314,8 @@ func clearTokenizerRestorationScreen(t *testing.T, output *os.File) {
 	if err := windows.GetConsoleScreenBufferInfo(windows.Handle(output.Fd()), &info); err != nil {
 		t.Fatal(err)
 	}
-	length := int(info.Size.X) * int(info.Size.Y)
+	// Match readOutputConsole's observed rows, without clearing unused scrollback.
+	length := int(info.Size.X) * (max(int(info.CursorPosition.Y), int(info.Window.Bottom)) + 1)
 	if info.Window.Right-info.Window.Left+1 < 40 || info.Window.Bottom-info.Window.Top+1 < 12 || length < 1 || length > 1<<20 {
 		t.Fatalf("unsupported private console geometry: %+v", info)
 	}
