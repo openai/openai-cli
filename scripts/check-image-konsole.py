@@ -29,6 +29,7 @@ import time
 SCRIPTS = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 from image_picker_harness import Terminal, wait_for_request
+from terminal_test import kitty_images
 
 # Reuse only pure PNG helpers and the synthetic HTTP fixture. Importing this
 # sibling checker does not run its main function or its VS Code assertions.
@@ -45,13 +46,11 @@ def check_frames(raw, widths, shape, protocol='iterm'):
     require(raw.count(b'\x1b]1337;File=') == len(frames), 'incomplete IIP frame')
     if protocol == 'kitty':
         chunks = KITTY.findall(raw)
-        require(not frames and len(chunks) == 1, 'stronger identity lost its Kitty protocol')
-        header, payload = chunks[0]
-        fields = dict(item.split(b'=', 1) for item in header.split(b','))
-        require(fields.get(b'f') == b'100' and fields.get(b'c') == str(widths[0]).encode(),
-                'wrong Kitty format or cell width')
-        require(fields.get(b'm') == b'0', 'incomplete Kitty upload')
-        require(fixtures.decode_png(base64.b64decode(payload, validate=True)) == shape, 'Kitty pixels changed')
+        images = kitty_images(raw)
+        require(not frames and len(images) == 1, 'stronger identity lost its Kitty protocol')
+        fields = dict(item.split(b'=', 1) for item in chunks[0][0].split(b','))
+        require(fields.get(b'c') == str(widths[0]).encode(), 'wrong Kitty cell width')
+        require(fixtures.decode_png(images[0]) == shape, 'Kitty pixels changed')
     else:
         require(b'\x1b_G' not in raw, 'unexpected Kitty output')
         require(len(frames) == len(widths), f'expected {len(widths)} frames, got {len(frames)}')
@@ -82,7 +81,7 @@ def main():
     evidence = {'binary': str(binary), 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
                 'checker_sha256': hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
                 'helper_sha256': {name: hashlib.sha256((SCRIPTS / name).read_bytes()).hexdigest()
-                                  for name in ('check-image-vscode.py', 'image_picker_harness.py')},
+                                  for name in ('check-image-vscode.py', 'image_picker_harness.py', 'terminal_test.py')},
                 'host': {'system': platform.system(), 'machine': platform.machine(), 'python': platform.python_version()},
                 'scope': 'Built CLI, sized POSIX PTYs, synthetic loopback API, no native Konsole rendering claim.',
                 'limits': ['No native terminal resize, scrollback, or patch-detection proof.',
@@ -118,7 +117,7 @@ def main():
 
         def tty(name, arguments, *, extra=None, widths=(64,), protocol='iterm', case=None,
                 expected=0, saved=1, interact=None, home_name=None, geometry=(80, 24),
-                image_shape=shape, executable=binary, stderr_tty=False, input_data=None):
+                image_shape=shape, executable=binary, stderr_tty=False, input_data=None, expected_stderr=b''):
             home, env = environment(home_name or name, extra)
             server.case = case = case or Response('ok', normal)
             stderr_path = output / (name + '.stderr')
@@ -141,7 +140,7 @@ def main():
                     require(case.requests[0].get('stream') is True and case.requests[0].get('partial_images') == 2,
                             'progress request changed')
                 if expected == 0:
-                    require(not error, f'unexpected stderr: {error!r}')
+                    require(error == expected_stderr, f'stderr changed: {error!r}')
                 elif not stderr_tty:
                     require(error and b'\x1b]1337;' not in error, 'missing or contaminated error diagnostic')
                 if expected == 130:
@@ -177,7 +176,10 @@ def main():
             tty('protocol-floor', generate, extra={'KONSOLE_VERSION': '220400'})
             tty('no-color-native', generate, extra={'NO_COLOR': '1'})
             tty('explicit-off', generate + ['--inline', 'off'], widths=())
-            tty('remember-off', ['images', 'inline', 'off'], home_name='preferences', widths=(), saved=0)
+            raw, _ = tty('remember-off', ['images', 'inline', 'off'], home_name='preferences', widths=(), saved=0,
+                         expected_stderr=b'Automatic image previews off.\nOverride once: --inline auto|on|off\n'
+                                         b'View a saved image: openai images preview FILE\n')
+            require(not raw, 'preference confirmation contaminated stdout')
             tty('persisted-off', generate, home_name='preferences', widths=())
             tty('override-off-with-on', generate + ['--inline', 'on'], home_name='preferences', saved=2)
             for name, value in [('default', ''), ('disabled', '0'), ('invalid', 'true'), ('whitespace', '1 ')]:
@@ -205,6 +207,14 @@ def main():
             source.write_bytes(normal)
             tty('local-preview', ['images', 'preview', str(source)], saved=0)
             require(source.read_bytes() == normal, 'local preview changed its source')
+            if args.baseline:
+                arguments = ['images', 'preview', str(source)]
+                baseline_raw, _ = tty('baseline-local-fallback', arguments, executable=baseline,
+                                      extra={'OPENAI_KONSOLE_IMAGES': ''}, widths=(), saved=0)
+                candidate_raw, _ = tty('candidate-local-fallback', arguments,
+                                       extra={'OPENAI_KONSOLE_IMAGES': ''}, widths=(), saved=0)
+                require(candidate_raw == baseline_raw and '▀'.encode() in candidate_raw,
+                        'default Konsole fallback changed')
             portrait, portrait_pixels = fixtures.fixture_png(8, 32)
             source.write_bytes(portrait)
             tty('portrait-height-fit', ['images', 'preview', str(source)], saved=0, geometry=(18, 8),
