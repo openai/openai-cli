@@ -151,6 +151,147 @@ func (c imageSaveCancellationContext) Err() error {
 	return c.Context.Err()
 }
 
+func TestSavedImageCancellationWithoutCompletedFiles(t *testing.T) {
+	var fixture bytes.Buffer
+	require.NoError(t, png.Encode(&fixture, image.NewRGBA(image.Rect(0, 0, 1, 1))))
+	encoded := base64.StdEncoding.EncodeToString(fixture.Bytes())
+	response := gjson.Parse(fmt.Sprintf(`{"data":[{"b64_json":%q}]}`, encoded))
+	for _, boundary := range []string{"before_first_save", "during_first_write"} {
+		for _, format := range []string{"text", "json"} {
+			t.Run(boundary+"/"+format, func(t *testing.T) {
+				directory := t.TempDir()
+				path := filepath.Join(directory, "synthetic-private-image.png")
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				boundaryReached := false
+				partialBytes := int64(0)
+				checking := imageSaveCancellationContext{Context: ctx, check: func() {
+					if boundary != "during_first_write" || boundaryReached {
+						return
+					}
+					info, err := os.Stat(path)
+					if errors.Is(err, os.ErrNotExist) {
+						return
+					}
+					require.NoError(t, err)
+					if info.Size() == 0 {
+						return
+					}
+					require.Less(t, info.Size(), int64(fixture.Len()), "cancel before the first image completes")
+					partialBytes = info.Size()
+					boundaryReached = true
+					cancel()
+				}}
+				plan := &imageOutputPlan{directory: directory, name: "synthetic-private-image", inline: "off"}
+				plan.loadingStage = func(stage imageLoadingStage) {
+					if boundary == "before_first_save" && stage == imageLoadingSaving {
+						boundaryReached = true
+						cancel()
+					}
+				}
+				var receipt bytes.Buffer
+				receiptCalls := 0
+				writer := loadingTestWriter(func(data []byte) (int, error) {
+					receiptCalls++
+					return receipt.Write(data)
+				})
+				presentation := context.WithValue(checking, imagePresentationKey{}, imagePresentation{plan, writer})
+				failure := ShowJSON(response, ShowJSONOpts{
+					Context: presentation, Operation: imageGenerationOperation, OutputKind: OutputResponse,
+					Format: "auto", Stdout: writer, Stderr: io.Discard,
+				})
+				require.True(t, boundaryReached, "the public presenter must reach the selected save boundary")
+				require.ErrorIs(t, failure, context.Canceled)
+				if boundary == "during_first_write" {
+					require.Positive(t, partialBytes, "exercise cleanup of an actual incomplete file")
+				} else {
+					require.Zero(t, partialBytes)
+				}
+				require.Zero(t, receiptCalls)
+				require.Empty(t, receipt.String())
+				_, err := os.Stat(path)
+				require.ErrorIs(t, err, os.ErrNotExist)
+				entries, err := os.ReadDir(directory)
+				require.NoError(t, err)
+				require.Empty(t, entries, "no completed file or incomplete output may remain")
+				root := readableErrorTestCommand(t, "--format-error", format)
+				for _, interrupted := range []bool{false, true} {
+					wrapped := failure
+					wantStatus := 1 // main's fallback; this check does not execute a native process.
+					if interrupted {
+						wrapped = &imageLoadingInterrupt{failure}
+						wantStatus = 130
+					}
+					wrapped = withCommandError(root, wrapped)
+					require.ErrorIs(t, wrapped, context.Canceled)
+					status := 1
+					var exit cli.ExitCoder
+					if errors.As(wrapped, &exit) {
+						status = exit.ExitCode()
+					}
+					require.Equal(t, wantStatus, status)
+					var diagnostic bytes.Buffer
+					require.NoError(t, ShowCommandError(root, wrapped, &diagnostic))
+					assertReadableErrorContainsNoPrivateDetails(t, diagnostic.String())
+					require.NotContains(t, diagnostic.String(), directory)
+					require.NotContains(t, diagnostic.String(), encoded)
+					message := diagnostic.String()
+					want := "Request canceled."
+					if format == "json" {
+						var document map[string]any
+						require.NoError(t, json.Unmarshal(diagnostic.Bytes(), &document))
+						require.Len(t, document, 1, "do not invent an HTTP status")
+						var ok bool
+						message, ok = document["message"].(string)
+						require.True(t, ok)
+					} else {
+						want += "\n"
+					}
+					t.Logf("interrupted=%t status_contract=%d canceled_first_bytes=%d diagnostic=%q", interrupted, status, partialBytes, message)
+					if message != want {
+						t.Errorf("zero-save cancellation presented save-failure guidance: got %q; want %q", message, want)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestSavedImageFailureWithoutCompletedFilesKeepsRecovery(t *testing.T) {
+	response := gjson.Parse(`{"data":[{"b64_json":"synthetic-private-invalid-base64"}]}`)
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			plan := &imageOutputPlan{directory: t.TempDir(), name: "robot", inline: "off"}
+			var receipt bytes.Buffer
+			presentation := context.WithValue(t.Context(), imagePresentationKey{}, imagePresentation{plan, &receipt})
+			failure := ShowJSON(response, ShowJSONOpts{
+				Context: presentation, Operation: imageGenerationOperation, OutputKind: OutputResponse,
+				Format: "auto", Stdout: &receipt, Stderr: io.Discard,
+			})
+			var malformed base64.CorruptInputError
+			require.ErrorAs(t, failure, &malformed)
+			require.False(t, errors.Is(failure, context.Canceled))
+			require.Empty(t, receipt.String())
+			entries, err := os.ReadDir(plan.directory)
+			require.NoError(t, err)
+			require.Empty(t, entries)
+			root := readableErrorTestCommand(t, "--format-error", format)
+			var diagnostic bytes.Buffer
+			require.NoError(t, ShowCommandError(root, withCommandError(root, failure), &diagnostic))
+			assertReadableErrorContainsNoPrivateDetails(t, diagnostic.String())
+			require.NotContains(t, diagnostic.String(), plan.directory)
+			want := "The API responded, but no images could be saved. Check the image data and output folder before trying again."
+			if format == "json" {
+				var document map[string]any
+				require.NoError(t, json.Unmarshal(diagnostic.Bytes(), &document))
+				require.Equal(t, map[string]any{"message": want}, document)
+			} else {
+				require.Equal(t, want+"\n", diagnostic.String())
+			}
+		})
+	}
+}
+
 func TestImagePreferenceCancellationKeepsPathPrivate(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "synthetic-private-home")
 	for _, key := range []string{"HOME", "APPDATA", "XDG_CONFIG_HOME"} {
@@ -190,8 +331,7 @@ func TestSavedImageCancellationOutputModes(t *testing.T) {
 	plan := &imageOutputPlan{directory: t.TempDir(), name: "robot", inline: "off"}
 	failure := plan.save(ctx, []byte(`{"data":[]}`), io.Discard)
 	require.ErrorIs(t, failure, context.Canceled)
-	want := "The API responded, but no images could be saved. Check the image data and output folder before trying again."
-	require.Equal(t, want, failure.Error())
+	want := "Request canceled."
 	for _, test := range []struct {
 		name, format string
 		args         []string

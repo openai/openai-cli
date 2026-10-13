@@ -195,8 +195,10 @@ func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writ
 		message := "The API responded, but no images could be saved. Check the image data and output folder before trying again."
 		if len(saved) > 0 {
 			message = fmt.Sprintf("Saved %d image(s), but could not save the entire response. The listed files are kept; do not generate those images again.", len(saved))
+			saveErr = imageSavingResultFailure(message, saveErr)
+		} else {
+			saveErr = imageSavingFailure(message, saveErr)
 		}
-		saveErr = imageSavingResultFailure(message, saveErr)
 	}
 	for _, file := range saved {
 		// Quoting keeps paths useful without allowing terminal control injection.
