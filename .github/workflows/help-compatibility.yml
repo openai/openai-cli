@@ -177,13 +177,13 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainFilesWorkflow(UploadPaths|UploadValidation|UploadStdinCompatibility|ExplicitBinaryStdin|MachineOutput|DownloadBytes|DownloadReceiptModes|FailuresPreserveExits)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'files-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
-      - name: Test Windows image upload scalar inputs
+      - name: Test Windows image uploads and saved results
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageUploadQuotedCountPreservesMultipart|TestMainImageEditQuotedStreamScalars|TestMainImageUploadMalformedScalarTextFailsBeforeRequest|TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues)$' |
-            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-scalar-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageUploadQuotedCountPreservesMultipart|TestMainImageEditQuotedStreamScalars|TestMainImageUploadMalformedScalarTextFailsBeforeRequest|TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues|TestMainImageEditStreamSavesFinalAndCloses|TestMainImageUploadBatchCollisionAndPartialFailure|TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse|TestMainImageGenerationPartialFailureKeepsSavedImage)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test request environment restoration
         if: matrix.environment
@@ -286,7 +286,7 @@ jobs:
                   required_cases("TestMainFilesWorkflow" + suffix, children)
                   for suffix, children in files_cases.items()
               ))
-              suites["image-scalar-tests.jsonl"] = required_cases(
+              suites["image-tests.jsonl"] = required_cases(
                   "TestMainImageUploadQuotedCountPreservesMultipart",
                   [f"{operation}/{source}/API={api}" for operation in ["edit", "create-variation"]
                    for source in ["JSON", "YAML", "whitespace"] for api in ["false", "true"]],
@@ -301,6 +301,18 @@ jobs:
                    for api in ["false", "true"]],
               ) | required_cases(
                   "TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues", ["native_null", "text_null"],
+              ) | required_cases(
+                  "TestMainImageEditStreamSavesFinalAndCloses", ["explicit", "partials", "stdin", "YAML"],
+              ) | required_cases(
+                  "TestMainImageUploadBatchCollisionAndPartialFailure",
+                  [f"{operation}_partial={partial}" for operation in ["edit", "create-variation"]
+                   for partial in ["false", "true"]],
+              ) | required_cases(
+                  "TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse",
+                  ["--stream=true", "--partial-images_2", "--stream=true_--max-items_-1",
+                   "--partial-images_2_--max-items_-1", "--stream=true_--max-items_-2"],
+              ) | required_cases(
+                  "TestMainImageGenerationPartialFailureKeepsSavedImage", [],
               )
           if os.environ["CHECK_ENVIRONMENT"] == "true":
               suites["environment-tests.jsonl"] = required_cases(
@@ -346,7 +358,7 @@ jobs:
                           package_passed = True
               missing = required - passed
               unexpected = passed - required if filename in {
-                  "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-scalar-tests.jsonl",
+                  "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-tests.jsonl",
               } else set()
               children = sum("/" in name for name in passed)
               if missing or unexpected or not package_passed:
