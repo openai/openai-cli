@@ -185,6 +185,14 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageUploadQuotedCountPreservesMultipart|TestMainImageEditQuotedStreamScalars|TestMainImageUploadMalformedScalarTextFailsBeforeRequest|TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues|TestMainImageEditStreamSavesFinalAndCloses|TestMainImageUploadBatchCollisionAndPartialFailure|TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse|TestMainImageGenerationPartialFailureKeepsSavedImage)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Windows audio output behavior
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainReadableAudioJSONPreservesTextAndMetadata|TestMainReadableAudioTextAndSubtitles|TestMainReadableAudioTranscriptionStreamsBeforeDone|TestMainReadableAudioTranscriptionKeepsEventsAndMetadata|TestMainReadableAudioStreamFailuresKeepPartialOutput|TestMainReadableAudioSpeechFormatsAndDownloads|TestMainReadableAudioSpeechPreservesBinary|TestMainReadableAudioLargePayloads)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'audio-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test request environment restoration
         if: matrix.environment
         shell: bash
@@ -314,6 +322,24 @@ jobs:
               ) | required_cases(
                   "TestMainImageGenerationPartialFailureKeepsSavedImage", [],
               )
+              audio_cases = {
+                  "JSONPreservesTextAndMetadata": ["audio:transcriptions", "audio:translations"],
+                  "TextAndSubtitles": [f"{command}/{format}" for command in ["audio:transcriptions", "audio:translations"]
+                                       for format in ["text", "srt", "vtt"]],
+                  "TranscriptionStreamsBeforeDone": [],
+                  "TranscriptionKeepsEventsAndMetadata": [],
+                  "StreamFailuresKeepPartialOutput": [f"{command}/{failure}/{format}"
+                                                     for command in ["audio:transcriptions", "audio:speech"]
+                                                     for failure in ["early_EOF", "error", "malformed"]
+                                                     for format in ["text", "jsonl"]],
+                  "SpeechFormatsAndDownloads": [],
+                  "SpeechPreservesBinary": [],
+                  "LargePayloads": ["JSON", "transcription_SSE", "speech_SSE"],
+              }
+              suites["audio-tests.jsonl"] = set().union(*(
+                  required_cases("TestMainReadableAudio" + suffix, children)
+                  for suffix, children in audio_cases.items()
+              ))
           if os.environ["CHECK_ENVIRONMENT"] == "true":
               suites["environment-tests.jsonl"] = required_cases(
                   "TestRequestConfigurationRestoresEnvironment",
@@ -359,6 +385,7 @@ jobs:
               missing = required - passed
               unexpected = passed - required if filename in {
                   "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-tests.jsonl",
+                  "audio-tests.jsonl",
               } else set()
               children = sum("/" in name for name in passed)
               if missing or unexpected or not package_passed:
