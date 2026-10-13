@@ -103,7 +103,16 @@ jobs:
             test "$(dpkg-query -W -f='${Architecture}' "$tool")" = "$(dpkg --print-architecture)"
             executable=$(command -v "$tool")
             printf '%s executable: %s\n' "$tool" "$executable"
-            dpkg-query -S "$(readlink -f "$executable")"
+            package_files=$(dpkg-query -L "$tool")
+            package_path=
+            while IFS= read -r candidate_path; do
+              if test -f "$candidate_path" && test "$executable" -ef "$candidate_path"; then
+                package_path=$candidate_path
+                break
+              fi
+            done <<< "$package_files"
+            test -n "$package_path"
+            printf '%s package executable: %s\n' "$tool" "$package_path"
           done
           zsh --version
           fish --version
