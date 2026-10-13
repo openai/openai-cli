@@ -218,7 +218,25 @@ VS Code requires ConPTY v2 or later for these images on Windows. Windows and
 remote sessions require separate rendering checks; an opt-in or successful write
 is not proof of visible rendering there.
 
-Konsole also requires an explicit opt-in. Use a build containing the resize and
+Konsole supports an interactive viewer for saved images without the upstream
+resize fix:
+
+```sh
+openai images preview --interactive "photo.png"
+```
+
+The viewer uses a separate screen and redraws after resizing. Press `q` or
+Escape to close it and restore the previous screen. The viewed image does not
+remain in terminal history. The original file stays unchanged.
+
+This mode requires terminal input and output, Konsole 22.04 or newer, and a
+macOS or Linux CLI host. Run outside CI and multiplexers. Konsole must supply
+its own `KONSOLE_VERSION`, with `TERM_PROGRAM` unset. Do not combine
+`--interactive` with `--inline`. This mode does not require
+`OPENAI_KONSOLE_IMAGES`. Native validation covers unpatched Konsole 23.08.5 on
+Linux/X11; other versions and desktop configurations need separate checks.
+
+Static Konsole previews require an explicit opt-in. Use a build containing the resize and
 scrolling fix from [Konsole merge request !1339](https://invent.kde.org/utilities/konsole/-/merge_requests/1339).
 Unpatched builds can crop earlier previews after resizing or lose previews
 during scrolling. No released minimum version for this fix is established.
@@ -247,6 +265,7 @@ previews after resizing, including after the CLI exits.
 The CLI does not read terminal replies or change Konsole settings.
 Native validation covers Linux/X11; Wayland, remote sessions, and other desktop
 platforms require separate rendering checks.
+Track the remaining upstream work in [issue #448](https://github.com/openai/openai-cli/issues/448).
 
 Other color terminals show a labeled color-block approximation. `NO_COLOR` or
 `CLICOLOR=0` disables that approximation, while native image graphics remain
@@ -301,14 +320,16 @@ outside the repository. Set `DEMO_API_BINARY` to a binary built from
 ```sh
 openai images preview "path/to/image.png"
 openai images preview --inline on "path/to/image.png"
+openai images preview --interactive "path/to/image.png" # Live Konsole viewer
 openai images inline off
 openai images inline on
 openai images generate --prompt "A tiny orange robot" --inline auto
 ```
 
 `images preview` displays an existing PNG, JPEG or WebP using the same renderer.
-It needs no API key, makes no request, does not read stdin, and leaves the
-original untouched. It works even when automatic previews are off. Explicit
+It needs no API key, makes no request, and leaves the original untouched.
+Static previews do not read stdin. The interactive Konsole viewer reads keyboard input.
+It works even when automatic previews are off. Explicit
 preview defaults to `auto`; `--inline on` also permits Apple Terminal image-font
 activation. Unsupported formats, output redirection, and images that cannot fit
 the terminal return an error. `--format-error` and `--transform-error` still

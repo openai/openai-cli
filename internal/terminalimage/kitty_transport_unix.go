@@ -17,10 +17,19 @@ import (
 const kittyOutputCleanupTimeout = 2 * time.Second
 
 type kittyOutputContextKey struct{}
+type interactiveImageOutputContextKey struct{}
 type kittyOutputBinding struct {
 	output  *os.File
 	session *kittyOutputSession
 	err     error
+}
+
+// PrepareInteractiveImageOutput gives directly owned helpers private sessions.
+// Group signals cancel the parent, while a
+// prepared helper remains available to restore the interactive terminal modes.
+// The existing lifeline still stops helpers if their parent dies unexpectedly.
+func PrepareInteractiveImageOutput(ctx context.Context, out io.Writer) (context.Context, func() error) {
+	return PrepareNativeImageOutput(context.WithValue(ctx, interactiveImageOutputContextKey{}, true), out)
 }
 
 // PrepareNativeImageOutput binds the writer before a command reads input or waits for
@@ -99,6 +108,13 @@ func writeNativeImageOutput(ctx context.Context, out io.Writer, write func(io.Wr
 	}
 	defer func() { session.gate <- struct{}{} }()
 	written, err := session.writeJob(ctx, job, write)
+	if interactive, _ := ctx.Value(interactiveImageOutputContextKey{}).(bool); interactive && err != nil && ctx.Err() == context.Canceled {
+		// Retiring the canceled job closes its private pipes and control socket.
+		// Those teardown errors describe the abandoned transfer. Keep any reset
+		// failure separate below, so a viewer can acknowledge deliberate closure
+		// without hiding a failed terminal restoration.
+		err = &CanceledOutputError{cause: err}
+	}
 	if err == nil || !written {
 		return err
 	}
