@@ -11,8 +11,11 @@ import (
 )
 
 // MSYS/Cygwin PTYs use these named pipes, including their native/Cygwin variants.
+// Windows can place them inside a session's AppContainer namespace.
 // Other named pipes and anonymous pipes remain redirected output.
-var welcomePTYName = regexp.MustCompile(`^\\(?:Device\\NamedPipe\\)?(?:msys|cygwin)-[0-9a-fA-F]+-pty[0-9]+-(?:from|to)-master(?:-nat|-cyg)?$`)
+var welcomePTYName = regexp.MustCompile(`^\\(?:Device\\NamedPipe\\)?` +
+	`(?:Sessions\\[0-9]+\\AppContainerNamedObjects\\S-1-15-2(?:-[0-9]+){7}\\)?` +
+	`(?:msys|cygwin)-[0-9a-fA-F]+-pty[0-9]+-(?:from|to)-master(?:-nat|-cyg)?$`)
 
 func welcomePseudoTerminal(fd uintptr) bool {
 	handle := windows.Handle(fd)
