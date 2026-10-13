@@ -1,22 +1,41 @@
 # Welcome banner comparison
 
 The recorder runs bare `openai` on real before and after binaries.
-At 56 columns and wider, a blue frame contains a three-row OPENAI wordmark.
-Literal OpenAI CLI text and the runtime version sit beside the decorative lettering.
-The lettering uses three blue shades. The full border uses the existing CLI focus blue.
+Color-capable UTF-8 terminals show a six-row OPENAI wordmark with continuous background fills.
+Each face pixel occupies two terminal columns. The 58-column face bitmap uses six gradual blue shades.
+Truecolor and 256-color output add one-column right shadows, extending the artwork to at most 59 columns.
+Literal OpenAI CLI text and the complete runtime version start at zero-based column 63.
+The title starts one row below the artwork's top edge, with the version directly below it.
+The card includes two columns of padding on each side and a blue border.
+The colored card occupies nine rows and at least 76 columns.
+Its width is `max(76, 66 + displayed version width)`, measured in terminal cells.
+Versions wider than 16 cells use the compact text layout.
+Color-capable UTF-8 terminals below the required artwork width also use the compact text layout.
+They never show a clipped wordmark or substitute partial block glyphs.
+The tagline is `What are we making today?` and occupies the last interior row.
+The card contains no mascot or added outline.
+In dark mode, the border uses `#5675BC`, matching the approved color swatch.
+The last face row uses lower-one-eighth masks with a subtle `#2B3039` charcoal edge.
+The shadow masks inherit the terminal background, avoiding bright protruding ends.
+The border and bottom masks depend on font rendering; faces and side shadows use continuous background fills.
+The approved ANSI fixture is `internal/clihelp/testdata/welcome-approved.ansi`.
+It preserves the user-selected design for comparison with the actual renderer.
+Native appearance outside the user's Apple Terminal preview still needs separate verification.
 Literal identity inherits terminal foreground, and the version uses the existing muted tone.
-A three-cell gap separates the lettering from identity and version.
-A small static Eightbit peeks from the bottom-right corner when enough space remains.
-Its purple head, green goggles, and white eyes adapt the user-supplied mascot reference.
-The fifteen-cell sprite uses four terminal rows for a rounded head, expressive face, waving arm, and curled tentacles.
-The card gains one row when the sprite fits. Its width remains 56 columns.
-Each sprite row preserves a gap after existing text, including the complete version.
-It disappears when the version needs its space or color is disabled.
-The card keeps its original six rows when the sprite is omitted.
-The terminal background remains inherited outside painted sprite half-cells.
-Below 56 columns, the card uses a text layout without the wordmark.
-Below 40 columns, that layout uses four rows instead of six.
-Versions wider than 16 cells also use the text layout, preserving the complete version.
+
+Monochrome UTF-8 output retains the original three-row glyph wordmark at widths of 56 columns or more.
+That fallback stays 56 columns by six rows. Its full and half-block glyphs remain font-rendered.
+Other or unknown encodings retain the ASCII frame and literal-title fallback at those widths.
+`LC_ALL` takes precedence over `LC_CTYPE` and `LANG`.
+Windows Terminal advertises Unicode when no locale is set.
+The ASCII fallback escapes non-ASCII revision characters without losing their values.
+Color selection remains independent from character encoding.
+The 16-color fallback retains a single-color filled wordmark without shadows or bottom masks.
+`NO_COLOR`, `FORCE_COLOR=0`, and `CLICOLOR=0` disable styling.
+The header performs no terminal query, starts no helper process, and requires no setup or image file.
+Existing bare-interactive eligibility remains unchanged, including quiet mode, pipes, CI, and dumb-terminal behavior.
+Font shapes and color rendering can still differ between terminals.
+The compact text layout uses six rows from 40 columns, or four rows below 40 columns.
 Terminals below 29 columns omit the optional card.
 If the complete identity and version cannot fit, the CLI preserves help without a banner.
 It uses the shared capture lifecycle and the existing rejecting loopback fixture.
@@ -24,7 +43,7 @@ It supplies no API credentials and requires zero API requests.
 Temporary HOME, XDG directories, working directories, and PATH isolate each scene.
 Existing first-run setup remains enabled within that temporary environment.
 
-Use Go 1.26.9 with `GOMAXPROCS=2` for these builds.
+Use the repository's required Go version with `GOMAXPROCS=2` for these builds.
 Acquire the coordinator's build and PTY slots before recording.
 
 Build the existing fixture:
@@ -33,7 +52,10 @@ Build the existing fixture:
 GOMAXPROCS=2 go build -p 2 -o dist/demos/bin/image-model-demo-api ./scripts/demos/image-models/main.go
 ```
 
-Build the baseline binary from `e68939820415144d769ed02de6aa72d5b7d32948` in its own checkout.
+The public comparison checker includes widths 75, 76, 81, and 82 around the artwork thresholds.
+
+Build the baseline binary from a pinned current-main commit in its own checkout.
+Set `BEFORE_SHA` to that exact commit and record it with the evidence.
 Build the candidate binary from the reviewed candidate commit.
 Verify both binary identities before supplying their full commit IDs.
 The recorder records binary hashes but cannot establish their source provenance.
@@ -43,7 +65,7 @@ Run the comparison from the candidate checkout:
 ```sh
 bash scripts/demos/record-welcome.sh \
   "$BEFORE_BINARY" "$AFTER_BINARY" \
-  e68939820415144d769ed02de6aa72d5b7d32948 "$AFTER_SHA" \
+  "$BEFORE_SHA" "$AFTER_SHA" \
   /absolute/path/outside/repository/welcome-color
 ```
 
@@ -57,7 +79,7 @@ Record the light background:
 DEMO_THEME=light \
   bash scripts/demos/record-welcome.sh \
   "$BEFORE_BINARY" "$AFTER_BINARY" \
-  e68939820415144d769ed02de6aa72d5b7d32948 "$AFTER_SHA" \
+  "$BEFORE_SHA" "$AFTER_SHA" \
   /absolute/path/outside/repository/welcome-light
 ```
 
@@ -77,7 +99,7 @@ Record the 40-column monochrome case:
 NO_COLOR=1 DEMO_COLUMNS=40 DEMO_ROWS=350 \
   bash scripts/demos/record-welcome.sh \
   "$BEFORE_BINARY" "$AFTER_BINARY" \
-  e68939820415144d769ed02de6aa72d5b7d32948 "$AFTER_SHA" \
+  "$BEFORE_SHA" "$AFTER_SHA" \
   /absolute/path/outside/repository/welcome-no-color
 ```
 
@@ -87,7 +109,7 @@ Record the narrow fallback:
 NO_COLOR=1 DEMO_COLUMNS=28 DEMO_ROWS=500 \
   bash scripts/demos/record-welcome.sh \
   "$BEFORE_BINARY" "$AFTER_BINARY" \
-  e68939820415144d769ed02de6aa72d5b7d32948 "$AFTER_SHA" \
+  "$BEFORE_SHA" "$AFTER_SHA" \
   /absolute/path/outside/repository/welcome-narrow
 ```
 
@@ -98,6 +120,8 @@ Increase `DEMO_ROWS` if the validation reports insufficient rows.
 These tall captures preserve full help; they do not demonstrate ordinary viewport height.
 
 The recorder checks the banner version against `openai --version`.
+It verifies all six filled pixel rows, the nine-row card, and the complete metadata layout.
+It separately checks the unchanged monochrome and ASCII fallback dimensions.
 It compares complete help and command groups with the baseline after removing the banner.
 Below the banner's required width, it requires exact baseline output.
 With `NO_COLOR` set, it rejects terminal escapes in CLI output.
@@ -117,3 +141,8 @@ Inspect both screenshots and the comparison GIF before sharing them.
 Keep generated media outside Git.
 These artifacts show Bash PTY replay through Menlo and the selected renderer theme.
 They do not establish native graphical terminal, Linux, Windows, or font behavior.
+
+Use DEMO_ENCODING=ascii to exercise the ASCII frame and literal-title fallback.
+The default DEMO_ENCODING=utf8 selects the filled wordmark when color and width permit.
+With NO_COLOR, UTF-8 captures retain the original glyph wordmark.
+The superseded mascot experiments and their recordings remain outside Git as historical evidence.

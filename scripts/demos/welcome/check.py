@@ -23,6 +23,9 @@ def run(binary, args, width=80, streams=(True, True, True), extra=None):
         root = Path(directory)
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 250, width, 0, 0))
+        attributes = termios.tcgetattr(slave)
+        attributes[1] &= ~termios.ONLCR
+        termios.tcsetattr(slave, termios.TCSANOW, attributes)
         env = {
             "PATH": "/usr/bin:/bin", "HOME": directory, "USERPROFILE": directory,
             "XDG_CONFIG_HOME": directory, "XDG_CACHE_HOME": directory,
@@ -75,13 +78,19 @@ def run(binary, args, width=80, streams=(True, True, True), extra=None):
                     stream.close()
         state = sorted(str(path.relative_to(root)) for path in root.rglob("*"))
         return {"code": code, "state": state, **{
-            name: bytes(data).decode("utf-8").replace("\r\n", "\n")
+            name: bytes(data).decode("utf-8")
             for name, data in output.items()
         }}
 
 
 def plain(text):
-    return re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    return re.sub(r"\x1b\[[0-9;:]*m", "", text)
+
+
+def cell_width(text):
+    return sum(0 if unicodedata.combining(char) else
+               2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+               for char in text)
 
 
 def main():
@@ -93,7 +102,7 @@ def main():
     before, after = options.before.resolve(), options.after.resolve()
     options.output.mkdir(parents=True, exist_ok=False)
     cases = []
-    for width in (100, 80, 60, 56, 55, 40, 39, 29, 28, 20):
+    for width in (100, 82, 81, 80, 76, 75, 66, 56, 55, 40, 39, 29, 28, 20):
         cases.append((f"bare-{width}", [], width, (True, True, True), {}, width >= 29))
     for name, extra, banner in (
         ("no-color", {"NO_COLOR": "anything", "CLICOLOR_FORCE": "1"}, True),
@@ -103,6 +112,20 @@ def main():
         ("ci-false", {"CI": "false"}, True),
         ("light-theme", {"COLORFGBG": "0;15", "COLORTERM": "truecolor"}, True),
         ("windows-terminal-env", {"TERM": "", "WT_SESSION": "synthetic-session"}, True),
+        ("clicolor-zero", {"CLICOLOR": "0"}, True),
+        ("ascii-locale", {"LC_ALL": "C"}, True),
+        ("unknown-locale", {"LANG": ""}, True),
+        ("ctype-ascii", {"LC_CTYPE": "C"}, True),
+        ("utf8-precedence", {"LC_ALL": "C.UTF-8", "LC_CTYPE": "C"}, True),
+        ("apple-terminal", {"TERM_PROGRAM": "Apple_Terminal"}, True),
+        ("vscode", {"TERM_PROGRAM": "vscode"}, True),
+        ("kitty", {"TERM_PROGRAM": "kitty"}, True),
+        ("iterm", {"TERM_PROGRAM": "iTerm.app"}, True),
+        ("ghostty", {"TERM_PROGRAM": "ghostty"}, True),
+        ("wezterm", {"TERM_PROGRAM": "WezTerm"}, True),
+        ("tmux", {"TMUX": "/synthetic/socket"}, True),
+        ("screen", {"TERM": "screen", "STY": "synthetic"}, True),
+        ("zellij", {"ZELLIJ": "synthetic"}, True),
     ):
         cases.append((name, [], 80, (True, True, True), extra, banner))
     for index, args in enumerate((
@@ -124,10 +147,6 @@ def main():
     ):
         cases.append((name, [], 80, streams, {}, False))
     version = run(after, ["--version"], streams=(False, False, False))["stdout"].strip().split()[-1]
-    display_version = "v" + version if version[0].isdigit() else version
-    version_cells = sum(0 if unicodedata.combining(char) else
-                        2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
-                        for char in display_version)
     results = []
     for name, args, width, streams, extra, banner in cases:
         old = run(before, args, width, streams, extra)
@@ -137,21 +156,48 @@ def main():
         assert old["state"] == new["state"] == [], (name, "unexpected state")
         comparable = dict(new)
         if banner:
-            header, body = new["terminal"].split("\n\n", 1)
-            header = plain(header)
-            assert "The OpenAI API" in header, (name, "missing greeting")
-            assert version in header, (name, "missing runtime version")
-            height = 6 if width >= 40 else 4
-            if width >= 56 and version_cells <= 7 and name not in ("no-color", "force-color-zero"):
-                height = 7
-            assert len(header.splitlines()) == height, (name, "unexpected header height")
+            raw_header, body = new["terminal"].split("\n\n", 1)
+            header = plain(raw_header)
+            lines = header.splitlines()
+            expect_ascii = name in ("ascii-locale", "unknown-locale", "ctype-ascii")
+            no_color = name in ("no-color", "force-color-zero", "clicolor-zero")
+            displayed_version = "v" + version if version[0].isdigit() else version
+            if expect_ascii:
+                displayed_version = "".join(char if ord(char) < 128 else
+                    ("\\u%04x" if ord(char) <= 0xffff else "\\U%08x") % ord(char)
+                    for char in displayed_version)
+            version_width = cell_width(displayed_version)
+            filled_width = max(76, 66 + version_width)
+            filled = not expect_ascii and not no_color and width >= filled_width and version_width <= 16
+            legacy_wide = (expect_ascii or no_color) and width >= 56 and version_width <= 16
+            height = 9 if filled else 6 if width >= 40 else 4
+            title_row = 2 if filled else 1 if legacy_wide else 2 if width >= 40 else 1
+            version_row = 3 if filled else 2 if legacy_wide else title_row
+            assert "What are we making today?" in header, (name, "missing greeting")
+            assert len(lines) == height, (name, "unexpected header height")
+            assert "OpenAI CLI" in lines[title_row] and displayed_version in lines[version_row], (name, "identity/version wrapped")
+            assert len({cell_width(line) for line in lines}) == 1, (name, "unequal frame widths")
+            assert all(cell_width(line) <= width for line in lines), (name, "header overflows")
             assert "✦" not in header and ">_" not in header, (name, "unexpected signature")
-            assert all(len(line) <= width for line in header.splitlines()), (name, "header overflows")
+            assert "\x1b" not in header, (name, "non-color terminal controls")
+            assert "(o u o)" not in header and "~U U U U~" not in header, (name, "unexpected mascot")
+            if filled:
+                assert all(cell_width(line) == filled_width for line in lines), (name, "incorrect filled-card width")
+                assert "What are we making today?" in lines[7], (name, "tagline moved")
+                assert all(re.search(r"\x1b\[(?:(?:4[0-7]|10[0-7])(?:[;m])|48[;:])", line) for line in raw_header.splitlines()[1:7]), (name, "missing filled pixel row")
+            elif legacy_wide:
+                assert all(cell_width(line) == 56 for line in lines), (name, "legacy fallback width changed")
+                if not expect_ascii:
+                    assert "█" in header, (name, "monochrome wordmark missing")
+            if not no_color and not expect_ascii:
+                assert not any(glyph in header for glyph in "█▀▄"), (name, "colored artwork contains block glyphs")
+            if expect_ascii:
+                assert header.isascii(), (name, "non-ASCII fallback")
             comparable["terminal"] = body
-            if name in ("no-color", "force-color-zero"):
+            if no_color:
                 assert "\x1b" not in new["terminal"], (name, "color was not disabled")
         else:
-            assert "The OpenAI API" not in str(new), (name, "unexpected banner")
+            assert "What are we making today?" not in str(new), (name, "unexpected banner")
         assert comparable == old, (name, "existing help/output changed")
         results.append({"case": name, "args": args, "width": width, "banner": banner, "status": "pass"})
     (options.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")

@@ -36,7 +36,7 @@ func TestMainWelcomeExplicitArgumentsStayPlain(t *testing.T) {
 			if got.code != 0 || got.stderr != "" || got.stdout == "" {
 				t.Fatalf("explicit invocation failed: %+v", got)
 			}
-			for _, marker := range []string{"┌", "The OpenAI API in your terminal.", "▄▀▀▄"} {
+			for _, marker := range []string{"┌", "What are we making today?", "▄▀▀▄"} {
 				if strings.Contains(got.stdout+got.stderr, marker) {
 					t.Errorf("explicit invocation contains welcome marker %q", marker)
 				}

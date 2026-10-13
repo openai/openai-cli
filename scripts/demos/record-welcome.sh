@@ -21,6 +21,13 @@ if [ "$demo_preview_rows" -gt "$demo_rows" ]; then
   exit 2
 fi
 demo_no_color="${NO_COLOR:-}"
+demo_source_manifest="${DEMO_SOURCE_MANIFEST:-}"
+demo_encoding="${DEMO_ENCODING:-utf8}"
+case "$demo_encoding" in
+  utf8) demo_locale='en_US.UTF-8';;
+  ascii) demo_locale='C';;
+  *) echo 'DEMO_ENCODING must be utf8 or ascii.' >&2; exit 2;;
+esac
 demo_theme="${DEMO_THEME:-dark}"
 demo_ansi_palette='000000,cd3131,0dbc79,e5e510,2472c8,bc3fbc,11a8cd,e5e5e5,666666,f14c4c,23d18b,f5f543,3b8eea,d670d6,29b8db,ffffff'
 case "$demo_theme" in
@@ -57,7 +64,14 @@ SCENE
 {
   echo 'feature: welcome banner on bare openai'
   echo "before commit: $demo_before_sha"
-  echo "after commit: $demo_after_sha"
+  if [ -n "$demo_source_manifest" ]; then
+    echo "after source parent: $demo_after_sha"
+    echo "after source manifest: $demo_source_manifest"
+    echo 'The parent alone does not identify uncommitted source. Use the manifest and binary hashes.'
+    shasum -a 256 "$demo_source_manifest"
+  else
+    echo "after commit: $demo_after_sha"
+  fi
   echo 'command: openai'
   echo 'version check: openai --version, saved separately before each scene'
   echo 'data: no API credentials; rejecting loopback fixture records unexpected requests'
@@ -65,6 +79,7 @@ SCENE
   echo 'startup: existing first-run behavior remains enabled within temporary directories'
   echo "render: asciinema + agg, Menlo 18px, $demo_palette, $demo_window_size, line height 1.2"
   echo "application color environment: COLORFGBG=$demo_colorfgbg COLORTERM=$demo_colorterm TERM=xterm-256color"
+  echo "character encoding environment: LC_ALL=$demo_locale"
   if [ -n "$demo_no_color" ]; then echo 'NO_COLOR: enabled'; else echo 'NO_COLOR: unset'; fi
   echo "top crops: first approximately $demo_preview_rows rows; full media and transcripts remain available"
   echo 'scope: terminal replay; not native graphical terminal, Linux, Windows, or font validation'
@@ -83,12 +98,12 @@ for demo_scene in before after; do
     "HOME=$demo_state/home" "XDG_CONFIG_HOME=$demo_state/config" \
     "XDG_CACHE_HOME=$demo_state/cache" "XDG_DATA_HOME=$demo_state/data" \
     "DEMO_WORKING_DIRECTORY=$demo_state/work" "DEMO_VERSION_FILE=$demo_output/$demo_scene-version.txt" \
-    "NO_COLOR=$demo_no_color" "COLORFGBG=$demo_colorfgbg" "COLORTERM=$demo_colorterm" "GOMAXPROCS=2"
+    "NO_COLOR=$demo_no_color" "COLORFGBG=$demo_colorfgbg" "COLORTERM=$demo_colorterm" "GOMAXPROCS=2" "LC_ALL=$demo_locale"
 done
 demo_stop_api
 cp "$demo_runtime/requests.txt" "$demo_output/requests.txt"
 test ! -s "$demo_output/requests.txt"
-"$demo_python" -I -B - "$demo_output" "$demo_columns" "$demo_rows" "$demo_no_color" "${FORCE_COLOR:-}" <<'PY'
+"$demo_python" -I -B - "$demo_output" "$demo_columns" "$demo_rows" "$demo_no_color" "$demo_encoding" <<'PY'
 import json
 import math
 import pathlib
@@ -99,6 +114,7 @@ import unicodedata
 output = pathlib.Path(sys.argv[1])
 columns, rows = map(int, sys.argv[2:4])
 no_color = bool(sys.argv[4])
+unicode_frame = sys.argv[5] == "utf8"
 csi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 def cell_width(text):
@@ -118,7 +134,7 @@ def read_scene(name):
     full_scene = csi.sub("", recorded).replace("\r\n", "\n")
     occupied = sum(max(1, math.ceil(cell_width(line) / columns)) for line in full_scene.split("\n"))
     assert occupied < rows, f"{name} needs more than {occupied} rows; raise DEMO_ROWS"
-    assert plain.startswith("NAME:\n") or plain.startswith("┌"), "missing help start"
+    assert plain.startswith(("NAME:\n", "┌", "+")), "missing help start"
     for expected in ("START HERE\n", "GLOBAL OPTIONS:\n", "Key setup: openai help setup\n"):
         assert expected in plain, f"{name} missing {expected!r}"
     if no_color:
@@ -134,24 +150,43 @@ assert report.startswith("openai version "), "unexpected runtime version report"
 version = report.removeprefix("openai version ")
 assert version, "runtime version is empty"
 display_version = "v" + version if version[0].isdigit() else version
+if not unicode_frame:
+    display_version = "".join(char if ord(char) < 128 else
+        ("\\u%04x" if ord(char) <= 0xffff else "\\U%08x") % ord(char) for char in display_version)
 title = "OpenAI CLI  " + display_version
-description = "The OpenAI API"
+description = "What are we making today?"
 banner_width = max(29, max(cell_width(title), cell_width(description)) + 4)
 assert "OpenAI CLI" not in before, "baseline already contains the welcome banner"
 if banner_width <= min(columns, 100):
     banner, help_text = after.split("\n\n", 1)
     lines = banner.splitlines()
-    expected_height = 6 if columns >= 40 else 4
-    wordmark = columns >= 56 and cell_width(display_version) <= 16
-    if wordmark and cell_width(display_version) <= 7 and not no_color and sys.argv[5] != "0":
-        expected_height = 7
-    title_row = 1 if wordmark else 2 if columns >= 40 else 1
-    version_row = 2 if wordmark else title_row
-    assert len(lines) == expected_height and lines[0].startswith("┌") and lines[-1].startswith("└"), "invalid banner frame"
+    version_width = cell_width(display_version)
+    filled_width = max(76, 66 + version_width)
+    filled = unicode_frame and not no_color and columns >= filled_width and version_width <= 16
+    legacy_wide = (not unicode_frame or no_color) and columns >= 56 and version_width <= 16
+    expected_height = 9 if filled else 6 if columns >= 40 else 4
+    title_row = 2 if filled else 1 if legacy_wide else 2 if columns >= 40 else 1
+    version_row = 3 if filled else 2 if legacy_wide else title_row
+    top, bottom = ("┌", "└") if unicode_frame else ("+", "+")
+    assert len(lines) == expected_height and lines[0].startswith(top) and lines[-1].startswith(bottom), "invalid banner frame"
     assert "OpenAI CLI" in lines[title_row] and display_version in lines[version_row], "identity/version wrapped"
     assert description in banner, "missing API description"
     assert len({cell_width(line) for line in lines}) == 1, "unequal frame widths"
+    if filled:
+        assert all(cell_width(line) == filled_width for line in lines), "incorrect filled-card width"
+        assert "What are we making today?" in lines[7], "tagline moved"
+        raw_lines = after_raw.split("\r\n\r\n", 1)[0].split("\r\n")
+        assert all(re.search(r"\x1b\[(?:(?:4[0-7]|10[0-7])(?:[;m])|48[;:])", line) for line in raw_lines[1:7]), "missing filled pixel row"
+    elif legacy_wide:
+        assert all(cell_width(line) == 56 for line in lines), "legacy fallback width changed"
+        if unicode_frame:
+            assert "█" in banner, "monochrome wordmark missing"
+    if unicode_frame and not no_color:
+        assert not any(glyph in banner for glyph in "█▀▄"), "colored artwork contains block glyphs"
     assert "✦" not in banner and ">_" not in banner, "unexpected signature mark"
+    assert "(o u o)" not in banner and "~U U U U~" not in banner, "unexpected mascot"
+    if not unicode_frame:
+        assert banner.isascii(), "non-ASCII decoration in the portable fallback"
     assert all(cell_width(line) <= columns for line in lines), "banner exceeds terminal width"
     assert help_text == before, "welcome changed existing help or command groups"
     assert after_raw.split("\r\n\r\n", 1)[1] == before_raw, "welcome changed existing help bytes"
