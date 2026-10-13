@@ -26,7 +26,7 @@ type kittyOutputBinding struct {
 // PrepareNativeImageOutput binds the writer before a command reads input or waits for
 // the API. Preparation errors are deferred until a preview actually uses it.
 // Close reports helper failures only after use, preserving non-preview paths.
-// The existing Kitty worker also carries VS Code's IIP bytes without interpreting them.
+// The existing Kitty worker also carries VS Code and Konsole IIP bytes without interpreting them.
 func PrepareNativeImageOutput(ctx context.Context, out io.Writer) (context.Context, func() error) {
 	file, ok := out.(*os.File)
 	if !ok || !term.IsTerminal(file.Fd()) {

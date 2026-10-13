@@ -179,10 +179,10 @@ func TestKonsoleImageOptIn(t *testing.T) {
 		{"disabled", "auto", "0", "261170", "blocks", true, nil},
 		{"strict assertion", "auto", "true", "261170", "blocks", true, nil},
 		{"assertion whitespace", "auto", "1 ", "261170", "blocks", true, nil},
-		{"auto opt in", "auto", "1", "261170", "iterm", true, nil},
-		{"on opt in", "on", "1", "261170", "iterm", true, nil},
-		{"protocol floor", "auto", "1", "220400", "iterm", true, nil},
-		{"older backport assertion", "auto", "1", "230805", "iterm", true, nil},
+		{"auto opt in", "auto", "1", "261170", "iterm-konsole", true, nil},
+		{"on opt in", "on", "1", "261170", "iterm-konsole", true, nil},
+		{"protocol floor", "auto", "1", "220400", "iterm-konsole", true, nil},
+		{"older backport assertion", "auto", "1", "230805", "iterm-konsole", true, nil},
 		{"protocol unavailable", "auto", "1", "220399", "blocks", true, nil},
 		{"missing identity", "auto", "1", "", "blocks", true, nil},
 		{"malformed identity", "auto", "1", "26.11.70", "blocks", true, nil},
@@ -207,10 +207,10 @@ func TestKonsoleImageOptIn(t *testing.T) {
 		{"kitty program wins", "auto", "1", "261170", "kitty", true, map[string]string{"TERM_PROGRAM": "kitty"}},
 		{"kitty term wins", "auto", "1", "261170", "kitty", true, map[string]string{"TERM": "xterm-kitty"}},
 		{"ghostty term wins", "auto", "1", "261170", "kitty", true, map[string]string{"TERM": "xterm-ghostty"}},
-		{"no color retains native", "auto", "1", "261170", "iterm", true, map[string]string{"NO_COLOR": "1"}},
+		{"no color retains native", "auto", "1", "261170", "iterm-konsole", true, map[string]string{"NO_COLOR": "1"}},
 		{"no color without assertion", "auto", "", "261170", "", true, map[string]string{"NO_COLOR": "1"}},
 		{"ssh missing identity", "auto", "1", "", "blocks", true, map[string]string{"SSH_TTY": "/dev/pts/1"}},
-		{"ssh explicit assertion", "auto", "1", "261170", "iterm", true, map[string]string{"SSH_TTY": "/dev/pts/1"}},
+		{"ssh explicit assertion", "auto", "1", "261170", "iterm-konsole", true, map[string]string{"SSH_TTY": "/dev/pts/1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := map[string]string{"TERM": "xterm-256color", "KONSOLE_VERSION": tc.version, "OPENAI_KONSOLE_IMAGES": tc.setting}

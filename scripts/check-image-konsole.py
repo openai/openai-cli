@@ -19,12 +19,16 @@ import pathlib
 import platform
 import re
 import select
+import shutil
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
+import termios
 import threading
 import time
+import zlib
 
 SCRIPTS = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
@@ -85,7 +89,7 @@ def main():
                 'host': {'system': platform.system(), 'machine': platform.machine(), 'python': platform.python_version()},
                 'scope': 'Built CLI, sized POSIX PTYs, synthetic loopback API, no native Konsole rendering claim.',
                 'limits': ['No native terminal resize, scrollback, or patch-detection proof.',
-                           'Cancellation tests API waiting and post-partial waiting, not blocked image writes.'],
+                           'Blocked-write cancellation suspends output on a private, non-controlling PTY before SIGINT.'],
                 'results': results}
     normal, pixels = fixtures.fixture_png(8, 4)
     shape = (8, 4, pixels)
@@ -162,6 +166,72 @@ def main():
                 finally:
                     terminal.close()
 
+        def blocked_preview(name, extra=None):
+            home, env = environment(name, extra)
+            source = home / 'synthetic large image.png'
+            pixels = hashlib.shake_256(b'konsole-blocked-output').digest(1024 * 1024 * 3)
+
+            def chunk(kind, data):
+                return (struct.pack('>I', len(data)) + kind + data
+                        + struct.pack('>I', zlib.crc32(kind + data)))
+
+            rows = b''.join(b'\0' + pixels[y * 3072:(y + 1) * 3072] for y in range(1024))
+            image = (b'\x89PNG\r\n\x1a\n'
+                     + chunk(b'IHDR', struct.pack('>IIBBBBB', 1024, 1024, 8, 2, 0, 0, 0))
+                     + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
+            source.write_bytes(image)
+            stderr_path = output / (name + '.stderr')
+            # A controlling session can delay Darwin's exit while unread data
+            # remains. Test the writer independently of that kernel teardown.
+            with stderr_path.open('wb') as stderr:
+                terminal = Terminal(str(binary), ['images', 'preview', str(source)], env, stderr_file=stderr)
+            suspended = False
+            try:
+                deadline = time.monotonic() + 12
+                while len(terminal.raw) < 4096 or b'\x1b]1337;File=' not in terminal.raw:
+                    require(terminal.child.poll() is None and time.monotonic() < deadline,
+                            'large preview did not begin its image payload')
+                    terminal.read()
+                # Suspend this owned terminal's output after the payload starts.
+                # No reader or kernel queue timing can release the writer before
+                # cancellation. Restore output only after the child has exited.
+                termios.tcflow(terminal.slave, termios.TCOOFF)
+                suspended = True
+                started = time.monotonic()
+                terminal.child.send_signal(signal.SIGINT)
+                try:
+                    status = terminal.child.wait(timeout=4)
+                except subprocess.TimeoutExpired:
+                    raise AssertionError('image output stayed blocked after SIGINT') from None
+                elapsed = time.monotonic() - started
+                require(status == 1, f'local preview cancellation changed exit status: {status}')
+                require(b'cancel' in stderr_path.read_bytes().lower(), 'missing cancellation diagnostic')
+                require(source.read_bytes() == image, 'blocked preview changed the original')
+                termios.tcflow(terminal.slave, termios.TCOON)
+                suspended = False
+                terminal.finish(1, expect_picker=False)
+                passed(name, exit=status, cancellation_seconds=round(elapsed, 3),
+                       output_suspended_until_exit=True, reader_stopped_until_exit=True, original_preserved=True)
+            except Exception as exc:
+                results.append(dict(case=name, result='fail', error=str(exc)))
+                raise
+            finally:
+                # Release only this owned PTY on a failed regression. Reap the
+                # child even when an older binary cannot cancel its tty write.
+                try:
+                    if suspended:
+                        termios.tcflow(terminal.slave, termios.TCOON)
+                finally:
+                    try:
+                        if terminal.child.poll() is None:
+                            terminal.child.kill()
+                        terminal.child.wait(timeout=5)
+                    finally:
+                        try:
+                            terminal.save(output / name)
+                        finally:
+                            terminal.close()
+
         generate = ['images', 'generate', '--prompt', 'Synthetic Konsole fixture']
         stream = [*generate, '--partial-images', '2', '--max-items', '-1']
         try:
@@ -227,6 +297,17 @@ def main():
 
             tty('current-width-after-request', generate, case=Response('ok', normal, True),
                 interact=release_resized, widths=(16,))
+
+            executable = root / 'removed executable'
+            shutil.copy2(binary, executable)
+
+            def remove_executable(terminal, case):
+                wait_for_request(terminal, case.started)
+                executable.unlink()
+                case.release.set()
+
+            tty('prepared-before-executable-removal', generate, executable=executable,
+                case=Response('ok', normal, True), interact=remove_executable)
 
             def preserve_input(terminal, case):
                 wait_for_request(terminal, case.started)
@@ -308,6 +389,8 @@ def main():
             saved_files(home, 1, normal)
             require(not server.case.errors and len(server.case.requests) == 1, 'redirected API request changed')
             passed('stdout-pipe', exit=0, frames=0, saved=1)
+            blocked_preview('cancel-blocked-vscode-control', {'TERM_PROGRAM': 'vscode', 'OPENAI_VSCODE_IMAGES': '1'})
+            blocked_preview('cancel-blocked-preview')
         except Exception as exc:
             evidence['failure'] = str(exc)
             raise

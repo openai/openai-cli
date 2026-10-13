@@ -74,7 +74,7 @@ func handleImagesPreview(ctx context.Context, command *cli.Command) (resultErr e
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
-	if protocol == "kitty" || protocol == "iterm-auto" {
+	if protocol == "kitty" || protocol == "iterm-auto" || protocol == "iterm-konsole" {
 		var closeOutput func() error
 		ctx, closeOutput = terminalimage.PrepareNativeImageOutput(ctx, out)
 		defer func() { resultErr = errors.Join(resultErr, closeOutput()) }()

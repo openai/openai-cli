@@ -214,7 +214,7 @@ func savedImageProtocol(mode string, terminal bool, getenv func(string) string) 
 			version := getenv("KONSOLE_VERSION")
 			if getenv("OPENAI_KONSOLE_IMAGES") == "1" && len(version) == 6 {
 				if number, err := strconv.Atoi(version); err == nil && number >= 220400 {
-					return "iterm"
+					return "iterm-konsole"
 				}
 			}
 		}

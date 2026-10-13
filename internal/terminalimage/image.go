@@ -38,12 +38,16 @@ func Write(ctx context.Context, w io.Writer, img image.Image, protocol string, c
 		return writeKittyImage(ctx, w, img, columns)
 	case "iterm":
 		return writeITermImage(ctx, w, img, columns)
-	case "iterm-auto":
+	case "iterm-auto", "iterm-konsole":
 		// xterm's IIP renderer fits auto/auto within its current viewport.
 		// An explicit width overrides its height limit, and OS window metadata
 		// does not reliably describe VS Code's cell size (including on Windows).
+		if protocol == "iterm-auto" {
+			columns = 0
+		}
+		// Konsole keeps the measured width, but shares the cancellable worker.
 		return writeITermOutput(ctx, w, func(destination io.Writer) error {
-			return writeITermImage(ctx, destination, img, 0)
+			return writeITermImage(ctx, destination, img, columns)
 		})
 	case "blocks":
 		cellWidth, cellHeight := 1, 2
