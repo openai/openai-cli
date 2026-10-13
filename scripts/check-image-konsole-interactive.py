@@ -190,7 +190,7 @@ def main():
                 t.resize(35 + cycle % 4, 15 + cycle % 3)
             t.resize(31, 17)
             offset = len(t.raw)
-            last = await_frame(t, offset)
+            await_frame(t, offset)
             deadline = time.monotonic() + .5
             while time.monotonic() < deadline:
                 t.read()
