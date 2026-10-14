@@ -208,15 +208,22 @@ func TestNestedParserErrorGuidancePreservesLocalAliasPrecedence(t *testing.T) {
 			ordinary := &observedOrdinaryAliasErrorFlag{IntFlag: &cli.IntFlag{Name: "count", Aliases: []string{"v"}, Hidden: tc.ordinaryHidden}}
 			flags := []cli.Flag{outer, ordinary, inner}
 			if tc.innerFirst {
+				ordinary.Aliases = nil
 				flags = []cli.Flag{outer, inner, ordinary}
+			} else {
+				inner.Aliases = nil
 			}
+			inherited := &cli.StringFlag{Name: "fallback", Aliases: []string{"v"}}
 			actionRan := false
 			leaf := &cli.Command{Name: "create", Flags: flags, Action: func(context.Context, *cli.Command) error { actionRan = true; return nil }}
-			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard, Commands: []*cli.Command{leaf}}
+			root := &cli.Command{Name: "openai", Flags: []cli.Flag{inherited}, Writer: io.Discard, ErrWriter: io.Discard, Commands: []*cli.Command{leaf}}
 			ConfigureCommandErrors(root)
 			err := root.Run(t.Context(), []string{"openai", "create", "-v=synthetic-private-invalid"})
 			if err == nil || actionRan {
 				t.Fatalf("invalid alias value reached the action: err=%v, action=%t", err, actionRan)
+			}
+			if inherited.IsSet() {
+				t.Fatal("inherited string parser accepted the local alias value")
 			}
 			var winner cli.Flag
 			var parseFailure error
@@ -228,6 +235,13 @@ func TestNestedParserErrorGuidancePreservesLocalAliasPrecedence(t *testing.T) {
 					t.Fatal("two declarations rejected one alias value")
 				}
 				winner, parseFailure = ordinary, ordinary.failure
+			}
+			var expectedWinner cli.Flag = ordinary
+			if tc.innerFirst {
+				expectedWinner = inner
+			}
+			if winner != expectedWinner {
+				t.Fatalf("alias parser owner=%T, want %T", winner, expectedWinner)
 			}
 			var parsed *strconv.NumError
 			if !errors.As(parseFailure, &parsed) {
@@ -258,6 +272,40 @@ func TestNestedParserErrorGuidancePreservesLocalAliasPrecedence(t *testing.T) {
 			}
 			if got := parserFlagExpectedType(leaf, "v"); got != expected {
 				t.Fatalf("alias type=%q, actual parser requires %q", got, expected)
+			}
+		})
+	}
+}
+
+func TestNestedParserErrorGuidanceRejectsDuplicateLocalAliases(t *testing.T) {
+	for _, tc := range []struct {
+		name                       string
+		innerFirst, ordinaryHidden bool
+	}{
+		{"inner before ordinary", true, false},
+		{"ordinary before inner", false, false},
+		{"hidden ordinary before inner", false, true},
+		{"inner before hidden ordinary", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outer := &requestflag.Flag[map[string]any]{Name: "settings", BodyPath: "settings"}
+			inner := &observedNestedAliasErrorFlag{InnerFlag: &requestflag.InnerFlag[bool]{Name: "settings.enabled", Aliases: []string{"v"}, InnerField: "enabled", OuterFlag: outer}}
+			ordinary := &observedOrdinaryAliasErrorFlag{IntFlag: &cli.IntFlag{Name: "count", Aliases: []string{"v"}, Hidden: tc.ordinaryHidden}}
+			flags := []cli.Flag{outer, ordinary, inner}
+			if tc.innerFirst {
+				flags = []cli.Flag{outer, inner, ordinary}
+			}
+			actionRan := false
+			leaf := &cli.Command{Name: "create", Flags: flags, Action: func(context.Context, *cli.Command) error { actionRan = true; return nil }}
+			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard, Commands: []*cli.Command{leaf}}
+			ConfigureCommandErrors(root)
+			err := root.Run(t.Context(), []string{"openai", "create", "-v=synthetic-private-invalid"})
+			want := `flag "v" defined multiple times in command "openai create"`
+			if err == nil || err.Error() != want {
+				t.Fatalf("duplicate alias rejection=%v, want %q", err, want)
+			}
+			if actionRan || inner.failure != nil || ordinary.failure != nil {
+				t.Fatalf("duplicate aliases reached parsing or action: inner=%v, ordinary=%v, action=%t", inner.failure, ordinary.failure, actionRan)
 			}
 		})
 	}
