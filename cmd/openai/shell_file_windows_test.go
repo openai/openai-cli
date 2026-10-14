@@ -132,6 +132,9 @@ func TestMainShellWindowsNative(t *testing.T) {
 			t.Run("request configuration", func(t *testing.T) {
 				testWindowsRequestConfiguration(t, shell, work, binary, helper, command, legacyArguments)
 			})
+			t.Run("file upload receipt", func(t *testing.T) {
+				testWindowsFilesConsoleReceipt(t, shell.name, path, binary, helper, command)
+			})
 			t.Run("field and whole request", func(t *testing.T) {
 				requests := make(chan map[string]any, 8)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -310,6 +313,7 @@ func TestMainShellWindowsNative(t *testing.T) {
 			t.Run(fmt.Sprintf("console cancellation/existing=%t/event=%d", existing, event), func(t *testing.T) { testWindowsDownloadConsoleCancellation(t, binary, event, existing) })
 		}
 	}
+	testWindowsStreamCancellation(t, binary)
 }
 
 func commandArgument(shell nativeShell, value string) string {
@@ -517,6 +521,45 @@ func testWindowsDownloadConsoleCancellation(t *testing.T, binary string, event u
 	assertWindowsDownloadStagesAbsent(t, work)
 }
 
+type windowsConsoleResult struct {
+	Started    bool
+	EventSent  bool
+	Event      uint32
+	ChildExit  *int
+	TimedOut   bool
+	ForcedKill bool
+}
+
+// Publish only a complete receipt. A helper failure must not resemble CLI cancellation.
+func writeWindowsConsoleResult(t *testing.T, result windowsConsoleResult) {
+	t.Helper()
+	path := os.Getenv("OPENAI_CLI_TEST_CONSOLE_RESULT")
+	if path == "" {
+		return
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("console result path must be fresh: %v", err)
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	temporary := path + ".tmp"
+	file, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(temporary)
+	written, writeErr := file.Write(data)
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil || written != len(data) {
+		t.Fatalf("write console result: bytes=%d/%d write=%v close=%v", written, len(data), writeErr, closeErr)
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Only this helper and its CLI child share the newly allocated console.
 func TestShellFileWindowsConsoleHelper(t *testing.T) {
 	separator := slices.Index(os.Args, "--")
@@ -543,6 +586,7 @@ func TestShellFileWindowsConsoleHelper(t *testing.T) {
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
+	observation := windowsConsoleResult{Started: true}
 	done := make(chan error, 1)
 	go func() { done <- child.Wait() }()
 	events := make(chan byte, 1)
@@ -555,26 +599,39 @@ func TestShellFileWindowsConsoleHelper(t *testing.T) {
 		}
 	}()
 	var result error
+	helperCode := -1
 	select {
 	case result = <-done:
 	case event := <-events:
 		if event > 1 {
+			observation.ForcedKill = true
 			child.Process.Kill()
-			<-done
-			os.Exit(125)
+			result = <-done
+			helperCode = 125
+			break
 		}
 		if err := windows.GenerateConsoleCtrlEvent(uint32(event), 0); err != nil {
 			child.Process.Kill()
 			<-done
 			t.Fatal(err)
 		}
+		observation.Event, observation.EventSent = uint32(event), true
 		result = <-done
 	}
-	if result == nil {
-		os.Exit(0)
+	code := 0
+	if result != nil {
+		if exit, ok := result.(*exec.ExitError); ok {
+			code = exit.ExitCode()
+		} else {
+			t.Fatal(result)
+		}
 	}
-	if exit, ok := result.(*exec.ExitError); ok {
-		os.Exit(exit.ExitCode())
+	observation.ChildExit = &code
+	observation.TimedOut = ctx.Err() != nil
+	observation.ForcedKill = observation.ForcedKill || observation.TimedOut
+	writeWindowsConsoleResult(t, observation)
+	if helperCode >= 0 {
+		os.Exit(helperCode)
 	}
-	t.Fatal(result)
+	os.Exit(code)
 }
