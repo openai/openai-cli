@@ -295,6 +295,24 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageUploadQuotedCountPreservesMultipart|TestMainImageEditQuotedStreamScalars|TestMainImageUploadMalformedScalarTextFailsBeforeRequest|TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues|TestMainImageEditStreamSavesFinalAndCloses|TestMainImageUploadBatchCollisionAndPartialFailure|TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse|TestMainImageGenerationPartialFailureKeepsSavedImage|TestMainImageGenerationClosedStdoutKeepsSavedImage|TestImageReceiptProcessRejectsNonPipeStdout)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Windows image save boundaries and interruption
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageGenerationFilenamesAndDirectoryValidation|TestMainImageGenerationKeepsReservedProbeDirectory|TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest|TestMainImageUploadClosedStdoutPreservesPartialSave|TestMainImageEditInterruptClosesStreamWithoutSavingPartial|TestImageEditInterruptCompletion|TestImageEditInterruptControllerResult)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-save-process-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows image filesystem helpers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          OPENAI_CLI_REQUIRE_WINDOWS_SYMLINKS: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./internal/imageoutput -count=1 -timeout=3m -v -json -run '^(TestResolveDirectory|TestSaveResponseFormatsAndUniqueNames|TestSaveResponseConcurrentNames|TestSaveResponseCancellation|TestSaveResponseNamedCollisionDoesNotFollowSymlink|TestCheckNameDoesNotFollowOrRemoveSymlinks|TestCheckNameKeepsReservedProbeCollisions)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-save-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test Windows audio output behavior
         if: runner.os == 'Windows'
         shell: pwsh
@@ -467,6 +485,7 @@ jobs:
               return {root} | {f"{root}/{child}" for child in children}
 
           strict_packages = {}
+
           if os.environ["RUNNER_OS"] == "Linux":
               fish_examples = [
                   f"copy_{surface}-help_image_example{location}"
@@ -576,6 +595,38 @@ jobs:
               ) | required_cases(
                   "TestImageReceiptProcessRejectsNonPipeStdout", [],
               )
+              suites["image-save-process-tests.jsonl"] = required_cases(
+                  "TestMainImageGenerationFilenamesAndDirectoryValidation",
+                  ["prompt_traversal_and_Unicode", "explicit_Unicode_and_extension", "invalid_name=../outside",
+                   "invalid_name=..", r"invalid_name=nested\file", "invalid_name=CON",
+                   r"invalid_name=escape\x1bname", "invalid_name=", "missing_custom_directory"],
+              ) | required_cases(
+                  "TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest",
+                  ["existing_image=false", "existing_image=true"],
+              ) | required_cases(
+                  "TestMainImageUploadClosedStdoutPreservesPartialSave", ["edit", "create-variation"],
+              ) | {"TestMainImageEditInterruptClosesStreamWithoutSavingPartial",
+                   "TestMainImageGenerationKeepsReservedProbeDirectory"} | required_cases(
+                  "TestImageEditInterruptCompletion",
+                  ["just_before_absolute_limit", "absolute_limit", "after_absolute_limit", "slow_startup_within_limit",
+                   "controller_timeout_after_slow_startup"],
+              ) | required_cases(
+                  "TestImageEditInterruptControllerResult",
+                  ["CTRL_C_exit", "signed_CTRL_C_exit", "unrelated_exit_1", "unrelated_exit_7",
+                   "missing_startup", "missing_event", "wrong_event", "missing_child_status",
+                   "zero_child_status", "mismatched_child_status", "controller_timeout", "forced_kill"],
+              )
+              suites["image-save-helper-tests.jsonl"] = {
+                  "TestResolveDirectory", "TestSaveResponseFormatsAndUniqueNames",
+                  "TestSaveResponseConcurrentNames", "TestSaveResponseNamedCollisionDoesNotFollowSymlink",
+                  "TestCheckNameDoesNotFollowOrRemoveSymlinks",
+              } | required_cases(
+                  "TestSaveResponseCancellation", ["before_saving", "after_partial_write"],
+              ) | required_cases(
+                  "TestCheckNameKeepsReservedProbeCollisions", ["file", "directory", "symlink"],
+              )
+              strict_packages["image-save-process-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+              strict_packages["image-save-helper-tests.jsonl"] = "github.com/openai/openai-cli/internal/imageoutput"
               audio_cases = {
                   "JSONPreservesTextAndMetadata": ["audio:transcriptions", "audio:translations"],
                   "TextAndSubtitles": [f"{command}/{format}" for command in ["audio:transcriptions", "audio:translations"]
@@ -1093,6 +1144,7 @@ jobs:
                   "native-command-tests.jsonl",
                   "image-command-order-tests.jsonl", "fish-image-help-tests.jsonl", "fish-help-invocation-tests.jsonl",
                   "windows-help-invocation-tests.jsonl",
+                  "image-save-process-tests.jsonl", "image-save-helper-tests.jsonl",
                   "request-configuration-public-tests.jsonl", "request-configuration-helper-tests.jsonl",
                   "windows-native-shell-tests.jsonl", "windows-download-tests.jsonl",
                   "audio-tests.jsonl", "resource-tests.jsonl", "streaming-text-tests.jsonl",
