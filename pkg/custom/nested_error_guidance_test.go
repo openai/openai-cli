@@ -213,7 +213,7 @@ func TestNestedParserErrorGuidancePreservesLocalAliasPrecedence(t *testing.T) {
 			} else {
 				inner.Aliases = nil
 			}
-			inherited := &cli.StringFlag{Name: "fallback", Aliases: []string{"v"}}
+			inherited := &cli.FloatFlag{Name: "fallback", Aliases: []string{"v"}}
 			actionRan := false
 			leaf := &cli.Command{Name: "create", Flags: flags, Action: func(context.Context, *cli.Command) error { actionRan = true; return nil }}
 			root := &cli.Command{Name: "openai", Flags: []cli.Flag{inherited}, Writer: io.Discard, ErrWriter: io.Discard, Commands: []*cli.Command{leaf}}
@@ -223,7 +223,7 @@ func TestNestedParserErrorGuidancePreservesLocalAliasPrecedence(t *testing.T) {
 				t.Fatalf("invalid alias value reached the action: err=%v, action=%t", err, actionRan)
 			}
 			if inherited.IsSet() {
-				t.Fatal("inherited string parser accepted the local alias value")
+				t.Fatal("inherited number parser received the local alias value")
 			}
 			var winner cli.Flag
 			var parseFailure error
