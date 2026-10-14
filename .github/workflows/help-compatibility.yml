@@ -529,7 +529,8 @@ jobs:
                    "controller_timeout_after_slow_startup"],
               ) | required_cases(
                   "TestImageEditInterruptControllerResult",
-                  ["nonzero_child_exit", "missing_startup", "missing_event", "wrong_event", "missing_child_status",
+                  ["CTRL_C_exit", "signed_CTRL_C_exit", "unrelated_exit_1", "unrelated_exit_7",
+                   "missing_startup", "missing_event", "wrong_event", "missing_child_status",
                    "zero_child_status", "mismatched_child_status", "controller_timeout", "forced_kill"],
               )
               suites["image-save-helper-tests.jsonl"] = {

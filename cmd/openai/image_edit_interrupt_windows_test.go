@@ -68,20 +68,29 @@ func imageEditInterruptCommand(t *testing.T, ctx context.Context, binary, home s
 }
 
 func verifyImageEditInterruptControllerResult(result windowsConsoleResult, helperExit int) error {
+	// Piped image output uses the default Windows Ctrl-C termination path.
+	// A queued event must not validate an unrelated early CLI failure.
 	if !result.Started || !result.EventSent || result.Event != windows.CTRL_C_EVENT || result.ChildExit == nil ||
-		*result.ChildExit == 0 || *result.ChildExit != helperExit || result.TimedOut || result.ForcedKill {
+		uint32(*result.ChildExit) != uint32(windows.STATUS_CONTROL_C_EXIT) ||
+		*result.ChildExit != helperExit || result.TimedOut || result.ForcedKill {
 		return fmt.Errorf("controller result does not establish image-edit cancellation")
 	}
 	return nil
 }
 
 func TestImageEditInterruptControllerResult(t *testing.T) {
+	controlExit := uint32(windows.STATUS_CONTROL_C_EXIT)
 	for _, test := range []struct {
 		name   string
 		change func(*windowsConsoleResult, *int)
 		valid  bool
 	}{
-		{"nonzero child exit", nil, true},
+		{"CTRL_C exit", nil, true},
+		{"signed CTRL_C exit", func(result *windowsConsoleResult, helper *int) {
+			*result.ChildExit, *helper = int(int32(controlExit)), int(int32(controlExit))
+		}, true},
+		{"unrelated exit 1", func(result *windowsConsoleResult, helper *int) { *result.ChildExit, *helper = 1, 1 }, false},
+		{"unrelated exit 7", func(result *windowsConsoleResult, helper *int) { *result.ChildExit, *helper = 7, 7 }, false},
 		{"missing startup", func(result *windowsConsoleResult, _ *int) { result.Started = false }, false},
 		{"missing event", func(result *windowsConsoleResult, _ *int) { result.EventSent = false }, false},
 		{"wrong event", func(result *windowsConsoleResult, _ *int) { result.Event = windows.CTRL_BREAK_EVENT }, false},
@@ -92,7 +101,7 @@ func TestImageEditInterruptControllerResult(t *testing.T) {
 		{"forced kill", func(result *windowsConsoleResult, _ *int) { result.ForcedKill = true }, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			childExit, helperExit := 7, 7
+			childExit, helperExit := int(controlExit), int(controlExit)
 			result := windowsConsoleResult{Started: true, EventSent: true, Event: windows.CTRL_C_EVENT, ChildExit: &childExit}
 			if test.change != nil {
 				test.change(&result, &helperExit)
