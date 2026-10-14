@@ -31,6 +31,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var imageModelsFailure *imageModelsError
 	var voiceTypeFailure *voiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
+	var adminCredentialsFailure *adminCredentialsError
+	var adminSetupFailure *adminSetupError
 	var utilityFailure *localUtilityError
 	var downloadFailure *downloadSaveError
 	var receiptFailure *saveReceiptError
@@ -38,11 +40,16 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var modelsListFailure *modelsListError
 	var finiteListFailure *finiteJSONListError
 	switch {
+	case errors.As(failure, &adminSetupFailure):
+		return adminSetupFailure.Error()
 	case errors.As(failure, &downloadFailure):
 		return downloadFailure.message
 	case errors.As(failure, &receiptFailure):
 		return receiptFailure.Error()
 	case errors.Is(failure, context.Canceled):
+		if errors.As(failure, &imageFailure) && imageFailure.preserveOnCancel {
+			return imageFailure.message
+		}
 		return "Request canceled."
 	case errors.As(failure, &utilityFailure):
 		return utilityFailure.Error()
@@ -70,6 +77,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return voiceTypeFailure.Error()
 	case errors.As(failure, &helpTopicFailure):
 		return unknownCommandAt(helpTopicFailure.Parent, helpTopicFailure.Topic)
+	case errors.As(failure, &adminCredentialsFailure):
+		return adminCredentialsFailure.Error()
 	case errors.As(failure, &pathError):
 		switch {
 		case errors.Is(pathError, os.ErrNotExist):
