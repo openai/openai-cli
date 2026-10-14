@@ -55,7 +55,11 @@ func TestSocketPairPagerFailureKeepsReusedDescriptorOpen(t *testing.T) {
 	require.NoError(t, unix.Close(probe[0]))
 	require.NoError(t, unix.Close(probe[1]))
 	file, pid, err := openSocketPairPager("synthetic descriptor regression")
-	require.Error(t, err)
+	if failure == "ForkExec" {
+		require.ErrorIs(t, err, unix.ENOEXEC, "reach the invalid executable after socket setup")
+	} else {
+		require.ErrorIs(t, err, os.ErrNotExist, "reach pager lookup after socket setup")
+	}
 	require.Nil(t, file)
 	require.Zero(t, pid)
 
