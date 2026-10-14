@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the pager descriptor regression in one disposable Ubuntu WSL 1 distro.
+"""Run fixed compatibility checks in one disposable Ubuntu WSL 1 distro.
 
 This is a process check. It does not test Windows Terminal or WSL 2.
 The calling workflow cross-compiles the test binary before importing Ubuntu.
@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 
 
@@ -31,6 +32,82 @@ IMAGE_LIMIT = 512 * 1024 * 1024
 OUTPUT_LIMIT = 8 * 1024 * 1024
 ROOT = "TestSocketPairPagerFailureKeepsReusedDescriptorOpen"
 TESTS = {ROOT, ROOT + "/LookPath", ROOT + "/ForkExec"}
+
+# Public stdin, download, and output contracts. These invoke main() in subprocesses.
+PROCESS_CASES = {
+    "TestMainShellExplicitTextInput": [
+        "plain/untrusted=false", "plain/untrusted=true", "JSON_stays_text/untrusted=false",
+        "JSON_stays_text/untrusted=true", "YAML_stays_text/untrusted=false", "YAML_stays_text/untrusted=true",
+        "empty/untrusted=false", "empty/untrusted=true", "unicode_and_control/untrusted=false",
+        "unicode_and_control/untrusted=true", "base64/untrusted=false", "base64/untrusted=true",
+        "non_UTF8_auto_base64/untrusted=false", "non_UTF8_auto_base64/untrusted=true",
+        "stdin_content_cannot_expand_files/untrusted=false",
+        "stdin_content_cannot_expand_files/untrusted=true",
+    ],
+    "TestMainShellWholeRequestAndRepeatedFlags": [
+        "JSON_override_and_unknown_null", "YAML", "last_scalar_releases_stdin", "last_scalar_selects_stdin",
+        "nested_field_selects_stdin", "nested_replacement_releases_stdin",
+        "empty_nullable_replacement_releases_stdin", "null_nullable_replacement_releases_stdin",
+        "untrusted_reference_remains_literal",
+    ],
+    "TestMainShellStdinConflictBeforeRead": [
+        "responses_create_--model_model_synthetic_--input_@-_--instructions_@-",
+        "audio_transcriptions_create_--model_whisper-1_--file_-_--prompt_@-",
+        "images_edit_--model_dall-e-2_--prompt_synthetic_--image_-_--image_-",
+        "responses_create_--model_model_synthetic_--input_[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"@-\"},{\"type\":\"input_text\",\"text\":\"@data://-\"}]}]",
+        "chat_completions_create_--model_model_synthetic_--message_{\"role\":\"user\",\"content\":\"@-\"}_--message_{\"role\":\"user\",\"content\":\"@file://-\"}",
+    ],
+    "TestMainShellStreamingInputDispatch": [
+        "JSON_true", "YAML_true", "explicit_false", "explicit_null", "last_stream_false", "last_stream_null",
+        "last_stream_true", "body_false", "body_null", "omitted",
+    ],
+    "TestMainShellMachineStreamDeliversBeforeNextEvent": [
+        "body/jsonl", "body/json", "body/pretty", "body/raw", "body/yaml", "flag/jsonl", "flag/json",
+        "flag/pretty", "flag/raw", "flag/yaml",
+    ],
+    "TestMainShellSaveReceiptWaitsForBodyCompletion": [],
+    "TestMainShellClosedStdoutStopsDownload": [],
+    "TestMainShellClosedStdoutPreservesStreamFailure": [],
+    "TestMainFilesWorkflowUploadPaths": [
+        "spaces", "options_first", "apostrophe", "literal_at", "literal_dash", "literal_double_dash", "empty",
+        "binary", "upload_flag", "create_flag", "upload_assigned_flag", "upload_repeated_flag",
+        "create_repeated_flag",
+    ],
+    "TestMainFilesWorkflowUploadValidation": [
+        "missing_purpose", "missing_path", "missing_local_file", "extra_positional",
+        "positional_and_file_flag", "file_flag_and_positional", "create_keeps_flag_syntax",
+    ],
+    "TestMainFilesWorkflowExplicitBinaryStdin": [
+        "empty", "binary", "JSON_stays_file_bytes",
+    ],
+    "TestMainFilesWorkflowMachineOutput": [
+        "piped_default", "explicit_auto", "explicit_text", "json", "jsonl", "raw", "extract_ID", "raw_ID",
+        "raw_timestamp",
+    ],
+    "TestMainFilesWorkflowDownloadBytes": [
+        "text", "binary",
+    ],
+    "TestMainDispatchOutputQuietPreservesSelectedPayloads": [
+        "models_retrieve_model_synthetic", "--format_json_models_retrieve_model_synthetic",
+        "--format_jsonl_files_list", "--format_yaml_files_list", "--format_raw_files_list",
+        "--format_pretty_models_retrieve_model_synthetic",
+        "--transform_extra.note_--raw-output_models_retrieve_model_synthetic",
+        "files_content_file_synthetic_--output_-", "containers_delete_cntr_synthetic",
+    ],
+    "TestMainDispatchOutputVerboseKeepsDataAndProtectsMachineErrors": [
+        "human_success", "machine_stdout_text_stderr", "machine_success", "machine_failure",
+        "explicit_machine_error", "human_failure", "quiet_takes_precedence",
+    ],
+    "TestMainDispatchOutputVerboseBinaryKeepsBytesAndLabelsFormatOption": [],
+    "TestMainDispatchOutputQuietKeepsFailurePayloadsAndSuppressesFallbackNotice": [
+        "json", "jsonl", "raw", "explore",
+    ],
+}
+PROCESS_TESTS = {root for root in PROCESS_CASES} | {
+    root + "/" + child for root, children in PROCESS_CASES.items() for child in children
+}
+PROCESS_SELECTOR = "^(" + "|".join(PROCESS_CASES) + ")$"
+
 STOP = 0
 
 
@@ -96,17 +173,17 @@ def require_native_windows_process():
     return identity
 
 
-def require_test_pass(stdout, stderr, code):
+def require_test_pass(stdout, stderr, code, tests=TESTS, label="pager"):
     text = stdout.decode("utf-8", errors="strict")
     stderr.decode("utf-8", errors="strict")
     if code != 0 or stderr:
-        raise RuntimeError("The WSL pager test failed or wrote stderr")
+        raise RuntimeError(f"The WSL {label} test failed or wrote stderr")
     starts = Counter(re.findall(r"^=== RUN\s+(\S+)\s*$", text, re.MULTILINE))
     passes = Counter(re.findall(r"^\s*--- PASS: (\S+) \([^\n]*\)\s*$", text, re.MULTILINE))
-    if (starts != Counter(TESTS) or passes != Counter(TESTS) or
+    if (starts != Counter(tests) or passes != Counter(tests) or
             re.search(r"--- (?:FAIL|SKIP):|panic:|fatal error:|no tests to run", text) or
             len(re.findall(r"^PASS\s*$", text, re.MULTILINE)) != 1):
-        raise RuntimeError("Missing, skipped, duplicated, or failed pager test execution")
+        raise RuntimeError(f"Missing, skipped, duplicated, or failed {label} test execution")
 
 
 def require_linux_binary(path):
@@ -231,11 +308,45 @@ class HTTPSOnly(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(request, fp, code, message, headers, newurl)
 
 
-def download_image(path, deadline):
+def open_image(opener, deadline, attempts):
+    # Retry only startup timeouts. No response or output file exists yet.
+    for index in range(2):
+        started = time.monotonic()
+        remaining = deadline - started
+        if STOP or remaining <= 0:
+            raise RuntimeError("Ubuntu download stopped or timed out")
+        attempt = {"number": index + 1, "outcome": "opening"}
+        attempts.append(attempt)
+        try:
+            response = opener.open(IMAGE_URL, timeout=min(10, remaining))
+        except Exception as error:
+            reason = error.reason if isinstance(error, urllib.error.URLError) else error
+            attempt.update(outcome="failed", error_type=type(error).__name__,
+                           reason_type=type(reason).__name__,
+                           elapsed_seconds=round(time.monotonic() - started, 3))
+            if index or isinstance(error, urllib.error.HTTPError) or not isinstance(reason, TimeoutError):
+                raise
+            if STOP or deadline - time.monotonic() < 11:
+                raise
+            time.sleep(1)
+            if STOP or deadline - time.monotonic() < 10:
+                raise
+            continue
+        attempt.update(outcome="opened", elapsed_seconds=round(time.monotonic() - started, 3))
+        if STOP or time.monotonic() >= deadline:
+            attempt["outcome"] = "rejected_late_or_stopped"
+            response.close()
+            raise RuntimeError("Ubuntu download stopped or timed out")
+        return response
+    raise RuntimeError("Ubuntu download failed to open within retry policy")
+
+
+def download_image(path, deadline, attempts=None):
     # A socket read can take ten seconds. Reserve that time inside the 480-second cap.
     end = min(deadline, time.monotonic() + 470)
     hasher, size = hashlib.sha256(), 0
-    with urllib.request.build_opener(HTTPSOnly()).open(IMAGE_URL, timeout=10) as response, path.open("xb") as output:
+    opener = urllib.request.build_opener(HTTPSOnly())
+    with open_image(opener, end, attempts if attempts is not None else []) as response, path.open("xb") as output:
         if int(response.headers.get("Content-Length", "0")) > IMAGE_LIMIT:
             raise RuntimeError("Ubuntu image exceeds its download limit")
         while True:
@@ -305,7 +416,27 @@ def write_json(path, data):
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
-def pilot(binary, cleanup_only=False):
+def copy_payload(commands, root, user, binary, target, expected_hash, prefix=""):
+    translated = commands.run(prefix + "binary-path", root + ["/usr/bin/wslpath", "-u", str(binary)], 20)[0].decode("utf-8").strip()
+    if not translated.startswith("/mnt/") or "\n" in translated:
+        raise RuntimeError("Unexpected Windows payload translation")
+    commands.run(prefix + "copy", root + ["/usr/bin/install", "-m", "700", "-o", "cli-compat", "-g", "cli-compat", "--", translated, target], 30)
+    copied = commands.run(prefix + "binary-hash", user + ["/usr/bin/sha256sum", target], 10)[0].decode("ascii").split()[0]
+    if copied != expected_hash:
+        raise RuntimeError("The copied Linux binary changed")
+
+
+def run_process_suite(commands, user, target):
+    # Reserve the full bounded stage before launching any selected process tests.
+    if commands.deadline - time.monotonic() < 170:
+        raise RuntimeError("Insufficient work time for the WSL process suite")
+    test = ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "160s", target,
+            "-test.run=" + PROCESS_SELECTOR, "-test.timeout=150s", "-test.v"]
+    stdout, stderr, code = commands.run("process", user + test, 170)
+    require_test_pass(stdout, stderr, code, PROCESS_TESTS, "process")
+
+
+def pilot(binary, cleanup_only=False, process_binary=None):
     # Validate process bitness before selecting System32, which WOW64 can redirect.
     host_process = require_native_windows_process()
     name, directory = owned_paths()
@@ -335,6 +466,10 @@ def pilot(binary, cleanup_only=False):
         if not cleanup_only:
             result["binary_sha256"] = require_linux_binary(binary)
             binary = binary.resolve(strict=True)
+            if process_binary is not None:
+                result["process_binary_sha256"] = require_linux_binary(process_binary)
+                process_binary = process_binary.resolve(strict=True)
+                result["scope"] += "; public stdin, download, and output processes"
             result["wsl_sha256"] = digest(Path(wsl))
             result["source"] = commands.run("source", ["git", "rev-parse", "HEAD", "HEAD^{tree}"], 10)[0].decode("ascii").splitlines()
             result["wsl_version"] = decode_metadata(commands.run("wsl-version", [wsl, "--version"], 20)[0])
@@ -349,7 +484,8 @@ def pilot(binary, cleanup_only=False):
             if shutil.disk_usage(directory).free < 6 * 1024**3:
                 raise RuntimeError("Insufficient free space for the disposable distro")
             image = directory / "ubuntu.wsl"
-            result["image_bytes"] = download_image(image, commands.deadline)
+            result["image_open_attempts"] = []
+            result["image_bytes"] = download_image(image, commands.deadline, result["image_open_attempts"])
             result["image_sha256"] = IMAGE_SHA256
             state["import_attempted"] = True
             write_json(state_path, state)
@@ -360,17 +496,14 @@ def pilot(binary, cleanup_only=False):
                      "/usr/sbin/useradd --create-home --uid 2000 --user-group --shell /bin/bash cli-compat; "
                      "install -d -m 700 -o cli-compat -g cli-compat /home/cli-compat/payload")
             commands.run("user", root + ["/bin/bash", "--noprofile", "--norc", "-c", setup], 30)
-            translated = commands.run("binary-path", root + ["/usr/bin/wslpath", "-u", str(binary)], 20)[0].decode("utf-8").strip()
-            if not translated.startswith("/mnt/") or "\n" in translated:
-                raise RuntimeError("Unexpected Windows payload translation")
             target = "/home/cli-compat/payload/custom.test"
-            commands.run("copy", root + ["/usr/bin/install", "-m", "700", "-o", "cli-compat", "-g", "cli-compat", "--", translated, target], 30)
             user = [wsl, "--distribution", name, "--user", "cli-compat", "--exec", "/usr/bin/env", "-i",
                     "HOME=/home/cli-compat", "TMPDIR=/home/cli-compat", "PATH=/usr/bin:/bin", "LC_ALL=C.UTF-8",
                     "TERM=dumb", "NO_COLOR=1", "GOMAXPROCS=2"]
-            copied = commands.run("binary-hash", user + ["/usr/bin/sha256sum", target], 10)[0].decode("ascii").split()[0]
-            if copied != result["binary_sha256"]:
-                raise RuntimeError("The copied Linux binary changed")
+            copy_payload(commands, root, user, binary, target, result["binary_sha256"])
+            process_target = "/home/cli-compat/payload/process.test"
+            if process_binary is not None:
+                copy_payload(commands, root, user, process_binary, process_target, result["process_binary_sha256"], "process-")
             identity = "set -eu; test $(id -u) = 2000; test $(uname -m) = x86_64; test $(dpkg --print-architecture) = amd64; cat /etc/os-release; uname -a; id; /bin/bash --version; stat -f -c %T /home/cli-compat"
             observed = commands.run("ubuntu-identity", user + ["/bin/bash", "--noprofile", "--norc", "-c", identity], 20)[0].decode("utf-8")
             if not re.search(r"^ID=ubuntu$", observed, re.MULTILINE):
@@ -384,12 +517,17 @@ def pilot(binary, cleanup_only=False):
                     "-test.run=^" + ROOT + "$", "-test.timeout=45s", "-test.v"]
             stdout, stderr, code = commands.run("pager", user + test, 70)
             require_test_pass(stdout, stderr, code)
+            result["tests"] = sorted(TESTS)
+            if process_binary is not None:
+                run_process_suite(commands, user, process_target)
+                result["process_tests"] = sorted(PROCESS_TESTS)
+                if digest(process_binary) != result["process_binary_sha256"]:
+                    raise RuntimeError("The host process test binary changed")
             if digest(binary) != result["binary_sha256"]:
                 raise RuntimeError("The host test binary changed")
             final_source = commands.run("source-final", ["git", "rev-parse", "HEAD", "HEAD^{tree}"], 10)[0].decode("ascii").splitlines()
             if final_source != result["source"]:
                 raise RuntimeError("The source commit changed during execution")
-            result["tests"] = sorted(TESTS)
     except Exception as error:
         failure = str(error)
     finally:
@@ -417,6 +555,7 @@ def pilot(binary, cleanup_only=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path)
+    parser.add_argument("--process-binary", type=Path, help="Also run the fixed noninteractive process suite")
     parser.add_argument("--cleanup", action="store_true")
     args = parser.parse_args()
     if not args.cleanup and args.binary is None:
@@ -424,7 +563,7 @@ def main():
     for number in (signal.SIGINT, signal.SIGTERM):
         signal.signal(number, interrupted)
     try:
-        code = pilot(args.binary, args.cleanup)
+        code = pilot(args.binary, args.cleanup, args.process_binary)
     except Exception as error:
         print(f"WSL pager pilot failed: {error}", file=sys.stderr)
         code = 128 + STOP if STOP else 1
