@@ -214,9 +214,9 @@ jobs:
             exit 1
           fi
 
-  test:
+  test-suite:
     timeout-minutes: 15
-    name: test
+    name: test suite
     needs: source
     permissions: {}
     runs-on: ubuntu-latest
@@ -236,6 +236,9 @@ jobs:
       - name: Verify mock tooling security
         run: node scripts/mock-tools/security.test.js
 
+      - name: Check error audit validator
+        run: python3 scripts/test-error-audit.py
+
       - name: Check Linux picker metadata and profile identity
         run: go test ./internal/autocomplete -run '^TestPicker(InstallRetainsLinuxSELinuxLabel|SecurityLabel.*|InstallPreservesLinuxFileMetadata|LinuxMetadataAddedAfterSnapshotIsKept|UnixProfileIdentityKeepsDistinctCaseNames)$' -count=1 -v
 
@@ -243,3 +246,62 @@ jobs:
         # Large-payload and subprocess suites share this runner. Avoid running
         # packages concurrently; retain every test, payload and deadline.
         run: ./scripts/test -p 1
+
+  error-audit:
+    timeout-minutes: 15
+    name: error audit (${{ matrix.shard }})
+    needs: source
+    permissions: {}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-go
+      - name: Run exhaustive error audit shard
+        shell: bash
+        env:
+          OPENAI_CLI_ERROR_COVERAGE_MODE: exhaustive
+          OPENAI_CLI_ERROR_COVERAGE_SHARD_INDEX: ${{ matrix.shard }}
+          OPENAI_CLI_ERROR_COVERAGE_SHARD_COUNT: '4'
+          GOMAXPROCS: '2'
+        run: |
+          go test -p 1 ./cmd/openai -run '^Test(MainErrorCoverageAcrossCommandTree|ErrorCoverage)' -count=1 -timeout=10m -json > "$RUNNER_TEMP/error-audit.jsonl"
+          python3 scripts/check-error-audit.py --log "$RUNNER_TEMP/error-audit.jsonl" --shard-index "$OPENAI_CLI_ERROR_COVERAGE_SHARD_INDEX" --shard-count "$OPENAI_CLI_ERROR_COVERAGE_SHARD_COUNT"
+      - name: Retain audit log
+        if: always()
+        continue-on-error: true # Diagnostic upload does not replace shard validation.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: error-audit-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/error-audit.jsonl
+          retention-days: 7
+
+  test:
+    timeout-minutes: 5
+    name: test
+    needs: [source, test-suite, error-audit]
+    if: always()
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful test suites
+        env:
+          SOURCE_RESULT: ${{ needs.source.result }}
+          SUITE_RESULT: ${{ needs.test-suite.result }}
+          AUDIT_RESULT: ${{ needs.error-audit.result }}
+        run: |
+          if [[ "$SOURCE_RESULT" != "success" || "$SUITE_RESULT" != "success" || "$AUDIT_RESULT" != "success" ]]; then
+            echo "Tests failed: source=$SOURCE_RESULT suite=$SUITE_RESULT audit=$AUDIT_RESULT"
+            exit 1
+          fi

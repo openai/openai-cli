@@ -214,6 +214,27 @@ Windows. Additional arguments are forwarded to `go test`:
 ./scripts/test -run '^TestResponsesCreate$'
 ```
 
+Normal tests inspect every command declaration and run representative error-recovery cases.
+CI also runs every generated recovery case across four balanced shards.
+Each shard validates its Go JSON results, including every selected case and the classification guards.
+The required test check requires successful source preparation, ordinary tests, and all four shards.
+
+Run the complete recovery audit locally with:
+
+```sh
+OPENAI_CLI_ERROR_COVERAGE_MODE=exhaustive go test ./cmd/openai -run '^TestMainErrorCoverageAcrossCommandTree$' -count=1
+```
+
+Run one balanced shard with:
+
+```sh
+OPENAI_CLI_ERROR_COVERAGE_SHARD_INDEX=0 OPENAI_CLI_ERROR_COVERAGE_SHARD_COUNT=4 go test ./cmd/openai -run '^TestMainErrorCoverageAcrossCommandTree$' -count=1
+```
+
+Shard indices start at zero. The audit calculates ranges from current declarations, including future additions.
+`OPENAI_CLI_ERROR_COVERAGE_START` and `OPENAI_CLI_ERROR_COVERAGE_END` select a half-open range for bounded local checks.
+Do not combine range and shard settings. Partial runs do not establish complete coverage.
+
 To keep the mock server running while iterating on tests, start it in a separate
 terminal:
 
