@@ -32,7 +32,7 @@ class MetadataTests(unittest.TestCase):
         row = {"Name": "Microsoft-Windows-Subsystem-Linux", "InstallState": 1}
         for encoding in ("utf-8", "utf-8-sig"):
             with self.subTest(encoding=encoding):
-                pilot.require_feature_enabled((json.dumps([row]) + "\r\n").encode(encoding))
+                pilot.require_feature_enabled((json.dumps([row]) + "\r\n").encode(encoding), pilot.FEATURE_PROGRESS)
 
     def test_unverified_feature(self):
         good = {"Name": "Microsoft-Windows-Subsystem-Linux", "InstallState": 1}
@@ -45,13 +45,29 @@ class MetadataTests(unittest.TestCase):
         for label, rows in bad.items():
             with self.subTest(label=label):
                 with self.assertRaisesRegex(RuntimeError, "not verified as already enabled"):
-                    pilot.require_feature_enabled(json.dumps(rows).encode())
+                    pilot.require_feature_enabled(json.dumps(rows).encode(), pilot.FEATURE_PROGRESS)
 
     def test_malformed_feature(self):
         for raw in (b"Enabled", b"\xff", b"[{\"Name\":\"other\",\"Name\":\"Microsoft-Windows-Subsystem-Linux\",\"InstallState\":1}]"):
             with self.subTest(raw=raw):
                 with self.assertRaisesRegex(RuntimeError, "Malformed|Duplicate"):
-                    pilot.require_feature_enabled(raw)
+                    pilot.require_feature_enabled(raw, pilot.FEATURE_PROGRESS)
+
+    def test_powershell_startup_control(self):
+        stdout, stderr = b"powershell-control-out", b"powershell-control-err"
+        pilot.require_powershell_control(stdout, stderr)
+        for out, err in ((b"", b""), (stderr, stdout), (stdout + b"\n", stderr), (stdout, stderr + b"unexpected")):
+            with self.subTest(stdout=out, stderr=err):
+                with self.assertRaisesRegex(RuntimeError, "startup control"):
+                    pilot.require_powershell_control(out, err)
+
+    def test_feature_query_progress(self):
+        data = b'[{"Name":"Microsoft-Windows-Subsystem-Linux","InstallState":1}]'
+        for stderr in (b"", b"feature-query-start\r\n", pilot.FEATURE_PROGRESS + b"unexpected",
+                       b"feature-query-complete\r\nfeature-query-start\r\n"):
+            with self.subTest(stderr=stderr):
+                with self.assertRaisesRegex(RuntimeError, "feature progress"):
+                    pilot.require_feature_enabled(data, stderr)
 
     def test_inventory_encodings(self):
         for encoding in ("utf-8", "utf-8-sig", "utf-16", "utf-16-le"):

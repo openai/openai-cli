@@ -30,6 +30,7 @@ IMAGE_LIMIT = 512 * 1024 * 1024
 OUTPUT_LIMIT = 8 * 1024 * 1024
 ROOT = "TestSocketPairPagerFailureKeepsReusedDescriptorOpen"
 TESTS = {ROOT, ROOT + "/LookPath", ROOT + "/ForkExec"}
+FEATURE_PROGRESS = b"feature-query-start\r\nfeature-query-complete\r\n"
 STOP = 0
 
 
@@ -71,7 +72,15 @@ def require_version_one(data, name):
         raise RuntimeError("The owned distribution is not verified as WSL 1")
 
 
-def require_feature_enabled(data):
+def require_powershell_control(stdout, stderr):
+    if stdout != b"powershell-control-out" or stderr != b"powershell-control-err":
+        raise RuntimeError("PowerShell startup control changed its output")
+
+
+def require_feature_enabled(data, stderr):
+    if stderr != FEATURE_PROGRESS:
+        raise RuntimeError("Missing or unexpected Windows feature progress")
+
     def unique_fields(pairs):
         fields = dict(pairs)
         if len(fields) != len(pairs):
@@ -333,15 +342,21 @@ def pilot(binary, cleanup_only=False):
             initial = distribution_names(commands.run("initial-inventory", [wsl, "--list", "--quiet"], 20)[0])
             if initial:
                 raise RuntimeError("The disposable runner already has a distribution")
+            powershell = str(Path(os.environ["SYSTEMROOT"]) / "System32/WindowsPowerShell/v1.0/powershell.exe")
+            startup = ("[Console]::Out.Write('powershell-control-out'); "
+                       "[Console]::Error.Write('powershell-control-err'); exit 7")
+            stdout, stderr, _ = commands.run("powershell-startup", [powershell, "-NoProfile", "-NonInteractive", "-Command", startup], 10, expected=7)
+            require_powershell_control(stdout, stderr)
             # WSL itself checks this read-only CIM class and requires InstallState 1.
             feature = ("$ErrorActionPreference = 'Stop'; "
+                       "[Console]::Error.WriteLine('feature-query-start'); "
                        "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
                        "ConvertTo-Json -Compress -InputObject @(Get-CimInstance -Namespace root/cimv2 "
                        "-ClassName Win32_OptionalFeature -Filter \"Name='Microsoft-Windows-Subsystem-Linux'\" "
-                       "-ErrorAction Stop | Select-Object Name,InstallState)")
-            powershell = str(Path(os.environ["SYSTEMROOT"]) / "System32/WindowsPowerShell/v1.0/powershell.exe")
-            enabled = commands.run("feature", [powershell, "-NoProfile", "-NonInteractive", "-Command", feature], 30)[0]
-            require_feature_enabled(enabled)
+                       "-ErrorAction Stop | Select-Object Name,InstallState); "
+                       "[Console]::Error.WriteLine('feature-query-complete')")
+            enabled, progress, _ = commands.run("feature", [powershell, "-NoProfile", "-NonInteractive", "-Command", feature], 30)
+            require_feature_enabled(enabled, progress)
             if shutil.disk_usage(directory).free < 6 * 1024**3:
                 raise RuntimeError("Insufficient free space for the disposable distro")
             image = directory / "ubuntu.wsl"
