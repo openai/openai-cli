@@ -78,6 +78,13 @@
     "TestImagePickerStateConcurrentSavesKeepWholeRecords": []
   },
   "process": {
+    "TestMainBashRequestConfiguration": [
+      "placement_precedence_and_error",
+      "root_and_body_project",
+      "equals_empty",
+      "separate_empty",
+      "completion_stays_local"
+    ],
     "TestMainGlobalFlagsPlacementHeadersAndOutput": [
       "extraction/equals/after",
       "extraction/equals/before",
