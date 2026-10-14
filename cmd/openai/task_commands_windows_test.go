@@ -18,8 +18,8 @@ func TestMainTaskWindowsAudioInterruptClosesStreams(t *testing.T) {
 		{"transcriptions", "transcribe", `{"type":"transcript.text.delta","delta":"Visible task output"}`, "Visible task output"},
 		{"speech", "speak", `{"type":"speech.audio.delta","audio":"c3ludGhldGlj"}`, "Type: speech.audio.delta"},
 	} {
-		var wantCode int
-		for index, route := range []string{"audio:" + task.resource + " create", "audio " + task.resource + " create", "audio " + task.verb, task.verb} {
+		canonical := "audio:" + task.resource + " create"
+		for _, route := range []string{canonical, "audio " + task.resource + " create", "audio " + task.verb, task.verb} {
 			t.Run(route, func(t *testing.T) {
 				flags := readableAudioArgs(t, "audio:"+task.resource)[2:]
 				if task.verb == "speak" {
@@ -27,11 +27,16 @@ func TestMainTaskWindowsAudioInterruptClosesStreams(t *testing.T) {
 				} else {
 					flags = append(flags, "--stream=true")
 				}
-				args := append([]string{"-test.run=^TestMainDispatchProcess$", "--", "openai"}, taskRouteArgs(route, flags...)...)
-				code := runWindowsStreamCancellation(t, binary, args, "/audio/"+task.resource, task.event, task.prefix,
-					"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1")
-				if index == 0 {
-					wantCode = code
+				run := func(selectedRoute string) int {
+					args := append([]string{"-test.run=^TestMainDispatchProcess$", "--", "openai"}, taskRouteArgs(selectedRoute, flags...)...)
+					return runWindowsStreamCancellation(t, binary, args, "/audio/"+task.resource, task.event, task.prefix,
+						"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1")
+				}
+				// A focused -run may omit every sibling, including the canonical case.
+				wantCode := run(canonical)
+				code := wantCode
+				if route != canonical {
+					code = run(route)
 				}
 				if code == 0 || code != wantCode {
 					t.Fatalf("alias cancellation returned %d; canonical route returned %d", code, wantCode)
