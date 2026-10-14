@@ -243,7 +243,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageGenerationFilenamesAndDirectoryValidation|TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest|TestMainImageUploadClosedStdoutPreservesPartialSave|TestMainImageEditInterruptClosesStreamWithoutSavingPartial|TestImageEditInterruptCompletion)$' |
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageGenerationFilenamesAndDirectoryValidation|TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest|TestMainImageUploadClosedStdoutPreservesPartialSave|TestMainImageEditInterruptClosesStreamWithoutSavingPartial|TestImageEditInterruptCompletion|TestImageEditInterruptControllerResult)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-save-process-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows image filesystem helpers
@@ -525,9 +525,12 @@ jobs:
                   "TestMainImageUploadClosedStdoutPreservesPartialSave", ["edit", "create-variation"],
               ) | {"TestMainImageEditInterruptClosesStreamWithoutSavingPartial"} | required_cases(
                   "TestImageEditInterruptCompletion",
-                  ["controller_failure", "forced_timeout", "unrelated_CLI_error", "extra_document", "CLI_cancellation",
-                   "just_before_absolute_limit", "absolute_limit", "after_absolute_limit", "slow_startup_within_limit",
+                  ["just_before_absolute_limit", "absolute_limit", "after_absolute_limit", "slow_startup_within_limit",
                    "controller_timeout_after_slow_startup"],
+              ) | required_cases(
+                  "TestImageEditInterruptControllerResult",
+                  ["nonzero_child_exit", "missing_startup", "missing_event", "wrong_event", "missing_child_status",
+                   "zero_child_status", "mismatched_child_status", "controller_timeout", "forced_kill"],
               )
               suites["image-save-helper-tests.jsonl"] = {
                   "TestResolveDirectory", "TestSaveResponseFormatsAndUniqueNames",

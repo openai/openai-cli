@@ -4,8 +4,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -13,12 +17,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func imageEditInterruptCommand(t *testing.T, ctx context.Context, binary, home string, env []string, args ...string) (*exec.Cmd, func() error, func([]byte, time.Duration) error) {
+func imageEditInterruptCommand(t *testing.T, ctx context.Context, binary, home string, env []string, args ...string) (*exec.Cmd, func() error, func(error, []byte, time.Duration) error) {
 	t.Helper()
 	command := append([]string{"-test.run=^TestShellFileWindowsConsoleHelper$", "--",
 		binary, "-test.run=^TestMainDispatchProcess$", "--"}, args...)
-	// Product JSON distinguishes cancellation from a controller failure.
-	command = append(command, "--format-error", "json")
 	child := exec.CommandContext(ctx, binary, command...)
 	child.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_CONSOLE, HideWindow: true}
 	for _, name := range []string{"PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"} {
@@ -27,8 +29,9 @@ func imageEditInterruptCommand(t *testing.T, ctx context.Context, binary, home s
 		}
 	}
 	child.Env = append(child.Env, env...)
+	resultPath := filepath.Join(home, "image-edit-console-result.json")
 	child.Env = append(child.Env, "APPDATA="+home, "LOCALAPPDATA="+home, "TEMP="+home, "TMP="+home,
-		"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "GOMAXPROCS=2")
+		"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "OPENAI_CLI_TEST_CONSOLE_RESULT="+resultPath, "GOMAXPROCS=2")
 	input, err := child.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -38,5 +41,65 @@ func imageEditInterruptCommand(t *testing.T, ctx context.Context, binary, home s
 		_, err := input.Write([]byte{byte(windows.CTRL_C_EVENT)})
 		return err
 	}
-	return child, interrupt, verifyImageEditInterruptCompletion
+	verify := func(waitErr error, stderr []byte, elapsed time.Duration) error {
+		if err := verifyImageEditInterruptCompletion(elapsed); err != nil {
+			return err
+		}
+		var exit *exec.ExitError
+		if !errors.As(waitErr, &exit) {
+			return fmt.Errorf("image edit did not return a child exit status: %v", waitErr)
+		}
+		data, err := os.ReadFile(resultPath)
+		if err != nil {
+			return fmt.Errorf("read image-edit controller result: %w", err)
+		}
+		var result windowsConsoleResult
+		if err := json.Unmarshal(data, &result); err != nil {
+			return fmt.Errorf("decode image-edit controller result: %w", err)
+		}
+		if err := verifyImageEditInterruptControllerResult(result, exit.ExitCode()); err != nil {
+			return fmt.Errorf("%w; result=%q helper_exit=%d stderr=%q", err, data, exit.ExitCode(), stderr)
+		}
+		t.Logf("image edit CTRL_C event=%d child_exit=%d helper_exit=%d elapsed=%s",
+			result.Event, *result.ChildExit, exit.ExitCode(), elapsed)
+		return nil
+	}
+	return child, interrupt, verify
+}
+
+func verifyImageEditInterruptControllerResult(result windowsConsoleResult, helperExit int) error {
+	if !result.Started || !result.EventSent || result.Event != windows.CTRL_C_EVENT || result.ChildExit == nil ||
+		*result.ChildExit == 0 || *result.ChildExit != helperExit || result.TimedOut || result.ForcedKill {
+		return fmt.Errorf("controller result does not establish image-edit cancellation")
+	}
+	return nil
+}
+
+func TestImageEditInterruptControllerResult(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*windowsConsoleResult, *int)
+		valid  bool
+	}{
+		{"nonzero child exit", nil, true},
+		{"missing startup", func(result *windowsConsoleResult, _ *int) { result.Started = false }, false},
+		{"missing event", func(result *windowsConsoleResult, _ *int) { result.EventSent = false }, false},
+		{"wrong event", func(result *windowsConsoleResult, _ *int) { result.Event = windows.CTRL_BREAK_EVENT }, false},
+		{"missing child status", func(result *windowsConsoleResult, _ *int) { result.ChildExit = nil }, false},
+		{"zero child status", func(result *windowsConsoleResult, helper *int) { *result.ChildExit, *helper = 0, 0 }, false},
+		{"mismatched child status", func(_ *windowsConsoleResult, helper *int) { *helper = 8 }, false},
+		{"controller timeout", func(result *windowsConsoleResult, _ *int) { result.TimedOut = true }, false},
+		{"forced kill", func(result *windowsConsoleResult, _ *int) { result.ForcedKill = true }, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			childExit, helperExit := 7, 7
+			result := windowsConsoleResult{Started: true, EventSent: true, Event: windows.CTRL_C_EVENT, ChildExit: &childExit}
+			if test.change != nil {
+				test.change(&result, &helperExit)
+			}
+			if err := verifyImageEditInterruptControllerResult(result, helperExit); (err == nil) != test.valid {
+				t.Fatalf("controller result accepted=%t, want %t: %v", err == nil, test.valid, err)
+			}
+		})
+	}
 }
