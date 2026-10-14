@@ -338,6 +338,7 @@ def open_image(opener, deadline, attempts):
             response.close()
             raise RuntimeError("Ubuntu download stopped or timed out")
         return response
+    raise RuntimeError("Ubuntu download failed to open within retry policy")
 
 
 def download_image(path, deadline, attempts=None):
