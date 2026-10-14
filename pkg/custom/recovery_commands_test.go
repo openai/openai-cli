@@ -50,24 +50,24 @@ func TestCommandRecoveryParsedCommands(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"root suffix", []string{"modles", "list"}, "Unknown command. Did you mean: openai models list?"},
-		{"nested suffix", []string{"admin", "organizaton", "projects", "list"}, "Unknown command. Did you mean: openai admin organization projects list?"},
-		{"leaf typo", []string{"models", "lsit"}, "Unknown command. Did you mean: openai models list?"},
-		{"canonical alias", []string{"modles", "ls"}, "Unknown command. Did you mean: openai models list?"},
-		{"exact suffix only", []string{"modles", "LIST"}, "Unknown command. Did you mean: openai models?"},
+		{"root suffix", []string{"modles", "list"}, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"nested suffix", []string{"admin", "organizaton", "projects", "list"}, "Unknown command. Did you mean: openai help admin organization projects list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"leaf typo", []string{"models", "lsit"}, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"canonical alias", []string{"modles", "ls"}, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"exact suffix only", []string{"modles", "LIST"}, "Unknown command. Did you mean: openai help models?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
 		{"root fallback", []string{"zzzzzzzzzz"}, "Unknown command. Run openai help to see commands."},
 		{"nested fallback", []string{"models", "zzzzzzzzzz"}, "Unknown command. Run openai help models to see commands."},
 		{"parsed help", []string{"modles", "list", "--help"}, "Unknown help topic. Did you mean: openai help models list?"},
 		{"nested parsed help", []string{"models", "lsit", "-h"}, "Unknown help topic. Did you mean: openai help models list?"},
-		{"false help", []string{"modles", "list", "--help=false"}, "Unknown command. Did you mean: openai models list?"},
-		{"help as value", []string{"modles", "--api-key", "--help", "list"}, "Unknown command. Did you mean: openai models list?"},
-		{"command as value", []string{"modles", "--api-key", "list"}, "Unknown command. Did you mean: openai models?"},
-		{"literal help", []string{"modles", "--", "--help"}, "Unknown command. Did you mean: openai models?"},
-		{"hidden suffix", []string{"modles", "__internal"}, "Unknown command. Did you mean: openai models?"},
-		{"legacy suffix", []string{"audio:transcriptins", "create"}, "Unknown command. Did you mean: openai audio:transcriptions create?"},
-		{"private operand", []string{"modles", "retrieve", "/synthetic-private-home/key"}, "Unknown command. Did you mean: openai models retrieve?"},
-		{"credentialed URL", []string{"modles", "list", "--base-url", "https://synthetic-private-user:synthetic-private-password@example.invalid"}, "Unknown command. Did you mean: openai models list?"},
-		{"controls", []string{"modles", "list", "\x1b]52;c;synthetic-private-secret\a"}, "Unknown command. Did you mean: openai models list?"},
+		{"false help", []string{"modles", "list", "--help=false"}, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"help as value", []string{"modles", "--api-key", "--help", "list"}, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"command as value", []string{"modles", "--api-key", "list"}, "Unknown command. Did you mean: openai help models?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"literal help", []string{"modles", "--", "--help"}, "Unknown command. Did you mean: openai help models?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"hidden suffix", []string{"modles", "__internal"}, "Unknown command. Did you mean: openai help models?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"legacy suffix", []string{"audio:transcriptins", "create"}, "Unknown command. Did you mean: openai help audio:transcriptions create?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"private operand", []string{"modles", "retrieve", "/synthetic-private-home/key"}, "Unknown command. Did you mean: openai help models retrieve?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"credentialed URL", []string{"modles", "list", "--base-url", "https://synthetic-private-user:synthetic-private-password@example.invalid"}, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"controls", []string{"modles", "list", "\x1b]52;c;synthetic-private-secret\a"}, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := recoveryCommandFixture(t)
@@ -114,7 +114,7 @@ func TestCommandRecoveryPreservesInvocation(t *testing.T) {
 	if err := root.Run(t.Context(), []string{"openai", "modles", "list"}); err == nil {
 		t.Fatal("expected an unknown command")
 	}
-	const want = "Unknown command. Did you mean: '/synthetic folder/openai' models list?"
+	const want = "Unknown command. Did you mean: '/synthetic folder/openai' help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."
 	if got := commandRecoveryMessage(root); got != want {
 		t.Fatalf("recovery = %q; want %q", got, want)
 	}

@@ -17,18 +17,18 @@ func TestMainRecoveryCommandSuggestions(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"root suffix", []string{"modles", "list"}, "Unknown command. Did you mean: openai models list?"},
-		{"nested suffix", []string{"audio", "transcriptons", "create"}, "Unknown command. Did you mean: openai audio transcriptions create?"},
-		{"nested operation", []string{"files", "lsit"}, "Unknown command. Did you mean: openai files list?"},
+		{"root suffix", []string{"modles", "list"}, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"nested suffix", []string{"audio", "transcriptons", "create"}, "Unknown command. Did you mean: openai help audio transcriptions create?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"nested operation", []string{"files", "lsit"}, "Unknown command. Did you mean: openai help files list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
 		{"help suffix", []string{"help", "modles", "list"}, "Unknown help topic. Did you mean: openai help models list?"},
 		{"help is not a help topic", []string{"help", "hepl"}, "Unknown help topic. Run openai help to see commands."},
 		{"nested help", []string{"audio", "help", "transcriptons", "create"}, "Unknown help topic. Did you mean: openai help audio transcriptions create?"},
 		{"help flag", []string{"--help", "modles", "list"}, "Unknown help topic. Did you mean: openai help models list?"},
-		{"false help", []string{"--help=false", "modles", "list"}, "Unknown command. Did you mean: openai models list?"},
-		{"flag boundary", []string{"modles", "list", "--api-key", "synthetic-private-key"}, "Unknown command. Did you mean: openai models list?"},
-		{"operand boundary", []string{"modles", "list", "synthetic-private-value", "delete"}, "Unknown command. Did you mean: openai models list?"},
-		{"unrecognized suffix", []string{"modles", "synthetic-private-value", "list"}, "Unknown command. Did you mean: openai models?"},
-		{"help-looking credential", []string{"--api-key=--help", "modles", "list"}, "Unknown command. Did you mean: openai models list?"},
+		{"false help", []string{"--help=false", "modles", "list"}, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"flag boundary", []string{"modles", "list", "--api-key", "synthetic-private-key"}, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"operand boundary", []string{"modles", "list", "synthetic-private-value", "delete"}, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"unrecognized suffix", []string{"modles", "synthetic-private-value", "list"}, "Unknown command. Did you mean: openai help models?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
+		{"help-looking credential", []string{"--api-key=--help", "modles", "list"}, "Unknown command. Did you mean: openai help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."},
 		{"private command", []string{"https://user:synthetic-private-key@example.invalid/?token=secret\x1b[31m"}, "Unknown command. Run openai help to see commands."},
 	} {
 		for _, format := range []string{"text", "json", "jsonl"} {

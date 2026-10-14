@@ -192,3 +192,57 @@ func TestMainRecoveryCorrectsPipedInputAndPreservesFlagLikeValues(t *testing.T) 
 		t.Fatalf("literal value/body changed: %#v", body)
 	}
 }
+
+func TestMainCommandRecoveryPreservesExplicitContext(t *testing.T) {
+	var requests atomic.Int32
+	type requestContext struct{ endpoint, project string }
+	var received atomic.Value
+	fixture := func(endpoint string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			received.Store(requestContext{endpoint, r.Header.Get("OpenAI-Project")})
+			if r.Method != http.MethodPost || r.URL.Path != "/vector_stores" {
+				t.Errorf("unexpected recovery request: %s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"id":"vs_synthetic","object":"vector_store","name":"synthetic"}`)
+		}))
+	}
+	defaultServer, explicitServer := fixture("default"), fixture("explicit")
+	defer defaultServer.Close()
+	defer explicitServer.Close()
+	home := t.TempDir()
+	environment := []string{"HOME=" + home, "USERPROFILE=" + home, "XDG_CONFIG_HOME=" + home,
+		"APPDATA=" + home, "ZDOTDIR=" + home, "OPENAI_API_KEY=sk-fake-recovery-context", "OPENAI_BASE_URL=" + defaultServer.URL,
+		"OPENAI_PROJECT_ID=proj_default", "FORCE_COLOR=0"}
+	original := []string{"openai", "--base-url", explicitServer.URL, "--project", "proj_override", "vector-stroes", "create"}
+	failed := runMainDispatchWithEnv(t, "bash", environment, original...)
+	if failed.code != 3 || failed.stdout != "" || requests.Load() != 0 {
+		t.Fatalf("typo must fail before requesting: %+v; requests=%d", failed, requests.Load())
+	}
+	_, suggestion, found := strings.Cut(failed.stderr, "Did you mean: ")
+	suggestion, _, _ = strings.Cut(suggestion, "?\n")
+	if !found || strings.Contains(failed.stderr, "proj_override") || strings.Contains(failed.stderr, explicitServer.URL) {
+		t.Fatalf("recovery must suggest declared commands without private values: %+v", failed)
+	}
+	// Execute the literal suggestion. Appending --help would hide unsafe recovery.
+	copied := runMainDispatchWithEnv(t, "bash", environment, strings.Fields(suggestion)...)
+	if copied.code != 0 || copied.stderr != "" || requests.Load() != 0 || !strings.Contains(copied.stdout, "SYNOPSIS:\n   openai vector-stores create") {
+		t.Fatalf("literal recovery must show help without an API mutation: %+v; requests=%d", copied, requests.Load())
+	}
+	if suggestion != "openai help vector-stores create" {
+		t.Fatalf("recovery lost the intended command: %q", suggestion)
+	}
+	if !strings.Contains(failed.stderr, "Keep your original options and arguments.") {
+		t.Fatalf("recovery omitted context-preserving instructions: %+v", failed)
+	}
+	// Follow the manual instruction: change only the misspelled command token.
+	original[5] = "vector-stores"
+	corrected := runMainDispatchWithEnv(t, "bash", environment, original...)
+	if corrected.code != 0 || corrected.stderr != "" || requests.Load() != 1 {
+		t.Fatalf("corrected original command failed: %+v; requests=%d", corrected, requests.Load())
+	}
+	if got := received.Load(); got != (requestContext{"explicit", "proj_override"}) {
+		t.Fatalf("corrected original lost explicit context: %+v", got)
+	}
+}

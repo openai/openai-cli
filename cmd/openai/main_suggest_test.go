@@ -12,10 +12,10 @@ func TestMainUnknownCommandSuggestions(t *testing.T) {
 		args   []string
 		stderr string
 	}{
-		{[]string{"fine-tuning:alpha:graders", "rn"}, "Unknown command. Did you mean: openai fine-tuning:alpha:graders run?\n"},
-		{[]string{"fine-tuning:alpha:graders", "rnu"}, "Unknown command. Did you mean: openai fine-tuning:alpha:graders run?\n"},
-		{[]string{"responses", "creat"}, "Unknown command. Did you mean: openai responses create?\n"},
-		{[]string{"RESPONSES"}, "Unknown command. Did you mean: openai responses?\n"},
+		{[]string{"fine-tuning:alpha:graders", "rn"}, "Unknown command. Did you mean: openai help fine-tuning:alpha:graders run?\nTo run it, correct only the command spelling. Keep your original options and arguments.\n"},
+		{[]string{"fine-tuning:alpha:graders", "rnu"}, "Unknown command. Did you mean: openai help fine-tuning:alpha:graders run?\nTo run it, correct only the command spelling. Keep your original options and arguments.\n"},
+		{[]string{"responses", "creat"}, "Unknown command. Did you mean: openai help responses create?\nTo run it, correct only the command spelling. Keep your original options and arguments.\n"},
+		{[]string{"RESPONSES"}, "Unknown command. Did you mean: openai help responses?\nTo run it, correct only the command spelling. Keep your original options and arguments.\n"},
 		{[]string{"totallybogus"}, "Unknown command. Run openai help to see commands.\n"},
 		{[]string{"responses", "zzzzz"}, "Unknown command. Run openai help responses to see commands.\n"},
 	} {

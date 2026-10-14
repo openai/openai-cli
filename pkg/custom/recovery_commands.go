@@ -29,8 +29,9 @@ func commandRecoveryMessage(command *cli.Command) string {
 	return commandRecoveryAt(command, "", nil, false)
 }
 
-// commandRecoveryAt emits only declared command names. A corrected group can
-// retain an exact descendant path, but never an operand or an option value.
+// commandRecoveryAt emits help for declared command names. A corrected group
+// can retain an exact descendant path, but never an operand or an option value.
+// Running the original operation requires keeping its private request context.
 func commandRecoveryAt(command *cli.Command, name string, remaining []string, helpRequested bool) string {
 	message := "Unknown command."
 	if helpRequested {
@@ -60,14 +61,15 @@ func commandRecoveryAt(command *cli.Command, name string, remaining []string, he
 				path = append(path, next.Name)
 				target = next
 			}
-			invocation := errorHelpInvocation(command.Root())
-			if helpRequested {
-				invocation += " help"
-			}
+			invocation := errorHelpInvocation(command.Root()) + " help"
 			if len(path) > 0 {
 				invocation += " " + strings.Join(path, " ")
 			}
-			return message + " Did you mean: " + invocation + "?"
+			message += " Did you mean: " + invocation + "?"
+			if !helpRequested {
+				message += "\nTo run it, correct only the command spelling. Keep your original options and arguments."
+			}
+			return message
 		}
 	}
 	invocation := errorHelpInvocation(command.Root()) + " help"

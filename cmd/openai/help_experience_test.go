@@ -55,7 +55,7 @@ func TestMainHelpExperienceUnknownTopicUsesParent(t *testing.T) {
 		}
 	}
 	got := runMainDispatch(t, "bash", "openai", "admin", "organization", "projcts")
-	if got.code != 3 || got.stdout != "" || !strings.Contains(got.stderr, "Unknown command. Did you mean: openai admin organization projects?") {
+	if got.code != 3 || got.stdout != "" || !strings.Contains(got.stderr, "Unknown command. Did you mean: openai help admin organization projects?\nTo run it, correct only the command spelling. Keep your original options and arguments.") {
 		t.Errorf("direct typo lost its command suggestion: %+v", got)
 	}
 	got = runMainDispatch(t, "bash", "openai", "help", "admin", "organization", "zzzzzzzzzz")
@@ -104,7 +104,7 @@ func TestMainHelpExperienceCompleteMixedGroups(t *testing.T) {
 
 func TestMainHelpExperienceLegacyTypoSuggestions(t *testing.T) {
 	for _, topic := range [][]string{{"audio:transcriptins"}, {"help", "audio:transcriptins"}} {
-		suggestion := "Unknown command. Did you mean: openai audio:transcriptions?"
+		suggestion := "Unknown command. Did you mean: openai help audio:transcriptions?\nTo run it, correct only the command spelling. Keep your original options and arguments."
 		if topic[0] == "help" {
 			suggestion = "Unknown help topic. Did you mean: openai help audio:transcriptions?"
 		}

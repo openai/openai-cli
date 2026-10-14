@@ -41,7 +41,7 @@ for phase in before after; do
   fi
 done
 grep -F 'Unknown help topic.' "$demo_output/before.txt"
-grep -F 'Did you mean: openai models list?' "$demo_output/after.txt"
+grep -F 'Did you mean: openai help models list?' "$demo_output/after.txt"
 grep -F 'Did you mean: openai help audio transcriptions create?' "$demo_output/after.txt"
 grep -F 'the file for --data.' "$demo_output/after.txt"
 demo_assemble_capture 250 before after

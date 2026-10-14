@@ -1,14 +1,15 @@
 # Recovering from command errors
 
 Command errors go to stderr and keep their failing exit status.
-The CLI suggests a correction but never runs it.
+The CLI suggests help for the corrected command but never runs it.
 The shell must first find the `openai` executable.
 For example, `opneai images generate` fails inside the shell before the CLI starts.
 Correct the executable name to `openai`; keep the remaining arguments unchanged.
 
 ```text
 $ openai modles list
-Unknown command. Did you mean: openai models list?
+Unknown command. Did you mean: openai help models list?
+To run it, correct only the command spelling. Keep your original options and arguments.
 
 $ openai help modles list
 Unknown help topic. Did you mean: openai help models list?
@@ -28,8 +29,10 @@ $ openai uploads parts create --upload-id upload_demo --data missing.bin
 Could not open the file for --data. Check the path and permissions.
 ```
 
-A suggestion can retain declared subcommands after the corrected command.
-Suggestions omit options and their values.
+A help suggestion can retain declared subcommands after the corrected command.
+To run the operation, correct only its spelling in your original command.
+Keep the original options and arguments, including project and endpoint overrides.
+Suggestions omit these private values.
 They stop before any remaining argument that is not a declared subcommand.
 It never repeats option values, private paths, credentials, or request contents.
 
