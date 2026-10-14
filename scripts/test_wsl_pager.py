@@ -63,8 +63,9 @@ class MetadataTests(unittest.TestCase):
 
     def test_feature_query_progress(self):
         data = b'[{"Name":"Microsoft-Windows-Subsystem-Linux","InstallState":1}]'
-        for stderr in (b"", b"feature-query-start\r\n", pilot.FEATURE_PROGRESS + b"unexpected",
-                       b"feature-query-complete\r\nfeature-query-start\r\n"):
+        lines = pilot.FEATURE_PROGRESS.splitlines(keepends=True)
+        incomplete = [b"".join(lines[:count]) for count in range(len(lines))]
+        for stderr in (*incomplete, pilot.FEATURE_PROGRESS + b"unexpected", b"".join(reversed(lines))):
             with self.subTest(stderr=stderr):
                 with self.assertRaisesRegex(RuntimeError, "feature progress"):
                     pilot.require_feature_enabled(data, stderr)

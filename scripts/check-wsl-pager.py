@@ -30,7 +30,12 @@ IMAGE_LIMIT = 512 * 1024 * 1024
 OUTPUT_LIMIT = 8 * 1024 * 1024
 ROOT = "TestSocketPairPagerFailureKeepsReusedDescriptorOpen"
 TESTS = {ROOT, ROOT + "/LookPath", ROOT + "/ForkExec"}
-FEATURE_PROGRESS = b"feature-query-start\r\nfeature-query-complete\r\n"
+FEATURE_PROGRESS = (
+    b"feature-encoding-start\r\nfeature-encoding-complete\r\n"
+    b"feature-load-start\r\nfeature-load-complete\r\n"
+    b"feature-query-start\r\nfeature-query-complete\r\n"
+    b"feature-serialization-start\r\nfeature-serialization-complete\r\n"
+)
 STOP = 0
 
 
@@ -349,12 +354,19 @@ def pilot(binary, cleanup_only=False):
             require_powershell_control(stdout, stderr)
             # WSL itself checks this read-only CIM class and requires InstallState 1.
             feature = ("$ErrorActionPreference = 'Stop'; "
-                       "[Console]::Error.WriteLine('feature-query-start'); "
+                       "[Console]::Error.WriteLine('feature-encoding-start'); "
                        "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
-                       "ConvertTo-Json -Compress -InputObject @(Get-CimInstance -Namespace root/cimv2 "
-                       "-ClassName Win32_OptionalFeature -Filter \"Name='Microsoft-Windows-Subsystem-Linux'\" "
-                       "-ErrorAction Stop | Select-Object Name,InstallState); "
-                       "[Console]::Error.WriteLine('feature-query-complete')")
+                       "[Console]::Error.WriteLine('feature-encoding-complete'); "
+                       "[Console]::Error.WriteLine('feature-load-start'); "
+                       "Import-Module -Name CimCmdlets,Microsoft.PowerShell.Utility -ErrorAction Stop; "
+                       "[Console]::Error.WriteLine('feature-load-complete'); "
+                       "[Console]::Error.WriteLine('feature-query-start'); "
+                       "$features = @(Get-CimInstance -Namespace root/cimv2 -ClassName Win32_OptionalFeature "
+                       "-Filter \"Name='Microsoft-Windows-Subsystem-Linux'\" -ErrorAction Stop | Select-Object Name,InstallState); "
+                       "[Console]::Error.WriteLine('feature-query-complete'); "
+                       "[Console]::Error.WriteLine('feature-serialization-start'); "
+                       "ConvertTo-Json -Compress -InputObject $features; "
+                       "[Console]::Error.WriteLine('feature-serialization-complete')")
             enabled, progress, _ = commands.run("feature", [powershell, "-NoProfile", "-NonInteractive", "-Command", feature], 30)
             require_feature_enabled(enabled, progress)
             if shutil.disk_usage(directory).free < 6 * 1024**3:
