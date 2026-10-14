@@ -108,6 +108,10 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	}
 	configureCommandHelp(root, root.Metadata["help-invocation"].(string), "")
 	if len(args) <= 1 {
+		// Preserve original invocation intent before normalizing bare startup
+		// to help. Each Configure call installs a fresh, unwrapped callback.
+		complete := root.Metadata["complete-help"].(func() string)
+		root.Metadata["complete-help"] = func() string { return welcomeHeader(root) + complete() }
 		return []string{root.Name, "--help"}, true, nil
 	}
 	if args[1] == "__complete" {

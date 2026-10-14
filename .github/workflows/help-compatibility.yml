@@ -149,6 +149,14 @@ jobs:
           exit $LASTEXITCODE
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
+      - name: Test Windows tokenizer console reader
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes)' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'tokenizer-reader-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test Linux Fish completion
         if: runner.os == 'Linux'
         shell: bash
@@ -291,6 +299,15 @@ jobs:
               return {root} | {f"{root}/{child}" for child in children}
 
           if os.environ["RUNNER_OS"] == "Windows":
+              suites["tokenizer-reader-tests.jsonl"] = {
+                  "TestTokenizerConsoleInputPreservesUnicode",
+                  "TestTokenizerConsoleInputRecordSemantics",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16",
+                  "TestTokenizerConsoleInputBoundedRepeatsAndCancellation",
+                  "TestTokenizerConsoleInputClosePreservesBorrowedHandle",
+                  "TestTokenizerConsoleInputReadFailure",
+                  "TestTokenizerInputSourcePreservesNonConsoleBytes",
+              }
               files_cases = {
                   "UploadPaths": ["spaces", "options_first", "apostrophe", "literal_at", "literal_dash",
                                   "literal_double_dash", "empty", "binary", "upload_flag", "create_flag",

@@ -133,6 +133,12 @@ type adminConsoleTestFrame struct {
 // Existing Windows CI selects TestMainDispatch. The outer job owns the worker,
 // ConPTY hosts, and CLI children, including any blocked console teardown.
 func TestMainDispatchAdminSetupConsole(t *testing.T) {
+	adminConsoleTestWorker(t, "TestMainDispatchAdminSetupConsole", adminConsoleRunCases)
+}
+
+// Share the owned worker and build lifecycle with other native console suites.
+func adminConsoleTestWorker(t *testing.T, testName string, runCases func(*testing.T), extraEnv ...string) {
+	t.Helper()
 	if os.Getenv("OPENAI_ADMIN_CONSOLE_WORKER") == "1" {
 		adminConsoleWorkerGate(t)
 		// Compile inside the owned job so watchdog cleanup also owns Go children.
@@ -140,7 +146,7 @@ func TestMainDispatchAdminSetupConsole(t *testing.T) {
 		defer cancelBuild()
 		build := exec.CommandContext(buildContext, "go", "test", "-c", "-p", "2", "-o", os.Getenv("OPENAI_ADMIN_CONSOLE_OBSERVER"), "./pkg/custom")
 		build.Dir = filepath.Clean(filepath.Join("..", ".."))
-		build.Env = append(os.Environ(), "GOFLAGS=-p=2")
+		build.Env = append(os.Environ(), "GOFLAGS=-p=2 -mod=readonly")
 		build.WaitDelay = 5 * time.Second
 		var output adminConsoleCapture
 		build.Stdout, build.Stderr = &output, &output
@@ -149,7 +155,7 @@ func TestMainDispatchAdminSetupConsole(t *testing.T) {
 		}
 		output.checkedText(t)
 		adminConsoleLogExecutable(t, "private reader observer test executable", os.Getenv("OPENAI_ADMIN_CONSOLE_OBSERVER"))
-		adminConsoleRunCases(t)
+		runCases(t)
 		return
 	}
 	executable, err := os.Executable()
@@ -173,10 +179,11 @@ func TestMainDispatchAdminSetupConsole(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
-	worker := exec.CommandContext(ctx, executable, "-test.run=^TestMainDispatchAdminSetupConsole$", "-test.v")
+	worker := exec.CommandContext(ctx, executable, "-test.run=^"+testName+"$", "-test.v")
 	worker.Env = append(adminConsoleEnvironment(directory),
 		"OPENAI_ADMIN_CONSOLE_WORKER=1", "OPENAI_ADMIN_CONSOLE_OBSERVER="+observer,
 		"OPENAI_ADMIN_CONSOLE_GATE="+listener.Addr().String(), "OPENAI_ADMIN_CONSOLE_NONCE="+nonce)
+	worker.Env = append(worker.Env, extraEnv...)
 	worker.Cancel = func() error { return windows.TerminateJobObject(job, 1) }
 	worker.WaitDelay = 5 * time.Second
 	var output adminConsoleCapture
@@ -1208,6 +1215,14 @@ func adminConsoleEnvironment(home string) []string {
 			environment = append(environment, name+"="+value)
 		}
 	}
+	// Preserve explicit offline constraints without forwarding host proxy URLs or Go hooks.
+	for name, value := range map[string]string{
+		"GOPROXY": "off", "GOTOOLCHAIN": "local", "GOENV": "off", "GOWORK": "off",
+	} {
+		if os.Getenv(name) == value {
+			environment = append(environment, name+"="+value)
+		}
+	}
 	// Keep the existing Go caches while isolating all application home paths.
 	goPath := os.Getenv("GOPATH")
 	if goPath == "" {
@@ -1219,7 +1234,43 @@ func adminConsoleEnvironment(home string) []string {
 		originalCache, _ := os.UserCacheDir()
 		goCache = filepath.Join(originalCache, "go-build")
 	}
-	return append(environment, "GOPATH="+goPath, "GOCACHE="+goCache, "HOME="+home, "USERPROFILE="+home, "APPDATA="+filepath.Join(home, "AppData", "Roaming"), "LOCALAPPDATA="+filepath.Join(home, "AppData", "Local"), "GOMAXPROCS=2", "TERM=xterm-256color", "NO_COLOR=1")
+	return append(environment, "GOPATH="+goPath, "GOCACHE="+goCache, "HOME="+home, "USERPROFILE="+home, "APPDATA="+filepath.Join(home, "AppData", "Roaming"), "LOCALAPPDATA="+filepath.Join(home, "AppData", "Local"), "GOMAXPROCS=2", "GOFLAGS=-p=2 -mod=readonly", "TERM=xterm-256color", "NO_COLOR=1")
+}
+
+func TestMainDispatchConsoleEnvironment(t *testing.T) {
+	constraints := map[string]string{
+		"GOPROXY": "off", "GOTOOLCHAIN": "local", "GOENV": "off", "GOWORK": "off",
+	}
+	for name, value := range constraints {
+		t.Setenv(name, value)
+	}
+	t.Setenv("GOFLAGS", "-mod=mod -p=99")
+	t.Setenv("GOMAXPROCS", "99")
+	t.Setenv("OPENAI_API_KEY", "synthetic-unused-key")
+	t.Setenv("HTTPS_PROXY", "https://unexpected.invalid")
+	for _, accepted := range []bool{true, false} {
+		if !accepted {
+			for name := range constraints {
+				t.Setenv(name, "unexpected-host-setting")
+			}
+		}
+		environment := map[string]string{}
+		for _, entry := range adminConsoleEnvironment(t.TempDir()) {
+			name, value, _ := strings.Cut(entry, "=")
+			environment[strings.ToUpper(name)] = value
+		}
+		for name, value := range constraints {
+			if accepted && environment[name] != value || !accepted && environment[name] != "" {
+				t.Errorf("console worker did not constrain %s", name)
+			}
+		}
+		if environment["GOFLAGS"] != "-p=2 -mod=readonly" || environment["GOMAXPROCS"] != "2" {
+			t.Error("console worker lost its fixed Go build limits")
+		}
+		if environment["OPENAI_API_KEY"] != "" || environment["HTTPS_PROXY"] != "" {
+			t.Error("console worker inherited credentials or an unapproved proxy")
+		}
+	}
 }
 
 func adminConsoleLogExecutable(t *testing.T, role, path string) {

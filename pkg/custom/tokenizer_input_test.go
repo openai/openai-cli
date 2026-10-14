@@ -1,17 +1,22 @@
 package custom
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/tokenizer"
 	"github.com/stretchr/testify/require"
 )
@@ -521,6 +526,130 @@ func (m *tokenizerInputProgramModel) Update(message tea.Msg) (tea.Model, tea.Cmd
 	}
 	_, cmd := m.tokenizerEditor.Update(message)
 	return m, cmd
+}
+
+// Embedding the pipe preserves cancelreader.File while observing actual reads.
+// This observer never changes read sizes or splits complete terminal replies.
+type tokenizerInputObservedFile struct {
+	*os.File
+	mu    sync.Mutex
+	reads [][]byte
+}
+
+func (r *tokenizerInputObservedFile) Read(buffer []byte) (int, error) {
+	n, err := r.File.Read(buffer)
+	if n > 0 {
+		r.mu.Lock()
+		r.reads = append(r.reads, bytes.Clone(buffer[:n]))
+		r.mu.Unlock()
+	}
+	return n, err
+}
+
+func TestTokenizerInputSplitBackgroundColorThroughBubbleTea(t *testing.T) {
+	// These synthetic replies come from the protocol and pinned decoder source.
+	// They are not captured native Windows replies.
+	const modeReport = "\x1b[?7;1$y"
+	const colorReply = "\x1b]11;rgb:0c0c/0c0c/0c0c\x1b\\"
+	const literal = "\\\ufffd"
+	wantText := literal + colorReply
+	for split := 0; split <= len(colorReply); split++ {
+		t.Run(fmt.Sprintf("split_%02d", split), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			raw, writer := io.Pipe()
+			defer writer.Close()
+			source := &tokenizerTestInput{PipeReader: raw}
+			bridge, err := startTokenizerInputBridge(ctx, source)
+			require.NoError(t, err)
+			defer bridge.Close()
+			observed := &tokenizerInputObservedFile{File: bridge.Input()}
+			modeSeen := make(chan struct{}, 1)
+			var modeCount, colorCount, pasteCount int
+			var modeExact, colorExact, pasteExact, initialDraftEmpty bool
+			model := &tokenizerInputProgramModel{tokenizerEditor: testTokenizerEditor(), bridge: bridge}
+			model.dark = false
+			model.onMessage = func(message tea.Msg) {
+				switch message := message.(type) {
+				case tea.ModeReportMsg:
+					modeCount++
+					modeExact = message.Mode == ansi.ModeAutoWrap && message.Value == ansi.ModeSet
+					initialDraftEmpty = model.text == ""
+					select {
+					case modeSeen <- struct{}{}:
+					default:
+					}
+				case tea.BackgroundColorMsg:
+					colorCount++
+					if message.Color != nil {
+						r, g, b, a := message.Color.RGBA()
+						colorExact = r == 0x0c0c && g == 0x0c0c && b == 0x0c0c && a == 0xffff
+					}
+				case tea.PasteMsg:
+					pasteCount++
+					pasteExact = message.Content == colorReply
+				}
+			}
+			program := tea.NewProgram(model, tea.WithInput(observed), tea.WithOutput(io.Discard),
+				tea.WithContext(ctx), tea.WithWindowSize(80, 24), tea.WithoutRenderer(), tea.WithoutSignalHandler())
+			written := make(chan error, 1)
+			go func() {
+				if _, err := io.WriteString(writer, modeReport+colorReply[:split]); err != nil {
+					written <- err
+					return
+				}
+				// TerminalReader scans its whole read before delivering this marker.
+				// The observed read proves whether it also consumed the reply prefix.
+				select {
+				case <-ctx.Done():
+					written <- ctx.Err()
+					return
+				case <-modeSeen:
+				}
+				_, err := io.WriteString(writer, colorReply[split:]+literal+tokenizerPasteStart+colorReply+tokenizerPasteEnd+"\x03")
+				written <- err
+			}()
+			_, runErr := program.Run()
+			writeErr := <-written
+			closeErr := bridge.Close()
+			readJoined, pumpJoined := false, false
+			select {
+			case <-bridge.readDone:
+				readJoined = true
+			default:
+			}
+			select {
+			case <-bridge.Done():
+				pumpJoined = true
+			default:
+			}
+			observed.mu.Lock()
+			var firstRead []byte
+			if len(observed.reads) > 0 {
+				firstRead = bytes.Clone(observed.reads[0])
+			}
+			observed.mu.Unlock()
+			prematurePrefix := split == len(colorReply)-1 && bytes.Equal(firstRead, []byte(modeReport+colorReply[:split]))
+			t.Logf("synthetic OSC11 split=%d mode_count=%d color_count=%d background_dark=%t paste_count=%d paste_exact=%t first_read_bytes=%d premature_prefix=%t draft_bytes=%d draft_sha256=%x quit=%t model_exit=%d read_joined=%t pump_joined=%t",
+				split, modeCount, colorCount, model.dark, pasteCount, pasteExact, len(firstRead), prematurePrefix, len(model.text), sha256.Sum256([]byte(model.text)), model.quit, model.exitCode, readJoined, pumpJoined)
+			require.NoError(t, runErr)
+			require.NoError(t, writeErr)
+			require.NoError(t, closeErr)
+			require.NoError(t, ctx.Err())
+			require.True(t, readJoined && pumpJoined)
+			require.EqualValues(t, 1, source.closes.Load())
+			require.True(t, model.quit)
+			require.Equal(t, 130, model.exitCode)
+			require.Equal(t, 1, modeCount)
+			require.True(t, modeExact && initialDraftEmpty)
+			require.Equal(t, 1, pasteCount)
+			require.True(t, pasteExact, "bracketed paste must preserve the complete reply literally")
+			require.Equal(t, 1, colorCount, "the complete reply must produce one typed color event")
+			require.True(t, colorExact && model.dark, "the reply must select the reported dark background")
+			require.True(t, model.text == wantText, "draft mismatch: got %d bytes (%x), want %d bytes (%x)",
+				len(model.text), sha256.Sum256([]byte(model.text)), len(wantText), sha256.Sum256([]byte(wantText)))
+		})
+	}
 }
 
 func TestTokenizerInputExpiredEscapeThroughBubbleTeaKeepsCtrlC(t *testing.T) {
