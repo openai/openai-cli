@@ -684,6 +684,10 @@ jobs:
                       if event["Action"] in {"skip", "fail"}:
                           raise SystemExit(f"{filename}: unexpected {event['Action']}: {event.get('Test', 'package')}")
                       if filename == "welcome-public-tests.jsonl":
+                          if event["Action"] == "build-fail":
+                              raise SystemExit(f"{filename}: unexpected build failure")
+                          if event["Action"] == "build-output":
+                              continue
                           if event.get("Package") != "github.com/openai/openai-cli/cmd/openai":
                               raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
                           if test:
