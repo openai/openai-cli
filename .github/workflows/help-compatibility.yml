@@ -43,6 +43,7 @@ jobs:
             shells: cmd,powershell,pwsh
             environment: true
           - os: macos-15-intel
+            request-configuration: true
             list-helpers: true
             goos: darwin
             goarch: amd64
@@ -62,6 +63,7 @@ jobs:
             pager: true
             bash-prefixes: true
           - os: windows-11-arm
+            request-configuration: true
             list-helpers: true
             goos: windows
             goarch: arm64
@@ -246,6 +248,26 @@ jobs:
           go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-renderer-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test request configuration
+        if: matrix.request-configuration && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainGlobalFlagsPlacementHeadersAndOutput|TestMainGlobalFlagsPrecedence|TestMainGlobalFlagsHeaderAliasesAndAuthorization|TestMainGlobalFlagsKeepEndpointFlagsAndLiterals|TestMainGlobalFlagsProjectBodyKeepsRootHeader|TestMainGlobalFlagsDeepAdminAndCustomCommands|TestMainGlobalFlagsHelpAndCompletionStayLocal|TestMainGlobalFlagsErrorOutputPlacement|TestMainGlobalFlagBaseURLOverridesMalformedEnvironment|TestMainGlobalFlagInvalidPercentBaseURLStillFails|TestMainGlobalFlagBaseURLOverridePreservesEnvironmentHeaders|TestMainGlobalFlagInvalidPercentBaseURLErrorsAreSafe|TestMainGlobalFlagEmptyBaseURLKeepsEnvironmentFallback|TestMainGlobalFlagEmptyMTLSOverridesEnvironment|TestMainGlobalFlagMTLSRejectsExplicitDuplicates|TestMainGlobalFlagCompletionScriptsIgnoreRequestConfiguration|TestMainGlobalFlagCompletionWordsRemainRequestValues|TestMainGlobalFlagRequestConfigurationStillValidates|TestMainGlobalFlagURLConfigurationPreservesOfflineHelp)$' \
+            | tee "$RUNNER_TEMP/request-configuration-public-tests.jsonl"
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestRootRequestFlagsPreserveOwnershipAndMetadata|TestRootRequestFlagsPreserveMTLSPlacement|TestRootRequestFlagsRetainSourcesAliasesAndValidation|TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue)$' \
+            | tee "$RUNNER_TEMP/request-configuration-helper-tests.jsonl"
+      - name: Test Windows request configuration
+        if: matrix.request-configuration && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainGlobalFlagsPlacementHeadersAndOutput|TestMainGlobalFlagsPrecedence|TestMainGlobalFlagsHeaderAliasesAndAuthorization|TestMainGlobalFlagsKeepEndpointFlagsAndLiterals|TestMainGlobalFlagsProjectBodyKeepsRootHeader|TestMainGlobalFlagsDeepAdminAndCustomCommands|TestMainGlobalFlagsHelpAndCompletionStayLocal|TestMainGlobalFlagsErrorOutputPlacement|TestMainGlobalFlagBaseURLOverridesMalformedEnvironment|TestMainGlobalFlagInvalidPercentBaseURLStillFails|TestMainGlobalFlagBaseURLOverridePreservesEnvironmentHeaders|TestMainGlobalFlagInvalidPercentBaseURLErrorsAreSafe|TestMainGlobalFlagEmptyBaseURLKeepsEnvironmentFallback|TestMainGlobalFlagEmptyMTLSOverridesEnvironment|TestMainGlobalFlagMTLSRejectsExplicitDuplicates|TestMainGlobalFlagCompletionScriptsIgnoreRequestConfiguration|TestMainGlobalFlagCompletionWordsRemainRequestValues|TestMainGlobalFlagRequestConfigurationStillValidates|TestMainGlobalFlagURLConfigurationPreservesOfflineHelp)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'request-configuration-public-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestRootRequestFlagsPreserveOwnershipAndMetadata|TestRootRequestFlagsPreserveMTLSPlacement|TestRootRequestFlagsRetainSourcesAliasesAndValidation|TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'request-configuration-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test request environment restoration
         if: matrix.environment
         shell: bash
@@ -287,6 +309,7 @@ jobs:
       - name: Verify selected compatibility test execution
         shell: bash
         env:
+          CHECK_REQUEST_CONFIGURATION: ${{ matrix.request-configuration || false }}
           CHECK_LIST_HELPERS: ${{ matrix.list-helpers || false }}
           CHECK_ENVIRONMENT: ${{ matrix.environment || false }}
           CHECK_GALLERY: ${{ matrix.gallery || false }}
@@ -296,6 +319,7 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          from collections import Counter
           from pathlib import Path
 
           completion_root = "TestMainDispatchCompletionEmpty"
@@ -604,6 +628,130 @@ jobs:
               suites['list-renderer-helper-tests.jsonl'] = set().union(*(
                   required_cases(root, children) for root, children in renderer_helper_cases.items()
               ))
+          request_configuration_packages = {}
+          if os.environ["CHECK_REQUEST_CONFIGURATION"] == "true":
+              request_public_cases = {
+                  'TestMainGlobalFlagsPlacementHeadersAndOutput': [
+                      'extraction/equals/after', 'extraction/equals/before', 'extraction/equals/between',
+                      'extraction/spaced/after', 'extraction/spaced/before', 'extraction/spaced/between',
+                      'json/equals/after', 'json/equals/before', 'json/equals/between', 'json/spaced/after',
+                      'json/spaced/before', 'json/spaced/between', 'raw/equals/after', 'raw/equals/before',
+                      'raw/equals/between', 'raw/spaced/after', 'raw/spaced/before', 'raw/spaced/between',
+                      'text/equals/after', 'text/equals/before', 'text/equals/between', 'text/spaced/after',
+                      'text/spaced/before', 'text/spaced/between',
+                  ],
+                  'TestMainGlobalFlagsPrecedence': [
+                      'custom_environment_header', 'empty_environment', 'empty_equals', 'empty_header', 'empty_spaced',
+                      'environment', 'flag_overrides_environment_header', 'header_overrides_project', 'last_duplicate',
+                      'unset',
+                  ],
+                  'TestMainGlobalFlagsHeaderAliasesAndAuthorization': [],
+                  'TestMainGlobalFlagsKeepEndpointFlagsAndLiterals': [
+                      'completion-looking_project', 'delimiter_stops_global_parsing', 'literal_after_delimiter',
+                      'literal_delimiter_value', 'literal_format-looking_value', 'literal_model_flag_value',
+                      'literal_project_value', 'local_flag_before_operation', 'local_flag_before_resource',
+                  ],
+                  'TestMainGlobalFlagsProjectBodyKeepsRootHeader': [
+                      'admin/organization/invites/empty', 'admin/organization/invites/environment',
+                      'admin/organization/invites/root', 'admin/organization/invites/unset',
+                      'admin:organization:invites/empty', 'admin:organization:invites/environment',
+                      'admin:organization:invites/root', 'admin:organization:invites/unset',
+                  ],
+                  'TestMainGlobalFlagsDeepAdminAndCustomCommands': [
+                      '#00', 'admin', 'admin/organization', 'admin/organization/invites',
+                      'admin/organization/invites/list', 'custom/after', 'custom/before', 'custom/between',
+                  ],
+                  'TestMainGlobalFlagsHelpAndCompletionStayLocal': [
+                      '--project=proj-help/models/list/--help', '__complete/--/models/list/--project/',
+                      'help/--all/models/list', 'models/--project=proj-help/list/--help',
+                      'models/list/--project=proj-help/--help',
+                  ],
+                  'TestMainGlobalFlagsErrorOutputPlacement': [
+                      'extraction/after', 'extraction/before', 'extraction/between', 'json/after', 'json/before',
+                      'json/between', 'raw/after', 'raw/before', 'raw/between', 'text/after', 'text/before',
+                      'text/between',
+                  ],
+                  'TestMainGlobalFlagBaseURLOverridesMalformedEnvironment': [
+                      'invalid_absolute_escape/equals/after', 'invalid_absolute_escape/equals/before',
+                      'invalid_absolute_escape/equals/between', 'invalid_absolute_escape/spaced/after',
+                      'invalid_absolute_escape/spaced/before', 'invalid_absolute_escape/spaced/between',
+                      'invalid_relative_escape/equals/after', 'invalid_relative_escape/equals/before',
+                      'invalid_relative_escape/equals/between', 'invalid_relative_escape/spaced/after',
+                      'invalid_relative_escape/spaced/before', 'invalid_relative_escape/spaced/between',
+                      'missing_scheme/equals/after', 'missing_scheme/equals/before', 'missing_scheme/equals/between',
+                      'missing_scheme/spaced/after', 'missing_scheme/spaced/before', 'missing_scheme/spaced/between',
+                  ],
+                  'TestMainGlobalFlagInvalidPercentBaseURLStillFails': [
+                      'absolute/empty_equals_fallback', 'absolute/empty_spaced_fallback', 'absolute/environment',
+                      'absolute/explicit', 'relative/empty_equals_fallback', 'relative/empty_spaced_fallback',
+                      'relative/environment', 'relative/explicit',
+                  ],
+                  'TestMainGlobalFlagBaseURLOverridePreservesEnvironmentHeaders': [
+                      'API_defaults', 'admin_defaults', 'explicit_context', 'header_precedence',
+                  ],
+                  'TestMainGlobalFlagInvalidPercentBaseURLErrorsAreSafe': [
+                      'json/empty_fallback', 'json/environment', 'json/explicit', 'text/empty_fallback',
+                      'text/environment', 'text/explicit',
+                  ],
+                  'TestMainGlobalFlagEmptyBaseURLKeepsEnvironmentFallback': [
+                      'equals/after', 'equals/before', 'equals/between', 'spaced/after', 'spaced/before',
+                      'spaced/between',
+                  ],
+                  'TestMainGlobalFlagEmptyMTLSOverridesEnvironment': [
+                      'equals/after', 'equals/before', 'equals/between', 'spaced/after', 'spaced/before',
+                      'spaced/between',
+                  ],
+                  'TestMainGlobalFlagMTLSRejectsExplicitDuplicates': [
+                      '--mtls-client-cert-file=/--mtls-client-cert-file=/models/list',
+                      '--mtls-client-cert-file=/models/--mtls-client-cert-file=/list',
+                      '--mtls-client-key-file=/--mtls-client-key-file=/models/list',
+                      '--mtls-client-key-file=/models/--mtls-client-key-file=/list',
+                      'models/--mtls-client-cert-file=/list/--mtls-client-cert-file=',
+                      'models/--mtls-client-key-file=/list/--mtls-client-key-file=',
+                  ],
+                  'TestMainGlobalFlagCompletionScriptsIgnoreRequestConfiguration': [
+                      'bash/certificate_only', 'bash/endpoint', 'bash/invalid_endpoint', 'bash/key_only',
+                      'bash/missing_files', 'fish/certificate_only', 'fish/endpoint', 'fish/invalid_endpoint',
+                      'fish/key_only', 'fish/missing_files', 'pwsh/certificate_only', 'pwsh/endpoint',
+                      'pwsh/invalid_endpoint', 'pwsh/key_only', 'pwsh/missing_files', 'zsh/certificate_only',
+                      'zsh/endpoint', 'zsh/invalid_endpoint', 'zsh/key_only', 'zsh/missing_files',
+                  ],
+                  'TestMainGlobalFlagCompletionWordsRemainRequestValues': [
+                      '@completion/equals', '@completion/spaced', '__complete/equals', '__complete/spaced',
+                  ],
+                  'TestMainGlobalFlagRequestConfigurationStillValidates': [
+                      'certificate_only/@completion', 'certificate_only/__complete', 'certificate_only/ordinary',
+                      'empty_endpoint_fallback/@completion', 'empty_endpoint_fallback/__complete',
+                      'empty_endpoint_fallback/ordinary', 'invalid_environment/@completion',
+                      'invalid_environment/__complete', 'invalid_environment/ordinary',
+                      'invalid_explicit_endpoint/@completion', 'invalid_explicit_endpoint/__complete',
+                      'invalid_explicit_endpoint/ordinary', 'key_only/@completion', 'key_only/__complete',
+                      'key_only/ordinary', 'missing_files/@completion', 'missing_files/__complete',
+                      'missing_files/ordinary',
+                  ],
+                  'TestMainGlobalFlagURLConfigurationPreservesOfflineHelp': [
+                      'help/imaginary/json', 'help/imaginary/text', 'help/json', 'help/models/imaginary/json',
+                      'help/models/imaginary/text', 'help/models/list/json', 'help/models/list/text', 'help/setup/json',
+                      'help/setup/text', 'help/text',
+                  ],
+              }
+              suites["request-configuration-public-tests.jsonl"] = set().union(*(
+                  required_cases(root, children) for root, children in request_public_cases.items()
+              ))
+              request_configuration_packages["request-configuration-public-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+              request_helper_cases = {
+                  'TestRootRequestFlagsPreserveOwnershipAndMetadata': [],
+                  'TestRootRequestFlagsPreserveMTLSPlacement': [],
+                  'TestRootRequestFlagsRetainSourcesAliasesAndValidation': [
+                      'environment', 'alias', 'empty', 'duplicate', 'validation',
+                  ],
+                  'TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue': [],
+              }
+              suites["request-configuration-helper-tests.jsonl"] = set().union(*(
+                  required_cases(root, children) for root, children in request_helper_cases.items()
+              ))
+              request_configuration_packages["request-configuration-helper-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+
           if os.environ["CHECK_ENVIRONMENT"] == "true":
               suites["environment-tests.jsonl"] = required_cases(
                   "TestRequestConfigurationRestoresEnvironment",
@@ -634,10 +782,20 @@ jobs:
           for filename, required in suites.items():
               passed = set()
               package_passed = False
+              request_configuration_events = Counter()
               with (Path(os.environ["RUNNER_TEMP"]) / filename).open() as events:
                   for line in events:
                       event = json.loads(line)
                       test = event.get("Test", "")
+                      if filename in request_configuration_packages:
+                          if event["Action"] == "build-output":
+                              continue
+                          if event["Action"] == "build-fail":
+                              raise SystemExit(f"{filename}: unexpected build failure")
+                          if event.get("Package") != request_configuration_packages[filename]:
+                              raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
+                          if event["Action"] in {"start", "run", "pass"}:
+                              request_configuration_events[event["Action"], test] += 1
                       if filename == "dispatch-tests.jsonl" and test and test != completion_root and not test.startswith(completion_root + "/"):
                           continue
                       if event["Action"] in {"skip", "fail"}:
@@ -649,12 +807,18 @@ jobs:
               missing = required - passed
               unexpected = passed - required if filename in {
                   "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-tests.jsonl",
+                  "request-configuration-public-tests.jsonl", "request-configuration-helper-tests.jsonl",
                   "audio-tests.jsonl", "resource-tests.jsonl", "streaming-text-tests.jsonl",
                   "list-navigation-helper-tests.jsonl", "list-projection-helper-tests.jsonl", "list-renderer-helper-tests.jsonl",
               } else set()
               children = sum("/" in name for name in passed)
               if missing or unexpected or not package_passed:
                   raise SystemExit(f"{filename}: missing required tests: {sorted(missing)}; unexpected tests: {sorted(unexpected)}; package passed: {package_passed}")
+              if filename in request_configuration_packages:
+                  expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
+                  expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
+                  if request_configuration_events != expected_events:
+                      raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
               print(f"{filename}: {len(passed) - children} roots and {children} children passed; no skips")
           PY
 
