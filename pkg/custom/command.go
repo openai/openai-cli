@@ -17,6 +17,8 @@ func ConfigureCommand(root *cli.Command) {
 		return
 	}
 	root.Metadata[configuredCommandMetadata] = true
+	configureCertificateCompatibility(root)
+	configureAudioVoices(root)
 	configureRootRequestFlags(root)
 	describeRequestInputs(root)
 	registerImageModels(root)

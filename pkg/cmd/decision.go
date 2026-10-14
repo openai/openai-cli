@@ -16,7 +16,7 @@ import (
 
 var decisionsCreate = cli.Command{
 	Name:    "create",
-	Usage:   "Use this endpoint to ask classification or scoring questions about the same\ninput. You’ll get the answers back in the order you asked the questions.",
+	Usage:   "Use this endpoint to quickly answer classification or scoring questions about\nsome input. You can ask multiple questions in one request.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[any]{
@@ -27,11 +27,13 @@ var decisionsCreate = cli.Command{
 		},
 		&requestflag.Flag[string]{
 			Name:     "model",
+			Usage:    "The model to use. Only `gpt-6-luna` is supported.",
 			Required: true,
 			BodyPath: "model",
 		},
 		&requestflag.Flag[[]map[string]any]{
 			Name:     "question",
+			Usage:    "Ask 1–200 questions about the input. Each question can be a predicate, choice, or score. Answers come back in the same order.",
 			Required: true,
 			BodyPath: "questions",
 		},
