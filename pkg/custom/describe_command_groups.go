@@ -96,7 +96,7 @@ var commandGroupDescriptions = map[string]string{
 	"admin organization projects users roles": "Assign and remove roles for project users.",
 	"admin organization projects service-accounts":          "Manage project service accounts and their API keys.",
 	"admin organization projects service-accounts api-keys": "Create service account API keys.",
-	"admin organization projects api-keys":                  "Inspect and delete project API keys.",
+	"admin organization projects api-keys":                  "Inspect, update, and delete project API keys.",
 	"admin organization projects rate-limits":               "Inspect and update project rate limits.",
 	"admin organization projects model-permissions":         "Manage project model permissions.",
 	"admin organization projects hosted-tool-permissions":   "Manage project hosted-tool permissions.",

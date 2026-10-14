@@ -711,6 +711,7 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&adminOrganizationProjectsAPIKeysRetrieve,
+					&adminOrganizationProjectsAPIKeysUpdate,
 					&adminOrganizationProjectsAPIKeysList,
 					&adminOrganizationProjectsAPIKeysDelete,
 				},
