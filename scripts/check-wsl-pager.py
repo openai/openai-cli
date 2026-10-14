@@ -33,7 +33,7 @@ OUTPUT_LIMIT = 8 * 1024 * 1024
 ROOT = "TestSocketPairPagerFailureKeepsReusedDescriptorOpen"
 TESTS = {ROOT, ROOT + "/LookPath", ROOT + "/ForkExec"}
 
-# Public stdin, download, and output contracts. These invoke main() in subprocesses.
+# Public input, download, output, and image-saving contracts invoke main() in subprocesses.
 PROCESS_CASES = {
     "TestMainShellExplicitTextInput": [
         "plain/untrusted=false", "plain/untrusted=true", "JSON_stays_text/untrusted=false",
@@ -102,6 +102,20 @@ PROCESS_CASES = {
     "TestMainDispatchOutputQuietKeepsFailurePayloadsAndSuppressesFallbackNotice": [
         "json", "jsonl", "raw", "explore",
     ],
+    "TestMainImageGenerationPartialFailureKeepsSavedImage": [],
+    "TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse": [
+        "--stream=true", "--partial-images_2", "--stream=true_--max-items_-1",
+        "--partial-images_2_--max-items_-1", "--stream=true_--max-items_-2",
+    ],
+    "TestMainImageGenerationClosedStdoutKeepsSavedImage": [
+        "partial-failure=false/format=text", "partial-failure=true/format=text",
+        "partial-failure=false/format=json", "partial-failure=true/format=json",
+    ],
+    "TestMainImageEditStreamSavesFinalAndCloses": ["explicit", "partials", "stdin", "YAML"],
+    "TestMainImageUploadBatchCollisionAndPartialFailure": [
+        "edit_partial=false", "edit_partial=true", "create-variation_partial=false", "create-variation_partial=true",
+    ],
+    "TestMainImageEditInterruptClosesStreamWithoutSavingPartial": [],
 }
 PROCESS_TESTS = {root for root in PROCESS_CASES} | {
     root + "/" + child for root, children in PROCESS_CASES.items() for child in children

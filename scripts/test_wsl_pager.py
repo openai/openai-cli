@@ -148,10 +148,28 @@ class AcceptanceTests(unittest.TestCase):
             pilot.require_test_pass(b"\xff\xfe" + passing_output().decode().encode("utf-16-le"), b"", 0)
 
     def test_process_exact_inventory(self):
-        self.assertEqual(len(pilot.PROCESS_CASES), 17)
-        self.assertEqual(len(pilot.PROCESS_TESTS), 121)
+        self.assertEqual(len(pilot.PROCESS_CASES), 23)
+        self.assertEqual(len(pilot.PROCESS_TESTS), 144)
         self.assertNotIn("TestMainDispatchProcess", pilot.PROCESS_TESTS)
         pilot.require_test_pass(process_passing_output(), b"", 0, pilot.PROCESS_TESTS, "process")
+
+    def test_process_requires_saved_image_cases(self):
+        good = process_passing_output()
+        for name in (
+            "TestMainImageGenerationPartialFailureKeepsSavedImage",
+            "TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse",
+            "TestMainImageGenerationClosedStdoutKeepsSavedImage",
+            "TestMainImageGenerationClosedStdoutKeepsSavedImage/partial-failure=true/format=json",
+            "TestMainImageEditStreamSavesFinalAndCloses",
+            "TestMainImageUploadBatchCollisionAndPartialFailure",
+            "TestMainImageEditInterruptClosesStreamWithoutSavingPartial",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, pilot.PROCESS_TESTS)
+                missing = good.replace(f"=== RUN   {name}\n".encode(), b"").replace(
+                    f"--- PASS: {name} (0.01s)\n".encode(), b"")
+                with self.assertRaisesRegex(RuntimeError, "process test execution"):
+                    pilot.require_test_pass(missing, b"", 0, pilot.PROCESS_TESTS, "process")
 
     def test_process_rejects_missing_duplicate_and_unexpected_events(self):
         good = process_passing_output()
