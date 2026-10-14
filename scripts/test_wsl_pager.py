@@ -4,7 +4,6 @@
 from datetime import datetime, timedelta, timezone
 import importlib.util
 import io
-import json
 import os
 from pathlib import Path
 import sys
@@ -29,46 +28,59 @@ def passing_output():
 
 class MetadataTests(unittest.TestCase):
     def test_enabled_feature(self):
-        row = {"Name": "Microsoft-Windows-Subsystem-Linux", "InstallState": 1}
-        for encoding in ("utf-8", "utf-8-sig"):
-            with self.subTest(encoding=encoding):
-                pilot.require_feature_enabled((json.dumps([row]) + "\r\n").encode(encoding), pilot.FEATURE_PROGRESS)
+        report = ("Deployment Image Servicing and Management tool\nVersion: synthetic\n\n"
+                  "Feature Name : Microsoft-Windows-Subsystem-Linux\nDisplay Name : Windows Subsystem for Linux\n"
+                  "State : Enabled\nRestart Required : Possible\n\nThe operation completed successfully.\n")
+        for encoding in ("utf-8", "utf-8-sig", "utf-16", "utf-16-le"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(encoding=encoding, newline=newline):
+                    pilot.require_feature_enabled(report.replace("\n", newline).encode(encoding), b"")
+        pilot.require_feature_enabled(b"\tFeature Name\t:\tMicrosoft-Windows-Subsystem-Linux \r\n  State : Enabled\t\r\n", b"")
 
     def test_unverified_feature(self):
-        good = {"Name": "Microsoft-Windows-Subsystem-Linux", "InstallState": 1}
-        bad = {"missing": [], "duplicate": [good, good], "object": good, "null": None,
-               "wrong name": [dict(good, Name="VirtualMachinePlatform")], "missing state": [{"Name": good["Name"]}],
-               "extra field": [dict(good, Other=1)], "non-object row": [1]}
-        for label, value in (("disabled", 2), ("absent", 3), ("unknown", 4), ("zero", 0),
-                             ("boolean", True), ("string", "1"), ("float", 1.0), ("null state", None)):
-            bad[label] = [dict(good, InstallState=value)]
-        for label, rows in bad.items():
+        name = "Feature Name : Microsoft-Windows-Subsystem-Linux\n"
+        enabled = "State : Enabled\n"
+        bad = {"missing": "", "name only": name, "state only": enabled,
+               "duplicate name": name + name + enabled, "duplicate state": name + enabled + enabled,
+               "conflicting states": name + enabled + "State : Disabled\n",
+               "wrong name": "Feature Name : VirtualMachinePlatform\n" + enabled,
+               "name suffix": name.rstrip() + " extra\n" + enabled,
+               "name prefix": "Feature Name : Other-Microsoft-Windows-Subsystem-Linux\n" + enabled,
+               "label prefix": "Not " + name + enabled,
+               "value on another line": name + "State :\nEnabled\n"}
+        for value in ("Disabled", "Absent", "Unknown", "Enable Pending", "Disable Pending",
+                      "Disabled with Payload Removed", "Enabled Pending", "Not Enabled", "Enabled extra",
+                      "Enabled; Disabled", "Enabled\tunexpected", "1", "True", ""):
+            bad["state " + value] = name + "State : " + value + "\n"
+        for label, report in bad.items():
             with self.subTest(label=label):
                 with self.assertRaisesRegex(RuntimeError, "not verified as already enabled"):
-                    pilot.require_feature_enabled(json.dumps(rows).encode(), pilot.FEATURE_PROGRESS)
+                    pilot.require_feature_enabled(report.encode(), b"")
 
     def test_malformed_feature(self):
-        for raw in (b"Enabled", b"\xff", b"[{\"Name\":\"other\",\"Name\":\"Microsoft-Windows-Subsystem-Linux\",\"InstallState\":1}]"):
+        for raw in (b"\xff", b"a\x00b", b"Feature Name : Microsoft-Windows-Subsystem-Linux\nState : Enabled\x1b[0m\n"):
             with self.subTest(raw=raw):
-                with self.assertRaisesRegex(RuntimeError, "Malformed|Duplicate"):
-                    pilot.require_feature_enabled(raw, pilot.FEATURE_PROGRESS)
+                with self.assertRaisesRegex(RuntimeError, "encoding|metadata controls"):
+                    pilot.require_feature_enabled(raw, b"")
 
-    def test_powershell_startup_control(self):
-        stdout, stderr = b"powershell-control-out", b"powershell-control-err"
-        pilot.require_powershell_control(stdout, stderr)
-        for out, err in ((b"", b""), (stderr, stdout), (stdout + b"\n", stderr), (stdout, stderr + b"unexpected")):
-            with self.subTest(stdout=out, stderr=err):
-                with self.assertRaisesRegex(RuntimeError, "startup control"):
-                    pilot.require_powershell_control(out, err)
+    def test_feature_stderr_stays_failure(self):
+        data = b"Feature Name : Microsoft-Windows-Subsystem-Linux\nState : Enabled\n"
+        with self.assertRaisesRegex(RuntimeError, "wrote stderr"):
+            pilot.require_feature_enabled(data, b"query failed")
 
-    def test_feature_query_progress(self):
-        data = b'[{"Name":"Microsoft-Windows-Subsystem-Linux","InstallState":1}]'
-        lines = pilot.FEATURE_PROGRESS.splitlines(keepends=True)
-        incomplete = [b"".join(lines[:count]) for count in range(len(lines))]
-        for stderr in (*incomplete, pilot.FEATURE_PROGRESS + b"unexpected", b"".join(reversed(lines))):
-            with self.subTest(stderr=stderr):
-                with self.assertRaisesRegex(RuntimeError, "feature progress"):
-                    pilot.require_feature_enabled(data, stderr)
+    def test_native_process_identity(self):
+        with patch.object(pilot.sys, "platform", "win32"), patch.object(pilot.platform, "machine", return_value="AMD64"), \
+                patch.object(pilot.struct, "calcsize", return_value=8):
+            identity = pilot.require_native_windows_process()
+            self.assertEqual(identity["pointer_bits"], 64)
+            self.assertEqual(identity["pid"], os.getpid())
+            self.assertEqual(identity["python_executable"], sys.executable)
+        for system, machine, pointer_bytes in (("linux", "x86_64", 8), ("win32", "ARM64", 8), ("win32", "AMD64", 4)):
+            with self.subTest(system=system, machine=machine, pointer_bytes=pointer_bytes):
+                with patch.object(pilot.sys, "platform", system), patch.object(pilot.platform, "machine", return_value=machine), \
+                        patch.object(pilot.struct, "calcsize", return_value=pointer_bytes):
+                    with self.assertRaisesRegex(RuntimeError, "64-bit Python process on Windows AMD64"):
+                        pilot.require_native_windows_process()
 
     def test_inventory_encodings(self):
         for encoding in ("utf-8", "utf-8-sig", "utf-16", "utf-16-le"):
@@ -212,6 +224,14 @@ class LifecycleTests(unittest.TestCase):
     def test_nonzero_exit_and_separate_streams(self):
         result = self.commands.run("control", [sys.executable, "-I", "-c", "import sys; print('out'); print('err', file=sys.stderr); sys.exit(7)"], 3, expected=7)
         self.assertEqual(result, (b"out\n", b"err\n", 7) if os.name != "nt" else (b"out\r\n", b"err\r\n", 7))
+        self.assertEqual(self.commands.records[0]["stream_eof"], [True, True])
+        self.assertIsNone(self.commands.records[0]["forced_stop"])
+
+    def test_nonzero_exit_rejects_enabled_feature(self):
+        code = "import sys; print('Feature Name : Microsoft-Windows-Subsystem-Linux'); print('State : Enabled'); sys.exit(7)"
+        with self.assertRaisesRegex(RuntimeError, "unexpected exit 7"):
+            self.commands.run("feature-error", [sys.executable, "-I", "-c", code], 3)
+        self.assertEqual(self.commands.records[0]["exit_code"], 7)
         self.assertEqual(self.commands.records[0]["stream_eof"], [True, True])
         self.assertIsNone(self.commands.records[0]["forced_stop"])
 

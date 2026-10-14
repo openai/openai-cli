@@ -16,6 +16,7 @@ import platform
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import threading
@@ -30,12 +31,6 @@ IMAGE_LIMIT = 512 * 1024 * 1024
 OUTPUT_LIMIT = 8 * 1024 * 1024
 ROOT = "TestSocketPairPagerFailureKeepsReusedDescriptorOpen"
 TESTS = {ROOT, ROOT + "/LookPath", ROOT + "/ForkExec"}
-FEATURE_PROGRESS = (
-    b"feature-encoding-start\r\nfeature-encoding-complete\r\n"
-    b"feature-load-start\r\nfeature-load-complete\r\n"
-    b"feature-query-start\r\nfeature-query-complete\r\n"
-    b"feature-serialization-start\r\nfeature-serialization-complete\r\n"
-)
 STOP = 0
 
 
@@ -77,30 +72,28 @@ def require_version_one(data, name):
         raise RuntimeError("The owned distribution is not verified as WSL 1")
 
 
-def require_powershell_control(stdout, stderr):
-    if stdout != b"powershell-control-out" or stderr != b"powershell-control-err":
-        raise RuntimeError("PowerShell startup control changed its output")
-
-
 def require_feature_enabled(data, stderr):
-    if stderr != FEATURE_PROGRESS:
-        raise RuntimeError("Missing or unexpected Windows feature progress")
-
-    def unique_fields(pairs):
-        fields = dict(pairs)
-        if len(fields) != len(pairs):
-            raise RuntimeError("Duplicate Windows feature fields")
-        return fields
-
+    if stderr:
+        raise RuntimeError("The Windows feature query wrote stderr")
     try:
-        rows = json.loads(data.decode("utf-8-sig"), object_pairs_hook=unique_fields)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise RuntimeError("Malformed Windows feature result") from error
-    if (not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict) or
-            set(rows[0]) != {"Name", "InstallState"} or
-            rows[0]["Name"] != "Microsoft-Windows-Subsystem-Linux" or
-            type(rows[0]["InstallState"]) is not int or rows[0]["InstallState"] != 1):
+        text = decode_metadata(data)
+    except UnicodeError as error:
+        raise RuntimeError("Invalid Windows feature encoding") from error
+    names = re.findall(r"^[ \t]*Feature Name[ \t]*:[ \t]*([^\r\n]*)\r?$", text, re.MULTILINE)
+    states = re.findall(r"^[ \t]*State[ \t]*:[ \t]*([^\r\n]*)\r?$", text, re.MULTILINE)
+    if ([value.strip() for value in names] != ["Microsoft-Windows-Subsystem-Linux"] or
+            [value.strip() for value in states] != ["Enabled"]):
         raise RuntimeError("WSL 1 is not verified as already enabled")
+
+
+def require_native_windows_process():
+    identity = {"platform": sys.platform, "machine": platform.machine(),
+                "pointer_bits": struct.calcsize("P") * 8, "pid": os.getpid(),
+                "python_executable": sys.executable, "python_version": sys.version}
+    if (identity["platform"] != "win32" or identity["pointer_bits"] != 64 or
+            identity["machine"].lower() not in ("amd64", "x86_64")):
+        raise RuntimeError("This pilot requires a 64-bit Python process on Windows AMD64")
+    return identity
 
 
 def require_test_pass(stdout, stderr, code):
@@ -313,8 +306,8 @@ def write_json(path, data):
 
 
 def pilot(binary, cleanup_only=False):
-    if sys.platform != "win32" or platform.machine().lower() not in ("amd64", "x86_64"):
-        raise RuntimeError("This pilot requires a native Windows host")
+    # Validate process bitness before selecting System32, which WOW64 can redirect.
+    host_process = require_native_windows_process()
     name, directory = owned_paths()
     wsl = str(Path(os.environ["SYSTEMROOT"]) / "System32" / "wsl.exe")
     state_path = directory / "state.json"
@@ -335,6 +328,7 @@ def pilot(binary, cleanup_only=False):
     commands = Commands(directory, min(work_deadline, start + (150 if cleanup_only else 780)), "final-" if cleanup_only else "")
     result = {"state": "failed", "scope": "Ubuntu WSL 1 AMD64 pager process", "commands": commands.records}
     result["requires_successful_process_exit"] = True
+    result["host_process"] = host_process
     result["runner_image"] = {key: os.environ.get(key) for key in ("ImageOS", "ImageVersion", "RUNNER_ARCH")}
     failure = None
     try:
@@ -347,28 +341,11 @@ def pilot(binary, cleanup_only=False):
             initial = distribution_names(commands.run("initial-inventory", [wsl, "--list", "--quiet"], 20)[0])
             if initial:
                 raise RuntimeError("The disposable runner already has a distribution")
-            powershell = str(Path(os.environ["SYSTEMROOT"]) / "System32/WindowsPowerShell/v1.0/powershell.exe")
-            startup = ("[Console]::Out.Write('powershell-control-out'); "
-                       "[Console]::Error.Write('powershell-control-err'); exit 7")
-            stdout, stderr, _ = commands.run("powershell-startup", [powershell, "-NoProfile", "-NonInteractive", "-Command", startup], 10, expected=7)
-            require_powershell_control(stdout, stderr)
-            # WSL itself checks this read-only CIM class and requires InstallState 1.
-            feature = ("$ErrorActionPreference = 'Stop'; "
-                       "[Console]::Error.WriteLine('feature-encoding-start'); "
-                       "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
-                       "[Console]::Error.WriteLine('feature-encoding-complete'); "
-                       "[Console]::Error.WriteLine('feature-load-start'); "
-                       "Import-Module -Name CimCmdlets,Microsoft.PowerShell.Utility -ErrorAction Stop; "
-                       "[Console]::Error.WriteLine('feature-load-complete'); "
-                       "[Console]::Error.WriteLine('feature-query-start'); "
-                       "$features = @(Get-CimInstance -Namespace root/cimv2 -ClassName Win32_OptionalFeature "
-                       "-Filter \"Name='Microsoft-Windows-Subsystem-Linux'\" -ErrorAction Stop | Select-Object Name,InstallState); "
-                       "[Console]::Error.WriteLine('feature-query-complete'); "
-                       "[Console]::Error.WriteLine('feature-serialization-start'); "
-                       "ConvertTo-Json -Compress -InputObject $features; "
-                       "[Console]::Error.WriteLine('feature-serialization-complete')")
-            enabled, progress, _ = commands.run("feature", [powershell, "-NoProfile", "-NonInteractive", "-Command", feature], 30)
-            require_feature_enabled(enabled, progress)
+            dism = Path(os.environ["SYSTEMROOT"]) / "System32" / "dism.exe"
+            result["dism_sha256"] = digest(dism)
+            enabled, errors, _ = commands.run("feature", [str(dism), "/Online", "/Get-FeatureInfo",
+                "/FeatureName:Microsoft-Windows-Subsystem-Linux", "/English", "/NoRestart", "/LogLevel:1"], 90)
+            require_feature_enabled(enabled, errors)
             if shutil.disk_usage(directory).free < 6 * 1024**3:
                 raise RuntimeError("Insufficient free space for the disposable distro")
             image = directory / "ubuntu.wsl"
