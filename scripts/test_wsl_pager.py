@@ -26,6 +26,11 @@ def passing_output():
             f"    --- PASS: {root}/ForkExec (0.01s)\nPASS\n").encode()
 
 
+def process_passing_output():
+    names = sorted(pilot.PROCESS_TESTS)
+    return ("".join(f"=== RUN   {name}\n--- PASS: {name} (0.01s)\n" for name in names) + "PASS\n").encode()
+
+
 class MetadataTests(unittest.TestCase):
     def test_enabled_feature(self):
         report = ("Deployment Image Servicing and Management tool\nVersion: synthetic\n\n"
@@ -139,6 +144,97 @@ class AcceptanceTests(unittest.TestCase):
     def test_ubuntu_output_is_not_metadata(self):
         with self.assertRaises(UnicodeDecodeError):
             pilot.require_test_pass(b"\xff\xfe" + passing_output().decode().encode("utf-16-le"), b"", 0)
+
+    def test_process_exact_inventory(self):
+        self.assertEqual(len(pilot.PROCESS_CASES), 17)
+        self.assertEqual(len(pilot.PROCESS_TESTS), 121)
+        self.assertNotIn("TestMainDispatchProcess", pilot.PROCESS_TESTS)
+        pilot.require_test_pass(process_passing_output(), b"", 0, pilot.PROCESS_TESTS, "process")
+
+    def test_process_rejects_missing_duplicate_and_unexpected_events(self):
+        good = process_passing_output()
+        name = "TestMainFilesWorkflowExplicitBinaryStdin/JSON_stays_file_bytes"
+        run = f"=== RUN   {name}\n".encode()
+        passed = f"--- PASS: {name} (0.01s)\n".encode()
+        bad = {"missing run": good.replace(run, b""), "missing pass": good.replace(passed, b""),
+               "duplicate run": good + run, "duplicate pass": good + passed,
+               "unexpected": good + b"=== RUN   TestOther\n--- PASS: TestOther (0.01s)\n",
+               "skipped": good + b"--- SKIP: TestOther (0.01s)\n",
+               "failed": good + b"--- FAIL: TestOther (0.01s)\n",
+               "no final pass": good.removesuffix(b"PASS\n"), "duplicate final pass": good + b"PASS\n",
+               "pager instead": passing_output(), "empty": b"PASS\n"}
+        for label, raw in bad.items():
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(RuntimeError, "process test execution"):
+                    pilot.require_test_pass(raw, b"", 0, pilot.PROCESS_TESTS, "process")
+
+    def test_process_preserves_exit_stderr_and_encoding_gates(self):
+        for stderr, code in ((b"", 7), (b"diagnostic", 0)):
+            with self.subTest(code=code, stderr=stderr):
+                with self.assertRaisesRegex(RuntimeError, "process test failed or wrote stderr"):
+                    pilot.require_test_pass(process_passing_output(), stderr, code, pilot.PROCESS_TESTS, "process")
+        with self.assertRaises(UnicodeDecodeError):
+            pilot.require_test_pass(b"\xff" + process_passing_output(), b"", 0, pilot.PROCESS_TESTS, "process")
+
+    def test_each_payload_uses_its_own_destination_and_hash(self):
+        class FakeCommands:
+            def __init__(self, observed):
+                self.observed, self.calls = observed, []
+
+            def run(self, label, argv, seconds):
+                self.calls.append((label, argv, seconds))
+                value = b"/mnt/c/synthetic test\n" if label.endswith("binary-path") else self.observed
+                return value, b"", 0
+
+        for prefix, target, expected in (("", "/home/cli-compat/payload/custom.test", "pager-digest"),
+                                         ("process-", "/home/cli-compat/payload/process.test", "process-digest")):
+            with self.subTest(prefix=prefix):
+                commands = FakeCommands((expected + "  " + target + "\n").encode())
+                pilot.copy_payload(commands, ["root"], ["user"], Path("C:/synthetic test"), target, expected, prefix)
+                self.assertEqual([x[0] for x in commands.calls],
+                                 [prefix + "binary-path", prefix + "copy", prefix + "binary-hash"])
+                self.assertEqual(commands.calls[1][1], ["root", "/usr/bin/install", "-m", "700", "-o", "cli-compat", "-g", "cli-compat", "--", "/mnt/c/synthetic test", target])
+                self.assertEqual(commands.calls[2][1], ["user", "/usr/bin/sha256sum", target])
+                with self.assertRaisesRegex(RuntimeError, "copied Linux binary changed"):
+                    pilot.copy_payload(FakeCommands(b"wrong  target\n"), ["root"], ["user"], Path("test"), target, expected, prefix)
+
+    def test_process_stage_requires_full_admission_and_fixed_command(self):
+        class FakeCommands:
+            deadline = 200.0
+
+            def __init__(self):
+                self.calls = []
+
+            def run(self, label, argv, seconds):
+                self.calls.append((label, argv, seconds))
+                return process_passing_output(), b"", 0
+
+        commands = FakeCommands()
+        with patch.object(pilot.time, "monotonic", return_value=30.001):
+            with self.assertRaisesRegex(RuntimeError, "Insufficient work time"):
+                pilot.run_process_suite(commands, ["user"], "/process.test")
+        self.assertEqual(commands.calls, [])
+        with patch.object(pilot.time, "monotonic", return_value=30.0):
+            pilot.run_process_suite(commands, ["user"], "/process.test")
+        self.assertEqual(commands.calls, [("process", ["user", "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "160s", "/process.test", "-test.run=" + pilot.PROCESS_SELECTOR, "-test.timeout=150s", "-test.v"], 170)])
+
+    def test_process_stage_does_not_accept_a_false_command_result(self):
+        class FakeCommands:
+            deadline = 200.0
+
+            def __init__(self, result):
+                self.result = result
+
+            def run(self, *_args):
+                return self.result
+
+        with patch.object(pilot.time, "monotonic", return_value=0):
+            for result in ((process_passing_output(), b"", 1),
+                           (process_passing_output(), b"unexpected", 0),
+                           (b"PASS\n", b"", 0)):
+                with self.subTest(code=result[2], stderr=result[1]):
+                    with self.assertRaises(RuntimeError):
+                        pilot.run_process_suite(FakeCommands(result), ["user"], "/process.test")
 
     def test_binary_architecture(self):
         with tempfile.TemporaryDirectory() as directory:

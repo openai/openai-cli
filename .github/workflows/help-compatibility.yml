@@ -690,7 +690,7 @@ jobs:
         shell: pwsh
         timeout-minutes: 1
         run: python -I -B scripts/test_wsl_pager.py
-      - name: Build the Linux pager test executable
+      - name: Build the Linux compatibility test executables
         shell: pwsh
         timeout-minutes: 6
         env:
@@ -704,12 +704,14 @@ jobs:
           $ErrorActionPreference = 'Stop'
           go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') ./pkg/custom
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-process.test') ./cmd/openai
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go mod verify
           exit $LASTEXITCODE
-      - name: Run the pager regression in disposable Ubuntu WSL 1
+      - name: Run compatibility checks in disposable Ubuntu WSL 1
         shell: pwsh
         timeout-minutes: 16
-        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test')
+        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') --process-binary (Join-Path $env:RUNNER_TEMP 'wsl-process.test')
       - name: Reconcile the owned WSL distribution
         if: always()
         shell: pwsh
