@@ -21,6 +21,33 @@ func TestAdminOrganizationProjectsAPIKeysRetrieve(t *testing.T) {
 	})
 }
 
+func TestAdminOrganizationProjectsAPIKeysUpdate(t *testing.T) {
+	t.Run("regular flags", func(t *testing.T) {
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"admin:organization:projects:api-keys", "update",
+			"--project-id", "project_id",
+			"--api-key-id", "api_key_id",
+			"--expires-in-seconds", "1",
+		)
+	})
+
+	t.Run("piping data", func(t *testing.T) {
+		// Test piping YAML data over stdin
+		pipeData := []byte("expires_in_seconds: 1")
+		mocktest.TestRunMockTestWithPipeAndFlags(
+			t, pipeData,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"admin:organization:projects:api-keys", "update",
+			"--project-id", "project_id",
+			"--api-key-id", "api_key_id",
+		)
+	})
+}
+
 func TestAdminOrganizationProjectsAPIKeysList(t *testing.T) {
 	t.Run("regular flags", func(t *testing.T) {
 		mocktest.TestRunMockTestWithFlags(

@@ -26,8 +26,16 @@ func filesWorkflowUploadServer(t *testing.T, filename string, payload []byte) (*
 
 func filesWorkflowUploadServerWithResponse(t *testing.T, filename string, payload []byte, status int, response string) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
+	handler, requests := filesWorkflowUploadHandler(t, filename, payload, status, response)
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	return server, requests
+}
+
+func filesWorkflowUploadHandler(t *testing.T, filename string, payload []byte, status int, response string) (http.Handler, *atomic.Int32) {
+	t.Helper()
 	requests := new(atomic.Int32)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		if r.Method != http.MethodPost || r.URL.Path != "/files" || !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data;") {
 			t.Errorf("unexpected upload request: %s %s, type=%q", r.Method, r.URL.Path, r.Header.Get("Content-Type"))
@@ -58,9 +66,7 @@ func filesWorkflowUploadServerWithResponse(t *testing.T, filename string, payloa
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, response)
-	}))
-	t.Cleanup(server.Close)
-	return server, requests
+	}), requests
 }
 
 func TestMainFilesWorkflowUploadPaths(t *testing.T) {

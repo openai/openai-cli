@@ -110,6 +110,28 @@ func TestAdminOrganizationUsageCosts(t *testing.T) {
 	})
 }
 
+func TestAdminOrganizationUsageDecisions(t *testing.T) {
+	t.Run("regular flags", func(t *testing.T) {
+		mocktest.TestRunMockTestWithFlags(
+			t,
+			"--api-key", "string",
+			"--admin-api-key", "string",
+			"admin:organization:usage", "decisions",
+			"--start-time", "0",
+			"--api-key-id", "string",
+			"--batch=true",
+			"--bucket-width", "1m",
+			"--end-time", "0",
+			"--group-by", "project_id",
+			"--limit", "0",
+			"--model", "string",
+			"--page", "page",
+			"--project-id", "string",
+			"--user-id", "string",
+		)
+	})
+}
+
 func TestAdminOrganizationUsageEmbeddings(t *testing.T) {
 	t.Run("regular flags", func(t *testing.T) {
 		mocktest.TestRunMockTestWithFlags(

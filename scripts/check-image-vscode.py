@@ -30,7 +30,7 @@ import time
 import zlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from image_picker_harness import Terminal, generate as submit_picker, ready, wait_for_request
+from image_picker_harness import END, Terminal, generate as submit_picker, ready, wait_for_request, wait_resumed, wait_submit_guard
 
 
 def require(condition, message):
@@ -292,13 +292,10 @@ def main():
                 for index, prompt in enumerate(prompts):
                     mark = len(terminal.raw)
                     case.started.clear()
-                    terminal.send(b'\x1b[200~' + prompt.encode() + b'\x1b[201~')
+                    terminal.send(END+b'\x15\x1b[200~' + prompt.encode() + b'\x1b[201~')
                     submit_picker(terminal)
                     wait_for_request(terminal, case.started)
-                    terminal.wait('Saved image:', after=mark)
-                    saved = terminal.raw.index(b'Saved image:', mark)
-                    terminal.wait('Create image', after=saved)
-                    terminal.wait('Describe your image', after=saved)
+                    wait_resumed(terminal, mark, prompt)
                     check_frames(bytes(terminal.raw), index + 1, normal_shape, picker=True)
                     check_saved(home, normal, index + 1)
                     require(len(case.requests) == index + 1, 'picker submitted an extra request')
@@ -308,16 +305,9 @@ def main():
                             executable.rename(home / 'original executable')
                             executable.write_text('#!/bin/sh\nexit 23\n')
                             executable.chmod(0o700)
-                        # Match the shared picker regression's quiet-input guard,
-                        # then prove the returned prompt is blank and accepting
-                        # input before submitting the next generation.
-                        until = time.monotonic() + 1
-                        while time.monotonic() < until:
-                            terminal.read(0.02)
-                        blank = len(terminal.raw)
-                        submit_picker(terminal)
-                        terminal.wait('Add a prompt first.', after=blank)
-                        require(len(case.requests) == 1, 'blank resumed picker generated an image')
+                        # Let the restored draft's quiet-input guard expire.
+                        wait_submit_guard(terminal)
+                        require(len(case.requests) == 1, 'restoring the draft generated an image')
                 terminal.send(b'\x03')
                 terminal.finish(130)
                 check_frames(bytes(terminal.raw), 2, normal_shape, picker=True)

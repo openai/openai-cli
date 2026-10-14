@@ -528,6 +528,10 @@ func FlagOptions(
 		}
 	}
 
+	if err := checkAdminCredentials(cmd); err != nil {
+		return nil, err
+	}
+
 	// FileInput values are file paths, so wrap trusted values with FilePathValue
 	// for automatic expansion. In untrusted-stdin mode, reject piped values.
 	if err := wrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
