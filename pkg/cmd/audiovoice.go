@@ -6,8 +6,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/requestflag"
-	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
@@ -57,16 +57,22 @@ func handleAudioVoicesCreate(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("Unexpected extra arguments: %v", unusedArgs)
 	}
 
-	options, err := custom.AudioVoicesFlagOptions(ctx, cmd)
+	options, err := flagOptions(
+		cmd,
+		apiquery.NestedQueryFormatBrackets,
+		apiquery.ArrayQueryFormatBrackets,
+		MultipartFormEncoded,
+		false,
+	)
 	if err != nil {
 		return err
 	}
 
+	params := openai.AudioVoiceNewParams{}
+
 	var res []byte
-	// Voice creation requires a regular API key, never an admin-key fallback.
-	options = append([]option.RequestOption{option.WithAdminAPIKey("")}, options...)
 	options = append(options, option.WithResponseBodyInto(&res))
-	err = client.Post(ctx, "audio/voices", nil, nil, options...)
+	_, err = client.Audio.Voices.New(ctx, params, options...)
 	if err != nil {
 		return err
 	}
