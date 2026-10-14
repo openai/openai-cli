@@ -245,7 +245,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageUploadQuotedCountPreservesMultipart|TestMainImageEditQuotedStreamScalars|TestMainImageUploadMalformedScalarTextFailsBeforeRequest|TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues|TestMainImageEditStreamSavesFinalAndCloses|TestMainImageUploadBatchCollisionAndPartialFailure|TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse|TestMainImageGenerationPartialFailureKeepsSavedImage)$' |
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageUploadQuotedCountPreservesMultipart|TestMainImageEditQuotedStreamScalars|TestMainImageUploadMalformedScalarTextFailsBeforeRequest|TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues|TestMainImageEditStreamSavesFinalAndCloses|TestMainImageUploadBatchCollisionAndPartialFailure|TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse|TestMainImageGenerationPartialFailureKeepsSavedImage|TestMainImageGenerationClosedStdoutKeepsSavedImage|TestImageReceiptProcessRejectsNonPipeStdout)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows audio output behavior
@@ -495,6 +495,12 @@ jobs:
                    "--partial-images_2_--max-items_-1", "--stream=true_--max-items_-2"],
               ) | required_cases(
                   "TestMainImageGenerationPartialFailureKeepsSavedImage", [],
+              ) | required_cases(
+                  "TestMainImageGenerationClosedStdoutKeepsSavedImage",
+                  [f"partial-failure={partial}/format={format}" for format in ["text", "json"]
+                   for partial in ["false", "true"]],
+              ) | required_cases(
+                  "TestImageReceiptProcessRejectsNonPipeStdout", [],
               )
               audio_cases = {
                   "JSONPreservesTextAndMetadata": ["audio:transcriptions", "audio:translations"],

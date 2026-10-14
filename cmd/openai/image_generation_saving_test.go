@@ -13,10 +13,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -545,9 +543,6 @@ func TestMainImageGenerationIncompleteStreamsDoNotReportSuccess(t *testing.T) {
 }
 
 func TestMainImageGenerationClosedStdoutKeepsSavedImage(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("closed stdout pipe behavior requires native Windows coverage")
-	}
 	payload := imageGenerationPNG(t)
 	binary, err := os.Executable()
 	if err != nil {
@@ -559,7 +554,14 @@ func TestMainImageGenerationClosedStdoutKeepsSavedImage(t *testing.T) {
 	}{{false, "text"}, {true, "text"}, {false, "json"}, {true, "json"}} {
 		partialFailure := tc.partialFailure
 		t.Run(fmt.Sprintf("partial-failure=%v/format=%s", partialFailure, tc.format), func(t *testing.T) {
+			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Method != http.MethodPost || r.URL.Path != "/images/generations" || r.Header.Get("Authorization") != "Bearer sk-fake-image-saving-test" {
+					t.Errorf("unexpected image request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
 				w.Header().Set("Content-Type", "application/json")
 				if partialFailure {
 					fmt.Fprintf(w, `{"data":[{"b64_json":%q},{"b64_json":"invalid-private-base64"}]}`, base64.StdEncoding.EncodeToString(payload))
@@ -572,27 +574,45 @@ func TestMainImageGenerationClosedStdoutKeepsSavedImage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			reader.Close()
 			defer writer.Close()
+			if err := reader.Close(); err != nil {
+				t.Fatal(err)
+			}
 			dir := t.TempDir()
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
-			child := exec.CommandContext(ctx, binary, "-test.run=^TestMainDispatchProcess$", "--", "openai", "images", "generate", "--prompt", "synthetic image", "--output-dir", dir, "--format-error", tc.format)
-			child.Env = append(imageGenerationEnv(server, t.TempDir()), "OPENAI_CLI_MAIN_DISPATCH_PROCESS=1")
+			child, verifyFixture := newImageReceiptProcess(t, ctx, binary, imageGenerationEnv(server, t.TempDir()),
+				"openai", "images", "generate", "--prompt", "synthetic image", "--output-dir", dir, "--format-error", tc.format)
 			var stderr bytes.Buffer
 			child.Stdout, child.Stderr = writer, &stderr
-			if err := child.Run(); err == nil || stderr.Len() == 0 {
-				t.Fatalf("closed output lost save/reporting failure: %v; stderr=%q", err, stderr.String())
+			runErr := child.Run()
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyFixture(runErr); err != nil {
+				t.Fatalf("invalid receipt fixture: %v; stderr=%q", err, stderr.String())
+			}
+			if runErr == nil || stderr.Len() == 0 {
+				t.Fatalf("closed output lost save/reporting failure: %v; stderr=%q", runErr, stderr.String())
 			}
 			if ctx.Err() != nil || strings.Contains(stderr.String(), "invalid-private-base64") || strings.Contains(stderr.String(), base64.StdEncoding.EncodeToString(payload)) {
 				t.Fatalf("closed output stalled or exposed image data: %q", stderr.String())
 			}
 			diagnostic := stderr.String()
+			if requests.Load() != 1 {
+				t.Fatalf("image request count = %d, want 1", requests.Load())
+			}
+			if tc.format == "json" && !json.Valid(stderr.Bytes()) {
+				t.Fatalf("closed output corrupted JSON error: %q", diagnostic)
+			}
 			if !strings.Contains(diagnostic, "Check the output folder before generating again") || strings.Contains(diagnostic, "listed files") {
 				t.Fatalf("missing or misleading saved-file recovery advice: %q", diagnostic)
 			}
 			if partialFailure && (!strings.Contains(diagnostic, "could not save the entire response") || !strings.Contains(diagnostic, "print all saved paths")) {
 				t.Fatalf("one batch/output failure hid the other: %q", diagnostic)
+			}
+			if !partialFailure && !strings.Contains(diagnostic, "paths could not be printed") {
+				t.Fatalf("missing receipt-write failure: %q", diagnostic)
 			}
 			paths := imageGenerationFiles(t, dir)
 			if len(paths) != 1 {
