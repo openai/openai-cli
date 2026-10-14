@@ -1,7 +1,12 @@
 #!/usr/bin/env fish
 
 function ____APPNAME___fish_autocomplete
-    set -l tokens (commandline -xpc)
+    # Fish 3 lacks expanded tokens; retain its literal tokenization fallback.
+    set -l tokens (commandline -xpc 2>/dev/null)
+    set -l legacy_tokens $status
+    if test $legacy_tokens -ne 0
+        set tokens (commandline -opc)
+    end
     set -l current (commandline -ct)
 
     set -l cmd $tokens[1]
@@ -38,6 +43,16 @@ function ____APPNAME___fish_autocomplete
                 set -l value "$current"
                 if test -n "$assignment"
                     set value (string sub -s (math (string length -- "$assignment") + 1) -- "$current")
+                end
+                # Fish 3 also completes the suffix after = or : in a path.
+                # Escape literal separators without changing expansion syntax.
+                if test $legacy_tokens -ne 0; and string match -qr '[=:]' -- "$value"; and not string match -qr '[$~*?{}()%]' -- "$value"
+                    set -l literal_value (commandline -I "$value" -o)
+                    if test $status -eq 0; and test (count $literal_value) -eq 1
+                        set value (string escape -n -- "$literal_value[1]")
+                        set value (string replace -a '=' '\x3d' -- "$value")
+                        set value (string replace -a ':' '\x3a' -- "$value")
+                    end
                 end
                 # Fish treats leading --name= specially, even for file values.
                 set -l literal_prefix ""
