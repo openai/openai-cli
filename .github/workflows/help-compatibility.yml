@@ -657,3 +657,72 @@ jobs:
                   raise SystemExit(f"{filename}: missing required tests: {sorted(missing)}; unexpected tests: {sorted(unexpected)}; package passed: {package_passed}")
               print(f"{filename}: {len(passed) - children} roots and {children} children passed; no skips")
           PY
+
+  wsl1-pager:
+    needs: source
+    permissions: {}
+    name: Pager descriptor ownership on Ubuntu WSL 1
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 25
+    steps:
+      - name: Reserve WSL cleanup time
+        shell: pwsh
+        run: |
+          $started = [DateTime]::UtcNow
+          "WSL_PAGER_WORK_DEADLINE=$($started.AddMinutes(20).ToString('o'))" >> $env:GITHUB_ENV
+          "WSL_PAGER_CLEANUP_DEADLINE=$($started.AddMinutes(23).ToString('o'))" >> $env:GITHUB_ENV
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        timeout-minutes: 2
+        with:
+          go-version-file: .go-version
+          check-latest: true
+      - uses: ./.github/actions/link-go-sdk
+      - name: Check the WSL pilot controls
+        shell: pwsh
+        timeout-minutes: 1
+        run: python -I -B scripts/test_wsl_pager.py
+      - name: Build the Linux pager test executable
+        shell: pwsh
+        timeout-minutes: 6
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+          GOMAXPROCS: '2'
+          GOFLAGS: '-p=2 -mod=readonly'
+          GOTOOLCHAIN: local
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') ./pkg/custom
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go mod verify
+          exit $LASTEXITCODE
+      - name: Run the pager regression in disposable Ubuntu WSL 1
+        shell: pwsh
+        timeout-minutes: 16
+        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test')
+      - name: Reconcile the owned WSL distribution
+        if: always()
+        shell: pwsh
+        timeout-minutes: 3
+        run: python -I -B scripts/check-wsl-pager.py --cleanup
+      - name: Retain WSL process evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wsl-pager-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/openai-cli-wsl1-${{ github.run_id }}-${{ github.run_attempt }}/*.json
+            ${{ runner.temp }}/openai-cli-wsl1-${{ github.run_id }}-${{ github.run_attempt }}/*.stdout
+            ${{ runner.temp }}/openai-cli-wsl1-${{ github.run_id }}-${{ github.run_attempt }}/*.stderr
+          if-no-files-found: warn
+          retention-days: 7
