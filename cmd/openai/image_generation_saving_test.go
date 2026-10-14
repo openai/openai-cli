@@ -353,6 +353,72 @@ func TestMainImageGenerationFilenamesAndDirectoryValidation(t *testing.T) {
 	})
 }
 
+func TestMainImageGenerationKeepsReservedProbeDirectory(t *testing.T) {
+	payload := imageGenerationPNG(t)
+	directory := t.TempDir()
+	stem := "reserved-probe"
+	reserved := filepath.Join(directory, stem+"-9223372036854775807.jpeg")
+	if err := os.Mkdir(reserved, 0700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(reserved, "keep.txt")
+	const contents = "keep reserved directory contents"
+	if err := os.WriteFile(marker, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Lstat(reserved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	const prompt = "synthetic reserved probe"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != http.MethodPost || r.URL.Path != "/images/generations" {
+			t.Errorf("unexpected image request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["prompt"] != prompt {
+			t.Errorf("unexpected image request body: %v, %v", body, err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, imageGenerationResponse(payload)); err != nil {
+			t.Errorf("write synthetic image: %v", err)
+		}
+	}))
+	defer server.Close()
+	got := runImageGeneration(t, server, t.TempDir(), "", "images", "generate",
+		"--prompt", prompt, "--name", stem, "--output-dir", directory)
+	if got.code != 0 || got.stderr != "" || requests.Load() != 1 {
+		t.Fatalf("reserved directory blocked image generation: result=%+v requests=%d", got, requests.Load())
+	}
+	saved := filepath.Join(directory, stem+".png")
+	data, err := os.ReadFile(saved)
+	if err != nil || !bytes.Equal(data, payload) || !strings.Contains(got.stdout, strconv.Quote(saved)) {
+		t.Fatalf("saved image or receipt changed: bytes=%d error=%v stdout=%q", len(data), err, got.stdout)
+	}
+	after, err := os.Lstat(reserved)
+	if err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() {
+		t.Fatalf("reserved directory changed: %v", err)
+	}
+	data, err = os.ReadFile(marker)
+	if err != nil || string(data) != contents {
+		t.Fatalf("reserved directory contents changed: %q, %v", data, err)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("unexpected output files: %v, %v", entries, err)
+	}
+	entries, err = os.ReadDir(reserved)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "keep.txt" {
+		t.Fatalf("reserved directory gained files: %v, %v", entries, err)
+	}
+}
+
 func TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest(t *testing.T) {
 	stem := strings.Repeat("x", 250)
 	encoded := base64.StdEncoding.EncodeToString(imageGenerationPNG(t))

@@ -243,7 +243,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageGenerationFilenamesAndDirectoryValidation|TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest|TestMainImageUploadClosedStdoutPreservesPartialSave|TestMainImageEditInterruptClosesStreamWithoutSavingPartial|TestImageEditInterruptCompletion|TestImageEditInterruptControllerResult)$' |
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageGenerationFilenamesAndDirectoryValidation|TestMainImageGenerationKeepsReservedProbeDirectory|TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest|TestMainImageUploadClosedStdoutPreservesPartialSave|TestMainImageEditInterruptClosesStreamWithoutSavingPartial|TestImageEditInterruptCompletion|TestImageEditInterruptControllerResult)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-save-process-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows image filesystem helpers
@@ -523,7 +523,8 @@ jobs:
                   ["existing_image=false", "existing_image=true"],
               ) | required_cases(
                   "TestMainImageUploadClosedStdoutPreservesPartialSave", ["edit", "create-variation"],
-              ) | {"TestMainImageEditInterruptClosesStreamWithoutSavingPartial"} | required_cases(
+              ) | {"TestMainImageEditInterruptClosesStreamWithoutSavingPartial",
+                   "TestMainImageGenerationKeepsReservedProbeDirectory"} | required_cases(
                   "TestImageEditInterruptCompletion",
                   ["just_before_absolute_limit", "absolute_limit", "after_absolute_limit", "slow_startup_within_limit",
                    "controller_timeout_after_slow_startup"],
