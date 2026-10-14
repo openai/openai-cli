@@ -6,11 +6,13 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import socket
+import ssl
 import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 spec = importlib.util.spec_from_file_location("wsl_pager", Path(__file__).with_name("check-wsl-pager.py"))
@@ -24,6 +26,11 @@ def passing_output():
             f"=== RUN   {root}/ForkExec\n--- PASS: {root} (0.02s)\n"
             f"    --- PASS: {root}/LookPath (0.01s)\n"
             f"    --- PASS: {root}/ForkExec (0.01s)\nPASS\n").encode()
+
+
+def process_passing_output():
+    names = sorted(pilot.PROCESS_TESTS)
+    return ("".join(f"=== RUN   {name}\n--- PASS: {name} (0.01s)\n" for name in names) + "PASS\n").encode()
 
 
 class MetadataTests(unittest.TestCase):
@@ -140,6 +147,97 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaises(UnicodeDecodeError):
             pilot.require_test_pass(b"\xff\xfe" + passing_output().decode().encode("utf-16-le"), b"", 0)
 
+    def test_process_exact_inventory(self):
+        self.assertEqual(len(pilot.PROCESS_CASES), 17)
+        self.assertEqual(len(pilot.PROCESS_TESTS), 121)
+        self.assertNotIn("TestMainDispatchProcess", pilot.PROCESS_TESTS)
+        pilot.require_test_pass(process_passing_output(), b"", 0, pilot.PROCESS_TESTS, "process")
+
+    def test_process_rejects_missing_duplicate_and_unexpected_events(self):
+        good = process_passing_output()
+        name = "TestMainFilesWorkflowExplicitBinaryStdin/JSON_stays_file_bytes"
+        run = f"=== RUN   {name}\n".encode()
+        passed = f"--- PASS: {name} (0.01s)\n".encode()
+        bad = {"missing run": good.replace(run, b""), "missing pass": good.replace(passed, b""),
+               "duplicate run": good + run, "duplicate pass": good + passed,
+               "unexpected": good + b"=== RUN   TestOther\n--- PASS: TestOther (0.01s)\n",
+               "skipped": good + b"--- SKIP: TestOther (0.01s)\n",
+               "failed": good + b"--- FAIL: TestOther (0.01s)\n",
+               "no final pass": good.removesuffix(b"PASS\n"), "duplicate final pass": good + b"PASS\n",
+               "pager instead": passing_output(), "empty": b"PASS\n"}
+        for label, raw in bad.items():
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(RuntimeError, "process test execution"):
+                    pilot.require_test_pass(raw, b"", 0, pilot.PROCESS_TESTS, "process")
+
+    def test_process_preserves_exit_stderr_and_encoding_gates(self):
+        for stderr, code in ((b"", 7), (b"diagnostic", 0)):
+            with self.subTest(code=code, stderr=stderr):
+                with self.assertRaisesRegex(RuntimeError, "process test failed or wrote stderr"):
+                    pilot.require_test_pass(process_passing_output(), stderr, code, pilot.PROCESS_TESTS, "process")
+        with self.assertRaises(UnicodeDecodeError):
+            pilot.require_test_pass(b"\xff" + process_passing_output(), b"", 0, pilot.PROCESS_TESTS, "process")
+
+    def test_each_payload_uses_its_own_destination_and_hash(self):
+        class FakeCommands:
+            def __init__(self, observed):
+                self.observed, self.calls = observed, []
+
+            def run(self, label, argv, seconds):
+                self.calls.append((label, argv, seconds))
+                value = b"/mnt/c/synthetic test\n" if label.endswith("binary-path") else self.observed
+                return value, b"", 0
+
+        for prefix, target, expected in (("", "/home/cli-compat/payload/custom.test", "pager-digest"),
+                                         ("process-", "/home/cli-compat/payload/process.test", "process-digest")):
+            with self.subTest(prefix=prefix):
+                commands = FakeCommands((expected + "  " + target + "\n").encode())
+                pilot.copy_payload(commands, ["root"], ["user"], Path("C:/synthetic test"), target, expected, prefix)
+                self.assertEqual([x[0] for x in commands.calls],
+                                 [prefix + "binary-path", prefix + "copy", prefix + "binary-hash"])
+                self.assertEqual(commands.calls[1][1], ["root", "/usr/bin/install", "-m", "700", "-o", "cli-compat", "-g", "cli-compat", "--", "/mnt/c/synthetic test", target])
+                self.assertEqual(commands.calls[2][1], ["user", "/usr/bin/sha256sum", target])
+                with self.assertRaisesRegex(RuntimeError, "copied Linux binary changed"):
+                    pilot.copy_payload(FakeCommands(b"wrong  target\n"), ["root"], ["user"], Path("test"), target, expected, prefix)
+
+    def test_process_stage_requires_full_admission_and_fixed_command(self):
+        class FakeCommands:
+            deadline = 200.0
+
+            def __init__(self):
+                self.calls = []
+
+            def run(self, label, argv, seconds):
+                self.calls.append((label, argv, seconds))
+                return process_passing_output(), b"", 0
+
+        commands = FakeCommands()
+        with patch.object(pilot.time, "monotonic", return_value=30.001):
+            with self.assertRaisesRegex(RuntimeError, "Insufficient work time"):
+                pilot.run_process_suite(commands, ["user"], "/process.test")
+        self.assertEqual(commands.calls, [])
+        with patch.object(pilot.time, "monotonic", return_value=30.0):
+            pilot.run_process_suite(commands, ["user"], "/process.test")
+        self.assertEqual(commands.calls, [("process", ["user", "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "160s", "/process.test", "-test.run=" + pilot.PROCESS_SELECTOR, "-test.timeout=150s", "-test.v"], 170)])
+
+    def test_process_stage_does_not_accept_a_false_command_result(self):
+        class FakeCommands:
+            deadline = 200.0
+
+            def __init__(self, result):
+                self.result = result
+
+            def run(self, *_args):
+                return self.result
+
+        with patch.object(pilot.time, "monotonic", return_value=0):
+            for result in ((process_passing_output(), b"", 1),
+                           (process_passing_output(), b"unexpected", 0),
+                           (b"PASS\n", b"", 0)):
+                with self.subTest(code=result[2], stderr=result[1]):
+                    with self.assertRaises(RuntimeError):
+                        pilot.run_process_suite(FakeCommands(result), ["user"], "/process.test")
+
     def test_binary_architecture(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "test"
@@ -210,6 +308,176 @@ class AcceptanceTests(unittest.TestCase):
                     patch.object(pilot, "IMAGE_SHA256", pilot.hashlib.sha256(b"").hexdigest()):
                 with self.assertRaisesRegex(RuntimeError, "timed out"):
                     pilot.download_image(Path(directory) / "late-close", 1.0)
+
+
+class DownloadRetryTests(unittest.TestCase):
+    class Response(io.BytesIO):
+        headers = {}
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "ubuntu.wsl"
+        self.addCleanup(setattr, pilot, "STOP", 0)
+
+    def test_startup_timeout_retries_once_before_creating_image(self):
+        data = b"synthetic image"
+        for failure in (TimeoutError("synthetic timeout"), pilot.urllib.error.URLError(TimeoutError("synthetic timeout"))):
+            with self.subTest(type=type(failure).__name__):
+                response = self.Response(data)
+                opener = Mock()
+                opener.open.side_effect = [failure, response]
+                attempts = []
+                with patch.object(pilot.urllib.request, "build_opener", return_value=opener), \
+                        patch.object(pilot.time, "sleep") as sleep, \
+                        patch.object(pilot, "IMAGE_SHA256", pilot.hashlib.sha256(data).hexdigest()):
+                    self.assertEqual(pilot.download_image(self.path, time.monotonic() + 100, attempts), len(data))
+                self.assertEqual(self.path.read_bytes(), data)
+                self.path.unlink()
+                self.assertTrue(response.closed)
+                self.assertEqual(opener.open.call_count, 2)
+                for call in opener.open.call_args_list:
+                    self.assertEqual(call.args, (pilot.IMAGE_URL,))
+                    self.assertEqual(call.kwargs, {"timeout": 10})
+                sleep.assert_called_once_with(1)
+                self.assertEqual([a["outcome"] for a in attempts], ["failed", "opened"])
+                self.assertEqual(attempts[0]["reason_type"], "TimeoutError")
+
+    def test_repeated_startup_timeout_preserves_final_failure_without_image(self):
+        final = pilot.urllib.error.URLError(TimeoutError("second timeout"))
+        opener = Mock()
+        opener.open.side_effect = [TimeoutError("first timeout"), final]
+        attempts = []
+        with patch.object(pilot.urllib.request, "build_opener", return_value=opener), patch.object(pilot.time, "sleep"):
+            with self.assertRaises(pilot.urllib.error.URLError) as caught:
+                pilot.download_image(self.path, time.monotonic() + 100, attempts)
+        self.assertIs(caught.exception, final)
+        self.assertEqual(opener.open.call_count, 2)
+        self.assertEqual([a["outcome"] for a in attempts], ["failed", "failed"])
+        self.assertFalse(self.path.exists())
+
+    def test_other_startup_failures_never_retry(self):
+        failures = [ssl.SSLCertVerificationError(1, "synthetic certificate failure"),
+                    pilot.urllib.error.URLError(ssl.SSLCertVerificationError(1, "synthetic certificate failure")),
+                    ssl.SSLError(1, "synthetic TLS failure"),
+                    pilot.urllib.error.HTTPError(pilot.IMAGE_URL, 503, "timeout-looking text", None, None),
+                    pilot.urllib.error.HTTPError(pilot.IMAGE_URL, 503, TimeoutError("synthetic HTTP reason"), None, None),
+                    pilot.urllib.error.URLError(socket.gaierror(-2, "synthetic DNS failure")),
+                    ConnectionResetError("synthetic reset"),
+                    pilot.urllib.error.URLError("The handshake operation timed out")]
+        for failure in failures:
+            with self.subTest(type=type(failure).__name__, message=str(failure)):
+                opener = Mock()
+                opener.open.side_effect = failure
+                attempts = []
+                with patch.object(pilot.time, "sleep") as sleep:
+                    with self.assertRaises(type(failure)) as caught:
+                        pilot.open_image(opener, time.monotonic() + 100, attempts)
+                self.assertIs(caught.exception, failure)
+                opener.open.assert_called_once()
+                sleep.assert_not_called()
+                self.assertEqual(len(attempts), 1)
+                self.assertFalse(self.path.exists())
+
+    def test_body_timeout_never_retries_and_owned_partial_file_is_removed(self):
+        class Partial(self.Response):
+            reads = 0
+
+            def read1(self, _size):
+                self.reads += 1
+                if self.reads == 1:
+                    return b"partial"
+                raise TimeoutError("synthetic body timeout")
+
+        response = Partial()
+        opener = Mock()
+        opener.open.return_value = response
+        with patch.object(pilot.urllib.request, "build_opener", return_value=opener):
+            with self.assertRaisesRegex(TimeoutError, "synthetic body timeout"):
+                pilot.download_image(self.path, time.monotonic() + 100)
+        opener.open.assert_called_once()
+        self.assertTrue(response.closed)
+        self.assertEqual(self.path.read_bytes(), b"partial")
+        commands = Mock()
+        commands.run.side_effect = AssertionError("No WSL command is needed before import")
+        pilot.clean_distro(commands, "wsl.exe", "owned", {"import_attempted": False, "directory": self.directory.name})
+        self.assertFalse(self.path.exists())
+
+    def test_integrity_and_file_failures_never_retry(self):
+        class WriteFailure(io.BytesIO):
+            def write(self, _data):
+                raise OSError("synthetic write failure")
+
+        for phase in ("checksum", "existing file", "write"):
+            with self.subTest(phase=phase):
+                response = self.Response(b"synthetic")
+                opener = Mock()
+                opener.open.return_value = response
+                with patch.object(pilot.urllib.request, "build_opener", return_value=opener):
+                    if phase == "write":
+                        output = WriteFailure()
+                        with patch.object(Path, "open", return_value=output):
+                            with self.assertRaisesRegex(OSError, "synthetic write failure"):
+                                pilot.download_image(self.path, time.monotonic() + 100)
+                        self.assertTrue(output.closed)
+                    elif phase == "existing file":
+                        self.path.write_bytes(b"preserved")
+                        with self.assertRaises(FileExistsError):
+                            pilot.download_image(self.path, time.monotonic() + 100)
+                        self.assertEqual(self.path.read_bytes(), b"preserved")
+                        self.path.unlink()
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "checksum mismatch"):
+                            pilot.download_image(self.path, time.monotonic() + 100)
+                        self.path.unlink()
+                opener.open.assert_called_once()
+                self.assertTrue(response.closed)
+
+    def test_stop_and_remaining_budget_prevent_second_attempt(self):
+        for boundary in ("before delay", "after delay", "stop"):
+            with self.subTest(boundary=boundary):
+                pilot.STOP = 0
+                clock = [0.0]
+                failure = TimeoutError("first timeout")
+                opener = Mock()
+                opener.open.side_effect = failure
+
+                def delay(_seconds):
+                    clock[0] = 91.0
+                    if boundary == "stop":
+                        pilot.STOP = 15
+
+                deadline = 10.99 if boundary == "before delay" else 100.0
+                with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(pilot.time, "sleep", side_effect=delay):
+                    with self.assertRaises(TimeoutError) as caught:
+                        pilot.open_image(opener, deadline, [])
+                self.assertIs(caught.exception, failure)
+                opener.open.assert_called_once()
+
+    def test_late_or_stopped_open_closes_response_without_acceptance(self):
+        for stopped in (False, True):
+            with self.subTest(stopped=stopped):
+                pilot.STOP = 0
+                clock = [0.0]
+                response = self.Response(b"synthetic")
+
+                def opened(*_args, **_kwargs):
+                    if stopped:
+                        pilot.STOP = 2
+                    else:
+                        clock[0] = 100.0
+                    return response
+
+                opener = Mock()
+                opener.open.side_effect = opened
+                attempts = []
+                with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]):
+                    with self.assertRaisesRegex(RuntimeError, "stopped or timed out"):
+                        pilot.open_image(opener, 100.0, attempts)
+                opener.open.assert_called_once()
+                self.assertTrue(response.closed)
+                self.assertEqual(attempts[0]["outcome"], "rejected_late_or_stopped")
 
 
 class LifecycleTests(unittest.TestCase):

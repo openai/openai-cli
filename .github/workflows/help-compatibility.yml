@@ -36,6 +36,7 @@ jobs:
             shells: bash,zsh
             bash-prefixes: true
           - os: windows-latest
+            image-order: true
             list-helpers: true
             goos: windows
             goarch: amd64
@@ -43,6 +44,7 @@ jobs:
             shells: cmd,powershell,pwsh
             environment: true
           - os: macos-15-intel
+            image-order: true
             welcome-public: true
             list-helpers: true
             goos: darwin
@@ -54,6 +56,7 @@ jobs:
             gallery: true
             bash-prefixes: true
           - os: ubuntu-24.04-arm
+            image-order: true
             welcome-public: true
             list-helpers: true
             goos: linux
@@ -64,6 +67,7 @@ jobs:
             pager: true
             bash-prefixes: true
           - os: windows-11-arm
+            image-order: true
             welcome-public: true
             list-helpers: true
             goos: windows
@@ -179,6 +183,22 @@ jobs:
           $ErrorActionPreference = 'Stop'
           go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes)' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'tokenizer-reader-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test image command ordering
+        if: matrix.image-order && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json \
+            -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' \
+            | tee "$RUNNER_TEMP/image-command-order-tests.jsonl"
+      - name: Test Windows image command ordering
+        if: matrix.image-order && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-command-order-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Linux Fish completion
         if: runner.os == 'Linux'
@@ -306,6 +326,7 @@ jobs:
       - name: Verify selected compatibility test execution
         shell: bash
         env:
+          CHECK_IMAGE_ORDER: ${{ matrix.image-order || false }}
           CHECK_WELCOME_PUBLIC: ${{ matrix.welcome-public || false }}
           CHECK_LIST_HELPERS: ${{ matrix.list-helpers || false }}
           CHECK_ENVIRONMENT: ${{ matrix.environment || false }}
@@ -349,6 +370,15 @@ jobs:
 
           def required_cases(root, children):
               return {root} | {f"{root}/{child}" for child in children}
+
+          if os.environ["CHECK_IMAGE_ORDER"] == "true":
+              suites["image-command-order-tests.jsonl"] = required_cases(
+                  "TestMainImageCommandHelpOrder",
+                  ["images", "images/--help", "images/-h", "images/--h",
+                   "help/images", "help/--all/images", "images/help/--all"],
+              ) | required_cases(
+                  "TestMainImageCommandCompletionOrder", ["bash", "zsh", "fish", "pwsh"],
+              )
 
           if os.environ["CHECK_WELCOME_PUBLIC"] == "true":
               suites["welcome-public-tests.jsonl"] = required_cases(
@@ -671,6 +701,7 @@ jobs:
           for filename, required in suites.items():
               passed = set()
               package_passed = False
+              image_order_events = Counter()
               welcome_runs = Counter()
               welcome_passes = Counter()
               welcome_package = Counter()
@@ -679,6 +710,13 @@ jobs:
                   for line in events:
                       event = json.loads(line)
                       test = event.get("Test", "")
+                      if filename == "image-command-order-tests.jsonl":
+                          if event["Action"] == "build-output":
+                              continue
+                          if event.get("Package") != "github.com/openai/openai-cli/cmd/openai":
+                              raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
+                          if event["Action"] in {"start", "run", "pass"}:
+                              image_order_events[event["Action"], test] += 1
                       if filename == "dispatch-tests.jsonl" and test and test != completion_root and not test.startswith(completion_root + "/"):
                           continue
                       if event["Action"] in {"skip", "fail"}:
@@ -718,6 +756,7 @@ jobs:
               missing = required - passed
               unexpected = passed - required if filename in {
                   "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-tests.jsonl",
+                  "image-command-order-tests.jsonl",
                   "audio-tests.jsonl", "resource-tests.jsonl", "streaming-text-tests.jsonl",
                   "welcome-public-tests.jsonl",
                   "list-navigation-helper-tests.jsonl", "list-projection-helper-tests.jsonl", "list-renderer-helper-tests.jsonl",
@@ -725,6 +764,11 @@ jobs:
               children = sum("/" in name for name in passed)
               if missing or unexpected or not package_passed:
                   raise SystemExit(f"{filename}: missing required tests: {sorted(missing)}; unexpected tests: {sorted(unexpected)}; package passed: {package_passed}")
+              if filename == "image-command-order-tests.jsonl":
+                  expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
+                  expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
+                  if image_order_events != expected_events:
+                      raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
               print(f"{filename}: {len(passed) - children} roots and {children} children passed; no skips")
           PY
 
@@ -760,7 +804,7 @@ jobs:
         shell: pwsh
         timeout-minutes: 1
         run: python -I -B scripts/test_wsl_pager.py
-      - name: Build the Linux pager test executable
+      - name: Build the Linux compatibility test executables
         shell: pwsh
         timeout-minutes: 6
         env:
@@ -774,12 +818,14 @@ jobs:
           $ErrorActionPreference = 'Stop'
           go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') ./pkg/custom
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-process.test') ./cmd/openai
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go mod verify
           exit $LASTEXITCODE
-      - name: Run the pager regression in disposable Ubuntu WSL 1
+      - name: Run compatibility checks in disposable Ubuntu WSL 1
         shell: pwsh
         timeout-minutes: 16
-        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test')
+        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') --process-binary (Join-Path $env:RUNNER_TEMP 'wsl-process.test')
       - name: Reconcile the owned WSL distribution
         if: always()
         shell: pwsh
