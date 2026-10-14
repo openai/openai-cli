@@ -307,6 +307,17 @@ jobs:
           go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestRootRequestFlagsPreserveOwnershipAndMetadata|TestRootRequestFlagsPreserveMTLSPlacement|TestRootRequestFlagsRetainSourcesAliasesAndValidation|TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'request-configuration-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Windows shell request configuration
+        if: matrix.request-configuration && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainShellWindowsNative$/^(cmd|powershell|pwsh)$/^request_configuration$/^(placement_precedence_and_error|root_and_body_project|equals_empty|separate_empty|completion_stays_local)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'request-configuration-shell-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test request environment restoration
         if: matrix.environment
         shell: bash
@@ -823,6 +834,20 @@ jobs:
                   required_cases(root, children) for root, children in request_helper_cases.items()
               ))
               request_configuration_packages["request-configuration-helper-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+              if os.environ["RUNNER_OS"] == "Windows":
+                  request_shell_root = "TestMainShellWindowsNative"
+                  request_shell_cases = [
+                      "placement_precedence_and_error", "root_and_body_project", "equals_empty",
+                      "separate_empty", "completion_stays_local",
+                  ]
+                  request_shell_tests = {request_shell_root}
+                  for shell in ["cmd", "powershell", "pwsh"]:
+                      request_shell_tests.add(f"{request_shell_root}/{shell}")
+                      request_shell_tests.update(required_cases(
+                          f"{request_shell_root}/{shell}/request_configuration", request_shell_cases,
+                      ))
+                  suites["request-configuration-shell-tests.jsonl"] = request_shell_tests
+                  request_configuration_packages["request-configuration-shell-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
 
           if os.environ["CHECK_ENVIRONMENT"] == "true":
               suites["environment-tests.jsonl"] = required_cases(
@@ -921,6 +946,7 @@ jobs:
                   "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-tests.jsonl",
                   "image-command-order-tests.jsonl",
                   "request-configuration-public-tests.jsonl", "request-configuration-helper-tests.jsonl",
+                  "request-configuration-shell-tests.jsonl",
                   "audio-tests.jsonl", "resource-tests.jsonl", "streaming-text-tests.jsonl",
                   "welcome-public-tests.jsonl",
                   "list-navigation-helper-tests.jsonl", "list-projection-helper-tests.jsonl", "list-renderer-helper-tests.jsonl",
