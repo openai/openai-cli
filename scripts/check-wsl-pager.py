@@ -71,6 +71,24 @@ def require_version_one(data, name):
         raise RuntimeError("The owned distribution is not verified as WSL 1")
 
 
+def require_feature_enabled(data):
+    def unique_fields(pairs):
+        fields = dict(pairs)
+        if len(fields) != len(pairs):
+            raise RuntimeError("Duplicate Windows feature fields")
+        return fields
+
+    try:
+        rows = json.loads(data.decode("utf-8-sig"), object_pairs_hook=unique_fields)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("Malformed Windows feature result") from error
+    if (not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict) or
+            set(rows[0]) != {"Name", "InstallState"} or
+            rows[0]["Name"] != "Microsoft-Windows-Subsystem-Linux" or
+            type(rows[0]["InstallState"]) is not int or rows[0]["InstallState"] != 1):
+        raise RuntimeError("WSL 1 is not verified as already enabled")
+
+
 def require_test_pass(stdout, stderr, code):
     text = stdout.decode("utf-8", errors="strict")
     stderr.decode("utf-8", errors="strict")
@@ -315,12 +333,15 @@ def pilot(binary, cleanup_only=False):
             initial = distribution_names(commands.run("initial-inventory", [wsl, "--list", "--quiet"], 20)[0])
             if initial:
                 raise RuntimeError("The disposable runner already has a distribution")
-            feature = ("[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
-                       "(Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux).State.ToString()")
+            # WSL itself checks this read-only CIM class and requires InstallState 1.
+            feature = ("$ErrorActionPreference = 'Stop'; "
+                       "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
+                       "ConvertTo-Json -Compress -InputObject @(Get-CimInstance -Namespace root/cimv2 "
+                       "-ClassName Win32_OptionalFeature -Filter \"Name='Microsoft-Windows-Subsystem-Linux'\" "
+                       "-ErrorAction Stop | Select-Object Name,InstallState)")
             powershell = str(Path(os.environ["SYSTEMROOT"]) / "System32/WindowsPowerShell/v1.0/powershell.exe")
             enabled = commands.run("feature", [powershell, "-NoProfile", "-NonInteractive", "-Command", feature], 30)[0]
-            if enabled.decode("utf-8-sig").strip() != "Enabled":
-                raise RuntimeError("WSL 1 is not already enabled")
+            require_feature_enabled(enabled)
             if shutil.disk_usage(directory).free < 6 * 1024**3:
                 raise RuntimeError("Insufficient free space for the disposable distro")
             image = directory / "ubuntu.wsl"

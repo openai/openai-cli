@@ -4,6 +4,7 @@
 from datetime import datetime, timedelta, timezone
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import sys
@@ -27,6 +28,31 @@ def passing_output():
 
 
 class MetadataTests(unittest.TestCase):
+    def test_enabled_feature(self):
+        row = {"Name": "Microsoft-Windows-Subsystem-Linux", "InstallState": 1}
+        for encoding in ("utf-8", "utf-8-sig"):
+            with self.subTest(encoding=encoding):
+                pilot.require_feature_enabled((json.dumps([row]) + "\r\n").encode(encoding))
+
+    def test_unverified_feature(self):
+        good = {"Name": "Microsoft-Windows-Subsystem-Linux", "InstallState": 1}
+        bad = {"missing": [], "duplicate": [good, good], "object": good, "null": None,
+               "wrong name": [dict(good, Name="VirtualMachinePlatform")], "missing state": [{"Name": good["Name"]}],
+               "extra field": [dict(good, Other=1)], "non-object row": [1]}
+        for label, value in (("disabled", 2), ("absent", 3), ("unknown", 4), ("zero", 0),
+                             ("boolean", True), ("string", "1"), ("float", 1.0), ("null state", None)):
+            bad[label] = [dict(good, InstallState=value)]
+        for label, rows in bad.items():
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(RuntimeError, "not verified as already enabled"):
+                    pilot.require_feature_enabled(json.dumps(rows).encode())
+
+    def test_malformed_feature(self):
+        for raw in (b"Enabled", b"\xff", b"[{\"Name\":\"other\",\"Name\":\"Microsoft-Windows-Subsystem-Linux\",\"InstallState\":1}]"):
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(RuntimeError, "Malformed|Duplicate"):
+                    pilot.require_feature_enabled(raw)
+
     def test_inventory_encodings(self):
         for encoding in ("utf-8", "utf-8-sig", "utf-16", "utf-16-le"):
             with self.subTest(encoding=encoding):
