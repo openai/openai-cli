@@ -396,7 +396,12 @@ func TestMainCompletionArgumentsIgnoreRequestConfiguration(t *testing.T) {
 		{[]string{"-profile=-install-picker"}, 2},
 		{[]string{"--", "-install-picker"}, 0},
 		{[]string{" -- ", "-install-picker"}, 0},
-		{[]string{"-", "--install-picker"}, 0},
+		// A bare dash is positional; urfave v3.14 still parses later flags.
+		// Setup rejects the extra positional argument without writing files.
+		{[]string{"-", "--install-picker"}, 2},
+		{[]string{"-", "--uninstall-picker"}, 2},
+		{[]string{"-", "--install-picker=false"}, 0},
+		{[]string{"-", "--", "--install-picker"}, 0},
 		{[]string{"-1", "--install-picker"}, 0},
 		{[]string{"-@", "--install-picker"}, 0},
 		{[]string{"--profile", "--install-picker"}, 2},
@@ -411,7 +416,7 @@ func TestMainCompletionArgumentsIgnoreRequestConfiguration(t *testing.T) {
 				t.Fatalf("non-setup arguments changed the completion script: %+v", want)
 			}
 			if test.wantCode != 0 && (want.stdout != "" || !strings.Contains(want.stderr, "Check your arguments with --help.")) {
-				t.Fatalf("invalid profile arguments lost their local diagnostic: %+v", want)
+				t.Fatalf("invalid setup arguments lost their local diagnostic: %+v", want)
 			}
 			for _, configuration := range []struct {
 				name string
