@@ -10,9 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -366,15 +364,14 @@ func TestMainImageUploadHelpIsOffline(t *testing.T) {
 }
 
 func TestMainImageUploadClosedStdoutPreservesPartialSave(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("closed process stdout requires native Windows coverage")
-	}
 	source, payload := imageUploadSource(t)
 	binary, err := os.Executable()
 	require.NoError(t, err)
 	for _, operation := range []string{"edit", "create-variation"} {
 		t.Run(operation, func(t *testing.T) {
+			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
 				readImageUpload(t, r)
 				w.Header().Set("Content-Type", "application/json")
 				fmt.Fprintf(w, `{"data":[{"b64_json":%q},{"b64_json":"invalid-private-base64"}]}`, base64.StdEncoding.EncodeToString(payload))
@@ -385,16 +382,19 @@ func TestMainImageUploadClosedStdoutPreservesPartialSave(t *testing.T) {
 			require.NoError(t, reader.Close())
 			defer writer.Close()
 			home := t.TempDir()
-			args := append([]string{"-test.run=^TestMainDispatchProcess$", "--", "openai"}, imageUploadArgs(operation, source)...)
+			args := append([]string{"openai"}, imageUploadArgs(operation, source)...)
 			args = append(args, "--count", "2")
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
-			child := exec.CommandContext(ctx, binary, args...)
-			child.Env = append(imageGenerationEnv(server, home), "OPENAI_CLI_MAIN_DISPATCH_PROCESS=1")
+			child, verifyFixture := newImageReceiptProcess(t, ctx, binary, imageGenerationEnv(server, home), args...)
 			var stderr bytes.Buffer
 			child.Stdout, child.Stderr = writer, &stderr
-			require.Error(t, child.Run())
+			runErr := child.Run()
+			require.NoError(t, writer.Close())
+			require.NoError(t, verifyFixture(runErr), stderr.String())
+			require.Error(t, runErr)
 			require.NoError(t, ctx.Err())
+			require.Equal(t, int32(1), requests.Load())
 			require.Contains(t, stderr.String(), "could not save the entire response or print all saved paths")
 			require.Contains(t, stderr.String(), "Check the output folder before generating again")
 			require.NotContains(t, stderr.String(), "listed files")
@@ -412,9 +412,6 @@ func TestMainImageUploadClosedStdoutPreservesPartialSave(t *testing.T) {
 }
 
 func TestMainImageEditInterruptClosesStreamWithoutSavingPartial(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("os.Process.Signal does not send os.Interrupt on Windows")
-	}
 	source, payload := imageUploadSource(t)
 	ready, closed, stop := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -436,10 +433,9 @@ func TestMainImageEditInterruptClosesStreamWithoutSavingPartial(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	args := append([]string{"-test.run=^TestMainDispatchProcess$", "--", "openai"}, imageUploadArgs("edit", source)...)
+	args := append([]string{"openai"}, imageUploadArgs("edit", source)...)
 	args = append(args, "--stream", "true")
-	child := exec.CommandContext(ctx, binary, args...)
-	child.Env = append(imageGenerationEnv(server, home), "OPENAI_CLI_MAIN_DISPATCH_PROCESS=1")
+	child, interrupt, verifyFixture := imageEditInterruptCommand(t, ctx, binary, home, imageGenerationEnv(server, home), args...)
 	var stdout, stderr bytes.Buffer
 	child.Stdout, child.Stderr = &stdout, &stderr
 	require.NoError(t, child.Start())
@@ -460,15 +456,18 @@ func TestMainImageEditInterruptClosesStreamWithoutSavingPartial(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("edit did not start")
 	}
-	require.NoError(t, child.Process.Signal(os.Interrupt))
+	require.NoError(t, interrupt())
 	select {
 	case err := <-done:
 		waited = true
 		require.Error(t, err)
 	case <-ctx.Done():
 		t.Fatal("edit did not stop on interrupt")
+	case <-time.After(5 * time.Second):
+		t.Fatal("edit did not stop before the console controller timeout")
 	}
 	require.NoError(t, ctx.Err())
+	require.NoError(t, verifyFixture(stderr.Bytes()))
 	require.Empty(t, stdout.String())
 	require.Empty(t, imageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images")))
 	original, err := os.ReadFile(source)
@@ -478,5 +477,34 @@ func TestMainImageEditInterruptClosesStreamWithoutSavingPartial(t *testing.T) {
 	case <-closed:
 	case <-time.After(3 * time.Second):
 		t.Fatal("interrupted edit left HTTP response open")
+	}
+}
+
+func verifyImageEditInterruptDiagnostic(stderr []byte) error {
+	var diagnostic struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(stderr, &diagnostic) != nil || diagnostic.Message != "Request canceled." {
+		return fmt.Errorf("edit interruption did not return the CLI cancellation diagnostic")
+	}
+	return nil
+}
+
+func TestImageEditInterruptDiagnostic(t *testing.T) {
+	for _, test := range []struct {
+		name, diagnostic string
+		valid            bool
+	}{
+		{"controller failure", "--- FAIL: TestShellFileWindowsConsoleHelper\n", false},
+		{"forced timeout", "", false},
+		{"unrelated CLI error", `{"message":"The image stream ended without a final image."}`, false},
+		{"extra document", "{\"message\":\"Request canceled.\"}\n{}\n", false},
+		{"CLI cancellation", `{"message":"Request canceled."}`, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := verifyImageEditInterruptDiagnostic([]byte(test.diagnostic)); (err == nil) != test.valid {
+				t.Fatalf("cancellation diagnostic accepted=%t, want %t: %v", err == nil, test.valid, err)
+			}
+		})
 	}
 }

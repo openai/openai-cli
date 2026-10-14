@@ -238,6 +238,24 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageUploadQuotedCountPreservesMultipart|TestMainImageEditQuotedStreamScalars|TestMainImageUploadMalformedScalarTextFailsBeforeRequest|TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues|TestMainImageEditStreamSavesFinalAndCloses|TestMainImageUploadBatchCollisionAndPartialFailure|TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse|TestMainImageGenerationPartialFailureKeepsSavedImage|TestMainImageGenerationClosedStdoutKeepsSavedImage|TestImageReceiptProcessRejectsNonPipeStdout)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Windows image save boundaries and interruption
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageGenerationFilenamesAndDirectoryValidation|TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest|TestMainImageUploadClosedStdoutPreservesPartialSave|TestMainImageEditInterruptClosesStreamWithoutSavingPartial|TestImageEditInterruptDiagnostic)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-save-process-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows image filesystem helpers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          OPENAI_CLI_REQUIRE_WINDOWS_SYMLINKS: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./internal/imageoutput -count=1 -timeout=3m -v -json -run '^(TestResolveDirectory|TestSaveResponseFormatsAndUniqueNames|TestSaveResponseConcurrentNames|TestSaveResponseCancellation|TestSaveResponseNamedCollisionDoesNotFollowSymlink|TestCheckNameDoesNotFollowOrRemoveSymlinks|TestCheckNameKeepsReservedProbeCollisions)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-save-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test Windows audio output behavior
         if: runner.os == 'Windows'
         shell: pwsh
@@ -480,6 +498,29 @@ jobs:
                    for partial in ["false", "true"]],
               ) | required_cases(
                   "TestImageReceiptProcessRejectsNonPipeStdout", [],
+              )
+              suites["image-save-process-tests.jsonl"] = required_cases(
+                  "TestMainImageGenerationFilenamesAndDirectoryValidation",
+                  ["prompt_traversal_and_Unicode", "explicit_Unicode_and_extension", "invalid_name=../outside",
+                   "invalid_name=..", r"invalid_name=nested\file", "invalid_name=CON",
+                   r"invalid_name=escape\x1bname", "invalid_name=", "missing_custom_directory"],
+              ) | required_cases(
+                  "TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest",
+                  ["existing_image=false", "existing_image=true"],
+              ) | required_cases(
+                  "TestMainImageUploadClosedStdoutPreservesPartialSave", ["edit", "create-variation"],
+              ) | {"TestMainImageEditInterruptClosesStreamWithoutSavingPartial"} | required_cases(
+                  "TestImageEditInterruptDiagnostic",
+                  ["controller_failure", "forced_timeout", "unrelated_CLI_error", "extra_document", "CLI_cancellation"],
+              )
+              suites["image-save-helper-tests.jsonl"] = {
+                  "TestResolveDirectory", "TestSaveResponseFormatsAndUniqueNames",
+                  "TestSaveResponseConcurrentNames", "TestSaveResponseNamedCollisionDoesNotFollowSymlink",
+                  "TestCheckNameDoesNotFollowOrRemoveSymlinks",
+              } | required_cases(
+                  "TestSaveResponseCancellation", ["before_saving", "after_partial_write"],
+              ) | required_cases(
+                  "TestCheckNameKeepsReservedProbeCollisions", ["file", "directory", "symlink"],
               )
               audio_cases = {
                   "JSONPreservesTextAndMetadata": ["audio:transcriptions", "audio:translations"],
@@ -851,6 +892,10 @@ jobs:
                    "open_single_quote", "open_double_quote", "before_closing_quote", "colon_not_a_word_break",
                    "multiple_quoted_colons", "partially_escaped_colons", "first_colon_escaped"],
               )
+          image_save_packages = {
+              "image-save-process-tests.jsonl": "github.com/openai/openai-cli/cmd/openai",
+              "image-save-helper-tests.jsonl": "github.com/openai/openai-cli/internal/imageoutput",
+          }
           for filename, required in suites.items():
               passed = set()
               package_passed = False
@@ -860,10 +905,23 @@ jobs:
               welcome_package = Counter()
               welcome_names = set()
               request_configuration_events = Counter()
+              image_save_events = Counter()
+              image_save_names = set()
               with (Path(os.environ["RUNNER_TEMP"]) / filename).open() as events:
                   for line in events:
                       event = json.loads(line)
                       test = event.get("Test", "")
+                      if filename in image_save_packages:
+                          if event["Action"] == "build-fail":
+                              raise SystemExit(f"{filename}: unexpected build failure")
+                          if event["Action"] == "build-output":
+                              continue
+                          if event.get("Package") != image_save_packages[filename]:
+                              raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
+                          if test:
+                              image_save_names.add(test)
+                          if event["Action"] in {"start", "run", "pass"}:
+                              image_save_events[event["Action"], test] += 1
                       if filename == "image-command-order-tests.jsonl":
                           if event["Action"] == "build-output":
                               continue
@@ -920,6 +978,7 @@ jobs:
               unexpected = passed - required if filename in {
                   "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-tests.jsonl",
                   "image-command-order-tests.jsonl",
+                  "image-save-process-tests.jsonl", "image-save-helper-tests.jsonl",
                   "request-configuration-public-tests.jsonl", "request-configuration-helper-tests.jsonl",
                   "audio-tests.jsonl", "resource-tests.jsonl", "streaming-text-tests.jsonl",
                   "welcome-public-tests.jsonl",
@@ -932,6 +991,11 @@ jobs:
                   expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
                   expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
                   if request_configuration_events != expected_events:
+                      raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
+              if filename in image_save_packages:
+                  expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
+                  expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
+                  if image_save_events != expected_events or image_save_names != required:
                       raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
               if filename == "image-command-order-tests.jsonl":
                   expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
