@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -267,9 +266,6 @@ func TestMainImageModelsRequestDeadlineCancelsHTTP(t *testing.T) {
 }
 
 func TestMainImageModelsInterruptPreservesCompletedResults(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("os.Process.Signal does not send os.Interrupt on Windows")
-	}
 	ready := make(chan struct{})
 	initialRequests := make(chan struct{}, 2)
 	server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -301,9 +297,7 @@ func TestMainImageModelsInterruptPreservesCompletedResults(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	child := exec.CommandContext(ctx, binary, "-test.run=^TestMainDispatchProcess$", "--",
-		"openai", "--format", "json", "images", "models")
-	child.Env = []string{"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "OPENAI_API_KEY=synthetic-models-key", "OPENAI_BASE_URL=" + server.URL, "FORCE_COLOR=0"}
+	child, interrupt := imageModelsInterruptCommand(t, ctx, binary, server.URL)
 	var stdout, stderr bytes.Buffer
 	child.Stdout, child.Stderr = &stdout, &stderr
 	if err := child.Start(); err != nil {
@@ -326,7 +320,7 @@ func TestMainImageModelsInterruptPreservesCompletedResults(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("discovery did not start its fourth lookup")
 	}
-	if err := child.Process.Signal(os.Interrupt); err != nil {
+	if err := interrupt(); err != nil {
 		t.Fatal(err)
 	}
 	err = <-done

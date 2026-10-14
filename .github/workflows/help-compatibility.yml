@@ -25,6 +25,7 @@ jobs:
       matrix:
         include:
           - os: macos-latest
+            native-commands: true
             goos: darwin
             goarch: arm64
             runner-arch: ARM64
@@ -36,6 +37,8 @@ jobs:
             shells: bash,zsh
             bash-prefixes: true
           - os: windows-latest
+            image-models: true
+            native-commands: true
             image-order: true
             list-helpers: true
             goos: windows
@@ -44,6 +47,8 @@ jobs:
             shells: cmd,powershell,pwsh
             environment: true
           - os: macos-15-intel
+            image-models: true
+            native-commands: true
             image-order: true
             welcome-public: true
             request-configuration: true
@@ -57,6 +62,8 @@ jobs:
             gallery: true
             bash-prefixes: true
           - os: ubuntu-24.04-arm
+            image-models: true
+            native-commands: true
             image-order: true
             welcome-public: true
             list-helpers: true
@@ -68,6 +75,8 @@ jobs:
             pager: true
             bash-prefixes: true
           - os: windows-11-arm
+            image-models: true
+            native-commands: true
             image-order: true
             welcome-public: true
             request-configuration: true
@@ -141,6 +150,27 @@ jobs:
           fish --version
           expect -v
       - uses: ./.github/actions/link-go-sdk
+      - name: Test native portable command contracts
+        if: matrix.native-commands && runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 10
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          set -euo pipefail
+          go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAPIErrorsFormatPrecedenceAndExtraction|TestMainAPIErrorsPreserveJSONDetailsAndExtraction|TestMainAPIErrorsStructuredAcrossCommands|TestMainAPIErrorsWithUnexpectedJSONShapes|TestMainAPIErrorsWithoutJSONDetails|TestMainCommandGroupsHaveWorkflowDescriptions|TestMainCommandSubgroupsCoverGeneratedRoutes|TestMainCommandSubgroupsHelpAndCompletion|TestMainCommandSubgroupsLegacyPrefixCompletion|TestMainCommandSubgroupsPreserveAudioAndErrors|TestMainCommandSubgroupsPreserveBodyFlagScope|TestMainCommandSubgroupsPreserveRequestsAndOutput|TestMainCommandSubgroupsStreamingStaysIncremental|TestMainLocalErrorGuidance|TestMainLocalErrorsStayOnStderr|TestMainNestedHelpErrorFormatPrecedence|TestMainPreservesWrappedExitCode|TestMainReadableAPIArgumentGuidance|TestMainReadableDefaultAndExplicitText|TestMainReadableErrorsStayOnStderr|TestMainReadablePreservesExplicitFormatsAndExtraction|TestMainReadableRawOutputStreamsBeforeNextEvent|TestMainSensitiveLocalErrors|TestMainStreamErrorsPreserveEventDetails|TestMainTaskAdminRoutesPreserveCredentialAndFlagScope|TestMainTaskAudioUploadsPreserveRequestsAndOutput|TestMainTaskFileUploadPreservesMultipartAndOutput|TestMainTaskResourceRoutesPreserveAPIErrorsAndExit|TestMainTaskRouteCompletionProtocols|TestMainTaskRouteHelpStaysLocal|TestMainTaskRoutesPreserveAPIErrorsAndExit|TestMainTaskRoutesPreserveRequiredFlags|TestMainTaskSpeechPreservesJSONInputAndBinaryOutput|TestMainTaskWindowsAudioInterruptClosesStreams)$' \
+            | tee "$RUNNER_TEMP/native-command-tests.jsonl"
+      - name: Test Windows portable command and alias cancellation contracts
+        if: matrix.native-commands && runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 10
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAPIErrorsFormatPrecedenceAndExtraction|TestMainAPIErrorsPreserveJSONDetailsAndExtraction|TestMainAPIErrorsStructuredAcrossCommands|TestMainAPIErrorsWithUnexpectedJSONShapes|TestMainAPIErrorsWithoutJSONDetails|TestMainCommandGroupsHaveWorkflowDescriptions|TestMainCommandSubgroupsCoverGeneratedRoutes|TestMainCommandSubgroupsHelpAndCompletion|TestMainCommandSubgroupsLegacyPrefixCompletion|TestMainCommandSubgroupsPreserveAudioAndErrors|TestMainCommandSubgroupsPreserveBodyFlagScope|TestMainCommandSubgroupsPreserveRequestsAndOutput|TestMainCommandSubgroupsStreamingStaysIncremental|TestMainLocalErrorGuidance|TestMainLocalErrorsStayOnStderr|TestMainNestedHelpErrorFormatPrecedence|TestMainPreservesWrappedExitCode|TestMainReadableAPIArgumentGuidance|TestMainReadableDefaultAndExplicitText|TestMainReadableErrorsStayOnStderr|TestMainReadablePreservesExplicitFormatsAndExtraction|TestMainReadableRawOutputStreamsBeforeNextEvent|TestMainSensitiveLocalErrors|TestMainStreamErrorsPreserveEventDetails|TestMainTaskAdminRoutesPreserveCredentialAndFlagScope|TestMainTaskAudioUploadsPreserveRequestsAndOutput|TestMainTaskFileUploadPreservesMultipartAndOutput|TestMainTaskResourceRoutesPreserveAPIErrorsAndExit|TestMainTaskRouteCompletionProtocols|TestMainTaskRouteHelpStaysLocal|TestMainTaskRoutesPreserveAPIErrorsAndExit|TestMainTaskRoutesPreserveRequiredFlags|TestMainTaskSpeechPreservesJSONInputAndBinaryOutput|TestMainTaskWindowsAudioInterruptClosesStreams)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'native-command-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test help
         if: runner.os != 'Windows'
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
@@ -269,6 +299,21 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageUploadQuotedCountPreservesMultipart|TestMainImageEditQuotedStreamScalars|TestMainImageUploadMalformedScalarTextFailsBeforeRequest|TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues|TestMainImageEditStreamSavesFinalAndCloses|TestMainImageUploadBatchCollisionAndPartialFailure|TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse|TestMainImageGenerationPartialFailureKeepsSavedImage|TestMainImageGenerationClosedStdoutKeepsSavedImage|TestImageReceiptProcessRejectsNonPipeStdout)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test image model discovery
+        if: matrix.image-models && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainImageModels' \
+            | tee "$RUNNER_TEMP/image-model-discovery-tests.jsonl"
+      - name: Test Windows image model discovery
+        if: matrix.image-models && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainImageModels' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-model-discovery-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test Windows image save boundaries and interruption
         if: runner.os == 'Windows'
         shell: pwsh
@@ -286,6 +331,14 @@ jobs:
           $ErrorActionPreference = 'Stop'
           go test -p 2 ./internal/imageoutput -count=1 -timeout=3m -v -json -run '^(TestResolveDirectory|TestSaveResponseFormatsAndUniqueNames|TestSaveResponseConcurrentNames|TestSaveResponseCancellation|TestSaveResponseNamedCollisionDoesNotFollowSymlink|TestCheckNameDoesNotFollowOrRemoveSymlinks|TestCheckNameKeepsReservedProbeCollisions)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-save-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows image model progress on stderr
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=30s -v -json -run '^TestImageModelsWindowsStderrProgress$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-models-progress-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows audio output behavior
         if: runner.os == 'Windows'
@@ -412,6 +465,8 @@ jobs:
         shell: bash
         env:
           CHECK_IMAGE_ORDER: ${{ matrix.image-order || false }}
+          CHECK_IMAGE_MODELS: ${{ matrix.image-models || false }}
+          CHECK_NATIVE_COMMANDS: ${{ matrix.native-commands || false }}
           CHECK_WELCOME_PUBLIC: ${{ matrix.welcome-public || false }}
           CHECK_REQUEST_CONFIGURATION: ${{ matrix.request-configuration || false }}
           CHECK_LIST_HELPERS: ${{ matrix.list-helpers || false }}
@@ -458,6 +513,57 @@ jobs:
               return {root} | {f"{root}/{child}" for child in children}
 
           strict_packages = {}
+          if os.environ["CHECK_IMAGE_MODELS"] == "true":
+              model_failures = ["authentication", "rate_limit", "timeout", "server",
+                                "forbidden", "invalid_response", "request", "network"]
+              model_error_formats = ["default", "inherited_JSON", "text_override", "JSONL_override",
+                                     "raw_override", "YAML_override", "error_extraction"]
+              model_cases = {
+                  "TestMainImageModelsAllIncludesExactSnapshotNames": [],
+                  "TestMainImageModelsAuthenticationAndRateLimitStopChecks": ["authentication", "rate_limit"],
+                  "TestMainImageModelsExploreFallbackWarning": ["auto", "explore", "json"],
+                  "TestMainImageModelsExtraArgumentGuidance": ["json", "jsonl", "raw", "text", "yaml"],
+                  "TestMainImageModelsFailureGuidanceFormats": model_failures + [
+                      f"{failure}/{format}" for failure in model_failures for format in model_error_formats
+                  ],
+                  "TestMainImageModelsHelpAndOfflineMakeNoRequests": [
+                      "--format/json/images/models/--offline",
+                      "--format/json/images/models/--offline/--all",
+                      "help/images/models",
+                      "images/models/--help",
+                  ],
+                  "TestMainImageModelsInterruptPreservesCompletedResults": [],
+                  "TestMainImageModelsJSONAndHeaders": [],
+                  "TestMainImageModelsKeepsPartialResultsOnTimeoutResponse": [],
+                  "TestMainImageModelsPipeIsReadableAndAllRevealsUnavailable": ["all=false", "all=true"],
+                  "TestMainImageModelsPreservesExistingModelListing": [],
+                  "TestMainImageModelsPreservesMachineFormatsAndExtraction": [
+                      "JSON",
+                      "RaW",
+                      "automatic_extraction",
+                      "exact_model_extraction",
+                      "explicit_auto_extraction",
+                      "json",
+                      "jsonl",
+                      "raw",
+                      "raw_string",
+                      "text_extraction",
+                  ],
+                  "TestMainImageModelsRejectsMalformedMetadata": [
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":\"file\"}",
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":\"model\"",
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":42}",
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":[]}",
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":null}",
+                      "{\"id\":\"gpt-image-2.5-flare\"_\"object\":\"model\"}",
+                  ],
+                  "TestMainImageModelsRequestDeadlineCancelsHTTP": [],
+              }
+              model_required = set()
+              for root, children in model_cases.items():
+                  model_required |= required_cases(root, children)
+              suites["image-model-discovery-tests.jsonl"] = model_required
+              strict_packages["image-model-discovery-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
 
           if os.environ["RUNNER_OS"] == "Linux":
               fish_examples = [
@@ -500,6 +606,8 @@ jobs:
               )
 
           if os.environ["RUNNER_OS"] == "Windows":
+              suites["image-models-progress-tests.jsonl"] = {"TestImageModelsWindowsStderrProgress"}
+              strict_packages["image-models-progress-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
               invocation_symlink_roots = {
                   "TestHelpInvocationFollowsInstalledSymlink", "TestHelpInvocationKeepsPowerShellScriptOnPath",
               }
@@ -1007,6 +1115,26 @@ jobs:
                    "open_single_quote", "open_double_quote", "before_closing_quote", "colon_not_a_word_break",
                    "multiple_quoted_colons", "partially_escaped_colons", "first_colon_escaped"],
               )
+          if os.environ.get("CHECK_NATIVE_COMMANDS") == "true":
+              inventory = json.loads(Path("scripts/native-command-tests.json").read_text())
+              portable = inventory["portable"]
+              if len(portable) != 33 or sum(len(children) for children in portable.values()) != 305:
+                  raise SystemExit("native command inventory must contain 33 roots and 305 children")
+              selected = set()
+              for root, children in portable.items():
+                  selected.update(required_cases(root, children))
+              if len(selected) != 338:
+                  raise SystemExit("native command inventory contains duplicate names")
+              if os.environ["RUNNER_OS"] == "Windows":
+                  aliases = inventory["windows_aliases"]
+                  if len(aliases) != 1 or sum(len(children) for children in aliases.values()) != 8:
+                      raise SystemExit("Windows task inventory must contain one root and eight children")
+                  for root, children in aliases.items():
+                      selected.update(required_cases(root, children))
+                  if len(selected) != 347:
+                      raise SystemExit("Windows task inventory contains duplicate names")
+              suites["native-command-tests.jsonl"] = selected
+              strict_packages["native-command-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
           for filename, required in suites.items():
               passed = set()
               package_passed = False
@@ -1094,12 +1222,14 @@ jobs:
               missing = required - passed
               unexpected = passed - required if filename in {
                   "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-tests.jsonl",
+                  "native-command-tests.jsonl",
                   "image-command-order-tests.jsonl", "fish-image-help-tests.jsonl", "fish-help-invocation-tests.jsonl",
                   "windows-help-invocation-tests.jsonl",
                   "image-save-process-tests.jsonl", "image-save-helper-tests.jsonl",
                   "request-configuration-public-tests.jsonl", "request-configuration-helper-tests.jsonl",
                   "windows-native-shell-tests.jsonl", "windows-download-tests.jsonl",
                   "audio-tests.jsonl", "resource-tests.jsonl", "streaming-text-tests.jsonl",
+                  "image-model-discovery-tests.jsonl",
                   "welcome-public-tests.jsonl",
                   "list-navigation-helper-tests.jsonl", "list-projection-helper-tests.jsonl", "list-renderer-helper-tests.jsonl",
               } else set()
