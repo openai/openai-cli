@@ -34,7 +34,7 @@ func denyImagePickerStateAccess(t *testing.T, path string, access uint32) func()
 	require.NoError(t, err)
 	control, _, err := original.Control()
 	require.NoError(t, err)
-	information := windows.DACL_SECURITY_INFORMATION | windows.UNPROTECTED_DACL_SECURITY_INFORMATION
+	var information windows.SECURITY_INFORMATION = windows.DACL_SECURITY_INFORMATION | windows.UNPROTECTED_DACL_SECURITY_INFORMATION
 	if control&windows.SE_DACL_PROTECTED != 0 {
 		information = windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION
 	}
