@@ -36,12 +36,14 @@ jobs:
             shells: bash,zsh
             bash-prefixes: true
           - os: windows-latest
+            list-helpers: true
             goos: windows
             goarch: amd64
             runner-arch: X64
             shells: cmd,powershell,pwsh
             environment: true
           - os: macos-15-intel
+            list-helpers: true
             goos: darwin
             goarch: amd64
             runner-arch: X64
@@ -51,6 +53,7 @@ jobs:
             gallery: true
             bash-prefixes: true
           - os: ubuntu-24.04-arm
+            list-helpers: true
             goos: linux
             goarch: arm64
             runner-arch: ARM64
@@ -59,6 +62,7 @@ jobs:
             pager: true
             bash-prefixes: true
           - os: windows-11-arm
+            list-helpers: true
             goos: windows
             goarch: arm64
             runner-arch: ARM64
@@ -217,6 +221,31 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainStreamingTextArrivesBeforeCompletion|TestMainStreamingTextKeepsPartIdentityAndSnapshots|TestMainStreamingTextRetainsNontextDetails|TestMainStreamingExplicitFormatsPreserveEveryEvent|TestMainStreamingTextInterleavedChoicesKeepDetails|TestMainStreamingFailuresPreservePartialOutput|TestMainStreamingInterruptedTransportPreservesPartialOutput|TestMainStreamingFailureDiagnostics|TestMainStreamingTextDistinguishesEarlyEOFAndEmptyCompletion|TestMainStreamingTextLargeEvent)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'streaming-text-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test list navigation and table helpers
+        if: matrix.list-helpers && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLargeFieldPreservedAndPrewrapped|TestListNavigationPrintPageCancelsWithoutFetching|TestListNavigationLabelsPreserveLongIDs|TestListNavigationNarrowFooterKeepsQuitAndPrintVisible|TestListNavigationErrorPresentation|TestListNavigationCompleteFirstPageFitsScreen|TestListNavigationContentFitsDisplayCells|TestListNavigationShortResultPreservesErrorsAndHistory|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' \
+            | tee "$RUNNER_TEMP/list-navigation-helper-tests.jsonl"
+          go test -p 2 ./pkg/transformers -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' \
+            | tee "$RUNNER_TEMP/list-projection-helper-tests.jsonl"
+          go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' \
+            | tee "$RUNNER_TEMP/list-renderer-helper-tests.jsonl"
+      - name: Test Windows list navigation and table helpers
+        if: matrix.list-helpers && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLargeFieldPreservedAndPrewrapped|TestListNavigationPrintPageCancelsWithoutFetching|TestListNavigationLabelsPreserveLongIDs|TestListNavigationNarrowFooterKeepsQuitAndPrintVisible|TestListNavigationErrorPresentation|TestListNavigationCompleteFirstPageFitsScreen|TestListNavigationContentFitsDisplayCells|TestListNavigationShortResultPreservesErrorsAndHistory|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-navigation-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 2 ./pkg/transformers -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-projection-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-renderer-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test request environment restoration
         if: matrix.environment
         shell: bash
@@ -258,6 +287,7 @@ jobs:
       - name: Verify selected compatibility test execution
         shell: bash
         env:
+          CHECK_LIST_HELPERS: ${{ matrix.list-helpers || false }}
           CHECK_ENVIRONMENT: ${{ matrix.environment || false }}
           CHECK_GALLERY: ${{ matrix.gallery || false }}
           CHECK_PAGER: ${{ matrix.pager || false }}
@@ -435,6 +465,145 @@ jobs:
               suites["streaming-text-tests.jsonl"] = set().union(*(
                   required_cases(root, children) for root, children in streaming_text_cases.items()
               ))
+          if os.environ["CHECK_LIST_HELPERS"] == "true":
+              navigation_helper_cases = {
+                  'TestListPageFetcherWaitsAndPreservesPageSize': ['-1', '0', '1', '2', '3'],
+                  'TestShowJSONPagesZeroRetainsRequestErrors': [],
+                  'TestListPageFetcherStopsEmptyAndStalledCursors': [
+                      'empty', 'last', 'missing', 'repeated', 'last_id', 'next',
+                  ],
+                  'TestListPageFetcherCancellationPreventsRequests': [],
+                  'TestListNavigationUsesLoadedRowsBeforeOneRequest': [],
+                  'TestListNavigationOutputPreservesFailureAndRestoresModes': [],
+                  'TestListNavigationOutputFailureDiagnostic': [
+                      'fetch_canceled/text', 'fetch_canceled/json', 'fetch_wrapped/text', 'fetch_wrapped/json',
+                      'fetch_finished/text', 'fetch_finished/json', 'fetch_joined/text', 'fetch_joined/json',
+                      'model_joined/text', 'model_joined/json', 'received_fetch_failure/text',
+                      'received_fetch_failure/json', 'program_joined/text', 'program_joined/json', 'request_timeout/text',
+                      'request_timeout/json', 'caller_canceled/text', 'caller_canceled/json', 'caller_timeout/text',
+                      'caller_timeout/json',
+                  ],
+                  'TestListNavigationQuitRetainsRealFailures': [
+                      'canceled', 'wrapped', 'joined_cancellation', 'failed', 'joined_failure',
+                  ],
+                  'TestListNavigationLargeFieldPreservedAndPrewrapped': [],
+                  'TestListNavigationPrintPageCancelsWithoutFetching': [],
+                  'TestListNavigationLabelsPreserveLongIDs': [],
+                  'TestListNavigationNarrowFooterKeepsQuitAndPrintVisible': [],
+                  'TestListNavigationErrorPresentation': [
+                      'direct/text', 'direct/json', 'wrapped/text', 'wrapped/json', 'joined/text', 'joined/json',
+                      'canceled/text', 'canceled/json',
+                  ],
+                  'TestListNavigationCompleteFirstPageFitsScreen': [
+                      'single_row', 'empty_result', 'empty_tiny_terminal', 'unknown_width', 'unknown_height',
+                      'exact_fit_with_separator', 'one_row_over', 'wide_characters_fit', 'wide_characters_overflow',
+                      'tabbed_filename_fits', 'tabbed_filename_overflows', 'tabbed_filename_taller_terminal',
+                      'tab_cancels_pending_wrap', 'text_after_margin_tab_wraps', 'more_API_pages',
+                  ],
+                  'TestListNavigationContentFitsDisplayCells': [
+                      'tab_exactly_fills_row', 'tab_adds_wrapped_row', 'tab_after_wide_grapheme',
+                      'tab_after_combining_grapheme', 'tab_after_wrapped_text', 'tab_stops_at_right_margin',
+                      'tab_clears_pending_wrap', 'text_wraps_after_margin_tab', 'color_has_no_display_width',
+                      'blank_separator_counts', 'prompt_row_remains',
+                  ],
+                  'TestListNavigationShortResultPreservesErrorsAndHistory': [
+                      'request_error', 'render_canceled', 'later_page', 'resized_viewer',
+                  ],
+                  'TestRenderListNavigationPageHintPolicy': [
+                      'files/table', 'files/table/ordinary', 'files/table/quiet', 'files/table/quiet_verbose',
+                      'files/table/machine_errors', 'files/table/inherited_machine_errors', 'files/table/extracted_errors',
+                      'files/table/explicit_text_override', 'files/fallback', 'files/fallback/ordinary',
+                      'files/fallback/quiet', 'files/fallback/quiet_verbose', 'files/fallback/machine_errors',
+                      'files/fallback/inherited_machine_errors', 'files/fallback/extracted_errors',
+                      'files/fallback/explicit_text_override', 'batches/table', 'batches/table/ordinary',
+                      'batches/table/quiet', 'batches/table/quiet_verbose', 'batches/table/machine_errors',
+                      'batches/table/inherited_machine_errors', 'batches/table/extracted_errors',
+                      'batches/table/explicit_text_override', 'batches/fallback', 'batches/fallback/ordinary',
+                      'batches/fallback/quiet', 'batches/fallback/quiet_verbose', 'batches/fallback/machine_errors',
+                      'batches/fallback/inherited_machine_errors', 'batches/fallback/extracted_errors',
+                      'batches/fallback/explicit_text_override', 'admin.organization.projects/table',
+                      'admin.organization.projects/table/ordinary', 'admin.organization.projects/table/quiet',
+                      'admin.organization.projects/table/quiet_verbose',
+                      'admin.organization.projects/table/machine_errors',
+                      'admin.organization.projects/table/inherited_machine_errors',
+                      'admin.organization.projects/table/extracted_errors',
+                      'admin.organization.projects/table/explicit_text_override', 'admin.organization.projects/fallback',
+                      'admin.organization.projects/fallback/ordinary', 'admin.organization.projects/fallback/quiet',
+                      'admin.organization.projects/fallback/quiet_verbose',
+                      'admin.organization.projects/fallback/machine_errors',
+                      'admin.organization.projects/fallback/inherited_machine_errors',
+                      'admin.organization.projects/fallback/extracted_errors',
+                      'admin.organization.projects/fallback/explicit_text_override',
+                  ],
+                  'TestRenderListNavigationPageCancelsProjection': ['files', 'batches', 'admin.organization.projects'],
+                  'TestRenderListTablePage': [],
+                  'TestRenderListTablePageEmptyAndUnsupported': [],
+              }
+              suites['list-navigation-helper-tests.jsonl'] = set().union(*(
+                  required_cases(root, children) for root, children in navigation_helper_cases.items()
+              ))
+              projection_helper_cases = {
+                  'TestProjectListTableCanceledContext': [],
+                  'TestListTableCountsCancellation': [],
+                  'TestProjectListTableKnownResources': ['files', 'batches', 'admin.organization.projects'],
+                  'TestProjectListTableMissingOptionalFields': [],
+                  'TestProjectListTableEmptyPagesAndRoutes': [],
+                  'TestProjectListTablePreservesOriginalStrings': [],
+                  'TestProjectListTableFallsBackForEntirePage': [
+                      'null', '[]', '"batch"', '{}', '{"id":123,"object":"batch","status":"completed"}',
+                      '{"id":"","object":"batch","status":"completed"}',
+                      '{"id":"batch_example","object":"file","status":"completed"}',
+                      '{"id":"batch_example","object":"batch"}', '{"id":"batch_example","object":"batch","status":null}',
+                      '{"id":"batch_example","object":"batch","status":[]}',
+                      '{"id":"batch_example","object":"batch","status":"completed","warning":"Review_batch."}',
+                      '{"id":"batch_example","object":"batch","status":"completed","new_field":null}',
+                      '{"id":"batch_example","object":"batch","status":"completed","shutdown_date":null}',
+                      '{"id":"batch_example","object":"batch","status":"failed","errors":{"data":[{"message":"Review_request."}]}}',
+                      '{"id":"batch_first","id":"batch_second","object":"batch","status":"completed"}',
+                      '{"id":"batch_example","object":"batch","status":"completed","created_at":1,"created_at":2}',
+                      '{"id":"batch_example","object":"batch","status":"completed"',
+                      '{"id":"batch_example","object":"batch"_"status":"completed"}',
+                  ],
+                  'TestProjectListTablePreservesErrorsAndMalformedFields': [
+                      'files{"id":"file_example","object":"file","filename":"input.txt","purpose":"batch","bytes":0,"status":"error","status_details":"Review_file."}',
+                      'files{"id":"file_example","object":"file","filename":"input.txt","purpose":"batch","bytes":0,"status":"processed","status_details":[]}',
+                      'files{"id":"file_example","object":"file","filename":"input.txt","purpose":"batch","bytes":"1024","status":"processed"}',
+                      'files{"id":"file_example","object":"file","filename":"input.txt","purpose":"batch","bytes":-1,"status":"processed"}',
+                      'files{"id":"file_example","object":"file","filename":"input.txt","purpose":"batch","bytes":1.5,"status":"processed"}',
+                      'files{"id":"file_example","object":"file","filename":"input.txt","purpose":"batch","bytes":18446744073709551616,"status":"processed"}',
+                      'files{"id":"file_example","object":"file","filename":{},"purpose":"batch","bytes":0,"status":"processed"}',
+                      'batches{"id":"batch_example","object":"batch","status":"failed","errors":{"data":[{"message":"Review_request."}]}}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","errors":[]}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","errors":""}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","error_file_id":"file_errors"}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","request_counts":{"total":3,"completed":2,"failed":1}}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","request_counts":{"total":3,"completed":3,"failed":0,"new_count":1}}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","request_counts":{"total":3,"completed":3,"failed":0,"failed":1}}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","request_counts":{"total":3,"completed":3,"failed":"0"}}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","request_counts":{"total":3,"completed":3}}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","request_counts":[]}',
+                      'admin.organization.projects{"id":"proj_example","object":"organization.project","name":[],"status":"active"}',
+                      'admin.organization.projects{"id":"proj_example","object":"organization.project","name":"Synthetic","status":false}',
+                      'admin.organization.projects{"id":"proj_example","object":"organization.project","name":"Synthetic","status":"active","warning":"Review_project."}',
+                      'admin.organization.projects{"id":"proj_example","object":"organization.project","name":"First","name":"Second","status":"active"}',
+                  ],
+                  'TestProjectListTableByteSizes': [
+                      '0', '1', '1023', '1024', '1536', '1234', '1048576', '9007199254740993', '18446744073709551615',
+                  ],
+              }
+              suites['list-projection-helper-tests.jsonl'] = set().union(*(
+                  required_cases(root, children) for root, children in projection_helper_cases.items()
+              ))
+              renderer_helper_cases = {
+                  'TestListTableKeepsIDsAndFitsWidth': [],
+                  'TestListTableNarrowFallbackKeepsIDs': [],
+                  'TestListTableEscapesEveryCell': [],
+                  'TestListTableUnicodeWidths': [],
+                  'TestListTableEmptyAndMalformedRows': [],
+              }
+              suites['list-renderer-helper-tests.jsonl'] = set().union(*(
+                  required_cases(root, children) for root, children in renderer_helper_cases.items()
+              ))
           if os.environ["CHECK_ENVIRONMENT"] == "true":
               suites["environment-tests.jsonl"] = required_cases(
                   "TestRequestConfigurationRestoresEnvironment",
@@ -481,6 +650,7 @@ jobs:
               unexpected = passed - required if filename in {
                   "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-tests.jsonl",
                   "audio-tests.jsonl", "resource-tests.jsonl", "streaming-text-tests.jsonl",
+                  "list-navigation-helper-tests.jsonl", "list-projection-helper-tests.jsonl", "list-renderer-helper-tests.jsonl",
               } else set()
               children = sum("/" in name for name in passed)
               if missing or unexpected or not package_passed:
