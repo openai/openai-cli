@@ -202,6 +202,16 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-command-order-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Linux Fish image help examples
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: fish
+        run: |
+          set -euo pipefail
+          go test ./cmd/openai -count=1 -timeout=3m -v -json \
+            -run '^TestMainFishImageHelpExamples$' \
+            | tee "$RUNNER_TEMP/fish-image-help-tests.jsonl"
       - name: Test Linux Fish completion
         if: runner.os == 'Linux'
         shell: bash
@@ -393,6 +403,17 @@ jobs:
 
           def required_cases(root, children):
               return {root} | {f"{root}/{child}" for child in children}
+
+          if os.environ["RUNNER_OS"] == "Linux":
+              fish_examples = [
+                  f"copy_{surface}-help_image_example{location}"
+                  for surface in ["flag", "command"]
+                  for location in ["", "_from_another_directory"]
+              ]
+              suites["fish-image-help-tests.jsonl"] = required_cases(
+                  "TestMainFishImageHelpExamples",
+                  fish_examples + [f"{name}/explicit_inline_off_preserves_remembered_on" for name in fish_examples],
+              )
 
           if os.environ["CHECK_IMAGE_ORDER"] == "true":
               suites["image-command-order-tests.jsonl"] = required_cases(
@@ -848,7 +869,7 @@ jobs:
           for filename, required in suites.items():
               passed = set()
               package_passed = False
-              image_order_events = Counter()
+              exact_events = Counter()
               welcome_runs = Counter()
               welcome_passes = Counter()
               welcome_package = Counter()
@@ -858,13 +879,13 @@ jobs:
                   for line in events:
                       event = json.loads(line)
                       test = event.get("Test", "")
-                      if filename == "image-command-order-tests.jsonl":
+                      if filename in {"image-command-order-tests.jsonl", "fish-image-help-tests.jsonl"}:
                           if event["Action"] == "build-output":
                               continue
                           if event.get("Package") != "github.com/openai/openai-cli/cmd/openai":
                               raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
                           if event["Action"] in {"start", "run", "pass"}:
-                              image_order_events[event["Action"], test] += 1
+                              exact_events[event["Action"], test] += 1
                       if filename in request_configuration_packages:
                           if event["Action"] == "build-output":
                               continue
@@ -913,7 +934,7 @@ jobs:
               missing = required - passed
               unexpected = passed - required if filename in {
                   "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-tests.jsonl",
-                  "image-command-order-tests.jsonl",
+                  "image-command-order-tests.jsonl", "fish-image-help-tests.jsonl",
                   "request-configuration-public-tests.jsonl", "request-configuration-helper-tests.jsonl",
                   "audio-tests.jsonl", "resource-tests.jsonl", "streaming-text-tests.jsonl",
                   "welcome-public-tests.jsonl",
@@ -927,10 +948,10 @@ jobs:
                   expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
                   if request_configuration_events != expected_events:
                       raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
-              if filename == "image-command-order-tests.jsonl":
+              if filename in {"image-command-order-tests.jsonl", "fish-image-help-tests.jsonl"}:
                   expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
                   expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
-                  if image_order_events != expected_events:
+                  if exact_events != expected_events:
                       raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
               print(f"{filename}: {len(passed) - children} roots and {children} children passed; no skips")
           PY

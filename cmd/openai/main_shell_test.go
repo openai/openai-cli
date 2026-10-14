@@ -26,24 +26,8 @@ type nativeShell struct {
 // These checks execute installed shells and the built CLI. They do not cover
 // terminal-app rendering, interactive hidden input, or profile installation.
 func TestMainNativeShell(t *testing.T) {
-	work := filepath.Join(t.TempDir(), "CLI with spaces & apostrophe's")
-	if err := os.Mkdir(work, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	binary := "openai"
-	if runtime.GOOS == "windows" {
-		binary += ".exe"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	goBinary := filepath.Join(runtime.GOROOT(), "bin", "go")
-	if runtime.GOOS == "windows" {
-		goBinary += ".exe"
-	}
-	build := exec.CommandContext(ctx, goBinary, "build", "-o", filepath.Join(work, binary), ".")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
+	work, binary := buildNativeShellCLI(t)
+
 	shells := []nativeShell{
 		{"bash", "bash", "./openai", "export OPENAI_API_KEY='fake-native-shell-key'; ", []string{"--noprofile", "--norc", "-c"}},
 		{"zsh", "zsh", "./openai", "export OPENAI_API_KEY='fake-native-shell-key'; ", []string{"-f", "-c"}},
@@ -250,76 +234,7 @@ func TestMainNativeShell(t *testing.T) {
 						exampleName += " from another directory"
 					}
 					t.Run(exampleName, func(t *testing.T) {
-						home := t.TempDir()
-						short := runNativeShell(t, shell, directory, home, "not-a-url", invocation+helpArgs)
-						var command string
-						_, examples, found := strings.Cut(short.stdout, "EXAMPLES:\n")
-						if !found {
-							t.Fatalf("help omitted its executable examples: %+v", short)
-						}
-						examples, _, _ = strings.Cut(examples, "\nOPTIONS:")
-						for line := range strings.SplitSeq(examples, "\n") {
-							if strings.Contains(line, " images generate --prompt ") {
-								command = strings.TrimSpace(line)
-								break
-							}
-						}
-						if short.code != 0 || short.stderr != "" || !strings.HasPrefix(command, invocation+" images generate ") {
-							t.Fatalf("help must use the invoked executable %q in its image example: %+v", invocation, short)
-						}
-						var requests atomic.Int32
-						payload := imageGenerationPNG(t)
-						server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-							requests.Add(1)
-							if r.Method != http.MethodPost || r.URL.Path != "/images/generations" {
-								t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-							}
-							var body struct {
-								Model, Prompt string
-								Inline        json.RawMessage
-							}
-							if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-								t.Errorf("decode synthetic request: %v", err)
-							} else if body.Model != "gpt-image-2.5-sunburst" || body.Prompt != prompt {
-								t.Errorf("copied example changed its arguments: %+v", body)
-							}
-							if body.Inline != nil {
-								t.Error("local inline flag leaked into the API request")
-							}
-							if r.Header.Get("Authorization") != "Bearer fake-native-shell-key" {
-								t.Error("shell environment did not supply the synthetic key")
-							}
-							w.Header().Set("Content-Type", "application/json")
-							io.WriteString(w, imageGenerationResponse(payload))
-						}))
-						defer server.Close()
-						got := runNativeShell(t, shell, directory, home, server.URL, shell.setKey+command)
-						if got.code != 0 || got.stderr != "" || requests.Load() != 1 || !strings.Contains(got.stdout, "Saved image:") {
-							t.Fatalf("copied image example failed: code=%d requests=%d stderr=%q", got.code, requests.Load(), got.stderr)
-						}
-						assertImageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"), got.stdout, 1, payload)
-						if full {
-							if _, err := os.Stat(filepath.Join(home, "Downloads", "gpt-images", "cat.png")); err != nil {
-								t.Fatalf("copied full-help example did not save its requested filename: %v", err)
-							}
-						}
-						if strings.Contains(got.stdout+got.stderr, "fake-native-shell-key") {
-							t.Error("output printed the synthetic credential")
-						}
-						t.Run("explicit inline off preserves remembered on", func(t *testing.T) {
-							home := t.TempDir()
-							got := runNativeShell(t, shell, directory, home, server.URL, invocation+" images inline on")
-							if got.code != 0 || got.stdout != "" || !strings.Contains(got.stderr, "Automatic image previews on.") {
-								t.Fatalf("remember inline on: %+v", got)
-							}
-							assertNativeShellImagePreference(t, home, true)
-							got = runNativeShell(t, shell, directory, home, server.URL, shell.setKey+command+" --inline off")
-							if got.code != 0 || got.stderr != "" || requests.Load() != 2 || !strings.Contains(got.stdout, "Saved image:") {
-								t.Fatalf("explicit inline off failed: code=%d requests=%d stderr=%q", got.code, requests.Load(), got.stderr)
-							}
-							assertImageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"), got.stdout, 1, payload)
-							assertNativeShellImagePreference(t, home, true)
-						})
+						testNativeShellImageExample(t, shell, directory, invocation, helpArgs, prompt)
 					})
 				}
 			}
@@ -400,6 +315,137 @@ func TestMainNativeShell(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Fish runs only the emitted-image examples here. Other shell contracts retain
+// their existing TestMainNativeShell selection.
+func TestMainFishImageHelpExamples(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Fish image examples require native Unix Fish")
+	}
+	path, err := exec.LookPath("fish")
+	if err != nil {
+		if slices.Contains(strings.Split(os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS"), ","), "fish") {
+			t.Fatalf("required shell fish is unavailable: %v", err)
+		}
+		t.Skip("fish is not installed")
+	}
+	shell := nativeShell{"fish", path, "./openai", "set -gx OPENAI_API_KEY 'fake-native-shell-key'; ", []string{"--no-config", "--private", "-c"}}
+	work, binary := buildNativeShellCLI(t)
+	for _, elsewhere := range []bool{false, true} {
+		directory, invocation := work, shell.binary
+		if elsewhere {
+			directory = t.TempDir()
+			invocation = "'" + strings.ReplaceAll(filepath.Join(work, binary), "'", "'\\''") + "'"
+		}
+		for _, commandHelp := range []bool{false, true} {
+			name, helpArgs := "copy flag-help image example", " images generate --help"
+			if commandHelp {
+				name, helpArgs = "copy command-help image example", " help images generate"
+			}
+			if elsewhere {
+				name += " from another directory"
+			}
+			t.Run(name, func(t *testing.T) {
+				testNativeShellImageExample(t, shell, directory, invocation, helpArgs, "A tiny cat")
+			})
+		}
+	}
+}
+
+func buildNativeShellCLI(t *testing.T) (work, binary string) {
+	t.Helper()
+	work = filepath.Join(t.TempDir(), "CLI with spaces & apostrophe's")
+	if err := os.Mkdir(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	binary = "openai"
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	goBinary := filepath.Join(runtime.GOROOT(), "bin", "go")
+	if runtime.GOOS == "windows" {
+		goBinary += ".exe"
+	}
+	build := exec.CommandContext(ctx, goBinary, "build", "-o", filepath.Join(work, binary), ".")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build CLI: %v\n%s", err, output)
+	}
+	return work, binary
+}
+
+func testNativeShellImageExample(t *testing.T, shell nativeShell, directory, invocation, helpArgs, prompt string) {
+	t.Helper()
+	home := t.TempDir()
+	short := runNativeShell(t, shell, directory, home, "not-a-url", invocation+helpArgs)
+	var command string
+	_, examples, found := strings.Cut(short.stdout, "EXAMPLES:\n")
+	if !found {
+		t.Fatalf("help omitted its executable examples: %+v", short)
+	}
+	examples, _, _ = strings.Cut(examples, "\nOPTIONS:")
+	for line := range strings.SplitSeq(examples, "\n") {
+		if strings.Contains(line, " images generate --prompt ") {
+			command = strings.TrimSpace(line)
+			break
+		}
+	}
+	if short.code != 0 || short.stderr != "" || !strings.HasPrefix(command, invocation+" images generate ") {
+		t.Fatalf("help must use the invoked executable %q in its image example: %+v", invocation, short)
+	}
+	var requests atomic.Int32
+	payload := imageGenerationPNG(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != http.MethodPost || r.URL.Path != "/images/generations" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			Model, Prompt string
+			Inline        json.RawMessage
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode synthetic request: %v", err)
+		} else if body.Model != "gpt-image-2.5-sunburst" || body.Prompt != prompt {
+			t.Errorf("copied example changed its arguments: %+v", body)
+		}
+		if body.Inline != nil {
+			t.Error("local inline flag leaked into the API request")
+		}
+		if r.Header.Get("Authorization") != "Bearer fake-native-shell-key" {
+			t.Error("shell environment did not supply the synthetic key")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, imageGenerationResponse(payload))
+	}))
+	defer server.Close()
+	got := runNativeShell(t, shell, directory, home, server.URL, shell.setKey+command)
+	if got.code != 0 || got.stderr != "" || requests.Load() != 1 || !strings.Contains(got.stdout, "Saved image:") {
+		t.Fatalf("copied image example failed: code=%d requests=%d stderr=%q", got.code, requests.Load(), got.stderr)
+	}
+	assertImageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"), got.stdout, 1, payload)
+	if _, err := os.Stat(filepath.Join(home, "Downloads", "gpt-images", "cat.png")); err != nil {
+		t.Fatalf("copied image example did not save its requested filename: %v", err)
+	}
+	if strings.Contains(got.stdout+got.stderr, "fake-native-shell-key") {
+		t.Error("output printed the synthetic credential")
+	}
+	t.Run("explicit inline off preserves remembered on", func(t *testing.T) {
+		home := t.TempDir()
+		got := runNativeShell(t, shell, directory, home, server.URL, invocation+" images inline on")
+		if got.code != 0 || got.stdout != "" || !strings.Contains(got.stderr, "Automatic image previews on.") {
+			t.Fatalf("remember inline on: %+v", got)
+		}
+		assertNativeShellImagePreference(t, home, true)
+		got = runNativeShell(t, shell, directory, home, server.URL, shell.setKey+command+" --inline off")
+		if got.code != 0 || got.stderr != "" || requests.Load() != 2 || !strings.Contains(got.stdout, "Saved image:") {
+			t.Fatalf("explicit inline off failed: code=%d requests=%d stderr=%q", got.code, requests.Load(), got.stderr)
+		}
+		assertImageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images"), got.stdout, 1, payload)
+		assertNativeShellImagePreference(t, home, true)
+	})
 }
 
 func runNativeShell(t *testing.T, shell nativeShell, work, home, baseURL, script string) mainDispatchResult {
