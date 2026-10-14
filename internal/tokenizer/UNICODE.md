@@ -5,7 +5,7 @@ They use Unicode 16.0.0 categories and whitespace.
 Modern encodings use explicit contraction case-fold closures; legacy encodings preserve case-sensitive contractions.
 Explicit regex classes keep results independent of the Go compiler's Unicode version.
 
-The adapter extracts ordinary vocabulary bytes through tokenizer v0.7.0's public `Decode` API.
+The adapter extracts ordinary vocabulary bytes through tokenizer v0.8.1's public `Decode` API.
 It builds immutable rank and fragment tables once per encoding.
 The supported names are `o200k_base`, `cl100k_base`, `r50k_base`, and `p50k_base`.
 `r50k_base` has ordinary ranks 0 through 50255.
