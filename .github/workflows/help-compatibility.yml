@@ -426,6 +426,7 @@ jobs:
           def required_cases(root, children):
               return {root} | {f"{root}/{child}" for child in children}
 
+          strict_packages = {}
           if os.environ["CHECK_IMAGE_ORDER"] == "true":
               suites["image-command-order-tests.jsonl"] = required_cases(
                   "TestMainImageCommandHelpOrder",
@@ -543,6 +544,8 @@ jobs:
               ) | required_cases(
                   "TestCheckNameKeepsReservedProbeCollisions", ["file", "directory", "symlink"],
               )
+              strict_packages["image-save-process-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+              strict_packages["image-save-helper-tests.jsonl"] = "github.com/openai/openai-cli/internal/imageoutput"
               audio_cases = {
                   "JSONPreservesTextAndMetadata": ["audio:transcriptions", "audio:translations"],
                   "TextAndSubtitles": [f"{command}/{format}" for command in ["audio:transcriptions", "audio:translations"]
@@ -762,7 +765,6 @@ jobs:
               suites['list-renderer-helper-tests.jsonl'] = set().union(*(
                   required_cases(root, children) for root, children in renderer_helper_cases.items()
               ))
-          request_configuration_packages = {}
           if os.environ["CHECK_REQUEST_CONFIGURATION"] == "true":
               request_public_cases = {
                   'TestMainGlobalFlagsPlacementHeadersAndOutput': [
@@ -872,7 +874,7 @@ jobs:
               suites["request-configuration-public-tests.jsonl"] = set().union(*(
                   required_cases(root, children) for root, children in request_public_cases.items()
               ))
-              request_configuration_packages["request-configuration-public-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+              strict_packages["request-configuration-public-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
               request_helper_cases = {
                   'TestRootRequestFlagsPreserveOwnershipAndMetadata': [],
                   'TestRootRequestFlagsPreserveMTLSPlacement': [],
@@ -884,7 +886,7 @@ jobs:
               suites["request-configuration-helper-tests.jsonl"] = set().union(*(
                   required_cases(root, children) for root, children in request_helper_cases.items()
               ))
-              request_configuration_packages["request-configuration-helper-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+              strict_packages["request-configuration-helper-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
               if os.environ["RUNNER_OS"] == "Windows":
                   request_shell_root = "TestMainShellWindowsNative"
                   request_shell_cases = [
@@ -912,7 +914,7 @@ jobs:
                       for kind in ["responses", "transcriptions", "speech"]
                   )
                   suites["windows-native-shell-tests.jsonl"] = request_shell_tests
-                  request_configuration_packages["windows-native-shell-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+                  strict_packages["windows-native-shell-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
                   windows_download_cases = {
                       "TestWindowsDownloadAutomaticConsole": [],
                       "TestWindowsDownloadPrivateCreation": [],
@@ -922,7 +924,7 @@ jobs:
                   suites["windows-download-tests.jsonl"] = set().union(*(
                       required_cases(root, children) for root, children in windows_download_cases.items()
                   ))
-                  request_configuration_packages["windows-download-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+                  strict_packages["windows-download-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
 
           if os.environ["CHECK_ENVIRONMENT"] == "true":
               suites["environment-tests.jsonl"] = required_cases(
@@ -951,10 +953,6 @@ jobs:
                    "open_single_quote", "open_double_quote", "before_closing_quote", "colon_not_a_word_break",
                    "multiple_quoted_colons", "partially_escaped_colons", "first_colon_escaped"],
               )
-          image_save_packages = {
-              "image-save-process-tests.jsonl": "github.com/openai/openai-cli/cmd/openai",
-              "image-save-helper-tests.jsonl": "github.com/openai/openai-cli/internal/imageoutput",
-          }
           for filename, required in suites.items():
               passed = set()
               package_passed = False
@@ -963,24 +961,11 @@ jobs:
               welcome_passes = Counter()
               welcome_package = Counter()
               welcome_names = set()
-              request_configuration_events = Counter()
-              image_save_events = Counter()
-              image_save_names = set()
+              strict_events = Counter()
               with (Path(os.environ["RUNNER_TEMP"]) / filename).open() as events:
                   for line in events:
                       event = json.loads(line)
                       test = event.get("Test", "")
-                      if filename in image_save_packages:
-                          if event["Action"] == "build-fail":
-                              raise SystemExit(f"{filename}: unexpected build failure")
-                          if event["Action"] == "build-output":
-                              continue
-                          if event.get("Package") != image_save_packages[filename]:
-                              raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
-                          if test:
-                              image_save_names.add(test)
-                          if event["Action"] in {"start", "run", "pass"}:
-                              image_save_events[event["Action"], test] += 1
                       if filename == "image-command-order-tests.jsonl":
                           if event["Action"] == "build-output":
                               continue
@@ -988,15 +973,17 @@ jobs:
                               raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
                           if event["Action"] in {"start", "run", "pass"}:
                               image_order_events[event["Action"], test] += 1
-                      if filename in request_configuration_packages:
-                          if event["Action"] == "build-output":
-                              continue
+                      if filename in strict_packages:
                           if event["Action"] == "build-fail":
                               raise SystemExit(f"{filename}: unexpected build failure")
-                          if event.get("Package") != request_configuration_packages[filename]:
+                          if test and test not in required:
+                              raise SystemExit(f"{filename}: unexpected named event: {test}")
+                          if event["Action"] == "build-output":
+                              continue
+                          if event.get("Package") != strict_packages[filename]:
                               raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
                           if event["Action"] in {"start", "run", "pass"}:
-                              request_configuration_events[event["Action"], test] += 1
+                              strict_events[event["Action"], test] += 1
                       if filename == "dispatch-tests.jsonl" and test and test != completion_root and not test.startswith(completion_root + "/"):
                           continue
                       if event["Action"] in {"skip", "fail"}:
@@ -1047,15 +1034,10 @@ jobs:
               children = sum("/" in name for name in passed)
               if missing or unexpected or not package_passed:
                   raise SystemExit(f"{filename}: missing required tests: {sorted(missing)}; unexpected tests: {sorted(unexpected)}; package passed: {package_passed}")
-              if filename in request_configuration_packages:
+              if filename in strict_packages:
                   expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
                   expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
-                  if request_configuration_events != expected_events:
-                      raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
-              if filename in image_save_packages:
-                  expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
-                  expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
-                  if image_save_events != expected_events or image_save_names != required:
+                  if strict_events != expected_events:
                       raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
               if filename == "image-command-order-tests.jsonl":
                   expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
