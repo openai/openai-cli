@@ -20,7 +20,7 @@ import time
 # Public fixtures used by the dynamically loaded picker process checks.
 __all__ = [
     'ANSI', 'DOWN', 'END', 'Fixture', 'HOME', 'PNG', 'PRINT', 'Terminal', 'UP',
-    'generate', 'http', 'printed_flags', 'ready', 'wait_for_request',
+    'generate', 'http', 'printed_flags', 'ready', 'wait_for_request', 'wait_resumed', 'wait_submit_guard',
 ]
 
 PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP438AAAAQBAYDFKhhdAAAAAElFTkSuQmCC')
@@ -132,10 +132,10 @@ class Terminal:
         self.child.wait(timeout=5)
 
     def save(self, destination):
-        destination.with_suffix('.raw').write_bytes(self.raw)
+        destination.with_name(destination.name + '.raw').write_bytes(self.raw)
         header = dict(version=2, width=self.initial_size[0], height=self.initial_size[1],
                       title='Local image picker; synthetic API', env={'TERM':'xterm-256color'})
-        destination.with_suffix('.cast').write_text('\n'.join(json.dumps(v) for v in [header, *self.events])+'\n')
+        destination.with_name(destination.name + '.cast').write_text('\n'.join(json.dumps(v) for v in [header, *self.events])+'\n')
 
 
 class Fixture(http.server.BaseHTTPRequestHandler):
@@ -166,6 +166,24 @@ class Fixture(http.server.BaseHTTPRequestHandler):
 def ready(terminal):
     terminal.wait('Prompt')
     terminal.wait('openai images generate')
+
+
+def wait_resumed(terminal, mark, prompt):
+    """Require a saved result and a new picker frame with the retained prompt."""
+    terminal.wait('Saved image:', after=mark)
+    saved = terminal.raw.index(b'Saved image:', mark)
+    terminal.wait('Create image', after=saved)
+    resumed = terminal.raw.index(b'Create image', saved)
+    for line in prompt.splitlines():
+        if line:
+            terminal.wait(line, after=resumed)
+
+
+def wait_submit_guard(terminal):
+    """Drain output while the restored draft's 750 ms submit guard expires."""
+    until = time.monotonic() + 1
+    while time.monotonic() < until:
+        terminal.read(0.02)
 
 
 def generate(terminal, focus='prompt'):

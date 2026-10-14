@@ -194,7 +194,7 @@ func tokenizerPreviewEncoding(encoding string) (byte, error) {
 	}
 }
 
-// These bounds come from the pinned tokenizer v0.7.0 codec vocabularies.
+// These bounds come from the pinned tokenizer v0.8.1 codec vocabularies.
 // p50k reserves 50256 for a special marker; ordinary encoding never emits it.
 func tokenizerPreviewValidID(encoding byte, id uint64) bool {
 	switch encoding {

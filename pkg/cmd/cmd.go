@@ -101,6 +101,14 @@ func init() {
 		},
 		Commands: []*cli.Command{
 			{
+				Name:     "decisions",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&decisionsCreate,
+				},
+			},
+			{
 				Name:     "completions",
 				Category: "API RESOURCE",
 				Suggest:  true,
@@ -703,6 +711,7 @@ func init() {
 				Suggest:  true,
 				Commands: []*cli.Command{
 					&adminOrganizationProjectsAPIKeysRetrieve,
+					&adminOrganizationProjectsAPIKeysUpdate,
 					&adminOrganizationProjectsAPIKeysList,
 					&adminOrganizationProjectsAPIKeysDelete,
 				},
