@@ -110,7 +110,7 @@ func TestImageModelsWindowsStderrProgress(t *testing.T) {
 	err = <-done
 	// EOF on this pipe instructs the controller to cancel. Keep it open until the child exits.
 	closeErr := input.Close()
-	if err != nil || closeErr != nil || ctx.Err() != nil || stderr.Len() != 0 {
+	if err != nil || (closeErr != nil && !errors.Is(closeErr, os.ErrClosed)) || ctx.Err() != nil || stderr.Len() != 0 {
 		t.Fatalf("console discovery failed: %v; input close=%v; context=%v; stdout=%q stderr=%q", err, closeErr, ctx.Err(), &stdout, &stderr)
 	}
 	const want = "Image models — checked with your API key\n\n" +
