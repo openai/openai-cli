@@ -36,6 +36,7 @@ jobs:
             shells: bash,zsh
             bash-prefixes: true
           - os: windows-latest
+            image-models: true
             image-order: true
             list-helpers: true
             goos: windows
@@ -44,6 +45,7 @@ jobs:
             shells: cmd,powershell,pwsh
             environment: true
           - os: macos-15-intel
+            image-models: true
             image-order: true
             welcome-public: true
             request-configuration: true
@@ -57,6 +59,7 @@ jobs:
             gallery: true
             bash-prefixes: true
           - os: ubuntu-24.04-arm
+            image-models: true
             image-order: true
             welcome-public: true
             list-helpers: true
@@ -68,6 +71,7 @@ jobs:
             pager: true
             bash-prefixes: true
           - os: windows-11-arm
+            image-models: true
             image-order: true
             welcome-public: true
             request-configuration: true
@@ -238,6 +242,21 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageUploadQuotedCountPreservesMultipart|TestMainImageEditQuotedStreamScalars|TestMainImageUploadMalformedScalarTextFailsBeforeRequest|TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues|TestMainImageEditStreamSavesFinalAndCloses|TestMainImageUploadBatchCollisionAndPartialFailure|TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse|TestMainImageGenerationPartialFailureKeepsSavedImage|TestMainImageGenerationClosedStdoutKeepsSavedImage|TestImageReceiptProcessRejectsNonPipeStdout)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test image model discovery
+        if: matrix.image-models && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainImageModels' \
+            | tee "$RUNNER_TEMP/image-model-discovery-tests.jsonl"
+      - name: Test Windows image model discovery
+        if: matrix.image-models && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainImageModels' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-model-discovery-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test Windows audio output behavior
         if: runner.os == 'Windows'
         shell: pwsh
@@ -349,6 +368,7 @@ jobs:
         shell: bash
         env:
           CHECK_IMAGE_ORDER: ${{ matrix.image-order || false }}
+          CHECK_IMAGE_MODELS: ${{ matrix.image-models || false }}
           CHECK_WELCOME_PUBLIC: ${{ matrix.welcome-public || false }}
           CHECK_REQUEST_CONFIGURATION: ${{ matrix.request-configuration || false }}
           CHECK_LIST_HELPERS: ${{ matrix.list-helpers || false }}
@@ -393,6 +413,57 @@ jobs:
 
           def required_cases(root, children):
               return {root} | {f"{root}/{child}" for child in children}
+
+          if os.environ["CHECK_IMAGE_MODELS"] == "true":
+              model_failures = ["authentication", "rate_limit", "timeout", "server",
+                                "forbidden", "invalid_response", "request", "network"]
+              model_error_formats = ["default", "inherited_JSON", "text_override", "JSONL_override",
+                                     "raw_override", "YAML_override", "error_extraction"]
+              model_cases = {
+                  "TestMainImageModelsAllIncludesExactSnapshotNames": [],
+                  "TestMainImageModelsAuthenticationAndRateLimitStopChecks": ["authentication", "rate_limit"],
+                  "TestMainImageModelsExploreFallbackWarning": ["auto", "explore", "json"],
+                  "TestMainImageModelsExtraArgumentGuidance": ["json", "jsonl", "raw", "text", "yaml"],
+                  "TestMainImageModelsFailureGuidanceFormats": model_failures + [
+                      f"{failure}/{format}" for failure in model_failures for format in model_error_formats
+                  ],
+                  "TestMainImageModelsHelpAndOfflineMakeNoRequests": [
+                      "--format/json/images/models/--offline",
+                      "--format/json/images/models/--offline/--all",
+                      "help/images/models",
+                      "images/models/--help",
+                  ],
+                  "TestMainImageModelsInterruptPreservesCompletedResults": [],
+                  "TestMainImageModelsJSONAndHeaders": [],
+                  "TestMainImageModelsKeepsPartialResultsOnTimeoutResponse": [],
+                  "TestMainImageModelsPipeIsReadableAndAllRevealsUnavailable": ["all=false", "all=true"],
+                  "TestMainImageModelsPreservesExistingModelListing": [],
+                  "TestMainImageModelsPreservesMachineFormatsAndExtraction": [
+                      "JSON",
+                      "RaW",
+                      "automatic_extraction",
+                      "exact_model_extraction",
+                      "explicit_auto_extraction",
+                      "json",
+                      "jsonl",
+                      "raw",
+                      "raw_string",
+                      "text_extraction",
+                  ],
+                  "TestMainImageModelsRejectsMalformedMetadata": [
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":\"file\"}",
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":\"model\"",
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":42}",
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":[]}",
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":null}",
+                      "{\"id\":\"gpt-image-2.5-flare\"_\"object\":\"model\"}",
+                  ],
+                  "TestMainImageModelsRequestDeadlineCancelsHTTP": [],
+              }
+              model_required = set()
+              for root, children in model_cases.items():
+                  model_required |= required_cases(root, children)
+              suites["image-model-discovery-tests.jsonl"] = model_required
 
           if os.environ["CHECK_IMAGE_ORDER"] == "true":
               suites["image-command-order-tests.jsonl"] = required_cases(
@@ -860,6 +931,8 @@ jobs:
               welcome_package = Counter()
               welcome_names = set()
               request_configuration_events = Counter()
+              image_models_events = Counter()
+              image_models_names = set()
               with (Path(os.environ["RUNNER_TEMP"]) / filename).open() as events:
                   for line in events:
                       event = json.loads(line)
@@ -871,6 +944,18 @@ jobs:
                               raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
                           if event["Action"] in {"start", "run", "pass"}:
                               image_order_events[event["Action"], test] += 1
+                      if filename == "image-model-discovery-tests.jsonl":
+                          if event["Action"] == "build-fail":
+                              raise SystemExit(f"{filename}: unexpected build failure")
+                          if event["Action"] == "build-output":
+                              continue
+                          if event.get("Package") != "github.com/openai/openai-cli/cmd/openai":
+                              raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
+                          if test:
+                              image_models_names.add(test)
+                          if event["Action"] in {"start", "run", "pass"}:
+                              image_models_events[event["Action"], test] += 1
+
                       if filename in request_configuration_packages:
                           if event["Action"] == "build-output":
                               continue
@@ -922,12 +1007,19 @@ jobs:
                   "image-command-order-tests.jsonl",
                   "request-configuration-public-tests.jsonl", "request-configuration-helper-tests.jsonl",
                   "audio-tests.jsonl", "resource-tests.jsonl", "streaming-text-tests.jsonl",
+                  "image-model-discovery-tests.jsonl",
                   "welcome-public-tests.jsonl",
                   "list-navigation-helper-tests.jsonl", "list-projection-helper-tests.jsonl", "list-renderer-helper-tests.jsonl",
               } else set()
               children = sum("/" in name for name in passed)
               if missing or unexpected or not package_passed:
                   raise SystemExit(f"{filename}: missing required tests: {sorted(missing)}; unexpected tests: {sorted(unexpected)}; package passed: {package_passed}")
+              if filename == "image-model-discovery-tests.jsonl":
+                  expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
+                  expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
+                  if image_models_events != expected_events or image_models_names != required:
+                      raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
+
               if filename in request_configuration_packages:
                   expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
                   expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
