@@ -671,6 +671,8 @@ jobs:
                       event = json.loads(line)
                       test = event.get("Test", "")
                       if filename == "image-command-order-tests.jsonl":
+                          if event["Action"] == "build-output":
+                              continue
                           if event.get("Package") != "github.com/openai/openai-cli/cmd/openai":
                               raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
                           if event["Action"] in {"start", "run", "pass"}:
