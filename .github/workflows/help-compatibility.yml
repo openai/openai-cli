@@ -142,7 +142,18 @@ jobs:
           expect -v
       - uses: ./.github/actions/link-go-sdk
       - name: Test help
+        if: runner.os != 'Windows'
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
+      - name: Test Windows help
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          OPENAI_CLI_REQUIRE_WINDOWS_SYMLINKS: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test ./internal/clihelp ./internal/requestflag -count=1 -v -json |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-help-invocation-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test public welcome startup
         if: matrix.welcome-public && runner.os != 'Windows'
         shell: bash
@@ -202,6 +213,16 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-command-order-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Linux Fish help invocation
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: fish
+        run: |
+          set -euo pipefail
+          go test ./cmd/openai -count=1 -timeout=3m -v -json \
+            -run '^TestMainFishHelpInvocation$' \
+            | tee "$RUNNER_TEMP/fish-help-invocation-tests.jsonl"
       - name: Test Linux Fish image help examples
         if: runner.os == 'Linux'
         shell: bash
@@ -410,6 +431,11 @@ jobs:
                   for surface in ["flag", "command"]
                   for location in ["", "_from_another_directory"]
               ]
+              suites["fish-help-invocation-tests.jsonl"] = required_cases(
+                  "TestMainFishHelpInvocation",
+                  ["installed_help_uses_command_name", "copy_local_help_with_implicit_lookup_enabled",
+                   "copy_typo_suggestion_with_another_openai_on_PATH"],
+              )
               suites["fish-image-help-tests.jsonl"] = required_cases(
                   "TestMainFishImageHelpExamples",
                   fish_examples + [f"{name}/explicit_inline_off_preserves_remembered_on" for name in fish_examples],
@@ -440,6 +466,12 @@ jobs:
               )
 
           if os.environ["RUNNER_OS"] == "Windows":
+              invocation_symlink_roots = {
+                  "TestHelpInvocationFollowsInstalledSymlink", "TestHelpInvocationKeepsPowerShellScriptOnPath",
+              }
+              suites["windows-help-invocation-tests.jsonl"] = invocation_symlink_roots | {
+                  "TestHelpInvocationKeepsPowerShellScriptOnPath/dangling_symlink",
+              }
               suites["tokenizer-reader-tests.jsonl"] = {
                   "TestTokenizerConsoleInputPreservesUnicode",
                   "TestTokenizerConsoleInputRecordSemantics",
@@ -876,6 +908,8 @@ jobs:
               passed = set()
               package_passed = False
               exact_events = Counter()
+              invocation_symlink_events = Counter()
+              invocation_symlink_names = set()
               welcome_runs = Counter()
               welcome_passes = Counter()
               welcome_package = Counter()
@@ -885,7 +919,20 @@ jobs:
                   for line in events:
                       event = json.loads(line)
                       test = event.get("Test", "")
-                      if filename in {"image-command-order-tests.jsonl", "fish-image-help-tests.jsonl"}:
+                      if filename == "windows-help-invocation-tests.jsonl":
+                          if event["Action"] == "build-fail":
+                              raise SystemExit(f"{filename}: unexpected build failure")
+                          if event["Action"] == "build-output":
+                              continue
+                          if event.get("Package") != "github.com/openai/openai-cli/internal/clihelp":
+                              continue
+                          if test and not any(test == root or test.startswith(root + "/") for root in invocation_symlink_roots):
+                              continue
+                          if test:
+                              invocation_symlink_names.add(test)
+                          if event["Action"] in {"start", "run", "pass"}:
+                              invocation_symlink_events[event["Action"], test] += 1
+                      if filename in {"image-command-order-tests.jsonl", "fish-image-help-tests.jsonl", "fish-help-invocation-tests.jsonl"}:
                           if event["Action"] == "build-fail":
                               raise SystemExit(f"{filename}: unexpected build failure")
                           if event["Action"] == "build-output":
@@ -942,7 +989,8 @@ jobs:
               missing = required - passed
               unexpected = passed - required if filename in {
                   "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-tests.jsonl",
-                  "image-command-order-tests.jsonl", "fish-image-help-tests.jsonl",
+                  "image-command-order-tests.jsonl", "fish-image-help-tests.jsonl", "fish-help-invocation-tests.jsonl",
+                  "windows-help-invocation-tests.jsonl",
                   "request-configuration-public-tests.jsonl", "request-configuration-helper-tests.jsonl",
                   "audio-tests.jsonl", "resource-tests.jsonl", "streaming-text-tests.jsonl",
                   "welcome-public-tests.jsonl",
@@ -951,12 +999,17 @@ jobs:
               children = sum("/" in name for name in passed)
               if missing or unexpected or not package_passed:
                   raise SystemExit(f"{filename}: missing required tests: {sorted(missing)}; unexpected tests: {sorted(unexpected)}; package passed: {package_passed}")
+              if filename == "windows-help-invocation-tests.jsonl":
+                  expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
+                  expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
+                  if invocation_symlink_events != expected_events or invocation_symlink_names != required:
+                      raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
               if filename in request_configuration_packages:
                   expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
                   expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
                   if request_configuration_events != expected_events:
                       raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
-              if filename in {"image-command-order-tests.jsonl", "fish-image-help-tests.jsonl"}:
+              if filename in {"image-command-order-tests.jsonl", "fish-image-help-tests.jsonl", "fish-help-invocation-tests.jsonl"}:
                   expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
                   expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
                   if exact_events != expected_events:
