@@ -115,6 +115,7 @@ func TestMainShellWindowsNative(t *testing.T) {
 			}
 			t.Logf("%s version: %s", shell.name, strings.TrimSpace(gotVersion.stdout))
 			preservesNativeBytes := shell.name == "cmd"
+			legacyArguments := false
 			if shell.name != "cmd" {
 				fields := strings.Split(strings.TrimSpace(gotVersion.stdout), ".")
 				if len(fields) < 2 {
@@ -126,7 +127,11 @@ func TestMainShellWindowsNative(t *testing.T) {
 					t.Fatal("unrecognized PowerShell version")
 				}
 				preservesNativeBytes = major > 7 || major == 7 && minor >= 4
+				legacyArguments = major < 7 || major == 7 && minor < 3
 			}
+			t.Run("request configuration", func(t *testing.T) {
+				testWindowsRequestConfiguration(t, shell, work, binary, helper, command, legacyArguments)
+			})
 			t.Run("field and whole request", func(t *testing.T) {
 				requests := make(chan map[string]any, 8)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
