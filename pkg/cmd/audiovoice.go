@@ -6,8 +6,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/requestflag"
-	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
@@ -16,18 +16,20 @@ import (
 
 var audioVoicesCreate = cli.Command{
 	Name:    "create",
-	Usage:   "Creates a voice from a text prompt or from a consent recording and an audio\nsample.",
+	Usage:   "Create a custom voice you can use for audio output (for example, in\nText-to-Speech and the Realtime API). This requires an audio sample and a\npreviously uploaded consent recording.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
 			Name:      "audio-sample",
 			Usage:     "The sample audio recording file. Maximum size is 10 MiB.\n\nSupported MIME types:\n`audio/mpeg`, `audio/wav`, `audio/x-wav`, `audio/ogg`, `audio/aac`, `audio/flac`, `audio/webm`, `audio/mp4`.\n",
+			Required:  true,
 			BodyPath:  "audio_sample",
 			FileInput: true,
 		},
 		&requestflag.Flag[string]{
 			Name:     "consent",
 			Usage:    "The consent recording ID (for example, `cons_1234`).",
+			Required: true,
 			BodyPath: "consent",
 		},
 		&requestflag.Flag[string]{
@@ -42,22 +44,6 @@ var audioVoicesCreate = cli.Command{
 			Default:  "audio_sample",
 			BodyPath: "type",
 		},
-		&requestflag.Flag[string]{
-			Name:     "prompt",
-			Usage:    "A description of the desired voice. Must not contain only whitespace.",
-			BodyPath: "prompt",
-		},
-		&requestflag.Flag[any]{
-			Name:     "model",
-			Usage:    "The voice creation model to use. Defaults to `auto`.",
-			Default:  "auto",
-			BodyPath: "model",
-		},
-		&requestflag.Flag[string]{
-			Name:     "script-hint",
-			Usage:    "Optional text for the voice to speak during creation. If omitted, a script is generated from the prompt. Must not be blank after trimming whitespace; scripts that are too short are rejected.",
-			BodyPath: "script_hint",
-		},
 	},
 	Action:          handleAudioVoicesCreate,
 	HideHelpCommand: true,
@@ -71,16 +57,22 @@ func handleAudioVoicesCreate(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("Unexpected extra arguments: %v", unusedArgs)
 	}
 
-	options, err := custom.AudioVoicesFlagOptions(ctx, cmd)
+	options, err := flagOptions(
+		cmd,
+		apiquery.NestedQueryFormatBrackets,
+		apiquery.ArrayQueryFormatBrackets,
+		MultipartFormEncoded,
+		false,
+	)
 	if err != nil {
 		return err
 	}
 
+	params := openai.AudioVoiceNewParams{}
+
 	var res []byte
-	// Voice creation requires a regular API key, never an admin-key fallback.
-	options = append([]option.RequestOption{option.WithAdminAPIKey("")}, options...)
 	options = append(options, option.WithResponseBodyInto(&res))
-	err = client.Post(ctx, "audio/voices", nil, nil, options...)
+	_, err = client.Audio.Voices.New(ctx, params, options...)
 	if err != nil {
 		return err
 	}

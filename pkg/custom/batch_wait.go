@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/readable"
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
@@ -91,9 +93,29 @@ func configureBatchCommands(root *cli.Command) {
 				}
 			}
 		}
-		resource.Commands = append(resource.Commands, newBatchDownloadCommand())
+		resource.Commands = append(resource.Commands, newBatchWaitCommand(), newBatchDownloadCommand())
 		return
 	}
+}
+
+func newBatchWaitCommand() *cli.Command {
+	command := &cli.Command{
+		Name: "wait", Usage: "Wait for a batch and optionally save its results",
+		Description:     "Waits without submitting or canceling remote work. Use --output-dir to save available output.jsonl and error.jsonl without overwriting files.",
+		HideHelpCommand: true, Suggest: true,
+		Flags: []cli.Flag{
+			&requestflag.Flag[string]{Name: "batch-id", PathParam: "batch_id", Required: true},
+			&cli.DurationFlag{Name: "poll-interval", Value: 10 * time.Second, Usage: "Delay between successful status checks"},
+			&cli.DurationFlag{Name: "wait-timeout", Usage: "Total local duration, including downloads; 0 waits without a deadline"},
+			&cli.StringFlag{Name: "output-dir", TakesFile: true, Usage: "Save available result files in this directory; create it if absent"},
+		},
+		Action: waitForBatch,
+	}
+	command.Metadata = map[string]any{"help-content": clihelp.Content{
+		Description: command.Description,
+		Examples:    []clihelp.Example{{Description: "Wait and save available results:", Command: "batches wait --batch-id batch_example --output-dir ./results"}},
+	}}
+	return command
 }
 
 // Parse once, preserving generated positional, @file, and piped input semantics.
@@ -120,6 +142,13 @@ func waitForBatch(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	var destination *batchOutputDirectory
+	if cmd.Name == "wait" && cmd.IsSet("output-dir") {
+		destination, err = prepareBatchOutputDirectory(cmd.String("output-dir"))
+		if err != nil {
+			return err
+		}
+	}
 	ctx, stop := batchSignalContext(ctx)
 	defer stop()
 	if timeout > 0 {
@@ -129,12 +158,12 @@ func waitForBatch(ctx context.Context, cmd *cli.Command) error {
 	}
 	stopReset := context.AfterFunc(ctx, stop)
 	defer stopReset()
-	if batchHumanTerminal(cmd.Root()) {
+	if batchHumanTerminal(ctx, cmd.Root()) {
 		err = writeBatchStdout(ctx, os.Stderr, func(progress io.Writer) error {
-			return pollBatch(ctx, cmd, options, interval, progress)
+			return pollBatch(ctx, cmd, options, interval, progress, destination)
 		})
 	} else {
-		err = pollBatch(ctx, cmd, options, interval, nil)
+		err = pollBatch(ctx, cmd, options, interval, nil, destination)
 	}
 	if ctx.Err() != nil {
 		return batchContextError(errors.Join(ctx.Err(), context.Cause(ctx), err))
@@ -142,7 +171,7 @@ func waitForBatch(ctx context.Context, cmd *cli.Command) error {
 	return err
 }
 
-func pollBatch(ctx context.Context, cmd *cli.Command, options []option.RequestOption, interval time.Duration, progress io.Writer) error {
+func pollBatch(ctx context.Context, cmd *cli.Command, options []option.RequestOption, interval time.Duration, progress io.Writer, destination *batchOutputDirectory) error {
 	client := openai.NewClient(GetDefaultRequestOptions(cmd)...)
 	var previous string
 	for {
@@ -174,11 +203,15 @@ func pollBatch(ctx context.Context, cmd *cli.Command, options []option.RequestOp
 			}
 		}
 		if terminal {
+			var downloadErr error
+			if destination != nil {
+				downloadErr = collectBatchFiles(ctx, cmd, client, options, batch, destination)
+			}
 			outputErr := batchShowJSON(ctx, cmd, batch, "retrieve")
 			if ctx.Err() != nil {
-				return errors.Join(batchContextError(errors.Join(ctx.Err(), outputErr)), result)
+				return errors.Join(batchContextError(errors.Join(ctx.Err(), outputErr, downloadErr)), result)
 			}
-			return errors.Join(outputErr, result)
+			return errors.Join(downloadErr, outputErr, result)
 		}
 		timer := time.NewTimer(interval)
 		select {
@@ -250,8 +283,8 @@ func batchShowJSON(ctx context.Context, cmd *cli.Command, batch gjson.Result, op
 	})
 }
 
-func batchHumanTerminal(root *cli.Command) bool {
-	return isTerminal(root.Writer) && isTerminal(os.Stderr) && !root.Bool("debug") &&
+func batchHumanTerminal(ctx context.Context, root *cli.Command) bool {
+	return outputDiagnosticsAllowed(ctx) && isTerminal(root.Writer) && isTerminal(os.Stderr) && !root.Bool("debug") &&
 		!root.Bool("raw-output") && root.String("transform") == "" &&
 		root.String("transform-error") == "" && errorOutputFormat(root) == "text" &&
 		resolvedOutputFormat(ShowJSONOpts{Format: root.String("format")}) == "text"
@@ -265,7 +298,7 @@ func showBatchNextCommand(batch gjson.Result, opts ShowJSONOpts) error {
 		return nil
 	}
 	cmd, ok := opts.Context.Value(batchCreateContextKey{}).(*cli.Command)
-	if !ok || !batchHumanTerminal(cmd.Root()) {
+	if !ok || !batchHumanTerminal(opts.Context, cmd.Root()) {
 		return nil
 	}
 	id := batch.Get("id").String()

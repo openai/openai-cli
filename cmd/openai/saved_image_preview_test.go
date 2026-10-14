@@ -128,8 +128,8 @@ func TestMainImageInlinePreferenceCommandsAreLocal(t *testing.T) {
 	for _, mode := range []string{"off", "on", "off"} {
 		got := runMainDispatchWithStdin(t, "bash", env, input, "openai", "images", "inline", mode)
 		require.Zero(t, got.code, got.stderr)
-		require.Empty(t, got.stderr)
-		require.Contains(t, got.stdout, "Automatic image previews "+mode)
+		require.Empty(t, got.stdout)
+		require.Contains(t, got.stderr, "Automatic image previews "+mode)
 		actual, err := imageprefs.Load(t.Context(), prefs)
 		require.NoError(t, err)
 		require.Equal(t, mode, actual)

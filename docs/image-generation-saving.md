@@ -21,16 +21,19 @@ available, but command printing is disabled with an explanation in the picker.
 An optional [Tab shortcut](image-picker-shortcuts.md) opens the same picker in
 Bash 4.3+, zsh and fish. Other shells use Enter.
 
-After a successful generation, the picker reopens below the saved result with
-the same image settings and an empty prompt. It remembers the last submitted
-image settings and save folder for next time; the description starts empty and
-is not saved in picker preferences. Canceled edits are discarded. Settings stay
-local to your user configuration folder and do not affect commands that supply flags.
+After generation, the picker keeps your prompt and settings below the saved result.
+Reopening restores your latest draft, including the prompt, image settings, and
+chosen save folder. Drafts save before deliberate requests and when you exit
+after editing. Clearing the prompt also clears the saved description.
+
+Drafts stay in your user configuration folder. Reopening never submits a request.
+With multiple edited sessions, the last successful save replaces the whole draft.
+Forced termination or power loss can discard unsaved edits.
 
 Choose **Save to** to use the default folder, current directory, or another
-existing folder. Tab completes folder names. Saved settings are optional: if
-they cannot be written, a warning appears and generation can still continue.
-Unknown or unreadable saved settings are left alone.
+existing folder. Tab completes folder names. Draft storage is optional: if a
+draft cannot be written, a warning appears and generation can still continue.
+Unknown or unreadable drafts are left alone.
 Explicit image flags, output formats, piped input and redirected output retain
 the direct command behavior described below.
 
@@ -97,7 +100,7 @@ Streamed edits save only the final image. `--partial-images 1`, `2` or `3`
 enables streaming and displays progress previews where supported.
 Explicit `--format json` preserves the original responses or edit events and
 makes no saved files. Model-discovery default markers remain separate work.
-Use `openai help --all images edit` for every request setting.
+Use `openai images edit --help` for every request setting.
 
 ## Inline previews
 
@@ -214,6 +217,56 @@ saved originals. See [VS Code image support](https://code.visualstudio.com/docs/
 VS Code requires ConPTY v2 or later for these images on Windows. Windows and
 remote sessions require separate rendering checks; an opt-in or successful write
 is not proof of visible rendering there.
+
+Konsole supports an interactive viewer for saved images without the upstream
+resize fix:
+
+```sh
+openai images preview --interactive "photo.png"
+```
+
+The viewer uses a separate screen and redraws after resizing. Press `q` or
+Escape to close it and restore the previous screen. The viewed image does not
+remain in terminal history. The original file stays unchanged.
+
+This mode requires terminal input and output, Konsole 22.04 or newer, and a
+macOS or Linux CLI host. Run outside CI and multiplexers. Konsole must supply
+its own `KONSOLE_VERSION`, with `TERM_PROGRAM` unset. Do not combine
+`--interactive` with `--inline`. This mode does not require
+`OPENAI_KONSOLE_IMAGES`. Native validation covers unpatched Konsole 23.08.5 on
+Linux/X11; other versions and desktop configurations need separate checks.
+
+Static Konsole previews require an explicit opt-in. Use a build containing the resize and
+scrolling fix from [Konsole merge request !1339](https://invent.kde.org/utilities/konsole/-/merge_requests/1339).
+Unpatched builds can crop earlier previews after resizing or lose previews
+during scrolling. No released minimum version for this fix is established.
+Inside that patched Konsole, opt in for a command:
+
+```sh
+env OPENAI_KONSOLE_IMAGES=1 openai images preview "photo.png" # Bash, zsh or fish
+```
+
+`OPENAI_KONSOLE_IMAGES` must be exactly `1`. This asserts that the current Konsole
+contains the fix; the CLI cannot verify the patch from the terminal version.
+Konsole must supply its own `KONSOLE_VERSION`, with `TERM_PROGRAM` unset.
+The CLI accepts six-digit versions starting at `220400` for protocol support.
+That check does not establish resize compatibility. Existing Kitty, Ghostty,
+and explicit `TERM_PROGRAM` identities retain their own selection rules.
+Use the assertion only in the patched Konsole, rather than exporting it globally.
+
+The opt-in applies to local preview, generation, and progress previews.
+Native Konsole previews require the CLI to run on macOS or Linux.
+Other CLI platforms retain the existing fallback, including when the opt-in is set.
+Without the opt-in, `auto` and `on` retain the existing color-block fallback when available.
+`--inline off`, redirected output, CI, and multiplexer restrictions still apply.
+The CLI reuses the iTerm PNG protocol with its usual 64-column maximum and
+viewport sizing. Saved originals remain unchanged. Patched Konsole fits existing
+previews after resizing, including after the CLI exits.
+The CLI does not read terminal replies or change Konsole settings.
+Native validation covers Linux/X11; Wayland, remote sessions, and other desktop
+platforms require separate rendering checks.
+Track the remaining upstream work in [issue #448](https://github.com/openai/openai-cli/issues/448).
+
 Other color terminals show a labeled color-block approximation. `NO_COLOR` or
 `CLICOLOR=0` disables that approximation, while native image graphics remain
 available. Basic terminals keep the saved path without a preview.
@@ -267,14 +320,16 @@ outside the repository. Set `DEMO_API_BINARY` to a binary built from
 ```sh
 openai images preview "path/to/image.png"
 openai images preview --inline on "path/to/image.png"
+openai images preview --interactive "path/to/image.png" # Live Konsole viewer
 openai images inline off
 openai images inline on
 openai images generate --prompt "A tiny orange robot" --inline auto
 ```
 
 `images preview` displays an existing PNG, JPEG or WebP using the same renderer.
-It needs no API key, makes no request, does not read stdin, and leaves the
-original untouched. It works even when automatic previews are off. Explicit
+It needs no API key, makes no request, and leaves the original untouched.
+Static previews do not read stdin. The interactive Konsole viewer reads keyboard input.
+It works even when automatic previews are off. Explicit
 preview defaults to `auto`; `--inline on` also permits Apple Terminal image-font
 activation. Unsupported formats, output redirection, and images that cannot fit
 the terminal return an error. `--format-error` and `--transform-error` still

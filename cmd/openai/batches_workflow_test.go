@@ -724,3 +724,112 @@ func TestMainBatchesWorkflowHelpWithoutCredentials(t *testing.T) {
 		})
 	}
 }
+
+func TestMainBatchesCollectTerminalFiles(t *testing.T) {
+	for _, state := range []string{"completed", "failed", "expired", "cancelled", "future_state"} {
+		t.Run(state, func(t *testing.T) {
+			directory := filepath.Join(t.TempDir(), "results")
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Method != http.MethodGet {
+					t.Errorf("unexpected mutation: %s", r.Method)
+				}
+				switch r.URL.Path {
+				case "/batches/batch_synthetic":
+					w.Header().Set("Content-Type", "application/json")
+					fmt.Fprint(w, batchesWorkflowResponse(state, batchesWorkflowCounts))
+				case "/files/file_output/content", "/files/file_error/content":
+					fmt.Fprint(w, batchesWorkflowContent)
+				default:
+					t.Errorf("unexpected route: %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			got := runReadableCommand(t, server, "batches", "wait", "batch_synthetic", "--output-dir", directory, "--format", "json")
+			wantCode, wantRequests := 1, int32(3)
+			if state == "completed" {
+				wantCode = 0
+			}
+			if state == "future_state" {
+				wantRequests = 1
+			}
+			if got.code != wantCode || requests.Load() != wantRequests || !json.Valid([]byte(got.stdout)) {
+				t.Fatalf("result=%+v requests=%d", got, requests.Load())
+			}
+			for _, name := range []string{"output.jsonl", "error.jsonl"} {
+				data, err := os.ReadFile(filepath.Join(directory, name))
+				if state == "future_state" {
+					if !os.IsNotExist(err) {
+						t.Fatalf("unknown state saved %s", name)
+					}
+				} else if err != nil || string(data) != batchesWorkflowContent {
+					t.Fatalf("%s bytes=%q err=%v", name, data, err)
+				}
+			}
+		})
+	}
+}
+
+func TestMainBatchesCollectPartialFailureRecovery(t *testing.T) {
+	for _, failed := range []string{"output", "error"} {
+		t.Run(failed, func(t *testing.T) {
+			directory := t.TempDir()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("unexpected mutation: %s", r.Method)
+				}
+				if r.URL.Path == "/batches/batch_synthetic" {
+					w.Header().Set("Content-Type", "application/json")
+					fmt.Fprint(w, batchesWorkflowResponse("completed", batchesWorkflowCounts))
+				} else if r.URL.Path == "/files/file_"+failed+"/content" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusNotFound)
+					fmt.Fprint(w, `{"error":{"message":"synthetic missing file"}}`)
+				} else {
+					fmt.Fprint(w, batchesWorkflowContent)
+				}
+			}))
+			defer server.Close()
+			got := runReadableCommand(t, server, "batches", "wait", "batch_synthetic", "--output-dir", directory)
+			if got.code != 1 || !strings.Contains(got.stderr, "--file "+failed) || !strings.Contains(got.stderr, "remain saved") {
+				t.Fatalf("missing recovery guidance: %+v", got)
+			}
+			kept := "output"
+			if failed == "output" {
+				kept = "error"
+			}
+			data, err := os.ReadFile(filepath.Join(directory, kept+".jsonl"))
+			if err != nil || string(data) != batchesWorkflowContent {
+				t.Fatalf("partial result lost: %q %v", data, err)
+			}
+			if _, err := os.Stat(filepath.Join(directory, failed+".jsonl")); !os.IsNotExist(err) {
+				t.Fatal("failed file published")
+			}
+			entries, _ := os.ReadDir(directory)
+			if len(entries) != 1 {
+				t.Fatalf("unexpected files: %v", entries)
+			}
+		})
+	}
+}
+
+func TestMainBatchesCollectPreflight(t *testing.T) {
+	for _, name := range []string{"output.jsonl", "error.jsonl"} {
+		t.Run(name, func(t *testing.T) {
+			directory := t.TempDir()
+			path := filepath.Join(directory, name)
+			if err := os.WriteFile(path, []byte("preserved"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); http.Error(w, "unexpected", 500) }))
+			defer server.Close()
+			got := runReadableCommand(t, server, "batches", "wait", "batch_synthetic", "--output-dir", directory)
+			data, err := os.ReadFile(path)
+			if got.code != 1 || requests.Load() != 0 || err != nil || string(data) != "preserved" {
+				t.Fatalf("result=%+v requests=%d data=%q err=%v", got, requests.Load(), data, err)
+			}
+		})
+	}
+}

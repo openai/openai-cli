@@ -99,6 +99,10 @@ func TestImageFontRetainsScrollbackAndTextSettings(t *testing.T) {
 	img.Set(0, 0, color.RGBA{B: 255, A: 255})
 	require.NoError(t, displayImageFont(t.Context(), &second, img, 32, directory, "/dev/ttys001", testFontViewport, bridge.services(t)))
 	require.NotEqual(t, first.String(), second.String())
+	for _, text := range []string{first.String(), second.String()} {
+		require.True(t, strings.HasSuffix(text, "\n"), "successful font output terminates its final row")
+		require.False(t, strings.HasSuffix(text, "\n\n"), "font output must not add a blank row")
+	}
 	require.Equal(t, 12.0, bridge.status.FontSize)
 	require.Equal(t, "Synthetic profile", bridge.status.ProfileName)
 	require.Equal(t, 1, bridge.status.ProfileID)

@@ -43,6 +43,23 @@ func TestMainAPIErrorsWithoutJSONDetails(t *testing.T) {
 	}
 }
 
+// The dispatch prefix also runs these process checks in the native CI matrix.
+func TestMainDispatchEmptyAPIErrorObjects(t *testing.T) {
+	for _, body := range []string{`{}`, `{"error":{}}`} {
+		for _, flag := range []string{"--format-error", "--format"} {
+			for _, format := range []string{"json", "jsonl", "raw", "yaml"} {
+				t.Run(body+"/"+flag+"/"+format, func(t *testing.T) {
+					result := runMainAPIErrorResponse(t, http.StatusBadGateway, "application/json", body, flag, format)
+					payload := decodeMainStructuredError(t, format, result.stderr)
+					if payload["status_code"] != json.Number("502") || payload["message"] != "HTTP 502 Bad Gateway: the server returned no usable JSON error details." {
+						t.Errorf("empty error object lost HTTP failure details: %#v", payload)
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestMainAPIErrorsPreserveJSONDetailsAndExtraction(t *testing.T) {
 	const details = `{"message":"synthetic error","type":"invalid_request_error","code":"synthetic_code","param":null,"future_field":{"sequence":9007199254740993}}`
 	want := decodeMainErrorObject(t, "json", details)
@@ -258,7 +275,7 @@ func TestMainStreamErrorsPreserveEventDetails(t *testing.T) {
 				}
 				switch {
 				case test.format == "text":
-					if !strings.Contains(result.stderr, "The response stream failed. Output may be incomplete.") || strings.Contains(result.stderr, "synthetic private stream detail") || strings.Contains(result.stderr, "200") {
+					if !strings.Contains(result.stderr, "The response stream failed.\nOutput may be incomplete.") || strings.Contains(result.stderr, "synthetic private stream detail") || strings.Contains(result.stderr, "200") {
 						t.Errorf("missing safe stream failure summary: %q", result.stderr)
 					}
 				case test.extracted != "":

@@ -131,7 +131,7 @@ func TestMixedHelpSeparatesActionsAndCommandGroups(t *testing.T) {
 		{Name: "create", Action: func(context.Context, *cli.Command) error { return nil }},
 		{Name: "retrieve", Action: func(context.Context, *cli.Command) error { return nil }},
 	}}
-	got := briefHelp(group, "openai", "admin organization projects")
+	got := commandHelpAtWidth(group, "openai", "admin organization projects", 80)
 	for _, want := range []string{"ACTIONS", "COMMAND GROUPS", "create", "retrieve", "users"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("mixed help lacks %q: %s", want, got)
@@ -145,7 +145,7 @@ func TestMixedHelpSeparatesActionsAndCommandGroups(t *testing.T) {
 func TestBriefHelpUsesFileInputMetadata(t *testing.T) {
 	for _, name := range []string{"file", "image", "mask"} {
 		flag := &requestflag.Flag[string]{Name: name, Usage: "The audio file object (not file name) to transcribe.", Required: true, FileInput: true}
-		got := briefHelp(&cli.Command{Name: "create", Flags: []cli.Flag{flag}}, "openai", "audio transcriptions create")
+		got := commandHelpAtWidth(&cli.Command{Name: "create", Flags: []cli.Flag{flag}}, "openai", "audio transcriptions create", 80)
 		if !strings.Contains(got, "Path to the audio file to transcribe.") || strings.Contains(got, "file object") {
 			t.Errorf("file flag %s still describes an SDK input: %s", name, got)
 		}

@@ -25,11 +25,67 @@ jobs:
       matrix:
         include:
           - os: macos-latest
+            native-commands: true
+            goos: darwin
+            goarch: arm64
+            runner-arch: ARM64
             shells: bash,zsh
           - os: ubuntu-latest
-            shells: bash
+            goos: linux
+            goarch: amd64
+            runner-arch: X64
+            shells: bash,zsh
+            bash-prefixes: true
           - os: windows-latest
+            image-models: true
+            native-commands: true
+            image-order: true
+            list-helpers: true
+            goos: windows
+            goarch: amd64
+            runner-arch: X64
             shells: cmd,powershell,pwsh
+            environment: true
+          - os: macos-15-intel
+            image-models: true
+            native-commands: true
+            image-order: true
+            welcome-public: true
+            request-configuration: true
+            list-helpers: true
+            goos: darwin
+            goarch: amd64
+            runner-arch: X64
+            shells: bash,zsh
+            environment: true
+            pager: true
+            gallery: true
+            bash-prefixes: true
+          - os: ubuntu-24.04-arm
+            image-models: true
+            native-commands: true
+            image-order: true
+            welcome-public: true
+            list-helpers: true
+            goos: linux
+            goarch: arm64
+            runner-arch: ARM64
+            shells: bash,zsh
+            environment: true
+            pager: true
+            bash-prefixes: true
+          - os: windows-11-arm
+            image-models: true
+            native-commands: true
+            image-order: true
+            welcome-public: true
+            request-configuration: true
+            list-helpers: true
+            goos: windows
+            goarch: arm64
+            runner-arch: ARM64
+            shells: cmd,powershell,pwsh
+            environment: true
     steps:
       - name: Download prepared source
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -44,10 +100,1227 @@ jobs:
         with:
           go-version-file: .go-version
           check-latest: true
+      - name: Verify native Go platform
+        shell: bash
+        env:
+          EXPECTED_GOOS: ${{ matrix.goos }}
+          EXPECTED_GOARCH: ${{ matrix.goarch }}
+          EXPECTED_RUNNER_ARCH: ${{ matrix.runner-arch }}
+        run: |
+          set -euo pipefail
+          echo "Runner: $RUNNER_OS/$RUNNER_ARCH"
+          go env GOOS GOARCH GOHOSTOS GOHOSTARCH
+          test "$RUNNER_ARCH" = "$EXPECTED_RUNNER_ARCH"
+          test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "$EXPECTED_GOOS/$EXPECTED_GOARCH"
+          test "$(go env GOOS)/$(go env GOARCH)" = "$EXPECTED_GOOS/$EXPECTED_GOARCH"
+      - name: Install Linux shells
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -r /etc/apt/sources.list.d/ubuntu.sources
+          ubuntu_sources=(
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources
+            -o Dir::Etc::sourceparts=/dev/null
+          )
+          cat /etc/apt/sources.list.d/ubuntu.sources
+          if test -r /etc/apt/apt-mirrors.txt; then
+            cat /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get "${ubuntu_sources[@]}" -o APT::Update::Error-Mode=any update
+          sudo apt-get "${ubuntu_sources[@]}" install --yes --no-install-recommends zsh fish expect
+          apt-cache "${ubuntu_sources[@]}" policy zsh fish expect
+          dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' zsh fish expect
+          for tool in zsh fish expect; do
+            test "$(dpkg-query -W -f='${Architecture}' "$tool")" = "$(dpkg --print-architecture)"
+            executable=$(command -v "$tool")
+            printf '%s executable: %s\n' "$tool" "$executable"
+            package_files=$(dpkg-query -L "$tool")
+            package_path=
+            while IFS= read -r candidate_path; do
+              if test -f "$candidate_path" && test "$executable" -ef "$candidate_path"; then
+                package_path=$candidate_path
+                break
+              fi
+            done <<< "$package_files"
+            test -n "$package_path"
+            printf '%s package executable: %s\n' "$tool" "$package_path"
+          done
+          zsh --version
+          fish --version
+          expect -v
       - uses: ./.github/actions/link-go-sdk
+      - name: Test native portable command contracts
+        if: matrix.native-commands && runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 10
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          set -euo pipefail
+          go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAPIErrorsFormatPrecedenceAndExtraction|TestMainAPIErrorsPreserveJSONDetailsAndExtraction|TestMainAPIErrorsStructuredAcrossCommands|TestMainAPIErrorsWithUnexpectedJSONShapes|TestMainAPIErrorsWithoutJSONDetails|TestMainCommandGroupsHaveWorkflowDescriptions|TestMainCommandSubgroupsCoverGeneratedRoutes|TestMainCommandSubgroupsHelpAndCompletion|TestMainCommandSubgroupsLegacyPrefixCompletion|TestMainCommandSubgroupsPreserveAudioAndErrors|TestMainCommandSubgroupsPreserveBodyFlagScope|TestMainCommandSubgroupsPreserveRequestsAndOutput|TestMainCommandSubgroupsStreamingStaysIncremental|TestMainLocalErrorGuidance|TestMainLocalErrorsStayOnStderr|TestMainNestedHelpErrorFormatPrecedence|TestMainPreservesWrappedExitCode|TestMainReadableAPIArgumentGuidance|TestMainReadableDefaultAndExplicitText|TestMainReadableErrorsStayOnStderr|TestMainReadablePreservesExplicitFormatsAndExtraction|TestMainReadableRawOutputStreamsBeforeNextEvent|TestMainSensitiveLocalErrors|TestMainStreamErrorsPreserveEventDetails|TestMainTaskAdminRoutesPreserveCredentialAndFlagScope|TestMainTaskAudioUploadsPreserveRequestsAndOutput|TestMainTaskFileUploadPreservesMultipartAndOutput|TestMainTaskResourceRoutesPreserveAPIErrorsAndExit|TestMainTaskRouteCompletionProtocols|TestMainTaskRouteHelpStaysLocal|TestMainTaskRoutesPreserveAPIErrorsAndExit|TestMainTaskRoutesPreserveRequiredFlags|TestMainTaskSpeechPreservesJSONInputAndBinaryOutput|TestMainTaskWindowsAudioInterruptClosesStreams)$' \
+            | tee "$RUNNER_TEMP/native-command-tests.jsonl"
+      - name: Test Windows portable command and alias cancellation contracts
+        if: matrix.native-commands && runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 10
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAPIErrorsFormatPrecedenceAndExtraction|TestMainAPIErrorsPreserveJSONDetailsAndExtraction|TestMainAPIErrorsStructuredAcrossCommands|TestMainAPIErrorsWithUnexpectedJSONShapes|TestMainAPIErrorsWithoutJSONDetails|TestMainCommandGroupsHaveWorkflowDescriptions|TestMainCommandSubgroupsCoverGeneratedRoutes|TestMainCommandSubgroupsHelpAndCompletion|TestMainCommandSubgroupsLegacyPrefixCompletion|TestMainCommandSubgroupsPreserveAudioAndErrors|TestMainCommandSubgroupsPreserveBodyFlagScope|TestMainCommandSubgroupsPreserveRequestsAndOutput|TestMainCommandSubgroupsStreamingStaysIncremental|TestMainLocalErrorGuidance|TestMainLocalErrorsStayOnStderr|TestMainNestedHelpErrorFormatPrecedence|TestMainPreservesWrappedExitCode|TestMainReadableAPIArgumentGuidance|TestMainReadableDefaultAndExplicitText|TestMainReadableErrorsStayOnStderr|TestMainReadablePreservesExplicitFormatsAndExtraction|TestMainReadableRawOutputStreamsBeforeNextEvent|TestMainSensitiveLocalErrors|TestMainStreamErrorsPreserveEventDetails|TestMainTaskAdminRoutesPreserveCredentialAndFlagScope|TestMainTaskAudioUploadsPreserveRequestsAndOutput|TestMainTaskFileUploadPreservesMultipartAndOutput|TestMainTaskResourceRoutesPreserveAPIErrorsAndExit|TestMainTaskRouteCompletionProtocols|TestMainTaskRouteHelpStaysLocal|TestMainTaskRoutesPreserveAPIErrorsAndExit|TestMainTaskRoutesPreserveRequiredFlags|TestMainTaskSpeechPreservesJSONInputAndBinaryOutput|TestMainTaskWindowsAudioInterruptClosesStreams)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'native-command-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test help
+        if: runner.os != 'Windows'
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
+      - name: Test Windows help
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          OPENAI_CLI_REQUIRE_WINDOWS_SYMLINKS: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test ./internal/clihelp ./internal/requestflag -count=1 -v -json |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-help-invocation-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test public welcome startup
+        if: matrix.welcome-public && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -p 2 ./cmd/openai -count=1 -timeout=2m -v -json \
+            -run '^(TestMainWelcomeRedirectedOutputMatchesHelp|TestMainWelcomeExplicitArgumentsStayPlain|TestMainWelcomeBareInvocationStaysOffline)$' \
+            | tee "$RUNNER_TEMP/welcome-public-tests.jsonl"
+      - name: Test Windows public welcome startup
+        if: matrix.welcome-public && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=2m -v -json -run '^(TestMainWelcomeRedirectedOutputMatchesHelp|TestMainWelcomeExplicitArgumentsStayPlain|TestMainWelcomeBareInvocationStaysOffline)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'welcome-public-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test command dispatch and native shells
-        run: go test ./cmd/openai -run '^(TestMainHelp|TestMainDispatch|TestMainNativeShell)' -count=1 -v
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./cmd/openai -run '^(TestMainHelp|TestMainDispatch|TestMainNativeShell)' -count=1 -v -json \
+            | tee "$RUNNER_TEMP/dispatch-tests.jsonl"
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
+      - name: Test Windows command dispatch and native shells
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test ./cmd/openai -run '^(TestMainHelp|TestMainDispatch|TestMainNativeShell)' -count=1 -v -json |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'dispatch-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+        env:
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
+      - name: Test Windows tokenizer console reader
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes)' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'tokenizer-reader-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test image command ordering
+        if: matrix.image-order && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json \
+            -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' \
+            | tee "$RUNNER_TEMP/image-command-order-tests.jsonl"
+      - name: Test Windows image command ordering
+        if: matrix.image-order && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-command-order-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Linux Fish help invocation
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: fish
+        run: |
+          set -euo pipefail
+          go test ./cmd/openai -count=1 -timeout=3m -v -json \
+            -run '^TestMainFishHelpInvocation$' \
+            | tee "$RUNNER_TEMP/fish-help-invocation-tests.jsonl"
+      - name: Test Linux Fish image help examples
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: fish
+        run: |
+          set -euo pipefail
+          go test ./cmd/openai -count=1 -timeout=3m -v -json \
+            -run '^TestMainFishImageHelpExamples$' \
+            | tee "$RUNNER_TEMP/fish-image-help-tests.jsonl"
+      - name: Test Linux Fish completion
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: fish
+        run: |
+          set -euo pipefail
+          go test ./internal/autocomplete -count=1 -timeout=5m -v -json \
+            -run '^(TestFish(FileCompletionPreservesAssignments|PackagePickerFirstPrompt|PackagePreservesOrdinaryCompletions)|TestPickerFish(TabAndLifecycle|BindingsAndResourcing|RejectsOtherCommandLines)|TestPickerInstalledFish(HonorsSharedOptOut|RunsAfterUserConfiguration))$' \
+            | tee "$RUNNER_TEMP/fish-tests.jsonl"
+      - name: Test Linux native command quoting
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: zsh,fish
+        run: |
+          set -euo pipefail
+          go test ./pkg/custom -count=1 -timeout=2m -v -json \
+            -run '^TestImagePickerNativeShellQuoting/(zsh|fish)$' \
+            | tee "$RUNNER_TEMP/shell-quoting-tests.jsonl"
+      - name: Test Windows Files upload and download routes
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainFilesWorkflow(UploadPaths|UploadValidation|UploadStdinCompatibility|ExplicitBinaryStdin|MachineOutput|DownloadBytes|DownloadReceiptModes|FailuresPreserveExits)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'files-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows image uploads and saved results
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageUploadQuotedCountPreservesMultipart|TestMainImageEditQuotedStreamScalars|TestMainImageUploadMalformedScalarTextFailsBeforeRequest|TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues|TestMainImageEditStreamSavesFinalAndCloses|TestMainImageUploadBatchCollisionAndPartialFailure|TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse|TestMainImageGenerationPartialFailureKeepsSavedImage|TestMainImageGenerationClosedStdoutKeepsSavedImage|TestImageReceiptProcessRejectsNonPipeStdout)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test image model discovery
+        if: matrix.image-models && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainImageModels' \
+            | tee "$RUNNER_TEMP/image-model-discovery-tests.jsonl"
+      - name: Test Windows image model discovery
+        if: matrix.image-models && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainImageModels' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-model-discovery-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows image save boundaries and interruption
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageGenerationFilenamesAndDirectoryValidation|TestMainImageGenerationKeepsReservedProbeDirectory|TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest|TestMainImageUploadClosedStdoutPreservesPartialSave|TestMainImageEditInterruptClosesStreamWithoutSavingPartial|TestImageEditInterruptCompletion|TestImageEditInterruptControllerResult)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-save-process-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows image filesystem helpers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          OPENAI_CLI_REQUIRE_WINDOWS_SYMLINKS: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./internal/imageoutput -count=1 -timeout=3m -v -json -run '^(TestResolveDirectory|TestSaveResponseFormatsAndUniqueNames|TestSaveResponseConcurrentNames|TestSaveResponseCancellation|TestSaveResponseNamedCollisionDoesNotFollowSymlink|TestCheckNameDoesNotFollowOrRemoveSymlinks|TestCheckNameKeepsReservedProbeCollisions)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-save-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows image model progress on stderr
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=30s -v -json -run '^TestImageModelsWindowsStderrProgress$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-models-progress-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows audio output behavior
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainReadableAudioJSONPreservesTextAndMetadata|TestMainReadableAudioTextAndSubtitles|TestMainReadableAudioTranscriptionStreamsBeforeDone|TestMainReadableAudioTranscriptionKeepsEventsAndMetadata|TestMainReadableAudioStreamFailuresKeepPartialOutput|TestMainReadableAudioSpeechFormatsAndDownloads|TestMainReadableAudioSpeechPreservesBinary|TestMainReadableAudioLargePayloads)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'audio-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows resource output and pagination
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainResourceSummariesRetainActionFields|TestMainResourceSummaryListFilesInVectorBatch|TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits|TestMainResourceSummaryListNoticeForMixedRecords|TestMainResourceSummaryEmptyList|TestMainResourceSummaryUnknownFieldsAndShapesFallBack|TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData|TestMainResourceSummaryListFormatsAndExtractionKeepFullItems|TestMainResourceSummaryLeavesOtherOperationsUnchanged|TestMainResourceSummaryPreservesLargeActionArguments|TestMainResourceSummaryPreservesPartialPageOnFailure|TestMainResourceSummaryWritesBeforeNextPageArrives|TestMainListNavigationNoninteractive)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'resource-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows streaming text output
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainStreamingTextArrivesBeforeCompletion|TestMainStreamingTextKeepsPartIdentityAndSnapshots|TestMainStreamingTextRetainsNontextDetails|TestMainStreamingExplicitFormatsPreserveEveryEvent|TestMainStreamingTextInterleavedChoicesKeepDetails|TestMainStreamingFailuresPreservePartialOutput|TestMainStreamingInterruptedTransportPreservesPartialOutput|TestMainStreamingFailureDiagnostics|TestMainStreamingTextDistinguishesEarlyEOFAndEmptyCompletion|TestMainStreamingTextLargeEvent)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'streaming-text-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test list navigation and table helpers
+        if: matrix.list-helpers && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLargeFieldPreservedAndPrewrapped|TestListNavigationPrintPageCancelsWithoutFetching|TestListNavigationLabelsPreserveLongIDs|TestListNavigationNarrowFooterKeepsQuitAndPrintVisible|TestListNavigationErrorPresentation|TestListNavigationCompleteFirstPageFitsScreen|TestListNavigationContentFitsDisplayCells|TestListNavigationShortResultPreservesErrorsAndHistory|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' \
+            | tee "$RUNNER_TEMP/list-navigation-helper-tests.jsonl"
+          go test -p 2 ./pkg/transformers -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' \
+            | tee "$RUNNER_TEMP/list-projection-helper-tests.jsonl"
+          go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' \
+            | tee "$RUNNER_TEMP/list-renderer-helper-tests.jsonl"
+      - name: Test Windows list navigation and table helpers
+        if: matrix.list-helpers && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLargeFieldPreservedAndPrewrapped|TestListNavigationPrintPageCancelsWithoutFetching|TestListNavigationLabelsPreserveLongIDs|TestListNavigationNarrowFooterKeepsQuitAndPrintVisible|TestListNavigationErrorPresentation|TestListNavigationCompleteFirstPageFitsScreen|TestListNavigationContentFitsDisplayCells|TestListNavigationShortResultPreservesErrorsAndHistory|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-navigation-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 2 ./pkg/transformers -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-projection-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-renderer-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test request configuration
+        if: matrix.request-configuration && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainGlobalFlagsPlacementHeadersAndOutput|TestMainGlobalFlagsPrecedence|TestMainGlobalFlagsHeaderAliasesAndAuthorization|TestMainGlobalFlagsKeepEndpointFlagsAndLiterals|TestMainGlobalFlagsProjectBodyKeepsRootHeader|TestMainGlobalFlagsDeepAdminAndCustomCommands|TestMainGlobalFlagsHelpAndCompletionStayLocal|TestMainGlobalFlagsErrorOutputPlacement|TestMainGlobalFlagBaseURLOverridesMalformedEnvironment|TestMainGlobalFlagInvalidPercentBaseURLStillFails|TestMainGlobalFlagBaseURLOverridePreservesEnvironmentHeaders|TestMainGlobalFlagInvalidPercentBaseURLErrorsAreSafe|TestMainGlobalFlagEmptyBaseURLKeepsEnvironmentFallback|TestMainGlobalFlagEmptyMTLSOverridesEnvironment|TestMainGlobalFlagMTLSRejectsExplicitDuplicates|TestMainGlobalFlagCompletionScriptsIgnoreRequestConfiguration|TestMainGlobalFlagCompletionWordsRemainRequestValues|TestMainGlobalFlagRequestConfigurationStillValidates|TestMainGlobalFlagURLConfigurationPreservesOfflineHelp)$' \
+            | tee "$RUNNER_TEMP/request-configuration-public-tests.jsonl"
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestRootRequestFlagsPreserveOwnershipAndMetadata|TestRootRequestFlagsPreserveMTLSPlacement|TestRootRequestFlagsRetainSourcesAliasesAndValidation|TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue)$' \
+            | tee "$RUNNER_TEMP/request-configuration-helper-tests.jsonl"
+      - name: Test Windows request configuration
+        if: matrix.request-configuration && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainGlobalFlagsPlacementHeadersAndOutput|TestMainGlobalFlagsPrecedence|TestMainGlobalFlagsHeaderAliasesAndAuthorization|TestMainGlobalFlagsKeepEndpointFlagsAndLiterals|TestMainGlobalFlagsProjectBodyKeepsRootHeader|TestMainGlobalFlagsDeepAdminAndCustomCommands|TestMainGlobalFlagsHelpAndCompletionStayLocal|TestMainGlobalFlagsErrorOutputPlacement|TestMainGlobalFlagBaseURLOverridesMalformedEnvironment|TestMainGlobalFlagInvalidPercentBaseURLStillFails|TestMainGlobalFlagBaseURLOverridePreservesEnvironmentHeaders|TestMainGlobalFlagInvalidPercentBaseURLErrorsAreSafe|TestMainGlobalFlagEmptyBaseURLKeepsEnvironmentFallback|TestMainGlobalFlagEmptyMTLSOverridesEnvironment|TestMainGlobalFlagMTLSRejectsExplicitDuplicates|TestMainGlobalFlagCompletionScriptsIgnoreRequestConfiguration|TestMainGlobalFlagCompletionWordsRemainRequestValues|TestMainGlobalFlagRequestConfigurationStillValidates|TestMainGlobalFlagURLConfigurationPreservesOfflineHelp)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'request-configuration-public-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestRootRequestFlagsPreserveOwnershipAndMetadata|TestRootRequestFlagsPreserveMTLSPlacement|TestRootRequestFlagsRetainSourcesAliasesAndValidation|TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'request-configuration-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows native shell and download contracts
+        if: matrix.request-configuration && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainShellWindowsNative$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-native-shell-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^TestWindowsDownload(AutomaticConsole|PrivateCreation|PrivatePublication|PreservesExistingDACL)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-download-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test request environment restoration
+        if: matrix.environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./cmd/openai -count=1 -timeout=2m -v -json \
+            -run '^TestRequestConfiguration(RestoresEnvironment|LeavesOtherEnvironmentCasesUnchanged)$' \
+            | tee "$RUNNER_TEMP/environment-tests.jsonl"
+      - name: Test gallery cleanup
+        if: matrix.gallery
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./internal/imagegallery -count=1 -timeout=2m -v -json \
+            -run '^TestCleanup(PreservesMalformedMetadata|ResumesAfterPartialArtifactRemoval)$' \
+            | tee "$RUNNER_TEMP/gallery-tests.jsonl"
+      - name: Test pager descriptor ownership
+        if: matrix.pager
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./pkg/custom -count=1 -timeout=2m -v -json \
+            -run '^TestSocketPairPagerFailureKeepsReusedDescriptorOpen$' \
+            | tee "$RUNNER_TEMP/pager-tests.jsonl"
+      - name: Test Bash command prefixes
+        if: matrix.bash-prefixes
+        shell: bash
+        env:
+          OPENAI_CLI_TEST_BASH: /bin/bash
+        run: |
+          set -euo pipefail
+          command -v "$OPENAI_CLI_TEST_BASH"
+          "$OPENAI_CLI_TEST_BASH" --version
+          command -v expect
+          expect -v
+          go test ./internal/autocomplete -count=1 -timeout=2m -v -json \
+            -run '^TestBashColonCompletionReadline$/^(ordinary|escaped|single_quoted|double_quoted|partially_quoted|open_single_quote|open_double_quote|before_closing_quote|colon_not_a_word_break|multiple_quoted_colons|partially_escaped_colons|first_colon_escaped)$' \
+            | tee "$RUNNER_TEMP/bash-prefix-tests.jsonl"
+      - name: Verify selected compatibility test execution
+        shell: bash
+        env:
+          CHECK_IMAGE_ORDER: ${{ matrix.image-order || false }}
+          CHECK_IMAGE_MODELS: ${{ matrix.image-models || false }}
+          CHECK_NATIVE_COMMANDS: ${{ matrix.native-commands || false }}
+          CHECK_WELCOME_PUBLIC: ${{ matrix.welcome-public || false }}
+          CHECK_REQUEST_CONFIGURATION: ${{ matrix.request-configuration || false }}
+          CHECK_LIST_HELPERS: ${{ matrix.list-helpers || false }}
+          CHECK_ENVIRONMENT: ${{ matrix.environment || false }}
+          CHECK_GALLERY: ${{ matrix.gallery || false }}
+          CHECK_PAGER: ${{ matrix.pager || false }}
+          CHECK_BASH_PREFIXES: ${{ matrix.bash-prefixes || false }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from collections import Counter
+          from pathlib import Path
+
+          completion_root = "TestMainDispatchCompletionEmpty"
+          suites = {
+              "dispatch-tests.jsonl": {completion_root} | {
+                  f"{completion_root}/{style}/{form}"
+                  for style in ["bash", "zsh", "fish", "pwsh"]
+                  for form in ["no_words", "empty_word"]
+              },
+          }
+          if os.environ["RUNNER_OS"] == "Linux":
+              suites.update({
+                  "fish-tests.jsonl": {
+                      "TestFishFileCompletionPreservesAssignments",
+                      "TestFishPackagePickerFirstPrompt",
+                      "TestFishPackagePreservesOrdinaryCompletions",
+                      "TestPickerFishTabAndLifecycle",
+                      "TestPickerFishBindingsAndResourcing",
+                      "TestPickerFishRejectsOtherCommandLines",
+                      "TestPickerInstalledFishHonorsSharedOptOut",
+                      "TestPickerInstalledFishRunsAfterUserConfiguration",
+                  },
+                  "shell-quoting-tests.jsonl": {
+                      "TestImagePickerNativeShellQuoting",
+                      "TestImagePickerNativeShellQuoting/zsh",
+                      "TestImagePickerNativeShellQuoting/fish",
+                  },
+              })
+
+          def required_cases(root, children):
+              return {root} | {f"{root}/{child}" for child in children}
+
+          strict_packages = {}
+          if os.environ["CHECK_IMAGE_MODELS"] == "true":
+              model_failures = ["authentication", "rate_limit", "timeout", "server",
+                                "forbidden", "invalid_response", "request", "network"]
+              model_error_formats = ["default", "inherited_JSON", "text_override", "JSONL_override",
+                                     "raw_override", "YAML_override", "error_extraction"]
+              model_cases = {
+                  "TestMainImageModelsAllIncludesExactSnapshotNames": [],
+                  "TestMainImageModelsAuthenticationAndRateLimitStopChecks": ["authentication", "rate_limit"],
+                  "TestMainImageModelsExploreFallbackWarning": ["auto", "explore", "json"],
+                  "TestMainImageModelsExtraArgumentGuidance": ["json", "jsonl", "raw", "text", "yaml"],
+                  "TestMainImageModelsFailureGuidanceFormats": model_failures + [
+                      f"{failure}/{format}" for failure in model_failures for format in model_error_formats
+                  ],
+                  "TestMainImageModelsHelpAndOfflineMakeNoRequests": [
+                      "--format/json/images/models/--offline",
+                      "--format/json/images/models/--offline/--all",
+                      "help/images/models",
+                      "images/models/--help",
+                  ],
+                  "TestMainImageModelsInterruptPreservesCompletedResults": [],
+                  "TestMainImageModelsJSONAndHeaders": [],
+                  "TestMainImageModelsKeepsPartialResultsOnTimeoutResponse": [],
+                  "TestMainImageModelsPipeIsReadableAndAllRevealsUnavailable": ["all=false", "all=true"],
+                  "TestMainImageModelsPreservesExistingModelListing": [],
+                  "TestMainImageModelsPreservesMachineFormatsAndExtraction": [
+                      "JSON",
+                      "RaW",
+                      "automatic_extraction",
+                      "exact_model_extraction",
+                      "explicit_auto_extraction",
+                      "json",
+                      "jsonl",
+                      "raw",
+                      "raw_string",
+                      "text_extraction",
+                  ],
+                  "TestMainImageModelsRejectsMalformedMetadata": [
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":\"file\"}",
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":\"model\"",
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":42}",
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":[]}",
+                      "{\"id\":\"gpt-image-2.5-flare\",\"object\":null}",
+                      "{\"id\":\"gpt-image-2.5-flare\"_\"object\":\"model\"}",
+                  ],
+                  "TestMainImageModelsRequestDeadlineCancelsHTTP": [],
+              }
+              model_required = set()
+              for root, children in model_cases.items():
+                  model_required |= required_cases(root, children)
+              suites["image-model-discovery-tests.jsonl"] = model_required
+              strict_packages["image-model-discovery-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+
+          if os.environ["RUNNER_OS"] == "Linux":
+              fish_examples = [
+                  f"copy_{surface}-help_image_example{location}"
+                  for surface in ["flag", "command"]
+                  for location in ["", "_from_another_directory"]
+              ]
+              suites["fish-help-invocation-tests.jsonl"] = required_cases(
+                  "TestMainFishHelpInvocation",
+                  ["installed_help_uses_command_name", "copy_local_help_with_implicit_lookup_enabled",
+                   "copy_typo_suggestion_with_another_openai_on_PATH"],
+              )
+              suites["fish-image-help-tests.jsonl"] = required_cases(
+                  "TestMainFishImageHelpExamples",
+                  fish_examples + [f"{name}/explicit_inline_off_preserves_remembered_on" for name in fish_examples],
+              )
+
+          if os.environ["CHECK_IMAGE_ORDER"] == "true":
+              suites["image-command-order-tests.jsonl"] = required_cases(
+                  "TestMainImageCommandHelpOrder",
+                  ["images", "images/--help", "images/-h", "images/--h",
+                   "help/images", "help/--all/images", "images/help/--all"],
+              ) | required_cases(
+                  "TestMainImageCommandCompletionOrder", ["bash", "zsh", "fish", "pwsh"],
+              )
+
+          if os.environ["CHECK_WELCOME_PUBLIC"] == "true":
+              suites["welcome-public-tests.jsonl"] = required_cases(
+                  "TestMainWelcomeRedirectedOutputMatchesHelp", [],
+              ) | required_cases(
+                  "TestMainWelcomeExplicitArgumentsStayPlain",
+                  ["--help", "-h", "help", "help/--all", "--", "--version", "--debug/--help",
+                   "--format/json", "--format/json/--help", "--format/jsonl/help",
+                   "--format-error/json/--help", "--raw-output/--help", "--transform/id/--help",
+                   "models", "models/--help", "help/models", "models/list/--help", "--quiet", "--verbose",
+                   "--quiet/--verbose", "--verbose/--quiet", "--quiet=false/--verbose=false", "--verbose/help",
+                   "--quiet/--format/json/--help", "files/upload/--help", "files/get/--help", "files/download/--help"],
+              ) | required_cases(
+                  "TestMainWelcomeBareInvocationStaysOffline", ["not%url"],
+              )
+
+          if os.environ["RUNNER_OS"] == "Windows":
+              suites["image-models-progress-tests.jsonl"] = {"TestImageModelsWindowsStderrProgress"}
+              strict_packages["image-models-progress-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+              invocation_symlink_roots = {
+                  "TestHelpInvocationFollowsInstalledSymlink", "TestHelpInvocationKeepsPowerShellScriptOnPath",
+              }
+              suites["windows-help-invocation-tests.jsonl"] = invocation_symlink_roots | {
+                  "TestHelpInvocationKeepsPowerShellScriptOnPath/dangling_symlink",
+              }
+              suites["tokenizer-reader-tests.jsonl"] = {
+                  "TestTokenizerConsoleInputPreservesUnicode",
+                  "TestTokenizerConsoleInputRecordSemantics",
+                  "TestTokenizerConsoleInputRejectsMalformedUTF16",
+                  "TestTokenizerConsoleInputBoundedRepeatsAndCancellation",
+                  "TestTokenizerConsoleInputClosePreservesBorrowedHandle",
+                  "TestTokenizerConsoleInputReadFailure",
+                  "TestTokenizerInputSourcePreservesNonConsoleBytes",
+              }
+              files_cases = {
+                  "UploadPaths": ["spaces", "options_first", "apostrophe", "literal_at", "literal_dash",
+                                  "literal_double_dash", "empty", "binary", "upload_flag", "create_flag",
+                                  "upload_assigned_flag", "upload_repeated_flag", "create_repeated_flag"],
+                  "UploadValidation": ["missing_purpose", "missing_path", "missing_local_file", "extra_positional",
+                                       "positional_and_file_flag", "file_flag_and_positional", "create_keeps_flag_syntax"],
+                  "UploadStdinCompatibility": ["JSON_purpose", "YAML_purpose", "JSON_request",
+                                               "flag_overrides_purpose", "path_overrides_JSON_file"],
+                  "ExplicitBinaryStdin": ["empty", "binary", "JSON_stays_file_bytes"],
+                  "MachineOutput": ["piped_default", "explicit_auto", "explicit_text", "json", "jsonl", "raw",
+                                    "extract_ID", "raw_ID", "raw_timestamp"],
+                  "DownloadBytes": ["text", "binary"],
+                  "DownloadReceiptModes": ["quiet", "error_JSON", "error_transform"],
+                  "FailuresPreserveExits": [],
+              }
+              suites["files-tests.jsonl"] = set().union(*(
+                  required_cases("TestMainFilesWorkflow" + suffix, children)
+                  for suffix, children in files_cases.items()
+              ))
+              suites["image-tests.jsonl"] = required_cases(
+                  "TestMainImageUploadQuotedCountPreservesMultipart",
+                  [f"{operation}/{source}/API={api}" for operation in ["edit", "create-variation"]
+                   for source in ["JSON", "YAML", "whitespace"] for api in ["false", "true"]],
+              ) | required_cases(
+                  "TestMainImageEditQuotedStreamScalars",
+                  [f"{source}/API={api}" for source in ["JSON", "YAML", "false_with_whitespace"]
+                   for api in ["false", "true"]],
+              ) | required_cases(
+                  "TestMainImageUploadMalformedScalarTextFailsBeforeRequest",
+                  [f"{source}/API={api}" for source in ["invalid_count", "fractional_count", "zero_count",
+                   "array_count", "invalid_stream", "too_many_partials", "boolean_partials"]
+                   for api in ["false", "true"]],
+              ) | required_cases(
+                  "TestMainImageUploadNullAndScalarLookingStringsKeepMultipartValues", ["native_null", "text_null"],
+              ) | required_cases(
+                  "TestMainImageEditStreamSavesFinalAndCloses", ["explicit", "partials", "stdin", "YAML"],
+              ) | required_cases(
+                  "TestMainImageUploadBatchCollisionAndPartialFailure",
+                  [f"{operation}_partial={partial}" for operation in ["edit", "create-variation"]
+                   for partial in ["false", "true"]],
+              ) | required_cases(
+                  "TestMainImageGenerationStreamSavesOnlyFinalAndClosesResponse",
+                  ["--stream=true", "--partial-images_2", "--stream=true_--max-items_-1",
+                   "--partial-images_2_--max-items_-1", "--stream=true_--max-items_-2"],
+              ) | required_cases(
+                  "TestMainImageGenerationPartialFailureKeepsSavedImage", [],
+              ) | required_cases(
+                  "TestMainImageGenerationClosedStdoutKeepsSavedImage",
+                  [f"partial-failure={partial}/format={format}" for format in ["text", "json"]
+                   for partial in ["false", "true"]],
+              ) | required_cases(
+                  "TestImageReceiptProcessRejectsNonPipeStdout", [],
+              )
+              suites["image-save-process-tests.jsonl"] = required_cases(
+                  "TestMainImageGenerationFilenamesAndDirectoryValidation",
+                  ["prompt_traversal_and_Unicode", "explicit_Unicode_and_extension", "invalid_name=../outside",
+                   "invalid_name=..", r"invalid_name=nested\file", "invalid_name=CON",
+                   r"invalid_name=escape\x1bname", "invalid_name=", "missing_custom_directory"],
+              ) | required_cases(
+                  "TestMainImageGenerationRejectsNamesWithoutSuffixRoomBeforeRequest",
+                  ["existing_image=false", "existing_image=true"],
+              ) | required_cases(
+                  "TestMainImageUploadClosedStdoutPreservesPartialSave", ["edit", "create-variation"],
+              ) | {"TestMainImageEditInterruptClosesStreamWithoutSavingPartial",
+                   "TestMainImageGenerationKeepsReservedProbeDirectory"} | required_cases(
+                  "TestImageEditInterruptCompletion",
+                  ["just_before_absolute_limit", "absolute_limit", "after_absolute_limit", "slow_startup_within_limit",
+                   "controller_timeout_after_slow_startup"],
+              ) | required_cases(
+                  "TestImageEditInterruptControllerResult",
+                  ["CTRL_C_exit", "signed_CTRL_C_exit", "unrelated_exit_1", "unrelated_exit_7",
+                   "missing_startup", "missing_event", "wrong_event", "missing_child_status",
+                   "zero_child_status", "mismatched_child_status", "controller_timeout", "forced_kill"],
+              )
+              suites["image-save-helper-tests.jsonl"] = {
+                  "TestResolveDirectory", "TestSaveResponseFormatsAndUniqueNames",
+                  "TestSaveResponseConcurrentNames", "TestSaveResponseNamedCollisionDoesNotFollowSymlink",
+                  "TestCheckNameDoesNotFollowOrRemoveSymlinks",
+              } | required_cases(
+                  "TestSaveResponseCancellation", ["before_saving", "after_partial_write"],
+              ) | required_cases(
+                  "TestCheckNameKeepsReservedProbeCollisions", ["file", "directory", "symlink"],
+              )
+              strict_packages["image-save-process-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+              strict_packages["image-save-helper-tests.jsonl"] = "github.com/openai/openai-cli/internal/imageoutput"
+              audio_cases = {
+                  "JSONPreservesTextAndMetadata": ["audio:transcriptions", "audio:translations"],
+                  "TextAndSubtitles": [f"{command}/{format}" for command in ["audio:transcriptions", "audio:translations"]
+                                       for format in ["text", "srt", "vtt"]],
+                  "TranscriptionStreamsBeforeDone": [],
+                  "TranscriptionKeepsEventsAndMetadata": [],
+                  "StreamFailuresKeepPartialOutput": [f"{command}/{failure}/{format}"
+                                                     for command in ["audio:transcriptions", "audio:speech"]
+                                                     for failure in ["early_EOF", "error", "malformed"]
+                                                     for format in ["text", "jsonl"]],
+                  "SpeechFormatsAndDownloads": [],
+                  "SpeechPreservesBinary": [],
+                  "LargePayloads": ["JSON", "transcription_SSE", "speech_SSE"],
+              }
+              suites["audio-tests.jsonl"] = set().union(*(
+                  required_cases("TestMainReadableAudio" + suffix, children)
+                  for suffix, children in audio_cases.items()
+              ))
+              resource_cases = {
+                  "TestMainResourceSummariesRetainActionFields": ["model", "file", "batch", "vector_store",
+                      "vector_file", "vector_file_batch", "fine_tuning_job", "assistant", "thread_run"],
+                  "TestMainResourceSummaryListFilesInVectorBatch": [],
+                  "TestMainResourceSummaryPaginationPreservesOrderDuplicatesAndLimits": ["-1", "3", "1", "0"],
+                  "TestMainResourceSummaryListNoticeForMixedRecords": ["fallback_only", "summary_then_fallback",
+                      "fallback_then_summary", "mixed_repeated_summaries"],
+                  "TestMainResourceSummaryEmptyList": [],
+                  "TestMainResourceSummaryUnknownFieldsAndShapesFallBack": [
+                      '{"id":"model_synthetic","object":"model","created":17',
+                      '{"id":"model_synthetic","object":"model"_"created":17}',
+                      '{"id":"model_synthetic","object":"model","created":17,"future_field":null}',
+                      '{"id":"model_synthetic","object":"model","created":17,"future_field":{"note":"retained"}}',
+                      '{"id":"model_synthetic","object":"model","created":17,"created":18}',
+                      '{"object":"model","created":17}',
+                      '{"id":null,"object":"model","created":17}',
+                      '{"id":"","object":"model","created":17}',
+                      '{"id":12,"object":"model","created":17}',
+                      '{"id":"model_synthetic","created":17}',
+                      '{"id":"model_synthetic","object":null,"created":17}',
+                      '{"id":"model_synthetic","object":"unfamiliar","created":17}',
+                  ],
+                  "TestMainResourceSummaryExplicitFormatsAndExtractionKeepFullData": ["auto", "text", "TeXt",
+                      "json", "jsonl", "raw", "yaml", "pretty", "explore", "--transform_created",
+                      "--format_auto_--transform_owned_by", "--transform_owned_by_--raw-output",
+                      "--format_text_--transform_@this", "--format_text_--transform_absent", "--format_text_--raw-output"],
+                  "TestMainResourceSummaryListFormatsAndExtractionKeepFullItems": ["json", "jsonl", "raw", "yaml",
+                      "pretty", "explore", "--transform_created_at", "--transform_filename_--raw-output",
+                      "--format_text_--transform_@this"],
+                  "TestMainResourceSummaryLeavesOtherOperationsUnchanged": ["create", "delete", "cancel"],
+                  "TestMainResourceSummaryPreservesLargeActionArguments": [],
+                  "TestMainResourceSummaryPreservesPartialPageOnFailure": ["text", "json"],
+                  "TestMainResourceSummaryWritesBeforeNextPageArrives": [],
+                  "TestMainListNavigationNoninteractive": [f"{resource}/{mode}"
+                      for resource in ["files", "batches", "projects"]
+                      for mode in ["default", "auto", "text", "json", "jsonl", "raw", "extraction", "raw_extraction",
+                                   "raw_output", "unlimited", "zero", "one", "page_boundary", "partial_second_page"]],
+              }
+              suites["resource-tests.jsonl"] = set().union(*(
+                  required_cases(root, children) for root, children in resource_cases.items()
+              ))
+              streaming_text_cases = {
+                  "TestMainStreamingTextArrivesBeforeCompletion": [f"{command}/{format}"
+                      for command in ["responses", "chat:completions", "completions"] for format in ["", "text"]],
+                  "TestMainStreamingTextKeepsPartIdentityAndSnapshots": [],
+                  "TestMainStreamingTextRetainsNontextDetails": [],
+                  "TestMainStreamingExplicitFormatsPreserveEveryEvent": [f"{command}/{format}"
+                      for command in ["responses", "chat:completions", "completions"] for format in ["raw", "json", "jsonl"]],
+                  "TestMainStreamingTextInterleavedChoicesKeepDetails": ["chat:completions", "completions"],
+                  "TestMainStreamingFailuresPreservePartialOutput": [f"{failure}/{format}"
+                      for failure in ["ordinary_failed_event", "ordinary_incomplete_event", "SDK_error_event", "malformed_event"]
+                      for format in ["text", "jsonl"]],
+                  "TestMainStreamingInterruptedTransportPreservesPartialOutput": [],
+                  "TestMainStreamingFailureDiagnostics": [f"{failure}/{format}"
+                      for failure in ["failed", "incomplete", "cancelled", "early_EOF"] for format in ["text", "json"]],
+                  "TestMainStreamingTextDistinguishesEarlyEOFAndEmptyCompletion": ["responses_early_EOF", "chat_early_EOF",
+                      "completion_early_EOF", "empty_transport", "completed_empty_response", "completed_empty_chat"],
+                  "TestMainStreamingTextLargeEvent": ["responses", "chat:completions"],
+              }
+              suites["streaming-text-tests.jsonl"] = set().union(*(
+                  required_cases(root, children) for root, children in streaming_text_cases.items()
+              ))
+          if os.environ["CHECK_LIST_HELPERS"] == "true":
+              navigation_helper_cases = {
+                  'TestListPageFetcherWaitsAndPreservesPageSize': ['-1', '0', '1', '2', '3'],
+                  'TestShowJSONPagesZeroRetainsRequestErrors': [],
+                  'TestListPageFetcherStopsEmptyAndStalledCursors': [
+                      'empty', 'last', 'missing', 'repeated', 'last_id', 'next',
+                  ],
+                  'TestListPageFetcherCancellationPreventsRequests': [],
+                  'TestListNavigationUsesLoadedRowsBeforeOneRequest': [],
+                  'TestListNavigationOutputPreservesFailureAndRestoresModes': [],
+                  'TestListNavigationOutputFailureDiagnostic': [
+                      'fetch_canceled/text', 'fetch_canceled/json', 'fetch_wrapped/text', 'fetch_wrapped/json',
+                      'fetch_finished/text', 'fetch_finished/json', 'fetch_joined/text', 'fetch_joined/json',
+                      'model_joined/text', 'model_joined/json', 'received_fetch_failure/text',
+                      'received_fetch_failure/json', 'program_joined/text', 'program_joined/json', 'request_timeout/text',
+                      'request_timeout/json', 'caller_canceled/text', 'caller_canceled/json', 'caller_timeout/text',
+                      'caller_timeout/json',
+                  ],
+                  'TestListNavigationQuitRetainsRealFailures': [
+                      'canceled', 'wrapped', 'joined_cancellation', 'failed', 'joined_failure',
+                  ],
+                  'TestListNavigationLargeFieldPreservedAndPrewrapped': [],
+                  'TestListNavigationPrintPageCancelsWithoutFetching': [],
+                  'TestListNavigationLabelsPreserveLongIDs': [],
+                  'TestListNavigationNarrowFooterKeepsQuitAndPrintVisible': [],
+                  'TestListNavigationErrorPresentation': [
+                      'direct/text', 'direct/json', 'wrapped/text', 'wrapped/json', 'joined/text', 'joined/json',
+                      'canceled/text', 'canceled/json',
+                  ],
+                  'TestListNavigationCompleteFirstPageFitsScreen': [
+                      'single_row', 'empty_result', 'empty_tiny_terminal', 'unknown_width', 'unknown_height',
+                      'exact_fit_with_separator', 'one_row_over', 'wide_characters_fit', 'wide_characters_overflow',
+                      'tabbed_filename_fits', 'tabbed_filename_overflows', 'tabbed_filename_taller_terminal',
+                      'tab_cancels_pending_wrap', 'text_after_margin_tab_wraps', 'more_API_pages',
+                  ],
+                  'TestListNavigationContentFitsDisplayCells': [
+                      'tab_exactly_fills_row', 'tab_adds_wrapped_row', 'tab_after_wide_grapheme',
+                      'tab_after_combining_grapheme', 'tab_after_wrapped_text', 'tab_stops_at_right_margin',
+                      'tab_clears_pending_wrap', 'text_wraps_after_margin_tab', 'color_has_no_display_width',
+                      'blank_separator_counts', 'prompt_row_remains',
+                  ],
+                  'TestListNavigationShortResultPreservesErrorsAndHistory': [
+                      'request_error', 'render_canceled', 'later_page', 'resized_viewer',
+                  ],
+                  'TestRenderListNavigationPageHintPolicy': [
+                      'files/table', 'files/table/ordinary', 'files/table/quiet', 'files/table/quiet_verbose',
+                      'files/table/machine_errors', 'files/table/inherited_machine_errors', 'files/table/extracted_errors',
+                      'files/table/explicit_text_override', 'files/fallback', 'files/fallback/ordinary',
+                      'files/fallback/quiet', 'files/fallback/quiet_verbose', 'files/fallback/machine_errors',
+                      'files/fallback/inherited_machine_errors', 'files/fallback/extracted_errors',
+                      'files/fallback/explicit_text_override', 'batches/table', 'batches/table/ordinary',
+                      'batches/table/quiet', 'batches/table/quiet_verbose', 'batches/table/machine_errors',
+                      'batches/table/inherited_machine_errors', 'batches/table/extracted_errors',
+                      'batches/table/explicit_text_override', 'batches/fallback', 'batches/fallback/ordinary',
+                      'batches/fallback/quiet', 'batches/fallback/quiet_verbose', 'batches/fallback/machine_errors',
+                      'batches/fallback/inherited_machine_errors', 'batches/fallback/extracted_errors',
+                      'batches/fallback/explicit_text_override', 'admin.organization.projects/table',
+                      'admin.organization.projects/table/ordinary', 'admin.organization.projects/table/quiet',
+                      'admin.organization.projects/table/quiet_verbose',
+                      'admin.organization.projects/table/machine_errors',
+                      'admin.organization.projects/table/inherited_machine_errors',
+                      'admin.organization.projects/table/extracted_errors',
+                      'admin.organization.projects/table/explicit_text_override', 'admin.organization.projects/fallback',
+                      'admin.organization.projects/fallback/ordinary', 'admin.organization.projects/fallback/quiet',
+                      'admin.organization.projects/fallback/quiet_verbose',
+                      'admin.organization.projects/fallback/machine_errors',
+                      'admin.organization.projects/fallback/inherited_machine_errors',
+                      'admin.organization.projects/fallback/extracted_errors',
+                      'admin.organization.projects/fallback/explicit_text_override',
+                  ],
+                  'TestRenderListNavigationPageCancelsProjection': ['files', 'batches', 'admin.organization.projects'],
+                  'TestRenderListTablePage': [],
+                  'TestRenderListTablePageEmptyAndUnsupported': [],
+              }
+              suites['list-navigation-helper-tests.jsonl'] = set().union(*(
+                  required_cases(root, children) for root, children in navigation_helper_cases.items()
+              ))
+              projection_helper_cases = {
+                  'TestProjectListTableCanceledContext': [],
+                  'TestListTableCountsCancellation': [],
+                  'TestProjectListTableKnownResources': ['files', 'batches', 'admin.organization.projects'],
+                  'TestProjectListTableMissingOptionalFields': [],
+                  'TestProjectListTableEmptyPagesAndRoutes': [],
+                  'TestProjectListTablePreservesOriginalStrings': [],
+                  'TestProjectListTableFallsBackForEntirePage': [
+                      'null', '[]', '"batch"', '{}', '{"id":123,"object":"batch","status":"completed"}',
+                      '{"id":"","object":"batch","status":"completed"}',
+                      '{"id":"batch_example","object":"file","status":"completed"}',
+                      '{"id":"batch_example","object":"batch"}', '{"id":"batch_example","object":"batch","status":null}',
+                      '{"id":"batch_example","object":"batch","status":[]}',
+                      '{"id":"batch_example","object":"batch","status":"completed","warning":"Review_batch."}',
+                      '{"id":"batch_example","object":"batch","status":"completed","new_field":null}',
+                      '{"id":"batch_example","object":"batch","status":"completed","shutdown_date":null}',
+                      '{"id":"batch_example","object":"batch","status":"failed","errors":{"data":[{"message":"Review_request."}]}}',
+                      '{"id":"batch_first","id":"batch_second","object":"batch","status":"completed"}',
+                      '{"id":"batch_example","object":"batch","status":"completed","created_at":1,"created_at":2}',
+                      '{"id":"batch_example","object":"batch","status":"completed"',
+                      '{"id":"batch_example","object":"batch"_"status":"completed"}',
+                  ],
+                  'TestProjectListTablePreservesErrorsAndMalformedFields': [
+                      'files{"id":"file_example","object":"file","filename":"input.txt","purpose":"batch","bytes":0,"status":"error","status_details":"Review_file."}',
+                      'files{"id":"file_example","object":"file","filename":"input.txt","purpose":"batch","bytes":0,"status":"processed","status_details":[]}',
+                      'files{"id":"file_example","object":"file","filename":"input.txt","purpose":"batch","bytes":"1024","status":"processed"}',
+                      'files{"id":"file_example","object":"file","filename":"input.txt","purpose":"batch","bytes":-1,"status":"processed"}',
+                      'files{"id":"file_example","object":"file","filename":"input.txt","purpose":"batch","bytes":1.5,"status":"processed"}',
+                      'files{"id":"file_example","object":"file","filename":"input.txt","purpose":"batch","bytes":18446744073709551616,"status":"processed"}',
+                      'files{"id":"file_example","object":"file","filename":{},"purpose":"batch","bytes":0,"status":"processed"}',
+                      'batches{"id":"batch_example","object":"batch","status":"failed","errors":{"data":[{"message":"Review_request."}]}}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","errors":[]}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","errors":""}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","error_file_id":"file_errors"}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","request_counts":{"total":3,"completed":2,"failed":1}}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","request_counts":{"total":3,"completed":3,"failed":0,"new_count":1}}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","request_counts":{"total":3,"completed":3,"failed":0,"failed":1}}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","request_counts":{"total":3,"completed":3,"failed":"0"}}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","request_counts":{"total":3,"completed":3}}',
+                      'batches{"id":"batch_example","object":"batch","status":"completed","request_counts":[]}',
+                      'admin.organization.projects{"id":"proj_example","object":"organization.project","name":[],"status":"active"}',
+                      'admin.organization.projects{"id":"proj_example","object":"organization.project","name":"Synthetic","status":false}',
+                      'admin.organization.projects{"id":"proj_example","object":"organization.project","name":"Synthetic","status":"active","warning":"Review_project."}',
+                      'admin.organization.projects{"id":"proj_example","object":"organization.project","name":"First","name":"Second","status":"active"}',
+                  ],
+                  'TestProjectListTableByteSizes': [
+                      '0', '1', '1023', '1024', '1536', '1234', '1048576', '9007199254740993', '18446744073709551615',
+                  ],
+              }
+              suites['list-projection-helper-tests.jsonl'] = set().union(*(
+                  required_cases(root, children) for root, children in projection_helper_cases.items()
+              ))
+              renderer_helper_cases = {
+                  'TestListTableKeepsIDsAndFitsWidth': [],
+                  'TestListTableNarrowFallbackKeepsIDs': [],
+                  'TestListTableEscapesEveryCell': [],
+                  'TestListTableUnicodeWidths': [],
+                  'TestListTableEmptyAndMalformedRows': [],
+              }
+              suites['list-renderer-helper-tests.jsonl'] = set().union(*(
+                  required_cases(root, children) for root, children in renderer_helper_cases.items()
+              ))
+          if os.environ["CHECK_REQUEST_CONFIGURATION"] == "true":
+              request_public_cases = {
+                  'TestMainGlobalFlagsPlacementHeadersAndOutput': [
+                      'extraction/equals/after', 'extraction/equals/before', 'extraction/equals/between',
+                      'extraction/spaced/after', 'extraction/spaced/before', 'extraction/spaced/between',
+                      'json/equals/after', 'json/equals/before', 'json/equals/between', 'json/spaced/after',
+                      'json/spaced/before', 'json/spaced/between', 'raw/equals/after', 'raw/equals/before',
+                      'raw/equals/between', 'raw/spaced/after', 'raw/spaced/before', 'raw/spaced/between',
+                      'text/equals/after', 'text/equals/before', 'text/equals/between', 'text/spaced/after',
+                      'text/spaced/before', 'text/spaced/between',
+                  ],
+                  'TestMainGlobalFlagsPrecedence': [
+                      'custom_environment_header', 'empty_environment', 'empty_equals', 'empty_header', 'empty_spaced',
+                      'environment', 'flag_overrides_environment_header', 'header_overrides_project', 'last_duplicate',
+                      'unset',
+                  ],
+                  'TestMainGlobalFlagsHeaderAliasesAndAuthorization': [],
+                  'TestMainGlobalFlagsKeepEndpointFlagsAndLiterals': [
+                      'completion-looking_project', 'delimiter_stops_global_parsing', 'literal_after_delimiter',
+                      'literal_delimiter_value', 'literal_format-looking_value', 'literal_model_flag_value',
+                      'literal_project_value', 'local_flag_before_operation', 'local_flag_before_resource',
+                  ],
+                  'TestMainGlobalFlagsProjectBodyKeepsRootHeader': [
+                      'admin/organization/invites/empty', 'admin/organization/invites/environment',
+                      'admin/organization/invites/root', 'admin/organization/invites/unset',
+                      'admin:organization:invites/empty', 'admin:organization:invites/environment',
+                      'admin:organization:invites/root', 'admin:organization:invites/unset',
+                  ],
+                  'TestMainGlobalFlagsDeepAdminAndCustomCommands': [
+                      '#00', 'admin', 'admin/organization', 'admin/organization/invites',
+                      'admin/organization/invites/list', 'custom/after', 'custom/before', 'custom/between',
+                  ],
+                  'TestMainGlobalFlagsHelpAndCompletionStayLocal': [
+                      '--project=proj-help/models/list/--help', '__complete/--/models/list/--project/',
+                      'help/--all/models/list', 'models/--project=proj-help/list/--help',
+                      'models/list/--project=proj-help/--help',
+                  ],
+                  'TestMainGlobalFlagsErrorOutputPlacement': [
+                      'extraction/after', 'extraction/before', 'extraction/between', 'json/after', 'json/before',
+                      'json/between', 'raw/after', 'raw/before', 'raw/between', 'text/after', 'text/before',
+                      'text/between',
+                  ],
+                  'TestMainGlobalFlagBaseURLOverridesMalformedEnvironment': [
+                      'invalid_absolute_escape/equals/after', 'invalid_absolute_escape/equals/before',
+                      'invalid_absolute_escape/equals/between', 'invalid_absolute_escape/spaced/after',
+                      'invalid_absolute_escape/spaced/before', 'invalid_absolute_escape/spaced/between',
+                      'invalid_relative_escape/equals/after', 'invalid_relative_escape/equals/before',
+                      'invalid_relative_escape/equals/between', 'invalid_relative_escape/spaced/after',
+                      'invalid_relative_escape/spaced/before', 'invalid_relative_escape/spaced/between',
+                      'missing_scheme/equals/after', 'missing_scheme/equals/before', 'missing_scheme/equals/between',
+                      'missing_scheme/spaced/after', 'missing_scheme/spaced/before', 'missing_scheme/spaced/between',
+                  ],
+                  'TestMainGlobalFlagInvalidPercentBaseURLStillFails': [
+                      'absolute/empty_equals_fallback', 'absolute/empty_spaced_fallback', 'absolute/environment',
+                      'absolute/explicit', 'relative/empty_equals_fallback', 'relative/empty_spaced_fallback',
+                      'relative/environment', 'relative/explicit',
+                  ],
+                  'TestMainGlobalFlagBaseURLOverridePreservesEnvironmentHeaders': [
+                      'API_defaults', 'admin_defaults', 'explicit_context', 'header_precedence',
+                  ],
+                  'TestMainGlobalFlagInvalidPercentBaseURLErrorsAreSafe': [
+                      'json/empty_fallback', 'json/environment', 'json/explicit', 'text/empty_fallback',
+                      'text/environment', 'text/explicit',
+                  ],
+                  'TestMainGlobalFlagEmptyBaseURLKeepsEnvironmentFallback': [
+                      'equals/after', 'equals/before', 'equals/between', 'spaced/after', 'spaced/before',
+                      'spaced/between',
+                  ],
+                  'TestMainGlobalFlagEmptyMTLSOverridesEnvironment': [
+                      'equals/after', 'equals/before', 'equals/between', 'spaced/after', 'spaced/before',
+                      'spaced/between',
+                  ],
+                  'TestMainGlobalFlagMTLSRejectsExplicitDuplicates': [
+                      '--mtls-client-cert-file=/--mtls-client-cert-file=/models/list',
+                      '--mtls-client-cert-file=/models/--mtls-client-cert-file=/list',
+                      '--mtls-client-key-file=/--mtls-client-key-file=/models/list',
+                      '--mtls-client-key-file=/models/--mtls-client-key-file=/list',
+                      'models/--mtls-client-cert-file=/list/--mtls-client-cert-file=',
+                      'models/--mtls-client-key-file=/list/--mtls-client-key-file=',
+                  ],
+                  'TestMainGlobalFlagCompletionScriptsIgnoreRequestConfiguration': [
+                      'bash/certificate_only', 'bash/endpoint', 'bash/invalid_endpoint', 'bash/key_only',
+                      'bash/missing_files', 'fish/certificate_only', 'fish/endpoint', 'fish/invalid_endpoint',
+                      'fish/key_only', 'fish/missing_files', 'pwsh/certificate_only', 'pwsh/endpoint',
+                      'pwsh/invalid_endpoint', 'pwsh/key_only', 'pwsh/missing_files', 'zsh/certificate_only',
+                      'zsh/endpoint', 'zsh/invalid_endpoint', 'zsh/key_only', 'zsh/missing_files',
+                  ],
+                  'TestMainGlobalFlagCompletionWordsRemainRequestValues': [
+                      '@completion/equals', '@completion/spaced', '__complete/equals', '__complete/spaced',
+                  ],
+                  'TestMainGlobalFlagRequestConfigurationStillValidates': [
+                      'certificate_only/@completion', 'certificate_only/__complete', 'certificate_only/ordinary',
+                      'empty_endpoint_fallback/@completion', 'empty_endpoint_fallback/__complete',
+                      'empty_endpoint_fallback/ordinary', 'invalid_environment/@completion',
+                      'invalid_environment/__complete', 'invalid_environment/ordinary',
+                      'invalid_explicit_endpoint/@completion', 'invalid_explicit_endpoint/__complete',
+                      'invalid_explicit_endpoint/ordinary', 'key_only/@completion', 'key_only/__complete',
+                      'key_only/ordinary', 'missing_files/@completion', 'missing_files/__complete',
+                      'missing_files/ordinary',
+                  ],
+                  'TestMainGlobalFlagURLConfigurationPreservesOfflineHelp': [
+                      'help/imaginary/json', 'help/imaginary/text', 'help/json', 'help/models/imaginary/json',
+                      'help/models/imaginary/text', 'help/models/list/json', 'help/models/list/text', 'help/setup/json',
+                      'help/setup/text', 'help/text',
+                  ],
+              }
+              suites["request-configuration-public-tests.jsonl"] = set().union(*(
+                  required_cases(root, children) for root, children in request_public_cases.items()
+              ))
+              strict_packages["request-configuration-public-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+              request_helper_cases = {
+                  'TestRootRequestFlagsPreserveOwnershipAndMetadata': [],
+                  'TestRootRequestFlagsPreserveMTLSPlacement': [],
+                  'TestRootRequestFlagsRetainSourcesAliasesAndValidation': [
+                      'environment', 'alias', 'empty', 'duplicate', 'validation',
+                  ],
+                  'TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue': [],
+              }
+              suites["request-configuration-helper-tests.jsonl"] = set().union(*(
+                  required_cases(root, children) for root, children in request_helper_cases.items()
+              ))
+              strict_packages["request-configuration-helper-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+              if os.environ["RUNNER_OS"] == "Windows":
+                  request_shell_root = "TestMainShellWindowsNative"
+                  request_shell_cases = [
+                      "placement_precedence_and_error", "root_and_body_project", "equals_empty",
+                      "separate_empty", "completion_stays_local",
+                  ]
+                  request_shell_tests = {request_shell_root}
+                  for shell in ["cmd", "powershell", "pwsh"]:
+                      request_shell_tests.add(f"{request_shell_root}/{shell}")
+                      request_shell_tests.update(required_cases(
+                          f"{request_shell_root}/{shell}/request_configuration", request_shell_cases,
+                      ))
+                      request_shell_tests.update(
+                          f"{request_shell_root}/{shell}/{case}" for case in [
+                              "field_and_whole_request", "binary_input_and_literal_paths",
+                              "downloads_and_managed_saves", "file_upload_receipt",
+                          ]
+                      )
+                  request_shell_tests.update(
+                      f"{request_shell_root}/console_cancellation/existing={existing}/event={event}"
+                      for existing in ["false", "true"] for event in [0, 1]
+                  )
+                  request_shell_tests.update(
+                      f"{request_shell_root}/stream_cancellation/{kind}"
+                      for kind in ["responses", "transcriptions", "speech"]
+                  )
+                  suites["windows-native-shell-tests.jsonl"] = request_shell_tests
+                  strict_packages["windows-native-shell-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+                  windows_download_cases = {
+                      "TestWindowsDownloadAutomaticConsole": [],
+                      "TestWindowsDownloadPrivateCreation": [],
+                      "TestWindowsDownloadPrivatePublication": ["hardlink", "exclusive_copy"],
+                      "TestWindowsDownloadPreservesExistingDACL": ["complete", "source_failure"],
+                  }
+                  suites["windows-download-tests.jsonl"] = set().union(*(
+                      required_cases(root, children) for root, children in windows_download_cases.items()
+                  ))
+                  strict_packages["windows-download-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+
+          if os.environ["CHECK_ENVIRONMENT"] == "true":
+              suites["environment-tests.jsonl"] = required_cases(
+                  "TestRequestConfigurationRestoresEnvironment",
+                  ["success", "setup_error", "action_error", "cancellation", "panic"],
+              ) | required_cases(
+                  "TestRequestConfigurationLeavesOtherEnvironmentCasesUnchanged",
+                  ["valid_environment", "empty_environment", "unset_environment", "omitted_override", "empty_override"],
+              )
+          if os.environ["CHECK_GALLERY"] == "true":
+              suites["gallery-tests.jsonl"] = required_cases(
+                  "TestCleanupPreservesMalformedMetadata",
+                  ["identity", "font", "allocation", "duplicate", "receipt", "unknown_field", "trailing_data"],
+              ) | required_cases(
+                  "TestCleanupResumesAfterPartialArtifactRemoval",
+                  ["images", "fonts", "images_and_fonts"],
+              )
+          if os.environ["CHECK_PAGER"] == "true":
+              suites["pager-tests.jsonl"] = required_cases(
+                  "TestSocketPairPagerFailureKeepsReusedDescriptorOpen", ["LookPath", "ForkExec"],
+              )
+          if os.environ["CHECK_BASH_PREFIXES"] == "true":
+              suites["bash-prefix-tests.jsonl"] = required_cases(
+                  "TestBashColonCompletionReadline",
+                  ["ordinary", "escaped", "single_quoted", "double_quoted", "partially_quoted",
+                   "open_single_quote", "open_double_quote", "before_closing_quote", "colon_not_a_word_break",
+                   "multiple_quoted_colons", "partially_escaped_colons", "first_colon_escaped"],
+              )
+          if os.environ.get("CHECK_NATIVE_COMMANDS") == "true":
+              inventory = json.loads(Path("scripts/native-command-tests.json").read_text())
+              portable = inventory["portable"]
+              if len(portable) != 33 or sum(len(children) for children in portable.values()) != 305:
+                  raise SystemExit("native command inventory must contain 33 roots and 305 children")
+              selected = set()
+              for root, children in portable.items():
+                  selected.update(required_cases(root, children))
+              if len(selected) != 338:
+                  raise SystemExit("native command inventory contains duplicate names")
+              if os.environ["RUNNER_OS"] == "Windows":
+                  aliases = inventory["windows_aliases"]
+                  if len(aliases) != 1 or sum(len(children) for children in aliases.values()) != 8:
+                      raise SystemExit("Windows task inventory must contain one root and eight children")
+                  for root, children in aliases.items():
+                      selected.update(required_cases(root, children))
+                  if len(selected) != 347:
+                      raise SystemExit("Windows task inventory contains duplicate names")
+              suites["native-command-tests.jsonl"] = selected
+              strict_packages["native-command-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+          for filename, required in suites.items():
+              passed = set()
+              package_passed = False
+              exact_events = Counter()
+              invocation_symlink_events = Counter()
+              invocation_symlink_names = set()
+              welcome_runs = Counter()
+              welcome_passes = Counter()
+              welcome_package = Counter()
+              welcome_names = set()
+              strict_events = Counter()
+              with (Path(os.environ["RUNNER_TEMP"]) / filename).open() as events:
+                  for line in events:
+                      event = json.loads(line)
+                      test = event.get("Test", "")
+                      if filename == "windows-help-invocation-tests.jsonl":
+                          if event["Action"] == "build-fail":
+                              raise SystemExit(f"{filename}: unexpected build failure")
+                          if event["Action"] == "build-output":
+                              continue
+                          if event.get("Package") != "github.com/openai/openai-cli/internal/clihelp":
+                              continue
+                          if test and not any(test == root or test.startswith(root + "/") for root in invocation_symlink_roots):
+                              continue
+                          if test:
+                              invocation_symlink_names.add(test)
+                          if event["Action"] in {"start", "run", "pass"}:
+                              invocation_symlink_events[event["Action"], test] += 1
+                      if filename in {"image-command-order-tests.jsonl", "fish-image-help-tests.jsonl", "fish-help-invocation-tests.jsonl"}:
+                          if event["Action"] == "build-fail":
+                              raise SystemExit(f"{filename}: unexpected build failure")
+                          if event["Action"] == "build-output":
+                              continue
+                          if event.get("Package") != "github.com/openai/openai-cli/cmd/openai":
+                              raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
+                          if event["Action"] in {"start", "run", "pass"}:
+                              exact_events[event["Action"], test] += 1
+                      if filename in strict_packages:
+                          if event["Action"] == "build-fail":
+                              raise SystemExit(f"{filename}: unexpected build failure")
+                          if test and test not in required:
+                              raise SystemExit(f"{filename}: unexpected named event: {test}")
+                          if event["Action"] == "build-output":
+                              continue
+                          if event.get("Package") != strict_packages[filename]:
+                              raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
+                          if event["Action"] in {"start", "run", "pass"}:
+                              strict_events[event["Action"], test] += 1
+                      if filename == "dispatch-tests.jsonl" and test and test != completion_root and not test.startswith(completion_root + "/"):
+                          continue
+                      if event["Action"] in {"skip", "fail"}:
+                          raise SystemExit(f"{filename}: unexpected {event['Action']}: {event.get('Test', 'package')}")
+                      if filename == "welcome-public-tests.jsonl":
+                          if event["Action"] == "build-fail":
+                              raise SystemExit(f"{filename}: unexpected build failure")
+                          if event["Action"] == "build-output":
+                              continue
+                          if event.get("Package") != "github.com/openai/openai-cli/cmd/openai":
+                              raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
+                          if test:
+                              welcome_names.add(test)
+                              if event["Action"] == "run":
+                                  welcome_runs[test] += 1
+                              elif event["Action"] == "pass":
+                                  welcome_passes[test] += 1
+                          elif event["Action"] in {"start", "pass"}:
+                              welcome_package[event["Action"]] += 1
+                      if event["Action"] == "pass" and "Test" in event:
+                          passed.add(event["Test"])
+                      elif event["Action"] == "pass":
+                          package_passed = True
+              if filename == "welcome-public-tests.jsonl":
+                  dynamic = set()
+                  for name in welcome_names - required:
+                      match = re.fullmatch(r"TestMainWelcomeBareInvocationStaysOffline/http://127\.0\.0\.1:([1-9][0-9]{0,4})", name)
+                      if match and 1 <= int(match[1]) <= 65535:
+                          dynamic.add(name)
+                  if len(dynamic) != 1:
+                      raise SystemExit(f"{filename}: expected one runtime loopback child, got {sorted(dynamic)}")
+                  required = required | dynamic
+                  expected_counts = Counter({name: 1 for name in required})
+                  if (welcome_runs != expected_counts or welcome_passes != expected_counts or
+                          welcome_names != required or welcome_package != Counter({"start": 1, "pass": 1})):
+                      raise SystemExit(f"{filename}: missing, duplicate, or unexpected welcome events")
+              missing = required - passed
+              unexpected = passed - required if filename in {
+                  "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-tests.jsonl",
+                  "native-command-tests.jsonl",
+                  "image-command-order-tests.jsonl", "fish-image-help-tests.jsonl", "fish-help-invocation-tests.jsonl",
+                  "windows-help-invocation-tests.jsonl",
+                  "image-save-process-tests.jsonl", "image-save-helper-tests.jsonl",
+                  "request-configuration-public-tests.jsonl", "request-configuration-helper-tests.jsonl",
+                  "windows-native-shell-tests.jsonl", "windows-download-tests.jsonl",
+                  "audio-tests.jsonl", "resource-tests.jsonl", "streaming-text-tests.jsonl",
+                  "image-model-discovery-tests.jsonl",
+                  "welcome-public-tests.jsonl",
+                  "list-navigation-helper-tests.jsonl", "list-projection-helper-tests.jsonl", "list-renderer-helper-tests.jsonl",
+              } else set()
+              children = sum("/" in name for name in passed)
+              if missing or unexpected or not package_passed:
+                  raise SystemExit(f"{filename}: missing required tests: {sorted(missing)}; unexpected tests: {sorted(unexpected)}; package passed: {package_passed}")
+              if filename == "windows-help-invocation-tests.jsonl":
+                  expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
+                  expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
+                  if invocation_symlink_events != expected_events or invocation_symlink_names != required:
+                      raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
+              if filename in strict_packages:
+                  expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
+                  expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
+                  if strict_events != expected_events:
+                      raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
+              if filename in {"image-command-order-tests.jsonl", "fish-image-help-tests.jsonl", "fish-help-invocation-tests.jsonl"}:
+                  expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
+                  expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
+                  if exact_events != expected_events:
+                      raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
+              print(f"{filename}: {len(passed) - children} roots and {children} children passed; no skips")
+          PY
+
+  wsl1-pager:
+    needs: source
+    permissions: {}
+    name: Pager descriptor ownership on Ubuntu WSL 1
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 25
+    steps:
+      - name: Reserve WSL cleanup time
+        shell: pwsh
+        run: |
+          $started = [DateTime]::UtcNow
+          "WSL_PAGER_WORK_DEADLINE=$($started.AddMinutes(20).ToString('o'))" >> $env:GITHUB_ENV
+          "WSL_PAGER_CLEANUP_DEADLINE=$($started.AddMinutes(23).ToString('o'))" >> $env:GITHUB_ENV
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        timeout-minutes: 2
+        with:
+          go-version-file: .go-version
+          check-latest: true
+      - uses: ./.github/actions/link-go-sdk
+      - name: Check the WSL pilot controls
+        shell: pwsh
+        timeout-minutes: 1
+        run: python -I -B scripts/test_wsl_pager.py
+      - name: Build the Linux compatibility test executables
+        shell: pwsh
+        timeout-minutes: 6
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+          GOMAXPROCS: '2'
+          GOFLAGS: '-p=2 -mod=readonly'
+          GOTOOLCHAIN: local
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') ./pkg/custom
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-process.test') ./cmd/openai
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go mod verify
+          exit $LASTEXITCODE
+      - name: Run compatibility checks in disposable Ubuntu WSL 1
+        shell: pwsh
+        timeout-minutes: 16
+        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') --process-binary (Join-Path $env:RUNNER_TEMP 'wsl-process.test')
+      - name: Reconcile the owned WSL distribution
+        if: always()
+        shell: pwsh
+        timeout-minutes: 3
+        run: python -I -B scripts/check-wsl-pager.py --cleanup
+      - name: Retain WSL process evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wsl-pager-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/openai-cli-wsl1-${{ github.run_id }}-${{ github.run_attempt }}/*.json
+            ${{ runner.temp }}/openai-cli-wsl1-${{ github.run_id }}-${{ github.run_attempt }}/*.stdout
+            ${{ runner.temp }}/openai-cli-wsl1-${{ github.run_id }}-${{ github.run_attempt }}/*.stderr
+          if-no-files-found: warn
+          retention-days: 7

@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/imageprefs"
-	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
 
@@ -62,7 +61,7 @@ func imageInlinePreferenceCommands() []*cli.Command {
 				if mode == "on" {
 					message += "\nOn also permits image-font activation in local Apple Terminal."
 				}
-				return readable.WriteText(imageCommandWriter(command), message)
+				return writeOutputReceipt(ctx, message)
 			},
 		})
 	}

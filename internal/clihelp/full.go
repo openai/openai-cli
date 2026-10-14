@@ -17,24 +17,26 @@ type FlagGroup struct {
 	Owner *cli.Command
 }
 
-// Keep the framework's command reference and its complete flag descriptions.
-// Only the option layout changes, using headings rather than a wide flag table.
-func fullHelpTemplate(command *cli.Command, source string) string {
-	configureCommandList(command)
-	command.Metadata["full-help-flags"] = func(flags []cli.Flag) string {
-		return fullFlagGroups(command, flags, helpWidth(command))
+// FlagUsage supplies display-only guidance for flags declared by Owner.
+type FlagUsage struct {
+	Owner *cli.Command
+	Names []string
+	Usage string
+}
+
+func commandFlagUsage(command *cli.Command, flag cli.Flag, usage string) string {
+	configured, _ := command.Metadata["help-flag-usages"].([]FlagUsage)
+	for _, entry := range configured {
+		if entry.Owner == nil || !slices.Contains(entry.Owner.Flags, flag) {
+			continue
+		}
+		for _, name := range entry.Names {
+			if slices.Contains(flag.Names(), name) {
+				return entry.Usage
+			}
+		}
 	}
-	command.Metadata["full-help-description"] = func(text string) string {
-		return strings.TrimSuffix(wrapDescription(text, "   ", helpWidth(command)), "\n")
-	}
-	return strings.NewReplacer(
-		`COMMANDS:{{template "visibleCommandCategoryTemplate" .}}`, `{{call (index .Metadata "help-command-list")}}`,
-		`COMMANDS:{{template "visibleCommandTemplate" .}}`, `{{call (index .Metadata "help-command-list")}}`,
-		`{{template "visibleFlagCategoryTemplate" .}}`, `{{call (index .Metadata "full-help-flags") .VisibleFlags}}`,
-		`{{template "visibleFlagTemplate" .}}`, `{{call (index .Metadata "full-help-flags") .VisibleFlags}}`,
-		`{{template "visiblePersistentFlagTemplate" .}}`, `{{call (index .Metadata "full-help-flags") .VisiblePersistentFlags}}`,
-		`   {{template "descriptionTemplate" .}}`, `{{call (index .Metadata "full-help-description") .Description}}`,
-	).Replace(source)
+	return usage
 }
 
 func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
@@ -77,13 +79,78 @@ func fullFlagGroups(command *cli.Command, flags []cli.Flag, width int) string {
 		}
 		fmt.Fprintf(&out, "\n\n   %s\n", group.Title)
 		for _, flag := range flags {
-			heading, description, _ := strings.Cut(fullFlag(flag), "\t")
+			heading, description := flagReference(command, flag)
 			fmt.Fprintf(&out, "\n   %s\n", heading)
-			out.WriteString(strings.TrimSuffix(wrapDescription(description, "      ", width), "\n"))
+			writeFlagDescription(&out, description, width)
 		}
 		delete(grouped, group.Title)
 	}
 	return out.String()
+}
+
+// Use documentation interfaces for defaults and environment names. Preserve a
+// custom flag's own presentation when its signature differs from standard flags.
+func flagReference(command *cli.Command, flag cli.Flag) (string, string) {
+	heading, fallback, _ := strings.Cut(fullFlag(flag), "\t")
+	doc, ok := flag.(cli.DocGenerationFlag)
+	if !ok || heading != fullFlagNames(flag, flagValueLabel(flag)) {
+		return heading, fallback
+	}
+	var names []string
+	for _, name := range flag.Names() {
+		prefix := "--"
+		if len(name) == 1 {
+			prefix = "-"
+		}
+		names = append(names, prefix+name)
+	}
+	heading = strings.Join(names, ", ")
+	if label := commandFlagValueLabel(command, flag); label != "" {
+		heading += " " + label
+	}
+	usage := fileInputUsage(flag, commandFlagUsage(command, flag, doc.GetUsage()))
+	if multi, ok := flag.(cli.DocGenerationMultiValueFlag); ok && multi.IsMultiValueFlag() &&
+		!strings.Contains(strings.ToLower(usage), "repeat") {
+		usage += "\nCan be used more than once."
+	}
+	required, _ := flag.(cli.RequiredFlag)
+	if doc.IsDefaultVisible() && (required == nil || !required.IsRequired()) {
+		value := doc.GetDefaultText()
+		// Request flags expose parsed values through GetValue. Their declared
+		// defaults come only from GetDefaultText, including unset nullable values.
+		_, request := flag.(interface{ IsRequiredAsFlagOrStdin() bool })
+		if value == "" && !request {
+			value = doc.GetValue()
+		}
+		if value != "" {
+			usage += "\nDefault: " + value
+		}
+	}
+	if env := doc.GetEnvVars(); len(env) > 0 {
+		usage += "\nEnv: " + strings.Join(env, ", ")
+	}
+	return heading, strings.TrimSpace(usage)
+}
+
+func writeFlagDescription(out *strings.Builder, description string, width int) {
+	var prose []string
+	flush := func() {
+		if len(prose) > 0 {
+			out.WriteString(wrapDescription(strings.Join(prose, "\n"), "      ", width))
+			prose = nil
+		}
+	}
+	for _, line := range strings.Split(description, "\n") {
+		// These are authored or interface-derived presentation lines. Preserve
+		// their boundaries without inferring values from arbitrary flag prose.
+		if strings.HasPrefix(line, "Default:") || strings.HasPrefix(line, "Env:") {
+			flush()
+			out.WriteString(wrapPlainDescription(line, "      ", width))
+		} else {
+			prose = append(prose, line)
+		}
+	}
+	flush()
 }
 
 func fullFlag(flag cli.Flag) string {
@@ -92,25 +159,24 @@ func fullFlag(flag cli.Flag) string {
 	if !ok {
 		return rendered
 	}
+	placeholder := ""
+	if doc.TakesValue() {
+		placeholder = doc.TypeName()
+		if placeholder == "" {
+			placeholder = "value"
+		}
+	}
 	_, quoted, found := strings.Cut(doc.GetUsage(), "`")
-	placeholder, _, closed := strings.Cut(quoted, "`")
-	if !found || !closed || placeholder == "" {
-		return rendered
+	if value, _, closed := strings.Cut(quoted, "`"); found && closed && value != "" {
+		placeholder = value
 	}
 	heading, details, separated := strings.Cut(rendered, "\t")
 	if !separated || heading != fullFlagNames(flag, placeholder) {
 		// Preserve flags with their own presentation, such as --[no-]color.
 		return rendered
 	}
-	label := ""
-	if doc.TakesValue() {
-		label = doc.TypeName()
-		if label == "" {
-			label = "value"
-		}
-	}
 	// Keep descriptions, defaults, and environment hints after file-input wording.
-	return fullFlagNames(flag, label) + "\t" + details
+	return fullFlagNames(flag, flagValueLabel(flag)) + "\t" + details
 }
 
 func fileInputUsage(flag cli.Flag, text string) string {

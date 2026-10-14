@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -58,15 +57,8 @@ func writeReadableSpeech(response *http.Response, stdout io.Writer, outfile stri
 	}
 	opts.Context = response.Request.Context()
 	if outfile != "" && outfile != "-" && outfile != "/dev/stdout" {
-		file, err := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-		if err != nil {
-			return true, "", err
-		}
-		copyErr := copySpeechStream(opts.Context, file, response.Body)
-		if err := errors.Join(copyErr, file.Close()); err != nil {
-			return true, "", err
-		}
-		return true, fmt.Sprintf("Wrote output to: %s", outfile), nil
+		message, err := writeManagedDownloadResponse(response, outfile, copySpeechSaveStream)
+		return true, message, err
 	}
 	if outfile != "" || opts.Transform == "" && (strings.EqualFold(opts.Format, "raw") || opts.RawOutput) {
 		if file, ok := stdout.(*os.File); ok && file == os.Stdout {
@@ -85,6 +77,15 @@ func writeReadableSpeech(response *http.Response, stdout io.Writer, outfile stri
 // Failures retain bytes already read, then stop consuming the response using the
 // same failure and incomplete-result contract as formatted output.
 func copySpeechStream(ctx context.Context, destination io.Writer, source io.Reader) error {
+	return copySpeechStreamWithCompletion(ctx, destination, source, false)
+}
+
+// An explicit-path speech save needs a speech completion event before success.
+func copySpeechSaveStream(ctx context.Context, destination io.Writer, source io.Reader) error {
+	return copySpeechStreamWithCompletion(ctx, destination, source, true)
+}
+
+func copySpeechStreamWithCompletion(ctx context.Context, destination io.Writer, source io.Reader, requireCompletion bool) error {
 	copying := &speechCopyReader{source: source, sink: outputWriter{ctx: ctx, out: destination}}
 	reader := bufio.NewReader(copying)
 	iter := &outputIterator[outputJSON]{
@@ -92,10 +93,15 @@ func copySpeechStream(ctx context.Context, destination io.Writer, source io.Read
 		transform: transformers.Identity, remaining: -1,
 		route: transformers.Route{Operation: speechStreamOperation, OutputKind: OutputStreamEvent},
 	}
+	completed := false
 	for iter.Next() {
+		completed = completed || iter.Current().Get("type").Str == "speech.audio.done"
 	}
 	if iter.Err() != nil || copying.err != nil || ctx.Err() != nil {
 		return errors.Join(iter.Err(), copying.err, ctx.Err())
+	}
+	if requireCompletion && !completed {
+		return &streamResultError{message: "The speech stream ended without a completion event."}
 	}
 	_, tailErr := io.Copy(io.Discard, reader)
 	return errors.Join(iter.Err(), tailErr, ctx.Err())

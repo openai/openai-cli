@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
@@ -271,6 +272,8 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 		localHelp, _ = help.Metadata["help-topic-command"].(bool)
 	}
 	helpTopics, literal := false, false
+	positionalCount := 0
+	var usedFlags []cli.Flag
 	i := 0
 	for i < len(preceding) {
 		arg := preceding[i]
@@ -281,11 +284,29 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			continue
 		}
 		if isFlag(arg) && !literal {
-			name, _, assigned := strings.Cut(arg, "=")
+			name, value, assigned := strings.Cut(arg, "=")
 			flag := findFlag(flags, name)
+			// Accept the typed legacy help flag without offering it in discovery.
+			if flag == nil && helpTopics && (name == "--all" || name == "-all") {
+				for _, declared := range help.Flags {
+					legacy, ok := declared.(*cli.BoolFlag)
+					if !ok || legacy.Name != "all" || !slices.Contains(flags, declared) {
+						continue
+					}
+					if assigned {
+						if _, err := strconv.ParseBool(value); err != nil {
+							break
+						}
+					}
+					flag = &declared
+					break
+				}
+			}
 			if flag == nil {
 				return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
-			} else if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && !assigned {
+			}
+			usedFlags = append(usedFlags, *flag)
+			if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && !assigned {
 				if i == len(preceding)-1 {
 					return flagValueCompletion(*flag)
 				}
@@ -294,6 +315,12 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 				i++
 			}
 		} else {
+			fileFlag, _ := cmd.Metadata["completion-positional-file"].(string)
+			if fileFlag != "" && !helpTopics && (literal || arg == "") {
+				positionalCount++
+				i++
+				continue
+			}
 			if arg == "" {
 				i++
 				continue
@@ -313,6 +340,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			}
 			if child != nil {
 				cmd = child
+				positionalCount = 0
 				lineage = append(lineage, child)
 				if !helpTopics {
 					flags = completionFlags(lineage)
@@ -320,6 +348,8 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			} else if helpTopics || len(cmd.Commands) > 0 {
 				// A failed group traversal must not offer commands from its parent.
 				return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+			} else {
+				positionalCount++
 			}
 			i++
 		}
@@ -350,6 +380,22 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			}
 			completions = builder.createFromFlag(current, &flag, completions)
 		}
+	}
+
+	// Metadata opts one positional path into its existing alternate file flag.
+	// Keep flag-value completion above and help-topic traversal unchanged.
+	fileFlag, _ := cmd.Metadata["completion-positional-file"].(string)
+	if fileFlag != "" && !helpTopics && (literal || !isFlag(current)) {
+		if positionalCount == 0 {
+			if flag := findFlag(flags, fileFlag); flag != nil && !slices.Contains(usedFlags, *flag) {
+				result := flagValueCompletion(*flag)
+				if result.Behavior == ShellCompletionBehaviorFile {
+					result.requiresFileValueSupport = true
+					return result
+				}
+			}
+		}
+		return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 	}
 
 	// Keep compatibility aliases out of discovery unless a colon requests them.
@@ -400,7 +446,12 @@ func completionCommands(command *cli.Command) []*cli.Command {
 
 func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	root := cmd.Root()
-	args := rebuildColonSeparatedArgs(root.Args().Slice()[1:])
+	args := root.Args().Slice()[1:]
+	// Current adapters preserve shell word boundaries. Older loaded adapters
+	// can still send colon fragments, so retain their reconstruction fallback.
+	if os.Getenv("OPENAI_CLI_COMPLETION_PRESERVE_WORDS") != "1" {
+		args = rebuildColonSeparatedArgs(args)
+	}
 
 	var completionStyle CompletionStyle
 	if style, ok := os.LookupEnv("COMPLETION_STYLE"); ok {
@@ -468,10 +519,10 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	return cli.Exit("", int(result.Behavior))
 }
 
-// When CLI arguments are passed in, they are separated on word barriers.
-// Most commonly this is whitespace but in some cases that may also be colons.
-// We wish to allow arguments with colons. To handle this, we append/prepend colons to their neighboring
-// arguments.
+// rebuildColonSeparatedArgs supports older adapters that send standalone colon
+// fragments. Current adapters must preserve word boundaries before calling the
+// backend: a literal ":" value cannot be distinguished from a split colon here.
+// A trailing colon alone never joins the next argument; it may end a flag value.
 //
 // Example: `rebuildColonSeparatedArgs(["a", "b", ":", "c", "d"])` => `["a", "b:c", "d"]`
 func rebuildColonSeparatedArgs(args []string) []string {
@@ -485,18 +536,12 @@ func rebuildColonSeparatedArgs(args []string) []string {
 	for i < len(args) {
 		current := args[i]
 
-		// Keep joining while the next element is ":" or the current element ends with ":"
-		for i+1 < len(args) && (args[i+1] == ":" || strings.HasSuffix(current, ":")) {
-			if args[i+1] == ":" {
-				current += ":"
+		for i+1 < len(args) && args[i+1] == ":" {
+			current += ":"
+			i++
+			if i+1 < len(args) && args[i+1] != ":" {
+				current += args[i+1]
 				i++
-				// Check if there's a following element after the ":"
-				if i+1 < len(args) && args[i+1] != ":" {
-					current += args[i+1]
-					i++
-				}
-			} else {
-				break
 			}
 		}
 

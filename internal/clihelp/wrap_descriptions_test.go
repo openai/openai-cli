@@ -13,7 +13,7 @@ func TestBriefDescriptionsWrapWithoutLosingWords(t *testing.T) {
 	description := "Creates an edited or extended image given one or more source images and a prompt."
 	command := &cli.Command{Name: "images", Commands: []*cli.Command{{Name: "edit", Usage: description}}}
 	for _, width := range []int{32, 40, 80, 120} {
-		got := briefHelpAtWidth(command, "openai", "images", width)
+		got := commandHelpAtWidth(command, "openai", "images", width)
 		_, listing, _ := strings.Cut(got, "ACTIONS\n")
 		listing, _, _ = strings.Cut(listing, "\nCommand help:")
 		if !strings.Contains(strings.Join(strings.Fields(listing), " "), description) || strings.Contains(listing, "...") {
@@ -65,7 +65,7 @@ func TestConfigureBriefUsesTheRootWriterBeforeParentLinksExist(t *testing.T) {
 	if _, _, err := Configure(root, []string{"openai", "images", "--help"}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := group.Metadata["brief-help"], briefHelpAtWidth(group, "openai", "images", 80); got != want {
+	if got, want := group.Metadata["complete-help"].(func() string)(), commandHelpAtWidth(group, "openai", "images", 80); got != want {
 		t.Fatalf("redirected group help measured another output: %v", got)
 	}
 }

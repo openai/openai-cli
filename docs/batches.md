@@ -59,6 +59,47 @@ The create reference includes `/v1/videos`.
 However, the [deprecation notice](https://developers.openai.com/api/docs/deprecations#2026-03-24-sora-2-video-generation-models-and-videos-api) lists September 24, 2026 as its shutdown date.
 This documentation conflict does not establish current Videos availability.
 
+## Wait and save results
+
+Wait for an existing batch and save its available result files:
+
+```sh
+openai batches wait --batch-id batch_example --output-dir ./results
+```
+
+The command creates `results` if absent. Its parent directory must already exist.
+It saves exact bytes as `output.jsonl` and `error.jsonl` when the API returns those file IDs.
+An absent file produces no file. Human terminals show which files were saved or absent.
+The final stdout response remains the Batch object, including explicit JSON and extraction modes.
+Quiet mode suppresses optional progress and receipts.
+
+```sh
+openai batches wait batch_example --output-dir ./results --poll-interval 5s --wait-timeout 30m
+openai --format json batches wait batch_example --output-dir ./results > batch.json
+```
+
+The deadline includes polling, downloads, and final output.
+The command saves available files for completed, failed, expired, and cancelled batches.
+Failed requests and unsuccessful terminal states still return nonzero after saving available files.
+An unknown status prints the response and exits nonzero without downloading.
+Neither command creates another batch or cancels remote work.
+
+Existing result paths fail preflight before API requests. Downloads never overwrite another process's files.
+A new directory uses private permissions. Each new file uses private permissions where the operating system supports them.
+Successful files remain saved if another download fails or local work stops.
+Ordinary download failures still allow the other available file to download.
+Ctrl+C stops further local work.
+
+After a partial download, retry only the missing file to a new path:
+
+```sh
+openai batches download batch_example --file error --output ./results/errors-retry.jsonl
+```
+
+Reuse the same connection options. Do not create another batch because waiting or downloading failed.
+Omit `--output-dir` to wait without downloading files.
+The existing `batches retrieve --wait` interface also remains available.
+
 ## Inspect and wait
 
 Existing commands retrieve once or list batches:
@@ -80,6 +121,20 @@ openai --transform id --raw-output batches retrieve batch_example
 The following optional view recipes use `jq` or Python 3.
 Neither tool is a CLI dependency.
 In Bash or zsh scripts, use `set -o pipefail` to retain failures from upstream commands.
+
+Refresh all listed batches every ten seconds in Bash or zsh:
+
+```sh
+(
+  while :; do
+    openai batches list --limit 100 --max-items -1 || exit "$?"
+    sleep 10 || exit "$?"
+  done
+)
+```
+
+Each refresh prints another snapshot. API failures stop the loop with a nonzero exit.
+This recipe does not clear terminal history or provide an atomic snapshot across pages.
 
 Show chronological lifecycle events, retaining Unix timestamps:
 
@@ -109,7 +164,7 @@ A positive timeout includes requests, retries, and polling delays.
 It does not change the SDK's individual request timeout behavior.
 The CLI retains SDK retries and supported `Retry-After` handling; exhausted retries stop waiting.
 Malformed batch JSON stops local waiting with an error.
-Timing flags require `--wait`.
+On `batches retrieve`, timing flags require `--wait`.
 
 Human terminal progress uses returned counts:
 
@@ -175,7 +230,7 @@ See the [Batch guide](https://developers.openai.com/api/docs/guides/batch) for l
 ## Download files
 
 Choose a file path without a trailing path separator.
-Directory-like destinations fail before an API request.
+A trailing path separator fails before any API request.
 
 Download one selected batch file to an explicit destination:
 
@@ -212,17 +267,17 @@ Output formats affect saved-file receipts and errors, never file bytes.
 Use the existing Files command when you already know the file ID:
 
 ```sh
-openai files content --file-id file_example --output results.jsonl
+openai files download --file-id file_example --output results.jsonl
 ```
 
-Unlike the batch convenience, existing `files content --output PATH` overwrites its destination.
+Unlike the batch convenience, `files download --output PATH` can overwrite its destination.
 
 ## Browse and manage linked files
 
 Use the batch's input, output, or error file ID to inspect file details:
 
 ```sh
-openai --format json files retrieve file_example
+openai --format json files get file_example
 ```
 
 The response includes filename, byte size, purpose, creation time, expiration, and any returned status details.

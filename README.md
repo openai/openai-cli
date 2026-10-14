@@ -88,13 +88,17 @@ Help works without an API key or network connection:
 
 ```sh
 openai help setup                  # Enter your API key safely
-openai images generate --help      # Example and common inputs
-openai help --all images generate  # Every image option and its details
-openai help --all                  # Command groups and global options
+openai images generate --help      # Example and every image option
+openai help images generate        # The same complete image help
+openai --help                      # Command groups and global options
 ```
 
-Add `--help` (or `-h`) to any command for its short guide. Help changes only
-what is displayed; command behavior, defaults, and output formats are unchanged.
+Add `--help` (or `-h`) to any command for its complete help page.
+`openai help COMMAND` shows the same page.
+Command pages list global options. Use `openai --help` for their full descriptions.
+You can place `--help` after valid command options.
+The old `help --all` spelling prints migration guidance and the complete page.
+Command behavior, defaults, and output formats remain unchanged.
 Tab completion follows the same group order and supports help topics and file input paths.
 After upgrading, [reload shell completion](docs/shell-completion.md) to enable the new file-path behavior.
 Older loaded completion scripts keep their previous behavior until refreshed.
@@ -103,6 +107,19 @@ Successful JSON responses print readable text by default, including in pipes.
 Use `--format json` or `--format jsonl` in scripts that parse API data.
 See [reading command results](docs/readable-output.md) for extraction, binary
 output, and the scope of readable presentation.
+
+Upload a local file with an explicit purpose, inspect its metadata, then download its contents:
+
+```sh
+openai files upload "upload space.txt" --purpose user_data
+openai files get file-example
+openai files download file-example --output "downloaded copy.txt"
+openai files download file-example > copy.txt
+```
+
+Replace `file-example` with the returned file ID. Upload takes a plain path, without an added `@`.
+`create`, `retrieve`, `content`, and their existing flags remain available.
+See [working with files](docs/files.md) for literal filenames, output formats, and script examples.
 
 `openai images generate --prompt "A tiny orange robot"` saves images to
 `~/Downloads/gpt-images/` and prints their paths, including in pipes. The CLI
@@ -228,7 +245,11 @@ presenting the client certificate during the proxy's own TLS handshake.
 
 ### Passing files as arguments
 
-To pass files to your API, you can use the `@myfile.ext` syntax:
+For JSON input values, `@myfile.ext` reads local file contents:
+
+Binary upload flags use plain paths. For example, use `files upload --file "upload space.txt" --purpose user_data`.
+Here, `--file "@upload space.txt"` names an actual file starting with `@`; it does not expand another file reference.
+See [working with files](docs/files.md).
 
 ```bash
 openai <command> --arg @abe.jpg

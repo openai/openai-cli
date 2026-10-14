@@ -127,7 +127,7 @@ func TestMainDispatchOrdinaryArguments(t *testing.T) {
 
 func TestMainDispatchEmptyArguments(t *testing.T) {
 	want := runMainDispatch(t, "bash", "openai", "--help")
-	if want.code != 0 || want.stderr != "" || !strings.Contains(want.stdout, "OpenAI CLI") {
+	if want.code != 0 || want.stderr != "" || !strings.HasPrefix(want.stdout, "NAME:\n   openai\n") {
 		t.Fatalf("root help control failed: %+v", want)
 	}
 	for _, argv := range [][]string{nil, {"openai"}, {""}, {"__complete"}, {"openai", "", "--help"}} {
@@ -170,5 +170,59 @@ func TestMainDispatchCompletionForms(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestMainDispatchCompletionEmpty(t *testing.T) {
+	for _, style := range []string{"bash", "zsh", "fish", "pwsh"} {
+		absentArgs := mainCompletionArgs(style)
+		if style == "pwsh" {
+			// A zero-word direct PowerShell request uses the supported separator form.
+			absentArgs = []string{"openai", "__complete", "--"}
+		}
+		for _, input := range []struct {
+			name  string
+			words []string
+		}{
+			{name: "no_words"},
+			{name: "empty_word", words: []string{""}},
+		} {
+			t.Run(style+"/"+input.name, func(t *testing.T) {
+				args := mainCompletionArgs(style, input.words...)
+				if input.name == "no_words" {
+					args = absentArgs
+				}
+				home := t.TempDir()
+				env := []string{"HOME=" + home, "USERPROFILE=" + home, "APPDATA=" + home, "XDG_CONFIG_HOME=" + home}
+				got := runMainDispatchWithEnv(t, style, env, args...)
+				if got.code != 0 || got.stderr != "" || got.stdout == "" {
+					t.Fatalf("empty completion failed: %+v", got)
+				}
+				if input.name == "empty_word" {
+					if absent := runMainDispatchWithEnv(t, style, env, absentArgs...); got != absent {
+						t.Fatalf("absent and empty completion words differ: %+v versus %+v", absent, got)
+					}
+				}
+				names := make(map[string]bool)
+				for _, line := range strings.Split(strings.TrimSuffix(got.stdout, "\n"), "\n") {
+					name := line
+					if style == "zsh" {
+						name, _, _ = strings.Cut(line, ":")
+					} else if style == "fish" {
+						name, _, _ = strings.Cut(line, "\t")
+					}
+					// A hidden colon alias leaves a backslash before zsh's first separator.
+					if name == "" || names[name] || strings.HasPrefix(name, "@") || strings.HasPrefix(name, "__") || strings.ContainsAny(name, ":\\") {
+						t.Fatalf("empty completion exposed an invalid or hidden candidate: %q", line)
+					}
+					names[name] = true
+				}
+				for _, name := range []string{"help", "images", "models", "responses"} {
+					if !names[name] {
+						t.Errorf("empty completion omitted public command %q", name)
+					}
+				}
+			})
+		}
 	}
 }

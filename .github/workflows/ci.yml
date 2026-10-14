@@ -16,6 +16,38 @@ jobs:
       contents: read
       actions: read
 
+  reference-shadow:
+    name: Reference-only shadow report
+    if: github.event_name == 'pull_request'
+    needs: source
+    permissions: {}
+    continue-on-error: true # Advisory only; no existing job consumes this result.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - name: Test shadow classifier
+        run: python3 -m unittest discover -s scripts/ci -p 'test_reference_shadow.py'
+      - name: Report committed scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: python3 scripts/ci/reference_shadow.py --base "$BASE_SHA" --head "$CANDIDATE_SHA" --pr-head "$PR_HEAD_SHA" --output "$RUNNER_TEMP/reference-shadow.json"
+      - name: Retain shadow observation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reference-shadow-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/reference-shadow.json
+          retention-days: 14
+
   lint:
     timeout-minutes: 15
     name: lint
@@ -83,6 +115,15 @@ jobs:
         run: go test ./internal/autocomplete -run '^TestPicker(ProfileRecovery.*|Rename.*|RecoveryDirectory.*|Windows.*|FileMetadataPreservesZoneIdentifierAtSnapshotRecheck|ReplacementMetadataKeepsSameInheritedPermissions|SecurityDescriptorComparisonPreservesPermissions|InstallRoundTrip|InstallConfigDirectoryChanges|InstallIgnoresUnusedConfigDirectory|InstallConfigDirectoryRefusalPreservesFiles|InstallPreservesHardLinkedProfiles|ProfileHardLinkAddedAfterSnapshot|ScriptContentChecksLegacyNamespaces|InstallRetriesSupersededScriptCleanup|RemoveRetriesScriptCleanup|RemoveMissingProfileParentCleansOwnedScripts|RemoveMissingProfileAndScriptDirectoriesNoOp|RemoveMissingProfileParentReappearsWhileWaiting|RemovePreservesPersonalLineBoundaries|InstalledDetectsAndRefreshesOlderScript)$' -count=1 -v
       - name: Check Windows shell home targeting
         run: go test ./pkg/custom -run '^TestImagePicker(WindowsShellHome|ShellConsent)' -count=1 -v
+      - name: Check native Windows shell and file commands
+        run: go test -p 2 ./cmd/openai -run '^TestMainShell' -count=1 -v
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: cmd,powershell,pwsh
+      - name: Check native Windows download completion and cleanup
+        run: go test -p 2 ./pkg/custom -run '^(TestWindowsDownload|TestManagedDownload|TestDownload|TestAutomaticDownload|TestBinaryResponsePreserves|TestWriteBinaryResponse|TestReportSaveReceipt|TestSaveReceiptContext|TestResponseSaveReceipt)' -count=1 -v
+        env:
+          GOMAXPROCS: '2'
 
   build-artifacts:
     timeout-minutes: 30
@@ -199,4 +240,6 @@ jobs:
         run: go test ./internal/autocomplete -run '^TestPicker(InstallRetainsLinuxSELinuxLabel|SecurityLabel.*|InstallPreservesLinuxFileMetadata|LinuxMetadataAddedAfterSnapshotIsKept|UnixProfileIdentityKeepsDistinctCaseNames)$' -count=1 -v
 
       - name: Run tests
-        run: ./scripts/test
+        # Large-payload and subprocess suites share this runner. Avoid running
+        # packages concurrently; retain every test, payload and deadline.
+        run: ./scripts/test -p 1

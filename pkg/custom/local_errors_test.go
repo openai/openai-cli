@@ -55,7 +55,7 @@ func TestLocalErrorMessageDoesNotExposeDiagnostics(t *testing.T) {
 		{"invalid output format", errors.New("Invalid format: " + secret + ", valid formats are: " + strings.Join(OutputFormats, ", ")), "Invalid output format."},
 		{"format choices", errors.New("format must be one of: " + strings.Join(OutputFormats, ", ")), "Invalid output format."},
 		{"untrusted format choices", errors.New("format must be one of: " + secret), "The command could not be completed."},
-		{"unknown help topic", fmt.Errorf("Unknown help topic %q. Run %s help --all to see commands.", secret, secret), "Unknown help topic. Run openai help --all to see commands."},
+		{"unknown help topic", fmt.Errorf("Unknown help topic %q. Run %s help --all to see commands.", secret, secret), "Unknown help topic. Run openai help to see commands."},
 		{"invalid YAML", errors.New("Failed to parse piped data as YAML/JSON:\n" + secret), "Could not parse piped input as YAML or JSON."},
 		{"scalar request body", errors.New("Cannot merge flags with a body that is not a map: " + secret), "The request body must be a JSON or YAML object."},
 		{"form body", errors.New("Cannot send a non-map value to a form-encoded endpoint: " + secret), "The request body must be a JSON or YAML object."},

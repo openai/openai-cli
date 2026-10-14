@@ -26,10 +26,8 @@ if [ "$DEMO_SCENE" = before ]; then
   printf '\n%s\n' '$ openai files content --file-id file_output --output results.jsonl'
   openai files content --file-id file_output --output results.jsonl
 else
-  printf '%s\n' '$ openai batches retrieve batch_after --wait --poll-interval 1s'
-  openai batches retrieve batch_after --wait --poll-interval 1s
-  printf '\n%s\n' '$ openai batches download batch_after --output results.jsonl'
-  openai batches download batch_after --output results.jsonl
+  printf '%s\n' '$ openai batches wait batch_after --output-dir results --poll-interval 1s'
+  openai batches wait batch_after --output-dir results --poll-interval 1s
 fi
 printf '\n%s\n' 'Saved exact JSONL bytes. No live batch was submitted.'
 sleep 3
@@ -48,25 +46,30 @@ demo_render_options=(--renderer resvg --font-family Menlo --font-size 22 --line-
 for demo_scene in before after; do
  demo_capture_scene "$demo_scene" 0 "$demo_runtime/$demo_scene" "$demo_api_url" "$demo_scene" \
   "DEMO_SCENE=$demo_scene" "DEMO_WORK=$demo_runtime/$demo_scene" NO_COLOR=1
- test -s "$demo_runtime/$demo_scene/results.jsonl"
+ if [ "$demo_scene" = before ]; then
+  test -s "$demo_runtime/$demo_scene/results.jsonl"
+ else
+  test -s "$demo_runtime/$demo_scene/results/output.jsonl"
+ fi
 done
-cmp "$demo_runtime/before/results.jsonl" "$demo_runtime/after/results.jsonl"
+cmp "$demo_runtime/before/results.jsonl" "$demo_runtime/after/results/output.jsonl"
 demo_stop_api
 cp "$demo_runtime/requests.jsonl" "$demo_output/requests.jsonl"
 "$demo_python" - "$demo_output" <<'PY'
 import json, pathlib, sys
 p=pathlib.Path(sys.argv[1])
 records=[json.loads(line) for line in (p/'requests.jsonl').read_text().splitlines()]
-assert len(records)==7, records
+assert len(records)==6, records
 assert sum(r['path']=='/v1/batches/batch_before' for r in records)==2
-assert sum(r['path']=='/v1/batches/batch_after' for r in records)==3
+assert sum(r['path']=='/v1/batches/batch_after' for r in records)==2
 assert sum(r['path']=='/v1/files/file_output/content' for r in records)==2
 assert all(r['method']=='GET' for r in records)
 after=(p/'after.txt').read_text()
 assert 'Processing: 420 of 1000 requests finished.' in after
 assert 'Completed: 1000 succeeded, 0 failed.' in after
-assert 'Bytes:' in after
-(p/'validation.txt').write_text('PASS: seven GET requests, exact file comparison, real exits, progress and receipt.\n')
+assert 'Saved' in after and 'results/output.jsonl' in after
+assert 'No error file returned.' in after
+(p/'validation.txt').write_text('PASS: six GET requests, exact file comparison, real exits, progress and receipt.\n')
 PY
 demo_assemble_capture 300 before after
 printf 'Recorded F13 batch demos in %s\n' "$demo_output"

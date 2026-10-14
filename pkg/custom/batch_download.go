@@ -5,12 +5,16 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
@@ -103,6 +107,10 @@ func handleBatchDownload(ctx context.Context, command *cli.Command) (err error) 
 // The directory handle anchors every staging and publication operation. A hard
 // link publishes complete bytes without replacing an existing destination.
 func writeBatchDownload(ctx context.Context, path string, body io.ReadCloser) (written int64, err error) {
+	return writeBatchDownloadInDirectory(ctx, path, body, nil)
+}
+
+func writeBatchDownloadInDirectory(ctx context.Context, path string, body io.ReadCloser, expected os.FileInfo) (written int64, err error) {
 	bodyOpen := true
 	defer func() {
 		if bodyOpen {
@@ -121,6 +129,9 @@ func writeBatchDownload(ctx context.Context, path string, body io.ReadCloser) (w
 	parent, err := root.Stat(".")
 	if err != nil {
 		return 0, batchDownloadFailure("Could not inspect the output directory.", err)
+	}
+	if expected != nil && !os.SameFile(expected, parent) {
+		return 0, batchError("The output directory changed. No output file was published.")
 	}
 	if _, err := root.Lstat(name); !errors.Is(err, os.ErrNotExist) {
 		if err == nil {
@@ -200,4 +211,108 @@ func removeBatchDownloadTemporary(root *os.Root, name string, owned os.FileInfo)
 
 func batchDownloadFailure(message string, cause error) error {
 	return &batchWorkflowError{message: message, code: 1, cause: cause}
+}
+
+type batchOutputDirectory struct {
+	path string
+	info os.FileInfo
+}
+
+func prepareBatchOutputDirectory(path string) (*batchOutputDirectory, error) {
+	if path == "" {
+		return nil, batchError("Choose a nonempty --output-dir path.")
+	}
+	// Mkdir creates only the selected directory. Missing parents require an
+	// explicit user choice, rather than creating a tree of untracked paths.
+	if err := os.Mkdir(path, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+		return nil, batchDownloadFailure("Could not create the output directory. Check its parent and permissions.", err)
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, batchDownloadFailure("Could not open the output directory. Check --output-dir and directory permissions.", err)
+	}
+	defer root.Close()
+	info, err := root.Stat(".")
+	if err != nil {
+		return nil, batchDownloadFailure("Could not inspect the output directory.", err)
+	}
+	for _, name := range []string{"output.jsonl", "error.jsonl"} {
+		if _, err := root.Lstat(name); !errors.Is(err, os.ErrNotExist) {
+			if err == nil {
+				err = os.ErrExist
+			}
+			return nil, batchDownloadFailure("A result path already exists or cannot be checked. Choose a new --output-dir. To recover a missing file, use batches download with the same batch ID, --file output or --file error, and a new --output path.", err)
+		}
+	}
+	return &batchOutputDirectory{path: path, info: info}, nil
+}
+
+func collectBatchFiles(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, batch gjson.Result, destination *batchOutputDirectory) error {
+	switch batch.Get("status").String() {
+	case "completed", "failed", "expired", "cancelled":
+	default:
+		return nil
+	}
+	var failures []error
+	var problems []string
+	finish := func() error {
+		if len(failures) == 0 {
+			return nil
+		}
+		message := strings.Join(problems, "\n")
+		if message == "" {
+			message = "Could not finish displaying the download receipts."
+		}
+		return batchDownloadFailure(message+"\nAny completed files remain saved. Reuse the same batch ID and connection options; do not create another batch.", errors.Join(failures...))
+	}
+	for _, selection := range []string{"output", "error"} {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(err, finish())
+		}
+		value := batch.Get(selection + "_file_id")
+		if value.Type == gjson.Null || value.Type == gjson.String && value.String() == "" {
+			if err := batchCollectionReceipt(ctx, cmd, "No "+selection+" file returned."); err != nil {
+				failures = append(failures, err)
+			}
+			continue
+		}
+		if value.Type != gjson.String {
+			message := "The batch returned an invalid " + selection + " file ID. Inspect the batch response before downloading."
+			problems = append(problems, message)
+			failures = append(failures, batchError(message))
+			continue
+		}
+		response, err := client.Files.Content(ctx, value.String(), options...)
+		path := filepath.Join(destination.path, selection+".jsonl")
+		if err == nil {
+			_, err = writeBatchDownloadInDirectory(ctx, path, response.Body, destination.info)
+		}
+		if err != nil {
+			message := fmt.Sprintf("Could not save %s.jsonl. Retry with batches download --file %s --output NEW_PATH.", selection, selection)
+			var local *batchWorkflowError
+			var apierr *openai.Error
+			switch {
+			case errors.As(err, &local):
+				message += "\n" + local.message
+			case errors.As(err, &apierr):
+				message += "\n" + readableAPIErrorMessage(cmd.Root(), err, apierr)
+			}
+			problems = append(problems, message)
+			failures = append(failures, err)
+			continue
+		}
+		if err := batchCollectionReceipt(ctx, cmd, fmt.Sprintf("Saved %q", path)); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return finish()
+}
+
+func batchCollectionReceipt(ctx context.Context, cmd *cli.Command, message string) error {
+	if !batchHumanTerminal(ctx, cmd.Root()) {
+		return nil
+	}
+	return writeBatchStdout(ctx, os.Stderr, func(out io.Writer) error {
+		return readable.WriteText(out, message)
+	})
 }

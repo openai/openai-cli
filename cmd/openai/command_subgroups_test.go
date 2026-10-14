@@ -203,7 +203,7 @@ func TestMainCommandSubgroupsPreserveAudioAndErrors(t *testing.T) {
 	for _, resource := range [][]string{{"audio:transcriptions"}, {"audio", "transcriptions"}} {
 		command := append(append([]string{}, resource...), args[1:]...)
 		failure := runMainCommandAPIErrorResponse(t, 400, "application/json", `{"error":{"message":"synthetic","type":"invalid_request_error","code":"invalid_value","param":"response_format"}}`, command)
-		if failure.code == 0 || failure.stdout != "" || !strings.Contains(failure.stderr, "json, text, srt") || !strings.Contains(failure.stderr, "help --all "+strings.Join(resource, " ")+" create") {
+		if failure.code == 0 || failure.stdout != "" || !strings.Contains(failure.stderr, "json, text, srt") || !strings.Contains(failure.stderr, "help "+strings.Join(resource, " ")+" create") {
 			t.Fatalf("audio error context changed: %+v", failure)
 		}
 	}

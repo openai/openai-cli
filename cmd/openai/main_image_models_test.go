@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -48,7 +47,7 @@ func TestMainImageModelsHelpAndOfflineMakeNoRequests(t *testing.T) {
 				}
 				assertMainImageModelsRows(t, report, args[len(args)-1] == "--all", imagemodels.StatusNotChecked)
 			} else {
-				for _, want := range []string{"openai images models", "--offline", "--all", "exact model names", "API key setup: openai help setup", "--model gpt-image-2.5-flare"} {
+				for _, want := range []string{"openai images models", "--offline", "--all", "exact model names", "Key setup: openai help setup", "--model gpt-image-2.5-flare"} {
 					if !strings.Contains(got.stdout, want) {
 						t.Errorf("help missing %q: %s", want, got.stdout)
 					}
@@ -165,6 +164,8 @@ func TestMainImageModelsExploreFallbackWarning(t *testing.T) {
 			wantWarning := ""
 			if format == "explore" {
 				wantWarning = "Warning: Output format 'explore' not supported for non-terminal output; falling back to 'json'\n"
+			} else if format == "auto" {
+				wantWarning = "Choose a model:\n  openai images generate --prompt \"A tiny orange robot\" --model gpt-image-2.5-sunburst\n"
 			}
 			if got.stderr != wantWarning {
 				t.Errorf("stderr = %q; want %q", got.stderr, wantWarning)
@@ -265,9 +266,6 @@ func TestMainImageModelsRequestDeadlineCancelsHTTP(t *testing.T) {
 }
 
 func TestMainImageModelsInterruptPreservesCompletedResults(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("os.Process.Signal does not send os.Interrupt on Windows")
-	}
 	ready := make(chan struct{})
 	initialRequests := make(chan struct{}, 2)
 	server, requests := mainImageModelsServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -299,9 +297,7 @@ func TestMainImageModelsInterruptPreservesCompletedResults(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	child := exec.CommandContext(ctx, binary, "-test.run=^TestMainDispatchProcess$", "--",
-		"openai", "--format", "json", "images", "models")
-	child.Env = []string{"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "OPENAI_API_KEY=synthetic-models-key", "OPENAI_BASE_URL=" + server.URL, "FORCE_COLOR=0"}
+	child, interrupt := imageModelsInterruptCommand(t, ctx, binary, server.URL)
 	var stdout, stderr bytes.Buffer
 	child.Stdout, child.Stderr = &stdout, &stderr
 	if err := child.Start(); err != nil {
@@ -324,7 +320,7 @@ func TestMainImageModelsInterruptPreservesCompletedResults(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("discovery did not start its fourth lookup")
 	}
-	if err := child.Process.Signal(os.Interrupt); err != nil {
+	if err := interrupt(); err != nil {
 		t.Fatal(err)
 	}
 	err = <-done
@@ -376,19 +372,18 @@ func TestMainImageModelsPipeIsReadableAndAllRevealsUnavailable(t *testing.T) {
 				args = append(args, "--all")
 			}
 			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_API_KEY=synthetic-models-key"}, args...)
-			if got.code != 0 || got.stderr != "" {
+			if got.code != 0 || !strings.Contains(got.stderr, `openai images generate --prompt "A tiny orange robot" --model gpt-image-2.5-sunburst`) {
 				t.Fatalf("readable piped discovery failed: %+v", got)
 			}
 			for _, want := range []string{
 				"MODEL", "STATUS", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "Visible",
-				`openai images generate --prompt "A tiny orange robot" --model gpt-image-2.5-sunburst`,
 				"generation permissions can differ",
 			} {
 				if !strings.Contains(got.stdout, want) {
 					t.Errorf("readable output missing %q: %s", want, got.stdout)
 				}
 			}
-			for _, hidden := range []string{`"id":`, `"source":`, "\x1b", "Checking image models", "default", "Leaving out --model"} {
+			for _, hidden := range []string{`"id":`, `"source":`, "\x1b", "Checking image models", "default", "Leaving out --model", "Choose a model", "openai images"} {
 				if strings.Contains(got.stdout, hidden) {
 					t.Errorf("readable pipe exposed JSON/progress/default/control %q: %q", hidden, got.stdout)
 				}
@@ -405,7 +400,7 @@ func TestMainImageModelsPipeIsReadableAndAllRevealsUnavailable(t *testing.T) {
 						t.Errorf("default presentation exposed unavailable row %q", hidden)
 					}
 				}
-				if !strings.Contains(got.stdout, "2 retired or not visible") || !strings.Contains(got.stdout, "openai images models --all") {
+				if !strings.Contains(got.stdout, "2 retired or not visible") || !strings.Contains(got.stderr, "openai images models --all") {
 					t.Errorf("missing hidden-row guidance: %q", got.stdout)
 				}
 			}

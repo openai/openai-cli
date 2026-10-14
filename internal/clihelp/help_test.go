@@ -19,6 +19,8 @@ func TestHelpUsesFeatureTemplatesWithoutRequestSetup(t *testing.T) {
 		{"openai", "help", "--all", "guide", "size"},
 		{"openai", "guide", "help", "size", "--all"},
 		{"openai", "guide", "size"},
+		{"openai", "guide", "size", "--help"},
+		{"openai", "guide", "size", "-h"},
 	} {
 		t.Run(strings.Join(args, "/"), func(t *testing.T) {
 			var out bytes.Buffer
@@ -41,9 +43,9 @@ func TestHelpUsesFeatureTemplatesWithoutRequestSetup(t *testing.T) {
 			if err := root.Run(t.Context(), normalized); err != nil {
 				t.Fatal(err)
 			}
-			want := "Short size guide\n"
+			want := "Full size guide\n"
 			if strings.Contains(strings.Join(args, " "), "--all") {
-				want = "Full size guide\n"
+				want = "Use openai help guide size; --all is no longer needed.\n" + want
 			}
 			if got := out.String(); got != want {
 				t.Fatalf("help = %q; want %q", got, want)

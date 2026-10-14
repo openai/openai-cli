@@ -15,7 +15,8 @@ jobs:
   upload:
     if: github.event.workflow_run.path == '.github/workflows/codeql.yml'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Four SARIF uploads can each take up to five minutes to process.
+    timeout-minutes: 25
     permissions:
       contents: read
       actions: read

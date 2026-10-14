@@ -59,7 +59,7 @@ func TestMainHelpExperienceUnknownTopicUsesParent(t *testing.T) {
 		t.Errorf("direct typo suggestion differs from help: %+v", got)
 	}
 	got = runMainDispatch(t, "bash", "openai", "help", "admin", "organization", "zzzzzzzzzz")
-	if got.code != 3 || got.stdout != "" || !strings.Contains(got.stderr, "openai help --all admin organization") || strings.Contains(got.stderr, "zzzzzzzzzz") {
+	if got.code != 3 || got.stdout != "" || !strings.Contains(got.stderr, "openai help admin organization") || strings.Contains(got.stderr, "zzzzzzzzzz") {
 		t.Errorf("unknown topic lacks contextual, value-safe recovery: %+v", got)
 	}
 	got = runMainDispatch(t, "bash", "openai", "--format-error", "json", "help", "admin", "organization", "projcts")
