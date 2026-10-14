@@ -8,11 +8,12 @@ import (
 	"os/exec"
 	"syscall"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
 
-func imageEditInterruptCommand(t *testing.T, ctx context.Context, binary, home string, env []string, args ...string) (*exec.Cmd, func() error, func([]byte) error) {
+func imageEditInterruptCommand(t *testing.T, ctx context.Context, binary, home string, env []string, args ...string) (*exec.Cmd, func() error, func([]byte, time.Duration) error) {
 	t.Helper()
 	command := append([]string{"-test.run=^TestShellFileWindowsConsoleHelper$", "--",
 		binary, "-test.run=^TestMainDispatchProcess$", "--"}, args...)
@@ -37,5 +38,5 @@ func imageEditInterruptCommand(t *testing.T, ctx context.Context, binary, home s
 		_, err := input.Write([]byte{byte(windows.CTRL_C_EVENT)})
 		return err
 	}
-	return child, interrupt, verifyImageEditInterruptDiagnostic
+	return child, interrupt, verifyImageEditInterruptCompletion
 }

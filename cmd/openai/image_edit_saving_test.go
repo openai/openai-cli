@@ -438,6 +438,7 @@ func TestMainImageEditInterruptClosesStreamWithoutSavingPartial(t *testing.T) {
 	child, interrupt, verifyFixture := imageEditInterruptCommand(t, ctx, binary, home, imageGenerationEnv(server, home), args...)
 	var stdout, stderr bytes.Buffer
 	child.Stdout, child.Stderr = &stdout, &stderr
+	started := time.Now()
 	require.NoError(t, child.Start())
 	done := make(chan error, 1)
 	go func() { done <- child.Wait() }()
@@ -467,7 +468,7 @@ func TestMainImageEditInterruptClosesStreamWithoutSavingPartial(t *testing.T) {
 		t.Fatal("edit did not stop before the console controller timeout")
 	}
 	require.NoError(t, ctx.Err())
-	require.NoError(t, verifyFixture(stderr.Bytes()))
+	require.NoError(t, verifyFixture(stderr.Bytes(), time.Since(started)))
 	require.Empty(t, stdout.String())
 	require.Empty(t, imageGenerationFiles(t, filepath.Join(home, "Downloads", "gpt-images")))
 	original, err := os.ReadFile(source)
@@ -480,7 +481,12 @@ func TestMainImageEditInterruptClosesStreamWithoutSavingPartial(t *testing.T) {
 	}
 }
 
-func verifyImageEditInterruptDiagnostic(stderr []byte) error {
+func verifyImageEditInterruptCompletion(stderr []byte, elapsed time.Duration) error {
+	// The unchanged Windows controller can force termination after ten seconds.
+	// Measure from before controller startup, not from request readiness.
+	if elapsed >= 9*time.Second {
+		return fmt.Errorf("edit interruption reached the absolute completion deadline")
+	}
 	var diagnostic struct {
 		Message string `json:"message"`
 	}
@@ -490,20 +496,26 @@ func verifyImageEditInterruptDiagnostic(stderr []byte) error {
 	return nil
 }
 
-func TestImageEditInterruptDiagnostic(t *testing.T) {
+func TestImageEditInterruptCompletion(t *testing.T) {
 	for _, test := range []struct {
 		name, diagnostic string
+		elapsed          time.Duration
 		valid            bool
 	}{
-		{"controller failure", "--- FAIL: TestShellFileWindowsConsoleHelper\n", false},
-		{"forced timeout", "", false},
-		{"unrelated CLI error", `{"message":"The image stream ended without a final image."}`, false},
-		{"extra document", "{\"message\":\"Request canceled.\"}\n{}\n", false},
-		{"CLI cancellation", `{"message":"Request canceled."}`, true},
+		{"controller failure", "--- FAIL: TestShellFileWindowsConsoleHelper\n", time.Second, false},
+		{"forced timeout", "", time.Second, false},
+		{"unrelated CLI error", `{"message":"The image stream ended without a final image."}`, time.Second, false},
+		{"extra document", "{\"message\":\"Request canceled.\"}\n{}\n", time.Second, false},
+		{"CLI cancellation", `{"message":"Request canceled."}`, time.Second, true},
+		{"just before absolute limit", `{"message":"Request canceled."}`, 9*time.Second - time.Nanosecond, true},
+		{"absolute limit", `{"message":"Request canceled."}`, 9 * time.Second, false},
+		{"after absolute limit", `{"message":"Request canceled."}`, 9*time.Second + time.Nanosecond, false},
+		{"slow startup within limit", `{"message":"Request canceled."}`, 6*time.Second + 2*time.Second, true},
+		{"controller timeout after slow startup", `{"message":"Request canceled."}`, 6*time.Second + 4*time.Second, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if err := verifyImageEditInterruptDiagnostic([]byte(test.diagnostic)); (err == nil) != test.valid {
-				t.Fatalf("cancellation diagnostic accepted=%t, want %t: %v", err == nil, test.valid, err)
+			if err := verifyImageEditInterruptCompletion([]byte(test.diagnostic), test.elapsed); (err == nil) != test.valid {
+				t.Fatalf("cancellation completion accepted=%t, want %t: %v", err == nil, test.valid, err)
 			}
 		})
 	}
