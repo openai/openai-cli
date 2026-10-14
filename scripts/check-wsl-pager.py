@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 
 
@@ -307,11 +308,44 @@ class HTTPSOnly(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(request, fp, code, message, headers, newurl)
 
 
-def download_image(path, deadline):
+def open_image(opener, deadline, attempts):
+    # Retry only startup timeouts. No response or output file exists yet.
+    for index in range(2):
+        started = time.monotonic()
+        remaining = deadline - started
+        if STOP or remaining <= 0:
+            raise RuntimeError("Ubuntu download stopped or timed out")
+        attempt = {"number": index + 1, "outcome": "opening"}
+        attempts.append(attempt)
+        try:
+            response = opener.open(IMAGE_URL, timeout=min(10, remaining))
+        except Exception as error:
+            reason = error.reason if isinstance(error, urllib.error.URLError) else error
+            attempt.update(outcome="failed", error_type=type(error).__name__,
+                           reason_type=type(reason).__name__,
+                           elapsed_seconds=round(time.monotonic() - started, 3))
+            if index or isinstance(error, urllib.error.HTTPError) or not isinstance(reason, TimeoutError):
+                raise
+            if STOP or deadline - time.monotonic() < 11:
+                raise
+            time.sleep(1)
+            if STOP or deadline - time.monotonic() < 10:
+                raise
+            continue
+        attempt.update(outcome="opened", elapsed_seconds=round(time.monotonic() - started, 3))
+        if STOP or time.monotonic() >= deadline:
+            attempt["outcome"] = "rejected_late_or_stopped"
+            response.close()
+            raise RuntimeError("Ubuntu download stopped or timed out")
+        return response
+
+
+def download_image(path, deadline, attempts=None):
     # A socket read can take ten seconds. Reserve that time inside the 480-second cap.
     end = min(deadline, time.monotonic() + 470)
     hasher, size = hashlib.sha256(), 0
-    with urllib.request.build_opener(HTTPSOnly()).open(IMAGE_URL, timeout=10) as response, path.open("xb") as output:
+    opener = urllib.request.build_opener(HTTPSOnly())
+    with open_image(opener, end, attempts if attempts is not None else []) as response, path.open("xb") as output:
         if int(response.headers.get("Content-Length", "0")) > IMAGE_LIMIT:
             raise RuntimeError("Ubuntu image exceeds its download limit")
         while True:
@@ -449,7 +483,8 @@ def pilot(binary, cleanup_only=False, process_binary=None):
             if shutil.disk_usage(directory).free < 6 * 1024**3:
                 raise RuntimeError("Insufficient free space for the disposable distro")
             image = directory / "ubuntu.wsl"
-            result["image_bytes"] = download_image(image, commands.deadline)
+            result["image_open_attempts"] = []
+            result["image_bytes"] = download_image(image, commands.deadline, result["image_open_attempts"])
             result["image_sha256"] = IMAGE_SHA256
             state["import_attempted"] = True
             write_json(state_path, state)

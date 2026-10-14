@@ -6,11 +6,13 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import socket
+import ssl
 import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 spec = importlib.util.spec_from_file_location("wsl_pager", Path(__file__).with_name("check-wsl-pager.py"))
@@ -306,6 +308,176 @@ class AcceptanceTests(unittest.TestCase):
                     patch.object(pilot, "IMAGE_SHA256", pilot.hashlib.sha256(b"").hexdigest()):
                 with self.assertRaisesRegex(RuntimeError, "timed out"):
                     pilot.download_image(Path(directory) / "late-close", 1.0)
+
+
+class DownloadRetryTests(unittest.TestCase):
+    class Response(io.BytesIO):
+        headers = {}
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "ubuntu.wsl"
+        self.addCleanup(setattr, pilot, "STOP", 0)
+
+    def test_startup_timeout_retries_once_before_creating_image(self):
+        data = b"synthetic image"
+        for failure in (TimeoutError("synthetic timeout"), pilot.urllib.error.URLError(TimeoutError("synthetic timeout"))):
+            with self.subTest(type=type(failure).__name__):
+                response = self.Response(data)
+                opener = Mock()
+                opener.open.side_effect = [failure, response]
+                attempts = []
+                with patch.object(pilot.urllib.request, "build_opener", return_value=opener), \
+                        patch.object(pilot.time, "sleep") as sleep, \
+                        patch.object(pilot, "IMAGE_SHA256", pilot.hashlib.sha256(data).hexdigest()):
+                    self.assertEqual(pilot.download_image(self.path, time.monotonic() + 100, attempts), len(data))
+                self.assertEqual(self.path.read_bytes(), data)
+                self.path.unlink()
+                self.assertTrue(response.closed)
+                self.assertEqual(opener.open.call_count, 2)
+                for call in opener.open.call_args_list:
+                    self.assertEqual(call.args, (pilot.IMAGE_URL,))
+                    self.assertEqual(call.kwargs, {"timeout": 10})
+                sleep.assert_called_once_with(1)
+                self.assertEqual([a["outcome"] for a in attempts], ["failed", "opened"])
+                self.assertEqual(attempts[0]["reason_type"], "TimeoutError")
+
+    def test_repeated_startup_timeout_preserves_final_failure_without_image(self):
+        final = pilot.urllib.error.URLError(TimeoutError("second timeout"))
+        opener = Mock()
+        opener.open.side_effect = [TimeoutError("first timeout"), final]
+        attempts = []
+        with patch.object(pilot.urllib.request, "build_opener", return_value=opener), patch.object(pilot.time, "sleep"):
+            with self.assertRaises(pilot.urllib.error.URLError) as caught:
+                pilot.download_image(self.path, time.monotonic() + 100, attempts)
+        self.assertIs(caught.exception, final)
+        self.assertEqual(opener.open.call_count, 2)
+        self.assertEqual([a["outcome"] for a in attempts], ["failed", "failed"])
+        self.assertFalse(self.path.exists())
+
+    def test_other_startup_failures_never_retry(self):
+        failures = [ssl.SSLCertVerificationError(1, "synthetic certificate failure"),
+                    pilot.urllib.error.URLError(ssl.SSLCertVerificationError(1, "synthetic certificate failure")),
+                    ssl.SSLError(1, "synthetic TLS failure"),
+                    pilot.urllib.error.HTTPError(pilot.IMAGE_URL, 503, "timeout-looking text", None, None),
+                    pilot.urllib.error.HTTPError(pilot.IMAGE_URL, 503, TimeoutError("synthetic HTTP reason"), None, None),
+                    pilot.urllib.error.URLError(socket.gaierror(-2, "synthetic DNS failure")),
+                    ConnectionResetError("synthetic reset"),
+                    pilot.urllib.error.URLError("The handshake operation timed out")]
+        for failure in failures:
+            with self.subTest(type=type(failure).__name__, message=str(failure)):
+                opener = Mock()
+                opener.open.side_effect = failure
+                attempts = []
+                with patch.object(pilot.time, "sleep") as sleep:
+                    with self.assertRaises(type(failure)) as caught:
+                        pilot.open_image(opener, time.monotonic() + 100, attempts)
+                self.assertIs(caught.exception, failure)
+                opener.open.assert_called_once()
+                sleep.assert_not_called()
+                self.assertEqual(len(attempts), 1)
+                self.assertFalse(self.path.exists())
+
+    def test_body_timeout_never_retries_and_owned_partial_file_is_removed(self):
+        class Partial(self.Response):
+            reads = 0
+
+            def read1(self, _size):
+                self.reads += 1
+                if self.reads == 1:
+                    return b"partial"
+                raise TimeoutError("synthetic body timeout")
+
+        response = Partial()
+        opener = Mock()
+        opener.open.return_value = response
+        with patch.object(pilot.urllib.request, "build_opener", return_value=opener):
+            with self.assertRaisesRegex(TimeoutError, "synthetic body timeout"):
+                pilot.download_image(self.path, time.monotonic() + 100)
+        opener.open.assert_called_once()
+        self.assertTrue(response.closed)
+        self.assertEqual(self.path.read_bytes(), b"partial")
+        commands = Mock()
+        commands.run.side_effect = AssertionError("No WSL command is needed before import")
+        pilot.clean_distro(commands, "wsl.exe", "owned", {"import_attempted": False, "directory": self.directory.name})
+        self.assertFalse(self.path.exists())
+
+    def test_integrity_and_file_failures_never_retry(self):
+        class WriteFailure(io.BytesIO):
+            def write(self, _data):
+                raise OSError("synthetic write failure")
+
+        for phase in ("checksum", "existing file", "write"):
+            with self.subTest(phase=phase):
+                response = self.Response(b"synthetic")
+                opener = Mock()
+                opener.open.return_value = response
+                with patch.object(pilot.urllib.request, "build_opener", return_value=opener):
+                    if phase == "write":
+                        output = WriteFailure()
+                        with patch.object(Path, "open", return_value=output):
+                            with self.assertRaisesRegex(OSError, "synthetic write failure"):
+                                pilot.download_image(self.path, time.monotonic() + 100)
+                        self.assertTrue(output.closed)
+                    elif phase == "existing file":
+                        self.path.write_bytes(b"preserved")
+                        with self.assertRaises(FileExistsError):
+                            pilot.download_image(self.path, time.monotonic() + 100)
+                        self.assertEqual(self.path.read_bytes(), b"preserved")
+                        self.path.unlink()
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "checksum mismatch"):
+                            pilot.download_image(self.path, time.monotonic() + 100)
+                        self.path.unlink()
+                opener.open.assert_called_once()
+                self.assertTrue(response.closed)
+
+    def test_stop_and_remaining_budget_prevent_second_attempt(self):
+        for boundary in ("before delay", "after delay", "stop"):
+            with self.subTest(boundary=boundary):
+                pilot.STOP = 0
+                clock = [0.0]
+                failure = TimeoutError("first timeout")
+                opener = Mock()
+                opener.open.side_effect = failure
+
+                def delay(_seconds):
+                    clock[0] = 91.0
+                    if boundary == "stop":
+                        pilot.STOP = 15
+
+                deadline = 10.99 if boundary == "before delay" else 100.0
+                with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(pilot.time, "sleep", side_effect=delay):
+                    with self.assertRaises(TimeoutError) as caught:
+                        pilot.open_image(opener, deadline, [])
+                self.assertIs(caught.exception, failure)
+                opener.open.assert_called_once()
+
+    def test_late_or_stopped_open_closes_response_without_acceptance(self):
+        for stopped in (False, True):
+            with self.subTest(stopped=stopped):
+                pilot.STOP = 0
+                clock = [0.0]
+                response = self.Response(b"synthetic")
+
+                def opened(*_args, **_kwargs):
+                    if stopped:
+                        pilot.STOP = 2
+                    else:
+                        clock[0] = 100.0
+                    return response
+
+                opener = Mock()
+                opener.open.side_effect = opened
+                attempts = []
+                with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]):
+                    with self.assertRaisesRegex(RuntimeError, "stopped or timed out"):
+                        pilot.open_image(opener, 100.0, attempts)
+                opener.open.assert_called_once()
+                self.assertTrue(response.closed)
+                self.assertEqual(attempts[0]["outcome"], "rejected_late_or_stopped")
 
 
 class LifecycleTests(unittest.TestCase):
