@@ -206,6 +206,16 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-command-order-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Linux Fish image help examples
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: fish
+        run: |
+          set -euo pipefail
+          go test ./cmd/openai -count=1 -timeout=3m -v -json \
+            -run '^TestMainFishImageHelpExamples$' \
+            | tee "$RUNNER_TEMP/fish-image-help-tests.jsonl"
       - name: Test Linux Fish completion
         if: runner.os == 'Linux'
         shell: bash
@@ -325,6 +335,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestRootRequestFlagsPreserveOwnershipAndMetadata|TestRootRequestFlagsPreserveMTLSPlacement|TestRootRequestFlagsRetainSourcesAliasesAndValidation|TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'request-configuration-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Windows shell request configuration
+        if: matrix.request-configuration && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainShellWindowsNative$/^(cmd|powershell|pwsh)$/^request_configuration$/^(placement_precedence_and_error|root_and_body_project|equals_empty|separate_empty|completion_stays_local)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'request-configuration-shell-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test request environment restoration
         if: matrix.environment
@@ -466,6 +487,17 @@ jobs:
                   model_required |= required_cases(root, children)
               suites["image-model-discovery-tests.jsonl"] = model_required
               strict_packages["image-model-discovery-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+
+          if os.environ["RUNNER_OS"] == "Linux":
+              fish_examples = [
+                  f"copy_{surface}-help_image_example{location}"
+                  for surface in ["flag", "command"]
+                  for location in ["", "_from_another_directory"]
+              ]
+              suites["fish-image-help-tests.jsonl"] = required_cases(
+                  "TestMainFishImageHelpExamples",
+                  fish_examples + [f"{name}/explicit_inline_off_preserves_remembered_on" for name in fish_examples],
+              )
 
           if os.environ["CHECK_IMAGE_ORDER"] == "true":
               suites["image-command-order-tests.jsonl"] = required_cases(
@@ -895,6 +927,20 @@ jobs:
                   required_cases(root, children) for root, children in request_helper_cases.items()
               ))
               strict_packages["request-configuration-helper-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+              if os.environ["RUNNER_OS"] == "Windows":
+                  request_shell_root = "TestMainShellWindowsNative"
+                  request_shell_cases = [
+                      "placement_precedence_and_error", "root_and_body_project", "equals_empty",
+                      "separate_empty", "completion_stays_local",
+                  ]
+                  request_shell_tests = {request_shell_root}
+                  for shell in ["cmd", "powershell", "pwsh"]:
+                      request_shell_tests.add(f"{request_shell_root}/{shell}")
+                      request_shell_tests.update(required_cases(
+                          f"{request_shell_root}/{shell}/request_configuration", request_shell_cases,
+                      ))
+                  suites["request-configuration-shell-tests.jsonl"] = request_shell_tests
+                  strict_packages["request-configuration-shell-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
 
           if os.environ["CHECK_ENVIRONMENT"] == "true":
               suites["environment-tests.jsonl"] = required_cases(
@@ -926,7 +972,7 @@ jobs:
           for filename, required in suites.items():
               passed = set()
               package_passed = False
-              image_order_events = Counter()
+              exact_events = Counter()
               welcome_runs = Counter()
               welcome_passes = Counter()
               welcome_package = Counter()
@@ -936,13 +982,15 @@ jobs:
                   for line in events:
                       event = json.loads(line)
                       test = event.get("Test", "")
-                      if filename == "image-command-order-tests.jsonl":
+                      if filename in {"image-command-order-tests.jsonl", "fish-image-help-tests.jsonl"}:
+                          if event["Action"] == "build-fail":
+                              raise SystemExit(f"{filename}: unexpected build failure")
                           if event["Action"] == "build-output":
                               continue
                           if event.get("Package") != "github.com/openai/openai-cli/cmd/openai":
                               raise SystemExit(f"{filename}: unexpected package: {event.get('Package')}")
                           if event["Action"] in {"start", "run", "pass"}:
-                              image_order_events[event["Action"], test] += 1
+                              exact_events[event["Action"], test] += 1
                       if filename in strict_packages:
                           if event["Action"] == "build-fail":
                               raise SystemExit(f"{filename}: unexpected build failure")
@@ -993,8 +1041,9 @@ jobs:
               missing = required - passed
               unexpected = passed - required if filename in {
                   "dispatch-tests.jsonl", "bash-prefix-tests.jsonl", "files-tests.jsonl", "image-tests.jsonl",
-                  "image-command-order-tests.jsonl",
+                  "image-command-order-tests.jsonl", "fish-image-help-tests.jsonl",
                   "request-configuration-public-tests.jsonl", "request-configuration-helper-tests.jsonl",
+                  "request-configuration-shell-tests.jsonl",
                   "audio-tests.jsonl", "resource-tests.jsonl", "streaming-text-tests.jsonl",
                   "image-model-discovery-tests.jsonl",
                   "welcome-public-tests.jsonl",
@@ -1008,10 +1057,10 @@ jobs:
                   expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
                   if strict_events != expected_events:
                       raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
-              if filename == "image-command-order-tests.jsonl":
+              if filename in {"image-command-order-tests.jsonl", "fish-image-help-tests.jsonl"}:
                   expected_events = Counter({("start", ""): 1, ("pass", ""): 1})
                   expected_events.update({(action, test): 1 for action in ["run", "pass"] for test in required})
-                  if image_order_events != expected_events:
+                  if exact_events != expected_events:
                       raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
               print(f"{filename}: {len(passed) - children} roots and {children} children passed; no skips")
           PY

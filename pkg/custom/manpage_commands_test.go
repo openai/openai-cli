@@ -25,8 +25,8 @@ func manpageTestCommand(t *testing.T, dir string) (*cli.Command, *cli.Command) {
 		Name: "@manpages", Hidden: true, HideHelpCommand: true,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "output", Value: dir},
-			&cli.BoolFlag{Name: "text", Value: true},
-			&cli.BoolFlag{Name: "gzip", Value: true},
+			&cli.BoolFlag{Name: "text", Aliases: []string{"z"}, Value: true},
+			&cli.BoolFlag{Name: "gzip", Aliases: []string{"z"}, Value: true},
 		},
 		Action: func(context.Context, *cli.Command) error {
 			return errors.New("the generated action must not run")
