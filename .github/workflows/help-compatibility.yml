@@ -458,7 +458,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test ./cmd/openai -count=1 -timeout=2m -v -json \
+          go test ./internal/app -count=1 -timeout=2m -v -json \
             -run '^TestRequestConfiguration(RestoresEnvironment|LeavesOtherEnvironmentCasesUnchanged)$' \
             | tee "$RUNNER_TEMP/environment-tests.jsonl"
       - name: Test gallery cleanup
@@ -1167,6 +1167,7 @@ jobs:
                   "TestRequestConfigurationLeavesOtherEnvironmentCasesUnchanged",
                   ["valid_environment", "empty_environment", "unset_environment", "omitted_override", "empty_override"],
               )
+              strict_packages["environment-tests.jsonl"] = "github.com/openai/openai-cli/internal/app"
           if os.environ["CHECK_GALLERY"] == "true":
               suites["gallery-tests.jsonl"] = required_cases(
                   "TestCleanupPreservesMalformedMetadata",
@@ -1383,12 +1384,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-process.test') ./cmd/openai
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-app.test') ./internal/app
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go mod verify
           exit $LASTEXITCODE
       - name: Run compatibility checks in disposable Ubuntu WSL 1
         shell: pwsh
         timeout-minutes: 16
-        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') --process-binary (Join-Path $env:RUNNER_TEMP 'wsl-process.test') ${{ matrix.arguments }}
+        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') --process-binary (Join-Path $env:RUNNER_TEMP 'wsl-process.test') --app-binary (Join-Path $env:RUNNER_TEMP 'wsl-app.test') ${{ matrix.arguments }}
       - name: Reconcile the owned WSL distribution
         if: always()
         shell: pwsh

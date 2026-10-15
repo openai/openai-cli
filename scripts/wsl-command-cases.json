@@ -304,20 +304,6 @@
       "help/setup/text",
       "help/text"
     ],
-    "TestRequestConfigurationRestoresEnvironment": [
-      "success",
-      "setup_error",
-      "action_error",
-      "cancellation",
-      "panic"
-    ],
-    "TestRequestConfigurationLeavesOtherEnvironmentCasesUnchanged": [
-      "valid_environment",
-      "empty_environment",
-      "unset_environment",
-      "omitted_override",
-      "empty_override"
-    ],
     "TestMainHelpPresentationConcreteSyntaxAndLabels": [],
     "TestMainHelpExperienceCompleteMixedGroups": [],
     "TestMainReadableDefaultAndExplicitText": [
@@ -713,5 +699,21 @@
     ],
     "TestMainDispatchFiniteJSONListPreservesEventStream": [],
     "TestMainDispatchFiniteJSONListLargeRecord": []
+  },
+  "app": {
+    "TestRequestConfigurationRestoresEnvironment": [
+      "success",
+      "setup_error",
+      "action_error",
+      "cancellation",
+      "panic"
+    ],
+    "TestRequestConfigurationLeavesOtherEnvironmentCasesUnchanged": [
+      "valid_environment",
+      "empty_environment",
+      "unset_environment",
+      "omitted_override",
+      "empty_override"
+    ]
   }
 }
