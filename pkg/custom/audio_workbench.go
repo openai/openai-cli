@@ -95,6 +95,7 @@ type audioWorkbench struct {
 	resultAction               int
 	recoveryParent             string
 	infoTitle, infoText        string
+	commandToPrint             string
 	infoParent                 string
 	infoOffset                 int
 	recoveryInfo               *audioInformationState
@@ -423,6 +424,15 @@ func (m *audioWorkbench) updateModal(message tea.Msg, key string) tea.Cmd {
 		return m.updateRecovery(key)
 	}
 	if m.modal == "info" {
+		if m.infoTitle == audioCommandTitle && key == "ctrl+p" {
+			if _, omit := fileReceiptRequestOptions(m.command.Root()); omit {
+				return nil
+			}
+			m.commandToPrint = m.commandPreview()
+			m.quit = true
+			m.stopPlayback()
+			return tea.Quit
+		}
 		m.infoOffset = audioScrollOffset(m.infoOffset, len(m.infoRows()), m.informationHeight(), key)
 		return nil
 	}

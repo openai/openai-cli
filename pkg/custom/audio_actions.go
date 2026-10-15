@@ -279,7 +279,13 @@ func (m *audioWorkbench) informationView() tea.View {
 	start := audioScrollOffset(m.infoOffset, len(rows), height, "")
 	lines := []string{m.strong().Render(m.infoTitle), ""}
 	lines = append(lines, rows[start:min(len(rows), start+height)]...)
-	lines = append(lines, "", m.muted().Render("↑↓ scroll · Esc back"))
+	footer := "↑↓ scroll · Esc back"
+	if m.infoTitle == audioCommandTitle {
+		if _, omit := fileReceiptRequestOptions(m.command.Root()); !omit {
+			footer = "↑↓ · Ctrl+P print/exit · Esc back"
+		}
+	}
+	lines = append(lines, "", m.muted().Render(footer))
 	return tea.NewView(m.fitAudio(lines))
 }
 

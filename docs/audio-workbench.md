@@ -36,6 +36,11 @@ The form keeps command text and help inside More actions.
 Show command opens a vertically scrollable Bash/zsh command.
 Up/Down and PageUp/PageDown scroll it. Home/End select its start or end.
 Enter inside this view never generates speech.
+Ctrl+P prints the complete command after frame cleanup and mode restoration, then exits without generating speech.
+Copy the printed command from the terminal transcript for Bash or zsh.
+The form's wrapped preview remains available for inspection.
+A prior failed action keeps its error and unsuccessful exit status, even when printing succeeds.
+Cancellation or cleanup failures detected before printing prevent output. Later output or closure failures still exit unsuccessfully.
 The command preserves supported project, organization, and endpoint overrides.
 Private credential overrides suppress the command instead of exposing their values.
 The editors normalize line endings, expand tabs, and remove unsupported control and replacement characters.

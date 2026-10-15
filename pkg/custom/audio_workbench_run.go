@@ -18,10 +18,12 @@ import (
 )
 
 func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.ActionFunc, store audiohistory.Store, input, output *os.File) (resultErr error) {
+	var commandText string
 	ctx, stopSignals := downloadSignalContext(parent)
-	defer stopSignals()
 	signalContext := ctx
 	defer func() {
+		// Reap the watcher after output closure, then preserve any observed signal status.
+		stopSignals()
 		var interrupted *downloadSignalError
 		if errors.As(context.Cause(signalContext), &interrupted) {
 			resultErr = errors.Join(cli.Exit("", interrupted.exitCode), resultErr)
@@ -42,7 +44,12 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 		return audioFailure("Could not prepare terminal output.", err)
 	}
 	defer func() {
-		resultErr = errors.Join(resultErr, audioFailureIf("Could not close terminal output.", terminal.Close()))
+		err := audioFailureIf("Could not close terminal output.", terminal.Close())
+		resultErr = errors.Join(resultErr, err)
+	}()
+	// Registered before native restoration so printing runs after it, but before Close.
+	defer func() {
+		resultErr = errors.Join(resultErr, printAudioCommand(signalContext, terminal, commandText))
 	}()
 	inputState, err := term.GetState(input.Fd())
 	if err != nil {
@@ -53,7 +60,11 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 		return err
 	}
 	defer func() {
-		resultErr = errors.Join(resultErr, term.Restore(input.Fd(), inputState), term.Restore(output.Fd(), outputState))
+		err := errors.Join(term.Restore(input.Fd(), inputState), term.Restore(output.Fd(), outputState))
+		if err != nil {
+			commandText = ""
+		}
+		resultErr = errors.Join(resultErr, err)
 	}()
 	console := uv.NewConsole(input, output, os.Environ())
 	if _, err = console.MakeRaw(); err != nil {
@@ -96,14 +107,33 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 	<-listenerDone
 	writeErr := painter.Stop()
 	cleanupErr := closeTokenizerEditorFrame(terminal, inline.close(), m.exitCode != 0 || contextErr != nil)
-	resultErr = audioFailureIf("Could not finish the audio terminal display.", errors.Join(writeErr, inline.err, cleanupErr))
+	sessionErr := errors.Join(runErr, contextErr, audioFailureIf("Could not finish the audio terminal display.", errors.Join(writeErr, inline.err, cleanupErr)))
 	if m.exitCode != 0 {
-		return errors.Join(resultErr, cli.Exit("", m.exitCode))
+		return errors.Join(cli.Exit("", m.exitCode), sessionErr)
 	}
-	if resultErr != nil {
+	resultErr = errors.Join(m.lastErr, sessionErr)
+	if sessionErr != nil {
 		return resultErr
 	}
-	return errors.Join(m.lastErr, runErr, contextErr)
+	// A prior action error remains observable even when printing is successful.
+	commandText = m.commandToPrint
+	return resultErr
+}
+
+// Print after frame cleanup and native mode restoration, using the owned cancellable writer.
+func printAudioCommand(ctx context.Context, output tokenizerFrameOutput, commandText string) error {
+	if commandText == "" {
+		return nil
+	}
+	if err := downloadContextError(ctx); err != nil {
+		return err
+	}
+	text := commandText + "\n"
+	written, err := output.WriteContext(ctx, []byte(text))
+	if written != len(text) && err == nil {
+		err = io.ErrShortWrite
+	}
+	return errors.Join(audioFailureIf("Could not print the audio command.", err), downloadContextError(ctx))
 }
 
 type audioWorkbenchWrapTimeout struct{}

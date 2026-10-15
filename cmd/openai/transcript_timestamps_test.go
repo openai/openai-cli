@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,7 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -331,5 +334,157 @@ func TestMainTranscriptTimestampsLargeText(t *testing.T) {
 		!strings.Contains(got.stdout, "Speaker: A") || !strings.Contains(got.stdout, "Start: 00:00.000 (0 s)") ||
 		!strings.Contains(got.stdout, "after large segment") || strings.Count(got.stdout, transcript) != 2 {
 		t.Fatalf("large aggregate or grouped segment lost: code=%d bytes=%d stderr=%q", got.code, len(got.stdout), got.stderr)
+	}
+}
+
+func TestMainTranscriptTimestampsWhisperMultipartContract(t *testing.T) {
+	const segment = `,"segments":[{"id":0,"start":0.125,"end":1.75,"text":"Hello world.","avg_logprob":-0.375}]`
+	const words = `,"words":[{"word":"Hello","start":0.125,"end":0.75},{"word":"world.","start":0.875,"end":1.75}]`
+	for _, tc := range []struct {
+		name, command, endpoint, task string
+		granularities                 []string
+		segments, words               bool
+	}{
+		{"segment timestamps", "transcribe", "/audio/transcriptions", "transcribe", []string{"segment"}, true, false},
+		{"word timestamps", "transcribe", "/audio/transcriptions", "transcribe", []string{"word"}, false, true},
+		{"both timestamp granularities", "transcribe", "/audio/transcriptions", "transcribe", []string{"segment", "word"}, true, true},
+		{"verbose translation", "translate", "/audio/translations", "translate", nil, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"task":"` + tc.task + `","language":"english","duration":1.875,"text":"Hello world."`
+			if tc.segments {
+				body += segment
+			}
+			if tc.words {
+				body += words
+			}
+			body += `}`
+			for _, format := range []string{"auto", "json"} {
+				t.Run(format, func(t *testing.T) {
+					// Synthetic bytes exercise multipart preservation without decoding audio.
+					upload := []byte("RIFF\x00\xff\r\nWAVE synthetic upload\x00")
+					path := filepath.Join(t.TempDir(), "meeting 世界.wav")
+					if err := os.WriteFile(path, upload, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					var requests atomic.Int32
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if count := requests.Add(1); count != 1 {
+							t.Errorf("one command sent %d requests", count)
+						}
+						if r.Method != http.MethodPost || r.URL.Path != tc.endpoint || r.URL.RawQuery != "" {
+							t.Errorf("request changed: %s %s", r.Method, r.URL.RequestURI())
+							http.Error(w, "unexpected synthetic request", http.StatusBadRequest)
+							return
+						}
+						if err := r.ParseMultipartForm(1 << 20); err != nil {
+							t.Error(err)
+							http.Error(w, "invalid synthetic multipart", http.StatusBadRequest)
+							return
+						}
+						defer func() {
+							if err := r.MultipartForm.RemoveAll(); err != nil {
+								t.Error(err)
+							}
+						}()
+						for field, want := range map[string][]string{
+							"model":                     {"whisper-1"},
+							"response_format":           {"verbose_json"},
+							"timestamp_granularities[]": tc.granularities,
+						} {
+							if got := r.MultipartForm.Value[field]; !slices.Equal(got, want) {
+								t.Errorf("multipart %s = %q; want %q", field, got, want)
+							}
+						}
+						for field := range r.MultipartForm.Value {
+							if strings.HasPrefix(field, "timestamp_granularities") && field != "timestamp_granularities[]" {
+								t.Errorf("unexpected timestamp field %q", field)
+							}
+						}
+						stream := r.MultipartForm.Value["stream"]
+						if len(stream) != 0 && (tc.command == "translate" || !slices.Equal(stream, []string{"false"})) {
+							t.Errorf("finite %s sent unexpected stream values %q", tc.command, stream)
+						}
+						if files := r.MultipartForm.File; len(files) != 1 || len(files["file"]) != 1 {
+							t.Errorf("expected exactly one file upload; got %v", files)
+							http.Error(w, "unexpected synthetic upload count", http.StatusBadRequest)
+							return
+						}
+						file, header, err := r.FormFile("file")
+						if err != nil {
+							t.Error(err)
+							http.Error(w, "missing synthetic upload", http.StatusBadRequest)
+							return
+						}
+						received, readErr := io.ReadAll(file)
+						closeErr := file.Close()
+						if readErr != nil || closeErr != nil || !bytes.Equal(received, upload) || header.Filename != filepath.Base(path) {
+							t.Errorf("upload changed: filename=%q bytes=%x read=%v close=%v", header.Filename, received, readErr, closeErr)
+						}
+						w.Header().Set("Content-Type", "application/json")
+						if _, err := io.WriteString(w, body); err != nil {
+							t.Error(err)
+						}
+					}))
+					t.Cleanup(server.Close)
+					args := []string{"--format", format, "audio", tc.command, "--file", path, "--model", "whisper-1", "--response-format", "verbose_json"}
+					for _, granularity := range tc.granularities {
+						args = append(args, "--timestamp-granularity", granularity)
+					}
+					got := runReadableCommand(t, server, args...)
+					if count := requests.Load(); count != 1 {
+						t.Fatalf("one command sent %d requests; want one", count)
+					}
+					if got.code != 0 || got.stderr != "" {
+						t.Fatalf("supported Whisper request failed: %+v", got)
+					}
+					if format == "json" {
+						// UseNumber also verifies segment and word numbers remain JSON numbers.
+						assertReadableAudioJSON(t, got.stdout, body)
+						return
+					}
+					if !strings.HasPrefix(got.stdout, "Hello world.\n") {
+						t.Fatalf("complete transcript missing: %q", got.stdout)
+					}
+					for _, metadata := range []string{"Task: " + tc.task, "Language: english", "Duration: 1.875"} {
+						if !strings.Contains(got.stdout, metadata) {
+							t.Errorf("missing metadata %q: %q", metadata, got.stdout)
+						}
+					}
+					if tc.segments {
+						for _, field := range []string{"Segments:", "ID: 0", "Start: 00:00.125 (0.125 s)", "End: 00:01.750 (1.75 s)", "Text: Hello world.", "Avg logprob: -0.375"} {
+							if !strings.Contains(got.stdout, field) {
+								t.Errorf("missing segment field %q: %q", field, got.stdout)
+							}
+						}
+						if strings.Count(got.stdout, "Hello world.") != 2 {
+							t.Errorf("aggregate or grouped segment text lost: %q", got.stdout)
+						}
+					}
+					if tc.words {
+						section := strings.Index(got.stdout, "Words:\n")
+						if section < 0 {
+							t.Fatalf("word details missing: %q", got.stdout)
+						}
+						wordOutput := got.stdout[section:]
+						for _, word := range []struct{ text, start, end string }{{"Hello", "0.125", "0.75"}, {"world.", "0.875", "1.75"}} {
+							position := strings.Index(wordOutput, "Word: "+word.text+"\n")
+							if position < 0 {
+								t.Fatalf("word %q missing: %q", word.text, wordOutput)
+							}
+							block := wordOutput[position:]
+							if next := strings.Index(block, "\n\n"); next >= 0 {
+								block = block[:next]
+							}
+							for _, field := range []string{"Start: " + word.start, "End: " + word.end} {
+								if !strings.Contains(block, field) {
+									t.Errorf("word %q lost field %q: %q", word.text, field, block)
+								}
+							}
+						}
+					}
+				})
+			}
+		})
 	}
 }

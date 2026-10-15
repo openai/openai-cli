@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -272,4 +274,166 @@ func TestAudioCommandPreviewSupportsInformationScrollKeys(t *testing.T) {
 	}
 	require.Zero(t, model.infoOffset)
 	require.Equal(t, first, model.View().Content)
+}
+
+func TestAudioCommandPrintNativeShellPreservesPrintedBytes(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh"} {
+		for _, width := range []int{40, 90} {
+			t.Run(fmt.Sprintf("%s/%d", shell, width), func(t *testing.T) {
+				binary, directory := audioPreviewExecutable(t, "openai preview's binary")
+				model := audioPreviewModel(t, audioShellQuote(binary), "--project=proj synthetic's", "--organization=org-世界", "--base-url=https://example.invalid/proxy/v1")
+				model.Update(tea.WindowSizeMsg{Width: width, Height: 12})
+				// At width 40, this input crosses a display boundary inside quoted JSON.
+				model.input.SetValue(strings.Repeat("A", 60) + "\n世界 says 'hello' @literal \\@literal")
+				model.instructions.SetValue("Preserve   spaces and 'quotes'.")
+				preview := model.commandPreview()
+				model.openInformation(audioCommandTitle, preview, "more")
+				require.Greater(t, len(model.infoRows()), 1)
+				require.Contains(t, ansi.Strip(model.View().Content), "Ctrl+P print/exit")
+				require.Nil(t, audioReviewKey(model, tea.KeyEnter))
+				require.False(t, model.quit)
+				_, quit := model.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+				require.NotNil(t, quit)
+				require.IsType(t, tea.QuitMsg{}, quit())
+				require.True(t, model.quit)
+				require.False(t, model.busy)
+				require.Zero(t, model.exitCode)
+				require.Equal(t, preview, model.commandToPrint)
+				var output audioCommandBuffer
+				require.NoError(t, printAudioCommand(t.Context(), &output, model.commandToPrint))
+				require.Equal(t, preview+"\n", output.String())
+				capture := executeAudioPreview(t, shell, output.String(), directory)
+				require.Equal(t, []string{"--project=proj synthetic's", "--organization=org-世界", "--base-url=https://example.invalid/proxy/v1", "audio", "speak", "--output", "speech.wav"}, capture.args)
+				require.Equal(t, "true", capture.protected)
+				assertAudioPreviewJSON(t, model, capture.stdin)
+				_, queued := model.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+				require.Nil(t, queued)
+				require.False(t, model.busy)
+			})
+		}
+	}
+}
+
+func TestAudioCommandPrintPreservesGuardsAndCancellation(t *testing.T) {
+	for _, mode := range []string{"form", "help", "busy", "tiny", "private", "cancel"} {
+		t.Run(mode, func(t *testing.T) {
+			flags := []string{}
+			if mode == "private" {
+				flags = append(flags, "--header=Authorization: Bearer fake-private")
+			}
+			model := audioPreviewModel(t, "openai", flags...)
+			model.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+			model.input.SetValue("Synthetic print guard")
+			model.openInformation(audioCommandTitle, model.commandPreview(), "more")
+			switch mode {
+			case "form":
+				model.modal = ""
+			case "help":
+				model.infoTitle = "Help"
+			case "busy":
+				model.busy = true
+			case "tiny":
+				model.Update(tea.WindowSizeMsg{Width: 39, Height: 11})
+			case "private":
+				require.NotContains(t, model.View().Content, "Ctrl+P")
+			case "cancel":
+				_, quit := model.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+				require.NotNil(t, quit)
+				require.Equal(t, 130, model.exitCode)
+			}
+			model.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+			require.Empty(t, model.commandToPrint)
+			require.Equal(t, mode == "cancel", model.quit)
+		})
+	}
+}
+
+func TestAudioCommandPrintPreservesFailedActionAndStopsPlayback(t *testing.T) {
+	model := audioPreviewModel(t, "openai")
+	model.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	model.input.SetValue("Synthetic retry command")
+	model.lastErr = errors.New("synthetic prior API failure")
+	originalError := model.lastErr
+	playbackCanceled := false
+	model.playing = true
+	model.playCancel = func() { playbackCanceled = true }
+	model.openInformation(audioCommandTitle, model.commandPreview(), "more")
+	_, quit := model.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	require.NotNil(t, quit)
+	require.IsType(t, tea.QuitMsg{}, quit())
+	require.True(t, playbackCanceled)
+	require.False(t, model.playing)
+	require.Same(t, originalError, model.lastErr)
+	require.NotEmpty(t, model.commandToPrint)
+}
+
+type audioCommandBuffer struct{ bytes.Buffer }
+
+func (output *audioCommandBuffer) WriteContext(_ context.Context, data []byte) (int, error) {
+	return output.Write(data)
+}
+
+type audioCommandWriteFunc func(context.Context, []byte) (int, error)
+
+func (write audioCommandWriteFunc) WriteContext(ctx context.Context, data []byte) (int, error) {
+	return write(ctx, data)
+}
+
+func TestAudioCommandPrintOutputFailuresAndCancellation(t *testing.T) {
+	failure := errors.New("synthetic output failure")
+	for _, test := range []struct {
+		name string
+		n    int
+		err  error
+		want error
+	}{
+		{"failure", 0, failure, failure},
+		{"partial_failure", 3, failure, failure},
+		{"short_write", 3, nil, io.ErrShortWrite},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			writer := audioCommandWriteFunc(func(context.Context, []byte) (int, error) { return test.n, test.err })
+			require.ErrorIs(t, printAudioCommand(t.Context(), writer, "synthetic-command"), test.want)
+		})
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	var output audioCommandBuffer
+	require.ErrorIs(t, printAudioCommand(ctx, &output, "synthetic-command"), context.Canceled)
+	require.Empty(t, output.String())
+	require.NoError(t, printAudioCommand(t.Context(), &output, ""))
+	require.Empty(t, output.String())
+	ctx, cancel = context.WithCancel(t.Context())
+	defer cancel()
+	writer := audioCommandWriteFunc(func(_ context.Context, data []byte) (int, error) {
+		cancel()
+		return len(data), nil
+	})
+	require.ErrorIs(t, printAudioCommand(ctx, writer, "synthetic-command"), context.Canceled)
+}
+
+func TestAudioCommandPrintCancelsBlockedContextWriter(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	entered := make(chan context.Context, 1)
+	finished := make(chan error, 1)
+	writer := audioCommandWriteFunc(func(received context.Context, _ []byte) (int, error) {
+		entered <- received
+		<-received.Done()
+		return 0, received.Err()
+	})
+	go func() { finished <- printAudioCommand(ctx, writer, "synthetic-command") }()
+	select {
+	case received := <-entered:
+		require.Same(t, ctx, received, "printing must use the retained signal context")
+	case <-time.After(5 * time.Second):
+		t.Fatal("print did not enter the context writer")
+	}
+	cancel()
+	select {
+	case err := <-finished:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("print did not stop after cancellation")
+	}
 }

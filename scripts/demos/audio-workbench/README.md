@@ -9,6 +9,7 @@ Read these references before execution or review:
 - `/Users/vguvvala/code/cli-work/DESIGN.md`
 - `/Users/vguvvala/code/cli-work/STATUS.md`
 - `/Users/vguvvala/code/cli-work/PRE_PUSH_REVIEW.md`
+- `/Users/vguvvala/code/cli-work/COMPATIBILITY.md`
 
 Request a PTY reservation before running either command below.
 Keep evidence outside the repository.
@@ -245,3 +246,32 @@ Keep these evidence limits explicit:
 - Preserve earlier failed captures when rerunning corrected fixture checks.
 - A stopped-reader pass does not establish visual reset or row cleanup under permanent output backpressure.
 - Source and fixture changes require affected reruns before screenshots or result claims use the new source identity.
+
+Print command lifecycle
+
+Use `--case print-command` with a fresh evidence directory and the exact candidate binary.
+This focused case needs Bash and the existing private-PTY reservation.
+It does not need asciinema, a navigation observer, or native desktop input.
+Use the existing bounded supervisor with a120-second outer limit.
+The case allows60 seconds for two CLI sessions. Existing ownership cleanup retains its separate bounded waits.
+
+Both sessions use40×12, fake credentials, loopback, and a private HOME.
+The checker selects the actual binary through an isolated `openai` symlink.
+It enters60 ASCII `A` characters and opens Show command.
+Enter must preserve the form and make no request.
+The first session uses Ctrl+P. The second uses Ctrl+C.
+The checker requires exit0 and130 respectively.
+
+The Bash parent stays alive after the CLI exits.
+The checker compares native terminal modes before releasing that parent.
+It requires final cursor and bracketed-paste cleanup before the printed command.
+It compares complete command bytes against an independent synthetic request specification.
+Only the terminal's original newline translation is accounted for.
+The checker preserves raw output, casts, emitted bytes, process statuses, and owned-process cleanup records.
+Both sessions must make zero accepted or rejected requests and create no audio History.
+A forced harness cleanup fails the case.
+
+This case verifies public process behavior and terminal restoration.
+It does not verify actual graphical-terminal selection, clipboard bytes, fonts, or audible playback.
+The Go Bash/zsh recorder tests separately execute printed command bytes through both shells.
+Keep unavailable platforms and deferred restore/close fault injection explicit.

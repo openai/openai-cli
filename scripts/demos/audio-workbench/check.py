@@ -38,7 +38,7 @@ def main():
     parser.add_argument("--repo-root", type=Path, default=os.environ.get("DEMO_REPO_ROOT"))
     parser.add_argument("--case", choices=("workflow", "compact", "navigation", "navigation-compact", "failure", "failure-compact",
                                           "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
-                                          "stopped-reader", "startup", "all"), default="all")
+                                          "stopped-reader", "startup", "print-command", "all"), default="all")
     parser.add_argument("--theme", choices=("dark", "light", "no-color"), default="dark")
     parser.add_argument("--asciinema", default=shutil.which("asciinema"))
     parser.add_argument("--navigation-observer", type=Path,
@@ -53,7 +53,7 @@ def main():
     failure_cases = ("failure", "failure-compact")
     observed_cases = (*navigation_cases, *failure_cases)
     needs_navigation_observer = args.case in (*observed_cases, "all")
-    if not args.asciinema and args.case not in observed_cases:
+    if not args.asciinema and args.case not in (*observed_cases, "print-command"):
         raise SystemExit("asciinema is required for real terminal-screen reconstruction")
     if not re.fullmatch(r"[0-9a-f]{40}", args.source):
         raise SystemExit("source must be a complete commit identity")
@@ -949,9 +949,108 @@ def main():
         result.update(pass_=True, exit_status=0, requests=[])
         result["pass"] = result.pop("pass_")
 
+    def print_command_case(private, env, programs, server, result):
+        # Keep the existing native parent alive while checking restored termios.
+        # This case reads protocol bytes directly; it makes no appearance claim.
+        deadline = time.monotonic() + 60
+        on_path = programs / "openai"
+        on_path.symlink_to(args.binary.resolve())
+        assert os.path.samefile(on_path, args.binary), "PATH selected a different executable"
+        command_env = dict(env, AUDIO_EXPECTED_COMMAND=str(on_path), SHELL="/bin/bash")
+        parent_script = ('[ "$(command -v openai)" = "$AUDIO_EXPECTED_COMMAND" ] || exit 90\n'
+                         'openai audio speak\naudio_status=$?\n'
+                         'printf "\\n__AUDIO_PRINT_STATUS__=%s\\n" "$audio_status"\n'
+                         'IFS= read -r audio_release\nexit "$audio_status"\n')
+        cache = private / "Library/Caches" if sys.platform == "darwin" else Path(env["XDG_CACHE_HOME"])
+        history = cache / "openai/audio"
+        assert not history.exists(), "Print case requires fresh isolated History"
+        text = "A" * 60
+        body = {"input": text, "instructions": fixture.DEFAULT_INSTRUCTIONS,
+                "model": "gpt-4o-mini-tts", "response_format": "wav", "speed": 1, "voice": "coral"}
+        body_text = json.dumps(body, sort_keys=True, separators=(",", ":"))
+        expected = ("printf %s '" + body_text + "' | OPENAI_UNTRUSTED_STDIN=true "
+                    "openai audio speak --output speech.wav").encode()
+        result["commands"] = []
+        result["case_deadline_seconds"] = 60
+        result["coverage_limit"] = "Private PTY lifecycle and emitted bytes; no native clipboard or appearance claim."
+
+        def remaining():
+            budget = deadline - time.monotonic()
+            assert budget > 0, "Print case exceeded its sixty-second execution deadline"
+            return min(5, budget)
+
+        def zero_requests():
+            with server.lock:
+                handlers = len(server.handler_threads)
+            assert handlers == 0 and not server.records and not server.failures, "Printing reached the speech fixture"
+            assert not history.exists(), "Printing created private audio History"
+
+        for action, expected_status in (("print", 0), ("cancel", 130)):
+            assert deadline - time.monotonic() >= 5, "Insufficient time to launch another print session"
+            child = Terminal("/bin/bash", ["--noprofile", "--norc", "-c", parent_script], command_env,
+                             width=40, height=12)
+            try:
+                child.wait("Text to speech", timeout=remaining())
+
+                def send_and_wait(keys, marker):
+                    offset = len(child.raw)
+                    child.send(keys)
+                    child.wait(marker, timeout=remaining(), after=offset)
+                    zero_requests()
+
+                paste(child, text)
+                send_and_wait(b"\t\t" + picker.END, "More actions")
+                send_and_wait(b"\r", "History")
+                send_and_wait(picker.DOWN * 3, "Show command")
+                send_and_wait(b"\r", "Ctrl+P print/exit")
+                child.send(b"\r")
+                drain(child, min(.2, remaining()))
+                zero_requests()
+                assert child.child.poll() is None, "Enter unexpectedly exited Show command"
+                offset = len(child.raw)
+                child.send(b"\x10" if action == "print" else b"\x03")
+                child.wait("__AUDIO_PRINT_STATUS__=", timeout=remaining(), after=offset)
+                drain(child, min(.1, remaining()))
+                statuses = re.findall(rb"__AUDIO_PRINT_STATUS__=(\d+)", child.raw[offset:])
+                assert statuses == [str(expected_status).encode()], "Print/cancel changed the CLI exit status"
+                assert child.child.poll() is None, "Native parent exited before the restoration check"
+                check_live_parent_terminal(child, True)
+                zero_requests()
+                paste_off = child.raw.rfind(b"\x1b[?2004l")
+                cursor_on = child.raw.rfind(b"\x1b[?25h")
+                assert offset <= paste_off < cursor_on, "Final frame cleanup did not precede command output"
+                status_start = child.raw.index(b"__AUDIO_PRINT_STATUS__=", cursor_on)
+                emitted = bytes(child.raw[cursor_on + len(b"\x1b[?25h"):status_start])
+                newline = (b"\r\n" if child.initial[1] & termios.OPOST and child.initial[1] & termios.ONLCR
+                           else b"\n")
+                # The parent's status marker contributes one leading newline.
+                want = expected + newline * 2 if action == "print" else newline
+                assert emitted == want, "Final command bytes changed or printing preceded cleanup"
+                (args.output / ("print-command-" + action + "-emitted.bin")).write_bytes(emitted)
+                child.send(b"release-parent\n")
+                while child.child.poll() is None:
+                    child.read(min(.03, remaining()))
+                child.child.wait(timeout=1)
+                drain_after_exit(child, result)
+                assert child.child.returncode == expected_status, "Native parent changed the CLI exit status"
+                result["commands"].append({"action": action, "exit_status": expected_status,
+                                           "native_modes_checked_before_parent_release": True,
+                                           "frame_cleanup_before_command": True,
+                                           "emitted_sha256": hashlib.sha256(emitted).hexdigest(),
+                                           "printed_command_bytes": len(expected) if action == "print" else 0,
+                                           "requests": 0, "history_created": False})
+            finally:
+                try:
+                    child.save(args.output / ("print-command-" + action))
+                finally:
+                    child.close()
+        zero_requests()
+        result.update(exit_status=0, requests=[], initial_size=[40, 12], pass_=True)
+        result["pass"] = result.pop("pass_")
+
     cases = ("workflow", "compact", "navigation", "navigation-compact", "failure", "failure-compact",
              "ctrl-c", "sigterm", "busy-ctrl-c", "busy-sigterm",
-             "stopped-reader", "startup") if args.case == "all" else (args.case,)
+             "stopped-reader", "startup", "print-command") if args.case == "all" else (args.case,)
     with harness_lifecycle():
         for case in cases:
             result = {"case": case, "states": [], "pass": False}
@@ -1004,6 +1103,9 @@ def main():
                 try:
                     if case == "startup":
                         startup_case(private, env, programs, server, result)
+                        continue
+                    if case == "print-command":
+                        print_command_case(private, env, programs, server, result)
                         continue
                     if navigation:
                         seeded_entry = seed_history(private, env)
