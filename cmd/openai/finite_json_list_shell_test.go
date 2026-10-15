@@ -90,7 +90,7 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 			// Unchanged native producers distinguish shell text conversion from
 			// CLI behavior. Only the Unicode filename may vary in PowerShell.
 			controls := make(map[bool][]map[string]any, 2)
-			redirectEncoding := ""
+			controlEncodings := make(map[bool]string, 2)
 			for _, pipeline := range []bool{false, true} {
 				directory := t.TempDir()
 				fixture := filepath.Join(directory, "native-control.json")
@@ -109,6 +109,9 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 					t.Fatalf("native producer control failed: pipeline=%t result=%+v", pipeline, got)
 				}
 				data, encoding := readFiniteJSONListShellText(t, output)
+				if pipeline {
+					_, encoding = readFiniteJSONListShellText(t, output+".stdin")
+				}
 				observed, err := finiteJSONListShellRecords(data, "json")
 				if err != nil {
 					t.Fatalf("native producer control is not a complete array: %v", err)
@@ -133,9 +136,7 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 					}
 				}
 				controls[pipeline] = observed
-				if !pipeline {
-					redirectEncoding = encoding
-				}
+				controlEncodings[pipeline] = encoding
 				t.Logf("native control: pipeline=%t encoding=%s Unicode-preserved=%t", pipeline, encoding, reflect.DeepEqual(observed, original))
 			}
 			for _, test := range []struct {
@@ -193,8 +194,11 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 						t.Fatalf("shell result changed: result=%+v requests=%d", got, requests.Load())
 					}
 					data, encoding := readFiniteJSONListShellText(t, output)
-					if !test.pipeline && encoding != redirectEncoding {
-						t.Fatalf("CLI redirection encoding=%s; native control=%s", encoding, redirectEncoding)
+					if test.pipeline {
+						_, encoding = readFiniteJSONListShellText(t, output+".stdin")
+					}
+					if encoding != controlEncodings[test.pipeline] {
+						t.Fatalf("CLI transport encoding=%s; native control=%s", encoding, controlEncodings[test.pipeline])
 					}
 					if test.failure {
 						assertFiniteJSONListShellPartial(t, data, controls[false][0])
@@ -421,8 +425,18 @@ func TestFiniteJSONListShellProcess(t *testing.T) {
 		var data []byte
 		data, err = io.ReadAll(os.Stdin)
 		if err == nil {
+			// Keep native-shell bytes before decoding its observed text encoding.
+			// A shell may add a BOM even when its native producer writes none.
+			err = os.WriteFile(args[1]+".stdin", data, 0600)
+		}
+		if err == nil {
+			var encoding string
+			data, encoding = readFiniteJSONListShellText(t, args[1]+".stdin")
 			var records []map[string]any
 			records, err = finiteJSONListShellRecords(data, strings.TrimPrefix(args[0], "parse-"))
+			if err != nil {
+				err = fmt.Errorf("native pipeline encoding=%s decoded prefix=% x: %w", encoding, data[:min(8, len(data))], err)
+			}
 			if err == nil {
 				data, err = json.Marshal(records)
 			}
