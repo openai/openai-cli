@@ -33,10 +33,14 @@ import pathlib, sys
 root = pathlib.Path(sys.argv[1])
 before = (root / "before.txt").read_text()
 after = (root / "after.txt").read_text()
-assert "No results." in before
-assert "No matches returned." in after
-assert "Indexing state was not checked." in after
-assert "No results." not in after
+if "No results." not in before:
+    raise SystemExit("Before capture is missing: No results.")
+if "No matches returned." not in after:
+    raise SystemExit("After capture is missing: No matches returned.")
+if "Indexing state was not checked." not in after:
+    raise SystemExit("After capture is missing: Indexing state was not checked.")
+if "No results." in after:
+    raise SystemExit("After capture contains the old message: No results.")
 PY
 demo_assemble_capture 200 before after
 printf 'Recorded vector-store search in %s\n' "$demo_output"
