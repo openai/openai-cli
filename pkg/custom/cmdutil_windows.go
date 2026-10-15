@@ -5,6 +5,7 @@ package custom
 import (
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -14,18 +15,25 @@ var (
 )
 
 func isPipedDataAvailableOSSpecific() bool {
-	// On Windows, unix.Poll is not available. Use PeekNamedPipe to check if data is available
-	// on the pipe without consuming it.
-	var available uint32
-	r, _, _ := procPeekNamedPipe.Call(
-		os.Stdin.Fd(),
-		0,
-		0,
-		0,
-		uintptr(unsafe.Pointer(&available)),
-		0,
-	)
-	return r != 0 && available > 0
+	return pipedDataAvailableWindows(os.Stdin.Fd())
+}
+
+func pipedDataAvailableWindows(fd uintptr) bool {
+	// Match Unix's short probe window: a shell producer may not have written
+	// when the CLI starts. Keep this bounded for terminals with an empty,
+	// open stdin pipe, and never consume bytes while probing.
+	deadline := time.Now().Add(10 * time.Millisecond)
+	for {
+		var available uint32
+		r, _, _ := procPeekNamedPipe.Call(fd, 0, 0, 0, uintptr(unsafe.Pointer(&available)), 0)
+		if r == 0 || available > 0 {
+			return r != 0 && available > 0
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func streamOutputOSSpecific(label string, generateOutput func(w *os.File) error) error {

@@ -363,7 +363,7 @@ class CommandContractTests(unittest.TestCase):
         self.assertEqual(checksum, hashlib.sha256(self.raw).hexdigest())
         self.assertEqual(set(suites), {"custom", "process"})
         self.assertEqual((len(suites["custom"]), len(self.names(suites["custom"]))), (10, 71))
-        self.assertEqual((len(suites["process"]), len(self.names(suites["process"]))), (59, 561))
+        self.assertEqual((len(suites["process"]), len(self.names(suites["process"]))), (67, 589))
         self.assertEqual(suites["process"]["TestMainBashRequestConfiguration"], [
             "placement_precedence_and_error", "root_and_body_project", "equals_empty",
             "separate_empty", "completion_stays_local",
@@ -377,7 +377,7 @@ class CommandContractTests(unittest.TestCase):
         self.assertIn('"synthetic_private_response_detail"/--format-error/json',
                       suites["process"]["TestMainAPIErrorsWithUnexpectedJSONShapes"])
         selected = set(suites["custom"]) | set(suites["process"])
-        self.assertEqual(len(selected), 69)
+        self.assertEqual(len(selected), 77)
         self.assertFalse(set(suites["custom"]) & set(suites["process"]))
         self.assertFalse(selected & (set(pilot.PROCESS_CASES) | {pilot.ROOT}))
         self.assertFalse(selected & {"TestMainDispatchProcess", "TestMainWrappedExitCodeProcess",
