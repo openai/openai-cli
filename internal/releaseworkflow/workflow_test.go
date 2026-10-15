@@ -103,7 +103,7 @@ func TestWorkflowPermissionsRemainLeastPrivileged(t *testing.T) {
 	}
 
 	ciJobs := readWorkflow(t, "ci.yml").Jobs
-	for _, name := range []string{"lint", "macos-uploads", "build-artifacts", "test"} {
+	for _, name := range []string{"lint", "macos-uploads", "build-artifacts", "test", "test-linux", "test-windows-compile"} {
 		if ciJobs[name].Permissions == nil || len(ciJobs[name].Permissions) != 0 {
 			t.Errorf("CI job %s permissions changed: %v", name, ciJobs[name].Permissions)
 		}
@@ -747,7 +747,7 @@ assert link.existing_snapshot(api, context, 7) is False
 
 func TestCandidateJobsUseOnlySameRunSourceArtifacts(t *testing.T) {
 	for filename, names := range map[string][]string{
-		"ci.yml":                 {"lint", "test", "build-artifacts", "macos-uploads"},
+		"ci.yml":                 {"lint", "test-linux", "test-windows-compile", "build-artifacts", "macos-uploads"},
 		"help-compatibility.yml": {"help"}, "codeql.yml": {"analyze"},
 	} {
 		jobs := readWorkflow(t, filename).Jobs
@@ -860,5 +860,53 @@ class GitHub:
 				t.Fatalf("unexpected staged artifact: %v", artifactErr)
 			}
 		})
+	}
+}
+
+func TestParallelTestGateRequiresBothJobs(t *testing.T) {
+	job := readWorkflow(t, "ci.yml").Jobs["test"]
+	if got := fmt.Sprint(job.Needs); got != "[test-linux test-windows-compile]" || job.If != "always()" {
+		t.Fatalf("test gate needs=%v if=%q, want both test jobs and always()", job.Needs, job.If)
+	}
+	_, step := requireStep(t, job, "Require successful tests and Windows compilation")
+	if step.Env["LINUX_RESULT"] != "${{ needs.test-linux.result }}" || step.Env["WINDOWS_RESULT"] != "${{ needs.test-windows-compile.result }}" {
+		t.Fatalf("test gate env=%v, want both dependency results", step.Env)
+	}
+	for _, linux := range []string{"success", "failure", "cancelled", "skipped", ""} {
+		for _, windows := range []string{"success", "failure", "cancelled", "skipped", ""} {
+			command := exec.Command("bash", "-c", step.Run)
+			command.Env = append(os.Environ(), "LINUX_RESULT="+linux, "WINDOWS_RESULT="+windows)
+			output, err := command.CombinedOutput()
+			wantSuccess := linux == "success" && windows == "success"
+			if (err == nil) != wantSuccess {
+				t.Errorf("test gate(%q, %q) success=%v, want %v: %s", linux, windows, err == nil, wantSuccess, output)
+			}
+		}
+	}
+}
+
+func TestArtifactBuildCacheIsSeparateAndRefreshable(t *testing.T) {
+	job := readWorkflow(t, "ci.yml").Jobs["build-artifacts"]
+	setupIndex, setup := requireStep(t, job, "Set up Go for artifact builds")
+	cacheIndex, cache := requireStep(t, job, "Cache artifact build dependencies and compilation")
+	bootstrapIndex, _ := requireStep(t, job, "Bootstrap")
+	buildIndex, _ := requireStep(t, job, "Run GoReleaser")
+	if setup.Uses != setupGoAction || setup.With["cache"] != false {
+		t.Errorf("artifact Go setup=%v, want pinned setup-go with default cache disabled", setup)
+	}
+	if !(setupIndex < cacheIndex && cacheIndex < bootstrapIndex && bootstrapIndex < buildIndex) {
+		t.Errorf("artifact setup/cache/bootstrap/build order=%v, want setup before restore before bootstrap before build", []int{setupIndex, cacheIndex, bootstrapIndex, buildIndex})
+	}
+	prefix := "artifact-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-"
+	if cache.With["key"] != prefix+"${{ github.sha }}" || strings.TrimSpace(fmt.Sprint(cache.With["restore-keys"])) != prefix {
+		t.Errorf("artifact cache inputs=%v, want revision-specific save and compatible artifact-only restore", cache.With)
+	}
+	if cache.Uses != "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830" {
+		t.Errorf("artifact cache action=%q, want reviewed cache action with success-only post-save", cache.Uses)
+	}
+	for _, step := range job.Steps {
+		if step.Uses == "./.github/actions/setup-go" {
+			t.Error("artifact build uses shared setup-go cache, want dedicated artifact cache only")
+		}
 	}
 }
