@@ -55,11 +55,11 @@ func TestMainVectorStoreSearchEmptyFormats(t *testing.T) {
 		{"default", vectorStoreNoMatches, nil},
 		{"auto", vectorStoreNoMatches, []string{"--format", "auto"}},
 		{"text", vectorStoreNoMatches, []string{"--format", "text"}},
-		{"json", "", []string{"--format", "json"}},
+		{"json", "[]\n", []string{"--format", "json"}},
 		{"jsonl", "", []string{"--format", "jsonl"}},
 		{"yaml", "", []string{"--format", "yaml"}},
 		{"pretty", "", []string{"--format", "pretty"}},
-		{"explore", "", []string{"--format", "explore"}},
+		{"explore", "[]\n", []string{"--format", "explore"}},
 		{"raw page", vectorStoreEmptySearch + "\n", []string{"--format", "raw"}},
 		{"extraction", "", []string{"--transform", "file_id"}},
 		{"raw extraction", "", []string{"--transform", "file_id", "--raw-output"}},
@@ -142,7 +142,10 @@ func TestMainVectorStoreSearchPreservesResults(t *testing.T) {
 			if format == "raw" {
 				require.Equal(t, vectorStoreSearchPage+"\n", got.stdout)
 			}
-			if format == "json" || format == "jsonl" {
+			if format == "json" {
+				require.JSONEq(t, "["+vectorStoreSearchFirst+","+vectorStoreSearchSecond+"]", got.stdout)
+			}
+			if format == "jsonl" {
 				decoder := json.NewDecoder(strings.NewReader(got.stdout))
 				for _, want := range []string{vectorStoreSearchFirst, vectorStoreSearchSecond} {
 					var item json.RawMessage
@@ -235,7 +238,7 @@ func TestMainVectorStoreSearchAfterIndexingWorkflow(t *testing.T) {
 	defer server.Close()
 	command := func(args ...string) map[string]json.RawMessage {
 		t.Helper()
-		got := runVectorStoreCommand(t, server, nil, append([]string{"--format", "json"}, args...)...)
+		got := runVectorStoreCommand(t, server, nil, append([]string{"--format", "jsonl"}, args...)...)
 		require.Zero(t, got.code, "%+v", got)
 		require.Empty(t, got.stderr)
 		var result map[string]json.RawMessage
