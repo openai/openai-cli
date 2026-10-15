@@ -166,7 +166,7 @@ func TestBatchOutputDirectoryPreservesExistingPaths(t *testing.T) {
 			case "missing_parent":
 				path = filepath.Join(path, "nested")
 			}
-			destination, err := prepareBatchOutputDirectory(path)
+			destination, err := prepareBatchOutputDirectory(t.Context(), path)
 			if name == "directory" || name == "directory_link" {
 				require.NoError(t, err)
 				require.True(t, os.SameFile(before, destination.info))
@@ -202,6 +202,163 @@ func TestBatchOutputDirectoryPreservesExistingPaths(t *testing.T) {
 	}
 }
 
+func TestBatchOutputDirectoryPreservesParentUmask(t *testing.T) {
+	const childDirectory = "OPENAI_TEST_BATCH_DIRECTORY_UMASK"
+	if directory := os.Getenv(childDirectory); directory != "" {
+		create := func(name string) os.FileMode {
+			file, err := os.OpenFile(filepath.Join(directory, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0666)
+			require.NoError(t, err)
+			info, err := file.Stat()
+			require.NoError(t, err)
+			require.NoError(t, file.Close())
+			return info.Mode().Perm()
+		}
+		before := create("before")
+		output := filepath.Join(directory, "results")
+		_, err := prepareBatchOutputDirectory(t.Context(), output)
+		require.NoError(t, err)
+		info, err := os.Stat(output)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0700), info.Mode().Perm())
+		require.Equal(t, before, create("after"), "directory creation changed the parent's umask")
+		return
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not use Unix umask")
+	}
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	for _, mask := range []os.FileMode{0077, 0400, 0777} {
+		t.Run(fmt.Sprintf("%03o", mask), func(t *testing.T) {
+			directory := t.TempDir()
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			child := exec.CommandContext(ctx, "sh", "-c", `umask "$1"; shift; exec "$@"`, "batch-directory-umask", fmt.Sprintf("%03o", mask), executable, "-test.run=^TestBatchOutputDirectoryPreservesParentUmask$")
+			child.Env = []string{childDirectory + "=" + directory, "GOMAXPROCS=2"}
+			child.WaitDelay = time.Second
+			output, err := child.CombinedOutput()
+			require.NoError(t, err, "parent umask process: %s", output)
+			for _, name := range []string{"before", "after"} {
+				info, err := os.Stat(filepath.Join(directory, name))
+				require.NoError(t, err)
+				require.Equal(t, 0666&^mask, info.Mode().Perm())
+			}
+		})
+	}
+}
+
+func TestBatchOutputDirectoryCreationErrors(t *testing.T) {
+	for _, name := range []string{"existing", "missing_parent", "file_parent", "denied_parent", "canceled"} {
+		t.Run(name, func(t *testing.T) {
+			parent := t.TempDir()
+			path := filepath.Join(parent, "results")
+			ctx := t.Context()
+			var want error
+			switch name {
+			case "existing":
+				require.NoError(t, os.Mkdir(path, 0700))
+				want = os.ErrExist
+			case "missing_parent":
+				path = filepath.Join(parent, "missing", "results")
+				want = os.ErrNotExist
+			case "file_parent":
+				require.NoError(t, os.WriteFile(path, nil, 0600))
+				path += string(os.PathSeparator) + "results"
+			case "denied_parent":
+				if runtime.GOOS == "windows" {
+					t.Skip("Windows permission behavior has separate ACL tests")
+				}
+				if os.Geteuid() == 0 {
+					t.Skip("root bypasses directory permissions")
+				}
+				require.NoError(t, os.Chmod(parent, 0500))
+				defer os.Chmod(parent, 0700)
+				want = os.ErrPermission
+			case "canceled":
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+				want = context.Canceled
+			}
+			_, err := createPrivateBatchDirectory(ctx, path)
+			require.Error(t, err)
+			if want != nil {
+				require.ErrorIs(t, err, want)
+			}
+			if name == "canceled" {
+				_, err := os.Lstat(path)
+				require.ErrorIs(t, err, os.ErrNotExist)
+			}
+		})
+	}
+}
+
+func TestBatchOutputDirectoryHelperLifelineStopsBlockedStartup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix directory helper uses inherited pipe descriptors")
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		t.Run(fmt.Sprint(attempt), func(t *testing.T) {
+			replyRead, replyWrite, err := os.Pipe()
+			require.NoError(t, err)
+			defer replyRead.Close()
+			defer replyWrite.Close()
+			// Fill only this fixture's pipe. The real helper cannot finish its
+			// readiness write until the parent consumes bytes or closes its lifeline.
+			require.NoError(t, replyWrite.SetWriteDeadline(time.Now().Add(50*time.Millisecond)))
+			_, err = replyWrite.Write(bytes.Repeat([]byte{'x'}, 4<<20))
+			require.ErrorIs(t, err, os.ErrDeadlineExceeded)
+			require.NoError(t, replyWrite.SetWriteDeadline(time.Time{}))
+			lifeRead, lifeWrite, err := os.Pipe()
+			require.NoError(t, err)
+			defer lifeRead.Close()
+			defer lifeWrite.Close()
+			executable, err := os.Executable()
+			require.NoError(t, err)
+			path := filepath.Join(t.TempDir(), "results")
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			child := exec.CommandContext(ctx, executable, "__batch-directory", path, "3")
+			child.Env = []string{"GOMAXPROCS=2"}
+			child.ExtraFiles = []*os.File{lifeRead}
+			child.Stdout = replyWrite
+			child.WaitDelay = time.Second
+			require.NoError(t, child.Start())
+			require.NoError(t, lifeRead.Close())
+			require.NoError(t, replyWrite.Close())
+			// EOF is the same kernel event produced when the parent dies.
+			require.NoError(t, lifeWrite.Close())
+			err = child.Wait()
+			require.Error(t, err)
+			require.NoError(t, ctx.Err(), "lifeline did not stop and reap the helper")
+			_, err = os.Lstat(path)
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+	}
+}
+
+func TestBatchOutputDirectoryRepeatedFailuresCloseDescriptors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix directory helper owns inherited pipe descriptors")
+	}
+	directory := t.TempDir()
+	missing := filepath.Join(directory, "missing", "results")
+	// Warm up runtime poll descriptors before measuring helper-owned pipes.
+	_, err := createPrivateBatchDirectory(t.Context(), missing)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	before, err := os.ReadDir("/dev/fd")
+	require.NoError(t, err)
+	for attempt := 0; attempt < 20; attempt++ {
+		_, err := createPrivateBatchDirectory(t.Context(), missing)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
+	_, err = createPrivateBatchDirectory(t.Context(), filepath.Join(directory, "results"))
+	require.NoError(t, err)
+	after, err := os.ReadDir("/dev/fd")
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(after), len(before), "repeated helper failures leaked descriptors")
+}
+
 func TestBatchOutputDirectoryPreservesPathTraversal(t *testing.T) {
 	separator := string(os.PathSeparator)
 	for _, component := range []string{"missing", "file", "symlink", "trailing_separator"} {
@@ -227,7 +384,7 @@ func TestBatchOutputDirectoryPreservesPathTraversal(t *testing.T) {
 			controlParent, controlPath := fixture()
 			parent, path := fixture()
 			controlErr := os.Mkdir(controlPath, 0700)
-			destination, err := prepareBatchOutputDirectory(path)
+			destination, err := prepareBatchOutputDirectory(t.Context(), path)
 			require.Equal(t, controlErr == nil, err == nil, "os.Mkdir: %v; Batch: %v", controlErr, err)
 			if err == nil {
 				info, err := os.Stat(path)

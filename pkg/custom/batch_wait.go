@@ -162,7 +162,7 @@ func waitForBatch(ctx context.Context, cmd *cli.Command) (err error) {
 	}
 	var destination *batchOutputDirectory
 	if cmd.Name == "wait" && cmd.IsSet("output-dir") {
-		destination, err = prepareBatchOutputDirectory(cmd.String("output-dir"))
+		destination, err = prepareBatchOutputDirectory(ctx, cmd.String("output-dir"))
 		if err != nil {
 			return err
 		}

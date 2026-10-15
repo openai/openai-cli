@@ -22,5 +22,14 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	if runBatchDirectoryFixture(os.Args) {
+		os.Exit(0)
+	}
+	if handled, err := custom.RunBatchDirectoryHelper(os.Args); handled {
+		if err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	os.Exit(m.Run())
 }

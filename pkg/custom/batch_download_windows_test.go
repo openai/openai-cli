@@ -81,7 +81,7 @@ func TestWindowsBatchOutputDirectoryPermissions(t *testing.T) {
 			parent := t.TempDir()
 			setInheritedAccess(parent, inheritance)
 			path := filepath.Join(parent, "results")
-			destination, err := prepareBatchOutputDirectory(path)
+			destination, err := prepareBatchOutputDirectory(t.Context(), path)
 			require.NoError(t, err)
 			file, err := os.Open(path)
 			require.NoError(t, err)
@@ -118,7 +118,7 @@ func TestWindowsBatchOutputDirectoryPermissions(t *testing.T) {
 			require.NoError(t, err)
 			original, err := os.Stat(path)
 			require.NoError(t, err)
-			_, err = prepareBatchOutputDirectory(path)
+			_, err = prepareBatchOutputDirectory(t.Context(), path)
 			if existingResult {
 				require.Error(t, err)
 			} else {
@@ -173,7 +173,7 @@ func TestWindowsBatchOutputDirectoryPaths(t *testing.T) {
 			}
 			control, path := pathFor("control"), pathFor("results")
 			require.NoError(t, os.Mkdir(control, 0700), "os.Mkdir control")
-			destination, err := prepareBatchOutputDirectory(path)
+			destination, err := prepareBatchOutputDirectory(t.Context(), path)
 			require.NoError(t, err)
 			info, err := os.Stat(path)
 			require.NoError(t, err)
@@ -228,6 +228,6 @@ func TestWindowsBatchOutputDirectoryWithoutParentListing(t *testing.T) {
 	}
 	require.Error(t, err, "the parent must deny listing")
 	require.NoError(t, os.Mkdir(filepath.Join(parent, "control"), 0700))
-	_, err = prepareBatchOutputDirectory(filepath.Join(parent, "results"))
+	_, err = prepareBatchOutputDirectory(t.Context(), filepath.Join(parent, "results"))
 	require.NoError(t, err)
 }

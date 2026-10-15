@@ -226,13 +226,16 @@ type batchOutputDirectory struct {
 	info os.FileInfo
 }
 
-func prepareBatchOutputDirectory(path string) (*batchOutputDirectory, error) {
+func prepareBatchOutputDirectory(ctx context.Context, path string) (*batchOutputDirectory, error) {
 	if path == "" {
 		return nil, batchError("Choose a nonempty --output-dir path.")
 	}
-	created, err := createBatchOutputDirectory(path)
+	observed, err := createBatchOutputDirectory(ctx, path)
 	if err != nil {
 		return nil, batchDownloadFailure("Could not create the output directory. Check its parent and permissions.", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	root, err := os.OpenRoot(path)
 	if err != nil {
@@ -243,7 +246,7 @@ func prepareBatchOutputDirectory(path string) (*batchOutputDirectory, error) {
 	if err != nil {
 		return nil, batchDownloadFailure("Could not inspect the output directory.", err)
 	}
-	if created != nil && !os.SameFile(created, info) {
+	if observed != nil && !os.SameFile(observed, info) {
 		return nil, batchError("The output directory changed. No output file was published.")
 	}
 	for _, name := range []string{"output.jsonl", "error.jsonl"} {
@@ -257,20 +260,15 @@ func prepareBatchOutputDirectory(path string) (*batchOutputDirectory, error) {
 	return &batchOutputDirectory{path: path, info: info}, nil
 }
 
-func createBatchOutputDirectory(path string) (os.FileInfo, error) {
+func createBatchOutputDirectory(ctx context.Context, path string) (os.FileInfo, error) {
 	// Preserve the caller's path traversal and existing-directory permissions.
-	created, err := createPrivateBatchDirectory(path)
+	observed, err := createPrivateBatchDirectory(ctx, path)
 	if errors.Is(err, os.ErrExist) {
 		return nil, nil
 	}
-	if err != nil && created != nil {
-		// Remove only this invocation's empty directory after a setup failure.
-		current, statErr := os.Lstat(path)
-		if statErr == nil && current.IsDir() && os.SameFile(created, current) {
-			err = errors.Join(err, os.Remove(path))
-		}
-	}
-	return created, err
+	// Failure may leave an empty directory. A later observation cannot prove
+	// creation ownership, so directory rollback would risk removing a replacement.
+	return observed, err
 }
 
 func collectBatchFiles(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, batch gjson.Result, destination *batchOutputDirectory) error {

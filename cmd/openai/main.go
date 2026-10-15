@@ -27,6 +27,12 @@ func main() {
 		}
 		return
 	}
+	if handled, err := custom.RunBatchDirectoryHelper(os.Args); handled {
+		if err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	app := cmd.Command
 	app.Flags = append(app.Flags, cmd.NewRequestHeaderFlag())
 

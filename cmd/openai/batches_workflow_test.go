@@ -1140,6 +1140,56 @@ func TestMainBatchesOutputPathTraversal(t *testing.T) {
 	}
 }
 
+func TestMainBatchesDirectoryHelperPreservesPathBytes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix argv paths preserve bytes outside UTF-8; Windows uses UTF-16 paths")
+	}
+	for _, tc := range []struct{ name, path string }{
+		{"relative", "results"},
+		{"spaces_unicode", "résultats with spaces"},
+		{"invalid_utf8", "results-\xff"},
+		{"trailing_separator", "results/"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := t.TempDir()
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				switch r.URL.Path {
+				case "/batches/batch_synthetic":
+					w.Header().Set("Content-Type", "application/json")
+					fmt.Fprint(w, batchesWorkflowResponse("completed", batchesWorkflowCounts))
+				case "/files/file_output/content", "/files/file_error/content":
+					fmt.Fprint(w, batchesWorkflowContent)
+				default:
+					t.Errorf("unexpected request: %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+			defer cancel()
+			child := batchesWorkflowProcess(t, ctx, server, "batches", "wait", "batch_synthetic", "--output-dir", tc.path, "--format", "json")
+			child.Dir = parent
+			var stdout, stderr bytes.Buffer
+			child.Stdout, child.Stderr = &stdout, &stderr
+			if err := child.Run(); err != nil || requests.Load() != 3 || !json.Valid(stdout.Bytes()) || stderr.Len() != 0 {
+				t.Fatalf("path bytes changed: error=%v requests=%d stdout=%q stderr=%q", err, requests.Load(), stdout.String(), stderr.String())
+			}
+			directory := parent + "/" + tc.path
+			info, err := os.Stat(directory)
+			if err != nil || info.Mode().Perm() != 0700 {
+				t.Fatalf("original path was not created privately: info=%v error=%v", info, err)
+			}
+			for _, name := range []string{"output.jsonl", "error.jsonl"} {
+				data, err := os.ReadFile(directory + "/" + name)
+				if err != nil || string(data) != batchesWorkflowContent {
+					t.Fatalf("original path did not receive complete bytes: file=%s bytes=%q error=%v", name, data, err)
+				}
+			}
+		})
+	}
+}
+
 func TestMainBatchesCollectRestrictiveUmask(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not use Unix umask")
