@@ -20,6 +20,7 @@ func TestParserErrorGuidanceTypes(t *testing.T) {
 		{"unsigned integer", &cli.UintFlag{Name: "value"}, "Expected an integer, such as 1."},
 		{"number", &cli.FloatFlag{Name: "value"}, "Expected a number, such as 0.5."},
 		{"boolean", &cli.BoolFlag{Name: "value"}, "Expected a boolean (true or false)."},
+		{"duration", &cli.DurationFlag{Name: "value"}, "Expected a duration, such as 1s."},
 		{"nullable integer", &requestflag.Flag[*int64]{Name: "value"}, "Expected an integer, such as 1."},
 		{"nullable number", &requestflag.Flag[*float64]{Name: "value"}, "Expected a number, such as 0.5."},
 		{"nullable boolean", &requestflag.Flag[*bool]{Name: "value"}, "Expected a boolean (true or false)."},

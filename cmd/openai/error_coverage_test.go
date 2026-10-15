@@ -69,7 +69,7 @@ type errorCoverageGroup struct {
 // Unknown future declaration types must gain a reviewed policy and probe.
 func errorCoverageTypePolicy(name string) (string, bool) {
 	switch name {
-	case "int", "uint", "float", "bool", "boolean", "date", "datetime", "time":
+	case "int", "uint", "float", "bool", "boolean", "duration", "date", "datetime", "time":
 		return "typed invalid value", true
 	case "string", "any", "":
 		return "no universally invalid scalar; missing values and request decoding cover syntax", true
@@ -430,6 +430,8 @@ func errorCoverageTypeDescription(name string) string {
 		return "a number, such as 0.5"
 	case "bool", "boolean":
 		return "a boolean (true or false)"
+	case "duration":
+		return "a duration, such as 1s"
 	// No production date declaration exists today. A future declaration must
 	// expose expected syntax rather than silently accepting missing guidance.
 	case "date":
@@ -898,6 +900,7 @@ func TestErrorCoverageRepresentativeSelection(t *testing.T) {
 		{},
 		{Path: []string{"first"}, Flags: []errorCoverageFlag{{Name: "limit", Aliases: []string{"l"}, Type: "int", TakesValue: true, Origin: "application declaration"}}},
 		{Path: []string{"second"}, Flags: []errorCoverageFlag{{Name: "limit", Aliases: []string{"l"}, Type: "int", TakesValue: true, Origin: "application declaration"}}},
+		{Path: []string{"timed"}, Flags: []errorCoverageFlag{{Name: "interval", Type: "duration", TakesValue: true, Origin: "application declaration"}}},
 		{Path: []string{"group:legacy"}, Compatibility: true, Flags: []errorCoverageFlag{{Name: "settings.ratio", Type: "float", TakesValue: true, Origin: "application declaration"}}},
 		{Path: []string{"help"}, HasChildren: true, ActionContract: "help", Flags: []errorCoverageFlag{{Name: "all", Type: "bool", Hidden: true, Origin: "application declaration"}}},
 		{Path: []string{"help", "setup"}, HasChildren: true, ActionContract: "help setup"},
@@ -928,7 +931,7 @@ func TestErrorCoverageRepresentativeSelection(t *testing.T) {
 		}
 	}
 	for _, contract := range []string{"kind:unknown-option", "scope:root", "scope:canonical-leaf", "scope:compatibility-leaf", "alias:l",
-		"type:invalid-type:int", "type:invalid-type:float", "type:invalid-type:bool", "nested-option:invalid-type:float",
+		"type:invalid-type:int", "type:invalid-type:float", "type:invalid-type:bool", "type:invalid-type:duration", "nested-option:invalid-type:float",
 		"hidden:invalid-type:bool", "action:help:unknown-child", "action:help setup:unknown-child", "path-form:colon"} {
 		if !selected[contract] {
 			t.Errorf("declaration metadata did not produce contract %q", contract)

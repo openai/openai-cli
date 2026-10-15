@@ -341,6 +341,8 @@ func parserFlagTypeDescription(flag cli.Flag) string {
 			return "a number, such as 0.5"
 		case "bool", "boolean":
 			return "a boolean (true or false)"
+		case "duration":
+			return "a duration, such as 1s"
 		}
 	}
 	return ""

@@ -191,3 +191,62 @@ func TestMainParserNumericExamplesRecoverRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestMainParserDurationExamplesRecoverRequests(t *testing.T) {
+	const rejected = "synthetic-private-duration\x1b[31m"
+	for _, flag := range []string{"--poll-interval", "--wait-timeout"} {
+		for _, mode := range localRecoveryModes() {
+			t.Run(flag+"/"+mode.name, func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					if r.Method != http.MethodGet || r.URL.Path != "/batches/batch_synthetic" || r.URL.RawQuery != "" ||
+						r.Header.Get("OpenAI-Project") != "project_synthetic" || r.Header.Get("X-Recovery-Probe") != "retained" {
+						t.Errorf("duration retry changed request context: %s %s", r.Method, r.URL)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					if _, err := io.WriteString(w, `{"id":"batch_synthetic","object":"batch","status":"completed"}`); err != nil {
+						t.Errorf("write synthetic response: %v", err)
+					}
+				}))
+				defer server.Close()
+				args := append([]string{"--project", "project_synthetic", "--header", "X-Recovery-Probe: retained"}, mode.flags...)
+				args = append(args, "batches", "retrieve", "batch_synthetic", "--wait", flag, rejected)
+				failed := runShellFileCommand(t, server, nil, []string{"NO_COLOR=1"}, args...)
+				message := localRecoveryMessage(t, failed, mode, 1)
+				want := "Invalid value for " + flag + ". Expected a duration, such as 1s.\nOptions and examples: openai batches retrieve --help"
+				if message != want || requests.Load() != 0 {
+					t.Fatalf("duration guidance = %q, requests = %d", message, requests.Load())
+				}
+				_, recovery, found := strings.Cut(message, "Options and examples: ")
+				if !found {
+					t.Fatal("missing duration recovery command")
+				}
+				help := runShellFileCommand(t, server, nil, nil, strings.Fields(recovery)[1:]...)
+				if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, flag) || requests.Load() != 0 {
+					t.Fatalf("copied duration recovery failed: %+v, requests = %d", help, requests.Load())
+				}
+				_, example, found := strings.Cut(message, "such as ")
+				example, _, complete := strings.Cut(example, ".\n")
+				if !found || !complete || example != "1s" {
+					t.Fatalf("duration example is not executable: %q", message)
+				}
+				// Change only the rejected value, retaining all request options.
+				corrected := slices.Clone(args)
+				corrected[len(corrected)-1] = example
+				recovered := runShellFileCommand(t, server, nil, []string{"NO_COLOR=1"}, corrected...)
+				if recovered.code != 0 || recovered.stderr != "" || !json.Valid([]byte(recovered.stdout)) || requests.Load() != 1 {
+					t.Fatalf("duration retry failed: %+v, requests = %d", recovered, requests.Load())
+				}
+				if flag == "--wait-timeout" {
+					// Zero disables this deadline and remains valid parser syntax.
+					corrected[len(corrected)-1] = "0"
+					unlimited := runShellFileCommand(t, server, nil, []string{"NO_COLOR=1"}, corrected...)
+					if unlimited.code != 0 || unlimited.stderr != "" || !json.Valid([]byte(unlimited.stdout)) || requests.Load() != 2 {
+						t.Fatalf("zero timeout changed: %+v, requests = %d", unlimited, requests.Load())
+					}
+				}
+			})
+		}
+	}
+}
