@@ -37,6 +37,7 @@ jobs:
             shells: bash,zsh
             bash-prefixes: true
           - os: windows-latest
+            image-state: true
             image-models: true
             native-commands: true
             image-order: true
@@ -47,6 +48,7 @@ jobs:
             shells: cmd,powershell,pwsh
             environment: true
           - os: macos-15-intel
+            image-state: true
             image-models: true
             native-commands: true
             image-order: true
@@ -62,6 +64,7 @@ jobs:
             gallery: true
             bash-prefixes: true
           - os: ubuntu-24.04-arm
+            image-state: true
             image-models: true
             native-commands: true
             image-order: true
@@ -75,6 +78,7 @@ jobs:
             pager: true
             bash-prefixes: true
           - os: windows-11-arm
+            image-state: true
             image-models: true
             native-commands: true
             image-order: true
@@ -389,6 +393,32 @@ jobs:
           go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-renderer-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test image preferences and picker state
+        if: matrix.image-state && runner.os != 'Windows'
+        shell: bash
+        env:
+          GOMAXPROCS: "2"
+          OPENAI_CLI_REQUIRE_IMAGE_STATE_SYMLINKS: "1"
+        run: |
+          set -euo pipefail
+          go test -p 2 ./internal/imageprefs -count=1 -timeout=3m -v -json -run '^(TestImagePreferenceDefaultAndReplacement|TestImagePreferenceInvalidSettingsRemainUntouched|TestImagePreferenceConcurrentWritesAndCancellation|TestImagePreferenceWaitingWriterKeepsNewSchema|TestImagePreferenceWaitingWriterCancellationAndReplacement|TestImagePreferenceRejectsUnsafePaths|TestImagePreferenceRejectsUnsafeWriterLocks|TestImagePreferencePermissionFailuresKeepFile)$' \
+            | tee "$RUNNER_TEMP/image-preference-state-tests.jsonl"
+          go test -p 2 ./pkg/custom -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateRejectsExposedPermissions|TestImagePickerStateWriteFailureKeepsPrevious)$' \
+            | tee "$RUNNER_TEMP/image-picker-state-tests.jsonl"
+      - name: Test Windows image preferences and picker state
+        if: matrix.image-state && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GOMAXPROCS: "2"
+          OPENAI_CLI_REQUIRE_IMAGE_STATE_SYMLINKS: "1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 2 ./internal/imageprefs -count=1 -timeout=3m -v -json -run '^(TestImagePreferenceDefaultAndReplacement|TestImagePreferenceInvalidSettingsRemainUntouched|TestImagePreferenceConcurrentWritesAndCancellation|TestImagePreferenceWaitingWriterKeepsNewSchema|TestImagePreferenceWaitingWriterCancellationAndReplacement|TestImagePreferenceRejectsUnsafePaths|TestImagePreferenceRejectsUnsafeWriterLocks|TestImagePreferenceWindowsAccessDeniedKeepsFile)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-preference-state-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 2 ./pkg/custom -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateWindowsAccessDeniedKeepsPrevious)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-picker-state-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test request configuration
         if: matrix.request-configuration && runner.os != 'Windows'
         shell: bash
@@ -464,6 +494,7 @@ jobs:
       - name: Verify selected compatibility test execution
         shell: bash
         env:
+          CHECK_IMAGE_STATE: ${{ matrix.image-state || false }}
           CHECK_IMAGE_ORDER: ${{ matrix.image-order || false }}
           CHECK_IMAGE_MODELS: ${{ matrix.image-models || false }}
           CHECK_NATIVE_COMMANDS: ${{ matrix.native-commands || false }}
@@ -513,6 +544,46 @@ jobs:
               return {root} | {f"{root}/{child}" for child in children}
 
           strict_packages = {}
+          if os.environ["CHECK_IMAGE_STATE"] == "true":
+              preference_cases = {
+                  'TestImagePreferenceDefaultAndReplacement': [],
+                  'TestImagePreferenceInvalidSettingsRemainUntouched': ['#00', 'private-not-json', '{}', '{"version":1}', '{"version":1,"inline":null}', '{"version":2,"inline":false}', '{"version":1,"inline":"off"}', '{"version":1,"inline":false,"future":true}', '{"version":1,"inline":false}_{}', '{"version":1,"inline":false,"inline":true}', '____________________________________________________________'],
+                  'TestImagePreferenceConcurrentWritesAndCancellation': [],
+                  'TestImagePreferenceWaitingWriterKeepsNewSchema': ['missing/{"version":2,"inline":false}', 'missing/{"version":1,"inline":false,"future":"keep"}', 'valid/{"version":2,"inline":false}', 'valid/{"version":1,"inline":false,"future":"keep"}'],
+                  'TestImagePreferenceWaitingWriterCancellationAndReplacement': ['cancel', 'replace-lock'],
+                  'TestImagePreferenceRejectsUnsafePaths': [],
+              }
+              picker_cases = {
+                  'TestImagePickerStateRoundTripAndPrivateReplacement': [],
+                  'TestImagePickerStateIgnoresLegacyPrompt': ['legacy_prompt=false', 'legacy_prompt=true'],
+                  'TestImagePickerStateMalformedAndUnknownRemainUntouched': ['empty', 'malformed', 'missing_fields', 'missing_version', 'unknown_version', 'duplicate', 'unknown_field', 'trailing_object', 'wrong_type', 'null', 'missing_prompt', 'null_prompt', 'numeric_prompt', 'object_prompt', 'duplicate_prompt', 'legacy_null_prompt', 'legacy_duplicate_prompt', 'unknown_choice', 'invalid_UTF8', 'oversize'],
+                  'TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary': ['temporary_written=false', 'temporary_written=true'],
+                  'TestImagePickerStateConcurrentSavesKeepWholeRecords': [],
+                  'TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration': [],
+                  'TestImagePickerStateAcceptsExactPersistenceLimit': [],
+                  'TestImagePickerStateRejectsUnstableSaveFolders': [],
+              }
+              windows_state = os.environ["RUNNER_OS"] == "Windows"
+              preference_cases["TestImagePreferenceRejectsUnsafeWriterLocks"] = [
+                  "directory", "symlink", "dangling-symlink",
+              ] + ([] if windows_state else ["public"])
+              picker_cases["TestImagePickerStateRejectsSpecialFilesAndSymlinks"] = [
+                  "directory", "symlink",
+              ] + ([] if windows_state else ["fifo"])
+              if windows_state:
+                  preference_cases["TestImagePreferenceWindowsAccessDeniedKeepsFile"] = ["read", "write"]
+                  picker_cases["TestImagePickerStateWindowsAccessDeniedKeepsPrevious"] = ["read", "write"]
+              else:
+                  preference_cases["TestImagePreferencePermissionFailuresKeepFile"] = []
+                  picker_cases["TestImagePickerStateRejectsExposedPermissions"] = []
+                  picker_cases["TestImagePickerStateWriteFailureKeepsPrevious"] = []
+              for filename, package, cases in [
+                  ("image-preference-state-tests.jsonl", "internal/imageprefs", preference_cases),
+                  ("image-picker-state-tests.jsonl", "pkg/custom", picker_cases),
+              ]:
+                  suites[filename] = set().union(*(required_cases(root, children) for root, children in cases.items()))
+                  strict_packages[filename] = "github.com/openai/openai-cli/" + package
+
           if os.environ["CHECK_IMAGE_MODELS"] == "true":
               model_failures = ["authentication", "rate_limit", "timeout", "server",
                                 "forbidden", "invalid_response", "request", "network"]

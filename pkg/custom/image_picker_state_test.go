@@ -175,23 +175,22 @@ func TestImagePickerStateMalformedAndUnknownRemainUntouched(t *testing.T) {
 
 func TestImagePickerStateRejectsSpecialFilesAndSymlinks(t *testing.T) {
 	settings := pickerStateSettings(t)
-	for _, kind := range []string{"directory", "symlink", "fifo"} {
+	kinds := []string{"directory", "symlink"}
+	if runtime.GOOS != "windows" {
+		kinds = append(kinds, "fifo")
+	}
+	for _, kind := range kinds {
 		t.Run(kind, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "image-picker.json")
+			var target string
 			switch kind {
 			case "directory":
 				require.NoError(t, os.Mkdir(path, 0700))
 			case "symlink":
-				if runtime.GOOS == "windows" {
-					t.Skip("native Windows symlinks need additional privileges")
-				}
-				target := filepath.Join(t.TempDir(), "target")
+				target = filepath.Join(t.TempDir(), "target")
 				require.NoError(t, os.WriteFile(target, []byte("unchanged"), 0600))
-				require.NoError(t, os.Symlink(target, path))
+				imagePickerStateSymlink(t, target, path)
 			case "fifo":
-				if runtime.GOOS == "windows" {
-					t.Skip("Unix FIFO semantics")
-				}
 				mkfifo, err := exec.LookPath("mkfifo")
 				require.NoError(t, err)
 				require.NoError(t, exec.Command(mkfifo, path).Run())
@@ -214,16 +213,26 @@ func TestImagePickerStateRejectsSpecialFilesAndSymlinks(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("special file blocked state access")
 			}
+			if target != "" {
+				data, err := os.ReadFile(target)
+				require.NoError(t, err)
+				require.Equal(t, "unchanged", string(data))
+				link, err := os.Lstat(path)
+				require.NoError(t, err)
+				require.NotZero(t, link.Mode()&os.ModeSymlink)
+			}
 		})
 	}
-	if runtime.GOOS != "windows" {
-		parent := filepath.Join(t.TempDir(), "linked-config")
-		require.NoError(t, os.Symlink(t.TempDir(), parent))
-		path := filepath.Join(parent, "image-picker.json")
-		_, _, err := loadImagePickerState(t.Context(), path)
-		require.Error(t, err)
-		require.Error(t, saveImagePickerState(t.Context(), path, settings))
-	}
+	parent := filepath.Join(t.TempDir(), "linked-config")
+	target := t.TempDir()
+	imagePickerStateSymlink(t, target, parent)
+	path := filepath.Join(parent, "image-picker.json")
+	_, _, err := loadImagePickerState(t.Context(), path)
+	require.Error(t, err)
+	require.Error(t, saveImagePickerState(t.Context(), path, settings))
+	entries, err := os.ReadDir(target)
+	require.NoError(t, err)
+	require.Empty(t, entries)
 }
 
 func TestImagePickerStateRejectsExposedPermissions(t *testing.T) {
