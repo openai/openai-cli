@@ -107,7 +107,10 @@ func TestMainAudioWorkbenchWindowsPlayerCancellationStatusAndCleanup(t *testing.
 						require.NoError(t, json.Unmarshal(data, receipt), "invalid atomic audio receipt")
 						return
 					}
-					require.ErrorIs(t, err, os.ErrNotExist)
+					// Retry Windows sharing conflicts within the existing receipt deadline.
+					if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+						require.NoError(t, err)
+					}
 					select {
 					case <-waitDone:
 						t.Fatalf("audio controller exited before receipt: %v; stderr=%q", waitErr, stderr.text())
