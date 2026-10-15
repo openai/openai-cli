@@ -181,12 +181,26 @@ jobs:
               "exec " + shlex.quote(str(runtime / "usr/bin/expect")) + ' "$@"\n')
           wrapper.chmod(0o700)
           PY
-          test "$(bin/bash --noprofile --norc -c 'printf "%s.%s.%s" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}" "${BASH_VERSINFO[2]}"')" = 4.0.0
-          test "$(bin/zsh -f -c 'printf "%s" "$ZSH_VERSION"')" = 5.8
-          test "$(env HOME="$tools_dir/home" XDG_CONFIG_HOME="$tools_dir/config" \
+          require_shell_version() {
+            local name="$1" expected="$2" actual status
+            shift 2
+            if actual="$("$@")"; then
+              printf '%s version: expected %q; observed %q\n' "$name" "$expected" "$actual"
+            else
+              status=$?
+              printf '%s version probe failed with status %s; observed %q\n' "$name" "$status" "$actual" >&2
+              return "$status"
+            fi
+            test "$actual" = "$expected"
+          }
+          require_shell_version Bash 4.0.0 bin/bash --noprofile --norc \
+            -c 'printf "%s.%s.%s" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}" "${BASH_VERSINFO[2]}"'
+          require_shell_version zsh 5.8 bin/zsh -f -c 'printf "%s" "$ZSH_VERSION"'
+          # The official static asset includes one Cargo version metadata fix after the 4.0.0 tag.
+          require_shell_version Fish 4.0.0-1-g1e069b0ff env HOME="$tools_dir/home" XDG_CONFIG_HOME="$tools_dir/config" \
             XDG_DATA_HOME="$tools_dir/data" XDG_CACHE_HOME="$tools_dir/cache" \
-            bin/fish --no-config -c 'printf "%s" $version')" = 4.0.0
-          printf '%s\n' 'Verified native minimums: Bash 4.0.0, zsh 5.8, Fish 4.0.0.'
+            bin/fish --no-config -c 'printf "%s" $version'
+          printf '%s\n' 'Verified native minimums: Bash 4.0.0, zsh 5.8, Fish 4.0.0 (official static build 4.0.0-1-g1e069b0ff).'
           bin/expect -v
           for binary in bash-4.0/bash zsh-5.8/Src/zsh bin/fish; do
             file "$binary"
