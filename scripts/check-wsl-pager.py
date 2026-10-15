@@ -121,6 +121,7 @@ PROCESS_TESTS = {root for root in PROCESS_CASES} | {
     root + "/" + child for root, children in PROCESS_CASES.items() for child in children
 }
 PROCESS_SELECTOR = "^(" + "|".join(PROCESS_CASES) + ")$"
+COMMAND_CASES_PATH = Path(__file__).with_name("wsl-command-cases.json")
 
 STOP = 0
 
@@ -440,17 +441,77 @@ def copy_payload(commands, root, user, binary, target, expected_hash, prefix="")
         raise RuntimeError("The copied Linux binary changed")
 
 
-def run_process_suite(commands, user, target):
+def test_names(cases):
+    return set(cases) | {root + "/" + child for root, children in cases.items() for child in children}
+
+
+def load_command_cases():
+    """Load the fixed supplemental contracts without affecting standalone cleanup."""
+    def unique_object(pairs):
+        value = dict(pairs)
+        if len(value) != len(pairs):
+            raise RuntimeError("Duplicated WSL command-contract inventory key")
+        return value
+
+    if COMMAND_CASES_PATH.is_symlink() or not COMMAND_CASES_PATH.is_file():
+        raise RuntimeError("Expected a regular WSL command-contract inventory")
+    data = COMMAND_CASES_PATH.read_bytes()
+    suites = json.loads(data, object_pairs_hook=unique_object)
+    if not isinstance(suites, dict) or set(suites) != {"custom", "process"}:
+        raise RuntimeError("Invalid WSL command-contract inventory")
+    excluded = set(PROCESS_CASES) | {ROOT, "TestMainDispatchProcess", "TestMainWrappedExitCodeProcess",
+                                      "TestRequestConfigurationChildEnvironment"}
+    selected = set()
+    for package, roots, names in (("custom", 10, 71), ("process", 59, 561)):
+        cases = suites[package]
+        if not isinstance(cases, dict) or len(cases) != roots:
+            raise RuntimeError("Invalid WSL command-contract root inventory")
+        for root, children in cases.items():
+            if (not re.fullmatch(r"Test[A-Za-z0-9_]+", root) or root in excluded or root in selected or
+                    not isinstance(children, list) or
+                    any(not isinstance(child, str) or not child or re.search(r"\s", child) for child in children) or
+                    len(children) != len(set(children))):
+                raise RuntimeError("Invalid or duplicated WSL command-contract case")
+        selected.update(cases)
+        if len(test_names(cases)) != names:
+            raise RuntimeError("Invalid WSL command-contract named inventory")
+    return suites, hashlib.sha256(data).hexdigest()
+
+
+def run_custom_suite(commands, user, target, cases=None):
+    # Admit the complete custom stage before launching either fixed selection.
+    if commands.deadline - time.monotonic() < 70:
+        raise RuntimeError("Insufficient work time for the WSL custom suite")
+    label = "pager" if cases is None else "custom-contracts"
+    tests = TESTS if cases is None else test_names(cases)
+    selector = "^" + ROOT + "$" if cases is None else "^(" + "|".join(cases) + ")$"
+    test = ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "60s", target,
+            "-test.run=" + selector, "-test.timeout=45s", "-test.v"]
+    stdout, stderr, code = commands.run(label, user + test, 70)
+    require_test_pass(stdout, stderr, code, tests, label)
+    return tests
+
+
+def run_process_suite(commands, user, target, cases=None):
     # Reserve the full bounded stage before launching any selected process tests.
     if commands.deadline - time.monotonic() < 170:
         raise RuntimeError("Insufficient work time for the WSL process suite")
+    label = "process" if cases is None else "process-contracts"
+    tests = PROCESS_TESTS if cases is None else test_names(cases)
+    selector = PROCESS_SELECTOR if cases is None else "^(" + "|".join(cases) + ")$"
     test = ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "160s", target,
-            "-test.run=" + PROCESS_SELECTOR, "-test.timeout=150s", "-test.v"]
-    stdout, stderr, code = commands.run("process", user + test, 170)
-    require_test_pass(stdout, stderr, code, PROCESS_TESTS, "process")
+            "-test.run=" + selector, "-test.timeout=150s", "-test.v"]
+    stdout, stderr, code = commands.run(label, user + test, 170)
+    require_test_pass(stdout, stderr, code, tests, label)
+    return tests
 
 
-def pilot(binary, cleanup_only=False, process_binary=None):
+def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=False):
+    suites = None
+    if command_contracts and not cleanup_only:
+        if binary is None or process_binary is None:
+            raise RuntimeError("Command contracts require both test binaries")
+        suites, inventory_hash = load_command_cases()
     # Validate process bitness before selecting System32, which WOW64 can redirect.
     host_process = require_native_windows_process()
     name, directory = owned_paths()
@@ -472,6 +533,10 @@ def pilot(binary, cleanup_only=False, process_binary=None):
     work_deadline = cleanup_deadline if cleanup_only else remaining_deadline("WSL_PAGER_WORK_DEADLINE")
     commands = Commands(directory, min(work_deadline, start + (150 if cleanup_only else 780)), "final-" if cleanup_only else "")
     result = {"state": "failed", "scope": "Ubuntu WSL 1 AMD64 pager process", "commands": commands.records}
+    result["selection"] = "command-contracts" if command_contracts else "pager-and-process"
+    if suites is not None:
+        result["scope"] = "Ubuntu WSL 1 AMD64 request, command, output, error, and saved-setting contracts"
+        result["command_cases_sha256"] = inventory_hash
     result["requires_successful_process_exit"] = True
     result["host_process"] = host_process
     result["runner_image"] = {key: os.environ.get(key) for key in ("ImageOS", "ImageVersion", "RUNNER_ARCH")}
@@ -483,7 +548,8 @@ def pilot(binary, cleanup_only=False, process_binary=None):
             if process_binary is not None:
                 result["process_binary_sha256"] = require_linux_binary(process_binary)
                 process_binary = process_binary.resolve(strict=True)
-                result["scope"] += "; public stdin, download, and output processes"
+                if suites is None:
+                    result["scope"] += "; public stdin, download, and output processes"
             result["wsl_sha256"] = digest(Path(wsl))
             result["source"] = commands.run("source", ["git", "rev-parse", "HEAD", "HEAD^{tree}"], 10)[0].decode("ascii").splitlines()
             result["wsl_version"] = decode_metadata(commands.run("wsl-version", [wsl, "--version"], 20)[0])
@@ -527,18 +593,17 @@ def pilot(binary, cleanup_only=False, process_binary=None):
             stdout, stderr, _ = commands.run("exit-control", user + ["/bin/bash", "--noprofile", "--norc", "-c", control], 10, expected=7)
             if stdout != b"wsl-control-out\n" or stderr != b"wsl-control-err\n":
                 raise RuntimeError("WSL stream or exit control changed")
-            test = ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "60s", target,
-                    "-test.run=^" + ROOT + "$", "-test.timeout=45s", "-test.v"]
-            stdout, stderr, code = commands.run("pager", user + test, 70)
-            require_test_pass(stdout, stderr, code)
-            result["tests"] = sorted(TESTS)
+            result["tests"] = sorted(run_custom_suite(commands, user, target,
+                                                     suites["custom"] if suites is not None else None))
             if process_binary is not None:
-                run_process_suite(commands, user, process_target)
-                result["process_tests"] = sorted(PROCESS_TESTS)
+                result["process_tests"] = sorted(run_process_suite(commands, user, process_target,
+                                                                  suites["process"] if suites is not None else None))
                 if digest(process_binary) != result["process_binary_sha256"]:
                     raise RuntimeError("The host process test binary changed")
             if digest(binary) != result["binary_sha256"]:
                 raise RuntimeError("The host test binary changed")
+            if suites is not None and digest(COMMAND_CASES_PATH) != inventory_hash:
+                raise RuntimeError("The command-contract inventory changed")
             final_source = commands.run("source-final", ["git", "rev-parse", "HEAD", "HEAD^{tree}"], 10)[0].decode("ascii").splitlines()
             if final_source != result["source"]:
                 raise RuntimeError("The source commit changed during execution")
@@ -570,14 +635,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path)
     parser.add_argument("--process-binary", type=Path, help="Also run the fixed noninteractive process suite")
+    parser.add_argument("--command-contracts", action="store_true",
+                        help="Run the fixed command-contract supplement using both test binaries")
     parser.add_argument("--cleanup", action="store_true")
     args = parser.parse_args()
     if not args.cleanup and args.binary is None:
         parser.error("--binary is required for the pilot")
+    if args.command_contracts and not args.cleanup and args.process_binary is None:
+        parser.error("--command-contracts requires --process-binary")
     for number in (signal.SIGINT, signal.SIGTERM):
         signal.signal(number, interrupted)
     try:
-        code = pilot(args.binary, args.cleanup, args.process_binary)
+        code = pilot(args.binary, args.cleanup, args.process_binary, args.command_contracts)
     except Exception as error:
         print(f"WSL pager pilot failed: {error}", file=sys.stderr)
         code = 128 + STOP if STOP else 1

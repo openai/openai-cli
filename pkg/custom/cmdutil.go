@@ -683,6 +683,9 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 			defer func() { resultErr = errors.Join(resultErr, closer.Close()) }()
 		}
 	}
+	if handled, err := showFiniteJSONList(source, itemsToDisplay, opts, selectTransformer); handled {
+		return err
+	}
 	if itemsToDisplay == 0 {
 		return errors.Join(opts.Context.Err(), source.Err())
 	}
