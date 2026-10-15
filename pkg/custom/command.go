@@ -20,6 +20,8 @@ func ConfigureCommand(root *cli.Command) {
 	configureCertificateCompatibility(root)
 	configureAudioVoices(root)
 	configureRootRequestFlags(root)
+	// Batch workflows preserve positional path inputs and need the same help annotations.
+	configureBatchCommands(root)
 	describeRequestInputs(root)
 	registerImageModels(root)
 	configureReadableOutput(root)
