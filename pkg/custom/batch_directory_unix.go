@@ -168,17 +168,12 @@ func runBatchDirectoryHelper(ctx context.Context, path string) error {
 	_ = replyWrite.Close()
 	_ = lifeRead.Close()
 	startup := time.AfterFunc(2*time.Second, stopWorker)
-	var ready [1]byte
-	_, readyErr := io.ReadFull(replyRead, ready[:])
-	if readyErr == nil && ready[0] == 'R' && workerContext.Err() == nil {
-		_, readyErr = lifeWrite.Write([]byte{'G'})
-	}
-	startup.Stop()
-	if readyErr != nil || ready[0] != 'R' || workerContext.Err() != nil {
+	if err := grantBatchDirectoryOperation(workerContext, startup, replyRead, lifeWrite); err != nil {
+		stopWorker()
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return errors.New("batch directory helper did not become ready")
+		return err
 	}
 	// Waiting for mkdir follows the Batch context, with no new filesystem
 	// deadline. The first result byte starts a bounded protocol/exit phase.
@@ -212,6 +207,21 @@ func runBatchDirectoryHelper(ctx context.Context, path string) error {
 	}
 	if value != 0 {
 		return &os.PathError{Op: "mkdir", Path: path, Err: syscall.Errno(value)}
+	}
+	return nil
+}
+
+func grantBatchDirectoryOperation(ctx context.Context, startup *time.Timer, reply io.Reader, life io.Writer) error {
+	var ready [1]byte
+	_, err := io.ReadFull(reply, ready[:])
+	// Stop must win before granting mkdir. A fired callback may not have
+	// canceled ctx yet, so checking ctx alone cannot end the startup phase.
+	stopped := startup.Stop()
+	if err != nil || ready[0] != 'R' || !stopped || ctx.Err() != nil {
+		return errors.New("batch directory helper did not become ready")
+	}
+	if _, err := life.Write([]byte{'G'}); err != nil || ctx.Err() != nil {
+		return errors.New("batch directory helper did not become ready")
 	}
 	return nil
 }
