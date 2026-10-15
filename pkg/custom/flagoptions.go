@@ -393,6 +393,20 @@ func FlagOptions(
 	ignoreStdin bool,
 	observeJSON ...func([]byte),
 ) (options []option.RequestOption, err error) {
+	return flagOptionsWithStdin(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, os.Stdin, observeJSON...)
+}
+
+// Keep request parsing and stdin ownership shared when a local workflow needs
+// a cancellable reader. Generated callers retain their ordinary stdin reader.
+func flagOptionsWithStdin(
+	cmd *cli.Command,
+	nestedFormat apiquery.NestedQueryFormat,
+	arrayFormat apiquery.ArrayQueryFormat,
+	bodyType BodyContentType,
+	ignoreStdin bool,
+	stdin io.Reader,
+	observeJSON ...func([]byte),
+) (options []option.RequestOption, err error) {
 	if prepared, ok, err := consumeImageSavingRequest(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin); ok {
 		return prepared, err
 	}
@@ -452,7 +466,7 @@ func FlagOptions(
 
 	stdinConsumedByPipe := false
 	if bodyType != ApplicationOctetStream && !ignoreStdin && explicitStdin == 0 && isInputPiped() {
-		pipeData, err := io.ReadAll(os.Stdin)
+		pipeData, err := io.ReadAll(stdin)
 		if err != nil {
 			return nil, err
 		}
@@ -548,7 +562,7 @@ func FlagOptions(
 	} else if stdinConsumedByPipe {
 		stdinReader = onceStdinReader{failureReason: "stdin was already consumed by piped YAML/JSON input"}
 	} else {
-		stdinReader = onceStdinReader{stdinReader: os.Stdin}
+		stdinReader = onceStdinReader{stdinReader: stdin}
 	}
 
 	// Embed files passed as "@file.jpg" in the request body, headers, and query:

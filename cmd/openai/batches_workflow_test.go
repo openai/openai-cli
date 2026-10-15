@@ -306,6 +306,10 @@ func runBatchesPipeInput(t *testing.T, server *httptest.Server, input string, co
 	}
 	defer reader.Close()
 	defer writer.Close()
+	// Make the initial pipe peek deterministic on Windows.
+	if _, err := io.WriteString(writer, " "); err != nil {
+		t.Fatal(err)
+	}
 	child := batchesWorkflowProcess(t, ctx, server, args...)
 	var stdout, stderr bytes.Buffer
 	child.Stdin, child.Stdout, child.Stderr = reader, &stdout, &stderr

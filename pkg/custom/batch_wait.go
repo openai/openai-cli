@@ -119,7 +119,7 @@ func newBatchWaitCommand() *cli.Command {
 }
 
 // Parse once, preserving generated positional, @file, and piped input semantics.
-func batchRequestOptions(cmd *cli.Command) ([]option.RequestOption, error) {
+func batchRequestOptions(ctx context.Context, cmd *cli.Command) ([]option.RequestOption, error) {
 	args := cmd.Args().Slice()
 	if !cmd.IsSet("batch-id") && len(args) > 0 {
 		if err := cmd.Set("batch-id", args[0]); err != nil {
@@ -130,7 +130,11 @@ func batchRequestOptions(cmd *cli.Command) ([]option.RequestOption, error) {
 	if len(args) > 0 {
 		return nil, batchError("Unexpected extra arguments. Use one batch ID.")
 	}
-	return FlagOptions(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, EmptyBody, false)
+	options, err := flagOptionsWithStdin(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, EmptyBody, false, batchRequestInput{ctx: ctx, file: os.Stdin})
+	if ctx.Err() != nil {
+		return nil, errors.Join(ctx.Err(), err)
+	}
+	return options, err
 }
 
 func waitForBatch(ctx context.Context, cmd *cli.Command) (err error) {
@@ -152,7 +156,7 @@ func waitForBatch(ctx context.Context, cmd *cli.Command) (err error) {
 			err = batchContextError(errors.Join(ctx.Err(), context.Cause(ctx), err))
 		}
 	}()
-	options, err := batchRequestOptions(cmd)
+	options, err := batchRequestOptions(ctx, cmd)
 	if err != nil {
 		return err
 	}

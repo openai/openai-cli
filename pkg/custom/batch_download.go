@@ -55,7 +55,7 @@ func handleBatchDownload(ctx context.Context, command *cli.Command) (err error) 
 			err = batchContextError(errors.Join(err, contextErr))
 		}
 	}()
-	options, err := batchRequestOptions(command)
+	options, err := batchRequestOptions(ctx, command)
 	if err != nil {
 		return err
 	}
