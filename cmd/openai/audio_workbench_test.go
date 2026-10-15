@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/openai/openai-cli/internal/audiohistory"
 	"github.com/openai/openai-cli/internal/audiomedia"
@@ -64,6 +67,112 @@ func audioWorkbenchHistory(t *testing.T) ([]string, audiohistory.Store, audiohis
 	preview, err := store.Capture(t.Context(), io.NopCloser(bytes.NewReader(data)), settings)
 	require.NoError(t, err)
 	return env, store, entry, preview, data
+}
+
+type audioWorkbenchHelperConfig struct {
+	Hold bool
+}
+
+type audioWorkbenchHelperReceipt struct {
+	PID                  int
+	Args                 []string
+	Input                []byte
+	ForbiddenEnvironment []string
+}
+
+const audioWorkbenchHelperConfigName = "audio-workbench-helper.json"
+const audioWorkbenchHelperReceiptName = "audio-workbench-helper-result.json"
+
+// Copy the current test executable so public playback uses normal PATH lookup.
+// Sidecar configuration does not weaken the production helper environment filter.
+func prepareAudioWorkbenchHelper(t *testing.T, hold bool) (programs string, receiptPath string) {
+	t.Helper()
+	programs = t.TempDir()
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	source, err := os.Open(executable)
+	require.NoError(t, err)
+	name := "ffplay"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	destination, err := os.OpenFile(filepath.Join(programs, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
+	if err != nil {
+		t.Fatal(errors.Join(err, source.Close()))
+	}
+	_, copyErr := io.Copy(destination, source)
+	require.NoError(t, errors.Join(copyErr, destination.Close(), source.Close()))
+	configuration, err := json.Marshal(audioWorkbenchHelperConfig{Hold: hold})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(programs, audioWorkbenchHelperConfigName), configuration, 0600))
+	return programs, filepath.Join(programs, audioWorkbenchHelperReceiptName)
+}
+
+// TestMain dispatches copied ffplay executables before testing parses their flags.
+func runAudioWorkbenchHelper() (bool, error) {
+	name := filepath.Base(os.Args[0])
+	if name != "ffplay" && name != "ffplay.exe" {
+		return false, nil
+	}
+	deadline := time.AfterFunc(30*time.Second, func() { os.Exit(124) })
+	defer deadline.Stop()
+	executable, err := os.Executable()
+	if err != nil {
+		return true, err
+	}
+	directory := filepath.Dir(executable)
+	configuration, err := os.ReadFile(filepath.Join(directory, audioWorkbenchHelperConfigName))
+	if err != nil {
+		return true, err
+	}
+	var config audioWorkbenchHelperConfig
+	if err := json.Unmarshal(configuration, &config); err != nil {
+		return true, err
+	}
+	if config.Hold {
+		// Notify suppresses default Windows console-event termination; Ignore does not.
+		interrupts := make(chan os.Signal, 1)
+		signal.Notify(interrupts, os.Interrupt)
+		defer signal.Stop(interrupts)
+	}
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return true, err
+	}
+	receipt := audioWorkbenchHelperReceipt{PID: os.Getpid(), Args: os.Args[1:], Input: input}
+	for _, variable := range os.Environ() {
+		key, _, _ := strings.Cut(variable, "=")
+		key = strings.ToUpper(key)
+		if strings.HasPrefix(key, "OPENAI_") || key == "FFREPORT" {
+			receipt.ForbiddenEnvironment = append(receipt.ForbiddenEnvironment, key)
+		}
+	}
+	data, err := json.Marshal(receipt)
+	if err != nil {
+		return true, err
+	}
+	path := filepath.Join(directory, audioWorkbenchHelperReceiptName)
+	temporary := path + ".tmp"
+	defer os.Remove(temporary)
+	if err := os.WriteFile(temporary, data, 0600); err != nil {
+		return true, err
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		return true, err
+	}
+	if config.Hold {
+		select {} // The deadline bounds cleanup after an unexpected parent failure.
+	}
+	return true, nil
+}
+
+func requireNoAudioSnapshots(t *testing.T, store audiohistory.Store) {
+	t.Helper()
+	entries, err := os.ReadDir(store.Directory)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		require.False(t, strings.HasPrefix(entry.Name(), ".snapshot-"), "operation retained a private snapshot")
+	}
 }
 
 func TestMainAudioWorkbenchLocalHistoryAndInspectFormats(t *testing.T) {
@@ -207,25 +316,31 @@ func TestMainAudioWorkbenchLocalNamesDoNotBypassRemoteSetup(t *testing.T) {
 }
 
 func TestMainAudioWorkbenchPlayUsesSyntheticLocalHelper(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake playback helper uses a Unix shell")
-	}
-	env, _, entry, _, data := audioWorkbenchHistory(t)
-	programs := t.TempDir()
-	played := filepath.Join(t.TempDir(), "played.wav")
-	quotedPath := "'" + strings.ReplaceAll(played, "'", "'\\''") + "'"
-	script := "#!/bin/sh\n[ -z \"${OPENAI_API_KEY+x}\" ] || exit 9\n[ -z \"${FFREPORT+x}\" ] || exit 10\n/bin/cat > " + quotedPath + "\n"
-	require.NoError(t, os.WriteFile(filepath.Join(programs, "ffplay"), []byte(script), 0700))
+	env, store, entry, _, data := audioWorkbenchHistory(t)
+	programs, receiptPath := prepareAudioWorkbenchHelper(t, false)
 	env = append(env, "PATH="+programs, "OPENAI_BASE_URL=://synthetic-private-endpoint",
 		"OPENAI_API_KEY=sk-fake-audio-playback", "FFREPORT=synthetic-private-report",
+		"OPENAI_ADMIN_KEY=sk-fake-audio-admin", "OPENAI_WEBHOOK_SECRET=whsec-fake-audio",
 		"OPENAI_MTLS_CLIENT_CERT_FILE=/synthetic-private/missing-cert")
 	got := runMainDispatchWithEnv(t, "bash", env, "openai", "audio", "--format", "json", "play", entry.ID)
 	require.Zero(t, got.code, "%s", got.stderr)
 	require.Empty(t, got.stdout)
 	require.Empty(t, got.stderr)
-	actual, err := os.ReadFile(played)
+	recorded, err := os.ReadFile(receiptPath)
 	require.NoError(t, err)
-	require.Equal(t, data, actual, "playback helper did not receive the verified original samples")
+	var receipt audioWorkbenchHelperReceipt
+	require.NoError(t, json.Unmarshal(recorded, &receipt))
+	require.Positive(t, receipt.PID)
+	require.Empty(t, receipt.ForbiddenEnvironment, "playback helper inherited private environment variables")
+	require.Equal(t, data, receipt.Input, "playback helper did not receive the verified original samples")
+	input := slices.Index(receipt.Args, "-i")
+	require.GreaterOrEqual(t, input, 0)
+	require.Less(t, input+1, len(receipt.Args))
+	require.Equal(t, "pipe:0", receipt.Args[input+1], "playback helper must consume verified bytes through stdin")
+	requireNoAudioSnapshots(t, store)
+	retained, err := os.ReadFile(filepath.Join(store.Directory, entry.ID, "audio"))
+	require.NoError(t, err)
+	require.Equal(t, data, retained, "playback changed retained original bytes")
 }
 
 func TestMainAudioWorkbenchLeavesDirectSpeechBinaryAndSSEPaths(t *testing.T) {
