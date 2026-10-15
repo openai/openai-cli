@@ -274,9 +274,67 @@ jobs:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: fish
         run: |
           set -euo pipefail
+          fish_version=$(fish --no-config -c 'printf "%s\n" $version')
+          if [[ ! $fish_version =~ ^([0-9]+)\.[0-9]+\.[0-9]+([-.+][[:alnum:].+-]+)?$ ]]; then
+            printf 'Unexpected Fish version: %s\n' "$fish_version" >&2
+            exit 1
+          fi
+          fish_major=${BASH_REMATCH[1]}
+          if (( 10#$fish_major >= 4 )); then
+            fish_suggestions=supported
+            suggestion_pattern='TestShellSuggestionsFish.*'
+          else
+            fish_suggestions=unsupported
+            suggestion_pattern='TestShellSuggestionsFish(RefusesUnsupportedVersionBeforeMutation|NoninteractiveDoesNotActivate)'
+            printf '%s\n' 'Fish executable suggestions: native refusal coverage only; Fish 4+ behavior requires a supported host.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          printf 'Fish %s: executable suggestion mode %s\n' "$fish_version" "$fish_suggestions"
+          printf 'OPENAI_CLI_CI_FISH_VERSION=%s\nOPENAI_CLI_CI_FISH_SUGGESTIONS=%s\n' "$fish_version" "$fish_suggestions" >> "$GITHUB_ENV"
           go test ./internal/autocomplete -count=1 -timeout=5m -v -json \
-            -run '^(TestFish(FileCompletionPreservesAssignments|PackagePickerFirstPrompt|PackagePreservesOrdinaryCompletions)|TestPickerFish(TabAndLifecycle|BindingsAndResourcing|RejectsOtherCommandLines)|TestPickerInstalledFish(HonorsSharedOptOut|RunsAfterUserConfiguration))$' \
+            -run "^(TestFish(FileCompletionPreservesAssignments|PackagePickerFirstPrompt|PackagePreservesOrdinaryCompletions)|TestPickerFish(TabAndLifecycle|BindingsAndResourcing|RejectsOtherCommandLines)|TestPickerInstalledFish(HonorsSharedOptOut|RunsAfterUserConfiguration)|${suggestion_pattern})$" \
             | tee "$RUNNER_TEMP/fish-tests.jsonl"
+      - name: Test Linux executable suggestion adapters
+        if: runner.os == 'Linux' && env.OPENAI_CLI_CI_FISH_SUGGESTIONS == 'supported'
+        shell: bash
+        timeout-minutes: 4
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: fish
+        run: |
+          set -euo pipefail
+          go test -p 1 ./internal/autocomplete -count=1 -timeout=3m -v -json \
+            -run '^(TestShellSuggestionsAdaptersUnavailableExecutable|TestShellSuggestionsAdaptersRefuseShadowedExecutable|TestShellSuggestionsAdaptersRecheckExecutablePrecedence|TestShellSuggestionsAdaptersRecheckRemovedExecutable)$/^fish$' \
+            | tee "$RUNNER_TEMP/fish-suggestion-adapter-tests.jsonl"
+      - name: Test Linux Bash and zsh executable suggestions
+        if: runner.os == 'Linux'
+        shell: bash
+        timeout-minutes: 4
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: bash,zsh
+          OPENAI_CLI_TEST_BASH: /bin/bash
+        run: |
+          set -euo pipefail
+          go test -p 1 ./internal/autocomplete -count=1 -timeout=3m -v -json \
+            -run '^(TestShellSuggestionMatcherCoversEverySingleEdit|TestShellSuggestionMatcherUsesBoundName|TestShellSuggestionScriptsResolveOnlyRendererTokens|TestShellSuggestionsBashDisableAndReenablePreservesTracing|TestShellSuggestionsBashNocasematchPreservesCaseOnlyReplacement|TestShellSuggestionsBashNocasematchPreservesExactMatchingAndOptions|TestShellSuggestionsBashNocasematchRejectsCaseOnlyBindingChange|TestShellSuggestionsBashRefusalPreservesExtglobOptions|TestShellSuggestionsBashRefusalPreservesParsedAliases|TestShellSuggestionsBashRefusalPreservesSourceProvenanceAndSiblingFiles|TestShellSuggestionsBashRefusalPreservesTracingPrivacy|TestShellSuggestionsBashRefusesExportedOrReadonlyHandler|TestShellSuggestionsBashRefusesPriorHandlerWithoutChangingNativeIdentity|TestShellSuggestionsBashRejectsForeignHandlerAfterDisable|TestShellSuggestionsBashZshAdvisoryAndPrivacy|TestShellSuggestionsBashZshFallbackDoesNotEchoCommandText|TestShellSuggestionsBashZshPreserveLaterReplacement|TestShellSuggestionsBashZshPreservePriorErrexit|TestShellSuggestionsBashZshPriorExitPrecedesAdvice|TestShellSuggestionsBashZshRefuseShadowedExecutable|TestShellSuggestionsBashZshRejectRebindingUntilDisabled|TestShellSuggestionsBashZshRejectRemovedCachedExecutable|TestShellSuggestionsRequireSafeBoundName|TestShellSuggestionsZshDisableAndReenablePreservesTracing|TestShellSuggestionsZshRefusalPreservesHandlerAttributes|TestShellSuggestionsZshRefusalPreservesTracingPrivacy|TestShellSuggestionsZshRefusesAutoloadWithoutLoadingHandler|TestShellSuggestionsZshRefusesEmptyPriorHandler|TestShellSuggestionsZshRefusesPriorHandlerWithoutChangingNativeIdentity|TestShellSuggestionsZshRejectsForeignHandlerAfterDisable|TestShellSuggestionsZshRejectsMissingAutoloadWithoutPartialActivation)$' \
+            | tee "$RUNNER_TEMP/bash-zsh-suggestion-tests.jsonl"
+      - name: Test Linux public executable suggestion setup
+        if: runner.os == 'Linux'
+        shell: bash
+        timeout-minutes: 4
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: bash,zsh,fish
+          OPENAI_CLI_TEST_BASH: /bin/bash
+        run: |
+          set -euo pipefail
+          shells='bash|zsh'
+          if test "$OPENAI_CLI_CI_FISH_SUGGESTIONS" = supported; then
+            shells+='|fish'
+          fi
+          go test -p 1 ./cmd/openai -count=1 -timeout=3m -v -json \
+            -run "^TestMainShellSuggestionsNative$/^(${shells})$" \
+            | tee "$RUNNER_TEMP/public-shell-suggestion-tests.jsonl"
       - name: Test Linux native command quoting
         if: runner.os == 'Linux'
         shell: bash
@@ -544,6 +602,164 @@ jobs:
               return {root} | {f"{root}/{child}" for child in children}
 
           strict_packages = {}
+          if os.environ["RUNNER_OS"] == "Linux":
+              fish_suggestion_cases = {
+                  'TestFishFileCompletionPreservesAssignments': [
+                      'openai_--file_assets/lo',
+                      'openai_--file=assets/lo',
+                      'openai_--image=assets/lo',
+                      'openai_--file=assets/a=',
+                      "openai_--file='assets/long_",
+                      'openai_--file=assets/l[',
+                      'openai_--file_--file=lo',
+                      'openai_--format=assets/lo',
+                      'openai_--missing=assets/lo',
+                      'openai_--_--file=assets/lo',
+                      "openai_--file='assets/a='",
+                      "openai_--file='assets/a=",
+                      'openai_--file="assets/a=',
+                      'openai_--file=assets/a\\=',
+                      "openai_--file='assets/equals_space=",
+                      'openai_--file=assets/colon:',
+                      'openai_--file=assets/back\\\\slash=',
+                      'openai_--file=$OPENAI_CLI_COMPLETION_ASSETS/lo',
+                      "openai_--format_'(touch_unsafe)'_--file=assets/lo",
+                      'openai_--format_(touch_unsafe)_--file=assets/lo',
+                  ],
+                  'TestFishPackagePickerFirstPrompt': [
+                      'enabled',
+                      'stable_opt-out',
+                      'stable_dangling_opt-out',
+                      'legacy_opt-out',
+                      'legacy_dangling_opt-out',
+                      'late_XDG_opt-out',
+                      'stable_opt-out_after_XDG_change',
+                      'disabled_in_config',
+                      'different_executable',
+                      'different_executable_after_prompt',
+                      'function_shadows_executable',
+                      'PATH-selected_test_is_ignored',
+                      'relative_home',
+                      'same_executable_through_symlink',
+                      'repeated_source',
+                      'personal_then_package',
+                      'package_then_personal',
+                  ],
+                  'TestFishPackagePreservesOrdinaryCompletions': [],
+                  'TestPickerFishBindingsAndResourcing': ['custom_binding', 'replacement_binding', 'disable_then_enable'],
+                  'TestPickerFishRejectsOtherCommandLines': [],
+                  'TestPickerFishTabAndLifecycle': [],
+                  'TestPickerInstalledFishHonorsSharedOptOut': ['absent', 'before_startup', 'before_prompt', 'disabled_in_config', 'nonempty', 'dangling_link'],
+                  'TestPickerInstalledFishRunsAfterUserConfiguration': ['config_binding', 'lazy_user_bindings', 'disabled_in_config'],
+                  'TestShellSuggestionsFishAbsentCurrentHandlerDoesNotReadInput': [],
+                  'TestShellSuggestionsFishAbsentPriorPreservesFallbackAndInput': [],
+                  'TestShellSuggestionsFishDelegatesArgumentsAndStatus': ['0', '42', '127'],
+                  'TestShellSuggestionsFishDescriptionValueIsNotEventMetadata': [],
+                  'TestShellSuggestionsFishMatcherAndPrivacy': [
+                      '"opneai"',
+                      '"opena"',
+                      '"xopenai"',
+                      '"openxai"',
+                      '"openaii"',
+                      '"opxnai"',
+                      '"Openai"',
+                      '"open-ai"',
+                      '"openai"',
+                      '"unrelated"',
+                      '"./opneai"',
+                      '"opneai\\n"',
+                      '"opneai\\x1b"',
+                      '"openai;"',
+                      '""',
+                      '"' + "a" * 1000 + '"',
+                  ],
+                  'TestShellSuggestionsFishNoninteractiveDoesNotActivate': [],
+                  'TestShellSuggestionsFishOriginalNameAndSelfReplacement': [],
+                  'TestShellSuggestionsFishPreservesEmptyHandlerAndInput': [],
+                  'TestShellSuggestionsFishPreservesLatePrivateCopyCollision': [],
+                  'TestShellSuggestionsFishPreservesMultilineHandlerLiterals': [],
+                  'TestShellSuggestionsFishPreservesPriorSelfRemoval': [],
+                  'TestShellSuggestionsFishPreservesSourceAndSiblingResource': [],
+                  'TestShellSuggestionsFishPublicLookupAndLifecycle': [],
+                  'TestShellSuggestionsFishRefusesCallerScopeWithoutMutation': [],
+                  'TestShellSuggestionsFishRefusesLegacyEventWithoutMutation': [],
+                  'TestShellSuggestionsFishRefusesSignalAndVariableEvents': ['--on-signal_USR1', '--on-variable_SUGGEST_EVENT_VARIABLE'],
+                  'TestShellSuggestionsFishRejectsPrivateCopyCollisions': ['__openai_suggestions_prior_1', '__openai_suggestions_current_1'],
+                  'TestShellSuggestionsFishRejectsUnsupportedEventsWithoutMutation': [],
+                  'TestShellSuggestionsFishRetainedWrapperAfterOwnedDisable': [],
+                  'TestShellSuggestionsFishRefusesUnsupportedVersionBeforeMutation': [],
+                  'TestShellSuggestionsFishRefusesForeignPendingStack': [],
+                  'TestShellSuggestionsFishRefusesAmbiguousSourceMetadata': [],
+                  'TestShellSuggestionsFishRefusesCompletionWrappers': ['initial', 'later'],
+                  'TestShellSuggestionsFishRestoresAfterInterruptedDelegation': ['owned', 'retained', 'nested-retained', 'disabled-retained'],
+                  'TestShellSuggestionsFishDefersEmittedEventsAndRestoresAfterRepeatedCalls': [],
+                  'TestShellSuggestionsFishTraceDoesNotDiscloseUnusedHandlerLiterals': [],
+              }
+              bash_zsh_suggestion_cases = {
+                  'TestShellSuggestionMatcherCoversEverySingleEdit': ['a', 'openai', 'future_cli2', 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'],
+                  'TestShellSuggestionMatcherUsesBoundName': ['openai', 'client', '_tool2'],
+                  'TestShellSuggestionScriptsResolveOnlyRendererTokens': [],
+                  'TestShellSuggestionsBashDisableAndReenablePreservesTracing': [],
+                  'TestShellSuggestionsBashNocasematchPreservesCaseOnlyReplacement': ['-s', '-u'],
+                  'TestShellSuggestionsBashNocasematchPreservesExactMatchingAndOptions': ['on', 'off'],
+                  'TestShellSuggestionsBashNocasematchRejectsCaseOnlyBindingChange': ['-s', '-u'],
+                  'TestShellSuggestionsBashRefusalPreservesExtglobOptions': [],
+                  'TestShellSuggestionsBashRefusalPreservesParsedAliases': [],
+                  'TestShellSuggestionsBashRefusalPreservesSourceProvenanceAndSiblingFiles': [],
+                  'TestShellSuggestionsBashRefusalPreservesTracingPrivacy': ['#00', 'set_-x'],
+                  'TestShellSuggestionsBashRefusesExportedOrReadonlyHandler': ['export', 'readonly', 'declare_-t'],
+                  'TestShellSuggestionsBashRefusesPriorHandlerWithoutChangingNativeIdentity': ['0', '42', '127'],
+                  'TestShellSuggestionsBashRejectsForeignHandlerAfterDisable': [],
+                  'TestShellSuggestionsBashZshAdvisoryAndPrivacy': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshFallbackDoesNotEchoCommandText': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshPreserveLaterReplacement': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshPreservePriorErrexit': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshPriorExitPrecedesAdvice': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshRefuseShadowedExecutable': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshRejectRebindingUntilDisabled': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshRejectRemovedCachedExecutable': ['bash/after-setup', 'bash/before-setup', 'zsh/after-setup', 'zsh/before-setup'],
+                  'TestShellSuggestionsRequireSafeBoundName': [],
+                  'TestShellSuggestionsZshDisableAndReenablePreservesTracing': [],
+                  'TestShellSuggestionsZshRefusalPreservesHandlerAttributes': ['trace', 'trace-local', 'warn-nested', 'sticky-emulation'],
+                  'TestShellSuggestionsZshRefusalPreservesTracingPrivacy': ['#00', 'set_-x'],
+                  'TestShellSuggestionsZshRefusesAutoloadWithoutLoadingHandler': [],
+                  'TestShellSuggestionsZshRefusesEmptyPriorHandler': [],
+                  'TestShellSuggestionsZshRefusesPriorHandlerWithoutChangingNativeIdentity': ['setopt/0', 'setopt/42', 'setopt/127', 'unsetopt/0', 'unsetopt/42', 'unsetopt/127'],
+                  'TestShellSuggestionsZshRejectsForeignHandlerAfterDisable': [],
+                  'TestShellSuggestionsZshRejectsMissingAutoloadWithoutPartialActivation': [],
+              }
+              fish_version = os.environ["OPENAI_CLI_CI_FISH_VERSION"]
+              version_match = re.fullmatch(r"([0-9]+)\.[0-9]+\.[0-9]+([-.+][a-zA-Z0-9.+-]+)?", fish_version)
+              if version_match is None:
+                  raise SystemExit(f"Unexpected Fish version: {fish_version!r}")
+              fish_supported = int(version_match[1]) >= 4
+              if os.environ["OPENAI_CLI_CI_FISH_SUGGESTIONS"] != ("supported" if fish_supported else "unsupported"):
+                  raise SystemExit("Fish version and selected coverage disagree")
+              if not fish_supported:
+                  fish_suggestion_cases = {
+                      root: children for root, children in fish_suggestion_cases.items()
+                      if not root.startswith("TestShellSuggestionsFish") or root in {
+                          "TestShellSuggestionsFishRefusesUnsupportedVersionBeforeMutation",
+                          "TestShellSuggestionsFishNoninteractiveDoesNotActivate",
+                      }
+                  }
+              for filename, cases in [
+                  ("fish-tests.jsonl", fish_suggestion_cases),
+                  ("bash-zsh-suggestion-tests.jsonl", bash_zsh_suggestion_cases),
+              ]:
+                  suites[filename] = set().union(*(required_cases(root, children) for root, children in cases.items()))
+                  strict_packages[filename] = "github.com/openai/openai-cli/internal/autocomplete"
+              fish_adapter_roots = ['TestShellSuggestionsAdaptersUnavailableExecutable', 'TestShellSuggestionsAdaptersRefuseShadowedExecutable', 'TestShellSuggestionsAdaptersRecheckExecutablePrecedence', 'TestShellSuggestionsAdaptersRecheckRemovedExecutable']
+              if fish_supported:
+                  suites["fish-suggestion-adapter-tests.jsonl"] = set().union(*(
+                      required_cases(root, ["fish"]) for root in fish_adapter_roots
+                  ))
+                  strict_packages["fish-suggestion-adapter-tests.jsonl"] = "github.com/openai/openai-cli/internal/autocomplete"
+              suites["public-shell-suggestion-tests.jsonl"] = required_cases(
+                  "TestMainShellSuggestionsNative", ["bash", "zsh", "fish"] if fish_supported else ["bash", "zsh"],
+              )
+              strict_packages["public-shell-suggestion-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+
           if os.environ["CHECK_IMAGE_STATE"] == "true":
               preference_cases = {
                   'TestImagePreferenceDefaultAndReplacement': [],
