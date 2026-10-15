@@ -44,7 +44,7 @@ demo_start_api "$demo_output/requests.json"
 printf 'unavailable-option\t1\ncorrected-request\t0\n' > "$demo_runtime/expected-statuses.tsv"
 for phase in before after; do
   demo_capture_scene "$phase" 0 "$demo_runtime/$phase" "$demo_api_url" "$phase: option scope (terminal replay)" \
-    HOME="$demo_runtime/home" NO_COLOR=1 DEMO_STATUS_FILE="$demo_output/$phase-statuses.tsv"
+    HOME="$demo_runtime/home" NO_COLOR=1 GOMAXPROCS=2 DEMO_STATUS_FILE="$demo_output/$phase-statuses.tsv"
   grep -F 'file_demo' "$demo_output/$phase.txt"
   cmp "$demo_runtime/expected-statuses.tsv" "$demo_output/$phase-statuses.tsv"
   if grep -qF '[exit' "$demo_output/$phase.txt"; then exit 1; fi

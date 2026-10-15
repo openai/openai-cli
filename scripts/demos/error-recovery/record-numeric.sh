@@ -65,7 +65,7 @@ demo_start_api "$demo_output/requests.json"
 printf 'invalid-option-value\t1\ninvalid-piped-value\t1\ncorrected-request\t0\n' > "$demo_runtime/expected-statuses.tsv"
 for phase in before after; do
   demo_capture_scene "$phase" 0 "$demo_runtime/$phase" "$demo_api_url" "$phase: numeric input recovery" \
-    HOME="$demo_runtime/home" XDG_CONFIG_HOME="$demo_runtime/home/config" NO_COLOR=1 OPENAI_UNTRUSTED_STDIN=false \
+    HOME="$demo_runtime/home" XDG_CONFIG_HOME="$demo_runtime/home/config" NO_COLOR=1 GOMAXPROCS=2 OPENAI_UNTRUSTED_STDIN=false \
     DEMO_STATUS_FILE="$demo_output/$phase-statuses.tsv"
   cmp "$demo_runtime/expected-statuses.tsv" "$demo_output/$phase-statuses.tsv"
 done

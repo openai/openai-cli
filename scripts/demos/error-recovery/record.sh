@@ -40,7 +40,7 @@ printf 'command-typo\t3\nhelp-typo\t3\nmissing-upload\t1\nmissing-part\t1\n' > "
 for phase in before after; do
   demo_capture_scene "$phase" 0 "$demo_runtime/$phase" http://127.0.0.1:1 \
     "$phase: actionable errors (terminal replay)" \
-    HOME="$demo_runtime/home" DEMO_ISOLATED_HOME="$demo_runtime/home" NO_COLOR=1 \
+    HOME="$demo_runtime/home" DEMO_ISOLATED_HOME="$demo_runtime/home" NO_COLOR=1 GOMAXPROCS=2 \
     DEMO_STATUS_FILE="$demo_output/$phase-statuses.tsv"
   cmp "$demo_runtime/expected-statuses.tsv" "$demo_output/$phase-statuses.tsv"
   if grep -qF '[exit' "$demo_output/$phase.txt"; then exit 1; fi
