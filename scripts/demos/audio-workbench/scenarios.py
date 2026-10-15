@@ -779,7 +779,7 @@ def compact_case(ctx):
     ctx.wait(terminal, "Duration 00:02.000")
     assert len(server.records) == 1, "Compact generation request count changed"
     request = server.records[0]["body"]
-    assert request["input"] == ctx.fixture.TEXT and request.get("instructions", "") == ""
+    assert request["input"] == ctx.fixture.TEXT and request.get("instructions", "") == ctx.fixture.DEFAULT_INSTRUCTIONS
     assert (request["model"], request["voice"], request["response_format"], request.get("speed", 1)) == (
         "gpt-4o-mini-tts", "coral", "wav", 1)
     entries = json.loads(public(["--format", "json", "audio", "history"]))
