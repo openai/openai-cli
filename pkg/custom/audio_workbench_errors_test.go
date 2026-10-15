@@ -306,7 +306,7 @@ func TestAudioWorkbenchFailureGuidanceFollowsEscapeTransitions(t *testing.T) {
 					require.Same(t, &result, m.result)
 				} else {
 					result.measured = false
-					m.Update(audioWorkMessage{kind: "generate", result: result, err: audioFailure("Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.", failure)})
+					m.Update(audioWorkMessage{kind: "generate", result: result, err: classifiedAudioFailure(audioMeasurementFailure, "Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.", failure)})
 					summary, action = "Measurement failed.", "Retained audio remains available. Export the file for inspection."
 				}
 				view := audioFeedbackView(t, m)
@@ -367,7 +367,7 @@ func TestAudioWorkbenchFailedAuditionPreservesFailureAndKnownPriorResult(t *test
 				for _, id := range []string{"first_audition", "second_audition"} {
 					audition := audioReviewResult(id, true)
 					audition.measured = false
-					_, command := m.Update(audioWorkMessage{kind: "generate", result: audition, err: audioFailure("Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.", failure)})
+					_, command := m.Update(audioWorkMessage{kind: "generate", result: audition, err: classifiedAudioFailure(audioMeasurementFailure, "Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.", failure)})
 					require.Nil(t, command, "failed measurement automatically started playback")
 					require.Equal(t, audition, *m.result)
 					require.Equal(t, 4, m.focus)
