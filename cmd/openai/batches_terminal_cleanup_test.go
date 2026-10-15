@@ -279,33 +279,77 @@ try:
 finally:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    permission_error, cleanup_error = None, None
+    cleanup_limit = time.monotonic() + .5
+    reaped = status is not None
     try:
         os.killpg(pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-    if status is None:
+    except PermissionError as error:
+        permission_error = error
+    except OSError as error:
+        cleanup_error = error
+    if not reaped:
         try:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        cleanup_limit = time.monotonic() + .5
-        while status is None and time.monotonic() < cleanup_limit:
-            child, candidate = os.waitpid(pid, os.WNOHANG)
+        except PermissionError as error:
+            permission_error = permission_error or error
+        except OSError as error:
+            cleanup_error = cleanup_error or error
+        while not reaped and time.monotonic() < cleanup_limit:
+            try:
+                child, candidate = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                # A signal can arrive after waitpid reaps, before Python assigns its result.
+                reaped = True
+                break
+            except OSError as error:
+                cleanup_error = cleanup_error or error
+                break
             if child:
                 status = candidate
+                reaped = True
                 break
-            ready, _, _ = select.select([master], [], [], .01)
-            if ready:
-                try:
+            try:
+                ready, _, _ = select.select([master], [], [], .01)
+                if ready:
                     os.read(master, 65536)
-                except OSError:
-                    pass
-        assert status is not None, "fixture cleanup could not reap the CLI"
-    if filler is not None:
-        os.close(filler)
-    os.close(slave)
-    os.close(master)
-    controller_channel.close()
+            except OSError:
+                pass
+    # Always close the owned terminal before deciding whether a signal error was benign.
+    for descriptor in [filler, slave, master]:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError as error:
+                cleanup_error = cleanup_error or error
+    try:
+        controller_channel.close()
+    except OSError as error:
+        cleanup_error = cleanup_error or error
+    group_gone = False
+    while True:
+        try:
+            os.killpg(pid, 0)
+        except ProcessLookupError:
+            group_gone = True
+            break
+        except PermissionError as error:
+            permission_error = permission_error or error
+        except OSError as error:
+            cleanup_error = cleanup_error or error
+            break
+        if time.monotonic() >= cleanup_limit:
+            break
+        time.sleep(.01)
+    if not reaped or not group_gone:
+        raise AssertionError("fixture cleanup retained the CLI or its group") from (permission_error or cleanup_error)
+    if cleanup_error is not None:
+        raise cleanup_error
+    # A raced PermissionError is harmless only after reaping and confirmed group disappearance.
 `
 
 func TestMainBatchesExplorerTerminalCleanup(t *testing.T) {
