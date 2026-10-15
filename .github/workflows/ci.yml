@@ -152,7 +152,33 @@ jobs:
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
 
-      - uses: ./.github/actions/setup-go
+      # Artifact builds must not compete with lint for setup-go's immutable cache.
+      - name: Set up Go for artifact builds
+        id: artifact-go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          check-latest: true
+          cache: false
+      - name: Locate Go caches
+        id: artifact-cache-paths
+        run: |
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+      - name: Cache artifact build dependencies and compilation
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ steps.artifact-cache-paths.outputs.build }}
+            ${{ steps.artifact-cache-paths.outputs.modules }}
+          # A new revision saves its completed cross-platform build; subsequent
+          # revisions restore the most recent compatible artifact-build cache.
+          key: artifact-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            artifact-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.artifact-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-
+      - uses: ./.github/actions/link-go-sdk
+      - name: Bootstrap
+        run: ./scripts/bootstrap
 
       - name: Test vulnerability scan coverage
         run: ./scripts/govulncheck-test
@@ -224,9 +250,9 @@ jobs:
             exit 1
           fi
 
-  test:
+  test-linux:
     timeout-minutes: 15
-    name: test
+    name: Linux tests
     needs: source
     permissions: {}
     runs-on: ubuntu-latest
@@ -253,3 +279,46 @@ jobs:
         # Large-payload and subprocess suites share this runner. Avoid running
         # packages concurrently; retain every test, payload and deadline.
         run: ./scripts/test -p 1
+        env:
+          SKIP_WINDOWS_TEST_COMPILE: '1'
+
+  test-windows-compile:
+    timeout-minutes: 15
+    name: Windows test compilation
+    needs: source
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-go
+      - name: Compile all test packages for Windows
+        run: |
+          output=$(mktemp -d)
+          trap 'rm -rf "$output"' EXIT
+          GOARCH=amd64 GOOS=windows go test -c -o "$output/" ./... -p 1
+
+  test:
+    timeout-minutes: 5
+    name: test
+    needs: [test-linux, test-windows-compile]
+    if: always()
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful tests and Windows compilation
+        env:
+          LINUX_RESULT: ${{ needs.test-linux.result }}
+          WINDOWS_RESULT: ${{ needs.test-windows-compile.result }}
+        run: |
+          if [[ "$LINUX_RESULT" != "success" || "$WINDOWS_RESULT" != "success" ]]; then
+            echo "Linux tests: $LINUX_RESULT; Windows compilation: $WINDOWS_RESULT"
+            exit 1
+          fi
