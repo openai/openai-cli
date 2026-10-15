@@ -833,3 +833,34 @@ func TestMainBatchesCollectPreflight(t *testing.T) {
 		})
 	}
 }
+
+func TestMainBatchesCollectReportsBothPermissionFailures(t *testing.T) {
+	var downloads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected mutation: %s", r.Method)
+		}
+		if r.URL.Path == "/batches/batch_synthetic" {
+			fmt.Fprint(w, batchesWorkflowResponse("completed", batchesWorkflowCounts))
+			return
+		}
+		downloads.Add(1)
+		w.Header().Set("x-request-id", "req_synthetic_permission")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"error":{"message":"do not echo synthetic body","code":"synthetic_forbidden"}}`)
+	}))
+	defer server.Close()
+	got := runReadableCommand(t, server, "batches", "wait", "batch_synthetic", "--output-dir", t.TempDir())
+	if got.code != 1 || downloads.Load() != 2 {
+		t.Fatalf("result=%+v downloads=%d", got, downloads.Load())
+	}
+	for _, expected := range []string{"output.jsonl", "error.jsonl", "--file output", "--file error", "permissions", "403", "req_synthetic_permission"} {
+		if !strings.Contains(got.stderr, expected) {
+			t.Fatalf("missing %q: %+v", expected, got)
+		}
+	}
+	if strings.Contains(got.stderr, "do not echo") {
+		t.Fatalf("API prose leaked: %+v", got)
+	}
+}
