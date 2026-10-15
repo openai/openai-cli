@@ -115,6 +115,8 @@ jobs:
         run: go test ./internal/autocomplete -run '^TestPicker(ProfileRecovery.*|Rename.*|RecoveryDirectory.*|Windows.*|FileMetadataPreservesZoneIdentifierAtSnapshotRecheck|ReplacementMetadataKeepsSameInheritedPermissions|SecurityDescriptorComparisonPreservesPermissions|InstallRoundTrip|InstallConfigDirectoryChanges|InstallIgnoresUnusedConfigDirectory|InstallConfigDirectoryRefusalPreservesFiles|InstallPreservesHardLinkedProfiles|ProfileHardLinkAddedAfterSnapshot|ScriptContentChecksLegacyNamespaces|InstallRetriesSupersededScriptCleanup|RemoveRetriesScriptCleanup|RemoveMissingProfileParentCleansOwnedScripts|RemoveMissingProfileAndScriptDirectoriesNoOp|RemoveMissingProfileParentReappearsWhileWaiting|RemovePreservesPersonalLineBoundaries|InstalledDetectsAndRefreshesOlderScript)$' -count=1 -v
       - name: Check Windows shell home targeting
         run: go test ./pkg/custom -run '^TestImagePicker(WindowsShellHome|ShellConsent)' -count=1 -v
+      - name: Check Windows stdin startup probing
+        run: go test ./pkg/custom -run '^TestWindowsPipedDataAvailable$' -count=1 -v
       - name: Check native Windows shell and file commands
         run: go test -p 2 ./cmd/openai -run '^TestMainShell' -count=1 -v
         env:
@@ -122,6 +124,14 @@ jobs:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: cmd,powershell,pwsh
       - name: Check native Windows download completion and cleanup
         run: go test -p 2 ./pkg/custom -run '^(TestWindowsDownload|TestManagedDownload|TestDownload|TestAutomaticDownload|TestBinaryResponsePreserves|TestWriteBinaryResponse|TestReportSaveReceipt|TestSaveReceiptContext|TestResponseSaveReceipt)' -count=1 -v
+        env:
+          GOMAXPROCS: '2'
+      - name: Check native Windows Batch stdin and private staging
+        run: |
+          go test -p 2 ./pkg/custom -run '^TestWindowsBatch(DownloadPrivateStagingAndPublication|OutputDirectory.*)$' -count=1 -timeout=1m -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 2 ./cmd/openai -run '^(TestMainBatchesStalledStdinDeadline|TestMainBatchesCompleteStdinControls)$' -count=1 -timeout=2m -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           GOMAXPROCS: '2'
 

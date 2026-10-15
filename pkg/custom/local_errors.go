@@ -39,8 +39,11 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var receiptFailure *saveReceiptError
 	var navigationFailure *listNavigationError
 	var modelsListFailure *modelsListError
+	var batchFailure *batchWorkflowError
 	var finiteListFailure *finiteJSONListError
 	switch {
+	case errors.As(failure, &batchFailure):
+		return batchFailure.message
 	case errors.As(failure, &adminSetupFailure):
 		return adminSetupFailure.Error()
 	case errors.As(failure, &downloadFailure):

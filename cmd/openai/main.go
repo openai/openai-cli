@@ -21,6 +21,18 @@ func main() {
 		}
 		return
 	}
+	if handled, err := custom.RunBatchOutputHelper(os.Args); handled {
+		if err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+	if handled, err := custom.RunBatchDirectoryHelper(os.Args); handled {
+		if err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	app := cmd.Command
 	app.Flags = append(app.Flags, cmd.NewRequestHeaderFlag())
 
@@ -48,7 +60,7 @@ func main() {
 			exitCode = exitErr.ExitCode()
 		}
 		if showErr := custom.ShowCommandError(app, err, os.Stderr); showErr != nil {
-			fmt.Fprintln(os.Stderr, "Could not display the error.")
+			_ = custom.ShowCommandErrorFallback(err, showErr, os.Stderr)
 		}
 		os.Exit(exitCode)
 	}
