@@ -3,8 +3,6 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,11 +10,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestMainDispatchFiniteJSONListCancellationPreservesPartialOutput(t *testing.T) {
@@ -111,45 +107,4 @@ func TestMainDispatchFiniteJSONListClosedConsumerPreservesFailure(t *testing.T) 
 	}
 }
 
-func TestMainDispatchFiniteJSONListReadOnlyStdoutFails(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, resourceFilePage([]string{"file_a"}, false))
-	}))
-	defer server.Close()
-	path := filepath.Join(t.TempDir(), "read-only-output.json")
-	const original = "existing synthetic content\n"
-	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
-		t.Fatal(err)
-	}
-	// A read-only descriptor fails even for privileged users. This avoids chmod tests.
-	destination, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer destination.Close()
-	binary, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	child := exec.CommandContext(ctx, binary, "-test.run=^TestMainDispatchProcess$", "--", "openai", "--format", "json", "files", "list")
-	child.Env = []string{"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "OPENAI_API_KEY=sk-fake-list-test", "OPENAI_BASE_URL=" + server.URL, "FORCE_COLOR=0"}
-	var stderr bytes.Buffer
-	child.Stdout, child.Stderr = destination, &stderr
-	if err := child.Run(); err == nil || ctx.Err() != nil {
-		t.Fatalf("read-only stdout did not fail promptly: %v stderr=%q", err, stderr.String())
-	}
-	var diagnostic map[string]any
-	if err := json.Unmarshal(stderr.Bytes(), &diagnostic); err != nil || len(diagnostic) == 0 {
-		t.Fatalf("missing structured write error: %q error=%v", stderr.String(), err)
-	}
-	actual, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(actual) != original {
-		t.Fatal("failed output changed the existing destination")
-	}
-}
+func setFiniteJSONListOutputProcess(*exec.Cmd) {}

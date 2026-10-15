@@ -374,6 +374,7 @@ func TestMainDispatchFiniteJSONListUpstreamFailures(t *testing.T) {
 	}{
 		{"initial API failure", `{"error":{"message":"synthetic initial failure","type":"invalid_request_error"}}`, http.StatusBadRequest, true},
 		{"later API failure", `{"error":{"message":"synthetic later failure","type":"invalid_request_error"}}`, http.StatusBadRequest, false},
+		{"later empty API error", `{"error":{}}`, http.StatusBadRequest, false},
 		{"initial malformed page", `{"data":[`, http.StatusOK, true},
 		{"later malformed page", `{"data":[`, http.StatusOK, false},
 	} {
@@ -395,6 +396,9 @@ func TestMainDispatchFiniteJSONListUpstreamFailures(t *testing.T) {
 			var diagnostic map[string]any
 			if err := json.Unmarshal([]byte(got.stderr), &diagnostic); err != nil {
 				t.Fatalf("invalid structured error: %+v error=%v", got, err)
+			}
+			if tc.failure == `{"error":{}}` && (diagnostic["status_code"] != float64(tc.status) || diagnostic["message"] != "HTTP 400 Bad Request: the server returned no usable JSON error details.") {
+				t.Fatalf("empty later-page error lost HTTP failure details: %#v", diagnostic)
 			}
 			if tc.first {
 				if got.stdout != "" {
