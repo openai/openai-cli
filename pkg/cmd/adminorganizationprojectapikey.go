@@ -34,6 +34,36 @@ var adminOrganizationProjectsAPIKeysRetrieve = cli.Command{
 	HideHelpCommand: true,
 }
 
+var adminOrganizationProjectsAPIKeysUpdate = cli.Command{
+	Name:    "update",
+	Usage:   "Updates the scopes and/or expiration of an existing API key in the project,\nincluding a service-account-owned key. Requires permission to write project API\nkeys.",
+	Suggest: true,
+	Flags: []cli.Flag{
+		&requestflag.Flag[string]{
+			Name:      "project-id",
+			Required:  true,
+			PathParam: "project_id",
+		},
+		&requestflag.Flag[string]{
+			Name:      "api-key-id",
+			Required:  true,
+			PathParam: "api_key_id",
+		},
+		&requestflag.Flag[int64]{
+			Name:     "expires-in-seconds",
+			Usage:    "Number of seconds from this request until the API key expires. Must comply with the organization and project expiry policies. Expired keys cannot be updated. Retrying resets the expiry relative to the new request. Omit to keep the current expiration.",
+			BodyPath: "expires_in_seconds",
+		},
+		&requestflag.Flag[[]string]{
+			Name:     "scope",
+			Usage:    `Replace the API key scope restrictions. Omit to leave scopes unchanged. An empty array removes key restrictions (All permissions), subject to the owner's effective permissions. Use ["api.all.read"] for read-only access. Scopes do not change the owner's roles or grant administrative permissions.`,
+			BodyPath: "scopes",
+		},
+	},
+	Action:          handleAdminOrganizationProjectsAPIKeysUpdate,
+	HideHelpCommand: true,
+}
+
 var adminOrganizationProjectsAPIKeysList = cli.Command{
 	Name:    "list",
 	Usage:   "Returns a list of API keys in the project.",
@@ -139,6 +169,63 @@ func handleAdminOrganizationProjectsAPIKeysRetrieve(ctx context.Context, cmd *cl
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
 		Title:          "admin:organization:projects:api-keys retrieve",
+		Transform:      transform,
+	})
+}
+
+func handleAdminOrganizationProjectsAPIKeysUpdate(ctx context.Context, cmd *cli.Command) error {
+	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
+	unusedArgs := cmd.Args().Slice()
+	if !cmd.IsSet("project-id") && len(unusedArgs) > 0 {
+		cmd.Set("project-id", unusedArgs[0])
+		unusedArgs = unusedArgs[1:]
+	}
+	if !cmd.IsSet("api-key-id") && len(unusedArgs) > 0 {
+		cmd.Set("api-key-id", unusedArgs[0])
+		unusedArgs = unusedArgs[1:]
+	}
+	if len(unusedArgs) > 0 {
+		return fmt.Errorf("Unexpected extra arguments: %v", unusedArgs)
+	}
+
+	options, err := flagOptions(
+		cmd,
+		apiquery.NestedQueryFormatBrackets,
+		apiquery.ArrayQueryFormatBrackets,
+		ApplicationJSON,
+		false,
+	)
+	if err != nil {
+		return err
+	}
+
+	params := openai.AdminOrganizationProjectAPIKeyUpdateParams{}
+
+	var res []byte
+	options = append(options, option.WithResponseBodyInto(&res))
+	_, err = client.Admin.Organization.Projects.APIKeys.Update(
+		ctx,
+		cmd.Value("project-id").(string),
+		cmd.Value("api-key-id").(string),
+		params,
+		options...,
+	)
+	if err != nil {
+		return err
+	}
+
+	obj := gjson.ParseBytes(res)
+	format := cmd.Root().String("format")
+	explicitFormat := cmd.Root().IsSet("format")
+	transform := cmd.Root().String("transform")
+	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) admin.organization.projects.api_keys > (method) update",
+		OutputKind:     outputResponse,
+		ExplicitFormat: explicitFormat,
+		Format:         format,
+		RawOutput:      cmd.Root().Bool("raw-output"),
+		Title:          "admin:organization:projects:api-keys update",
 		Transform:      transform,
 	})
 }

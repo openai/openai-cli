@@ -265,7 +265,7 @@ The temporary-file example preserves an existing result when tokenization fails.
 
 ## Tokenizer dependencies
 
-The tokenizer reads embedded OpenAI vocabularies through `github.com/tiktoken-go/tokenizer v0.7.0`.
+The tokenizer reads embedded OpenAI vocabularies through `github.com/tiktoken-go/tokenizer v0.8.1`.
 It uses `github.com/pkoukk/tiktoken-go v0.1.8` for ordinary BPE encoding with fixed Unicode 16 rules.
 Each encoding initializes once, and both counting and inspection validate every returned byte against the input.
 The CLI never downloads vocabulary data during execution.

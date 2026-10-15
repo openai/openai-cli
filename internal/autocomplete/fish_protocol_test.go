@@ -21,7 +21,10 @@ func TestFishFileCompletionPreservesAssignments(t *testing.T) {
 	script, err := shellCompletions[CompletionStyleFish](&cli.Command{}, "openai")
 	require.NoError(t, err)
 	dir := t.TempDir()
-	for _, name := range []string{"assets/logo.png", "assets/long name.png", "assets/a=b.png", "assets/l[bracket].png", "--file=logo.png"} {
+	for _, name := range []string{
+		"assets/logo.png", "assets/long name.png", "assets/a=b.png", "assets/l[bracket].png", "--file=logo.png",
+		"assets/equals space=.png", "assets/colon:name.png", `assets/back\slash=.png`,
+	} {
 		path := filepath.Join(dir, name)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 		require.NoError(t, os.WriteFile(path, nil, 0600))
@@ -44,11 +47,21 @@ complete -C "$OPENAI_CLI_COMPLETION_LINE"
 		{"openai --format=assets/lo", nil},
 		{"openai --missing=assets/lo", nil},
 		{"openai -- --file=assets/lo", nil},
+		{"openai --file='assets/a='", []string{"--file=assets/a=b.png"}},
+		{"openai --file='assets/a=", []string{"--file=assets/a=b.png"}},
+		{"openai --file=\"assets/a=", []string{"--file=assets/a=b.png"}},
+		{`openai --file=assets/a\=`, []string{"--file=assets/a=b.png"}},
+		{"openai --file='assets/equals space=", []string{"--file=assets/equals space=.png"}},
+		{"openai --file=assets/colon:", []string{"--file=assets/colon:name.png"}},
+		{`openai --file=assets/back\\slash=`, []string{`--file=assets/back\slash=.png`}},
+		{`openai --file=$OPENAI_CLI_COMPLETION_ASSETS/lo`, []string{"--file=$OPENAI_CLI_COMPLETION_ASSETS/logo.png", "--file=$OPENAI_CLI_COMPLETION_ASSETS/long name.png"}},
+		{"openai --format '(touch unsafe)' --file=assets/lo", []string{"--file=assets/logo.png", "--file=assets/long name.png"}},
+		{"openai --format (touch unsafe) --file=assets/lo", []string{"--file=assets/logo.png", "--file=assets/long name.png"}},
 	} {
 		t.Run(tc.line, func(t *testing.T) {
 			command := exec.Command(fish, "--no-config", "-c", probe)
 			command.Dir = dir
-			command.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "OPENAI_CLI_COMPLETION_HELPER=1", "OPENAI_CLI_COMPLETION_BINARY="+binary, "OPENAI_CLI_COMPLETION_LINE="+tc.line)
+			command.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "OPENAI_CLI_COMPLETION_HELPER=1", "OPENAI_CLI_COMPLETION_BINARY="+binary, "OPENAI_CLI_COMPLETION_LINE="+tc.line, "OPENAI_CLI_COMPLETION_ASSETS=assets")
 			out, err := command.CombinedOutput()
 			require.NoError(t, err, string(out))
 			var got []string
@@ -59,6 +72,8 @@ complete -C "$OPENAI_CLI_COMPLETION_LINE"
 				}
 			}
 			require.ElementsMatch(t, tc.want, got)
+			_, err = os.Stat(filepath.Join(dir, "unsafe"))
+			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 	}
 }

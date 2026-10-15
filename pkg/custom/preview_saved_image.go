@@ -17,6 +17,8 @@ import (
 const imagePreviewDetails = `PNG, JPEG and WebP. No API call or key is needed. The original is unchanged.
 Preview size uses the current terminal window. Resize, then run it again.
 Automatic preview preferences do not affect this command.
+Use --interactive in Konsole for a live view that redraws after resizing.
+Press q or Escape to close it. The live view does not remain in scrollback.
 `
 
 const imagePreviewHelp = `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}View a saved image
@@ -34,8 +36,8 @@ func registerImagePreviewCommands(root *cli.Command) {
 		return
 	}
 	images.Commands = append(images.Commands,
-		&cli.Command{Name: "preview", Usage: "Display a saved image without generating another one.", UsageText: "openai images preview [--inline auto|on] FILE", Description: imagePreviewDetails + "\nPipes, CI and terminals without supported graphics or color cannot display previews.\nPreview limits: 64 MiB and 16 megapixels. Larger originals are still kept.", CustomHelpTemplate: imagePreviewHelp,
-			Flags: []cli.Flag{&cli.StringFlag{Name: "inline", Value: "auto", Usage: "Preview using auto or on; on permits a local Apple Terminal image font"}}, Action: handleImagesPreview},
+		&cli.Command{Name: "preview", Usage: "Display a saved image without generating another one.", UsageText: "openai images preview [--inline auto|on | --interactive] FILE", Description: imagePreviewDetails + "\nPipes, CI and terminals without supported graphics or color cannot display previews.\nPreview limits: 64 MiB and 16 megapixels. Larger originals are still kept.", CustomHelpTemplate: imagePreviewHelp,
+			Flags: []cli.Flag{&cli.StringFlag{Name: "inline", Value: "auto", Usage: "Preview using auto or on; on permits a local Apple Terminal image font"}, &cli.BoolFlag{Name: "interactive", Usage: "Open a live Konsole viewer on macOS or Linux; q or Escape closes it"}}, Action: handleImagesPreview},
 	)
 	inline := images.Command("inline")
 	if inline == nil {
@@ -64,6 +66,9 @@ func handleImagesPreview(ctx context.Context, command *cli.Command) (resultErr e
 	if !isTerminal(out) {
 		return imageSavingFailure("Image previews require a terminal. Run without piping or redirecting stdout.", nil)
 	}
+	if command.Bool("interactive") {
+		return handleInteractiveImagePreview(ctx, command)
+	}
 	protocol := savedImageProtocol(mode, true, os.Getenv)
 	if protocol == "" {
 		return imageSavingFailure("This terminal cannot show an image preview with the current settings. Use a terminal with native graphics or color; previews are disabled in CI.", nil)
@@ -74,7 +79,7 @@ func handleImagesPreview(ctx context.Context, command *cli.Command) (resultErr e
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
-	if protocol == "kitty" || protocol == "iterm-auto" {
+	if protocol == "kitty" || protocol == "iterm-auto" || protocol == "iterm-konsole" {
 		var closeOutput func() error
 		ctx, closeOutput = terminalimage.PrepareNativeImageOutput(ctx, out)
 		defer func() { resultErr = errors.Join(resultErr, closeOutput()) }()

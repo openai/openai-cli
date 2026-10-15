@@ -99,6 +99,22 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("full help failed: %+v", got)
 			}
+			// These existing help topics are manual guides, even when an interactive
+			// setup command has the same path. Keep checking any future children.
+			var guideText []string
+			if slices.Equal(path, []string{"setup"}) {
+				guideText = []string{"Set up your API key", "read -rs OPENAI_API_KEY", "openai models list"}
+			} else if slices.Equal(path, []string{"setup", "admin"}) {
+				guideText = []string{"Set up an admin API key", "read -rs OPENAI_ADMIN_KEY", "openai setup admin"}
+			}
+			if guideText != nil {
+				for _, text := range guideText {
+					if !strings.Contains(got.stdout, text) {
+						t.Errorf("manual setup guide lost %q", text)
+					}
+				}
+				return
+			}
 			for _, flag := range flags {
 				for _, name := range flag.Names() {
 					prefix := "--"

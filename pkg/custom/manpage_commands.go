@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 
 	docs "github.com/urfave/cli-docs/v3"
 	"github.com/urfave/cli/v3"
@@ -16,6 +17,13 @@ func configureManpageCommands(root *cli.Command) {
 	command := root.Command("@manpages")
 	if command == nil || command.Action == nil {
 		return
+	}
+	for _, flag := range command.Flags {
+		if flag, ok := flag.(*cli.BoolFlag); ok && flag.Name == "text" {
+			// The generated text and gzip flags both claim -z. Preserve the CLI's
+			// established meaning of -z as gzip, including -z=false.
+			flag.Aliases = slices.DeleteFunc(flag.Aliases, func(alias string) bool { return alias == "z" })
+		}
 	}
 	command.Action = func(_ context.Context, command *cli.Command) error {
 		// cli-docs increases Markdown heading depth for each command level.
