@@ -40,10 +40,7 @@ tests; they are not required to build the CLI.
 
 ## Project structure
 
-- `cmd/openai/` contains the executable entrypoint and executable tests.
-- `internal/app/` owns invocation, request-environment scope, completion setup,
-  output policy, and exit-status selection. Command assembly still uses the
-  existing generated tree during the layout migration.
+- `cmd/openai/` contains startup, minimal wiring, and executable tests.
 - `pkg/cmd/` contains generated API commands and their integration tests.
 - `pkg/custom/` contains handwritten CLI commands, defaults, output-format
   policy, error handling, and presentation orchestration.
@@ -51,6 +48,9 @@ tests; they are not required to build the CLI.
 - `internal/` contains shared helpers for flags, request encoding, terminal
   output, and testing. For example, `internal/readable` renders labeled text
   and escapes terminal controls for results and errors.
+- `internal/app/` owns invocation, request-environment scope, completion setup,
+  output policy, and exit-status selection. Command assembly still uses the
+  existing generated tree during the layout migration.
 - `api_reference/openapi.transformed.yml` contains the OpenAPI specification
   used by the mock server.
 - `scripts/` contains the local development, build, and test commands.
