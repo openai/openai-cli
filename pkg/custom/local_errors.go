@@ -46,6 +46,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var receiptFailure *saveReceiptError
 	var navigationFailure *listNavigationError
 	var modelsListFailure *modelsListError
+	var finiteListFailure *finiteJSONListError
 	switch {
 	case errors.As(failure, &adminSetupFailure):
 		return adminSetupFailure.Error()
@@ -64,6 +65,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return "The request timed out. The API may have received it; check its status before repeating it."
 	case errors.As(failure, &modelsListFailure):
 		return modelsListFailure.Error()
+	case errors.As(failure, &finiteListFailure):
+		return finiteListFailure.Error()
 	case errors.As(failure, &imageFailure):
 		return imageFailure.message
 	case errors.As(failure, &navigationFailure):
