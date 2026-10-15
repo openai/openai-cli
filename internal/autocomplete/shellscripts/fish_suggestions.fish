@@ -46,7 +46,8 @@ set -l pending_name __openai_suggestions_pending_$serial
 set -l identity_name __openai_suggestions_identity_$serial
 set -l restore_name __openai_suggestions_restore_$serial
 set -l event_name __openai_suggestions_events_$serial
-if set -q $active_name; or set -q $pending_name
+set -l inflight_name __openai_suggestions_inflight_$fish_pid\_$serial
+if set -q $active_name; or set -q $pending_name; or set -q $inflight_name
     printf '%s\n' 'Executable suggestions conflict with existing shell state. Keep the existing handler and use CLI help.' >&2
     return 1
 end
@@ -159,22 +160,19 @@ function $restore_name --inherit-variable pending_name --inherit-variable curren
 end
 set -l restore_definition (functions $restore_name | string collect)
 
-function $event_name --on-event fish_postexec --on-event fish_prompt --inherit-variable pending_name --inherit-variable restore_name --inherit-variable restore_definition
+function $event_name --on-event fish_postexec --on-event fish_prompt --inherit-variable pending_name --inherit-variable restore_name --inherit-variable restore_definition --inherit-variable inflight_name
     set -l fish_trace ''
     if not set -q __openai_suggestions_pending_restores[1]; and not set -q $pending_name
         return 0
     end
-    # A prior handler can emit these events itself. Read function names only;
-    # defer restoration until its call stack has unwound. Ignore event arguments.
-    set -l absent (status --level 2147483647 function)
-    # Fish 4's FISH_MAX_STACK_DEPTH is 128. Include the event's own frame.
-    # An actual function can have the localized absence string as its name.
-    # Inspect all permitted caller levels rather than stopping at that string.
-    set -l level 2
-    while test $level -le 130
-        set -l caller (status --level $level function)
-        test "$caller" = "$absent"; or return 0
-        set level (math $level + 1)
+    # Exported function-local variables survive ordinary nested function scopes.
+    # Cancellation removes them when those scopes unwind. Never read event arguments.
+    set --query --local $inflight_name; and return 0
+    for pending_restore in $__openai_suggestions_pending_restores
+        string match --quiet --regex -- '\A__openai_suggestions_restore_[0-9]+\z' "$pending_restore"; or return 1
+        set -l pending_serial (string replace __openai_suggestions_restore_ '' -- "$pending_restore")
+        set -l pending_inflight __openai_suggestions_inflight_$fish_pid\_$pending_serial
+        set --query --local $pending_inflight; and return 0
     end
     # Retained wrappers can nest across activations. Unwind active transactions
     # in reverse order, regardless of Fish's event-handler dispatch order.
@@ -200,8 +198,9 @@ function $event_name --on-event fish_postexec --on-event fish_prompt --inherit-v
     end
 end
 
-function fish_command_not_found --inherit-variable active_name --inherit-variable had_prior --inherit-variable prior_name --inherit-variable current_name --inherit-variable pending_name --inherit-variable identity_name --inherit-variable restore_name --inherit-variable restore_definition
+function fish_command_not_found --inherit-variable active_name --inherit-variable had_prior --inherit-variable prior_name --inherit-variable current_name --inherit-variable pending_name --inherit-variable identity_name --inherit-variable restore_name --inherit-variable restore_definition --inherit-variable inflight_name
     set -l fish_trace ''
+    set --function --export $inflight_name 1
     set -l result 127
     if test "$had_prior" = 1
         if set -q $pending_name; or functions --query $current_name; or not functions --query $prior_name

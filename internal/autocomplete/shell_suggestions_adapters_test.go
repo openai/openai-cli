@@ -30,6 +30,7 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 		t.Skipf("native %s is unavailable", shell)
 	}
 	directory := t.TempDir()
+	fishMajor := 0
 	if shell == "fish" {
 		allowUnsupported := false
 		for _, value := range values {
@@ -46,6 +47,7 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 		require.NotEmpty(t, fields, "Fish returned an empty version")
 		major, parseErr := strconv.Atoi(strings.Split(fields[len(fields)-1], ".")[0])
 		require.NoError(t, parseErr, "Fish returned an unsupported version format: %s", output)
+		fishMajor = major
 		if major < 4 && !allowUnsupported {
 			for _, required := range strings.Split(os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS"), ",") {
 				if required == "fish" {
@@ -72,13 +74,13 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 	require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte(stub), 0700))
 	style, extension := CompletionStyleFish, ".fish"
 	args := []string{"--no-config", "--interactive"}
-	interactiveInput := false
+	useFishPTY := false
 	for _, value := range values {
 		if value == "SUGGEST_NONINTERACTIVE=1" {
 			args = []string{"--no-config"}
 		}
-		if shell == "fish" && value == "SUGGEST_INTERACTIVE_INPUT=1" {
-			interactiveInput = true
+		if shell == "fish" && value == "SUGGEST_FISH_CANCELLATION_PTY=1" {
+			useFishPTY = true
 		}
 	}
 	if shell == "pwsh" {
@@ -87,19 +89,43 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 	}
 	script, err := RenderShellSuggestions(style, appName)
 	require.NoError(t, err)
+	for _, value := range values {
+		if shell == "fish" && fishMajor >= 4 && value == "SUGGEST_SIMULATE_OLD_FISH=1" {
+			const detector = "(string split . -- $version)"
+			require.Equal(t, 1, strings.Count(script, detector))
+			script = strings.Replace(script, detector, "(string split . -- 3.7.1)", 1)
+		}
+	}
 	hook := filepath.Join(directory, "suggestions"+extension)
 	require.NoError(t, os.WriteFile(hook, []byte(script), 0600))
 	probe := filepath.Join(directory, "probe"+extension)
 	require.NoError(t, os.WriteFile(probe, []byte(setup+"\n"+body), 0600))
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancel()
-	if interactiveInput {
-		input = "source \"$SUGGEST_PROBE\"\n" + input
+	fishBinary := binary
+	if useFishPTY {
+		binary, err = exec.LookPath("expect")
+		if err != nil {
+			for _, required := range strings.Split(os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS"), ",") {
+				if required == "fish" {
+					t.Fatal("required native Fish cancellation test needs expect")
+				}
+			}
+			t.Skip("expect is required for native Fish cancellation")
+		}
+		driver := filepath.Join(directory, "cancellation.exp")
+		require.NoError(t, os.WriteFile(driver, []byte(fishSuggestionCancellationDriver), 0600))
+		require.NoError(t, os.WriteFile(filepath.Join(directory, "continue.fish"), []byte(input), 0600))
+		args = []string{driver}
+		input = ""
 	} else {
 		args = append(args, probe)
 	}
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
 	command := exec.CommandContext(ctx, binary, args...)
 	command.WaitDelay = time.Second
+	if useFishPTY {
+		command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
+	}
 	command.Dir = directory
 	command.Env = []string{
 		"HOME=" + directory, "USERPROFILE=" + directory,
@@ -114,20 +140,111 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 		command.Env = append(command.Env, "SystemRoot="+os.Getenv("SystemRoot"), "PATHEXT="+os.Getenv("PATHEXT"))
 	}
 	command.Env = append(command.Env, values...)
+	if useFishPTY {
+		command.Env = append(command.Env,
+			"SUGGEST_FISH_BINARY="+fishBinary,
+			"SUGGEST_CONTINUATION="+filepath.Join(directory, "continue.fish"),
+			"SUGGEST_STDOUT="+filepath.Join(directory, "continuation.stdout"),
+			"SUGGEST_STDERR="+filepath.Join(directory, "continuation.stderr"),
+			"SUGGEST_TRANSCRIPT="+filepath.Join(directory, "terminal.log"))
+	}
 	command.Stdin = strings.NewReader(input)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("%s adapter stdout=%q stderr=%q", shell, stdout.String(), stderr.String())
+			if useFishPTY {
+				if transcript, readErr := os.ReadFile(filepath.Join(directory, "terminal.log")); readErr == nil {
+					t.Logf("Fish cancellation transcript=%q", transcript)
+				}
+			}
 		}
 	})
 	require.NoError(t, command.Run(), "stdout=%s\nstderr=%s", stdout.String(), stderr.String())
 	require.NoError(t, ctx.Err())
+	if useFishPTY {
+		transcript, readErr := os.ReadFile(filepath.Join(directory, "terminal.log"))
+		require.NoError(t, readErr)
+		require.NotContains(t, string(transcript), "UNEXPECTED_AFTER_INTERRUPT", "delegation continued after SIGINT")
+	}
 	_, err = os.Stat(filepath.Join(directory, "launched"))
 	require.ErrorIs(t, err, os.ErrNotExist, "the suggestion hook launched the bound executable")
 	return strings.ReplaceAll(stdout.String(), "\r\n", "\n"), strings.ReplaceAll(stderr.String(), "\r\n", "\n")
 }
+
+// The PTY keeps interactive Fish alive after SIGINT. Each fixture owns one Fish child.
+// The driver reaps that child on success, timeout, or a caught termination signal.
+const fishSuggestionCancellationDriver = `
+set timeout 5
+set child_pid 0
+proc owned_child {} {
+    global child_pid
+    if {$child_pid == 0} { return 0 }
+    if {[catch {exec /bin/ps -p $child_pid -o ppid=} parent details]} {
+        set errorcode [dict get $details -errorcode]
+        if {[lindex $errorcode 0] eq "CHILDSTATUS" && [lindex $errorcode 2] == 1 && [string trim $parent] eq ""} {
+            return 0
+        }
+        puts stderr "Cannot verify Fish child ownership: $parent"
+        return -1
+    }
+    if {![string is integer -strict [string trim $parent]]} {
+        puts stderr "Invalid Fish child ownership response: $parent"
+        return -1
+    }
+    return [expr {[string trim $parent] eq [pid]}]
+}
+proc finish {code} {
+    global child_pid
+    if {$code != 0} {
+        if {[owned_child] == 1} { catch {exec /bin/kill -TERM $child_pid} }
+        after 150
+        if {[owned_child] == 1} { catch {exec /bin/kill -KILL $child_pid} }
+        catch {close}
+        catch {wait}
+    }
+    exit $code
+}
+trap {finish 130} {SIGINT SIGTERM}
+after 10000 {puts stderr "Fish cancellation deadline expired"; finish 124}
+if {[catch {
+log_user 0
+log_file -a -noappend $env(SUGGEST_TRANSCRIPT)
+spawn -noecho -- $env(SUGGEST_FISH_BINARY) --no-config --interactive --init-command {set -g fish_greeting ''; function fish_prompt; printf 'SUGGESTION_TEST> '; end; function fish_right_prompt; end}
+set child_pid [exp_pid]
+expect_after {
+    timeout {puts stderr "Fish cancellation stage timed out"; finish 124}
+    eof {puts stderr "Fish exited before continuation"; finish 1}
+}
+expect -exact "SUGGESTION_TEST> "
+send -- {source "$SUGGEST_PROBE"}
+send -- "\r"
+expect -exact "__SUGGESTION_READY__\r\n"
+expect -exact "SUGGESTION_TEST> "
+send -- {source "$SUGGEST_CONTINUATION" >"$SUGGEST_STDOUT" 2>"$SUGGEST_STDERR"; printf '__SUGGESTION_DONE__\n'}
+send -- "\r"
+expect -exact "__SUGGESTION_DONE__\r\n"
+expect -exact "SUGGESTION_TEST> "
+send -- "exit 0\r"
+expect eof
+set result [wait]
+if {[lindex $result 2] != 0 || [lindex $result 3] != 0} {
+    puts stderr "Fish cancellation child exited unsuccessfully: $result"
+    finish 1
+}
+set output [open $env(SUGGEST_STDOUT) r]
+puts -nonewline stdout [read $output]
+close $output
+set errors [open $env(SUGGEST_STDERR) r]
+puts -nonewline stderr [read $errors]
+close $errors
+} failure]} {
+    puts stderr "Fish cancellation driver failed: $failure"
+    finish 1
+}
+finish 0
+`
 
 const suggestionAdvice = "Command not found. Did you mean: openai?\nKeep the remaining arguments unchanged.\n"
 
@@ -382,17 +499,6 @@ printf 'DISABLE:%s\n' $status
 
 func TestShellSuggestionsFishRefusesUnsupportedVersionBeforeMutation(t *testing.T) {
 	out, errOut := runSuggestionAdapter(t, "fish", `
-# Fish 3.x exercises its real detector. Fish 4+ simulates detection only.
-set -l native_version (builtin string split . -- $version)
-if test "$native_version[1]" -ge 4
-    function string
-        if test "$argv[1]" = split; and test "$argv[2]" = .
-            printf '%s\n' 3 7 1
-        else
-            builtin string $argv
-        end
-    end
-end
 function fish_command_not_found
     printf 'PRIOR\n'
     return 42
@@ -416,7 +522,7 @@ set -q __openai_suggestions_serial
 printf 'STATE:%s\n' $status
 fish_command_not_found opneai
 printf 'PRIOR_STATUS:%s\n' $status
-`, "", "SUGGEST_ALLOW_UNSUPPORTED_FISH=1")
+`, "", "SUGGEST_ALLOW_UNSUPPORTED_FISH=1", "SUGGEST_SIMULATE_OLD_FISH=1")
 	require.Equal(t, "ENABLE:1\nBODY:0\nFUNCTIONS:0\nEVENTS:0\nSTATE:1\nPRIOR\nPRIOR_STATUS:42\n", out)
 	require.Equal(t, "Executable suggestions require fish 4.0 or newer.\n", errOut)
 }
@@ -842,7 +948,7 @@ function fish_command_not_found
     return 42
 end`, `
 set -l before (functions --details --verbose fish_command_not_found)
-set -l body_before (functions fish_command_not_found | string collect | string replace --regex '\A#[^\n]*\n' '')
+set -l body_before (functions --no-details fish_command_not_found | string collect)
 source "$SUGGEST_HOOK"
 functions --copy fish_command_not_found retained_wrapper
 openai_suggestions_disable
@@ -860,7 +966,7 @@ and test "$before[3]" = "$after[3]"
 and test "$before[4]" = "$after[4]"
 and test "$before[5]" = "$after[5]"
 printf 'DETAILS:%s\n' $status
-set -l body_after (functions fish_command_not_found | string collect | string replace --regex '\A#[^\n]*\n' '')
+set -l body_after (functions --no-details fish_command_not_found | string collect)
 test "$body_before" = "$body_after"
 printf 'BODY:%s\n' $status
 functions --query __openai_suggestions_current_1
@@ -889,7 +995,7 @@ function fish_command_not_found
     printf 'STILL_PRIOR:%s\n' $status
     return 42
 end`, `
-set -l original (functions fish_command_not_found | string collect | string replace --regex '\A#[^\n]*\n' '')
+set -l original (functions --no-details fish_command_not_found | string collect)
 source "$SUGGEST_HOOK"
 set -l events_before (functions --handlers | string collect)
 set -l functions_before (functions --names --all | string collect)
@@ -904,7 +1010,7 @@ printf 'EVENTS:%s\n' $status
 test "$functions_before" = "$functions_after"
 printf 'FUNCTIONS:%s\n' $status
 openai_suggestions_disable
-set -l restored (functions fish_command_not_found | string collect | string replace --regex '\A#[^\n]*\n' '')
+set -l restored (functions --no-details fish_command_not_found | string collect)
 test "$original" = "$restored"
 printf 'RESTORED:%s\n' $status
 `, "")
@@ -917,13 +1023,10 @@ func TestShellSuggestionsFishRestoresAfterInterruptedDelegation(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			out, errOut := runSuggestionAdapter(t, "fish", `
 set -g fish_greeting ''
-function fish_prompt
-end
-function fish_right_prompt
-end
 function fish_command_not_found
     if not set -q interrupted_once
         set -g interrupted_once 1
+        printf '__SUGGESTION_READY__\n'
         command kill -INT $fish_pid
         return 86
     end
@@ -949,7 +1052,7 @@ if test "$SUGGEST_CANCEL_MODE" != owned
         set -g probe_call retained_wrapper
     end
 end
-set -g expected_body (functions fish_command_not_found | string collect | string replace --regex '\A#[^\n]*\n' '')
+set -g expected_body (functions --no-details fish_command_not_found | string collect)
 set -g expected_events (functions --handlers | string collect)
 set -g expected_functions (functions --names --all | string collect)
 $probe_call opneai
@@ -967,7 +1070,7 @@ if test "$SUGGEST_CANCEL_MODE" = nested-retained
     set -q __openai_suggestions_pending_2
     printf 'PENDING2:%s\n' $status
 end
-set -g actual_body (functions fish_command_not_found | string collect | string replace --regex '\A#[^\n]*\n' '')
+set -g actual_body (functions --no-details fish_command_not_found | string collect)
 test "$expected_body" = "$actual_body"
 printf 'BODY:%s\n' $status
 set -g actual_events (functions --handlers | string collect)
@@ -981,8 +1084,7 @@ printf 'REPEATED:%s\n' $status
 openai_suggestions_disable
 $probe_call unrelated
 printf 'DISABLED:%s\n' $status
-exit 0
-`, "SUGGEST_INTERACTIVE_INPUT=1", "SUGGEST_CANCEL_MODE="+mode)
+`, "SUGGEST_FISH_CANCELLATION_PTY=1", "SUGGEST_CANCEL_MODE="+mode)
 			expected := "CONTINUED\nTEMP:1\nPENDING:1\nSTACK:1\n"
 			if mode == "nested-retained" {
 				expected += "TEMP2:1\nPENDING2:1\n"
