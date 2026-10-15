@@ -59,7 +59,7 @@ func TestMainVectorStoreSearchEmptyFormats(t *testing.T) {
 		{"jsonl", "", []string{"--format", "jsonl"}},
 		{"yaml", "", []string{"--format", "yaml"}},
 		{"pretty", "", []string{"--format", "pretty"}},
-		{"explore", "[]\n", []string{"--format", "explore"}},
+		{"explore", "", []string{"--format", "explore"}},
 		{"raw page", vectorStoreEmptySearch + "\n", []string{"--format", "raw"}},
 		{"extraction", "", []string{"--transform", "file_id"}},
 		{"raw extraction", "", []string{"--transform", "file_id", "--raw-output"}},
