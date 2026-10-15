@@ -205,7 +205,7 @@ func TestMainParserDurationExamplesRecoverRequests(t *testing.T) {
 						t.Errorf("duration retry changed request context: %s %s", r.Method, r.URL)
 					}
 					w.Header().Set("Content-Type", "application/json")
-					if _, err := io.WriteString(w, `{"id":"batch_synthetic","object":"batch","status":"completed"}`); err != nil {
+					if _, err := io.WriteString(w, `{"id":"batch_synthetic","object":"batch","status":"completed","request_counts":{"total":1,"completed":1,"failed":0}}`); err != nil {
 						t.Errorf("write synthetic response: %v", err)
 					}
 				}))
