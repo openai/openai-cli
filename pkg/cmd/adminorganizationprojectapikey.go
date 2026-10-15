@@ -36,7 +36,7 @@ var adminOrganizationProjectsAPIKeysRetrieve = cli.Command{
 
 var adminOrganizationProjectsAPIKeysUpdate = cli.Command{
 	Name:    "update",
-	Usage:   "Updates the expiration of an existing API key in the project, including a\nservice-account-owned key. Requires permission to write project API keys.",
+	Usage:   "Updates the scopes and/or expiration of an existing API key in the project,\nincluding a service-account-owned key. Requires permission to write project API\nkeys.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{
@@ -51,9 +51,13 @@ var adminOrganizationProjectsAPIKeysUpdate = cli.Command{
 		},
 		&requestflag.Flag[int64]{
 			Name:     "expires-in-seconds",
-			Usage:    "Number of seconds from this request until the API key expires. Must comply with the organization and project expiry policies. Expired keys cannot be updated. Retrying resets the expiry relative to the new request.",
-			Required: true,
+			Usage:    "Number of seconds from this request until the API key expires. Must comply with the organization and project expiry policies. Expired keys cannot be updated. Retrying resets the expiry relative to the new request. Omit to keep the current expiration.",
 			BodyPath: "expires_in_seconds",
+		},
+		&requestflag.Flag[[]string]{
+			Name:     "scope",
+			Usage:    `Replace the API key scope restrictions. Omit to leave scopes unchanged. An empty array removes key restrictions (All permissions), subject to the owner's effective permissions. Use ["api.all.read"] for read-only access. Scopes do not change the owner's roles or grant administrative permissions.`,
+			BodyPath: "scopes",
 		},
 	},
 	Action:          handleAdminOrganizationProjectsAPIKeysUpdate,

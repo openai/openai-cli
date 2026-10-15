@@ -659,6 +659,9 @@ func FlagOptions(
 		if err != nil {
 			return nil, err
 		}
+		if err := validateProjectAPIKeyUpdate(cmd, bodyBytes); err != nil {
+			return nil, err
+		}
 		if err := resolveStreamingInput(cmd, bodyBytes); err != nil {
 			return nil, err
 		}

@@ -31,12 +31,16 @@ func TestAdminOrganizationProjectsAPIKeysUpdate(t *testing.T) {
 			"--project-id", "project_id",
 			"--api-key-id", "api_key_id",
 			"--expires-in-seconds", "1",
+			"--scope", "api.all.read",
 		)
 	})
 
 	t.Run("piping data", func(t *testing.T) {
 		// Test piping YAML data over stdin
-		pipeData := []byte("expires_in_seconds: 1")
+		pipeData := []byte("" +
+			"expires_in_seconds: 1\n" +
+			"scopes:\n" +
+			"  - api.all.read\n")
 		mocktest.TestRunMockTestWithPipeAndFlags(
 			t, pipeData,
 			"--api-key", "string",
