@@ -143,7 +143,8 @@ jobs:
             cd bash-4.0
             # GCC 10 changed the historical common-symbol default.
             CFLAGS='-O2 -fcommon' ./configure --without-bash-malloc --disable-nls
-            make -j2 bash
+            # Bash 4.0's readline/history targets rebuild shared objects in overlapping submakes.
+            make -j1 bash
           )
           (
             cd zsh-5.8
