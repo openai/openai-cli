@@ -103,7 +103,7 @@ func TestWorkflowPermissionsRemainLeastPrivileged(t *testing.T) {
 	}
 
 	ciJobs := readWorkflow(t, "ci.yml").Jobs
-	for _, name := range []string{"lint", "macos-uploads", "build-artifacts", "test"} {
+	for _, name := range []string{"lint", "macos-uploads", "build-artifacts", "test", "test-suite", "error-audit"} {
 		if ciJobs[name].Permissions == nil || len(ciJobs[name].Permissions) != 0 {
 			t.Errorf("CI job %s permissions changed: %v", name, ciJobs[name].Permissions)
 		}
@@ -747,7 +747,7 @@ assert link.existing_snapshot(api, context, 7) is False
 
 func TestCandidateJobsUseOnlySameRunSourceArtifacts(t *testing.T) {
 	for filename, names := range map[string][]string{
-		"ci.yml":                 {"lint", "test", "build-artifacts", "macos-uploads"},
+		"ci.yml":                 {"lint", "test-suite", "error-audit", "build-artifacts", "macos-uploads"},
 		"help-compatibility.yml": {"help"}, "codeql.yml": {"analyze"},
 	} {
 		jobs := readWorkflow(t, filename).Jobs
