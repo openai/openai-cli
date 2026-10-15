@@ -699,7 +699,7 @@
     },
     "scripts/castiron/CUSTOM_CODE.md": {
       "mode": "100644",
-      "sha256": "94a0edeef17aeb1c54060f7a9a89ea62c5a3dc2e11aa8fe47f98a3694b3f3cbb"
+      "sha256": "9c602fb42e00a40e21f3106c357fdaadfc1b9865de4105c71364354b451211d6"
     },
     "scripts/castiron/README.md": {
       "mode": "100644",
@@ -707,7 +707,7 @@
     },
     "scripts/castiron/custom_code_budget.py": {
       "mode": "100644",
-      "sha256": "baaaf541c361cdc2717425d39e41c638e127d5b5504e37975d3420a51d9576ea"
+      "sha256": "e504abba2701f4733eb4b8ce26856cca596e13feab1e7e323adc8e7d2ccb64bc"
     },
     "scripts/castiron/custom_code_report.py": {
       "mode": "100644",
@@ -719,7 +719,7 @@
     },
     "scripts/castiron/fixtures/github_publisher.cjs": {
       "mode": "100644",
-      "sha256": "c69fd42edee2d6e98980a9de90c46ffd9fdb41abbf34d432c455627e6d0fd89c"
+      "sha256": "fc80b1aff054f8a2ea16fc6bd9cff5ed4e4a48eebc7f3af8427947796fb8d865"
     },
     "scripts/castiron/ruff.toml": {
       "mode": "100644",
@@ -727,7 +727,7 @@
     },
     "scripts/castiron/test_custom_code_budget.py": {
       "mode": "100644",
-      "sha256": "f50be5d5fcef25c47e518fe3ed240271d54d33c986eea78efb79f92a2a3eb50a"
+      "sha256": "f07fcaf6d10890a47403b784898e3f40a443fa551d66701a717de8382ebf0b9c"
     },
     "scripts/castiron/test_custom_code_github.py": {
       "mode": "100644",

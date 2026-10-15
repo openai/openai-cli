@@ -7,7 +7,13 @@ const github = {
   rest: {
     actions: { getWorkflowRun: async () => ({ data: data.run }) },
     pulls: { get: async () => ({ data: data.current_sequence?.shift() || data.current }), list: 'pulls' },
-    git: { getRef: async ({ref}) => ({ data: { object: { sha: ref === 'heads/main' && data.main_sha ? data.main_sha : data.current.base.sha } } }) },
+    git: {
+      getRef: async ({ ref }) => ({
+        data: {
+          object: { sha: ref === 'heads/main' && data.main_sha ? data.main_sha : data.current.base.sha },
+        },
+      }),
+    },
     repos: {
       createCommitStatus: async (value) => writes.push(value),
       listCommitStatusesForRef: 'statuses',
@@ -19,14 +25,20 @@ const github = {
       updateComment: async (value) => writes.push({ operation: 'update', ...value }),
     },
   },
-  graphql: async (_query, {branch, cursor}) => {
+  graphql: async (_query, { branch, cursor }) => {
     if (branch !== data.current.base.ref) throw new Error('Wrong queue target');
     const page = data.queue_pages?.shift();
     if (page && page.expected_cursor !== cursor) throw new Error('Wrong queue cursor');
-    return {repository: {mergeQueue: {entries: page || {
-      nodes: data.queue_absent ? [] : [{headCommit: {oid: data.run.head_sha}}],
-      pageInfo: {hasNextPage: false, endCursor: null},
-    }}}};
+    return {
+      repository: {
+        mergeQueue: {
+          entries: page || {
+            nodes: data.queue_absent ? [] : [{ headCommit: { oid: data.run.head_sha } }],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        },
+      },
+    };
   },
   paginate: async (method, params) => {
     if (method === 'statuses') return data.previous_statuses || [];

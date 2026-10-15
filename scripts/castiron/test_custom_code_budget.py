@@ -287,6 +287,65 @@ class StrictTests(GitTestCase):
         self.write("handwritten.py", "custom behavior\n")
         self.assertEqual(self.evaluate()["checks"]["budget"]["state"], "success")
 
+    def test_strict_main_checks_migration_target_and_candidate(self) -> None:
+        self.git("checkout", "-q", "-b", "next", self.base)
+        self.write(budget.POLICY, '{"schema_version":1,"max_custom_patch_lines":1000}')
+        target = self.commit("next still uses migration policy")
+        self.write(self.workflow, "manual workflow edit\n")
+        head = self.commit()
+        for pull_heads in (None, [head]):
+            with self.subTest(pull_heads=pull_heads):
+                result, _ = budget.evaluate(
+                    self.repo,
+                    target,
+                    head,
+                    public=False,
+                    policy_sha=self.base,
+                    pull_heads=pull_heads,
+                )
+                self.assertEqual(result["total"], 0)
+                self.assertEqual(result["checks"]["isolation"]["state"], "success")
+                self.assertEqual(result["checks"]["budget"]["state"], "failure")
+                self.assertIn(self.workflow, result["strict_violations"][0])
+
+    def test_activation_accepts_stale_pr_without_policy_edits(self) -> None:
+        strict = (self.repo / budget.POLICY).read_text()
+        self.git("checkout", "-q", "-b", "migration", f"{self.base}^")
+        self.write(budget.POLICY, '{"schema_version":1,"max_custom_patch_lines":1000}')
+        migration = self.commit("migration policy before activation")
+        self.git("checkout", "-q", "-b", "stale", migration)
+        self.write("handwritten.py", "custom behavior\n")
+        stale = self.commit("PR predates strict activation")
+        self.git("checkout", "-q", "migration")
+        self.write(budget.POLICY, strict)
+        activated = self.commit("activate strict policy")
+        result, _ = budget.evaluate(self.repo, activated, stale, public=False)
+        self.assertTrue(all(c["state"] == "success" for c in result["checks"].values()))
+        self.git("merge", "--no-ff", "-m", "queue stale PR", stale)
+        result, _ = budget.evaluate(
+            self.repo,
+            activated,
+            self.git("rev-parse", "HEAD"),
+            public=False,
+            pull_heads=[stale],
+        )
+        self.assertTrue(all(c["state"] == "success" for c in result["checks"].values()))
+
+    def test_stale_policy_edit_cannot_downgrade_activated_base(self) -> None:
+        strict = (self.repo / budget.POLICY).read_text()
+        self.git("checkout", "-q", "-b", "migration", f"{self.base}^")
+        self.write(budget.POLICY, '{"schema_version":1,"max_custom_patch_lines":10}')
+        migration = self.commit("migration policy before activation")
+        self.git("checkout", "-q", "-b", "stale", migration)
+        self.write(budget.POLICY, '{"schema_version":1,"max_custom_patch_lines":1000}')
+        stale = self.commit("stale policy increase")
+        self.git("checkout", "-q", "migration")
+        self.write(budget.POLICY, strict)
+        activated = self.commit("activate strict policy")
+        result, _ = budget.evaluate(self.repo, activated, stale, public=False)
+        self.assertEqual(result["checks"]["isolation"]["state"], "failure")
+        self.assertIn("cannot be downgraded", result["checks"]["isolation"]["description"])
+
     def test_workflow_edit_fails_despite_zero_legacy_patch(self) -> None:
         self.write(self.workflow, "edited workflow\n")
         result = self.evaluate()
@@ -422,6 +481,40 @@ class StrictTests(GitTestCase):
         self.write("generated.py", "snapshot changed without updating manifest\n")
         with self.assertRaisesRegex(ValueError, "disagrees"):
             budget.generated_manifest(self.repo, self.commit())
+
+    def test_private_manifest_checks_excluded_workflows_and_actions(self) -> None:
+        for path in (self.workflow, ".github/actions/generated/action.yml"):
+            for mutation in ("omit", "content", "mode"):
+                with self.subTest(path=path, mutation=mutation):
+                    self.git("checkout", "--detach", "-q", self.generated)
+                    self.write(path, "generated workflow or action\n")
+                    manifest = json.loads((self.repo / budget.MANIFEST.decode()).read_text())
+                    manifest["files"][path] = {
+                        "mode": "100644",
+                        "sha256": hashlib.sha256((self.repo / path).read_bytes()).hexdigest(),
+                    }
+                    if mutation == "omit":
+                        del manifest["files"][path]
+                    elif mutation == "content":
+                        self.write(path, "unrecorded change\n")
+                    else:
+                        (self.repo / path).chmod(0o755)
+                    self.write(budget.MANIFEST.decode(), json.dumps(manifest))
+                    error = "cover.*exactly" if mutation == "omit" else "disagrees"
+                    with self.assertRaisesRegex(ValueError, error):
+                        budget.generated_manifest(self.repo, self.commit())
+
+    def test_public_snapshot_keeps_strict_workflow_identity_without_private_blob(self) -> None:
+        self.git("checkout", "--detach", "-q", self.generated)
+        (self.repo / self.workflow).unlink()
+        public = self.commit("sanitized public checkpoint")
+        self.assertIn(self.workflow.encode(), budget.generated_manifest(self.repo, public))
+        self.assertEqual(budget.verify_generated(self.repo, public, self.base), [])
+        self.git("checkout", "--detach", "-q", self.base)
+        self.write(self.workflow, "manual workflow edit\n")
+        violations = budget.verify_generated(self.repo, public, self.commit())
+        self.assertEqual(len(violations), 1)
+        self.assertIn(self.workflow, violations[0])
 
     def test_generated_deletion_requires_removing_retired_file(self) -> None:
         self.git("checkout", "-q", self.generated)
