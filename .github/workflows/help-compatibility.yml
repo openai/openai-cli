@@ -105,6 +105,7 @@ jobs:
           go-version-file: .go-version
           check-latest: true
       - name: Verify native Go platform
+        id: native-go-platform
         shell: bash
         env:
           EXPECTED_GOOS: ${{ matrix.goos }}
@@ -154,6 +155,7 @@ jobs:
           fish --version
           expect -v
       - uses: ./.github/actions/link-go-sdk
+        id: link-go-sdk
       - name: Test native portable command contracts
         if: matrix.native-commands && runner.os != 'Windows'
         shell: bash
@@ -345,7 +347,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-models-progress-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows audio output behavior
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && !cancelled() && steps.native-go-platform.outcome == 'success' && steps.link-go-sdk.outcome == 'success'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
