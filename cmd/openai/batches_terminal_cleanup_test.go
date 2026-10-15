@@ -10,11 +10,134 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
+
+// Keep one owner in the test's group while its controller owns a separate session.
+// The launch gate prevents the CLI from leaving that session's group before registration.
+const batchesTerminalCleanupGuardian = `
+import json, os, pathlib, select, signal, socket, sys, time
+expected_parent = int(sys.argv.pop(3))
+receipt_path = os.environ.pop("OPENAI_CLI_BATCHES_PTY_RECEIPT", "")
+stopping = None
+def stop_guardian(number, frame):
+    global stopping
+    stopping = number
+for number in [signal.SIGINT, signal.SIGTERM]:
+    signal.signal(number, stop_guardian)
+parent_channel, controller_channel = socket.socketpair()
+controller_pid = os.fork()
+if controller_pid:
+    controller_channel.close()
+    cli_pid, status, pending = None, None, b""
+    foreground_ready = False
+    started = time.monotonic()
+    reason, cleanup_ok = None, True
+    def receipt(state):
+        if receipt_path:
+            path = pathlib.Path(receipt_path)
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps({"state": state, "guardian_pid": os.getpid(),
+                "controller_pid": controller_pid, "cli_pid": cli_pid,
+                "reason": reason, "cleanup_ok": cleanup_ok}))
+            temporary.replace(path)
+    def send(pid, number, group=False):
+        try:
+            (os.killpg if group else os.kill)(pid, number)
+        except ProcessLookupError:
+            pass
+    def group_exists(pid):
+        try:
+            os.killpg(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+    try:
+        receipt("started")
+        while status is None:
+            if stopping is not None:
+                reason = "signal-" + str(stopping)
+                break
+            if os.getppid() != expected_parent:
+                reason = "parent-exited"
+                break
+            if time.monotonic() - started >= 8:
+                reason = "guardian-deadline"
+                break
+            ready, _, _ = select.select([parent_channel], [], [], .01)
+            if ready:
+                data = parent_channel.recv(128)
+                pending += data
+                while b"\n" in pending:
+                    message, pending = pending.split(b"\n", 1)
+                    if message.startswith(b"P "):
+                        assert cli_pid is None, "duplicate CLI registration"
+                        cli_pid = int(message[2:])
+                        assert os.getsid(cli_pid) == controller_pid
+                        assert os.getpgid(cli_pid) == controller_pid
+                        receipt("registered")
+                        parent_channel.sendall(b"F")
+                    else:
+                        assert message == b"R" and cli_pid is not None
+                        foreground_ready = True
+                        receipt("foreground-ready")
+                if not data:
+                    time.sleep(.01)
+            child, candidate = os.waitpid(controller_pid, os.WNOHANG)
+            if child:
+                status = candidate
+    except BaseException as error:
+        reason = type(error).__name__ + ": " + str(error)
+    finally:
+        # Finish before the outer supervisor's two-second SIGKILL grace expires.
+        cleanup_started = time.monotonic()
+        if cli_pid is not None and (status is None or group_exists(cli_pid)):
+            send(cli_pid, signal.SIGKILL, group=True)
+            if not foreground_ready:
+                send(cli_pid, signal.SIGKILL)
+        if status is None:
+            send(controller_pid, signal.SIGTERM)
+            send(controller_pid, signal.SIGCONT)
+        while status is None and time.monotonic() - cleanup_started < .75:
+            child, candidate = os.waitpid(controller_pid, os.WNOHANG)
+            if child:
+                status = candidate
+                break
+            time.sleep(.01)
+        if status is None or group_exists(controller_pid):
+            send(controller_pid, signal.SIGKILL, group=True)
+            if status is None:
+                send(controller_pid, signal.SIGKILL)
+        groups_gone = False
+        while time.monotonic() - cleanup_started < 1.5:
+            if status is None:
+                child, candidate = os.waitpid(controller_pid, os.WNOHANG)
+                if child:
+                    status = candidate
+            groups_gone = not group_exists(controller_pid) and (cli_pid is None or not group_exists(cli_pid))
+            if status is not None and groups_gone:
+                break
+            time.sleep(.01)
+        cleanup_ok = status is not None and groups_gone
+        parent_channel.close()
+        receipt("finished")
+    if not cleanup_ok:
+        sys.stderr.write("fixture guardian could not remove every owned process group\n")
+    if reason:
+        sys.stderr.write("fixture guardian stopped: " + reason + "\n")
+    code = os.waitstatus_to_exitcode(status) if status is not None else 1
+    sys.exit((128 + stopping) if stopping is not None else (1 if reason or not cleanup_ok else (128 - code if code < 0 else code)))
+parent_channel.close()
+def stop_controller(number, frame):
+    raise SystemExit(128 + number)
+for number in [signal.SIGINT, signal.SIGTERM]:
+    signal.signal(number, stop_controller)
+`
 
 // Python supplies only PTY plumbing. Every child invokes production main.
 // The controller outlives the CLI; macOS session teardown can wait on unread output.
@@ -42,7 +165,9 @@ if pid == 0:
     os.close(gate_write)
     if filler is not None:
         os.close(filler)
-    os.setpgid(0, 0)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    controller_channel.close()
     assert os.read(gate_read, 1) == b"F"
     os.close(gate_read)
     signal.signal(signal.SIGTTOU, signal.SIG_DFL)
@@ -53,6 +178,8 @@ if pid == 0:
         os.close(slave)
     os.execve(argv[0], argv, os.environ)
 os.close(gate_read)
+controller_channel.sendall(("P " + str(pid) + "\n").encode())
+assert controller_channel.recv(1) == b"F"
 os.setpgid(pid, pid)
 os.tcsetpgrp(slave, pid)
 assert os.getsid(pid) == os.getpid()
@@ -63,6 +190,7 @@ output, status, sent, filled, stop_drain = bytearray(), None, False, 0, False
 started = time.monotonic()
 phases = []
 try:
+    controller_channel.sendall(b"R\n")
     while time.monotonic() - started < 2.5:
         if not stop_drain:
             ready, _, _ = select.select([master], [], [], .01)
@@ -111,7 +239,7 @@ try:
     exceeded = status is None
     if exceeded:
         phases.append(["watchdog", time.monotonic() - started])
-        os.kill(pid, signal.SIGKILL)
+        os.killpg(pid, signal.SIGKILL)
         cleanup_limit = time.monotonic() + 2
         while status is None and time.monotonic() < cleanup_limit:
             child, candidate = os.waitpid(pid, os.WNOHANG)
@@ -149,15 +277,35 @@ try:
         "controller_pid": os.getpid(), "cli_pid": pid, "foreground_child": True,
         "output": output.decode(errors="replace"), "filled": filled, "stop_drain": stop_drain, "phases": phases}))
 finally:
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
     if status is None:
         try:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        cleanup_limit = time.monotonic() + .5
+        while status is None and time.monotonic() < cleanup_limit:
+            child, candidate = os.waitpid(pid, os.WNOHANG)
+            if child:
+                status = candidate
+                break
+            ready, _, _ = select.select([master], [], [], .01)
+            if ready:
+                try:
+                    os.read(master, 65536)
+                except OSError:
+                    pass
+        assert status is not None, "fixture cleanup could not reap the CLI"
     if filler is not None:
         os.close(filler)
     os.close(slave)
     os.close(master)
+    controller_channel.close()
 `
 
 func TestMainBatchesExplorerTerminalCleanup(t *testing.T) {
@@ -221,8 +369,10 @@ func TestMainBatchesExplorerTerminalCleanup(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			process := batchesWorkflowProcess(t, ctx, server, args...)
-			probe := exec.CommandContext(ctx, python, append([]string{"-c", batchesTerminalCleanupPTY, mode, entered}, process.Args...)...)
+			probe := exec.CommandContext(ctx, python, append([]string{"-c", batchesTerminalCleanupGuardian + batchesTerminalCleanupPTY, mode, entered, strconv.Itoa(os.Getpid())}, process.Args...)...)
 			probe.Env = append(process.Env, "TERM=xterm-256color")
+			probe.Cancel = func() error { return probe.Process.Signal(syscall.SIGTERM) }
+			probe.WaitDelay = 2 * time.Second
 			output, err := probe.CombinedOutput()
 			if err != nil {
 				t.Fatalf("explorer cleanup probe failed: %v %s", err, output)
