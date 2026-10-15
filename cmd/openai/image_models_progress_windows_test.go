@@ -95,7 +95,8 @@ func TestImageModelsWindowsStderrProgress(t *testing.T) {
 			}
 			break
 		}
-		if !errors.Is(err, os.ErrNotExist) {
+		// Windows can briefly deny reads while the child publishes the marker.
+		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
 			t.Fatal(err)
 		}
 		select {
