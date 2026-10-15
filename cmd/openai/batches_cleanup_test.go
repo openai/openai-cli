@@ -107,11 +107,10 @@ func TestMainBatchesDownloadSIGTERMCleansOwnedStaging(t *testing.T) {
 		if !ok {
 			t.Fatalf("termination returned %v; stderr=%q", err, stderr.String())
 		}
-		status, signaled := exit.Sys().(syscall.WaitStatus)
-		if exit.ExitCode() != 128+int(syscall.SIGTERM) && !(signaled && status.Signaled() && status.Signal() == syscall.SIGTERM) {
+		if exit.ExitCode() != 128+int(syscall.SIGTERM) {
 			t.Fatalf("termination lost signal status: %v; stderr=%q", err, stderr.String())
 		}
-		if exit.ExitCode() == 128+int(syscall.SIGTERM) && !json.Valid(stderr.Bytes()) {
+		if !json.Valid(stderr.Bytes()) {
 			t.Fatalf("graceful termination corrupted JSON diagnostics: %q", stderr.String())
 		}
 	case <-time.After(2 * time.Second):
@@ -204,8 +203,8 @@ func TestMainBatchesDownloadRejectsDirectoryDestinationIntent(t *testing.T) {
 						t.Errorf("rejected output created files: %v", entries)
 					}
 				}
-				if requests.Load() > 2 {
-					t.Errorf("unexpected request count: %d", requests.Load())
+				if requests.Load() != 0 {
+					t.Errorf("directory intent reached HTTP: %d requests", requests.Load())
 				}
 			})
 		}
