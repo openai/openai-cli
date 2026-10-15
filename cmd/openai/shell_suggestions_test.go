@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -119,7 +121,16 @@ func TestMainShellSuggestionsNative(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			before := shellSuggestionConfiguration(t, home)
+			ignoredCache := ""
+			if runtime.GOOS == "windows" && shell.name == "pwsh" {
+				// PowerShell writes this native startup cache before executing the script.
+				ignoredCache = filepath.FromSlash("AppData/Local/Microsoft/PowerShell/StartupProfileData-NonInteractive")
+				// Keep parent directories in both snapshots to preserve their mode checks.
+				if err := os.MkdirAll(filepath.Dir(filepath.Join(home, ignoredCache)), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := shellSuggestionConfiguration(t, home, ignoredCache)
 			sentinelDirectory := filepath.Join(work, "sentinel")
 			if err := os.Mkdir(sentinelDirectory, 0o700); err != nil {
 				t.Fatal(err)
@@ -298,14 +309,14 @@ func TestMainShellSuggestionsNative(t *testing.T) {
 			if requests.Load() != 0 {
 				t.Errorf("local setup or failed lookup made %d API requests", requests.Load())
 			}
-			if after := shellSuggestionConfiguration(t, home); !maps.Equal(before, after) {
+			if after := shellSuggestionConfiguration(t, home, ignoredCache); !maps.Equal(before, after) {
 				t.Errorf("native setup modified shell configuration: before=%v after=%v", before, after)
 			}
 		})
 	}
 }
 
-func shellSuggestionConfiguration(t *testing.T, home string) map[string]string {
+func shellSuggestionConfiguration(t *testing.T, home, ignoredCache string) map[string]string {
 	t.Helper()
 	files := map[string]string{}
 	err := filepath.Walk(home, func(path string, info os.FileInfo, err error) error {
@@ -316,13 +327,16 @@ func shellSuggestionConfiguration(t *testing.T, home string) map[string]string {
 		if err != nil {
 			return err
 		}
+		if relative == ignoredCache && info.Mode().IsRegular() {
+			return nil
+		}
 		files[relative] = info.Mode().String()
 		if !info.IsDir() {
 			data, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			files[relative] += string(data)
+			files[relative] += fmt.Sprintf(" sha256:%x", sha256.Sum256(data))
 		}
 		return nil
 	})
@@ -330,6 +344,80 @@ func shellSuggestionConfiguration(t *testing.T, home string) map[string]string {
 		t.Fatal(err)
 	}
 	return files
+}
+
+func TestMainShellSuggestionsConfigurationSnapshot(t *testing.T) {
+	const cache = "AppData/Local/Microsoft/PowerShell/StartupProfileData-NonInteractive"
+	const profile = "config/powershell/Microsoft.PowerShell_profile.ps1"
+	for _, test := range []struct {
+		name         string
+		changedPath  string
+		initialCache bool
+		includeCache bool
+		wantEqual    bool
+	}{
+		{name: "cache_creation", changedPath: cache, wantEqual: true},
+		{name: "cache_rewrite", changedPath: cache, initialCache: true, wantEqual: true},
+		{name: "sibling_file", changedPath: cache + ".extra"},
+		{name: "new_profile", changedPath: "Documents/PowerShell/Microsoft.PowerShell_profile.ps1"},
+		{name: "existing_profile", changedPath: profile},
+		{name: "profile_mode", changedPath: profile},
+		{name: "cache_without_exclusion", changedPath: cache, includeCache: true},
+		{name: "cache_directory", changedPath: cache},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			write := func(relative string, data []byte) {
+				t.Helper()
+				path := filepath.Join(home, filepath.FromSlash(relative))
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write(profile, []byte("# SYNTHETIC_PRIVATE_ORIGINAL_PROFILE\n"))
+			cachePath := filepath.Join(home, filepath.FromSlash(cache))
+			if err := os.MkdirAll(filepath.Dir(cachePath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if test.initialCache {
+				write(cache, []byte("\x00SYNTHETIC_PRIVATE_OLD_CACHE\xff"))
+			}
+			ignoredCache := filepath.FromSlash(cache)
+			if test.includeCache {
+				ignoredCache = ""
+			}
+			before := shellSuggestionConfiguration(t, home, ignoredCache)
+			switch test.name {
+			case "cache_directory":
+				if err := os.Mkdir(cachePath, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case "profile_mode":
+				path := filepath.Join(home, filepath.FromSlash(profile))
+				t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+				if err := os.Chmod(path, 0o400); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				write(test.changedPath, []byte("\x00SYNTHETIC_PRIVATE_CHANGED_CONTENT\xff"))
+			}
+			after := shellSuggestionConfiguration(t, home, ignoredCache)
+			if maps.Equal(before, after) != test.wantEqual {
+				t.Fatalf("snapshot equality: want %v; before=%v after=%v", test.wantEqual, before, after)
+			}
+			if strings.Contains(fmt.Sprint(before, after), "SYNTHETIC_PRIVATE") {
+				t.Fatal("configuration snapshot includes raw file content")
+			}
+			for parent := filepath.Dir(filepath.FromSlash(cache)); parent != "."; parent = filepath.Dir(parent) {
+				if _, ok := after[parent]; !ok {
+					t.Fatalf("configuration snapshot omitted cache parent %s", parent)
+				}
+			}
+		})
+	}
 }
 
 const shellSuggestionNativeUnix = `
