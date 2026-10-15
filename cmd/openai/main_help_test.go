@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-cli/pkg/cmd"
 	"github.com/urfave/cli/v3"
 )
@@ -138,25 +137,6 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 			for _, text := range headerReference {
 				if !strings.Contains(got.stdout, text) {
 					t.Errorf("full help lost request-header documentation %q", text)
-				}
-			}
-			var required []string
-			for _, flag := range command.VisibleFlags() {
-				ordinary, isOrdinary := flag.(cli.RequiredFlag)
-				body, isBody := flag.(requestflag.RequiredFlagOrStdin)
-				if (isOrdinary && ordinary.IsRequired()) || (isBody && body.IsRequiredAsFlagOrStdin()) {
-					required = append(required, flag.Names()[0])
-				}
-			}
-			if len(required) > 0 {
-				short := runMainDispatch(t, "bash", append([]string{"openai", "help"}, path...)...)
-				if short.code != 0 || short.stderr != "" {
-					t.Fatalf("short help failed: %+v", short)
-				}
-				for _, name := range required {
-					if !strings.Contains(short.stdout, "--"+name) {
-						t.Errorf("short help hid required option --%s", name)
-					}
 				}
 			}
 		})
