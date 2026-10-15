@@ -40,6 +40,11 @@ tests; they are not required to build the CLI.
 
 ## Project structure
 
+The CLI is an executable product; its Go packages are not a supported library API.
+See the [repository layout migration](docs/architecture/repository-layout.md) for
+the target structure, package boundaries, and CLI compatibility checks. The list
+below describes the current layout as the migration proceeds.
+
 - `cmd/openai/` contains startup, minimal wiring, and executable tests.
 - `pkg/cmd/` contains generated API commands and their integration tests.
 - `pkg/custom/` contains handwritten CLI commands, defaults, output-format
