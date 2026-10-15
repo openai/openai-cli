@@ -252,7 +252,11 @@ jobs:
 
   test-linux:
     timeout-minutes: 15
-    name: Linux tests
+    name: Linux tests (${{ matrix.group }})
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [cli, other]
     needs: source
     permissions: {}
     runs-on: ubuntu-latest
@@ -272,7 +276,12 @@ jobs:
       - name: Verify mock tooling security
         run: node scripts/mock-tools/security.test.js
 
+      - name: Verify test package selection
+        if: matrix.group == 'other'
+        run: python3 -B -m unittest discover -s scripts/ci -p 'test_test_groups.py'
+
       - name: Check Linux picker metadata and profile identity
+        if: matrix.group == 'other'
         run: go test ./internal/autocomplete -run '^TestPicker(InstallRetainsLinuxSELinuxLabel|SecurityLabel.*|InstallPreservesLinuxFileMetadata|LinuxMetadataAddedAfterSnapshotIsKept|UnixProfileIdentityKeepsDistinctCaseNames)$' -count=1 -v
 
       - name: Run tests
@@ -281,6 +290,7 @@ jobs:
         run: ./scripts/test -p 1
         env:
           SKIP_WINDOWS_TEST_COMPILE: '1'
+          TEST_PACKAGE_GROUP: ${{ matrix.group }}
 
   test-windows-compile:
     timeout-minutes: 15

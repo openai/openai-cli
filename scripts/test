@@ -4,6 +4,27 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# CI splits native tests across runners; the default still covers every package.
+packages=(./...)
+case "${TEST_PACKAGE_GROUP:-all}" in
+  all) ;;
+  cli) packages=(./cmd/openai) ;;
+  other)
+    package_list=$(go list ./...)
+    packages=()
+    while IFS= read -r package; do
+      if [[ -n "$package" && "$package" != github.com/openai/openai-cli/cmd/openai ]]; then
+        packages+=("$package")
+      fi
+    done <<< "$package_list"
+    if [[ ${#packages[@]} -eq 0 ]]; then
+      echo 'No packages found for the other test group' >&2
+      exit 1
+    fi
+    ;;
+  *) echo "Unknown TEST_PACKAGE_GROUP: $TEST_PACKAGE_GROUP" >&2; exit 2 ;;
+esac
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -53,12 +74,12 @@ else
 fi
 
 echo "==> Running tests"
-go test ./... "$@"
+go test "${packages[@]}" "$@"
 
 # CI compiles Windows tests in a parallel job; local runs still check both.
 if [[ "${SKIP_WINDOWS_TEST_COMPILE:-0}" != "1" ]]; then
   echo "==> Checking tests on Windows"
-  GOARCH=amd64 GOOS=windows go test -c ./... "$@"
+  GOARCH=amd64 GOOS=windows go test -c "${packages[@]}" "$@"
   # `go test -c` produces a bunch of .exe files; make sure to clean those up
   find . -name "*.test.exe" -exec rm {} \;
 fi

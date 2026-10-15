@@ -38,6 +38,12 @@ type workflow struct {
 }
 
 type workflowJob struct {
+	Strategy struct {
+		FailFast *bool `yaml:"fail-fast"`
+		Matrix   struct {
+			Group []string `yaml:"group"`
+		} `yaml:"matrix"`
+	} `yaml:"strategy"`
 	Env         map[string]string `yaml:"env"`
 	If          string            `yaml:"if"`
 	Environment string            `yaml:"environment"`
@@ -908,5 +914,19 @@ func TestArtifactBuildCacheIsSeparateAndRefreshable(t *testing.T) {
 		if step.Uses == "./.github/actions/setup-go" {
 			t.Error("artifact build uses shared setup-go cache, want dedicated artifact cache only")
 		}
+	}
+}
+
+func TestLinuxTestGroupsPreserveCoverage(t *testing.T) {
+	job := readWorkflow(t, "ci.yml").Jobs["test-linux"]
+	if !reflect.DeepEqual(job.Strategy.Matrix.Group, []string{"cli", "other"}) {
+		t.Errorf("Linux groups=%v, want cli and other", job.Strategy.Matrix.Group)
+	}
+	if job.Strategy.FailFast == nil || *job.Strategy.FailFast {
+		t.Error("Linux matrix fail-fast must be explicitly false so both groups finish")
+	}
+	_, step := requireStep(t, job, "Run tests")
+	if step.Run != "./scripts/test -p 1" || step.Env["TEST_PACKAGE_GROUP"] != "${{ matrix.group }}" || step.Env["SKIP_WINDOWS_TEST_COMPILE"] != "1" {
+		t.Errorf("Linux run=%q env=%v, want sequential native package group with separate Windows compilation", step.Run, step.Env)
 	}
 }
