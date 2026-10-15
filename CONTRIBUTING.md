@@ -222,7 +222,7 @@ The required test check requires successful source preparation, ordinary tests, 
 Run the complete recovery audit locally with:
 
 ```sh
-OPENAI_CLI_ERROR_COVERAGE_MODE=exhaustive go test ./cmd/openai -run '^TestMainErrorCoverageAcrossCommandTree$' -count=1
+OPENAI_CLI_ERROR_COVERAGE_MODE=exhaustive go test ./cmd/openai -run '^TestMainErrorCoverageAcrossCommandTree$' -count=1 -timeout=30m
 ```
 
 Run one balanced shard with:
