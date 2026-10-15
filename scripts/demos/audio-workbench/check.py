@@ -251,6 +251,7 @@ def main():
                         try:
                             os.killpg(pgid, signal.SIGKILL)
                         except ProcessLookupError:
+                            # The process group exited between the existence check and killpg.
                             pass
                     self.child.wait(timeout=1)
                     deadline = time.monotonic() + 2
