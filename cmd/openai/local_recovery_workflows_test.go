@@ -79,6 +79,37 @@ func localRecoveryMessage(t *testing.T, got mainDispatchResult, mode localRecove
 	return strings.TrimSpace(got.stderr)
 }
 
+func TestMainRecoveryRequiredValidationStages(t *testing.T) {
+	for _, mode := range localRecoveryModes() {
+		t.Run(mode.name, func(t *testing.T) {
+			_, env, requests := localRecoveryEnvironment(t)
+			for _, stage := range []struct {
+				args []string
+				flag string
+			}{
+				{[]string{"batches", "download"}, "--output"},
+				{[]string{"batches", "download", "--output", "-"}, "--batch-id"},
+			} {
+				args := append([]string{"--project", "synthetic-private-project"}, stage.args...)
+				failed := runLocalRecovery(t, env, mode, args...)
+				message := localRecoveryMessage(t, failed, mode, 1)
+				want := "Missing required options: " + stage.flag + ".\nOptions and examples: openai batches download --help"
+				if message != want || requests.Load() != 0 {
+					t.Fatalf("required input recovery: %q; want %q; requests=%d", message, want, requests.Load())
+				}
+				_, copied, found := strings.Cut(message, "Options and examples: ")
+				if !found {
+					t.Fatal("required input recovery omitted executable help")
+				}
+				help := runMainDispatchWithEnv(t, "", env, strings.Fields(copied)...)
+				if help.code != 0 || help.stderr != "" || !strings.Contains(help.stdout, "openai batches download") || requests.Load() != 0 {
+					t.Fatalf("copied required input help failed: %+v; requests=%d", help, requests.Load())
+				}
+			}
+		})
+	}
+}
+
 func TestMainRecoveryManpageOutput(t *testing.T) {
 	for _, stage := range []string{"prepare", "partial"} {
 		for _, mode := range localRecoveryModes() {

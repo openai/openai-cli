@@ -27,16 +27,17 @@ import (
 )
 
 type errorCoverageFlag struct {
-	Name       string
-	Aliases    []string
-	Type       string
-	TakesValue bool
-	Required   bool
-	Owner      string
-	Persistent bool
-	Hidden     bool
-	Policy     string
-	Origin     string
+	Name               string
+	Aliases            []string
+	Type               string
+	TakesValue         bool
+	Required           bool
+	RequiredAfterInput bool
+	Owner              string
+	Persistent         bool
+	Hidden             bool
+	Policy             string
+	Origin             string
 }
 
 type errorCoverageCommand struct {
@@ -227,7 +228,7 @@ func buildErrorCoverageManifest(root *cli.Command) (errorCoverageManifest, error
 				declared.Required = required.IsRequired()
 			}
 			if required, ok := flag.(requestflag.RequiredFlagOrStdin); ok {
-				declared.Required = declared.Required || required.IsRequiredAsFlagOrStdin()
+				declared.RequiredAfterInput = !declared.Required && required.IsRequiredAsFlagOrStdin()
 			}
 			entry.Flags = append(entry.Flags, declared)
 		}
@@ -390,6 +391,21 @@ func errorCoverageContracts(kind string, command errorCoverageCommand, spelling 
 		}
 	}
 	tags := []string{"kind:" + kind, "scope:" + scope}
+	if kind == "required-options" {
+		framework, input := false, false
+		for _, flag := range command.Flags {
+			framework = framework || flag.Required
+			input = input || flag.RequiredAfterInput
+		}
+		stage := "input"
+		if framework {
+			stage = "framework"
+			if input {
+				stage = "mixed"
+			}
+		}
+		tags = append(tags, "required-stage:"+stage)
+	}
 	if len(command.Path) > 0 && strings.Contains(command.Path[0], ":") {
 		tags = append(tags, "path-form:colon")
 	}
@@ -507,7 +523,7 @@ func declaredErrorCoverageCases(manifest errorCoverageManifest) []errorCoverageC
 			}
 			add("unknown-child", "", []string{private}, code, message)
 		}
-		var required []string
+		var required, requiredAfterInput []string
 		aliasOwners := map[string]string{}
 		for _, flag := range command.Flags {
 			for _, alias := range append([]string{flag.Name}, flag.Aliases...) {
@@ -548,6 +564,14 @@ func declaredErrorCoverageCases(manifest errorCoverageManifest) []errorCoverageC
 			if flag.Required {
 				required = append(required, name)
 			}
+			if flag.RequiredAfterInput {
+				requiredAfterInput = append(requiredAfterInput, name)
+			}
+		}
+		// The framework rejects its missing flags before the action can check
+		// request flags supplied through stdin or positional input.
+		if len(required) == 0 {
+			required = requiredAfterInput
 		}
 		if len(required) != 0 {
 			add("required-options", "", nil, 1, "Missing required options: "+strings.Join(required, ", ")+"."+help)
@@ -1137,6 +1161,47 @@ func TestErrorCoverageInventoriesInheritanceAndAliasShadowing(t *testing.T) {
 }
 
 func TestErrorCoverageModelsFrameworkFlags(t *testing.T) {
+	t.Run("required validation stages", func(t *testing.T) {
+		framework := func() cli.Flag { return &cli.StringFlag{Name: "output", Required: true} }
+		input := func() cli.Flag {
+			return &requestflag.Flag[string]{Name: "resource-id", PathParam: "resource_id", Required: true}
+		}
+		root := &cli.Command{Name: "openai", Commands: []*cli.Command{
+			{Name: "framework", Flags: []cli.Flag{framework()}},
+			{Name: "input", Flags: []cli.Flag{input()}},
+			{Name: "mixed", Flags: []cli.Flag{input(), framework()}},
+		}}
+		manifest, err := buildErrorCoverageManifest(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cases := declaredErrorCoverageCases(manifest)
+		selection, err := selectErrorCoverageCases(cases, func(string) (string, bool) { return "", false })
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, stage := range []string{"framework", "input", "mixed"} {
+			index := slices.IndexFunc(cases, func(test errorCoverageCase) bool {
+				return test.Name == stage+"/required-options/"
+			})
+			if index < 0 || !slices.Contains(selection.Indices, index) {
+				t.Fatalf("required stage %s lost its executable representative", stage)
+			}
+			flag := "--output"
+			if stage == "input" {
+				flag = "--resource-id"
+			}
+			want := "Missing required options: " + flag + ".\nOptions and examples: openai " + stage + " --help"
+			if cases[index].Message != want || !slices.Contains(cases[index].Contracts, "required-stage:"+stage) {
+				t.Fatalf("required stage %s: %+v; want %q", stage, cases[index], want)
+			}
+		}
+		mixed := manifest.Commands[len(manifest.Commands)-1]
+		if len(mixed.Flags) < 2 || mixed.Flags[0].Required || !mixed.Flags[0].RequiredAfterInput ||
+			!mixed.Flags[1].Required || mixed.Flags[1].RequiredAfterInput {
+			t.Fatalf("mixed declarations lost their independent validation stages: %+v", mixed.Flags)
+		}
+	})
 	root := &cli.Command{Name: "openai", Version: "synthetic", Flags: []cli.Flag{&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}}},
 		Commands: []*cli.Command{{Name: "group", Commands: []*cli.Command{{Name: "leaf"}}},
 			{Name: "group:legacy", Hidden: true, Metadata: map[string]any{"command-compatibility-alias": true}, Commands: []*cli.Command{{Name: "leaf"}}},
