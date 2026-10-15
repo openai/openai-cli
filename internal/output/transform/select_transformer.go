@@ -1,6 +1,6 @@
-// Package transformers contains SDK-owned response transformations. Presentation
+// Package transform contains CLI-owned response transformations. Presentation
 // and output formats belong to pkg/custom and its internal rendering helpers.
-package transformers
+package transform
 
 import (
 	"context"
