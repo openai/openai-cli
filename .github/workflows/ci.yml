@@ -104,7 +104,6 @@ jobs:
       GOMAXPROCS: '2'
       GOFLAGS: '-p=1 -mod=readonly'
       OPENAI_CLI_REQUIRE_NATIVE_SHELLS: bash,zsh,fish
-      OPENAI_CLI_TEST_BASH: ${{ runner.temp }}/minimum-shells/bin/bash
     steps:
       - name: Download prepared source
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -198,6 +197,8 @@ jobs:
       - name: Test minimum Unix executable suggestions
         shell: bash
         timeout-minutes: 12
+        env:
+          OPENAI_CLI_TEST_BASH: ${{ runner.temp }}/minimum-shells/bin/bash
         run: |
           python3 - <<'PY'
           import json
@@ -737,8 +738,6 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $hostPowerShell = (Get-Process -Id $PID).Path
-          "host-shell=`"$hostPowerShell`" -NoLogo -NoProfile -NonInteractive -Command `". '{0}'`"" |
-            Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           if ($env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne $env:EXPECTED_RUNNER_ARCH) {
             throw 'Unexpected Windows runner architecture'
           }
@@ -787,8 +786,8 @@ jobs:
           if ($env:EXPECTED_POWERSHELL -ne 'current' -and $shell.version -cne $env:EXPECTED_POWERSHELL) {
             throw 'Selected PowerShell does not match the requested minimum version'
           }
-          [IO.Path]::GetDirectoryName($selected) |
-            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "selected-directory=$([IO.Path]::GetDirectoryName($selected))" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           $proof = [ordered]@{
             candidate = $candidate
             runnerOS = $env:RUNNER_OS
@@ -811,35 +810,41 @@ jobs:
         if: matrix.existing-checks
         run: go test ./pkg/custom -run '^TestImagePicker(WindowsShellHome|ShellConsent)' -count=1 -v
       - name: Check native PowerShell executable suggestions
-        shell: ${{ steps.powershell.outputs.host-shell }}
+        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $env:PATH = $env:SELECTED_POWERSHELL_DIRECTORY + [IO.Path]::PathSeparator + $env:PATH
           go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsPowerShell' -count=1 -timeout=5m -v -json |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'powershell-suggestion-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
         env:
           GOMAXPROCS: '2'
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
+          SELECTED_POWERSHELL_DIRECTORY: ${{ steps.powershell.outputs.selected-directory }}
       - name: Check native PowerShell suggestion adapters
-        shell: ${{ steps.powershell.outputs.host-shell }}
+        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $env:PATH = $env:SELECTED_POWERSHELL_DIRECTORY + [IO.Path]::PathSeparator + $env:PATH
           go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsAdapters.*$/^pwsh$' -count=1 -timeout=3m -v -json |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'powershell-suggestion-adapter-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
         env:
           GOMAXPROCS: '2'
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
+          SELECTED_POWERSHELL_DIRECTORY: ${{ steps.powershell.outputs.selected-directory }}
       - name: Check native public executable suggestion setup
-        shell: ${{ steps.powershell.outputs.host-shell }}
+        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $env:PATH = $env:SELECTED_POWERSHELL_DIRECTORY + [IO.Path]::PathSeparator + $env:PATH
           go test -p 1 ./cmd/openai -run '^TestMainShellSuggestions' -count=1 -timeout=3m -v -json |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'public-shell-suggestion-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
         env:
           GOMAXPROCS: '2'
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
+          SELECTED_POWERSHELL_DIRECTORY: ${{ steps.powershell.outputs.selected-directory }}
       - name: Check native Windows shell and file commands
         if: matrix.existing-checks
         run: go test -p 2 ./cmd/openai -run '^TestMainShell' -skip '^TestMainShellSuggestions' -count=1 -v
