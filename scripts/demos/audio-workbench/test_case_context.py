@@ -1,5 +1,6 @@
-"""Ownership regressions that need no PTY, process launch, or network connection."""
+"""Ownership and capture regressions without PTYs, process launches, or network connections."""
 
+from contextlib import contextmanager
 import importlib.util
 import json
 from pathlib import Path
@@ -14,6 +15,10 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location("audio_case_context", Path(__file__).with_name("case_context.py"))
 context = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(context)
+
+spec = importlib.util.spec_from_file_location("audio_shared_terminal", Path(__file__).resolve().parents[2] / "image_picker_harness.py")
+picker = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(picker)
 
 
 class Child:
@@ -144,6 +149,78 @@ class OwnershipTests(unittest.TestCase):
             case.close()
         self.assertEqual(closed, ["first", "second"])
         self.assertFalse(case.result["pass"])
+
+
+class CaptureTests(unittest.TestCase):
+    reset = b"\x1b[?2004l\x1b[?25h"
+
+    @contextmanager
+    def capture(self, chunks, *, exit_status=130, repeating=False):
+        terminal_type = context.terminal_class(picker)
+        terminal = terminal_type.__new__(terminal_type)
+        terminal.child = Child()
+        terminal.child.returncode = exit_status
+        terminal.master, terminal.slave = -100, -101  # Patched calls never open these descriptors.
+        terminal.initial = [0, 0, 0, 0]
+        terminal.raw = bytearray(b"\x1b[?25l\x1b[?2004h")
+        terminal.events, terminal.started = [], 0
+        terminal.decoder = context.codecs.getincrementaldecoder("utf-8")("replace")
+        terminal.decoder_finished = False
+        observed = bytearray()
+        terminal.navigation_observer = SimpleNamespace(feed=observed.extend)
+        terminal.context = SimpleNamespace(args=SimpleNamespace(theme="dark", emit=False))
+        pending, clock = list(chunks), [0.0]
+
+        def ready(readers, writers, errors, duration):
+            clock[0] += min(duration, .01) if pending else duration
+            return (readers if pending else [], [], [])
+
+        def read(_descriptor, _length):
+            return pending[0] if repeating else pending.pop(0)
+
+        with patch.object(context.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(context.select, "select", side_effect=ready), \
+                patch.object(context.os, "read", side_effect=read), \
+                patch.object(picker.termios, "tcgetattr", return_value=[0, 0, 0, 0]):
+            yield terminal, pending, observed, clock
+
+    def test_finish_drains_all_post_exit_chunks_before_shared_assertions(self):
+        chunks = [b"first", b"second", b"third", b"fourth", self.reset]
+        with self.capture(chunks) as (terminal, pending, observed, _clock):
+            with self.assertRaisesRegex(AssertionError, "bracketed paste was not restored"):
+                picker.Terminal.finish(terminal, 130)
+            self.assertEqual(pending, chunks[3:])
+            self.assertEqual(observed, b"".join(chunks[:3]))
+        with self.capture(chunks) as (terminal, pending, observed, _clock):
+            terminal.finish(130)
+            self.assertEqual(pending, [])
+            self.assertEqual(observed, b"".join(chunks))
+            self.assertTrue(terminal.raw.endswith(b"".join(chunks)))
+            self.assertEqual("".join(event[2] for event in terminal.events).encode(), b"".join(chunks))
+            self.assertIsNone(terminal.finish_deadline)
+
+    def test_finish_preserves_wrong_exit_failure(self):
+        with self.capture([self.reset], exit_status=1) as (terminal, _pending, _observed, _clock):
+            with self.assertRaises(AssertionError) as caught:
+                terminal.finish(130)
+            self.assertEqual(caught.exception.args[0][:2], (1, 130))
+            self.assertIsNone(terminal.finish_deadline)
+
+    def test_finish_preserves_missing_restoration_failure(self):
+        with self.capture([b"completed output"]) as (terminal, _pending, _observed, _clock):
+            with self.assertRaisesRegex(AssertionError, "bracketed paste was not restored"):
+                terminal.finish(130)
+            self.assertIsNone(terminal.finish_deadline)
+
+    def test_finish_bounds_live_exit_and_post_exit_drain(self):
+        for exit_status in (None, 130):
+            with self.subTest(exit_status=exit_status):
+                with self.capture([b"still writing"], exit_status=exit_status, repeating=True) as capture:
+                    terminal, _pending, _observed, clock = capture
+                    with self.assertRaisesRegex(AssertionError, "exit deadline"):
+                        terminal.finish(130, timeout=.2)
+                    self.assertLessEqual(clock[0], .2)
+                    self.assertIsNone(terminal.finish_deadline)
 
 
 if __name__ == "__main__":

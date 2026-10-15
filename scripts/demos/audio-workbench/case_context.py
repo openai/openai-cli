@@ -90,6 +90,24 @@ def terminal_class(picker):
                 raise ValueError("Navigation observer requires fixed-size sessions; resize was rejected")
             super().resize(width, height, notify=notify)
 
+        def finish(self, expected, timeout=12, expect_picker=True):
+            deadline = time.monotonic() + timeout
+            previous = getattr(self, "finish_deadline", None)
+            self.finish_deadline = deadline
+            try:
+                while self.child.poll() is None:
+                    self.read(.05)
+                # An exited child can leave more than three queued PTY chunks.
+                # Drain until quiet before reusing every shared exit assertion.
+                while True:
+                    before = len(self.raw)
+                    self.read(.03)
+                    if len(self.raw) == before:
+                        break
+                super().finish(expected, timeout=max(0, deadline-time.monotonic()), expect_picker=expect_picker)
+            finally:
+                self.finish_deadline = previous
+
         def close(self):
             if self.harness_closed:
                 return
@@ -136,6 +154,12 @@ def terminal_class(picker):
                 self.decoder_finished = True
 
         def read(self, duration=.05):
+            deadline = getattr(self, "finish_deadline", None)
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise AssertionError("Terminal output did not finish before the exit deadline")
+                duration = min(duration, remaining)
             if not select.select([self.master], [], [], duration)[0]:
                 return
             try:
