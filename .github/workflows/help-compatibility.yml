@@ -1257,9 +1257,19 @@ jobs:
   wsl1-pager:
     needs: source
     permissions: {}
-    name: Pager descriptor ownership on Ubuntu WSL 1
+    name: ${{ matrix.name }}
     runs-on: windows-2025-vs2026
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Pager descriptor ownership on Ubuntu WSL 1
+            arguments: ''
+            artifact: wsl-pager
+          - name: Command contracts on Ubuntu WSL 1
+            arguments: --command-contracts
+            artifact: wsl-command-contracts
     steps:
       - name: Reserve WSL cleanup time
         shell: pwsh
@@ -1307,17 +1317,17 @@ jobs:
       - name: Run compatibility checks in disposable Ubuntu WSL 1
         shell: pwsh
         timeout-minutes: 16
-        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') --process-binary (Join-Path $env:RUNNER_TEMP 'wsl-process.test')
+        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') --process-binary (Join-Path $env:RUNNER_TEMP 'wsl-process.test') ${{ matrix.arguments }}
       - name: Reconcile the owned WSL distribution
         if: always()
         shell: pwsh
         timeout-minutes: 3
-        run: python -I -B scripts/check-wsl-pager.py --cleanup
+        run: python -I -B scripts/check-wsl-pager.py --cleanup ${{ matrix.arguments }}
       - name: Retain WSL process evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: wsl-pager-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ matrix.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/openai-cli-wsl1-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ${{ runner.temp }}/openai-cli-wsl1-${{ github.run_id }}-${{ github.run_attempt }}/*.stdout
