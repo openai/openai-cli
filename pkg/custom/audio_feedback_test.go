@@ -123,8 +123,8 @@ func TestAudioFeedbackPreservesRetainedOperationProvenance(t *testing.T) {
 		failure         error
 		summary, action string
 	}{
-		{"measurement", "generate", audioFailure("Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.", private), "Measurement failed.", "Retained audio remains available."},
-		{"decoder", "generate", audioFailure("Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.", audiomedia.ErrDecoderUnavailable), "Measurement needs FFmpeg.", "Retained audio remains available."},
+		{"measurement", "generate", classifiedAudioFailure(audioMeasurementFailure, "Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.", private), "Measurement failed.", "Retained audio remains available."},
+		{"decoder", "generate", classifiedAudioFailure(audioMeasurementFailure, "Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.", audiomedia.ErrDecoderUnavailable), "Measurement needs FFmpeg.", "Retained audio remains available."},
 		{"invalid audio", "generate", errors.Join(audiomedia.ErrInvalidAudio, private), "Audio could not be decoded.", "Export the retained file"},
 		{"unsupported format", "open", errors.Join(audiomedia.ErrUnsupportedFormat, private), "Audio format is unsupported.", "Export the retained file"},
 		{"analysis", "open", errors.Join(audiomedia.ErrAnalysisFailed, private), "Audio measurement failed.", "Export the retained file"},
@@ -134,14 +134,18 @@ func TestAudioFeedbackPreservesRetainedOperationProvenance(t *testing.T) {
 		{"history verification", "open", errors.Join(audiohistory.ErrInvalid, private), "History could not be verified.", "private cache permissions"},
 		{"history replacement", "export", errors.Join(audiohistory.ErrChanged, private), "History changed during this action.", "select the result again"},
 		{"history read", "history", private, "History failed.", "retained records"},
-		{"cached audition", "generate", audioFailure("Could not inspect cached auditions. No speech request was sent.", private), "History failed.", "retained records"},
-		{"open for saving", "export", audioFailure("Could not open retained audio for saving.", private), "History failed.", "retained records"},
+		{"cached audition", "generate", classifiedAudioFailure(audioHistoryFailure, "Could not inspect cached auditions. No speech request was sent.", private), "History failed.", "retained records"},
+		{"open for saving", "export", classifiedAudioFailure(audioHistoryFailure, "Could not open retained audio for saving.", private), "History failed.", "retained records"},
 		{"export", "export", &downloadSaveError{message: "synthetic-private", cause: private}, "Save failed.", "Retained audio remains available."},
 		{"receipt", "export", &saveReceiptError{cause: private}, "Save receipt failed.", "Check the destination before saving again."},
-		{"retention", "generate", audioFailure("Could not retain completed audio in private history.", private), "Audio retention failed.", "Check History and API usage"},
+		{"retention", "generate", classifiedAudioFailure(audioCaptureFailure, "Could not retain completed audio in private history.", private), "Audio retention failed.", "Check History and API usage"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			feedback := audioFailureFeedback(nil, tc.operation, tc.failure)
+			var local *localUtilityError
+			if errors.As(tc.failure, &local) {
+				local.message = "Updated local audio guidance."
+			}
+			feedback := audioFailureFeedback(nil, tc.operation, fmt.Errorf("outer context: %w", tc.failure))
 			require.Equal(t, tc.summary, feedback.Summary)
 			require.Contains(t, feedback.Action, tc.action)
 			require.NotContains(t, feedback.Summary+feedback.Action, "synthetic-private")
@@ -180,7 +184,7 @@ func TestAudioFeedbackLocalFailuresHidePaths(t *testing.T) {
 		require.Equal(t, "Speech connection failed.", feedback.Summary)
 		require.Equal(t, "Check the connection and API usage before generating again.", feedback.Action)
 	}
-	feedback := audioFailureFeedback(nil, "generate", audioFailure("Could not retain completed audio in private history.", io.ErrUnexpectedEOF))
+	feedback := audioFailureFeedback(nil, "generate", classifiedAudioFailure(audioCaptureFailure, "Could not retain completed audio in private history.", io.ErrUnexpectedEOF))
 	require.Equal(t, "Speech response was incomplete.", feedback.Summary)
 	require.Equal(t, "Check API usage before generating again.", feedback.Action)
 }
@@ -231,22 +235,36 @@ func TestAudioFeedbackAuthDoesNotInferCredentialCause(t *testing.T) {
 }
 
 func TestAudioFeedbackValidationAndUnknownFailures(t *testing.T) {
+	feedbackAfterRewording := func(failure error) audioFeedback {
+		t.Helper()
+		var local *localUtilityError
+		require.ErrorAs(t, failure, &local)
+		local.message = "Updated local validation guidance."
+		require.EqualError(t, failure, local.message)
+		return audioFailureFeedback(nil, "generate", fmt.Errorf("outer context: %w", failure))
+	}
 	settings := audioDefaultSettings()
-	require.Equal(t, "Text is empty.", audioFailureFeedback(nil, "generate", validateAudioSettings(settings)).Summary)
+	require.Equal(t, "Text is empty.", feedbackAfterRewording(validateAudioSettings(settings)).Summary)
 	settings.Input = "synthetic-private"
 	settings.Speed = 5
-	require.Equal(t, "Format or speed is invalid.", audioFailureFeedback(nil, "generate", validateAudioSettings(settings)).Summary)
+	require.Equal(t, "Format or speed is invalid.", feedbackAfterRewording(validateAudioSettings(settings)).Summary)
 	settings.Speed = 1
 	settings.Model = "tts-1"
 	settings.Instructions = "synthetic-private"
-	require.Equal(t, "Model cannot use Instructions.", audioFailureFeedback(nil, "generate", validateAudioSettings(settings)).Summary)
+	require.Equal(t, "Model cannot use Instructions.", feedbackAfterRewording(validateAudioSettings(settings)).Summary)
 	settings.Instructions = ""
 	settings.Voice = "ballad"
-	require.Equal(t, "Voice cannot use this Model.", audioFailureFeedback(nil, "generate", validateAudioSettings(settings)).Summary)
-	for _, message := range []string{"The speech response did not contain a finite audio file.", "The speech request did not finish an audio file."} {
-		require.Equal(t, "No complete audio file returned.", audioFailureFeedback(nil, "generate", audioFailure(message, nil)).Summary)
-	}
-	for _, failure := range []error{audioFeedbackOpaqueError{}, audioFailure("synthetic-private", audioFeedbackOpaqueError{})} {
+	require.Equal(t, "Voice cannot use this Model.", feedbackAfterRewording(validateAudioSettings(settings)).Summary)
+	capture := &audioCapture{}
+	response := &http.Response{Header: http.Header{"Content-Type": {"application/json"}}, Body: http.NoBody}
+	require.Equal(t, "No complete audio file returned.", feedbackAfterRewording(capture.receive(response)).Summary)
+	settings = audioDefaultSettings()
+	settings.Input = "Synthetic audio request"
+	_, failure := generateAudio(t.Context(), audioGenerateTestCommand(), func(context.Context, *cli.Command) error {
+		return nil
+	}, audioTestStore(t), settings)
+	require.Equal(t, "No complete audio file returned.", feedbackAfterRewording(failure).Summary)
+	for _, failure := range []error{audioFeedbackOpaqueError{}, audioFailure("synthetic-private", audioFeedbackOpaqueError{}), audioFailure("Enter text before generating speech.", nil)} {
 		require.Equal(t, "Speech request failed.", audioFailureFeedback(nil, "generate", failure).Summary)
 		feedback := audioFailureFeedback(nil, "synthetic-private-operation", failure)
 		require.Equal(t, "Audio operation failed.", feedback.Summary)

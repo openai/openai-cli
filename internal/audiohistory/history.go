@@ -165,7 +165,7 @@ func (s Store) List(ctx context.Context) ([]Entry, error) {
 	}
 	defer root.Close()
 	var entries []Entry
-	err = scanEntries(ctx, root, func(id string) error {
+	err = scanEntries(ctx, root, false, func(id string) error {
 		directory, identity, err := openEntryDirectory(root, id)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil // A concurrent clear removed the enumerated directory.
@@ -377,7 +377,11 @@ func verifyDirectory(root *os.Root, id string, expected os.FileInfo) error {
 }
 
 func readManifest(ctx context.Context, root *os.Root, id string) (Entry, os.FileInfo, error) {
-	file, identity, err := openPrivateFile(root, "manifest.json")
+	return readManifestFile(ctx, root, "manifest.json", id)
+}
+
+func readManifestFile(ctx context.Context, root *os.Root, name, id string) (Entry, os.FileInfo, error) {
+	file, identity, err := openPrivateFile(root, name)
 	if err != nil {
 		return Entry{}, nil, err
 	}
@@ -408,7 +412,7 @@ func readManifest(ctx context.Context, root *os.Root, id string) (Entry, os.File
 		!validSettings(entry.Settings) || err != nil || len(digest) != sha256.Size || strings.ToLower(entry.SHA256) != entry.SHA256 {
 		return Entry{}, nil, ErrInvalid
 	}
-	if err := verifyUnchangedFile(root, "manifest.json", identity); err != nil {
+	if err := verifyUnchangedFile(root, name, identity); err != nil {
 		return Entry{}, nil, err
 	}
 	return entry, identity, nil
@@ -437,7 +441,7 @@ func uniqueManifestKeys(decoder *json.Decoder) bool {
 	return err == nil && token == json.Delim('}')
 }
 
-func scanEntries(ctx context.Context, root *os.Root, visit func(string) error) error {
+func scanEntries(ctx context.Context, root *os.Root, includeClearing bool, visit func(string) error) error {
 	file, err := root.Open(".")
 	if err != nil {
 		return err
@@ -453,8 +457,12 @@ func scanEntries(ctx context.Context, root *os.Root, visit func(string) error) e
 			if err := ctx.Err(); err != nil {
 				return errors.Join(failures, err)
 			}
-			if validID(entry.Name()) {
-				failures = errors.Join(failures, visit(entry.Name()))
+			id := entry.Name()
+			if includeClearing {
+				id = strings.TrimPrefix(id, clearPrefix)
+			}
+			if validID(id) {
+				failures = errors.Join(failures, visit(id))
 			}
 		}
 		if err == io.EOF {

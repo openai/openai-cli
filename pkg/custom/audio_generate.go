@@ -65,7 +65,7 @@ func audioWorkbenchWorkflow(next cli.ActionFunc) cli.ActionFunc {
 		}
 		store, err := audiohistory.Default()
 		if err != nil {
-			return audioFailure("Could not open private audio history.", err)
+			return classifiedAudioFailure(audioHistoryFailure, "Could not open private audio history.", err)
 		}
 		return runAudioWorkbench(ctx, command, next, store, os.Stdin, out)
 	}
@@ -93,11 +93,11 @@ type audioCapture struct {
 func (c *audioCapture) receive(response *http.Response) error {
 	kind, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || kind == "text/event-stream" || !strings.HasPrefix(kind, "audio/") && kind != "application/octet-stream" {
-		return audioFailure("The speech response did not contain a finite audio file.", err)
+		return classifiedAudioFailure(audioIncompleteFileFailure, "The speech response did not contain a finite audio file.", err)
 	}
 	c.entry, err = c.store.Capture(response.Request.Context(), response.Body, c.settings)
 	if err != nil {
-		return audioFailure("Could not retain completed audio in private history.", err)
+		return classifiedAudioFailure(audioCaptureFailure, "Could not retain completed audio in private history.", err)
 	}
 	c.received = true
 	return nil
@@ -136,24 +136,24 @@ func generateAudio(ctx context.Context, command *cli.Command, next cli.ActionFun
 		return capture.entry, err
 	}
 	if !capture.received {
-		return audiohistory.Entry{}, audioFailure("The speech request did not finish an audio file.", nil)
+		return audiohistory.Entry{}, classifiedAudioFailure(audioIncompleteFileFailure, "The speech request did not finish an audio file.", nil)
 	}
 	return capture.entry, nil
 }
 
 func validateAudioSettings(s audiohistory.Settings) error {
 	if strings.TrimSpace(s.Input) == "" {
-		return audioFailure("Enter text before generating speech.", nil)
+		return classifiedAudioFailure(audioEmptyTextFailure, "Enter text before generating speech.", nil)
 	}
 	if !slices.Contains(audioFormats, s.Format) || math.IsNaN(s.Speed) || math.IsInf(s.Speed, 0) || s.Speed < .25 || s.Speed > 4 {
-		return audioFailure("Choose a supported format and speed from 0.25 to 4.", nil)
+		return classifiedAudioFailure(audioInvalidSettingsFailure, "Choose a supported format and speed from 0.25 to 4.", nil)
 	}
 	if strings.HasPrefix(s.Model, "tts-1") {
 		if s.Instructions != "" {
-			return audioFailure("This model does not support instructions. Clear instructions or choose gpt-4o-mini-tts.", nil)
+			return classifiedAudioFailure(audioInstructionsFailure, "This model does not support instructions. Clear instructions or choose gpt-4o-mini-tts.", nil)
 		}
 		if !audioSupportsVoice(s.Model, s.Voice) {
-			return audioFailure("This voice needs gpt-4o-mini-tts. Choose another voice or model.", nil)
+			return classifiedAudioFailure(audioVoiceFailure, "This voice needs gpt-4o-mini-tts. Choose another voice or model.", nil)
 		}
 	}
 	return nil

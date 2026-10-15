@@ -66,6 +66,51 @@ func audioReviewResult(id string, preview bool) audioWorkResult {
 	}
 }
 
+func TestAudioWorkbenchMeasurementFailureKeepsExportAfterDisplayChange(t *testing.T) {
+	m := audioReviewModel(t)
+	settings := audioDefaultSettings()
+	settings.Input = "Synthetic retained audio"
+	const audio = "This retained WAV is malformed."
+	entry, err := m.store.Capture(t.Context(), io.NopCloser(strings.NewReader(audio)), settings)
+	require.NoError(t, err)
+	message := m.load(t.Context(), entry.ID, "generate")
+	require.ErrorIs(t, message.err, audiomedia.ErrInvalidAudio)
+	require.Equal(t, entry, message.result.entry)
+	require.False(t, message.result.measured)
+	var local *localUtilityError
+	require.ErrorAs(t, message.err, &local)
+	local.message = "Retained audio needs inspection."
+	require.EqualError(t, message.err, local.message)
+	require.Equal(t, "measure", audioFailureStage(message.kind, message.err))
+	message.err = fmt.Errorf("outer context: %w", message.err)
+	m.Update(message)
+	require.Equal(t, entry, m.result.entry)
+	require.ErrorIs(t, m.lastErr, audiomedia.ErrInvalidAudio)
+	view := audioFeedbackView(t, m)
+	require.Contains(t, view, "Export the retained file for inspection.")
+	require.NotContains(t, view, "generating again")
+
+	// Follow the recovery guidance through the form's real Save action.
+	m.openSave()
+	path := filepath.Join(t.TempDir(), "retained.wav")
+	m.path.SetValue(path)
+	save := audioReviewKey(m, tea.KeyEnter)
+	require.NotNil(t, save)
+	batch, ok := save().(tea.BatchMsg)
+	require.True(t, ok)
+	result, ok := batch[0]().(audioWorkMessage)
+	require.True(t, ok)
+	require.NoError(t, result.err)
+	m.Update(result)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, audio, string(data))
+	require.Contains(t, m.result.savedPaths, path)
+	entries, err := m.store.List(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, []audiohistory.Entry{entry}, entries)
+}
+
 func TestAudioReviewNavigationDoesNotGenerate(t *testing.T) {
 	for setting, choices := range [][]string{audioModels, audioVoices, audioFormats} {
 		t.Run(fmt.Sprintf("setting_%d", setting), func(t *testing.T) {

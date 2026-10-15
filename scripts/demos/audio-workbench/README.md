@@ -1,15 +1,29 @@
 Audio workbench integration and replay recipe
 
-The coordinator delegated these feature-local files on October 9, 2026.
 Keep each result manifest with its binary hash, source identity, and recorded environment.
 A pass applies only to the recorded cases and environment.
+Read `CONTRIBUTING.md` and `SECURITY.md` before running this development tooling.
 
-Read these references before execution or review:
+Prerequisites are Python 3.10 or newer, Bash, and asciinema 3.2.1.
+Install the pinned observer sources before navigation, failure, or the default all-cases run:
 
-- `/Users/vguvvala/code/cli-work/DESIGN.md`
-- `/Users/vguvvala/code/cli-work/STATUS.md`
-- `/Users/vguvvala/code/cli-work/PRE_PUSH_REVIEW.md`
-- `/Users/vguvvala/code/cli-work/COMPATIBILITY.md`
+```sh
+python3 -I -B scripts/demos/audio-workbench/setup_observer.py
+```
+
+Setup downloads only files listed in `observer_sources.json` from immutable upstream commits.
+It verifies every source and license hash before publishing the installation directory.
+It runs no packaging hooks, changes no Python environment, and installs no CLI dependency.
+The default location is `$XDG_CACHE_HOME/openai-cli/audio-observer/MANIFEST_SHA`, using `~/.cache` when unset.
+Use `--output /absolute/evidence/observer-sources` to choose another fresh directory.
+Use `--source-directory /absolute/path/to/verified-bundle` for an offline copy with the same hash checks.
+Pass that output through the checker's `--observer-source-directory` option.
+
+The sources are pyte 0.8.2 at `b106bb7bd23ab31ec7709c5e6788117dcc07203c`
+and wcwidth 0.2.13 at `36a625179ed2675287fe6b61c2ad319406449e60`.
+Their repository URLs, file hashes, licenses, and source notices remain in the pinned manifest and installed bundle.
+pyte includes LGPLv3 and embedded GPL/BSD notices. wcwidth includes MIT and Markus Kuhn notices.
+These development dependencies do not enter the CLI binary or release artifacts.
 
 Request a PTY reservation before running either command below.
 Keep evidence outside the repository.
@@ -19,8 +33,7 @@ Use immutable binaries with recorded complete source identities.
 python3 -I -B scripts/demos/audio-workbench/check.py \
   --binary /absolute/path/to/openai \
   --source CANDIDATE_COMMIT_SHA \
-  --repo-root /Users/vguvvala/.codex/worktrees/1f6c/openai-cli \
-  --navigation-observer /Users/vguvvala/code/cli-work/new-features-20261009/transcript-timestamps/audio-parity/navigation_observer_pyte.py \
+  --repo-root "$PWD" \
   --output /absolute/evidence/audio-workbench-dark \
   --theme dark
 ```
@@ -32,7 +45,7 @@ Use `--case NAME` to repeat one affected case.
 Use `--theme light` or `--theme no-color` for the additional palette checks.
 
 ```sh
-DEMO_REPO_ROOT=/Users/vguvvala/.codex/worktrees/1f6c/openai-cli \
+DEMO_REPO_ROOT="$PWD" \
 bash scripts/demos/audio-workbench/record.sh \
   /absolute/path/to/before-openai /absolute/path/to/after-openai \
   BEFORE_COMMIT_SHA CANDIDATE_COMMIT_SHA \
@@ -92,18 +105,17 @@ The navigation inventory contains 185 current-viewport checkpoints at each size.
 The navigation cases test Alt+Enter without submitting editor text.
 They leave Enter generation and the existing repeat-submit guard unchanged.
 
-Navigation and failure cases require the explicit reviewed `--navigation-observer` adapter.
-The default all-cases run also requires that argument because it includes these cases.
+Navigation and failure cases use the repository-owned `observer.py` by default.
+The default all-cases run includes both groups and never silently skips them.
 The checker verifies the adapter hash before loading it.
-Observer construction verifies pinned pyte 0.8.2 and wcwidth 0.2.13 sources before importing them.
-No package installation or project dependency change is required.
-The adapter remains outside the repository beside its reviewed package directory.
+Observer construction verifies the manifest, dependency hashes, import inventory, and loaded module origins.
+Missing sources stop execution before a PTY starts and identify the setup command.
+The optional `--navigation-observer` override preserves the previously reviewed external adapter's exact hash.
+It is unnecessary for a fresh checkout and cannot bypass dependency integrity checks.
 
 Use a binary built from the current reviewed source with a fresh evidence directory.
-Older source14/PTY10 and source16/PTY11 records retain their original checker and runtime identities.
-Those runs passed their previous contracts. They do not establish acceptance of this revised interface.
 Record the checker commit separately if it differs from the binary runtime commit.
-The observer directory must retain the sources and manifest described in its external `REVIEW.md`.
+Prior results retain their original source identities and do not establish acceptance of changed code.
 
 Every navigation focus assertion reads a persistent combining-aware viewport.
 Final navigation checks separately require a blank viewport and no retained owned scrollback rows.
@@ -118,7 +130,7 @@ Reaching the adapter's scrollback bound fails the check instead of allowing a cl
 Failure recovery cases
 
 Use `--case failure` at 90×34 or `--case failure-compact` at an actual fixed 40×12.
-Pass the reviewed `--navigation-observer` adapter and a different fresh output directory for each case.
+Use the installed observer sources and a different fresh output directory for each case.
 These cases do not resize, rewrite cast headers, or alter captured bytes.
 
 The first explicit Ctrl+G sends synthetic Text with the actual seeded Instructions example.
@@ -252,15 +264,15 @@ Print command lifecycle
 Use `--case print-command` with a fresh evidence directory and the exact candidate binary.
 This focused case needs Bash and the existing private-PTY reservation.
 It does not need asciinema, a navigation observer, or native desktop input.
-Use the existing bounded supervisor with a120-second outer limit.
-The case allows60 seconds for two CLI sessions. Existing ownership cleanup retains its separate bounded waits.
+Use the existing bounded supervisor with a 120-second outer limit.
+The case allows 60 seconds for two CLI sessions. Existing ownership cleanup retains its separate bounded waits.
 
-Both sessions use40×12, fake credentials, loopback, and a private HOME.
+Both sessions use 40×12, fake credentials, loopback, and a private HOME.
 The checker selects the actual binary through an isolated `openai` symlink.
-It enters60 ASCII `A` characters and opens Show command.
+It enters 60 ASCII `A` characters and opens Show command.
 Enter must preserve the form and make no request.
 The first session uses Ctrl+P. The second uses Ctrl+C.
-The checker requires exit0 and130 respectively.
+The checker requires exit 0 and 130 respectively.
 
 The Bash parent stays alive after the CLI exits.
 The checker compares native terminal modes before releasing that parent.
@@ -275,3 +287,24 @@ This case verifies public process behavior and terminal restoration.
 It does not verify actual graphical-terminal selection, clipboard bytes, fonts, or audible playback.
 The Go Bash/zsh recorder tests separately execute printed command bytes through both shells.
 Keep unavailable platforms and deferred restore/close fault injection explicit.
+
+
+Checker structure and focused checks
+
+`check.py` parses options and selects direct scenario functions from a small dispatch map.
+`scenarios.py` contains the workflow, navigation, recovery, startup, printing, and cancellation scenarios.
+`case_context.py` owns each case's result, private fixture, terminals, and capture operations.
+The run-level harness retains signal handling and final cleanup across all registered cases.
+Terminal construction receives its case explicitly; it does not read a surrounding loop's result variable.
+Fixture ownership is registered before thread construction or startup.
+Terminal ownership is registered before observer setup and before returning the terminal to its caller.
+
+Run these focused checks without a PTY or network connection:
+
+```sh
+python3 -I -B scripts/demos/audio-workbench/test_case_context.py
+python3 -I -B scripts/demos/audio-workbench/test_observer.py
+```
+
+These tests cover partial startup, deferred interruption, continued cleanup, source integrity, and scrollback saturation.
+They do not replace the full checker run against the exact candidate binary.

@@ -25,6 +25,33 @@ type audioFeedback struct {
 	StatusCode int
 }
 
+type audioFailureKind uint8
+
+const (
+	audioEmptyTextFailure audioFailureKind = iota + 1
+	audioInvalidSettingsFailure
+	audioInstructionsFailure
+	audioVoiceFailure
+	audioIncompleteFileFailure
+	audioCaptureFailure
+	audioHistoryFailure
+	audioMeasurementFailure
+)
+
+// Classification comes from the failure site, independently of display wording.
+// Keep the local wrapper in the chain for safe presentation and original causes.
+type audioClassifiedFailure struct {
+	kind    audioFailureKind
+	failure *localUtilityError
+}
+
+func (e *audioClassifiedFailure) Error() string { return e.failure.Error() }
+func (e *audioClassifiedFailure) Unwrap() error { return e.failure }
+
+func classifiedAudioFailure(kind audioFailureKind, message string, cause error) error {
+	return &audioClassifiedFailure{kind: kind, failure: &localUtilityError{message: message, cause: cause}}
+}
+
 func audioFailureFeedback(command *cli.Command, operation string, failure error) audioFeedback {
 	if failure == nil {
 		return audioFeedback{}
@@ -37,18 +64,18 @@ func audioFailureFeedback(command *cli.Command, operation string, failure error)
 		return audioAPIErrorFeedback(command, apierr)
 	}
 	stage := audioFailureStage(operation, failure)
-	var local *localUtilityError
-	if errors.As(failure, &local) && local != nil {
-		switch local.message {
-		case "Enter text before generating speech.":
+	var classified *audioClassifiedFailure
+	if errors.As(failure, &classified) && classified != nil {
+		switch classified.kind {
+		case audioEmptyTextFailure:
 			return audioFeedback{Summary: "Text is empty.", Action: "Enter text before generating speech."}
-		case "Choose a supported format and speed from 0.25 to 4.":
+		case audioInvalidSettingsFailure:
 			return audioFeedback{Summary: "Format or speed is invalid.", Action: "Choose a listed format and speed from 0.25 to 4."}
-		case "This model does not support instructions. Clear instructions or choose gpt-4o-mini-tts.":
+		case audioInstructionsFailure:
 			return audioFeedback{Summary: "Model cannot use Instructions.", Action: "Clear Instructions or choose gpt-4o-mini-tts."}
-		case "This voice needs gpt-4o-mini-tts. Choose another voice or model.":
+		case audioVoiceFailure:
 			return audioFeedback{Summary: "Voice cannot use this Model.", Action: "Choose another Voice or gpt-4o-mini-tts."}
-		case "The speech response did not contain a finite audio file.", "The speech request did not finish an audio file.":
+		case audioIncompleteFileFailure:
 			return audioFeedback{Summary: "No complete audio file returned.", Action: "Check API usage before generating again."}
 		}
 	}
@@ -183,17 +210,17 @@ func audioAPIErrorFeedback(command *cli.Command, apierr *openai.Error) audioFeed
 	return feedback
 }
 
-// Exact local wrappers establish the failed stage after generation succeeds.
+// Typed local failures establish the failed stage after generation succeeds.
 // Unknown wrappers and operation strings never become display text.
 func audioFailureStage(operation string, failure error) string {
-	var local *localUtilityError
-	if errors.As(failure, &local) && local != nil {
-		switch local.message {
-		case "Could not retain completed audio in private history.":
+	var classified *audioClassifiedFailure
+	if errors.As(failure, &classified) && classified != nil {
+		switch classified.kind {
+		case audioCaptureFailure:
 			return "capture"
-		case "Could not reopen retained audio.", "Could not open retained audio for saving.", "Could not inspect cached auditions. No speech request was sent.", "Could not open private audio history.":
+		case audioHistoryFailure:
 			return "history"
-		case "Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.":
+		case audioMeasurementFailure:
 			return "measure"
 		}
 	}

@@ -489,7 +489,7 @@ func (m *audioWorkbench) updateModal(message tea.Msg, key string) tea.Cmd {
 		return m.work("export", func(ctx context.Context) audioWorkMessage {
 			snapshot, err := m.store.Open(ctx, id)
 			if err != nil {
-				return audioWorkMessage{kind: "export", err: audioFailure("Could not open retained audio for saving.", err)}
+				return audioWorkMessage{kind: "export", err: classifiedAudioFailure(audioHistoryFailure, "Could not open retained audio for saving.", err)}
 			}
 			err = errors.Join(exportAudio(ctx, snapshot, path, nil), snapshot.Close())
 			return audioWorkMessage{kind: "export", path: path, entryID: id, err: audioFailureIf("Could not save the original audio file.", err)}
@@ -562,7 +562,7 @@ func (m *audioWorkbench) generate(preview bool) tea.Cmd {
 		if preview {
 			entries, listErr := m.store.List(ctx)
 			if listErr != nil {
-				return audioWorkMessage{kind: "generate", err: audioFailure("Could not inspect cached auditions. No speech request was sent.", listErr)}
+				return audioWorkMessage{kind: "generate", err: classifiedAudioFailure(audioHistoryFailure, "Could not inspect cached auditions. No speech request was sent.", listErr)}
 			}
 			for _, entry := range entries {
 				if entry.Settings == settings {
@@ -582,13 +582,15 @@ func (m *audioWorkbench) load(ctx context.Context, id, kind string) audioWorkMes
 	message := audioWorkMessage{kind: kind}
 	snapshot, err := m.store.Open(ctx, id)
 	if err != nil {
-		message.err = audioFailure("Could not reopen retained audio.", err)
+		message.err = classifiedAudioFailure(audioHistoryFailure, "Could not reopen retained audio.", err)
 		return message
 	}
 	message.result.entry = snapshot.Entry
 	message.result.analysis, err = audiomedia.Analyze(ctx, snapshot.File, snapshot.Entry.Settings.Format)
 	message.result.measured = err == nil
-	message.err = audioFailureIf("Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.", errors.Join(err, snapshot.Close()))
+	if err := errors.Join(err, snapshot.Close()); err != nil {
+		message.err = classifiedAudioFailure(audioMeasurementFailure, "Audio is retained, but measurement failed. Compressed formats need FFmpeg on PATH.", err)
+	}
 	return message
 }
 
