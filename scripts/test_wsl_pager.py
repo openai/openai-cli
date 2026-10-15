@@ -2,8 +2,10 @@
 """Offline controls for the WSL pager pilot. Never imports or starts a distro."""
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import socket
@@ -326,6 +328,306 @@ class AcceptanceTests(unittest.TestCase):
                     patch.object(pilot, "IMAGE_SHA256", pilot.hashlib.sha256(b"").hexdigest()):
                 with self.assertRaisesRegex(RuntimeError, "timed out"):
                     pilot.download_image(Path(directory) / "late-close", 1.0)
+
+
+class CommandContractTests(unittest.TestCase):
+    def setUp(self):
+        self.raw = pilot.COMMAND_CASES_PATH.read_bytes()
+        self.suites = json.loads(self.raw)
+        processes = patch.object(pilot.subprocess, "Popen", side_effect=AssertionError("No process may start"))
+        network = patch.object(pilot.urllib.request, "build_opener", side_effect=AssertionError("No network may start"))
+        processes.start()
+        network.start()
+        self.addCleanup(processes.stop)
+        self.addCleanup(network.stop)
+
+    @staticmethod
+    def names(cases):
+        return set(cases) | {root + "/" + child for root, children in cases.items() for child in children}
+
+    @classmethod
+    def output(cls, cases):
+        return ("".join(f"=== RUN   {name}\n--- PASS: {name} (0.01s)\n"
+                        for name in sorted(cls.names(cases))) + "PASS\n").encode()
+
+    def load_fixture(self, raw):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cases.json"
+            path.write_bytes(raw)
+            with patch.object(pilot, "COMMAND_CASES_PATH", path):
+                return pilot.load_command_cases()
+
+    def test_fixed_inventory_and_literal_suffixes(self):
+        suites, checksum = pilot.load_command_cases()
+        self.assertEqual(suites, self.suites)
+        self.assertEqual(checksum, hashlib.sha256(self.raw).hexdigest())
+        self.assertEqual(set(suites), {"custom", "process"})
+        self.assertEqual((len(suites["custom"]), len(self.names(suites["custom"]))), (10, 71))
+        self.assertEqual((len(suites["process"]), len(self.names(suites["process"]))), (59, 561))
+        self.assertEqual(suites["process"]["TestMainBashRequestConfiguration"], [
+            "placement_precedence_and_error", "root_and_body_project", "equals_empty",
+            "separate_empty", "completion_stays_local",
+        ])
+        self.assertIn("absent/", suites["custom"]["TestImageInlinePreferencePrecedence"])
+        self.assertIn("absent/#01", suites["custom"]["TestImageInlinePreferencePrecedence"])
+        self.assertIn("#00", suites["process"]["TestMainGlobalFlagsDeepAdminAndCustomCommands"])
+        self.assertIn("missing_required_flag/", suites["process"]["TestMainLocalErrorsStayOnStderr"])
+        self.assertIn('{"error":true}/--format/text/--format-error/json',
+                      suites["process"]["TestMainAPIErrorsFormatPrecedenceAndExtraction"])
+        self.assertIn('"synthetic_private_response_detail"/--format-error/json',
+                      suites["process"]["TestMainAPIErrorsWithUnexpectedJSONShapes"])
+        selected = set(suites["custom"]) | set(suites["process"])
+        self.assertEqual(len(selected), 69)
+        self.assertFalse(set(suites["custom"]) & set(suites["process"]))
+        self.assertFalse(selected & (set(pilot.PROCESS_CASES) | {pilot.ROOT}))
+        self.assertFalse(selected & {"TestMainDispatchProcess", "TestMainWrappedExitCodeProcess",
+                                    "TestRequestConfigurationChildEnvironment"})
+
+    def test_inventory_rejects_malformed_duplicate_and_nonregular_inputs(self):
+        duplicate_root = self.raw.replace(b'"custom": {',
+                                         b'"custom": {"TestRootRequestFlagsPreserveOwnershipAndMetadata": [],', 1)
+        for raw in (b"", b"{", b"\xff", b"[]", b"null", b'{"custom": {},' + self.raw[1:], duplicate_root):
+            with self.subTest(raw=raw[:70]):
+                with self.assertRaises((RuntimeError, ValueError, UnicodeError)):
+                    self.load_fixture(raw)
+        for symlink, regular in ((True, True), (False, False)):
+            path = Mock()
+            path.is_symlink.return_value = symlink
+            path.is_file.return_value = regular
+            with self.subTest(symlink=symlink, regular=regular):
+                with patch.object(pilot, "COMMAND_CASES_PATH", path):
+                    with self.assertRaisesRegex(RuntimeError, "regular.*inventory"):
+                        pilot.load_command_cases()
+                path.read_bytes.assert_not_called()
+
+    def test_inventory_rejects_invalid_shapes_and_counts(self):
+        for label in ("missing suite", "extra suite", "swapped suites", "wrong root count",
+                      "wrong named count", "nonmapping suite", "nonlist children",
+                      "duplicate child", "empty child", "whitespace child", "nonstring child", "invalid root"):
+            with self.subTest(case=label):
+                suites = json.loads(self.raw)
+                root = "TestMainGlobalFlagsPrecedence"
+                if label == "missing suite":
+                    del suites["custom"]
+                elif label == "extra suite":
+                    suites["other"] = {}
+                elif label == "swapped suites":
+                    suites["custom"], suites["process"] = suites["process"], suites["custom"]
+                elif label == "wrong root count":
+                    del suites["process"][root]
+                elif label == "wrong named count":
+                    suites["process"][root].pop()
+                elif label == "nonmapping suite":
+                    suites["custom"] = []
+                elif label == "nonlist children":
+                    suites["process"][root] = "environment"
+                elif label == "duplicate child":
+                    suites["process"][root][1] = suites["process"][root][0]
+                elif label == "empty child":
+                    suites["process"][root][0] = ""
+                elif label == "whitespace child":
+                    suites["process"][root][0] = "unexpected child"
+                elif label == "nonstring child":
+                    suites["process"][root][0] = 7
+                else:
+                    suites["process"]["TestUnexpected/root"] = suites["process"].pop(root)
+                with self.assertRaisesRegex(RuntimeError, "inventory|case"):
+                    self.load_fixture(json.dumps(suites).encode())
+
+    def test_inventory_rejects_helper_baseline_and_cross_package_roots(self):
+        forbidden = ["TestMainDispatchProcess", "TestMainWrappedExitCodeProcess",
+                     "TestRequestConfigurationChildEnvironment", pilot.ROOT,
+                     *pilot.PROCESS_CASES, "TestRootRequestFlagsPreserveOwnershipAndMetadata"]
+        for root in forbidden:
+            with self.subTest(root=root):
+                suites = json.loads(self.raw)
+                # Replacing a zero-child root keeps both count checks satisfied.
+                del suites["process"]["TestMainPreservesWrappedExitCode"]
+                suites["process"][root] = []
+                with self.assertRaisesRegex(RuntimeError, "case"):
+                    self.load_fixture(json.dumps(suites).encode())
+
+    def test_supplement_suites_require_exact_output(self):
+        for package, runner in (("custom", pilot.run_custom_suite), ("process", pilot.run_process_suite)):
+            cases = self.suites[package]
+            good = self.output(cases)
+            name = next(name for name in sorted(self.names(cases)) if "/" in name)
+            run = f"=== RUN   {name}\n".encode()
+            passed = f"--- PASS: {name} (0.01s)\n".encode()
+            bad = {
+                "missing run": good.replace(run, b""),
+                "missing pass": good.replace(passed, b""),
+                "duplicate run": good + run,
+                "duplicate pass": good + passed,
+                "extra test": good + b"=== RUN   TestOther\n--- PASS: TestOther (0.01s)\n",
+                "skip": good.replace(passed, f"--- SKIP: {name} (0.01s)\n".encode()),
+                "fail": good.replace(passed, f"--- FAIL: {name} (0.01s)\n".encode()),
+                "wrong package": self.output(self.suites["process" if package == "custom" else "custom"]),
+                "missing conclusion": good.removesuffix(b"PASS\n"),
+                "duplicate conclusion": good + b"PASS\n",
+                "empty selection": b"PASS\n",
+                "invalid encoding": b"\xff" + good,
+                "panic": good + b"panic: synthetic\n",
+            }
+            results = [(label, (raw, b"", 0)) for label, raw in bad.items()]
+            results.extend([("nonzero exit", (good, b"", 7)), ("stderr", (good, b"unexpected\n", 0))])
+            for label, result in results:
+                with self.subTest(package=package, case=label):
+                    commands = Mock(deadline=1000.0)
+                    commands.run.return_value = result
+                    with patch.object(pilot.time, "monotonic", return_value=0.0):
+                        with self.assertRaises((RuntimeError, UnicodeError)):
+                            runner(commands, ["user"], "/payload.test", cases)
+                    commands.run.assert_called_once()
+
+    def test_custom_admission_and_both_fixed_commands(self):
+        for cases in (None, self.suites["custom"]):
+            with self.subTest(supplement=cases is not None):
+                commands = Mock(deadline=200.0)
+                commands.run.return_value = (passing_output() if cases is None else self.output(cases), b"", 0)
+                with patch.object(pilot.time, "monotonic", return_value=130.001):
+                    with self.assertRaisesRegex(RuntimeError, "Insufficient work time"):
+                        pilot.run_custom_suite(commands, ["user"], "/custom.test", cases)
+                commands.run.assert_not_called()
+                with patch.object(pilot.time, "monotonic", return_value=130.0):
+                    names = pilot.run_custom_suite(commands, ["user"], "/custom.test", cases)
+                selector = "^" + pilot.ROOT + "$" if cases is None else "^(" + "|".join(cases) + ")$"
+                commands.run.assert_called_once_with("pager" if cases is None else "custom-contracts",
+                    ["user", "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "60s", "/custom.test",
+                     "-test.run=" + selector, "-test.timeout=45s", "-test.v"], 70)
+                self.assertEqual(names, pilot.TESTS if cases is None else self.names(cases))
+
+    def test_process_supplement_preserves_full_admission_and_command(self):
+        cases = self.suites["process"]
+        commands = Mock(deadline=200.0)
+        commands.run.return_value = (self.output(cases), b"", 0)
+        with patch.object(pilot.time, "monotonic", return_value=30.001):
+            with self.assertRaisesRegex(RuntimeError, "Insufficient work time"):
+                pilot.run_process_suite(commands, ["user"], "/process.test", cases)
+        commands.run.assert_not_called()
+        with patch.object(pilot.time, "monotonic", return_value=30.0):
+            self.assertEqual(pilot.run_process_suite(commands, ["user"], "/process.test", cases), self.names(cases))
+        commands.run.assert_called_once_with("process-contracts",
+            ["user", "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "160s", "/process.test",
+             "-test.run=^(" + "|".join(cases) + ")$", "-test.timeout=150s", "-test.v"], 170)
+
+    def test_cli_rejects_missing_payloads_and_unknown_flags(self):
+        for argv in (["--command-contracts"], ["--command-contracts", "--binary", "custom.test"],
+                     ["--command-contracts", "--process-binary", "process.test"], ["--unknown"]):
+            with self.subTest(argv=argv):
+                with patch.object(pilot.sys, "argv", ["check-wsl-pager.py", *argv]), \
+                        patch.object(pilot.sys, "stderr", io.StringIO()), patch.object(pilot, "pilot") as run:
+                    with self.assertRaises(SystemExit) as caught:
+                        pilot.main()
+                self.assertEqual(caught.exception.code, 2)
+                run.assert_not_called()
+
+    def test_cli_preserves_profile_and_cleanup_flags(self):
+        for argv, expected in (
+            (["--command-contracts", "--binary", "custom.test", "--process-binary", "process.test"],
+             (Path("custom.test"), False, Path("process.test"), True)),
+            (["--cleanup", "--command-contracts"], (None, True, None, True)),
+            (["--binary", "custom.test"], (Path("custom.test"), False, None, False)),
+        ):
+            calls = []
+
+            def run(binary, cleanup_only=False, process_binary=None, command_contracts=False):
+                calls.append((binary, cleanup_only, process_binary, command_contracts))
+                return 0
+
+            with self.subTest(argv=argv):
+                with patch.object(pilot.sys, "argv", ["check-wsl-pager.py", *argv]), \
+                        patch.object(pilot.signal, "signal"), patch.object(pilot, "pilot", side_effect=run):
+                    self.assertEqual(pilot.main(), 0)
+                self.assertEqual(calls, [expected])
+
+    def test_direct_pilot_requires_both_payloads_before_preparation(self):
+        for binary, process_binary in ((None, None), (Path("custom.test"), None), (None, Path("process.test"))):
+            with self.subTest(binary=binary, process=process_binary):
+                with patch.object(pilot, "load_command_cases") as load, \
+                        patch.object(pilot, "require_native_windows_process") as native:
+                    with self.assertRaisesRegex(RuntimeError, "both test binaries"):
+                        pilot.pilot(binary, process_binary=process_binary, command_contracts=True)
+                load.assert_not_called()
+                native.assert_not_called()
+
+    def test_pilot_routes_only_the_fixed_supplement(self):
+        class FakeCommands:
+            records = []
+            deadline = 1000.0
+
+            def run(self, label, *_args, **_kwargs):
+                replies = {
+                    "source": (b"source\ntree\n", b"", 0),
+                    "source-final": (b"source\ntree\n", b"", 0),
+                    "wsl-version": (b"synthetic version\n", b"", 0),
+                    "initial-inventory": (b"", b"", 0),
+                    "feature": (b"Feature Name : Microsoft-Windows-Subsystem-Linux\nState : Enabled\n", b"", 0),
+                    "import": (b"", b"", 0),
+                    "version-one": (b"owned Stopped 1\n", b"", 0),
+                    "user": (b"", b"", 0),
+                    "ubuntu-identity": (b"ID=ubuntu\n", b"", 0),
+                    "exit-control": (b"wsl-control-out\n", b"wsl-control-err\n", 7),
+                }
+                return replies[label]
+
+            def finish(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            custom, process = parent / "custom.test", parent / "process.test"
+            custom.write_bytes(b"synthetic")
+            process.write_bytes(b"synthetic")
+            owned = parent / "owned"
+            commands = FakeCommands()
+            custom_names = self.names(self.suites["custom"])
+            process_names = self.names(self.suites["process"])
+            with patch.object(pilot, "load_command_cases", return_value=(self.suites, "a" * 64)) as load, \
+                    patch.object(pilot, "require_native_windows_process", return_value={}), \
+                    patch.object(pilot, "owned_paths", return_value=("owned", owned)), \
+                    patch.object(pilot, "remaining_deadline", return_value=1000.0), \
+                    patch.object(pilot.time, "monotonic", return_value=0.0), \
+                    patch.object(pilot, "Commands", return_value=commands), \
+                    patch.object(pilot, "require_linux_binary", return_value="b" * 64), \
+                    patch.object(pilot, "digest", side_effect=lambda path: "a" * 64 if path == pilot.COMMAND_CASES_PATH else "b" * 64), \
+                    patch.object(pilot.shutil, "disk_usage", return_value=Mock(free=6 * 1024**3)), \
+                    patch.object(pilot, "download_image", return_value=0), \
+                    patch.object(pilot, "copy_payload"), patch.object(pilot, "clean_distro"), \
+                    patch.object(pilot, "run_custom_suite", return_value=custom_names) as run_custom, \
+                    patch.object(pilot, "run_process_suite", return_value=process_names) as run_process, \
+                    patch.dict(os.environ, {"SYSTEMROOT": str(parent / "windows")}):
+                self.assertEqual(pilot.pilot(custom, process_binary=process, command_contracts=True), 0)
+            load.assert_called_once_with()
+            run_custom.assert_called_once()
+            run_process.assert_called_once()
+            self.assertEqual(run_custom.call_args.args[2:], ("/home/cli-compat/payload/custom.test", self.suites["custom"]))
+            self.assertEqual(run_process.call_args.args[2:], ("/home/cli-compat/payload/process.test", self.suites["process"]))
+            result = json.loads((owned / "result.json").read_text())
+            self.assertEqual(result["selection"], "command-contracts")
+            self.assertEqual(result["command_cases_sha256"], "a" * 64)
+            self.assertEqual(result["tests"], sorted(custom_names))
+            self.assertEqual(result["process_tests"], sorted(process_names))
+
+    def test_cleanup_does_not_require_inventory_or_payloads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            state = {"name": "owned", "directory": str(path), "import_attempted": False}
+            (path / "state.json").write_text(json.dumps(state))
+            commands = Mock(deadline=1000.0, records=[])
+            with patch.object(pilot, "require_native_windows_process", return_value={}), \
+                    patch.object(pilot, "owned_paths", return_value=("owned", path)), \
+                    patch.object(pilot, "remaining_deadline", return_value=1000.0), \
+                    patch.object(pilot.time, "monotonic", return_value=0.0), \
+                    patch.object(pilot, "Commands", return_value=commands), \
+                    patch.object(pilot, "load_command_cases", side_effect=FileNotFoundError("missing inventory")) as load, \
+                    patch.object(pilot, "clean_distro") as clean, \
+                    patch.dict(os.environ, {"SYSTEMROOT": str(path / "windows")}):
+                self.assertEqual(pilot.pilot(None, cleanup_only=True, command_contracts=True), 0)
+            load.assert_not_called()
+            commands.run.assert_not_called()
+            commands.finish.assert_called_once()
+            self.assertEqual(clean.call_args.args[2:], ("owned", state))
 
 
 class DownloadRetryTests(unittest.TestCase):
