@@ -1062,6 +1062,79 @@ func TestMainBatchesCollectTerminalFiles(t *testing.T) {
 	}
 }
 
+func TestMainBatchesCollectRestrictiveUmask(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not use Unix umask")
+	}
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, mask string
+		parentMode os.FileMode
+	}{
+		{"077", "077", 0700},
+		{"400", "400", 0700},
+		{"777", "777", 0700},
+		{"write_search_parent", "077", 0300},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parent := t.TempDir()
+			if test.parentMode == 0300 && os.Geteuid() == 0 {
+				t.Skip("root bypasses parent read permissions")
+			}
+			if err := os.Chmod(parent, test.parentMode); err != nil {
+				t.Fatal(err)
+			}
+			defer os.Chmod(parent, 0700)
+			directory := filepath.Join(parent, "results")
+			defer os.Chmod(directory, 0700) // Permit cleanup even when the regression leaves mode 000.
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.URL.Path == "/batches/batch_synthetic" {
+					info, err := os.Stat(directory)
+					if err != nil || info.Mode().Perm() != 0700 {
+						t.Errorf("output directory was not private before HTTP: info=%v error=%v", info, err)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					fmt.Fprint(w, batchesWorkflowResponse("completed", batchesWorkflowCounts))
+					return
+				}
+				fmt.Fprint(w, batchesWorkflowContent)
+			}))
+			defer server.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			child := batchesWorkflowProcess(t, ctx, server, "batches", "wait", "batch_synthetic", "--output-dir", directory, "--format", "json")
+			child.Path = shell
+			child.Args = append([]string{shell, "-c", `umask "$1"; shift; exec "$@"`, "batch-directory-umask", test.mask}, child.Args...)
+			child.WaitDelay = time.Second
+			var stdout, stderr bytes.Buffer
+			child.Stdout, child.Stderr = &stdout, &stderr
+			if err := child.Run(); err != nil || requests.Load() != 3 || !json.Valid(stdout.Bytes()) || stderr.Len() != 0 {
+				t.Fatalf("collection under umask %s: err=%v requests=%d stdout=%q stderr=%q", test.mask, err, requests.Load(), stdout.String(), stderr.String())
+			}
+			for _, name := range []string{"output.jsonl", "error.jsonl"} {
+				path := filepath.Join(directory, name)
+				data, err := os.ReadFile(path)
+				if err != nil || string(data) != batchesWorkflowContent {
+					t.Fatalf("saved bytes changed: %s data=%q err=%v", name, data, err)
+				}
+				info, err := os.Stat(path)
+				if err != nil || info.Mode().Perm() != 0600 {
+					t.Fatalf("saved file permissions: info=%v err=%v", info, err)
+				}
+			}
+			entries, err := os.ReadDir(directory)
+			if err != nil || len(entries) != 2 {
+				t.Fatalf("unexpected result-directory contents: entries=%v err=%v", entries, err)
+			}
+		})
+	}
+}
+
 func TestMainBatchesCollectPartialFailureRecovery(t *testing.T) {
 	for _, failed := range []string{"output", "error"} {
 		t.Run(failed, func(t *testing.T) {

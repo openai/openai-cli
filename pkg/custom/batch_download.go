@@ -227,9 +227,8 @@ func prepareBatchOutputDirectory(path string) (*batchOutputDirectory, error) {
 	if path == "" {
 		return nil, batchError("Choose a nonempty --output-dir path.")
 	}
-	// Mkdir creates only the selected directory. Missing parents require an
-	// explicit user choice, rather than creating a tree of untracked paths.
-	if err := os.Mkdir(path, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+	created, err := createBatchOutputDirectory(path)
+	if err != nil {
 		return nil, batchDownloadFailure("Could not create the output directory. Check its parent and permissions.", err)
 	}
 	root, err := os.OpenRoot(path)
@@ -241,6 +240,9 @@ func prepareBatchOutputDirectory(path string) (*batchOutputDirectory, error) {
 	if err != nil {
 		return nil, batchDownloadFailure("Could not inspect the output directory.", err)
 	}
+	if created != nil && !os.SameFile(created, info) {
+		return nil, batchError("The output directory changed. No output file was published.")
+	}
 	for _, name := range []string{"output.jsonl", "error.jsonl"} {
 		if _, err := root.Lstat(name); !errors.Is(err, os.ErrNotExist) {
 			if err == nil {
@@ -250,6 +252,22 @@ func prepareBatchOutputDirectory(path string) (*batchOutputDirectory, error) {
 		}
 	}
 	return &batchOutputDirectory{path: path, info: info}, nil
+}
+
+func createBatchOutputDirectory(path string) (os.FileInfo, error) {
+	// Preserve the caller's path traversal and existing-directory permissions.
+	created, err := createPrivateBatchDirectory(path)
+	if errors.Is(err, os.ErrExist) {
+		return nil, nil
+	}
+	if err != nil && created != nil {
+		// Remove only this invocation's empty directory after a setup failure.
+		current, statErr := os.Lstat(path)
+		if statErr == nil && current.IsDir() && os.SameFile(created, current) {
+			err = errors.Join(err, os.Remove(path))
+		}
+	}
+	return created, err
 }
 
 func collectBatchFiles(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, batch gjson.Result, destination *batchOutputDirectory) error {

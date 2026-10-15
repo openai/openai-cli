@@ -135,6 +135,114 @@ func TestBatchDownloadRestrictiveUmask(t *testing.T) {
 	}
 }
 
+func TestBatchOutputDirectoryPreservesExistingPaths(t *testing.T) {
+	for _, name := range []string{"directory", "directory_link", "existing_result", "file", "broken_link", "missing_parent"} {
+		t.Run(name, func(t *testing.T) {
+			parent := t.TempDir()
+			path := filepath.Join(parent, "results")
+			var before os.FileInfo
+			switch name {
+			case "directory", "directory_link", "existing_result":
+				require.NoError(t, os.Mkdir(path, 0700))
+				require.NoError(t, os.Chmod(path, 0770))
+				var err error
+				before, err = os.Stat(path)
+				require.NoError(t, err)
+				if name == "directory_link" {
+					link := filepath.Join(parent, "linked-results")
+					if err := os.Symlink(path, link); err != nil {
+						t.Skipf("directory symlinks unavailable: %v", err)
+					}
+					path = link
+				} else if name == "existing_result" {
+					require.NoError(t, os.WriteFile(filepath.Join(path, "output.jsonl"), []byte("preserved"), 0600))
+				}
+			case "file":
+				require.NoError(t, os.WriteFile(path, []byte("preserved"), 0600))
+			case "broken_link":
+				if err := os.Symlink(filepath.Join(parent, "absent"), path); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+			case "missing_parent":
+				path = filepath.Join(path, "nested")
+			}
+			destination, err := prepareBatchOutputDirectory(path)
+			if name == "directory" || name == "directory_link" {
+				require.NoError(t, err)
+				require.True(t, os.SameFile(before, destination.info))
+			} else {
+				require.Error(t, err)
+			}
+			if before != nil {
+				after, err := os.Stat(path)
+				require.NoError(t, err)
+				require.True(t, os.SameFile(before, after))
+				require.Equal(t, before.Mode(), after.Mode())
+			}
+			if name == "existing_result" || name == "file" {
+				file := path
+				if name == "existing_result" {
+					file = filepath.Join(path, "output.jsonl")
+				}
+				data, err := os.ReadFile(file)
+				require.NoError(t, err)
+				require.Equal(t, "preserved", string(data))
+			}
+			if name == "missing_parent" {
+				entries, err := os.ReadDir(parent)
+				require.NoError(t, err)
+				require.Empty(t, entries)
+			}
+			if name == "broken_link" {
+				info, err := os.Lstat(path)
+				require.NoError(t, err)
+				require.NotZero(t, info.Mode()&os.ModeSymlink)
+			}
+		})
+	}
+}
+
+func TestBatchOutputDirectoryPreservesPathTraversal(t *testing.T) {
+	separator := string(os.PathSeparator)
+	for _, component := range []string{"missing", "file", "symlink", "trailing_separator"} {
+		t.Run(component, func(t *testing.T) {
+			fixture := func() (string, string) {
+				parent := t.TempDir()
+				path := parent + separator + component + separator + ".." + separator + "results"
+				if component == "file" {
+					require.NoError(t, os.WriteFile(filepath.Join(parent, component), []byte("preserved"), 0600))
+				}
+				if component == "symlink" {
+					target := filepath.Join(parent, "actual", "child")
+					require.NoError(t, os.MkdirAll(target, 0700))
+					if err := os.Symlink(target, filepath.Join(parent, component)); err != nil {
+						t.Skipf("directory symlinks unavailable: %v", err)
+					}
+				}
+				if component == "trailing_separator" {
+					path = filepath.Join(parent, "results") + separator
+				}
+				return parent, path
+			}
+			controlParent, controlPath := fixture()
+			parent, path := fixture()
+			controlErr := os.Mkdir(controlPath, 0700)
+			destination, err := prepareBatchOutputDirectory(path)
+			require.Equal(t, controlErr == nil, err == nil, "os.Mkdir: %v; Batch: %v", controlErr, err)
+			if err == nil {
+				info, err := os.Stat(path)
+				require.NoError(t, err)
+				require.True(t, os.SameFile(destination.info, info))
+			}
+			for _, relative := range []string{"results", filepath.Join("actual", "results")} {
+				_, controlErr := os.Lstat(filepath.Join(controlParent, relative))
+				_, err := os.Lstat(filepath.Join(parent, relative))
+				require.Equal(t, controlErr == nil, err == nil, "resolved location: %s", relative)
+			}
+		})
+	}
+}
+
 func TestBatchDownloadStdoutIgnoresDataFormatting(t *testing.T) {
 	body := "{\"custom_id\":\"b\"}\r\n{\"custom_id\":\"a\"}\n\x1b\x00\xff"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
