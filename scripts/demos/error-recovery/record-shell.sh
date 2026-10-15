@@ -64,7 +64,7 @@ for phase in before after; do
   demo_capture_scene "$phase" 0 "$demo_runtime/$phase" http://127.0.0.1:1 \
     "$phase: executable typo (terminal replay)" \
     HOME="$demo_runtime/home-$phase" ZDOTDIR="$demo_runtime/home-$phase" \
-    HISTFILE=/dev/null DEMO_PHASE="$phase" NO_COLOR=1
+    HISTFILE=/dev/null DEMO_PHASE="$phase" NO_COLOR=1 GOMAXPROCS=2
   grep -F '[exit 127]' "$demo_output/$phase.txt"
   test ! -e "$demo_runtime/home-$phase/backend-called"
 done
