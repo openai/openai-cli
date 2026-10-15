@@ -43,7 +43,7 @@ func TestShellSuggestionsRejectSetupBeforeSideEffects(t *testing.T) {
 			if !errors.As(err, &exit) || exit.ExitCode() != 2 || called || output.Len() != 0 {
 				t.Fatalf("mixed setup reached an action or changed output/status: called=%v error=%v output=%q", called, err, output.String())
 			}
-			if !strings.Contains(err.Error(), "Print executable suggestions separately") || strings.Contains(err.Error(), "synthetic-private") {
+			if !strings.Contains(err.Error(), "openai '@completion' SHELL --suggest-executable") || strings.Contains(err.Error(), "synthetic-private") {
 				t.Fatalf("setup guidance lost its safe next action: %v", err)
 			}
 		})
@@ -65,7 +65,7 @@ func TestShellSuggestionsValidateShellWithoutRepeatingInputs(t *testing.T) {
 			if !errors.As(err, &exit) || exit.ExitCode() != 2 || called || output.Len() != 0 {
 				t.Fatalf("invalid shell reached output/action: called=%v error=%v output=%q", called, err, output.String())
 			}
-			if !strings.Contains(err.Error(), "openai @completion SHELL --suggest-executable") || strings.Contains(err.Error(), "synthetic-private") || strings.ContainsRune(err.Error(), '\x1b') {
+			if !strings.Contains(err.Error(), "openai '@completion' SHELL --suggest-executable") || strings.Contains(err.Error(), "synthetic-private") || strings.ContainsRune(err.Error(), '\x1b') {
 				t.Fatalf("shell guidance leaked input or omitted repair: %v", err)
 			}
 		})

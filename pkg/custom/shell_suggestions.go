@@ -29,14 +29,14 @@ func configureShellSuggestions(root *cli.Command) {
 			message := ""
 			switch {
 			case command.Bool("picker") || command.Bool("install-picker") || command.Bool("uninstall-picker") || command.Bool("automatic") || command.IsSet("profile"):
-				message = "Print executable suggestions separately from picker setup. Use openai @completion SHELL --suggest-executable."
+				message = "Print executable suggestions separately from picker setup. Use openai '@completion' SHELL --suggest-executable."
 			case command.Args().Len() != 1:
-				message = "Choose one shell: openai @completion SHELL --suggest-executable. Supported shells: bash, zsh, fish, pwsh."
+				message = "Choose one shell: openai '@completion' SHELL --suggest-executable. Supported shells: bash, zsh, fish, pwsh."
 			default:
 				switch command.Args().First() {
 				case "bash", "zsh", "fish", "pwsh":
 				default:
-					message = "Executable suggestions support bash, zsh, fish, and pwsh. Use openai @completion SHELL --suggest-executable."
+					message = "Executable suggestions support bash, zsh, fish, and pwsh. Use openai '@completion' SHELL --suggest-executable."
 				}
 			}
 			if message != "" {

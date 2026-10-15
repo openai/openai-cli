@@ -135,6 +135,7 @@ A handler that exits or triggers shell error termination can prevent later advic
 Fish retains its native missing-command result regardless of its handler's return status.
 Fish preserves ordinary handlers through native function copies.
 Handlers with event registrations or `--no-scope-shadowing` remain unchanged; sourcing explains the conflict.
+This includes Fish 3.2's shipped event-bound handler, which prevents activation until the user changes that handler.
 PowerShell advice appears only when its previous callback leaves lookup unresolved.
 
 Without a previous handler, Bash and zsh use a fixed fallback message on stderr and return 127.
