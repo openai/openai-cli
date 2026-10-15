@@ -680,6 +680,38 @@
       "translate"
     ],
     "TestMainTaskRoutesPreserveRequiredFlags": [],
-    "TestMainTaskSpeechPreservesJSONInputAndBinaryOutput": []
+    "TestMainTaskSpeechPreservesJSONInputAndBinaryOutput": [],
+    "TestMainDispatchFiniteJSONListDocuments": [
+      "empty",
+      "multiple_pages",
+      "one",
+      "page_boundary",
+      "single",
+      "unlimited",
+      "zero"
+    ],
+    "TestMainDispatchFiniteJSONListPreservesExplicitModes": [
+      "explicit_transform",
+      "identity_transform",
+      "jsonl",
+      "object_transform",
+      "raw_envelope",
+      "raw_output"
+    ],
+    "TestMainDispatchFiniteJSONListUpstreamFailures": [
+      "initial_API_failure",
+      "initial_malformed_page",
+      "later_API_failure",
+      "later_empty_API_error",
+      "later_malformed_page"
+    ],
+    "TestMainDispatchFiniteJSONListWritesBeforeNextPageCompletes": [],
+    "TestMainDispatchFiniteJSONListCancellationPreservesPartialOutput": [],
+    "TestMainDispatchFiniteJSONListClosedConsumerPreservesFailure": [
+      "upstream_failure=false",
+      "upstream_failure=true"
+    ],
+    "TestMainDispatchFiniteJSONListPreservesEventStream": [],
+    "TestMainDispatchFiniteJSONListLargeRecord": []
   }
 }
