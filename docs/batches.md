@@ -288,7 +288,7 @@ openai --format json files list --order desc --max-items -1
 ```
 
 Add `--purpose batch` to select uploaded batch inputs.
-JSON list output emits successive records; use `jq -s` when you need one array.
+`--format json` returns one array. Use `--format jsonl` for independent records.
 Search filenames with a case-insensitive literal substring:
 
 ```sh
