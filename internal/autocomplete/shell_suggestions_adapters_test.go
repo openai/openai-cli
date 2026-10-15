@@ -114,7 +114,7 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 		driver := filepath.Join(directory, "cancellation.exp")
 		require.NoError(t, os.WriteFile(driver, []byte(fishSuggestionCancellationDriver), 0600))
 		require.NoError(t, os.WriteFile(filepath.Join(directory, "continue.fish"), []byte(input), 0600))
-		args = []string{driver}
+		args = []string{"-N", "-n", driver}
 		input = ""
 	} else {
 		args = append(args, probe)
@@ -211,7 +211,7 @@ after 10000 {puts stderr "Fish cancellation deadline expired"; finish 124}
 if {[catch {
 log_user 0
 log_file -a -noappend $env(SUGGEST_TRANSCRIPT)
-spawn -noecho -- $env(SUGGEST_FISH_BINARY) --no-config --interactive --init-command {set -g fish_greeting ''; function fish_prompt; printf 'SUGGESTION_TEST> '; end; function fish_right_prompt; end}
+spawn -noecho $env(SUGGEST_FISH_BINARY) --no-config --interactive --init-command {set -g fish_greeting ''; function fish_prompt; printf 'SUGGESTION_TEST> '; end; function fish_right_prompt; end}
 set child_pid [exp_pid]
 expect_after {
     timeout {puts stderr "Fish cancellation stage timed out"; finish 124}
