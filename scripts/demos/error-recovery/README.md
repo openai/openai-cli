@@ -1,7 +1,8 @@
 # Error recovery replay
 
 The scenes run actual CLI binaries with isolated configuration and synthetic inputs.
-They show real exit statuses. Recovery scenes use a local synthetic API fixture.
+They show commands and actual CLI or shell output without added exit-status labels.
+Recovery scenes use a local synthetic API fixture.
 Use matching binaries and record their full commit IDs.
 
 ```sh
@@ -14,6 +15,9 @@ bash scripts/demos/error-recovery/record.sh \
 The script reuses `scripts/demos/capture_and_render.sh`.
 It writes before/after PNGs, a comparison GIF, transcripts and metadata outside the repository.
 These assets are terminal replays, not native Terminal screenshots.
+Each recipe records command statuses in `before-statuses.tsv` and `after-statuses.tsv`.
+Each line contains a fixed scene step and its observed numeric status, separated by a tab.
+The recorder checks these files separately from the visible transcript.
 
 The nonterminal comparison uses the same public commands across more command families:
 

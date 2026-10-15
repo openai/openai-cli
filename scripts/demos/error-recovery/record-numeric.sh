@@ -27,6 +27,7 @@ demo_render_options=(--font-family Menlo --font-size 18 --theme "$theme" --last-
 cat > "$demo_runtime/scene.sh" <<'SCENE'
 #!/bin/bash
 set -euo pipefail
+: > "$DEMO_STATUS_FILE"
 cd "$HOME"
 printf '%s\n\n' "$DEMO_SCENE_LABEL"
 printf '$ openai files list --limit nope\n'
@@ -34,29 +35,39 @@ set +e
 openai files list --limit nope
 result=$?
 set -e
+printf 'invalid-option-value\t%s\n' "$result" >> "$DEMO_STATUS_FILE"
 test "$result" -eq 1
-printf '[exit 1]\n\n'
+printf '\n'
 sleep 1
 printf '%s\n' '$ printf '\''{"limit":"nope"}\n'\'' |' '> openai files list'
 set +e
 printf '{"limit":"nope"}\n' | openai files list
 result=$?
 set -e
+printf 'invalid-piped-value\t%s\n' "$result" >> "$DEMO_STATUS_FILE"
 test "$result" -eq 1
-printf '[exit 1]\n\n'
+printf '\n'
 sleep 1
 printf '%s\n' '$ printf '\''{"limit":1}\n'\'' |' '> openai files list --format json'
+set +e
 printf '{"limit":1}\n' | openai files list --format json
-printf '[exit 0; synthetic response]\n'
+result=$?
+set -e
+printf 'corrected-request\t%s\n' "$result" >> "$DEMO_STATUS_FILE"
+test "$result" -eq 0
+printf '\n'
 sleep 2
 SCENE
 mkdir -p "$demo_runtime/home"
 demo_capture_metadata > "$demo_output/metadata.txt"
 printf 'Before source: %s\nAfter source: %s\nProfile: %s\nNO_COLOR=1; synthetic loopback terminal replay.\n' "$before_source" "$after_source" "$profile" >> "$demo_output/metadata.txt"
 demo_start_api "$demo_output/requests.json"
+printf 'invalid-option-value\t1\ninvalid-piped-value\t1\ncorrected-request\t0\n' > "$demo_runtime/expected-statuses.tsv"
 for phase in before after; do
   demo_capture_scene "$phase" 0 "$demo_runtime/$phase" "$demo_api_url" "$phase: numeric input recovery" \
-    HOME="$demo_runtime/home" XDG_CONFIG_HOME="$demo_runtime/home/config" NO_COLOR=1 OPENAI_UNTRUSTED_STDIN=false
+    HOME="$demo_runtime/home" XDG_CONFIG_HOME="$demo_runtime/home/config" NO_COLOR=1 OPENAI_UNTRUSTED_STDIN=false \
+    DEMO_STATUS_FILE="$demo_output/$phase-statuses.tsv"
+  cmp "$demo_runtime/expected-statuses.tsv" "$demo_output/$phase-statuses.tsv"
 done
 demo_stop_api
 python3 - "$demo_output" <<'PY'
@@ -76,11 +87,11 @@ for phase in ("before", "after"):
     for expected in (phase + ": numeric input recovery", "$ openai files list --limit nope",
                      "$ printf '{\"limit\":\"nope\"}\\n' |", "> openai files list",
                      "$ printf '{\"limit\":1}\\n' |", "> openai files list --format json",
-                     "file_demo", "[exit 0; synthetic response]"):
+                     "file_demo"):
         if re.sub(r"\s+", "", expected) not in compact:
             raise SystemExit(phase + " replay lost required content: " + repr(expected))
-    if compact.count("[exit1]") != 2:
-        raise SystemExit(phase + " replay did not preserve both failures")
+    if "[exit" in compact:
+        raise SystemExit(phase + " replay contains an exit annotation")
     if "synthetic-private" in text:
         raise SystemExit(phase + " replay exposed a private fixture value")
 checks = {

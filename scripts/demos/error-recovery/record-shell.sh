@@ -19,6 +19,7 @@ demo_render_options=(--font-family Menlo --font-size 18 --theme "$theme" --last-
 cat > "$demo_runtime/scene.sh" <<'SCENE'
 #!/bin/bash
 set -euo pipefail
+: > "$DEMO_STATUS_FILE"
 cd "$HOME"
 printf '%s\n\n' "$DEMO_SCENE_LABEL"
 if [ "$DEMO_PHASE" = after ]; then
@@ -44,8 +45,9 @@ source ./generated.zsh || exit 1
 printf '$ opneai images generate\n'
 opneai images generate
 result=$?
-printf '[exit %s]\n\n' "$result"
+printf 'executable-typo\t%s\n' "$result" >> "$DEMO_STATUS_FILE" || exit 1
 [[ $result == 127 && ! -e ./backend-called ]] || exit 1
+printf '\n'
 if [[ $DEMO_PHASE == after ]]; then
   printf '$ openai_suggestions_disable\n'
   openai_suggestions_disable || exit 1
@@ -58,14 +60,17 @@ demo_capture_metadata > "$demo_output/metadata.txt"
 /bin/zsh --version >> "$demo_output/metadata.txt"
 shasum -a 256 /bin/zsh "$0" >> "$demo_output/metadata.txt"
 printf 'Before source: %s\nAfter source: %s\nProfile: %s\nTerminal replay; isolated zsh; sentinel executable; no API command executed. No loopback request counter runs in this replay.\n' "$3" "$4" "$6" >> "$demo_output/metadata.txt"
+printf 'executable-typo\t127\n' > "$demo_runtime/expected-statuses.tsv"
 for phase in before after; do
   mkdir "$demo_runtime/home-$phase"
   cp "$demo_runtime/scene.zsh" "$demo_runtime/home-$phase/scene.zsh"
   demo_capture_scene "$phase" 0 "$demo_runtime/$phase" http://127.0.0.1:1 \
     "$phase: executable typo (terminal replay)" \
     HOME="$demo_runtime/home-$phase" ZDOTDIR="$demo_runtime/home-$phase" \
-    HISTFILE=/dev/null DEMO_PHASE="$phase" NO_COLOR=1 GOMAXPROCS=2
-  grep -F '[exit 127]' "$demo_output/$phase.txt"
+    HISTFILE=/dev/null DEMO_PHASE="$phase" NO_COLOR=1 GOMAXPROCS=2 \
+    DEMO_STATUS_FILE="$demo_output/$phase-statuses.tsv"
+  cmp "$demo_runtime/expected-statuses.tsv" "$demo_output/$phase-statuses.tsv"
+  if grep -qF '[exit' "$demo_output/$phase.txt"; then exit 1; fi
   test ! -e "$demo_runtime/home-$phase/backend-called"
 done
 grep -F 'command not found: opneai' "$demo_output/before.txt"

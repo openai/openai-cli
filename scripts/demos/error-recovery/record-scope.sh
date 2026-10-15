@@ -16,6 +16,7 @@ demo_render_options=(--font-family Menlo --font-size 18 --theme "$theme" --last-
 cat > "$demo_runtime/scene.sh" <<'SCENE'
 #!/bin/bash
 set -euo pipefail
+: > "$DEMO_STATUS_FILE"
 cd "$HOME"
 printf '%s\n\n' "$DEMO_SCENE_LABEL"
 printf '$ openai files --limit 1 list\n'
@@ -23,22 +24,30 @@ set +e
 openai files --limit 1 list
 result=$?
 set -e
+printf 'unavailable-option\t%s\n' "$result" >> "$DEMO_STATUS_FILE"
 test "$result" -eq 1
-printf '[exit %s; no request]\n\n' "$result"
+printf '\n'
 printf '$ openai files list --limit 1 --format json\n'
+set +e
 openai files list --limit 1 --format json
-printf '[exit 0; synthetic response]\n'
+result=$?
+set -e
+printf 'corrected-request\t%s\n' "$result" >> "$DEMO_STATUS_FILE"
+test "$result" -eq 0
+printf '\n'
 sleep 1
 SCENE
 mkdir -p "$demo_runtime/home"
 demo_capture_metadata > "$demo_output/metadata.txt"
 printf 'Before source: %s\nAfter source: %s\nProfile: %s\nNO_COLOR=1; terminal replay; loopback fixture.\n' "$3" "$4" "$6" >> "$demo_output/metadata.txt"
 demo_start_api "$demo_output/requests.json"
+printf 'unavailable-option\t1\ncorrected-request\t0\n' > "$demo_runtime/expected-statuses.tsv"
 for phase in before after; do
-  demo_capture_scene "$phase" 0 "$demo_runtime/$phase" "$demo_api_url" "$phase: option scope (terminal replay)" HOME="$demo_runtime/home" NO_COLOR=1
+  demo_capture_scene "$phase" 0 "$demo_runtime/$phase" "$demo_api_url" "$phase: option scope (terminal replay)" \
+    HOME="$demo_runtime/home" NO_COLOR=1 DEMO_STATUS_FILE="$demo_output/$phase-statuses.tsv"
   grep -F 'file_demo' "$demo_output/$phase.txt"
-  grep -F '[exit 1; no request]' "$demo_output/$phase.txt"
-  grep -F '[exit 0; synthetic response]' "$demo_output/$phase.txt"
+  cmp "$demo_runtime/expected-statuses.tsv" "$demo_output/$phase-statuses.tsv"
+  if grep -qF '[exit' "$demo_output/$phase.txt"; then exit 1; fi
 done
 grep -F 'An option is not recognized.' "$demo_output/before.txt"
 # Compare the normalized text so native wrapping does not obscure the assertion.
