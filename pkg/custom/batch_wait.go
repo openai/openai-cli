@@ -133,11 +133,25 @@ func batchRequestOptions(cmd *cli.Command) ([]option.RequestOption, error) {
 	return FlagOptions(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, EmptyBody, false)
 }
 
-func waitForBatch(ctx context.Context, cmd *cli.Command) error {
+func waitForBatch(ctx context.Context, cmd *cli.Command) (err error) {
 	interval, timeout := cmd.Duration("poll-interval"), cmd.Duration("wait-timeout")
 	if interval <= 0 || timeout < 0 {
 		return batchError("--poll-interval must be positive, and --wait-timeout must be zero or positive.")
 	}
+	ctx, stop := batchSignalContext(ctx)
+	defer stop()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	stopReset := context.AfterFunc(ctx, stop)
+	defer stopReset()
+	defer func() {
+		if ctx.Err() != nil {
+			err = batchContextError(errors.Join(ctx.Err(), context.Cause(ctx), err))
+		}
+	}()
 	options, err := batchRequestOptions(cmd)
 	if err != nil {
 		return err
@@ -149,24 +163,12 @@ func waitForBatch(ctx context.Context, cmd *cli.Command) error {
 			return err
 		}
 	}
-	ctx, stop := batchSignalContext(ctx)
-	defer stop()
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	stopReset := context.AfterFunc(ctx, stop)
-	defer stopReset()
 	if batchHumanTerminal(ctx, cmd.Root()) {
 		err = writeBatchStdout(ctx, os.Stderr, func(progress io.Writer) error {
 			return pollBatch(ctx, cmd, options, interval, progress, destination)
 		})
 	} else {
 		err = pollBatch(ctx, cmd, options, interval, nil, destination)
-	}
-	if ctx.Err() != nil {
-		return batchContextError(errors.Join(ctx.Err(), context.Cause(ctx), err))
 	}
 	return err
 }

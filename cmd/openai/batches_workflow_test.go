@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -290,6 +291,215 @@ func batchesWorkflowProcess(t *testing.T, ctx context.Context, server *httptest.
 	child := exec.CommandContext(ctx, binary, append([]string{"-test.run=^TestMainDispatchProcess$", "--", "openai"}, args...)...)
 	child.Env = []string{"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "OPENAI_API_KEY=sk-fake-batches-test", "OPENAI_BASE_URL=" + server.URL, "FORCE_COLOR=0", "GOMAXPROCS=2"}
 	return child
+}
+
+// Keep the pipe's writer open until the CLI exits unless complete is true.
+// Signal cases write more than native pipe capacity before signaling. This
+// handshake proves the CLI started consuming stdin without waiting on a sleep.
+func runBatchesPipeInput(t *testing.T, server *httptest.Server, input string, complete bool, signal os.Signal, args ...string) mainDispatchResult {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
+	defer cancel()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	child := batchesWorkflowProcess(t, ctx, server, args...)
+	var stdout, stderr bytes.Buffer
+	child.Stdin, child.Stdout, child.Stderr = reader, &stdout, &stderr
+	child.WaitDelay = time.Second
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	reader.Close()
+	finished := make(chan error, 1)
+	go func() { finished <- child.Wait() }()
+	written := make(chan error, 1)
+	go func() {
+		if signal != nil {
+			if _, err := io.WriteString(writer, strings.Repeat(" ", 4<<20)); err != nil {
+				written <- err
+				return
+			}
+		}
+		_, err := io.WriteString(writer, input)
+		written <- err
+	}()
+	waited, writeFinished := false, false
+	defer func() {
+		writer.Close()
+		if !waited {
+			_ = child.Process.Kill()
+			select {
+			case <-finished:
+			case <-time.After(2 * time.Second):
+				t.Error("stdin fixture could not reap its child after watchdog cleanup")
+			}
+		}
+		if !writeFinished {
+			select {
+			case <-written:
+			case <-time.After(time.Second):
+				t.Error("stdin fixture writer did not stop after closing its owned pipe")
+			}
+		}
+	}()
+	select {
+	case err := <-written:
+		writeFinished = true
+		if err != nil {
+			t.Fatalf("stdin fixture could not deliver input: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stdin fixture watchdog: CLI did not consume the input prefix")
+	}
+	if complete {
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if signal != nil {
+		if err := child.Process.Signal(signal); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case err := <-finished:
+		waited = true
+		code := 0
+		if exit, ok := err.(*exec.ExitError); ok {
+			code = exit.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		return mainDispatchResult{code, stdout.String(), stderr.String()}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stdin fixture watchdog: CLI remained blocked while the input pipe stayed open")
+		return mainDispatchResult{}
+	}
+}
+
+func TestMainBatchesStalledStdinDeadline(t *testing.T) {
+	for _, operation := range []string{"wait", "retrieve"} {
+		for _, format := range []string{"json", "yaml"} {
+			t.Run(operation+"_"+format, func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					requests.Add(1)
+					http.Error(w, "stalled stdin must not reach HTTP", http.StatusBadRequest)
+				}))
+				defer server.Close()
+				directory := t.TempDir()
+				output := filepath.Join(directory, "results")
+				args := []string{"batches", operation, "--wait-timeout", "500ms", "--format", "json"}
+				if operation == "retrieve" {
+					args = append(args, "--wait")
+				} else {
+					args = append(args, "--output-dir", output)
+				}
+				input := `{"batch_id":"batch_synthetic"`
+				if format == "yaml" {
+					input = "batch_id: \"batch_synthetic"
+				}
+				got := runBatchesPipeInput(t, server, input, false, nil, args...)
+				if got.code != 124 || got.stdout != "" || !json.Valid([]byte(got.stderr)) || requests.Load() != 0 {
+					t.Fatalf("stalled input escaped the wait deadline: result=%+v requests=%d", got, requests.Load())
+				}
+				entries, err := os.ReadDir(directory)
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("stalled input changed the output directory: entries=%v error=%v", entries, err)
+				}
+			})
+		}
+	}
+}
+
+func TestMainBatchesStalledStdinSignals(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows cannot send SIGINT or SIGTERM through os.Process.Signal")
+	}
+	for _, operation := range []string{"wait", "retrieve", "download"} {
+		for _, signal := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
+			t.Run(operation+"_"+signal.String(), func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					requests.Add(1)
+					http.Error(w, "stalled stdin must not reach HTTP", http.StatusBadRequest)
+				}))
+				defer server.Close()
+				directory := t.TempDir()
+				args := []string{"batches", operation, "--format", "json"}
+				switch operation {
+				case "wait":
+					args = append(args, "--output-dir", filepath.Join(directory, "results"))
+				case "retrieve":
+					args = append(args, "--wait")
+				case "download":
+					args = append(args, "--output", filepath.Join(directory, "results.jsonl"))
+				}
+				got := runBatchesPipeInput(t, server, `{"batch_id":"batch_synthetic"`, false, signal, args...)
+				if got.code != 128+int(signal) || got.stdout != "" || !json.Valid([]byte(got.stderr)) || requests.Load() != 0 {
+					t.Fatalf("stalled input ignored cancellation: result=%+v requests=%d", got, requests.Load())
+				}
+				entries, err := os.ReadDir(directory)
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("canceled input changed the output directory: entries=%v error=%v", entries, err)
+				}
+			})
+		}
+	}
+}
+
+func TestMainBatchesCompleteStdinControls(t *testing.T) {
+	for _, operation := range []string{"wait", "retrieve", "download"} {
+		for _, format := range []string{"json", "yaml"} {
+			t.Run(operation+"_"+format, func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					if r.Method != http.MethodGet {
+						t.Errorf("piped input mutated remote work: %s %s", r.Method, r.URL)
+					}
+					switch r.URL.Path {
+					case "/batches/batch_synthetic":
+						w.Header().Set("Content-Type", "application/json")
+						fmt.Fprint(w, batchesWorkflowResponse("completed", batchesWorkflowCounts))
+					case "/files/file_output/content":
+						fmt.Fprint(w, batchesWorkflowContent)
+					default:
+						t.Errorf("piped input changed the request target: %s", r.URL)
+						http.NotFound(w, r)
+					}
+				}))
+				defer server.Close()
+				args := []string{"batches", operation, "--format", "json"}
+				wantRequests := int32(1)
+				if operation == "retrieve" {
+					args = append(args, "--wait")
+				} else if operation == "download" {
+					args = append(args, "--output", "-")
+					wantRequests = 2
+				}
+				input := `{"batch_id":"batch_synthetic"}`
+				if format == "yaml" {
+					input = "batch_id: batch_synthetic\n"
+				}
+				got := runBatchesPipeInput(t, server, input, true, nil, args...)
+				if got.code != 0 || got.stderr != "" || requests.Load() != wantRequests {
+					t.Fatalf("complete piped input failed: result=%+v requests=%d", got, requests.Load())
+				}
+				if operation == "download" {
+					if got.stdout != batchesWorkflowContent {
+						t.Fatalf("piped download changed file bytes: %q", got.stdout)
+					}
+				} else if !json.Valid([]byte(got.stdout)) || !strings.Contains(got.stdout, `"batch_synthetic"`) {
+					t.Fatalf("piped wait lost its Batch response: %q", got.stdout)
+				}
+			})
+		}
+	}
 }
 
 func TestMainBatchesWaitInterruptNeverCancelsRemoteBatch(t *testing.T) {
@@ -701,6 +911,8 @@ func TestMainBatchesWorkflowHelpWithoutCredentials(t *testing.T) {
 	for _, args := range [][]string{
 		{"batches", "retrieve", "--help"},
 		{"help", "--all", "batches", "retrieve"},
+		{"batches", "wait", "--help"},
+		{"help", "--all", "batches", "wait"},
 		{"batches", "download", "--help"},
 		{"help", "--all", "batches", "download"},
 	} {
@@ -715,6 +927,15 @@ func TestMainBatchesWorkflowHelpWithoutCredentials(t *testing.T) {
 			if got.code != 0 || got.stderr != "" || requests.Load() != 0 {
 				t.Fatalf("help failed or reached HTTP: result=%+v requests=%d", got, requests.Load())
 			}
+			plain := strings.Join(strings.Fields(got.stdout), " ")
+			for _, want := range []string{
+				"[BATCH_ID | --batch-id BATCH_ID]", "ID of the batch.",
+				"The shown positional arguments can replace their matching flags.", "JSON/YAML keys: batch_id.",
+			} {
+				if !strings.Contains(plain, want) {
+					t.Errorf("Batch help omitted %q: %s", want, got.stdout)
+				}
+			}
 			if strings.Contains(strings.Join(args, " "), "download") && !strings.Contains(got.stdout, "--output") {
 				t.Fatalf("download help lost required output: %q", got.stdout)
 			}
@@ -722,6 +943,72 @@ func TestMainBatchesWorkflowHelpWithoutCredentials(t *testing.T) {
 				t.Fatalf("full retrieve help omitted wait: %q", got.stdout)
 			}
 		})
+	}
+}
+
+func TestMainBatchesHelpInputFormsExecute(t *testing.T) {
+	for _, operation := range []string{"wait", "download"} {
+		for _, spelling := range []string{"command_help", "help_all"} {
+			t.Run(operation+"_"+spelling, func(t *testing.T) {
+				args := []string{"openai", "batches", operation, "--help"}
+				if spelling == "help_all" {
+					args = []string{"openai", "help", "--all", "batches", operation}
+				}
+				help := runMainDispatch(t, "bash", args...)
+				if help.code != 0 || help.stderr != "" {
+					t.Fatalf("help failed: %+v", help)
+				}
+				synopsis := strings.Join(strings.Fields(helpSection(help.stdout, "SYNOPSIS", "DESCRIPTION")), " ")
+				prefix, rest, found := strings.Cut(synopsis, "[")
+				choices, _, closed := strings.Cut(rest, "]")
+				if !found || !closed || strings.TrimSpace(prefix) != "openai batches "+operation ||
+					choices != "BATCH_ID | --batch-id BATCH_ID" {
+					t.Fatalf("missing executable Batch input alternatives: %s", synopsis)
+				}
+				// Run both alternatives copied from the synopsis against a local API.
+				// Supply the required download destination separately, using stdout.
+				for _, choice := range strings.Split(choices, " | ") {
+					t.Run(choice, func(t *testing.T) {
+						var requests atomic.Int32
+						server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							requests.Add(1)
+							if r.Method != http.MethodGet {
+								t.Errorf("documented input mutated remote work: %s %s", r.Method, r.URL)
+							}
+							switch r.URL.Path {
+							case "/batches/batch_synthetic":
+								w.Header().Set("Content-Type", "application/json")
+								fmt.Fprint(w, batchesWorkflowResponse("completed", batchesWorkflowCounts))
+							case "/files/file_output/content":
+								fmt.Fprint(w, batchesWorkflowContent)
+							default:
+								t.Errorf("documented input reached an unexpected path: %s", r.URL)
+								http.NotFound(w, r)
+							}
+						}))
+						defer server.Close()
+						argv := strings.Fields(prefix + strings.ReplaceAll(choice, "BATCH_ID", "batch_synthetic"))
+						argv = append(argv, "--format", "json")
+						wantRequests := int32(1)
+						if operation == "download" {
+							argv = append(argv, "--output", "-")
+							wantRequests = 2
+						}
+						got := runReadableCommand(t, server, argv[1:]...)
+						if got.code != 0 || got.stderr != "" || requests.Load() != wantRequests {
+							t.Fatalf("documented input failed: argv=%q result=%+v requests=%d", argv, got, requests.Load())
+						}
+						if operation == "download" {
+							if got.stdout != batchesWorkflowContent {
+								t.Fatalf("documented download changed file bytes: %q", got.stdout)
+							}
+						} else if !json.Valid([]byte(got.stdout)) || !strings.Contains(got.stdout, `"batch_synthetic"`) {
+							t.Fatalf("documented wait lost its Batch response: %q", got.stdout)
+						}
+					})
+				}
+			})
+		}
 	}
 }
 

@@ -45,10 +45,6 @@ func handleBatchDownload(ctx context.Context, command *cli.Command) (err error) 
 	if os.IsPathSeparator(path[len(path)-1]) {
 		return batchError("Choose an output file path without a trailing path separator.")
 	}
-	options, err := batchRequestOptions(command)
-	if err != nil {
-		return err
-	}
 	ctx, stopSignals := batchSignalContext(ctx)
 	stopReset := context.AfterFunc(ctx, stopSignals)
 	defer func() {
@@ -59,6 +55,10 @@ func handleBatchDownload(ctx context.Context, command *cli.Command) (err error) 
 			err = batchContextError(errors.Join(err, contextErr))
 		}
 	}()
+	options, err := batchRequestOptions(command)
+	if err != nil {
+		return err
+	}
 	client := openai.NewClient(GetDefaultRequestOptions(command)...)
 	batch, err := client.Batches.Get(ctx, command.String("batch-id"), options...)
 	if err != nil {
@@ -140,7 +140,7 @@ func writeBatchDownloadInDirectory(ctx context.Context, path string, body io.Rea
 		return 0, batchDownloadFailure("The output path already exists or cannot be checked. Choose a new --output path.", err)
 	}
 	temporary := ".openai-batch-" + rand.Text()
-	file, err := root.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	file, err := createPrivateDownloadFile(root, temporary)
 	if err != nil {
 		return 0, batchDownloadFailure("Could not prepare the output file. Check directory permissions and available space.", err)
 	}
@@ -157,6 +157,11 @@ func writeBatchDownloadInDirectory(ctx context.Context, path string, body io.Rea
 			err = errors.Join(err, batchDownloadFailure("Could not remove the temporary download file. Check the output directory.", cleanupErr))
 		}
 	}()
+	// Keep downloaded results readable and writable by their owner even when
+	// the process umask removes those permissions during private creation.
+	if err := file.Chmod(0o600); err != nil {
+		return 0, batchDownloadFailure("Could not prepare the output file permissions. No output file was published.", err)
+	}
 	written, copyErr := io.Copy(outputWriter{ctx: ctx, out: file}, body)
 	bodyOpen = false
 	bodyCloseErr := body.Close()

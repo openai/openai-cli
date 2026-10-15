@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
@@ -76,6 +79,58 @@ func TestBatchDownloadSelectsAvailableFilesAndPreservesRequestContext(t *testing
 			entries, err := os.ReadDir(filepath.Dir(path))
 			require.NoError(t, err)
 			require.Len(t, entries, 1)
+		})
+	}
+}
+
+func TestBatchDownloadRestrictiveUmask(t *testing.T) {
+	const childDestination = "OPENAI_TEST_BATCH_DOWNLOAD_UMASK_DESTINATION"
+	const childServer = "OPENAI_TEST_BATCH_DOWNLOAD_UMASK_SERVER"
+	if path := os.Getenv(childDestination); path != "" {
+		root := batchDownloadTestCommand(t, os.Getenv(childServer), io.Discard)
+		require.NoError(t, root.Run(t.Context(), []string{"openai", "batches", "download", "batch_example", "--output", path}))
+		return
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not use Unix umask")
+	}
+	payload := []byte("{\"custom_id\":\"synthetic\"}\r\n\x00\xff")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/batches/batch_example" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"batch_example","output_file_id":"file_output"}`)
+			return
+		}
+		if r.URL.Path != "/files/file_output/content" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	for _, mask := range []os.FileMode{0o077, 0o400, 0o777} {
+		t.Run(fmt.Sprintf("mask_%03o", mask), func(t *testing.T) {
+			directory := t.TempDir()
+			path := filepath.Join(directory, "result.jsonl")
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, "sh", "-c", `umask "$1"; shift; exec "$@"`, "batch-download-umask", fmt.Sprintf("%03o", mask), executable, "-test.run=^TestBatchDownloadRestrictiveUmask$")
+			command.Env = append(os.Environ(), childDestination+"="+path, childServer+"="+server.URL)
+			command.WaitDelay = time.Second
+			output, err := command.CombinedOutput()
+			require.NoError(t, err, "native umask child: %s", output)
+			info, err := os.Stat(path)
+			require.NoError(t, err)
+			require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, payload, data)
+			entries, err := os.ReadDir(directory)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			require.Equal(t, "result.jsonl", entries[0].Name())
 		})
 	}
 }
