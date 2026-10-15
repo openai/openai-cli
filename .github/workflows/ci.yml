@@ -148,7 +148,7 @@ jobs:
           (
             cd zsh-5.8
             # Static modules keep this test executable independent of installation paths.
-            ./configure --disable-dynamic
+            ./configure --disable-dynamic --with-tcsetpgrp
             make -j2 config.h config.modules
             make -j2 -C Src
           )
@@ -446,15 +446,20 @@ jobs:
           curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
             https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu66_66.1-2ubuntu2.1_amd64.deb \
             -o "$tools_dir/libicu66.deb"
+          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
+            https://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb \
+            -o "$tools_dir/libssl1.1.deb"
           (
             cd "$tools_dir"
             sha256sum --check <<'SHA256'
           3e80a662a5defb283185961330c4a44d5d5179f9eb2a2ee74ac7e1d3caf16b2c  powershell-7.0.0-linux-x64.tar.gz
           00d0de456134668f41bd9ea308a076bc0a6a805180445af8a37209d433f41efe  libicu66.deb
+          7cf39d70a639017d1dd7c8d36daa2258063608688e449fddf40ffdd46f992a78  libssl1.1.deb
           SHA256
           )
           tar -xzf "$tools_dir/powershell-7.0.0-linux-x64.tar.gz" -C "$tools_dir/runtime"
           dpkg-deb --extract "$tools_dir/libicu66.deb" "$tools_dir/dependencies"
+          dpkg-deb --extract "$tools_dir/libssl1.1.deb" "$tools_dir/dependencies"
           chmod +x "$tools_dir/runtime/pwsh"
           python3 - <<'PY'
           import os
@@ -527,6 +532,7 @@ jobs:
               "selectedSHA256": hashlib.sha256(runtime.read_bytes()).hexdigest(),
               "runtimeArchiveSHA256": hashlib.sha256((root / "powershell-7.0.0-linux-x64.tar.gz").read_bytes()).hexdigest(),
               "icuPackageSHA256": hashlib.sha256((root / "libicu66.deb").read_bytes()).hexdigest(),
+              "opensslPackageSHA256": hashlib.sha256((root / "libssl1.1.deb").read_bytes()).hexdigest(),
           }
           (Path(os.environ["RUNNER_TEMP"]) / "unix-powershell-platform.json").write_text(
               json.dumps(proof, indent=2) + "\n", encoding="utf-8",
@@ -632,8 +638,9 @@ jobs:
                   shell["libraryPath"] == str(root / "dependencies/usr/lib/x86_64-linux-gnu") + ":" + str(root / "runtime"),
                   "Turkish culture or private ICU selection differs")
           require(proof["runtimeArchiveSHA256"] == "3e80a662a5defb283185961330c4a44d5d5179f9eb2a2ee74ac7e1d3caf16b2c" and
-                  proof["icuPackageSHA256"] == "00d0de456134668f41bd9ea308a076bc0a6a805180445af8a37209d433f41efe",
-                  "Runtime or ICU package identity differs")
+                  proof["icuPackageSHA256"] == "00d0de456134668f41bd9ea308a076bc0a6a805180445af8a37209d433f41efe" and
+                  proof["opensslPackageSHA256"] == "7cf39d70a639017d1dd7c8d36daa2258063608688e449fddf40ffdd46f992a78",
+                  "Runtime, ICU, or OpenSSL package identity differs")
           require(proof["selectedSHA256"] == hashlib.sha256((root / "runtime/pwsh").read_bytes()).hexdigest() and
                   proof["selectedSHA256"] == "e92acf832104ca188f112bc126ced6879af6e86c6341d0b79a1e5a53c50f27b5",
                   "Selected runtime changed")
