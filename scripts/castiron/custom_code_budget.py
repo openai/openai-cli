@@ -87,7 +87,7 @@ MANIFEST = b"scripts/castiron/generated-files.json"
 
 def generated_manifest(repo: Path, generated: str) -> dict[bytes, dict[str, str]]:
     """Read ownership from the verified snapshot, never the candidate's manifest."""
-    entries = report.tree_entries(repo, generated)
+    entries = report.tree_entries(repo, generated, include_workflows=True)
     entry = entries.get(MANIFEST)
     if entry is None or entry.mode != b"100644":
         raise ValueError(
@@ -125,12 +125,16 @@ def generated_manifest(repo: Path, generated: str) -> dict[bytes, dict[str, str]
         ):
             raise ValueError(f"invalid generated identity: {name}")
         files[path] = identity
-    # Preserve v1 snapshot hashing and public promotion exclusions. The manifest
-    # binds excluded workflow bytes without publishing private workflow blobs.
-    if {p for p in files if report.included(p)} != set(entries) - {MANIFEST}:
+    # Private snapshots must bind every generated file, including workflows and
+    # actions omitted from the legacy hash. Public snapshots retain these
+    # identities but deliberately omit their private blobs.
+    snapshot_paths = set(entries) - {MANIFEST}
+    if snapshot_paths - files.keys() or any(
+        report.included(path) for path in files.keys() - snapshot_paths
+    ):
         raise ValueError("generated manifest does not cover the verified snapshot exactly")
     for path, identity in files.items():
-        if report.included(path):
+        if path in entries:
             actual = entries[path]
             if (
                 actual.mode.decode() != identity["mode"]
@@ -217,11 +221,11 @@ def changed_paths(repo: Path, base: str, head: str) -> set[bytes]:
 def check_isolation(repo: Path, base: str, head: str) -> int | None:
     # Validate even if the policy was removed by an earlier commit in this PR.
     proposed = read_budget(repo, head)
-    if strict_policy(repo, base) and not strict_policy(repo, head):
-        raise ValueError("strict generated-file ownership cannot be downgraded")
     paths = changed_paths(repo, base, head)
     if POLICY.encode() not in paths:
         return None
+    if strict_policy(repo, base) and not strict_policy(repo, head):
+        raise ValueError("strict generated-file ownership cannot be downgraded")
     if paths != {POLICY.encode()}:
         raise ValueError(ISOLATION_MESSAGE)
     return proposed
@@ -317,7 +321,11 @@ def evaluate(
         description = f"+{added} / -{removed} = {total} custom lines; limit {checked_limit}."
         # Main's strict policy applies even if the candidate tries to remove it.
         # A proposed activation must itself satisfy the stricter contract.
-        if strict_policy(repo, base) or strict_policy(repo, head):
+        if (
+            strict_policy(repo, policy_sha)
+            or strict_policy(repo, base)
+            or strict_policy(repo, head)
+        ):
             violations = verify_generated(
                 repo, measured["after"]["commit"], head, previous=measured["before"]["commit"]
             )

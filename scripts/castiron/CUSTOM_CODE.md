@@ -42,7 +42,7 @@ Schema v1 remains migration mode with its existing patch budget. An SDK with
 zero customizations can opt into schema v2 through a policy-only PR:
 
 ```json
-{"schema_version": 2, "generated_files": "strict", "max_custom_patch_lines": 0}
+{ "schema_version": 2, "generated_files": "strict", "max_custom_patch_lines": 0 }
 ```
 
 First land shared compiler/verifier support and regenerate the SDK, including
