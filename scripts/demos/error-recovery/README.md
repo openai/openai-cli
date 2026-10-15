@@ -50,3 +50,19 @@ bash scripts/demos/error-recovery/record-numeric.sh \
 
 Use `narrow` for a separate 40-column replay. Both profiles disable color.
 The script checks the earlier executable hash, current source, request counts, and complete recovery text.
+
+
+The executable-typo replay compares ordinary completion with the optional zsh suggestion hook.
+It generates scripts with real binaries, then replaces the executable with a synthetic replay sentinel.
+Both scenes retain status 127. The after scene also disables its session hook.
+The scenes use an isolated home and do not execute an API command.
+The separate public probe counts connection attempts; this replay has no loopback request counter.
+The recorder checks source, binary, zsh, and recipe identities before and after capture.
+
+```sh
+bash scripts/demos/error-recovery/record-shell.sh \
+  /absolute/path/before/openai /absolute/path/after/openai \
+  BEFORE_COMMIT AFTER_COMMIT /absolute/path/new-shell-output normal
+```
+
+Use `narrow` for a separate 40-column replay. The zsh session starts without an existing command-not-found handler.

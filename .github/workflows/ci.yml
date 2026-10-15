@@ -115,6 +115,16 @@ jobs:
         run: go test ./internal/autocomplete -run '^TestPicker(ProfileRecovery.*|Rename.*|RecoveryDirectory.*|Windows.*|FileMetadataPreservesZoneIdentifierAtSnapshotRecheck|ReplacementMetadataKeepsSameInheritedPermissions|SecurityDescriptorComparisonPreservesPermissions|InstallRoundTrip|InstallConfigDirectoryChanges|InstallIgnoresUnusedConfigDirectory|InstallConfigDirectoryRefusalPreservesFiles|InstallPreservesHardLinkedProfiles|ProfileHardLinkAddedAfterSnapshot|ScriptContentChecksLegacyNamespaces|InstallRetriesSupersededScriptCleanup|RemoveRetriesScriptCleanup|RemoveMissingProfileParentCleansOwnedScripts|RemoveMissingProfileAndScriptDirectoriesNoOp|RemoveMissingProfileParentReappearsWhileWaiting|RemovePreservesPersonalLineBoundaries|InstalledDetectsAndRefreshesOlderScript)$' -count=1 -v
       - name: Check Windows shell home targeting
         run: go test ./pkg/custom -run '^TestImagePicker(WindowsShellHome|ShellConsent)' -count=1 -v
+      - name: Check native PowerShell executable suggestions
+        shell: pwsh
+        run: |
+          go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsPowerShell' -count=1 -timeout=5m -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsAdapters.*$/^pwsh$' -count=1 -timeout=3m -v
+          exit $LASTEXITCODE
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
       - name: Check native Windows shell and file commands
         run: go test -p 2 ./cmd/openai -run '^TestMainShell' -count=1 -v
         env:
@@ -241,6 +251,12 @@ jobs:
 
       - name: Check Linux picker metadata and profile identity
         run: go test ./internal/autocomplete -run '^TestPicker(InstallRetainsLinuxSELinuxLabel|SecurityLabel.*|InstallPreservesLinuxFileMetadata|LinuxMetadataAddedAfterSnapshotIsKept|UnixProfileIdentityKeepsDistinctCaseNames)$' -count=1 -v
+
+      - name: Check native Bash executable suggestions
+        run: go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsBash' -count=1 -timeout=5m -v
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: bash
 
       - name: Run tests
         # Large-payload and subprocess suites share this runner. Avoid running
