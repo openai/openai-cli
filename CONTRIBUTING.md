@@ -53,6 +53,9 @@ below describes the current layout as the migration proceeds.
 - `internal/` contains shared helpers for flags, request encoding, terminal
   output, and testing. For example, `internal/readable` renders labeled text
   and escapes terminal controls for results and errors.
+- `internal/app/` owns invocation, request-environment scope, completion setup,
+  output policy, and exit-status selection. Command assembly still uses the
+  existing generated tree during the layout migration.
 - `api_reference/openapi.transformed.yml` contains the OpenAPI specification
   used by the mock server.
 - `scripts/` contains the local development, build, and test commands.
