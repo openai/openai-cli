@@ -173,7 +173,7 @@ explicit API error details can contain server-supplied sensitive data.
 - `--mtls-client-cert-file` (can also be set with `OPENAI_MTLS_CLIENT_CERT_FILE` env var)
 - `--mtls-client-key-file` (can also be set with `OPENAI_MTLS_CLIENT_KEY_FILE` env var)
 - `--help` - Show command line usage
-- `--debug` - Enable debug logging. This includes HTTP request/response details and bodies; do not share debug logs if they may contain sensitive payloads.
+- `--debug` - Log redacted HTTP headers and per-attempt timing to stderr. Bodies are omitted. Review logs before sharing. See [HTTP debugging](docs/debugging.md).
 - `--version`, `-v` - Show the CLI version
 - `--base-url` - Use a custom API backend URL
 - `--header`, `-H` - Add a literal request header as `Name: Value`; repeat for multiple headers
