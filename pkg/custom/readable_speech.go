@@ -27,6 +27,10 @@ func configureReadableSpeech(root *cli.Command) {
 		return
 	}
 	command := resource.Command("create")
+	command.Description += "\n\nRun without command flags in a terminal to open speech controls. " +
+		"The form retains audio, text, and instructions in private local history. " +
+		"Use audio history, inspect, play, and export for retained results. " +
+		"Explicit flags and pipes preserve direct output."
 	next := command.Action
 	command.Action = func(ctx context.Context, command *cli.Command) error {
 		root := command.Root()
@@ -38,6 +42,7 @@ func configureReadableSpeech(root *cli.Command) {
 		}
 		return next(context.WithValue(ctx, speechOutputKey{}, opts), command)
 	}
+	command.Action = audioWorkbenchWorkflow(command.Action)
 }
 
 // Speech shares the generated download path. Intercept only this command's SSE
@@ -46,6 +51,9 @@ func configureReadableSpeech(root *cli.Command) {
 func writeReadableSpeech(response *http.Response, stdout io.Writer, outfile string) (bool, string, error) {
 	if response == nil || response.Request == nil || response.StatusCode >= 300 {
 		return false, "", nil
+	}
+	if capture, ok := response.Request.Context().Value(audioCaptureKey{}).(*audioCapture); ok {
+		return true, "", capture.receive(response)
 	}
 	opts, ok := response.Request.Context().Value(speechOutputKey{}).(ShowJSONOpts)
 	if !ok {

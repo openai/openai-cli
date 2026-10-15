@@ -35,6 +35,7 @@ func ConfigureCommand(root *cli.Command) {
 	configureAdminCredentials(root)
 	configureCommandSubgroups(root)
 	configureTaskCommands(root)
+	registerAudioCommands(root)
 	configureFileCommands(root)
 	registerTokenizerCommands(root)
 	registerCodexCommands(root)
