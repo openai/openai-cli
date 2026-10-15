@@ -461,7 +461,7 @@ func TestMainShellSuggestionsRejectMixedPersistentSetup(t *testing.T) {
 					}
 					message, _ = payload["message"].(string)
 				}
-				if !strings.Contains(message, "Use openai @completion SHELL --suggest-executable.") {
+				if !strings.Contains(message, "Use openai '@completion' SHELL --suggest-executable.") {
 					t.Fatalf("mixed setup lost its repair instruction: %q", message)
 				}
 				if data, err := os.ReadFile(profile); err != nil || string(data) != original {
