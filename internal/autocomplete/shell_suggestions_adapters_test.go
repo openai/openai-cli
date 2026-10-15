@@ -161,8 +161,20 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 			}
 		}
 	})
-	require.NoError(t, command.Run(), "stdout=%s\nstderr=%s", stdout.String(), stderr.String())
-	require.NoError(t, ctx.Err())
+	started := time.Now()
+	runErr := command.Run()
+	contextErr := ctx.Err()
+	elapsed := time.Since(started).Round(time.Millisecond)
+	processState := command.ProcessState
+	for _, value := range values {
+		if value == "SUGGEST_PHASE_RUN=baseline" || value == "SUGGEST_PHASE_RUN=hooked" {
+			t.Logf("PowerShell %s start=%s elapsed=%s context=%v process=%v",
+				strings.TrimPrefix(value, "SUGGEST_PHASE_RUN="), started.UTC().Format(time.RFC3339Nano), elapsed, contextErr, processState)
+		}
+	}
+	require.NoError(t, runErr, "%s adapter ended after %s (context=%v, process=%v): stdout=%s\nstderr=%s",
+		shell, elapsed, contextErr, processState, stdout.String(), stderr.String())
+	require.NoError(t, contextErr)
 	if useFishPTY {
 		transcript, readErr := os.ReadFile(filepath.Join(directory, "terminal.log"))
 		require.NoError(t, readErr)
@@ -1127,24 +1139,42 @@ printf 'STDIN:%s\n' "$remaining"
 }
 
 func TestShellSuggestionsPowerShellPublicLookupAndPrivacy(t *testing.T) {
-	setup := `
+	phaseLog := filepath.Join(t.TempDir(), "lookup-phases.log")
+	t.Cleanup(func() {
+		phases, err := os.ReadFile(phaseLog)
+		if err != nil {
+			t.Logf("PowerShell lookup phase log unavailable (%T)", err)
+			return
+		}
+		t.Logf("PowerShell lookup phases:\n%s", phases)
+	})
+	phase := func(name string) string {
+		return "[IO.File]::AppendAllText($env:SUGGEST_PHASE_LOG, $env:SUGGEST_PHASE_RUN + '|" + name + "|' + " +
+			"[DateTime]::UtcNow.ToString('O') + '|' + [Diagnostics.Stopwatch]::GetTimestamp() + '|' + " +
+			"[Diagnostics.Stopwatch]::Frequency + [Environment]::NewLine)\n"
+	}
+	setup := phase("script-entry") + `
 $ErrorActionPreference = 'Stop'
 $global:LASTEXITCODE = 73
 $global:PriorNames = [System.Collections.Generic.List[string]]::new()
 $ExecutionContext.InvokeCommand.CommandNotFoundAction = {
     param($sender, $eventArgs)
+` + phase("handler-entry") + `
     $global:PriorNames.Add($eventArgs.CommandName)
 }`
-	probe := `
+	probe := phase("before-lookup") + `
 try { opneai images generate 'FAKE_PRIVATE_MARKER' } catch {
+` + phase("catch-entry") + `
     [Console]::Out.WriteLine('MISSING:' + $_.FullyQualifiedErrorId)
 }
 [Console]::Out.WriteLine('LAST:' + $global:LASTEXITCODE)
 [Console]::Out.WriteLine('PRIOR:' + [string]::Join(',', $global:PriorNames))
 [Console]::Out.WriteLine('STDIN:' + [Console]::ReadLine())
 `
-	baselineOut, baselineErr := runSuggestionAdapter(t, "pwsh", setup, probe, "untouched\n")
-	out, errOut := runSuggestionAdapter(t, "pwsh", setup, ". $env:SUGGEST_HOOK\n. $env:SUGGEST_HOOK\n"+probe, "untouched\n")
+	baselineOut, baselineErr := runSuggestionAdapter(t, "pwsh", setup, probe, "untouched\n",
+		"SUGGEST_PHASE_LOG="+phaseLog, "SUGGEST_PHASE_RUN=baseline")
+	out, errOut := runSuggestionAdapter(t, "pwsh", setup, ". $env:SUGGEST_HOOK\n. $env:SUGGEST_HOOK\n"+probe, "untouched\n",
+		"SUGGEST_PHASE_LOG="+phaseLog, "SUGGEST_PHASE_RUN=hooked")
 	require.Empty(t, baselineErr)
 	require.Equal(t, baselineOut, out)
 	require.Contains(t, out, "MISSING:CommandNotFoundException\nLAST:73\n")
