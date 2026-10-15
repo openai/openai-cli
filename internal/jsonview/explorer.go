@@ -336,14 +336,14 @@ func ExploreJSONWithOutput(title string, json gjson.Result, output io.Writer) er
 }
 
 // ExploreJSONWithContext also stops the explorer when its caller is canceled.
-func ExploreJSONWithContext(ctx context.Context, title string, json gjson.Result, output io.Writer) error {
+func ExploreJSONWithContext(ctx context.Context, title string, json gjson.Result, output io.Writer, options ...tea.ProgramOption) error {
 	view, err := newView("", json, false)
 	if err != nil {
 		return err
 	}
 
 	viewer := &JSONViewer{stack: []JSONView{view}, root: title, rawMode: false, help: help.New()}
-	return runExplorerWithOutput(viewer, output, tea.WithContext(ctx))
+	return runExplorerWithOutput(viewer, output, append(options, tea.WithContext(ctx))...)
 }
 
 func runExplorerWithOutput(viewer *JSONViewer, output io.Writer, options ...tea.ProgramOption) error {

@@ -187,6 +187,7 @@ assert os.getpgid(pid) == pid and os.tcgetpgrp(slave) == pid
 os.write(gate_write, b"F")
 os.close(gate_write)
 output, status, sent, filled, stop_drain = bytearray(), None, False, 0, False
+saved_before_signal = None
 started = time.monotonic()
 phases = []
 try:
@@ -208,11 +209,16 @@ try:
             if mode in ["result_quit", "error_api_quit"] and hidden and frame:
                 os.write(master, b"q")
                 sent = True
-            elif mode == "result_interrupt" and hidden and frame:
-                os.kill(pid, signal.SIGINT)
+            elif (mode.startswith("result_interrupt") or mode == "result_terminate_wait") and hidden and frame:
+                if mode == "result_interrupt_download":
+                    saved_before_signal = entered.with_name("output.jsonl").read_bytes().hex()
+                number = signal.SIGTERM if mode == "result_terminate_wait" else signal.SIGINT
+                os.kill(pid, number)
+                phases.append(["signal_sent", int(number), time.monotonic() - started])
                 sent = True
             elif mode == "error_interrupt" and entered.exists():
                 os.kill(pid, signal.SIGINT)
+                phases.append(["signal_sent", int(signal.SIGINT), time.monotonic() - started])
                 sent = True
             elif mode == "result_blocked" and hidden and frame:
                 # The explorer has initialized before output becomes blocked.
@@ -275,7 +281,8 @@ try:
         "seconds": elapsed, "cursor_hidden": b"l" in cursor,
         "cursor_visible": not cursor or cursor[-1] == b"h", "modes_restored": restored, "kernel_pendin": before != after and restored,
         "controller_pid": os.getpid(), "cli_pid": pid, "foreground_child": True,
-        "output": output.decode(errors="replace"), "filled": filled, "stop_drain": stop_drain, "phases": phases}))
+        "output": output.decode(errors="replace"), "filled": filled, "stop_drain": stop_drain,
+        "sent": sent, "phases": phases, "saved_before_signal": saved_before_signal}))
 finally:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -363,12 +370,20 @@ func TestMainBatchesExplorerTerminalCleanup(t *testing.T) {
 		}
 		t.Skip("explorer cleanup requires python3 for POSIX PTY plumbing")
 	}
-	for _, mode := range []string{"result_quit", "result_deadline", "result_interrupt", "result_blocked", "error_deadline", "error_interrupt", "error_deadline_transform", "error_api_quit", "human_api_denial"} {
+	const downloadBytes = "{\"custom_id\":\"synthetic\",\"value\":\"café\"}\r\n"
+	for _, mode := range []string{"result_quit", "result_deadline", "result_interrupt", "result_interrupt_wait", "result_interrupt_ordinary", "result_interrupt_download", "result_terminate_wait", "result_blocked", "error_deadline", "error_interrupt", "error_deadline_transform", "error_api_quit", "human_api_denial"} {
 		t.Run(mode, func(t *testing.T) {
-			entered := filepath.Join(t.TempDir(), "entered")
+			directory := t.TempDir()
+			entered := filepath.Join(directory, "entered")
+			downloadPath := filepath.Join(directory, "output.jsonl")
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				request := requests.Add(1)
+				if mode == "result_interrupt_download" && request == 2 && r.Method == http.MethodGet && r.URL.Path == "/files/file_output/content" {
+					w.Header().Set("Content-Type", "application/jsonl")
+					fmt.Fprint(w, downloadBytes)
+					return
+				}
 				if r.Method != http.MethodGet || r.URL.Path != "/batches/batch_synthetic" {
 					t.Errorf("unexpected explorer request: %s %s", r.Method, r.URL)
 				}
@@ -394,6 +409,14 @@ func TestMainBatchesExplorerTerminalCleanup(t *testing.T) {
 			}))
 			defer server.Close()
 			args := []string{"batches", "retrieve", "batch_synthetic", "--wait"}
+			switch mode {
+			case "result_interrupt_wait", "result_terminate_wait":
+				args = []string{"batches", "wait", "batch_synthetic"}
+			case "result_interrupt_ordinary":
+				args = []string{"batches", "retrieve", "batch_synthetic"}
+			case "result_interrupt_download":
+				args = []string{"batches", "download", "batch_synthetic", "--output", downloadPath}
+			}
 			switch {
 			case strings.HasPrefix(mode, "error_"):
 				args = append(args, "--format-error", "explore")
@@ -422,29 +445,46 @@ func TestMainBatchesExplorerTerminalCleanup(t *testing.T) {
 				t.Fatalf("explorer cleanup probe failed: %v %s", err, output)
 			}
 			var got struct {
-				Code          int     `json:"code"`
-				Exceeded      bool    `json:"exceeded"`
-				Seconds       float64 `json:"seconds"`
-				CursorHidden  bool    `json:"cursor_hidden"`
-				CursorVisible bool    `json:"cursor_visible"`
-				ModesRestored bool    `json:"modes_restored"`
-				Output        string  `json:"output"`
-				Filled        int     `json:"filled"`
-				StopDrain     bool    `json:"stop_drain"`
+				Code              int     `json:"code"`
+				Exceeded          bool    `json:"exceeded"`
+				Seconds           float64 `json:"seconds"`
+				CursorHidden      bool    `json:"cursor_hidden"`
+				CursorVisible     bool    `json:"cursor_visible"`
+				ModesRestored     bool    `json:"modes_restored"`
+				Output            string  `json:"output"`
+				Filled            int     `json:"filled"`
+				StopDrain         bool    `json:"stop_drain"`
+				Sent              bool    `json:"sent"`
+				Phases            [][]any `json:"phases"`
+				SavedBeforeSignal string  `json:"saved_before_signal"`
 			}
 			if err := json.Unmarshal(output, &got); err != nil {
 				t.Fatalf("invalid cleanup probe response: %v %s", err, output)
 			}
+			if (strings.Contains(mode, "interrupt") || strings.Contains(mode, "terminate")) && !got.Sent {
+				t.Fatalf("fixture did not send its signal: %+v", got)
+			}
 			wantCode, wantRequests := 124, int32(1)
 			if mode == "result_quit" {
 				wantCode = 0
+			} else if mode == "result_interrupt_ordinary" {
+				// Ordinary explorer retains Bubble Tea's error and main's default exit code.
+				wantCode = 1
+			} else if mode == "result_terminate_wait" {
+				wantCode = 143
 			} else if strings.Contains(mode, "interrupt") {
 				wantCode = 130
 			} else if mode == "error_api_quit" || mode == "human_api_denial" {
 				wantCode = 1
 			}
-			if mode == "human_api_denial" {
+			if mode == "human_api_denial" || mode == "result_interrupt_download" {
 				wantRequests = 2
+			}
+			if mode == "result_interrupt_download" {
+				data, readErr := os.ReadFile(downloadPath)
+				if readErr != nil || string(data) != downloadBytes || got.SavedBeforeSignal != fmt.Sprintf("%x", []byte(downloadBytes)) {
+					t.Fatalf("receipt interruption changed the saved bytes: before=%q after=%q err=%v", got.SavedBeforeSignal, data, readErr)
+				}
 			}
 			if got.Exceeded || got.Code != wantCode || requests.Load() != wantRequests || !got.ModesRestored {
 				t.Fatalf("explorer lifecycle failed: %+v requests=%d; want exit %d requests %d", got, requests.Load(), wantCode, wantRequests)

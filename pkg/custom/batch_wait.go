@@ -276,7 +276,9 @@ func batchShowJSON(ctx context.Context, cmd *cli.Command, batch gjson.Result, op
 	root := cmd.Root()
 	return writeBatchStdoutWithCleanup(ctx, root.Writer, batchOutputCleanupGrace, func(out io.Writer) error {
 		return ShowJSON(batch, ShowJSONOpts{
-			Context: ctx, Operation: "(resource) batches > (method) " + operation, OutputKind: OutputResponse,
+			// Batch supplies signal cancellation and preserves its exit status.
+			CallerHandlesSignals: true,
+			Context:              ctx, Operation: "(resource) batches > (method) " + operation, OutputKind: OutputResponse,
 			Format: root.String("format"), ExplicitFormat: root.IsSet("format"), RawOutput: root.Bool("raw-output"),
 			Transform: root.String("transform"), Title: "batches " + operation, Stdout: out,
 		})
