@@ -151,6 +151,155 @@ func TestMainBatchesBlockedStdoutCancellation(t *testing.T) {
 	}
 }
 
+// Keep stderr full while communicate drains stdout independently. Restore the
+// original pipe flags before spawning the CLI; a nonblocking inherited writer
+// would test EAGAIN handling instead of cancellation during a blocked write.
+const batchesBlockedSecondaryStderr = `
+import fcntl, json, os, signal, subprocess, sys
+mode, argv = sys.argv[1], sys.argv[2:]
+read_fd, write_fd, child = None, None, None
+filled, watchdog_killed = 0, False
+def stop(signum, _):
+    raise SystemExit(128 + signum)
+for signum in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(signum, stop)
+try:
+    if mode == "blocked":
+        read_fd, write_fd = os.pipe()
+        original = fcntl.fcntl(write_fd, fcntl.F_GETFL)
+        try:
+            fcntl.fcntl(write_fd, fcntl.F_SETFL, original | os.O_NONBLOCK)
+            for size in (65536, 1):
+                while True:
+                    try:
+                        filled += os.write(write_fd, b"x" * size)
+                    except BlockingIOError:
+                        break
+        finally:
+            fcntl.fcntl(write_fd, fcntl.F_SETFL, original)
+        assert fcntl.fcntl(write_fd, fcntl.F_GETFL) == original
+    child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=write_fd if mode == "blocked" else subprocess.PIPE)
+    if write_fd is not None:
+        os.close(write_fd)
+        write_fd = None
+    try:
+        stdout, stderr = child.communicate(timeout=2)
+    except subprocess.TimeoutExpired:
+        watchdog_killed = True
+        child.kill()
+        stdout, stderr = child.communicate(timeout=2)
+    prefill_preserved = True
+    if read_fd is not None:
+        os.set_blocking(read_fd, False)
+        captured = bytearray()
+        while True:
+            try:
+                data = os.read(read_fd, 65536)
+            except BlockingIOError:
+                break
+            if not data:
+                break
+            captured.extend(data)
+        prefill_preserved = captured[:filled] == b"x" * filled
+        stderr = bytes(captured[filled:])
+    print(json.dumps({"code": child.returncode, "watchdog_killed": watchdog_killed,
+                      "filled": filled,
+                      "prefill_preserved": prefill_preserved,
+                      "stdout": stdout.decode(), "stderr": stderr.decode()}))
+finally:
+    if child is not None:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=2)
+    for fd in (read_fd, write_fd):
+        if fd is not None:
+            os.close(fd)
+`
+
+func TestMainBatchesBlockedSecondaryStderrDeadline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX pipe saturation does not establish native Windows stderr behavior")
+	}
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		if runtime.GOOS == "darwin" {
+			t.Fatal("native macOS batch stderr regression requires python3:", err)
+		}
+		t.Skip("native stderr regression requires python3 for POSIX pipes")
+	}
+	for _, format := range []string{"explore", "readable"} {
+		for _, mode := range []string{"draining", "blocked"} {
+			t.Run(format+"_"+mode, func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					if r.Method != http.MethodGet || r.URL.Path != "/batches/batch_synthetic" {
+						t.Errorf("unexpected stderr regression request: %s %s", r.Method, r.URL)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					// Unknown fields disable summaries. Keep only known Batch fields
+					// so the draining control proves the summary hint is exercised.
+					response := strings.Replace(batchesWorkflowResponse("completed", batchesWorkflowCounts),
+						`,"future_field":{"exact_integer":9007199254740993}`, "", 1)
+					fmt.Fprint(w, response)
+				}))
+				defer server.Close()
+				ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+				defer cancel()
+				args := []string{"batches", "wait", "batch_synthetic", "--wait-timeout", "500ms"}
+				wantDiagnostic := "Full data: --format json.\n"
+				if format == "explore" {
+					args = append(args, "--format", "explore")
+					wantDiagnostic = "Warning: Output format 'explore' not supported for non-terminal output; falling back to 'json'\n"
+				}
+				process := batchesWorkflowProcess(t, ctx, server, args...)
+				probe := exec.CommandContext(ctx, python, append([]string{"-c", batchesBlockedSecondaryStderr, mode}, process.Args...)...)
+				probe.Env = process.Env
+				output, err := probe.CombinedOutput()
+				if err != nil {
+					t.Fatalf("secondary stderr probe failed: %v %s", err, output)
+				}
+				var got struct {
+					Code             int    `json:"code"`
+					WatchdogKilled   bool   `json:"watchdog_killed"`
+					Filled           int    `json:"filled"`
+					PrefillPreserved bool   `json:"prefill_preserved"`
+					Stdout           string `json:"stdout"`
+					Stderr           string `json:"stderr"`
+				}
+				if err := json.Unmarshal(output, &got); err != nil {
+					t.Fatalf("invalid secondary stderr result: %s (%v)", output, err)
+				}
+				wantCode := 0
+				if mode == "blocked" {
+					wantCode = 124
+				}
+				if got.WatchdogKilled || got.Code != wantCode || requests.Load() != 1 {
+					t.Fatalf("secondary stderr deadline failed: %+v requests=%d; want exit %d", got, requests.Load(), wantCode)
+				}
+				if mode == "blocked" {
+					if got.Filled == 0 || !got.PrefillPreserved || got.Stderr != "" {
+						t.Fatalf("blocked stderr changed its undrained pipe: %+v", got)
+					}
+					return
+				}
+				if got.Stderr != wantDiagnostic || strings.Contains(got.Stdout, wantDiagnostic) {
+					t.Fatalf("draining control did not expose the secondary diagnostic: %+v", got)
+				}
+				if format == "explore" {
+					if !json.Valid([]byte(got.Stdout)) || !strings.Contains(got.Stdout, `"batch_synthetic"`) {
+						t.Fatalf("explore fallback lost its JSON response: %+v", got)
+					}
+				} else if !strings.Contains(got.Stdout, "ID: batch_synthetic\n") ||
+					!strings.Contains(got.Stdout, "Status: completed\n") || strings.Contains(got.Stdout, "Object:") {
+					t.Fatalf("readable control did not summarize the Batch: %+v", got)
+				}
+			})
+		}
+	}
+}
+
 // Keep stdout undrained after a small prefix while draining stderr independently.
 // The VINTR case keeps a controlling terminal while draining diagnostics separately.
 const batchesBlockedTerminal = `

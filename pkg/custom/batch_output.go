@@ -43,6 +43,22 @@ func (w batchTerminalWriter) Fd() uintptr                { return w.file.Fd() }
 func (w batchTerminalWriter) Read(p []byte) (int, error) { return w.file.Read(p) }
 func (w batchTerminalWriter) Close() error               { return nil } // The destination is borrowed.
 
+// Start an owned writer only when presentation emits a warning or hint.
+// The operation deadline must also stop writes to its secondary output.
+type batchDiagnosticWriter struct {
+	ctx  context.Context
+	file *os.File
+}
+
+func (w batchDiagnosticWriter) Write(data []byte) (n int, err error) {
+	err = writeBatchStdout(w.ctx, w.file, func(out io.Writer) error {
+		var writeErr error
+		n, writeErr = out.Write(data)
+		return writeErr
+	})
+	return n, err
+}
+
 type batchOutputInterrupted struct {
 	error
 	output *os.File
@@ -70,16 +86,29 @@ func (e *batchOutputResultError) ExitCode() int {
 // Do not attempt another diagnostic write to the destination whose delivery
 // was interrupted. The exit status still reports cancellation or timeout.
 func interruptedBatchDiagnostic(err error) bool {
-	var interrupted *batchOutputInterrupted
-	if !errors.As(err, &interrupted) {
-		return false
+	if interrupted, ok := err.(*batchOutputInterrupted); ok {
+		if interrupted.output == os.Stderr {
+			return true
+		}
+		out, outErr := interrupted.output.Stat()
+		stderr, stderrErr := os.Stderr.Stat()
+		if outErr == nil && stderrErr == nil && os.SameFile(out, stderr) {
+			return true
+		}
 	}
-	if interrupted.output == os.Stderr {
-		return true
+	// Stdout delivery can wrap a failed secondary write. Inspect every cause
+	// so the outer destination does not hide an interrupted stderr writer.
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, cause := range joined.Unwrap() {
+			if interruptedBatchDiagnostic(cause) {
+				return true
+			}
+		}
 	}
-	out, outErr := interrupted.output.Stat()
-	stderr, stderrErr := os.Stderr.Stat()
-	return outErr == nil && stderrErr == nil && os.SameFile(out, stderr)
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return interruptedBatchDiagnostic(wrapped.Unwrap())
+	}
+	return false
 }
 
 // RunBatchOutputHelper handles the private byte-copy process before CLI parsing.

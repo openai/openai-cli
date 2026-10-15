@@ -3,10 +3,36 @@ package custom
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"testing"
 )
+
+func TestBatchInterruptedDiagnosticsFindNestedStderr(t *testing.T) {
+	other, err := os.CreateTemp(t.TempDir(), "output-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	stderr := &batchOutputInterrupted{error: context.DeadlineExceeded, output: os.Stderr}
+	unrelated := &batchOutputInterrupted{error: context.DeadlineExceeded, output: other}
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"secondary wrapped by stdout":   {&batchOutputInterrupted{error: fmt.Errorf("presentation: %w", stderr), output: other}, true},
+		"secondary after joined output": {errors.Join(unrelated, stderr), true},
+		"other destination only":        {unrelated, false},
+		"deadline without delivery":     {context.DeadlineExceeded, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := interruptedBatchDiagnostic(tc.err); got != tc.want {
+				t.Fatalf("interrupted stderr = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestBatchCancellationDiagnosticsPreserveIndependentFailures(t *testing.T) {
 	for _, independent := range []error{
