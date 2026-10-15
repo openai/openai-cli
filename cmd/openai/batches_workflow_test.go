@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1152,6 +1153,20 @@ func TestMainBatchesDirectoryHelperPreservesPathBytes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			parent := t.TempDir()
+			directory := parent + "/" + tc.path
+			var filesystemErr error
+			if tc.name == "invalid_utf8" {
+				// Some filesystems reject these bytes before the CLI can use them.
+				// Probe the same destination, then remove only our successful creation.
+				filesystemErr = os.Mkdir(directory, 0700)
+				if filesystemErr == nil {
+					if err := os.Remove(directory); err != nil {
+						t.Fatal(err)
+					}
+				} else if !errors.Is(filesystemErr, syscall.EILSEQ) && !errors.Is(filesystemErr, syscall.EINVAL) {
+					t.Fatalf("unexpected filesystem capability error: %v", filesystemErr)
+				}
+			}
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
@@ -1172,10 +1187,22 @@ func TestMainBatchesDirectoryHelperPreservesPathBytes(t *testing.T) {
 			child.Dir = parent
 			var stdout, stderr bytes.Buffer
 			child.Stdout, child.Stderr = &stdout, &stderr
-			if err := child.Run(); err != nil || requests.Load() != 3 || !json.Valid(stdout.Bytes()) || stderr.Len() != 0 {
+			err := child.Run()
+			if filesystemErr != nil {
+				exit, ok := err.(*exec.ExitError)
+				if !ok || exit.ExitCode() != 1 || requests.Load() != 0 || stdout.Len() != 0 || !json.Valid(stderr.Bytes()) || !strings.Contains(stderr.String(), "Could not create the output directory.") {
+					t.Fatalf("filesystem rejection changed: error=%v requests=%d stdout=%q stderr=%q", err, requests.Load(), stdout.String(), stderr.String())
+				}
+				entries, err := os.ReadDir(parent)
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("rejected path created output or changed path bytes: entries=%v error=%v", entries, err)
+				}
+				t.Logf("Filesystem rejected invalid UTF-8; verified failure preservation, not successful path support: %v", filesystemErr)
+				return
+			}
+			if err != nil || requests.Load() != 3 || !json.Valid(stdout.Bytes()) || stderr.Len() != 0 {
 				t.Fatalf("path bytes changed: error=%v requests=%d stdout=%q stderr=%q", err, requests.Load(), stdout.String(), stderr.String())
 			}
-			directory := parent + "/" + tc.path
 			info, err := os.Stat(directory)
 			if err != nil || info.Mode().Perm() != 0700 {
 				t.Fatalf("original path was not created privately: info=%v error=%v", info, err)

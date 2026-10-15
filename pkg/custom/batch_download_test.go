@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -220,6 +221,8 @@ func TestBatchOutputDirectoryPreservesParentUmask(t *testing.T) {
 		info, err := os.Stat(output)
 		require.NoError(t, err)
 		require.Equal(t, os.FileMode(0700), info.Mode().Perm())
+		_, err = createPrivateBatchDirectory(t.Context(), filepath.Join(directory, "missing", "results"))
+		require.ErrorIs(t, err, os.ErrNotExist)
 		require.Equal(t, before, create("after"), "directory creation changed the parent's umask")
 		return
 	}
@@ -264,6 +267,9 @@ func TestBatchOutputDirectoryCreationErrors(t *testing.T) {
 			case "file_parent":
 				require.NoError(t, os.WriteFile(path, nil, 0600))
 				path += string(os.PathSeparator) + "results"
+				if runtime.GOOS != "windows" {
+					want = syscall.ENOTDIR
+				}
 			case "denied_parent":
 				if runtime.GOOS == "windows" {
 					t.Skip("Windows permission behavior has separate ACL tests")

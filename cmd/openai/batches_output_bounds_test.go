@@ -104,6 +104,17 @@ func runBatchDirectoryFixture(args []string) bool {
 		hang()
 	}
 	write([]byte{'R'})
+	life := os.NewFile(3, "batch-directory-fixture-lifeline")
+	if life == nil {
+		os.Exit(99)
+	}
+	defer life.Close()
+	var grant [1]byte
+	_, err = io.ReadFull(life, grant[:])
+	fail(err)
+	if grant[0] != 'G' {
+		os.Exit(99)
+	}
 	switch string(mode) {
 	case "missing_result":
 		return true

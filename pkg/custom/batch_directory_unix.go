@@ -58,9 +58,14 @@ func RunBatchDirectoryHelper(args []string) (bool, error) {
 	signal.Ignore(batchOperationSignals...)
 	finished := make(chan struct{})
 	defer close(finished) // Close before life so normal return cannot look like parent loss.
+	granted := make(chan struct{})
 	go func() {
 		var value [1]byte
-		_, _ = life.Read(value[:])
+		_, err := io.ReadFull(life, value[:])
+		if err == nil && value[0] == 'G' {
+			close(granted)
+			_, _ = life.Read(value[:])
+		}
 		select {
 		case <-finished:
 			return
@@ -71,6 +76,9 @@ func RunBatchDirectoryHelper(args []string) (bool, error) {
 	if _, err := os.Stdout.Write([]byte{'R'}); err != nil {
 		return true, err
 	}
+	// Opposite pipe ends can have different stat identities. Require a parent
+	// grant before mkdir; aliased reply/lifeline pipes consume R instead of G.
+	<-granted
 	previous := syscall.Umask(0077)
 	err := os.Mkdir(args[2], 0700)
 	syscall.Umask(previous)
@@ -162,6 +170,9 @@ func runBatchDirectoryHelper(ctx context.Context, path string) error {
 	startup := time.AfterFunc(2*time.Second, stopWorker)
 	var ready [1]byte
 	_, readyErr := io.ReadFull(replyRead, ready[:])
+	if readyErr == nil && ready[0] == 'R' && workerContext.Err() == nil {
+		_, readyErr = lifeWrite.Write([]byte{'G'})
+	}
 	startup.Stop()
 	if readyErr != nil || ready[0] != 'R' || workerContext.Err() != nil {
 		if ctx.Err() != nil {
