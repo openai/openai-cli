@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -81,6 +82,33 @@ func TestMainShellSuggestionsNative(t *testing.T) {
 			}
 			shell.executable = path
 			work, home := t.TempDir(), t.TempDir()
+			if shell.name == "bash" || shell.name == "fish" {
+				args := []string{"--noprofile", "--norc", "-c", `printf '%s\n' "${BASH_VERSINFO[0]}"`}
+				if shell.name == "fish" {
+					args = []string{"--no-config", "-c", `string split . -- $version`}
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+				defer cancel()
+				version := exec.CommandContext(ctx, path, args...)
+				version.WaitDelay = time.Second
+				version.Dir = work
+				version.Env = []string{"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, "config"), "PATH=/usr/bin:/bin", "LC_ALL=C"}
+				output, err := version.Output()
+				if err != nil {
+					t.Fatalf("cannot inspect native %s version: %v", shell.name, err)
+				}
+				first, _, _ := strings.Cut(strings.TrimSpace(string(output)), "\n")
+				major, err := strconv.Atoi(first)
+				if err != nil {
+					t.Fatalf("invalid native %s major version: %q", shell.name, first)
+				}
+				if major < 4 {
+					if slices.Contains(required, shell.name) {
+						t.Fatalf("required native %s needs version 4 or newer; found %d", shell.name, major)
+					}
+					t.Skipf("native %s %d does not support executable suggestions", shell.name, major)
+				}
+			}
 			configuration := filepath.Join(home, "config")
 			for _, profile := range []string{".bashrc", ".zshrc", "config/fish/config.fish", "config/powershell/Microsoft.PowerShell_profile.ps1"} {
 				name := filepath.Join(home, filepath.FromSlash(profile))
@@ -158,19 +186,23 @@ func TestMainShellSuggestionsNative(t *testing.T) {
 				}
 				t.Skip("Bash 4+ unavailable; set OPENAI_CLI_TEST_BASH")
 			}
-			if err != nil || strings.ReplaceAll(stdout.String(), "\r\n", "\n") != "STDIN:SYNTHETIC_UNREAD_STDIN\n" {
+			if err != nil || shell.name != "fish" && strings.ReplaceAll(stdout.String(), "\r\n", "\n") != "STDIN:SYNTHETIC_UNREAD_STDIN\n" {
 				t.Fatalf("native setup failed: error=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
 			}
-			if strings.Contains(stderr.String(), "SYNTHETIC_PRIVATE_ARGUMENT") {
+			if shell.name != "fish" && strings.Contains(stderr.String(), "SYNTHETIC_PRIVATE_ARGUMENT") {
 				t.Errorf("shell diagnostics exposed a private argument: %q", stderr.String())
 			}
 			read := func(name string) string {
 				t.Helper()
-				if shell.name == "fish" && strings.HasSuffix(name, ".err") {
+				if shell.name == "fish" && (strings.HasSuffix(name, ".err") || strings.HasSuffix(name, ".out")) {
 					// Fish invokes missing-command callbacks outside command redirections.
-					stage := strings.TrimSuffix(name, ".err")
+					stage := strings.TrimSuffix(strings.TrimSuffix(name, ".err"), ".out")
 					begin, end := "BEGIN:"+stage+"\n", "END:"+stage+"\n"
-					captured := strings.ReplaceAll(stderr.String(), "\r\n", "\n")
+					captured := stderr.String()
+					if strings.HasSuffix(name, ".out") {
+						captured = stdout.String()
+					}
+					captured = strings.ReplaceAll(captured, "\r\n", "\n")
 					if strings.Count(captured, begin) != 1 || strings.Count(captured, end) != 1 {
 						t.Fatalf("missing Fish stage markers for %s: %q", stage, captured)
 					}
@@ -190,41 +222,73 @@ func TestMainShellSuggestionsNative(t *testing.T) {
 				}
 			}
 			const advice = "Command not found. Did you mean: openai?\nKeep the remaining arguments unchanged.\n"
+			if shell.name == "fish" {
+				if read("baseline.status") != "127\n" || read("later_baseline.status") != "127\n" ||
+					strings.Count(read("baseline.err"), "PRIOR\n") != 1 ||
+					strings.Count(read("later_baseline.err"), "LATER\n") != 1 ||
+					strings.Contains(read("baseline.err")+read("later_baseline.err"), advice) {
+					t.Fatalf("Fish native baselines did not execute the expected handlers: baseline=%q later=%q",
+						read("baseline.err"), read("later_baseline.err"))
+				}
+			}
 			for _, stage := range []string{"active", "reenabled"} {
-				wantError, wantStatus := advice, "127\n"
+				wantOutput, wantError, wantStatus := "", advice, "127\n"
 				if shell.name == "fish" {
-					wantError = "PRIOR\n" + advice
+					// Preserve native source diagnostics, which can contain original arguments.
+					// Only the added, fixed advice has a private-value omission contract.
+					wantOutput = read("baseline.out")
+					wantError = strings.Replace(read("baseline.err"), "PRIOR\n", "PRIOR\n"+advice, 1)
 				} else if shell.name == "pwsh" {
 					wantStatus = "CommandNotFoundException:73\n"
 				}
-				if got := read(stage + ".status"); got != wantStatus || read(stage+".out") != "" || read(stage+".err") != wantError {
+				if got := read(stage + ".status"); got != wantStatus || read(stage+".out") != wantOutput || read(stage+".err") != wantError {
 					t.Errorf("%s changed lookup: status=%q stdout=%q stderr=%q", stage, got, read(stage+".out"), read(stage+".err"))
 				}
 			}
-			wantDisabled, wantLater := "127\n", "42\n"
+			wantDisabled, wantLater, wantLaterOutput, wantLaterError := "127\n", "42\n", "", "LATER\n"
 			if shell.name == "pwsh" {
 				wantDisabled = "CommandNotFoundException:73\n"
 			} else if shell.name == "fish" {
 				wantLater = "127\n"
+				wantLaterOutput, wantLaterError = read("later_baseline.out"), read("later_baseline.err")
 			}
-			if got := read("disabled.status"); got != wantDisabled || read("disabled.out") != "" || strings.Contains(read("disabled.err"), "Did you mean:") {
+			wantDisabledOutput := ""
+			if shell.name == "fish" {
+				wantDisabledOutput = read("baseline.out")
+				if read("disabled.err") != read("baseline.err") {
+					t.Errorf("Fish disable changed native diagnostics: before=%q after=%q", read("baseline.err"), read("disabled.err"))
+				}
+			}
+			if got := read("disabled.status"); got != wantDisabled || read("disabled.out") != wantDisabledOutput || strings.Contains(read("disabled.err"), "Did you mean:") {
 				t.Errorf("disable did not restore lookup: status=%q stdout=%q stderr=%q", got, read("disabled.out"), read("disabled.err"))
 			}
-			if got := read("later.status"); got != wantLater || read("later.out") != "" || read("later.err") != "LATER\n" {
+			if got := read("later.status"); got != wantLater || read("later.out") != wantLaterOutput || read("later.err") != wantLaterError {
 				t.Errorf("disable replaced a later handler: status=%q stdout=%q stderr=%q", got, read("later.out"), read("later.err"))
 			}
 			if shell.name == "fish" {
-				want := "BEGIN:active\nPRIOR\n" + advice + "END:active\n" +
-					"BEGIN:disabled\nPRIOR\nEND:disabled\n" +
-					"BEGIN:reenabled\nPRIOR\n" + advice + "END:reenabled\n" +
-					"BEGIN:later\nLATER\nEND:later\n"
-				if got := strings.ReplaceAll(stderr.String(), "\r\n", "\n"); got != want {
+				var wantOutput, wantError strings.Builder
+				for _, stage := range []string{"baseline", "active", "disabled", "reenabled", "later_baseline", "later"} {
+					wantOutput.WriteString("BEGIN:" + stage + "\n" + read(stage+".out") + "END:" + stage + "\n")
+					wantError.WriteString("BEGIN:" + stage + "\n" + read(stage+".err") + "END:" + stage + "\n")
+				}
+				wantOutput.WriteString("STDIN:SYNTHETIC_UNREAD_STDIN\n")
+				if got := strings.ReplaceAll(stdout.String(), "\r\n", "\n"); got != wantOutput.String() {
+					t.Errorf("Fish changed stdin or emitted output outside lookup stages: %q", got)
+				}
+				if got := strings.ReplaceAll(stderr.String(), "\r\n", "\n"); got != wantError.String() {
 					t.Errorf("Fish emitted unexpected process diagnostics: %q", got)
 				}
 			}
 			arguments := []string{"opneai", "images", "generate", "--api-key=SYNTHETIC_PRIVATE_ARGUMENT", "", "space value", "quote\"value", "$(touch replayed)", "line\nvalue"}
 			if got := read("later.args"); got != strings.Join(arguments, "\x00")+"\x00" {
 				t.Errorf("later handler received changed arguments: %q", got)
+			}
+			if shell.name == "fish" {
+				for _, stage := range []string{"baseline", "active", "disabled", "reenabled", "later_baseline"} {
+					if got := read(stage + ".args"); got != strings.Join(arguments, "\x00")+"\x00" {
+						t.Errorf("Fish %s handler received changed arguments: %q", stage, got)
+					}
+				}
 			}
 			for _, marker := range []string{"backend-called", "replayed"} {
 				if _, err := os.Stat(filepath.Join(work, marker)); !os.IsNotExist(err) {
@@ -319,54 +383,54 @@ exit 0
 
 const shellSuggestionNativeFish = `
 function fish_command_not_found
+    printf '%s\000' $argv > "$suggestion_phase.args"
     printf 'PRIOR\n' >&2
     return 42
 end
-openai @completion fish --suggest-executable | source
-printf '%s\n' $status > setup1.status
-openai @completion fish --suggest-executable | source
-printf '%s\n' $status > setup2.status
-set -gx PATH "$SUGGEST_SENTINEL_DIRECTORY" /usr/bin /bin
-printf 'BEGIN:active\n' >&2
-opneai images generate '--api-key=SYNTHETIC_PRIVATE_ARGUMENT' '' 'space value' 'quote"value' '$(touch replayed)' 'line
-value' > active.out 2> active.err
-printf '%s\n' $status > active.status
-printf 'END:active\n' >&2
-openai_suggestions_disable
-printf '%s\n' $status > disable1.status
-openai_suggestions_disable
-printf '%s\n' $status > disable2.status
-printf 'BEGIN:disabled\n' >&2
-opneai > disabled.out 2> disabled.err
-printf '%s\n' $status > disabled.status
-printf 'END:disabled\n' >&2
-set -gx PATH "$SUGGEST_CLI_DIRECTORY" /usr/bin /bin
-openai @completion fish --suggest-executable | source
-printf '%s\n' $status > setup3.status
-set -gx PATH "$SUGGEST_SENTINEL_DIRECTORY" /usr/bin /bin
-printf 'BEGIN:reenabled\n' >&2
-opneai images generate '--api-key=SYNTHETIC_PRIVATE_ARGUMENT' '' 'space value' 'quote"value' '$(touch replayed)' 'line
-value' > reenabled.out 2> reenabled.err
-printf '%s\n' $status > reenabled.status
-printf 'END:reenabled\n' >&2
-function fish_command_not_found
-    printf '%s\000' $argv > later.args
-    printf 'LATER\n' >&2
-    return 42
+function invoke_typo
+    opneai images generate '--api-key=SYNTHETIC_PRIVATE_ARGUMENT' '' 'space value' 'quote"value' '$(touch replayed)' 'line
+value'
+    printf '%s\n' $status > "$suggestion_phase.status"
 end
-set -gx PATH "$SUGGEST_CLI_DIRECTORY" /usr/bin /bin
-openai @completion fish --suggest-executable | source
-printf '%s\n' $status > setup4.status
-set -gx PATH "$SUGGEST_SENTINEL_DIRECTORY" /usr/bin /bin
-openai_suggestions_disable
-printf '%s\n' $status > disable3.status
-openai_suggestions_disable
-printf '%s\n' $status > disable4.status
-printf 'BEGIN:later\n' >&2
-opneai images generate '--api-key=SYNTHETIC_PRIVATE_ARGUMENT' '' 'space value' 'quote"value' '$(touch replayed)' 'line
-value' > later.out 2> later.err
-printf '%s\n' $status > later.status
-printf 'END:later\n' >&2
+# Keep both call sites fixed so native source diagnostics remain comparable.
+for phase in baseline active disabled reenabled later_baseline later
+    set -g suggestion_phase "$phase"
+    set -gx PATH "$SUGGEST_CLI_DIRECTORY" /usr/bin /bin
+    switch "$phase"
+        case active
+            openai @completion fish --suggest-executable | source
+            printf '%s\n' $status > setup1.status
+            openai @completion fish --suggest-executable | source
+            printf '%s\n' $status > setup2.status
+        case disabled
+            openai_suggestions_disable
+            printf '%s\n' $status > disable1.status
+            openai_suggestions_disable
+            printf '%s\n' $status > disable2.status
+        case reenabled
+            openai @completion fish --suggest-executable | source
+            printf '%s\n' $status > setup3.status
+        case later_baseline
+            function fish_command_not_found
+                printf '%s\000' $argv > "$suggestion_phase.args"
+                printf 'LATER\n' >&2
+                return 42
+            end
+        case later
+            openai @completion fish --suggest-executable | source
+            printf '%s\n' $status > setup4.status
+            openai_suggestions_disable
+            printf '%s\n' $status > disable3.status
+            openai_suggestions_disable
+            printf '%s\n' $status > disable4.status
+    end
+    set -gx PATH "$SUGGEST_SENTINEL_DIRECTORY" /usr/bin /bin
+    printf 'BEGIN:%s\n' "$phase"
+    printf 'BEGIN:%s\n' "$phase" >&2
+    invoke_typo
+    printf 'END:%s\n' "$phase"
+    printf 'END:%s\n' "$phase" >&2
+end
 read --local remaining
 printf 'STDIN:%s\n' "$remaining"
 exit 0

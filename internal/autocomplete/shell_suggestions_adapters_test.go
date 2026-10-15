@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,31 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 		t.Skipf("native %s is unavailable", shell)
 	}
 	directory := t.TempDir()
+	if shell == "fish" {
+		allowUnsupported := false
+		for _, value := range values {
+			allowUnsupported = allowUnsupported || value == "SUGGEST_ALLOW_UNSUPPORTED_FISH=1"
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		version := exec.CommandContext(ctx, binary, "--no-config", "--version")
+		version.Env = []string{"HOME=" + directory, "XDG_CONFIG_HOME=" + filepath.Join(directory, "config"), "LANG=C"}
+		output, versionErr := version.CombinedOutput()
+		require.NoError(t, versionErr, "Fish version probe failed: %s", output)
+		require.NoError(t, ctx.Err())
+		fields := strings.Fields(string(output))
+		require.NotEmpty(t, fields, "Fish returned an empty version")
+		major, parseErr := strconv.Atoi(strings.Split(fields[len(fields)-1], ".")[0])
+		require.NoError(t, parseErr, "Fish returned an unsupported version format: %s", output)
+		if major < 4 && !allowUnsupported {
+			for _, required := range strings.Split(os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS"), ",") {
+				if required == "fish" {
+					t.Fatalf("required native Fish 4.0 or newer is unavailable: %s", output)
+				}
+			}
+			t.Skipf("native Fish 4.0 or newer is unavailable: %s", output)
+		}
+	}
 	bin := filepath.Join(directory, "bin")
 	require.NoError(t, os.Mkdir(bin, 0700))
 	stub := "#!/bin/sh\nprintf launched >>\"$SUGGEST_EXEC_LOG\"\nexit 98\n"
@@ -46,9 +72,13 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 	require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte(stub), 0700))
 	style, extension := CompletionStyleFish, ".fish"
 	args := []string{"--no-config", "--interactive"}
+	interactiveInput := false
 	for _, value := range values {
 		if value == "SUGGEST_NONINTERACTIVE=1" {
 			args = []string{"--no-config"}
+		}
+		if shell == "fish" && value == "SUGGEST_INTERACTIVE_INPUT=1" {
+			interactiveInput = true
 		}
 	}
 	if shell == "pwsh" {
@@ -63,7 +93,12 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 	require.NoError(t, os.WriteFile(probe, []byte(setup+"\n"+body), 0600))
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, binary, append(args, probe)...)
+	if interactiveInput {
+		input = "source \"$SUGGEST_PROBE\"\n" + input
+	} else {
+		args = append(args, probe)
+	}
+	command := exec.CommandContext(ctx, binary, args...)
 	command.WaitDelay = time.Second
 	command.Dir = directory
 	command.Env = []string{
@@ -72,7 +107,7 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 		"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"LANG=C", "TERM=dumb", "NO_COLOR=1",
 		"POWERSHELL_TELEMETRY_OPTOUT=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "POWERSHELL_UPDATECHECK=Off",
-		"SUGGEST_HOOK=" + hook, "SUGGEST_EXEC_LOG=" + filepath.Join(directory, "launched"),
+		"SUGGEST_HOOK=" + hook, "SUGGEST_PROBE=" + probe, "SUGGEST_EXEC_LOG=" + filepath.Join(directory, "launched"),
 		"SUGGEST_EXECUTABLE=" + filepath.Join(bin, name),
 	}
 	if runtime.GOOS == "windows" {
@@ -133,11 +168,20 @@ func TestShellSuggestionsFishPublicLookupAndLifecycle(t *testing.T) {
 function fish_command_not_found
     printf 'PRIOR\n' >&2
     return 42
+end
+function probe_missing
+    opneai images generate 'FAKE_PRIVATE_MARKER'
 end`, `
-source "$SUGGEST_HOOK"
-source "$SUGGEST_HOOK"
-opneai images generate 'FAKE_PRIVATE_MARKER'
-printf 'PUBLIC:%s\n' $status
+for phase in baseline enabled
+    if test "$phase" = enabled
+        source "$SUGGEST_HOOK"
+        source "$SUGGEST_HOOK"
+    end
+    printf 'BEGIN:%s\n' "$phase" >&2
+    probe_missing
+    printf 'PUBLIC:%s:%s\n' "$phase" $status
+    printf 'END:%s\n' "$phase" >&2
+end
 openai_suggestions_disable
 openai_suggestions_disable
 fish_command_not_found unrelated
@@ -161,8 +205,21 @@ source "$SUGGEST_HOOK"
 fish_command_not_found opneai
 printf 'REENABLED:%s\n' $status
 `, "")
-	require.Equal(t, "PUBLIC:127\nRESTORED:42\nCOLLISION\nCOLLISION_STATUS:19\nREPLACED:42\nREENABLED:42\n", out)
-	require.Equal(t, "PRIOR\n"+suggestionAdvice+"PRIOR\nPRIOR\nPRIOR\n"+suggestionAdvice, errOut)
+	require.Equal(t, "PUBLIC:baseline:127\nPUBLIC:enabled:127\nRESTORED:42\nCOLLISION\nCOLLISION_STATUS:19\nREPLACED:42\nREENABLED:42\n", out)
+	segments := make(map[string]string)
+	for _, phase := range []string{"baseline", "enabled"} {
+		begin, end := "BEGIN:"+phase+"\n", "END:"+phase+"\n"
+		require.Equal(t, 1, strings.Count(errOut, begin))
+		require.Equal(t, 1, strings.Count(errOut, end))
+		start, finish := strings.Index(errOut, begin)+len(begin), strings.Index(errOut, end)
+		require.GreaterOrEqual(t, finish, start)
+		segments[phase] = errOut[start:finish]
+	}
+	require.True(t, strings.HasPrefix(segments["baseline"], "PRIOR\n"))
+	require.Contains(t, segments["baseline"], "opneai images generate 'FAKE_PRIVATE_MARKER'")
+	require.Equal(t, "PRIOR\n"+suggestionAdvice+strings.TrimPrefix(segments["baseline"], "PRIOR\n"), segments["enabled"])
+	require.Equal(t, "BEGIN:baseline\n"+segments["baseline"]+"END:baseline\n"+
+		"BEGIN:enabled\n"+segments["enabled"]+"END:enabled\nPRIOR\nPRIOR\nPRIOR\n"+suggestionAdvice, errOut)
 }
 
 func TestShellSuggestionsFishDelegatesArgumentsAndStatus(t *testing.T) {
@@ -318,9 +375,158 @@ test "$before" = "$after"
 printf 'UNCHANGED:%s\n' $status
 functions --query openai_suggestions_disable
 printf 'DISABLE:%s\n' $status
-`, "", "SUGGEST_NONINTERACTIVE=1")
+`, "", "SUGGEST_NONINTERACTIVE=1", "SUGGEST_ALLOW_UNSUPPORTED_FISH=1")
 	require.Equal(t, "UNCHANGED:0\nDISABLE:1\n", out)
 	require.Empty(t, errOut)
+}
+
+func TestShellSuggestionsFishRefusesUnsupportedVersionBeforeMutation(t *testing.T) {
+	out, errOut := runSuggestionAdapter(t, "fish", `
+# Fish 3.x exercises its real detector. Fish 4+ simulates detection only.
+set -l native_version (builtin string split . -- $version)
+if test "$native_version[1]" -ge 4
+    function string
+        if test "$argv[1]" = split; and test "$argv[2]" = .
+            printf '%s\n' 3 7 1
+        else
+            builtin string $argv
+        end
+    end
+end
+function fish_command_not_found
+    printf 'PRIOR\n'
+    return 42
+end
+set -l before (functions fish_command_not_found | string collect)
+set -l functions_before (functions --names --all | string collect)
+set -l events_before (functions --handlers | string collect)
+`, `
+source "$SUGGEST_HOOK"
+printf 'ENABLE:%s\n' $status
+set -l after (functions fish_command_not_found | string collect)
+test "$before" = "$after"
+printf 'BODY:%s\n' $status
+set -l functions_after (functions --names --all | string collect)
+test "$functions_before" = "$functions_after"
+printf 'FUNCTIONS:%s\n' $status
+set -l events_after (functions --handlers | string collect)
+test "$events_before" = "$events_after"
+printf 'EVENTS:%s\n' $status
+set -q __openai_suggestions_serial
+printf 'STATE:%s\n' $status
+fish_command_not_found opneai
+printf 'PRIOR_STATUS:%s\n' $status
+`, "", "SUGGEST_ALLOW_UNSUPPORTED_FISH=1")
+	require.Equal(t, "ENABLE:1\nBODY:0\nFUNCTIONS:0\nEVENTS:0\nSTATE:1\nPRIOR\nPRIOR_STATUS:42\n", out)
+	require.Equal(t, "Executable suggestions require fish 4.0 or newer.\n", errOut)
+}
+
+func TestShellSuggestionsFishRefusesCompletionWrappers(t *testing.T) {
+	for _, mode := range []string{"initial", "later"} {
+		t.Run(mode, func(t *testing.T) {
+			out, errOut := runSuggestionAdapter(t, "fish", `
+function fish_command_not_found
+    return 42
+end
+if test "$SUGGEST_WRAP_MODE" = later
+    source "$SUGGEST_HOOK"
+    functions --copy fish_command_not_found retained_wrapper
+end
+function fish_command_not_found --wraps=synthetic_command
+    return 63
+end
+set -l before (functions fish_command_not_found | string collect)
+set -l functions_before (functions --names --all | string collect)
+set -l events_before (functions --handlers | string collect)
+`, `
+if test "$SUGGEST_WRAP_MODE" = later
+    retained_wrapper opneai
+    printf 'RESULT:%s\n' $status
+else
+    source "$SUGGEST_HOOK"
+    printf 'RESULT:%s\n' $status
+end
+set -l after (functions fish_command_not_found | string collect)
+test "$before" = "$after"
+printf 'BODY:%s\n' $status
+set -l functions_after (functions --names --all | string collect)
+test "$functions_before" = "$functions_after"
+printf 'FUNCTIONS:%s\n' $status
+set -l events_after (functions --handlers | string collect)
+test "$events_before" = "$events_after"
+printf 'EVENTS:%s\n' $status
+fish_command_not_found unrelated
+printf 'PRESERVED:%s\n' $status
+`, "", "SUGGEST_WRAP_MODE="+mode)
+			status := 1
+			if mode == "later" {
+				status = 127
+			}
+			require.Equal(t, fmt.Sprintf("RESULT:%d\nBODY:0\nFUNCTIONS:0\nEVENTS:0\nPRESERVED:63\n", status), out)
+			require.Equal(t, "Executable suggestions cannot retain a handler with completion wrappers. Keep the existing handler and use CLI help.\n", errOut)
+		})
+	}
+}
+
+func TestShellSuggestionsFishRefusesAmbiguousSourceMetadata(t *testing.T) {
+	prior := filepath.Join(t.TempDir(), "prior\nsource.fish")
+	require.NoError(t, os.WriteFile(prior, []byte(`
+function fish_command_not_found --no-scope-shadowing
+    return 42
+end
+`), 0600))
+	out, errOut := runSuggestionAdapter(t, "fish", `
+source "$SUGGEST_PRIOR"
+set -l before (functions fish_command_not_found | string collect)
+set -l functions_before (functions --names --all | string collect)
+`, `
+source "$SUGGEST_HOOK"
+printf 'ENABLE:%s\n' $status
+set -l after (functions fish_command_not_found | string collect)
+test "$before" = "$after"
+printf 'BODY:%s\n' $status
+set -l functions_after (functions --names --all | string collect)
+test "$functions_before" = "$functions_after"
+printf 'FUNCTIONS:%s\n' $status
+set -q __openai_suggestions_serial
+printf 'STATE:%s\n' $status
+fish_command_not_found unrelated
+printf 'PRESERVED:%s\n' $status
+`, "", "SUGGEST_PRIOR="+prior)
+	require.Equal(t, "ENABLE:1\nBODY:0\nFUNCTIONS:0\nSTATE:1\nPRESERVED:42\n", out)
+	require.Equal(t, "Executable suggestions cannot retain this handler metadata. Keep the existing handler and use CLI help.\n", errOut)
+}
+
+func TestShellSuggestionsFishRefusesForeignPendingStack(t *testing.T) {
+	out, errOut := runSuggestionAdapter(t, "fish", `
+function synthetic_foreign_cleanup
+    printf 'UNEXPECTED_FOREIGN_EXECUTION\n'
+end
+function fish_command_not_found
+    return 42
+end
+set -g __openai_suggestions_pending_restores synthetic_foreign_cleanup
+set -l before (functions fish_command_not_found | string collect)
+set -l events_before (functions --handlers | string collect)
+set -l functions_before (functions --names --all | string collect)
+`, `
+source "$SUGGEST_HOOK"
+printf 'ENABLE:%s\n' $status
+emit fish_prompt
+emit fish_postexec SYNTHETIC_PRIVATE_EVENT_ARGUMENT
+set -l after (functions fish_command_not_found | string collect)
+test "$before" = "$after"
+printf 'BODY:%s\n' $status
+set -l events_after (functions --handlers | string collect)
+test "$events_before" = "$events_after"
+printf 'EVENTS:%s\n' $status
+set -l functions_after (functions --names --all | string collect)
+test "$functions_before" = "$functions_after"
+printf 'FUNCTIONS:%s\n' $status
+printf 'FOREIGN:%s\n' "$__openai_suggestions_pending_restores"
+`, "")
+	require.Equal(t, "ENABLE:1\nBODY:0\nEVENTS:0\nFUNCTIONS:0\nFOREIGN:synthetic_foreign_cleanup\n", out)
+	require.Equal(t, "Executable suggestions conflict with existing shell state. Keep the existing handler and use CLI help.\n", errOut)
 }
 
 func TestShellSuggestionsFishPreservesMultilineHandlerLiterals(t *testing.T) {
@@ -512,7 +718,7 @@ end
 `), 0600))
 	out, errOut := runSuggestionAdapter(t, "fish", `
 source "$SUGGEST_PRIOR"
-set -l baseline_details (functions --details --verbose fish_command_not_found | string collect)
+set -l baseline_details (functions --details --verbose fish_command_not_found)
 function probe_missing
     opneai synthetic_argument
 end`, `
@@ -533,8 +739,15 @@ for phase in baseline enabled disabled
     functions --query __openai_suggestions_current_1
     printf 'TEMP:%s:%s\n' "$phase" $status
 end
-set -l restored_details (functions --details --verbose fish_command_not_found | string collect)
-test "$baseline_details" = "$restored_details"
+set -l restored_details (functions --details --verbose fish_command_not_found)
+set -l restored_origin "$restored_details[1]"
+if not contains -- "$restored_details[2]" autoloaded not-autoloaded n/a
+    set restored_origin "$restored_details[2]"
+end
+test "$baseline_details[1]" = "$restored_origin"
+and test "$baseline_details[3]" = "$restored_details[3]"
+and test "$baseline_details[4]" = "$restored_details[4]"
+and test "$baseline_details[5]" = "$restored_details[5]"
 printf 'DETAILS:%s\n' $status
 `, "baseline-unread\nenabled-unread\ndisabled-unread\n", "SUGGEST_PRIOR="+prior)
 	require.Equal(t, "LOOKUP:baseline:127\nSTDIN:baseline:baseline-unread\nTEMP:baseline:1\n"+
@@ -628,7 +841,8 @@ function fish_command_not_found
     printf 'PRIOR\n'
     return 42
 end`, `
-set -l before (functions --details --verbose fish_command_not_found | string collect)
+set -l before (functions --details --verbose fish_command_not_found)
+set -l body_before (functions fish_command_not_found | string collect | string replace --regex '\A#[^\n]*\n' '')
 source "$SUGGEST_HOOK"
 functions --copy fish_command_not_found retained_wrapper
 openai_suggestions_disable
@@ -636,16 +850,151 @@ retained_wrapper opneai
 printf 'RETAINED:%s\n' $status
 fish_command_not_found unrelated
 printf 'RESTORED:%s\n' $status
-set -l after (functions --details --verbose fish_command_not_found | string collect)
-test "$before" = "$after"
+set -l after (functions --details --verbose fish_command_not_found)
+set -l after_origin "$after[1]"
+if not contains -- "$after[2]" autoloaded not-autoloaded n/a
+    set after_origin "$after[2]"
+end
+test "$before[1]" = "$after_origin"
+and test "$before[3]" = "$after[3]"
+and test "$before[4]" = "$after[4]"
+and test "$before[5]" = "$after[5]"
 printf 'DETAILS:%s\n' $status
+set -l body_after (functions fish_command_not_found | string collect | string replace --regex '\A#[^\n]*\n' '')
+test "$body_before" = "$body_after"
+printf 'BODY:%s\n' $status
 functions --query __openai_suggestions_current_1
 printf 'TEMP:%s\n' $status
 read --local remaining
 printf 'STDIN:%s\n' "$remaining"
 `, "untouched\n")
-	require.Equal(t, "PRIOR\nRETAINED:42\nPRIOR\nRESTORED:42\nDETAILS:0\nTEMP:1\nSTDIN:untouched\n", out)
+	require.Equal(t, "PRIOR\nRETAINED:42\nPRIOR\nRESTORED:42\nDETAILS:0\nBODY:0\nTEMP:1\nSTDIN:untouched\n", out)
 	require.Empty(t, errOut)
+}
+
+func TestShellSuggestionsFishDefersEmittedEventsAndRestoresAfterRepeatedCalls(t *testing.T) {
+	out, errOut := runSuggestionAdapter(t, "fish", `
+function 'Not a function'
+    emit fish_prompt
+    emit fish_postexec SYNTHETIC_PRIVATE_EVENT_ARGUMENT
+end
+function fish_command_not_found
+    # This meaningful comment must survive native copies.
+    set -l before (functions fish_command_not_found | string collect)
+    emit fish_prompt
+    emit fish_postexec SYNTHETIC_PRIVATE_EVENT_ARGUMENT
+    'Not a function'
+    set -l after (functions fish_command_not_found | string collect)
+    test "$before" = "$after"
+    printf 'STILL_PRIOR:%s\n' $status
+    return 42
+end`, `
+set -l original (functions fish_command_not_found | string collect | string replace --regex '\A#[^\n]*\n' '')
+source "$SUGGEST_HOOK"
+set -l events_before (functions --handlers | string collect)
+set -l functions_before (functions --names --all | string collect)
+for attempt in 1 2 3
+    fish_command_not_found opneai
+    printf 'STATUS:%s\n' $status
+end
+set -l events_after (functions --handlers | string collect)
+set -l functions_after (functions --names --all | string collect)
+test "$events_before" = "$events_after"
+printf 'EVENTS:%s\n' $status
+test "$functions_before" = "$functions_after"
+printf 'FUNCTIONS:%s\n' $status
+openai_suggestions_disable
+set -l restored (functions fish_command_not_found | string collect | string replace --regex '\A#[^\n]*\n' '')
+test "$original" = "$restored"
+printf 'RESTORED:%s\n' $status
+`, "")
+	require.Equal(t, strings.Repeat("STILL_PRIOR:0\nSTATUS:42\n", 3)+"EVENTS:0\nFUNCTIONS:0\nRESTORED:0\n", out)
+	require.Equal(t, strings.Repeat(suggestionAdvice, 3), errOut)
+}
+
+func TestShellSuggestionsFishRestoresAfterInterruptedDelegation(t *testing.T) {
+	for _, mode := range []string{"owned", "retained", "disabled-retained", "nested-retained"} {
+		t.Run(mode, func(t *testing.T) {
+			out, errOut := runSuggestionAdapter(t, "fish", `
+set -g fish_greeting ''
+function fish_prompt
+end
+function fish_right_prompt
+end
+function fish_command_not_found
+    if not set -q interrupted_once
+        set -g interrupted_once 1
+        command kill -INT $fish_pid
+        return 86
+    end
+    printf 'PRIOR\n'
+    return 42
+end`, `
+source "$SUGGEST_HOOK"
+set -g probe_call fish_command_not_found
+if test "$SUGGEST_CANCEL_MODE" != owned
+    functions --copy fish_command_not_found retained_wrapper
+    if test "$SUGGEST_CANCEL_MODE" = nested-retained
+        openai_suggestions_disable
+        function fish_command_not_found
+            retained_wrapper $argv
+        end
+        source "$SUGGEST_HOOK"
+    else if test "$SUGGEST_CANCEL_MODE" = retained
+        function fish_command_not_found
+            retained_wrapper $argv
+        end
+    else
+        openai_suggestions_disable
+        set -g probe_call retained_wrapper
+    end
+end
+set -g expected_body (functions fish_command_not_found | string collect | string replace --regex '\A#[^\n]*\n' '')
+set -g expected_events (functions --handlers | string collect)
+set -g expected_functions (functions --names --all | string collect)
+$probe_call opneai
+printf 'UNEXPECTED_AFTER_INTERRUPT\n'
+`, `printf 'CONTINUED\n'
+functions --query __openai_suggestions_current_1
+printf 'TEMP:%s\n' $status
+set -q __openai_suggestions_pending_1
+printf 'PENDING:%s\n' $status
+set -q __openai_suggestions_pending_restores[1]
+printf 'STACK:%s\n' $status
+if test "$SUGGEST_CANCEL_MODE" = nested-retained
+    functions --query __openai_suggestions_current_2
+    printf 'TEMP2:%s\n' $status
+    set -q __openai_suggestions_pending_2
+    printf 'PENDING2:%s\n' $status
+end
+set -g actual_body (functions fish_command_not_found | string collect | string replace --regex '\A#[^\n]*\n' '')
+test "$expected_body" = "$actual_body"
+printf 'BODY:%s\n' $status
+set -g actual_events (functions --handlers | string collect)
+test "$expected_events" = "$actual_events"
+printf 'EVENTS:%s\n' $status
+set -g actual_functions (functions --names --all | string collect)
+test "$expected_functions" = "$actual_functions"
+printf 'FUNCTIONS:%s\n' $status
+$probe_call opneai
+printf 'REPEATED:%s\n' $status
+openai_suggestions_disable
+$probe_call unrelated
+printf 'DISABLED:%s\n' $status
+exit 0
+`, "SUGGEST_INTERACTIVE_INPUT=1", "SUGGEST_CANCEL_MODE="+mode)
+			expected := "CONTINUED\nTEMP:1\nPENDING:1\nSTACK:1\n"
+			if mode == "nested-retained" {
+				expected += "TEMP2:1\nPENDING2:1\n"
+			}
+			require.Equal(t, expected+"BODY:0\nEVENTS:0\nFUNCTIONS:0\nPRIOR\nREPEATED:42\nPRIOR\nDISABLED:42\n", out)
+			if mode == "disabled-retained" {
+				require.Empty(t, errOut)
+			} else {
+				require.Equal(t, suggestionAdvice, errOut)
+			}
+		})
+	}
 }
 
 func TestShellSuggestionsFishPreservesLatePrivateCopyCollision(t *testing.T) {

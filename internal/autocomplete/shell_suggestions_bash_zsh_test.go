@@ -787,9 +787,14 @@ opneai > result.out 2> result.err
 builtin printf '%s' "$?" > result.status
 exit 0
 `)
-			require.Equal(t, "", shellSuggestionsRead(t, directory, "result.out"))
-			require.Equal(t, "prior exit\n", shellSuggestionsRead(t, directory, "result.err"))
-			require.Equal(t, "42", shellSuggestionsRead(t, directory, "result.status"))
+			wantError := "prior exit\n"
+			if style == CompletionStyleBash {
+				// Interactive Bash prints its own exit diagnostic from the native handler.
+				wantError += "exit\n"
+			}
+			require.Equal(t, "", shellSuggestionsRead(t, directory, "baseline.out"))
+			require.Equal(t, wantError, shellSuggestionsRead(t, directory, "baseline.err"))
+			require.Equal(t, "42", shellSuggestionsRead(t, directory, "baseline.status"))
 			for _, field := range []string{"out", "err", "status"} {
 				require.Equal(t, shellSuggestionsRead(t, directory, "baseline."+field), shellSuggestionsRead(t, directory, "result."+field))
 			}

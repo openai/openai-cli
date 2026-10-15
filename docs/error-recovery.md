@@ -104,7 +104,7 @@ source <(openai @completion zsh --suggest-executable)
 # Bash 4 or later
 source <(openai @completion bash --suggest-executable)
 
-# fish 3.2 or later
+# fish 4.0 or later
 openai @completion fish --suggest-executable | source
 ```
 
@@ -134,8 +134,10 @@ Bash and zsh leave existing handlers installed without adding advice.
 A handler that exits or triggers shell error termination can prevent later advice.
 Fish retains its native missing-command result regardless of its handler's return status.
 Fish preserves ordinary handlers through native function copies.
-Handlers with event registrations or `--no-scope-shadowing` remain unchanged; sourcing explains the conflict.
-This includes Fish 3.2's shipped event-bound handler, which prevents activation until the user changes that handler.
+Fish 4.0 or later preserves the original handler's source location during these copies.
+Earlier Fish versions cannot enable this opt-in.
+Handlers with event registrations, completion wrappers, or `--no-scope-shadowing` remain unchanged; sourcing explains the conflict.
+Fish also refuses ambiguous source metadata, including source paths with newline characters.
 PowerShell advice appears only when its previous callback leaves lookup unresolved.
 
 Without a previous handler, Bash and zsh use a fixed fallback message on stderr and return 127.
@@ -147,5 +149,5 @@ Shell hooks with unsupported ownership or event metadata remain unchanged; setup
 They cover one insertion, deletion, substitution, or adjacent transposition in a simple ASCII executable name.
 They do not correct filesystem paths, renamed binaries, distant names, shell syntax, redirections, or interpreter failures.
 They cannot intercept failures inside `sudo`, `env`, another process, or a remote shell.
-Bash 3.2, POSIX sh, cmd.exe, and Windows PowerShell 5.1 are unsupported by this opt-in.
+Bash 3.2, Fish 3.x, POSIX sh, cmd.exe, and Windows PowerShell 5.1 are unsupported by this opt-in.
 Ordinary completion remains available on its existing supported shells.
