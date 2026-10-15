@@ -177,7 +177,11 @@ try:
                         break
         finally:
             fcntl.fcntl(write_fd, fcntl.F_SETFL, original)
-        assert fcntl.fcntl(write_fd, fcntl.F_GETFL) == original
+        restored = fcntl.fcntl(write_fd, fcntl.F_GETFL)
+        # Darwin may add kernel-maintained status flags after the prefill write.
+        # Both snapshots must still prove that the inherited writer is blocking.
+        assert not (original | restored) & os.O_NONBLOCK, (
+            f"stderr writer is nonblocking: original={original:#x}, restored={restored:#x}")
     child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=write_fd if mode == "blocked" else subprocess.PIPE)
     if write_fd is not None:
