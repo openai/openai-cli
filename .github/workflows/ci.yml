@@ -406,6 +406,274 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  minimum-unix-powershell:
+    name: Unix PowerShell 7.0 executable suggestions
+    needs: source
+    permissions: {}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=1 -mod=readonly'
+      OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
+      POWERSHELL_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      POWERSHELL_UPDATECHECK: 'Off'
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-go
+      - name: Prepare native Unix PowerShell 7.0
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          test "$RUNNER_OS/$RUNNER_ARCH/$(uname -m)" = Linux/X64/x86_64
+          tools_dir="$RUNNER_TEMP/minimum-pwsh"
+          mkdir "$tools_dir"
+          mkdir -p "$tools_dir"/{runtime,dependencies,bin,home,config,data,cache}
+          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
+            https://github.com/PowerShell/PowerShell/releases/download/v7.0.0/powershell-7.0.0-linux-x64.tar.gz \
+            -o "$tools_dir/powershell-7.0.0-linux-x64.tar.gz"
+          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
+            https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu66_66.1-2ubuntu2.1_amd64.deb \
+            -o "$tools_dir/libicu66.deb"
+          (
+            cd "$tools_dir"
+            sha256sum --check <<'SHA256'
+          3e80a662a5defb283185961330c4a44d5d5179f9eb2a2ee74ac7e1d3caf16b2c  powershell-7.0.0-linux-x64.tar.gz
+          00d0de456134668f41bd9ea308a076bc0a6a805180445af8a37209d433f41efe  libicu66.deb
+          SHA256
+          )
+          tar -xzf "$tools_dir/powershell-7.0.0-linux-x64.tar.gz" -C "$tools_dir/runtime"
+          dpkg-deb --extract "$tools_dir/libicu66.deb" "$tools_dir/dependencies"
+          chmod +x "$tools_dir/runtime/pwsh"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import shlex
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "minimum-pwsh"
+          # Tests restrict subprocess environments. Keep runtime dependencies in this launcher.
+          libraries = str(root / "dependencies/usr/lib/x86_64-linux-gnu") + ":" + str(root / "runtime")
+          launcher = root / "bin/pwsh"
+          launcher.write_text(
+              "#!/bin/sh\nexport LD_LIBRARY_PATH=" + shlex.quote(libraries) +
+              "\nexport CLR_ICU_VERSION_OVERRIDE=66\nexec " + shlex.quote(str(root / "runtime/pwsh")) + ' "$@"\n',
+              encoding="utf-8",
+          )
+          launcher.chmod(0o700)
+          PY
+          printf '%s\n' "$tools_dir/bin" >> "$GITHUB_PATH"
+          env HOME="$tools_dir/home" XDG_CONFIG_HOME="$tools_dir/config" \
+            XDG_DATA_HOME="$tools_dir/data" XDG_CACHE_HOME="$tools_dir/cache" \
+            "$tools_dir/bin/pwsh" -NoLogo -NoProfile -NonInteractive -Command '
+              $ErrorActionPreference = "Stop"
+              $culture = [Globalization.CultureInfo]::GetCultureInfo("tr-TR")
+              [ordered]@{
+                executable = (Get-Process -Id $PID).Path
+                version = $PSVersionTable.PSVersion.ToString()
+                edition = $PSVersionTable.PSEdition
+                platform = $PSVersionTable.Platform
+                linux = [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)
+                osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+                processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+                turkishUpperCodepoint = [int][char]$culture.TextInfo.ToUpper("i")
+                icuVersionOverride = $env:CLR_ICU_VERSION_OVERRIDE
+                libraryPath = $env:LD_LIBRARY_PATH
+              } | ConvertTo-Json -Compress' > "$tools_dir/shell.json"
+          go env -json GOOS GOARCH GOHOSTOS GOHOSTARCH > "$tools_dir/go.json"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import struct
+          import subprocess
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "minimum-pwsh"
+          shell = json.loads((root / "shell.json").read_text(encoding="utf-8"))
+          go = json.loads((root / "go.json").read_text(encoding="utf-8"))
+          runtime = root / "runtime/pwsh"
+          launcher = root / "bin/pwsh"
+          candidate = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if candidate != os.environ["GITHUB_SHA"] or go != {
+              "GOOS": "linux", "GOHOSTOS": "linux", "GOARCH": "amd64", "GOHOSTARCH": "amd64",
+          }:
+              raise ValueError("Candidate or native Go architecture differs")
+          with runtime.open("rb") as stream:
+              header = stream.read(20)
+          if header[:6] != b"\x7fELF\x02\x01" or struct.unpack("<H", header[18:20])[0] != 62:
+              raise ValueError("PowerShell must be a native Linux x64 ELF executable")
+          if (shell["executable"] != str(runtime) or shell["version"] != "7.0.0" or
+                  shell["edition"] != "Core" or shell["platform"] != "Unix" or shell["linux"] is not True or
+                  shell["osArchitecture"] != "X64" or shell["processArchitecture"] != "X64" or
+                  shell["turkishUpperCodepoint"] != 304 or shell["icuVersionOverride"] != "66" or
+                  shell["libraryPath"] != str(root / "dependencies/usr/lib/x86_64-linux-gnu") + ":" + str(root / "runtime")):
+              raise ValueError("PowerShell version, native process, or Turkish culture preflight failed")
+          proof = {
+              "candidate": candidate, "runnerOS": os.environ["RUNNER_OS"], "runnerArchitecture": os.environ["RUNNER_ARCH"],
+              "go": go, "goVersion": subprocess.check_output(["go", "version"], text=True).strip(),
+              "selectedPowerShell": shell, "launcher": str(launcher),
+              "launcherSHA256": hashlib.sha256(launcher.read_bytes()).hexdigest(),
+              "selectedSHA256": hashlib.sha256(runtime.read_bytes()).hexdigest(),
+              "runtimeArchiveSHA256": hashlib.sha256((root / "powershell-7.0.0-linux-x64.tar.gz").read_bytes()).hexdigest(),
+              "icuPackageSHA256": hashlib.sha256((root / "libicu66.deb").read_bytes()).hexdigest(),
+          }
+          (Path(os.environ["RUNNER_TEMP"]) / "unix-powershell-platform.json").write_text(
+              json.dumps(proof, indent=2) + "\n", encoding="utf-8",
+          )
+          print(json.dumps(proof, indent=2))
+          PY
+      - name: Test native Unix PowerShell executable suggestions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(command -v pwsh)" = "$RUNNER_TEMP/minimum-pwsh/bin/pwsh"
+          go test -p 1 -parallel 1 ./internal/autocomplete -run '^TestShellSuggestionsPowerShell' -count=1 -timeout=5m -v -json \
+            | tee "$RUNNER_TEMP/unix-powershell-suggestion-tests.jsonl"
+          go test -p 1 -parallel 1 ./internal/autocomplete -run '^TestShellSuggestionsAdapters.*$/^pwsh$' -count=1 -timeout=3m -v -json \
+            | tee "$RUNNER_TEMP/unix-powershell-adapter-tests.jsonl"
+          go test -p 1 -parallel 1 ./cmd/openai -run '^TestMainShellSuggestionsNative$/^pwsh$' -count=1 -timeout=3m -v -json \
+            | tee "$RUNNER_TEMP/unix-powershell-public-tests.jsonl"
+      - name: Verify native Unix PowerShell execution
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from collections import Counter
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+
+          def require(condition, message):
+              if not condition:
+                  raise ValueError(message)
+
+
+          def unique_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  require(key not in result, "Duplicate JSON field: " + key)
+                  result[key] = value
+              return result
+
+          def cases(root, children=()):
+              return {root} | {root + "/" + child for child in children}
+
+          powershell = {
+              "TestShellSuggestionsPowerShell" + suffix
+              for suffix in [
+                  "PublicLookupAndPrivacy", "MatchesAndWindowsExtension",
+                  "WindowsMatchingIgnoresCurrentCulture", "UppercaseBinding",
+                  "CanonicalCaseUsesExistingCommand", "PreservesResolutionAndDisable",
+                  "PreservesPriorExceptions", "PriorResolutionWinsNearMiss",
+                  "StopSearchRemainsUnchanged", "DisableAliasConflict",
+              ]
+          }
+          matches = [
+              "opneai", "opena", "xopenai", "openxai", "openaii", "opxnai", "open-ai",
+              "opneai.exe", "opneai.EXE", "Opneai.exe", "OPNEAI.EXE", "openai.exe",
+              "OpenAI.exe", "OPENAI.EXE", "opneai.exe.exe", "./opneai.exe", "./Opneai.exe",
+              "C:\\opneai.exe", "opneai.ps1", "unrelated", "opneai\n", "opneai\x1b",
+              "openai;", "opneaı.exe", "opneaİ.exe", "ＯＰＮＥＡＩ.EXE", "a" * 1000,
+          ]
+          cultures = [
+              "Opneai.exe", "OPNEAI.EXE", "OpenAI.exe", "OPENAI.EXE",
+              "opneaı.exe", "opneaİ.exe", "./Opneai.exe", "C:\\Opneai.exe",
+          ]
+          for suffix, names in [
+              ("MatchesAndWindowsExtension", matches),
+              ("WindowsMatchingIgnoresCurrentCulture", cultures),
+          ]:
+              powershell.update(cases(
+                  "TestShellSuggestionsPowerShell" + suffix,
+                  [json.dumps(name, ensure_ascii=False).replace("\\u001b", "\\x1b") for name in names],
+              ))
+          adapters = set().union(*(
+              cases("TestShellSuggestionsAdapters" + suffix, ["pwsh"])
+              for suffix in [
+                  "UnavailableExecutable", "RefuseShadowedExecutable",
+                  "RecheckExecutablePrecedence", "RecheckRemovedExecutable",
+              ]
+          ))
+
+          public = cases("TestMainShellSuggestionsNative", ["pwsh"])
+          require((len(powershell), len(adapters), len(public)) == (45, 8, 2), "Suggestion inventory differs")
+          suites = {
+              "unix-powershell-suggestion-tests.jsonl": ("internal/autocomplete", powershell),
+              "unix-powershell-adapter-tests.jsonl": ("internal/autocomplete", adapters),
+              "unix-powershell-public-tests.jsonl": ("cmd/openai", public),
+          }
+          directory = Path(os.environ["RUNNER_TEMP"])
+          root = directory / "minimum-pwsh"
+          proof = json.loads((directory / "unix-powershell-platform.json").read_text(encoding="utf-8"),
+                             object_pairs_hook=unique_object)
+          require(proof["candidate"] == os.environ["GITHUB_SHA"], "Candidate identity differs")
+          require(proof["runnerOS"] == "Linux" and proof["runnerArchitecture"] == "X64", "Runner identity differs")
+          require(proof["go"] == {
+              "GOOS": "linux", "GOHOSTOS": "linux", "GOARCH": "amd64", "GOHOSTARCH": "amd64",
+          }, "Go host or target differs")
+          shell = proof["selectedPowerShell"]
+          require(shell["executable"] == str(root / "runtime/pwsh") and shell["version"] == "7.0.0" and
+                  shell["edition"] == "Core" and shell["platform"] == "Unix" and shell["linux"] is True and
+                  shell["osArchitecture"] == "X64" and shell["processArchitecture"] == "X64",
+                  "PowerShell did not run natively at the required version")
+          require(shell["turkishUpperCodepoint"] == 304 and shell["icuVersionOverride"] == "66" and
+                  shell["libraryPath"] == str(root / "dependencies/usr/lib/x86_64-linux-gnu") + ":" + str(root / "runtime"),
+                  "Turkish culture or private ICU selection differs")
+          require(proof["runtimeArchiveSHA256"] == "3e80a662a5defb283185961330c4a44d5d5179f9eb2a2ee74ac7e1d3caf16b2c" and
+                  proof["icuPackageSHA256"] == "00d0de456134668f41bd9ea308a076bc0a6a805180445af8a37209d433f41efe",
+                  "Runtime or ICU package identity differs")
+          require(proof["selectedSHA256"] == hashlib.sha256((root / "runtime/pwsh").read_bytes()).hexdigest() and
+                  proof["selectedSHA256"] == "e92acf832104ca188f112bc126ced6879af6e86c6341d0b79a1e5a53c50f27b5",
+                  "Selected runtime changed")
+          require(proof["launcher"] == str(root / "bin/pwsh") and
+                  proof["launcherSHA256"] == hashlib.sha256((root / "bin/pwsh").read_bytes()).hexdigest(),
+                  "Selected launcher changed")
+          for filename, (package, expected) in suites.items():
+              observed = Counter()
+              for line in (directory / filename).read_text(encoding="utf-8").splitlines():
+                  event = json.loads(line, object_pairs_hook=unique_object)
+                  require(isinstance(event, dict), filename + ": expected a JSON object")
+                  action, name = event.get("Action"), event.get("Test", "")
+                  require(isinstance(action, str) and isinstance(name, str), filename + ": malformed event")
+                  require(action not in {"fail", "skip", "build-fail"}, filename + ": failed or skipped event")
+                  if action == "build-output":
+                      require(not name and isinstance(event.get("Output"), str), filename + ": malformed build output")
+                      continue
+                  require(event.get("Package") == "github.com/openai/openai-cli/" + package,
+                          filename + ": unexpected package")
+                  require(not name or name in expected, filename + ": unexpected named test: " + name)
+                  require(action in {"start", "run", "pass", "output"}, filename + ": unexpected action")
+                  if action == "output":
+                      require(isinstance(event.get("Output"), str), filename + ": malformed output")
+                  else:
+                      observed[action, name] += 1
+              wanted = Counter({("start", ""): 1, ("pass", ""): 1})
+              wanted.update({(action, name): 1 for action in ["run", "pass"] for name in expected})
+              require(observed == wanted, filename + ": missing, duplicate, or unexpected execution events")
+              print(f"{filename}: {len(expected)} named tests ran and passed exactly once; no skips")
+          PY
+      - name: Retain native Unix PowerShell evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: minimum-unix-powershell-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/unix-powershell-platform.json
+            ${{ runner.temp }}/unix-powershell-*-tests.jsonl
+          if-no-files-found: error
+          retention-days: 7
+
   windows-picker-permissions:
     timeout-minutes: 15
     name: ${{ matrix.name }}
