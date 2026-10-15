@@ -107,10 +107,14 @@ func handleBatchDownload(ctx context.Context, command *cli.Command) (err error) 
 // The directory handle anchors every staging and publication operation. A hard
 // link publishes complete bytes without replacing an existing destination.
 func writeBatchDownload(ctx context.Context, path string, body io.ReadCloser) (written int64, err error) {
-	return writeBatchDownloadInDirectory(ctx, path, body, nil)
+	directory, name := filepath.Split(path)
+	if directory == "" {
+		directory = "."
+	}
+	return writeBatchDownloadInDirectory(ctx, directory, name, body, nil)
 }
 
-func writeBatchDownloadInDirectory(ctx context.Context, path string, body io.ReadCloser, expected os.FileInfo) (written int64, err error) {
+func writeBatchDownloadInDirectory(ctx context.Context, directory, name string, body io.ReadCloser, expected os.FileInfo) (written int64, err error) {
 	bodyOpen := true
 	defer func() {
 		if bodyOpen {
@@ -120,7 +124,6 @@ func writeBatchDownloadInDirectory(ctx context.Context, path string, body io.Rea
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	directory, name := filepath.Dir(path), filepath.Base(path)
 	root, err := os.OpenRoot(directory)
 	if err != nil {
 		return 0, batchDownloadFailure("Could not open the output directory. Check --output and directory permissions.", err)
@@ -306,9 +309,9 @@ func collectBatchFiles(ctx context.Context, cmd *cli.Command, client openai.Clie
 			continue
 		}
 		response, err := client.Files.Content(ctx, value.String(), options...)
-		path := filepath.Join(destination.path, selection+".jsonl")
+		name := selection + ".jsonl"
 		if err == nil {
-			_, err = writeBatchDownloadInDirectory(ctx, path, response.Body, destination.info)
+			_, err = writeBatchDownloadInDirectory(ctx, destination.path, name, response.Body, destination.info)
 		}
 		if err != nil {
 			message := fmt.Sprintf("Could not save %s.jsonl. Retry with batches download --file %s --output NEW_PATH.", selection, selection)
@@ -324,7 +327,12 @@ func collectBatchFiles(ctx context.Context, cmd *cli.Command, client openai.Clie
 			failures = append(failures, err)
 			continue
 		}
-		if err := batchCollectionReceipt(ctx, cmd, fmt.Sprintf("Saved %q", path)); err != nil {
+		// Preserve filesystem traversal in the receipt, including drive-relative paths.
+		path := destination.path
+		if !os.IsPathSeparator(path[len(path)-1]) && !(filepath.VolumeName(path) == path && strings.HasSuffix(path, ":")) {
+			path += string(os.PathSeparator)
+		}
+		if err := batchCollectionReceipt(ctx, cmd, fmt.Sprintf("Saved %q", path+name)); err != nil {
 			failures = append(failures, err)
 		}
 	}

@@ -1062,6 +1062,84 @@ func TestMainBatchesCollectTerminalFiles(t *testing.T) {
 	}
 }
 
+func TestMainBatchesOutputPathTraversal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix resolves symlink/.. through the filesystem; Windows uses DOS path rules")
+	}
+	for _, mode := range []string{"wait_new", "wait_existing", "download"} {
+		t.Run(mode, func(t *testing.T) {
+			parent := t.TempDir()
+			actual := filepath.Join(parent, "actual")
+			if err := os.MkdirAll(filepath.Join(actual, "child"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(actual, "child"), filepath.Join(parent, "link")); err != nil {
+				t.Fatal(err)
+			}
+			destination := filepath.Join(actual, "results")
+			if mode != "wait_new" {
+				if err := os.Mkdir(destination, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(destination, 0770); err != nil {
+					t.Fatal(err)
+				}
+			}
+			decoy := filepath.Join(parent, "results")
+			if err := os.Mkdir(decoy, 0700); err != nil {
+				t.Fatal(err)
+			}
+			path := parent + "/link/../results"
+			payloads := map[string]string{"output": "synthetic output\r\n\x00\xff", "error": "synthetic error\n"}
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				switch r.URL.Path {
+				case "/batches/batch_synthetic":
+					w.Header().Set("Content-Type", "application/json")
+					fmt.Fprint(w, batchesWorkflowResponse("completed", batchesWorkflowCounts))
+				case "/files/file_output/content":
+					fmt.Fprint(w, payloads["output"])
+				case "/files/file_error/content":
+					fmt.Fprint(w, payloads["error"])
+				default:
+					t.Errorf("unexpected request: %s", r.URL.Path)
+					http.Error(w, "unexpected request", http.StatusBadRequest)
+				}
+			}))
+			defer server.Close()
+			args := []string{"batches", "wait", "batch_synthetic", "--output-dir", path, "--format", "json"}
+			files := []string{"output", "error"}
+			if mode == "download" {
+				args = []string{"batches", "download", "batch_synthetic", "--output", path + "/output.jsonl", "--format", "json"}
+				files = []string{"output"}
+			}
+			got := runReadableCommand(t, server, args...)
+			if got.code != 0 || got.stderr != "" || !json.Valid([]byte(got.stdout)) || requests.Load() != int32(1+len(files)) {
+				t.Fatalf("collection failed: result=%+v requests=%d", got, requests.Load())
+			}
+			for _, selection := range files {
+				data, err := os.ReadFile(filepath.Join(destination, selection+".jsonl"))
+				if err != nil || string(data) != payloads[selection] {
+					t.Fatalf("saved bytes at intended destination: file=%s data=%q err=%v", selection, data, err)
+				}
+			}
+			entries, err := os.ReadDir(decoy)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("lexically cleaned destination changed: entries=%v err=%v", entries, err)
+			}
+			info, err := os.Stat(destination)
+			expectedMode := os.FileMode(0770)
+			if mode == "wait_new" {
+				expectedMode = 0700
+			}
+			if err != nil || info.Mode().Perm() != expectedMode {
+				t.Fatalf("destination permissions changed: info=%v err=%v", info, err)
+			}
+		})
+	}
+}
+
 func TestMainBatchesCollectRestrictiveUmask(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not use Unix umask")
