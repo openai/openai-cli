@@ -5,7 +5,7 @@ making changes.
 
 ## Generated CLI sources
 
-Most files in `pkg/cmd/` are generated from the OpenAPI specification by
+Files in `generated/commands/` are generated from the OpenAPI specification by
 Castiron. Generated files identify themselves with a `File generated` header;
 `.castiron.stats.yml` and `api_reference/openapi.transformed.yml` record the
 generation inputs. Establish whether the generator owns a file before editing
