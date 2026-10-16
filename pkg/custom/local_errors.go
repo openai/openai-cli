@@ -54,6 +54,9 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		if errors.As(failure, &imageFailure) && imageFailure.preserveOnCancel {
 			return imageFailure.message
 		}
+		if errors.As(failure, &utilityFailure) && utilityFailure.preserveOnCancel {
+			return utilityFailure.message
+		}
 		return "Request canceled."
 	case errors.As(failure, &utilityFailure):
 		return utilityFailure.Error()

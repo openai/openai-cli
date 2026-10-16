@@ -61,22 +61,12 @@ func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 	if cmd.IsSet("admin-api-key") {
 		opts = append(opts, option.WithAdminAPIKey(cmd.String("admin-api-key")))
 	}
-	if cmd.IsSet("organization") {
-		opts = append(opts, option.WithOrganization(cmd.String("organization")))
-	}
-	// Endpoint body fields named project must not select the request's project context.
-	root := cmd.Root()
-	if root.IsSet("project") {
-		opts = append(opts, option.WithProject(root.String("project")))
-	}
+	// Resolve nonsecret context once, preserving root flag and endpoint ownership.
+	opts = append(opts, resolvedRequestOptions(cmd)...)
 	if cmd.IsSet("webhook-secret") {
 		opts = append(opts, option.WithWebhookSecret(cmd.String("webhook-secret")))
 	}
 
-	// Override base URL if the --base-url flag is provided
-	if baseURL := cmd.String("base-url"); baseURL != "" {
-		opts = append(opts, option.WithBaseURL(baseURL))
-	}
 	if httpClient, ok := cmd.Root().Metadata[mtlsHTTPClientMetadata].(*http.Client); ok {
 		opts = append(opts, option.WithHTTPClient(httpClient))
 	}

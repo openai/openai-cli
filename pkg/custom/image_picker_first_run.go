@@ -28,7 +28,7 @@ func SetupImagePickerShellOnFirstRun(ctx context.Context, args []string, roots .
 	}
 	// Read command declarations before the optional worker starts. CLI parsing
 	// may mutate them after the foreground timeout, so the worker borrows none.
-	if len(roots) > 0 && (skipAudioFirstRunSetup(roots[0], args) || skipAuthFirstRunSetup(roots[0], args)) {
+	if len(roots) > 0 && (skipAudioFirstRunSetup(roots[0], args) || skipContextFirstRunSetup(roots[0], args)) {
 		return
 	}
 	args = append([]string(nil), args...)
@@ -107,7 +107,7 @@ func imagePickerFirstRunEligible(args []string, getenv func(string) string, inpu
 	// these fixed tokens never parses, consumes, or rewrites request arguments.
 	for _, argument := range args[1:] {
 		switch argument {
-		case "__complete", "@completion", "@manpages", "--generate-shell-completion", "tokenizer", "codex":
+		case "__complete", "@completion", "@manpages", "--generate-shell-completion", "tokenizer", "codex", "link", "unlink":
 			return false
 		}
 	}

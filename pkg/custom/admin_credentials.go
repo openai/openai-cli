@@ -55,7 +55,11 @@ func checkAdminCredentials(command *cli.Command) error {
 	missing := &adminCredentialsError{invocation: invocation}
 	// Custom endpoints own their authentication contracts and server errors.
 	// Do not infer whether an arbitrary gateway requires credentials.
-	if !usesStandardAdminService(command) {
+	standard, err := usesStandardAdminService(command)
+	if err != nil {
+		return err
+	}
+	if !standard {
 		return nil
 	}
 	// Validate headers before considering authentication, matching FlagOptions.
@@ -96,20 +100,23 @@ func checkAdminCredentials(command *cli.Command) error {
 	return missing
 }
 
-func usesStandardAdminService(command *cli.Command) bool {
-	baseURL := command.String("base-url")
-	if baseURL == "" {
-		baseURL = os.Getenv("OPENAI_BASE_URL")
+func usesStandardAdminService(command *cli.Command) (bool, error) {
+	resolved, err := resolvedCommandRequestContext(command)
+	if err != nil {
+		return false, err
 	}
+	baseURL := resolved.BaseURL.Value
 	if baseURL == "" {
-		return true
+		// Preserve the credential guard for an explicitly empty environment URL.
+		// This does not replace the endpoint that the SDK will receive.
+		return true, nil
 	}
 	endpoint, err := url.Parse(baseURL)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	// URL userinfo can provide HTTP Basic authentication through Go's client.
 	return endpoint.User == nil && strings.EqualFold(endpoint.Scheme, "https") &&
 		(strings.EqualFold(endpoint.Hostname(), "api.openai.com") || strings.EqualFold(endpoint.Hostname(), "mtls.api.openai.com")) &&
-		(endpoint.Port() == "" || endpoint.Port() == "443")
+		(endpoint.Port() == "" || endpoint.Port() == "443"), nil
 }

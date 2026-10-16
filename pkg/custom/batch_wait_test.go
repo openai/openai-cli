@@ -67,6 +67,12 @@ func TestBatchHintRetainsOnlyReproducibleRequestContext(t *testing.T) {
 		{"explicit endpoint", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", []string{"--base-url", "http://127.0.0.1:1"}, true},
 		{"different endpoint", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", []string{"--base-url", "http://127.0.0.1:2"}, true},
 		{"empty endpoint fallback", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", []string{"--base-url="}, false},
+		{"environment profile", "unused", "OPENAI_PROFILE", "profile_environment", nil, false},
+		{"empty environment profile", "unused", "OPENAI_PROFILE", "", nil, false},
+		{"explicit profile", "unused", "OPENAI_PROFILE", "profile_environment", []string{"--profile", "profile_override"}, true},
+		{"matching profile", "unused", "OPENAI_PROFILE", "profile_environment", []string{"--profile", "profile_environment"}, true},
+		{"empty profile override", "unused", "OPENAI_PROFILE", "profile_environment", []string{"--profile="}, true},
+		{"empty profile without environment value", "unused", "OPENAI_PROFILE", "", []string{"--profile="}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(tc.environment, tc.inherited)
@@ -82,6 +88,7 @@ func TestBatchHintRetainsOnlyReproducibleRequestContext(t *testing.T) {
 					return nil
 				},
 			}
+			configureProfileContext(root)
 			if err := root.Run(t.Context(), append([]string{"openai"}, tc.args...)); err != nil {
 				t.Fatal(err)
 			}

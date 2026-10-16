@@ -3,11 +3,17 @@ package custom
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
@@ -20,21 +26,35 @@ func registerAuthCommands(root *cli.Command) {
 	help := `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}EXAMPLE
   {{$bin}} auth status
 
-Shows configured authentication without sending requests or verifying access.
+Shows configured authentication offline by default.
+Use --verify --credential-kind api or admin to look up one authenticated principal.
 
 ` + cli.CommandHelpTemplate + localUtilityGlobalHelp
 	root.Commands = append(root.Commands, &cli.Command{
-		Name: "auth", Usage: "Inspect authentication configuration locally", HideHelpCommand: true,
+		Name: "auth", Usage: "Inspect authentication configuration and identity", HideHelpCommand: true,
 		Metadata: map[string]any{localUtilityMetadata: true, "help-command-section": "Local tools"},
 		Commands: []*cli.Command{{
-			Name: "status", Usage: "Show effective authentication configuration without network access",
+			Name: "status", Usage: "Show authentication configuration; optionally resolve one identity",
 			Description: "Reports API and Admin credentials separately, plus organization, project, and a sanitized base URL. " +
-				"Does not verify credentials, identity, permissions, or membership. Does not read stdin, refresh credentials, or configure your shell. " +
+				"Identity stays unknown unless --verify selects an API or Admin credential. Identity lookup does not verify permissions or membership. " +
+				"Does not read stdin, refresh credentials, or configure your shell. " +
 				"Supports --format auto, text, or json. Credential values are never displayed.",
+			Flags: []cli.Flag{
+				&cli.BoolFlag{Name: "verify", Usage: "Resolve one authenticated principal using the OpenAI identity provider"},
+				&authStatusCredentialKindFlag{StringFlag: &cli.StringFlag{Name: "credential-kind", Usage: "Credential to resolve with --verify: api or admin"}},
+			},
 			HideHelpCommand: true, CustomHelpTemplate: help,
 			Metadata: map[string]any{"local-help-full": help}, Action: handleAuthStatus,
 		}},
 	})
+}
+
+// urfave keeps presence across command reuse; verification must be explicit each time.
+type authStatusCredentialKindFlag struct{ *cli.StringFlag }
+
+func (f *authStatusCredentialKindFlag) PreParse() error {
+	f.StringFlag = &cli.StringFlag{Name: f.Name, Usage: f.Usage}
+	return f.StringFlag.PreParse()
 }
 
 type authStatusCredential struct {
@@ -53,15 +73,27 @@ type authStatusEndpoint struct {
 	Redacted bool `json:"redacted"`
 }
 
+type authStatusIdentity struct {
+	Status   string  `json:"status"`
+	Reason   string  `json:"reason,omitempty"`
+	Provider string  `json:"provider,omitempty"`
+	ID       string  `json:"id,omitempty"`
+	Name     *string `json:"name"`
+	Email    *string `json:"email"`
+}
+
 // Only sanitized configuration reaches either renderer. Credentials never enter this report.
 type authStatusReport struct {
-	Offline      bool                 `json:"offline"`
-	Verified     bool                 `json:"verified"`
-	API          authStatusCredential `json:"api_credential"`
-	Admin        authStatusCredential `json:"admin_credential"`
-	Organization authStatusValue      `json:"organization"`
-	Project      authStatusValue      `json:"project"`
-	BaseURL      authStatusEndpoint   `json:"base_url"`
+	Offline                bool                 `json:"offline"`
+	Verified               bool                 `json:"verified"`
+	VerifiedCredentialKind string               `json:"verified_credential_kind,omitempty"`
+	APIIdentity            authStatusIdentity   `json:"api_identity"`
+	AdminIdentity          authStatusIdentity   `json:"admin_identity"`
+	API                    authStatusCredential `json:"api_credential"`
+	Admin                  authStatusCredential `json:"admin_credential"`
+	Organization           authStatusValue      `json:"organization"`
+	Project                authStatusValue      `json:"project"`
+	BaseURL                authStatusEndpoint   `json:"base_url"`
 }
 
 func handleAuthStatus(ctx context.Context, command *cli.Command) error {
@@ -79,9 +111,41 @@ func handleAuthStatus(ctx context.Context, command *cli.Command) error {
 	if format != "auto" && format != "text" && format != "json" {
 		return &localUtilityError{message: "Auth status supports --format auto, text, or json."}
 	}
-	report, err := resolveAuthStatus(root, os.LookupEnv)
+	verify, kind := command.Bool("verify"), command.String("credential-kind")
+	if verify && kind != "api" && kind != "admin" || !verify && command.IsSet("credential-kind") {
+		return &localUtilityError{message: "Use --verify with --credential-kind api or --credential-kind admin."}
+	}
+	snapshot, err := resolveAuthStatusSnapshot(root, os.LookupEnv)
 	if err != nil {
 		return err
+	}
+	report := snapshot.report
+	var lookupErr error
+	if verify {
+		var stop func()
+		ctx, stop = adminSetupSignalContext(ctx)
+		defer stop()
+		report.Offline = false
+		identity, failure := authStatusLookup(ctx, root, snapshot, kind)
+		lookupErr = failure
+		if ctx.Err() != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return &localUtilityError{message: "Identity lookup timed out. Identity remains unknown.", cause: context.DeadlineExceeded}
+			}
+			code := 130
+			if errors.Is(context.Cause(ctx), errAdminSetupTerminated) {
+				code = 143
+			}
+			return &authStatusLookupError{localUtilityError: &localUtilityError{message: "Identity lookup canceled.", cause: context.Canceled, preserveOnCancel: true}, code: code}
+		}
+		if kind == "api" {
+			report.APIIdentity = identity
+		} else {
+			report.AdminIdentity = identity
+		}
+		if failure == nil {
+			report.Verified, report.VerifiedCredentialKind = true, kind
+		}
 	}
 	out := outputWriter{ctx: ctx, out: root.Writer}
 	if format == "json" {
@@ -91,19 +155,40 @@ func handleAuthStatus(ctx context.Context, command *cli.Command) error {
 		if report.BaseURL.Redacted {
 			endpoint += " (URL components omitted)"
 		}
-		_, err = fmt.Fprintf(out, "Authentication configuration (offline; not verified)\n"+
+		title := "Authentication configuration (offline; not verified)"
+		if verify {
+			title = "Authentication configuration (identity lookup requested: " + kind + ")"
+		}
+		_, err = fmt.Fprintf(out, "%s\n"+
 			"API credential: %s [%s]\nAdmin credential: %s [%s]\n"+
+			"API identity: %s\nAdmin identity: %s\n"+
 			"Organization: %s [%s]\nProject: %s [%s]\nBase URL: %s [%s]\n",
-			strings.ReplaceAll(report.API.Type, "_", " "), report.API.Source,
-			strings.ReplaceAll(report.Admin.Type, "_", " "), report.Admin.Source,
-			authStatusTextValue(report.Organization), report.Organization.Source,
-			authStatusTextValue(report.Project), report.Project.Source,
-			endpoint, report.BaseURL.Source)
+			title,
+			strings.ReplaceAll(report.API.Type, "_", " "), readable.Text(report.API.Source),
+			strings.ReplaceAll(report.Admin.Type, "_", " "), readable.Text(report.Admin.Source),
+			authStatusIdentityText(report.APIIdentity), authStatusIdentityText(report.AdminIdentity),
+			authStatusTextValue(report.Organization), readable.Text(report.Organization.Source),
+			authStatusTextValue(report.Project), readable.Text(report.Project.Source),
+			endpoint, readable.Text(report.BaseURL.Source))
 	}
 	if err != nil {
-		return &localUtilityError{message: "Could not write auth status. Check the output file or pipe before rerunning.", cause: err}
+		return &localUtilityError{message: "Could not write auth status. Check the output file or pipe before rerunning.", cause: errors.Join(err, lookupErr)}
 	}
-	return nil
+	return lookupErr
+}
+
+func authStatusIdentityText(identity authStatusIdentity) string {
+	if identity.Status != "resolved" {
+		return "unknown (" + identity.Reason + ")"
+	}
+	value := identity.ID
+	if identity.Name != nil {
+		value += " | name: " + *identity.Name
+	}
+	if identity.Email != nil {
+		value += " | email: " + *identity.Email
+	}
+	return "resolved | " + authStatusTextValue(authStatusValue{Value: value})
 }
 
 func authStatusTextValue(value authStatusValue) string {
@@ -118,54 +203,38 @@ func authStatusTextValue(value authStatusValue) string {
 }
 
 // Match the CLI and SDK option layers without constructing an SDK client or request.
-// Snapshot the six relevant environment inputs once; never enumerate unrelated secrets.
+// Snapshot relevant environment inputs once; never enumerate unrelated secrets.
 func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (authStatusReport, error) {
-	environment := make(map[string]authStatusValue, 6)
-	for _, name := range []string{"OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID", "OPENAI_BASE_URL", "OPENAI_CUSTOM_HEADERS"} {
-		if value, present := lookup(name); present {
-			environment[name] = authStatusValue{Value: value, Source: "environment:" + name}
-		}
-	}
+	snapshot, err := resolveAuthStatusSnapshot(root, lookup)
+	return snapshot.report, err
+}
+
+// Secrets stay in this invocation-local snapshot and never enter a renderer.
+type authStatusSnapshot struct {
+	report                               authStatusReport
+	baseURL, explicitBaseURL             string
+	apiAuthorization, adminAuthorization string
+	secrets                              []string
+}
+
+func resolveAuthStatusSnapshot(root *cli.Command, lookup func(string) (string, bool)) (authStatusSnapshot, error) {
+	environment := snapshotContextEnvironment(root, lookup)
 	literal, err := requestHeaders(root)
 	if err != nil {
-		return authStatusReport{}, &localUtilityError{message: "Invalid --header. Use 'Name: Value' without control characters."}
+		return authStatusSnapshot{}, &localUtilityError{message: "Invalid --header. Use 'Name: Value' without control characters."}
 	}
-	// The SDK ignores environment lines without a colon and trims names and values.
-	inherited := make(http.Header)
-	for _, line := range strings.Split(environment["OPENAI_CUSTOM_HEADERS"].Value, "\n") {
-		if name, value, found := strings.Cut(line, ":"); found {
-			inherited.Set(strings.TrimSpace(name), strings.TrimSpace(value))
-		}
-	}
+	inherited := inheritedContextHeaders(environment)
 	setting := func(flag, variable string) authStatusValue {
-		source := "unset"
-		if env, present := environment[variable]; present {
-			source = env.Source
-		}
-		for _, declared := range root.Flags {
-			if f, ok := declared.(*rootRequestFlag); ok && f.Name == flag && f.explicitlySet {
-				source = "flag:--" + flag
-				break
-			}
-		}
-		if root.IsSet(flag) {
-			return authStatusValue{Value: root.String(flag), Source: source}
-		}
-		if env, present := environment[variable]; present {
-			return env
-		}
-		return authStatusValue{Source: "unset"}
+		return requestContextSetting(root, environment, flag, variable)
 	}
-	base := environment["OPENAI_BASE_URL"]
-	if base.Source == "" {
-		base = authStatusValue{Value: "https://api.openai.com/v1/", Source: "default"}
+	resolved, err := resolveRequestContext(requestResolutionContext(root), root, environment, literal)
+	if err != nil {
+		return authStatusSnapshot{}, err
 	}
-	if value := root.String("base-url"); value != "" {
-		base = authStatusValue{Value: value, Source: "flag:--base-url"}
-	}
+	base := resolved.BaseURL
 	endpoint, basic, err := authStatusBaseURL(base)
 	if err != nil {
-		return authStatusReport{}, err
+		return authStatusSnapshot{}, err
 	}
 	credential := func(flag, variable, kind string) authStatusCredential {
 		key := setting(flag, variable)
@@ -190,26 +259,282 @@ func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (a
 		}
 		return result
 	}
-	contextValue := func(flag, variable, header string) authStatusValue {
-		if literal.Values(header) != nil {
-			return authStatusValue{Value: literal.Get(header), Source: "flag:--header"}
-		}
-		value := setting(flag, variable)
-		if value.Source != "unset" {
-			return value
-		}
-		if inherited.Values(header) != nil {
-			return authStatusValue{Value: inherited.Get(header), Source: "environment:OPENAI_CUSTOM_HEADERS"}
-		}
-		return value
+	snapshot := authStatusSnapshot{baseURL: base.Value}
+	snapshot.secrets = append(snapshot.secrets, environment["OPENAI_API_KEY"].Value, environment["OPENAI_ADMIN_KEY"].Value)
+	if base.Source == "flag:--base-url" || base.Source == "environment:OPENAI_BASE_URL" {
+		snapshot.explicitBaseURL = base.Value
 	}
-	return authStatusReport{
+	authorization := func(flag, variable string) string {
+		key := setting(flag, variable).Value
+		snapshot.secrets = append(snapshot.secrets, key)
+		if literal.Values("Authorization") != nil {
+			return literal.Get("Authorization")
+		}
+		if key != "" {
+			return "Bearer " + key
+		}
+		return inherited.Get("Authorization")
+	}
+	snapshot.apiAuthorization = authorization("api-key", "OPENAI_API_KEY")
+	snapshot.adminAuthorization = authorization("admin-api-key", "OPENAI_ADMIN_KEY")
+	for _, header := range []string{literal.Get("Authorization"), inherited.Get("Authorization"), snapshot.apiAuthorization, snapshot.adminAuthorization} {
+		snapshot.secrets = append(snapshot.secrets, header)
+		if _, token, ok := strings.Cut(header, " "); ok {
+			// A Bearer separator can contain several spaces. Keep request bytes
+			// unchanged while rejecting responses that echo the credential alone.
+			snapshot.secrets = append(snapshot.secrets, token, strings.TrimSpace(token))
+		}
+	}
+	snapshot.report = authStatusReport{
 		Offline:      true,
 		API:          credential("api-key", "OPENAI_API_KEY", "api_key"),
 		Admin:        credential("admin-api-key", "OPENAI_ADMIN_KEY", "admin_api_key"),
-		Organization: contextValue("organization", "OPENAI_ORG_ID", "OpenAI-Organization"),
-		Project:      contextValue("project", "OPENAI_PROJECT_ID", "OpenAI-Project"), BaseURL: endpoint,
-	}, nil
+		Organization: resolved.Organization,
+		Project:      resolved.Project, BaseURL: endpoint,
+	}
+	unknown := func(credential authStatusCredential) authStatusIdentity {
+		reason := "not_requested"
+		if !credential.Configured {
+			reason = "not_configured"
+		}
+		return authStatusIdentity{Status: "unknown", Reason: reason}
+	}
+	snapshot.report.APIIdentity, snapshot.report.AdminIdentity = unknown(snapshot.report.API), unknown(snapshot.report.Admin)
+	return snapshot, nil
+}
+
+type authStatusLookupError struct {
+	*localUtilityError
+	code int
+}
+
+func (e *authStatusLookupError) ExitCode() int { return e.code }
+
+// The provider returns an authenticated principal, not a key ID or membership assertion.
+// Keep its request independent of SDK API/Admin fallback and API-body error rendering.
+func authStatusLookup(ctx context.Context, root *cli.Command, snapshot authStatusSnapshot, kind string) (authStatusIdentity, error) {
+	failure := func(reason, message string) (authStatusIdentity, error) {
+		return authStatusIdentity{Status: "unknown", Reason: reason}, &localUtilityError{message: message}
+	}
+	endpoint, err := url.Parse(snapshot.baseURL)
+	if err != nil || endpoint.Scheme != "https" || endpoint.Hostname() != "api.openai.com" ||
+		(endpoint.Port() != "" && endpoint.Port() != "443") || endpoint.User != nil ||
+		endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" || endpoint.RawFragment != "" ||
+		endpoint.RawPath != "" || (endpoint.Path != "/v1" && endpoint.Path != "/v1/") {
+		return failure("unsupported_provider", "Identity lookup requires the supported https://api.openai.com/v1/ endpoint. No request was sent.")
+	}
+	authorization := snapshot.apiAuthorization
+	if kind == "admin" {
+		authorization = snapshot.adminAuthorization
+	}
+	if authorization == "" {
+		return failure("not_configured", "The selected credential is not configured. No request was sent.")
+	}
+	scheme, token, bearer := strings.Cut(authorization, " ")
+	if !bearer || !strings.EqualFold(scheme, "Bearer") || strings.TrimSpace(token) == "" {
+		return failure("invalid_configuration", "Identity lookup requires a Bearer credential. No request was sent.")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	requestFailure := func() (authStatusIdentity, error) {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return failure("timed_out", "Identity lookup timed out. Identity remains unknown.")
+		}
+		if ctx.Err() != nil {
+			return failure("canceled", "Identity lookup canceled.")
+		}
+		return failure("request_failed", "Could not resolve identity. Check your connection and retry.")
+	}
+	cert, _ := root.Value(mtlsClientCertFileFlag).(string)
+	key, _ := root.Value(mtlsClientKeyFileFlag).(string)
+	client, err := newMTLSHTTPClientWithReader(cert, key, snapshot.explicitBaseURL, func(kind, path string) ([]byte, error) {
+		return authStatusReadMTLSFile(ctx, kind, path)
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			return requestFailure()
+		}
+		return failure("invalid_configuration", "Could not configure identity lookup TLS. Check the certificate, key, and explicit base URL.")
+	}
+	if client == nil {
+		client = &http.Client{Transport: http.DefaultTransport}
+		if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+			client.Transport = transport.Clone()
+		}
+	}
+	// Each lookup owns a fresh transport. Keep it on HTTP/1 so HTTP/2 cannot
+	// retry a refused stream. Clear inherited ALPN and alternate protocol hooks.
+	if transport, ok := client.Transport.(*http.Transport); ok {
+		transport.Protocols = &http.Protocols{}
+		transport.Protocols.SetHTTP1(true)
+		transport.TLSNextProto = nil
+		if transport.TLSClientConfig != nil {
+			transport.TLSClientConfig.NextProtos = []string{"http/1.1"}
+		}
+	}
+	defer client.CloseIdleConnections()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	endpoint.Path = "/v1/me"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return failure("invalid_configuration", "Could not configure identity lookup. No request was sent.")
+	}
+	request.Header.Set("Authorization", authorization)
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("OpenAI-Organization", snapshot.report.Organization.Value)
+	request.Header.Set("OpenAI-Project", snapshot.report.Project.Value)
+	response, err := client.Do(request)
+
+	if err != nil {
+		return requestFailure()
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		reason := "unavailable"
+		switch {
+		case response.StatusCode == http.StatusUnauthorized:
+			reason = "unauthorized"
+		case response.StatusCode == http.StatusForbidden:
+			reason = "forbidden"
+		case response.StatusCode == http.StatusTooManyRequests:
+			reason = "rate_limited"
+		case response.StatusCode >= 300 && response.StatusCode < 400:
+			reason = "redirect"
+		}
+		return failure(reason, "The identity provider did not resolve identity. Identity remains unknown.")
+	}
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return failure("invalid_response", "The identity provider returned an invalid response. Identity remains unknown.")
+	}
+	identity, err := decodeAuthStatusIdentity(response.Body)
+	if ctx.Err() != nil {
+		return requestFailure()
+	}
+	if err != nil {
+		return failure("invalid_response", "The identity provider returned an invalid response. Identity remains unknown.")
+	}
+	values := []string{identity.ID}
+	if identity.Name != nil {
+		values = append(values, *identity.Name)
+	}
+	if identity.Email != nil {
+		values = append(values, *identity.Email)
+	}
+	for _, value := range values {
+		for _, secret := range snapshot.secrets {
+			if secret != "" && strings.Contains(value, secret) {
+				return failure("invalid_response", "The identity provider returned an invalid response. Identity remains unknown.")
+			}
+		}
+	}
+	return identity, nil
+}
+
+// Verification reads only regular files from the validated opened descriptor.
+// Cancellation is cooperative between operations; it cannot interrupt kernel I/O.
+func authStatusReadMTLSFile(ctx context.Context, kind, path string) (_ []byte, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return nil, err
+	}
+	before, err := os.Lstat(resolved)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() {
+		return nil, errors.New("mTLS client " + kind + " must be a regular file")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// O_NONBLOCK prevents a replaced Unix FIFO from waiting for a writer.
+	file, err := os.OpenFile(resolved, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(before, opened) {
+		return nil, errors.New("mTLS client " + kind + " file changed before reading")
+	}
+	var data []byte
+	defer func() {
+		if err != nil {
+			clear(data)
+		}
+	}()
+	buffer := make([]byte, 32<<10)
+	defer clear(buffer)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		n, readErr := file.Read(buffer)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data = append(data, buffer[:n]...)
+		if errors.Is(readErr, io.EOF) {
+			return data, nil
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+	}
+}
+
+func decodeAuthStatusIdentity(body io.Reader) (authStatusIdentity, error) {
+	decoder := json.NewDecoder(body)
+	invalid := errors.New("invalid identity response")
+	identity := authStatusIdentity{Status: "resolved", Provider: "openai_me_v1"}
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return authStatusIdentity{}, invalid
+	}
+	seen := map[string]bool{}
+	object := ""
+	for decoder.More() {
+		token, err = decoder.Token()
+		name, ok := token.(string)
+		if err != nil || !ok || seen[name] {
+			return authStatusIdentity{}, invalid
+		}
+		seen[name] = true
+		switch name {
+		case "object":
+			err = decoder.Decode(&object)
+		case "id":
+			err = decoder.Decode(&identity.ID)
+		case "name":
+			err = decoder.Decode(&identity.Name)
+		case "email":
+			err = decoder.Decode(&identity.Email)
+		default:
+			var ignored json.RawMessage
+			err = decoder.Decode(&ignored)
+		}
+		if err != nil {
+			return authStatusIdentity{}, invalid
+		}
+	}
+	if _, err = decoder.Token(); err != nil {
+		return authStatusIdentity{}, invalid
+	}
+	if _, err = decoder.Token(); err != io.EOF || object != "user" || strings.TrimSpace(identity.ID) == "" {
+		return authStatusIdentity{}, invalid
+	}
+	return identity, nil
 }
 
 func authStatusBaseURL(base authStatusValue) (authStatusEndpoint, bool, error) {
@@ -233,10 +558,10 @@ func authStatusBaseURL(base authStatusValue) (authStatusEndpoint, bool, error) {
 	return authStatusEndpoint{authStatusValue: authStatusValue{Value: safe, Source: base.Source}, Redacted: redacted}, parsed.User != nil, nil
 }
 
-// Identify the declared auth root before optional shell setup can spawn a worker.
+// Identify local context commands before optional shell setup can spawn a worker.
 // Consume root flag values by declaration, so a request value named "auth" does not match.
-func skipAuthFirstRunSetup(root *cli.Command, args []string) bool {
-	if root == nil || len(args) < 2 || root.Command("auth") == nil {
+func skipContextFirstRunSetup(root *cli.Command, args []string) bool {
+	if root == nil || len(args) < 2 || root.Command("auth") == nil && root.Command("profile") == nil {
 		return false
 	}
 	lineage := []*cli.Command{root}
@@ -268,7 +593,7 @@ func skipAuthFirstRunSetup(root *cli.Command, args []string) bool {
 			continue
 		}
 		selected := root.Command(arg)
-		return selected != nil && selected == root.Command("auth")
+		return selected != nil && (selected == root.Command("auth") || selected == root.Command("profile"))
 	}
 	return false
 }

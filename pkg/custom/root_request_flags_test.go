@@ -8,10 +8,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"reflect"
 	"testing"
 
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -92,7 +95,7 @@ func TestRootRequestFlagsExplicitAssignmentProvenance(t *testing.T) {
 	}
 }
 
-func TestRootRequestFlagPreParseResetsOnlyProvenance(t *testing.T) {
+func TestRootRequestFlagPreParseResetsInvocationState(t *testing.T) {
 	wrapped := &rootRequestFlag{Flag: &requestflag.Flag[string]{Name: "project", Default: "default-project"}}
 	require.NoError(t, wrapped.PreParse())
 	require.False(t, wrapped.explicitlySet)
@@ -103,26 +106,196 @@ func TestRootRequestFlagPreParseResetsOnlyProvenance(t *testing.T) {
 
 	require.NoError(t, wrapped.PreParse())
 	require.False(t, wrapped.explicitlySet)
-	// Preserve the embedded flag's existing state across repeated parsing.
-	require.True(t, wrapped.IsSet())
-	require.Equal(t, 1, wrapped.Count())
+	require.False(t, wrapped.IsSet())
+	require.Zero(t, wrapped.Count())
 	require.Equal(t, "default-project", wrapped.Get())
 }
 
 func TestRootRequestFlagsResetProvenanceAcrossRuns(t *testing.T) {
-	var explicit []bool
-	root := &cli.Command{
-		Name: "openai", Writer: io.Discard, ErrWriter: io.Discard,
-		Flags: []cli.Flag{&requestflag.Flag[string]{Name: "project"}},
-		Action: func(_ context.Context, command *cli.Command) error {
-			explicit = append(explicit, command.Flags[0].(*rootRequestFlag).explicitlySet)
-			return nil
-		},
+	for _, name := range []string{"api-key", "admin-api-key", "organization", "project", "webhook-secret"} {
+		t.Run(name, func(t *testing.T) {
+			const variable = "OPENAI_TEST_ROOT_REQUEST_REUSE"
+			t.Setenv(variable, "")
+			rejected := errors.New("rejected synthetic value")
+			definition := &requestflag.Flag[string]{Name: name, Aliases: []string{"p"}, Sources: cli.EnvVars(variable),
+				Validator: func(value string) error {
+					if value == "invalid" {
+						return rejected
+					}
+					return nil
+				}}
+			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard,
+				Flags: []cli.Flag{definition}, Commands: []*cli.Command{{Name: "models", Commands: []*cli.Command{{Name: "list"}}}},
+			}
+			configureRootRequestFlags(root)
+			wrapped := root.Flags[0].(*rootRequestFlag)
+			// Root sources precede descendant arguments, so Count includes source and explicit assignments.
+			for _, tc := range []struct {
+				name, environment, want string
+				args                    []string
+				absent, explicit, set   bool
+				count                   int
+				err                     error
+			}{
+				{name: "initial environment", environment: "synthetic-first", want: "synthetic-first", set: true, count: 1},
+				{name: "changed environment", environment: "synthetic-second", want: "synthetic-second", set: true, count: 1},
+				{name: "explicit repeated alias", environment: "synthetic-second", args: []string{"--" + name + "=synthetic-first", "-p", "synthetic-last"}, want: "synthetic-last", explicit: true, set: true, count: 3},
+				{name: "environment after explicit", environment: "synthetic-third", want: "synthetic-third", set: true, count: 1},
+				{name: "explicit empty", environment: "synthetic-third", args: []string{"--" + name + "="}, explicit: true, set: true, count: 2},
+				{name: "present empty environment", set: true},
+				{name: "removed environment", absent: true},
+				{name: "validation failure", environment: "synthetic-third", args: []string{"--" + name + "=invalid"}, err: rejected},
+				{name: "recovery after failure", environment: "synthetic-recovered", want: "synthetic-recovered", set: true, count: 1},
+			} {
+				t.Setenv(variable, tc.environment)
+				if tc.absent {
+					require.NoError(t, os.Unsetenv(variable))
+				}
+				called := false
+				root.Command("models").Command("list").Action = func(_ context.Context, command *cli.Command) error {
+					called = true
+					require.Same(t, definition, wrapped.RequestFlag(), tc.name)
+					require.Equal(t, tc.explicit, wrapped.ExplicitRequestFlag(), tc.name)
+					require.Equal(t, tc.set, root.IsSet(name), tc.name)
+					require.Equal(t, tc.set, command.IsSet(name), tc.name)
+					require.Equal(t, tc.want, root.String(name), tc.name)
+					require.Equal(t, tc.want, command.String(name), tc.name)
+					require.Equal(t, tc.count, wrapped.Count(), tc.name)
+					return nil
+				}
+				args := append([]string{"openai", "models", "list"}, tc.args...)
+				err := root.Run(t.Context(), args)
+				if tc.err != nil {
+					require.ErrorContains(t, err, tc.err.Error(), tc.name)
+					require.False(t, called, tc.name)
+				} else {
+					require.NoError(t, err, tc.name)
+					require.True(t, called, tc.name)
+				}
+			}
+		})
 	}
-	configureRootRequestFlags(root)
-	require.NoError(t, root.Run(t.Context(), []string{"openai", "--project=synthetic-project"}))
-	require.NoError(t, root.Run(t.Context(), []string{"openai"}))
-	require.Equal(t, []bool{true, false}, explicit)
+}
+
+func TestRootRequestFlagPreParsePreservesCurrentDefinition(t *testing.T) {
+	var validated []string
+	definition := &requestflag.Flag[string]{
+		Name: "project", Category: "Synthetic category", DefaultText: "Synthetic default",
+		HideDefault: true, Usage: "Synthetic usage", Sources: cli.EnvVars("OPENAI_TEST_ROOT_METADATA"),
+		Required: true, Hidden: true, Default: "synthetic-default", Aliases: []string{"p"},
+		Validator: func(value string) error { validated = append(validated, value); return nil },
+		QueryPath: "synthetic_query", HeaderPath: "X-Synthetic", BodyPath: "synthetic_body", BodyRoot: true,
+		PathParam: "synthetic_path", Const: true, FileInput: true, DataAliases: []string{"synthetic_alias"},
+	}
+	wrapped := &rootRequestFlag{Flag: definition}
+	require.NoError(t, wrapped.PreParse())
+	require.NoError(t, wrapped.Set("project", "synthetic-explicit"))
+	definition.Usage, definition.Default = "Updated synthetic usage", "synthetic-updated"
+	before := reflect.ValueOf(*definition)
+	require.NoError(t, wrapped.PreParse())
+	require.Same(t, definition, wrapped.RequestFlag())
+	after := reflect.ValueOf(*definition)
+	for index := 0; index < before.NumField(); index++ {
+		field := before.Type().Field(index)
+		if !field.IsExported() {
+			continue
+		}
+		if field.Type.Kind() == reflect.Func {
+			require.Equal(t, before.Field(index).Pointer(), after.Field(index).Pointer(), field.Name)
+		} else {
+			require.Equal(t, before.Field(index).Interface(), after.Field(index).Interface(), field.Name)
+		}
+	}
+	require.Equal(t, []string{"synthetic-default", "synthetic-explicit", "synthetic-updated"}, validated)
+	require.Equal(t, "synthetic-updated", wrapped.Get())
+	require.True(t, wrapped.IsSet(), "Const remains set without an invocation assignment")
+	require.Zero(t, wrapped.Count())
+	require.False(t, wrapped.ExplicitRequestFlag())
+}
+
+func TestRootRequestFlagsReuseMatchesStatusAndSDKRequests(t *testing.T) {
+	projectLinkTestEnvironment(t)
+	authStatusTestEnvironment(t, nil)
+	t.Setenv("OPENAI_PROFILE", "work")
+	path, err := profileStorePath()
+	require.NoError(t, err)
+	organization, project := "org_profile", "proj_profile"
+	_, err = updateProfiles(t.Context(), path, func(registry *profileRegistry) error {
+		registry.Profiles["work"] = profileValues{Organization: &organization, Project: &project}
+		return nil
+	})
+	require.NoError(t, err)
+	root := profileContextTestRoot(t)
+	root.Commands = append(root.Commands, &cli.Command{Name: "probe"})
+	for _, tc := range []struct {
+		name, api, admin, organization, project, source string
+		args                                            []string
+		remove                                          bool
+	}{
+		{name: "environment", api: "synthetic-api-first", admin: "synthetic-admin-first", organization: "org_first", project: "proj_first", source: "environment"},
+		{name: "explicit", api: "synthetic-api-flag", admin: "synthetic-admin-flag", organization: "org_flag", project: "proj_flag", source: "flag",
+			args: []string{"--api-key=synthetic-api-flag", "--admin-api-key=synthetic-admin-flag", "--organization=org_flag", "--project=proj_flag"}},
+		{name: "changed environment", api: "synthetic-api-second", admin: "synthetic-admin-second", organization: "org_second", project: "proj_second", source: "environment"},
+		{name: "explicit empty", source: "flag", args: []string{"--api-key=", "--admin-api-key=", "--organization=", "--project="}},
+		{name: "environment restored", api: "synthetic-api-second", admin: "synthetic-admin-second", organization: "org_second", project: "proj_second", source: "environment"},
+		{name: "removed environment", organization: "org_profile", project: "proj_profile", source: "profile", remove: true},
+	} {
+		if tc.source == "environment" {
+			for name, value := range map[string]string{"OPENAI_API_KEY": tc.api, "OPENAI_ADMIN_KEY": tc.admin, "OPENAI_ORG_ID": tc.organization, "OPENAI_PROJECT_ID": tc.project} {
+				t.Setenv(name, value)
+			}
+		}
+		if tc.remove {
+			for _, name := range []string{"OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"} {
+				require.NoError(t, os.Unsetenv(name))
+			}
+		}
+		called := false
+		root.Command("probe").Action = func(ctx context.Context, command *cli.Command) error {
+			called = true
+			report, err := resolveAuthStatus(root, os.LookupEnv)
+			require.NoError(t, err, tc.name)
+			require.Equal(t, tc.api != "", report.API.Configured, tc.name)
+			require.Equal(t, tc.admin != "", report.Admin.Configured, tc.name)
+			apiSource, adminSource := "unset", "unset"
+			if tc.source == "environment" {
+				apiSource, adminSource = "environment:OPENAI_API_KEY", "environment:OPENAI_ADMIN_KEY"
+			} else if tc.source == "flag" {
+				apiSource, adminSource = "flag:--api-key", "flag:--admin-api-key"
+			}
+			require.Equal(t, apiSource, report.API.Source, tc.name)
+			require.Equal(t, adminSource, report.Admin.Source, tc.name)
+			require.Equal(t, tc.organization, report.Organization.Value, tc.name)
+			require.Equal(t, tc.project, report.Project.Value, tc.name)
+			wantSource := tc.source + ":"
+			for _, source := range []string{report.Organization.Source, report.Project.Source} {
+				require.Contains(t, source, wantSource, tc.name)
+			}
+			var requests []http.Header
+			options := append(GetDefaultRequestOptions(command), option.WithHTTPClient(profileContextTransport(func(request *http.Request) {
+				requests = append(requests, request.Header.Clone())
+			})))
+			client := openai.NewClient(options...)
+			_, err = client.Models.List(ctx)
+			require.NoError(t, err, tc.name)
+			_, err = client.Admin.Organization.Projects.List(ctx, openai.AdminOrganizationProjectListParams{})
+			require.NoError(t, err, tc.name)
+			require.Len(t, requests, 2, tc.name)
+			for index, key := range []string{tc.api, tc.admin} {
+				authorization := ""
+				if key != "" {
+					authorization = "Bearer " + key
+				}
+				require.Equal(t, authorization, requests[index].Get("Authorization"), tc.name)
+				require.Equal(t, tc.organization, requests[index].Get("OpenAI-Organization"), tc.name)
+				require.Equal(t, tc.project, requests[index].Get("OpenAI-Project"), tc.name)
+			}
+			return nil
+		}
+		args := append([]string{"openai", "probe"}, tc.args...)
+		require.NoError(t, root.Run(t.Context(), args), tc.name)
+		require.True(t, called, tc.name)
+	}
 }
 
 func TestRootRequestFlagsPreserveMTLSPlacement(t *testing.T) {

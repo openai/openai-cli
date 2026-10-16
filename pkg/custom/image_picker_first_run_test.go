@@ -313,12 +313,18 @@ func TestImagePickerFirstRunConcurrentSetupAndCanceledRun(t *testing.T) {
 
 func TestAuthStatusSkipsFirstRunSetupByDeclaredCommand(t *testing.T) {
 	root := authStatusTestRoot(nil)
+	configureProfileContext(root)
+	registerProfileCommands(root)
 	root.Commands = append(root.Commands, &cli.Command{Name: "models", Commands: []*cli.Command{{Name: "list"}}})
 	for _, tc := range []struct {
 		args []string
 		want bool
 	}{
 		{[]string{"openai", "auth", "status"}, true},
+		{[]string{"openai", "profile", "list"}, true},
+		{[]string{"openai", "--profile", "work", "auth", "switch", "--to-project", "proj_next"}, true},
+		{[]string{"openai", "--profile", "profile", "models", "list"}, false},
+		{[]string{"openai", "help", "profile", "list"}, true},
 		{[]string{"openai", "--api-key", "synthetic", "auth", "status"}, true},
 		{[]string{"openai", "--api-key=synthetic", "auth", "--format=json", "status"}, true},
 		{[]string{"openai", "help", "auth", "status"}, true},
@@ -334,8 +340,8 @@ func TestAuthStatusSkipsFirstRunSetupByDeclaredCommand(t *testing.T) {
 		{[]string{"openai", "--api-key", "auth"}, false},
 		{[]string{"openai"}, false},
 	} {
-		require.Equal(t, tc.want, skipAuthFirstRunSetup(root, tc.args), "%q", tc.args)
+		require.Equal(t, tc.want, skipContextFirstRunSetup(root, tc.args), "%q", tc.args)
 	}
-	require.False(t, skipAuthFirstRunSetup(nil, []string{"openai", "auth", "status"}))
-	require.False(t, skipAuthFirstRunSetup(&cli.Command{}, []string{"openai", "auth", "status"}))
+	require.False(t, skipContextFirstRunSetup(nil, []string{"openai", "auth", "status"}))
+	require.False(t, skipContextFirstRunSetup(&cli.Command{}, []string{"openai", "auth", "status"}))
 }

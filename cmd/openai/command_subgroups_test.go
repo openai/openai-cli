@@ -107,7 +107,7 @@ func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
 func TestMainCommandSubgroupsLegacyPrefixCompletion(t *testing.T) {
 	summaries := map[string]string{
 		"audio":                         "Transcribe audio, generate speech, and create voices.",
-		"auth":                          "Inspect authentication configuration locally",
+		"auth":                          "Inspect authentication configuration and identity",
 		"audio:transcriptions":          "Convert audio to text.",
 		"audio:translations":            "Translate supported audio to English text.",
 		"admin:organization:audit-logs": "List organization actions and configuration changes.",
