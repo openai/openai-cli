@@ -25,6 +25,9 @@ type profileSelectorFlag struct {
 
 func (f *profileSelectorFlag) PreParse() error {
 	f.ctx, f.resolved, f.err = nil, nil, nil
+	// urfave retains presence and duplicate counters across PreParse calls.
+	// This selector has no environment sources or caller-owned destination.
+	f.StringFlag = &cli.StringFlag{Name: f.Name, Usage: f.Usage}
 	return f.StringFlag.PreParse()
 }
 

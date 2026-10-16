@@ -109,3 +109,45 @@ func TestProfileContextEnvironmentSnapshot(t *testing.T) {
 		require.Equal(t, 1, count, name)
 	}
 }
+
+func TestProfileContextSelectorCommandReuse(t *testing.T) {
+	for _, useEnvironment := range []bool{false, true} {
+		name := "saved default"
+		if useEnvironment {
+			name = "environment"
+		}
+		t.Run(name, func(t *testing.T) {
+			projectLinkTestEnvironment(t)
+			authStatusTestEnvironment(t, nil)
+			if useEnvironment {
+				t.Setenv("OPENAI_PROFILE", "default")
+			}
+			path, err := profileStorePath()
+			require.NoError(t, err)
+			work, fallback, selected := "proj_work", "proj_default", "default"
+			_, err = updateProfiles(t.Context(), path, func(registry *profileRegistry) error {
+				registry.Profiles["work"] = profileValues{Project: &work}
+				registry.Profiles["default"] = profileValues{Project: &fallback}
+				registry.DefaultProfile = &selected
+				return nil
+			})
+			require.NoError(t, err)
+			root := profileContextTestRoot(t)
+			var got []string
+			root.Command("auth").Command("status").Action = func(_ context.Context, _ *cli.Command) error {
+				report, err := resolveAuthStatus(root, os.LookupEnv)
+				got = append(got, report.Project.Value)
+				return err
+			}
+			for _, args := range [][]string{
+				{"openai", "--profile=work", "auth", "status"},
+				{"openai", "auth", "status"},
+				{"openai", "--profile=", "auth", "status"},
+				{"openai", "auth", "status"},
+			} {
+				require.NoError(t, root.Run(t.Context(), args))
+			}
+			require.Equal(t, []string{work, fallback, "", fallback}, got)
+		})
+	}
+}

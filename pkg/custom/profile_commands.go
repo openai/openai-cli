@@ -14,6 +14,29 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+// These command-local flags have no sources, destinations, or nonzero defaults.
+// Fresh declarations clear urfave's retained presence and duplicate counters.
+type profileStringFlag struct{ cli.StringFlag }
+
+func (f *profileStringFlag) PreParse() error {
+	f.StringFlag = cli.StringFlag{Name: f.Name, Usage: f.Usage, OnlyOnce: true}
+	return f.StringFlag.PreParse()
+}
+
+type profileUnsetFlag struct{ cli.StringSliceFlag }
+
+func (f *profileUnsetFlag) PreParse() error {
+	f.StringSliceFlag = cli.StringSliceFlag{Name: f.Name, Usage: f.Usage}
+	return f.StringSliceFlag.PreParse()
+}
+
+type profileDeactivateFlag struct{ cli.BoolFlag }
+
+func (f *profileDeactivateFlag) PreParse() error {
+	f.BoolFlag = cli.BoolFlag{Name: f.Name, Usage: f.Usage, OnlyOnce: true}
+	return f.BoolFlag.PreParse()
+}
+
 func registerProfileCommands(root *cli.Command) {
 	if root.Command("profile") != nil {
 		return
@@ -41,13 +64,13 @@ func registerProfileCommands(root *cli.Command) {
 		"An empty value remains present; --unset removes presence. Supports --format auto, text, json, or jsonl."
 	set.DisableSliceFlagSeparator = true
 	set.Flags = []cli.Flag{
-		&cli.StringFlag{Name: "organization", Usage: "Save organization `VALUE`; an empty value suppresses lower defaults", OnlyOnce: true},
-		&cli.StringFlag{Name: "project", Usage: "Save project `VALUE`; an empty value suppresses lower defaults", OnlyOnce: true},
-		&cli.StringFlag{Name: "base-url", Usage: "Save endpoint `URL` without user information, query, or fragment; empty selects production", OnlyOnce: true},
-		&cli.StringSliceFlag{Name: "unset", Usage: "Remove saved `FIELD`: organization, project, or base_url; repeat for multiple fields"},
+		&profileStringFlag{cli.StringFlag{Name: "organization", Usage: "Save organization `VALUE`; an empty value suppresses lower defaults", OnlyOnce: true}},
+		&profileStringFlag{cli.StringFlag{Name: "project", Usage: "Save project `VALUE`; an empty value suppresses lower defaults", OnlyOnce: true}},
+		&profileStringFlag{cli.StringFlag{Name: "base-url", Usage: "Save endpoint `URL` without user information, query, or fragment; empty selects production", OnlyOnce: true}},
+		&profileUnsetFlag{cli.StringSliceFlag{Name: "unset", Usage: "Remove saved `FIELD`: organization, project, or base_url; repeat for multiple fields"}},
 	}
 	profile.Command("delete").Flags = []cli.Flag{
-		&cli.BoolFlag{Name: "deactivate", Usage: "Clear the saved default when deleting its active profile", OnlyOnce: true},
+		&profileDeactivateFlag{cli.BoolFlag{Name: "deactivate", Usage: "Clear the saved default when deleting its active profile", OnlyOnce: true}},
 	}
 	root.Commands = append(root.Commands, profile)
 	if auth := root.Command("auth"); auth != nil && auth.Command("switch") == nil {
@@ -57,7 +80,7 @@ func registerProfileCommands(root *cli.Command) {
 			"This does not activate the profile, contact the API, or change credentials or permissions. " +
 			"Supports --format auto, text, json, or jsonl."
 		command.Flags = []cli.Flag{
-			&cli.StringFlag{Name: "to-project", Usage: "Save nonempty project `VALUE` in the selected profile", OnlyOnce: true},
+			&profileStringFlag{cli.StringFlag{Name: "to-project", Usage: "Save nonempty project `VALUE` in the selected profile", OnlyOnce: true}},
 		}
 		command.Action = handleProfileCommand
 		auth.Commands = append(auth.Commands, command)
@@ -232,7 +255,7 @@ func handleProfileCommand(ctx context.Context, command *cli.Command) error {
 func explicitProfileEdits(command *cli.Command) (map[string]*string, error) {
 	edits := make(map[string]*string)
 	for _, declared := range command.Flags {
-		flag, ok := declared.(*cli.StringFlag)
+		flag, ok := declared.(*profileStringFlag)
 		if !ok || !flag.IsSet() {
 			continue
 		}

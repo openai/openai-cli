@@ -112,6 +112,81 @@ func TestProfileSetOnlyPersistsLocalExplicitEdits(t *testing.T) {
 	require.Equal(t, profileValues{}, registry.Profiles["work"])
 }
 
+func TestProfileCommandReusePreservesExplicitEdits(t *testing.T) {
+	path := profileCommandTestEnvironment(t)
+	root := profileCommandTestRoot(io.Discard)
+	run := func(args ...string) {
+		t.Helper()
+		require.NoError(t, root.Run(t.Context(), append([]string{"openai"}, args...)))
+	}
+	check := func(organization, project, baseURL *string) {
+		t.Helper()
+		registry, err := loadProfiles(t.Context(), path)
+		require.NoError(t, err)
+		require.Equal(t, profileValues{Organization: organization, Project: project, BaseURL: baseURL}, registry.Profiles["work"])
+	}
+	run("profile", "create", "work")
+	run("profile", "set", "work", "--project=proj_first")
+	run("profile", "set", "work", "--organization=org_demo")
+	check(profileCommandString("org_demo"), profileCommandString("proj_first"), nil)
+	run("profile", "set", "work", "--project=proj_second", "--base-url=https://example.invalid/v1")
+	check(profileCommandString("org_demo"), profileCommandString("proj_second"), profileCommandString("https://example.invalid/v1"))
+	run("profile", "set", "work", "--unset=project", "--unset=organization")
+	check(nil, nil, profileCommandString("https://example.invalid/v1"))
+	run("profile", "set", "work", "--project=", "--organization=org_again")
+	check(profileCommandString("org_again"), profileCommandString(""), profileCommandString("https://example.invalid/v1"))
+	run("profile", "set", "work", "--unset=base_url")
+	check(profileCommandString("org_again"), profileCommandString(""), nil)
+	run("profile", "set", "work", "--base-url=")
+	check(profileCommandString("org_again"), profileCommandString(""), profileCommandString(""))
+	require.ErrorContains(t, root.Run(t.Context(), []string{"openai", "profile", "set", "work"}), "No saved edits")
+	check(profileCommandString("org_again"), profileCommandString(""), profileCommandString(""))
+	for _, duplicate := range [][]string{
+		{"--project=proj_one", "--project=proj_two"},
+		{"--organization=org_one", "--organization=org_two"},
+		{"--base-url=", "--base-url=https://example.invalid/v1"},
+	} {
+		args := append([]string{"openai", "profile", "set", "work"}, duplicate...)
+		require.Error(t, root.Run(t.Context(), args))
+		check(profileCommandString("org_again"), profileCommandString(""), profileCommandString(""))
+	}
+	run("profile", "set", "work", "--project=proj_after_failure")
+	check(profileCommandString("org_again"), profileCommandString("proj_after_failure"), profileCommandString(""))
+}
+
+func TestProfileCommandReuseResetsSwitchAndDeactivation(t *testing.T) {
+	path := profileCommandTestEnvironment(t)
+	root := profileCommandTestRoot(io.Discard)
+	run := func(args ...string) {
+		t.Helper()
+		require.NoError(t, root.Run(t.Context(), append([]string{"openai"}, args...)))
+	}
+	run("profile", "create", "work")
+	run("profile", "activate", "work")
+	run("auth", "switch", "--to-project=proj_first")
+	run("auth", "switch", "--to-project=proj_second")
+	require.Error(t, root.Run(t.Context(), []string{"openai", "auth", "switch"}))
+	require.Error(t, root.Run(t.Context(), []string{"openai", "auth", "switch", "--to-project=proj_three", "--to-project=proj_four"}))
+	registry, err := loadProfiles(t.Context(), path)
+	require.NoError(t, err)
+	require.Equal(t, "proj_second", *registry.Profiles["work"].Project)
+	run("auth", "switch", "--to-project=proj_after_failure")
+	run("profile", "delete", "work", "--deactivate")
+	for range 2 {
+		run("profile", "create", "work")
+		run("profile", "activate", "work")
+		for _, flags := range [][]string{nil, {"--deactivate=false"}, {"--deactivate", "--deactivate"}} {
+			args := append([]string{"openai", "profile", "delete", "work"}, flags...)
+			require.Error(t, root.Run(t.Context(), args))
+			registry, err = loadProfiles(t.Context(), path)
+			require.NoError(t, err)
+			require.Equal(t, "work", *registry.DefaultProfile)
+			require.Contains(t, registry.Profiles, "work")
+		}
+		run("profile", "delete", "work", "--deactivate")
+	}
+}
+
 func TestProfileCommandsRejectBeforeMutation(t *testing.T) {
 	path := profileCommandTestEnvironment(t)
 	for _, args := range [][]string{
