@@ -75,8 +75,9 @@ available.
 
 Handwritten behavior belongs in `pkg/custom/`, `internal/output/transform/`, and focused
 `internal/` helpers. Keep `cmd/openai/` focused on startup and wiring. Generated
-code calls handwritten request/output helpers through a generated runtime bridge. Application assembly registers handwritten features; keep their
-implementations and tests outside `generated/`.
+code calls handwritten request/output helpers through a generated runtime bridge.
+Application assembly registers handwritten features; keep their implementations
+and tests outside `generated/`.
 Reuse an existing package unless a new one has a distinct responsibility.
 Preserve existing command flags, output,
 request semantics, supported platforms, generated boundaries, and the separate

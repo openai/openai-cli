@@ -1,12 +1,12 @@
 package cli_test
 
 import (
-	"github.com/openai/openai-cli/generated/commands"
-	"github.com/openai/openai-cli/pkg/custom"
 	"os"
 	"testing"
 
+	"github.com/openai/openai-cli/generated/commands"
 	"github.com/openai/openai-cli/internal/mocktest"
+	"github.com/openai/openai-cli/pkg/custom"
 )
 
 func TestMain(m *testing.M) {

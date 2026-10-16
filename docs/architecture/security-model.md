@@ -17,9 +17,10 @@ tree, validates an environment-selected base URL, and formats API errors
 ([internal/app/run.go](../../internal/app/run.go),
 [generated/commands/cmd.go:26-45](../../generated/commands/cmd.go#L26-L45)).
 
-Most endpoint commands under `generated/commands/` are generated from the checked-in
-OpenAPI snapshot; shared request plumbing and selected files such as
-`flagoptions.go` and `mtls.go` are handwritten. That split matters for
+Endpoint commands and request tests under `generated/commands/` are generated
+from the checked-in OpenAPI snapshot. Shared request plumbing remains
+handwritten in `pkg/custom/`, including `flagoptions.go` and `mtls.go`.
+That split matters for
 maintenance, but both generated and handwritten tracked source are repository
 code once reviewed and executed
 ([CONTRIBUTING.md:51-64](../../CONTRIBUTING.md#L51-L64),
