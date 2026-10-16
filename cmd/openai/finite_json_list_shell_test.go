@@ -104,7 +104,7 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 				}
 				script, status := finiteJSONListShellScript(t, shell, directory, transport("produce", fixture), consumer, output)
 				got := runNativeShell(t, shell, directory, t.TempDir(), "http://127.0.0.1:1", script)
-				assertFiniteJSONListShellStatus(t, status, 0)
+				assertFiniteJSONListShellStatus(t, status, 0, got, fmt.Sprintf("native producer control pipeline=%t", pipeline))
 				if got.code != 0 || got.stdout != "" || got.stderr != "" {
 					t.Fatalf("native producer control failed: pipeline=%t result=%+v", pipeline, got)
 				}
@@ -189,7 +189,7 @@ func TestMainNativeShellFiniteJSONList(t *testing.T) {
 					if test.empty {
 						wantRequests = 1
 					}
-					assertFiniteJSONListShellStatus(t, status, wantCode)
+					assertFiniteJSONListShellStatus(t, status, wantCode, got, "CLI producer")
 					if got.code != wantCode || got.stdout != "" || requests.Load() != wantRequests {
 						t.Fatalf("shell result changed: result=%+v requests=%d", got, requests.Load())
 					}
@@ -292,15 +292,15 @@ func finiteJSONListShellScript(t *testing.T, shell nativeShell, directory, produ
 	return body + finish, status
 }
 
-func assertFiniteJSONListShellStatus(t *testing.T, path string, want int) {
+func assertFiniteJSONListShellStatus(t *testing.T, path string, want int, result mainDispatchResult, phase string) {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%s: read producer status: %v; shell code=%d stdout=%q stderr=%q", phase, err, result.code, result.stdout, result.stderr)
 	}
 	code, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil || code != want {
-		t.Fatalf("CLI producer exit=%q; want %d; error=%v", data, want, err)
+		t.Fatalf("%s: producer exit=%q; want %d; error=%v; shell code=%d stdout=%q stderr=%q", phase, data, want, err, result.code, result.stdout, result.stderr)
 	}
 }
 
