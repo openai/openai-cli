@@ -8,6 +8,9 @@ contracts live in `tests/cli/`.
 The tokenizer Unicode tables live in `generated/tokenizer/`; their producer is
 `scripts/generate-tokenizer-unicode.go`, while runtime code remains in
 `internal/tokenizer/`.
+The browser launcher and its platform/environment isolation tests now live in
+`internal/terminal/`; the Codex command retains destination selection, output
+ordering, and the launch deadline.
 
 ## Product and compatibility contract
 

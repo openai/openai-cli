@@ -17,7 +17,7 @@ func TestLiveSessionsAccept(t *testing.T) {
 			"--admin-api-key", "string",
 			"live:sessions", "accept",
 			"--session-id", "session_id",
-			"--session", "{model: gpt-live-1, type: live, audio: {output: {voice: alloy}}, delegation: {type: client}, input: [{content: [{text: text, type: input_text}], role: developer, id: id, status: incomplete, type: message}], instructions: instructions, store: true}",
+			"--session", "{model: gpt-live-1, type: live, audio: {output: {voice: alloy}}, delegation: {type: client}, input: [{content: [{text: text, type: input_text}], role: developer, id: id, status: incomplete, type: message}], instructions: instructions, store: true, triggers: [{decisions: {questions: [{instructions: instructions, type: predicate, name: name}]}, event_type: session.input_transcript.delta, type: decisions}]}",
 		)
 	})
 
@@ -39,6 +39,7 @@ func TestLiveSessionsAccept(t *testing.T) {
 			"--session.input", "[{content: [{text: text, type: input_text}], role: developer, id: id, status: incomplete, type: message}]",
 			"--session.instructions", "instructions",
 			"--session.store=true",
+			"--session.triggers", "[{decisions: {questions: [{instructions: instructions, type: predicate, name: name}]}, event_type: session.input_transcript.delta, type: decisions}]",
 		)
 	})
 
@@ -62,7 +63,15 @@ func TestLiveSessionsAccept(t *testing.T) {
 			"      status: incomplete\n" +
 			"      type: message\n" +
 			"  instructions: instructions\n" +
-			"  store: true\n")
+			"  store: true\n" +
+			"  triggers:\n" +
+			"    - decisions:\n" +
+			"        questions:\n" +
+			"          - instructions: instructions\n" +
+			"            type: predicate\n" +
+			"            name: name\n" +
+			"      event_type: session.input_transcript.delta\n" +
+			"      type: decisions\n")
 		mocktest.TestRunMockTestWithPipeAndFlags(
 			t, pipeData,
 			"--api-key", "string",
