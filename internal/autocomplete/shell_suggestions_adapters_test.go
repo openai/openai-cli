@@ -99,7 +99,13 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 	hook := filepath.Join(directory, "suggestions"+extension)
 	require.NoError(t, os.WriteFile(hook, []byte(script), 0600))
 	probe := filepath.Join(directory, "probe"+extension)
-	require.NoError(t, os.WriteFile(probe, []byte(setup+"\n"+body), 0600))
+	probeScript := setup + "\n" + body
+	if shell == "pwsh" {
+		// PowerShell adds known-folder module paths before script startup.
+		// Reset them before setup while preserving native module autoload.
+		probeScript = "$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')\n" + probeScript
+	}
+	require.NoError(t, os.WriteFile(probe, []byte(probeScript), 0600))
 	fishBinary := binary
 	if useFishPTY {
 		binary, err = exec.LookPath("expect")
@@ -140,6 +146,9 @@ func runSuggestionAdapter(t *testing.T, shell, setup, body, input string, values
 		command.Env = append(command.Env, "SystemRoot="+os.Getenv("SystemRoot"), "PATHEXT="+os.Getenv("PATHEXT"))
 	}
 	command.Env = append(command.Env, values...)
+	if shell == "pwsh" {
+		command.Env = append(command.Env, "PSModuleAnalysisCachePath="+filepath.Join(directory, "ModuleAnalysisCache"))
+	}
 	if useFishPTY {
 		command.Env = append(command.Env,
 			"SUGGEST_FISH_BINARY="+fishBinary,
@@ -1180,6 +1189,85 @@ try { opneai images generate 'FAKE_PRIVATE_MARKER' } catch {
 	require.Contains(t, out, "MISSING:CommandNotFoundException\nLAST:73\n")
 	require.Contains(t, out, "STDIN:untouched\n")
 	require.Equal(t, suggestionAdvice, errOut)
+}
+
+func TestShellSuggestionsPowerShellModuleIsolation(t *testing.T) {
+	modules := t.TempDir()
+	module := filepath.Join(modules, "SyntheticSuggestionModule")
+	require.NoError(t, os.Mkdir(module, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(module, "SyntheticSuggestionModule.psd1"), []byte(`@{
+    RootModule = 'SyntheticSuggestionModule.psm1'
+    ModuleVersion = '1.0.0'
+    FunctionsToExport = @('Get-opneai')
+    CmdletsToExport = @()
+    VariablesToExport = @()
+    AliasesToExport = @()
+}
+`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(module, "SyntheticSuggestionModule.psm1"), []byte(`
+[IO.File]::WriteAllText($env:SUGGEST_MODULE_IMPORT_LOG, 'imported')
+function Get-opneai { [Console]::Out.WriteLine('AUTOLOAD:' + $args.Count) }
+`), 0600))
+	for _, tc := range []struct {
+		name    string
+		include bool
+	}{
+		{"isolated", false},
+		{"included", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setup := `
+$ErrorActionPreference = 'Stop'
+$global:LASTEXITCODE = 73
+$global:PriorNames = [System.Collections.Generic.List[string]]::new()
+$ExecutionContext.InvokeCommand.CommandNotFoundAction = {
+    param($sender, $eventArgs)
+    $global:PriorNames.Add($eventArgs.CommandName)
+}
+`
+			if tc.include {
+				// Only this positive control opts its owned module into native discovery.
+				setup += "$env:PSModulePath = $env:SUGGEST_TEST_MODULES + [IO.Path]::PathSeparator + $env:PSModulePath\n"
+			}
+			probe := `
+try { opneai 'FAKE_PRIVATE_MARKER' '' 'space value' } catch {
+    [Console]::Out.WriteLine('MISSING:' + $_.FullyQualifiedErrorId)
+}
+[Console]::Out.WriteLine('LAST:' + $global:LASTEXITCODE)
+[Console]::Out.WriteLine('PRIOR:' + [string]::Join(',', $global:PriorNames))
+[Console]::Out.WriteLine('STDIN:' + [Console]::ReadLine())
+`
+			run := func(hook string) (string, string) {
+				marker := filepath.Join(t.TempDir(), "module-imported")
+				out, errOut := runSuggestionAdapter(t, "pwsh", setup, hook+probe, "untouched\n",
+					"PSModulePath="+modules, "SUGGEST_TEST_MODULES="+modules, "SUGGEST_MODULE_IMPORT_LOG="+marker)
+				if tc.include {
+					imported, err := os.ReadFile(marker)
+					require.NoError(t, err, "public lookup must import the synthetic module")
+					require.Equal(t, "imported", string(imported))
+					require.Equal(t, "AUTOLOAD:3\nLAST:73\nPRIOR:\nSTDIN:untouched\n", out)
+					require.Empty(t, errOut)
+				} else {
+					_, err := os.Stat(marker)
+					require.ErrorIs(t, err, os.ErrNotExist, "isolated lookup imported the ambient module")
+					require.Contains(t, out, "MISSING:CommandNotFoundException\nLAST:73\n")
+					require.Contains(t, out, "STDIN:untouched\n")
+					require.NotContains(t, out, "AUTOLOAD:")
+					require.NotContains(t, out+errOut, "FAKE_PRIVATE_MARKER")
+				}
+				return out, errOut
+			}
+			baselineOut, baselineErr := run("")
+			out, errOut := run(". $env:SUGGEST_HOOK\n. $env:SUGGEST_HOOK\n")
+			require.Equal(t, baselineOut, out)
+			require.Empty(t, baselineErr)
+			if tc.include {
+				require.Empty(t, errOut)
+			} else {
+				require.Equal(t, suggestionAdvice, errOut)
+			}
+		})
+	}
 }
 
 func TestShellSuggestionsPowerShellMatchesAndWindowsExtension(t *testing.T) {

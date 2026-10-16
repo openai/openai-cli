@@ -594,7 +594,7 @@ jobs:
           powershell = {
               "TestShellSuggestionsPowerShell" + suffix
               for suffix in [
-                  "PublicLookupAndPrivacy", "MatchesAndWindowsExtension",
+                  "PublicLookupAndPrivacy", "ModuleIsolation", "MatchesAndWindowsExtension",
                   "WindowsMatchingIgnoresCurrentCulture", "UppercaseBinding",
                   "CanonicalCaseUsesExistingCommand", "PreservesResolutionAndDisable",
                   "PreservesPriorExceptions", "PriorResolutionWinsNearMiss",
@@ -620,6 +620,9 @@ jobs:
                   "TestShellSuggestionsPowerShell" + suffix,
                   [json.dumps(name, ensure_ascii=False).replace("\\u001b", "\\x1b") for name in names],
               ))
+          powershell.update(cases(
+              "TestShellSuggestionsPowerShellModuleIsolation", ["isolated", "included"],
+          ))
           adapters = set().union(*(
               cases("TestShellSuggestionsAdapters" + suffix, ["pwsh"])
               for suffix in [
@@ -629,7 +632,7 @@ jobs:
           ))
 
           public = cases("TestMainShellSuggestionsNative", ["pwsh"])
-          require((len(powershell), len(adapters), len(public)) == (45, 8, 2), "Suggestion inventory differs")
+          require((len(powershell), len(adapters), len(public)) == (48, 8, 2), "Suggestion inventory differs")
           suites = {
               "unix-powershell-suggestion-tests.jsonl": ("internal/autocomplete", powershell),
               "unix-powershell-adapter-tests.jsonl": ("internal/autocomplete", adapters),
@@ -921,7 +924,7 @@ jobs:
           powershell = {
               "TestShellSuggestionsPowerShell" + suffix
               for suffix in [
-                  "PublicLookupAndPrivacy", "MatchesAndWindowsExtension",
+                  "PublicLookupAndPrivacy", "ModuleIsolation", "MatchesAndWindowsExtension",
                   "WindowsMatchingIgnoresCurrentCulture", "UppercaseBinding",
                   "CanonicalCaseUsesExistingCommand", "PreservesResolutionAndDisable",
                   "PreservesPriorExceptions", "PriorResolutionWinsNearMiss",
@@ -947,6 +950,9 @@ jobs:
                   "TestShellSuggestionsPowerShell" + suffix,
                   [json.dumps(name, ensure_ascii=False).replace("\\u001b", "\\x1b") for name in names],
               ))
+          powershell.update(cases(
+              "TestShellSuggestionsPowerShellModuleIsolation", ["isolated", "included"],
+          ))
           adapters = set().union(*(
               cases("TestShellSuggestionsAdapters" + suffix, ["pwsh"])
               for suffix in [
@@ -966,7 +972,7 @@ jobs:
                   for flag in ["--install-picker", "--uninstall-picker", "--automatic"]
               ])
           )
-          require((len(powershell), len(adapters), len(public)) == (45, 8, 23),
+          require((len(powershell), len(adapters), len(public)) == (48, 8, 23),
                   "Suggestion inventory contains missing or duplicate names")
           suites = {
               "powershell-suggestion-tests.jsonl": ("internal/autocomplete", powershell),
