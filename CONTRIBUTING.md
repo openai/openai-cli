@@ -40,14 +40,25 @@ tests; they are not required to build the CLI.
 
 ## Project structure
 
+The CLI is an executable product; its Go packages are not a supported library API.
+See the [repository layout migration](docs/architecture/repository-layout.md) for
+the target structure, package boundaries, and CLI compatibility checks. The list
+below describes the current layout as the migration proceeds.
+
 - `cmd/openai/` contains startup, minimal wiring, and executable tests.
+- `generated/tokenizer/` contains Unicode tables emitted by
+  `scripts/generate-tokenizer-unicode.go`; the handwritten tokenizer stays in
+  `internal/tokenizer/`.
 - `pkg/cmd/` contains generated API commands and their integration tests.
 - `pkg/custom/` contains handwritten CLI commands, defaults, output-format
   policy, error handling, and presentation orchestration.
-- `pkg/transformers/` selects or reshapes API responses before presentation.
+- `internal/output/transform/` selects or reshapes API responses before presentation.
 - `internal/` contains shared helpers for flags, request encoding, terminal
   output, and testing. For example, `internal/readable` renders labeled text
   and escapes terminal controls for results and errors.
+- `internal/app/` owns invocation, request-environment scope, completion setup,
+  output policy, and exit-status selection. Command assembly still uses the
+  existing generated tree during the layout migration.
 - `api_reference/openapi.transformed.yml` contains the OpenAPI specification
   used by the mock server.
 - `scripts/` contains the local development, build, and test commands.
@@ -61,7 +72,7 @@ generation inputs. Establish ownership before editing generated files and fix
 recurring generated problems in the authoritative schema or generator when
 available.
 
-Handwritten behavior belongs in `pkg/custom/`, `pkg/transformers/`, and focused
+Handwritten behavior belongs in `pkg/custom/`, `internal/output/transform/`, and focused
 `internal/` helpers. Keep `cmd/openai/` focused on startup and wiring. A small
 compatibility bridge remains in `pkg/cmd/`; do not add feature logic there.
 Reuse an existing package unless a new one has a distinct responsibility.
