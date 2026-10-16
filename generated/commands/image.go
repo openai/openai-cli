@@ -135,6 +135,11 @@ var imagesEdit = cli.Command{
 			BodyPath: "response_format",
 		},
 		&requestflag.Flag[*string]{
+			Name:     "safety-identifier",
+			Usage:    "A stable identifier for an end user in your organization, used for safety monitoring and abuse detection. Hash a username or email address to avoid sending identifying information. A non-empty value takes precedence over the deprecated `user` parameter. If omitted, null, or empty, the API uses `user` when available. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).",
+			BodyPath: "safety_identifier",
+		},
+		&requestflag.Flag[*string]{
 			Name:     "size",
 			Usage:    "The size of the generated images. Defaults to `auto`. For `gpt-image-2`, `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`, `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`, and `gpt-image-2.5-flare-2026-09-08`, arbitrary resolutions are supported as `WIDTHxHEIGHT` strings, for example `1536x864`. Width and height must both be divisible by 16 and the requested aspect ratio must be between 1:3 and 3:1. Resolutions above `2560x1440` are experimental, and the maximum supported resolution is `3840x2160`. The requested size must also satisfy the model's current pixel and edge limits. The standard sizes `1024x1024`, `1536x1024`, and `1024x1536` are supported by the GPT image models; `auto` is supported for models that allow automatic sizing.",
 			BodyPath: "size",
@@ -147,7 +152,7 @@ var imagesEdit = cli.Command{
 		},
 		&requestflag.Flag[string]{
 			Name:     "user",
-			Usage:    "A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).\n",
+			Usage:    "Deprecated: use `safety_identifier` instead. This parameter remains accepted for backward compatibility and is used when `safety_identifier` is omitted, null, or empty. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).",
 			BodyPath: "user",
 		},
 		&requestflag.Flag[int64]{
@@ -223,6 +228,11 @@ var imagesGenerate = cli.Command{
 			BodyPath: "response_format",
 		},
 		&requestflag.Flag[*string]{
+			Name:     "safety-identifier",
+			Usage:    "A stable identifier for an end user in your organization, used for safety monitoring and abuse detection. Hash a username or email address to avoid sending identifying information. A non-empty value takes precedence over the deprecated `user` parameter. If omitted, null, or empty, the API uses `user` when available. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).",
+			BodyPath: "safety_identifier",
+		},
+		&requestflag.Flag[*string]{
 			Name:     "size",
 			Usage:    "The size of the generated images. For `gpt-image-2`, `gpt-image-2-2026-04-21`, `gpt-image-2.5-sunburst`, `gpt-image-2.5-sunburst-2026-09-08`, `gpt-image-2.5-flare`, and `gpt-image-2.5-flare-2026-09-08`, arbitrary resolutions are supported as `WIDTHxHEIGHT` strings, for example `1536x864`. Width and height must both be divisible by 16 and the requested aspect ratio must be between 1:3 and 3:1. Resolutions above `2560x1440` are experimental, and the maximum supported resolution is `3840x2160`. The requested size must also satisfy the model's current pixel and edge limits. The standard sizes `1024x1024`, `1536x1024`, and `1024x1536` are supported by the GPT image models; `auto` is supported for models that allow automatic sizing.",
 			BodyPath: "size",
@@ -240,7 +250,7 @@ var imagesGenerate = cli.Command{
 		},
 		&requestflag.Flag[string]{
 			Name:     "user",
-			Usage:    "A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).\n",
+			Usage:    "Deprecated: use `safety_identifier` instead. This parameter remains accepted for backward compatibility and is used when `safety_identifier` is omitted, null, or empty. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).",
 			BodyPath: "user",
 		},
 		&requestflag.Flag[int64]{
