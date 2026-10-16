@@ -236,6 +236,10 @@ func updateProjectLink(ctx context.Context, path, directory, project string) (ma
 		return nil, err
 	}
 	defer root.Close()
+	directoryInfo, err := root.Stat(".")
+	if err != nil {
+		return nil, err
+	}
 	lock, err := lockProjectLinks(ctx, root, name)
 	if err != nil {
 		return nil, err
@@ -282,6 +286,13 @@ func updateProjectLink(ctx context.Context, path, directory, project string) (ma
 	}
 	closeErr := file.Close()
 	if err := errors.Join(writeErr, closeErr, ctx.Err()); err != nil {
+		return nil, err
+	}
+	currentDirectory, err := os.Lstat(filepath.Dir(path))
+	if err != nil || !os.SameFile(directoryInfo, currentDirectory) || !privateProjectLinkPermissions(currentDirectory) {
+		return nil, errProjectLinkDirectoryChanged
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	// Rename replaces the directory entry, never a substituted symlink's target.

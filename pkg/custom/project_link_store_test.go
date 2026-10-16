@@ -354,6 +354,87 @@ func TestProjectLinkStoreWaitingWriterValidatesCurrentState(t *testing.T) {
 	}
 }
 
+func TestProjectLinkStoreWaitingWriterRejectsReplacedDirectory(t *testing.T) {
+	for _, action := range []string{"link", "unlink"} {
+		t.Run(action, func(t *testing.T) {
+			path := projectLinkTestPath(t)
+			directory := t.TempDir()
+			before, err := json.Marshal(map[string]string{directory: "proj_before"})
+			require.NoError(t, err)
+			before = append(before, ' ', '\n')
+			current, err := json.Marshal(map[string]string{directory: "proj_current"})
+			require.NoError(t, err)
+			current = append(current, '\n')
+			writeProjectLinkTestFile(t, path, string(before))
+			root, name, err := openProjectLinkDirectory(path, false)
+			require.NoError(t, err)
+			defer root.Close()
+			first, err := lockProjectLinks(t.Context(), root, name)
+			require.NoError(t, err)
+			defer first.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			observed := &observedProjectLinkWait{Context: ctx, waiting: make(chan struct{})}
+			result := make(chan error, 1)
+			finished := make(chan struct{})
+			project := "proj_new"
+			if action == "unlink" {
+				project = ""
+			}
+			go func() {
+				defer close(finished)
+				_, err := updateProjectLink(observed, path, directory, project)
+				result <- err
+			}()
+			defer func() {
+				cancel()
+				_ = first.Close()
+				<-finished
+			}()
+			select {
+			case <-observed.waiting:
+			case err := <-result:
+				t.Fatalf("writer did not wait: %v", err)
+			case <-ctx.Done():
+				t.Fatal("writer did not reach lock wait")
+			}
+			oldDirectory := filepath.Dir(path) + "-old"
+			if err := os.Rename(filepath.Dir(path), oldDirectory); err != nil {
+				if runtime.GOOS == "windows" {
+					t.Skipf("filesystem cannot rename an open configuration directory: %v", err)
+				}
+				require.NoError(t, err)
+			}
+			writeProjectLinkTestFile(t, path, string(current))
+			require.NoError(t, first.Close())
+			select {
+			case err := <-result:
+				require.ErrorIs(t, err, errProjectLinkDirectoryChanged)
+			case <-ctx.Done():
+				t.Fatal("waiting writer did not finish")
+			}
+			for _, state := range []struct {
+				path  string
+				data  []byte
+				files []string
+			}{
+				{filepath.Join(oldDirectory, name), before, []string{name, "." + name + ".lock"}},
+				{path, current, []string{name}},
+			} {
+				data, err := os.ReadFile(state.path)
+				require.NoError(t, err)
+				require.Equal(t, state.data, data)
+				entries, err := os.ReadDir(filepath.Dir(state.path))
+				require.NoError(t, err)
+				var names []string
+				for _, entry := range entries {
+					names = append(names, entry.Name())
+				}
+				require.ElementsMatch(t, state.files, names, "only the original registry and lock may remain")
+			}
+		})
+	}
+}
+
 func TestProjectLinkStoreProcessExitReleasesLock(t *testing.T) {
 	const helperPath = "OPENAI_CLI_TEST_PROJECT_LINK_LOCK"
 	if path := os.Getenv(helperPath); path != "" {
