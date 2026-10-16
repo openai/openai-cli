@@ -259,7 +259,7 @@
     },
     "generated/commands/audiospeech.go": {
       "mode": "100644",
-      "sha256": "a54a0bcd48d819aaa41e248178c03298312086d354243dddbe7ce7ee65774a10"
+      "sha256": "7ecf60e1519a78ca7807ef17d2a177843e6dca46243ebbd6542d7e2f86c8653b"
     },
     "generated/commands/audiospeech_test.go": {
       "mode": "100644",
@@ -283,7 +283,7 @@
     },
     "generated/commands/audiovoice.go": {
       "mode": "100644",
-      "sha256": "54801696dcf32ebb4c959d161eb8ee5521e16957e7b36c03cde5397a67d86e88"
+      "sha256": "f7451d6bb157d23aa24ae54da793a95490720751a4cd234699656b9b0f87d911"
     },
     "generated/commands/audiovoice_test.go": {
       "mode": "100644",
@@ -387,7 +387,7 @@
     },
     "generated/commands/chatcompletion.go": {
       "mode": "100644",
-      "sha256": "02c279294f4842983f437f8d7b6fca03e3295c0255fbbed19ec487cc31a0968f"
+      "sha256": "d189008f82ba53f0143d21cff659a775caada2be58cc91f15e009b0215d8d745"
     },
     "generated/commands/chatcompletion_test.go": {
       "mode": "100644",
