@@ -18,6 +18,9 @@ func TestProjectLinkStoreFailurePreservesCauses(t *testing.T) {
 	}{
 		{"size", "1 MiB", errProjectLinksTooLarge},
 		{"invalid", "invalid JSON or entries", errProjectLinksInvalid},
+		{"alias conflict", "different projects", errProjectLinkAliasConflict},
+		{"alias access", "Check access to the linked folders", errors.Join(errProjectLinkAliasAccess,
+			&os.PathError{Op: "lstat", Path: "/synthetic-private/alias", Err: os.ErrPermission})},
 		{"directory", "0700", errProjectLinkDirectoryUnsafe},
 		{"file", "0600", errProjectLinkFileUnsafe},
 		{"lock", ".project-links.json.lock", errProjectLinkLockUnsafe},
@@ -33,6 +36,27 @@ func TestProjectLinkStoreFailurePreservesCauses(t *testing.T) {
 			require.Contains(t, failure.Error(), test.guidance)
 			require.Contains(t, failure.Error(), "Inspect with '/synthetic/CLI with spaces/openai' link.")
 			require.NotContains(t, failure.Error(), "synthetic-private")
+		})
+	}
+}
+
+func TestProjectLinkCommittedSelectionFailurePreservesOutcomeAndCause(t *testing.T) {
+	private := &os.PathError{Op: "lstat", Path: "/synthetic-private/alias", Err: os.ErrPermission}
+	for _, test := range []struct {
+		action, outcome string
+	}{
+		{"link", "The folder link was saved."},
+		{"unlink", "This folder has no saved link of its own."},
+	} {
+		t.Run(test.action, func(t *testing.T) {
+			cause := errors.Join(errProjectLinkAliasAccess, private)
+			failure := projectLinkCommittedSelectionFailure(test.action, cause)
+			require.ErrorIs(t, failure, private)
+			require.ErrorIs(t, failure, errProjectLinkAliasAccess)
+			message := localErrorMessage(nil, failure)
+			require.Contains(t, message, test.outcome)
+			require.NotContains(t, message, "did not change")
+			require.NotContains(t, message, "synthetic-private")
 		})
 	}
 }

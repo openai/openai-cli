@@ -76,10 +76,22 @@ Run `unlink` in the linked parent folder to remove that parent link.
 
 The CLI resolves symlinks before saving or looking up a directory.
 The real directory and its symlink therefore share one link.
-Links follow canonical paths, not folder names or filesystem object identities.
-Moving a folder does not move its link.
+Inheritance follows the resolved target's parent directories.
+The CLI also recognizes case or Unicode-normalization variants when the filesystem confirms they identify the same existing directory.
+These equivalent paths are aliases. Names that identify distinct directories keep separate links.
+
+Inspection and API lookup never rewrite registry entries.
+Existing alias entries with the same project ID remain readable.
+Conflicting project IDs for one folder prevent implicit selection, even when the current path exactly matches a saved entry.
+Explicit `link --project` combines the current folder's alias entries into one entry with the selected project ID.
+If aliases already exist, the CLI consistently retains one existing path key.
+`unlink` removes all alias entries for the current folder while preserving parent and unrelated links.
+
+Saved links use directory paths.
+Moving a folder to a different location does not move its link.
 Deleting a folder leaves its saved entry unchanged.
 Recreating the same path reuses the saved entry.
+Entries for missing folders remain stored and do not prevent unrelated links.
 Unlink before moving or deleting a folder when you do not want this behavior.
 
 The registry contains only paths and project IDs.
@@ -105,7 +117,7 @@ Native Windows replacement and locking behavior remain unverified.
 
 The local registry supports up to 1 MiB of JSON.
 This limit does not apply to API payloads.
-Malformed, duplicate, insecure, or nonregular registry files cause an error.
+Malformed JSON, duplicate JSON keys, insecure permissions, or nonregular registry files cause an error.
 The CLI preserves invalid settings instead of overwriting them.
 An explicit project flag or environment variable bypasses registry loading for API requests.
 An explicit `OpenAI-Project` custom header also bypasses registry loading.
@@ -131,3 +143,12 @@ If the registry cannot be read, check its file type, permissions, and JSON synta
 The error identifies known size, ownership, permission, or concurrent-change problems without exposing registry contents or private paths.
 Move an invalid registry aside only when you intend to discard its saved links.
 To remove a stale entry for a deleted directory, edit that entry while no CLI process writes the registry.
+
+To resolve conflicting aliases, run `openai link --project proj_work` in the affected folder to choose its saved project.
+Run `openai unlink` there to remove its saved aliases.
+For inherited conflicts, change to the linked parent folder first.
+Alternatively, repair the conflicting entries in `project-links.json` while no CLI process writes that registry.
+
+Removing a child link can expose conflicting parent entries.
+The error then reports completed removal and unresolved inherited project selection.
+The CLI keeps the removal and does not restore the child's old link.

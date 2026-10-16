@@ -124,19 +124,6 @@ func validLinkedProject(project string) bool {
 	return true
 }
 
-func nearestProjectLink(links map[string]string, directory string) (string, string) {
-	for {
-		if project, ok := links[directory]; ok {
-			return directory, project
-		}
-		parent := filepath.Dir(directory)
-		if parent == directory {
-			return "", ""
-		}
-		directory = parent
-	}
-}
-
 // No environment mutation: clients retain API keys and their actual access.
 // Root ownership prevents endpoint body fields named project from changing this.
 func projectLinkRequestOptions(command *cli.Command) []option.RequestOption {
@@ -176,13 +163,16 @@ func projectLinkRequestOptions(command *cli.Command) []option.RequestOption {
 	if err == nil {
 		directory, err = projectLinkDirectory()
 	}
+	var project string
+	if err == nil {
+		_, project, err = nearestProjectLink(ctx, links, directory)
+	}
 	if err != nil {
 		failure := projectLinkStoreFailure(root, "resolve", err)
 		return []option.RequestOption{option.WithMaxRetries(0), option.WithMiddleware(func(*http.Request, option.MiddlewareNext) (*http.Response, error) {
 			return nil, failure
 		})}
 	}
-	_, project := nearestProjectLink(links, directory)
 	if project == "" {
 		return nil
 	}
@@ -240,7 +230,13 @@ func handleProjectLink(ctx context.Context, command *cli.Command) error {
 	if err != nil {
 		return projectLinkStoreFailure(root, status.Action, err)
 	}
-	status.LinkedDirectory, status.Project = nearestProjectLink(links, directory)
+	status.LinkedDirectory, status.Project, err = nearestProjectLink(ctx, links, directory)
+	if err != nil {
+		if status.Action == "inspect" {
+			return projectLinkStoreFailure(root, status.Action, err)
+		}
+		return projectLinkCommittedSelectionFailure(status.Action, err)
+	}
 	status.Inherited = status.LinkedDirectory != "" && status.LinkedDirectory != directory
 	// The --project on link saves a future default; this invocation has no API
 	// request. Show the environment override that future commands retain.

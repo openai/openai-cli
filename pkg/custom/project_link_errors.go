@@ -17,8 +17,20 @@ func projectLinkStoreFailure(root *cli.Command, action string, cause error) erro
 	case "resolve":
 		operation = "Could not resolve folder project defaults. "
 	}
+	message := operation + projectLinkRecovery(cause) + "This command did not change saved links."
+	if action == "resolve" {
+		message += " Inspect with " + errorHelpInvocation(root) + " link."
+	}
+	return projectLinkFailure(message, cause)
+}
+
+func projectLinkRecovery(cause error) string {
 	recovery := "Check project-links.json and its lock in your user configuration folder. "
 	switch {
+	case errors.Is(cause, errProjectLinkAliasConflict):
+		recovery = "Folder links assign different projects to the same folder. Stop CLI writers, then repair the matching paths in project-links.json. "
+	case errors.Is(cause, errProjectLinkAliasAccess):
+		recovery = "Could not verify equivalent folder paths. Check access to the linked folders, then retry. "
 	case errors.Is(cause, errProjectLinksTooLarge):
 		recovery = "Folder links must fit within 1 MiB. Remove unused entries or excess whitespace from project-links.json before retrying. "
 	case errors.Is(cause, errProjectLinksInvalid):
@@ -36,11 +48,15 @@ func projectLinkStoreFailure(root *cli.Command, action string, cause error) erro
 	case errors.Is(cause, errProjectLinkInputInvalid):
 		recovery = "Use an existing folder and a project ID starting with proj_. "
 	}
-	message := operation + recovery + "This command did not change saved links."
-	if action == "resolve" {
-		message += " Inspect with " + errorHelpInvocation(root) + " link."
+	return recovery
+}
+
+func projectLinkCommittedSelectionFailure(action string, cause error) error {
+	outcome := "The folder link was saved. Its effective project could not be resolved. "
+	if action == "unlink" {
+		outcome = "This folder has no saved link of its own. Its inherited project could not be resolved. "
 	}
-	return projectLinkFailure(message, cause)
+	return projectLinkFailure(outcome+projectLinkRecovery(cause), cause)
 }
 
 func projectLinkOutputFailure(root *cli.Command, action string, cause error) error {

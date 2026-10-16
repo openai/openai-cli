@@ -245,10 +245,22 @@ func updateProjectLink(ctx context.Context, path, directory, project string) (ma
 	if err != nil {
 		return nil, err
 	}
-	if project == "" {
-		delete(links, directory)
-	} else {
-		links[directory] = project
+	aliases, err := projectLinkAliasKeys(ctx, links, directory)
+	if err != nil {
+		return nil, err
+	}
+	key := directory
+	if len(aliases) != 0 {
+		key = aliases[0]
+		if _, exact := links[directory]; exact {
+			key = directory
+		}
+	}
+	for _, alias := range aliases {
+		delete(links, alias)
+	}
+	if project != "" {
+		links[key] = project
 	}
 	data, err := json.MarshalIndent(links, "", "  ")
 	if err != nil {
