@@ -126,7 +126,7 @@ func TestNativeShellCLIFixture(t *testing.T) {
 	empty, relative, shortHash, invalidHash := "", "openai", "00", strings.Repeat("g", 64)
 	wrongHash := strings.Repeat("0", 64)
 	missing, directory := filepath.Join(t.TempDir(), "missing"), t.TempDir()
-	invalidPath := filepath.Join(t.TempDir(), "invalid\x00file")
+	invalidPath := filepath.Join(source, "child")
 	type fixtureCase struct {
 		name       string
 		path, hash *string
