@@ -40,6 +40,7 @@ func ConfigureCommand(root *cli.Command) {
 	configureFileCommands(root)
 	registerTokenizerCommands(root)
 	registerCodexCommands(root)
+	registerCostReportCommands(root)
 	configureCommandPresentation(root)
 	configureManpageCommands(root)
 	configureOutputPolicy(root)
