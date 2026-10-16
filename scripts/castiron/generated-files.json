@@ -607,11 +607,11 @@
     },
     "generated/commands/session.go": {
       "mode": "100644",
-      "sha256": "a49ac90078748755be070bfa362cd2bddcd47a3adb005d5d393bbd523bfe1208"
+      "sha256": "a5c226a9be75e4bfff4129f4a50b98bada2691056c035f7c0792dafb6a252b00"
     },
     "generated/commands/session_test.go": {
       "mode": "100644",
-      "sha256": "ae74c30f4d36022144fadac7ce8c6f4b12c12939d4864000b082312785722c40"
+      "sha256": "96f1da030a51f634779c7d2e9ce8017f6d4179b15fb5668b1f56d1cff385355b"
     },
     "generated/commands/skill.go": {
       "mode": "100644",
