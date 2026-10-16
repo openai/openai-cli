@@ -36,6 +36,8 @@ The provider accepts `https://api.openai.com/v1` and `https://api.openai.com/v1/
 Other endpoints, paths, ports, URL credentials, queries, and fragments produce `unsupported_provider` without a request.
 The command never replaces an unsupported endpoint with production.
 Certificate options require an explicit supported base URL, even when a profile selects that URL.
+Identity lookup accepts regular certificate and key files, including symlinks to regular files.
+It rejects directories and named pipes before reading.
 
 The provider returns an authenticated principal ID, plus nullable name and email fields.
 It does not identify the active key resource, distinguish humans from service accounts, or establish membership or permissions.
@@ -57,7 +59,9 @@ Invalid local credentials or TLS configuration produce `invalid_configuration` w
 Missing selected credentials produce `not_configured` without fallback.
 The command discards provider error bodies and never includes them in diagnostics, including debug output.
 
-The lookup has a 15-second deadline, follows no redirects, and performs no automatic retries.
+The lookup uses a 15-second context deadline, follows no redirects, and performs no automatic retries.
+The deadline starts before TLS setup. File reads check cancellation between chunks.
+Filesystem calls and certificate parsing can delay cancellation.
 Interrupt and termination signals stop the lookup without printing a status report.
 Their exit statuses are 130 and 143, respectively.
 The command never caches identity, saves credentials, or stores credential hashes.

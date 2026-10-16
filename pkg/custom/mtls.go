@@ -76,6 +76,11 @@ func configureMTLS(ctx context.Context, cmd *cli.Command) (context.Context, erro
 }
 
 func newMTLSHTTPClient(certFile, keyFile, baseURL string) (*http.Client, error) {
+	return newMTLSHTTPClientWithReader(certFile, keyFile, baseURL, readMTLSFile)
+}
+
+// Share TLS and transport policy while callers select their credential-file reader.
+func newMTLSHTTPClientWithReader(certFile, keyFile, baseURL string, readFile func(string, string) ([]byte, error)) (*http.Client, error) {
 	if certFile == "" && keyFile == "" {
 		return nil, nil
 	}
@@ -87,13 +92,13 @@ func newMTLSHTTPClient(certFile, keyFile, baseURL string) (*http.Client, error) 
 		return nil, errors.New("mTLS requires an explicit HTTPS base URL")
 	}
 
-	certPEM, err := readMTLSFile("certificate", certFile)
+	certPEM, err := readFile("certificate", certFile)
 	if err != nil {
 		return nil, err
 	}
 	defer clear(certPEM)
 
-	keyPEM, err := readMTLSFile("key", keyFile)
+	keyPEM, err := readFile("key", keyFile)
 	if err != nil {
 		return nil, err
 	}

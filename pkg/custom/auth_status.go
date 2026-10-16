@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/openai/openai-cli/internal/readable"
@@ -275,10 +277,12 @@ func resolveAuthStatusSnapshot(root *cli.Command, lookup func(string) (string, b
 	}
 	snapshot.apiAuthorization = authorization("api-key", "OPENAI_API_KEY")
 	snapshot.adminAuthorization = authorization("admin-api-key", "OPENAI_ADMIN_KEY")
-	for _, header := range []string{literal.Get("Authorization"), inherited.Get("Authorization")} {
+	for _, header := range []string{literal.Get("Authorization"), inherited.Get("Authorization"), snapshot.apiAuthorization, snapshot.adminAuthorization} {
 		snapshot.secrets = append(snapshot.secrets, header)
 		if _, token, ok := strings.Cut(header, " "); ok {
-			snapshot.secrets = append(snapshot.secrets, token)
+			// A Bearer separator can contain several spaces. Keep request bytes
+			// unchanged while rejecting responses that echo the credential alone.
+			snapshot.secrets = append(snapshot.secrets, token, strings.TrimSpace(token))
 		}
 	}
 	snapshot.report = authStatusReport{
@@ -330,10 +334,26 @@ func authStatusLookup(ctx context.Context, root *cli.Command, snapshot authStatu
 	if !bearer || !strings.EqualFold(scheme, "Bearer") || strings.TrimSpace(token) == "" {
 		return failure("invalid_configuration", "Identity lookup requires a Bearer credential. No request was sent.")
 	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	requestFailure := func() (authStatusIdentity, error) {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return failure("timed_out", "Identity lookup timed out. Identity remains unknown.")
+		}
+		if ctx.Err() != nil {
+			return failure("canceled", "Identity lookup canceled.")
+		}
+		return failure("request_failed", "Could not resolve identity. Check your connection and retry.")
+	}
 	cert, _ := root.Value(mtlsClientCertFileFlag).(string)
 	key, _ := root.Value(mtlsClientKeyFileFlag).(string)
-	client, err := newMTLSHTTPClient(cert, key, snapshot.explicitBaseURL)
+	client, err := newMTLSHTTPClientWithReader(cert, key, snapshot.explicitBaseURL, func(kind, path string) ([]byte, error) {
+		return authStatusReadMTLSFile(ctx, kind, path)
+	})
 	if err != nil {
+		if ctx.Err() != nil {
+			return requestFailure()
+		}
 		return failure("invalid_configuration", "Could not configure identity lookup TLS. Check the certificate, key, and explicit base URL.")
 	}
 	if client == nil {
@@ -342,10 +362,18 @@ func authStatusLookup(ctx context.Context, root *cli.Command, snapshot authStatu
 			client.Transport = transport.Clone()
 		}
 	}
+	// Each lookup owns a fresh transport. Keep it on HTTP/1 so HTTP/2 cannot
+	// retry a refused stream. Clear inherited ALPN and alternate protocol hooks.
+	if transport, ok := client.Transport.(*http.Transport); ok {
+		transport.Protocols = &http.Protocols{}
+		transport.Protocols.SetHTTP1(true)
+		transport.TLSNextProto = nil
+		if transport.TLSClientConfig != nil {
+			transport.TLSClientConfig.NextProtos = []string{"http/1.1"}
+		}
+	}
 	defer client.CloseIdleConnections()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
 	endpoint.Path = "/v1/me"
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
@@ -356,15 +384,7 @@ func authStatusLookup(ctx context.Context, root *cli.Command, snapshot authStatu
 	request.Header.Set("OpenAI-Organization", snapshot.report.Organization.Value)
 	request.Header.Set("OpenAI-Project", snapshot.report.Project.Value)
 	response, err := client.Do(request)
-	requestFailure := func() (authStatusIdentity, error) {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return failure("timed_out", "Identity lookup timed out. Identity remains unknown.")
-		}
-		if ctx.Err() != nil {
-			return failure("canceled", "Identity lookup canceled.")
-		}
-		return failure("request_failed", "Could not resolve identity. Check your connection and retry.")
-	}
+
 	if err != nil {
 		return requestFailure()
 	}
@@ -409,6 +429,69 @@ func authStatusLookup(ctx context.Context, root *cli.Command, snapshot authStatu
 		}
 	}
 	return identity, nil
+}
+
+// Verification reads only regular files from the validated opened descriptor.
+// Cancellation is cooperative between operations; it cannot interrupt kernel I/O.
+func authStatusReadMTLSFile(ctx context.Context, kind, path string) (_ []byte, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return nil, err
+	}
+	before, err := os.Lstat(resolved)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() {
+		return nil, errors.New("mTLS client " + kind + " must be a regular file")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// O_NONBLOCK prevents a replaced Unix FIFO from waiting for a writer.
+	file, err := os.OpenFile(resolved, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(before, opened) {
+		return nil, errors.New("mTLS client " + kind + " file changed before reading")
+	}
+	var data []byte
+	defer func() {
+		if err != nil {
+			clear(data)
+		}
+	}()
+	buffer := make([]byte, 32<<10)
+	defer clear(buffer)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		n, readErr := file.Read(buffer)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data = append(data, buffer[:n]...)
+		if errors.Is(readErr, io.EOF) {
+			return data, nil
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+	}
 }
 
 func decodeAuthStatusIdentity(body io.Reader) (authStatusIdentity, error) {

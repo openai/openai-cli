@@ -15,7 +15,19 @@ type mtlsClientFlag struct {
 
 func (f *mtlsClientFlag) PreParse() error {
 	f.explicit = false
-	return f.StringFlag.PreParse()
+	// urfave retains source presence and duplicate counts across invocations.
+	// Preserve the current public definition and the metadata pointer in place.
+	flag := &f.StringFlag
+	*flag = cli.StringFlag{
+		Name: flag.Name, Category: flag.Category, DefaultText: flag.DefaultText,
+		HideDefault: flag.HideDefault, Usage: flag.Usage, Sources: flag.Sources,
+		Required: flag.Required, Hidden: flag.Hidden, Deprecated: flag.Deprecated,
+		Local: flag.Local, Value: flag.Value, Destination: flag.Destination,
+		Aliases: flag.Aliases, TakesFile: flag.TakesFile, Action: flag.Action,
+		Config: flag.Config, OnlyOnce: flag.OnlyOnce, Validator: flag.Validator,
+		ValidateDefaults: flag.ValidateDefaults,
+	}
+	return flag.PreParse()
 }
 
 func (f *mtlsClientFlag) Set(name, value string) error {

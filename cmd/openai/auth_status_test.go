@@ -1,11 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
+	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,6 +21,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -407,6 +416,7 @@ type authStatusIdentityFixture struct {
 	Location    string `json:"location"`
 	Error       string `json:"error"`
 	Wait        bool   `json:"wait"`
+	WaitBody    bool   `json:"wait_body"`
 }
 
 type authStatusIdentityRequest struct {
@@ -463,8 +473,24 @@ func TestMainAuthStatusIdentityProcess(t *testing.T) {
 		if fixture.Location != "" {
 			headers.Set("Location", fixture.Location)
 		}
-		return &http.Response{StatusCode: fixture.Status, Header: headers,
-			Body: io.NopCloser(strings.NewReader(fixture.Body)), Request: request}, nil
+		var body io.ReadCloser = io.NopCloser(strings.NewReader(fixture.Body))
+		if fixture.WaitBody {
+			reader, writer := io.Pipe()
+			body = reader
+			go func() {
+				// Pipe.Write returns only after the decoder consumes this incomplete JSON.
+				_, err := io.WriteString(writer, `{"object":"user","id":"synthetic-private-response-body`)
+				if err == nil {
+					err = os.WriteFile(os.Getenv("OPENAI_CLI_AUTH_IDENTITY_BODY_READY"), []byte("body-decoding\n"), 0600)
+				}
+				if err == nil {
+					<-request.Context().Done()
+					err = request.Context().Err()
+				}
+				_ = writer.CloseWithError(err)
+			}()
+		}
+		return &http.Response{StatusCode: fixture.Status, Header: headers, Body: body, Request: request}, nil
 	})
 	separator := slices.Index(os.Args, "--")
 	require.GreaterOrEqual(t, separator, 0)
@@ -474,15 +500,21 @@ func TestMainAuthStatusIdentityProcess(t *testing.T) {
 }
 
 type authStatusIdentityProcess struct {
-	command  *exec.Cmd
-	stdout   bytes.Buffer
-	stderr   bytes.Buffer
-	context  context.Context
-	done     chan error
-	requests string
+	command   *exec.Cmd
+	stdout    bytes.Buffer
+	stderr    bytes.Buffer
+	context   context.Context
+	done      chan error
+	requests  string
+	bodyReady string
 }
 
 func startAuthStatusIdentity(t *testing.T, fixture authStatusIdentityFixture, env []string, args ...string) *authStatusIdentityProcess {
+	t.Helper()
+	return startAuthStatusIdentityWithTimeout(t, 25*time.Second, fixture, env, args...)
+}
+
+func startAuthStatusIdentityWithTimeout(t *testing.T, timeout time.Duration, fixture authStatusIdentityFixture, env []string, args ...string) *authStatusIdentityProcess {
 	t.Helper()
 	binary, err := os.Executable()
 	require.NoError(t, err)
@@ -491,8 +523,9 @@ func startAuthStatusIdentity(t *testing.T, fixture authStatusIdentityFixture, en
 	data, err := json.Marshal(fixture)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(fixturePath, data, 0600))
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	process := &authStatusIdentityProcess{context: ctx, done: make(chan error, 1), requests: filepath.Join(directory, "requests.jsonl")}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	process := &authStatusIdentityProcess{context: ctx, done: make(chan error, 1), requests: filepath.Join(directory, "requests.jsonl"),
+		bodyReady: filepath.Join(directory, "body-ready")}
 	argv := append([]string{"-test.run=^TestMainAuthStatusIdentityProcess$", "--", "openai", "auth", "status"}, args...)
 	process.command = exec.CommandContext(ctx, binary, argv...)
 	for _, entry := range os.Environ() {
@@ -504,7 +537,7 @@ func startAuthStatusIdentity(t *testing.T, fixture authStatusIdentityFixture, en
 	process.command.Env = append(process.command.Env, authStatusEnvironment(t)...)
 	process.command.Env = append(process.command.Env,
 		"OPENAI_CLI_AUTH_IDENTITY_PROCESS=1", "OPENAI_CLI_AUTH_IDENTITY_FIXTURE="+fixturePath,
-		"OPENAI_CLI_AUTH_IDENTITY_REQUESTS="+process.requests, "COMPLETION_STYLE=bash",
+		"OPENAI_CLI_AUTH_IDENTITY_REQUESTS="+process.requests, "OPENAI_CLI_AUTH_IDENTITY_BODY_READY="+process.bodyReady, "COMPLETION_STYLE=bash",
 		"OPENAI_BASE_URL=https://api.openai.com/v1/")
 	process.command.Env = append(process.command.Env, env...)
 	process.command.Stdout, process.command.Stderr = &process.stdout, &process.stderr
@@ -604,6 +637,53 @@ func TestMainAuthStatusIdentitySelectionAndRequestBoundary(t *testing.T) {
 			require.Greater(t, requests[0].DeadlineMilliseconds, int64(0))
 			require.LessOrEqual(t, requests[0].DeadlineMilliseconds, int64(15000))
 		})
+	}
+}
+
+func TestMainAuthStatusIdentitySpacedBearerRemainsPrivate(t *testing.T) {
+	const secret = "synthetic-private-spaced-bearer"
+	const authorization = "Bearer   " + secret
+	for _, source := range []string{"flag", "environment", "key"} {
+		for _, kind := range []string{"api", "admin"} {
+			for _, format := range []string{"text", "json"} {
+				t.Run(source+"_"+kind+"_"+format, func(t *testing.T) {
+					args := []string{"--verify", "--credential-kind=" + kind, "--format=" + format, "--format-error=json", "--debug"}
+					var env []string
+					switch source {
+					case "flag":
+						args = append(args, "--header=Authorization: "+authorization)
+					case "environment":
+						env = append(env, "OPENAI_CUSTOM_HEADERS=Authorization: "+authorization)
+					case "key":
+						variable := "OPENAI_API_KEY"
+						if kind == "admin" {
+							variable = "OPENAI_ADMIN_KEY"
+						}
+						env = append(env, variable+"=  "+secret)
+					}
+					fixture := authStatusIdentityFixture{Status: http.StatusOK, ContentType: "application/json",
+						Body: `{"object":"user","id":"user-synthetic","name":"prefix ` + secret + ` suffix"}`}
+					got, requests := runAuthStatusIdentity(t, fixture, env, args...)
+					require.NotZero(t, got.code)
+					require.Len(t, requests, 1)
+					require.Equal(t, authorization, requests[0].Headers.Get("Authorization"))
+					if format == "json" {
+						status := decodeAuthStatusJSON(t, got.stdout)
+						require.False(t, status.Verified)
+						identity := status.APIIdentity
+						if kind == "admin" {
+							identity = status.AdminIdentity
+						}
+						require.Equal(t, "unknown", identity.Status)
+						require.Equal(t, "invalid_response", identity.Reason)
+					} else {
+						require.Contains(t, got.stdout, "unknown (invalid_response)")
+					}
+					decodeMainStructuredError(t, "json", got.stderr)
+					assertAuthStatusPrivate(t, got, secret)
+				})
+			}
+		}
 	}
 }
 
@@ -798,14 +878,26 @@ func TestMainAuthStatusIdentitySignals(t *testing.T) {
 		name   string
 		signal os.Signal
 		code   int
-	}{{"SIGINT", os.Interrupt, 130}, {"SIGTERM", syscall.Signal(15), 143}} {
+		body   bool
+	}{
+		{"SIGINT", os.Interrupt, 130, false},
+		{"SIGTERM", syscall.Signal(15), 143, false},
+		{"SIGINT body", os.Interrupt, 130, true},
+		{"SIGTERM body", syscall.Signal(15), 143, true},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			process := startAuthStatusIdentity(t, authStatusIdentityFixture{Wait: true}, []string{"OPENAI_API_KEY=synthetic-private-api-token"},
+			process := startAuthStatusIdentity(t, authStatusIdentityFixture{Wait: !tc.body, WaitBody: tc.body, Status: http.StatusOK, ContentType: "application/json"}, []string{"OPENAI_API_KEY=synthetic-private-api-token"},
 				"--verify", "--credential-kind=api", "--format=json", "--format-error=json", "--debug")
 			require.Eventually(t, func() bool {
 				data, err := os.ReadFile(process.requests)
 				return err == nil && json.Valid(bytes.TrimSpace(data))
 			}, 5*time.Second, time.Millisecond, "request must start before the signal")
+			if tc.body {
+				require.Eventually(t, func() bool {
+					data, err := os.ReadFile(process.bodyReady)
+					return err == nil && string(data) == "body-decoding\n"
+				}, 5*time.Second, time.Millisecond, "decoder must consume the partial body before the signal")
+			}
 			started := time.Now()
 			require.NoError(t, process.command.Process.Signal(tc.signal))
 			got, requests := finishAuthStatusIdentity(t, process)
@@ -814,7 +906,306 @@ func TestMainAuthStatusIdentitySignals(t *testing.T) {
 			require.Empty(t, got.stdout)
 			require.Len(t, requests, 1)
 			decodeMainStructuredError(t, "json", got.stderr)
-			assertAuthStatusPrivate(t, got, "synthetic-private-api-token")
+			assertAuthStatusPrivate(t, got, "synthetic-private-api-token", "synthetic-private-response-body")
 		})
 	}
+}
+
+func TestMainAuthStatusIdentityMTLSFIFOs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix FIFO paths require a Unix native runner")
+	}
+	mkfifo, err := exec.LookPath("mkfifo")
+	require.NoError(t, err, "supported Unix runners must provide mkfifo")
+	for _, kind := range []string{"certificate", "key"} {
+		t.Run(kind, func(t *testing.T) {
+			directory := t.TempDir()
+			certFile := filepath.Join(directory, "synthetic-private-certificate.pem")
+			keyFile := filepath.Join(directory, "synthetic-private-key.pem")
+			fifo, regular := certFile, keyFile
+			if kind == "key" {
+				fifo, regular = keyFile, certFile
+			}
+			const placeholder = "synthetic-private-PEM-placeholder"
+			require.NoError(t, os.WriteFile(regular, []byte(placeholder), 0600))
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			require.NoError(t, exec.CommandContext(ctx, mkfifo, fifo).Run())
+			require.NoError(t, ctx.Err())
+			require.NoError(t, os.Chmod(fifo, 0600))
+			process := startAuthStatusIdentityWithTimeout(t, 3*time.Second, authStatusIdentitySuccessFixture(),
+				[]string{"OPENAI_API_KEY=synthetic-private-api-token"},
+				"--verify", "--credential-kind=api", "--format=json", "--format-error=json", "--debug",
+				"--mtls-client-cert-file="+certFile, "--mtls-client-key-file="+keyFile)
+			got, requests := finishAuthStatusIdentity(t, process)
+			require.NotZero(t, got.code)
+			require.Empty(t, requests, "special files must fail before the provider request")
+			status := decodeAuthStatusJSON(t, got.stdout)
+			require.False(t, status.Offline)
+			require.False(t, status.Verified)
+			require.Equal(t, "unknown", status.APIIdentity.Status)
+			require.Equal(t, "invalid_configuration", status.APIIdentity.Reason)
+			require.Equal(t, "not_configured", status.AdminIdentity.Reason)
+			decodeMainStructuredError(t, "json", got.stderr)
+			assertAuthStatusPrivate(t, got, "synthetic-private-api-token", placeholder, certFile, keyFile)
+		})
+	}
+}
+
+// Linux reads SSL_CERT_FILE and SSL_CERT_DIR without changing system trust.
+// Exercise the standalone CLI: no test transport is installed in its process.
+func TestBuiltCLIAuthStatusIdentityTransportLinux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("isolated certificate roots require the Linux trust loader")
+	}
+	binary, err := shellTestCLI()
+	require.NoError(t, err)
+	certificate, roots := authStatusProxyCertificate(t)
+	caFile := filepath.Join(t.TempDir(), "synthetic-ca.pem")
+	require.NoError(t, os.WriteFile(caFile, roots, 0o600))
+	emptyCA := filepath.Join(t.TempDir(), "empty-ca.pem")
+	require.NoError(t, os.WriteFile(emptyCA, nil, 0o600))
+	const api = "synthetic-private-built-api"
+	const admin = "synthetic-private-built-admin"
+	const private = "synthetic-private-provider-body"
+	const success = `{"object":"user","id":"user-built-synthetic","name":null,"email":null}`
+	for _, tc := range []struct {
+		name, kind, reason, body, location string
+		status                             int
+	}{
+		{name: "offline"},
+		{name: "api", kind: "api", status: 200, body: success},
+		{name: "admin", kind: "admin", status: 200, body: success},
+		{name: "untrusted_tls", kind: "api", reason: "request_failed", status: 200, body: success},
+		{name: "invalid_json", kind: "api", reason: "invalid_response", status: 200, body: `{"object":"user","id":7}`},
+		{name: "unauthorized", kind: "api", reason: "unauthorized", status: 401, body: private + api + admin},
+		{name: "same_origin_redirect", kind: "api", reason: "redirect", status: 302, body: private,
+			location: "https://api.openai.com/v1/synthetic-private-redirect"},
+		{name: "cross_origin_redirect", kind: "api", reason: "redirect", status: 307, body: private,
+			location: "https://example.invalid/synthetic-private-redirect"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proxy, finish := authStatusLoopbackProxy(t, certificate, tc.status, tc.body, tc.location)
+			trust := caFile
+			if tc.name == "untrusted_tls" {
+				trust = emptyCA
+			}
+			env := append(authStatusEnvironment(t), "OPENAI_API_KEY="+api, "OPENAI_ADMIN_KEY="+admin,
+				"OPENAI_BASE_URL=https://api.openai.com/v1/", "HTTPS_PROXY="+proxy, "NO_PROXY=",
+				"SSL_CERT_FILE="+trust, "SSL_CERT_DIR="+t.TempDir(), "GODEBUG=",
+				"OPENAI_ORG_ID=org_synthetic", "OPENAI_PROJECT_ID=proj_synthetic",
+				"OPENAI_CUSTOM_HEADERS=X-Private: synthetic-private-custom-header")
+			args := []string{"auth", "status", "--format=json", "--format-error=json", "--debug"}
+			if tc.kind != "" {
+				args = append(args, "--verify", "--credential-kind="+tc.kind)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			child := exec.CommandContext(ctx, binary, args...)
+			child.Env = env
+			child.WaitDelay = time.Second
+			var stdout, stderr bytes.Buffer
+			child.Stdout, child.Stderr = &stdout, &stderr
+			err := child.Run()
+			observed := finish()
+			require.NoError(t, ctx.Err(), "standalone CLI exceeded its bound")
+			code := 0
+			if err != nil {
+				var exit *exec.ExitError
+				require.ErrorAs(t, err, &exit)
+				code = exit.ExitCode()
+			}
+			got := mainDispatchResult{code, stdout.String(), stderr.String()}
+			assertAuthStatusPrivate(t, got, api, admin, private, "synthetic-private-custom-header", "synthetic-private-redirect")
+			if tc.kind == "" {
+				decodeAuthStatus(t, got)
+				require.Empty(t, observed, "offline status must not connect to the proxy")
+				return
+			}
+			require.Len(t, observed, 1, "lookup must not retry or follow any redirect")
+			require.Equal(t, "api.openai.com:443", observed[0].authority)
+			require.Empty(t, observed[0].connectHeaders.Get("Authorization"))
+			for _, values := range observed[0].connectHeaders {
+				for _, value := range values {
+					require.NotContains(t, value, api)
+					require.NotContains(t, value, admin)
+				}
+			}
+			require.Equal(t, "api.openai.com", observed[0].serverName)
+			if tc.name == "untrusted_tls" {
+				require.True(t, observed[0].tlsRejected)
+				require.Nil(t, observed[0].request, "untrusted TLS must receive no credential-bearing HTTP request")
+			} else {
+				require.Empty(t, observed[0].failure)
+				request := observed[0].request
+				require.NotNil(t, request)
+				require.Equal(t, http.MethodGet, request.Method)
+				require.Equal(t, "api.openai.com", request.Host)
+				require.Equal(t, "/v1/me", request.URL.String())
+				require.Zero(t, request.ContentLength)
+				require.Empty(t, request.TransferEncoding)
+				credential, unselected := api, admin
+				if tc.kind == "admin" {
+					credential, unselected = admin, api
+				}
+				require.Equal(t, []string{"Bearer " + credential}, request.Header.Values("Authorization"))
+				for _, values := range request.Header {
+					for _, value := range values {
+						require.NotContains(t, value, unselected)
+					}
+				}
+				require.Equal(t, "application/json", request.Header.Get("Accept"))
+				require.Equal(t, "org_synthetic", request.Header.Get("OpenAI-Organization"))
+				require.Equal(t, "proj_synthetic", request.Header.Get("OpenAI-Project"))
+				require.Empty(t, request.Header.Get("X-Private"))
+			}
+			status := decodeAuthStatusJSON(t, got.stdout)
+			require.False(t, status.Offline)
+			selected, other := status.APIIdentity, status.AdminIdentity
+			if tc.kind == "admin" {
+				selected, other = other, selected
+			}
+			require.Equal(t, "unknown", other.Status)
+			require.Equal(t, "not_requested", other.Reason)
+			if tc.reason == "" {
+				require.Zero(t, got.code, "%s", got.stderr)
+				require.Empty(t, got.stderr)
+				require.True(t, status.Verified)
+				require.Equal(t, tc.kind, status.VerifiedKind)
+				require.Equal(t, "resolved", selected.Status)
+				require.Equal(t, "openai_me_v1", selected.Provider)
+				require.Equal(t, "user-built-synthetic", selected.ID)
+				require.Nil(t, selected.Name)
+				require.Nil(t, selected.Email)
+			} else {
+				require.Equal(t, 1, got.code)
+				require.False(t, status.Verified)
+				require.Equal(t, "unknown", selected.Status)
+				require.Equal(t, tc.reason, selected.Reason)
+				decodeMainStructuredError(t, "json", got.stderr)
+			}
+		})
+	}
+}
+
+func authStatusProxyCertificate(t *testing.T) (tls.Certificate, []byte) {
+	t.Helper()
+	caPublic, caPrivate, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	ca := &x509.Certificate{SerialNumber: big.NewInt(1), IsCA: true, BasicConstraintsValid: true,
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageCertSign}
+	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, caPublic, caPrivate)
+	require.NoError(t, err)
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: []string{"api.openai.com"},
+		NotBefore: ca.NotBefore, NotAfter: ca.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, ca, public, caPrivate)
+	require.NoError(t, err)
+	return tls.Certificate{Certificate: [][]byte{leafDER}, PrivateKey: private}, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+}
+
+type authStatusProxyObservation struct {
+	authority, serverName, failure string
+	connectHeaders                 http.Header
+	request                        *http.Request
+	tlsRejected                    bool
+}
+
+// Terminate CONNECT locally. This proxy never resolves or dials its target.
+func authStatusLoopbackProxy(t *testing.T, certificate tls.Certificate, status int, body, location string) (string, func() []authStatusProxyObservation) {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	var mutex sync.Mutex
+	var active net.Conn
+	var closing bool
+	var observed []authStatusProxyObservation
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			mutex.Lock()
+			if closing {
+				mutex.Unlock()
+				connection.Close()
+				return
+			}
+			active = connection
+			mutex.Unlock()
+			observation := authStatusProxyObservation{}
+			func() {
+				defer connection.Close()
+				if err := connection.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+					observation.failure = "set connection deadline"
+					return
+				}
+				request, err := http.ReadRequest(bufio.NewReader(connection))
+				if err != nil {
+					observation.failure = "read CONNECT"
+					return
+				}
+				observation.authority, observation.connectHeaders = request.Host, request.Header.Clone()
+				if request.Method != http.MethodConnect || request.Host != "api.openai.com:443" || request.RequestURI != request.Host {
+					observation.failure = "rejected CONNECT target"
+					return
+				}
+				if _, err := io.WriteString(connection, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+					observation.failure = "write CONNECT response"
+					return
+				}
+				secure := tls.Server(connection, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}})
+				err = secure.Handshake()
+				observation.serverName = secure.ConnectionState().ServerName
+				if err != nil {
+					observation.tlsRejected = true
+					return
+				}
+				request, err = http.ReadRequest(bufio.NewReader(secure))
+				if err != nil {
+					observation.failure = "read identity request"
+					return
+				}
+				observation.request = request
+				response := &http.Response{StatusCode: status, ProtoMajor: 1, ProtoMinor: 1,
+					Header: http.Header{"Content-Type": {"application/json"}},
+					Body:   io.NopCloser(strings.NewReader(body)), ContentLength: int64(len(body)), Close: true}
+				if location != "" {
+					response.Header.Set("Location", location)
+				}
+				if err := response.Write(secure); err != nil {
+					observation.failure = "write identity response"
+				}
+			}()
+			observed = append(observed, observation)
+			mutex.Lock()
+			active = nil
+			mutex.Unlock()
+		}
+	}()
+	var once sync.Once
+	finish := func() []authStatusProxyObservation {
+		once.Do(func() {
+			listener.Close()
+			mutex.Lock()
+			closing = true
+			if active != nil {
+				active.Close()
+			}
+			mutex.Unlock()
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("local identity proxy did not stop")
+			}
+		})
+		return observed
+	}
+	t.Cleanup(func() { finish() })
+	return "http://" + listener.Addr().String(), finish
 }

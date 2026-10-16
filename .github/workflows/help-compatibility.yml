@@ -213,6 +213,120 @@ jobs:
           go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAPIErrorsFormatPrecedenceAndExtraction|TestMainAPIErrorsPreserveJSONDetailsAndExtraction|TestMainAPIErrorsStructuredAcrossCommands|TestMainAPIErrorsWithUnexpectedJSONShapes|TestMainAPIErrorsWithoutJSONDetails|TestMainCommandGroupsHaveWorkflowDescriptions|TestMainCommandSubgroupsCoverGeneratedRoutes|TestMainCommandSubgroupsHelpAndCompletion|TestMainCommandSubgroupsLegacyPrefixCompletion|TestMainCommandSubgroupsPreserveAudioAndErrors|TestMainCommandSubgroupsPreserveBodyFlagScope|TestMainCommandSubgroupsPreserveRequestsAndOutput|TestMainCommandSubgroupsStreamingStaysIncremental|TestMainLocalErrorGuidance|TestMainLocalErrorsStayOnStderr|TestMainNestedHelpErrorFormatPrecedence|TestMainPreservesWrappedExitCode|TestMainReadableAPIArgumentGuidance|TestMainReadableDefaultAndExplicitText|TestMainReadableErrorsStayOnStderr|TestMainReadablePreservesExplicitFormatsAndExtraction|TestMainReadableRawOutputStreamsBeforeNextEvent|TestMainSensitiveLocalErrors|TestMainStreamErrorsPreserveEventDetails|TestMainTaskAdminRoutesPreserveCredentialAndFlagScope|TestMainTaskAudioUploadsPreserveRequestsAndOutput|TestMainTaskFileUploadPreservesMultipartAndOutput|TestMainTaskResourceRoutesPreserveAPIErrorsAndExit|TestMainTaskRouteCompletionProtocols|TestMainTaskRouteHelpStaysLocal|TestMainTaskRoutesPreserveAPIErrorsAndExit|TestMainTaskRoutesPreserveRequiredFlags|TestMainTaskSpeechPreservesJSONInputAndBinaryOutput|TestMainTaskWindowsAudioInterruptClosesStreams)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'native-command-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test authentication, profiles, and project links
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 4
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          set -euo pipefail
+          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=3m -v -json -run '^(TestMainAuthStatusOfflineOutputAndDiagnostics|TestMainAuthStatusCredentialAndContextPrecedence|TestMainAuthStatusPreservesStdin|TestMainAuthStatusDoesNotLoadMTLS|TestMainAuthStatusSanitizesURLsAndTerminalControls|TestMainAuthStatusErrorsRemainPrivate|TestMainAuthStatusIdentitySelectionAndRequestBoundary|TestMainAuthStatusIdentityProviderAndCredentialRejections|TestMainAuthStatusIdentitySelectionRequiresExplicitVerification|TestMainAuthStatusIdentityFailuresRemainUnknownAndPrivate|TestMainAuthStatusIdentityNullableFieldsAndSupportedEndpoints|TestMainAuthStatusIdentityAuthorizationPrecedence|TestMainAuthStatusIdentityTextEscapesTerminalControls|TestMainAuthStatusIdentityDeadline|TestMainProfileLifecycleAndExactSchemas|TestMainProfileEditsNeverSaveAmbientValues|TestMainProfileStatusMatchesRequestContext|TestMainProfileProjectBypassesMalformedFolderRegistry|TestMainProfileMissingSelectionPreservesCommittedFolderLink|TestMainProfileCancellationPreservesCommittedOutcomes|TestMainProjectLinkOfflineLifecycle|TestMainProjectLinkQuietPreservesInspectionAndJSON|TestMainProjectLinkRequestPrecedence|TestMainProjectLinkDirectoryScope|TestMainProjectLinkMalformedRegistryFailsBeforeRequests|TestMainAuthStatusIdentitySpacedBearerRemainsPrivate)$' \
+            | tee "$RUNNER_TEMP/auth-profile-tests.jsonl"
+      - name: Test Windows authentication, profiles, and project links
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 4
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=3m -v -json -run '^(TestMainAuthStatusOfflineOutputAndDiagnostics|TestMainAuthStatusCredentialAndContextPrecedence|TestMainAuthStatusPreservesStdin|TestMainAuthStatusDoesNotLoadMTLS|TestMainAuthStatusSanitizesURLsAndTerminalControls|TestMainAuthStatusErrorsRemainPrivate|TestMainAuthStatusIdentitySelectionAndRequestBoundary|TestMainAuthStatusIdentityProviderAndCredentialRejections|TestMainAuthStatusIdentitySelectionRequiresExplicitVerification|TestMainAuthStatusIdentityFailuresRemainUnknownAndPrivate|TestMainAuthStatusIdentityNullableFieldsAndSupportedEndpoints|TestMainAuthStatusIdentityAuthorizationPrecedence|TestMainAuthStatusIdentityTextEscapesTerminalControls|TestMainAuthStatusIdentityDeadline|TestMainProfileLifecycleAndExactSchemas|TestMainProfileEditsNeverSaveAmbientValues|TestMainProfileStatusMatchesRequestContext|TestMainProfileProjectBypassesMalformedFolderRegistry|TestMainProfileMissingSelectionPreservesCommittedFolderLink|TestMainProfileCancellationPreservesCommittedOutcomes|TestMainProjectLinkOfflineLifecycle|TestMainProjectLinkQuietPreservesInspectionAndJSON|TestMainProjectLinkRequestPrecedence|TestMainProjectLinkDirectoryScope|TestMainProjectLinkMalformedRegistryFailsBeforeRequests|TestMainAuthStatusIdentitySpacedBearerRemainsPrivate)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'auth-profile-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test identity transport and repeated request configuration
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 2
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          set -euo pipefail
+          go test -p 1 ./pkg/custom -parallel=1 -count=1 -timeout=1m -v -json -run '^(TestAuthStatusIdentityMTLSReaderRegularAndCancellation|TestAuthStatusIdentityVerifiedTLSAndMTLS|TestRootRequestFlagPreParseResetsInvocationState|TestRootRequestFlagsResetProvenanceAcrossRuns|TestRootRequestFlagPreParsePreservesCurrentDefinition|TestRootRequestFlagsReuseMatchesStatusAndSDKRequests|TestAuthStatusIdentityCommandReuseClearsVerification|TestAuthStatusIdentityRejectsReflectedSpacedBearer|TestMTLSClientFlagPreParsePreservesCurrentDefinition|TestMTLSClientFlagsReuseEnvironmentForTLS)$' \
+            | tee "$RUNNER_TEMP/auth-identity-tls-tests.jsonl"
+      - name: Test Windows identity transport and repeated request configuration
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 2
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 1 ./pkg/custom -parallel=1 -count=1 -timeout=1m -v -json -run '^(TestAuthStatusIdentityMTLSReaderRegularAndCancellation|TestAuthStatusIdentityVerifiedTLSAndMTLS|TestRootRequestFlagPreParseResetsInvocationState|TestRootRequestFlagsResetProvenanceAcrossRuns|TestRootRequestFlagPreParsePreservesCurrentDefinition|TestRootRequestFlagsReuseMatchesStatusAndSDKRequests|TestAuthStatusIdentityCommandReuseClearsVerification|TestAuthStatusIdentityRejectsReflectedSpacedBearer|TestMTLSClientFlagPreParsePreservesCurrentDefinition|TestMTLSClientFlagsReuseEnvironmentForTLS)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'auth-identity-tls-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Unix identity credential symlinks and special files
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 3
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          set -euo pipefail
+          go test -p 1 ./pkg/custom -parallel=1 -count=1 -timeout=1m -v -json -run '^TestAuthStatusIdentityMTLSReaderSymlinks$' \
+            | tee "$RUNNER_TEMP/auth-identity-symlink-tests.jsonl"
+          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=1m -v -json -run '^TestMainAuthStatusIdentityMTLSFIFOs$' \
+            | tee "$RUNNER_TEMP/auth-identity-fifo-tests.jsonl"
+      - name: Test identity lookup signals
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 2
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          set -euo pipefail
+          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=1m -v -json -run '^TestMainAuthStatusIdentitySignals$' \
+            | tee "$RUNNER_TEMP/auth-identity-signal-tests.jsonl"
+      - name: Test Linux standalone identity transport
+        if: runner.os == 'Linux'
+        shell: bash
+        timeout-minutes: 6
+        env:
+          GOMAXPROCS: '2'
+          GOFLAGS: '-p=2'
+        run: |
+          set -euo pipefail
+          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=5m -v -json -run '^TestBuiltCLIAuthStatusIdentityTransportLinux$' \
+            | tee "$RUNNER_TEMP/auth-identity-built-cli-tests.jsonl"
+      - name: Test Linux case-sensitive project links
+        if: runner.os == 'Linux'
+        shell: bash
+        timeout-minutes: 2
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          set -euo pipefail
+          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=1m -v -json \
+            -run '^(TestMainProjectLinkDistinctCaseFoldDirectories|TestMainProjectLinkRetargetedAliasDoesNotMoveSavedLink)$' \
+            | tee "$RUNNER_TEMP/project-link-case-sensitive-tests.jsonl"
+      - name: Test Unix profile command native shells
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 2
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Linux) export OPENAI_CLI_REQUIRE_NATIVE_SHELLS=bash,zsh,fish; selected_shells='bash|zsh|fish' ;;
+            macOS) export OPENAI_CLI_REQUIRE_NATIVE_SHELLS=bash,zsh; selected_shells='bash|zsh' ;;
+            *) exit 1 ;;
+          esac
+          go test -p 1 ./pkg/custom -parallel=1 -count=1 -timeout=1m -v -json \
+            -run "^TestImagePickerProfileCommandNativeShellRoundTrip$/^($selected_shells)$" \
+            | tee "$RUNNER_TEMP/profile-native-shell-tests.jsonl"
+      - name: Test Windows profile command native PowerShell
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 2
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 1 ./pkg/custom -parallel=1 -count=1 -timeout=1m -v -json -run '^TestImagePickerProfileCommandNativeShellRoundTrip$/^pwsh$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'profile-native-shell-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test help
         if: runner.os != 'Windows'
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
@@ -582,6 +696,223 @@ jobs:
               return {root} | {f"{root}/{child}" for child in children}
 
           strict_packages = {}
+          suites["auth-identity-tls-tests.jsonl"] = required_cases(
+              "TestAuthStatusIdentityMTLSReaderRegularAndCancellation",
+              ["certificate", "key", "directory", "pre-canceled", "canceled_between_PEM_files"],
+          ) | required_cases(
+              "TestAuthStatusIdentityVerifiedTLSAndMTLS",
+              ["TLS_API", "mTLS_Admin", "untrusted_server", "wrong_server_name", "TLS_closes_response", "mTLS_closes_response"],
+          )
+          identity_regression_cases = {
+              "TestRootRequestFlagPreParseResetsInvocationState": [],
+              "TestRootRequestFlagsResetProvenanceAcrossRuns": ["api-key", "admin-api-key", "organization", "project", "webhook-secret"],
+              "TestRootRequestFlagPreParsePreservesCurrentDefinition": [],
+              "TestRootRequestFlagsReuseMatchesStatusAndSDKRequests": [],
+              "TestAuthStatusIdentityCommandReuseClearsVerification": [],
+              "TestAuthStatusIdentityRejectsReflectedSpacedBearer": ["flag_api_id", "flag_api_name", "flag_api_email", "flag_admin_id", "flag_admin_name", "flag_admin_email", "environment_api_id", "environment_api_name", "environment_api_email", "environment_admin_id", "environment_admin_name", "environment_admin_email", "key_api_id", "key_api_name", "key_api_email", "key_admin_id", "key_admin_name", "key_admin_email"],
+              "TestMTLSClientFlagPreParsePreservesCurrentDefinition": [],
+              "TestMTLSClientFlagsReuseEnvironmentForTLS": ["SDK", "identity"],
+          }
+          suites["auth-identity-tls-tests.jsonl"] |= set().union(*(
+              required_cases(root, children) for root, children in identity_regression_cases.items()
+          ))
+          strict_packages["auth-identity-tls-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+          if os.environ["RUNNER_OS"] != "Windows":
+              suites["auth-identity-symlink-tests.jsonl"] = required_cases(
+                  "TestAuthStatusIdentityMTLSReaderSymlinks", ["certificate", "key"],
+              )
+              strict_packages["auth-identity-symlink-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+              suites["auth-identity-fifo-tests.jsonl"] = required_cases(
+                  "TestMainAuthStatusIdentityMTLSFIFOs", ["certificate", "key"],
+              )
+              strict_packages["auth-identity-fifo-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+          auth_profile_cases = {
+              "TestMainAuthStatusOfflineOutputAndDiagnostics": [
+                  "auto",
+                  "text",
+                  "json"
+              ],
+              "TestMainAuthStatusCredentialAndContextPrecedence": [
+                  "missing",
+                  "environment",
+                  "equal_flag_value",
+                  "empty_flag",
+                  "last_empty_flag",
+                  "last_nonempty_flag",
+                  "environment_key_overrides_authorization",
+                  "environment_authorization_only",
+                  "flag_authorization",
+                  "empty_authorization",
+                  "before_command",
+                  "between_commands",
+                  "after_command"
+              ],
+              "TestMainAuthStatusPreservesStdin": [
+                  "auth_status_--format_json",
+                  "auth_status_--help",
+                  "auth_status_--format_yaml_--format-error_json"
+              ],
+              "TestMainAuthStatusDoesNotLoadMTLS": [
+                  "incomplete_environment",
+                  "missing_environment_files",
+                  "incomplete_flag",
+                  "missing_flag_files"
+              ],
+              "TestMainAuthStatusSanitizesURLsAndTerminalControls": [
+                  "text",
+                  "json",
+                  "explicit_empty_endpoint"
+              ],
+              "TestMainAuthStatusErrorsRemainPrivate": [
+                  "unsupported_format",
+                  "unknown_format",
+                  "transform",
+                  "raw_output_false",
+                  "extra_argument",
+                  "malformed_header",
+                  "header_control",
+                  "invalid_environment_URL",
+                  "invalid_flag_URL"
+              ],
+              "TestMainAuthStatusIdentitySelectionAndRequestBoundary": [
+                  "api",
+                  "admin"
+              ],
+              "TestMainAuthStatusIdentityProviderAndCredentialRejections": [
+                  "http://api.openai.com/v1/",
+                  "https://example.invalid/v1/",
+                  "https://api.openai.com.example.invalid/v1/",
+                  "https://api.openai.com:444/v1/",
+                  "https://api.openai.com/",
+                  "https://api.openai.com/v1/other",
+                  "https://api.openai.com/%76%31/",
+                  "https://api.openai.com/v1/?",
+                  "https://api.openai.com/v1/?token=synthetic-private-query",
+                  "https://api.openai.com/v1/#synthetic-private-fragment",
+                  "https://synthetic-private-user:synthetic-private-password@api.openai.com/v1/",
+                  "missing_selected_admin",
+                  "empty_selected_admin_override",
+                  "unsupported_authorization",
+                  "incomplete_TLS"
+              ],
+              "TestMainAuthStatusIdentitySelectionRequiresExplicitVerification": [
+                  "--verify",
+                  "--verify_--credential-kind=other",
+                  "--credential-kind=api",
+                  "--verify=false_--credential-kind=admin"
+              ],
+              "TestMainAuthStatusIdentityFailuresRemainUnknownAndPrivate": [
+                  "unauthorized",
+                  "forbidden",
+                  "missing_provider",
+                  "rate_limited",
+                  "server_failure",
+                  "same-origin_redirect",
+                  "cross-origin_redirect",
+                  "transport_failure",
+                  "wrong_content_type",
+                  "malformed_JSON",
+                  "missing_ID",
+                  "wrong_principal",
+                  "wrong_name_type",
+                  "duplicate_ID",
+                  "duplicate_unknown_field",
+                  "trailing_JSON",
+                  "credential_echoed_in_ID",
+                  "credential_echoed_in_name",
+                  "credential_echoed_in_email"
+              ],
+              "TestMainAuthStatusIdentityNullableFieldsAndSupportedEndpoints": [
+                  "https://api.openai.com/v1",
+                  "https://api.openai.com/v1/",
+                  "https://api.openai.com:443/v1",
+                  "https://api.openai.com:443/v1/"
+              ],
+              "TestMainAuthStatusIdentityAuthorizationPrecedence": [
+                  "selected_API_flag",
+                  "selected_admin_flag",
+                  "literal_authorization",
+                  "inherited_authorization"
+              ],
+              "TestMainAuthStatusIdentityTextEscapesTerminalControls": [],
+              "TestMainAuthStatusIdentitySpacedBearerRemainsPrivate": ["flag_api_text", "flag_api_json", "flag_admin_text", "flag_admin_json", "environment_api_text", "environment_api_json", "environment_admin_text", "environment_admin_json", "key_api_text", "key_api_json", "key_admin_text", "key_admin_json"],
+              "TestMainAuthStatusIdentityDeadline": [],
+              "TestMainProfileLifecycleAndExactSchemas": [
+                  "json",
+                  "jsonl"
+              ],
+              "TestMainProfileEditsNeverSaveAmbientValues": [],
+              "TestMainProfileStatusMatchesRequestContext": [
+                  "saved_default",
+                  "explicit_root_over_custom_headers",
+                  "root_over_environment",
+                  "empty_root",
+                  "environment_over_profile",
+                  "empty_environment",
+                  "empty_profile_fields",
+                  "absent_profile_fields",
+                  "empty_flag_selector",
+                  "empty_environment_selector",
+                  "flag_selector_over_environment",
+                  "custom_header_fallback",
+                  "literal_headers",
+                  "empty_literal_headers"
+              ],
+              "TestMainProfileProjectBypassesMalformedFolderRegistry": [
+                  "work",
+                  "empty"
+              ],
+              "TestMainProfileMissingSelectionPreservesCommittedFolderLink": [
+                  "text",
+                  "json"
+              ],
+              "TestMainProfileCancellationPreservesCommittedOutcomes": [
+                  "text",
+                  "json"
+              ],
+              "TestMainProjectLinkOfflineLifecycle": [
+                  "without_credentials",
+                  "invalid_remote_configuration"
+              ],
+              "TestMainProjectLinkQuietPreservesInspectionAndJSON": [],
+              "TestMainProjectLinkRequestPrecedence": [
+                  "saved_folder",
+                  "environment",
+                  "empty_environment",
+                  "root_flag_before",
+                  "root_flag_between",
+                  "root_flag_after",
+                  "empty_root_flag",
+                  "explicit_header"
+              ],
+              "TestMainProjectLinkDirectoryScope": [],
+              "TestMainProjectLinkMalformedRegistryFailsBeforeRequests": []
+          }
+          suites["auth-profile-tests.jsonl"] = set().union(*(
+              required_cases(root, children) for root, children in auth_profile_cases.items()
+          ))
+          strict_packages["auth-profile-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+          if os.environ["RUNNER_OS"] != "Windows":
+              suites["auth-identity-signal-tests.jsonl"] = required_cases(
+                  "TestMainAuthStatusIdentitySignals", ["SIGINT", "SIGTERM", "SIGINT_body", "SIGTERM_body"],
+              )
+              strict_packages["auth-identity-signal-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+          if os.environ["RUNNER_OS"] == "Linux":
+              suites["auth-identity-built-cli-tests.jsonl"] = required_cases(
+                  "TestBuiltCLIAuthStatusIdentityTransportLinux",
+                  ["offline", "api", "admin", "untrusted_tls", "invalid_json", "unauthorized", "same_origin_redirect", "cross_origin_redirect"],
+              )
+              strict_packages["auth-identity-built-cli-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+              suites["project-link-case-sensitive-tests.jsonl"] = {
+                  "TestMainProjectLinkDistinctCaseFoldDirectories",
+                  "TestMainProjectLinkRetargetedAliasDoesNotMoveSavedLink",
+              }
+              strict_packages["project-link-case-sensitive-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+          profile_shells = {"Linux": ["bash", "zsh", "fish"], "macOS": ["bash", "zsh"], "Windows": ["pwsh"]}
+          suites["profile-native-shell-tests.jsonl"] = required_cases(
+              "TestImagePickerProfileCommandNativeShellRoundTrip", profile_shells[os.environ["RUNNER_OS"]],
+          )
+          strict_packages["profile-native-shell-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
           if os.environ["CHECK_IMAGE_STATE"] == "true":
               preference_cases = {
                   'TestImagePreferenceDefaultAndReplacement': [],
@@ -1363,6 +1694,23 @@ jobs:
                       raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
               print(f"{filename}: {len(passed) - children} roots and {children} children passed; no skips")
           PY
+
+      - name: Retain authentication and profile test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: auth-profile-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/auth-profile-tests.jsonl
+            ${{ runner.temp }}/auth-identity-signal-tests.jsonl
+            ${{ runner.temp }}/auth-identity-tls-tests.jsonl
+            ${{ runner.temp }}/auth-identity-built-cli-tests.jsonl
+            ${{ runner.temp }}/auth-identity-symlink-tests.jsonl
+            ${{ runner.temp }}/auth-identity-fifo-tests.jsonl
+            ${{ runner.temp }}/project-link-case-sensitive-tests.jsonl
+            ${{ runner.temp }}/profile-native-shell-tests.jsonl
+          if-no-files-found: warn
+          retention-days: 7
 
   wsl1-pager:
     if: github.event_name != 'push'

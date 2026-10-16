@@ -33,7 +33,19 @@ func (*rootRequestFlag) IsLocal() bool { return false }
 
 func (f *rootRequestFlag) PreParse() error {
 	f.explicitlySet = false
-	return f.Flag.PreParse()
+	// Request flags retain presence and counts across parsing. Reset only these
+	// root wrappers, preserving their current public definition and pointer.
+	flag := f.Flag
+	*flag = requestflag.Flag[string]{
+		Name: flag.Name, Category: flag.Category, DefaultText: flag.DefaultText,
+		HideDefault: flag.HideDefault, Usage: flag.Usage, Sources: flag.Sources,
+		Required: flag.Required, Hidden: flag.Hidden, Default: flag.Default,
+		Aliases: flag.Aliases, Validator: flag.Validator,
+		QueryPath: flag.QueryPath, HeaderPath: flag.HeaderPath, BodyPath: flag.BodyPath,
+		BodyRoot: flag.BodyRoot, PathParam: flag.PathParam, Const: flag.Const,
+		FileInput: flag.FileInput, DataAliases: flag.DataAliases,
+	}
+	return flag.PreParse()
 }
 
 // Environment fallback calls the embedded Flag.Set directly. Only parser or
