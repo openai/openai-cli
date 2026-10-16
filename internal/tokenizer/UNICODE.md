@@ -22,7 +22,7 @@ Special-token spellings remain ordinary text.
 Library initialization uses no loader API, runtime download, or persistent cache.
 The existing one-MiB input limit and synchronous worst-case CPU limitation remain.
 
-Regenerate `unicode16.go` from a local copy of the official Unicode 16.0.0 `UnicodeData.txt`.
+Regenerate `generated/tokenizer/unicode16.go` from a local copy of the official Unicode 16.0.0 `UnicodeData.txt`.
 Source: <https://www.unicode.org/Public/16.0.0/ucd/UnicodeData.txt>.
 Required SHA-256: `ff58e5823bd095166564a006e47d111130813dcf8bf234ef79fa51a870edb48f`.
 The generator validates that exact digest before parsing the file.
@@ -35,6 +35,9 @@ GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
 ```
 
 Run this command from the repository root with its supported Go toolchain.
+Create `generated/tokenizer/` first if it is absent. This directory contains only
+tables emitted by the generator; the tokenizer implementation and tests remain
+in `internal/tokenizer/`.
 The generated file identifies its source digest and generator.
 The embedded `LICENSES.txt` retains the Unicode, BPE, vocabulary, and dependency notices.
 Vocabulary fingerprint tests use independently generated tiktoken 0.14.0 public decoder results.

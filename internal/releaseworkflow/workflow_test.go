@@ -936,7 +936,7 @@ func TestErrorAuditShardsRemainRequired(t *testing.T) {
 	}
 	windows := jobs["test-windows-compile"]
 	_, compilation := requireStep(t, windows, "Compile all test packages for Windows")
-	if windows.ContinueOnError || compilation.ContinueOnError || !strings.Contains(compilation.Run, "GOARCH=amd64 GOOS=windows go test -c -o \"$output/\" ./... -p 1") {
+	if windows.ContinueOnError || compilation.ContinueOnError || !strings.Contains(compilation.Run, "GOARCH=amd64 GOOS=windows go test -exec=true ./... -p 1") {
 		t.Fatalf("Windows test compilation must remain mandatory: %+v", compilation)
 	}
 }

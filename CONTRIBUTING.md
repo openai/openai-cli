@@ -46,6 +46,9 @@ the target structure, package boundaries, and CLI compatibility checks. The list
 below describes the current layout as the migration proceeds.
 
 - `cmd/openai/` contains startup, minimal wiring, and executable tests.
+- `generated/tokenizer/` contains Unicode tables emitted by
+  `scripts/generate-tokenizer-unicode.go`; the handwritten tokenizer stays in
+  `internal/tokenizer/`.
 - `pkg/cmd/` contains generated API commands and their integration tests.
 - `pkg/custom/` contains handwritten CLI commands, defaults, output-format
   policy, error handling, and presentation orchestration.
