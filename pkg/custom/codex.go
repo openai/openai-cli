@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
@@ -154,7 +155,7 @@ func handleCodex(ctx context.Context, command *cli.Command, open func(context.Co
 	} else {
 		content = codexGuideText(guide)
 	}
-	if err := readable.WriteText(outputWriter{ctx: ctx, out: root.Writer}, content); err != nil {
+	if err := readable.WriteText(clioutput.Writer{Context: ctx, Sink: root.Writer}, content); err != nil {
 		return &localUtilityError{message: "Could not write Codex output. Output may be incomplete. Check the output file or pipe before rerunning.", cause: err}
 	}
 	if err := ctx.Err(); err != nil {

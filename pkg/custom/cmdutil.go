@@ -21,6 +21,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/openai/openai-cli/internal/jsonview"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-go/v3/option"
@@ -219,7 +220,7 @@ func streamToPagerWithPipe(label string, generateOutput func(w *os.File) error) 
 	// Deliver EOF and reap the pager even when output generation failed.
 	w.Close()
 	waitErr := cmd.Wait()
-	if outputErr != nil && !isOutputBrokenPipe(outputErr) {
+	if outputErr != nil && !clioutput.IsBrokenPipe(outputErr) {
 		return outputErr
 	}
 	return wrapPagerError(waitErr)
@@ -228,41 +229,10 @@ func streamToPagerWithPipe(label string, generateOutput func(w *os.File) error) 
 func streamToStdout(generateOutput func(w *os.File) error) error {
 	signal.Ignore(syscall.SIGPIPE)
 	err := generateOutput(os.Stdout)
-	if isOutputBrokenPipe(err) {
+	if clioutput.IsBrokenPipe(err) {
 		return nil
 	}
 	return err
-}
-
-// outputWriteError identifies failures from the output sink, rather than from
-// the iterator, transport, or formatter producing the output.
-type outputWriteError struct{ error }
-
-func (e *outputWriteError) Unwrap() error { return e.error }
-
-func isOutputBrokenPipe(err error) bool {
-	if _, diagnostic := err.(*diagnosticWriteError); diagnostic {
-		return false
-	}
-	if outputErr, ok := err.(*outputWriteError); ok {
-		return strings.Contains(outputErr.Error(), "broken pipe")
-	}
-	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		causes := joined.Unwrap()
-		if len(causes) == 0 {
-			return false
-		}
-		for _, cause := range causes {
-			if !isOutputBrokenPipe(cause) {
-				return false
-			}
-		}
-		return true
-	}
-	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
-		return isOutputBrokenPipe(wrapped.Unwrap())
-	}
-	return false
 }
 
 // WriteBinaryResponse writes a binary response to stdout or a file.
@@ -601,7 +571,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 			if opts.RawOutput && isTerminal(opts.Stdout) {
 				text = jsonview.SanitizeTerminalString(text)
 			}
-			_, err := (outputWriter{ctx: opts.Context, out: opts.Stdout}).WriteString(text)
+			_, err := (clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}).WriteString(text)
 			return err
 		}
 		encoded, err := json.Marshal(text)
@@ -623,17 +593,17 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 		if !opts.RawOutput || res.Type != gjson.String {
 			if projectAudio {
 				if event, ok := transformers.ProjectAudioResponse(res, transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}); ok {
-					writer := readable.NewStreamWriter(outputWriter{ctx: opts.Context, out: opts.Stdout})
+					writer := readable.NewStreamWriter(clioutput.Writer{Context: opts.Context, Sink: opts.Stdout})
 					if err := writer.Write(event); err != nil {
 						return err
 					}
 					if !writer.HasOutput() {
-						return readable.WriteText(outputWriter{ctx: opts.Context, out: opts.Stdout}, "")
+						return readable.WriteText(clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}, "")
 					}
 					return writer.Finish()
 				}
 			}
-			out := outputWriter{ctx: opts.Context, out: opts.Stdout}
+			out := clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}
 			omitted, err := writeReadableResource(out, res, opts)
 			if err != nil {
 				return err
@@ -652,7 +622,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 			return jsonview.ExploreJSONWithContext(opts.Context, opts.Title, res, opts.Stdout, options...)
 		}
 		if opts.ExplicitFormat && outputDiagnosticsAllowed(opts.Context) {
-			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stderr}).WriteString(warningExploreNotSupported); err != nil {
+			if _, err := (clioutput.Writer{Context: opts.Context, Sink: opts.Stderr}).WriteString(warningExploreNotSupported); err != nil {
 				return err
 			}
 		}
@@ -663,7 +633,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	if err != nil {
 		return err
 	}
-	_, err = (outputWriter{ctx: opts.Context, out: opts.Stdout}).Write(formatted)
+	_, err = (clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}).Write(formatted)
 	return err
 }
 
@@ -726,7 +696,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 
 	if strings.ToLower(opts.Format) == "explore" {
 		if isTerminal(opts.Stdout) {
-			out := terminalOutputWriter{outputWriter{ctx: opts.Context, out: opts.Stdout}, opts.Stdout.(*os.File)}
+			out := terminalOutputWriter{clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}, opts.Stdout.(*os.File)}
 			err := jsonview.ExploreJSONStreamWithOutput(opts.Title, iter, out)
 			if iterErr := iter.Err(); iterErr != nil && !errors.Is(err, iterErr) {
 				return errors.Join(err, iterErr)
@@ -734,7 +704,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 			return err
 		}
 		if opts.ExplicitFormat && outputDiagnosticsAllowed(opts.Context) {
-			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stderr}).WriteString(warningExploreNotSupported); err != nil {
+			if _, err := (clioutput.Writer{Context: opts.Context, Sink: opts.Stderr}).WriteString(warningExploreNotSupported); err != nil {
 				return err
 			}
 		}
@@ -750,7 +720,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 			if err != nil {
 				return errors.Join(err, iter.Err())
 			}
-			if _, err := (outputWriter{ctx: opts.Context, out: destination}).Write(formatted); err != nil {
+			if _, err := (clioutput.Writer{Context: opts.Context, Sink: destination}).Write(formatted); err != nil {
 				return errors.Join(err, iter.Err())
 			}
 		}
@@ -790,7 +760,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 
 	if !usePager {
 		return streamToStdout(func(stdout *os.File) error {
-			if _, err := (outputWriter{ctx: opts.Context, out: stdout}).Write(output); err != nil {
+			if _, err := (clioutput.Writer{Context: opts.Context, Sink: stdout}).Write(output); err != nil {
 				return errors.Join(err, iter.Err())
 			}
 			return iter.Err()
@@ -798,7 +768,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	}
 
 	return streamOutput(opts.Title, func(pager *os.File) error {
-		if _, err := (outputWriter{ctx: opts.Context, out: pager}).Write(output); err != nil {
+		if _, err := (clioutput.Writer{Context: opts.Context, Sink: pager}).Write(output); err != nil {
 			return errors.Join(err, iter.Err())
 		}
 		pagerOpts := opts
@@ -808,7 +778,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 			if err != nil {
 				return errors.Join(err, iter.Err())
 			}
-			if _, err := (outputWriter{ctx: opts.Context, out: pager}).Write(formatted); err != nil {
+			if _, err := (clioutput.Writer{Context: opts.Context, Sink: pager}).Write(formatted); err != nil {
 				return errors.Join(err, iter.Err())
 			}
 		}

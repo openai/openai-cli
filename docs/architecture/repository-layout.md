@@ -12,6 +12,9 @@ The browser launcher and its platform/environment isolation tests now live in
 `internal/terminal/`; the Codex command retains destination selection, output
 ordering, and the launch deadline.
 
+Cancellation-aware output writing and sink/diagnostic error classification live
+in `internal/output/`, shared by handwritten commands and presentation code.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

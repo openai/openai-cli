@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/stretchr/testify/require"
 )
 
@@ -62,7 +63,7 @@ func TestStreamOutputErrorOrigins(t *testing.T) {
 				}
 				for i := 0; i < 100; i++ {
 					if _, writeErr = w.WriteString(strings.Repeat("x", 65536)); writeErr != nil {
-						return &outputWriteError{writeErr}
+						return &clioutput.WriteError{Err: writeErr}
 					}
 				}
 				return nil

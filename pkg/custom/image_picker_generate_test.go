@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
@@ -151,7 +152,7 @@ func TestImagePickerRecoverableRequest(t *testing.T) {
 		{"interrupted", &imageLoadingInterrupt{context.Canceled}, false},
 		{"exit status", cli.Exit("stop", 143), false},
 		{"save failed", imageSavingFailure("save failed", transportFailure), false},
-		{"output failed", &outputWriteError{transportFailure}, false},
+		{"output failed", &clioutput.WriteError{Err: transportFailure}, false},
 		{"joined requests", errors.Join(apiFailure, transportFailure), true},
 		{"joined output", errors.Join(apiFailure, io.ErrClosedPipe), false},
 		{"joined cancellation", errors.Join(apiFailure, context.Canceled), false},

@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/jsonview"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -51,16 +52,9 @@ func configureReadableOutput(root *cli.Command) {
 	}
 }
 
-// outputWriter preserves cancellation separately from failures of the sink.
-// Only actual sink errors may be treated as a closed output pipe by the pager.
-type outputWriter struct {
-	ctx context.Context
-	out io.Writer
-}
-
 // Preserve terminal detection when the interactive viewer uses guarded output.
 type terminalOutputWriter struct {
-	outputWriter
+	clioutput.Writer
 	file *os.File
 }
 
@@ -70,38 +64,12 @@ func (w terminalOutputWriter) Fd() uintptr                { return w.file.Fd() }
 func (w terminalOutputWriter) Read(p []byte) (int, error) { return w.file.Read(p) }
 func (w terminalOutputWriter) Close() error               { return w.file.Close() }
 
-func (w outputWriter) Write(data []byte) (int, error) {
-	if err := w.ctx.Err(); err != nil {
-		return 0, err
-	}
-	n, err := w.out.Write(data)
-	return w.result(n, len(data), err)
-}
-
-func (w outputWriter) WriteString(data string) (int, error) {
-	if err := w.ctx.Err(); err != nil {
-		return 0, err
-	}
-	n, err := io.WriteString(w.out, data)
-	return w.result(n, len(data), err)
-}
-
-func (w outputWriter) result(n, size int, err error) (int, error) {
-	if err == nil && n != size {
-		err = io.ErrShortWrite
-	}
-	if err != nil {
-		return n, &outputWriteError{err}
-	}
-	return n, w.ctx.Err()
-}
-
 // Render records as they arrive, keeping stream state separate from list records.
 func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts) error {
 	if opts.OutputKind == OutputStreamEvent && opts.Transform == "" && !opts.RawOutput {
 		return showReadableStream(iter, opts)
 	}
-	out := outputWriter{ctx: opts.Context, out: opts.Stdout}
+	out := clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}
 	emitted := false
 	omitted := false
 	for iter.Next() {

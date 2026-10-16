@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/term"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/tokenizer"
 	"github.com/urfave/cli/v3"
 )
@@ -221,7 +222,7 @@ type tokenizerToken struct {
 }
 
 func writeTokenizerResult(ctx context.Context, writer io.Writer, result tokenizer.Result, inspect, asJSON bool) error {
-	out := bufio.NewWriterSize(outputWriter{ctx: ctx, out: writer}, 32*1024)
+	out := bufio.NewWriterSize(clioutput.Writer{Context: ctx, Sink: writer}, 32*1024)
 	if asJSON {
 		if _, err := fmt.Fprintf(out, `{"encoding":%q,"input_bytes":%d,"token_count":%d`, result.Encoding, result.InputBytes, result.TokenCount); err != nil {
 			return err
@@ -311,7 +312,7 @@ func handleTokenizerEncodings(ctx context.Context, command *cli.Command) error {
 		}
 		text = string(data) + "\n"
 	}
-	_, err = io.WriteString(outputWriter{ctx: ctx, out: command.Root().Writer}, text)
+	_, err = io.WriteString(clioutput.Writer{Context: ctx, Sink: command.Root().Writer}, text)
 	return tokenizerOutputFailure(err)
 }
 
@@ -330,6 +331,6 @@ func handleTokenizerLicenses(ctx context.Context, command *cli.Command) error {
 		}
 		text = string(data) + "\n"
 	}
-	_, err = io.WriteString(outputWriter{ctx: ctx, out: command.Root().Writer}, text)
+	_, err = io.WriteString(clioutput.Writer{Context: ctx, Sink: command.Root().Writer}, text)
 	return tokenizerOutputFailure(err)
 }
