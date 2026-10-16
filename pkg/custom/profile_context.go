@@ -224,7 +224,7 @@ func requestResolutionContext(root *cli.Command) context.Context {
 	return context.Background()
 }
 
-func resolvedRequestOptions(command *cli.Command) []option.RequestOption {
+func resolvedCommandRequestContext(command *cli.Command) (resolvedRequestContext, error) {
 	root := command.Root()
 	selected := rootProfileSelector(root)
 	var result resolvedRequestContext
@@ -241,6 +241,11 @@ func resolvedRequestOptions(command *cli.Command) []option.RequestOption {
 			selected.resolved, selected.err = &result, err
 		}
 	}
+	return result, err
+}
+
+func resolvedRequestOptions(command *cli.Command) []option.RequestOption {
+	result, err := resolvedCommandRequestContext(command)
 	if err != nil {
 		return []option.RequestOption{option.WithMaxRetries(0), option.WithMiddleware(func(*http.Request, option.MiddlewareNext) (*http.Response, error) { return nil, err })}
 	}

@@ -309,7 +309,7 @@ func (m *imagePicker) commandPreview(width, height int) ([]string, int, int) {
 }
 
 func (m *imagePicker) commandLines(width int) []string {
-	command := formatImagePickerCommand(m.settings.args(), m.shell)
+	command := formatImagePickerCommand(imagePickerDisplayArgs(m.settings.args(), m.profile), m.shell)
 	if command == "" {
 		command = imagePickerUnsupportedShell
 	}

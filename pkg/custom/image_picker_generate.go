@@ -48,6 +48,10 @@ func imagePickerWorkflow(next cli.ActionFunc) cli.ActionFunc {
 // selection from the picker; restoring text never starts generation.
 func runImagePickerDrafts(ctx context.Context, command *cli.Command, next cli.ActionFunc, diagnostics io.Writer, pick func(imagePickerOptions) (imagePickerResult, error)) error {
 	options := imagePickerOptions{}
+	if command.Root().IsSet("profile") {
+		profile := command.Root().String("profile")
+		options.profile = &profile
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -69,7 +73,7 @@ func runImagePickerDrafts(ctx context.Context, command *cli.Command, next cli.Ac
 		if result.PrintOnly {
 			return nil
 		}
-		options = imagePickerOptions{Prompt: result.settings.prompt, initial: &result.settings, resuming: true}
+		options = imagePickerOptions{Prompt: result.settings.prompt, profile: options.profile, initial: &result.settings, resuming: true}
 		requestCtx := context.WithValue(ctx, imagePickerLoadingPromptKey{}, result.settings.prompt)
 		if err := runImagePickerAction(requestCtx, command, result.Args, next); err != nil {
 			if ctx.Err() != nil || !imagePickerRecoverableRequest(err) {

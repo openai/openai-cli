@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -743,4 +744,61 @@ func TestMainProfileBaseURLUsesActualEffectiveEndpoint(t *testing.T) {
 		})
 	}
 	assertProfileJSON(t, profileCommand(t, home, directory, "profile", "get", "empty"), profileRecord("empty", false, map[string]string{"base_url": ""}))
+}
+
+func TestMainProfileAdminEndpointPreflightMatchesSelection(t *testing.T) {
+	home, directory := t.TempDir(), t.TempDir()
+	createProfileFixture(t, home, directory, "gateway", "--base-url=https://gateway.invalid/custom")
+	createProfileFixture(t, home, directory, "standard", "--base-url=https://api.openai.com/v1")
+	createProfileFixture(t, home, directory, "empty", "--base-url=")
+	activated := profileCommand(t, home, directory, "profile", "activate", "gateway")
+	require.Zero(t, activated.code, "%s", activated.stderr)
+	before, err := os.ReadFile(profileRegistryPath(home))
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, endpoint, failure string
+		env, flags              []string
+	}{
+		{name: "saved gateway", endpoint: "https://gateway.invalid/custom/organization/projects"},
+		{name: "standard profile", flags: []string{"--profile=standard"}, failure: "Admin API key required."},
+		{name: "empty profile endpoint", flags: []string{"--profile=empty"}, failure: "Admin API key required."},
+		{name: "empty selector", flags: []string{"--profile="}, failure: "Admin API key required."},
+		{name: "environment selector", env: []string{"OPENAI_PROFILE=standard"}, failure: "Admin API key required."},
+		{name: "empty environment selector", env: []string{"OPENAI_PROFILE="}, failure: "Admin API key required."},
+		{name: "flag selector overrides environment", env: []string{"OPENAI_PROFILE=standard"}, flags: []string{"--profile=gateway"}, endpoint: "https://gateway.invalid/custom/organization/projects"},
+		{name: "standard flag overrides profile", flags: []string{"--base-url=https://api.openai.com/v1"}, failure: "Admin API key required."},
+		{name: "standard environment overrides profile", env: []string{"OPENAI_BASE_URL=https://api.openai.com/v1"}, failure: "Admin API key required."},
+		{name: "gateway flag overrides standard profile", flags: []string{"--profile=standard", "--base-url=https://flag.invalid/v1"}, endpoint: "https://flag.invalid/v1/organization/projects"},
+		{name: "gateway environment overrides standard profile", env: []string{"OPENAI_BASE_URL=https://environment.invalid/v1"}, flags: []string{"--profile=standard"}, endpoint: "https://environment.invalid/v1/organization/projects"},
+		{name: "empty flag retains profile", flags: []string{"--base-url="}, endpoint: "https://gateway.invalid/custom/organization/projects"},
+		{name: "empty environment retains credential guard", env: []string{"OPENAI_BASE_URL="}, failure: "Admin API key required."},
+		{name: "unknown profile preserves selection error", flags: []string{"--profile=missing"}, failure: "Selected profile does not exist."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append(slices.Clone(tc.flags), "admin", "organization", "projects", "list", "--limit=1", "--format=raw", "--format-error=json")
+			// This subprocess replaces the transport before main. No destination can receive a real request.
+			got := runProfileURLMain(t, home, directory, tc.env, args)
+			if tc.failure != "" {
+				require.Equal(t, 1, got.code)
+				require.Empty(t, got.stdout)
+				require.True(t, json.Valid([]byte(got.stderr)), "%s", got.stderr)
+				require.Contains(t, got.stderr, tc.failure)
+				require.NotContains(t, got.stderr, "captured-url=")
+			} else {
+				require.Zero(t, got.code, "%s", got.stderr)
+				require.Equal(t, globalFlagsPage+"\n", got.stdout)
+				require.Equal(t, 1, strings.Count(got.stderr, "\n"))
+				require.True(t, strings.HasPrefix(got.stderr, "captured-url="), "%s", got.stderr)
+				captured, err := url.Parse(strings.TrimSuffix(strings.TrimPrefix(got.stderr, "captured-url="), "\n"))
+				require.NoError(t, err)
+				require.Equal(t, "1", captured.Query().Get("limit"))
+				captured.RawQuery = ""
+				require.Equal(t, tc.endpoint, captured.String())
+			}
+			assertAuthStatusPrivate(t, got, "synthetic-url-key", home)
+			after, err := os.ReadFile(profileRegistryPath(home))
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+		})
+	}
 }

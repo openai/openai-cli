@@ -25,6 +25,15 @@ func (s imagePickerSettings) args() []string {
 
 const imagePickerUnsupportedShell = "Command printing needs Bash, zsh, fish or PowerShell 7."
 
+// The explicit selector belongs only to displayed commands, never request arguments or saved drafts.
+// A non-nil empty selector disables the saved default profile.
+func imagePickerDisplayArgs(args []string, profile *string) []string {
+	if profile == nil {
+		return args
+	}
+	return append([]string{"--profile", *profile}, args...)
+}
+
 func imagePickerShellQuoter(shell string) func(string) string {
 	switch shell {
 	case "bash", "zsh":
