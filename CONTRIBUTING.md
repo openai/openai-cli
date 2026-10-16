@@ -49,7 +49,7 @@ below describes the current layout as the migration proceeds.
 - `pkg/cmd/` contains generated API commands and their integration tests.
 - `pkg/custom/` contains handwritten CLI commands, defaults, output-format
   policy, error handling, and presentation orchestration.
-- `pkg/transformers/` selects or reshapes API responses before presentation.
+- `internal/output/transform/` selects or reshapes API responses before presentation.
 - `internal/` contains shared helpers for flags, request encoding, terminal
   output, and testing. For example, `internal/readable` renders labeled text
   and escapes terminal controls for results and errors.
@@ -69,7 +69,7 @@ generation inputs. Establish ownership before editing generated files and fix
 recurring generated problems in the authoritative schema or generator when
 available.
 
-Handwritten behavior belongs in `pkg/custom/`, `pkg/transformers/`, and focused
+Handwritten behavior belongs in `pkg/custom/`, `internal/output/transform/`, and focused
 `internal/` helpers. Keep `cmd/openai/` focused on startup and wiring. A small
 compatibility bridge remains in `pkg/cmd/`; do not add feature logic there.
 Reuse an existing package unless a new one has a distinct responsibility.

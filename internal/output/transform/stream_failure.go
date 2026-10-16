@@ -1,4 +1,4 @@
-package transformers
+package transform
 
 import "github.com/tidwall/gjson"
 
