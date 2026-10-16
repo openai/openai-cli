@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/openai/openai-cli/pkg/cmd"
+	"github.com/openai/openai-cli/generated/commands"
 	"github.com/urfave/cli/v3"
 )
 
@@ -150,7 +150,7 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 			visit(child, append(slices.Clone(path), child.Name), persistent)
 		}
 	}
-	visit(cmd.Command, nil, nil)
+	visit(commands.Command, nil, nil)
 	if visited < 100 {
 		t.Fatalf("complete-help coverage visited only %d commands", visited)
 	}
@@ -186,7 +186,7 @@ func TestMainHelpFullReferenceRoutes(t *testing.T) {
 				t.Errorf("args %q: misleading value label %q", args, text)
 			}
 		}
-		for _, flag := range cmd.Command.Command("images").Command("generate").VisibleFlags() {
+		for _, flag := range commands.Command.Command("images").Command("generate").VisibleFlags() {
 			name := flag.Names()[0]
 			if !strings.Contains(got.stdout, "-"+name) {
 				t.Errorf("args %q: full reference lost option %q", args, name)

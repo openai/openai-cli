@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openai/openai-cli/generated/commands"
 	"github.com/openai/openai-cli/internal/requestflag"
-	apicmd "github.com/openai/openai-cli/pkg/cmd"
 	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/urfave/cli/v3"
 )
@@ -308,8 +308,8 @@ func TestMainErrorCoverageManifestProcess(t *testing.T) {
 	if os.Getenv("OPENAI_CLI_ERROR_COVERAGE_MANIFEST") != "1" {
 		return
 	}
-	root := apicmd.Command
-	root.Flags = append(root.Flags, apicmd.NewRequestHeaderFlag())
+	root := commands.Command
+	root.Flags = append(root.Flags, custom.NewRequestHeaderFlag())
 	if _, _, err := custom.ConfigureHelp(root, []string{"openai", "--help"}); err != nil {
 		t.Fatal(err)
 	}

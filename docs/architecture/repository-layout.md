@@ -2,7 +2,10 @@
 
 Status: accepted direction; migrate through small, independently buildable PRs.
 Paths in the target table are destinations, not a claim that every move is complete.
-The tokenizer Unicode tables now live in `generated/tokenizer/`; their producer is
+API command definitions and generated tests now live in `generated/commands/`;
+application assembly owns handwritten registration, and handwritten command
+contracts live in `tests/cli/`.
+The tokenizer Unicode tables live in `generated/tokenizer/`; their producer is
 `scripts/generate-tokenizer-unicode.go`, while runtime code remains in
 `internal/tokenizer/`.
 

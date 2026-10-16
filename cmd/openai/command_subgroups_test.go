@@ -10,17 +10,17 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/openai/openai-cli/pkg/cmd"
+	"github.com/openai/openai-cli/generated/commands"
 )
 
 func TestMainCommandSubgroupsCoverGeneratedRoutes(t *testing.T) {
 	count := 0
-	for _, old := range cmd.Command.Commands {
+	for _, old := range commands.Command.Commands {
 		if old.Category != "API RESOURCE" || !strings.Contains(old.Name, ":") {
 			continue
 		}
 		count++
-		nested := cmd.Command
+		nested := commands.Command
 		for _, part := range strings.Split(old.Name, ":") {
 			nested = nested.Command(part)
 			if nested == nil {
