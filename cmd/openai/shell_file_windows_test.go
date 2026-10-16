@@ -154,8 +154,11 @@ func TestMainShellWindowsNative(t *testing.T) {
 				defer server.Close()
 				cliArgs := []string{"responses", "create", "--model", "explicit-model"}
 				cli := command(binary, cliArgs...)
+				prefilledStdin := command(helper, append([]string{
+					"-test.run=^TestShellFileWindowsTransportHelper$", "--", "prefilled-stdin", binary,
+				}, cliArgs...)...)
 				for _, input := range []string{"request.json", "request.yaml"} {
-					// Keep shell text ready without a competing Go test producer.
+					// Preserve shell text conversion, then prefill the CLI's owned pipe.
 					producer := "type " + commandArgument(shell, input)
 					if shell.name != "cmd" {
 						producer = "$requestText = [IO.File]::ReadAllText(" + commandArgument(shell, input) + "); $requestText"
@@ -164,7 +167,7 @@ func TestMainShellWindowsNative(t *testing.T) {
 						"-test.run=^TestShellFileWindowsTransportHelper$", "--", "prefilled-input", input, binary,
 					}, cliArgs...)...)
 					for _, operation := range []struct{ name, script string }{
-						{"shell text", producer + " | " + cli},
+						{"shell text", producer + " | " + prefilledStdin},
 						{"prefilled pipe", prefilled},
 					} {
 						before := requestCount.Load()
@@ -708,17 +711,23 @@ func TestShellFileWindowsTransportHelper(t *testing.T) {
 		return
 	}
 	args := os.Args[separator+1:]
-	if len(args) < 2 || args[0] != "prefilled-input" && len(args) != 2 {
+	if len(args) < 2 || args[0] != "prefilled-input" && args[0] != "prefilled-stdin" && len(args) != 2 {
 		t.Fatal("invalid transport helper arguments")
 	}
 	var err error
 	switch args[0] {
-	case "prefilled-input":
-		if len(args) < 3 {
-			t.Fatal("missing prefilled-input command")
-		}
+	case "prefilled-input", "prefilled-stdin":
 		var data []byte
-		data, err = os.ReadFile(args[1])
+		commandArgs := args[1:]
+		if args[0] == "prefilled-input" {
+			if len(args) < 3 {
+				t.Fatal("missing prefilled-input command")
+			}
+			data, err = os.ReadFile(args[1])
+			commandArgs = args[2:]
+		} else {
+			data, err = io.ReadAll(os.Stdin)
+		}
 		if err != nil {
 			break
 		}
@@ -735,7 +744,7 @@ func TestShellFileWindowsTransportHelper(t *testing.T) {
 		if err := writer.Close(); err != nil {
 			t.Fatalf("close prefilled stdin writer: %v", err)
 		}
-		child := exec.Command(args[2], args[3:]...)
+		child := exec.Command(commandArgs[0], commandArgs[1:]...)
 		child.Stdin, child.Stdout, child.Stderr = reader, os.Stdout, os.Stderr
 		childErr := child.Run()
 		// os.Exit below bypasses deferred cleanup.
