@@ -362,9 +362,52 @@ func AudioVoicesFlagOptions(ctx context.Context, cmd *cli.Command) ([]option.Req
 	return FlagOptions(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, MultipartFormEncoded, false)
 }
 
-// The final body has flags, piped input and file references merged. Inspect
-// only the discriminator; sample uploads stay unread. FlagOptions owns error
-// cleanup until the multipart encoder takes ownership.
+// Check known voice requirements before opening uploads. References and readers
+// retain their context-aware inspection below; protected stdin stays literal.
+func preflightAudioVoicesMultipartBody(cmd *cli.Command, bodyMap map[string]any) error {
+	if _, ok := cmd.Metadata[audioVoicesContextMetadata].(context.Context); !ok {
+		return nil
+	}
+	value, supplied := bodyMap["type"]
+	if !supplied {
+		value = "audio_sample"
+	}
+	if text, ok := value.(*string); ok && text != nil {
+		value = *text
+	}
+	switch typed := value.(type) {
+	case untrustedStdinValue:
+		value = string(typed)
+	case FilePathValue:
+		if typed != "" {
+			return requireAudioVoicesFields(cmd, bodyMap, "name")
+		}
+	case io.Reader:
+		// Already-created readers retain late inspection and ownership cleanup.
+		return nil
+	default:
+		// Shared expansion can resolve ordinary or named strings beginning with @.
+		if text := reflect.ValueOf(value); text.Kind() == reflect.String && strings.HasPrefix(text.String(), "@") {
+			return requireAudioVoicesFields(cmd, bodyMap, "name")
+		}
+	}
+	return validateAudioVoicesRequirements(cmd, bodyMap, value)
+}
+
+// Use one type-to-requirements mapping before and after reference inspection.
+func validateAudioVoicesRequirements(cmd *cli.Command, bodyMap map[string]any, voiceType any) error {
+	switch voiceType {
+	case "audio_sample":
+		return requireAudioVoicesFields(cmd, bodyMap, "audio_sample", "consent", "name")
+	case "prompt":
+		return requireAudioVoicesFields(cmd, bodyMap, "name", "prompt")
+	default:
+		return &voiceTypeError{}
+	}
+}
+
+// Inspect the embedded discriminator before expanding unrelated uploads.
+// The caller owns its replay until the complete multipart body transfers ownership.
 func prepareAudioVoicesMultipartBody(cmd *cli.Command, bodyMap map[string]any) error {
 	ctx, ok := cmd.Metadata[audioVoicesContextMetadata].(context.Context)
 	if !ok {
@@ -380,13 +423,11 @@ func prepareAudioVoicesMultipartBody(cmd *cli.Command, bodyMap map[string]any) e
 	if inspectErr != nil {
 		return inspectErr
 	}
-	if voiceType != "audio_sample" && voiceType != "prompt" {
-		return &voiceTypeError{}
-	}
-	required := []string{"audio_sample", "consent", "name"}
-	if voiceType == "prompt" {
-		required = []string{"name", "prompt"}
-	}
+	return validateAudioVoicesRequirements(cmd, bodyMap, voiceType)
+}
+
+// Share presence checks and field order between early and resolved validation.
+func requireAudioVoicesFields(cmd *cli.Command, bodyMap map[string]any, required ...string) error {
 	var missing []string
 	for _, field := range required {
 		if _, present := bodyMap[field]; !present {
@@ -397,6 +438,57 @@ func prepareAudioVoicesMultipartBody(cmd *cli.Command, bodyMap map[string]any) e
 		return fmt.Errorf("Required flags %q not set\nRun '%s --help' for usage information", strings.Join(missing, ", "), cmd.FullName())
 	}
 	return nil
+}
+
+// Resolve voice requirements before unrelated uploads can block or fail.
+// Keep the type replay outside generic expansion and its partial-error cleanup.
+func embedAudioVoicesMultipartBody(cmd *cli.Command, bodyMap map[string]any, stdin *onceStdinReader) (body map[string]any, err error) {
+	remaining := maps.Clone(bodyMap)
+	typeValue, supplied := remaining["type"]
+	delete(remaining, "type")
+	var pendingType any
+	expandingRemaining := false
+	defer func() {
+		if err != nil {
+			if closeErr := closeFileUploads(pendingType); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+			if !expandingRemaining {
+				// Generic expansion has not taken ownership of these existing uploads.
+				if closeErr := closeFileUploads(remaining); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
+			}
+		}
+	}()
+	if supplied {
+		// A one-field body preserves the existing --type source and file errors.
+		embedded, embedErr := embedRequestFiles(cmd, map[string]any{"type": typeValue}, "body", EmbedIOReader, stdin)
+		if embedErr != nil {
+			return nil, embedErr
+		}
+		pendingType = embedded.(map[string]any)["type"]
+		remaining["type"] = pendingType
+	}
+	err = prepareAudioVoicesMultipartBody(cmd, remaining)
+	if supplied {
+		// Inspection closes the source and replaces it with a metadata-preserving replay.
+		pendingType = remaining["type"]
+	}
+	delete(remaining, "type")
+	if err != nil {
+		return nil, err
+	}
+	expandingRemaining = true // Generic expansion cleans its visited partial result.
+	embedded, err := embedRequestFiles(cmd, remaining, "body", EmbedIOReader, stdin)
+	if err != nil {
+		return nil, err
+	}
+	body = embedded.(map[string]any)
+	if supplied {
+		body["type"] = pendingType
+	}
+	return body, nil
 }
 
 func FlagOptions(
@@ -559,6 +651,14 @@ func flagOptionsWithStdin(
 		}
 	}
 
+	if bodyType == MultipartFormEncoded {
+		if bodyMap, ok := requestContents.Body.(map[string]any); ok {
+			if err := preflightAudioVoicesMultipartBody(cmd, bodyMap); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	if err := checkAdminCredentials(cmd); err != nil {
 		return nil, err
 	}
@@ -588,13 +688,20 @@ func flagOptionsWithStdin(
 		embedStyle = EmbedIOReader
 	}
 
-	if embedded, err := embedRequestFiles(cmd, requestContents.Body, "body", embedStyle, &stdinReader); err != nil {
-		return nil, err
+	var embedded any
+	bodyMap, bodyIsMap := requestContents.Body.(map[string]any)
+	_, voiceAction := cmd.Metadata[audioVoicesContextMetadata].(context.Context)
+	if bodyType == MultipartFormEncoded && bodyIsMap && voiceAction {
+		embedded, err = embedAudioVoicesMultipartBody(cmd, bodyMap, &stdinReader)
 	} else {
-		requestContents.Body = embedded
-		if bodyType == MultipartFormEncoded {
-			pendingMultipartUploads = embedded
-		}
+		embedded, err = embedRequestFiles(cmd, requestContents.Body, "body", embedStyle, &stdinReader)
+	}
+	if err != nil {
+		return nil, err
+	}
+	requestContents.Body = embedded
+	if bodyType == MultipartFormEncoded {
+		pendingMultipartUploads = embedded
 	}
 
 	if headersWithFiles, err := embedRequestFiles(cmd, requestContents.Headers, "header", EmbedText, &stdinReader); err != nil {
@@ -657,9 +764,6 @@ func flagOptionsWithStdin(
 		bodyMap, ok := requestContents.Body.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("Cannot send a non-map value to a form-encoded endpoint: %v\n", requestContents.Body)
-		}
-		if err := prepareAudioVoicesMultipartBody(cmd, bodyMap); err != nil {
-			return nil, err
 		}
 		if err := prepareImageMultipartBody(cmd, bodyMap); err != nil {
 			return nil, err
