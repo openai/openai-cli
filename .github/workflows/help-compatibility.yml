@@ -1446,6 +1446,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-clihelp.test') ./internal/clihelp
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-autocomplete.test') ./internal/autocomplete
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           if ('${{ matrix.profile }}' -eq 'shell-contracts') {
             go build -o (Join-Path $env:RUNNER_TEMP 'wsl-openai') ./cmd/openai
@@ -1467,6 +1469,7 @@ jobs:
           if ('${{ matrix.profile }}' -eq 'local-state') {
             $payloads += @('--imageprefs-binary', (Join-Path $env:RUNNER_TEMP 'wsl-imageprefs.test'))
             $payloads += @('--clihelp-binary', (Join-Path $env:RUNNER_TEMP 'wsl-clihelp.test'))
+            $payloads += @('--autocomplete-binary', (Join-Path $env:RUNNER_TEMP 'wsl-autocomplete.test'))
           }
           if ('${{ matrix.profile }}' -eq 'shell-contracts') {
             $payloads += @('--cli-binary', (Join-Path $env:RUNNER_TEMP 'wsl-openai'))

@@ -112,18 +112,18 @@ class LocalInventoryTests(unittest.TestCase):
         with patch.object(pilot, "LOCAL_CASES_PATH", path):
             return pilot.load_local_cases()
 
-    def test_fixed_four_payload_inventory(self):
+    def test_fixed_five_payload_inventory(self):
         suites, digest = self.load(raw=self.raw)
-        self.assertEqual(set(suites), {"imageprefs", "custom", "process", "clihelp"})
+        self.assertEqual(set(suites), {"imageprefs", "custom", "autocomplete", "process", "clihelp"})
         expected = {"imageprefs": (9, 21, 30), "custom": (10, 5, 15),
-                    "process": (28, 114, 142), "clihelp": (3, 1, 4)}
+                    "autocomplete": (3, 29, 32), "process": (28, 114, 142), "clihelp": (3, 1, 4)}
         total = [0, 0, 0]
         for package, counts in expected.items():
             cases = suites[package]
             observed = (len(cases), sum(map(len, cases.values())), len(pilot.test_names(cases)))
             self.assertEqual(observed, counts)
             total = [left + right for left, right in zip(total, observed)]
-        self.assertEqual(total, [50, 141, 191])
+        self.assertEqual(total, [53, 170, 223])
         self.assertEqual(digest, hashlib.sha256(self.raw).hexdigest())
         self.assertEqual(suites["process"][WELCOME], ["<loopback>", "not%url"])
         self.assertEqual(len(suites["process"]["TestMainCommandSubgroupsBareInvocation"]), 10)
@@ -136,6 +136,13 @@ class LocalInventoryTests(unittest.TestCase):
             "TestHelpInvocationFollowsInstalledSymlink": [],
             "TestHelpInvocationKeepsPowerShellScriptOnPath": ["dangling_symlink"],
         })
+        self.assertEqual(set(suites["autocomplete"]), {
+            "TestPickerRenameNoReplace", "TestPickerInstallRoundTrip", "TestPickerRemoveRestoresAbsentProfile",
+        })
+        self.assertEqual(suites["autocomplete"]["TestPickerInstallRoundTrip"], [
+            shell + "/" + original for shell in ("bash", "zsh", "fish")
+            for original in ("", "#_personal_setting", "#_personal_setting_", "\\ufeff#_Windows_setting__")
+        ])
 
     def test_all_payload_names_require_execution(self):
         for package, cases in self.suites.items():
@@ -306,7 +313,7 @@ class DynamicWelcomeTests(unittest.TestCase):
 
 class ProfileAdmissionTests(unittest.TestCase):
     def test_whole_profile_exact_budget_and_shortfall(self):
-        for profile, seconds in (("local-state", 400), ("shell-contracts", 565)):
+        for profile, seconds in (("local-state", 470), ("shell-contracts", 565)):
             self.assertEqual(sum(pilot.PROFILE_PHASES[profile].values()), seconds)
             for difference in (0, -0.001):
                 commands = Mock(deadline=1000 + seconds + difference)
@@ -319,7 +326,7 @@ class ProfileAdmissionTests(unittest.TestCase):
                         pilot.admit_profile(commands, pilot.PROFILE_PHASES[profile])
 
     def test_rechecks_all_remaining_phases_before_next_launch(self):
-        for profile, seconds, first in (("local-state", 400, 70), ("shell-contracts", 565, 170)):
+        for profile, seconds, first in (("local-state", 470, 70), ("shell-contracts", 565, 170)):
             clock = [0.0]
             commands = Mock(deadline=float(seconds))
             def first_phase(*_args, **_kwargs):
@@ -333,19 +340,32 @@ class ProfileAdmissionTests(unittest.TestCase):
                 commands.run.assert_not_called()
 
     def test_local_payloads_keep_separate_bounds_and_final_reserve(self):
-        suites = {name: {} for name in ("imageprefs", "custom", "process", "clihelp")}
-        commands, result = Mock(deadline=400.0), {}
+        suites = {name: {} for name in ("imageprefs", "custom", "autocomplete", "process", "clihelp")}
+        commands, result = Mock(deadline=470.0), {}
         with patch.object(pilot.time, "monotonic", return_value=0), \
                 patch.object(pilot, "run_selected_tests", return_value=[]) as selected:
             remaining = pilot.run_profile(commands, ["synthetic-user"], "local-state", suites, {}, result)
         self.assertEqual(remaining, {"final": 20})
-        self.assertEqual(result["profile_admission_seconds"], 400)
+        self.assertEqual(result["profile_admission_seconds"], 470)
         self.assertEqual([(call.args[2], call.args[4], call.args[5], call.kwargs) for call in selected.call_args_list], [
             ("/home/cli-compat/payload/imageprefs.test", "local-imageprefs", 70, {"dynamic_loopback": False}),
             ("/home/cli-compat/payload/custom.test", "local-custom", 70, {"dynamic_loopback": False}),
+            ("/home/cli-compat/payload/autocomplete.test", "local-autocomplete", 70, {"dynamic_loopback": False}),
             ("/home/cli-compat/payload/process.test", "local-process", 170, {"dynamic_loopback": True}),
             ("/home/cli-compat/payload/clihelp.test", "local-clihelp", 70, {"dynamic_loopback": False}),
         ])
+        commands.run.assert_not_called()
+
+    def test_autocomplete_failure_stops_before_public_process_tests(self):
+        suites = {name: {} for name in ("imageprefs", "custom", "autocomplete", "process", "clihelp")}
+        commands, result = Mock(deadline=470.0), {}
+        with patch.object(pilot.time, "monotonic", return_value=0), \
+                patch.object(pilot, "run_selected_tests", side_effect=[[], [], RuntimeError("native rename failure")]) as selected:
+            with self.assertRaisesRegex(RuntimeError, "native rename failure"):
+                pilot.run_profile(commands, [], "local-state", suites, {}, result)
+        self.assertEqual([call.args[4] for call in selected.call_args_list],
+                         ["local-imageprefs", "local-custom", "local-autocomplete"])
+        self.assertEqual(set(result["profile_results"]), {"imageprefs", "custom"})
         commands.run.assert_not_called()
 
     def test_native_selector_is_exactly_three_bash_leaves(self):
@@ -572,11 +592,13 @@ class ProfileCLIAndCleanupTests(unittest.TestCase):
         code, run = self.invoke_main([
             "--profile", "local-state", "--binary", "custom.test", "--process-binary", "process.test",
             "--imageprefs-binary", "imageprefs.test", "--clihelp-binary", "clihelp.test",
+            "--autocomplete-binary", "autocomplete.test",
         ])
         self.assertEqual(code, 0)
         run.assert_called_once_with(Path("custom.test"), False, Path("process.test"),
                                     profile="local-state", extra_payloads={
-                                        "imageprefs.test": Path("imageprefs.test"), "clihelp.test": Path("clihelp.test")})
+                                        "imageprefs.test": Path("imageprefs.test"), "clihelp.test": Path("clihelp.test"),
+                                        "autocomplete.test": Path("autocomplete.test")})
         code, run = self.invoke_main(["--profile", "shell-contracts", "--process-binary", "process.test",
                                      "--cli-binary", "openai"])
         self.assertEqual(code, 0)
@@ -589,7 +611,12 @@ class ProfileCLIAndCleanupTests(unittest.TestCase):
             ["--profile", "shell-contracts", "--cli-binary", "openai"],
             ["--profile", "shell-contracts", "--process-binary", "process.test", "--cli-binary", "openai", "--binary", "custom.test"],
             ["--profile", "local-state", "--binary", "custom.test", "--process-binary", "process.test"],
+            ["--profile", "local-state", "--binary", "custom.test", "--process-binary", "process.test",
+             "--imageprefs-binary", "imageprefs.test", "--clihelp-binary", "clihelp.test"],
+            ["--profile", "shell-contracts", "--process-binary", "process.test", "--cli-binary", "openai",
+             "--autocomplete-binary", "autocomplete.test"],
             ["--binary", "custom.test", "--cli-binary", "openai"],
+            ["--binary", "custom.test", "--autocomplete-binary", "autocomplete.test"],
             ["--profile", "local-state", "--command-contracts"],
         ]
         for args in bad:
@@ -616,12 +643,20 @@ class ProfileCLIAndCleanupTests(unittest.TestCase):
                     pilot.pilot(None, **kwargs)
                 native.assert_not_called()
 
+    def test_local_profile_requires_autocomplete_before_native_access(self):
+        with patch.object(pilot, "require_native_windows_process") as native:
+            with self.assertRaisesRegex(RuntimeError, "exact payload set"):
+                pilot.pilot(Path("custom.test"), process_binary=Path("process.test"), profile="local-state",
+                            extra_payloads={"imageprefs.test": Path("imageprefs.test"), "clihelp.test": Path("clihelp.test")})
+            native.assert_not_called()
+
     def test_successor_profiles_reject_command_contract_app_binary(self):
         cases = (
             ("local-state", Path("custom.test"), {
                 "imageprefs.test": Path("imageprefs.test"), "clihelp.test": Path("clihelp.test"),
+                "autocomplete.test": Path("autocomplete.test"),
             }, ["--binary", "custom.test", "--imageprefs-binary", "imageprefs.test",
-                "--clihelp-binary", "clihelp.test"]),
+                "--clihelp-binary", "clihelp.test", "--autocomplete-binary", "autocomplete.test"]),
             ("shell-contracts", None, {"openai": Path("openai")}, ["--cli-binary", "openai"]),
         )
         for profile, binary, extras, flags in cases:

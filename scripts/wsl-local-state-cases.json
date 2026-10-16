@@ -54,6 +54,43 @@
     "TestImagePickerDefaultFolderPrintHasNoSideEffects": [],
     "TestImagePickerReadOnlyFolderKeepsPickerOpen": []
   },
+  "autocomplete": {
+    "TestPickerRenameNoReplace": [
+      "open_editor_continues_writing_to_the_retained_inode",
+      "only_one_competing_destination_move_can_succeed",
+      "capture_and_restore_preserve_the_original_inode",
+      "keep_destination_file",
+      "keep_destination_directory",
+      "keep_destination_symlink",
+      "keep_destination_dangling_symlink",
+      "move_the_source_symlink_without_following_it",
+      "missing_source_leaves_destination_absent",
+      "reject_escape_through_parent_symlink",
+      "reject_unsafe_names_before_moving"
+    ],
+    "TestPickerInstallRoundTrip": [
+      "bash/",
+      "bash/#_personal_setting",
+      "bash/#_personal_setting_",
+      "bash/\\ufeff#_Windows_setting__",
+      "zsh/",
+      "zsh/#_personal_setting",
+      "zsh/#_personal_setting_",
+      "zsh/\\ufeff#_Windows_setting__",
+      "fish/",
+      "fish/#_personal_setting",
+      "fish/#_personal_setting_",
+      "fish/\\ufeff#_Windows_setting__"
+    ],
+    "TestPickerRemoveRestoresAbsentProfile": [
+      "bash/missing-directory=false",
+      "bash/missing-directory=true",
+      "zsh/missing-directory=false",
+      "zsh/missing-directory=true",
+      "fish/missing-directory=false",
+      "fish/missing-directory=true"
+    ]
+  },
   "process": {
     "TestMainPickerShellSetupRoundTrip": [
       "bash",

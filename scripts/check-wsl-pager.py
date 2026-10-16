@@ -125,7 +125,9 @@ PROCESS_SELECTOR = "^(" + "|".join(PROCESS_CASES) + ")$"
 COMMAND_CASES_PATH = Path(__file__).with_name("wsl-command-cases.json")
 LOCAL_CASES_PATH = Path(__file__).with_name("wsl-local-state-cases.json")
 PROFILE_PHASES = {
-    "local-state": {"imageprefs": 70, "custom": 70, "process": 170, "clihelp": 70, "final": 20},
+    # Direct installer checks retain native errors before public commands redact them.
+    "local-state": {"imageprefs": 70, "custom": 70, "autocomplete": 70,
+                    "process": 170, "clihelp": 70, "final": 20},
     "shell-contracts": {"invocation": 170, "completion": 75, "startup-login": 130,
                         "startup-nonlogin": 130, "models": 40, "final": 20},
 }
@@ -556,7 +558,8 @@ def load_local_cases():
         raise RuntimeError("Expected a regular local-state inventory")
     raw = LOCAL_CASES_PATH.read_bytes()
     suites = json.loads(raw, object_pairs_hook=unique_object)
-    counts = {"imageprefs": (9, 30), "custom": (10, 15), "process": (28, 142), "clihelp": (3, 4)}
+    counts = {"imageprefs": (9, 30), "custom": (10, 15), "autocomplete": (3, 32),
+              "process": (28, 142), "clihelp": (3, 4)}
     if not isinstance(suites, dict) or set(suites) != set(counts):
         raise RuntimeError("Invalid local-state packages")
     excluded = set(PROCESS_CASES) | {ROOT, "TestMainDispatchProcess", "TestImagePreferenceWaitingWriterProcess"}
@@ -817,7 +820,7 @@ def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=Fal
             payloads["custom.test"] = binary
         if process_binary is not None:
             payloads["process.test"] = process_binary
-        required = {"custom.test", "process.test", "imageprefs.test", "clihelp.test"} if profile == "local-state" else {"process.test", "openai"}
+        required = {"custom.test", "process.test", "imageprefs.test", "clihelp.test", "autocomplete.test"} if profile == "local-state" else {"process.test", "openai"}
         if set(payloads) != required:
             raise RuntimeError("The fixed WSL profile requires its exact payload set")
         if profile == "local-state":
@@ -1012,6 +1015,7 @@ def main():
     selection.add_argument("--profile", choices=sorted(PROFILE_PHASES), help="Run one fixed successor profile")
     parser.add_argument("--imageprefs-binary", type=Path)
     parser.add_argument("--clihelp-binary", type=Path)
+    parser.add_argument("--autocomplete-binary", type=Path)
     parser.add_argument("--cli-binary", type=Path)
     parser.add_argument("--cleanup", action="store_true")
     args = parser.parse_args()
@@ -1020,12 +1024,13 @@ def main():
     if args.command_contracts and not args.cleanup and (args.process_binary is None or args.app_binary is None):
         parser.error("--command-contracts requires --process-binary and --app-binary")
     extras = {name: path for name, path in (("imageprefs.test", args.imageprefs_binary),
-              ("clihelp.test", args.clihelp_binary), ("openai", args.cli_binary)) if path is not None}
+              ("clihelp.test", args.clihelp_binary), ("autocomplete.test", args.autocomplete_binary),
+              ("openai", args.cli_binary)) if path is not None}
     if not args.cleanup:
         if args.profile is not None and args.app_binary is not None:
             parser.error("--app-binary cannot be combined with --profile")
-        if args.profile == "local-state" and (args.process_binary is None or set(extras) != {"imageprefs.test", "clihelp.test"}):
-            parser.error("--profile local-state requires process, imageprefs, and clihelp test binaries")
+        if args.profile == "local-state" and (args.process_binary is None or set(extras) != {"imageprefs.test", "clihelp.test", "autocomplete.test"}):
+            parser.error("--profile local-state requires process, imageprefs, clihelp, and autocomplete test binaries")
         if args.profile == "shell-contracts" and (args.binary is not None or args.process_binary is None or set(extras) != {"openai"}):
             parser.error("--profile shell-contracts requires only process and CLI binaries")
         if args.profile is None and extras:
