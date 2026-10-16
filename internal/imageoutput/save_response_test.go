@@ -181,18 +181,13 @@ func TestSaveResponseNamedCollisions(t *testing.T) {
 }
 
 func TestSaveResponseNamedCollisionDoesNotFollowSymlink(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("creating Windows symlinks can require elevated privileges")
-	}
 	directory := t.TempDir()
 	target := filepath.Join(t.TempDir(), "untouched.png")
 	if err := os.WriteFile(target, []byte("untouched"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(directory, "robot.png")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
-	}
+	symlinkImageOutputFixture(t, target, link)
 	paths, err := SaveResponse(context.Background(), imageResponse(t, imageFixtures(t)[0]), directory, "robot")
 	if err != nil || len(paths) != 1 || filepath.Base(paths[0].Path) != "robot-2.png" {
 		t.Fatalf("symlink collision = %v, %v", paths, err)

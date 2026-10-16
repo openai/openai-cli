@@ -310,6 +310,72 @@ var adminOrganizationUsageCosts = cli.Command{
 	HideHelpCommand: true,
 }
 
+var adminOrganizationUsageDecisions = cli.Command{
+	Name:    "decisions",
+	Usage:   "Get Decisions API usage details for the organization.",
+	Suggest: true,
+	Flags: []cli.Flag{
+		&requestflag.Flag[int64]{
+			Name:      "start-time",
+			Usage:     "Start time (Unix seconds) of the query time range, inclusive.",
+			Required:  true,
+			QueryPath: "start_time",
+		},
+		&requestflag.Flag[[]string]{
+			Name:      "api-key-id",
+			Usage:     "Return only usage for these API keys.",
+			QueryPath: "api_key_ids",
+		},
+		&requestflag.Flag[*bool]{
+			Name:      "batch",
+			Usage:     "If `true`, return batch jobs only. If `false`, return non-batch jobs only. By default, return both.",
+			QueryPath: "batch",
+		},
+		&requestflag.Flag[*string]{
+			Name:      "bucket-width",
+			Usage:     "Width of each time bucket in response. Currently `1m`, `1h` and `1d` are supported, default to `1d`.",
+			QueryPath: "bucket_width",
+		},
+		&requestflag.Flag[*int64]{
+			Name:      "end-time",
+			Usage:     "End time (Unix seconds) of the query time range, exclusive.",
+			QueryPath: "end_time",
+		},
+		&requestflag.Flag[[]string]{
+			Name:      "group-by",
+			Usage:     "Group the usage data by the specified fields. Support fields include `project_id`, `user_id`, `api_key_id`, `model`, `batch`, `service_tier`, `api_source` or any combination of them. When grouped by `api_source`, results use `agents_api` for attributed Agents API activity and `unlabeled` for all other activity. Without source grouping, `api_source` is null.",
+			QueryPath: "group_by",
+		},
+		&requestflag.Flag[*int64]{
+			Name:      "limit",
+			Usage:     "Specifies the number of buckets to return.\n- `bucket_width=1d`: default: 7, max: 31\n- `bucket_width=1h`: default: 24, max: 168\n- `bucket_width=1m`: default: 60, max: 1440",
+			QueryPath: "limit",
+		},
+		&requestflag.Flag[[]string]{
+			Name:      "model",
+			Usage:     "Return only usage for these models.",
+			QueryPath: "models",
+		},
+		&requestflag.Flag[*string]{
+			Name:      "page",
+			Usage:     "A cursor for use in pagination. Corresponding to the `next_page` field from the previous response.",
+			QueryPath: "page",
+		},
+		&requestflag.Flag[[]string]{
+			Name:      "project-id",
+			Usage:     "Return only usage for these projects.",
+			QueryPath: "project_ids",
+		},
+		&requestflag.Flag[[]string]{
+			Name:      "user-id",
+			Usage:     "Return only usage for these users.",
+			QueryPath: "user_ids",
+		},
+	},
+	Action:          handleAdminOrganizationUsageDecisions,
+	HideHelpCommand: true,
+}
+
 var adminOrganizationUsageEmbeddings = cli.Command{
 	Name:    "embeddings",
 	Usage:   "Get embeddings usage details for the organization.",
@@ -898,6 +964,50 @@ func handleAdminOrganizationUsageCosts(ctx context.Context, cmd *cli.Command) er
 		Format:         format,
 		RawOutput:      cmd.Root().Bool("raw-output"),
 		Title:          "admin:organization:usage costs",
+		Transform:      transform,
+	})
+}
+
+func handleAdminOrganizationUsageDecisions(ctx context.Context, cmd *cli.Command) error {
+	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
+	unusedArgs := cmd.Args().Slice()
+
+	if len(unusedArgs) > 0 {
+		return fmt.Errorf("Unexpected extra arguments: %v", unusedArgs)
+	}
+
+	options, err := flagOptions(
+		cmd,
+		apiquery.NestedQueryFormatBrackets,
+		apiquery.ArrayQueryFormatBrackets,
+		EmptyBody,
+		false,
+	)
+	if err != nil {
+		return err
+	}
+
+	params := openai.AdminOrganizationUsageDecisionsParams{}
+
+	var res []byte
+	options = append(options, option.WithResponseBodyInto(&res))
+	_, err = client.Admin.Organization.Usage.Decisions(ctx, params, options...)
+	if err != nil {
+		return err
+	}
+
+	obj := gjson.ParseBytes(res)
+	format := cmd.Root().String("format")
+	explicitFormat := cmd.Root().IsSet("format")
+	transform := cmd.Root().String("transform")
+	return ShowJSON(obj, ShowJSONOpts{
+		Context:        ctx,
+		Operation:      "(resource) admin.organization.usage > (method) decisions",
+		OutputKind:     outputResponse,
+		ExplicitFormat: explicitFormat,
+		Format:         format,
+		RawOutput:      cmd.Root().Bool("raw-output"),
+		Title:          "admin:organization:usage decisions",
 		Transform:      transform,
 	})
 }

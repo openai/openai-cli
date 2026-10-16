@@ -4,8 +4,8 @@ import (
 	"errors"
 
 	"github.com/openai/openai-cli/internal/jsonview"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/readable"
-	"github.com/openai/openai-cli/pkg/transformers"
 )
 
 // showReadableStream keeps API projection separate from incremental rendering.

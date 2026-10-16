@@ -41,7 +41,7 @@ func TestMainFineTuningEmptyJobsModes(t *testing.T) {
 			{"auto", fineTuningEmptyMessage, []string{"--format", "auto"}},
 			{"text", fineTuningEmptyMessage, []string{"--format", "TeXt"}},
 			{"quiet", fineTuningEmptyMessage, []string{"--quiet"}},
-			{"JSON", "", []string{"--format", "json"}},
+			{"JSON", "[]\n", []string{"--format", "json"}},
 			{"JSONL", "", []string{"--format", "jsonl"}},
 			{"YAML", "", []string{"--format", "yaml"}},
 			{"raw envelope", fineTuningEmptyPage + "\n", []string{"--format", "RaW"}},
@@ -74,7 +74,7 @@ func TestMainFineTuningNonemptyJobsPreserveData(t *testing.T) {
 		flags      []string
 	}{
 		{"readable", "", nil},
-		{"JSON", fineTuningJob, []string{"--format", "json"}},
+		{"JSON", "[" + fineTuningJob + "]", []string{"--format", "json"}},
 		{"JSONL", fineTuningJob, []string{"--format", "jsonl"}},
 		{"raw envelope", page, []string{"--format", "raw"}},
 		{"extraction", `"ftjob_example"`, []string{"--transform", "id"}},

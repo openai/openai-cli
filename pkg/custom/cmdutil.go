@@ -18,9 +18,11 @@ import (
 	"syscall"
 	"unicode/utf8"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/openai/openai-cli/internal/jsonview"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/readable"
-	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/charmbracelet/colorprofile"
@@ -115,6 +117,8 @@ func isInputPiped() bool {
 
 func isTerminal(w io.Writer) bool {
 	switch v := w.(type) {
+	case batchTerminalWriter:
+		return term.IsTerminal(v.file.Fd())
 	case *os.File:
 		return term.IsTerminal(v.Fd())
 	default:
@@ -553,6 +557,9 @@ type ShowJSONOpts struct {
 	Stdout         io.Writer       // output destination; defaults to os.Stdout
 	Title          string          // display title
 	Transform      string          // GJSON path to extract before displaying
+
+	// The caller cancels Context on signals, so the explorer must not also handle them.
+	CallerHandlesSignals bool
 }
 
 func (o *ShowJSONOpts) setDefaults() {
@@ -569,7 +576,10 @@ func (o *ShowJSONOpts) setDefaults() {
 
 // ShowJSON displays a single JSON result to the user.
 func ShowJSON(res gjson.Result, opts ShowJSONOpts) error {
-	return showJSON(res, opts, transformers.Select)
+	if err := showJSON(res, opts, transformers.Select); err != nil {
+		return err
+	}
+	return showBatchNextCommand(res, opts)
 }
 
 func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformerSelector) error {
@@ -635,7 +645,11 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 		}
 	case "explore":
 		if isTerminal(opts.Stdout) {
-			return jsonview.ExploreJSONWithOutput(opts.Title, res, opts.Stdout)
+			var options []tea.ProgramOption
+			if opts.CallerHandlesSignals {
+				options = append(options, tea.WithoutSignalHandler())
+			}
+			return jsonview.ExploreJSONWithContext(opts.Context, opts.Title, res, opts.Stdout, options...)
 		}
 		if opts.ExplicitFormat && outputDiagnosticsAllowed(opts.Context) {
 			if _, err := (outputWriter{ctx: opts.Context, out: opts.Stderr}).WriteString(warningExploreNotSupported); err != nil {
@@ -682,6 +696,9 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 		if closer, ok := any(source).(io.Closer); ok {
 			defer func() { resultErr = errors.Join(resultErr, closer.Close()) }()
 		}
+	}
+	if handled, err := showFiniteJSONList(source, itemsToDisplay, opts, selectTransformer); handled {
+		return err
 	}
 	if itemsToDisplay == 0 {
 		return errors.Join(opts.Context.Err(), source.Err())

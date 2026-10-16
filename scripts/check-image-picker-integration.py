@@ -44,13 +44,6 @@ def check_saved(home, directory=None, filename=None):
         assert files[0].name == filename, files
 
 
-def wait_resumed(terminal, mark):
-    terminal.wait('Saved image:', after=mark)
-    saved = terminal.raw.index(b'Saved image:', mark)
-    terminal.wait('Create image', after=saved)
-    terminal.wait('Describe your image', after=saved)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary')
@@ -143,7 +136,7 @@ def main():
                 assert b';2;' not in terminal.raw[mark:] and b';5;' not in terminal.raw[mark:], 'NO_COLOR emitted color'
                 mark = len(terminal.raw)
                 terminal.send(b'\r')
-                wait_resumed(terminal, mark)
+                picker.wait_resumed(terminal, mark, prompt)
                 terminal.send(b'\x03')
                 terminal.finish(130)
                 assert len(server.requests) == before+1, 'expected one image request'
@@ -176,7 +169,7 @@ def main():
                     assert not list(home.rglob('image-picker.json')), 'disabled printing wrote settings'
                     mark = len(terminal.raw)
                     terminal.send(b'\r')
-                    wait_resumed(terminal, mark)
+                    picker.wait_resumed(terminal, mark, prompt)
                     assert len(server.requests) == before+1
                     check_body(server.requests[-1], {'prompt': prompt})
                     check_saved(home)
@@ -185,17 +178,18 @@ def main():
                     assert len(states) == 1, states
                     saved_state = states[0].read_bytes()
                     assert json.loads(saved_state) == {
-                        'version': 1, 'model': 'gpt-image-2.5-sunburst', 'size': '1024x1024',
+                        'version': 2, 'prompt': prompt, 'model': 'gpt-image-2.5-sunburst', 'size': '1024x1024',
                         'quality': 'auto', 'background': 'auto', 'format': 'png',
                         'count': '1', 'output_dir': ''}, saved_state
                     terminal.send(b'\x03')
                     terminal.finish(130)
                     reopened = picker.Terminal(binary, ['images', 'generate'], env)
                     try:
-                        reopened.wait('Describe your image')
+                        reopened.wait(prompt.splitlines()[0])
                         reopened.wait('gpt-image-2.5-sunburst')
-                        assert prompt.splitlines()[0] not in reopened.text()
-                        assert 'Could not restore saved settings' not in reopened.text()
+                        assert 'Could not restore the draft' not in reopened.text()
+                        picker.wait_submit_guard(reopened)
+                        assert len(server.requests) == before+1, 'restoring the draft started a request'
                         reopened.send(b'\x03')
                         reopened.finish(130)
                         assert states[0].read_bytes() == saved_state
@@ -246,7 +240,7 @@ def main():
                 assert len(server.requests) == before
                 assert not list(home.glob('Downloads/gpt-images/*'))
                 states = list(home.rglob('image-picker.json'))
-                assert len(states) == 1 and 'prompt' not in json.loads(states[0].read_text())
+                assert len(states) == 1 and json.loads(states[0].read_text())['prompt'] == prompt
                 passed(name)
             finally:
                 try:
@@ -299,26 +293,28 @@ def main():
                                 os.kill(terminal.child.pid, signal.SIGINT)
                                 terminal.finish(130)
                             elif action == 'api-error':
-                                terminal.finish(1)
-                                assert 'HTTP 401: Unauthorized.' in terminal.text(), terminal.text()
-                                assert 'Check API key, organization and project.' in terminal.text(), terminal.text()
+                                terminal.wait('Authentication failed', after=mark)
+                                failed = terminal.raw.index(b'Authentication failed', mark)
+                                terminal.wait('Create image', after=failed)
+                                terminal.wait(prompt, after=failed)
+                                assert 'Your draft is saved. Ctrl+C exits.' in terminal.text(), terminal.text()
+                                terminal.send(b'\x03')
+                                terminal.finish(130)
                             else:
-                                wait_resumed(terminal, mark)
+                                picker.wait_resumed(terminal, mark, prompt)
+                                if action == 'repeated-enter':
+                                    picker.wait_submit_guard(terminal)
+                                    assert len(server.requests) == before+1, 'queued Enter repeated generation'
                                 if action == 'two-generations':
                                     # Wait for the visible resumed prompt to accept a new submit.
-                                    until = time.monotonic()+1.0
-                                    while time.monotonic() < until:
-                                        terminal.read(0.02)
-                                    blank = len(terminal.raw)
-                                    terminal.send(b'\r')
-                                    terminal.wait('Add a prompt first.', after=blank)
+                                    picker.wait_submit_guard(terminal)
                                     assert len(server.requests) == before+1
                                     server.request_started.clear()
                                     second = len(terminal.raw)
                                     second_prompt = 'A completely new synthetic image'
-                                    terminal.send(b'\x1b[200~'+second_prompt.encode()+b'\x1b[201~\r')
+                                    terminal.send(picker.END+b'\x15\x1b[200~'+second_prompt.encode()+b'\x1b[201~\r')
                                     picker.wait_for_request(terminal, server.request_started)
-                                    wait_resumed(terminal, second)
+                                    picker.wait_resumed(terminal, second, second_prompt)
                                     assert server.requests[-2]['prompt'] == prompt
                                     assert server.requests[-1]['prompt'] == second_prompt
                                     prompt = second_prompt
@@ -340,7 +336,7 @@ def main():
                     assert len(states) == int(action != 'cancel'), (name, states)
                     if states:
                         saved_settings = json.loads(states[0].read_text())
-                        assert 'prompt' not in saved_settings, saved_settings
+                        assert saved_settings['version'] == 2 and saved_settings['prompt'] == prompt, saved_settings
                         expected_model = 'gpt-image-2.5-flare' if action == 'changed-model' else 'gpt-image-2.5-sunburst'
                         assert saved_settings['model'] == expected_model, saved_settings
                     generates = action not in {'cancel', 'print'}

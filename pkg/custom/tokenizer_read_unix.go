@@ -21,7 +21,7 @@ func readTokenizerFile(ctx context.Context, file *os.File, data []byte) (int, er
 	if err != nil {
 		return 0, err
 	}
-	if info.Mode()&os.ModeNamedPipe == 0 {
+	if info.Mode()&(os.ModeNamedPipe|os.ModeSocket) == 0 {
 		return file.Read(data)
 	}
 	connection, err := file.SyscallConn()

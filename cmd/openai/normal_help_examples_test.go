@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,7 +13,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestMainNormalHelpOutputOptions(t *testing.T) {
@@ -93,12 +91,7 @@ func TestMainNormalHelpNativeModelExamples(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(work, "openai")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	build := exec.CommandContext(ctx, filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-o", binary, ".")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
+	copyShellTestCLI(t, binary)
 	invocation := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "'"
 	server, requests := normalHelpModelsServer(t)
 	required := strings.Split(os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS"), ",")
@@ -163,16 +156,16 @@ func TestMainNormalHelpNativeModelExamples(t *testing.T) {
 								}
 							}
 						case 1:
-							decoder := json.NewDecoder(strings.NewReader(got.stdout))
-							for _, id := range []string{"synthetic-model-one", "synthetic-model-two"} {
-								var item map[string]any
-								if err := decoder.Decode(&item); err != nil || item["id"] != id || item["synthetic_field"] != "retained" || len(item) != 5 {
-									t.Fatalf("JSON example lost complete model data: %q (%v)", got.stdout, err)
-								}
+							var items []map[string]any
+							if err := json.Unmarshal([]byte(got.stdout), &items); err != nil || len(items) != 2 {
+								t.Fatalf("JSON example must contain one complete array: %q (%v)", got.stdout, err)
 							}
-							var extra any
-							if err := decoder.Decode(&extra); err != io.EOF {
-								t.Fatalf("JSON example contains extra output: %q (%v)", got.stdout, err)
+							for index, id := range []string{"synthetic-model-one", "synthetic-model-two"} {
+								item := items[index]
+								if item["id"] != id || item["object"] != "model" || item["created"] != float64(index+1) ||
+									item["owned_by"] != "test" || item["synthetic_field"] != "retained" || len(item) != 5 {
+									t.Fatalf("JSON example lost complete model data: %q", got.stdout)
+								}
 							}
 						case 2:
 							if got.stdout != "synthetic-model-one\nsynthetic-model-two\n" {

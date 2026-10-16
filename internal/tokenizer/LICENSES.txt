@@ -1,7 +1,7 @@
 Tokenizer dependency notices
 
-github.com/tiktoken-go/tokenizer v0.7.0
-https://github.com/tiktoken-go/tokenizer/blob/v0.7.0/LICENSE
+github.com/tiktoken-go/tokenizer v0.8.1
+https://github.com/tiktoken-go/tokenizer/blob/v0.8.1/LICENSE
 
 MIT License
 
@@ -50,8 +50,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-github.com/dlclark/regexp2 v1.11.5
-https://github.com/dlclark/regexp2/blob/v1.11.5/LICENSE
+github.com/dlclark/regexp2 v1.12.0
+https://github.com/dlclark/regexp2/blob/v1.12.0/LICENSE
+
+github.com/dlclark/regexp2/v2 v2.5.1
+https://github.com/dlclark/regexp2/blob/v2.5.1/LICENSE
 
 The MIT License (MIT)
 
@@ -75,8 +78,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-github.com/dlclark/regexp2 v1.11.5 attribution notices
-https://github.com/dlclark/regexp2/blob/v1.11.5/ATTRIB
+github.com/dlclark/regexp2 v1.12.0 attribution notices
+https://github.com/dlclark/regexp2/blob/v1.12.0/ATTRIB
+
+github.com/dlclark/regexp2/v2 v2.5.1 attribution notices
+https://github.com/dlclark/regexp2/blob/v2.5.1/ATTRIB
 
 ============
 These pieces of code were ported from dotnet/corefx:

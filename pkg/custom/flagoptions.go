@@ -393,6 +393,20 @@ func FlagOptions(
 	ignoreStdin bool,
 	observeJSON ...func([]byte),
 ) (options []option.RequestOption, err error) {
+	return flagOptionsWithStdin(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, os.Stdin, observeJSON...)
+}
+
+// Keep request parsing and stdin ownership shared when a local workflow needs
+// a cancellable reader. Generated callers retain their ordinary stdin reader.
+func flagOptionsWithStdin(
+	cmd *cli.Command,
+	nestedFormat apiquery.NestedQueryFormat,
+	arrayFormat apiquery.ArrayQueryFormat,
+	bodyType BodyContentType,
+	ignoreStdin bool,
+	stdin io.Reader,
+	observeJSON ...func([]byte),
+) (options []option.RequestOption, err error) {
 	if prepared, ok, err := consumeImageSavingRequest(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin); ok {
 		return prepared, err
 	}
@@ -452,7 +466,7 @@ func FlagOptions(
 
 	stdinConsumedByPipe := false
 	if bodyType != ApplicationOctetStream && !ignoreStdin && explicitStdin == 0 && isInputPiped() {
-		pipeData, err := io.ReadAll(os.Stdin)
+		pipeData, err := io.ReadAll(stdin)
 		if err != nil {
 			return nil, err
 		}
@@ -528,6 +542,10 @@ func FlagOptions(
 		}
 	}
 
+	if err := checkAdminCredentials(cmd); err != nil {
+		return nil, err
+	}
+
 	// FileInput values are file paths, so wrap trusted values with FilePathValue
 	// for automatic expansion. In untrusted-stdin mode, reject piped values.
 	if err := wrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
@@ -544,7 +562,7 @@ func FlagOptions(
 	} else if stdinConsumedByPipe {
 		stdinReader = onceStdinReader{failureReason: "stdin was already consumed by piped YAML/JSON input"}
 	} else {
-		stdinReader = onceStdinReader{stdinReader: os.Stdin}
+		stdinReader = onceStdinReader{stdinReader: stdin}
 	}
 
 	// Embed files passed as "@file.jpg" in the request body, headers, and query:
@@ -653,6 +671,9 @@ func FlagOptions(
 	case ApplicationJSON:
 		bodyBytes, err := json.Marshal(requestContents.Body)
 		if err != nil {
+			return nil, err
+		}
+		if err := validateProjectAPIKeyUpdate(cmd, bodyBytes); err != nil {
 			return nil, err
 		}
 		if err := resolveStreamingInput(cmd, bodyBytes); err != nil {

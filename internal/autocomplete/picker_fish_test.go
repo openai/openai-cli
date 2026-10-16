@@ -35,25 +35,28 @@ send -- "exit\r"; expect eof
 }
 
 func TestPickerFishBindingsAndResourcing(t *testing.T) {
-	for _, scenario := range []struct{ name, setup, probe, interaction, want string }{
+	for _, scenario := range []struct{ name, setup, probe, interaction, want, bindingFunction string }{
 		{
 			name: "custom binding",
 			setup: `fish_default_key_bindings
 function custom_tab; printf 'fallback\n' >>"$PICKER_TEST_RESULT"; end
-bind \t custom_tab`,
-			probe:       `source "$PICKER_TEST_HOOK"`,
-			interaction: `send -- "other\t\025openai_picker_disable; openai_picker_disable; bind --user \\t >>\"\$PICKER_TEST_RESULT\"\r"`,
-			want:        "fallback\nbind tab custom_tab\n",
+bind \t custom_tab
+bind --user \t >"$PICKER_TEST_BINDING"`,
+			probe:           `source "$PICKER_TEST_HOOK"`,
+			interaction:     `send -- "other\t\025openai_picker_disable; openai_picker_disable; bind --user \\t >>\"\$PICKER_TEST_RESULT\"\r"`,
+			want:            "fallback\n",
+			bindingFunction: "custom_tab",
 		},
 		{
 			name: "replacement binding",
 			probe: `function new_tab; end
 bind \t new_tab
+bind --user \t >"$PICKER_TEST_BINDING"
 source "$PICKER_TEST_HOOK"
 openai_picker_disable
 openai_picker_disable
 bind --user \t >>"$PICKER_TEST_RESULT"`,
-			want: "bind tab new_tab\n",
+			bindingFunction: "new_tab",
 		},
 		{
 			name: "disable then enable",
@@ -78,7 +81,15 @@ send -- "\025printf 'DONE\\n'\r"`,
 			runPickerShellPTY(t, "fish", directory, scenario.setup, scenario.probe, interaction)
 			result, err := os.ReadFile(filepath.Join(directory, "result"))
 			require.NoError(t, err)
-			require.Equal(t, scenario.want, string(result))
+			want := scenario.want
+			if scenario.bindingFunction != "" {
+				before, err := os.ReadFile(filepath.Join(directory, "binding"))
+				require.NoError(t, err)
+				require.NotEmpty(t, before)
+				require.Contains(t, string(before), scenario.bindingFunction)
+				want += string(before)
+			}
+			require.Equal(t, want, string(result))
 		})
 	}
 }
