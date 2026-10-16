@@ -467,11 +467,11 @@
     },
     "generated/commands/decision.go": {
       "mode": "100644",
-      "sha256": "7e47101668cdc9be3b233cfcc9f92a098fd9cc42cff181884cbfac1bdc7d3c01"
+      "sha256": "27633372d196b06c8d2313d491721192ec0844995e7e21901e4b8a216593e3d9"
     },
     "generated/commands/decision_test.go": {
       "mode": "100644",
-      "sha256": "475964c1f4d19a87e83af0105c55254dbed9844a70dd9501d0566a118b4f103d"
+      "sha256": "52da248ee20b131024d0895d6809bde3ce6797e09497509fdd54d6d7878e1a40"
     },
     "generated/commands/embedding.go": {
       "mode": "100644",
