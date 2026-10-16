@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +12,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestMainAdminSetupOfflineRoutes(t *testing.T) {
@@ -129,18 +127,12 @@ func TestMainAdminSetupCopiedVerificationCommand(t *testing.T) {
 	if err := os.Mkdir(work, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	binary, goBinary := "openai", filepath.Join(runtime.GOROOT(), "bin", "go")
+	binary := "openai"
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
-		goBinary += ".exe"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
 	executable := filepath.Join(work, binary)
-	build := exec.CommandContext(ctx, goBinary, "build", "-o", executable, ".")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
+	copyShellTestCLI(t, executable)
 	shells := []nativeShell{
 		{"bash", "bash", "", "export OPENAI_ADMIN_KEY='synthetic-admin-setup-key'; ", []string{"--noprofile", "--norc", "-c"}},
 		{"zsh", "zsh", "", "export OPENAI_ADMIN_KEY='synthetic-admin-setup-key'; ", []string{"-f", "-c"}},

@@ -1,6 +1,8 @@
 name: Help compatibility
 
 on:
+  push:
+    branches: [main]
   pull_request:
   merge_group:
     types: [checks_requested]
@@ -14,7 +16,44 @@ jobs:
       contents: read
       actions: read
 
+  # These platforms have no other main-branch CI producer. PR/queue caches
+  # cannot seed the default branch, so warm compilation on trusted main pushes.
+  warm-native-cache:
+    if: github.event_name == 'push'
+    needs: source
+    permissions: {}
+    name: Warm compatibility cache on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, windows-11-arm]
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore main checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-compatibility-go
+        with:
+          cache-compilation: 'true'
+      - name: Warm native test and CLI compilation
+        shell: bash
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          set -euo pipefail
+          go test -p 1 ./cmd/openai ./internal/... ./pkg/custom ./pkg/transformers -run '^$'
+          go build -p 1 -o "$RUNNER_TEMP/openai.exe" ./cmd/openai
+          go mod verify
+
   help:
+    if: github.event_name != 'push'
     needs: source
     permissions: {}
     name: Help on ${{ matrix.os }}
@@ -100,10 +139,9 @@ jobs:
       - name: Restore candidate checkout
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/setup-compatibility-go
         with:
-          go-version-file: .go-version
-          check-latest: true
+          cache-compilation: ${{ matrix.os == 'macos-15-intel' || matrix.os == 'windows-11-arm' }}
       - name: Verify native Go platform
         shell: bash
         env:
@@ -1327,6 +1365,7 @@ jobs:
           PY
 
   wsl1-pager:
+    if: github.event_name != 'push'
     needs: source
     permissions: {}
     name: ${{ matrix.name }}
