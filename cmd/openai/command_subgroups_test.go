@@ -43,15 +43,40 @@ func TestMainCommandSubgroupsCoverGeneratedRoutes(t *testing.T) {
 	t.Logf("checked %d original resource routes and their nested actions", count)
 }
 
-func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
-	for _, tc := range []struct{ path, child string }{
+func commandSubgroupBrowseCases() []struct{ path, child string } {
+	return []struct{ path, child string }{
 		{"admin", "projects"}, {"admin organization", "audit-logs"},
 		{"admin organization projects", "service-accounts"},
 		{"admin organization projects service-accounts", "api-keys"},
 		{"chat", "completions"}, {"chat completions", "messages"},
 		{"audio", "transcribe"}, {"beta threads runs", "steps"},
 		{"containers files", "content"}, {"skills versions", "content"},
-	} {
+	}
+}
+
+func TestMainCommandSubgroupsBareInvocation(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "bare subgroup browsing must not send requests", http.StatusBadRequest)
+	}))
+	t.Cleanup(server.Close)
+	for _, tc := range commandSubgroupBrowseCases() {
+		t.Run(tc.path, func(t *testing.T) {
+			args := append([]string{"openai"}, strings.Fields(tc.path)...)
+			got := runMainDispatchWithEnv(t, "bash", []string{"OPENAI_BASE_URL=" + server.URL}, args...)
+			if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, tc.child) {
+				t.Fatalf("bare subgroup browsing failed: %+v", got)
+			}
+			if count := requests.Load(); count != 0 {
+				t.Fatalf("bare subgroup browsing made %d API requests", count)
+			}
+		})
+	}
+}
+
+func TestMainCommandSubgroupsHelpAndCompletion(t *testing.T) {
+	for _, tc := range commandSubgroupBrowseCases() {
 		t.Run(tc.path, func(t *testing.T) {
 			for _, full := range []bool{false, true} {
 				args := []string{"openai"}

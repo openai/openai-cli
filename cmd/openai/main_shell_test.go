@@ -404,6 +404,11 @@ func buildNativeShellCLI(t *testing.T) (work, binary string) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
+	if copied, err := copyNativeShellCLI(filepath.Join(work, binary)); err != nil {
+		t.Fatalf("prebuilt CLI: %v", err)
+	} else if copied {
+		return work, binary
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	goBinary := filepath.Join(runtime.GOROOT(), "bin", "go")
