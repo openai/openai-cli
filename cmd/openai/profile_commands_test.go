@@ -248,7 +248,7 @@ func TestMainProfileCopiedRecoveryPreservesInvocation(t *testing.T) {
 								t.Run(tc.name, func(t *testing.T) {
 									home, directory := t.TempDir(), t.TempDir()
 									registry := profileRegistryPath(home)
-									before := []byte("{\"version\":1,\"profiles\":{\"work\":{\"project\":\"proj_original\"}}}\n")
+									before := []byte("{\"version\":1,\"default_profile\":null,\"profiles\":{\"work\":{\"project\":\"proj_original\"}}}\n")
 									require.NoError(t, os.MkdirAll(filepath.Dir(registry), 0o700))
 									require.NoError(t, os.WriteFile(registry, before, 0o600))
 									got := runNativeShell(t, shell, directory, home, server.URL,
