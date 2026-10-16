@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -193,6 +194,106 @@ func TestMainProfileValidationLeavesStateUnchanged(t *testing.T) {
 				require.Equal(t, before, after)
 			})
 		}
+	}
+}
+
+func TestMainProfileCopiedRecoveryPreservesInvocation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("this copied-command fixture executes native Bash and zsh")
+	}
+	work, name := buildNativeShellCLI(t)
+	binary := filepath.Join(work, name)
+	invocation := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "'"
+	server, requests := localUtilitiesRequestTrap(t)
+	required := strings.Split(os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS"), ",")
+	for _, shell := range []nativeShell{
+		{name: "bash", executable: "bash", args: []string{"--noprofile", "--norc", "-c"}},
+		{name: "zsh", executable: "zsh", args: []string{"-f", "-c"}},
+	} {
+		t.Run(shell.name, func(t *testing.T) {
+			path, err := exec.LookPath(shell.executable)
+			if err != nil {
+				if slices.Contains(required, shell.name) {
+					t.Fatalf("required shell is unavailable: %v", err)
+				}
+				t.Skipf("%s is unavailable", shell.name)
+			}
+			shell.executable = path
+			t.Setenv("COMPLETION_STYLE", shell.name)
+			for _, competing := range []bool{false, true} {
+				mode := "empty PATH"
+				if competing {
+					mode = "competing executable"
+				}
+				t.Run(mode, func(t *testing.T) {
+					decoy, sentinel := t.TempDir(), filepath.Join(t.TempDir(), "invoked")
+					if competing {
+						script := "#!/bin/sh\nprintf 'wrong executable' > '" + strings.ReplaceAll(sentinel, "'", "'\\''") + "'\nexit 99\n"
+						require.NoError(t, os.WriteFile(filepath.Join(decoy, "openai"), []byte(script), 0o700))
+						t.Setenv("PATH", decoy)
+					} else {
+						t.Setenv("PATH", "")
+					}
+					for _, format := range []string{"text", "json", "jsonl"} {
+						t.Run(format, func(t *testing.T) {
+							for _, tc := range []struct{ name, args, recovery string }{
+								{"missing get", "profile get missing", "list"},
+								{"duplicate create", "profile create work", "set"},
+								{"missing set", "profile set missing --project proj_new", "list"},
+								{"missing activate", "profile activate missing", "list"},
+								{"missing delete", "profile delete missing", "list"},
+								{"missing status selection", "--profile missing auth status", "list"},
+								{"missing switch selection", "--profile missing auth switch --to-project proj_new", "list"},
+							} {
+								t.Run(tc.name, func(t *testing.T) {
+									home, directory := t.TempDir(), t.TempDir()
+									registry := profileRegistryPath(home)
+									before := []byte("{\"version\":1,\"profiles\":{\"work\":{\"project\":\"proj_original\"}}}\n")
+									require.NoError(t, os.MkdirAll(filepath.Dir(registry), 0o700))
+									require.NoError(t, os.WriteFile(registry, before, 0o600))
+									got := runNativeShell(t, shell, directory, home, server.URL,
+										invocation+" "+tc.args+" --format-error="+format)
+									require.Equal(t, 1, got.code, "%s", got.stderr)
+									require.Empty(t, got.stdout)
+									after, err := os.ReadFile(registry)
+									require.NoError(t, err)
+									require.Equal(t, before, after, "failed command changed saved profiles")
+									message := strings.TrimSpace(got.stderr)
+									if format != "text" {
+										var value map[string]string
+										require.NoError(t, json.Unmarshal([]byte(got.stderr), &value))
+										require.Len(t, value, 1)
+										message = value["message"]
+									}
+									_, guidance, found := strings.Cut(message, "Use ")
+									require.True(t, found, "%s", message)
+									printedInvocation, _, found := strings.Cut(guidance, " profile "+tc.recovery)
+									require.True(t, found, "%s", guidance)
+									require.Equal(t, invocation, printedInvocation)
+									recovery := printedInvocation + " profile " + tc.recovery
+									if tc.recovery == "set" {
+										// The guidance names an edit prefix; supply the intended profile and edit.
+										recovery += " work --project proj_recovered"
+									}
+									copied := runNativeShell(t, shell, directory, home, server.URL, recovery+" --format=json")
+									if tc.recovery == "set" {
+										assertProfileJSON(t, copied, profileReceipt("set", "work", false, map[string]string{"project": "proj_recovered"}))
+										assertProfileJSON(t, profileCommand(t, home, directory, "profile", "get", "work"), profileRecord("work", false, map[string]string{"project": "proj_recovered"}))
+									} else {
+										assertProfileJSON(t, copied, []map[string]any{profileRecord("work", false, map[string]string{"project": "proj_original"})})
+										after, err = os.ReadFile(registry)
+										require.NoError(t, err)
+										require.Equal(t, before, after)
+									}
+									require.NoFileExists(t, sentinel, "recovery invoked the competing executable")
+									require.Zero(t, requests.Load(), "profile recovery reached the API")
+								})
+							}
+						})
+					}
+				})
+			}
+		})
 	}
 }
 

@@ -172,7 +172,7 @@ func handleProfileCommand(ctx context.Context, command *cli.Command) error {
 			result = records
 		} else {
 			if _, exists := registry.Profiles[name]; !exists {
-				return profileFailure("That profile does not exist. Use openai profile list to inspect saved names.", nil)
+				return profileFailure("That profile does not exist. Use "+errorHelpInvocation(root)+" profile list to inspect saved names.", nil)
 			}
 			result = savedProfileRecord(registry, name)
 		}
@@ -193,13 +193,13 @@ func handleProfileCommand(ctx context.Context, command *cli.Command) error {
 			values, exists := registry.Profiles[name]
 			if action == "create" {
 				if exists {
-					return profileFailure("That profile already exists. Use openai profile set to edit its saved fields.", nil)
+					return profileFailure("That profile already exists. Use "+errorHelpInvocation(root)+" profile set to edit its saved fields.", nil)
 				}
 				registry.Profiles[name] = profileValues{}
 				return nil
 			}
 			if !exists {
-				return profileFailure("That profile does not exist. Use openai profile list to inspect saved names.", nil)
+				return profileFailure("That profile does not exist. Use "+errorHelpInvocation(root)+" profile list to inspect saved names.", nil)
 			}
 			switch action {
 			case "set":

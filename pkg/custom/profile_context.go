@@ -70,7 +70,7 @@ func selectedProfileName(root *cli.Command, lookup func(string) (string, bool), 
 	}
 	if name != "" {
 		if _, exists := registry.Profiles[name]; !exists {
-			return "", &localUtilityError{message: "Selected profile does not exist. Use openai profile list or create the profile first."}
+			return "", &localUtilityError{message: "Selected profile does not exist. Use " + errorHelpInvocation(root) + " profile list or create the profile first."}
 		}
 	}
 	return name, nil
