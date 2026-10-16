@@ -868,7 +868,8 @@ func TestAuthStatusIdentityVerifiedTLSAndMTLS(t *testing.T) {
 			}))
 			server.EnableHTTP2 = true
 			server.Config.ErrorLog = log.New(io.Discard, "", 0)
-			server.TLS = &tls.Config{Certificates: []tls.Certificate{serverPair}, MinVersion: tls.VersionTLS12}
+			server.TLS = &tls.Config{Certificates: []tls.Certificate{serverPair}, MinVersion: tls.VersionTLS12,
+				NextProtos: []string{"h2", "http/1.1"}}
 			if tc.mtls {
 				server.TLS.ClientAuth = tls.RequireAndVerifyClientCert
 				server.TLS.ClientCAs = clientRoots

@@ -129,6 +129,7 @@ func TestRootRequestFlagsResetProvenanceAcrossRuns(t *testing.T) {
 			}
 			configureRootRequestFlags(root)
 			wrapped := root.Flags[0].(*rootRequestFlag)
+			// Root sources precede descendant arguments, so Count includes source and explicit assignments.
 			for _, tc := range []struct {
 				name, environment, want string
 				args                    []string
@@ -138,9 +139,9 @@ func TestRootRequestFlagsResetProvenanceAcrossRuns(t *testing.T) {
 			}{
 				{name: "initial environment", environment: "synthetic-first", want: "synthetic-first", set: true, count: 1},
 				{name: "changed environment", environment: "synthetic-second", want: "synthetic-second", set: true, count: 1},
-				{name: "explicit repeated alias", environment: "synthetic-second", args: []string{"--" + name + "=synthetic-first", "-p", "synthetic-last"}, want: "synthetic-last", explicit: true, set: true, count: 2},
+				{name: "explicit repeated alias", environment: "synthetic-second", args: []string{"--" + name + "=synthetic-first", "-p", "synthetic-last"}, want: "synthetic-last", explicit: true, set: true, count: 3},
 				{name: "environment after explicit", environment: "synthetic-third", want: "synthetic-third", set: true, count: 1},
-				{name: "explicit empty", environment: "synthetic-third", args: []string{"--" + name + "="}, explicit: true, set: true, count: 1},
+				{name: "explicit empty", environment: "synthetic-third", args: []string{"--" + name + "="}, explicit: true, set: true, count: 2},
 				{name: "present empty environment", set: true},
 				{name: "removed environment", absent: true},
 				{name: "validation failure", environment: "synthetic-third", args: []string{"--" + name + "=invalid"}, err: rejected},
