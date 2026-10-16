@@ -16,6 +16,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
@@ -43,7 +44,7 @@ func handleTokenizerEditor(ctx context.Context, command *cli.Command) error {
 	}
 	if input == nil || output == nil || !isTerminal(input) ||
 		!codexTerminalGuideEligible(format, isTerminal(output), os.Getenv) {
-		_, err := fmt.Fprintf(outputWriter{ctx: ctx, out: root.Writer},
+		_, err := fmt.Fprintf(clioutput.Writer{Context: ctx, Sink: root.Writer},
 			"Tokenizer\n\nOpen the live editor with terminal input and output:\n  %s tokenizer\n\n"+
 				"Commands\n  count      Count exact plain-text tokens\n  inspect    Show token IDs and byte boundaries\n"+
 				"  encodings  List available encodings\n  licenses   Show bundled notices\n\n"+

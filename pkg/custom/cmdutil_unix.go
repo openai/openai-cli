@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"syscall"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"golang.org/x/sys/unix"
 )
 
@@ -51,7 +52,7 @@ func streamOutputOSSpecific(label string, generateOutput func(w *os.File) error)
 	var wstatus syscall.WaitStatus
 	_, err = syscall.Wait4(pid, &wstatus, 0, nil)
 	// Preserve generation errors, but only after closing and reaping the pager.
-	if outputErr != nil && !isOutputBrokenPipe(outputErr) {
+	if outputErr != nil && !clioutput.IsBrokenPipe(outputErr) {
 		return outputErr
 	}
 	if wstatus.ExitStatus() != 0 {

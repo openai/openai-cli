@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
@@ -56,7 +57,7 @@ func codexGuideDarkBackground(colorfgbg string) bool {
 }
 
 func writeCodexTerminalContent(ctx context.Context, output io.Writer, profile colorprofile.Profile, guide codexInstructions, width int, dark bool) error {
-	writer := &colorprofile.Writer{Forward: outputWriter{ctx: ctx, out: output}, Profile: profile}
+	writer := &colorprofile.Writer{Forward: clioutput.Writer{Context: ctx, Sink: output}, Profile: profile}
 	_, err := io.WriteString(writer, renderCodexTerminalGuide(guide, width, dark))
 	return err
 }

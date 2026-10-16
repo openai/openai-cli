@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"testing"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/urfave/cli/v3"
 )
 
@@ -33,10 +34,10 @@ func TestOutputInvocationStderrBrokenPipeKeepsFailureProvenance(t *testing.T) {
 	err = RunWithOutputPolicy(t.Context(), root, func(ctx context.Context) error {
 		return root.Run(ctx, []string{"openai", "--verbose", "synthetic"})
 	})
-	var diagnostic *diagnosticWriteError
+	var diagnostic *clioutput.DiagnosticError
 	var exit cli.ExitCoder
 	if !errors.Is(err, cause) || !errors.Is(err, syscall.EPIPE) || !errors.As(err, &diagnostic) ||
-		!errors.As(err, &exit) || exit.ExitCode() != 27 || isOutputBrokenPipe(err) {
+		!errors.As(err, &exit) || exit.ExitCode() != 27 || clioutput.IsBrokenPipe(err) {
 		t.Fatalf("stderr EPIPE hid the original failure or became stdout EPIPE: %v", err)
 	}
 }
