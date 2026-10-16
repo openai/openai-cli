@@ -3,703 +3,707 @@
   "files": {
     ".github/workflows/castiron-custom-code-comment.yml": {
       "mode": "100644",
-      "sha256": "815b1e8ed09255088d37b7b09a758a567037c2ee5b56397fe8b096b7c97e8a41"
+      "sha256": "02b1c497461fcaf604e1389e7dcab06cfcca01635a8cb2e92f8769245a2aaead"
     },
     ".github/workflows/castiron-custom-code.yml": {
       "mode": "100644",
       "sha256": "ccd67760a8cfcc17ebdf5c8df7e330ee7be5199cb62232afdf9035fea68bbc2f"
     },
-    "pkg/cmd/adminorganizationadminapikey.go": {
+    "generated/commands/adminorganizationadminapikey.go": {
       "mode": "100644",
-      "sha256": "0d93ff8ddcc439d209b0d7831687bf14d8e7cf3aa55be6bbdf7c34ca76a335b0"
+      "sha256": "4b4842f0c706c4a5568a0cd65cfb495c73ec86257b6892499dbd326d1e939c85"
     },
-    "pkg/cmd/adminorganizationadminapikey_test.go": {
+    "generated/commands/adminorganizationadminapikey_test.go": {
       "mode": "100644",
-      "sha256": "1f0757ef11f009da7be1fc1163058adc37d022d390f9ddca7f655e1fe4c74e10"
+      "sha256": "e1de713bb3e5220e6243058a607a53c1b1fc3086a800ad662383f79d86b6c1e2"
     },
-    "pkg/cmd/adminorganizationauditlog.go": {
+    "generated/commands/adminorganizationauditlog.go": {
       "mode": "100644",
-      "sha256": "3f985b4cd84a9dd60da8c72ad2d179de3901107d164b026bd12e8f86eb2dc85d"
+      "sha256": "540bfcb6f09089da1bb71f3cd8b5087f199f7f618a36eb286b438e95a452dd6a"
     },
-    "pkg/cmd/adminorganizationauditlog_test.go": {
+    "generated/commands/adminorganizationauditlog_test.go": {
       "mode": "100644",
-      "sha256": "1f5ec59f5974a38744a592f25c010aef6de85866f6bdddfcec876c8ed051f47a"
+      "sha256": "3461a701c40da9c4e61e54b222293ad242ab2037735fe7166f10c0c4eb23441d"
     },
-    "pkg/cmd/adminorganizationcertificate.go": {
+    "generated/commands/adminorganizationcertificate.go": {
       "mode": "100644",
-      "sha256": "742f55477eb302b178fae93073518161b51804f2ebec8c7801f8a2f4369e669e"
+      "sha256": "4a01eecc38e039c8f11d5806dd8214f8abaf228ec528ce78a5f0236b9cf9d9db"
     },
-    "pkg/cmd/adminorganizationcertificate_test.go": {
+    "generated/commands/adminorganizationcertificate_test.go": {
       "mode": "100644",
-      "sha256": "ece0170ac9c3ba3006ac3259f9d5f6a2c72de26e48cf523a939f992e8b8b4687"
+      "sha256": "044b2f0c60d69af230b82914ab8e2670934ec4698c3c748a7f0b8dd49af6e2f6"
     },
-    "pkg/cmd/adminorganizationdataretention.go": {
+    "generated/commands/adminorganizationdataretention.go": {
       "mode": "100644",
-      "sha256": "ce9ca1b2346469ebbbb554907f346c15fd226a1411e8bfcb4190aff0b7820567"
+      "sha256": "de4fefc17718c9d6a11a5dc2a38dd3050cf659d06c4432d6ab16e87c066623cd"
     },
-    "pkg/cmd/adminorganizationdataretention_test.go": {
+    "generated/commands/adminorganizationdataretention_test.go": {
       "mode": "100644",
-      "sha256": "4bbd81262954e8f2abe4b83fef185b0703ed9c66fbcec8cb45732809f7910c74"
+      "sha256": "cc01b8a3e21a8e49b323e9f9da3cbda07db54b3aa498aae7e54d6bf094707505"
     },
-    "pkg/cmd/adminorganizationexternalstorage.go": {
+    "generated/commands/adminorganizationexternalstorage.go": {
       "mode": "100644",
-      "sha256": "b3aaacfab4a40f1fdf9238c53f115734bca764a7fe08160009109561262c6042"
+      "sha256": "f18526f6cd87147007a3be9b501623fd3e6451b62374296b30248944a14e7097"
     },
-    "pkg/cmd/adminorganizationexternalstorage_test.go": {
+    "generated/commands/adminorganizationexternalstorage_test.go": {
       "mode": "100644",
-      "sha256": "c16ea1fcd7ac834715c7aaa85953623a53e3adc4ea3834e7214e7029d6852709"
+      "sha256": "6f7bdce70c5ba723edc8d1bc72f0683d9ce510f921bcade313b7bfa6705e861d"
     },
-    "pkg/cmd/adminorganizationgroup.go": {
+    "generated/commands/adminorganizationgroup.go": {
       "mode": "100644",
-      "sha256": "ee2448f45e52c90d81eb54d13edc4207a8edc0f878fb963a51811249f5227f77"
+      "sha256": "970f616c9838bd8deb5fb5abedbed0a77c06d7867867c7e28fd533eb76799b57"
     },
-    "pkg/cmd/adminorganizationgroup_test.go": {
+    "generated/commands/adminorganizationgroup_test.go": {
       "mode": "100644",
-      "sha256": "e795276227e4f69b5a26704a018df09cb3aa0dc6660f2f16ecbd0882f1b3867d"
+      "sha256": "14c5fbdcf52732ae0e3fb4b102d676fb3adc8fc76492f33951480df5a6b1e6a0"
     },
-    "pkg/cmd/adminorganizationgrouprole.go": {
+    "generated/commands/adminorganizationgrouprole.go": {
       "mode": "100644",
-      "sha256": "0dd25b0d30361bde3a43f26f15254394891a9e47b3a93512c1d762c6e4a37fda"
+      "sha256": "f2d512dc82f5b880e8bdc99551e1274772f6c13364d98b23db9dc6bf3129795d"
     },
-    "pkg/cmd/adminorganizationgrouprole_test.go": {
+    "generated/commands/adminorganizationgrouprole_test.go": {
       "mode": "100644",
-      "sha256": "0498df0a9cacb68cbf82e68a9f3a7d7665d417836c4bf87b4a4798c63c49571e"
+      "sha256": "2f90bdb83b745418720c4597674136ba654b025efc8c1f7815a71c9a6ae49e9a"
     },
-    "pkg/cmd/adminorganizationgroupuser.go": {
+    "generated/commands/adminorganizationgroupuser.go": {
       "mode": "100644",
-      "sha256": "bcb08d9935fa01130e62338e3f254984d900cc848a4953947d618d4258a5674b"
+      "sha256": "91c2fc2d5b14d3b722c529d8e18284a0b6c4e757c2f779930afe0094493b11f9"
     },
-    "pkg/cmd/adminorganizationgroupuser_test.go": {
+    "generated/commands/adminorganizationgroupuser_test.go": {
       "mode": "100644",
-      "sha256": "181359e44033931474d6a89e262bd990ff00b46f8fe8b0acf0243708d8dd123f"
+      "sha256": "0efdedffc6d26a94270e2d8dc589e6730a6d562710f1427f5d5e2cdb5d36ad8f"
     },
-    "pkg/cmd/adminorganizationinvite.go": {
+    "generated/commands/adminorganizationinvite.go": {
       "mode": "100644",
-      "sha256": "80c78aa1781590e011ba77ea9954743228553932c67bcdd8bcd81cdf486167c4"
+      "sha256": "7e5c6c8412e1f4afd6f31b3fa6842e49e1815c54199233bd1dc20589fa2e04d5"
     },
-    "pkg/cmd/adminorganizationinvite_test.go": {
+    "generated/commands/adminorganizationinvite_test.go": {
       "mode": "100644",
-      "sha256": "8d94ad08fab0fb1ade2732c1590b8b4e29533c0af4b9ab73cdf880c51b263858"
+      "sha256": "cce0b34c21ac6cbec3c451fc39e341fe1bc2091d0e3b5fcf5021bed9ae8973b2"
     },
-    "pkg/cmd/adminorganizationproject.go": {
+    "generated/commands/adminorganizationproject.go": {
       "mode": "100644",
-      "sha256": "3b62e16c7f44ad8d5536f4dda4919f9bacb06b5e3b7ccccf8b38d7522a843afc"
+      "sha256": "dec0cc065ec3b20cfa31116c0079d3dbaf0bbb023da6487329c97558b5706990"
     },
-    "pkg/cmd/adminorganizationproject_test.go": {
+    "generated/commands/adminorganizationproject_test.go": {
       "mode": "100644",
-      "sha256": "9cfc807c90f7166fec46288a3a4ae54cda8e447e1a90672a1a750a1692e5ff0a"
+      "sha256": "b2b6444718a6cb274afe05180170129b3e29477be3479dc6c8a155dcf287fa9f"
     },
-    "pkg/cmd/adminorganizationprojectapikey.go": {
+    "generated/commands/adminorganizationprojectapikey.go": {
       "mode": "100644",
-      "sha256": "2e82dd1fd161660899d7e74137ab024e0fe7f94ab8eee0d266842aa24aa59193"
+      "sha256": "fe3e39586c5628f2415af012cce9a8f844222009faddc3fb6507a9aa4e44d1f1"
     },
-    "pkg/cmd/adminorganizationprojectapikey_test.go": {
+    "generated/commands/adminorganizationprojectapikey_test.go": {
       "mode": "100644",
-      "sha256": "e8f4f4731be31bde2ca7133bbf0a50f19870ba4592fa84d6e156835302e08c7d"
+      "sha256": "5627ed368fbd7121228afe3e1e08f2f675dfe3bf5dfd3ef72978c8163b2c8a32"
     },
-    "pkg/cmd/adminorganizationprojectcertificate.go": {
+    "generated/commands/adminorganizationprojectcertificate.go": {
       "mode": "100644",
-      "sha256": "4e5894c7f3835f3ced3bb891b78dda7cb517e8fe5ee9c43519063713539ca747"
+      "sha256": "b9eded426b2d922dfe79befa8d1c933e7fb6b21182db42a31bba19e5524cd170"
     },
-    "pkg/cmd/adminorganizationprojectcertificate_test.go": {
+    "generated/commands/adminorganizationprojectcertificate_test.go": {
       "mode": "100644",
-      "sha256": "82c4672052f3eaa8112dc5c6087fd998874f4b60de9e9740a141a085989146f1"
+      "sha256": "2ac4136fa978717ed8f371a5189bb7323956b9633f28ed02d1c6de961fb04881"
     },
-    "pkg/cmd/adminorganizationprojectdataretention.go": {
+    "generated/commands/adminorganizationprojectdataretention.go": {
       "mode": "100644",
-      "sha256": "2a50270d2e8bf7eca9b77142fec7f4e18c6bf874ad88aaf430e54ec8452bf2b2"
+      "sha256": "f4126dff65dec7424d0bdda0761ba7689d3b8e7d2891d1f89795e7c1766f45c9"
     },
-    "pkg/cmd/adminorganizationprojectdataretention_test.go": {
+    "generated/commands/adminorganizationprojectdataretention_test.go": {
       "mode": "100644",
-      "sha256": "dd3f5187d381d6dc2f2ce952e1e3ba913557dff2fe96200dc4f2c1b09d684e6e"
+      "sha256": "e8ee0f1d57b7cb7ebb602569a2982f65e47b2d0a6b992894c9947b7b73330165"
     },
-    "pkg/cmd/adminorganizationprojectgroup.go": {
+    "generated/commands/adminorganizationprojectgroup.go": {
       "mode": "100644",
-      "sha256": "1bda55751c61995ac193203c3e922d62892ca77088e42d981800247bee5bf8e3"
+      "sha256": "293d577558b374b491e901620ade351c57029941b701a95caa52cac291efe07e"
     },
-    "pkg/cmd/adminorganizationprojectgroup_test.go": {
+    "generated/commands/adminorganizationprojectgroup_test.go": {
       "mode": "100644",
-      "sha256": "d0db7d51921fab643a7437b26a0b6e40936b781c744c2ec91653cef061cea03d"
+      "sha256": "c5113825c731e3303fd85b2b3fb7af309af0ccf97837ff7c4ee94bdbffcd5685"
     },
-    "pkg/cmd/adminorganizationprojectgrouprole.go": {
+    "generated/commands/adminorganizationprojectgrouprole.go": {
       "mode": "100644",
-      "sha256": "4721c1d5c150a9959c702e72936ffcc0ab206ba99651e7ae0116a1f2d10dbb0f"
+      "sha256": "ac8668ddb9274ba15d0e705b326fae9f8510cd7071d0dfef65a9a0889b9f9a0e"
     },
-    "pkg/cmd/adminorganizationprojectgrouprole_test.go": {
+    "generated/commands/adminorganizationprojectgrouprole_test.go": {
       "mode": "100644",
-      "sha256": "692c8ee1c08e2926de054cab30253b32034bb06375b7ab0b5cda46af29aeb04f"
+      "sha256": "75b257ebf32562664b66ef817cc512f7b22a3ef9f699250eb6929e6993af7a3e"
     },
-    "pkg/cmd/adminorganizationprojecthostedtoolpermission.go": {
+    "generated/commands/adminorganizationprojecthostedtoolpermission.go": {
       "mode": "100644",
-      "sha256": "dd444551b5b1655874c5a5bcaef9477f3dd6a014401eedb3e21bd65d80c68357"
+      "sha256": "3657998fbec4622676cc1548ad678daaed5685f1d3c39bee04c406234f694d0e"
     },
-    "pkg/cmd/adminorganizationprojecthostedtoolpermission_test.go": {
+    "generated/commands/adminorganizationprojecthostedtoolpermission_test.go": {
       "mode": "100644",
-      "sha256": "346fd93ea3bcd60009b837dfa2bb434c94dd09dafb8543386ee2809798626538"
+      "sha256": "8d3510925d8c13937157264ec7c132a9e5c456558e6c6d965ef309ff1da05e60"
     },
-    "pkg/cmd/adminorganizationprojectmodelpermission.go": {
+    "generated/commands/adminorganizationprojectmodelpermission.go": {
       "mode": "100644",
-      "sha256": "4d3033f6ff07bc8d40e5ec8e45937765a57c6149ffc1058f5156fc3ea8d619be"
+      "sha256": "57ce2db74b554316ab779e36ef1baa58820eaab5cfaa5125b8e3c4b5b3d4948e"
     },
-    "pkg/cmd/adminorganizationprojectmodelpermission_test.go": {
+    "generated/commands/adminorganizationprojectmodelpermission_test.go": {
       "mode": "100644",
-      "sha256": "683e0a56d534b99d3f0961769403fe2e5013bb8ccd42d8040659ca92b8c8ba17"
+      "sha256": "8c96fa890c934223fc1e543e9b193e289a97919b2ea9aae3c6f6ea03c490477c"
     },
-    "pkg/cmd/adminorganizationprojectratelimit.go": {
+    "generated/commands/adminorganizationprojectratelimit.go": {
       "mode": "100644",
-      "sha256": "1972d9dab73a50d3c84c70f5a8ff31018c60a70e2b84a09bdb2851133a46d38b"
+      "sha256": "cc5c77d319085f3d6bae0db32836245c33dce492e8716cd94bb4a9cf14cf7ba5"
     },
-    "pkg/cmd/adminorganizationprojectratelimit_test.go": {
+    "generated/commands/adminorganizationprojectratelimit_test.go": {
       "mode": "100644",
-      "sha256": "4b9f2f66b5d7fb6ce6af7fc0b46254da99b8296a18435aa4506ae098c95876d8"
+      "sha256": "147a6c5170548c2ebfa37844ab9b570a7a710d11188c1e4c71597207b75eb5b6"
     },
-    "pkg/cmd/adminorganizationprojectrole.go": {
+    "generated/commands/adminorganizationprojectrole.go": {
       "mode": "100644",
-      "sha256": "3ea6467789d2990bfe7d7030d2a2551c779ab0c45bb97678ad37ce441dbb66a4"
+      "sha256": "229a0cdc60322c2640ebb68c75c874e3d0fcd287e8a35671452ff2939d5a89c8"
     },
-    "pkg/cmd/adminorganizationprojectrole_test.go": {
+    "generated/commands/adminorganizationprojectrole_test.go": {
       "mode": "100644",
-      "sha256": "cd5211f2f62b8c9eaa9668b20f051660c6cccaa1ce53c35cb3dfc9deccad9db2"
+      "sha256": "dd0f794a5100fb83b5353995f3d1729c99601f161a815e32ad74af7501a5e452"
     },
-    "pkg/cmd/adminorganizationprojectserviceaccount.go": {
+    "generated/commands/adminorganizationprojectserviceaccount.go": {
       "mode": "100644",
-      "sha256": "e4af496d3f63b5ef093950e0f53ea13d8dc275b8e5d29d927d60034c14c3ab0a"
+      "sha256": "cd22b29f6f4e7a59d7b6c9c012556e21e0d6d658909d615a1765d3092fe87edf"
     },
-    "pkg/cmd/adminorganizationprojectserviceaccount_test.go": {
+    "generated/commands/adminorganizationprojectserviceaccount_test.go": {
       "mode": "100644",
-      "sha256": "8f9a8ac33524f4b920969ff2847d58f5aeacf00a020a2e58d7455cfc82dd79c3"
+      "sha256": "ca16f35e3a7b2a62191530a4b5fc727b1d3b941d8a09867e3a10f09ce369da50"
     },
-    "pkg/cmd/adminorganizationprojectserviceaccountapikey.go": {
+    "generated/commands/adminorganizationprojectserviceaccountapikey.go": {
       "mode": "100644",
-      "sha256": "5d7a04b170c12cf423d08b8be5965cf47e8ca436534903f95cedfe2b4bd78780"
+      "sha256": "5280055ca2f3765635fbf6e09eb9da81321c341f546f73ea90a674194ff0ace4"
     },
-    "pkg/cmd/adminorganizationprojectserviceaccountapikey_test.go": {
+    "generated/commands/adminorganizationprojectserviceaccountapikey_test.go": {
       "mode": "100644",
-      "sha256": "66aef115a90d72b6180dd8e231734fdc7b6eb9190df61bbae56b2233e19d99b8"
+      "sha256": "2094e2e67b482ddad86c3d99704b762ad350c42e4fd83ff0f5ee57a20d8ce724"
     },
-    "pkg/cmd/adminorganizationprojectspendalert.go": {
+    "generated/commands/adminorganizationprojectspendalert.go": {
       "mode": "100644",
-      "sha256": "02c788451daf1a194de3fdddfb2aea57c620f93ca6dd0b1d25a015a1bf39a504"
+      "sha256": "d8c4a27fc10c1941314aa044d99c1560e559fb3503171802633cb9f3859ea628"
     },
-    "pkg/cmd/adminorganizationprojectspendalert_test.go": {
+    "generated/commands/adminorganizationprojectspendalert_test.go": {
       "mode": "100644",
-      "sha256": "2d15ac748fbf0d665454062ac43a41ecde7a71cc0ceee37d497f0e904e27841b"
+      "sha256": "0b7005d2d1e6f9abf69c1385306ddc1ec6a823f2d963a3cf96ba69846f4bf6e9"
     },
-    "pkg/cmd/adminorganizationprojectspendlimit.go": {
+    "generated/commands/adminorganizationprojectspendlimit.go": {
       "mode": "100644",
-      "sha256": "b816d0209f24264416015ba222843e9a38d94965ae1beb9783b2bd6f6cc5f9c1"
+      "sha256": "4cd7968388acd298d90a0fa982f6f4b7c702806ea905ea7072ba3ecaa2a8492b"
     },
-    "pkg/cmd/adminorganizationprojectspendlimit_test.go": {
+    "generated/commands/adminorganizationprojectspendlimit_test.go": {
       "mode": "100644",
-      "sha256": "da9c9b1b30fa99ec5ec13a96dff31a2aaa861bf4e598ae5ee39c428492cc4e21"
+      "sha256": "92cf9263699d24eb119d4d7e4545e31bd571dd5340b63dfb59ed2ecc615695ac"
     },
-    "pkg/cmd/adminorganizationprojectuser.go": {
+    "generated/commands/adminorganizationprojectuser.go": {
       "mode": "100644",
-      "sha256": "abadd5fe754e4986b258fb82230750188003b866fa2de735478d5b6d0ae8623c"
+      "sha256": "83aabcaab9b6768c9bdd4b998d28abc830c7e1d0b455d2add6a2fccf9aa899c0"
     },
-    "pkg/cmd/adminorganizationprojectuser_test.go": {
+    "generated/commands/adminorganizationprojectuser_test.go": {
       "mode": "100644",
-      "sha256": "f8243636c4e5d1c54b6531553af64ae4b1ad0f3f1f378e45f67ede5a214c2e2d"
+      "sha256": "492581621ee6efd30b933282b21ae5a6d6838685e3fc5b1986b0f3b448ea696e"
     },
-    "pkg/cmd/adminorganizationprojectuserrole.go": {
+    "generated/commands/adminorganizationprojectuserrole.go": {
       "mode": "100644",
-      "sha256": "e6743854e5d0a9c18b21011da42869935e44d9360121022eeda60c49a2d92499"
+      "sha256": "1e2496e35f1dbc3ad414a1f76a05affb050c915ff8f24210229fc4edd16085f0"
     },
-    "pkg/cmd/adminorganizationprojectuserrole_test.go": {
+    "generated/commands/adminorganizationprojectuserrole_test.go": {
       "mode": "100644",
-      "sha256": "abfff3f7eb0e60b10ee23cf7ba4b5e3ea21b6bac13847e8c1e2ccf7596936302"
+      "sha256": "be1f19582afb2a343f2a151bddde5d2e4a607a44340bb3f501b7791a92825b54"
     },
-    "pkg/cmd/adminorganizationrole.go": {
+    "generated/commands/adminorganizationrole.go": {
       "mode": "100644",
-      "sha256": "f32d82b78cfb0f8fa12f2a01a0eea5aff1290611176ed018941b2ab856ec166e"
+      "sha256": "6457775a260b31ee4dbdad54ab2db7a8bc29e748757d8adeeb8a8a23796284a6"
     },
-    "pkg/cmd/adminorganizationrole_test.go": {
+    "generated/commands/adminorganizationrole_test.go": {
       "mode": "100644",
-      "sha256": "0cb76f895b4ed871846b08ad90df6039ce382a7fc9411dadf184fe3fdd8a3a04"
+      "sha256": "bf414a7390e70669753b21300a62843a107a7f3ed222038142506d8b6fa2abb5"
     },
-    "pkg/cmd/adminorganizationspendalert.go": {
+    "generated/commands/adminorganizationspendalert.go": {
       "mode": "100644",
-      "sha256": "4f0bd9455b028eb949592ab75a2fbac1bbfeaad6f777a9e7cd1bd931d4cb0c15"
+      "sha256": "612f227113f65772ee00b96275926523eced352f6b7fa7d715952ec18d322c6c"
     },
-    "pkg/cmd/adminorganizationspendalert_test.go": {
+    "generated/commands/adminorganizationspendalert_test.go": {
       "mode": "100644",
-      "sha256": "c139c678db4c9a71e4fa16df38e0c41474fe1cf04b73b4454012e3cc87bf43dd"
+      "sha256": "299d46f970ce00d8ed08dfcb2effab780e5f1f8e12419a38a5c9654f92f22c12"
     },
-    "pkg/cmd/adminorganizationspendlimit.go": {
+    "generated/commands/adminorganizationspendlimit.go": {
       "mode": "100644",
-      "sha256": "693906887f47bb8dedb60fa086714778a8d28f0e1d4da7137bc9212db3c92b99"
+      "sha256": "58d6eee10a7c5ef43c9f57e18cb05945b1873d2b8d095ab3281b587d1d68123b"
     },
-    "pkg/cmd/adminorganizationspendlimit_test.go": {
+    "generated/commands/adminorganizationspendlimit_test.go": {
       "mode": "100644",
-      "sha256": "d6630bb2567aed6f725e94c698d0934d05cc187272ce03103c99cbfa767e55e4"
+      "sha256": "b4ebc73211ead5cdbca16f74f071e1e679990ee28ae289404ab11aa27e91be46"
     },
-    "pkg/cmd/adminorganizationusage.go": {
+    "generated/commands/adminorganizationusage.go": {
       "mode": "100644",
-      "sha256": "fc32d0bfd10a112d2be0760ba36a868fd8002f262a001ec41013f25dafa62e9b"
+      "sha256": "9a2ff7160fef591da2213bd67bb5a92c606f00fed56de4b49c1f25ee9646ca3f"
     },
-    "pkg/cmd/adminorganizationusage_test.go": {
+    "generated/commands/adminorganizationusage_test.go": {
       "mode": "100644",
-      "sha256": "f12f8c87cda4b9379525f3b4d9bfdce4d1f421e1b07bff7701c544464b4aedc8"
+      "sha256": "a882a678d65d92b836543a050c528ef8590ee84e5ed6e2c7809ed9b9ffe2b912"
     },
-    "pkg/cmd/adminorganizationuser.go": {
+    "generated/commands/adminorganizationuser.go": {
       "mode": "100644",
-      "sha256": "f42ad59df51ee5e4ff630a7a586e73845791cab19819d6f259267e0f0ece3348"
+      "sha256": "5784d49942757dee38bbad678a8862af6820b8f7d04c58294bfd51eb4542dd35"
     },
-    "pkg/cmd/adminorganizationuser_test.go": {
+    "generated/commands/adminorganizationuser_test.go": {
       "mode": "100644",
-      "sha256": "34d50eeb956204fe8be5e872b54d9d5d62c1822438650cfc107708f5a38803c0"
+      "sha256": "971d197ce97a9962d536c119b5d6b63a57fdc54c17504997809f7e2421ddbfb4"
     },
-    "pkg/cmd/adminorganizationuserrole.go": {
+    "generated/commands/adminorganizationuserrole.go": {
       "mode": "100644",
-      "sha256": "cc156ea1157013be699176a96c7d24d343b9802d2528e835d12feac00effaf48"
+      "sha256": "6668abfe923a40546c9e71e2fbad1f3d47aebb2a3d0e11bf71f1b2677894f6e9"
     },
-    "pkg/cmd/adminorganizationuserrole_test.go": {
+    "generated/commands/adminorganizationuserrole_test.go": {
       "mode": "100644",
-      "sha256": "4f9ab542b6f2b506fb188366f99ea33143c0acad66eca5953cb8814229aa85cd"
+      "sha256": "d04fcaf1af7a215f4fabee0af75e96a02518b9623ed57f0be32604b51b7e0768"
     },
-    "pkg/cmd/audiospeech.go": {
+    "generated/commands/audiospeech.go": {
       "mode": "100644",
-      "sha256": "361b610ab8089a6c25d9671a9af7de7d85430b40475548193529fe3a4acbe8a3"
+      "sha256": "a54a0bcd48d819aaa41e248178c03298312086d354243dddbe7ce7ee65774a10"
     },
-    "pkg/cmd/audiospeech_test.go": {
+    "generated/commands/audiospeech_test.go": {
       "mode": "100644",
-      "sha256": "a39f36f65d281e7fc64877c3968b6be940c1d01f7729cfda3dc9a0cfcb1cc920"
+      "sha256": "36d3f2fa76f0e0ca4f9109c456ae0fac1b10b1a74e33da11bb0e36fb12e916a3"
     },
-    "pkg/cmd/audiotranscription.go": {
+    "generated/commands/audiotranscription.go": {
       "mode": "100644",
-      "sha256": "37a49c3534881986c71ace5d4e2b082d25e79247d38795fb9976f78b66bb27d1"
+      "sha256": "246f4f95de2544c4b9016f173bfe62550296dff38f70c40ddc75e6a56c78f0e7"
     },
-    "pkg/cmd/audiotranscription_test.go": {
+    "generated/commands/audiotranscription_test.go": {
       "mode": "100644",
-      "sha256": "715666f0becc66a0522b4a3c487823a6fe4b56c4c1c9a71709a8d48be4c17ced"
+      "sha256": "6ea58329fa1cf5f60eb46e94d1194300fa04713c872523a329b26a4eff331e20"
     },
-    "pkg/cmd/audiotranslation.go": {
+    "generated/commands/audiotranslation.go": {
       "mode": "100644",
-      "sha256": "1cfdb22ee2648baa57178eeb18e3c135a8866248a720f5735a0e02760b3283f1"
+      "sha256": "9d7f313934c747c326939c7c40becb34d6bd719abc0f62d81db201a3a39c6601"
     },
-    "pkg/cmd/audiotranslation_test.go": {
+    "generated/commands/audiotranslation_test.go": {
       "mode": "100644",
-      "sha256": "89b5044732fb3013d752b4ae3e63fc687546f060e11b42033fbb5d8c3ceafcd9"
+      "sha256": "d6bfc244748f9369859edf6c93de2725aeed135cae0a8a6fba79d3d774310694"
     },
-    "pkg/cmd/audiovoice.go": {
+    "generated/commands/audiovoice.go": {
       "mode": "100644",
-      "sha256": "3566668eb98510c89f9f5afa2f65bf330691be524777d9e341ac616f9e7e2153"
+      "sha256": "54801696dcf32ebb4c959d161eb8ee5521e16957e7b36c03cde5397a67d86e88"
     },
-    "pkg/cmd/audiovoice_test.go": {
+    "generated/commands/audiovoice_test.go": {
       "mode": "100644",
-      "sha256": "ba75b4d7b6f0784fc8e57f6aafe1fe4229053d28129ed40a07f2d68d068b6217"
+      "sha256": "1ff06e79177074f4a3c9b62ebd5529b9203a8452d77393c09fda981829253538"
     },
-    "pkg/cmd/batch.go": {
+    "generated/commands/batch.go": {
       "mode": "100644",
-      "sha256": "c9a30bbb15221fbdc52de750627a2136a529c1509cd7e6b7b51c88fe9fcb36f8"
+      "sha256": "83f4665183a8959433676a2926fdb7bd54dbfcb4a65bedcd291cae91d748aa88"
     },
-    "pkg/cmd/batch_test.go": {
+    "generated/commands/batch_test.go": {
       "mode": "100644",
-      "sha256": "ae6622ed985b681451502bf0a7941e9c56eece21ccc85e7258e99cc79413bddf"
+      "sha256": "f89b8cfbc3d1ce711576d70cba1dec8f62277da6e28c03b894e9d4bf2641d391"
     },
-    "pkg/cmd/betaassistant.go": {
+    "generated/commands/betaassistant.go": {
       "mode": "100644",
-      "sha256": "5293d823341d029e224aaa098d428fe141407009465fe401df3b0a85f8b84b98"
+      "sha256": "aabba08d1480dea2c9e2dbe2e5389f3ab34c5fa76b937b98e037869f48839d35"
     },
-    "pkg/cmd/betaassistant_test.go": {
+    "generated/commands/betaassistant_test.go": {
       "mode": "100644",
-      "sha256": "05e640751eefac155f1ae1f660b67ae4465bd4a677c35633ca7b61840b6639ca"
+      "sha256": "1d43175cebd85b213ef332a2132ce96f08054f4c24e30d17fe44a8581ff20f1d"
     },
-    "pkg/cmd/betachatkitsession.go": {
+    "generated/commands/betachatkitsession.go": {
       "mode": "100644",
-      "sha256": "df4421bccefeaa587e1e97686227e8778bc6b71ed1304a9d8cd95c6cdb052d6b"
+      "sha256": "ff23460fc45a0b046dc29f1257baf5ee353e1c5ed9d0aca3c4e99bc0ff520301"
     },
-    "pkg/cmd/betachatkitsession_test.go": {
+    "generated/commands/betachatkitsession_test.go": {
       "mode": "100644",
-      "sha256": "42911e7daf4e762948ff5e040012d1fcdbb39fb01d01330f38402d75a1ee29db"
+      "sha256": "ffe025e0452e4e9f54bd179882dcae4a5fa931e18ece5e48f27af249c096e8c9"
     },
-    "pkg/cmd/betachatkitthread.go": {
+    "generated/commands/betachatkitthread.go": {
       "mode": "100644",
-      "sha256": "33c8c9a23ba7d721bc1c0b3d723be307171e362ac4e647ad88ed32316bee7c05"
+      "sha256": "505b47f6c22ba89fe82508282197e566c6d522806be5614c39dc7f137d2cc753"
     },
-    "pkg/cmd/betachatkitthread_test.go": {
+    "generated/commands/betachatkitthread_test.go": {
       "mode": "100644",
-      "sha256": "65100e1448b3f584b7cd21b446c22a8d4f2fe39f3dc2c47f873654b93b6b7267"
+      "sha256": "de7693249c30d7c93fb880b76cbedc3cfffeb154c5a83f686706343dd35f38cf"
     },
-    "pkg/cmd/betaresponse.go": {
+    "generated/commands/betaresponse.go": {
       "mode": "100644",
-      "sha256": "ec82b5c4f1bcfee5205c34cf4aa407a309bd5a11cd622ed0ceccf22d43d945c5"
+      "sha256": "88c30647a8806bc816e9c657e9732895518214b785c983c3e9cc52db521fdf4a"
     },
-    "pkg/cmd/betaresponse_test.go": {
+    "generated/commands/betaresponse_test.go": {
       "mode": "100644",
-      "sha256": "dfb87d58c1250813547d86fd8b311f69a2bf3f8326205fa7326562da4c43ec5e"
+      "sha256": "4325181c4d804a9c951f4111504867ad291870c3c23a4f4afddbadbfd39a512b"
     },
-    "pkg/cmd/betaresponseinputitem.go": {
+    "generated/commands/betaresponseinputitem.go": {
       "mode": "100644",
-      "sha256": "2c76342eaf194734c257a96b1ff89284dd9a932f255946d94ebdf12bcb0c4e34"
+      "sha256": "e8c4fcd0ad5936d927e84faf9d73a7f3678b1245a0c1c4acdcbe3ab55bf38ec2"
     },
-    "pkg/cmd/betaresponseinputitem_test.go": {
+    "generated/commands/betaresponseinputitem_test.go": {
       "mode": "100644",
-      "sha256": "d580908ce6b85606293bcc51597f7a3c1b40cd0c99513a67b10567772e878b92"
+      "sha256": "9d829c65ccf042fec5a629ed2049ee3c94b314a1f107730bf858c294d55bb72a"
     },
-    "pkg/cmd/betaresponseinputtoken.go": {
+    "generated/commands/betaresponseinputtoken.go": {
       "mode": "100644",
-      "sha256": "75830ce9774e2fe82069ad44d8782d8a86207ff5e2bf528c38277732647fd43e"
+      "sha256": "01ce2924e9d19108d8c212cf16a0ab01989cc500177c633e0177d2914c8731ae"
     },
-    "pkg/cmd/betaresponseinputtoken_test.go": {
+    "generated/commands/betaresponseinputtoken_test.go": {
       "mode": "100644",
-      "sha256": "c1695c264e1800869578472e8c63b7288ad7ec061e2025efd46edadd9fe4273d"
+      "sha256": "962f762107a573cb075e506530dac65d3217d56ecb41fa03866d264b900efa4b"
     },
-    "pkg/cmd/betathread.go": {
+    "generated/commands/betathread.go": {
       "mode": "100644",
-      "sha256": "cfbff69ace1d1c4aacc5cea8aa669314e6934e6c74702d319e448bbf5474e591"
+      "sha256": "419e0d14aab72c082fbbf7bebed1418808bab56badb664525b012c35b1a93479"
     },
-    "pkg/cmd/betathread_test.go": {
+    "generated/commands/betathread_test.go": {
       "mode": "100644",
-      "sha256": "7df298638931381a672e8e3a2665e1dbe8e057bde8572f123aa95ccd8fd7a39c"
+      "sha256": "f25edc92487f35a2ecf6f24f49798f04473296d9d2a79e93d231ca263daa93a6"
     },
-    "pkg/cmd/betathreadmessage.go": {
+    "generated/commands/betathreadmessage.go": {
       "mode": "100644",
-      "sha256": "696a854fb5b9c1c6000ed74e634041132087cf784d1414293f472d7b656cad20"
+      "sha256": "c68ef8b8f1d078ff83be178fb5a59a70e796e384130fcc3c8fc9ca03b8be26d6"
     },
-    "pkg/cmd/betathreadmessage_test.go": {
+    "generated/commands/betathreadmessage_test.go": {
       "mode": "100644",
-      "sha256": "01434e697a9ce66891f5cbd56d76cfd068f81a0ce4f536646988b621c51b243f"
+      "sha256": "4a490416c2ab3ed0150c90a2440204ee9f08a0e38a8d51e04bf3304e27d5c6f1"
     },
-    "pkg/cmd/betathreadrun.go": {
+    "generated/commands/betathreadrun.go": {
       "mode": "100644",
-      "sha256": "3cac337b97747e7a58d1d676949ea5b76143e63cea30645d0a115d992a4265b0"
+      "sha256": "7da2c54d998485557a7a9bc6ed69413ef73498cd27bf6c351168b796bbf010f6"
     },
-    "pkg/cmd/betathreadrun_test.go": {
+    "generated/commands/betathreadrun_test.go": {
       "mode": "100644",
-      "sha256": "c012cc5e5c941054418660e027976bfc5a59fdf7a2e8936e58b002078bfbe599"
+      "sha256": "dc034f1949bc071e83197e43e186a398b29d734b3d5623f4d2aa1c8c6c43d99e"
     },
-    "pkg/cmd/betathreadrunstep.go": {
+    "generated/commands/betathreadrunstep.go": {
       "mode": "100644",
-      "sha256": "fb0410dd05c5187a73c83bdb64cf627cbc6ce54d88e77033d6adbb791d0334ce"
+      "sha256": "b663e6d66d36a2380d208ac6e7539adf8d59f5647eb833e885dde258e04cbbf2"
     },
-    "pkg/cmd/betathreadrunstep_test.go": {
+    "generated/commands/betathreadrunstep_test.go": {
       "mode": "100644",
-      "sha256": "f8f0e6d4383f9aece1bd2ffbf002f728df0a6794659079fc85a2f074b3b1f32a"
+      "sha256": "a5854322a954af9038121ad31870ad6535094e4f245154a66e8cfee6789126d2"
     },
-    "pkg/cmd/call.go": {
+    "generated/commands/call.go": {
       "mode": "100644",
-      "sha256": "1f870b7d1ab7b6398d4d17de8d999fad92a45e8119e1c77218fe81bf96283ab5"
+      "sha256": "c93f95e484acb1fb415223f137dbc5d8276cd782694688f9cd4d641fd88a7d77"
     },
-    "pkg/cmd/call_test.go": {
+    "generated/commands/call_test.go": {
       "mode": "100644",
-      "sha256": "0b0a6741015ce12746a12cda8e5760fa90abf156cc56411df7a0b6ec51f38e31"
+      "sha256": "06a72dd39aaf6ab6ae6f0a19e86925ed8abb189518d4f500a73b26d16741c61a"
     },
-    "pkg/cmd/chatcompletion.go": {
+    "generated/commands/chatcompletion.go": {
       "mode": "100644",
-      "sha256": "873d2a536a5c16ae9efd93b11114136ade3430502365fb2197fec2532112a247"
+      "sha256": "02c279294f4842983f437f8d7b6fca03e3295c0255fbbed19ec487cc31a0968f"
     },
-    "pkg/cmd/chatcompletion_test.go": {
+    "generated/commands/chatcompletion_test.go": {
       "mode": "100644",
-      "sha256": "d3d845338bddccd5fa10d87809b32680d7f404f86be8265150eedf57529e678b"
+      "sha256": "efc99388400a30cb83e541f97d3193f924722551e4a15b3d86e07b8ed269c83b"
     },
-    "pkg/cmd/chatcompletionmessage.go": {
+    "generated/commands/chatcompletionmessage.go": {
       "mode": "100644",
-      "sha256": "90ddbf37e31e355c2ad4786331f5eb0aa4a59dd506df3fd337f85be332bf7edc"
+      "sha256": "982a0de0991929b8ce26c66a5dea490290d569cc3c2f68c7509a0285ee07c2f1"
     },
-    "pkg/cmd/chatcompletionmessage_test.go": {
+    "generated/commands/chatcompletionmessage_test.go": {
       "mode": "100644",
-      "sha256": "c4a51e87117d5058819b3f0cf138556e046c9f61539bdde83225d113561bfa25"
+      "sha256": "fb27b29f42b7c5efcb82fe4b6828e1a8b2e3f93dc337d1c9515587e244bb63aa"
     },
-    "pkg/cmd/clientsecret.go": {
+    "generated/commands/clientsecret.go": {
       "mode": "100644",
-      "sha256": "ed0e94e027223ec1cec370d6606b09a8fb05643632027f09203fda6a4437361b"
+      "sha256": "71a53d9eef68913a819c4f88b040de1a569ea562889afa3b809479756c09260f"
     },
-    "pkg/cmd/clientsecret_test.go": {
+    "generated/commands/clientsecret_test.go": {
       "mode": "100644",
-      "sha256": "ab1e7dac1874dbeb114ea85806d0c74863244a2d0bb3a09808bc8dc249b995e1"
+      "sha256": "85f11266846146441b4618d21b4b53cc52e8f1886ca27e8e5f76e4bb9cf1d186"
     },
-    "pkg/cmd/cmd.go": {
+    "generated/commands/cmd.go": {
       "mode": "100644",
-      "sha256": "56d659e7fe9bf71ff3205a3d7c390b9b0e15fb5e595c49bf42834294c7a22c0f"
+      "sha256": "d84614e473f1c68f166e3bc5eaf4894aee6542c331ac9568a72d029d29371b62"
     },
-    "pkg/cmd/completion.go": {
+    "generated/commands/completion.go": {
       "mode": "100644",
-      "sha256": "e83fda398b255316f52fe87779aa04e103178fa6c5d32bf31e62e27c7e63756a"
+      "sha256": "8bcb4a3628ca1465d4a9e30d0286c3c674116f44ca002d0b5067162e74f52087"
     },
-    "pkg/cmd/completion_test.go": {
+    "generated/commands/completion_test.go": {
       "mode": "100644",
-      "sha256": "a02acd647683ef6a4636e0ea036e833a5e7d3ae04b3f51afa1309c7066124b8f"
+      "sha256": "15dab28b9a864f7537994a1f24906c8d72d23d1ab5d48370d7ec25e0cc3cd2d7"
     },
-    "pkg/cmd/container.go": {
+    "generated/commands/container.go": {
       "mode": "100644",
-      "sha256": "af8383ffa6f9865ac28e17aad37e6f639d45bcfdae505671e5f19390ad086688"
+      "sha256": "d7a5a4d8bc4d9f6d134247258583d7bd1e0147d25256641c22b7958ed72a1b9a"
     },
-    "pkg/cmd/container_test.go": {
+    "generated/commands/container_test.go": {
       "mode": "100644",
-      "sha256": "e74a4ea96416ba30c44eb17c706f159fbd022602592439bc8c11292502a55b97"
+      "sha256": "04dfb4007095e1b18991a8957a1307632694cf38bec189b027154d89684026d9"
     },
-    "pkg/cmd/containerfile.go": {
+    "generated/commands/containerfile.go": {
       "mode": "100644",
-      "sha256": "9bd98cf5fd5e3c82ebd892299bdd42a40462a4bb0b94e3b066ddb56f9536e7ae"
+      "sha256": "6815c5daa3b5f3ac91b06882fdc633f664a0ab89c76d205808a148f971944f26"
     },
-    "pkg/cmd/containerfile_test.go": {
+    "generated/commands/containerfile_test.go": {
       "mode": "100644",
-      "sha256": "e33f3a430bc776110773a2da994cf78c2ea977c90ff4231cec5d9f8c6cc118cd"
+      "sha256": "94b9583e503d4e7ec6b88e8bff404a7c6d6aec820f2b1689a03ef6e9ce5e5e72"
     },
-    "pkg/cmd/containerfilecontent.go": {
+    "generated/commands/containerfilecontent.go": {
       "mode": "100644",
-      "sha256": "c766cb459c8a583ba6a4fec06c61b895f6c6f4cc2b19400394356f3086a1899d"
+      "sha256": "ba3b2b7fa65f7525b59fc513430b2505bf9e2b2cf146dc1845cfed7b000b6e8d"
     },
-    "pkg/cmd/containerfilecontent_test.go": {
+    "generated/commands/containerfilecontent_test.go": {
       "mode": "100644",
-      "sha256": "2964c3e8265a0655056eddaa38a6584cef698ddcbd4b33483a2df9cd3f3f4784"
+      "sha256": "524ae11ec10f7b665e71ce5f44582df5ab2d47651267197dac33de297cf70303"
     },
-    "pkg/cmd/contentprovenancecheck.go": {
+    "generated/commands/contentprovenancecheck.go": {
       "mode": "100644",
-      "sha256": "a3ca4a3191cc673e7c70141db27b8d67eee2ed0bb17fe89d5ed45377de14107b"
+      "sha256": "81b87fb8effd1ee4ea1e9177f8b6c62cda962c220587cb09e01e8cee63d71435"
     },
-    "pkg/cmd/contentprovenancecheck_test.go": {
+    "generated/commands/contentprovenancecheck_test.go": {
       "mode": "100644",
-      "sha256": "7d6d2ebe3e8e070e816c3c309f92bcab9f279d7e711d35471a06195f9e65d630"
+      "sha256": "22e3aa785e95c05e2fd5d70cb15946866961b173c9d6383ad8e56b8667ce81bf"
     },
-    "pkg/cmd/conversation.go": {
+    "generated/commands/conversation.go": {
       "mode": "100644",
-      "sha256": "eff22aa0d81768e72a2a44544fc9ed69403546b506c2ce6e1209e58260e2194c"
+      "sha256": "ee355ae86b6b02de8dbb5a0b65ff379c9685da0506bdcf9d7786f5a64ff2d774"
     },
-    "pkg/cmd/conversation_test.go": {
+    "generated/commands/conversation_test.go": {
       "mode": "100644",
-      "sha256": "c87698101fca9e930a8d8a0b704b62fafba59d66d39a1cc0a960059cfd5e2dd6"
+      "sha256": "8d97fccd49abd6790d694084770f6a90b4f1d45b2ce921bec8957e26cca3eab0"
     },
-    "pkg/cmd/custom_runtime.go": {
+    "generated/commands/custom_runtime.go": {
       "mode": "100644",
-      "sha256": "75f0c924cf644a9c6926f01ec6ccf9ccecd605fa7222faca42655f9b6a7c1650"
+      "sha256": "9a6d5472697c437f4ca886967b4457a7ec704e463f09427ee41d6367683381a8"
     },
-    "pkg/cmd/decision.go": {
+    "generated/commands/decision.go": {
       "mode": "100644",
-      "sha256": "aa8163e3efeef4a94babd4f1f1a9cf15016edd6bcb0d35d32c65298e96697b13"
+      "sha256": "7e47101668cdc9be3b233cfcc9f92a098fd9cc42cff181884cbfac1bdc7d3c01"
     },
-    "pkg/cmd/decision_test.go": {
+    "generated/commands/decision_test.go": {
       "mode": "100644",
-      "sha256": "0e4b3359abfff63f329b71c355cf6531e6de077617e1a25ffcf0766322abcaac"
+      "sha256": "475964c1f4d19a87e83af0105c55254dbed9844a70dd9501d0566a118b4f103d"
     },
-    "pkg/cmd/embedding.go": {
+    "generated/commands/embedding.go": {
       "mode": "100644",
-      "sha256": "c33981e3baa4c5829e613d962d1bad7e3add7fe2ab1f49886addbad0ae9337b2"
+      "sha256": "391d4190e529d9d2aa887047116cb67d6bbe00cd072512e089ac93ea2a82cf3e"
     },
-    "pkg/cmd/embedding_test.go": {
+    "generated/commands/embedding_test.go": {
       "mode": "100644",
-      "sha256": "10c1e70ff1974e951d090a36e3632aab8b8c59b632bf78a0d4a7d594f867e3f8"
+      "sha256": "ae73f9e2f272070fe8a55223cffe2467b873f4c3e7029aef15c4af5743110ec2"
     },
-    "pkg/cmd/eventtype.go": {
+    "generated/commands/eventtype.go": {
       "mode": "100644",
-      "sha256": "597c96ffc197e68d30d4bf4462c58848b08141289bb6efe557d360ecb4bb96ef"
+      "sha256": "f53de35295e0676ba7d3ea53d6f2edf469b153129eea519d15e38af790584e1c"
     },
-    "pkg/cmd/eventtype_test.go": {
+    "generated/commands/eventtype_test.go": {
       "mode": "100644",
-      "sha256": "ea664ecd660e18eefaf003f23563f5e03c27ccd2aacfbc377f3f605bc07c0c0e"
+      "sha256": "eed7d073611c5b6192831e38b35e9aa631ed98d18a07696025ce5efb073ad46f"
     },
-    "pkg/cmd/file.go": {
+    "generated/commands/file.go": {
       "mode": "100644",
-      "sha256": "a371efb84adbf3633dfa82f2fcc8d02301cc4f8a55268533b64610d9d167d678"
+      "sha256": "5c290ab1ce804c4a55dd91ed9df89bbf763102fca13d590e2bed0e9c3d86aae7"
     },
-    "pkg/cmd/file_test.go": {
+    "generated/commands/file_test.go": {
       "mode": "100644",
-      "sha256": "3aa1cc371f614c5eba8520b29fa560ce60e87cbd6f678743f095c48342fb971d"
+      "sha256": "dccd4d43e9c795830ad9fb7c4128239f98523ba5043314e33240a44d5c1b1d84"
     },
-    "pkg/cmd/finetuningalphagrader.go": {
+    "generated/commands/finetuningalphagrader.go": {
       "mode": "100644",
-      "sha256": "8125721ec7e4b1b7d23bcabff1999a0e82720170e4e411835457a80d408a6491"
+      "sha256": "fcb0712a40815781ed24ca33c560a09f9603d80c40f8b33130dfb6a0d20f0ba5"
     },
-    "pkg/cmd/finetuningalphagrader_test.go": {
+    "generated/commands/finetuningalphagrader_test.go": {
       "mode": "100644",
-      "sha256": "9eb5a4f192e22ae00e980e4a0d99baac8ca66913658298aaa0692d75862d2abe"
+      "sha256": "b2f19ad660c4e7589df8434af6c6387a7b43cbcad5afce79805e5788ae369dad"
     },
-    "pkg/cmd/finetuningcheckpointpermission.go": {
+    "generated/commands/finetuningcheckpointpermission.go": {
       "mode": "100644",
-      "sha256": "8eea4b5b3a80456ad9847cf596e877f7e548915d6579a9f930efcf38daadc140"
+      "sha256": "0105c3653458ccee39bff7e8b6d93c83af5ee78eefe9bbc44d7f54eb6124cbcc"
     },
-    "pkg/cmd/finetuningcheckpointpermission_test.go": {
+    "generated/commands/finetuningcheckpointpermission_test.go": {
       "mode": "100644",
-      "sha256": "2474af6a57ee91d6b426fa0cc6e6bbb44e636a4d1af919a700bf9f58f87df65f"
+      "sha256": "1e9129eeddfc46e364803f75734341670a09580119085e0fdcebcd6ef2c91557"
     },
-    "pkg/cmd/finetuningjob.go": {
+    "generated/commands/finetuningjob.go": {
       "mode": "100644",
-      "sha256": "868cb3cb01cbefbaa3bf60d02ada7fa69d69badf188d85a478e80e8195ecb10f"
+      "sha256": "4ac50623ccd582922aebbb0f9756dee68972be9c9efc016775b3c9300507b2ae"
     },
-    "pkg/cmd/finetuningjob_test.go": {
+    "generated/commands/finetuningjob_test.go": {
       "mode": "100644",
-      "sha256": "48a7736edac1d76dfc58e51da26b8ec0b4e8d846fd639d746e84b3c35a6b3d59"
+      "sha256": "c0321586f99e705fc625060c4bc25c2f643f9194a4f92a62e65041c078c14779"
     },
-    "pkg/cmd/finetuningjobcheckpoint.go": {
+    "generated/commands/finetuningjobcheckpoint.go": {
       "mode": "100644",
-      "sha256": "203eeb180b9747e8deb589bf513b739c7c8c0d1e53c06951361781e38c521ba4"
+      "sha256": "301cd4a554eeeb252eeffe36ae35433629b6055bcb078efbdb5d7f3eea2a6139"
     },
-    "pkg/cmd/finetuningjobcheckpoint_test.go": {
+    "generated/commands/finetuningjobcheckpoint_test.go": {
       "mode": "100644",
-      "sha256": "936883864c3254deb042831c7cdd5e4a4aa4ad795ea69e7b87f011813cf7c369"
+      "sha256": "09ad2dcbc71c6b1e1781a68a84eaea9a85b6dbda0772ce0dfdbf4e42e12edc24"
     },
-    "pkg/cmd/image.go": {
+    "generated/commands/image.go": {
       "mode": "100644",
-      "sha256": "60bc23c1abc80a56fcfcb87d6adacd027e9c3ef39ada54499caa80a1887a23db"
+      "sha256": "d1d9e7fed66c0c515d9d1a7b1e636a480ad3d10828d7dfc0af082c386b68b537"
     },
-    "pkg/cmd/image_test.go": {
+    "generated/commands/image_test.go": {
       "mode": "100644",
-      "sha256": "63fa94b71b2b4ffd2895e1d488f460ff6307c577a68738eb1ac36edd100d4499"
+      "sha256": "efa58e6d04ebb1e34a57c24286cc8d68aefc1dca2b29a4475221cd4500f1720a"
     },
-    "pkg/cmd/inputitem.go": {
+    "generated/commands/inputitem.go": {
       "mode": "100644",
-      "sha256": "7245d26586a73226234872f3926c7b98c1f416fb89663d689ca486b57e2cb748"
+      "sha256": "5dd8571e789c681f7a8e5929be3dfc387260aec24e84a02b3aecdbf6ece6bfce"
     },
-    "pkg/cmd/inputitem_test.go": {
+    "generated/commands/inputitem_test.go": {
       "mode": "100644",
-      "sha256": "3e454699931e492873f49d7b624d9be7c9ff5dc31168c039fc191199390ea051"
+      "sha256": "18afdb662b5b8824a9864f98f82f6790042a051040a22caf283b54119b2ae35c"
     },
-    "pkg/cmd/inputtoken.go": {
+    "generated/commands/inputtoken.go": {
       "mode": "100644",
-      "sha256": "0e7c3f7f0f315269a9bcf5c62b38e85d273d82517bf10d79923c67ea369a6328"
+      "sha256": "756e644411dbc7748f70791a4e6e6c3f6628c2971c0f975ea8c528d0c1d98876"
     },
-    "pkg/cmd/inputtoken_test.go": {
+    "generated/commands/inputtoken_test.go": {
       "mode": "100644",
-      "sha256": "13ed7c4c63d016b29f6d4e25babb2636391faeabb3bcc73dfbfa1ddf424afb24"
+      "sha256": "306725aaaf60816e20d042191613347dc69eb5f1f0e465139707eaf353ee0bfa"
     },
-    "pkg/cmd/item.go": {
+    "generated/commands/item.go": {
       "mode": "100644",
-      "sha256": "9aefdad0589841dedc7f6f2e4983160b3c7ec2357fe803ffaf8eb933d748651c"
+      "sha256": "67a041b3e121811b75d81742cd8e6b4dd9fc96f0ba3dee56a581d6a19ff36f95"
     },
-    "pkg/cmd/item_test.go": {
+    "generated/commands/item_test.go": {
       "mode": "100644",
-      "sha256": "8592a33a30d0c3cdad93692bfc79d7c5f797ceb57e3643e2e242a8f6d122a8ad"
+      "sha256": "4035d1141b01b307b6954dfd87dc824c2002f02439d8805f4ceb13c5be377d7c"
     },
-    "pkg/cmd/model.go": {
+    "generated/commands/mocktest_main_test.go": {
       "mode": "100644",
-      "sha256": "4b6513effc040d8202204aa460b517148bd51dab34457db605591bd2ebaae7b3"
+      "sha256": "44b17a637197b4f7a306220ef57a304c18e5d404e8b540406ab7c5d9236385b0"
     },
-    "pkg/cmd/model_test.go": {
+    "generated/commands/model.go": {
       "mode": "100644",
-      "sha256": "4512c17660bc9a39fbbfdeab444f635efda7b10c16698fe3a69b1d4210fcb516"
+      "sha256": "5d714e45a119f9a6935de857fbee77e4fb3853a5c5f28d8563ca924eb805d31f"
     },
-    "pkg/cmd/moderation.go": {
+    "generated/commands/model_test.go": {
       "mode": "100644",
-      "sha256": "7c0705193ac0e05657122bea095623eae7d459cc1330e5191c824ff202e5b420"
+      "sha256": "adc17dcdd786abeb6a8c701b9645873f62ab3eeeb7e0f024218493026188f014"
     },
-    "pkg/cmd/moderation_test.go": {
+    "generated/commands/moderation.go": {
       "mode": "100644",
-      "sha256": "000af4957c42969a372c45699d048c7af83147c662a200b82bfb5cba0f92f079"
+      "sha256": "1d62c8e203e415cafb5c4aebc659a6989f38a265c33d0163112d8a863df62a63"
     },
-    "pkg/cmd/response.go": {
+    "generated/commands/moderation_test.go": {
       "mode": "100644",
-      "sha256": "9edca3d93847ae1971e73eb606ab1ee09bceee3607f7e8bbf25eb1c88c1038f2"
+      "sha256": "d1be88e5aab19734dccf92729db270c22c58d79c2865da2dd8e9e408aeb1da85"
     },
-    "pkg/cmd/response_test.go": {
+    "generated/commands/response.go": {
       "mode": "100644",
-      "sha256": "8c1281013117068618cdce012849f25902908c475312aa9169ca0da901381f44"
+      "sha256": "2cac6acf09a95b51b617f9cd1a529440bbc7ac0efd9dcbb17a7481f9e55b0578"
     },
-    "pkg/cmd/safetyalert.go": {
+    "generated/commands/response_test.go": {
       "mode": "100644",
-      "sha256": "2c333556246f3642882455663f0f65658a3b5be62b96fad9b6c26c5a23437771"
+      "sha256": "0667eca1f096db8ac06f540269d4014f96967a34f451a820c48ef441ae03a636"
     },
-    "pkg/cmd/safetyalert_test.go": {
+    "generated/commands/safetyalert.go": {
       "mode": "100644",
-      "sha256": "ac7240814dbac981ba3fad04a8f9cc9ec00d67161027edd11e9321177d96b011"
+      "sha256": "e536ca3282dcfd9f945befb79bc3bef33e1186da4ffdba19755bbfd5f9772e3c"
     },
-    "pkg/cmd/safetycase.go": {
+    "generated/commands/safetyalert_test.go": {
       "mode": "100644",
-      "sha256": "3b6d35332fb067182d8e066616d3795f91f038bb9e299dda38ede225e9d29152"
+      "sha256": "6e6cbccbb5d164c867d55401173edc93e85995daf7aa9e7486d1fae3624f30c1"
     },
-    "pkg/cmd/safetycase_test.go": {
+    "generated/commands/safetycase.go": {
       "mode": "100644",
-      "sha256": "f8492bec12b7a995a6083863192f4ed3649841021c6cbc152332c533af65c06e"
+      "sha256": "70ce95e496600f49a5dd56edb2250bada5b0b442422baf33648601c62be92841"
     },
-    "pkg/cmd/session.go": {
+    "generated/commands/safetycase_test.go": {
       "mode": "100644",
-      "sha256": "b4976a736adf287816cf713ef9fc862db455cbda06d4ce03120f7eb29ce101c7"
+      "sha256": "204bd5da77d9f9a58a89e2c9bbef557d8e29bb54f727394472f06a6407922eac"
     },
-    "pkg/cmd/session_test.go": {
+    "generated/commands/session.go": {
       "mode": "100644",
-      "sha256": "a9a5ac9295e4b63933eb1689bf7147559d4737e1ad9ba930b7ab86e0ffa8ea3f"
+      "sha256": "a49ac90078748755be070bfa362cd2bddcd47a3adb005d5d393bbd523bfe1208"
     },
-    "pkg/cmd/skill.go": {
+    "generated/commands/session_test.go": {
       "mode": "100644",
-      "sha256": "d263076f05170c9f74f5b49f590cbee7e0117179c4233c732af5d6c88e8be459"
+      "sha256": "ae74c30f4d36022144fadac7ce8c6f4b12c12939d4864000b082312785722c40"
     },
-    "pkg/cmd/skill_test.go": {
+    "generated/commands/skill.go": {
       "mode": "100644",
-      "sha256": "e3c1854fb8f24331cc8fd5901d7ac33da938867b682c1c473c88913d0609aa02"
+      "sha256": "4539a6b4ab8c06a7d676a52a78e5dd3db1c77e241a7a21ac57c42f9c1b0f08e9"
     },
-    "pkg/cmd/skillcontent.go": {
+    "generated/commands/skill_test.go": {
       "mode": "100644",
-      "sha256": "13043c28f164b5b74fac41b6fa9ca3e109240fcdd083ed126f8d2a558cd8a5b2"
+      "sha256": "2d6a034f28fbe9b71b0f7ed5cd6830fce67806202b0460c66f2107db92bfd73f"
     },
-    "pkg/cmd/skillcontent_test.go": {
+    "generated/commands/skillcontent.go": {
       "mode": "100644",
-      "sha256": "4f6c221f9f5f45c7d68970242997ae55bf0908b61009232e9e97940e14208886"
+      "sha256": "bc00e79a5efaa4a3f52a318f22423a2385fe88ada90cdb6f77edfda0a338266a"
     },
-    "pkg/cmd/skillversion.go": {
+    "generated/commands/skillcontent_test.go": {
       "mode": "100644",
-      "sha256": "cf090d526bf7624873f7025a6fa73c80bc4c9faf8308a3742292547179086817"
+      "sha256": "731f35ee2531908dacae6cb2f502ded518ffc1d97e5af4649ffc96e89766d33c"
     },
-    "pkg/cmd/skillversion_test.go": {
+    "generated/commands/skillversion.go": {
       "mode": "100644",
-      "sha256": "1d99b15998394d9550ac88a887a978a566d05db2912f96cad7c6c5baf7ab1424"
+      "sha256": "d3f34cc67d942cbd5b5d711d039ad8570edc0a22d94bfcbf476390670c6bc453"
     },
-    "pkg/cmd/skillversioncontent.go": {
+    "generated/commands/skillversion_test.go": {
       "mode": "100644",
-      "sha256": "ca328163285032d8dc690020fc031e741573fe5a9a066c8862ae07d5400cffcc"
+      "sha256": "da699e95dc560df807a0998ede210ce7de2d140e58e4ac18d960c9e49af5066c"
     },
-    "pkg/cmd/skillversioncontent_test.go": {
+    "generated/commands/skillversioncontent.go": {
       "mode": "100644",
-      "sha256": "509b01a76182f2c98c64d5adac0ec0f1d47447b0b1cdb935a928199f0ed12166"
+      "sha256": "de6814f563f7b7b4574f452d5850cf19ebe8130e7bd7f5e2e59cc769dfaa9fab"
     },
-    "pkg/cmd/upload.go": {
+    "generated/commands/skillversioncontent_test.go": {
       "mode": "100644",
-      "sha256": "fe412749bd1c6ed652b1cf179fe2b97b047e7c3f8d7819efe212695824a9fb18"
+      "sha256": "89880a4fd20cfe171a69e20bcb6f3cbfdbe04faaac87b9658a529f04e3fd13fe"
     },
-    "pkg/cmd/upload_test.go": {
+    "generated/commands/upload.go": {
       "mode": "100644",
-      "sha256": "ebf0c47112854b415ec8a483da9057893141972d4fb7290e083d654612ea8d08"
+      "sha256": "c40dfacfa561ab603af6f2ed984a0f72724d0240e366df75ec15d6bfbc0d56f0"
     },
-    "pkg/cmd/uploadpart.go": {
+    "generated/commands/upload_test.go": {
       "mode": "100644",
-      "sha256": "c413da7d2dd6f477d63faa185ffb01c33b4464720cfe976da887cb951c694312"
+      "sha256": "16b178b9f53ceff5c2bc494343ecb32b6b976ec9ddc1a55a0fe97d3e6f3a1f2d"
     },
-    "pkg/cmd/uploadpart_test.go": {
+    "generated/commands/uploadpart.go": {
       "mode": "100644",
-      "sha256": "3d7b323a637650bd0427ccfe33afab34c873d6dc6c08c67a343df20d76f3ce84"
+      "sha256": "cafce4f66f4515a3ab2f1fab39c96dbaa354e77fbc1a616e71181d1657d5e1e4"
     },
-    "pkg/cmd/vectorstore.go": {
+    "generated/commands/uploadpart_test.go": {
       "mode": "100644",
-      "sha256": "3edf2ee922300cc5a9568773f7c06866a4f97c2ddb0d23451c178c03c95fa6b5"
+      "sha256": "a271cb09ee11fbc66afc7e38f89644df668e2ca27a708470e0742b0be229d9a0"
     },
-    "pkg/cmd/vectorstore_test.go": {
+    "generated/commands/vectorstore.go": {
       "mode": "100644",
-      "sha256": "873f1e2ece4b4c3b430704f195ff89d91dde1ba34c8bcfc64ea28a9294e4b985"
+      "sha256": "6c5a9f6287a9f8e67a89699806752fe4747a02f92c5c807de90bb079fb5f16c4"
     },
-    "pkg/cmd/vectorstorefile.go": {
+    "generated/commands/vectorstore_test.go": {
       "mode": "100644",
-      "sha256": "97e056e1b2a569ac201510b3ae99ac4cbc75e13a1a500ca02e6cfbaef2db4869"
+      "sha256": "7c07cd2b49b88fc7737b8f1308f6131f4ab7a7c8b89e6d791961ceed31fa9db1"
     },
-    "pkg/cmd/vectorstorefile_test.go": {
+    "generated/commands/vectorstorefile.go": {
       "mode": "100644",
-      "sha256": "291f03d3a5e86d66059eeaf2aa0d3185d0c3774e16cc8e8115f30263569febc0"
+      "sha256": "d22867ec8f2ac38a7ad75135ad94c63c5fe7d4c9ad44e975ad0ddc6baf8f2e80"
     },
-    "pkg/cmd/vectorstorefilebatch.go": {
+    "generated/commands/vectorstorefile_test.go": {
       "mode": "100644",
-      "sha256": "6e189ac097bc627249b8aad26f8af75cd27be05a63aec423ebc97f6388a24cb9"
+      "sha256": "ee6535873dc4fd8def0dfcc2a18fe92b595ed8d6fa75f65ccc078f10bbbde4a3"
     },
-    "pkg/cmd/vectorstorefilebatch_test.go": {
+    "generated/commands/vectorstorefilebatch.go": {
       "mode": "100644",
-      "sha256": "9f4f96aff345b64498b6dcb97d89418324ec6855410c77c4191cbca086cb5a84"
+      "sha256": "de291b77bd55022f25646dfe723e10f3901d69da27e0e14631dff97737193d8d"
     },
-    "pkg/cmd/video.go": {
+    "generated/commands/vectorstorefilebatch_test.go": {
       "mode": "100644",
-      "sha256": "0f209b73818835d28650fd2927a59ab5ee32ceb67f668ae7026e19d08b7f457d"
+      "sha256": "cb760153216153838eb6a2c53c177cadc462100a1b4ddb8069c57b334330e6f2"
     },
-    "pkg/cmd/video_test.go": {
+    "generated/commands/video.go": {
       "mode": "100644",
-      "sha256": "d17ec5b4f696e3ee55e53275105367e67609ad7ef577982f776fac73be95f467"
+      "sha256": "17116f5743b0ed11740fa170f0ff403307e39c16ee9cfb61a7a255342d7bc9ff"
     },
-    "pkg/cmd/webhook.go": {
+    "generated/commands/video_test.go": {
       "mode": "100644",
-      "sha256": "a3ce638ba9e66deb1a751e2af4584ff2092532711be4db6aaf049f8bf9643a84"
+      "sha256": "6a246bba97bacc4b4d16513f1db2ccb49fe857c0196ae3c5398e01fa1dc5ae9f"
     },
-    "pkg/cmd/webhook_test.go": {
+    "generated/commands/webhook.go": {
       "mode": "100644",
-      "sha256": "7770d3be5cdecc6b5751cb6d99d6558b238681a2eda3104ef71f2e5f4eb84fb0"
+      "sha256": "3a6f2a76ad5d3955884ca0c52de95ef978014f013851d8de32c6c09bfee54baf"
+    },
+    "generated/commands/webhook_test.go": {
+      "mode": "100644",
+      "sha256": "2c42dcf1216aa926d59435283b061c145e455c5c9be3816db14f824697dbdf37"
     },
     "scripts/castiron/CUSTOM_CODE.md": {
       "mode": "100644",
-      "sha256": "9c602fb42e00a40e21f3106c357fdaadfc1b9865de4105c71364354b451211d6"
+      "sha256": "c83e57879ee995c2871ff41a775758301d634199a00886e339a41212db711f39"
     },
     "scripts/castiron/README.md": {
       "mode": "100644",
@@ -707,7 +711,7 @@
     },
     "scripts/castiron/custom_code_budget.py": {
       "mode": "100644",
-      "sha256": "e504abba2701f4733eb4b8ce26856cca596e13feab1e7e323adc8e7d2ccb64bc"
+      "sha256": "e6f19706c26f9b996f7d6d5f8a654e54fbc8c49a5d2fce045c1996b119feee33"
     },
     "scripts/castiron/custom_code_report.py": {
       "mode": "100644",
@@ -727,19 +731,19 @@
     },
     "scripts/castiron/test_custom_code_budget.py": {
       "mode": "100644",
-      "sha256": "f07fcaf6d10890a47403b784898e3f40a443fa551d66701a717de8382ebf0b9c"
+      "sha256": "cf4938bca739d01f1db2a421ec97e4fe8b41b8bc2d2c634a01247e36cb464649"
     },
     "scripts/castiron/test_custom_code_github.py": {
       "mode": "100644",
-      "sha256": "2d5700e28b539bb31a0a547a35803c7cf0627e89c1c0430a1307284aff3279b6"
+      "sha256": "aa170458b1b58523df78073a96ba8c58b75fce03206ff7d62d99b29791c6ca39"
     },
     "scripts/castiron/test_custom_code_publication.py": {
       "mode": "100644",
-      "sha256": "835b5728882d5fb3fb41f93a5ca71034e357b938164fdee8d0d456195b92b133"
+      "sha256": "99b266761f427d77990e68ce2fdea4b5f1a5b175612b3a9f4355c094939130ca"
     },
     "scripts/castiron/test_custom_code_report.py": {
       "mode": "100644",
-      "sha256": "2f6ef126e8298fb4eb68ebbb95e8966006525aa4078ec4392083c7076cf4a36d"
+      "sha256": "5c17ac9b5596e7f69aaefe3f29615cdac425323594854a91e1759c88d92a68bb"
     }
   }
 }

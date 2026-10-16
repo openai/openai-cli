@@ -88,7 +88,7 @@ jobs:
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-go
       - name: Check upload cancellation and EOF
-        run: go test ./internal/binaryparam ./pkg/cmd -run 'Test(CancellableFIFO|FilesCreateCLICancelClosesStalledFIFO|FilesCreateCLIStreamsSparseFile|ImagesEditCLIStreamsMultipleFiles)' -count=1
+        run: go test ./internal/binaryparam ./tests/cli -run 'Test(CancellableFIFO|FilesCreateCLICancelClosesStalledFIFO|FilesCreateCLIStreamsSparseFile|ImagesEditCLIStreamsMultipleFiles)' -count=1
       - name: Check native macOS picker metadata and profile transactions
         run: go test ./internal/autocomplete -run '^TestPicker' -count=1 -v
       - name: Check native macOS shell targeting and setup decisions

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/generated/commands"
 	"github.com/openai/openai-cli/internal/clihelp"
-	"github.com/openai/openai-cli/pkg/cmd"
 )
 
 func TestMainHelpExperienceRootMapAndOrdering(t *testing.T) {
@@ -16,7 +16,7 @@ func TestMainHelpExperienceRootMapAndOrdering(t *testing.T) {
 			t.Fatalf("offline overview failed: %+v", got)
 		}
 		last := -1
-		for _, group := range clihelp.VisibleCommands(cmd.Command) {
+		for _, group := range clihelp.VisibleCommands(commands.Command) {
 			if group.Category != "API RESOURCE" {
 				continue
 			}
@@ -74,7 +74,7 @@ func TestMainHelpExperienceUnknownTopicUsesParent(t *testing.T) {
 
 func TestMainHelpExperienceCompleteMixedGroups(t *testing.T) {
 	for _, path := range [][]string{{"admin", "organization"}, {"admin", "organization", "projects"}, {"beta", "threads", "runs"}} {
-		group := cmd.Command
+		group := commands.Command
 		for _, part := range path {
 			group = group.Command(part)
 		}
