@@ -66,6 +66,7 @@ func TestImagesEdit(t *testing.T) {
 			"--partial-images", "1",
 			"--quality", "high",
 			"--response-format", "url",
+			"--safety-identifier", "user-1234",
 			"--size", "1024x1024",
 			"--stream=false",
 			"--user", "user-1234",
@@ -88,6 +89,7 @@ func TestImagesEdit(t *testing.T) {
 			"partial_images: 1\n" +
 			"quality: high\n" +
 			"response_format: url\n" +
+			"safety_identifier: user-1234\n" +
 			"size: 1024x1024\n" +
 			"stream: false\n" +
 			"user: user-1234\n"
@@ -121,6 +123,7 @@ func TestImagesGenerate(t *testing.T) {
 			"--partial-images", "1",
 			"--quality", "medium",
 			"--response-format", "url",
+			"--safety-identifier", "user-1234",
 			"--size", "1024x1024",
 			"--stream=false",
 			"--style", "vivid",
@@ -141,6 +144,7 @@ func TestImagesGenerate(t *testing.T) {
 			"partial_images: 1\n" +
 			"quality: medium\n" +
 			"response_format: url\n" +
+			"safety_identifier: user-1234\n" +
 			"size: 1024x1024\n" +
 			"stream: false\n" +
 			"style: vivid\n" +
