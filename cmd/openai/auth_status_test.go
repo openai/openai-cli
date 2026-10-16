@@ -107,7 +107,7 @@ func TestMainAuthStatusOfflineOutputAndDiagnostics(t *testing.T) {
 				require.Equal(t, ordinary.code, got.code)
 				require.Equal(t, ordinary.stdout, got.stdout)
 				assertAuthStatusPrivate(t, got, apiKey, adminKey, webhook)
-				if len(policy) == 1 && policy[0] == "--verbose" && format != "json" {
+				if len(policy) == 1 && policy[0] == "--verbose" {
 					assertLocalUtilityVerbose(t, got.stderr, "auth status", format, "completed", "")
 				} else {
 					require.Empty(t, got.stderr)
