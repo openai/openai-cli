@@ -300,10 +300,10 @@ jobs:
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-go
       - name: Compile all test packages for Windows
-        run: |
-          output=$(mktemp -d)
-          trap 'rm -rf "$output"' EXIT
-          GOARCH=amd64 GOOS=windows go test -c -o "$output/" ./... -p 1
+        # Go owns separate temporary output paths, including packages sharing a
+        # directory name such as internal/tokenizer and generated/tokenizer.
+        # `true` accepts each compiled Windows binary without executing it.
+        run: GOARCH=amd64 GOOS=windows go test -exec=true ./... -p 1
 
   test:
     timeout-minutes: 5
