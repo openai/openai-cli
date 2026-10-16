@@ -92,6 +92,7 @@ func TestMTLSClientFlagPreParsePreservesCurrentDefinition(t *testing.T) {
 
 func TestMTLSClientFlagsReuseEnvironmentForTLS(t *testing.T) {
 	projectLinkTestEnvironment(t)
+	t.Setenv("OPENAI_PROFILE", "")
 	authStatusTestEnvironment(t, map[string]string{
 		"OPENAI_API_KEY": "synthetic-mtls-reuse-api", "OPENAI_BASE_URL": "https://api.openai.com/v1/",
 		"OPENAI_ORG_ID": "org_mtls_reuse", "OPENAI_PROJECT_ID": "proj_mtls_reuse",
