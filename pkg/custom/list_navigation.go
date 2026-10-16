@@ -15,7 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
-	"github.com/openai/openai-cli/pkg/transformers"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/tidwall/gjson"
 )
 

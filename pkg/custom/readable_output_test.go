@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openai/openai-cli/pkg/transformers"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"

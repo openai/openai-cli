@@ -8,7 +8,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/openai/openai-cli/pkg/transformers"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/pagination"
 	"github.com/stretchr/testify/require"

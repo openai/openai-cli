@@ -1,6 +1,8 @@
 name: Help compatibility
 
 on:
+  push:
+    branches: [main]
   pull_request:
   merge_group:
     types: [checks_requested]
@@ -14,7 +16,44 @@ jobs:
       contents: read
       actions: read
 
+  # These platforms have no other main-branch CI producer. PR/queue caches
+  # cannot seed the default branch, so warm compilation on trusted main pushes.
+  warm-native-cache:
+    if: github.event_name == 'push'
+    needs: source
+    permissions: {}
+    name: Warm compatibility cache on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, windows-11-arm]
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore main checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-compatibility-go
+        with:
+          cache-compilation: 'true'
+      - name: Warm native test and CLI compilation
+        shell: bash
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          set -euo pipefail
+          go test -p 1 ./cmd/openai ./internal/... ./pkg/custom -run '^$'
+          go build -p 1 -o "$RUNNER_TEMP/openai.exe" ./cmd/openai
+          go mod verify
+
   help:
+    if: github.event_name != 'push'
     needs: source
     permissions: {}
     name: Help on ${{ matrix.os }}
@@ -100,10 +139,9 @@ jobs:
       - name: Restore candidate checkout
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/setup-compatibility-go
         with:
-          go-version-file: .go-version
-          check-latest: true
+          cache-compilation: ${{ matrix.os == 'macos-15-intel' || matrix.os == 'windows-11-arm' }}
       - name: Verify native Go platform
         shell: bash
         env:
@@ -375,7 +413,7 @@ jobs:
           set -euo pipefail
           go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLargeFieldPreservedAndPrewrapped|TestListNavigationPrintPageCancelsWithoutFetching|TestListNavigationLabelsPreserveLongIDs|TestListNavigationNarrowFooterKeepsQuitAndPrintVisible|TestListNavigationErrorPresentation|TestListNavigationCompleteFirstPageFitsScreen|TestListNavigationContentFitsDisplayCells|TestListNavigationShortResultPreservesErrorsAndHistory|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' \
             | tee "$RUNNER_TEMP/list-navigation-helper-tests.jsonl"
-          go test -p 2 ./pkg/transformers -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' \
+          go test -p 2 ./internal/output/transform -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' \
             | tee "$RUNNER_TEMP/list-projection-helper-tests.jsonl"
           go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' \
             | tee "$RUNNER_TEMP/list-renderer-helper-tests.jsonl"
@@ -387,7 +425,7 @@ jobs:
           go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLargeFieldPreservedAndPrewrapped|TestListNavigationPrintPageCancelsWithoutFetching|TestListNavigationLabelsPreserveLongIDs|TestListNavigationNarrowFooterKeepsQuitAndPrintVisible|TestListNavigationErrorPresentation|TestListNavigationCompleteFirstPageFitsScreen|TestListNavigationContentFitsDisplayCells|TestListNavigationShortResultPreservesErrorsAndHistory|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-navigation-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./pkg/transformers -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' |
+          go test -p 2 ./internal/output/transform -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-projection-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' |
@@ -458,7 +496,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test ./cmd/openai -count=1 -timeout=2m -v -json \
+          go test ./internal/app -count=1 -timeout=2m -v -json \
             -run '^TestRequestConfiguration(RestoresEnvironment|LeavesOtherEnvironmentCasesUnchanged)$' \
             | tee "$RUNNER_TEMP/environment-tests.jsonl"
       - name: Test gallery cleanup
@@ -1167,6 +1205,7 @@ jobs:
                   "TestRequestConfigurationLeavesOtherEnvironmentCasesUnchanged",
                   ["valid_environment", "empty_environment", "unset_environment", "omitted_override", "empty_override"],
               )
+              strict_packages["environment-tests.jsonl"] = "github.com/openai/openai-cli/internal/app"
           if os.environ["CHECK_GALLERY"] == "true":
               suites["gallery-tests.jsonl"] = required_cases(
                   "TestCleanupPreservesMalformedMetadata",
@@ -1326,6 +1365,7 @@ jobs:
           PY
 
   wsl1-pager:
+    if: github.event_name != 'push'
     needs: source
     permissions: {}
     name: ${{ matrix.name }}
@@ -1383,12 +1423,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-process.test') ./cmd/openai
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-app.test') ./internal/app
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go mod verify
           exit $LASTEXITCODE
       - name: Run compatibility checks in disposable Ubuntu WSL 1
         shell: pwsh
         timeout-minutes: 16
-        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') --process-binary (Join-Path $env:RUNNER_TEMP 'wsl-process.test') ${{ matrix.arguments }}
+        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') --process-binary (Join-Path $env:RUNNER_TEMP 'wsl-process.test') --app-binary (Join-Path $env:RUNNER_TEMP 'wsl-app.test') ${{ matrix.arguments }}
       - name: Reconcile the owned WSL distribution
         if: always()
         shell: pwsh

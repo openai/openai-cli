@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,7 +11,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestMainParserErrorGuidance(t *testing.T) {
@@ -77,12 +75,7 @@ func TestMainParserRecoveryNativeShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(work, "openai")
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
-	defer cancel()
-	build := exec.CommandContext(ctx, filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-o", binary, ".")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
+	copyShellTestCLI(t, binary)
 	other := t.TempDir()
 	if err := os.WriteFile(filepath.Join(other, "openai"), []byte("#!/bin/sh\nexit 99\n"), 0o700); err != nil {
 		t.Fatal(err)
