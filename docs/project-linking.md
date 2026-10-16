@@ -132,7 +132,8 @@ They reject positional arguments, `--transform`, and `--raw-output` before chang
 `--quiet` suppresses readable save/remove confirmations and preserves inspection and JSON output.
 JSON reports the action, current directory, linked directory, saved project, inheritance, effective project, and source.
 An empty effective project means the request uses an empty override or the existing default.
-The `source` field distinguishes these cases: `folder`, `environment`, `header`, `custom_headers`, or `default`.
+The `source` field distinguishes these cases: `profile`, `folder`, `environment`, `header`, `custom_headers`, or `default`.
+`profile` means a present project field in the selected profile.
 `environment` means `OPENAI_PROJECT_ID`; `header` means an explicit `--header`; `custom_headers` means the SDK environment fallback.
 Inspection hides external project values that do not match the project ID format.
 JSON marks these values with `effective_project_redacted: true`.

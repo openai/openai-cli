@@ -1,7 +1,9 @@
 package custom
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -149,5 +151,36 @@ func TestProfileContextSelectorCommandReuse(t *testing.T) {
 			}
 			require.Equal(t, []string{work, fallback, "", fallback}, got)
 		})
+	}
+}
+
+func TestProfileContextStatusEscapesProfileSource(t *testing.T) {
+	projectLinkTestEnvironment(t)
+	name := "work\u202e\u2028demo"
+	authStatusTestEnvironment(t, map[string]string{"OPENAI_PROFILE": name})
+	path, err := profileStorePath()
+	require.NoError(t, err)
+	organization, project, endpoint := "org_demo", "proj_demo", "https://example.invalid/v1"
+	_, err = updateProfiles(t.Context(), path, func(registry *profileRegistry) error {
+		registry.Profiles[name] = profileValues{Organization: &organization, Project: &project, BaseURL: &endpoint}
+		return nil
+	})
+	require.NoError(t, err)
+	for _, format := range []string{"text", "json"} {
+		var output bytes.Buffer
+		root := profileContextTestRoot(t)
+		root.Writer = &output
+		require.NoError(t, root.Run(t.Context(), []string{"openai", "auth", "status", "--format=" + format}))
+		if format == "text" {
+			require.NotContains(t, output.String(), "\u202e")
+			require.NotContains(t, output.String(), "\u2028")
+			require.Equal(t, 3, strings.Count(output.String(), `[profile:work\u202e\u2028demo]`))
+		} else {
+			var report authStatusReport
+			require.NoError(t, json.Unmarshal(output.Bytes(), &report))
+			for _, source := range []string{report.Organization.Source, report.Project.Source, report.BaseURL.Source} {
+				require.Equal(t, "profile:"+name, source)
+			}
+		}
 	}
 }

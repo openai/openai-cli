@@ -56,6 +56,12 @@ func projectLinkCommittedSelectionFailure(action string, cause error) error {
 	if action == "unlink" {
 		outcome = "This folder has no saved link of its own. Its inherited project could not be resolved. "
 	}
+	var utility *localUtilityError
+	if errors.As(cause, &utility) {
+		// Profile selection can fail after the independent folder transaction.
+		// Keep its vetted recovery instead of blaming the folder registry.
+		return projectLinkFailure(outcome+utility.Error(), cause)
+	}
 	return projectLinkFailure(outcome+projectLinkRecovery(cause), cause)
 }
 

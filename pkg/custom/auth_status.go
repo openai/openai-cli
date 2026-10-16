@@ -93,11 +93,11 @@ func handleAuthStatus(ctx context.Context, command *cli.Command) error {
 		_, err = fmt.Fprintf(out, "Authentication configuration (offline; not verified)\n"+
 			"API credential: %s [%s]\nAdmin credential: %s [%s]\n"+
 			"Organization: %s [%s]\nProject: %s [%s]\nBase URL: %s [%s]\n",
-			strings.ReplaceAll(report.API.Type, "_", " "), report.API.Source,
-			strings.ReplaceAll(report.Admin.Type, "_", " "), report.Admin.Source,
-			authStatusTextValue(report.Organization), report.Organization.Source,
-			authStatusTextValue(report.Project), report.Project.Source,
-			endpoint, report.BaseURL.Source)
+			strings.ReplaceAll(report.API.Type, "_", " "), readable.Text(report.API.Source),
+			strings.ReplaceAll(report.Admin.Type, "_", " "), readable.Text(report.Admin.Source),
+			authStatusTextValue(report.Organization), readable.Text(report.Organization.Source),
+			authStatusTextValue(report.Project), readable.Text(report.Project.Source),
+			endpoint, readable.Text(report.BaseURL.Source))
 	}
 	if err != nil {
 		return &localUtilityError{message: "Could not write auth status. Check the output file or pipe before rerunning.", cause: err}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -303,6 +304,39 @@ func TestMainProfileProjectBypassesMalformedFolderRegistry(t *testing.T) {
 	require.Equal(t, malformed, string(data))
 }
 
+func TestMainProfileMissingSelectionPreservesCommittedFolderLink(t *testing.T) {
+	server, requests := localUtilitiesRequestTrap(t)
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			home, directory := t.TempDir(), t.TempDir()
+			createProfileFixture(t, home, directory, "work", "--project=proj_profile")
+			assertProfileJSON(t, profileCommand(t, home, directory, "profile", "activate", "work"), profileReceipt("activate", "work", true, map[string]string{"project": "proj_profile"}))
+			before, err := os.ReadFile(profileRegistryPath(home))
+			require.NoError(t, err)
+			projectLinkCreate(t, home, directory, "proj_original")
+
+			got := runProjectLinkMain(t, home, directory, []string{"OPENAI_PROFILE=missing", "OPENAI_BASE_URL=" + server.URL}, "",
+				"link", "--project=proj_saved", "--format-error="+format)
+			require.NotZero(t, got.code)
+			require.Empty(t, got.stdout)
+			if format == "json" {
+				decodeMainStructuredError(t, format, got.stderr)
+			}
+			require.Contains(t, got.stderr, "The folder link was saved.")
+			require.Contains(t, got.stderr, "Its effective project could not be resolved.")
+			require.Contains(t, got.stderr, "Selected profile does not exist.")
+			require.Contains(t, got.stderr, "profile list")
+			require.NotContains(t, got.stderr, "project-links.json")
+			require.NotContains(t, got.stderr, "did not change saved links")
+			require.Equal(t, map[string]string{projectLinkCanonicalDirectory(t, directory): "proj_saved"}, projectLinkRegistry(t, home))
+			after, err := os.ReadFile(profileRegistryPath(home))
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+		})
+	}
+	require.Zero(t, requests.Load(), "folder links and profile selection must remain offline")
+}
+
 func TestMainProfileEndpointProjectRemainsBodyField(t *testing.T) {
 	home, directory := t.TempDir(), t.TempDir()
 	createProfileFixture(t, home, directory, "work", "--project=proj_profile")
@@ -323,6 +357,120 @@ func TestMainProfileEndpointProjectRemainsBodyField(t *testing.T) {
 		require.Equal(t, http.MethodPost, request.method)
 		require.Equal(t, "/organization/invites", request.path)
 		require.JSONEq(t, `{"email":"synthetic@example.invalid","role":"reader","projects":[{"id":"membership_project","role":"member"}]}`, string(request.body))
+	}
+}
+
+func TestMainProfileStreamingPreservesContextAndLifecycle(t *testing.T) {
+	home, directory := t.TempDir(), t.TempDir()
+	createProfileFixture(t, home, directory, "work", "--project=proj_profile", "--organization=org_profile")
+	for _, tc := range []struct {
+		name, project string
+		flags         []string
+		earlyExit     bool
+	}{
+		{"profile failure", "proj_profile", nil, false},
+		{"literal override failure", "proj_header", []string{"--project=proj_flag", "--header=OpenAI-Project: proj_header"}, false},
+		{"profile early exit", "proj_profile", []string{"--max-items=1"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			release, closed := make(chan struct{}), make(chan struct{}, 1)
+			requests := make(chan globalFlagsRequest, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer func() {
+					select {
+					case closed <- struct{}{}:
+					default:
+					}
+				}()
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+				}
+				select {
+				case requests <- globalFlagsRequest{r.Method, r.URL.Path, r.Header.Clone(), body}:
+				default:
+					t.Error("unexpected repeated streaming request")
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				writeStreamingTextEvent(w, `{"type":"response.output_text.delta","item_id":"msg_profile","output_index":0,"content_index":0,"delta":"Partial answer"}`)
+				w.(http.Flusher).Flush()
+				select {
+				case <-release:
+					writeStreamingTextEvent(w, `{"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","message":"synthetic failure"}}}`)
+				case <-r.Context().Done():
+				}
+			}))
+			t.Cleanup(server.Close)
+			t.Cleanup(server.CloseClientConnections)
+			binary, err := os.Executable()
+			require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			args := streamingTextArgs("responses", "--profile=work", "--format=text", "--format-error=json")
+			args = append(args, tc.flags...)
+			childTest := "TestMainDispatchProcess"
+			if tc.earlyExit {
+				childTest = "TestMainDispatchOutputStreamExitChild"
+			}
+			child := exec.CommandContext(ctx, binary, append([]string{"-test.run=^" + childTest + "$", "--", "openai"}, args...)...)
+			child.Dir = directory
+			child.Env = []string{"OPENAI_CLI_MAIN_DISPATCH_PROCESS=1", "OPENAI_API_KEY=synthetic-stream-key", "OPENAI_BASE_URL=" + server.URL,
+				"OPENAI_CUSTOM_HEADERS=OpenAI-Project: proj_custom", "HOME=" + home, "USERPROFILE=" + home, "APPDATA=" + home,
+				"XDG_CONFIG_HOME=" + home, "NO_COLOR=1", "FORCE_COLOR=0", "TERM=dumb", "GOMAXPROCS=2"}
+			barrier := t.TempDir()
+			if tc.earlyExit {
+				child.Env = append(child.Env, "OPENAI_CLI_OUTPUT_STREAM_BARRIER="+barrier)
+			} else if len(tc.flags) != 0 {
+				child.Env = append(child.Env, "OPENAI_PROJECT_ID=proj_environment")
+			}
+			stderr := new(bytes.Buffer)
+			child.Stderr = stderr
+			stdout, err := child.StdoutPipe()
+			require.NoError(t, err)
+			require.NoError(t, child.Start())
+			t.Cleanup(func() {
+				cancel()
+				stdout.Close()
+				if child.ProcessState == nil {
+					child.Wait()
+				}
+			})
+			readStreamingTextPrefix(t, ctx, stdout, "Partial answer")
+			request := globalFlagsOneRequest(t, requests)
+			require.Equal(t, http.MethodPost, request.method)
+			require.Equal(t, "/responses", request.path)
+			require.Equal(t, []string{tc.project}, request.header.Values("OpenAI-Project"))
+			require.Equal(t, []string{"org_profile"}, request.header.Values("OpenAI-Organization"))
+			require.JSONEq(t, `{"model":"fake-model","input":"synthetic input","stream":true}`, string(request.body))
+			if tc.earlyExit {
+				select {
+				case <-closed:
+				case <-ctx.Done():
+					t.Fatal("early output exit retained the blocked HTTP stream")
+				}
+				// The existing child cannot exit successfully before this release.
+				require.NoError(t, os.WriteFile(filepath.Join(barrier, "release-child"), nil, 0600))
+			} else {
+				close(release)
+			}
+			rest, err := io.ReadAll(stdout)
+			require.NoError(t, err)
+			err = child.Wait()
+			require.NoError(t, ctx.Err())
+			require.Empty(t, requests, "stream must not restart after partial output")
+			if tc.earlyExit {
+				require.NoError(t, err, "%s", stderr)
+				require.Equal(t, "\n", string(rest))
+				require.Empty(t, stderr.String())
+			} else {
+				var exit *exec.ExitError
+				require.ErrorAs(t, err, &exit)
+				require.Greater(t, exit.ExitCode(), 0)
+				require.Contains(t, string(rest), "synthetic failure")
+				require.True(t, json.Valid(stderr.Bytes()), "%s", stderr)
+			}
+		})
 	}
 }
 
@@ -475,22 +623,25 @@ func TestMainProfileBaseURLUsesActualEffectiveEndpoint(t *testing.T) {
 	createProfileFixture(t, home, directory, "empty", "--base-url=")
 	for _, tc := range []struct {
 		name, profile, baseURL, source, requestURL string
+		redacted                                   bool
 		env, flags                                 []string
 	}{
-		{"profile", "work", "https://profile.invalid/custom", "profile:work", "https://profile.invalid/custom/models", nil, nil},
-		{"empty profile production reset", "empty", "https://api.openai.com/v1/", "profile:empty", "https://api.openai.com/v1/models", nil, nil},
-		{"empty flag keeps profile", "work", "https://profile.invalid/custom", "profile:work", "https://profile.invalid/custom/models", nil, []string{"--base-url="}},
-		{"empty flag keeps production reset", "empty", "https://api.openai.com/v1/", "profile:empty", "https://api.openai.com/v1/models", nil, []string{"--base-url="}},
-		{"environment", "work", "https://environment.invalid/v1", "environment:OPENAI_BASE_URL", "https://environment.invalid/v1/models", []string{"OPENAI_BASE_URL=https://environment.invalid/v1"}, nil},
-		{"empty flag keeps environment", "work", "https://environment.invalid/v1", "environment:OPENAI_BASE_URL", "https://environment.invalid/v1/models", []string{"OPENAI_BASE_URL=https://environment.invalid/v1"}, []string{"--base-url="}},
-		{"root overrides environment", "work", "https://flag.invalid/v1", "flag:--base-url", "https://flag.invalid/v1/models", []string{"OPENAI_BASE_URL=https://environment.invalid/v1"}, []string{"--base-url=https://flag.invalid/v1"}},
-		{"empty environment remains empty", "work", "", "environment:OPENAI_BASE_URL", "models", []string{"OPENAI_BASE_URL="}, nil},
+		// A1 hides custom endpoint paths in status; the request must retain the complete path.
+		{"profile", "work", "https://profile.invalid/", "profile:work", "https://profile.invalid/custom/models", true, nil, nil},
+		{"empty profile production reset", "empty", "https://api.openai.com/v1/", "profile:empty", "https://api.openai.com/v1/models", false, nil, nil},
+		{"empty flag keeps profile", "work", "https://profile.invalid/", "profile:work", "https://profile.invalid/custom/models", true, nil, []string{"--base-url="}},
+		{"empty flag keeps production reset", "empty", "https://api.openai.com/v1/", "profile:empty", "https://api.openai.com/v1/models", false, nil, []string{"--base-url="}},
+		{"environment", "work", "https://environment.invalid/v1", "environment:OPENAI_BASE_URL", "https://environment.invalid/v1/models", false, []string{"OPENAI_BASE_URL=https://environment.invalid/v1"}, nil},
+		{"empty flag keeps environment", "work", "https://environment.invalid/v1", "environment:OPENAI_BASE_URL", "https://environment.invalid/v1/models", false, []string{"OPENAI_BASE_URL=https://environment.invalid/v1"}, []string{"--base-url="}},
+		{"root overrides environment", "work", "https://flag.invalid/v1", "flag:--base-url", "https://flag.invalid/v1/models", false, []string{"OPENAI_BASE_URL=https://environment.invalid/v1"}, []string{"--base-url=https://flag.invalid/v1"}},
+		// SDK URL resolution adds a slash but preserves the empty scheme and host.
+		{"empty environment remains empty", "work", "", "environment:OPENAI_BASE_URL", "/models", false, []string{"OPENAI_BASE_URL="}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			flags := append([]string{"--profile=" + tc.profile}, tc.flags...)
 			statusArgs := append(slices.Clone(flags), "auth", "status", "--format=json")
 			status := decodeAuthStatus(t, runProfileURLMain(t, home, directory, tc.env, statusArgs))
-			require.Equal(t, authStatusValueResult{Value: tc.baseURL, Source: tc.source}, status.BaseURL)
+			require.Equal(t, authStatusValueResult{Value: tc.baseURL, Source: tc.source, Redacted: tc.redacted}, status.BaseURL)
 			requestArgs := append(slices.Clone(flags), "models", "list", "--format=raw")
 			got := runProfileURLMain(t, home, directory, tc.env, requestArgs)
 			require.Zero(t, got.code, "%s", got.stderr)
