@@ -113,7 +113,8 @@ func authStatusTextValue(value authStatusValue) string {
 	if value.Value == "" {
 		return "(empty)"
 	}
-	return readable.Text(value.Value)
+	// Report fields occupy one row; preserve line breaks and tabs as visible escapes.
+	return strings.NewReplacer("\n", `\n`, "\t", `\t`).Replace(readable.Text(value.Value))
 }
 
 // Match the CLI and SDK option layers without constructing an SDK client or request.

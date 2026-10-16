@@ -141,7 +141,7 @@ func TestAuthStatusEndpointAndSingleEnvironmentSnapshot(t *testing.T) {
 }
 
 func TestAuthStatusOutputAndLocalErrors(t *testing.T) {
-	authStatusTestEnvironment(t, map[string]string{"OPENAI_PROJECT_ID": "proj\x1b[31m\nspoof"})
+	authStatusTestEnvironment(t, map[string]string{"OPENAI_PROJECT_ID": "proj\x1b[31m\nspoof\tcolumn"})
 	for _, format := range []string{"auto", "text", "json"} {
 		var out bytes.Buffer
 		root := authStatusTestRoot(&out)
@@ -150,10 +150,12 @@ func TestAuthStatusOutputAndLocalErrors(t *testing.T) {
 		if format == "json" {
 			var report authStatusReport
 			require.NoError(t, json.Unmarshal(out.Bytes(), &report))
-			require.Equal(t, "proj\x1b[31m\nspoof", report.Project.Value)
+			require.Equal(t, "proj\x1b[31m\nspoof\tcolumn", report.Project.Value)
 		} else {
 			require.Contains(t, out.String(), "offline; not verified")
 			require.NotContains(t, out.String(), "\nspoof")
+			require.NotContains(t, out.String(), "\t")
+			require.Contains(t, out.String(), `\nspoof\tcolumn`)
 		}
 	}
 	for _, args := range [][]string{{"extra"}, {"--format=jsonl"}, {"--transform=project"}, {"--raw-output=false"}, {"-H", "synthetic-secret"}, {"-H", "Authorization: synthetic-secret\r"}} {

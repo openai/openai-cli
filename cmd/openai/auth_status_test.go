@@ -249,7 +249,7 @@ func TestMainAuthStatusSanitizesURLsAndTerminalControls(t *testing.T) {
 	const fragment = "synthetic-private-url-fragment"
 	url := strings.Replace(server.URL, "://", "://"+user+":"+password+"@", 1) + "/v1?token=" + query + "#" + fragment
 	organization := "org_synthetic\x1b[31m\rspoofed"
-	project := "proj_synthetic\x1b]0;spoofed\a"
+	project := "proj_synthetic\x1b]0;spoofed\a\nforged-row\tcolumn"
 	for _, format := range []string{"text", "json"} {
 		t.Run(format, func(t *testing.T) {
 			env := append(authStatusEnvironment(t), "OPENAI_BASE_URL="+url,
@@ -260,6 +260,8 @@ func TestMainAuthStatusSanitizesURLsAndTerminalControls(t *testing.T) {
 			assertAuthStatusPrivate(t, got, user, password, query, fragment)
 			require.NotContains(t, got.stdout, "\r")
 			require.NotContains(t, got.stdout, "\a")
+			require.NotContains(t, got.stdout, "\nforged-row")
+			require.NotContains(t, got.stdout, "\t")
 			if format == "json" {
 				status := decodeAuthStatus(t, got)
 				require.True(t, status.BaseURL.Redacted)
