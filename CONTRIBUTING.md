@@ -57,6 +57,8 @@ below describes the current layout as the migration proceeds.
 - `internal/` contains shared helpers for flags, request encoding, terminal
   output, and testing. For example, `internal/readable` renders labeled text
   and escapes terminal controls for results and errors.
+- `internal/terminal/` owns platform adapters, starting with browser launching
+  and child-process environment isolation.
 - `internal/app/` owns invocation, request-environment scope, completion setup,
   output policy, and exit-status selection. Command assembly still uses the
   existing generated tree during the layout migration.
