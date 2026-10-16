@@ -54,7 +54,7 @@ var liveSessionsAccept = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.InnerFlag[map[string]any]{
 			Name:       "session.delegation",
-			Usage:      "Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` to let the API manage a Responses backend.",
+			Usage:      "Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` or `decisions` to delegate to the corresponding API.",
 			InnerField: "delegation",
 		},
 		&requestflag.InnerFlag[[]map[string]any]{
@@ -71,6 +71,11 @@ var liveSessionsAccept = requestflag.WithInnerFlags(cli.Command{
 			Name:       "session.store",
 			Usage:      "Whether to store the session for later forking and recording download. Defaults to false for new sessions.",
 			InnerField: "store",
+		},
+		&requestflag.InnerFlag[[]map[string]any]{
+			Name:       "session.triggers",
+			Usage:      "At most one Decisions trigger per transcript event type. Triggers run independently of delegation. On update, omit triggers to keep the current configuration, send a list to replace it, or send an empty list to disable triggers.",
+			InnerField: "triggers",
 		},
 	},
 })
