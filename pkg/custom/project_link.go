@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +21,12 @@ type projectLinkFlag struct {
 	*rootRequestFlag
 	explicit bool
 	context  context.Context
+}
+
+func (f *projectLinkFlag) PreParse() error {
+	f.explicit = false
+	f.context = nil
+	return f.rootRequestFlag.PreParse()
 }
 
 func (f *projectLinkFlag) Set(name, value string) error {
@@ -57,7 +62,7 @@ func registerProjectLinkCommands(root *cli.Command) {
 	for _, name := range []string{"link", "unlink"} {
 		usage, example := "Inspect or save this folder's OpenAI project", "link --project proj_work"
 		description := "With --project, save a project ID for this folder. Without it, inspect the saved link and effective project.\n" +
-			"Flags override OPENAI_PROJECT_ID, which overrides the nearest linked parent folder. Empty overrides disable folder defaults.\n" +
+			"Flags override OPENAI_PROJECT_ID, then the selected profile, then the nearest linked parent folder. Empty overrides disable folder defaults.\n" +
 			"No API request or credentials are needed. Linking does not grant project access or change your API key."
 		if name == "unlink" {
 			usage, example = "Remove this folder's saved OpenAI project", "unlink"
@@ -127,56 +132,39 @@ func validLinkedProject(project string) bool {
 // No environment mutation: clients retain API keys and their actual access.
 // Root ownership prevents endpoint body fields named project from changing this.
 func projectLinkRequestOptions(command *cli.Command) []option.RequestOption {
-	root := command.Root()
-	if root.IsSet("project") {
-		return []option.RequestOption{option.WithProject(root.String("project"))}
-	}
-	if project, present := os.LookupEnv("OPENAI_PROJECT_ID"); present {
-		return []option.RequestOption{option.WithProject(project)}
-	}
-	// Explicit literal headers are applied by FlagOptions after client defaults.
-	// They also make implicit registry lookup unnecessary, including empty values.
-	if root.IsSet("header") {
-		if headers, err := requestHeaders(root); err == nil && len(headers.Values("OpenAI-Project")) != 0 {
-			return nil
+	return resolvedRequestOptions(command)
+}
+
+func resolveFolderProject(ctx context.Context, root *cli.Command) (string, error) {
+	enabled := false
+	for _, flag := range root.Flags {
+		if _, ok := flag.(*projectLinkFlag); ok {
+			enabled = true
+			break
 		}
+	}
+	if !enabled {
+		return "", nil
 	}
 	path, err := projectLinkPath()
 	if err != nil {
-		// A process without a user configuration location has no folder defaults.
-		// Preserve the existing API behavior for minimal service environments.
-		return nil
-	}
-	// Production callers use the context captured by the root Before hook.
-	// Direct option-only callers retain a context without a cancellation signal.
-	ctx := context.Background()
-	for _, flag := range root.Flags {
-		if project, ok := flag.(*projectLinkFlag); ok && project.context != nil {
-			ctx = project.context
-		}
+		return "", nil
 	}
 	links, err := loadProjectLinks(ctx, path)
 	if err == nil && len(links) == 0 {
-		return nil
+		return "", nil
 	}
-	var directory string
+	var directory, project string
 	if err == nil {
 		directory, err = projectLinkDirectory()
 	}
-	var project string
 	if err == nil {
 		_, project, err = nearestProjectLink(ctx, links, directory)
 	}
 	if err != nil {
-		failure := projectLinkStoreFailure(root, "resolve", err)
-		return []option.RequestOption{option.WithMaxRetries(0), option.WithMiddleware(func(*http.Request, option.MiddlewareNext) (*http.Response, error) {
-			return nil, failure
-		})}
+		return "", projectLinkStoreFailure(root, "resolve", err)
 	}
-	if project == "" {
-		return nil
-	}
-	return []option.RequestOption{option.WithProject(project)}
+	return project, nil
 }
 
 type projectLinkStatus struct {
@@ -240,7 +228,13 @@ func handleProjectLink(ctx context.Context, command *cli.Command) error {
 	status.Inherited = status.LinkedDirectory != "" && status.LinkedDirectory != directory
 	// The --project on link saves a future default; this invocation has no API
 	// request. Show the environment override that future commands retain.
-	status.EffectiveProject, status.Source = projectLinkEffectiveProject(root, status.Project)
+	status.EffectiveProject, status.Source, err = projectLinkEffectiveProject(ctx, root, status.Project)
+	if err != nil {
+		if status.Action != "inspect" {
+			return projectLinkCommittedSelectionFailure(status.Action, err)
+		}
+		return err
+	}
 	if status.EffectiveProject != "" && !validLinkedProject(status.EffectiveProject) {
 		status.EffectiveProject, status.ProjectRedacted = "", true
 	}
@@ -262,7 +256,11 @@ func handleProjectLink(ctx context.Context, command *cli.Command) error {
 // Inspect the same project sources as request construction without creating a
 // client or validating unrelated remote configuration. Keep SDK header parsing
 // here limited to the project header; never retain or display other headers.
-func projectLinkEffectiveProject(root *cli.Command, folder string) (project, source string) {
+func projectLinkEffectiveProject(ctx context.Context, root *cli.Command, folder string) (project, source string, err error) {
+	_, selected, err := resolveSelectedProfile(ctx, root, os.LookupEnv)
+	if err != nil {
+		return "", "", err
+	}
 	source = "default"
 	for _, line := range strings.Split(os.Getenv("OPENAI_CUSTOM_HEADERS"), "\n") {
 		name, value, ok := strings.Cut(line, ":")
@@ -272,6 +270,9 @@ func projectLinkEffectiveProject(root *cli.Command, folder string) (project, sou
 	}
 	if folder != "" {
 		project, source = folder, "folder"
+	}
+	if selected.Project != nil {
+		project, source = *selected.Project, "profile"
 	}
 	if environment, present := os.LookupEnv("OPENAI_PROJECT_ID"); present {
 		project, source = environment, "environment"
@@ -283,7 +284,7 @@ func projectLinkEffectiveProject(root *cli.Command, folder string) (project, sou
 			}
 		}
 	}
-	return project, source
+	return project, source, nil
 }
 
 func projectLinkText(status projectLinkStatus) string {
@@ -306,7 +307,15 @@ func projectLinkText(status projectLinkStatus) string {
 	} else if status.Action == "inspect" {
 		out.WriteString("This folder has no saved project link.\n")
 	}
-	if status.Source == "environment" {
+	if status.Source == "profile" {
+		if status.ProjectRedacted {
+			fmt.Fprintln(&out, "A selected profile overrides the folder default (value omitted).")
+		} else if status.EffectiveProject == "" {
+			fmt.Fprintln(&out, "The selected profile disables the folder default.")
+		} else {
+			fmt.Fprintf(&out, "Effective project: %s (selected profile overrides the folder default)\n", readable.Text(status.EffectiveProject))
+		}
+	} else if status.Source == "environment" {
 		if status.ProjectRedacted {
 			out.WriteString("OPENAI_PROJECT_ID overrides the folder default. Its value is not a project ID and is hidden.\n")
 		} else if status.EffectiveProject == "" {

@@ -48,3 +48,6 @@ func (f *rootRequestFlag) Set(name, value string) error {
 
 // RequestFlag exposes the existing metadata for help decoration and redaction.
 func (f *rootRequestFlag) RequestFlag() *requestflag.Flag[string] { return f.Flag }
+
+// ExplicitRequestFlag preserves presence through wrappers that embed this flag.
+func (f *rootRequestFlag) ExplicitRequestFlag() bool { return f.explicitlySet }

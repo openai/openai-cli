@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -118,51 +117,22 @@ func authStatusTextValue(value authStatusValue) string {
 }
 
 // Match the CLI and SDK option layers without constructing an SDK client or request.
-// Snapshot the six relevant environment inputs once; never enumerate unrelated secrets.
+// Snapshot relevant environment inputs once; never enumerate unrelated secrets.
 func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (authStatusReport, error) {
-	environment := make(map[string]authStatusValue, 6)
-	for _, name := range []string{"OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID", "OPENAI_BASE_URL", "OPENAI_CUSTOM_HEADERS"} {
-		if value, present := lookup(name); present {
-			environment[name] = authStatusValue{Value: value, Source: "environment:" + name}
-		}
-	}
+	environment := snapshotContextEnvironment(root, lookup)
 	literal, err := requestHeaders(root)
 	if err != nil {
 		return authStatusReport{}, &localUtilityError{message: "Invalid --header. Use 'Name: Value' without control characters."}
 	}
-	// The SDK ignores environment lines without a colon and trims names and values.
-	inherited := make(http.Header)
-	for _, line := range strings.Split(environment["OPENAI_CUSTOM_HEADERS"].Value, "\n") {
-		if name, value, found := strings.Cut(line, ":"); found {
-			inherited.Set(strings.TrimSpace(name), strings.TrimSpace(value))
-		}
-	}
+	inherited := inheritedContextHeaders(environment)
 	setting := func(flag, variable string) authStatusValue {
-		source := "unset"
-		if env, present := environment[variable]; present {
-			source = env.Source
-		}
-		for _, declared := range root.Flags {
-			if f, ok := declared.(*rootRequestFlag); ok && f.Name == flag && f.explicitlySet {
-				source = "flag:--" + flag
-				break
-			}
-		}
-		if root.IsSet(flag) {
-			return authStatusValue{Value: root.String(flag), Source: source}
-		}
-		if env, present := environment[variable]; present {
-			return env
-		}
-		return authStatusValue{Source: "unset"}
+		return requestContextSetting(root, environment, flag, variable)
 	}
-	base := environment["OPENAI_BASE_URL"]
-	if base.Source == "" {
-		base = authStatusValue{Value: "https://api.openai.com/v1/", Source: "default"}
+	resolved, err := resolveRequestContext(requestResolutionContext(root), root, environment, literal)
+	if err != nil {
+		return authStatusReport{}, err
 	}
-	if value := root.String("base-url"); value != "" {
-		base = authStatusValue{Value: value, Source: "flag:--base-url"}
-	}
+	base := resolved.BaseURL
 	endpoint, basic, err := authStatusBaseURL(base)
 	if err != nil {
 		return authStatusReport{}, err
@@ -190,25 +160,12 @@ func resolveAuthStatus(root *cli.Command, lookup func(string) (string, bool)) (a
 		}
 		return result
 	}
-	contextValue := func(flag, variable, header string) authStatusValue {
-		if literal.Values(header) != nil {
-			return authStatusValue{Value: literal.Get(header), Source: "flag:--header"}
-		}
-		value := setting(flag, variable)
-		if value.Source != "unset" {
-			return value
-		}
-		if inherited.Values(header) != nil {
-			return authStatusValue{Value: inherited.Get(header), Source: "environment:OPENAI_CUSTOM_HEADERS"}
-		}
-		return value
-	}
 	return authStatusReport{
 		Offline:      true,
 		API:          credential("api-key", "OPENAI_API_KEY", "api_key"),
 		Admin:        credential("admin-api-key", "OPENAI_ADMIN_KEY", "admin_api_key"),
-		Organization: contextValue("organization", "OPENAI_ORG_ID", "OpenAI-Organization"),
-		Project:      contextValue("project", "OPENAI_PROJECT_ID", "OpenAI-Project"), BaseURL: endpoint,
+		Organization: resolved.Organization,
+		Project:      resolved.Project, BaseURL: endpoint,
 	}, nil
 }
 
@@ -233,10 +190,10 @@ func authStatusBaseURL(base authStatusValue) (authStatusEndpoint, bool, error) {
 	return authStatusEndpoint{authStatusValue: authStatusValue{Value: safe, Source: base.Source}, Redacted: redacted}, parsed.User != nil, nil
 }
 
-// Identify the declared auth root before optional shell setup can spawn a worker.
+// Identify local context commands before optional shell setup can spawn a worker.
 // Consume root flag values by declaration, so a request value named "auth" does not match.
-func skipAuthFirstRunSetup(root *cli.Command, args []string) bool {
-	if root == nil || len(args) < 2 || root.Command("auth") == nil {
+func skipContextFirstRunSetup(root *cli.Command, args []string) bool {
+	if root == nil || len(args) < 2 || root.Command("auth") == nil && root.Command("profile") == nil {
 		return false
 	}
 	lineage := []*cli.Command{root}
@@ -268,7 +225,7 @@ func skipAuthFirstRunSetup(root *cli.Command, args []string) bool {
 			continue
 		}
 		selected := root.Command(arg)
-		return selected != nil && selected == root.Command("auth")
+		return selected != nil && (selected == root.Command("auth") || selected == root.Command("profile"))
 	}
 	return false
 }

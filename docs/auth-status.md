@@ -23,13 +23,19 @@ The report follows existing CLI request selection:
 - A nonempty API key or Admin key overrides an Authorization header from `OPENAI_CUSTOM_HEADERS`.
 - An empty key option suppresses its environment key. An environment Authorization header can still apply.
 - Literal organization and project headers override their corresponding options.
-- Organization and project options override environment custom headers, including explicitly empty values.
+- Root organization and project flags override present environment values, then selected-profile fields.
+- A present profile project overrides folder links. Absent profile fields permit fallback; empty fields suppress it.
+- Folder links precede custom-header fallback. Explicit headers retain their higher priority.
 - Repeated options retain the parser's existing last-value behavior.
 - A nonempty `--base-url` overrides `OPENAI_BASE_URL`. An empty flag falls back to the environment.
-- An explicitly empty `OPENAI_BASE_URL` remains empty. An absent value selects the SDK production URL.
+- An explicitly empty `OPENAI_BASE_URL` remains empty. An absent environment value permits the selected profile endpoint.
+- An effective empty stored endpoint selects the SDK production URL. Status reports that URL with profile provenance.
 
 Explicit flag assignment remains distinguishable from environment input, even when their values match.
-Sources use `flag:--NAME`, `environment:VARIABLE`, `default`, or `unset`.
+Sources use `flag:--NAME`, `environment:VARIABLE`, `profile:NAME`, `folder`, `default`, or `unset`.
+Root `--profile`, present `OPENAI_PROFILE`, then the saved default select a profile.
+An empty selector disables the saved default; folder fallback remains eligible.
+Unknown selected profiles fail without fallback. See [profiles](profiles.md) for local management.
 Header-derived values identify `--header` or `OPENAI_CUSTOM_HEADERS` as their source.
 The report does not infer credentials or permissions from arbitrary gateway headers.
 

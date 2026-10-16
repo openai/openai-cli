@@ -42,6 +42,8 @@ func ConfigureCommand(root *cli.Command) {
 	registerCodexCommands(root)
 	registerProjectLinkCommands(root)
 	registerAuthCommands(root)
+	configureProfileContext(root)
+	registerProfileCommands(root)
 	configureCommandPresentation(root)
 	configureManpageCommands(root)
 	configureOutputPolicy(root)

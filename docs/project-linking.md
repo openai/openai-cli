@@ -48,21 +48,24 @@ API requests select a project in this order:
 
 1. The explicit root `--project` flag.
 2. `OPENAI_PROJECT_ID`.
-3. The nearest linked folder, including the current folder.
-4. The existing SDK default when no project is selected.
+3. A present project field in the selected profile, including the saved default profile.
+4. The nearest linked folder, including the current folder.
+5. The existing SDK custom-header fallback when no project is selected.
 
-An explicit empty flag or empty environment variable disables folder selection.
+An explicit empty flag, environment variable, or profile project field disables folder selection.
+An absent profile project permits folder fallback.
+An empty `--profile` or `OPENAI_PROFILE` disables profile selection, while preserving folder fallback.
 For example, `openai --project= files list` sends an empty project header.
 Root request flags work before or after commands, subject to existing endpoint flag ownership.
 An endpoint's own `--project` request field does not change request-header selection.
 Explicit custom `OpenAI-Project` headers retain their existing override behavior.
 An explicit `--header 'OpenAI-Project: ...'` takes priority over these project defaults, including an empty header value.
-Without a flag, environment project, or folder default, the SDK can use `OpenAI_CUSTOM_HEADERS` as a fallback.
+Without a flag, environment project, profile project, or folder default, the SDK can use `OpenAI_CUSTOM_HEADERS` as a fallback.
 For repeated project headers in that environment variable, the last matching header wins.
 
 `link --project` saves a future folder default.
-An existing `OPENAI_PROJECT_ID` still overrides that default on later API commands.
-Link output identifies this override.
+An existing `OPENAI_PROJECT_ID` or present selected-profile project still overrides that default on later API commands.
+Link output identifies these overrides. Profile selection grants no project access.
 Inspection also identifies a supplied custom project header or the SDK's custom-header fallback.
 Custom headers are never saved in the folder registry.
 
