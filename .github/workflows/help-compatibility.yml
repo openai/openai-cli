@@ -213,6 +213,20 @@ jobs:
           go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAPIErrorsFormatPrecedenceAndExtraction|TestMainAPIErrorsPreserveJSONDetailsAndExtraction|TestMainAPIErrorsStructuredAcrossCommands|TestMainAPIErrorsWithUnexpectedJSONShapes|TestMainAPIErrorsWithoutJSONDetails|TestMainCommandGroupsHaveWorkflowDescriptions|TestMainCommandSubgroupsCoverGeneratedRoutes|TestMainCommandSubgroupsHelpAndCompletion|TestMainCommandSubgroupsLegacyPrefixCompletion|TestMainCommandSubgroupsPreserveAudioAndErrors|TestMainCommandSubgroupsPreserveBodyFlagScope|TestMainCommandSubgroupsPreserveRequestsAndOutput|TestMainCommandSubgroupsStreamingStaysIncremental|TestMainLocalErrorGuidance|TestMainLocalErrorsStayOnStderr|TestMainNestedHelpErrorFormatPrecedence|TestMainPreservesWrappedExitCode|TestMainReadableAPIArgumentGuidance|TestMainReadableDefaultAndExplicitText|TestMainReadableErrorsStayOnStderr|TestMainReadablePreservesExplicitFormatsAndExtraction|TestMainReadableRawOutputStreamsBeforeNextEvent|TestMainSensitiveLocalErrors|TestMainStreamErrorsPreserveEventDetails|TestMainTaskAdminRoutesPreserveCredentialAndFlagScope|TestMainTaskAudioUploadsPreserveRequestsAndOutput|TestMainTaskFileUploadPreservesMultipartAndOutput|TestMainTaskResourceRoutesPreserveAPIErrorsAndExit|TestMainTaskRouteCompletionProtocols|TestMainTaskRouteHelpStaysLocal|TestMainTaskRoutesPreserveAPIErrorsAndExit|TestMainTaskRoutesPreserveRequiredFlags|TestMainTaskSpeechPreservesJSONInputAndBinaryOutput|TestMainTaskWindowsAudioInterruptClosesStreams)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'native-command-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Windows voice validation and upload ownership
+        if: matrix.native-commands && runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 10
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAudioVoiceDiscriminatorReferences|TestMainAudioVoiceMergedInputs|TestMainAudioVoicePreflight|TestMainAudioVoiceReferenceOrdering)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-voice-public-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 1 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestAudioVoiceBodyEmbeddingCancellationReleasesOwnedRead|TestAudioVoiceBodyEmbeddingPartialFailureClosesOnce|TestAudioVoiceBodyEmbeddingPreservesReplayAndOwnership|TestAudioVoiceBodyEmbeddingReadFailureRetainsCauses|TestAudioVoiceBodyEmbeddingTypeOpenFailureClosesOwnedInputs|TestAudioVoiceBodyEmbeddingValidationFailureClosesOwnedInputs)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-voice-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test help
         if: runner.os != 'Windows'
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
@@ -1461,6 +1475,21 @@ jobs:
                       raise SystemExit("Windows task inventory contains duplicate names")
               suites["native-command-tests.jsonl"] = selected
               strict_packages["native-command-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+              if os.environ["RUNNER_OS"] == "Windows":
+                  for filename, key, package, roots, total in [
+                      ("windows-voice-public-tests.jsonl", "windows_voice_public", "github.com/openai/openai-cli/cmd/openai", 4, 138),
+                      ("windows-voice-helper-tests.jsonl", "windows_voice_helpers", "github.com/openai/openai-cli/pkg/custom", 6, 8),
+                  ]:
+                      cases = inventory[key]
+                      if len(cases) != roots or sum(len(children) for children in cases.values()) != total - roots:
+                          raise SystemExit(f"{filename}: voice inventory must contain {roots} roots and {total - roots} children")
+                      selected = set()
+                      for root, children in cases.items():
+                          selected.update(required_cases(root, children))
+                      if len(selected) != total:
+                          raise SystemExit(f"{filename}: voice inventory contains duplicate names")
+                      suites[filename] = selected
+                      strict_packages[filename] = package
           for filename, required in suites.items():
               passed = set()
               package_passed = False
@@ -1579,6 +1608,17 @@ jobs:
                       raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
               print(f"{filename}: {len(passed) - children} roots and {children} children passed; no skips")
           PY
+
+      - name: Retain Windows voice validation evidence
+        if: always() && matrix.native-commands && runner.os == 'Windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-voice-validation-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/windows-voice-public-tests.jsonl
+            ${{ runner.temp }}/windows-voice-helper-tests.jsonl
+          if-no-files-found: warn
+          retention-days: 7
 
   wsl1-pager:
     if: github.event_name != 'push'
