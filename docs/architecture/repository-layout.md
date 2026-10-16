@@ -2,6 +2,9 @@
 
 Status: accepted direction; migrate through small, independently buildable PRs.
 Paths in the target table are destinations, not a claim that every move is complete.
+The tokenizer Unicode tables now live in `generated/tokenizer/`; their producer is
+`scripts/generate-tokenizer-unicode.go`, while runtime code remains in
+`internal/tokenizer/`.
 
 ## Product and compatibility contract
 
