@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,7 +13,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestMainNormalHelpOutputOptions(t *testing.T) {
@@ -93,12 +91,7 @@ func TestMainNormalHelpNativeModelExamples(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(work, "openai")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	build := exec.CommandContext(ctx, filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-o", binary, ".")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
+	copyShellTestCLI(t, binary)
 	invocation := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "'"
 	server, requests := normalHelpModelsServer(t)
 	required := strings.Split(os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS"), ",")
