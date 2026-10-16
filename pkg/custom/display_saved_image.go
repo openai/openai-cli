@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/term"
@@ -161,6 +162,10 @@ func savedImagePreviewColumns(bounds image.Rectangle, width, height, cellWidth, 
 }
 
 func savedImageProtocol(mode string, terminal bool, getenv func(string) string) string {
+	return savedImageProtocolForOS(mode, terminal, getenv, runtime.GOOS)
+}
+
+func savedImageProtocolForOS(mode string, terminal bool, getenv func(string) string, goos string) string {
 	if !terminal || mode == "off" {
 		return ""
 	}
@@ -185,7 +190,7 @@ func savedImageProtocol(mode string, terminal bool, getenv func(string) string) 
 				break
 			}
 			// Warp documents native image protocols on macOS and Linux.
-			if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+			if goos == "darwin" || goos == "linux" {
 				return "kitty"
 			}
 		case "vscode":
@@ -201,12 +206,21 @@ func savedImageProtocol(mode string, terminal bool, getenv func(string) string) 
 			if t == "xterm-kitty" && getenv("KITTY_WINDOW_ID") != "" {
 				return "kitty"
 			}
-			if mode == "on" && getenv("SSH_CONNECTION") == "" && getenv("SSH_CLIENT") == "" && getenv("SSH_TTY") == "" && runtime.GOOS == "darwin" {
+			if mode == "on" && getenv("SSH_CONNECTION") == "" && getenv("SSH_CLIENT") == "" && getenv("SSH_TTY") == "" && goos == "darwin" {
 				return "font"
 			}
 		case "":
 			if t == "xterm-kitty" || t == "xterm-ghostty" {
 				return "kitty"
+			}
+			// The assertion requires Konsole's resize/scroll fix. Its version
+			// identifies protocol support only, not whether that fix is present.
+			// Other platforms lack the cancellable output worker.
+			version := getenv("KONSOLE_VERSION")
+			if (goos == "darwin" || goos == "linux") && getenv("OPENAI_KONSOLE_IMAGES") == "1" && len(version) == 6 {
+				if number, err := strconv.Atoi(version); err == nil && number >= 220400 {
+					return "iterm-konsole"
+				}
 			}
 		}
 	}

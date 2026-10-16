@@ -167,6 +167,112 @@ func TestVSCodeImageOptIn(t *testing.T) {
 	}
 }
 
+func TestKonsoleImageOptIn(t *testing.T) {
+	native, withoutColor := "blocks", ""
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+		native, withoutColor = "iterm-konsole", "iterm-konsole"
+	}
+	for _, tc := range []struct {
+		name, mode, setting, version, want string
+		tty                                bool
+		extra                              map[string]string
+	}{
+		{"default", "auto", "", "261170", "blocks", true, nil},
+		{"on is not capability", "on", "", "261170", "blocks", true, nil},
+		{"future version needs assertion", "auto", "", "990100", "blocks", true, nil},
+		{"disabled", "auto", "0", "261170", "blocks", true, nil},
+		{"strict assertion", "auto", "true", "261170", "blocks", true, nil},
+		{"assertion whitespace", "auto", "1 ", "261170", "blocks", true, nil},
+		{"auto opt in", "auto", "1", "261170", native, true, nil},
+		{"on opt in", "on", "1", "261170", native, true, nil},
+		{"protocol floor", "auto", "1", "220400", native, true, nil},
+		{"older backport assertion", "auto", "1", "230805", native, true, nil},
+		{"protocol unavailable", "auto", "1", "220399", "blocks", true, nil},
+		{"missing identity", "auto", "1", "", "blocks", true, nil},
+		{"malformed identity", "auto", "1", "26.11.70", "blocks", true, nil},
+		{"nonnumeric identity", "auto", "1", "26117x", "blocks", true, nil},
+		{"signed identity", "auto", "1", "+261170", "blocks", true, nil},
+		{"negative identity", "auto", "1", "-261170", "blocks", true, nil},
+		{"identity whitespace", "auto", "1", "261170\n", "blocks", true, nil},
+		{"short identity", "auto", "1", "26117", "blocks", true, nil},
+		{"long identity", "auto", "1", "99999999999999999999", "blocks", true, nil},
+		{"off wins", "off", "1", "261170", "", true, nil},
+		{"redirected", "on", "1", "261170", "", false, nil},
+		{"ci", "on", "1", "261170", "", true, map[string]string{"CI": "true"}},
+		{"dumb", "on", "1", "261170", "", true, map[string]string{"TERM": "dumb"}},
+		{"tmux", "on", "1", "261170", "blocks", true, map[string]string{"TMUX": "active"}},
+		{"screen", "on", "1", "261170", "blocks", true, map[string]string{"STY": "active"}},
+		{"zellij", "on", "1", "261170", "blocks", true, map[string]string{"ZELLIJ": "active"}},
+		{"tmux term", "on", "1", "261170", "blocks", true, map[string]string{"TERM": "tmux-256color"}},
+		{"screen term", "on", "1", "261170", "blocks", true, map[string]string{"TERM": "screen-256color"}},
+		{"unknown program wins", "auto", "1", "261170", "blocks", true, map[string]string{"TERM_PROGRAM": "unknown"}},
+		{"vscode requires its assertion", "auto", "1", "261170", "blocks", true, map[string]string{"TERM_PROGRAM": "vscode"}},
+		{"vscode assertion wins", "auto", "1", "261170", "iterm-auto", true, map[string]string{"TERM_PROGRAM": "vscode", "OPENAI_VSCODE_IMAGES": "1"}},
+		{"kitty program wins", "auto", "1", "261170", "kitty", true, map[string]string{"TERM_PROGRAM": "kitty"}},
+		{"kitty term wins", "auto", "1", "261170", "kitty", true, map[string]string{"TERM": "xterm-kitty"}},
+		{"ghostty term wins", "auto", "1", "261170", "kitty", true, map[string]string{"TERM": "xterm-ghostty"}},
+		{"no color retains native", "auto", "1", "261170", withoutColor, true, map[string]string{"NO_COLOR": "1"}},
+		{"clicolor retains native", "auto", "1", "261170", withoutColor, true, map[string]string{"CLICOLOR": "0"}},
+		{"no color without assertion", "auto", "", "261170", "", true, map[string]string{"NO_COLOR": "1"}},
+		{"ssh missing identity", "auto", "1", "", "blocks", true, map[string]string{"SSH_TTY": "/dev/pts/1"}},
+		{"ssh explicit assertion", "auto", "1", "261170", native, true, map[string]string{"SSH_TTY": "/dev/pts/1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := map[string]string{"TERM": "xterm-256color", "KONSOLE_VERSION": tc.version, "OPENAI_KONSOLE_IMAGES": tc.setting}
+			for key, value := range tc.extra {
+				env[key] = value
+			}
+			getenv := func(key string) string { return env[key] }
+			require.Equal(t, tc.want, savedImageProtocol(tc.mode, tc.tty, getenv))
+			require.Equal(t, tc.want, imageProgressProtocol(tc.mode, tc.tty, getenv))
+		})
+	}
+}
+
+func TestKonsoleImagePlatforms(t *testing.T) {
+	for _, platform := range []struct{ goos, native, withoutColor string }{
+		{"darwin", "iterm-konsole", "iterm-konsole"},
+		{"linux", "iterm-konsole", "iterm-konsole"},
+		{"windows", "blocks", ""},
+		{"freebsd", "blocks", ""},
+		{"openbsd", "blocks", ""},
+		{"plan9", "blocks", ""},
+		{"unknown", "blocks", ""},
+	} {
+		for _, tc := range []struct {
+			name, mode, want string
+			tty              bool
+			extra            map[string]string
+		}{
+			{"automatic", "auto", platform.native, true, nil},
+			{"explicit on", "on", platform.native, true, nil},
+			{"off", "off", "", true, nil},
+			{"pipe", "on", "", false, nil},
+			{"no color", "auto", platform.withoutColor, true, map[string]string{"NO_COLOR": "1"}},
+			{"clicolor", "on", platform.withoutColor, true, map[string]string{"CLICOLOR": "0"}},
+			{"no assertion", "auto", "blocks", true, map[string]string{"OPENAI_KONSOLE_IMAGES": ""}},
+			{"no identity", "on", "blocks", true, map[string]string{"KONSOLE_VERSION": ""}},
+			{"tmux", "on", "blocks", true, map[string]string{"TMUX": "active"}},
+			{"ci", "on", "", true, map[string]string{"CI": "true"}},
+			{"kitty", "auto", "kitty", true, map[string]string{"TERM_PROGRAM": "kitty"}},
+			{"vscode", "auto", "iterm-auto", true, map[string]string{"TERM_PROGRAM": "vscode", "OPENAI_VSCODE_IMAGES": "1"}},
+		} {
+			t.Run(platform.goos+"/"+tc.name, func(t *testing.T) {
+				env := map[string]string{"TERM": "xterm-256color", "KONSOLE_VERSION": "261170", "OPENAI_KONSOLE_IMAGES": "1"}
+				for key, value := range tc.extra {
+					env[key] = value
+				}
+				getenv := func(key string) string { return env[key] }
+				require.Equal(t, tc.want, savedImageProtocolForOS(tc.mode, tc.tty, getenv, platform.goos))
+				if platform.goos == runtime.GOOS {
+					require.Equal(t, tc.want, savedImageProtocol(tc.mode, tc.tty, getenv))
+					require.Equal(t, tc.want, imageProgressProtocol(tc.mode, tc.tty, getenv))
+				}
+			})
+		}
+	}
+}
+
 // Run in a real PTY as well as the ordinary suite. This test writes synthetic
 // native protocol output; it must never activate the Apple Terminal font path.
 func TestSavedImagePreviewTerminal(t *testing.T) {

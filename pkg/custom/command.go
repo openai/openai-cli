@@ -17,7 +17,11 @@ func ConfigureCommand(root *cli.Command) {
 		return
 	}
 	root.Metadata[configuredCommandMetadata] = true
+	configureCertificateCompatibility(root)
+	configureAudioVoices(root)
 	configureRootRequestFlags(root)
+	// Batch workflows preserve positional path inputs and need the same help annotations.
+	configureBatchCommands(root)
 	describeRequestInputs(root)
 	registerImageModels(root)
 	configureReadableOutput(root)
@@ -28,12 +32,16 @@ func ConfigureCommand(root *cli.Command) {
 	registerImagePreviewCommands(root)
 	configureReadableAudio(root)
 	configureReadableSpeech(root)
+	registerAdminSetup(root)
+	configureAdminCredentials(root)
 	configureCommandSubgroups(root)
 	configureTaskCommands(root)
+	registerAudioCommands(root)
 	configureFileCommands(root)
 	registerTokenizerCommands(root)
 	registerCodexCommands(root)
 	registerProjectLinkCommands(root)
+	registerAuthCommands(root)
 	configureCommandPresentation(root)
 	configureManpageCommands(root)
 	configureOutputPolicy(root)
