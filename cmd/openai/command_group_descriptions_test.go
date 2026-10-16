@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openai/openai-cli/pkg/cmd"
+	"github.com/openai/openai-cli/generated/commands"
 	"github.com/urfave/cli/v3"
 )
 
@@ -24,15 +24,15 @@ func TestMainCommandGroupsHaveWorkflowDescriptions(t *testing.T) {
 			}
 		}
 	}
-	visit(cmd.Command, "")
+	visit(commands.Command, "")
 	if count < 90 {
 		t.Fatalf("expected the complete group tree, inspected %d", count)
 	}
-	for _, legacy := range cmd.Command.Commands {
+	for _, legacy := range commands.Command.Commands {
 		if !legacy.Hidden || legacy.Category != "API RESOURCE" || !strings.Contains(legacy.Name, ":") {
 			continue
 		}
-		canonical := cmd.Command
+		canonical := commands.Command
 		for _, part := range strings.Split(legacy.Name, ":") {
 			canonical = canonical.Command(part)
 			if canonical == nil {
