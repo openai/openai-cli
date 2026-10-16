@@ -342,6 +342,54 @@ func TestProfileCommandsOutputFailureAndCancellation(t *testing.T) {
 	require.Equal(t, before, after)
 }
 
+type profileCancelOutputWriter struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func (writer profileCancelOutputWriter) Write([]byte) (int, error) {
+	writer.cancel()
+	return 0, writer.ctx.Err()
+}
+
+func TestProfileCommittedCancellationPreservesOutcome(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		for _, action := range []string{"create", "get"} {
+			t.Run(format+"/"+action, func(t *testing.T) {
+				path := profileCommandTestEnvironment(t)
+				runProfileCommand(t, "profile", "create", "work")
+				before, err := os.ReadFile(path)
+				require.NoError(t, err)
+				name, want := "work", "Request canceled."
+				if action == "create" {
+					name, want = "committed", "Saved profiles were updated, but the result could not be written."
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				root := profileCommandTestRoot(profileCancelOutputWriter{ctx, cancel})
+				failure := root.Run(ctx, []string{"openai", "--format=" + format, "profile", action, name})
+				require.ErrorIs(t, failure, context.Canceled)
+				var diagnostic bytes.Buffer
+				require.NoError(t, ShowCommandError(root, failure, &diagnostic))
+				require.Contains(t, diagnostic.String(), want)
+				if format == "json" {
+					require.True(t, json.Valid(diagnostic.Bytes()), diagnostic.String())
+				}
+				after, err := os.ReadFile(path)
+				require.NoError(t, err)
+				if action == "get" {
+					require.Equal(t, before, after)
+				} else {
+					registry, err := loadProfiles(t.Context(), path)
+					require.NoError(t, err)
+					require.Contains(t, registry.Profiles, "committed")
+					require.Contains(t, diagnostic.String(), "profile list")
+				}
+			})
+		}
+	}
+}
+
 func TestProfileCommandsKeepStoreErrorsPrivate(t *testing.T) {
 	path := profileCommandTestEnvironment(t)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))

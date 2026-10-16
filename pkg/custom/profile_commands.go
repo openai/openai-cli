@@ -246,7 +246,10 @@ func handleProfileCommand(ctx context.Context, command *cli.Command) error {
 		if committed {
 			message = "Saved profiles were updated, but the result could not be written."
 		}
-		return profileFailure(message+" Inspect with "+errorHelpInvocation(root)+" profile list.", err)
+		return &localUtilityError{
+			message: message + " Inspect with " + errorHelpInvocation(root) + " profile list.",
+			cause:   err, preserveOnCancel: committed,
+		}
 	}
 	return nil
 }

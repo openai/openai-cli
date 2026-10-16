@@ -1,6 +1,7 @@
 package custom
 
 import (
+	"context"
 	"errors"
 	"os"
 
@@ -56,13 +57,20 @@ func projectLinkCommittedSelectionFailure(action string, cause error) error {
 	if action == "unlink" {
 		outcome = "This folder has no saved link of its own. Its inherited project could not be resolved. "
 	}
+	if errors.Is(cause, context.Canceled) {
+		return &localUtilityError{
+			message: outcome + "The command was canceled. Inspect saved links before retrying.",
+			cause:   cause, preserveOnCancel: true,
+		}
+	}
 	var utility *localUtilityError
+	recovery := projectLinkRecovery(cause)
 	if errors.As(cause, &utility) {
 		// Profile selection can fail after the independent folder transaction.
 		// Keep its vetted recovery instead of blaming the folder registry.
-		return projectLinkFailure(outcome+utility.Error(), cause)
+		recovery = utility.Error()
 	}
-	return projectLinkFailure(outcome+projectLinkRecovery(cause), cause)
+	return &localUtilityError{message: outcome + recovery, cause: cause, preserveOnCancel: true}
 }
 
 func projectLinkOutputFailure(root *cli.Command, action string, cause error) error {
@@ -73,5 +81,8 @@ func projectLinkOutputFailure(root *cli.Command, action string, cause error) err
 	case "unlink":
 		message = "This folder has no saved link of its own. Its confirmation could not be written."
 	}
-	return projectLinkFailure(message+" Inspect with "+errorHelpInvocation(root)+" link.", cause)
+	return &localUtilityError{
+		message: message + " Inspect with " + errorHelpInvocation(root) + " link.",
+		cause:   cause, preserveOnCancel: action == "link" || action == "unlink",
+	}
 }

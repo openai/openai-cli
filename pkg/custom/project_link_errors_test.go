@@ -1,6 +1,9 @@
 package custom
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -90,5 +93,48 @@ func TestProjectLinkOutputFailureReportsActualOutcome(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, test.wantProject, links[directory])
 		})
+	}
+}
+
+func TestProjectLinkCommittedCancellationPreservesOutcome(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		for _, test := range []struct {
+			name, outcome, wantProject string
+			args                       []string
+		}{
+			{"inspect", "Request canceled.", "proj_saved", []string{"link"}},
+			{"save", "The folder link was saved", "proj_updated", []string{"link", "--project=proj_updated"}},
+			{"remove", "no saved link of its own", "", []string{"unlink"}},
+		} {
+			t.Run(format+"/"+test.name, func(t *testing.T) {
+				path := projectLinkTestEnvironment(t)
+				require.NoError(t, projectLinkTestCommand(io.Discard).Run(t.Context(), []string{"openai", "link", "--project=proj_saved"}))
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				root := projectLinkTestCommand(profileCancelOutputWriter{ctx, cancel})
+				failure := root.Run(ctx, append([]string{"openai", "--format=" + format}, test.args...))
+				require.ErrorIs(t, failure, context.Canceled)
+				var diagnostic bytes.Buffer
+				require.NoError(t, ShowCommandError(root, failure, &diagnostic))
+				require.Contains(t, diagnostic.String(), test.outcome)
+				if format == "json" {
+					require.True(t, json.Valid(diagnostic.Bytes()), diagnostic.String())
+				}
+				links, err := loadProjectLinks(t.Context(), path)
+				require.NoError(t, err)
+				directory, err := projectLinkDirectory()
+				require.NoError(t, err)
+				require.Equal(t, test.wantProject, links[directory])
+			})
+		}
+	}
+	for _, action := range []string{"link", "unlink"} {
+		cause := errors.Join(context.Canceled, &os.PathError{Op: "open", Path: "/synthetic-private/state", Err: os.ErrPermission})
+		failure := projectLinkCommittedSelectionFailure(action, cause)
+		require.ErrorIs(t, failure, context.Canceled)
+		message := localErrorMessage(nil, failure)
+		require.Contains(t, message, "The command was canceled.")
+		require.NotContains(t, message, "synthetic-private")
+		require.NotContains(t, message, "project-links.json")
 	}
 }

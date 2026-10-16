@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openai/openai-cli/internal/app"
+	"github.com/openai/openai-cli/pkg/cmd"
 	"github.com/stretchr/testify/require"
 )
 
@@ -573,7 +575,7 @@ func (profileURLCaptureTransport) RoundTrip(request *http.Request) (*http.Respon
 }
 
 func TestMainProfileURLProcess(t *testing.T) {
-	if os.Getenv("OPENAI_CLI_PROFILE_URL_PROCESS") != "1" {
+	if os.Getenv("OPENAI_CLI_PROFILE_TEST_PROCESS") != "1" {
 		return
 	}
 	separator := slices.Index(os.Args, "--")
@@ -587,11 +589,16 @@ func TestMainProfileURLProcess(t *testing.T) {
 
 func runProfileURLMain(t *testing.T, home, directory string, env, args []string) mainDispatchResult {
 	t.Helper()
+	return runProfileTestMain(t, "TestMainProfileURLProcess", home, directory, env, args)
+}
+
+func runProfileTestMain(t *testing.T, processTest, home, directory string, env, args []string) mainDispatchResult {
+	t.Helper()
 	binary, err := os.Executable()
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	child := exec.CommandContext(ctx, binary, append([]string{"-test.run=^TestMainProfileURLProcess$", "--", "openai"}, args...)...)
+	child := exec.CommandContext(ctx, binary, append([]string{"-test.run=^" + processTest + "$", "--", "openai"}, args...)...)
 	child.Dir = directory
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
@@ -601,7 +608,7 @@ func runProfileURLMain(t *testing.T, home, directory string, env, args []string)
 		}
 		child.Env = append(child.Env, entry)
 	}
-	child.Env = append(child.Env, "OPENAI_CLI_PROFILE_URL_PROCESS=1", "COMPLETION_STYLE=bash", "OPENAI_API_KEY=synthetic-url-key",
+	child.Env = append(child.Env, "OPENAI_CLI_PROFILE_TEST_PROCESS=1", "COMPLETION_STYLE=bash", "OPENAI_API_KEY=synthetic-url-key",
 		"HOME="+home, "USERPROFILE="+home, "APPDATA="+home, "XDG_CONFIG_HOME="+home, "NO_COLOR=1", "FORCE_COLOR=0", "TERM=dumb")
 	child.Env = append(child.Env, env...)
 	var stdout, stderr bytes.Buffer
@@ -615,6 +622,92 @@ func runProfileURLMain(t *testing.T, home, directory string, env, args []string)
 		require.NoError(t, err)
 	}
 	return mainDispatchResult{code, stdout.String(), stderr.String()}
+}
+
+type profileCancelReceiptWriter struct{ cancel context.CancelFunc }
+
+func (writer profileCancelReceiptWriter) Write([]byte) (int, error) {
+	writer.cancel()
+	return 0, context.Canceled
+}
+
+func TestMainProfileCanceledReceiptProcess(t *testing.T) {
+	if os.Getenv("OPENAI_CLI_PROFILE_TEST_PROCESS") != "1" {
+		return
+	}
+	separator := slices.Index(os.Args, "--")
+	require.GreaterOrEqual(t, separator, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd.Command.Writer = profileCancelReceiptWriter{cancel: cancel}
+	if os.Getenv("OPENAI_CLI_PROFILE_CANCEL_BEFORE") == "1" {
+		cancel()
+	}
+	os.Exit(app.Run(ctx, os.Args[separator+1:]))
+}
+
+func TestMainProfileCancellationPreservesCommittedOutcomes(t *testing.T) {
+	const profileCommitted = "Saved profiles were updated, but the result could not be written. Inspect with openai profile list."
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			home, directory := t.TempDir(), t.TempDir()
+			run := func(message string, env []string, args ...string) {
+				t.Helper()
+				args = append(args, "--format="+format, "--format-error="+format)
+				got := runProfileTestMain(t, "TestMainProfileCanceledReceiptProcess", home, directory, env, args)
+				require.Equal(t, 1, got.code, "%s", got.stderr)
+				require.Empty(t, got.stdout)
+				if format == "json" {
+					want, err := json.Marshal(map[string]string{"message": message})
+					require.NoError(t, err)
+					require.JSONEq(t, string(want), got.stderr)
+				} else {
+					require.Equal(t, message+"\n", got.stderr)
+				}
+				assertAuthStatusPrivate(t, got, "synthetic-url-key", home, directory)
+			}
+			run("Request canceled.", []string{"OPENAI_CLI_PROFILE_CANCEL_BEFORE=1"}, "profile", "create", "work")
+			_, err := os.Stat(profileRegistryPath(home))
+			require.ErrorIs(t, err, os.ErrNotExist)
+			for _, step := range []struct {
+				args    []string
+				want    string
+				inspect bool
+			}{
+				{[]string{"profile", "create", "work"}, `{"version":1,"default_profile":null,"profiles":{"work":{}}}`, false},
+				{[]string{"profile", "set", "work", "--project=proj_saved"}, `{"version":1,"default_profile":null,"profiles":{"work":{"project":"proj_saved"}}}`, false},
+				{[]string{"profile", "activate", "work"}, `{"version":1,"default_profile":"work","profiles":{"work":{"project":"proj_saved"}}}`, false},
+				{[]string{"profile", "get", "work"}, `{"version":1,"default_profile":"work","profiles":{"work":{"project":"proj_saved"}}}`, true},
+				{[]string{"profile", "delete", "work", "--deactivate"}, `{"version":1,"default_profile":null,"profiles":{}}`, false},
+			} {
+				message := profileCommitted
+				var before []byte
+				if step.inspect {
+					message = "Request canceled."
+					before, err = os.ReadFile(profileRegistryPath(home))
+					require.NoError(t, err)
+				}
+				run(message, nil, step.args...)
+				after, err := os.ReadFile(profileRegistryPath(home))
+				require.NoError(t, err)
+				require.JSONEq(t, step.want, string(after))
+				if step.inspect {
+					require.Equal(t, before, after)
+				}
+			}
+
+			run("The folder link was saved, but its confirmation could not be written. Inspect with openai link.", nil,
+				"link", "--project=proj_folder")
+			require.Equal(t, map[string]string{projectLinkCanonicalDirectory(t, directory): "proj_folder"}, projectLinkRegistry(t, home))
+			before, err := os.ReadFile(projectLinkRegistryPath(home))
+			require.NoError(t, err)
+			run("Request canceled.", nil, "link")
+			after, err := os.ReadFile(projectLinkRegistryPath(home))
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+			run("This folder has no saved link of its own. Its confirmation could not be written. Inspect with openai link.", nil, "unlink")
+			require.Empty(t, projectLinkRegistry(t, home))
+		})
+	}
 }
 
 func TestMainProfileBaseURLUsesActualEffectiveEndpoint(t *testing.T) {

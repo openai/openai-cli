@@ -24,6 +24,8 @@ func IsLocalUtilityCommand(command *cli.Command) bool {
 type localUtilityError struct {
 	message string
 	cause   error
+	// Keep proven committed outcomes visible when receipt delivery is canceled.
+	preserveOnCancel bool
 }
 
 func (e *localUtilityError) Error() string { return e.message }

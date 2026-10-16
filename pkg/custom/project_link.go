@@ -239,6 +239,9 @@ func handleProjectLink(ctx context.Context, command *cli.Command) error {
 		status.EffectiveProject, status.ProjectRedacted = "", true
 	}
 	if err := ctx.Err(); err != nil {
+		if status.Action != "inspect" {
+			return projectLinkOutputFailure(root, status.Action, err)
+		}
 		return err
 	}
 	writer := outputWriter{ctx: ctx, out: root.Writer}
