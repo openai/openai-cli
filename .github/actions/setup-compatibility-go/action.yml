@@ -1,0 +1,35 @@
+name: Set up compatibility Go
+description: Keep native compatibility compilation separate from other Go jobs
+inputs:
+  cache-compilation:
+    description: Use the revisioned cache maintained by the main-branch producer
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      id: go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: .go-version
+        check-latest: true
+        cache: ${{ inputs.cache-compilation != 'true' }}
+    - name: Locate native compatibility caches
+      if: inputs.cache-compilation == 'true'
+      id: paths
+      shell: bash
+      run: |
+        echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+        echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+    - name: Cache native compatibility compilation
+      if: inputs.cache-compilation == 'true'
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ${{ steps.paths.outputs.build }}
+          ${{ steps.paths.outputs.modules }}
+        # Each successful revision refreshes compilation, rather than freezing
+        # the first build until go.sum changes. PR caches retain GitHub's scope.
+        key: native-compat-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+        restore-keys: |
+          native-compat-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}-

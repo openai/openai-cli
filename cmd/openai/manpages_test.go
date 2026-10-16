@@ -78,6 +78,8 @@ func TestMainDispatchOutputManpageReceiptPolicy(t *testing.T) {
 	}{
 		{name: "default gzip and directory", gzip: true, receipt: true, defaultDirectory: true},
 		{name: "text only", local: []string{"--text", "--gzip=false"}, text: true, receipt: true},
+		{name: "gzip alias", local: []string{"-z"}, gzip: true, receipt: true},
+		{name: "disabled gzip alias", local: []string{"--text", "-z=false"}, text: true, receipt: true},
 		{name: "both formats", local: []string{"--text"}, text: true, gzip: true, receipt: true},
 		{name: "neither format", local: []string{"--text=false", "--gzip=false"}},
 		{name: "quiet verbose", root: []string{"--quiet", "--verbose"}, local: []string{"--text"}, text: true, gzip: true},

@@ -29,19 +29,31 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var imageFailure *imageSavingError
 	var streamFailure *streamResultError
 	var imageModelsFailure *imageModelsError
+	var projectAPIKeyUpdateFailure *projectAPIKeyUpdateError
 	var voiceTypeFailure *voiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
+	var adminCredentialsFailure *adminCredentialsError
+	var adminSetupFailure *adminSetupError
 	var utilityFailure *localUtilityError
 	var downloadFailure *downloadSaveError
 	var receiptFailure *saveReceiptError
 	var navigationFailure *listNavigationError
 	var modelsListFailure *modelsListError
+	var batchFailure *batchWorkflowError
+	var finiteListFailure *finiteJSONListError
 	switch {
+	case errors.As(failure, &batchFailure):
+		return batchFailure.message
+	case errors.As(failure, &adminSetupFailure):
+		return adminSetupFailure.Error()
 	case errors.As(failure, &downloadFailure):
 		return downloadFailure.message
 	case errors.As(failure, &receiptFailure):
 		return receiptFailure.Error()
 	case errors.Is(failure, context.Canceled):
+		if errors.As(failure, &imageFailure) && imageFailure.preserveOnCancel {
+			return imageFailure.message
+		}
 		return "Request canceled."
 	case errors.As(failure, &utilityFailure):
 		return utilityFailure.Error()
@@ -49,6 +61,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return "The request timed out. The API may have received it; check its status before repeating it."
 	case errors.As(failure, &modelsListFailure):
 		return modelsListFailure.Error()
+	case errors.As(failure, &finiteListFailure):
+		return finiteListFailure.Error()
 	case errors.As(failure, &imageFailure):
 		return imageFailure.message
 	case errors.As(failure, &navigationFailure):
@@ -63,10 +77,14 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return "The output pager failed. Check PAGER or use --format text to display the result without a pager."
 	case errors.As(failure, &imageModelsFailure):
 		return imageModelsFailure.Error()
+	case errors.As(failure, &projectAPIKeyUpdateFailure):
+		return projectAPIKeyUpdateFailure.Error()
 	case errors.As(failure, &voiceTypeFailure):
 		return voiceTypeFailure.Error()
 	case errors.As(failure, &helpTopicFailure):
 		return unknownCommandAt(helpTopicFailure.Parent, helpTopicFailure.Topic)
+	case errors.As(failure, &adminCredentialsFailure):
+		return adminCredentialsFailure.Error()
 	case errors.As(failure, &pathError):
 		switch {
 		case errors.Is(pathError, os.ErrNotExist):

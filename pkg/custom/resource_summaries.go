@@ -3,8 +3,8 @@ package custom
 import (
 	"io"
 
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/readable"
-	"github.com/openai/openai-cli/pkg/transformers"
 	"github.com/tidwall/gjson"
 )
 

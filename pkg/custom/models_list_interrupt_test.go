@@ -3,6 +3,7 @@ package custom
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,6 +11,31 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
+
+func TestModelsListExternalInterruptPreservesStatusAndFailures(t *testing.T) {
+	for _, operation := range []string{"(resource) models > (method) list", "(resource) files > (method) list"} {
+		for _, outputErr := range []error{nil, io.ErrClosedPipe} {
+			for _, runErr := range []error{tea.ErrInterrupted, errors.Join(tea.ErrProgramKilled, tea.ErrInterrupted)} {
+				request, cancel := context.WithCancel(t.Context())
+				model := &listNavigation{opts: ShowJSONOpts{Context: t.Context(), Operation: operation}, cancel: cancel}
+				err := model.finish(&listNavigationOutput{err: outputErr}, runErr)
+				require.ErrorIs(t, request.Err(), context.Canceled)
+				require.ErrorIs(t, err, tea.ErrInterrupted)
+				if outputErr != nil {
+					require.ErrorIs(t, err, outputErr)
+				}
+				var exit cli.ExitCoder
+				if operation == "(resource) models > (method) list" {
+					require.ErrorIs(t, err, context.Canceled)
+					require.True(t, errors.As(err, &exit))
+					require.Equal(t, 130, exit.ExitCode())
+				} else {
+					require.False(t, errors.As(err, &exit), "preserve other list exit status")
+				}
+			}
+		}
+	}
+}
 
 func TestModelsListViewerInterruptStatus(t *testing.T) {
 	for _, test := range []struct {

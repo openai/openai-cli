@@ -395,6 +395,90 @@ func TestMainSpendAlertsPagination(t *testing.T) {
 	}
 }
 
+func TestMainSpendAlertsJSONPagination(t *testing.T) {
+	for _, project := range []bool{false, true} {
+		first := spendThresholdBody(project, "spend-alerts", `{"id":"alert_first","currency":"USD","interval":"month","threshold_amount":9007199254740993,"future":{"decimal":0.100000000000000001}}`)
+		second := spendThresholdBody(project, "spend-alerts", `{"id":"alert_second","currency":"USD","interval":"month","threshold_amount":0}`)
+		for _, tc := range []struct {
+			name           string
+			flags          []string
+			count, calls   int
+			empty, failure bool
+		}{
+			{name: "two pages", count: 2, calls: 2},
+			{name: "unlimited", flags: []string{"--max-items", "-1"}, count: 2, calls: 2},
+			{name: "zero", flags: []string{"--max-items", "0"}, calls: 1},
+			{name: "one", flags: []string{"--max-items", "1"}, count: 1, calls: 1},
+			{name: "empty", empty: true, calls: 1},
+			{name: "later failure", count: 1, calls: 2, failure: true},
+			{name: "extraction", flags: []string{"--transform", "threshold_amount"}, count: 2, calls: 2},
+			{name: "raw output", flags: []string{"--raw-output"}, count: 2, calls: 2},
+		} {
+			t.Run(fmt.Sprintf("project=%t/%s", project, tc.name), func(t *testing.T) {
+				var calls atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					call := calls.Add(1)
+					if r.Method != http.MethodGet || r.URL.Path != spendThresholdPath(project, "spend-alerts") || r.URL.Query().Get("limit") != "1" {
+						t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					if call == 1 {
+						if r.URL.Query().Get("after") != "" {
+							t.Errorf("unexpected first cursor: %s", r.URL)
+						}
+						if tc.empty {
+							io.WriteString(w, `{"object":"list","data":[],"has_more":false}`)
+						} else {
+							fmt.Fprintf(w, `{"object":"list","data":[%s],"has_more":true,"last_id":"alert_first"}`, first)
+						}
+						return
+					}
+					if call != 2 || r.URL.Query().Get("after") != "alert_first" {
+						t.Errorf("unexpected later cursor: %s", r.URL)
+					}
+					if tc.failure {
+						w.Header().Set("x-should-retry", "false")
+						w.WriteHeader(http.StatusBadRequest)
+						io.WriteString(w, `{"error":{"message":"Synthetic JSON page failure","type":"invalid_request_error"}}`)
+						return
+					}
+					fmt.Fprintf(w, `{"object":"list","data":[%s],"has_more":false,"last_id":"alert_second"}`, second)
+				}))
+				defer server.Close()
+				args := append([]string{"--format", "json"}, spendThresholdArgs(project, "spend-alerts", "list")...)
+				args = append(args, "--limit", "1")
+				got := runSpendThresholdCommand(t, server, append(args, tc.flags...)...)
+				if int(calls.Load()) != tc.calls {
+					t.Fatalf("requests=%d; want %d", calls.Load(), tc.calls)
+				}
+				if tc.failure {
+					if got.code != 1 || decodeMainStructuredError(t, "json", got.stderr)["message"] != "Synthetic JSON page failure" {
+						t.Fatalf("later JSON failure disappeared: %+v", got)
+					}
+					assertFiniteJSONListPartial(t, got.stdout, "alert_first")
+					decoder := json.NewDecoder(strings.NewReader(got.stdout))
+					if _, err := decoder.Token(); err != nil {
+						t.Fatal(err)
+					}
+					var record json.RawMessage
+					if err := decoder.Decode(&record); err != nil {
+						t.Fatal(err)
+					}
+					assertSpendThresholdJSON(t, string(record), first)
+				} else if got.code != 0 || got.stderr != "" {
+					t.Fatalf("JSON alert list failed: %+v", got)
+				} else if slices.Contains(tc.flags, "--transform") {
+					assertSpendThresholdJSON(t, got.stdout, "9007199254740993", "0")
+				} else if slices.Contains(tc.flags, "--raw-output") {
+					assertSpendThresholdJSON(t, got.stdout, first, second)
+				} else {
+					assertSpendThresholdJSON(t, got.stdout, "["+strings.Join([]string{first, second}[:tc.count], ",")+"]")
+				}
+			})
+		}
+	}
+}
+
 func TestMainSpendThresholdMalformedAPIErrors(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		{"empty", ""},
@@ -422,7 +506,7 @@ func TestMainSpendThresholdMalformedAPIErrors(t *testing.T) {
 				}
 				if format == "json" {
 					payload := decodeMainErrorObject(t, "json", got.stderr)
-					if len(payload) > 0 && (payload["status_code"] != json.Number("502") || payload["message"] != "HTTP 502 Bad Gateway: the server returned no usable JSON error details.") {
+					if payload["status_code"] != json.Number("502") || payload["message"] != "HTTP 502 Bad Gateway: the server returned no usable JSON error details." {
 						t.Errorf("fallback status or message changed: %#v", payload)
 					}
 				} else if !strings.Contains(got.stderr, "HTTP 502: Bad Gateway.") || !strings.Contains(got.stderr, "API error details: --format-error json.") {

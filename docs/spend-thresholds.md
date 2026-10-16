@@ -45,9 +45,13 @@ openai admin organization spend-limit retrieve --transform threshold_amount --ra
 
 # Preserve existing pagination controls.
 openai admin organization spend-alerts list --max-items -1
+
+# Read alert records as one JSON array.
+openai admin organization spend-alerts list --format json
 ```
 
 Explicit JSON, JSONL, YAML, raw, pretty, and explore formats retain their existing data behavior.
+JSON alert lists use one array across pages. JSONL emits separate records; raw format preserves the response page.
 Extraction and `--raw-output` bypass the projection.
 The CLI does not change errors, exit status, or pagination.
 

@@ -58,7 +58,7 @@ func newTokenizerInputBridge(ctx context.Context, original *os.File) (*tokenizer
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	source, err := uv.NewCancelReader(original)
+	source, err := newTokenizerInputSource(original)
 	if err != nil {
 		return nil, err
 	}
@@ -371,6 +371,12 @@ func (p *tokenizerInputParser) flushOrdinary(expired bool) error {
 		n, event := decoder.Decode(data)
 		if n <= 0 || n > len(data) {
 			return errors.New("could not decode terminal input")
+		}
+		// The decoder consumes a final OSC ESC as cancellation even when it
+		// starts a split ESC-backslash terminator. Keep it until more input or
+		// the existing expiry/EOF path decides that the sequence is incomplete.
+		if !expired && n == len(data) && n > 2 && data[0] == '\x1b' && data[1] == ']' && data[n-1] == '\x1b' {
+			break
 		}
 		_, unknown := event.(uv.UnknownEvent)
 		// TerminalReader holds unknown sequences and short ESC-prefixed keys

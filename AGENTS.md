@@ -5,7 +5,7 @@ making changes.
 
 ## Generated CLI sources
 
-Most files in `pkg/cmd/` are generated from the OpenAPI specification by
+Files in `generated/commands/` are generated from the OpenAPI specification by
 Castiron. Generated files identify themselves with a `File generated` header;
 `.castiron.stats.yml` and `api_reference/openapi.transformed.yml` record the
 generation inputs. Establish whether the generator owns a file before editing
@@ -13,7 +13,7 @@ it. Fix recurring generated defects in the authoritative schema or generator
 when available instead of introducing broad manual changes.
 
 Handwritten CLI behavior lives in `pkg/custom/`; API response selection and
-reshaping live in `pkg/transformers/`. Use cohesive `internal/` helpers for
+reshaping live in `internal/output/transform/`. Use cohesive `internal/` helpers for
 shared implementation, including text rendering and terminal escaping.
 Keep `cmd/openai/main.go` focused on startup and wiring. Reuse existing packages
 and explain the distinct responsibility of any new package. Preserve command
