@@ -344,7 +344,7 @@ const audioVoicesContextMetadata = "openai-audio-voices-create-context"
 type voiceTypeError struct{}
 
 func (e *voiceTypeError) Error() string {
-	return "Invalid voice type: --type must be audio_sample. Omit it to use audio_sample."
+	return "Invalid voice type: --type must be audio_sample or prompt. Omit it to use audio_sample."
 }
 
 // Voice type checks require the actual request context when type is an
@@ -376,8 +376,21 @@ func prepareAudioVoicesMultipartBody(cmd *cli.Command, bodyMap map[string]any) e
 	if inspectErr != nil {
 		return inspectErr
 	}
-	if voiceType != "audio_sample" {
+	if voiceType != "audio_sample" && voiceType != "prompt" {
 		return &voiceTypeError{}
+	}
+	required := []string{"audio_sample", "consent", "name"}
+	if voiceType == "prompt" {
+		required = []string{"name", "prompt"}
+	}
+	var missing []string
+	for _, field := range required {
+		if _, present := bodyMap[field]; !present {
+			missing = append(missing, strings.ReplaceAll(field, "_", "-"))
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("Required flags %q not set\nRun '%s --help' for usage information", strings.Join(missing, ", "), cmd.FullName())
 	}
 	return nil
 }
