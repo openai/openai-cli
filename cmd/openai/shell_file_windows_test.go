@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -139,7 +140,9 @@ func TestMainShellWindowsNative(t *testing.T) {
 			})
 			t.Run("field and whole request", func(t *testing.T) {
 				requests := make(chan map[string]any, 8)
+				var requestCount atomic.Int32
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requestCount.Add(1)
 					var body map[string]any
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 						t.Error(err)
@@ -149,12 +152,33 @@ func TestMainShellWindowsNative(t *testing.T) {
 					io.WriteString(w, `{"id":"resp_synthetic","object":"response","output":[]}`)
 				}))
 				defer server.Close()
-				cli := command(binary, "responses", "create", "--model", "explicit-model")
+				cliArgs := []string{"responses", "create", "--model", "explicit-model"}
+				cli := command(binary, cliArgs...)
 				for _, input := range []string{"request.json", "request.yaml"} {
-					got := runNativeShell(t, shell, work, home, server.URL, shell.setKey+transport("produce", input)+" | "+cli)
-					body := windowsShellRequest(t, requests, got)
-					if got.code != 0 || body["input"] != "whole request" || body["model"] != "explicit-model" {
-						t.Fatalf("whole request %s: %+v body=%v", input, got, body)
+					// Keep shell text ready without a competing Go test producer.
+					producer := "type " + commandArgument(shell, input)
+					if shell.name != "cmd" {
+						producer = "$requestText = [IO.File]::ReadAllText(" + commandArgument(shell, input) + "); $requestText"
+					}
+					prefilled := command(helper, append([]string{
+						"-test.run=^TestShellFileWindowsTransportHelper$", "--", "prefilled-input", input, binary,
+					}, cliArgs...)...)
+					for _, operation := range []struct{ name, script string }{
+						{"shell text", producer + " | " + cli},
+						{"prefilled pipe", prefilled},
+					} {
+						before := requestCount.Load()
+						got := runNativeShell(t, shell, work, home, server.URL, shell.setKey+operation.script)
+						body := windowsShellRequest(t, requests, got)
+						count := requestCount.Load() - before
+						if got.code != 0 || got.stderr != "" || len(body) != 2 || body["input"] != "whole request" || body["model"] != "explicit-model" || count != 1 {
+							t.Fatalf("whole request %s (%s): %+v body=%v requests=%d", input, operation.name, got, body, count)
+						}
+						select {
+						case extra := <-requests:
+							t.Fatalf("whole request %s (%s) sent an extra request: %v", input, operation.name, extra)
+						default:
+						}
 					}
 				}
 				capture := "field-" + shell.name + ".bin"
@@ -677,18 +701,53 @@ func TestMainShellWindowsProcessDiagnostics(t *testing.T) {
 	}
 }
 
-// A plain native producer/consumer exposes shell transformations without CLI parsing.
+// Native transport controls expose shell transformations and ready stdin.
 func TestShellFileWindowsTransportHelper(t *testing.T) {
 	separator := slices.Index(os.Args, "--")
 	if separator < 0 {
 		return
 	}
 	args := os.Args[separator+1:]
-	if len(args) != 2 {
+	if len(args) < 2 || args[0] != "prefilled-input" && len(args) != 2 {
 		t.Fatal("invalid transport helper arguments")
 	}
 	var err error
 	switch args[0] {
+	case "prefilled-input":
+		if len(args) < 3 {
+			t.Fatal("missing prefilled-input command")
+		}
+		var data []byte
+		data, err = os.ReadFile(args[1])
+		if err != nil {
+			break
+		}
+		reader, writer, pipeErr := os.Pipe()
+		if pipeErr != nil {
+			t.Fatal(pipeErr)
+		}
+		defer reader.Close()
+		defer writer.Close()
+		// These small fixtures must be ready before the CLI probes stdin.
+		if n, writeErr := writer.Write(data); writeErr != nil || n != len(data) {
+			t.Fatalf("prefill stdin: wrote %d of %d bytes: %v", n, len(data), writeErr)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatalf("close prefilled stdin writer: %v", err)
+		}
+		child := exec.Command(args[2], args[3:]...)
+		child.Stdin, child.Stdout, child.Stderr = reader, os.Stdout, os.Stderr
+		childErr := child.Run()
+		// os.Exit below bypasses deferred cleanup.
+		if err := reader.Close(); err != nil {
+			t.Fatalf("close prefilled stdin reader: %v", err)
+		}
+		if exit, ok := childErr.(*exec.ExitError); ok {
+			os.Exit(exit.ExitCode())
+		}
+		if childErr != nil {
+			t.Fatal(childErr)
+		}
 	case "produce":
 		var data []byte
 		data, err = os.ReadFile(args[1])
