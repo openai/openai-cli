@@ -13,6 +13,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/autocomplete"
 	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v3"
 )
 
 func TestImagePickerFirstRunBlockedWorkDoesNotBlockCommand(t *testing.T) {
@@ -308,4 +309,33 @@ func TestImagePickerFirstRunConcurrentSetupAndCanceledRun(t *testing.T) {
 	profile, err := os.ReadFile(targets[0].Profile)
 	require.NoError(t, err)
 	require.Equal(t, 1, strings.Count(string(profile), "# >>> openai image picker"))
+}
+
+func TestAuthStatusSkipsFirstRunSetupByDeclaredCommand(t *testing.T) {
+	root := authStatusTestRoot(nil)
+	root.Commands = append(root.Commands, &cli.Command{Name: "models", Commands: []*cli.Command{{Name: "list"}}})
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"openai", "auth", "status"}, true},
+		{[]string{"openai", "--api-key", "synthetic", "auth", "status"}, true},
+		{[]string{"openai", "--api-key=synthetic", "auth", "--format=json", "status"}, true},
+		{[]string{"openai", "help", "auth", "status"}, true},
+		{[]string{"openai", "--", "auth", "status"}, true},
+		{[]string{"openai", "auth", "--help"}, true},
+		{[]string{"openai", "auth", "status", "--unknown"}, true},
+		{[]string{"openai", "--debug=false", "auth", "status"}, true},
+		{[]string{"openai", "--api-key", "auth", "models", "list"}, false},
+		{[]string{"openai", "--header", "X-Test: auth", "models", "list"}, false},
+		{[]string{"openai", "--base-url=auth", "models", "list"}, false},
+		{[]string{"openai", "models", "list", "auth"}, false},
+		{[]string{"openai", "--unknown", "auth", "status"}, false},
+		{[]string{"openai", "--api-key", "auth"}, false},
+		{[]string{"openai"}, false},
+	} {
+		require.Equal(t, tc.want, skipAuthFirstRunSetup(root, tc.args), "%q", tc.args)
+	}
+	require.False(t, skipAuthFirstRunSetup(nil, []string{"openai", "auth", "status"}))
+	require.False(t, skipAuthFirstRunSetup(&cli.Command{}, []string{"openai", "auth", "status"}))
 }

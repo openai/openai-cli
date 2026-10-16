@@ -26,9 +26,25 @@ func configureRootRequestFlags(root *cli.Command) {
 
 type rootRequestFlag struct {
 	*requestflag.Flag[string]
+	explicitlySet bool
 }
 
 func (*rootRequestFlag) IsLocal() bool { return false }
+
+func (f *rootRequestFlag) PreParse() error {
+	f.explicitlySet = false
+	return f.Flag.PreParse()
+}
+
+// Environment fallback calls the embedded Flag.Set directly. Only parser or
+// Command.Set assignments pass through this wrapper, including explicit empties.
+func (f *rootRequestFlag) Set(name, value string) error {
+	if err := f.Flag.Set(name, value); err != nil {
+		return err
+	}
+	f.explicitlySet = true
+	return nil
+}
 
 // RequestFlag exposes the existing metadata for help decoration and redaction.
 func (f *rootRequestFlag) RequestFlag() *requestflag.Flag[string] { return f.Flag }
