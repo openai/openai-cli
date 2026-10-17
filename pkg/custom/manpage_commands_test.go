@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/urfave/cli/v3"
 )
 
@@ -178,7 +179,7 @@ func TestManpagePreparationAndCreateErrorsNameOutput(t *testing.T) {
 			}
 			root, _ := manpageTestCommand(t, dir)
 			failure := root.Run(t.Context(), []string{"openai", "@manpages"})
-			var local *localUtilityError
+			var local *localcommands.LocalError
 			var cause *os.PathError
 			if !errors.As(failure, &local) || !errors.As(failure, &cause) || !errors.Is(failure, cause) {
 				t.Fatalf("manpage failure lost classification or cause: %v", failure)
@@ -271,8 +272,8 @@ func TestWriteManpageFileErrorsAndCleanup(t *testing.T) {
 				}
 			}
 			if err != nil {
-				var local *localUtilityError
-				if !errors.As(err, &local) || !strings.Contains(local.message, "--output") || !strings.Contains(local.message, "Some files may be incomplete") {
+				var local *localcommands.LocalError
+				if !errors.As(err, &local) || !strings.Contains(local.Message, "--output") || !strings.Contains(local.Message, "Some files may be incomplete") {
 					t.Fatalf("write/finalization failure lost recovery: %v", err)
 				}
 				var diagnostic bytes.Buffer

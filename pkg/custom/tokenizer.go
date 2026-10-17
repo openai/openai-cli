@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/term"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/tokenizer"
 	"github.com/urfave/cli/v3"
@@ -24,7 +25,7 @@ func registerTokenizerCommands(root *cli.Command) {
 
 Opens the live editor in a terminal. Use count or inspect for scripts.
 
-` + cli.SubcommandHelpTemplate + localUtilityGlobalHelp
+` + cli.SubcommandHelpTemplate + localcommands.LocalUtilityGlobalHelp
 	root.Commands = append(root.Commands, &cli.Command{
 		Name: "tokenizer", Usage: "Explore text, token IDs, and bytes locally",
 		Description: "Tokenizes exact UTF-8 text without credentials, network access, or saved input. " +
@@ -32,12 +33,12 @@ Opens the live editor in a terminal. Use count or inspect for scripts.
 			"Use responses input-tokens count for server request counting.",
 		HideHelpCommand:    true,
 		CustomHelpTemplate: help,
-		Metadata:           map[string]any{localUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools"},
+		Metadata:           map[string]any{localcommands.LocalUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools"},
 		Action:             handleTokenizerEditor,
 		Commands: []*cli.Command{
 			tokenizerInputCommand("count", false), tokenizerInputCommand("inspect", true),
-			{Name: "encodings", Usage: "List the embedded tokenizer encodings", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate + localUtilityGlobalHelp, Action: handleTokenizerEncodings},
-			{Name: "licenses", Usage: "Print the bundled tokenizer license notices", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate + localUtilityGlobalHelp, Action: handleTokenizerLicenses},
+			{Name: "encodings", Usage: "List the embedded tokenizer encodings", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp, Action: handleTokenizerEncodings},
+			{Name: "licenses", Usage: "Print the bundled tokenizer license notices", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp, Action: handleTokenizerLicenses},
 			tokenizerPreviewCommand(),
 			tokenizerTerminalOutputCommand(),
 		},
@@ -52,7 +53,7 @@ func tokenizerInputCommand(name string, inspect bool) *cli.Command {
 	help := `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}EXAMPLE
   {{$bin}} tokenizer {{.Name}} --text "Hello, world!"
 
-` + cli.CommandHelpTemplate + localUtilityGlobalHelp
+` + cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp
 	return &cli.Command{
 		Name: name, Usage: usage, HideHelpCommand: true,
 		CustomHelpTemplate: help,
@@ -77,18 +78,18 @@ func tokenizerInputCommand(name string, inspect bool) *cli.Command {
 
 func tokenizerOutputFormat(command *cli.Command) (string, error) {
 	if command.Args().Present() {
-		return "", &localUtilityError{message: "Tokenizer commands take no positional arguments. Use --text or --file for input."}
+		return "", &localcommands.LocalError{Message: "Tokenizer commands take no positional arguments. Use --text or --file for input."}
 	}
 	root := command.Root()
 	if root.IsSet("transform") || root.IsSet("raw-output") {
-		return "", &localUtilityError{message: "Tokenizer output does not support --transform or --raw-output. Use --format text or json."}
+		return "", &localcommands.LocalError{Message: "Tokenizer output does not support --transform or --raw-output. Use --format text or json."}
 	}
 	format := strings.ToLower(root.String("format"))
 	switch format {
 	case "auto", "text", "json":
 		return format, nil
 	default:
-		return "", &localUtilityError{message: "Tokenizer output supports --format auto, text, or json."}
+		return "", &localcommands.LocalError{Message: "Tokenizer output supports --format auto, text, or json."}
 	}
 }
 
@@ -102,7 +103,7 @@ func handleTokenizer(ctx context.Context, command *cli.Command, inspect bool) er
 	}
 	encoding := command.String("encoding")
 	if !tokenizer.IsSupportedEncoding(encoding) {
-		return &localUtilityError{message: "Choose a tokenizer encoding: " + strings.Join(tokenizer.SupportedEncodings(), ", ") + ". Model names are not encodings."}
+		return &localcommands.LocalError{Message: "Choose a tokenizer encoding: " + strings.Join(tokenizer.SupportedEncodings(), ", ") + ". Model names are not encodings."}
 	}
 	text, err := readTokenizerInput(ctx, command)
 	if err != nil {
@@ -112,7 +113,7 @@ func handleTokenizer(ctx context.Context, command *cli.Command, inspect bool) er
 	// SIGINT termination, including during library computation and blocked input.
 	result, err := tokenizer.Encode(text, encoding, inspect)
 	if err != nil {
-		return &localUtilityError{message: "Could not tokenize input. Use valid UTF-8 text of at most 1 MiB.", cause: err}
+		return &localcommands.LocalError{Message: "Could not tokenize input. Use valid UTF-8 text of at most 1 MiB.", Cause: err}
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -124,15 +125,15 @@ func tokenizerOutputFailure(err error) error {
 	if err == nil {
 		return nil
 	}
-	return &localUtilityError{
-		message: "Could not write tokenizer output. Output may be incomplete. Check the output file or pipe before rerunning.",
-		cause:   err,
+	return &localcommands.LocalError{
+		Message: "Could not write tokenizer output. Output may be incomplete. Check the output file or pipe before rerunning.",
+		Cause:   err,
 	}
 }
 
 func readTokenizerInput(ctx context.Context, command *cli.Command) (string, error) {
 	if command.IsSet("text") && command.IsSet("file") {
-		return "", &localUtilityError{message: "Choose one tokenizer input: --text or --file. Piped stdin is used only without either option."}
+		return "", &localcommands.LocalError{Message: "Choose one tokenizer input: --text or --file. Piped stdin is used only without either option."}
 	}
 	if command.IsSet("text") {
 		return validateTokenizerInput(command.String("text"))
@@ -144,22 +145,22 @@ func readTokenizerInput(ctx context.Context, command *cli.Command) (string, erro
 	if command.IsSet("file") {
 		path := command.String("file")
 		if path == "" {
-			return "", &localUtilityError{message: "--file requires a path. Use --file - to read stdin."}
+			return "", &localcommands.LocalError{Message: "--file requires a path. Use --file - to read stdin."}
 		}
 		if path != "-" {
 			file, err := os.Open(path)
 			if err != nil {
-				return "", &localUtilityError{message: "Could not open tokenizer input. Check the --file path and its permissions.", cause: err}
+				return "", &localcommands.LocalError{Message: "Could not open tokenizer input. Check the --file path and its permissions.", Cause: err}
 			}
 			defer file.Close()
 			input = file
 		}
 	} else if file, ok := input.(*os.File); ok && tokenizerInputIsTerminal(file) {
-		return "", &localUtilityError{message: "Provide --text or --file, or pipe UTF-8 text into the tokenizer. Use --file - for interactive stdin."}
+		return "", &localcommands.LocalError{Message: "Provide --text or --file, or pipe UTF-8 text into the tokenizer. Use --file - for interactive stdin."}
 	}
 	data, err := io.ReadAll(io.LimitReader(&tokenizerInputReader{ctx: ctx, input: input}, tokenizer.MaxInputBytes+1))
 	if err != nil {
-		return "", &localUtilityError{message: "Could not read tokenizer input. Check --file or standard input.", cause: err}
+		return "", &localcommands.LocalError{Message: "Could not read tokenizer input. Check --file or standard input.", Cause: err}
 	}
 	return validateTokenizerInput(string(data))
 }
@@ -205,10 +206,10 @@ func (r *tokenizerInputReader) Read(data []byte) (n int, err error) {
 
 func validateTokenizerInput(text string) (string, error) {
 	if len(text) > tokenizer.MaxInputBytes {
-		return "", &localUtilityError{message: "Tokenizer input exceeds 1 MiB. Use a smaller complete input; splitting text can change token boundaries."}
+		return "", &localcommands.LocalError{Message: "Tokenizer input exceeds 1 MiB. Use a smaller complete input; splitting text can change token boundaries."}
 	}
 	if !utf8.ValidString(text) {
-		return "", &localUtilityError{message: "Tokenizer input must be valid UTF-8. Convert the source encoding before tokenizing."}
+		return "", &localcommands.LocalError{Message: "Tokenizer input must be valid UTF-8. Convert the source encoding before tokenizing."}
 	}
 	return text, nil
 }

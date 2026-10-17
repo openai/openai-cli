@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	docs "github.com/urfave/cli-docs/v3"
 	"github.com/urfave/cli/v3"
 )
@@ -38,7 +39,7 @@ func configureManpageCommands(root *cli.Command) {
 
 		dir := command.String("output")
 		if err := os.MkdirAll(filepath.Join(dir, "man1"), 0755); err != nil {
-			return &localUtilityError{message: "Could not create the manpage folder for --output. Check the destination path and permissions.", cause: err}
+			return &localcommands.LocalError{Message: "Could not create the manpage folder for --output. Check the destination path and permissions.", Cause: err}
 		}
 		writingStarted := false
 		writeFile := func(name string, compressed bool) error {
@@ -48,7 +49,7 @@ func configureManpageCommands(root *cli.Command) {
 				if writingStarted {
 					message += " Some manpage files may be incomplete; check them before using them."
 				}
-				return &localUtilityError{message: message, cause: err}
+				return &localcommands.LocalError{Message: message, Cause: err}
 			}
 			writingStarted = true
 			return writeManpageFile(file, manpage, compressed)
@@ -75,9 +76,9 @@ func writeManpageFile(file io.WriteCloser, manpage string, compressed bool) (err
 	defer func() {
 		err = errors.Join(err, file.Close())
 		if err != nil {
-			err = &localUtilityError{
-				message: "Could not finish writing manpages for --output. Some files may be incomplete. Check the destination path and permissions.",
-				cause:   err,
+			err = &localcommands.LocalError{
+				Message: "Could not finish writing manpages for --output. Some files may be incomplete. Check the destination path and permissions.",
+				Cause:   err,
 			}
 		}
 	}()

@@ -1,4 +1,4 @@
-package custom
+package codex
 
 import (
 	"context"
@@ -22,14 +22,14 @@ import (
 func writeCodexTerminalGuide(ctx context.Context, command *cli.Command, guide codexInstructions) (bool, error) {
 	root := command.Root()
 	output, terminal := root.Writer.(*os.File)
-	if !terminal || !cliterminal.AutomaticPresentation(root.String("format"), isTerminal(output), os.Getenv) {
+	if !terminal || !cliterminal.AutomaticPresentation(root.String("format"), term.IsTerminal(output.Fd()), os.Getenv) {
 		return false, nil
 	}
 	width, _, err := term.GetSize(output.Fd())
 	if err != nil || width < 40 {
 		return false, nil
 	}
-	return true, writeCodexTerminalContent(ctx, output, cliterminal.ColorProfile(output, os.Environ(), isTerminal(output)), guide, width, cliterminal.DarkBackground(os.Getenv("COLORFGBG")))
+	return true, writeCodexTerminalContent(ctx, output, cliterminal.ColorProfile(output, os.Environ(), term.IsTerminal(output.Fd())), guide, width, cliterminal.DarkBackground(os.Getenv("COLORFGBG")))
 }
 
 func writeCodexTerminalContent(ctx context.Context, output io.Writer, profile colorprofile.Profile, guide codexInstructions, width int, dark bool) error {

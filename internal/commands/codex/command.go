@@ -1,4 +1,4 @@
-package custom
+package codex
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/terminal"
@@ -49,7 +50,8 @@ type codexInstructions struct {
 	Destinations  []codexDestination  `json:"destinations"`
 }
 
-func registerCodexCommands(root *cli.Command) {
+// Register adds the local Codex guide to the command tree.
+func Register(root *cli.Command) {
 	root.Commands = append(root.Commands, codexCommand(terminal.OpenBrowser))
 }
 
@@ -57,7 +59,7 @@ func codexCommand(open func(context.Context, string) error) *cli.Command {
 	help := `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}EXAMPLE
   {{$bin}} codex --destination config
 
-` + cli.CommandHelpTemplate + localUtilityGlobalHelp
+` + cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp
 	return &cli.Command{
 		Name: "codex", Usage: "Show local Codex CLI instructions and official links",
 		Description: "Prints installation and configuration instructions for the separate codex command. " +
@@ -66,7 +68,7 @@ func codexCommand(open func(context.Context, string) error) *cli.Command {
 			"Supports --format auto, text, and json. Does not support --transform or --raw-output.",
 		HideHelpCommand:    true,
 		CustomHelpTemplate: help,
-		Metadata:           map[string]any{localUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools"},
+		Metadata:           map[string]any{localcommands.LocalUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools"},
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "destination", Usage: "Print an official link: docs, config, app, or web", OnlyOnce: true},
 			&cli.BoolFlag{Name: "open", Usage: "Open the selected destination in a browser; requires --destination", OnlyOnce: true},
@@ -105,15 +107,15 @@ func handleCodex(ctx context.Context, command *cli.Command, open func(context.Co
 		return err
 	}
 	if command.Args().Present() {
-		return &localUtilityError{message: "Codex instructions take no positional arguments. Use --destination docs, config, app, or web."}
+		return &localcommands.LocalError{Message: "Codex instructions take no positional arguments. Use --destination docs, config, app, or web."}
 	}
 	root := command.Root()
 	if root.IsSet("transform") || root.IsSet("raw-output") {
-		return &localUtilityError{message: "Codex instructions do not support --transform or --raw-output. Use --format text or json."}
+		return &localcommands.LocalError{Message: "Codex instructions do not support --transform or --raw-output. Use --format text or json."}
 	}
 	format := strings.ToLower(root.String("format"))
 	if format != "auto" && format != "text" && format != "json" {
-		return &localUtilityError{message: "Codex instructions support --format auto, text, or json."}
+		return &localcommands.LocalError{Message: "Codex instructions support --format auto, text, or json."}
 	}
 	var selected *codexDestination
 	guide := codexGuide()
@@ -125,16 +127,16 @@ func handleCodex(ctx context.Context, command *cli.Command, open func(context.Co
 			}
 		}
 		if selected == nil {
-			return &localUtilityError{message: "Choose a Codex destination: docs, config, app, or web."}
+			return &localcommands.LocalError{Message: "Choose a Codex destination: docs, config, app, or web."}
 		}
 	}
 	if command.Bool("open") && selected == nil {
-		return &localUtilityError{message: "Opening a Codex destination requires --destination docs, config, app, or web."}
+		return &localcommands.LocalError{Message: "Opening a Codex destination requires --destination docs, config, app, or web."}
 	}
 	if selected == nil {
 		if handled, err := writeCodexTerminalGuide(ctx, command, guide); handled {
 			if err != nil {
-				return &localUtilityError{message: "Could not write Codex output. Output may be incomplete. Check the output file or pipe before rerunning.", cause: err}
+				return &localcommands.LocalError{Message: "Could not write Codex output. Output may be incomplete. Check the output file or pipe before rerunning.", Cause: err}
 			}
 			return nil
 		}
@@ -156,7 +158,7 @@ func handleCodex(ctx context.Context, command *cli.Command, open func(context.Co
 		content = codexGuideText(guide)
 	}
 	if err := readable.WriteText(clioutput.Writer{Context: ctx, Sink: root.Writer}, content); err != nil {
-		return &localUtilityError{message: "Could not write Codex output. Output may be incomplete. Check the output file or pipe before rerunning.", cause: err}
+		return &localcommands.LocalError{Message: "Could not write Codex output. Output may be incomplete. Check the output file or pipe before rerunning.", Cause: err}
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -171,7 +173,7 @@ func handleCodex(ctx context.Context, command *cli.Command, open func(context.Co
 			err = openContext.Err()
 		}
 		if err != nil {
-			return &localUtilityError{message: "Could not open the browser. Open this URL manually: " + selected.URL, cause: err}
+			return &localcommands.LocalError{Message: "Could not open the browser. Open this URL manually: " + selected.URL, Cause: err}
 		}
 	}
 	return nil

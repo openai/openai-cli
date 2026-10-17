@@ -51,7 +51,10 @@ below describes the current layout as the migration proceeds.
   `scripts/generate-tokenizer-unicode.go`; the handwritten tokenizer stays in
   `internal/tokenizer/`.
 - `tests/cli/` contains handwritten command and request contracts.
-- `pkg/custom/` contains handwritten CLI commands, defaults, output-format
+- `internal/commands/codex/` owns the complete Codex guide, presentation, and tests.
+- `internal/commands/` defines shared local-command routing, help, and safe-error
+  contracts.
+- `pkg/custom/` contains remaining handwritten CLI commands, defaults, output-format
   policy, error handling, and presentation orchestration.
 - `internal/output/transform/` selects or reshapes API responses before presentation.
 - `internal/` contains shared helpers for flags, request encoding, terminal
@@ -77,9 +80,11 @@ generation inputs. Establish ownership before editing generated files and fix
 recurring generated problems in the authoritative schema or generator when
 available.
 
-Handwritten behavior belongs in `pkg/custom/`, `internal/output/transform/`, and focused
-`internal/` helpers. Keep `cmd/openai/` focused on startup and wiring. Generated
-code calls handwritten request/output helpers through a generated runtime bridge.
+Handwritten features are moving into `internal/commands/<feature>/`; Codex is
+there now. Remaining behavior belongs in `pkg/custom/`,
+`internal/output/transform/`, and focused `internal/` helpers. Keep
+`cmd/openai/` focused on startup and wiring. Generated code calls handwritten
+request/output helpers through a generated runtime bridge.
 Application assembly registers handwritten features; keep their implementations
 and tests outside `generated/`.
 Reuse an existing package unless a new one has a distinct responsibility.

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
@@ -42,7 +43,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var helpTopicFailure *clihelp.UnknownTopicError
 	var adminCredentialsFailure *adminCredentialsError
 	var adminSetupFailure *adminSetupError
-	var utilityFailure *localUtilityError
+	var utilityFailure *localcommands.LocalError
 	var downloadFailure *downloadSaveError
 	var receiptFailure *saveReceiptError
 	var navigationFailure *listNavigationError

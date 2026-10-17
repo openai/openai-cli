@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
 	"github.com/openai/openai-cli/internal/audiomedia"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -77,10 +78,10 @@ func TestAudioWorkbenchMeasurementFailureKeepsExportAfterDisplayChange(t *testin
 	require.ErrorIs(t, message.err, audiomedia.ErrInvalidAudio)
 	require.Equal(t, entry, message.result.entry)
 	require.False(t, message.result.measured)
-	var local *localUtilityError
+	var local *localcommands.LocalError
 	require.ErrorAs(t, message.err, &local)
-	local.message = "Retained audio needs inspection."
-	require.EqualError(t, message.err, local.message)
+	local.Message = "Retained audio needs inspection."
+	require.EqualError(t, message.err, local.Message)
 	require.Equal(t, "measure", audioFailureStage(message.kind, message.err))
 	message.err = fmt.Errorf("outer context: %w", message.err)
 	m.Update(message)

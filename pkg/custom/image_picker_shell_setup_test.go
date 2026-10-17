@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/openai/openai-cli/internal/autocomplete"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -151,12 +152,12 @@ func TestImagePickerShellSetupValidationPreservesRecoveryAndExit(t *testing.T) {
 			output, diagnostic, failure := runPickerShellSetupWithDiagnostics(t, t.Context(), append(tc.args, profile)...)
 			require.Empty(t, output)
 			require.Empty(t, diagnostic)
-			var local *localUtilityError
+			var local *localcommands.LocalError
 			var exit cli.ExitCoder
 			require.ErrorAs(t, failure, &local)
 			require.ErrorAs(t, failure, &exit)
 			require.Equal(t, 2, exit.ExitCode())
-			require.True(t, errors.Is(failure, local.cause))
+			require.True(t, errors.Is(failure, local.Cause))
 			for _, format := range []string{"text", "json"} {
 				var presented bytes.Buffer
 				require.NoError(t, ShowCommandError(readableErrorTestCommand(t, "--format-error", format), failure, &presented))

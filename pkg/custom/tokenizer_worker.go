@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/tokenizer"
 	"github.com/urfave/cli/v3"
 )
@@ -173,9 +174,9 @@ func tokenizerPreviewCommand() *cli.Command {
 }
 
 func tokenizerPreviewFailure(cause error) error {
-	return &localUtilityError{
-		message: "Could not update the token preview. Edit the text to retry, or use tokenizer inspect for plain output.",
-		cause:   cause,
+	return &localcommands.LocalError{
+		Message: "Could not update the token preview. Edit the text to retry, or use tokenizer inspect for plain output.",
+		Cause:   cause,
 	}
 }
 

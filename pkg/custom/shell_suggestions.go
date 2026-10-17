@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/openai/openai-cli/internal/autocomplete"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/urfave/cli/v3"
 )
 
@@ -40,7 +41,7 @@ func configureShellSuggestions(root *cli.Command) {
 				}
 			}
 			if message != "" {
-				return &localUtilityError{message: message, cause: cli.Exit(message, 2)}
+				return &localcommands.LocalError{Message: message, Cause: cli.Exit(message, 2)}
 			}
 			script, err := autocomplete.RenderShellSuggestions(autocomplete.CompletionStyle(command.Args().First()), command.Root().Name)
 			if err != nil {

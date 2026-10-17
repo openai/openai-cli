@@ -19,6 +19,11 @@ Shared color profiles, automatic terminal presentation eligibility, and backgrou
 theme detection live in `internal/terminal/`. Feature callers retain terminal
 detection for their output destinations, including wrapped batch output.
 
+The complete Codex guide and its tests live in `internal/commands/codex/`.
+`internal/commands/` holds shared local-command routing, help, and safe-error
+contracts. The existing assembly sequence registers Codex before presentation
+and error policies are installed.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

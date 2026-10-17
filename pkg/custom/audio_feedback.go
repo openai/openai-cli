@@ -12,6 +12,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/audiohistory"
 	"github.com/openai/openai-cli/internal/audiomedia"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-go/v3"
 	"github.com/urfave/cli/v3"
 )
@@ -42,14 +43,14 @@ const (
 // Keep the local wrapper in the chain for safe presentation and original causes.
 type audioClassifiedFailure struct {
 	kind    audioFailureKind
-	failure *localUtilityError
+	failure *localcommands.LocalError
 }
 
 func (e *audioClassifiedFailure) Error() string { return e.failure.Error() }
 func (e *audioClassifiedFailure) Unwrap() error { return e.failure }
 
 func classifiedAudioFailure(kind audioFailureKind, message string, cause error) error {
-	return &audioClassifiedFailure{kind: kind, failure: &localUtilityError{message: message, cause: cause}}
+	return &audioClassifiedFailure{kind: kind, failure: &localcommands.LocalError{Message: message, Cause: cause}}
 }
 
 func audioFailureFeedback(command *cli.Command, operation string, failure error) audioFeedback {

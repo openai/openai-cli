@@ -16,6 +16,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
@@ -27,14 +28,14 @@ func handleTokenizerEditor(ctx context.Context, command *cli.Command) error {
 		return err
 	}
 	if command.Args().Present() {
-		return &localUtilityError{message: "Tokenizer takes no positional input. Open the editor without arguments, or use tokenizer count --text TEXT."}
+		return &localcommands.LocalError{Message: "Tokenizer takes no positional input. Open the editor without arguments, or use tokenizer count --text TEXT."}
 	}
 	format, err := tokenizerOutputFormat(command)
 	if err != nil {
-		return &localUtilityError{message: "The tokenizer editor supports --format auto or text. For JSON, use tokenizer count or inspect. --transform and --raw-output are unsupported."}
+		return &localcommands.LocalError{Message: "The tokenizer editor supports --format auto or text. For JSON, use tokenizer count or inspect. --transform and --raw-output are unsupported."}
 	}
 	if format == "json" {
-		return &localUtilityError{message: "Choose tokenizer count or tokenizer inspect for --format json. Use --text, --file, or piped input."}
+		return &localcommands.LocalError{Message: "Choose tokenizer count or tokenizer inspect for --format json. Use --text, --file, or piped input."}
 	}
 	root := command.Root()
 	input, _ := root.Reader.(*os.File)
@@ -55,7 +56,7 @@ func handleTokenizerEditor(ctx context.Context, command *cli.Command) error {
 	}
 	code, err := runTokenizerEditor(ctx, input, output, invocation)
 	if err != nil {
-		return &localUtilityError{message: "Could not display the tokenizer editor. Use tokenizer count or tokenizer inspect with --text or --file.", cause: err}
+		return &localcommands.LocalError{Message: "Could not display the tokenizer editor. Use tokenizer count or tokenizer inspect with --text or --file.", Cause: err}
 	}
 	if code != 0 {
 		return cli.Exit("", code)

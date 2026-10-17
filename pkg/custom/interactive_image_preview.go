@@ -17,6 +17,7 @@ import (
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/term"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/urfave/cli/v3"
 )
@@ -35,7 +36,7 @@ func (e *interactiveImageFailure) Error() string {
 	return "Could not display or restore the interactive preview. The original file is unchanged."
 }
 func (e *interactiveImageFailure) Unwrap() error {
-	return &localUtilityError{message: e.Error(), cause: e.cause}
+	return &localcommands.LocalError{Message: e.Error(), Cause: e.cause}
 }
 func (e *interactiveImageFailure) ExitCode() int { return e.code }
 

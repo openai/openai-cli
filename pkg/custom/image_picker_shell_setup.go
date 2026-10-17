@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/autocomplete"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/urfave/cli/v3"
 )
 
@@ -89,7 +90,7 @@ func configureImagePickerShellSetup(root *cli.Command) {
 		if !install && !remove {
 			if command.Bool("automatic") || command.IsSet("profile") {
 				const message = "Use --install-picker or --uninstall-picker with setup options."
-				return &localUtilityError{message: message, cause: cli.Exit(message, 2)}
+				return &localcommands.LocalError{Message: message, Cause: cli.Exit(message, 2)}
 			}
 			return next(ctx, command)
 		}
@@ -97,7 +98,7 @@ func configureImagePickerShellSetup(root *cli.Command) {
 			command.IsSet("profile") && command.String("profile") == "" ||
 			command.Bool("automatic") && (remove || command.IsSet("profile") || command.Args().Len() > 0) {
 			const message = "Choose one setup action. Automatic setup does not accept a shell or profile override."
-			return &localUtilityError{message: message, cause: cli.Exit(message, 2)}
+			return &localcommands.LocalError{Message: message, Cause: cli.Exit(message, 2)}
 		}
 		shell := command.Args().First()
 		if shell == "" && !command.Bool("automatic") {

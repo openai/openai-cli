@@ -291,7 +291,7 @@ func TestTokenizerTerminalFragmentsAreEscaped(t *testing.T) {
 func TestTokenizerWriteFailureAndCancellation(t *testing.T) {
 	failure := errors.New("private synthetic sink failure")
 	for _, format := range []string{"text", "json"} {
-		root := tokenizerTestRoot(tokenizerRejectReader{}, codexFailedWriter{failure})
+		root := tokenizerTestRoot(tokenizerRejectReader{}, failOutputWriter{failure})
 		err := root.Run(t.Context(), []string{"openai", "--format", format, "tokenizer", "inspect", "--text", "Hello"})
 		if !errors.Is(err, failure) || strings.Contains(err.Error(), "private synthetic") {
 			t.Fatalf("writer failure lost or exposed: %v", err)

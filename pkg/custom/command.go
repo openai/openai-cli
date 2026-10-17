@@ -3,6 +3,7 @@ package custom
 import (
 	"context"
 
+	"github.com/openai/openai-cli/internal/commands/codex"
 	"github.com/urfave/cli/v3"
 )
 
@@ -40,7 +41,7 @@ func ConfigureCommand(root *cli.Command) {
 	registerAudioCommands(root)
 	configureFileCommands(root)
 	registerTokenizerCommands(root)
-	registerCodexCommands(root)
+	codex.Register(root)
 	configureCommandPresentation(root)
 	configureManpageCommands(root)
 	configureOutputPolicy(root)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/audiohistory"
 	"github.com/openai/openai-cli/internal/audiomedia"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -141,9 +142,9 @@ func TestAudioFeedbackPreservesRetainedOperationProvenance(t *testing.T) {
 		{"retention", "generate", classifiedAudioFailure(audioCaptureFailure, "Could not retain completed audio in private history.", private), "Audio retention failed.", "Check History and API usage"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var local *localUtilityError
+			var local *localcommands.LocalError
 			if errors.As(tc.failure, &local) {
-				local.message = "Updated local audio guidance."
+				local.Message = "Updated local audio guidance."
 			}
 			feedback := audioFailureFeedback(nil, tc.operation, fmt.Errorf("outer context: %w", tc.failure))
 			require.Equal(t, tc.summary, feedback.Summary)
@@ -237,10 +238,10 @@ func TestAudioFeedbackAuthDoesNotInferCredentialCause(t *testing.T) {
 func TestAudioFeedbackValidationAndUnknownFailures(t *testing.T) {
 	feedbackAfterRewording := func(failure error) audioFeedback {
 		t.Helper()
-		var local *localUtilityError
+		var local *localcommands.LocalError
 		require.ErrorAs(t, failure, &local)
-		local.message = "Updated local validation guidance."
-		require.EqualError(t, failure, local.message)
+		local.Message = "Updated local validation guidance."
+		require.EqualError(t, failure, local.Message)
 		return audioFailureFeedback(nil, "generate", fmt.Errorf("outer context: %w", failure))
 	}
 	settings := audioDefaultSettings()
