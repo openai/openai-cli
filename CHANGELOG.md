@@ -1,5 +1,102 @@
 # Changelog
 
+## [1.39.0](https://github.com/openai/openai-cli/compare/v1.38.0...v1.39.0) (2026-10-17)
+
+
+### Features
+
+* **admin:** add guided admin-key setup and access verification ([#387](https://github.com/openai/openai-cli/issues/387)) ([4183995](https://github.com/openai/openai-cli/commit/418399574848f9bb894d660d84ece12f78f9b092))
+* **api:** add Decisions creation and hosted environment reference ([#437](https://github.com/openai/openai-cli/issues/437)) ([0ca3ac7](https://github.com/openai/openai-cli/commit/0ca3ac7021f88de81f7442d299093814afcf45c2))
+* **api:** add Decisions prompt caching options ([#501](https://github.com/openai/openai-cli/issues/501)) ([5031be2](https://github.com/openai/openai-cli/commit/5031be2adc789a4e2e96b51f0a682a93097aaf8f))
+* **api:** add organization Decisions usage reporting ([#435](https://github.com/openai/openai-cli/issues/435)) ([ba6cb09](https://github.com/openai/openai-cli/commit/ba6cb091387803581722e99443d8f3bfc59f9326))
+* **api:** add prompt-based voice creation ([#502](https://github.com/openai/openai-cli/issues/502)) ([72f552b](https://github.com/openai/openai-cli/commit/72f552bbfe38d5fe3f018ef1257db59b51319120))
+* **api:** add safety identifiers to image requests and responses ([#503](https://github.com/openai/openai-cli/issues/503)) ([b624c9f](https://github.com/openai/openai-cli/commit/b624c9ff262f2201d2b1523601c0c24bd628fa1d))
+* **api:** configure Decisions when accepting Live SIP calls ([#505](https://github.com/openai/openai-cli/issues/505)) ([e17ac83](https://github.com/openai/openai-cli/commit/e17ac832f7201ad1d0c7a3905ccace79e1b33ba8))
+* **api:** support project API key scope updates ([#478](https://github.com/openai/openai-cli/issues/478)) ([7afecce](https://github.com/openai/openai-cli/commit/7afeccea67647dfa0031fc80a7f29520a3f01efa))
+* **api:** support updating project API key expiry ([#462](https://github.com/openai/openai-cli/issues/462)) ([97b43f2](https://github.com/openai/openai-cli/commit/97b43f2cacc586ab352de1d544bd0b3c89936364))
+* **audio:** add speech workflows, local history, playback, export, and readable transcripts ([#403](https://github.com/openai/openai-cli/issues/403)) ([fe17bcb](https://github.com/openai/openai-cli/commit/fe17bcbc30cd30dc4ab525e7036ea0ef0ddc5f3b))
+* **batches:** add waiting, result collection, and safe downloads ([#388](https://github.com/openai/openai-cli/issues/388)) ([ecaf876](https://github.com/openai/openai-cli/commit/ecaf876d034ea37c8c1f01087c9c000c660a0df3))
+* **cli:** add scoped error recovery and optional shell typo suggestions ([#409](https://github.com/openai/openai-cli/issues/409)) ([a81ec27](https://github.com/openai/openai-cli/commit/a81ec27645fccd8187a6ac61453e31e80bf335d5))
+* **cli:** show a welcome card during bare interactive startup ([#401](https://github.com/openai/openai-cli/issues/401)) ([024dbaa](https://github.com/openai/openai-cli/commit/024dbaa695b5f10289dded3dcab5db1af0620bdd))
+* **files:** add get and download routes with positional uploads ([#397](https://github.com/openai/openai-cli/issues/397)) ([e689398](https://github.com/openai/openai-cli/commit/e68939820415144d769ed02de6aa72d5b7d32948))
+* **help:** show complete help consistently and improve flag diagnostics ([#384](https://github.com/openai/openai-cli/issues/384)) ([6fcc478](https://github.com/openai/openai-cli/commit/6fcc478086507571286727084a7d7b162a37ab51))
+* **images:** add interactive and opt-in Konsole previews ([#371](https://github.com/openai/openai-cli/issues/371)) ([d3bc819](https://github.com/openai/openai-cli/commit/d3bc819041757108d39222b239bfe427c421fd40))
+* **images:** retain picker drafts and keep failed requests editable ([#394](https://github.com/openai/openai-cli/issues/394)) ([1dc9d3d](https://github.com/openai/openai-cli/commit/1dc9d3d2a18f2a9ad016f539d337f5544e665ac2))
+* **models:** add filtered ID and owner lists with interactive navigation ([#391](https://github.com/openai/openai-cli/issues/391)) ([86502b0](https://github.com/openai/openai-cli/commit/86502b0d5b614155746daedb6a435e209fdb443e))
+* **output:** add quiet and verbose controls ([#392](https://github.com/openai/openai-cli/issues/392)) ([866d877](https://github.com/openai/openai-cli/commit/866d8770c00c331bf3630b05f2a76870110d2896))
+* **tokenizer:** add offline token inspection and local Codex guidance ([#386](https://github.com/openai/openai-cli/issues/386)) ([217ff2e](https://github.com/openai/openai-cli/commit/217ff2ea1e853040ba08c3c170e05586424386aa))
+
+
+### Bug Fixes
+
+* **autocomplete:** preserve colon argument boundaries ([#413](https://github.com/openai/openai-cli/issues/413)) ([5739ce0](https://github.com/openai/openai-cli/commit/5739ce0f3a6cc5887092554a403bf53357eca9a4))
+* **autocomplete:** preserve quoted and Unicode filenames during Bash completion ([#446](https://github.com/openai/openai-cli/issues/446)) ([6ec7646](https://github.com/openai/openai-cli/commit/6ec7646e76e1934ef4b10701b56cd79949028d45))
+* **autocomplete:** preserve quoted Bash command prefixes ([#399](https://github.com/openai/openai-cli/issues/399)) ([c3c66c4](https://github.com/openai/openai-cli/commit/c3c66c4c014e7759a6f3b61a595d1c54fd542db9))
+* **autocomplete:** restore Fish 3 completion and literal filename prefixes ([#447](https://github.com/openai/openai-cli/issues/447)) ([f93670c](https://github.com/openai/openai-cli/commit/f93670c039148eb812ce0ac256a4e84694ce3034))
+* **ci:** decode SDK cross-link events as UTF-8 ([#457](https://github.com/openai/openai-cli/issues/457)) ([af0e8a0](https://github.com/openai/openai-cli/commit/af0e8a00d6060ab5d4004449ab306966f9366334))
+* **cli:** emit finite JSON arrays; use --format jsonl for independent records ([#407](https://github.com/openai/openai-cli/issues/407)) ([b93e41e](https://github.com/openai/openai-cli/commit/b93e41e12201e806d86c3d69fc6e3c7c3bf44768))
+* **cli:** wait briefly for Windows piped input ([#485](https://github.com/openai/openai-cli/issues/485)) ([8b40840](https://github.com/openai/openai-cli/commit/8b40840535e17d32b3bd4d3fd5defe657e30b0d2))
+* **errors:** preserve incomplete resumed-stream failures and empty API error details ([#439](https://github.com/openai/openai-cli/issues/439)) ([e8ffaab](https://github.com/openai/openai-cli/commit/e8ffaab16604f6a4ef22b1cb6549a0b44283cbbe))
+* **help:** preserve literal flag values and quoted Bash file completion ([#440](https://github.com/openai/openai-cli/issues/440)) ([47d6a16](https://github.com/openai/openai-cli/commit/47d6a16f909342f87af4a7c66a6b3ab96d429f4e))
+* **images:** preserve reserved probe directories during Windows image saves ([#470](https://github.com/openai/openai-cli/issues/470)) ([e330cc2](https://github.com/openai/openai-cli/commit/e330cc2997ae3d7220afca0a09c94e712c47ceb3))
+* **images:** retain saved-file recovery guidance after cancellation ([#442](https://github.com/openai/openai-cli/issues/442)) ([337a7e4](https://github.com/openai/openai-cli/commit/337a7e448aed26b454f63a13469a19689053a7a6))
+* **io:** preserve explicit stdin, stream events promptly, and protect incomplete downloads ([#395](https://github.com/openai/openai-cli/issues/395)) ([390a9c3](https://github.com/openai/openai-cli/commit/390a9c3d68e93f7348509ffec169bb5ab38d68cc))
+* **models:** finish SIGINT shutdown with status 130 ([#441](https://github.com/openai/openai-cli/issues/441)) ([673c5eb](https://github.com/openai/openai-cli/commit/673c5ebab5ed5f2c51d954b75983121be25e2d16))
+* **output:** keep redirected results undecorated and preserve stream cleanup ([#392](https://github.com/openai/openai-cli/issues/392)) ([866d877](https://github.com/openai/openai-cli/commit/866d8770c00c331bf3630b05f2a76870110d2896))
+* **output:** send successful API save receipts to stderr ([#395](https://github.com/openai/openai-cli/issues/395)) ([390a9c3](https://github.com/openai/openai-cli/commit/390a9c3d68e93f7348509ffec169bb5ab38d68cc))
+* **tokenizer:** preserve Windows Unicode input and split terminal replies ([#454](https://github.com/openai/openai-cli/issues/454)) ([911218a](https://github.com/openai/openai-cli/commit/911218a71df84ae14e79c43a9a9174cc2f14a7bd))
+
+
+### Chores
+
+* **api:** clarify Decisions request and response fields ([#476](https://github.com/openai/openai-cli/issues/476)) ([8301197](https://github.com/openai/openai-cli/commit/83011971aa627069f86c919ed610dbb07ba6b50d))
+* **api:** correct the shida Live voice name ([#430](https://github.com/openai/openai-cli/issues/430)) ([193ee5b](https://github.com/openai/openai-cli/commit/193ee5b56e304723fa1995ff96aa711c876b45ef))
+* **api:** document 128-character safety identifiers ([#428](https://github.com/openai/openai-cli/issues/428)) ([a6bf1af](https://github.com/openai/openai-cli/commit/a6bf1af6633fa4d49d8adf5283343b5814134f65))
+* **api:** document beta pagination validation and migration ([#431](https://github.com/openai/openai-cli/issues/431)) ([729045e](https://github.com/openai/openai-cli/commit/729045ee4042582b3878e74c42e449b3b7252ec3))
+* **api:** document beta session spending controls ([#432](https://github.com/openai/openai-cli/issues/432)) ([47df976](https://github.com/openai/openai-cli/commit/47df9766d29c970082e6b50b90c86d12c8657d19))
+* **api:** document billing_not_active session errors ([#429](https://github.com/openai/openai-cli/issues/429)) ([8f26fe4](https://github.com/openai/openai-cli/commit/8f26fe41d00ab021d63195fa6f9561349ff2bf39))
+* **api:** document detailed safety alert explanations ([#434](https://github.com/openai/openai-cli/issues/434)) ([2b61ced](https://github.com/openai/openai-cli/commit/2b61cedea6934da4d42ddedfdbffd8e8f32e834c))
+* **api:** document Files API rate-limit responses ([#427](https://github.com/openai/openai-cli/issues/427)) ([88cd309](https://github.com/openai/openai-cli/commit/88cd309619677d90528c23af8b8871edd219a8c0))
+* **api:** document image tool error and moderation details ([#451](https://github.com/openai/openai-cli/issues/451)) ([53b3b6e](https://github.com/openai/openai-cli/commit/53b3b6e8ca28ee0ac25e35109366e8d979174787))
+* **api:** document Live audio fixture events in the API reference ([#481](https://github.com/openai/openai-cli/issues/481)) ([38c82ce](https://github.com/openai/openai-cli/commit/38c82ce7d1b9d2fda7f88255b6b20f66935fc02f))
+* **api:** document OCI external-storage providers ([#433](https://github.com/openai/openai-cli/issues/433)) ([4f1f7df](https://github.com/openai/openai-cli/commit/4f1f7df4dac9c434ede4a4cade820a5a69b9df46))
+* **api:** document Realtime response error messages ([#479](https://github.com/openai/openai-cli/issues/479)) ([ec8d114](https://github.com/openai/openai-cli/commit/ec8d114f92d02a6deb91b6731eb9ca396f4f9c78))
+* **api:** document regional processing residency values ([#477](https://github.com/openai/openai-cli/issues/477)) ([75865b6](https://github.com/openai/openai-cli/commit/75865b6e163a030c2d636c63647cf9f84eeae081))
+* **api:** document snapshot lifecycle status values and events ([#415](https://github.com/openai/openai-cli/issues/415)) ([53828f0](https://github.com/openai/openai-cli/commit/53828f030b5b74f5ca3da44ba341865228827ffb))
+* **api:** document vault updates and metadata filters ([#426](https://github.com/openai/openai-cli/issues/426)) ([b724518](https://github.com/openai/openai-cli/commit/b724518c69b00cb70c0c3487ed021392b606b5b0))
+* clarify Live limits and refresh generated-file verification ([#510](https://github.com/openai/openai-cli/issues/510)) ([9cddd6b](https://github.com/openai/openai-cli/commit/9cddd6bc8715eb06ec37176328cc6e3148d9e827))
+* **deps:** bump the go-minor-and-patch group across 1 directory with 5 updates ([#444](https://github.com/openai/openai-cli/issues/444)) ([263dadd](https://github.com/openai/openai-cli/commit/263dadd23530f55da776b944b559e5c6642e6f25))
+* **deps:** update openai-go to v3.74.0 ([#393](https://github.com/openai/openai-cli/issues/393)) ([e32158e](https://github.com/openai/openai-cli/commit/e32158e57f05eae260ebb7a0bd0cacc6b2961ce1))
+* **deps:** update openai-go to v3.75.0 ([#412](https://github.com/openai/openai-cli/issues/412)) ([077ae69](https://github.com/openai/openai-cli/commit/077ae69604621bf0c6814c7c66c8a6906177c06d))
+* **deps:** update openai-go to v3.77.0 ([#414](https://github.com/openai/openai-cli/issues/414)) ([835de59](https://github.com/openai/openai-cli/commit/835de5951f37122e4c04ce613b94e38800f5ca3c))
+* **deps:** update openai-go to v3.78.0 ([#450](https://github.com/openai/openai-cli/issues/450)) ([8f79e98](https://github.com/openai/openai-cli/commit/8f79e984b87eaa7808bebedc428881f025c78ce2))
+* **deps:** update openai-go to v3.79.0 ([#507](https://github.com/openai/openai-cli/issues/507)) ([0828c79](https://github.com/openai/openai-cli/commit/0828c79cbca6447ce9719f4e6f447d2d6db5e295))
+* restore generated reporting tools without behavior changes ([#475](https://github.com/openai/openai-cli/issues/475)) ([c12cd56](https://github.com/openai/openai-cli/commit/c12cd56cc5ecf67e958654fbb122204071ce8363))
+
+
+### Documentation
+
+* define CLI layout migration and compatibility contract ([#486](https://github.com/openai/openai-cli/issues/486)) ([e9ad31e](https://github.com/openai/openai-cli/commit/e9ad31e68acfa588c873549a92e5b40be6979118))
+* **windows:** explain JSON stderr capture in Windows PowerShell 5.1 ([#443](https://github.com/openai/openai-cli/issues/443)) ([960af77](https://github.com/openai/openai-cli/commit/960af77801394e5f0e3eed64090b03c0fec21571))
+
+
+### Refactors
+
+* extract CLI invocation runner into internal app ([#488](https://github.com/openai/openai-cli/issues/488)) ([ee7a731](https://github.com/openai/openai-cli/commit/ee7a731b91ade984da59ff307a138196087d5dc0))
+* isolate browser platform handling in internal/terminal ([#504](https://github.com/openai/openai-cli/issues/504)) ([9d304ca](https://github.com/openai/openai-cli/commit/9d304cae6bd3631c9f88e0f2854393f88f74f996))
+* isolate command-tree organization ([#515](https://github.com/openai/openai-cli/issues/515)) ([b5cc7a8](https://github.com/openai/openai-cli/commit/b5cc7a8f94adbc869beae9b92421a4e6c66b4d83))
+* isolate generated tokenizer tables ([#496](https://github.com/openai/openai-cli/issues/496)) ([efda414](https://github.com/openai/openai-cli/commit/efda4149c76e1093c656d10feb69b4959fbf7a78))
+* isolate the Codex command feature ([#509](https://github.com/openai/openai-cli/issues/509)) ([a6530ae](https://github.com/openai/openai-cli/commit/a6530ae24054949a080aecbcbdb453a8a428a6f7))
+* isolate the manpage command feature ([#514](https://github.com/openai/openai-cli/issues/514)) ([7617d3d](https://github.com/openai/openai-cli/commit/7617d3da4fa9b575ad4bd4119a40b7e12b731463))
+* isolate the shared terminal output runtime ([#512](https://github.com/openai/openai-cli/issues/512)) ([d93d0d0](https://github.com/openai/openai-cli/commit/d93d0d06f646830c8aa879b5ba7f22d6bcb8d09e))
+* **lists:** add shared paged-list navigation runtime ([#389](https://github.com/openai/openai-cli/issues/389)) ([d866707](https://github.com/openai/openai-cli/commit/d86670735891cb7cb1c948573430d3df4641c237))
+* **lists:** prepare compact table rendering for resource lists ([#390](https://github.com/openai/openai-cli/issues/390)) ([c65e03e](https://github.com/openai/openai-cli/commit/c65e03e16f537faf85d2522c31b431a4ac1c550a))
+* move response transformations into internal output ([#487](https://github.com/openai/openai-cli/issues/487)) ([55ebd62](https://github.com/openai/openai-cli/commit/55ebd62813ec2a70e7c98ec52dd030cc0d632227))
+* separate generated API commands from handwritten CLI code ([#500](https://github.com/openai/openai-cli/issues/500)) ([d44fb85](https://github.com/openai/openai-cli/commit/d44fb85fdc1cdfeb4897529dfbbca2c38d6bd703))
+* separate generated commands from CLI compatibility behavior ([#474](https://github.com/openai/openai-cli/issues/474)) ([08df3f6](https://github.com/openai/openai-cli/commit/08df3f68eb3518f6abffe94d6edb5f5a5e9d66db))
+* share output writing and error classification ([#506](https://github.com/openai/openai-cli/issues/506)) ([bce2ab8](https://github.com/openai/openai-cli/commit/bce2ab8087d413d08aee21e16439274b4b741c53))
+* share terminal color and presentation policy ([#508](https://github.com/openai/openai-cli/issues/508)) ([575d494](https://github.com/openai/openai-cli/commit/575d4945b35df20db9f548a6b212a09c23f8dae3))
+
 ## [1.38.0](https://github.com/openai/openai-cli/compare/v1.37.0...v1.38.0) (2026-10-08)
 
 
