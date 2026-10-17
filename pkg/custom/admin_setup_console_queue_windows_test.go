@@ -35,7 +35,7 @@ func adminConsoleInjectQueuedRecords() *adminConsoleQueueEvidence {
 	defer clear(records)
 	for i := range records {
 		// Alternating characters prevent adjacent repeat coalescing.
-		records[i] = adminSetupConsoleInputRecord{eventType: 1, keyDown: 1, repeat: 1, character: uint16('Q' + i%2)}
+		records[i] = adminSetupConsoleInputRecord{EventType: 1, KeyDown: 1, Repeat: 1, Character: uint16('Q' + i%2)}
 	}
 	evidence.RecordsWritten, err = adminConsoleWriteNativeRecords(records)
 	evidence.WriteSucceeded = err == nil && evidence.RecordsWritten == evidence.RecordsRequested

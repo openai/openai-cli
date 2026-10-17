@@ -1,6 +1,6 @@
 //go:build windows
 
-package custom
+package tokenize
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 
 	uv "github.com/charmbracelet/ultraviolet"
 	xwindows "github.com/charmbracelet/x/windows"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"golang.org/x/sys/windows"
 )
 
@@ -27,7 +28,7 @@ func newTokenizerInputSource(input *os.File) (tokenizerCancelableInput, error) {
 	if err := windows.GetConsoleMode(handle, &mode); err != nil {
 		return uv.NewCancelReader(input)
 	}
-	if err := consoleReadInputEx.Find(); err != nil {
+	if err := cliterminal.PrepareConsoleInput(); err != nil {
 		return nil, fmt.Errorf("prepare console input records: %w", err)
 	}
 	// Preserve NewCancelReader's startup clearing. Never drain on Cancel or Close.
@@ -43,7 +44,7 @@ type tokenizerConsoleInput struct {
 	canceled atomic.Bool
 	readErr  error
 
-	records     [32]consoleInputRecord
+	records     [32]cliterminal.ConsoleInputRecord
 	count, next int
 	pending     [utf8.UTFMax]byte
 	size, used  int
@@ -83,7 +84,7 @@ func (reader *tokenizerConsoleInput) Read(output []byte) (int, error) {
 		}
 		clear(reader.records[:])
 		reader.count, reader.next = 0, 0
-		reader.count, err = readConsoleInputRecords(reader.input, reader.records[:])
+		reader.count, err = cliterminal.ReadConsoleInputRecords(reader.input, reader.records[:])
 		if err == nil && reader.count == 0 {
 			// NOWAIT never leaves a pending read; the finite wait bounds cancellation.
 			var state uint32
@@ -146,14 +147,14 @@ func (reader *tokenizerConsoleInput) copyRecords(output []byte) (int, error) {
 			return written, nil
 		}
 		record := reader.records[reader.next]
-		reader.records[reader.next] = consoleInputRecord{}
+		reader.records[reader.next] = cliterminal.ConsoleInputRecord{}
 		reader.next++
 		channel := reader.characterChannel(record)
 		if channel == 0 {
 			continue
 		}
-		value := rune(record.character)
-		repeat := max(record.repeat, 1)
+		value := rune(record.Character)
+		repeat := max(record.Repeat, 1)
 		if reader.high != 0 {
 			if value < 0xdc00 || value > 0xdfff || repeat != reader.highRepeat || channel != reader.highChannel {
 				return written, errTokenizerConsoleUTF16
@@ -161,7 +162,7 @@ func (reader *tokenizerConsoleInput) copyRecords(output []byte) (int, error) {
 			value = utf16.DecodeRune(rune(reader.high), value)
 			reader.high, reader.highRepeat, reader.highChannel = 0, 0, 0
 		} else if value >= 0xd800 && value <= 0xdbff {
-			reader.high, reader.highRepeat, reader.highChannel = record.character, repeat, channel
+			reader.high, reader.highRepeat, reader.highChannel = record.Character, repeat, channel
 			continue
 		} else if value >= 0xdc00 && value <= 0xdfff {
 			return written, errTokenizerConsoleUTF16
@@ -174,32 +175,32 @@ func (reader *tokenizerConsoleInput) copyRecords(output []byte) (int, error) {
 
 // Channel identity prevents pairing a key press with unrelated Alt-release text.
 // VT input already translates ordinary keys and paste markers into characters.
-func (reader *tokenizerConsoleInput) characterChannel(record consoleInputRecord) uint8 {
-	if record.eventType != 1 {
+func (reader *tokenizerConsoleInput) characterChannel(record cliterminal.ConsoleInputRecord) uint8 {
+	if record.EventType != 1 {
 		return 0
 	}
-	isAlt := record.virtualKey == 0x12 || record.virtualKey == 0xa4 || record.virtualKey == 0xa5
-	if record.keyDown == 0 {
+	isAlt := record.VirtualKey == 0x12 || record.VirtualKey == 0xa4 || record.VirtualKey == 0xa5
+	if record.KeyDown == 0 {
 		if !isAlt {
 			return 0
 		}
 		composed := reader.altNumpad
 		reader.altNumpad = false
-		if record.character != 0 || composed {
+		if record.Character != 0 || composed {
 			return 2
 		}
 		return 0
 	}
-	alt := record.controlState&0x0003 != 0
-	ctrl := record.controlState&0x000c != 0
-	if alt && !ctrl && record.virtualKey >= 0x60 && record.virtualKey <= 0x69 {
+	alt := record.ControlState&0x0003 != 0
+	ctrl := record.ControlState&0x000c != 0
+	if alt && !ctrl && record.VirtualKey >= 0x60 && record.VirtualKey <= 0x69 {
 		reader.altNumpad = true
 		return 0
 	}
-	if record.character == 0 && record.virtualKey != 0 && record.virtualKey != 0xe7 {
+	if record.Character == 0 && record.VirtualKey != 0 && record.VirtualKey != 0xe7 {
 		// Ctrl+Space, Ctrl+2/@, and Ctrl+grave can translate to NUL.
 		// Other characterless physical keys, including modifiers, carry no text.
-		if !ctrl || record.virtualKey != 0x20 && record.virtualKey != 0x32 && record.virtualKey != 0xc0 {
+		if !ctrl || record.VirtualKey != 0x20 && record.VirtualKey != 0x32 && record.VirtualKey != 0xc0 {
 			return 0
 		}
 	}

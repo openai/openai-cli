@@ -1,6 +1,6 @@
 //go:build windows
 
-package custom
+package terminal
 
 import (
 	"fmt"
@@ -9,24 +9,26 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// INPUT_RECORD contains a WORD tag, padding, and a 16-byte KEY_EVENT_RECORD.
+// ConsoleInputRecord represents INPUT_RECORD: a WORD tag, padding, and a
+// 16-byte KEY_EVENT_RECORD. Field order and padding preserve the native ABI.
 // https://learn.microsoft.com/en-us/windows/console/input-record-str
 // https://learn.microsoft.com/en-us/windows/console/key-event-record-str
-type consoleInputRecord struct {
-	eventType    uint16
+type ConsoleInputRecord struct {
+	EventType    uint16
 	_            uint16
-	keyDown      int32
-	repeat       uint16
-	virtualKey   uint16
-	scanCode     uint16
-	character    uint16
-	controlState uint32
+	KeyDown      int32
+	Repeat       uint16
+	VirtualKey   uint16
+	ScanCode     uint16
+	Character    uint16
+	ControlState uint32
 }
 
 var consoleReadInputEx = windows.NewLazySystemDLL("kernel32.dll").NewProc("ReadConsoleInputExW")
 
-// Read only available records, without leaving a pending read on borrowed stdin.
-func readConsoleInputRecords(input windows.Handle, records []consoleInputRecord) (int, error) {
+// ReadConsoleInputRecords reads only available records, without leaving a
+// pending read on borrowed stdin.
+func ReadConsoleInputRecords(input windows.Handle, records []ConsoleInputRecord) (int, error) {
 	if len(records) == 0 {
 		return 0, nil
 	}
@@ -44,3 +46,6 @@ func readConsoleInputRecords(input windows.Handle, records []consoleInputRecord)
 	}
 	return int(count), nil
 }
+
+// PrepareConsoleInput checks availability of the nonblocking native record API.
+func PrepareConsoleInput() error { return consoleReadInputEx.Find() }

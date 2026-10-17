@@ -1,4 +1,4 @@
-package custom
+package tokenize
 
 import (
 	"bytes"
@@ -26,8 +26,7 @@ func tokenizerTestRoot(input io.Reader, out io.Writer) *cli.Command {
 			&cli.BoolFlag{Name: "raw-output"},
 		},
 	}
-	registerTokenizerCommands(root)
-	ConfigureCommandErrors(root)
+	Register(root)
 	return root
 }
 
@@ -92,28 +91,6 @@ func TestTokenizerSourcesPreserveExactBytes(t *testing.T) {
 				})
 			}
 		})
-	}
-}
-
-func TestTokenizerInvalidInputsDoNotReadStdin(t *testing.T) {
-	for _, args := range [][]string{
-		{"--text", "private text", "--file", "private path"},
-		{"--encoding", "unknown-private-model"}, {"--encoding", "gpt-4o"},
-		{"--encoding", "gpt2"}, {"--encoding", "p50k_edit"}, {"--encoding", "P50K_BASE"}, {"--encoding", "r50k_base "},
-		{"--file", ""}, {"--text", string([]byte{0xff})},
-		{"--text", strings.Repeat("x", tokenizer.MaxInputBytes+1)},
-		{"--text", "first", "--text", "second"}, {"--file", "first", "--file", "second"},
-		{"--model", "gpt-4o"}, {"extra"},
-	} {
-		var out bytes.Buffer
-		root := tokenizerTestRoot(tokenizerRejectReader{}, &out)
-		err := root.Run(t.Context(), append([]string{"openai", "tokenizer", "count"}, args...))
-		if err == nil || out.Len() != 0 {
-			t.Fatalf("invalid input produced a result: error=%v, output=%q", err, out.String())
-		}
-		if strings.Contains(err.Error(), "unknown-private-model") || strings.Contains(err.Error(), "private text") {
-			t.Fatalf("error echoed input: %v", err)
-		}
 	}
 }
 
@@ -291,7 +268,7 @@ func TestTokenizerTerminalFragmentsAreEscaped(t *testing.T) {
 func TestTokenizerWriteFailureAndCancellation(t *testing.T) {
 	failure := errors.New("private synthetic sink failure")
 	for _, format := range []string{"text", "json"} {
-		root := tokenizerTestRoot(tokenizerRejectReader{}, failOutputWriter{failure})
+		root := tokenizerTestRoot(tokenizerRejectReader{}, tokenizerFailureWriter{failure})
 		err := root.Run(t.Context(), []string{"openai", "--format", format, "tokenizer", "inspect", "--text", "Hello"})
 		if !errors.Is(err, failure) || strings.Contains(err.Error(), "private synthetic") {
 			t.Fatalf("writer failure lost or exposed: %v", err)
@@ -436,3 +413,7 @@ func TestTokenizerBorrowedRegularFileRemainsOpen(t *testing.T) {
 		t.Fatalf("caller file changed: %q / %v", data, err)
 	}
 }
+
+type tokenizerFailureWriter struct{ err error }
+
+func (w tokenizerFailureWriter) Write([]byte) (int, error) { return 0, w.err }

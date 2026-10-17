@@ -1,4 +1,4 @@
-package custom
+package tokenize
 
 import (
 	"errors"
@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/stretchr/testify/require"
 )
 
@@ -623,7 +624,7 @@ func TestTokenizerEditorContinuousEmojiUsesPainterWidths(t *testing.T) {
 				require.Positive(t, count)
 				for _, row := range rows {
 					require.LessOrEqual(t, tokenizerSourceWidth(row), m.viewWidth())
-					frame := imagePickerInlineFrame("  "+row, m.width)
+					frame := cliterminal.InlineFrame("  "+row, m.width)
 					cue := "\x1b[4;7m" + cluster + "\x1b[24;27m"
 					if color {
 						cue = "\x1b[1;4m" + cluster + "\x1b[22;24m"
@@ -667,7 +668,7 @@ func TestTokenizerEditorCaretSurvivesASCIIProfile(t *testing.T) {
 				writer := &colorprofile.Writer{Forward: &converted, Profile: colorprofile.ASCII}
 				_, err := writer.WriteString(m.View().Content)
 				require.NoError(t, err)
-				frame := imagePickerInlineFrame(converted.String(), m.width)
+				frame := cliterminal.InlineFrame(converted.String(), m.width)
 				require.Contains(t, frame, "\x1b[7m")
 				require.Contains(t, frame, "\x1b[27m")
 				for _, rendition := range regexp.MustCompile(`\x1b\[[0-9;:]*m`).FindAllString(frame, -1) {
@@ -690,7 +691,7 @@ func TestTokenizerEditorCaretRemainsVisibleOnOversizedGrapheme(t *testing.T) {
 	writer := &colorprofile.Writer{Forward: &converted, Profile: colorprofile.ASCII}
 	_, err := writer.WriteString(m.View().Content)
 	require.NoError(t, err)
-	frame := imagePickerInlineFrame(converted.String(), m.width)
+	frame := cliterminal.InlineFrame(converted.String(), m.width)
 	require.Contains(t, frame, "\x1b[7m…\x1b[27m", "clipping must not hide the current caret")
 	require.Equal(t, source, m.text)
 	require.Zero(t, m.cursor)
@@ -883,7 +884,7 @@ func TestTokenizerEditorSourceBordersSurviveInlinePainter(t *testing.T) {
 			source := "Line one\r\n日本語 and e\u0301\nEmoji 👩‍💻\tend\n"
 			m.insert(source)
 			m.cursor = len("Line one\r\n日本語 and e\u0301")
-			frame := imagePickerInlineFrame(m.View().Content, m.width)
+			frame := cliterminal.InlineFrame(m.View().Content, m.width)
 			require.Equal(t, 6, strings.Count(ansi.Strip(frame), "│"), "every source row must retain both borders")
 			require.Equal(t, source, m.text)
 		})
@@ -898,7 +899,7 @@ func TestTokenizerEditorEmojiEndCursorSurvivesInlinePainter(t *testing.T) {
 				m.width, m.height = size[0], size[1]
 				source := strings.Repeat(cluster, 200)
 				m.insert(source)
-				paint := imagePickerInlineFrame(m.View().Content, m.width)
+				paint := cliterminal.InlineFrame(m.View().Content, m.width)
 				frame := ansi.Strip(paint)
 				require.Contains(t, frame, cluster+" ", "the ending grapheme and cursor cell must remain visible")
 				require.Contains(t, paint, "\x1b[7m \x1b[27m")

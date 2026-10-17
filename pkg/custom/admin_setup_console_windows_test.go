@@ -15,27 +15,13 @@ import (
 	"testing"
 	"time"
 
+	consolefixture "github.com/openai/openai-cli/internal/testutil/console"
 	"golang.org/x/sys/windows"
 )
 
-type adminConsoleModes struct {
-	Stdin  uint32 `json:"stdin"`
-	Stdout uint32 `json:"stdout"`
-	Stderr uint32 `json:"stderr"`
-}
+type adminConsoleModes = consolefixture.Modes
 
-func adminConsoleGetModes() (adminConsoleModes, error) {
-	var modes adminConsoleModes
-	for _, item := range []struct {
-		file *os.File
-		mode *uint32
-	}{{os.Stdin, &modes.Stdin}, {os.Stdout, &modes.Stdout}, {os.Stderr, &modes.Stderr}} {
-		if err := windows.GetConsoleMode(windows.Handle(item.file.Fd()), item.mode); err != nil {
-			return modes, errors.New("observer requires console standard handles")
-		}
-	}
-	return modes, nil
-}
+func adminConsoleGetModes() (adminConsoleModes, error) { return consolefixture.GetModes() }
 
 func adminConsoleProbeError(err error) map[string]any {
 	result := map[string]any{"failed": err != nil}
@@ -85,32 +71,15 @@ func adminConsoleLogHandleFailure(t *testing.T, stage string) {
 	t.Logf("console handle diagnostics: %s", encoded)
 }
 
-type adminConsoleControl struct {
-	Action string `json:"action"`
-	Phase  string `json:"phase"`
-	Nonce  string `json:"nonce"`
-}
+type adminConsoleControl = consolefixture.Control
 
 type adminConsoleObserver struct {
-	mu       sync.Mutex
-	encoder  *json.Encoder
-	failed   bool
+	*consolefixture.Observer
 	controls chan adminConsoleControl
 }
 
-func (observer *adminConsoleObserver) send(frame map[string]any) {
-	observer.mu.Lock()
-	defer observer.mu.Unlock()
-	if observer.encoder.Encode(frame) != nil {
-		observer.failed = true
-	}
-}
-
-func (observer *adminConsoleObserver) healthy() bool {
-	observer.mu.Lock()
-	defer observer.mu.Unlock()
-	return !observer.failed
-}
+func (observer *adminConsoleObserver) send(frame map[string]any) { observer.Send(frame) }
+func (observer *adminConsoleObserver) healthy() bool             { return observer.Healthy() }
 
 type adminConsoleObservedReader struct {
 	adminSetupKeyReader
@@ -352,7 +321,7 @@ func TestAdminSetupConsoleObserverChild(t *testing.T) {
 	if connection.SetDeadline(time.Now().Add(45*time.Second)) != nil {
 		t.Fatal("console observer could not bound its control channel")
 	}
-	observer := &adminConsoleObserver{encoder: json.NewEncoder(connection), controls: make(chan adminConsoleControl, 1)}
+	observer := &adminConsoleObserver{Observer: consolefixture.NewObserver(json.NewEncoder(connection)), controls: make(chan adminConsoleControl, 1)}
 	observer.send(map[string]any{"event": "hello", "nonce": nonce, "original": original, "scenario": scenario, "reader_mode": readerMode})
 	// This bounds test-control metadata only, never key input or API payloads.
 	decoder := json.NewDecoder(io.LimitReader(connection, 64<<10))

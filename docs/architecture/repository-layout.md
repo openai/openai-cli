@@ -22,13 +22,22 @@ detection for their output destinations, including wrapped batch output.
 The shared terminal output worker, frame painter, bounded cleanup, and diagnostic
 session isolation live in `internal/terminal/`. Tokenizer, audio workbench, and
 image previews use this runtime; its private `tokenizer __output` invocation and
-wire protocol remain unchanged. This separates shared runtime dependencies before
-extracting the tokenizer command feature.
+wire protocol remain unchanged. Feature implementations use this shared runtime
+without depending on one another.
+
+The complete tokenizer command, live editor, preview worker, and native input
+tests live in `internal/commands/tokenize/`. The encoding engine and generated
+Unicode tables remain in `internal/tokenizer/` and `generated/tokenizer/`.
+Shared borrowed-file reads live in `internal/input/`; frame layout and Windows
+console records live in `internal/terminal/`. Native admin and tokenizer tests
+share synthetic observer fixtures in `internal/testutil/console/`, without feature
+packages depending on one another.
 
 The complete Codex guide and its tests live in `internal/commands/codex/`.
 `internal/commands/` holds shared local-command routing, help, and safe-error
 contracts. The existing assembly sequence registers Codex before presentation
-and error policies are installed.
+and error policies are installed. Tokenizer retains its preceding registration
+position, including both private helper commands.
 
 ## Product and compatibility contract
 
@@ -54,6 +63,7 @@ entrypoints, developer script entrypoints, and release artifacts working.
 | `internal/app/` | Handwritten application assembly, invocation lifecycle, global policies, and ordered feature registration. |
 | `internal/commands/<feature>/` | Handwritten workflows grouped by feature: audio, images, files, models, admin, tokenize, and codex. |
 | `internal/request/` | Shared request configuration, credentials, transport setup, headers, input decoding, and upload encoding. |
+| `internal/input/` | Shared borrowed-file reads, preserving cancellation, descriptor flags, deadlines, and caller ownership. |
 | `internal/output/` | Shared output policy, transformations, formatting, streaming, paging, and error presentation. |
 | `internal/terminal/` | Shared completion, terminal rendering, and platform adapters. |
 | `internal/tokenizer/` | Tokenization implementation used by the handwritten commands. |

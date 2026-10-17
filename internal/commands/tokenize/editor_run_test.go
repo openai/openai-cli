@@ -1,4 +1,4 @@
-package custom
+package tokenize
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ import (
 
 func TestTokenizerEditorFallbackOutputFailure(t *testing.T) {
 	for _, failure := range []error{io.ErrClosedPipe, nil, context.Canceled} {
-		sink := &localUtilityPartialSink{failure: failure}
+		sink := &tokenizerPartialSink{failure: failure}
 		root := tokenizerTestRoot(tokenizerRejectReader{}, sink)
 		err := root.Run(t.Context(), []string{"openai", "tokenizer"})
 		want := failure
@@ -79,3 +79,14 @@ type tokenizerRecordedFrames struct{ strings.Builder }
 
 func (p *tokenizerRecordedFrames) Control(data string) { _, _ = p.WriteString(data) }
 func (p *tokenizerRecordedFrames) Frame(data string)   { _, _ = p.WriteString(data) }
+
+type tokenizerPartialSink struct {
+	accepted bytes.Buffer
+	failure  error
+}
+
+func (s *tokenizerPartialSink) Write(data []byte) (int, error) {
+	n := min(len(data)/2, 19)
+	_, _ = s.accepted.Write(data[:n])
+	return n, s.failure
+}

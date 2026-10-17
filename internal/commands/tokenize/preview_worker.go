@@ -1,4 +1,4 @@
-package custom
+package tokenize
 
 import (
 	"bufio"
@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/x/term"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/tokenizer"
 	"github.com/urfave/cli/v3"
@@ -159,10 +160,10 @@ func tokenizerPreviewCommand() *cli.Command {
 			if !ok || command.Args().Present() {
 				return tokenizerPreviewFailure(nil)
 			}
-			if file, ok := input.(*os.File); ok && isTerminal(file) {
+			if file, ok := input.(*os.File); ok && term.IsTerminal(file.Fd()) {
 				return tokenizerPreviewFailure(nil)
 			}
-			if file, ok := command.Root().Writer.(*os.File); ok && isTerminal(file) {
+			if file, ok := command.Root().Writer.(*os.File); ok && term.IsTerminal(file.Fd()) {
 				return tokenizerPreviewFailure(nil)
 			}
 			if err := serveTokenizerPreview(ctx, input, command.Root().Writer); err != nil {

@@ -133,18 +133,18 @@ type adminConsoleTestFrame struct {
 // Existing Windows CI selects TestMainDispatch. The outer job owns the worker,
 // ConPTY hosts, and CLI children, including any blocked console teardown.
 func TestMainDispatchAdminSetupConsole(t *testing.T) {
-	adminConsoleTestWorker(t, "TestMainDispatchAdminSetupConsole", adminConsoleRunCases)
+	adminConsoleTestWorker(t, "TestMainDispatchAdminSetupConsole", "./pkg/custom", adminConsoleRunCases)
 }
 
 // Share the owned worker and build lifecycle with other native console suites.
-func adminConsoleTestWorker(t *testing.T, testName string, runCases func(*testing.T), extraEnv ...string) {
+func adminConsoleTestWorker(t *testing.T, testName, observerPackage string, runCases func(*testing.T), extraEnv ...string) {
 	t.Helper()
 	if os.Getenv("OPENAI_ADMIN_CONSOLE_WORKER") == "1" {
 		adminConsoleWorkerGate(t)
 		// Compile inside the owned job so watchdog cleanup also owns Go children.
 		buildContext, cancelBuild := context.WithTimeout(t.Context(), 2*time.Minute)
 		defer cancelBuild()
-		build := exec.CommandContext(buildContext, "go", "test", "-c", "-p", "2", "-o", os.Getenv("OPENAI_ADMIN_CONSOLE_OBSERVER"), "./pkg/custom")
+		build := exec.CommandContext(buildContext, "go", "test", "-c", "-p", "2", "-o", os.Getenv("OPENAI_ADMIN_CONSOLE_OBSERVER"), observerPackage)
 		build.Dir = filepath.Clean(filepath.Join("..", ".."))
 		build.Env = append(os.Environ(), "GOFLAGS=-p=2 -mod=readonly")
 		build.WaitDelay = 5 * time.Second

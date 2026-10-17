@@ -233,7 +233,7 @@ func (p *audioWorkbenchInline) drawFrame(w, h int) {
 	if content == p.content && w == p.width && h == p.height {
 		return
 	}
-	p.painter.Frame(imagePickerInlineFrame(content, w))
+	p.painter.Frame(cliterminal.InlineFrame(content, w))
 	p.content, p.width, p.height = content, w, h
 }
 func (p *audioWorkbenchInline) close() string {

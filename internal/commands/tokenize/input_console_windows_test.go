@@ -1,6 +1,6 @@
 //go:build windows
 
-package custom
+package tokenize
 
 import (
 	"context"
@@ -18,6 +18,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
+	consolefixture "github.com/openai/openai-cli/internal/testutil/console"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
 )
@@ -25,14 +27,14 @@ import (
 const tokenizerConsolePaste = "漢字 👩‍💻 e\u0301 \ufffd"
 
 type tokenizerConsoleState struct {
-	modes             adminConsoleModes
+	modes             consolefixture.Modes
 	inputCP, outputCP uint32
 }
 
 func tokenizerConsoleSnapshot() (tokenizerConsoleState, error) {
 	var state tokenizerConsoleState
 	var modeErr, inputErr, outputErr error
-	state.modes, modeErr = adminConsoleGetModes()
+	state.modes, modeErr = consolefixture.GetModes()
 	state.inputCP, inputErr = windows.GetConsoleCP()
 	state.outputCP, outputErr = windows.GetConsoleOutputCP()
 	return state, errors.Join(modeErr, inputErr, outputErr)
@@ -49,18 +51,18 @@ func tokenizerConsoleRestore(state tokenizerConsoleState) error {
 	return errors.Join(append(failures, windows.SetConsoleCP(state.inputCP), windows.SetConsoleOutputCP(state.outputCP))...)
 }
 
-func tokenizerConsoleRecords(text string) []adminSetupConsoleInputRecord {
+func tokenizerConsoleRecords(text string) []cliterminal.ConsoleInputRecord {
 	units := utf16.Encode([]rune(text))
-	records := make([]adminSetupConsoleInputRecord, len(units))
+	records := make([]cliterminal.ConsoleInputRecord, len(units))
 	for i, unit := range units {
-		records[i] = adminSetupConsoleInputRecord{eventType: 1, keyDown: 1, repeat: 1, character: unit}
+		records[i] = cliterminal.ConsoleInputRecord{EventType: 1, KeyDown: 1, Repeat: 1, Character: unit}
 	}
 	return records
 }
 
-func tokenizerConsoleWrite(records []adminSetupConsoleInputRecord) error {
+func tokenizerConsoleWrite(records []cliterminal.ConsoleInputRecord) error {
 	// Accepted record counts do not prove text preservation; the model checks exact UTF-8 separately.
-	written, err := adminConsoleWriteNativeRecords(records)
+	written, err := consolefixture.WriteRecords(records)
 	if err != nil {
 		return err
 	}
@@ -107,7 +109,7 @@ func tokenizerConsoleDeliver(ctx context.Context, cancel context.CancelFunc, sce
 	return tokenizerConsoleDelivery{boundaryReached: true}
 }
 
-func tokenizerConsoleRun(t *testing.T, observer *adminConsoleObserver, scenario string, inputCP uint32, original tokenizerConsoleState) map[string]any {
+func tokenizerConsoleRun(t *testing.T, observer *consolefixture.Observer, scenario string, inputCP uint32, original tokenizerConsoleState) map[string]any {
 	t.Helper()
 	restored := false
 	defer func() {
@@ -140,7 +142,7 @@ func tokenizerConsoleRun(t *testing.T, observer *adminConsoleObserver, scenario 
 		}}
 	program := tea.NewProgram(model, tea.WithInput(bridge.Input()), tea.WithOutput(io.Discard),
 		tea.WithContext(ctx), tea.WithWindowSize(80, 24), tea.WithoutRenderer(), tea.WithoutSignalHandler())
-	observer.send(map[string]any{"event": "ready", "scenario": "tokenizer/" + scenario, "active": sourceActive.modes,
+	observer.Send(map[string]any{"event": "ready", "scenario": "tokenizer/" + scenario, "active": sourceActive.modes,
 		"active_input_cp": sourceActive.inputCP, "active_output_cp": sourceActive.outputCP})
 	delivered := make(chan tokenizerConsoleDelivery, 1)
 	go func() {
@@ -163,7 +165,7 @@ func tokenizerConsoleRun(t *testing.T, observer *adminConsoleObserver, scenario 
 	}
 	digest := sha256.Sum256([]byte(model.text))
 	// Preserve the model observation even if a baseline reader cannot finish cleanup.
-	observer.send(map[string]any{
+	observer.Send(map[string]any{
 		"event": "model_complete", "scenario": "tokenizer/" + scenario,
 		"input_sha256": fmt.Sprintf("%x", digest), "input_bytes": len(model.text), "model_exit": model.exitCode,
 		"fixture_written": delivery.err == nil, "operation_completed": operationCompleted,
@@ -202,7 +204,7 @@ func tokenizerConsoleRun(t *testing.T, observer *adminConsoleObserver, scenario 
 	restored = restoreErr == nil && finalErr == nil && final == original
 	checks["restored_modes_match"] = restoreErr == nil && finalErr == nil && final.modes == original.modes
 	checks["restored_codepages_match"] = restoreErr == nil && finalErr == nil && final.inputCP == original.inputCP && final.outputCP == original.outputCP
-	checks["observer_healthy"] = observer.healthy()
+	checks["observer_healthy"] = observer.Healthy()
 	return map[string]any{
 		"event": "tokenizer_complete", "scenario": "tokenizer/" + scenario, "checks": checks,
 		"original": original.modes, "restored": final.modes,
@@ -244,11 +246,11 @@ func TestTokenizerInputConsoleChild(t *testing.T) {
 	require.NoError(t, err)
 	defer connection.Close()
 	require.NoError(t, connection.SetDeadline(time.Now().Add(15*time.Second)))
-	observer := &adminConsoleObserver{encoder: json.NewEncoder(connection)}
-	observer.send(map[string]any{"event": "hello", "nonce": nonce, "original": original.modes,
+	observer := consolefixture.NewObserver(json.NewEncoder(connection))
+	observer.Send(map[string]any{"event": "hello", "nonce": nonce, "original": original.modes,
 		"scenario": "tokenizer/" + scenario, "original_input_cp": original.inputCP, "original_output_cp": original.outputCP})
 	decoder := json.NewDecoder(io.LimitReader(connection, 64<<10))
-	var start adminConsoleControl
+	var start consolefixture.Control
 	if decoder.Decode(&start) != nil || start.Action != "start" || start.Nonce != nonce {
 		t.Fatal("tokenizer console controller authentication failed")
 	}
@@ -259,9 +261,9 @@ func TestTokenizerInputConsoleChild(t *testing.T) {
 		passed = passed && valid
 	}
 	frame["passed"] = passed
-	observer.send(frame)
-	var ack adminConsoleControl
-	if decoder.Decode(&ack) != nil || ack.Action != "ack" || !observer.healthy() {
+	observer.Send(frame)
+	var ack consolefixture.Control
+	if decoder.Decode(&ack) != nil || ack.Action != "ack" || !observer.Healthy() {
 		t.Fatal("tokenizer console child did not receive its final acknowledgement")
 	}
 	for name, valid := range checks {

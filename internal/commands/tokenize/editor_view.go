@@ -1,4 +1,4 @@
-package custom
+package tokenize
 
 import (
 	"encoding/hex"
@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/readable"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-cli/internal/tokenizer"
 )
 
@@ -110,7 +111,7 @@ func (m *tokenizerEditor) View() tea.View {
 			if line == "" || line == tokenizerCaret(" ") {
 				input = lipgloss.NewStyle()
 			}
-			line = imagePickerPromptFit(line, width-4)
+			line = cliterminal.FitPrompt(line, width-4)
 			// Match the image prompt's explicit edge placement. Terminals can
 			// disagree about the cell width of complete emoji clusters.
 			row := s.border.Render("│") + input.Render(ansi.EraseCharacter(width-2)+" "+line+" ") +
@@ -455,7 +456,7 @@ func tokenizerCaret(display string) string { return "\x1b[7m" + display + "\x1b[
 func tokenizerSourceWidth(text string) int {
 	width := 0
 	for len(text) > 0 {
-		_, cells, read := imagePickerSequence(text)
+		_, cells, read := cliterminal.Sequence(text)
 		width += cells
 		text = text[read:]
 	}
@@ -506,7 +507,7 @@ func tokenizerSegmentClip(label string, width int) string {
 	var out strings.Builder
 	used := 0
 	for len(label) > 0 {
-		sequence, cells, read := imagePickerSequence(label)
+		sequence, cells, read := cliterminal.Sequence(label)
 		if used+cells > width-1 {
 			break
 		}

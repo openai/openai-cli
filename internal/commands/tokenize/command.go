@@ -1,4 +1,4 @@
-package custom
+package tokenize
 
 import (
 	"bufio"
@@ -14,13 +14,15 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	cliinput "github.com/openai/openai-cli/internal/input"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-cli/internal/tokenizer"
 	"github.com/urfave/cli/v3"
 )
 
-func registerTokenizerCommands(root *cli.Command) {
+// Register adds the local tokenizer commands and private helpers to the tree.
+func Register(root *cli.Command) {
 	help := `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}EXAMPLE
   {{$bin}} tokenizer
 
@@ -195,7 +197,7 @@ func (r *tokenizerInputReader) Read(data []byte) (n int, err error) {
 	}:
 		n, err = input.ReadContext(r.ctx, data)
 	case *os.File:
-		n, err = readTokenizerFile(r.ctx, input, data)
+		n, err = cliinput.ReadFile(r.ctx, input, data)
 	default:
 		n, err = input.Read(data)
 	}

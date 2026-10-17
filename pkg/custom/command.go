@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/openai/openai-cli/internal/commands/codex"
+	"github.com/openai/openai-cli/internal/commands/tokenize"
 	"github.com/urfave/cli/v3"
 )
 
@@ -40,7 +41,7 @@ func ConfigureCommand(root *cli.Command) {
 	configureTaskCommands(root)
 	registerAudioCommands(root)
 	configureFileCommands(root)
-	registerTokenizerCommands(root)
+	tokenize.Register(root)
 	codex.Register(root)
 	configureCommandPresentation(root)
 	configureManpageCommands(root)

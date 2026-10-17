@@ -1,4 +1,4 @@
-package custom
+package tokenize
 
 import (
 	"context"
@@ -44,8 +44,8 @@ func handleTokenizerEditor(ctx context.Context, command *cli.Command) error {
 	if invocation == "" {
 		invocation = "openai"
 	}
-	if input == nil || output == nil || !isTerminal(input) ||
-		!cliterminal.AutomaticPresentation(format, isTerminal(output), os.Getenv) {
+	if input == nil || output == nil || !term.IsTerminal(input.Fd()) ||
+		!cliterminal.AutomaticPresentation(format, term.IsTerminal(output.Fd()), os.Getenv) {
 		_, err := fmt.Fprintf(clioutput.Writer{Context: ctx, Sink: root.Writer},
 			"Tokenizer\n\nOpen the live editor with terminal input and output:\n  %s tokenizer\n\n"+
 				"Commands\n  count      Count exact plain-text tokens\n  inspect    Show token IDs and byte boundaries\n"+
@@ -118,7 +118,7 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	if invocation != "" {
 		model.invocation = invocation
 	}
-	profile := cliterminal.ColorProfile(output, os.Environ(), isTerminal(output))
+	profile := cliterminal.ColorProfile(output, os.Environ(), term.IsTerminal(output.Fd()))
 	model.color = profile >= colorprofile.ANSI
 	inline := &tokenizerEditorInline{model: model, worker: worker, output: output, profile: profile,
 		painter: painter, input: inputBridge, fail: cancel}
@@ -280,7 +280,7 @@ func (p *tokenizerEditorInline) draw() {
 	if content == p.content && width == p.width && height == p.height {
 		return
 	}
-	p.painter.Frame(imagePickerInlineFrame(content, width))
+	p.painter.Frame(cliterminal.InlineFrame(content, width))
 	p.content, p.width, p.height = content, width, height
 }
 

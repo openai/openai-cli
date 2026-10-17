@@ -1,6 +1,6 @@
 //go:build !windows
 
-package custom
+package input
 
 import (
 	"context"
@@ -10,10 +10,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// readTokenizerFile preserves the caller's descriptor flags and deadlines.
+// ReadFile preserves the caller's descriptor flags and deadlines.
 // Pipe input needs an exclusive consumer: another descriptor or process could
 // otherwise drain a blocking pipe between its readiness event and read.
-func readTokenizerFile(ctx context.Context, file *os.File, data []byte) (int, error) {
+func ReadFile(ctx context.Context, file *os.File, data []byte) (int, error) {
 	if ctx.Done() == nil || len(data) == 0 {
 		return file.Read(data)
 	}

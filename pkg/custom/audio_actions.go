@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
 	"github.com/openai/openai-cli/internal/readable"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -239,7 +240,7 @@ func audioCommandRows(text string, width int) []string {
 	var line strings.Builder
 	used := 0
 	for len(text) > 0 {
-		sequence, cells, read := imagePickerSequence(text)
+		sequence, cells, read := cliterminal.Sequence(text)
 		if used > 0 && used+cells > width {
 			rows = append(rows, line.String())
 			line.Reset()

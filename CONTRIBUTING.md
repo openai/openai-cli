@@ -52,6 +52,9 @@ below describes the current layout as the migration proceeds.
   `internal/tokenizer/`.
 - `tests/cli/` contains handwritten command and request contracts.
 - `internal/commands/codex/` owns the complete Codex guide, presentation, and tests.
+- `internal/commands/tokenize/` owns tokenizer commands, the live editor, preview
+  workers, native input handling, and their tests; `internal/tokenizer/` remains
+  the encoding engine.
 - `internal/commands/` defines shared local-command routing, help, and safe-error
   contracts.
 - `pkg/custom/` contains remaining handwritten CLI commands, defaults, output-format
@@ -64,7 +67,12 @@ below describes the current layout as the migration proceeds.
   failures from diagnostics and upstream errors.
 - `internal/terminal/` owns browser launching and child-process environment
   isolation, color profiles, automatic terminal presentation, background themes,
-  and cancellable terminal frame output shared by tokenizer, audio, and images.
+  cancellable terminal frame output, frame layout, and native Windows input
+  records shared by tokenizer, audio, images, and admin setup.
+- `internal/input/` owns borrowed-file reading shared by Batch and tokenizer,
+  preserving cancellation, descriptor flags, deadlines, and caller ownership.
+- `internal/testutil/console/` contains shared synthetic Windows console records
+  and observer fixtures used only by native feature tests.
 - `internal/app/` owns invocation, request-environment scope, completion setup,
   output policy, and exit-status selection. Command assembly still uses the
   existing generated tree during the layout migration.
@@ -81,8 +89,8 @@ generation inputs. Establish ownership before editing generated files and fix
 recurring generated problems in the authoritative schema or generator when
 available.
 
-Handwritten features are moving into `internal/commands/<feature>/`; Codex is
-there now. Remaining behavior belongs in `pkg/custom/`,
+Handwritten features are moving into `internal/commands/<feature>/`; Codex and
+tokenizer are there now. Remaining behavior belongs in `pkg/custom/`,
 `internal/output/transform/`, and focused `internal/` helpers. Keep
 `cmd/openai/` focused on startup and wiring. Generated code calls handwritten
 request/output helpers through a generated runtime bridge.

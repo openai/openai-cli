@@ -1,6 +1,6 @@
 //go:build windows
 
-package custom
+package tokenize
 
 import (
 	"bytes"
@@ -12,16 +12,17 @@ import (
 	"unicode/utf16"
 
 	"github.com/muesli/cancelreader"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
 )
 
-func tokenizerConsoleKey(value uint16) consoleInputRecord {
-	return consoleInputRecord{eventType: 1, keyDown: 1, repeat: 1, character: value}
+func tokenizerConsoleKey(value uint16) cliterminal.ConsoleInputRecord {
+	return cliterminal.ConsoleInputRecord{EventType: 1, KeyDown: 1, Repeat: 1, Character: value}
 }
 
-func tokenizerConsoleText(value string) []consoleInputRecord {
-	var records []consoleInputRecord
+func tokenizerConsoleText(value string) []cliterminal.ConsoleInputRecord {
+	var records []cliterminal.ConsoleInputRecord
 	for _, unit := range utf16.Encode([]rune(value)) {
 		records = append(records, tokenizerConsoleKey(unit))
 	}
@@ -35,7 +36,7 @@ func TestTokenizerConsoleInputPreservesUnicode(t *testing.T) {
 		for split := 0; split <= len(records); split++ {
 			reader := &tokenizerConsoleInput{}
 			var output bytes.Buffer
-			for _, batch := range [][]consoleInputRecord{records[:split], records[split:]} {
+			for _, batch := range [][]cliterminal.ConsoleInputRecord{records[:split], records[split:]} {
 				reader.count, reader.next = copy(reader.records[:], batch), 0
 				require.Equal(t, len(batch), reader.count)
 				for reader.next < reader.count || reader.repeats != 0 {
@@ -53,40 +54,40 @@ func TestTokenizerConsoleInputPreservesUnicode(t *testing.T) {
 
 func TestTokenizerConsoleInputRecordSemantics(t *testing.T) {
 	repeated := tokenizerConsoleKey('é')
-	repeated.repeat = 3
+	repeated.Repeat = 3
 	high, low := tokenizerConsoleKey(0xd83d), tokenizerConsoleKey(0xde00)
-	high.repeat, low.repeat = 3, 3
+	high.Repeat, low.Repeat = 3, 3
 	zeroRepeat := tokenizerConsoleKey('z')
-	zeroRepeat.repeat = 0
+	zeroRepeat.Repeat = 0
 	release := tokenizerConsoleKey('x')
-	release.keyDown = 0
+	release.KeyDown = 0
 	modifier := tokenizerConsoleKey(0)
-	modifier.virtualKey = 0x10
+	modifier.VirtualKey = 0x10
 	arrow := modifier
-	arrow.virtualKey = 0x25
+	arrow.VirtualKey = 0x25
 	ctrlNUL := modifier
-	ctrlNUL.virtualKey, ctrlNUL.controlState = 0x20, 0x0008
+	ctrlNUL.VirtualKey, ctrlNUL.ControlState = 0x20, 0x0008
 	composition := tokenizerConsoleKey('1')
-	composition.virtualKey, composition.controlState = 0x61, 0x0002
+	composition.VirtualKey, composition.ControlState = 0x61, 0x0002
 	altRelease := tokenizerConsoleKey('é')
-	altRelease.keyDown, altRelease.virtualKey = 0, 0x12
+	altRelease.KeyDown, altRelease.VirtualKey = 0, 0x12
 	altNUL := altRelease
-	altNUL.character = 0
+	altNUL.Character = 0
 	altHigh, altLow := altRelease, altRelease
-	altHigh.character, altLow.character = 0xd83d, 0xde00
+	altHigh.Character, altLow.Character = 0xd83d, 0xde00
 	releaseHigh, releaseLow := high, low
-	releaseHigh.keyDown, releaseLow.keyDown = 0, 0
+	releaseHigh.KeyDown, releaseLow.KeyDown = 0, 0
 	for _, test := range []struct {
 		name    string
-		records []consoleInputRecord
+		records []cliterminal.ConsoleInputRecord
 		want    string
 	}{
-		{"repeats", []consoleInputRecord{repeated, high, low, zeroRepeat}, "ééé😀😀😀z"},
-		{"nontext", []consoleInputRecord{{eventType: 4}, modifier, arrow, release, tokenizerConsoleKey('a')}, "a"},
-		{"translated_NUL", []consoleInputRecord{tokenizerConsoleKey(0), ctrlNUL}, "\x00\x00"},
-		{"Alt_composition", []consoleInputRecord{composition, altRelease, composition, altNUL}, "é\x00"},
-		{"Alt_surrogate_pair", []consoleInputRecord{altHigh, altLow}, "😀"},
-		{"ordinary_surrogate_releases", []consoleInputRecord{high, releaseHigh, releaseLow, low}, "😀😀😀"},
+		{"repeats", []cliterminal.ConsoleInputRecord{repeated, high, low, zeroRepeat}, "ééé😀😀😀z"},
+		{"nontext", []cliterminal.ConsoleInputRecord{{EventType: 4}, modifier, arrow, release, tokenizerConsoleKey('a')}, "a"},
+		{"translated_NUL", []cliterminal.ConsoleInputRecord{tokenizerConsoleKey(0), ctrlNUL}, "\x00\x00"},
+		{"Alt_composition", []cliterminal.ConsoleInputRecord{composition, altRelease, composition, altNUL}, "é\x00"},
+		{"Alt_surrogate_pair", []cliterminal.ConsoleInputRecord{altHigh, altLow}, "😀"},
+		{"ordinary_surrogate_releases", []cliterminal.ConsoleInputRecord{high, releaseHigh, releaseLow, low}, "😀😀😀"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			reader := &tokenizerConsoleInput{}
@@ -107,18 +108,18 @@ func TestTokenizerConsoleInputRecordSemantics(t *testing.T) {
 func TestTokenizerConsoleInputRejectsMalformedUTF16(t *testing.T) {
 	high, low := tokenizerConsoleKey(0xd83d), tokenizerConsoleKey(0xde00)
 	repeatedLow := low
-	repeatedLow.repeat = 2
+	repeatedLow.Repeat = 2
 	altLow := low
-	altLow.keyDown, altLow.virtualKey = 0, 0x12
+	altLow.KeyDown, altLow.VirtualKey = 0, 0x12
 	for _, test := range []struct {
 		name    string
-		records []consoleInputRecord
+		records []cliterminal.ConsoleInputRecord
 	}{
-		{"isolated_low", []consoleInputRecord{low}},
-		{"following_text", []consoleInputRecord{high, tokenizerConsoleKey('x')}},
-		{"repeated_high", []consoleInputRecord{high, high}},
-		{"repeat_mismatch", []consoleInputRecord{high, repeatedLow}},
-		{"channel_mismatch", []consoleInputRecord{high, altLow}},
+		{"isolated_low", []cliterminal.ConsoleInputRecord{low}},
+		{"following_text", []cliterminal.ConsoleInputRecord{high, tokenizerConsoleKey('x')}},
+		{"repeated_high", []cliterminal.ConsoleInputRecord{high, high}},
+		{"repeat_mismatch", []cliterminal.ConsoleInputRecord{high, repeatedLow}},
+		{"channel_mismatch", []cliterminal.ConsoleInputRecord{high, altLow}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			reader := &tokenizerConsoleInput{}
@@ -133,7 +134,7 @@ func TestTokenizerConsoleInputRejectsMalformedUTF16(t *testing.T) {
 			require.Zero(t, n)
 			require.ErrorIs(t, err, errTokenizerConsoleUTF16, "source failures remain observable")
 			require.Zero(t, reader.high)
-			require.Equal(t, [32]consoleInputRecord{}, reader.records)
+			require.Equal(t, [32]cliterminal.ConsoleInputRecord{}, reader.records)
 		})
 	}
 }
@@ -141,7 +142,7 @@ func TestTokenizerConsoleInputRejectsMalformedUTF16(t *testing.T) {
 func TestTokenizerConsoleInputBoundedRepeatsAndCancellation(t *testing.T) {
 	reader := &tokenizerConsoleInput{}
 	reader.records[0] = tokenizerConsoleKey('x')
-	reader.records[0].repeat = 0xffff
+	reader.records[0].Repeat = 0xffff
 	reader.count = 1
 	var output [1]byte
 	n, err := reader.Read(output[:])
