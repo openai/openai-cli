@@ -108,6 +108,9 @@ func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts)
 		return err
 	}
 	if !emitted {
+		if text, ok := fineTuningEmptyResult(opts); ok {
+			return readable.WriteText(out, text)
+		}
 		return readable.WriteText(out, "No results.")
 	}
 	return opts.Context.Err()
