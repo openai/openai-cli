@@ -39,6 +39,12 @@ contracts. The existing assembly sequence registers Codex before presentation
 and error policies are installed. Tokenizer retains its preceding registration
 position, including both private helper commands.
 
+Manpage rendering, flattened documentation trees, text/gzip file cleanup, and
+their tests live in `internal/commands/manpages/`. Application assembly supplies
+the shared save-receipt policy and configures the feature in its original position.
+The hidden `@manpages` entrypoint, generated flag declarations, manual paths,
+and existing developer/release artifact-generation commands remain unchanged.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

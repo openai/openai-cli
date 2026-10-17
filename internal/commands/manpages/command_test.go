@@ -1,4 +1,4 @@
-package custom
+package manpages_test
 
 import (
 	"bytes"
@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	manpagecmd "github.com/openai/openai-cli/internal/commands/manpages"
+	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/urfave/cli/v3"
 )
 
@@ -38,7 +40,9 @@ func manpageTestCommand(t *testing.T, dir string) (*cli.Command, *cli.Command) {
 		Flags:    []cli.Flag{&cli.BoolFlag{Name: "quiet", Value: true}},
 		Commands: []*cli.Command{group, hidden, manpages},
 	}
-	configureManpageCommands(root)
+	manpagecmd.Configure(root, func(command *cli.Command, message string) error {
+		return custom.ReportSaveReceipt(command, os.Stderr, message, nil)
+	})
 	return root, manpages
 }
 
@@ -146,7 +150,7 @@ func TestManpageCommandsKeepTextAfterGzipCreateFailure(t *testing.T) {
 	if !errors.As(failure, &cause) || cause.Op != "open" {
 		t.Fatalf("create failure lost its path cause: %v", failure)
 	}
-	message := localErrorMessage(root, failure)
+	message := manpageErrorMessage(t, root, failure)
 	if !strings.Contains(message, "--output") || !strings.Contains(message, "Some manpage files may be incomplete") || strings.Contains(message, dir) {
 		t.Fatalf("partial manpage recovery lost its operation or privacy: %q", message)
 	}
@@ -184,7 +188,7 @@ func TestManpagePreparationAndCreateErrorsNameOutput(t *testing.T) {
 			if !errors.As(failure, &local) || !errors.As(failure, &cause) || !errors.Is(failure, cause) {
 				t.Fatalf("manpage failure lost classification or cause: %v", failure)
 			}
-			message := localErrorMessage(root, failure)
+			message := manpageErrorMessage(t, root, failure)
 			if !strings.Contains(message, "Could not create a manpage file") && stage == "file" ||
 				!strings.Contains(message, "Could not create the manpage folder") && stage == "folder" ||
 				!strings.Contains(message, "--output") || strings.Contains(message, "incomplete") || strings.Contains(message, "synthetic-private") {
@@ -262,7 +266,7 @@ func TestWriteManpageFileErrorsAndCleanup(t *testing.T) {
 				}
 				return output.Write(data)
 			}}
-			err := writeManpageFile(file, manpage, tc.compressed)
+			err := manpagecmd.WriteFileForTest(file, manpage, tc.compressed)
 			if tc.wantErr == nil && tc.closeErr == nil && err != nil {
 				t.Fatal(err)
 			}
@@ -277,7 +281,7 @@ func TestWriteManpageFileErrorsAndCleanup(t *testing.T) {
 					t.Fatalf("write/finalization failure lost recovery: %v", err)
 				}
 				var diagnostic bytes.Buffer
-				if showErr := ShowCommandError(readableErrorTestCommand(t, "--format-error", "json"), err, &diagnostic); showErr != nil {
+				if showErr := custom.ShowCommandError(manpageJSONErrorCommand(t), err, &diagnostic); showErr != nil {
 					t.Fatal(showErr)
 				}
 				if strings.Contains(diagnostic.String(), "synthetic") {
@@ -301,4 +305,33 @@ func TestWriteManpageFileErrorsAndCleanup(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Exercise the actual application error presenter through its public boundary.
+func manpageErrorMessage(t *testing.T, root *cli.Command, failure error) string {
+	t.Helper()
+	var diagnostic bytes.Buffer
+	if err := custom.ShowCommandError(root, failure, &diagnostic); err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(diagnostic.String())
+}
+
+func manpageJSONErrorCommand(t *testing.T) *cli.Command {
+	t.Helper()
+	root := &cli.Command{
+		Name: "openai", Reader: strings.NewReader(""), Writer: io.Discard, ErrWriter: io.Discard,
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "format", Value: "auto"},
+			&cli.StringFlag{Name: "format-error", Value: "auto"},
+			&cli.StringFlag{Name: "transform-error"},
+			&cli.StringFlag{Name: "transform"},
+			&cli.BoolFlag{Name: "raw-output"},
+		},
+		Action: func(context.Context, *cli.Command) error { return nil },
+	}
+	if err := root.Run(t.Context(), []string{"openai", "--format-error", "json"}); err != nil {
+		t.Fatal(err)
+	}
+	return root
 }

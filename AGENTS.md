@@ -12,8 +12,8 @@ generation inputs. Establish whether the generator owns a file before editing
 it. Fix recurring generated defects in the authoritative schema or generator
 when available instead of introducing broad manual changes.
 
-Handwritten CLI features are moving into `internal/commands/<feature>/` (Codex
-and tokenizer are there now); remaining behavior lives in `pkg/custom/`. API response selection
+Handwritten CLI features are moving into `internal/commands/<feature>/` (Codex,
+tokenizer, and manpages are there now); remaining behavior lives in `pkg/custom/`. API response selection
 and reshaping live in `internal/output/transform/`. Use cohesive `internal/` helpers for
 shared implementation, including text rendering and terminal escaping.
 Keep `cmd/openai/main.go` focused on startup and wiring. Reuse existing packages

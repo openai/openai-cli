@@ -1,4 +1,4 @@
-package custom
+package manpages
 
 import (
 	"compress/gzip"
@@ -14,7 +14,9 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func configureManpageCommands(root *cli.Command) {
+// Configure installs manpage generation on the generated command tree. Assembly
+// supplies the shared receipt policy; this feature owns rendering and file cleanup.
+func Configure(root *cli.Command, reportReceipt func(*cli.Command, string) error) {
 	command := root.Command("@manpages")
 	if command == nil || command.Action == nil {
 		return
@@ -67,7 +69,7 @@ func configureManpageCommands(root *cli.Command) {
 		if !command.Bool("text") && !command.Bool("gzip") {
 			return nil
 		}
-		return ReportSaveReceipt(command, os.Stderr, "Wrote manpages to "+dir, nil)
+		return reportReceipt(command, "Wrote manpages to "+dir)
 	}
 }
 

@@ -2,8 +2,10 @@ package custom
 
 import (
 	"context"
+	"os"
 
 	"github.com/openai/openai-cli/internal/commands/codex"
+	"github.com/openai/openai-cli/internal/commands/manpages"
 	"github.com/openai/openai-cli/internal/commands/tokenize"
 	"github.com/urfave/cli/v3"
 )
@@ -44,7 +46,9 @@ func ConfigureCommand(root *cli.Command) {
 	tokenize.Register(root)
 	codex.Register(root)
 	configureCommandPresentation(root)
-	configureManpageCommands(root)
+	manpages.Configure(root, func(command *cli.Command, message string) error {
+		return ReportSaveReceipt(command, os.Stderr, message, nil)
+	})
 	configureOutputPolicy(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, mtlsClientFlags()...)

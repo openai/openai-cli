@@ -55,6 +55,8 @@ below describes the current layout as the migration proceeds.
 - `internal/commands/tokenize/` owns tokenizer commands, the live editor, preview
   workers, native input handling, and their tests; `internal/tokenizer/` remains
   the encoding engine.
+- `internal/commands/manpages/` owns manual rendering, text/gzip file cleanup,
+  and tests. Application assembly supplies the shared save-receipt policy.
 - `internal/commands/` defines shared local-command routing, help, and safe-error
   contracts.
 - `pkg/custom/` contains remaining handwritten CLI commands, defaults, output-format
@@ -89,8 +91,8 @@ generation inputs. Establish ownership before editing generated files and fix
 recurring generated problems in the authoritative schema or generator when
 available.
 
-Handwritten features are moving into `internal/commands/<feature>/`; Codex and
-tokenizer are there now. Remaining behavior belongs in `pkg/custom/`,
+Handwritten features are moving into `internal/commands/<feature>/`; Codex,
+tokenizer, and manpages are there now. Remaining behavior belongs in `pkg/custom/`,
 `internal/output/transform/`, and focused `internal/` helpers. Keep
 `cmd/openai/` focused on startup and wiring. Generated code calls handwritten
 request/output helpers through a generated runtime bridge.
