@@ -7,7 +7,6 @@ import (
 	"io"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -80,18 +79,3 @@ type tokenizerRecordedFrames struct{ strings.Builder }
 
 func (p *tokenizerRecordedFrames) Control(data string) { _, _ = p.WriteString(data) }
 func (p *tokenizerRecordedFrames) Frame(data string)   { _, _ = p.WriteString(data) }
-
-func TestTokenizerEditorCleanupCannotBlockCancellation(t *testing.T) {
-	writer := &tokenizerPainterProbe{entered: make(chan string, 1), resume: make(chan struct{})}
-	start := time.Now()
-	if err := closeTokenizerEditorFrame(writer, "cleanup", true); err != nil {
-		t.Fatal(err)
-	}
-	if time.Since(start) > time.Second {
-		t.Fatal("cleanup did not respect its bounded cancellation scope")
-	}
-	writer = &tokenizerPainterProbe{entered: make(chan string, 1), resume: make(chan struct{})}
-	if err := closeTokenizerEditorFrame(writer, "cleanup", false); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("ordinary cleanup failure was lost: %v", err)
-	}
-}

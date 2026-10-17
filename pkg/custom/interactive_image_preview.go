@@ -18,12 +18,12 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/term"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/urfave/cli/v3"
 )
 
 type interactiveImageExit struct{ code int }
-type interactiveImageDiagnosticContextKey struct{}
 
 func (e interactiveImageExit) Error() string { return "interactive image viewer closed" }
 
@@ -106,7 +106,7 @@ func handleInteractiveImagePreview(parent context.Context, command *cli.Command)
 	}()
 	defer func() { cancel(nil); <-signalDone }()
 	ctx, closeOutput := terminalimage.PrepareInteractiveImageOutput(ctx, output)
-	var reporter *tokenizerTerminalOutput
+	var reporter *cliterminal.Output
 	defer func() {
 		resultErr = finishInteractiveImagePreview(ctx, errors.Join(resultErr, closeOutput()))
 		if reporter != nil {
@@ -119,7 +119,7 @@ func handleInteractiveImagePreview(parent context.Context, command *cli.Command)
 	}
 	// Bind stderr before the user can remove or replace the executable. This
 	// resident writer also survives foreground-group signals during the view.
-	reporter, err = newTokenizerTerminalOutput(context.WithValue(ctx, interactiveImageDiagnosticContextKey{}, true), executable, os.Stderr)
+	reporter, err = cliterminal.NewOutput(cliterminal.DetachedOutputContext(ctx), executable, os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -152,7 +152,7 @@ func finishInteractiveImagePreview(ctx context.Context, err error) error {
 	return nil
 }
 
-func reportInteractiveImageFailure(command *cli.Command, output *tokenizerTerminalOutput, failure error) (result error) {
+func reportInteractiveImageFailure(command *cli.Command, output *cliterminal.Output, failure error) (result error) {
 	defer func() {
 		if err := output.Close(); err != nil {
 			code := 1

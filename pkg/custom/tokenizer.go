@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-cli/internal/tokenizer"
 	"github.com/urfave/cli/v3"
 )
@@ -40,7 +41,7 @@ Opens the live editor in a terminal. Use count or inspect for scripts.
 			{Name: "encodings", Usage: "List the embedded tokenizer encodings", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp, Action: handleTokenizerEncodings},
 			{Name: "licenses", Usage: "Print the bundled tokenizer license notices", HideHelpCommand: true, CustomHelpTemplate: cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp, Action: handleTokenizerLicenses},
 			tokenizerPreviewCommand(),
-			tokenizerTerminalOutputCommand(),
+			cliterminal.OutputCommand(),
 		},
 	})
 }

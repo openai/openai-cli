@@ -1,6 +1,6 @@
 //go:build darwin || linux
 
-package custom
+package terminal
 
 import (
 	"bytes"
@@ -31,7 +31,7 @@ func TestTokenizerTerminalOutputLifelineStopsSaturatedPipe(t *testing.T) {
 	}
 	// Fill with writes larger than a helper frame, until the kernel refuses
 	// another byte. The read end stays open and unread until the helper exits.
-	fill := bytes.Repeat([]byte("p"), 4*tokenizerTerminalFrameBytes)
+	fill := bytes.Repeat([]byte("p"), 4*outputFrameBytes)
 	for {
 		n, err := unix.Write(fd, fill)
 		if errors.Is(err, unix.EAGAIN) {
@@ -50,7 +50,7 @@ func TestTokenizerTerminalOutputLifelineStopsSaturatedPipe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, helper, "tokenizer", "__output")
-	command.Stdout, command.Env = write, tokenizerTerminalEnvironment()
+	command.Stdout, command.Env = write, outputEnvironment()
 	input, err := command.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -75,16 +75,16 @@ func TestTokenizerTerminalOutputLifelineStopsSaturatedPipe(t *testing.T) {
 		}
 	}()
 	var ready [8]byte
-	if _, err := io.ReadFull(ack, ready[:]); err != nil || ready != tokenizerTerminalReady {
+	if _, err := io.ReadFull(ack, ready[:]); err != nil || ready != outputReady {
 		t.Fatalf("helper readiness: %v", err)
 	}
 	var header [8]byte
 	binary.BigEndian.PutUint32(header[:4], 1)
-	binary.BigEndian.PutUint32(header[4:], tokenizerTerminalFrameBytes)
-	if err := writeTokenizerTerminalBytes(input, header[:]); err != nil {
+	binary.BigEndian.PutUint32(header[4:], outputFrameBytes)
+	if err := writeOutputBytes(input, header[:]); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeTokenizerTerminalBytes(input, fill[:tokenizerTerminalFrameBytes]); err != nil {
+	if err := writeOutputBytes(input, fill[:outputFrameBytes]); err != nil {
 		t.Fatal(err)
 	}
 	started := filepath.Join(filepath.Dir(helper), "started")

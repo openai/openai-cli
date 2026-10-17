@@ -1,4 +1,4 @@
-package custom
+package terminal
 
 import (
 	"bytes"
@@ -18,13 +18,13 @@ import (
 
 func init() {
 	if len(os.Args) == 3 && os.Args[1] == "__tokenizer-terminal-parent" {
-		writer, err := newTokenizerTerminalOutput(context.Background(), os.Args[2], os.Stdout)
+		writer, err := NewOutput(context.Background(), os.Args[2], os.Stdout)
 		if err != nil {
 			os.Exit(6)
 		}
 		fmt.Fprintln(os.Stderr, writer.worker.command.Process.Pid)
 		go func() {
-			_, _ = writer.WriteContext(context.Background(), bytes.Repeat([]byte("p"), 4*tokenizerTerminalFrameBytes))
+			_, _ = writer.WriteContext(context.Background(), bytes.Repeat([]byte("p"), 4*outputFrameBytes))
 		}()
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		os.Exit(7)
@@ -49,7 +49,7 @@ func init() {
 		os.Exit(0)
 	}
 	if strings.Contains(mode, "invalid-ack") || strings.Contains(mode, "exit-before-ack") {
-		_, _ = os.Stderr.Write(tokenizerTerminalReady[:])
+		_, _ = os.Stderr.Write(outputReady[:])
 		var header [8]byte
 		_, _ = io.ReadFull(os.Stdin, header[:])
 		_, _ = io.CopyN(io.Discard, os.Stdin, int64(binary.BigEndian.Uint32(header[4:])))
@@ -69,7 +69,7 @@ func init() {
 			output = tokenizerTerminalObservedWriter{os.Stdout, filepath.Join(filepath.Dir(os.Args[0]), "started")}
 		}
 	}
-	err := serveTokenizerTerminalOutput(context.Background(), os.Stdin, output, os.Stderr)
+	err := serveOutput(context.Background(), os.Stdin, output, os.Stderr)
 	if strings.Contains(mode, "completion") {
 		_ = os.WriteFile(filepath.Join(filepath.Dir(os.Args[0]), "completed"), []byte("stopped"), 0600)
 	}
@@ -138,7 +138,7 @@ func TestTokenizerTerminalOutputExactBytesAndMinimalEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer file.Close()
-	writer, err := newTokenizerTerminalOutput(t.Context(), os.Args[0], file)
+	writer, err := NewOutput(t.Context(), os.Args[0], file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestTokenizerTerminalOutputCancelBlockedWriteAndRestart(t *testing.T) {
 	}
 	defer read.Close()
 	defer write.Close()
-	writer, err := newTokenizerTerminalOutput(t.Context(), os.Args[0], write)
+	writer, err := NewOutput(t.Context(), os.Args[0], write)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestTokenizerTerminalOutputCancelBlockedWriteAndRestart(t *testing.T) {
 	first := writer.worker
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	started := time.Now()
-	data := bytes.Repeat([]byte("x"), 128*tokenizerTerminalFrameBytes)
+	data := bytes.Repeat([]byte("x"), 128*outputFrameBytes)
 	n, err := writer.WriteContext(ctx, data)
 	cancel()
 	if !errors.Is(err, context.DeadlineExceeded) || n == len(data) || time.Since(started) > 3*time.Second {
@@ -222,7 +222,7 @@ func TestTokenizerTerminalOutputStartupAndAcknowledgementFailures(t *testing.T) 
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), timeout)
 			defer cancel()
-			writer, err := newTokenizerTerminalOutput(ctx, tokenizerTerminalTestExecutable(t, mode), file)
+			writer, err := NewOutput(ctx, tokenizerTerminalTestExecutable(t, mode), file)
 			if strings.Contains(mode, "ready") {
 				if err == nil || writer != nil {
 					t.Fatal("invalid startup succeeded")
@@ -246,11 +246,11 @@ func TestTokenizerTerminalOutputStartupAndAcknowledgementFailures(t *testing.T) 
 }
 
 func TestTokenizerTerminalOutputRejectsMalformedFrames(t *testing.T) {
-	for _, fields := range [][2]uint32{{0, 1}, {1, 0}, {1, tokenizerTerminalFrameBytes + 1}, {2, 1}, {1, 5}} {
+	for _, fields := range [][2]uint32{{0, 1}, {1, 0}, {1, outputFrameBytes + 1}, {2, 1}, {1, 5}} {
 		var header [8]byte
 		binary.BigEndian.PutUint32(header[:4], fields[0])
 		binary.BigEndian.PutUint32(header[4:], fields[1])
-		if err := readTokenizerTerminalFrames(bytes.NewReader(header[:]), make(chan tokenizerTerminalFrame, 1)); err == nil {
+		if err := readOutputFrames(bytes.NewReader(header[:]), make(chan outputFrame, 1)); err == nil {
 			t.Fatalf("malformed frame succeeded: %v", fields)
 		}
 	}
@@ -260,7 +260,7 @@ func TestTokenizerTerminalOutputRejectsMalformedFrames(t *testing.T) {
 		_ = binary.Write(&stream, binary.BigEndian, uint32(1))
 		stream.WriteByte('x')
 	}
-	if err := readTokenizerTerminalFrames(&stream, make(chan tokenizerTerminalFrame, 1)); err == nil {
+	if err := readOutputFrames(&stream, make(chan outputFrame, 1)); err == nil {
 		t.Fatal("unacknowledged frames blocked the lifeline reader")
 	}
 }
@@ -277,7 +277,7 @@ func TestTokenizerTerminalOutputParentDeathStopsBlockedWriter(t *testing.T) {
 	defer cancel()
 	parent := exec.CommandContext(ctx, os.Args[0], "__tokenizer-terminal-parent", helper)
 	parent.Stdout = write
-	parent.Env = tokenizerTerminalEnvironment()
+	parent.Env = outputEnvironment()
 	input, err := parent.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -334,14 +334,14 @@ func TestTokenizerTerminalOutputCloseStopsActiveWrite(t *testing.T) {
 	}
 	defer read.Close()
 	defer write.Close()
-	writer, err := newTokenizerTerminalOutput(t.Context(), os.Args[0], write)
+	writer, err := NewOutput(t.Context(), os.Args[0], write)
 	if err != nil {
 		t.Fatal(err)
 	}
 	worker := writer.worker
 	finished := make(chan error, 1)
 	go func() {
-		_, err := writer.WriteContext(t.Context(), bytes.Repeat([]byte("x"), 128*tokenizerTerminalFrameBytes))
+		_, err := writer.WriteContext(t.Context(), bytes.Repeat([]byte("x"), 128*outputFrameBytes))
 		finished <- err
 	}()
 	var first [1]byte

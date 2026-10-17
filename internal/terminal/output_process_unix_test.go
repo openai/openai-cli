@@ -1,6 +1,6 @@
 //go:build darwin || linux
 
-package custom
+package terminal
 
 import (
 	"context"
@@ -18,14 +18,16 @@ func TestInteractiveImageDiagnosticSessionIsOptIn(t *testing.T) {
 	for _, isolated := range []bool{false, true} {
 		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 		defer cancel()
-		ctx = context.WithValue(ctx, interactiveImageDiagnosticContextKey{}, isolated)
+		if isolated {
+			ctx = DetachedOutputContext(ctx)
+		}
 		input, feed, err := os.Pipe()
 		require.NoError(t, err)
 		defer input.Close()
 		defer feed.Close()
 		command := exec.CommandContext(ctx, "/bin/cat")
 		command.Stdin = input
-		configureInteractiveImageDiagnostic(ctx, command)
+		configureOutputProcess(ctx, command)
 		require.NoError(t, command.Start())
 		defer func() { _ = command.Process.Kill(); _ = command.Wait() }()
 		group, err := syscall.Getpgid(command.Process.Pid)

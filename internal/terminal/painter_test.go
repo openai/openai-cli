@@ -1,4 +1,4 @@
-package custom
+package terminal
 
 import (
 	"context"
@@ -32,7 +32,7 @@ func (w *tokenizerPainterProbe) WriteContext(ctx context.Context, data []byte) (
 
 func TestTokenizerPainterKeepsLatestFrameWithoutBlockingInput(t *testing.T) {
 	writer := &tokenizerPainterProbe{entered: make(chan string, 2), resume: make(chan struct{})}
-	painter := newTokenizerPainter(writer, func() {})
+	painter := NewPainter(writer, func() {})
 	defer painter.Stop()
 	painter.Control("initialize")
 	require.Equal(t, "initialize", <-writer.entered)
@@ -61,7 +61,7 @@ func TestTokenizerPainterRetainsOutputFailure(t *testing.T) {
 	for _, failure := range []error{io.ErrClosedPipe, io.ErrShortWrite} {
 		writer := &tokenizerPainterProbe{entered: make(chan string, 1), resume: make(chan struct{}, 1), err: failure}
 		failed := make(chan struct{})
-		painter := newTokenizerPainter(writer, func() { close(failed) })
+		painter := NewPainter(writer, func() { close(failed) })
 		painter.Frame("frame")
 		<-writer.entered
 		writer.resume <- struct{}{}
@@ -71,5 +71,20 @@ func TestTokenizerPainterRetainsOutputFailure(t *testing.T) {
 			t.Fatal("output failure did not stop the editor")
 		}
 		require.True(t, errors.Is(painter.Stop(), failure))
+	}
+}
+
+func TestTokenizerEditorCleanupCannotBlockCancellation(t *testing.T) {
+	writer := &tokenizerPainterProbe{entered: make(chan string, 1), resume: make(chan struct{})}
+	start := time.Now()
+	if err := CloseFrame(writer, "cleanup", true); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("cleanup did not respect its bounded cancellation scope")
+	}
+	writer = &tokenizerPainterProbe{entered: make(chan string, 1), resume: make(chan struct{})}
+	if err := CloseFrame(writer, "cleanup", false); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ordinary cleanup failure was lost: %v", err)
 	}
 }

@@ -76,7 +76,7 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	if err != nil {
 		return 0, err
 	}
-	terminalOutput, err := newTokenizerTerminalOutput(parent, executable, output)
+	terminalOutput, err := cliterminal.NewOutput(parent, executable, output)
 	if err != nil {
 		return 0, err
 	}
@@ -110,7 +110,7 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	defer inputBridge.Close()
 	worker := newTokenizerPreviewWorker(ctx, executable)
 	defer worker.Close()
-	painter := newTokenizerPainter(terminalOutput, cancel)
+	painter := cliterminal.NewPainter(terminalOutput, cancel)
 	defer painter.Stop()
 	model := newTokenizerEditor()
 	model.width, model.height = width, height
@@ -177,7 +177,7 @@ func runTokenizerEditor(parent context.Context, input, output *os.File, invocati
 	closeErr := worker.Close()
 	inputErr := inputBridge.Close()
 	writeErr := painter.Stop()
-	cleanupErr := closeTokenizerEditorFrame(terminalOutput, inline.close(), model.exitCode != 0)
+	cleanupErr := cliterminal.CloseFrame(terminalOutput, inline.close(), model.exitCode != 0)
 	if (writeErr != nil || inline.err != nil) && errors.Is(runErr, context.Canceled) {
 		// A failed write cancels the private loop, not the user's operation.
 		runErr = nil
@@ -189,36 +189,13 @@ type tokenizerEditorSizeErrorMsg struct{}
 type tokenizerEditorWrapTimeout struct{}
 type tokenizerEditorInputErrorMsg struct{ err error }
 
-// A terminal that stops accepting output cannot receive an unbounded cleanup
-// write. Native input/output modes still restore in the runner's defer.
-func closeTokenizerEditorFrame(output tokenizerFrameOutput, frame string, interrupted bool) error {
-	if frame == "" {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
-	defer cancel()
-	n, err := output.WriteContext(ctx, []byte(frame))
-	if interrupted && errors.Is(err, context.DeadlineExceeded) {
-		return nil
-	}
-	if err == nil && n != len(frame) {
-		err = io.ErrShortWrite
-	}
-	return err
-}
-
-type tokenizerFramePainter interface {
-	Control(string)
-	Frame(string)
-}
-
 // Reuse the image picker's frame layout while keeping terminal backpressure
 // outside the model and retaining the tokenizer's exact input bytes.
 type tokenizerEditorInline struct {
 	model                             *tokenizerEditor
 	worker                            *tokenizerPreviewWorker
 	output                            *os.File
-	painter                           tokenizerFramePainter
+	painter                           cliterminal.FramePainter
 	input                             *tokenizerInputBridge
 	fail                              context.CancelFunc
 	profile                           colorprofile.Profile

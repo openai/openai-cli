@@ -40,7 +40,7 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 	if err != nil {
 		return err
 	}
-	terminal, err := newTokenizerTerminalOutput(ctx, executable, output)
+	terminal, err := cliterminal.NewOutput(ctx, executable, output)
 	if err != nil {
 		return audioFailure("Could not prepare terminal output.", err)
 	}
@@ -71,7 +71,7 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 	if _, err = console.MakeRaw(); err != nil {
 		return err
 	}
-	painter := newTokenizerPainter(terminal, cancel)
+	painter := cliterminal.NewPainter(terminal, cancel)
 	defer painter.Stop()
 	m := newAudioWorkbench(ctx, command, next, store)
 	m.width, m.height = width, height
@@ -107,7 +107,7 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 	m.workers.close(cancel)
 	<-listenerDone
 	writeErr := painter.Stop()
-	cleanupErr := closeTokenizerEditorFrame(terminal, inline.close(), m.exitCode != 0 || contextErr != nil)
+	cleanupErr := cliterminal.CloseFrame(terminal, inline.close(), m.exitCode != 0 || contextErr != nil)
 	sessionErr := errors.Join(runErr, contextErr, audioFailureIf("Could not finish the audio terminal display.", errors.Join(writeErr, inline.err, cleanupErr)))
 	if m.exitCode != 0 {
 		return errors.Join(cli.Exit("", m.exitCode), sessionErr)
@@ -122,7 +122,7 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 }
 
 // Print after frame cleanup and native mode restoration, using the owned cancellable writer.
-func printAudioCommand(ctx context.Context, output tokenizerFrameOutput, commandText string) error {
+func printAudioCommand(ctx context.Context, output cliterminal.FrameOutput, commandText string) error {
 	if commandText == "" {
 		return nil
 	}
@@ -144,7 +144,7 @@ type audioWorkbenchSizeError struct{}
 // only bracketed paste, cursor visibility, and wrapping; keyboard modes stay put.
 type audioWorkbenchInline struct {
 	model                             *audioWorkbench
-	painter                           tokenizerFramePainter
+	painter                           cliterminal.FramePainter
 	output                            *os.File
 	profile                           colorprofile.Profile
 	cancel                            context.CancelFunc
