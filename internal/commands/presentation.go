@@ -1,4 +1,4 @@
-package custom
+package commands
 
 import (
 	"strings"
@@ -147,7 +147,9 @@ var commandDisplaySections = map[string][]commandDisplaySection{
 	},
 }
 
-func configureCommandPresentation(root *cli.Command) {
+// ConfigurePresentation annotates command groups for help without replacing
+// generated categories or authored descriptions.
+func ConfigurePresentation(root *cli.Command) {
 	var visit func(*cli.Command, string)
 	visit = func(command *cli.Command, path string) {
 		if command.Metadata == nil {

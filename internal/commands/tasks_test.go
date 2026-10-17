@@ -1,10 +1,12 @@
-package custom
+package commands_test
 
 import (
 	"context"
 	"io"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/urfave/cli/v3"
 )
 
@@ -21,12 +23,12 @@ func TestTaskCommandsPreserveIdentityAndIndependentNodes(t *testing.T) {
 		root := taskCommandTree()
 		var selected string
 		root.Commands[0].Commands[0].Action = func(_ context.Context, command *cli.Command) error {
-			selected = commandResourceName(command)
+			selected = commands.ResourceName(command)
 			return nil
 		}
-		ConfigureCommand(root)
+		custom.ConfigureCommand(root)
 		count := len(root.Commands)
-		ConfigureCommand(root)
+		custom.ConfigureCommand(root)
 		if len(root.Commands) != count {
 			t.Fatal("repeated configuration duplicated routes")
 		}
@@ -59,7 +61,7 @@ func TestTaskCommandsPreserveFutureCommandsAndCollisions(t *testing.T) {
 	for _, name := range []string{"group-name", "group-alias", "root-alias", "future-audio-action", "admin-name", "admin-alias", "root-projects"} {
 		t.Run(name, func(t *testing.T) {
 			root := taskCommandTree()
-			configureCommandSubgroups(root)
+			commands.ConfigureSubgroups(root)
 			audio := root.Command("audio")
 			transcriptions := audio.Command("transcriptions")
 			admin := root.Command("admin")
@@ -87,7 +89,7 @@ func TestTaskCommandsPreserveFutureCommandsAndCollisions(t *testing.T) {
 				reserved.Name = "projects"
 				root.Commands = append(root.Commands, reserved)
 			}
-			configureTaskCommands(root)
+			commands.ConfigureTasks(root)
 			switch name {
 			case "group-name", "group-alias":
 				if audio.Command("transcribe") != reserved || transcriptions.Hidden || root.Command("transcribe") != nil {
@@ -119,7 +121,7 @@ func TestTaskCommandsNeverSkipAncestorBehavior(t *testing.T) {
 		for _, behavior := range []string{"flag", "before", "after", "action", "validator", "skip-parsing", "short-options", "stop-parsing"} {
 			t.Run(ancestor+"/"+behavior, func(t *testing.T) {
 				root := taskCommandTree()
-				configureCommandSubgroups(root)
+				commands.ConfigureSubgroups(root)
 				audio, admin := root.Command("audio"), root.Command("admin")
 				organization := admin.Command("organization")
 				command := map[string]*cli.Command{"transcriptions": audio.Command("transcriptions"), "audio": audio, "organization": organization, "admin": admin}[ancestor]
@@ -142,7 +144,7 @@ func TestTaskCommandsNeverSkipAncestorBehavior(t *testing.T) {
 					value := 1
 					command.StopOnNthArg = &value
 				}
-				configureTaskCommands(root)
+				commands.ConfigureTasks(root)
 				switch ancestor {
 				case "transcriptions":
 					if audio.Command("transcribe") != nil || command.Hidden {

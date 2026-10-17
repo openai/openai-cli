@@ -57,8 +57,9 @@ below describes the current layout as the migration proceeds.
   the encoding engine.
 - `internal/commands/manpages/` owns manual rendering, text/gzip file cleanup,
   and tests. Application assembly supplies the shared save-receipt policy.
-- `internal/commands/` defines shared local-command routing, help, and safe-error
-  contracts.
+- `internal/commands/` owns nested API routes, compatibility aliases, task
+  shortcuts, and help-group metadata, alongside shared local-command and safe-error
+  contracts. Assembly preserves the order in which these are configured.
 - `pkg/custom/` contains remaining handwritten CLI commands, defaults, output-format
   policy, error handling, and presentation orchestration.
 - `internal/output/transform/` selects or reshapes API responses before presentation.

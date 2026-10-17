@@ -16,6 +16,8 @@ Handwritten CLI features are moving into `internal/commands/<feature>/` (Codex,
 tokenizer, and manpages are there now); remaining behavior lives in `pkg/custom/`. API response selection
 and reshaping live in `internal/output/transform/`. Use cohesive `internal/` helpers for
 shared implementation, including text rendering and terminal escaping.
+`internal/commands/` owns command-tree routing, compatibility aliases, shortcuts,
+help-group metadata, and shared feature contracts; assembly owns their order.
 Keep `cmd/openai/main.go` focused on startup and wiring. Reuse existing packages
 and explain the distinct responsibility of any new package. Preserve command
 compatibility, generated ownership, and the separate `api_reference/go.mod`

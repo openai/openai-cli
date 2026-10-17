@@ -1,4 +1,4 @@
-package custom
+package commands
 
 import (
 	"strings"
@@ -6,9 +6,9 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// Task routes reuse the decorated API handlers. Install them before help and
+// ConfigureTasks reuses decorated API handlers for task routes. Install before help and
 // parsing, so each invocation gets its own command nodes and displayed path.
-func configureTaskCommands(root *cli.Command) {
+func ConfigureTasks(root *cli.Command) {
 	for _, task := range []struct {
 		group, resource, name, usage string
 		shortcut                     bool
@@ -33,7 +33,7 @@ func configureTaskCommands(root *cli.Command) {
 		if source == nil {
 			continue
 		}
-		command := cloneResourceCommand(source)
+		command := CloneResourceCommand(source)
 		command.Name, command.Aliases, command.Hidden = task.name, nil, false
 		command.Usage = task.usage
 		command.Metadata[resourceCommandMetadata] = resource.Name
@@ -42,9 +42,9 @@ func configureTaskCommands(root *cli.Command) {
 		}
 		group.Commands = append(group.Commands, command)
 		if task.resource == "" {
-			markCompatibilityCommand(source)
+			MarkCompatibilityCommand(source)
 		} else if len(resource.Commands) == 1 {
-			markCompatibilityCommand(resource)
+			MarkCompatibilityCommand(resource)
 		}
 		if task.shortcut && structuralCommand(group) {
 			addTaskShortcut(root, command, task.name, task.group+" "+task.name)
@@ -66,14 +66,14 @@ func configureTaskCommands(root *cli.Command) {
 			complete = false
 			continue
 		}
-		promoted := cloneResourceCommand(source)
+		promoted := CloneResourceCommand(source)
 		admin.Commands = append(admin.Commands, promoted)
 		if source.Name == "projects" {
 			projects = promoted
 		}
 	}
 	if complete {
-		markCompatibilityCommand(organization)
+		MarkCompatibilityCommand(organization)
 	}
 	if projects != nil && structuralCommand(admin) {
 		if shortcut := addTaskShortcut(root, projects, "projects", "admin projects"); shortcut != nil {
@@ -98,7 +98,9 @@ func commandNamesCollide(parent, command *cli.Command) bool {
 	return false
 }
 
-func markCompatibilityCommand(command *cli.Command) {
+// MarkCompatibilityCommand hides a legacy route while keeping it available to
+// parsing and command recovery.
+func MarkCompatibilityCommand(command *cli.Command) {
 	if command.Metadata == nil {
 		command.Metadata = map[string]any{}
 	}
@@ -110,7 +112,7 @@ func addTaskShortcut(root, source *cli.Command, name, path string) *cli.Command 
 	if root.Command(name) != nil {
 		return nil
 	}
-	shortcut := cloneResourceCommand(source)
+	shortcut := CloneResourceCommand(source)
 	shortcut.Name, shortcut.Aliases, shortcut.Hidden = name, nil, false
 	shortcut.Usage = strings.TrimSuffix(source.Usage, ".") + "; shortcut for " + path + "."
 	root.Commands = append(root.Commands, shortcut)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/codex"
 	"github.com/openai/openai-cli/internal/commands/manpages"
 	"github.com/openai/openai-cli/internal/commands/tokenize"
@@ -39,13 +40,13 @@ func ConfigureCommand(root *cli.Command) {
 	configureReadableSpeech(root)
 	registerAdminSetup(root)
 	configureAdminCredentials(root)
-	configureCommandSubgroups(root)
-	configureTaskCommands(root)
+	localcommands.ConfigureSubgroups(root)
+	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
 	configureFileCommands(root)
 	tokenize.Register(root)
 	codex.Register(root)
-	configureCommandPresentation(root)
+	localcommands.ConfigurePresentation(root)
 	manpages.Configure(root, func(command *cli.Command, message string) error {
 		return ReportSaveReceipt(command, os.Stderr, message, nil)
 	})

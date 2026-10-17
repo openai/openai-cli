@@ -1,4 +1,5 @@
-// Package commands defines shared contracts for handwritten CLI features.
+// Package commands shapes the CLI command tree and defines shared contracts for
+// handwritten features. Application assembly owns configuration order.
 package commands
 
 // LocalUtilityMetadata marks registered commands that bypass remote setup.

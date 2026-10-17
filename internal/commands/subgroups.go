@@ -1,4 +1,4 @@
-package custom
+package commands
 
 import (
 	"maps"
@@ -10,10 +10,10 @@ import (
 
 const resourceCommandMetadata = "openai-resource-command"
 
-// configureCommandSubgroups adds real command groups from the generated resource
+// ConfigureSubgroups adds real command groups from the generated resource
 // names. Run after feature decoration and before cli.Run: command nodes acquire
 // mutable parent/parser state when the framework initializes them.
-func configureCommandSubgroups(root *cli.Command) {
+func ConfigureSubgroups(root *cli.Command) {
 	resources := slices.Clone(root.Commands)
 	// Install parents before descendants, including when generation changes order.
 	slices.SortStableFunc(resources, func(a, b *cli.Command) int {
@@ -42,7 +42,7 @@ func configureCommandSubgroups(root *cli.Command) {
 		if parent == nil || parent.Command(parts[len(parts)-1]) != nil {
 			continue
 		}
-		nested := cloneResourceCommand(resource)
+		nested := CloneResourceCommand(resource)
 		nested.Name = parts[len(parts)-1]
 		nested.Metadata[resourceCommandMetadata] = resource.Name
 		parent.Commands = append(parent.Commands, nested)
@@ -54,10 +54,11 @@ func configureCommandSubgroups(root *cli.Command) {
 	}
 }
 
-// Keep separate nodes and metadata for the canonical and compatibility paths.
+// CloneResourceCommand keeps separate nodes and metadata for canonical and
+// compatibility paths.
 // Flags and actions retain their generated definitions; only the selected route
 // is parsed during a CLI invocation.
-func cloneResourceCommand(source *cli.Command) *cli.Command {
+func CloneResourceCommand(source *cli.Command) *cli.Command {
 	copy := *source
 	copy.Metadata = maps.Clone(source.Metadata)
 	if copy.Metadata == nil {
@@ -65,13 +66,14 @@ func cloneResourceCommand(source *cli.Command) *cli.Command {
 	}
 	copy.Commands = make([]*cli.Command, len(source.Commands))
 	for i, child := range source.Commands {
-		copy.Commands[i] = cloneResourceCommand(child)
+		copy.Commands[i] = CloneResourceCommand(child)
 	}
 	copy.Flags = slices.Clone(source.Flags)
 	return &copy
 }
 
-func commandResourceName(command *cli.Command) string {
+// ResourceName identifies the generated resource behind a selected route.
+func ResourceName(command *cli.Command) string {
 	if name, ok := command.Metadata[resourceCommandMetadata].(string); ok {
 		return name
 	}

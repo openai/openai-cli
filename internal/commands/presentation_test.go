@@ -1,8 +1,9 @@
-package custom
+package commands_test
 
 import (
 	"testing"
 
+	"github.com/openai/openai-cli/internal/commands"
 	"github.com/urfave/cli/v3"
 )
 
@@ -11,9 +12,9 @@ func TestCommandPresentationPreservesUnknownAndAuthoredGroups(t *testing.T) {
 	images := &cli.Command{Name: "images", Category: "API RESOURCE", Usage: "Authored image summary.", Commands: []*cli.Command{action}}
 	future := &cli.Command{Name: "future-resources:entries", Category: "API RESOURCE", Commands: []*cli.Command{{Name: "list"}}}
 	root := &cli.Command{Commands: []*cli.Command{images, future}}
-	configureCommandSubgroups(root)
-	configureCommandPresentation(root)
-	configureCommandPresentation(root)
+	commands.ConfigureSubgroups(root)
+	commands.ConfigurePresentation(root)
+	commands.ConfigurePresentation(root)
 	if images.Usage != "Authored image summary." || action.Usage != "Create an image." || images.Category != "API RESOURCE" {
 		t.Fatal("presentation replaced authored text or parser metadata")
 	}
@@ -32,8 +33,8 @@ func TestCommandPresentationPreservesUnknownAndAuthoredGroups(t *testing.T) {
 func TestCommandPresentationDecoratesCanonicalAndCompatibilityGroups(t *testing.T) {
 	legacy := &cli.Command{Name: "admin:organization:projects:users", Category: "API RESOURCE", Commands: []*cli.Command{{Name: "list"}}}
 	root := &cli.Command{Commands: []*cli.Command{legacy}}
-	configureCommandSubgroups(root)
-	configureCommandPresentation(root)
+	commands.ConfigureSubgroups(root)
+	commands.ConfigurePresentation(root)
 	canonical := root.Command("admin").Command("organization").Command("projects").Command("users")
 	if canonical.Usage == "" || canonical.Usage != legacy.Usage {
 		t.Fatalf("canonical and compatibility help differ: %q / %q", canonical.Usage, legacy.Usage)

@@ -1,4 +1,4 @@
-package custom
+package commands_test
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/urfave/cli/v3"
 )
 
@@ -22,8 +24,8 @@ func TestCommandSubgroupsKeepActionsFlagsAndParents(t *testing.T) {
 			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard, Flags: []cli.Flag{&cli.StringFlag{Name: "format"}, &cli.StringFlag{Name: "admin-api-key"}}, Commands: []*cli.Command{
 				{Name: "admin:organization:users:roles", Category: "API RESOURCE", Commands: []*cli.Command{{Name: "list"}}}, original,
 			}}
-			ConfigureCommand(root)
-			ConfigureCommand(root)
+			custom.ConfigureCommand(root)
+			custom.ConfigureCommand(root)
 			users := root.Command("admin").Command("organization").Command("users")
 			if !original.Hidden || users.Hidden || users.Command("roles") == nil || users.Command("list") == leaf {
 				t.Fatal("missing subgroup or shared command node")
@@ -51,7 +53,7 @@ func TestCommandSubgroupsNeverReplaceAnExistingAction(t *testing.T) {
 	action := &cli.Command{Name: "item", Action: func(context.Context, *cli.Command) error { return nil }}
 	legacy := &cli.Command{Name: "files:item:details", Category: "API RESOURCE", Commands: []*cli.Command{{Name: "list"}}}
 	root := &cli.Command{Commands: []*cli.Command{{Name: "files", Category: "API RESOURCE", Commands: []*cli.Command{action}}, legacy}}
-	configureCommandSubgroups(root)
+	commands.ConfigureSubgroups(root)
 	if legacy.Hidden || root.Command("files").Command("item") != action || !slices.Contains(root.Commands, legacy) {
 		t.Fatal("a command collision replaced an existing route")
 	}
