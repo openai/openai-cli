@@ -59,8 +59,8 @@ below describes the current layout as the migration proceeds.
   and escapes terminal controls for results and errors.
 - `internal/output/` owns cancellation-aware writing and distinguishes output-sink
   failures from diagnostics and upstream errors.
-- `internal/terminal/` owns platform adapters, starting with browser launching
-  and child-process environment isolation.
+- `internal/terminal/` owns browser launching and child-process environment
+  isolation, color profiles, automatic terminal presentation, and background themes.
 - `internal/app/` owns invocation, request-environment scope, completion setup,
   output policy, and exit-status selection. Command assembly still uses the
   existing generated tree during the layout migration.
@@ -231,6 +231,27 @@ Windows. Additional arguments are forwarded to `go test`:
 ```sh
 ./scripts/test -run '^TestResponsesCreate$'
 ```
+
+Normal tests inspect every command declaration and run representative error-recovery cases.
+CI also runs every generated recovery case across four balanced shards.
+Each shard validates its Go JSON results, including every selected case and the classification guards.
+The required test check requires successful source preparation, ordinary tests, and all four shards.
+
+Run the complete recovery audit locally with:
+
+```sh
+OPENAI_CLI_ERROR_COVERAGE_MODE=exhaustive go test ./cmd/openai -run '^TestMainErrorCoverageAcrossCommandTree$' -count=1 -timeout=30m
+```
+
+Run one balanced shard with:
+
+```sh
+OPENAI_CLI_ERROR_COVERAGE_SHARD_INDEX=0 OPENAI_CLI_ERROR_COVERAGE_SHARD_COUNT=4 go test ./cmd/openai -run '^TestMainErrorCoverageAcrossCommandTree$' -count=1
+```
+
+Shard indices start at zero. The audit calculates ranges from current declarations, including future additions.
+`OPENAI_CLI_ERROR_COVERAGE_START` and `OPENAI_CLI_ERROR_COVERAGE_END` select a half-open range for bounded local checks.
+Do not combine range and shard settings. Partial runs do not establish complete coverage.
 
 To keep the mock server running while iterating on tests, start it in a separate
 terminal:

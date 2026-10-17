@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/audiohistory"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -74,8 +75,8 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 	defer painter.Stop()
 	m := newAudioWorkbench(ctx, command, next, store)
 	m.width, m.height = width, height
-	m.dark = codexGuideDarkBackground(os.Getenv("COLORFGBG"))
-	profile := prettyColorProfile(output, os.Environ())
+	m.dark = cliterminal.DarkBackground(os.Getenv("COLORFGBG"))
+	profile := cliterminal.ColorProfile(output, os.Environ(), isTerminal(output))
 	m.color = profile >= colorprofile.ANSI
 	inline := &audioWorkbenchInline{model: m, painter: painter, output: output, profile: profile, cancel: cancel}
 	program := tea.NewProgram(inline, tea.WithContext(ctx), tea.WithInput(input), tea.WithOutput(io.Discard), tea.WithoutSignalHandler(), tea.WithoutRenderer(), tea.WithWindowSize(width, height), tea.WithColorProfile(profile))

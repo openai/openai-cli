@@ -88,14 +88,16 @@ func configureImagePickerShellSetup(root *cli.Command) {
 		install, remove := command.Bool("install-picker"), command.Bool("uninstall-picker")
 		if !install && !remove {
 			if command.Bool("automatic") || command.IsSet("profile") {
-				return cli.Exit("Use --install-picker or --uninstall-picker with setup options.", 2)
+				const message = "Use --install-picker or --uninstall-picker with setup options."
+				return &localUtilityError{message: message, cause: cli.Exit(message, 2)}
 			}
 			return next(ctx, command)
 		}
 		if install && remove || command.Bool("picker") || command.Args().Len() > 1 ||
 			command.IsSet("profile") && command.String("profile") == "" ||
 			command.Bool("automatic") && (remove || command.IsSet("profile") || command.Args().Len() > 0) {
-			return cli.Exit("Choose one setup action. Automatic setup does not accept a shell or profile override.", 2)
+			const message = "Choose one setup action. Automatic setup does not accept a shell or profile override."
+			return &localUtilityError{message: message, cause: cli.Exit(message, 2)}
 		}
 		shell := command.Args().First()
 		if shell == "" && !command.Bool("automatic") {

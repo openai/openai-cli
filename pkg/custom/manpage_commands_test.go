@@ -137,8 +137,17 @@ func TestManpageCommandsKeepTextAfterGzipCreateFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	root, manpages := manpageTestCommand(t, dir)
-	if err := root.Run(context.Background(), []string{"openai", "@manpages"}); err == nil {
+	failure := root.Run(context.Background(), []string{"openai", "@manpages"})
+	if failure == nil {
 		t.Fatal("gzip create failure returned success")
+	}
+	var cause *os.PathError
+	if !errors.As(failure, &cause) || cause.Op != "open" {
+		t.Fatalf("create failure lost its path cause: %v", failure)
+	}
+	message := localErrorMessage(root, failure)
+	if !strings.Contains(message, "--output") || !strings.Contains(message, "Some manpage files may be incomplete") || strings.Contains(message, dir) {
+		t.Fatalf("partial manpage recovery lost its operation or privacy: %q", message)
 	}
 	text, err := os.ReadFile(filepath.Join(dir, "man1", "openai.1"))
 	if err != nil || len(text) == 0 {
@@ -153,6 +162,34 @@ func TestManpageCommandsKeepTextAfterGzipCreateFailure(t *testing.T) {
 	complete, err := os.ReadFile(filepath.Join(dir, "man1", "openai.1"))
 	if err != nil || !bytes.Equal(text, complete) {
 		t.Fatalf("partial failure did not retain the complete text: %v", err)
+	}
+}
+
+func TestManpagePreparationAndCreateErrorsNameOutput(t *testing.T) {
+	for _, stage := range []string{"folder", "file"} {
+		t.Run(stage, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "synthetic-private-output")
+			if stage == "folder" {
+				if err := os.WriteFile(dir, []byte("keep original"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.MkdirAll(filepath.Join(dir, "man1", "openai.1"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			root, _ := manpageTestCommand(t, dir)
+			failure := root.Run(t.Context(), []string{"openai", "@manpages"})
+			var local *localUtilityError
+			var cause *os.PathError
+			if !errors.As(failure, &local) || !errors.As(failure, &cause) || !errors.Is(failure, cause) {
+				t.Fatalf("manpage failure lost classification or cause: %v", failure)
+			}
+			message := localErrorMessage(root, failure)
+			if !strings.Contains(message, "Could not create a manpage file") && stage == "file" ||
+				!strings.Contains(message, "Could not create the manpage folder") && stage == "folder" ||
+				!strings.Contains(message, "--output") || strings.Contains(message, "incomplete") || strings.Contains(message, "synthetic-private") {
+				t.Fatalf("wrong preparation recovery: %q", message)
+			}
+		})
 	}
 }
 
@@ -231,6 +268,19 @@ func TestWriteManpageFileErrorsAndCleanup(t *testing.T) {
 			for _, want := range []error{tc.wantErr, tc.closeErr} {
 				if want != nil && !errors.Is(err, want) {
 					t.Fatalf("error %v lost %v", err, want)
+				}
+			}
+			if err != nil {
+				var local *localUtilityError
+				if !errors.As(err, &local) || !strings.Contains(local.message, "--output") || !strings.Contains(local.message, "Some files may be incomplete") {
+					t.Fatalf("write/finalization failure lost recovery: %v", err)
+				}
+				var diagnostic bytes.Buffer
+				if showErr := ShowCommandError(readableErrorTestCommand(t, "--format-error", "json"), err, &diagnostic); showErr != nil {
+					t.Fatal(showErr)
+				}
+				if strings.Contains(diagnostic.String(), "synthetic") {
+					t.Fatalf("manpage diagnostic exposed a raw cause: %q", diagnostic.String())
 				}
 			}
 			if file.closeCalls != 1 || file.writesAfterClose != 0 {

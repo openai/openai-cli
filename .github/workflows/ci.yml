@@ -94,12 +94,16 @@ jobs:
       - name: Check native macOS shell targeting and setup decisions
         run: go test ./pkg/custom -run '^TestImagePicker(Shell|FirstRun|TabChoice|MacOS)' -count=1 -v
 
-  windows-picker-permissions:
-    timeout-minutes: 15
-    name: Windows shell setup permissions
+  minimum-unix-shells:
+    name: Minimum Unix executable suggestions
     needs: source
     permissions: {}
-    runs-on: windows-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=1 -mod=readonly'
+      OPENAI_CLI_REQUIRE_NATIVE_SHELLS: bash,zsh,fish
     steps:
       - name: Download prepared source
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -111,18 +115,771 @@ jobs:
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-go
+      - name: Prepare exact minimum Unix shells
+        shell: bash
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          test "$(go env GOOS)/$(go env GOARCH)" = linux/amd64
+          tools_dir="$RUNNER_TEMP/minimum-shells"
+          mkdir -p "$tools_dir/bin" "$tools_dir/home" "$tools_dir/config" "$tools_dir/data" "$tools_dir/cache"
+          cd "$tools_dir"
+          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
+            https://ftp.gnu.org/gnu/bash/bash-4.0.tar.gz -o bash-4.0.tar.gz
+          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
+            https://www.zsh.org/pub/old/zsh-5.8.tar.xz -o zsh-5.8.tar.xz
+          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
+            https://github.com/fish-shell/fish-shell/releases/download/4.0.0/fish-static-amd64-4.0.0.tar.xz -o fish-4.0.0.tar.xz
+          sha256sum --check <<'SHA256'
+          9793d394f640a95030c77d5ac989724afe196921956db741bcaf141801c50518  bash-4.0.tar.gz
+          dcc4b54cc5565670a65581760261c163d720991f0d06486da61f8d839b52de27  zsh-5.8.tar.xz
+          e7bc962652763e9ca396fd81c1a6cc6105c78f4a82ec35b6bf5c3edacfbd2114  fish-4.0.0.tar.xz
+          SHA256
+          tar -xzf bash-4.0.tar.gz
+          tar -xJf zsh-5.8.tar.xz
+          tar -xJf fish-4.0.0.tar.xz -C bin fish
+          (
+            cd bash-4.0
+            # GCC 10 changed the historical common-symbol default.
+            CFLAGS='-O2 -fcommon' ./configure --without-bash-malloc --disable-nls
+            # Bash 4.0's readline/history targets rebuild shared objects in overlapping submakes.
+            make -j1 bash
+          )
+          (
+            cd zsh-5.8
+            # Static modules keep this test executable independent of installation paths.
+            ./configure --disable-dynamic --with-tcsetpgrp
+            make -j2 config.h config.modules
+            make -j2 -C Src
+          )
+          ln -s "$tools_dir/bash-4.0/bash" bin/bash
+          ln -s "$tools_dir/zsh-5.8/Src/zsh" bin/zsh
+          # Extract signed-repository packages without installing packages or running maintainer scripts.
+          mkdir expect-packages expect-runtime
+          (
+            cd expect-packages
+            test -r /etc/apt/sources.list.d/ubuntu.sources
+            apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources \
+              -o Dir::Etc::sourceparts=/dev/null download expect tcl-expect tcl8.6 libtcl8.6
+            sha256sum ./*.deb
+            for archive in ./*.deb; do
+              dpkg-deb --field "$archive" Package Version Architecture
+              dpkg-deb --extract "$archive" ../expect-runtime
+            done
+          )
+          export MINIMUM_SHELL_TOOLS="$tools_dir"
+          python3 - <<'PY'
+          import os
+          import shlex
+          from pathlib import Path
+          tools = Path(os.environ["MINIMUM_SHELL_TOOLS"])
+          runtime = tools / "expect-runtime"
+          wrapper = tools / "bin/expect"
+          wrapper.write_text("#!/bin/sh\n" +
+              "export LD_LIBRARY_PATH=" + shlex.quote(str(runtime / "usr/lib/x86_64-linux-gnu")) + "\n" +
+              "export TCL_LIBRARY=" + shlex.quote(str(runtime / "usr/share/tcltk/tcl8.6")) + "\n" +
+              "exec " + shlex.quote(str(runtime / "usr/bin/expect")) + ' "$@"\n')
+          wrapper.chmod(0o700)
+          PY
+          require_shell_version() {
+            local name="$1" expected="$2" actual status
+            shift 2
+            if actual="$("$@")"; then
+              printf '%s version: expected %q; observed %q\n' "$name" "$expected" "$actual"
+            else
+              status=$?
+              printf '%s version probe failed with status %s; observed %q\n' "$name" "$status" "$actual" >&2
+              return "$status"
+            fi
+            test "$actual" = "$expected"
+          }
+          require_shell_version Bash 4.0.0 bin/bash --noprofile --norc \
+            -c 'printf "%s.%s.%s" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}" "${BASH_VERSINFO[2]}"'
+          require_shell_version zsh 5.8 bin/zsh -f -c 'printf "%s" "$ZSH_VERSION"'
+          # The official static asset includes one Cargo version metadata fix after the 4.0.0 tag.
+          require_shell_version Fish 4.0.0-1-g1e069b0ff env HOME="$tools_dir/home" XDG_CONFIG_HOME="$tools_dir/config" \
+            XDG_DATA_HOME="$tools_dir/data" XDG_CACHE_HOME="$tools_dir/cache" \
+            bin/fish --no-config -c 'printf "%s" $version'
+          printf '%s\n' 'Verified native minimums: Bash 4.0.0, zsh 5.8, Fish 4.0.0 (official static build 4.0.0-1-g1e069b0ff).'
+          bin/expect -v
+          for binary in bash-4.0/bash zsh-5.8/Src/zsh bin/fish; do
+            file "$binary"
+            file "$binary" | grep -q 'ELF 64-bit LSB.*x86-64'
+          done
+          sha256sum bash-4.0/bash zsh-5.8/Src/zsh bin/fish
+          printf '%s\n' "$tools_dir/bin" >> "$GITHUB_PATH"
+      - name: Test minimum Unix executable suggestions
+        shell: bash
+        timeout-minutes: 12
+        env:
+          OPENAI_CLI_TEST_BASH: ${{ runner.temp }}/minimum-shells/bin/bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from collections import Counter
+          from pathlib import Path
+
+          # These names match the existing Help compatibility shell inventory.
+          cases = {
+              'TestShellSuggestionMatcherCoversEverySingleEdit': [
+                  'a',
+                  'openai',
+                  'future_cli2',
+                  'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+              ],
+              'TestShellSuggestionMatcherUsesBoundName': ['openai', 'client', '_tool2'],
+              'TestShellSuggestionScriptsResolveOnlyRendererTokens': [],
+              'TestShellSuggestionsBashDisableAndReenablePreservesTracing': [],
+              'TestShellSuggestionsBashNocasematchPreservesCaseOnlyReplacement': ['-s', '-u'],
+              'TestShellSuggestionsBashNocasematchPreservesExactMatchingAndOptions': ['on', 'off'],
+              'TestShellSuggestionsBashNocasematchRejectsCaseOnlyBindingChange': ['-s', '-u'],
+              'TestShellSuggestionsBashRefusalPreservesExtglobOptions': [],
+              'TestShellSuggestionsBashRefusalPreservesParsedAliases': [],
+              'TestShellSuggestionsBashRefusalPreservesSourceProvenanceAndSiblingFiles': [],
+              'TestShellSuggestionsBashRefusalPreservesTracingPrivacy': ['#00', 'set_-x'],
+              'TestShellSuggestionsBashRefusesExportedOrReadonlyHandler': ['export', 'readonly', 'declare_-t'],
+              'TestShellSuggestionsBashRefusesPriorHandlerWithoutChangingNativeIdentity': ['0', '42', '127'],
+              'TestShellSuggestionsBashRejectsForeignHandlerAfterDisable': [],
+              'TestShellSuggestionsBashZshAdvisoryAndPrivacy': ['bash', 'zsh'],
+              'TestShellSuggestionsBashZshFallbackDoesNotEchoCommandText': ['bash', 'zsh'],
+              'TestShellSuggestionsBashZshPreserveLaterReplacement': ['bash', 'zsh'],
+              'TestShellSuggestionsBashZshPreservePriorErrexit': ['bash', 'zsh'],
+              'TestShellSuggestionsBashZshPriorExitPrecedesAdvice': ['bash', 'zsh'],
+              'TestShellSuggestionsBashZshRefuseShadowedExecutable': ['bash', 'zsh'],
+              'TestShellSuggestionsBashZshRejectRebindingUntilDisabled': ['bash', 'zsh'],
+              'TestShellSuggestionsBashZshRejectRemovedCachedExecutable': [
+                  'bash/after-setup',
+                  'bash/before-setup',
+                  'zsh/after-setup',
+                  'zsh/before-setup',
+              ],
+              'TestShellSuggestionsFishAbsentCurrentHandlerDoesNotReadInput': [],
+              'TestShellSuggestionsFishAbsentPriorPreservesFallbackAndInput': [],
+              'TestShellSuggestionsFishDefersEmittedEventsAndRestoresAfterRepeatedCalls': [],
+              'TestShellSuggestionsFishDelegatesArgumentsAndStatus': ['0', '42', '127'],
+              'TestShellSuggestionsFishDescriptionValueIsNotEventMetadata': [],
+              'TestShellSuggestionsFishMatcherAndPrivacy': [
+                  '"opneai"',
+                  '"opena"',
+                  '"xopenai"',
+                  '"openxai"',
+                  '"openaii"',
+                  '"opxnai"',
+                  '"Openai"',
+                  '"open-ai"',
+                  '"openai"',
+                  '"unrelated"',
+                  '"./opneai"',
+                  '"opneai\\n"',
+                  '"opneai\\x1b"',
+                  '"openai;"',
+                  '""',
+                  '"' + "a" * 1000 + '"',
+              ],
+              'TestShellSuggestionsFishNoninteractiveDoesNotActivate': [],
+              'TestShellSuggestionsFishOriginalNameAndSelfReplacement': [],
+              'TestShellSuggestionsFishPreservesEmptyHandlerAndInput': [],
+              'TestShellSuggestionsFishPreservesLatePrivateCopyCollision': [],
+              'TestShellSuggestionsFishPreservesMultilineHandlerLiterals': [],
+              'TestShellSuggestionsFishPreservesPriorSelfRemoval': [],
+              'TestShellSuggestionsFishPreservesSourceAndSiblingResource': [],
+              'TestShellSuggestionsFishPublicLookupAndLifecycle': [],
+              'TestShellSuggestionsFishRefusesAmbiguousSourceMetadata': [],
+              'TestShellSuggestionsFishRefusesCallerScopeWithoutMutation': [],
+              'TestShellSuggestionsFishRefusesCompletionWrappers': ['initial', 'later'],
+              'TestShellSuggestionsFishRefusesForeignPendingStack': [],
+              'TestShellSuggestionsFishRefusesLegacyEventWithoutMutation': [],
+              'TestShellSuggestionsFishRefusesSignalAndVariableEvents': [
+                  '--on-signal_USR1',
+                  '--on-variable_SUGGEST_EVENT_VARIABLE',
+              ],
+              'TestShellSuggestionsFishRefusesUnsupportedVersionBeforeMutation': [],
+              'TestShellSuggestionsFishRejectsPrivateCopyCollisions': [
+                  '__openai_suggestions_prior_1',
+                  '__openai_suggestions_current_1',
+              ],
+              'TestShellSuggestionsFishRejectsUnsupportedEventsWithoutMutation': [],
+              'TestShellSuggestionsFishRestoresAfterInterruptedDelegation': [
+                  'owned',
+                  'retained',
+                  'nested-retained',
+                  'disabled-retained',
+              ],
+              'TestShellSuggestionsFishRetainedWrapperAfterOwnedDisable': [],
+              'TestShellSuggestionsFishTraceDoesNotDiscloseUnusedHandlerLiterals': [],
+              'TestShellSuggestionsRequireSafeBoundName': [],
+              'TestShellSuggestionsZshDisableAndReenablePreservesTracing': [],
+              'TestShellSuggestionsZshRefusalPreservesHandlerAttributes': [
+                  'trace',
+                  'trace-local',
+                  'warn-nested',
+                  'sticky-emulation',
+              ],
+              'TestShellSuggestionsZshRefusalPreservesTracingPrivacy': ['#00', 'set_-x'],
+              'TestShellSuggestionsZshRefusesAutoloadWithoutLoadingHandler': [],
+              'TestShellSuggestionsZshRefusesEmptyPriorHandler': [],
+              'TestShellSuggestionsZshRefusesPriorHandlerWithoutChangingNativeIdentity': [
+                  'setopt/0',
+                  'setopt/42',
+                  'setopt/127',
+                  'unsetopt/0',
+                  'unsetopt/42',
+                  'unsetopt/127',
+              ],
+              'TestShellSuggestionsZshRejectsForeignHandlerAfterDisable': [],
+              'TestShellSuggestionsZshRejectsMissingAutoloadWithoutPartialActivation': [],
+          }
+
+          def required_cases(root, children):
+              # A slash inside one t.Run name does not emit intermediate parent events.
+              return {root} | {root + "/" + child for child in children}
+
+          def unique_fields(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError(f"duplicate JSON field: {key}")
+                  result[key] = value
+              return result
+
+          def validate_events(contents, expected, package):
+              runs, passes = Counter(), Counter()
+              package_events = Counter()
+              for line in contents.splitlines():
+                  event = json.loads(line, object_pairs_hook=unique_fields)
+                  if not isinstance(event, dict):
+                      raise ValueError("invalid event object")
+                  action = event.get("Action")
+                  if action == "build-output" and "Test" not in event:
+                      continue
+                  if event.get("Package") != package:
+                      raise ValueError("missing or unexpected package identity")
+                  if action not in {"start", "run", "pause", "cont", "output", "pass"}:
+                      raise ValueError(f"invalid, skipped, or failed action: {action!r}")
+                  name = event.get("Test")
+                  if name is None:
+                      if action not in {"start", "output", "pass"}:
+                          raise ValueError("invalid package action")
+                      if action in {"start", "pass"}:
+                          package_events[action] += 1
+                      continue
+                  if not isinstance(name, str) or name not in expected:
+                      raise ValueError(f"unexpected test: {name!r}")
+                  if action == "start":
+                      raise ValueError("test cannot start a package")
+                  if action == "run":
+                      runs[name] += 1
+                  elif action == "pass":
+                      if runs[name] != 1:
+                          raise ValueError(f"test passed without one run: {name}")
+                      passes[name] += 1
+              if package_events != Counter({"start": 1, "pass": 1}) or runs != Counter(expected) or passes != Counter(expected):
+                  raise ValueError("missing, duplicate, or incomplete test execution")
+
+
+          def main():
+              helper_events = set().union(*(required_cases(root, children) for root, children in cases.items()))
+              adapter_roots = [
+                  "TestShellSuggestionsAdaptersUnavailableExecutable",
+                  "TestShellSuggestionsAdaptersRefuseShadowedExecutable",
+                  "TestShellSuggestionsAdaptersRecheckExecutablePrecedence",
+                  "TestShellSuggestionsAdaptersRecheckRemovedExecutable",
+              ]
+              suites = [
+                  ("helpers", "internal/autocomplete", "^(" + "|".join(re.escape(root) for root in cases) + ")$",
+                   helper_events, "3m", 240),
+                  ("adapters", "internal/autocomplete", "^TestShellSuggestionsAdapters.*$/^fish$",
+                   set().union(*(required_cases(root, ["fish"]) for root in adapter_roots)), "2m", 180),
+                  ("public", "cmd/openai", "^TestMainShellSuggestionsNative$/^(bash|zsh|fish)$",
+                   required_cases("TestMainShellSuggestionsNative", ["bash", "zsh", "fish"]), "4m", 300),
+              ]
+              for name, package, pattern, expected, timeout, process_timeout in suites:
+                  path = Path(os.environ["RUNNER_TEMP"]) / f"minimum-shell-{name}.jsonl"
+                  command = ["go", "test", "-p", "1", "-parallel", "1", "./" + package,
+                             "-count=1", "-timeout=" + timeout, "-v", "-json", "-run", pattern]
+                  with path.open("w") as output:
+                      result = subprocess.run(command, stdout=output, timeout=process_timeout, check=False)
+                  print(path.read_text(), end="", flush=True)
+                  if result.returncode != 0:
+                      raise SystemExit(result.returncode)
+                  validate_events(path.read_text(), expected, "github.com/openai/openai-cli/" + package)
+                  print(f"Verified {len(expected)} named minimum-shell test events for {name}.", flush=True)
+
+
+          if __name__ == "__main__":
+              main()
+          PY
+      - name: Retain minimum shell evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: minimum-unix-shells-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/minimum-shell-*.jsonl
+          if-no-files-found: ignore
+          retention-days: 14
+
+  minimum-unix-powershell:
+    name: Unix PowerShell 7.0 executable suggestions
+    needs: source
+    permissions: {}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=1 -mod=readonly'
+      OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
+      POWERSHELL_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      POWERSHELL_UPDATECHECK: 'Off'
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-go
+      - name: Prepare native Unix PowerShell 7.0
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          test "$RUNNER_OS/$RUNNER_ARCH/$(uname -m)" = Linux/X64/x86_64
+          tools_dir="$RUNNER_TEMP/minimum-pwsh"
+          mkdir "$tools_dir"
+          mkdir -p "$tools_dir"/{runtime,dependencies,bin,home,config,data,cache}
+          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
+            https://github.com/PowerShell/PowerShell/releases/download/v7.0.0/powershell-7.0.0-linux-x64.tar.gz \
+            -o "$tools_dir/powershell-7.0.0-linux-x64.tar.gz"
+          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
+            https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu66_66.1-2ubuntu2.1_amd64.deb \
+            -o "$tools_dir/libicu66.deb"
+          curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
+            https://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb \
+            -o "$tools_dir/libssl1.1.deb"
+          (
+            cd "$tools_dir"
+            sha256sum --check <<'SHA256'
+          3e80a662a5defb283185961330c4a44d5d5179f9eb2a2ee74ac7e1d3caf16b2c  powershell-7.0.0-linux-x64.tar.gz
+          00d0de456134668f41bd9ea308a076bc0a6a805180445af8a37209d433f41efe  libicu66.deb
+          7cf39d70a639017d1dd7c8d36daa2258063608688e449fddf40ffdd46f992a78  libssl1.1.deb
+          SHA256
+          )
+          tar -xzf "$tools_dir/powershell-7.0.0-linux-x64.tar.gz" -C "$tools_dir/runtime"
+          dpkg-deb --extract "$tools_dir/libicu66.deb" "$tools_dir/dependencies"
+          dpkg-deb --extract "$tools_dir/libssl1.1.deb" "$tools_dir/dependencies"
+          chmod +x "$tools_dir/runtime/pwsh"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import shlex
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "minimum-pwsh"
+          # Tests restrict subprocess environments. Keep runtime dependencies in this launcher.
+          libraries = str(root / "dependencies/usr/lib/x86_64-linux-gnu") + ":" + str(root / "runtime")
+          launcher = root / "bin/pwsh"
+          launcher.write_text(
+              "#!/bin/sh\nexport LD_LIBRARY_PATH=" + shlex.quote(libraries) +
+              "\nexport CLR_ICU_VERSION_OVERRIDE=66\nexec " + shlex.quote(str(root / "runtime/pwsh")) + ' "$@"\n',
+              encoding="utf-8",
+          )
+          launcher.chmod(0o700)
+          PY
+          printf '%s\n' "$tools_dir/bin" >> "$GITHUB_PATH"
+          env HOME="$tools_dir/home" XDG_CONFIG_HOME="$tools_dir/config" \
+            XDG_DATA_HOME="$tools_dir/data" XDG_CACHE_HOME="$tools_dir/cache" \
+            "$tools_dir/bin/pwsh" -NoLogo -NoProfile -NonInteractive -Command '
+              $ErrorActionPreference = "Stop"
+              $culture = [Globalization.CultureInfo]::GetCultureInfo("tr-TR")
+              [ordered]@{
+                executable = (Get-Process -Id $PID).Path
+                version = $PSVersionTable.PSVersion.ToString()
+                edition = $PSVersionTable.PSEdition
+                platform = $PSVersionTable.Platform
+                linux = [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)
+                osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+                processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+                turkishUpperCodepoint = [int][char]$culture.TextInfo.ToUpper("i")
+                icuVersionOverride = $env:CLR_ICU_VERSION_OVERRIDE
+                libraryPath = $env:LD_LIBRARY_PATH
+              } | ConvertTo-Json -Compress' > "$tools_dir/shell.json"
+          go env -json GOOS GOARCH GOHOSTOS GOHOSTARCH > "$tools_dir/go.json"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import struct
+          import subprocess
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "minimum-pwsh"
+          shell = json.loads((root / "shell.json").read_text(encoding="utf-8"))
+          go = json.loads((root / "go.json").read_text(encoding="utf-8"))
+          runtime = root / "runtime/pwsh"
+          launcher = root / "bin/pwsh"
+          candidate = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if candidate != os.environ["GITHUB_SHA"] or go != {
+              "GOOS": "linux", "GOHOSTOS": "linux", "GOARCH": "amd64", "GOHOSTARCH": "amd64",
+          }:
+              raise ValueError("Candidate or native Go architecture differs")
+          with runtime.open("rb") as stream:
+              header = stream.read(20)
+          if header[:6] != b"\x7fELF\x02\x01" or struct.unpack("<H", header[18:20])[0] != 62:
+              raise ValueError("PowerShell must be a native Linux x64 ELF executable")
+          if (shell["executable"] != str(runtime) or shell["version"] != "7.0.0" or
+                  shell["edition"] != "Core" or shell["platform"] != "Unix" or shell["linux"] is not True or
+                  shell["osArchitecture"] != "X64" or shell["processArchitecture"] != "X64" or
+                  shell["turkishUpperCodepoint"] != 304 or shell["icuVersionOverride"] != "66" or
+                  shell["libraryPath"] != str(root / "dependencies/usr/lib/x86_64-linux-gnu") + ":" + str(root / "runtime")):
+              raise ValueError("PowerShell version, native process, or Turkish culture preflight failed")
+          proof = {
+              "candidate": candidate, "runnerOS": os.environ["RUNNER_OS"], "runnerArchitecture": os.environ["RUNNER_ARCH"],
+              "go": go, "goVersion": subprocess.check_output(["go", "version"], text=True).strip(),
+              "selectedPowerShell": shell, "launcher": str(launcher),
+              "launcherSHA256": hashlib.sha256(launcher.read_bytes()).hexdigest(),
+              "selectedSHA256": hashlib.sha256(runtime.read_bytes()).hexdigest(),
+              "runtimeArchiveSHA256": hashlib.sha256((root / "powershell-7.0.0-linux-x64.tar.gz").read_bytes()).hexdigest(),
+              "icuPackageSHA256": hashlib.sha256((root / "libicu66.deb").read_bytes()).hexdigest(),
+              "opensslPackageSHA256": hashlib.sha256((root / "libssl1.1.deb").read_bytes()).hexdigest(),
+          }
+          (Path(os.environ["RUNNER_TEMP"]) / "unix-powershell-platform.json").write_text(
+              json.dumps(proof, indent=2) + "\n", encoding="utf-8",
+          )
+          print(json.dumps(proof, indent=2))
+          PY
+      - name: Test native Unix PowerShell executable suggestions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(command -v pwsh)" = "$RUNNER_TEMP/minimum-pwsh/bin/pwsh"
+          go test -p 1 -parallel 1 ./internal/autocomplete -run '^TestShellSuggestionsPowerShell' -count=1 -timeout=5m -v -json \
+            | tee "$RUNNER_TEMP/unix-powershell-suggestion-tests.jsonl"
+          go test -p 1 -parallel 1 ./internal/autocomplete -run '^TestShellSuggestionsAdapters.*$/^pwsh$' -count=1 -timeout=3m -v -json \
+            | tee "$RUNNER_TEMP/unix-powershell-adapter-tests.jsonl"
+          go test -p 1 -parallel 1 ./cmd/openai -run '^TestMainShellSuggestionsNative$/^pwsh$' -count=1 -timeout=3m -v -json \
+            | tee "$RUNNER_TEMP/unix-powershell-public-tests.jsonl"
+      - name: Verify native Unix PowerShell execution
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from collections import Counter
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+
+          def require(condition, message):
+              if not condition:
+                  raise ValueError(message)
+
+
+          def unique_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  require(key not in result, "Duplicate JSON field: " + key)
+                  result[key] = value
+              return result
+
+          def cases(root, children=()):
+              return {root} | {root + "/" + child for child in children}
+
+          powershell = {
+              "TestShellSuggestionsPowerShell" + suffix
+              for suffix in [
+                  "PublicLookupAndPrivacy", "ModuleIsolation", "MatchesAndWindowsExtension",
+                  "WindowsMatchingIgnoresCurrentCulture", "UppercaseBinding",
+                  "CanonicalCaseUsesExistingCommand", "PreservesResolutionAndDisable",
+                  "PreservesPriorExceptions", "PriorResolutionWinsNearMiss",
+                  "StopSearchRemainsUnchanged", "DisableAliasConflict",
+              ]
+          }
+          matches = [
+              "opneai", "opena", "xopenai", "openxai", "openaii", "opxnai", "open-ai",
+              "opneai.exe", "opneai.EXE", "Opneai.exe", "OPNEAI.EXE", "openai.exe",
+              "OpenAI.exe", "OPENAI.EXE", "opneai.exe.exe", "./opneai.exe", "./Opneai.exe",
+              "C:\\opneai.exe", "opneai.ps1", "unrelated", "opneai\n", "opneai\x1b",
+              "openai;", "opneaı.exe", "opneaİ.exe", "ＯＰＮＥＡＩ.EXE", "a" * 1000,
+          ]
+          cultures = [
+              "Opneai.exe", "OPNEAI.EXE", "OpenAI.exe", "OPENAI.EXE",
+              "opneaı.exe", "opneaİ.exe", "./Opneai.exe", "C:\\Opneai.exe",
+          ]
+          for suffix, names in [
+              ("MatchesAndWindowsExtension", matches),
+              ("WindowsMatchingIgnoresCurrentCulture", cultures),
+          ]:
+              powershell.update(cases(
+                  "TestShellSuggestionsPowerShell" + suffix,
+                  [json.dumps(name, ensure_ascii=False).replace("\\u001b", "\\x1b") for name in names],
+              ))
+          powershell.update(cases(
+              "TestShellSuggestionsPowerShellModuleIsolation", ["isolated", "included"],
+          ))
+          adapters = set().union(*(
+              cases("TestShellSuggestionsAdapters" + suffix, ["pwsh"])
+              for suffix in [
+                  "UnavailableExecutable", "RefuseShadowedExecutable",
+                  "RecheckExecutablePrecedence", "RecheckRemovedExecutable",
+              ]
+          ))
+
+          public = cases("TestMainShellSuggestionsNative", ["pwsh"])
+          require((len(powershell), len(adapters), len(public)) == (48, 8, 2), "Suggestion inventory differs")
+          suites = {
+              "unix-powershell-suggestion-tests.jsonl": ("internal/autocomplete", powershell),
+              "unix-powershell-adapter-tests.jsonl": ("internal/autocomplete", adapters),
+              "unix-powershell-public-tests.jsonl": ("cmd/openai", public),
+          }
+          directory = Path(os.environ["RUNNER_TEMP"])
+          root = directory / "minimum-pwsh"
+          proof = json.loads((directory / "unix-powershell-platform.json").read_text(encoding="utf-8"),
+                             object_pairs_hook=unique_object)
+          require(proof["candidate"] == os.environ["GITHUB_SHA"], "Candidate identity differs")
+          require(proof["runnerOS"] == "Linux" and proof["runnerArchitecture"] == "X64", "Runner identity differs")
+          require(proof["go"] == {
+              "GOOS": "linux", "GOHOSTOS": "linux", "GOARCH": "amd64", "GOHOSTARCH": "amd64",
+          }, "Go host or target differs")
+          shell = proof["selectedPowerShell"]
+          require(shell["executable"] == str(root / "runtime/pwsh") and shell["version"] == "7.0.0" and
+                  shell["edition"] == "Core" and shell["platform"] == "Unix" and shell["linux"] is True and
+                  shell["osArchitecture"] == "X64" and shell["processArchitecture"] == "X64",
+                  "PowerShell did not run natively at the required version")
+          require(shell["turkishUpperCodepoint"] == 304 and shell["icuVersionOverride"] == "66" and
+                  shell["libraryPath"] == str(root / "dependencies/usr/lib/x86_64-linux-gnu") + ":" + str(root / "runtime"),
+                  "Turkish culture or private ICU selection differs")
+          require(proof["runtimeArchiveSHA256"] == "3e80a662a5defb283185961330c4a44d5d5179f9eb2a2ee74ac7e1d3caf16b2c" and
+                  proof["icuPackageSHA256"] == "00d0de456134668f41bd9ea308a076bc0a6a805180445af8a37209d433f41efe" and
+                  proof["opensslPackageSHA256"] == "7cf39d70a639017d1dd7c8d36daa2258063608688e449fddf40ffdd46f992a78",
+                  "Runtime, ICU, or OpenSSL package identity differs")
+          require(proof["selectedSHA256"] == hashlib.sha256((root / "runtime/pwsh").read_bytes()).hexdigest() and
+                  proof["selectedSHA256"] == "e92acf832104ca188f112bc126ced6879af6e86c6341d0b79a1e5a53c50f27b5",
+                  "Selected runtime changed")
+          require(proof["launcher"] == str(root / "bin/pwsh") and
+                  proof["launcherSHA256"] == hashlib.sha256((root / "bin/pwsh").read_bytes()).hexdigest(),
+                  "Selected launcher changed")
+          for filename, (package, expected) in suites.items():
+              observed = Counter()
+              for line in (directory / filename).read_text(encoding="utf-8").splitlines():
+                  event = json.loads(line, object_pairs_hook=unique_object)
+                  require(isinstance(event, dict), filename + ": expected a JSON object")
+                  action, name = event.get("Action"), event.get("Test", "")
+                  require(isinstance(action, str) and isinstance(name, str), filename + ": malformed event")
+                  require(action not in {"fail", "skip", "build-fail"}, filename + ": failed or skipped event")
+                  if action == "build-output":
+                      require(not name and isinstance(event.get("Output"), str), filename + ": malformed build output")
+                      continue
+                  require(event.get("Package") == "github.com/openai/openai-cli/" + package,
+                          filename + ": unexpected package")
+                  require(not name or name in expected, filename + ": unexpected named test: " + name)
+                  require(action in {"start", "run", "pass", "output"}, filename + ": unexpected action")
+                  if action == "output":
+                      require(isinstance(event.get("Output"), str), filename + ": malformed output")
+                  else:
+                      observed[action, name] += 1
+              wanted = Counter({("start", ""): 1, ("pass", ""): 1})
+              wanted.update({(action, name): 1 for action in ["run", "pass"] for name in expected})
+              require(observed == wanted, filename + ": missing, duplicate, or unexpected execution events")
+              print(f"{filename}: {len(expected)} named tests ran and passed exactly once; no skips")
+          PY
+      - name: Retain native Unix PowerShell evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: minimum-unix-powershell-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/unix-powershell-platform.json
+            ${{ runner.temp }}/unix-powershell-*-tests.jsonl
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-picker-permissions:
+    timeout-minutes: 15
+    name: ${{ matrix.name }}
+    needs: source
+    permissions: {}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows shell setup permissions
+            os: windows-latest
+            goarch: amd64
+            runner-arch: X64
+            process-arch: X64
+            powershell: current
+            existing-checks: true
+          - name: Windows ARM64 executable suggestions
+            os: windows-11-arm
+            goarch: arm64
+            runner-arch: ARM64
+            process-arch: Arm64
+            powershell: current
+          - name: Windows x64 PowerShell 7.0 executable suggestions
+            os: windows-latest
+            goarch: amd64
+            runner-arch: X64
+            process-arch: X64
+            powershell: '7.0.0'
+            archive: PowerShell-7.0.0-win-x64.zip
+            sha256: CDA2CA2227FBEC2C753AA760859667B02007D14646A831BD908B8F749CBCC687
+          - name: Windows ARM64 PowerShell 7.0 executable suggestions
+            os: windows-11-arm
+            goarch: arm64
+            runner-arch: ARM64
+            process-arch: Arm64
+            powershell: '7.0.0'
+            archive: PowerShell-7.0.0-win-arm64.zip
+            sha256: 2FD04091F7AACF2BBBA470EDC92A28034CD6F54999F7A880404AD17954476ABF
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-go
+      - name: Select and verify native PowerShell
+        id: powershell
+        shell: pwsh
+        env:
+          EXPECTED_GOARCH: ${{ matrix.goarch }}
+          EXPECTED_RUNNER_ARCH: ${{ matrix.runner-arch }}
+          EXPECTED_PROCESS_ARCH: ${{ matrix.process-arch }}
+          EXPECTED_POWERSHELL: ${{ matrix.powershell }}
+          POWERSHELL_ARCHIVE: ${{ matrix.archive || '' }}
+          POWERSHELL_SHA256: ${{ matrix.sha256 || '' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hostPowerShell = (Get-Process -Id $PID).Path
+          if ($env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne $env:EXPECTED_RUNNER_ARCH) {
+            throw 'Unexpected Windows runner architecture'
+          }
+          $goJson = go env -json GOOS GOARCH GOHOSTOS GOHOSTARCH
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect Go architecture' }
+          $go = $goJson | ConvertFrom-Json
+          if ($go.GOOS -cne 'windows' -or $go.GOHOSTOS -cne 'windows' -or
+              $go.GOARCH -cne $env:EXPECTED_GOARCH -or $go.GOHOSTARCH -cne $env:EXPECTED_GOARCH) {
+            throw 'Go host and target must match the native Windows runner'
+          }
+          $goVersion = go version
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect Go version' }
+          $candidate = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $candidate -cne $env:GITHUB_SHA) {
+            throw 'Prepared source does not match the workflow candidate'
+          }
+          $selected = (Get-Command pwsh.exe -CommandType Application -ErrorAction Stop).Source
+          if ($env:EXPECTED_POWERSHELL -ne 'current') {
+            # Official v7.0.0 release hashes pin portable archives. No host installation occurs.
+            $archive = Join-Path $env:RUNNER_TEMP $env:POWERSHELL_ARCHIVE
+            $directory = Join-Path $env:RUNNER_TEMP 'shell-suggestion-powershell'
+            Invoke-WebRequest -Uri "https://github.com/PowerShell/PowerShell/releases/download/v7.0.0/$env:POWERSHELL_ARCHIVE" -OutFile $archive
+            if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -cne $env:POWERSHELL_SHA256) {
+              throw 'PowerShell archive checksum mismatch'
+            }
+            New-Item -ItemType Directory -Path $directory | Out-Null
+            Expand-Archive -LiteralPath $archive -DestinationPath $directory
+            $selected = Join-Path $directory 'pwsh.exe'
+          }
+          $shellJson = & $selected -NoLogo -NoProfile -NonInteractive -Command '
+            [ordered]@{
+              executable = (Get-Process -Id $PID).Path
+              version = $PSVersionTable.PSVersion.ToString()
+              edition = $PSVersionTable.PSEdition
+              osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+              processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+            } | ConvertTo-Json -Compress'
+          if ($LASTEXITCODE -ne 0) { throw 'Selected PowerShell failed its native probe' }
+          $shell = $shellJson | ConvertFrom-Json
+          if ($shell.osArchitecture -cne $env:EXPECTED_PROCESS_ARCH -or
+              $shell.processArchitecture -cne $env:EXPECTED_PROCESS_ARCH -or
+              $shell.edition -cne 'Core' -or ([version]$shell.version).Major -lt 7 -or
+              -not [string]::Equals($shell.executable, $selected, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Selected PowerShell must execute natively from the verified path'
+          }
+          if ($env:EXPECTED_POWERSHELL -ne 'current' -and $shell.version -cne $env:EXPECTED_POWERSHELL) {
+            throw 'Selected PowerShell does not match the requested minimum version'
+          }
+          "selected-directory=$([IO.Path]::GetDirectoryName($selected))" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $proof = [ordered]@{
+            candidate = $candidate
+            runnerOS = $env:RUNNER_OS
+            runnerArchitecture = $env:RUNNER_ARCH
+            imageOS = $env:ImageOS
+            imageVersion = $env:ImageVersion
+            goVersion = $goVersion
+            go = $go
+            workflowPowerShell = $hostPowerShell
+            selectedPowerShell = $shell
+            selectedSHA256 = (Get-FileHash -LiteralPath $selected -Algorithm SHA256).Hash
+            expectedPowerShell = $env:EXPECTED_POWERSHELL
+          }
+          $proof | ConvertTo-Json -Depth 4 |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'shell-suggestion-platform.json') -Encoding utf8NoBOM -ErrorAction Stop
       - name: Check native Windows ownership, ACLs and profile transactions
+        if: matrix.existing-checks
         run: go test ./internal/autocomplete -run '^TestPicker(ProfileRecovery.*|Rename.*|RecoveryDirectory.*|Windows.*|FileMetadataPreservesZoneIdentifierAtSnapshotRecheck|ReplacementMetadataKeepsSameInheritedPermissions|SecurityDescriptorComparisonPreservesPermissions|InstallRoundTrip|InstallConfigDirectoryChanges|InstallIgnoresUnusedConfigDirectory|InstallConfigDirectoryRefusalPreservesFiles|InstallPreservesHardLinkedProfiles|ProfileHardLinkAddedAfterSnapshot|ScriptContentChecksLegacyNamespaces|InstallRetriesSupersededScriptCleanup|RemoveRetriesScriptCleanup|RemoveMissingProfileParentCleansOwnedScripts|RemoveMissingProfileAndScriptDirectoriesNoOp|RemoveMissingProfileParentReappearsWhileWaiting|RemovePreservesPersonalLineBoundaries|InstalledDetectsAndRefreshesOlderScript)$' -count=1 -v
       - name: Check Windows shell home targeting
+        if: matrix.existing-checks
         run: go test ./pkg/custom -run '^TestImagePicker(WindowsShellHome|ShellConsent)' -count=1 -v
+      - name: Check native PowerShell executable suggestions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PATH = $env:SELECTED_POWERSHELL_DIRECTORY + [IO.Path]::PathSeparator + $env:PATH
+          go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsPowerShell' -count=1 -timeout=5m -v -json |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'powershell-suggestion-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
+          SELECTED_POWERSHELL_DIRECTORY: ${{ steps.powershell.outputs.selected-directory }}
+      - name: Check native PowerShell suggestion adapters
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PATH = $env:SELECTED_POWERSHELL_DIRECTORY + [IO.Path]::PathSeparator + $env:PATH
+          go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsAdapters.*$/^pwsh$' -count=1 -timeout=3m -v -json |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'powershell-suggestion-adapter-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
+          SELECTED_POWERSHELL_DIRECTORY: ${{ steps.powershell.outputs.selected-directory }}
+      - name: Check native public executable suggestion setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PATH = $env:SELECTED_POWERSHELL_DIRECTORY + [IO.Path]::PathSeparator + $env:PATH
+          go test -p 1 ./cmd/openai -run '^(TestMainShellSuggestions|TestMainShellWindowsProcessDiagnostics$)' -count=1 -timeout=3m -v -json |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'public-shell-suggestion-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
+          SELECTED_POWERSHELL_DIRECTORY: ${{ steps.powershell.outputs.selected-directory }}
       - name: Check Windows stdin startup probing
         run: go test ./pkg/custom -run '^TestWindowsPipedDataAvailable$' -count=1 -v
       - name: Check native Windows shell and file commands
-        run: go test -p 2 ./cmd/openai -run '^TestMainShell' -count=1 -v
+        if: matrix.existing-checks
+        run: go test -p 2 ./cmd/openai -run '^TestMainShell' -skip '^TestMainShellSuggestions' -count=1 -v
         env:
           GOMAXPROCS: '2'
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: cmd,powershell,pwsh
       - name: Check native Windows download completion and cleanup
+        if: matrix.existing-checks
         run: go test -p 2 ./pkg/custom -run '^(TestWindowsDownload|TestManagedDownload|TestDownload|TestAutomaticDownload|TestBinaryResponsePreserves|TestWriteBinaryResponse|TestReportSaveReceipt|TestSaveReceiptContext|TestResponseSaveReceipt)' -count=1 -v
         env:
           GOMAXPROCS: '2'
@@ -134,6 +891,155 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           GOMAXPROCS: '2'
+
+      - name: Verify selected Windows suggestion test execution
+        shell: bash
+        env:
+          EXPECTED_GOARCH: ${{ matrix.goarch }}
+          EXPECTED_RUNNER_ARCH: ${{ matrix.runner-arch }}
+          EXPECTED_PROCESS_ARCH: ${{ matrix.process-arch }}
+          EXPECTED_POWERSHELL: ${{ matrix.powershell }}
+        run: |
+          python3 - <<'PY'
+          from collections import Counter
+          import json
+          import os
+          from pathlib import Path
+          import re
+
+          def require(condition, message):
+              if not condition:
+                  raise ValueError(message)
+
+          def unique_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  require(key not in result, "Duplicate JSON field: " + key)
+                  result[key] = value
+              return result
+
+          def cases(root, children=()):
+              return {root} | {root + "/" + child for child in children}
+
+          powershell = {
+              "TestShellSuggestionsPowerShell" + suffix
+              for suffix in [
+                  "PublicLookupAndPrivacy", "ModuleIsolation", "MatchesAndWindowsExtension",
+                  "WindowsMatchingIgnoresCurrentCulture", "UppercaseBinding",
+                  "CanonicalCaseUsesExistingCommand", "PreservesResolutionAndDisable",
+                  "PreservesPriorExceptions", "PriorResolutionWinsNearMiss",
+                  "StopSearchRemainsUnchanged", "DisableAliasConflict",
+              ]
+          }
+          matches = [
+              "opneai", "opena", "xopenai", "openxai", "openaii", "opxnai", "open-ai",
+              "opneai.exe", "opneai.EXE", "Opneai.exe", "OPNEAI.EXE", "openai.exe",
+              "OpenAI.exe", "OPENAI.EXE", "opneai.exe.exe", "./opneai.exe", "./Opneai.exe",
+              "C:\\opneai.exe", "opneai.ps1", "unrelated", "opneai\n", "opneai\x1b",
+              "openai;", "opneaı.exe", "opneaİ.exe", "ＯＰＮＥＡＩ.EXE", "a" * 1000,
+          ]
+          cultures = [
+              "Opneai.exe", "OPNEAI.EXE", "OpenAI.exe", "OPENAI.EXE",
+              "opneaı.exe", "opneaİ.exe", "./Opneai.exe", "C:\\Opneai.exe",
+          ]
+          for suffix, names in [
+              ("MatchesAndWindowsExtension", matches),
+              ("WindowsMatchingIgnoresCurrentCulture", cultures),
+          ]:
+              powershell.update(cases(
+                  "TestShellSuggestionsPowerShell" + suffix,
+                  [json.dumps(name, ensure_ascii=False).replace("\\u001b", "\\x1b") for name in names],
+              ))
+          powershell.update(cases(
+              "TestShellSuggestionsPowerShellModuleIsolation", ["isolated", "included"],
+          ))
+          adapters = set().union(*(
+              cases("TestShellSuggestionsAdapters" + suffix, ["pwsh"])
+              for suffix in [
+                  "UnavailableExecutable", "RefuseShadowedExecutable",
+                  "RecheckExecutablePrecedence", "RecheckRemovedExecutable",
+              ]
+          ))
+          public = (
+              cases("TestMainShellSuggestionsNative", ["pwsh"]) |
+              cases("TestMainShellSuggestionsRequireSeparateConsent", ["bash", "zsh", "fish", "pwsh"]) |
+              cases("TestMainShellSuggestionsConfigurationSnapshot", [
+                  "cache_creation", "cache_rewrite", "sibling_file", "new_profile",
+                  "existing_profile", "profile_mode", "cache_without_exclusion", "cache_directory",
+              ]) |
+              cases("TestMainShellSuggestionsRejectMixedPersistentSetup", [
+                  mode + "/" + flag for mode in ["text", "json"]
+                  for flag in ["--install-picker", "--uninstall-picker", "--automatic"]
+              ])
+          )
+          public.update(cases(
+              "TestMainShellWindowsProcessDiagnostics", ["success", "nonzero", "timeout"],
+          ))
+          require((len(powershell), len(adapters), len(public)) == (48, 8, 27),
+                  "Suggestion inventory contains missing or duplicate names")
+          suites = {
+              "powershell-suggestion-tests.jsonl": ("internal/autocomplete", powershell),
+              "powershell-suggestion-adapter-tests.jsonl": ("internal/autocomplete", adapters),
+              "public-shell-suggestion-tests.jsonl": ("cmd/openai", public),
+          }
+          directory = Path(os.environ["RUNNER_TEMP"])
+          proof = json.loads((directory / "shell-suggestion-platform.json").read_text(encoding="utf-8"),
+                             object_pairs_hook=unique_object)
+          require(proof["candidate"] == os.environ["GITHUB_SHA"], "Candidate identity differs")
+          require(proof["runnerOS"] == "Windows" and
+                  proof["runnerArchitecture"] == os.environ["EXPECTED_RUNNER_ARCH"], "Runner identity differs")
+          require(proof["go"] == {
+              "GOOS": "windows", "GOHOSTOS": "windows",
+              "GOARCH": os.environ["EXPECTED_GOARCH"], "GOHOSTARCH": os.environ["EXPECTED_GOARCH"],
+          }, "Go host or target differs")
+          shell = proof["selectedPowerShell"]
+          require(shell["osArchitecture"] == os.environ["EXPECTED_PROCESS_ARCH"] and
+                  shell["processArchitecture"] == os.environ["EXPECTED_PROCESS_ARCH"],
+                  "PowerShell did not run natively")
+          require(shell["edition"] == "Core" and re.fullmatch(r"\d+\.\d+\.\d+", shell["version"]) and
+                  int(shell["version"].split(".", 1)[0]) >= 7,
+                  "Unsupported PowerShell version")
+          require(proof["expectedPowerShell"] == os.environ["EXPECTED_POWERSHELL"], "PowerShell selection differs")
+          if proof["expectedPowerShell"] != "current":
+              require(shell["version"] == proof["expectedPowerShell"], "Minimum PowerShell version differs")
+          require(bool(shell["executable"]) and re.fullmatch(r"[0-9A-F]{64}", proof["selectedSHA256"]),
+                  "Missing selected executable identity")
+          for filename, (package, expected) in suites.items():
+              observed = Counter()
+              for line in (directory / filename).read_text(encoding="utf-8").splitlines():
+                  event = json.loads(line, object_pairs_hook=unique_object)
+                  require(isinstance(event, dict), filename + ": expected a JSON object")
+                  action, name = event.get("Action"), event.get("Test", "")
+                  require(isinstance(action, str) and isinstance(name, str), filename + ": malformed event")
+                  require(action not in {"fail", "skip", "build-fail"}, filename + ": failed or skipped event")
+                  if action == "build-output":
+                      require(not name and isinstance(event.get("Output"), str), filename + ": malformed build output")
+                      continue
+                  require(event.get("Package") == "github.com/openai/openai-cli/" + package,
+                          filename + ": unexpected package")
+                  require(not name or name in expected, filename + ": unexpected named test: " + name)
+                  require(action in {"start", "run", "pass", "output"}, filename + ": unexpected action")
+                  if action == "output":
+                      require(isinstance(event.get("Output"), str), filename + ": malformed output")
+                  else:
+                      observed[action, name] += 1
+              wanted = Counter({("start", ""): 1, ("pass", ""): 1})
+              wanted.update({(action, name): 1 for action in ["run", "pass"] for name in expected})
+              require(observed == wanted, filename + ": missing, duplicate, or unexpected execution events")
+              print(f"{filename}: {len(expected)} named tests ran and passed exactly once; no skips")
+          PY
+      - name: Retain native Windows suggestion evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-suggestions-${{ matrix.goarch }}-${{ matrix.powershell }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/shell-suggestion-platform.json
+            ${{ runner.temp }}/powershell-suggestion-tests.jsonl
+            ${{ runner.temp }}/powershell-suggestion-adapter-tests.jsonl
+            ${{ runner.temp }}/public-shell-suggestion-tests.jsonl
+          if-no-files-found: error
+          retention-days: 7
 
   build-artifacts:
     timeout-minutes: 30
@@ -272,8 +1178,17 @@ jobs:
       - name: Verify mock tooling security
         run: node scripts/mock-tools/security.test.js
 
+      - name: Check error audit validator
+        run: python3 scripts/test-error-audit.py
+
       - name: Check Linux picker metadata and profile identity
         run: go test ./internal/autocomplete -run '^TestPicker(InstallRetainsLinuxSELinuxLabel|SecurityLabel.*|InstallPreservesLinuxFileMetadata|LinuxMetadataAddedAfterSnapshotIsKept|UnixProfileIdentityKeepsDistinctCaseNames)$' -count=1 -v
+
+      - name: Check native Bash executable suggestions
+        run: go test -p 1 ./internal/autocomplete -run '^TestShellSuggestionsBash' -count=1 -timeout=5m -v
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: bash
 
       - name: Run tests
         # Large-payload and subprocess suites share this runner. Avoid running
@@ -305,20 +1220,62 @@ jobs:
         # `true` accepts each compiled Windows binary without executing it.
         run: GOARCH=amd64 GOOS=windows go test -exec=true ./... -p 1
 
+  error-audit:
+    timeout-minutes: 15
+    name: error audit (${{ matrix.shard }})
+    needs: source
+    permissions: {}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - name: Download prepared source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.source.outputs.artifact-id }}
+          path: ${{ runner.temp }}/ci-inputs
+          merge-multiple: true
+      - name: Restore candidate checkout
+        shell: bash
+        run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
+      - uses: ./.github/actions/setup-go
+      - name: Run exhaustive error audit shard
+        shell: bash
+        env:
+          OPENAI_CLI_ERROR_COVERAGE_MODE: exhaustive
+          OPENAI_CLI_ERROR_COVERAGE_SHARD_INDEX: ${{ matrix.shard }}
+          OPENAI_CLI_ERROR_COVERAGE_SHARD_COUNT: '4'
+          GOMAXPROCS: '2'
+        run: |
+          go test -p 1 ./cmd/openai -run '^Test(MainErrorCoverageAcrossCommandTree|ErrorCoverage)' -count=1 -timeout=10m -json > "$RUNNER_TEMP/error-audit.jsonl"
+          python3 scripts/check-error-audit.py --log "$RUNNER_TEMP/error-audit.jsonl" --shard-index "$OPENAI_CLI_ERROR_COVERAGE_SHARD_INDEX" --shard-count "$OPENAI_CLI_ERROR_COVERAGE_SHARD_COUNT"
+      - name: Retain audit log
+        if: always()
+        continue-on-error: true # Diagnostic upload does not replace shard validation.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: error-audit-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/error-audit.jsonl
+          retention-days: 7
+
   test:
     timeout-minutes: 5
     name: test
-    needs: [test-linux, test-windows-compile]
+    needs: [source, test-linux, test-windows-compile, error-audit]
     if: always()
     permissions: {}
     runs-on: ubuntu-latest
     steps:
-      - name: Require successful tests and Windows compilation
+      - name: Require successful tests and error audits
         env:
+          SOURCE_RESULT: ${{ needs.source.result }}
           LINUX_RESULT: ${{ needs.test-linux.result }}
           WINDOWS_RESULT: ${{ needs.test-windows-compile.result }}
+          AUDIT_RESULT: ${{ needs.error-audit.result }}
         run: |
-          if [[ "$LINUX_RESULT" != "success" || "$WINDOWS_RESULT" != "success" ]]; then
-            echo "Linux tests: $LINUX_RESULT; Windows compilation: $WINDOWS_RESULT"
+          if [[ "$SOURCE_RESULT" != "success" || "$LINUX_RESULT" != "success" || "$WINDOWS_RESULT" != "success" || "$AUDIT_RESULT" != "success" ]]; then
+            echo "Tests failed: source=$SOURCE_RESULT linux=$LINUX_RESULT windows=$WINDOWS_RESULT audit=$AUDIT_RESULT"
             exit 1
           fi

@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -21,39 +22,14 @@ import (
 func writeCodexTerminalGuide(ctx context.Context, command *cli.Command, guide codexInstructions) (bool, error) {
 	root := command.Root()
 	output, terminal := root.Writer.(*os.File)
-	if !terminal || !codexTerminalGuideEligible(root.String("format"), isTerminal(output), os.Getenv) {
+	if !terminal || !cliterminal.AutomaticPresentation(root.String("format"), isTerminal(output), os.Getenv) {
 		return false, nil
 	}
 	width, _, err := term.GetSize(output.Fd())
 	if err != nil || width < 40 {
 		return false, nil
 	}
-	return true, writeCodexTerminalContent(ctx, output, prettyColorProfile(output, os.Environ()), guide, width, codexGuideDarkBackground(os.Getenv("COLORFGBG")))
-}
-
-func codexTerminalGuideEligible(format string, terminal bool, getenv func(string) string) bool {
-	if !strings.EqualFold(format, "auto") || !terminal || strings.EqualFold(getenv("TERM"), "dumb") {
-		return false
-	}
-	for _, name := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "TF_BUILD", "BUILDKITE", "JENKINS_URL", "TEAMCITY_VERSION"} {
-		value := strings.ToLower(getenv(name))
-		if value != "" && value != "false" && value != "0" {
-			return false
-		}
-	}
-	return true
-}
-
-func codexGuideDarkBackground(colorfgbg string) bool {
-	// Use only the environment's explicit standard light backgrounds. The dark
-	// default matches the image picker's initial theme without reading stdin.
-	parts := strings.Split(colorfgbg, ";")
-	switch parts[len(parts)-1] {
-	case "7", "15", "231", "255":
-		return false
-	default:
-		return true
-	}
+	return true, writeCodexTerminalContent(ctx, output, cliterminal.ColorProfile(output, os.Environ(), isTerminal(output)), guide, width, cliterminal.DarkBackground(os.Getenv("COLORFGBG")))
 }
 
 func writeCodexTerminalContent(ctx context.Context, output io.Writer, profile colorprofile.Profile, guide codexInstructions, width int, dark bool) error {

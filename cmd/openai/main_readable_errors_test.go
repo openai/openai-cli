@@ -158,7 +158,7 @@ func TestMainSensitiveLocalErrors(t *testing.T) {
 			args: []string{"--base-url", "synthetic-private-host/?token=fake-secret", "models", "list"},
 		},
 		{
-			name: "missing file", want: "local file",
+			name: "missing file", want: "the file for --input",
 			args: []string{"responses", "create", "--model", "synthetic-model", "--input", "@" + missingFile},
 		},
 		{

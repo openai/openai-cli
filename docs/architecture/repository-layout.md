@@ -15,6 +15,10 @@ ordering, and the launch deadline.
 Cancellation-aware output writing and sink/diagnostic error classification live
 in `internal/output/`, shared by handwritten commands and presentation code.
 
+Shared color profiles, automatic terminal presentation eligibility, and background
+theme detection live in `internal/terminal/`. Feature callers retain terminal
+detection for their output destinations, including wrapped batch output.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

@@ -13,18 +13,26 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
 
 // Local diagnostics can contain rejected values, file names, and credentialed
 // URLs. Classify them into local prose; terminal escaping is not redaction.
 func localErrorMessage(root *cli.Command, failure error) string {
+	command := root
+	var contextual *commandError
+	if errors.As(failure, &contextual) && contextual.command != nil {
+		command = contextual.command
+	}
 	var timeout net.Error
 	var networkError *url.Error
 	var connectionError *net.OpError
 	var typeError *json.UnmarshalTypeError
 	var syntaxError *json.SyntaxError
 	var pathError *os.PathError
+	var inputFailure *inputFileError
+	var stdinFailure *requestflag.StdinValueError
 	var pagerFailure *pagerError
 	var imageFailure *imageSavingError
 	var streamFailure *streamResultError
@@ -69,6 +77,23 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		return navigationFailure.Error()
 	case errors.As(failure, &streamFailure):
 		return streamFailure.message + "\nOutput may be incomplete."
+	case errors.As(failure, &stdinFailure):
+		message := "Could not apply piped input. Check the input's field names and value types."
+		for _, flag := range parserErrorFlags(command) {
+			if !slices.Contains(flag.Names(), stdinFailure.FlagName()) {
+				continue
+			}
+			name := "--" + flag.Names()[0]
+			if len(flag.Names()[0]) == 1 {
+				name = "-" + flag.Names()[0]
+			}
+			message = "Invalid piped input for " + name + "."
+			if expected := parserFlagTypeDescription(flag); expected != "" {
+				message += " Expected " + expected + "."
+			}
+			break
+		}
+		return parserErrorGuidance(command, message)
 	case errors.As(failure, &typeError):
 		return "Could not decode JSON: a value has an unexpected type."
 	case errors.As(failure, &syntaxError):
@@ -82,10 +107,13 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	case errors.As(failure, &voiceTypeFailure):
 		return voiceTypeFailure.Error()
 	case errors.As(failure, &helpTopicFailure):
-		return unknownCommandAt(helpTopicFailure.Parent, helpTopicFailure.Topic)
+		return commandRecoveryAt(helpTopicFailure.Parent, helpTopicFailure.Topic, helpTopicFailure.Remaining, true)
 	case errors.As(failure, &adminCredentialsFailure):
 		return adminCredentialsFailure.Error()
-	case errors.As(failure, &pathError):
+	case errors.As(failure, &inputFailure), errors.As(failure, &pathError):
+		if inputFailure != nil {
+			return inputFileErrorMessage(root, failure)
+		}
 		switch {
 		case errors.Is(pathError, os.ErrNotExist):
 			return "A local file could not be found. Check your file arguments and @file references."
@@ -94,11 +122,6 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		default:
 			return "A local file could not be read or written. Check your file arguments and permissions."
 		}
-	}
-	command := root
-	var contextual *commandError
-	if errors.As(failure, &contextual) && contextual.command != nil {
-		command = contextual.command
 	}
 	for err := failure; err != nil; err = errors.Unwrap(err) {
 		if message := knownLocalError(command, err.Error()); message != "" {
@@ -220,12 +243,15 @@ func knownLocalError(command *cli.Command, message string) string {
 	case strings.HasPrefix(message, "flag provided but not defined: -"):
 		name := strings.TrimPrefix(message, "flag provided but not defined: -")
 		message := "An option is not recognized."
+		if flag := unavailableParserFlag(command, name); flag != "" {
+			message = "The " + flag + " option is not available for this command."
+		}
 		if suggestion := suggestParserFlag(command, name); suggestion != "" {
 			message += " Did you mean " + suggestion + "?"
 		}
 		return parserErrorGuidance(command, message)
 	case strings.HasPrefix(message, "No help topic for '"):
-		return unknownCommandErrorMessage(command)
+		return commandRecoveryMessage(command)
 	case strings.HasPrefix(message, "Unknown help topic "):
 		return "Unknown help topic. Run openai help to see commands."
 	case strings.HasPrefix(message, "Failed to parse piped data as YAML/JSON:\n"):
@@ -256,25 +282,68 @@ func parserErrorFlags(command *cli.Command) []cli.Flag {
 	if command == nil {
 		return nil
 	}
-	return append(command.VisibleFlags(), command.VisiblePersistentFlags()...)
+	visible := command.VisibleFlags()
+	inherited := command.VisiblePersistentFlags()
+	eligible := append(slices.Clone(visible), inherited...)
+	// InnerFlag is a valid parser declaration without cli.VisibleFlag. Follow
+	// its actual outer declarations, excluding hidden and unrelated chains.
+	visibleOuter := func(flag cli.Flag) bool {
+		seen := map[cli.Flag]bool{}
+		for flag != nil {
+			if visible, ok := flag.(cli.VisibleFlag); ok && !visible.IsVisible() {
+				return false
+			}
+			if slices.Contains(eligible, flag) {
+				return true
+			}
+			if seen[flag] || !slices.Contains(command.Flags, flag) {
+				return false
+			}
+			inner, ok := flag.(requestflag.HasOuterFlag)
+			if !ok {
+				return false
+			}
+			seen[flag] = true
+			flag = inner.GetOuterFlag()
+		}
+		return false
+	}
+	var flags []cli.Flag
+	// Local declaration order decides which declaration owns a shared alias.
+	for _, flag := range command.Flags {
+		if visibleOuter(flag) {
+			flags = append(flags, flag)
+		}
+	}
+	// Preserve any framework-visible flags outside the ordinary flag slice.
+	for _, flag := range append(visible, inherited...) {
+		if !slices.Contains(flags, flag) {
+			flags = append(flags, flag)
+		}
+	}
+	return flags
 }
 
 func parserFlagExpectedType(command *cli.Command, name string) string {
-	for _, flag := range parserErrorFlags(command) {
-		if !slices.Contains(flag.Names(), name) {
-			continue
+	flag := declaredErrorFlagDefinition(command, name)
+	if flag != nil && slices.Contains(parserErrorFlags(command), flag) {
+		return parserFlagTypeDescription(flag)
+	}
+	return ""
+}
+
+func parserFlagTypeDescription(flag cli.Flag) string {
+	if documented, ok := flag.(cli.DocGenerationFlag); ok {
+		switch documented.TypeName() {
+		case "int", "uint":
+			return "an integer, such as 1"
+		case "float":
+			return "a number, such as 0.5"
+		case "bool", "boolean":
+			return "a boolean (true or false)"
+		case "duration":
+			return "a duration, such as 1s"
 		}
-		if documented, ok := flag.(cli.DocGenerationFlag); ok {
-			switch documented.TypeName() {
-			case "int", "uint":
-				return "an integer"
-			case "float":
-				return "a number"
-			case "bool", "boolean":
-				return "a boolean (true or false)"
-			}
-		}
-		return ""
 	}
 	return ""
 }
@@ -313,57 +382,6 @@ func suggestParserFlag(command *cli.Command, provided string) string {
 	return suggestion
 }
 
-func unknownCommandErrorMessage(command *cli.Command) string {
-	// Reuse the matcher with parsed arguments, never a suggestion copied from
-	// the error string. It emits only names from the local command declarations.
-	if command != nil {
-		command = command.Root()
-	}
-	for command != nil && command.Args() != nil && command.Args().Present() {
-		name := command.Args().First()
-		if next := command.Command(name); next != nil {
-			command = next
-			continue
-		}
-		return unknownCommandAt(command, name)
-	}
-	return "Unknown help topic. Run openai help to see commands."
-}
-
-func unknownCommandAt(command *cli.Command, name string) string {
-	if command == nil {
-		return "Unknown help topic. Run openai help to see commands."
-	}
-	if command.Suggest {
-		candidates := clihelp.VisibleCommands(command)
-		for _, child := range command.Commands {
-			compatibility, _ := child.Metadata["command-compatibility-alias"].(bool)
-			if child.Hidden && compatibility && (strings.Contains(name, ":") || withinOneEdit(strings.ToLower(name), strings.ToLower(child.Name))) {
-				candidates = append(candidates, child)
-			}
-		}
-		if suggestion := suggestCommand(candidates, name); suggestion != "" {
-			prefix := "Did you mean '" + command.Root().Name
-			if strings.HasPrefix(suggestion, prefix+" ") {
-				suggestion = "Did you mean '" + errorHelpInvocation(command.Root()) + strings.TrimPrefix(suggestion, prefix)
-			}
-			return "Unknown help topic. " + suggestion
-		}
-	}
-	var path []string
-	for _, ancestor := range command.Lineage() {
-		if ancestor != command.Root() {
-			path = append(path, ancestor.Name)
-		}
-	}
-	slices.Reverse(path)
-	invocation := errorHelpInvocation(command.Root()) + " help"
-	if len(path) > 0 {
-		invocation += " " + strings.Join(path, " ")
-	}
-	return "Unknown help topic. Run " + invocation + " to see commands."
-}
-
 func afterQuotedValue(message, prefix string) (string, bool) {
 	rest, ok := strings.CutPrefix(message, prefix)
 	if !ok {
@@ -377,22 +395,32 @@ func afterQuotedValue(message, prefix string) (string, bool) {
 }
 
 func declaredErrorFlag(command *cli.Command, name string) string {
+	if flag := declaredErrorFlagDefinition(command, name); flag != nil {
+		names := flag.Names()
+		prefix := "--"
+		if len(names[0]) == 1 {
+			prefix = "-"
+		}
+		return prefix + names[0]
+	}
+	return ""
+}
+
+// Keep the existing declaration-name lookup. Type guidance additionally
+// requires the same declaration to belong to the eligible parser scope.
+func declaredErrorFlagDefinition(command *cli.Command, name string) cli.Flag {
 	if command == nil {
-		return ""
+		return nil
 	}
 	for _, ancestor := range command.Lineage() {
 		for _, flag := range ancestor.Flags {
 			names := flag.Names()
 			for _, candidate := range names {
 				if candidate == name {
-					prefix := "--"
-					if len(names[0]) == 1 {
-						prefix = "-"
-					}
-					return prefix + names[0]
+					return flag
 				}
 			}
 		}
 	}
-	return ""
+	return nil
 }

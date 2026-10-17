@@ -3,6 +3,7 @@ package custom
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -124,10 +125,51 @@ func TestImagePickerShellSetupRejectsPowerShellWithoutWriting(t *testing.T) {
 			require.Contains(t, err.Error(), "openai images generate")
 			require.Empty(t, output)
 			require.Empty(t, diagnostic)
+			var presented bytes.Buffer
+			require.NoError(t, ShowCommandError(readableErrorTestCommand(t), err, &presented))
+			require.Contains(t, presented.String(), "PowerShell uses normal Tab completion")
 			entries, err := os.ReadDir(home)
 			require.NoError(t, err)
 			require.Empty(t, entries)
 		}
+	}
+}
+
+func TestImagePickerShellSetupValidationPreservesRecoveryAndExit(t *testing.T) {
+	for _, tc := range []struct {
+		name, message string
+		args          []string
+	}{
+		{"orphan profile", "Use --install-picker or --uninstall-picker with setup options.", []string{"bash", "--profile"}},
+		{"conflicting actions", "Choose one setup action. Automatic setup does not accept a shell or profile override.", []string{"bash", "--install-picker", "--uninstall-picker", "--profile"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := pickerShellSetupHome(t)
+			profile := filepath.Join(home, "synthetic-private-profile")
+			original := []byte("# preserved startup bytes\n")
+			require.NoError(t, os.WriteFile(profile, original, 0600))
+			output, diagnostic, failure := runPickerShellSetupWithDiagnostics(t, t.Context(), append(tc.args, profile)...)
+			require.Empty(t, output)
+			require.Empty(t, diagnostic)
+			var local *localUtilityError
+			var exit cli.ExitCoder
+			require.ErrorAs(t, failure, &local)
+			require.ErrorAs(t, failure, &exit)
+			require.Equal(t, 2, exit.ExitCode())
+			require.True(t, errors.Is(failure, local.cause))
+			for _, format := range []string{"text", "json"} {
+				var presented bytes.Buffer
+				require.NoError(t, ShowCommandError(readableErrorTestCommand(t, "--format-error", format), failure, &presented))
+				require.Contains(t, presented.String(), tc.message)
+				require.NotContains(t, presented.String(), "synthetic-private")
+			}
+			data, err := os.ReadFile(profile)
+			require.NoError(t, err)
+			require.Equal(t, original, data)
+			entries, err := os.ReadDir(home)
+			require.NoError(t, err)
+			require.Len(t, entries, 1, "validation must not create setup state")
+		})
 	}
 }
 

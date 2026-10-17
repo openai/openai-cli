@@ -11,41 +11,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func TestCodexTerminalGuideEligibility(t *testing.T) {
-	for _, test := range []struct {
-		name, format, variable, value string
-		terminal, want                bool
-	}{
-		{"auto terminal", "auto", "TERM", "xterm-256color", true, true},
-		{"case insensitive auto", "AUTO", "TERM", "xterm", true, true},
-		{"pipe", "auto", "TERM", "xterm", false, false},
-		{"explicit text", "text", "TERM", "xterm", true, false},
-		{"explicit json", "json", "TERM", "xterm", true, false},
-		{"dumb", "auto", "TERM", "Dumb", true, false},
-		{"CI", "auto", "CI", "true", true, false},
-		{"CI disabled", "auto", "CI", "false", true, true},
-		{"CI zero", "auto", "CI", "0", true, true},
-		{"GitHub CI", "auto", "GITHUB_ACTIONS", "1", true, false},
-		{"GitLab CI", "auto", "GITLAB_CI", "1", true, false},
-		{"Azure CI", "auto", "TF_BUILD", "1", true, false},
-		{"Buildkite CI", "auto", "BUILDKITE", "1", true, false},
-		{"Jenkins CI", "auto", "JENKINS_URL", "synthetic", true, false},
-		{"TeamCity CI", "auto", "TEAMCITY_VERSION", "synthetic", true, false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			getenv := func(name string) string {
-				if name == test.variable {
-					return test.value
-				}
-				return ""
-			}
-			if got := codexTerminalGuideEligible(test.format, test.terminal, getenv); got != test.want {
-				t.Fatalf("eligible = %v, want %v", got, test.want)
-			}
-		})
-	}
-}
-
 func TestCodexTerminalGuidePreservesInstructions(t *testing.T) {
 	guide := codexGuide()
 	for _, width := range []int{40, 80, 200} {
@@ -120,19 +85,6 @@ func TestCodexTerminalGuideColorPolicyAndFailures(t *testing.T) {
 	}
 	if output.Len() != 0 {
 		t.Fatal("canceled guide wrote output")
-	}
-}
-
-func TestCodexTerminalGuideBackgroundDoesNotQueryInput(t *testing.T) {
-	for _, value := range []string{"", "15;0", "0;8", "synthetic"} {
-		if !codexGuideDarkBackground(value) {
-			t.Errorf("%q: expected safe dark default", value)
-		}
-	}
-	for _, value := range []string{"0;7", "0;15", "0;231", "0;255"} {
-		if codexGuideDarkBackground(value) {
-			t.Errorf("%q: ignored explicit light background", value)
-		}
 	}
 }
 

@@ -38,13 +38,19 @@ func configureManpageCommands(root *cli.Command) {
 
 		dir := command.String("output")
 		if err := os.MkdirAll(filepath.Join(dir, "man1"), 0755); err != nil {
-			return err
+			return &localUtilityError{message: "Could not create the manpage folder for --output. Check the destination path and permissions.", cause: err}
 		}
+		writingStarted := false
 		writeFile := func(name string, compressed bool) error {
 			file, err := os.Create(filepath.Join(dir, "man1", name))
 			if err != nil {
-				return err
+				message := "Could not create a manpage file for --output. Check the destination path and permissions."
+				if writingStarted {
+					message += " Some manpage files may be incomplete; check them before using them."
+				}
+				return &localUtilityError{message: message, cause: err}
 			}
+			writingStarted = true
 			return writeManpageFile(file, manpage, compressed)
 		}
 		if command.Bool("text") {
@@ -66,7 +72,15 @@ func configureManpageCommands(root *cli.Command) {
 
 // writeManpageFile owns file and finishes compression before closing it.
 func writeManpageFile(file io.WriteCloser, manpage string, compressed bool) (err error) {
-	defer func() { err = errors.Join(err, file.Close()) }()
+	defer func() {
+		err = errors.Join(err, file.Close())
+		if err != nil {
+			err = &localUtilityError{
+				message: "Could not finish writing manpages for --output. Some files may be incomplete. Check the destination path and permissions.",
+				cause:   err,
+			}
+		}
+	}()
 	var written int
 	if compressed {
 		writer := gzip.NewWriter(file)

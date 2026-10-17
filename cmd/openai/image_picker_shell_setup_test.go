@@ -415,7 +415,11 @@ func TestMainCompletionArgumentsIgnoreRequestConfiguration(t *testing.T) {
 			if test.wantCode == 0 && want != script {
 				t.Fatalf("non-setup arguments changed the completion script: %+v", want)
 			}
-			if test.wantCode != 0 && (want.stdout != "" || !strings.Contains(want.stderr, "Check your arguments with --help.")) {
+			wantError := "Use --install-picker or --uninstall-picker with setup options.\n"
+			if test.args[0] == "-" {
+				wantError = "Choose one setup action. Automatic setup does not accept a shell or profile override.\n"
+			}
+			if test.wantCode != 0 && (want.stdout != "" || want.stderr != wantError) {
 				t.Fatalf("invalid setup arguments lost their local diagnostic: %+v", want)
 			}
 			for _, configuration := range []struct {
