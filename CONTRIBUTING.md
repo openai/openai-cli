@@ -59,8 +59,8 @@ below describes the current layout as the migration proceeds.
   and escapes terminal controls for results and errors.
 - `internal/output/` owns cancellation-aware writing and distinguishes output-sink
   failures from diagnostics and upstream errors.
-- `internal/terminal/` owns platform adapters, starting with browser launching
-  and child-process environment isolation.
+- `internal/terminal/` owns browser launching and child-process environment
+  isolation, color profiles, automatic terminal presentation, and background themes.
 - `internal/app/` owns invocation, request-environment scope, completion setup,
   output policy, and exit-status selection. Command assembly still uses the
   existing generated tree during the layout migration.
