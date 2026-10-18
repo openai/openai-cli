@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/jsonview"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/tidwall/pretty"
 )
@@ -142,7 +143,7 @@ func (list *finiteJSONList) write(out io.Writer) error {
 		if err != nil || data == nil {
 			return list.err(err)
 		}
-		if _, err := (outputWriter{ctx: list.opts.Context, out: out}).Write(data); err != nil {
+		if _, err := (clioutput.Writer{Context: list.opts.Context, Sink: out}).Write(data); err != nil {
 			return list.err(err)
 		}
 	}
@@ -159,7 +160,7 @@ func (list *finiteJSONList) showTerminal(width, height int) error {
 		}
 		if err != nil || data == nil || list.done {
 			return streamToStdout(func(out *os.File) error {
-				_, writeErr := (outputWriter{ctx: list.opts.Context, out: out}).Write(prefix.Bytes())
+				_, writeErr := (clioutput.Writer{Context: list.opts.Context, Sink: out}).Write(prefix.Bytes())
 				return list.err(errors.Join(err, writeErr))
 			})
 		}
@@ -167,7 +168,7 @@ func (list *finiteJSONList) showTerminal(width, height int) error {
 	// Keep existing long-output paging. The prefix holds at most one screen plus
 	// the item crossing that screen, independent of the total list length.
 	return streamOutput(list.opts.Title, func(out *os.File) error {
-		if _, err := (outputWriter{ctx: list.opts.Context, out: out}).Write(prefix.Bytes()); err != nil {
+		if _, err := (clioutput.Writer{Context: list.opts.Context, Sink: out}).Write(prefix.Bytes()); err != nil {
 			return list.err(err)
 		}
 		return list.write(out)

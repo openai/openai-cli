@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/audiohistory"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
@@ -160,5 +161,5 @@ func validateAudioSettings(s audiohistory.Settings) error {
 }
 
 func audioFailure(message string, cause error) error {
-	return &localUtilityError{message: message, cause: cause}
+	return &localcommands.LocalError{Message: message, Cause: cause}
 }

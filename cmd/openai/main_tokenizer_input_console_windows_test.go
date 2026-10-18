@@ -35,7 +35,7 @@ func TestMainDispatchTokenizerInputConsole(t *testing.T) {
 	if selection != "" && selection != "unicode" {
 		t.Fatal("unknown tokenizer console case selection")
 	}
-	adminConsoleTestWorker(t, "TestMainDispatchTokenizerInputConsole", tokenizerConsoleRunCases,
+	adminConsoleTestWorker(t, "TestMainDispatchTokenizerInputConsole", "./internal/commands/tokenize", tokenizerConsoleRunCases,
 		"OPENAI_TOKENIZER_CONSOLE_CASES="+selection)
 }
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/term"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/tidwall/gjson"
@@ -32,7 +33,7 @@ func (p *imageOutputPlan) displayImageProgress(ctx context.Context, event gjson.
 		}
 		// This notice belongs with the terminal progress. Keep stderr clear for
 		// a later structured API, saving, or cancellation error.
-		return true, readable.WriteText(outputWriter{ctx: ctx, out: out}, message)
+		return true, readable.WriteText(clioutput.Writer{Context: ctx, Sink: out}, message)
 	}
 	const unavailableMessage = "Progress preview unavailable; waiting for the final image."
 	encoded := event.Get("b64_json")
@@ -43,7 +44,7 @@ func (p *imageOutputPlan) displayImageProgress(ctx context.Context, event gjson.
 	if err != nil {
 		return warn(unavailableMessage)
 	}
-	if _, err := fmt.Fprintf(outputWriter{ctx: ctx, out: out}, "Progress preview %d of %d:\n", event.Get("partial_image_index").Int()+1, p.partialImages); err != nil {
+	if _, err := fmt.Fprintf(clioutput.Writer{Context: ctx, Sink: out}, "Progress preview %d of %d:\n", event.Get("partial_image_index").Int()+1, p.partialImages); err != nil {
 		return false, err
 	}
 	// Share the saved-image sizing calculation, but not its recovery messages:
@@ -65,7 +66,7 @@ func (p *imageOutputPlan) displayImageProgress(ctx context.Context, event gjson.
 		return warn(unavailableMessage)
 	}
 	if protocol == "blocks" {
-		if err := readable.WriteText(outputWriter{ctx: ctx, out: out}, "Inline preview (color approximation):"); err != nil {
+		if err := readable.WriteText(clioutput.Writer{Context: ctx, Sink: out}, "Inline preview (color approximation):"); err != nil {
 			return false, err
 		}
 	}
@@ -85,6 +86,6 @@ func (p *imageOutputPlan) displayImageProgress(ctx context.Context, event gjson.
 	if err != nil {
 		return false, err
 	}
-	_, err = fmt.Fprintln(outputWriter{ctx: ctx, out: out})
+	_, err = fmt.Fprintln(clioutput.Writer{Context: ctx, Sink: out})
 	return false, err
 }

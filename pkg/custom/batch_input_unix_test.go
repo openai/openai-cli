@@ -50,7 +50,7 @@ func batchInputSocketPair(t *testing.T, blocking bool) (*os.File, *os.File) {
 			t.Fatalf("prepare blocking socket: %v / %v", err, modeErr)
 		}
 	}
-	if nonblocking := tokenizerPipeFlags(t, input)&unix.O_NONBLOCK != 0; nonblocking == blocking {
+	if nonblocking := batchInputPipeFlags(t, input)&unix.O_NONBLOCK != 0; nonblocking == blocking {
 		t.Fatal("socket fixture did not establish its requested descriptor mode")
 	}
 	return input, producer
@@ -82,7 +82,7 @@ func TestBatchRequestInputSocketCancellationPreservesBorrowedDescriptor(t *testi
 		}
 		t.Run(name, func(t *testing.T) {
 			input, producer := batchInputSocketPair(t, blocking)
-			flags := tokenizerPipeFlags(t, input)
+			flags := batchInputPipeFlags(t, input)
 			for attempt := range 3 {
 				ctx, cancel := context.WithTimeout(t.Context(), 40*time.Millisecond)
 				want := error(context.DeadlineExceeded)
@@ -105,7 +105,7 @@ func TestBatchRequestInputSocketCancellationPreservesBorrowedDescriptor(t *testi
 				if timer != nil {
 					timer.Stop()
 				}
-				if !errors.Is(err, want) || len(data) != 0 || tokenizerPipeFlags(t, input) != flags {
+				if !errors.Is(err, want) || len(data) != 0 || batchInputPipeFlags(t, input) != flags {
 					t.Fatalf("attempt %d changed cancellation, bytes, or flags: %q / %v", attempt, data, err)
 				}
 			}
@@ -130,7 +130,7 @@ func TestBatchRequestInputSocketBytesAndEOF(t *testing.T) {
 		for _, value := range []string{"", "\ufeffa\r\n👩\u200d💻 e\u0301\x00\x1b\xff\t\n"} {
 			t.Run(name+"/"+hex.EncodeToString([]byte(value)), func(t *testing.T) {
 				input, producer := batchInputSocketPair(t, blocking)
-				flags := tokenizerPipeFlags(t, input)
+				flags := batchInputPipeFlags(t, input)
 				if _, err := io.WriteString(producer, value); err != nil {
 					t.Fatal(err)
 				}
@@ -141,7 +141,7 @@ func TestBatchRequestInputSocketBytesAndEOF(t *testing.T) {
 				defer cancel()
 				reader := &batchRequestInput{ctx: ctx, file: input}
 				data, err := io.ReadAll(reader)
-				if err != nil || string(data) != value || tokenizerPipeFlags(t, input) != flags {
+				if err != nil || string(data) != value || batchInputPipeFlags(t, input) != flags {
 					t.Fatalf("socket bytes or flags changed: %q / %v", data, err)
 				}
 				if n, err := reader.Read(make([]byte, 1)); n != 0 || err != io.EOF {
@@ -164,7 +164,7 @@ func TestBatchRequestInputSocketCallerErrors(t *testing.T) {
 		for _, action := range []string{"closed", "expired_deadline", "future_deadline", "cancel_preserves_deadline"} {
 			t.Run(name+"/"+action, func(t *testing.T) {
 				input, producer := batchInputSocketPair(t, blocking)
-				flags := tokenizerPipeFlags(t, input)
+				flags := batchInputPipeFlags(t, input)
 				ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 				defer cancel()
 				want := error(os.ErrDeadlineExceeded)
@@ -199,7 +199,7 @@ func TestBatchRequestInputSocketCallerErrors(t *testing.T) {
 				if action == "closed" {
 					return
 				}
-				if tokenizerPipeFlags(t, input) != flags {
+				if batchInputPipeFlags(t, input) != flags {
 					t.Fatal("caller deadline changed descriptor flags")
 				}
 				// A fresh Batch context must still honor the original handle's deadline,
@@ -249,7 +249,7 @@ func TestTokenizerSocketCancellationAndReuse(t *testing.T) {
 		for _, source := range []string{"stdin", "file-dash"} {
 			t.Run(name+"/"+source, func(t *testing.T) {
 				input, producer := batchInputSocketPair(t, blocking)
-				flags := tokenizerPipeFlags(t, input)
+				flags := batchInputPipeFlags(t, input)
 				args := []string{"openai", "--format", "json", "tokenizer", "inspect"}
 				if source == "file-dash" {
 					args = append(args, "--file", "-")
@@ -260,7 +260,7 @@ func TestTokenizerSocketCancellationAndReuse(t *testing.T) {
 				go func() { done <- tokenizerTestRoot(input, &out).Run(ctx, args) }()
 				err := awaitBatchSocketRead(t, producer, done)
 				cancel()
-				if !errors.Is(err, context.DeadlineExceeded) || out.Len() != 0 || tokenizerPipeFlags(t, input) != flags {
+				if !errors.Is(err, context.DeadlineExceeded) || out.Len() != 0 || batchInputPipeFlags(t, input) != flags {
 					t.Fatalf("Tokenizer socket cancellation changed: %v / %q", err, out.String())
 				}
 				const value = "\ufeffhello\r\n👩\u200d💻 e\u0301\x00\x1b\t\n"
@@ -272,8 +272,12 @@ func TestTokenizerSocketCancellationAndReuse(t *testing.T) {
 					t.Fatal(err)
 				}
 				var result struct {
-					InputBytes int              `json:"input_bytes"`
-					Tokens     []tokenizerToken `json:"tokens"`
+					InputBytes int `json:"input_bytes"`
+					Tokens     []struct {
+						StartByte int    `json:"start_byte"`
+						EndByte   int    `json:"end_byte"`
+						BytesHex  string `json:"bytes_hex"`
+					} `json:"tokens"`
 				}
 				if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 					t.Fatal(err)
@@ -286,7 +290,7 @@ func TestTokenizerSocketCancellationAndReuse(t *testing.T) {
 					}
 					reconstructed = append(reconstructed, fragment...)
 				}
-				if string(reconstructed) != value || result.InputBytes != len(value) || tokenizerPipeFlags(t, input) != flags {
+				if string(reconstructed) != value || result.InputBytes != len(value) || batchInputPipeFlags(t, input) != flags {
 					t.Fatal("Tokenizer socket data or descriptor flags changed")
 				}
 				if _, err := input.Read(make([]byte, 1)); err != io.EOF {
@@ -295,4 +299,20 @@ func TestTokenizerSocketCancellationAndReuse(t *testing.T) {
 			})
 		}
 	}
+}
+
+func batchInputPipeFlags(t *testing.T, file *os.File) int {
+	t.Helper()
+	connection, err := file.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags := 0
+	var flagErr error
+	if err := connection.Control(func(fd uintptr) {
+		flags, flagErr = unix.FcntlInt(fd, unix.F_GETFL, 0)
+	}); err != nil || flagErr != nil {
+		t.Fatalf("read descriptor flags: %v / %v", err, flagErr)
+	}
+	return flags
 }

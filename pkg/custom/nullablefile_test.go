@@ -101,7 +101,7 @@ func TestNullableFileReferencesEndToEnd(t *testing.T) {
 			}
 			if tt.wantErr {
 				require.Error(t, err)
-				require.Contains(t, stderr.String(), "A local file could not be found.")
+				require.Equal(t, "Could not open the file for --instructions. Check the path and permissions.\n", stderr.String())
 				require.NotContains(t, stderr.String(), path)
 				require.Nil(t, body)
 				return

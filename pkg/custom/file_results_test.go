@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -139,13 +140,13 @@ func TestFileReceiptPropagatesOutputFailuresAndCancellation(t *testing.T) {
 	value := gjson.Parse(fileReceiptFixture)
 	failure := errors.New("synthetic output failure")
 	for _, tc := range []struct{ returned, want error }{{failure, failure}, {nil, io.ErrShortWrite}} {
-		out := outputWriter{ctx: t.Context(), out: failOutputWriter{tc.returned}}
+		out := clioutput.Writer{Context: t.Context(), Sink: failOutputWriter{tc.returned}}
 		require.ErrorIs(t, writeFileReceipt(out, value, "bash", fileInvocation{display: "openai"}), tc.want)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	var out bytes.Buffer
-	require.ErrorIs(t, writeFileReceipt(outputWriter{ctx: ctx, out: &out}, value, "bash", fileInvocation{display: "openai"}), context.Canceled)
+	require.ErrorIs(t, writeFileReceipt(clioutput.Writer{Context: ctx, Sink: &out}, value, "bash", fileInvocation{display: "openai"}), context.Canceled)
 	require.Empty(t, out.String())
 }
 

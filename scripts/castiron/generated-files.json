@@ -259,7 +259,7 @@
     },
     "generated/commands/audiospeech.go": {
       "mode": "100644",
-      "sha256": "a54a0bcd48d819aaa41e248178c03298312086d354243dddbe7ce7ee65774a10"
+      "sha256": "7ecf60e1519a78ca7807ef17d2a177843e6dca46243ebbd6542d7e2f86c8653b"
     },
     "generated/commands/audiospeech_test.go": {
       "mode": "100644",
@@ -283,7 +283,7 @@
     },
     "generated/commands/audiovoice.go": {
       "mode": "100644",
-      "sha256": "54801696dcf32ebb4c959d161eb8ee5521e16957e7b36c03cde5397a67d86e88"
+      "sha256": "f7451d6bb157d23aa24ae54da793a95490720751a4cd234699656b9b0f87d911"
     },
     "generated/commands/audiovoice_test.go": {
       "mode": "100644",
@@ -387,7 +387,7 @@
     },
     "generated/commands/chatcompletion.go": {
       "mode": "100644",
-      "sha256": "02c279294f4842983f437f8d7b6fca03e3295c0255fbbed19ec487cc31a0968f"
+      "sha256": "d189008f82ba53f0143d21cff659a775caada2be58cc91f15e009b0215d8d745"
     },
     "generated/commands/chatcompletion_test.go": {
       "mode": "100644",
@@ -467,11 +467,11 @@
     },
     "generated/commands/decision.go": {
       "mode": "100644",
-      "sha256": "7e47101668cdc9be3b233cfcc9f92a098fd9cc42cff181884cbfac1bdc7d3c01"
+      "sha256": "27633372d196b06c8d2313d491721192ec0844995e7e21901e4b8a216593e3d9"
     },
     "generated/commands/decision_test.go": {
       "mode": "100644",
-      "sha256": "475964c1f4d19a87e83af0105c55254dbed9844a70dd9501d0566a118b4f103d"
+      "sha256": "52da248ee20b131024d0895d6809bde3ce6797e09497509fdd54d6d7878e1a40"
     },
     "generated/commands/embedding.go": {
       "mode": "100644",
@@ -531,11 +531,11 @@
     },
     "generated/commands/image.go": {
       "mode": "100644",
-      "sha256": "d1d9e7fed66c0c515d9d1a7b1e636a480ad3d10828d7dfc0af082c386b68b537"
+      "sha256": "d0d64d5a19dd851149410b7eb7c63e9729a2c094f5fcf6bef55da7e726a32e2f"
     },
     "generated/commands/image_test.go": {
       "mode": "100644",
-      "sha256": "efa58e6d04ebb1e34a57c24286cc8d68aefc1dca2b29a4475221cd4500f1720a"
+      "sha256": "dd2bf52146a024ff7c160b17e84e2d13aa4b0fc33bdf0ebe35251e6638494748"
     },
     "generated/commands/inputitem.go": {
       "mode": "100644",
@@ -607,11 +607,11 @@
     },
     "generated/commands/session.go": {
       "mode": "100644",
-      "sha256": "a49ac90078748755be070bfa362cd2bddcd47a3adb005d5d393bbd523bfe1208"
+      "sha256": "bc3e1f77d36048567563a2bba46dfac0dadf4515299d2cd8efa5626c12f136d5"
     },
     "generated/commands/session_test.go": {
       "mode": "100644",
-      "sha256": "ae74c30f4d36022144fadac7ce8c6f4b12c12939d4864000b082312785722c40"
+      "sha256": "96f1da030a51f634779c7d2e9ce8017f6d4179b15fb5668b1f56d1cff385355b"
     },
     "generated/commands/skill.go": {
       "mode": "100644",
@@ -711,7 +711,7 @@
     },
     "scripts/castiron/custom_code_budget.py": {
       "mode": "100644",
-      "sha256": "e6f19706c26f9b996f7d6d5f8a654e54fbc8c49a5d2fce045c1996b119feee33"
+      "sha256": "31b47b2c85fc7ef483c18a94f0725e4f6bae50164c427330af6d081d5d3f31f2"
     },
     "scripts/castiron/custom_code_report.py": {
       "mode": "100644",
@@ -743,7 +743,7 @@
     },
     "scripts/castiron/test_custom_code_report.py": {
       "mode": "100644",
-      "sha256": "5c17ac9b5596e7f69aaefe3f29615cdac425323594854a91e1759c88d92a68bb"
+      "sha256": "56a748c56ccf137aee0e5997dd29484157d5566bf844cc4969270dd26fa38cbd"
     }
   }
 }

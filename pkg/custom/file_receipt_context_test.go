@@ -7,6 +7,7 @@ import (
 	"os"
 	"testing"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -62,7 +63,7 @@ func TestFileReceiptRequestContext(t *testing.T) {
 			}
 			root.Flags = append(root.Flags, mtlsClientFlags()...)
 			configureRootRequestFlags(root)
-			configureTaskCommands(root)
+			localcommands.ConfigureTasks(root)
 			configureFileCommands(root)
 			args := append([]string{"openai", "files", "upload", "source.txt", "--purpose=user_data"}, tc.flags...)
 			require.NoError(t, root.Run(t.Context(), args))

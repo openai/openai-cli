@@ -15,10 +15,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -109,6 +111,7 @@ func TestMainShellWindowsNative(t *testing.T) {
 			if shell.name != "cmd" {
 				versionScript = "$PSVersionTable.PSVersion.ToString()"
 			}
+			t.Logf("%s phase=version-discovery", shell.name)
 			gotVersion := runNativeShell(t, shell, work, home, "http://127.0.0.1:1", versionScript)
 			if gotVersion.code != 0 || gotVersion.stderr != "" {
 				t.Fatalf("shell version: %+v", gotVersion)
@@ -137,7 +140,9 @@ func TestMainShellWindowsNative(t *testing.T) {
 			})
 			t.Run("field and whole request", func(t *testing.T) {
 				requests := make(chan map[string]any, 8)
+				var requestCount atomic.Int32
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requestCount.Add(1)
 					var body map[string]any
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 						t.Error(err)
@@ -147,12 +152,36 @@ func TestMainShellWindowsNative(t *testing.T) {
 					io.WriteString(w, `{"id":"resp_synthetic","object":"response","output":[]}`)
 				}))
 				defer server.Close()
-				cli := command(binary, "responses", "create", "--model", "explicit-model")
+				cliArgs := []string{"responses", "create", "--model", "explicit-model"}
+				cli := command(binary, cliArgs...)
+				prefilledStdin := command(helper, append([]string{
+					"-test.run=^TestShellFileWindowsTransportHelper$", "--", "prefilled-stdin", binary,
+				}, cliArgs...)...)
 				for _, input := range []string{"request.json", "request.yaml"} {
-					got := runNativeShell(t, shell, work, home, server.URL, shell.setKey+transport("produce", input)+" | "+cli)
-					body := windowsShellRequest(t, requests, got)
-					if got.code != 0 || body["input"] != "whole request" || body["model"] != "explicit-model" {
-						t.Fatalf("whole request %s: %+v body=%v", input, got, body)
+					// Preserve shell text conversion, then prefill the CLI's owned pipe.
+					producer := "type " + commandArgument(shell, input)
+					if shell.name != "cmd" {
+						producer = "$requestText = [IO.File]::ReadAllText(" + commandArgument(shell, input) + "); $requestText"
+					}
+					prefilled := command(helper, append([]string{
+						"-test.run=^TestShellFileWindowsTransportHelper$", "--", "prefilled-input", input, binary,
+					}, cliArgs...)...)
+					for _, operation := range []struct{ name, script string }{
+						{"shell text", producer + " | " + prefilledStdin},
+						{"prefilled pipe", prefilled},
+					} {
+						before := requestCount.Load()
+						got := runNativeShell(t, shell, work, home, server.URL, shell.setKey+operation.script)
+						body := windowsShellRequest(t, requests, got)
+						count := requestCount.Load() - before
+						if got.code != 0 || got.stderr != "" || len(body) != 2 || body["input"] != "whole request" || body["model"] != "explicit-model" || count != 1 {
+							t.Fatalf("whole request %s (%s): %+v body=%v requests=%d", input, operation.name, got, body, count)
+						}
+						select {
+						case extra := <-requests:
+							t.Fatalf("whole request %s (%s) sent an extra request: %v", input, operation.name, extra)
+						default:
+						}
 					}
 				}
 				capture := "field-" + shell.name + ".bin"
@@ -373,9 +402,19 @@ func TestShellFileWindowsProcessHelper(t *testing.T) {
 	defer cancel()
 	child := exec.CommandContext(ctx, args[0], args[1:]...)
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
+	started := time.Now()
 	err := child.Run()
 	if ctx.Err() != nil {
-		t.Fatalf("native shell timed out: %v", ctx.Err())
+		pid, exit, userCPU, systemCPU := "unavailable", "unavailable", "unavailable", "unavailable"
+		if child.Process != nil {
+			pid = strconv.Itoa(child.Process.Pid)
+		}
+		if child.ProcessState != nil {
+			exit = strconv.Itoa(child.ProcessState.ExitCode())
+			userCPU, systemCPU = child.ProcessState.UserTime().String(), child.ProcessState.SystemTime().String()
+		}
+		t.Fatalf("native shell timed out: %v; elapsed=%s process=%t process_state=%t pid=%s exit=%s user_cpu=%s system_cpu=%s error_type=%T",
+			ctx.Err(), time.Since(started), child.Process != nil, child.ProcessState != nil, pid, exit, userCPU, systemCPU, err)
 	}
 	if err == nil {
 		os.Exit(0)
@@ -386,18 +425,338 @@ func TestShellFileWindowsProcessHelper(t *testing.T) {
 	t.Fatal(err)
 }
 
-// A plain native producer/consumer exposes shell transformations without CLI parsing.
+// These controls use this test executable, without building or starting the CLI.
+func TestMainShellWindowsProcessDiagnostics(t *testing.T) {
+	stdoutBytes := []byte("\x00\xff\x1a\r\n\x1b[31msynthetic-private-stdout\n")
+	stderrBytes := []byte("\xfe\x00\x1b[0m\r\nsynthetic-private-stderr\n")
+	type processIdentity struct {
+		PID      uint32
+		Creation windows.Filetime
+	}
+	if separator := slices.Index(os.Args, "--"); separator >= 0 {
+		args := os.Args[separator+1:]
+		if len(args) < 2 {
+			t.Fatal("invalid diagnostic control arguments")
+		}
+		mode, work := args[0], args[1]
+		ready := func(name string) {
+			identity := processIdentity{PID: uint32(os.Getpid())}
+			var exit, kernel, user windows.Filetime
+			if err := windows.GetProcessTimes(windows.CurrentProcess(), &identity.Creation, &exit, &kernel, &user); err != nil {
+				t.Fatalf("identify ready control process: error_type=%T", err)
+			}
+			data, err := json.Marshal(identity)
+			if err != nil {
+				t.Fatalf("encode control readiness: error_type=%T", err)
+			}
+			path := filepath.Join(work, name+".ready")
+			if err := os.WriteFile(path+".tmp", data, 0600); err != nil {
+				t.Fatalf("write control readiness: error_type=%T", err)
+			}
+			if err := os.Rename(path+".tmp", path); err != nil {
+				t.Fatalf("publish control readiness: error_type=%T", err)
+			}
+		}
+		if mode == "descendant" {
+			for _, stream := range []*os.File{os.Stdout, os.Stderr} {
+				kind, err := windows.GetFileType(windows.Handle(stream.Fd()))
+				if err != nil || kind != windows.FILE_TYPE_PIPE {
+					t.Fatalf("descendant did not inherit a capture pipe: kind=%d error_type=%T", kind, err)
+				}
+			}
+			ready("descendant")
+			time.Sleep(time.Hour)
+			os.Exit(125)
+		}
+		for _, stream := range []struct {
+			file *os.File
+			data []byte
+		}{{os.Stdout, stdoutBytes}, {os.Stderr, stderrBytes}} {
+			if n, err := stream.file.Write(stream.data); err != nil || n != len(stream.data) {
+				t.Fatalf("write control stream: bytes=%d error_type=%T", n, err)
+			}
+		}
+		switch mode {
+		case "success":
+			os.Exit(0)
+		case "nonzero":
+			os.Exit(37)
+		case "timeout":
+			ready("child")
+			descendant := exec.Command(os.Args[0], "-test.run=^TestMainShellWindowsProcessDiagnostics$", "--", "descendant", work)
+			descendant.Stdout, descendant.Stderr = os.Stdout, os.Stderr
+			if err := descendant.Start(); err != nil {
+				t.Fatalf("start control descendant: error_type=%T", err)
+			}
+			defer descendant.Process.Kill()
+			// The process helper must kill this child; its Job Object must kill the descendant.
+			err := descendant.Wait()
+			t.Fatalf("control descendant exited before cancellation: error_type=%T", err)
+		default:
+			t.Fatal("unknown diagnostic control")
+		}
+		return
+	}
+
+	helper, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locate test executable: error_type=%T", err)
+	}
+	for _, control := range []struct {
+		name string
+		code int
+	}{{"success", 0}, {"nonzero", 37}, {"timeout", 1}} {
+		t.Run(control.name, func(t *testing.T) {
+			work := filepath.Join(t.TempDir(), "synthetic-private-directory")
+			if err := os.Mkdir(work, 0700); err != nil {
+				t.Fatalf("create control directory: error_type=%T", err)
+			}
+			const privateArgument = "synthetic-private-argument-\x1b[31m"
+			const privateEnvironment = "synthetic-private-environment"
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			process := exec.CommandContext(ctx, helper, "-test.run=^TestShellFileWindowsProcessHelper$", "--",
+				helper, "-test.run=^TestMainShellWindowsProcessDiagnostics$", "--", control.name, work, privateArgument)
+			process.Dir = work
+			for _, name := range []string{"SystemRoot", "WINDIR"} {
+				if value, ok := os.LookupEnv(name); ok {
+					process.Env = append(process.Env, name+"="+value)
+				}
+			}
+			process.Env = append(process.Env, "GOMAXPROCS=2", "OPENAI_CLI_TEST_PRIVATE="+privateEnvironment)
+			stdoutRead, stdoutWrite, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("create stdout capture pipe: error_type=%T", err)
+			}
+			defer stdoutRead.Close()
+			defer stdoutWrite.Close()
+			stderrRead, stderrWrite, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("create stderr capture pipe: error_type=%T", err)
+			}
+			defer stderrRead.Close()
+			defer stderrWrite.Close()
+			var stdout, stderr bytes.Buffer
+			process.Stdout, process.Stderr = stdoutWrite, stderrWrite
+			started := time.Now()
+			if err := process.Start(); err != nil {
+				t.Fatalf("start process helper: error_type=%T", err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- process.Wait() }()
+			stdoutDone, stderrDone := make(chan error, 1), make(chan error, 1)
+			go func() {
+				_, err := io.Copy(&stdout, stdoutRead)
+				stdoutDone <- err
+			}()
+			go func() {
+				_, err := io.Copy(&stderr, stderrRead)
+				stderrDone <- err
+			}()
+			waited := false
+			stdoutDrained, stderrDrained := false, false
+			var handles []windows.Handle
+			var pids []int
+			defer func() {
+				if !waited {
+					process.Process.Kill()
+				}
+				for _, handle := range handles {
+					state, err := windows.WaitForSingleObject(handle, 2000)
+					if err != nil || state != windows.WAIT_OBJECT_0 {
+						t.Errorf("owned control process remained active: wait=%d error_type=%T", state, err)
+						windows.TerminateProcess(handle, 125)
+						if state, err := windows.WaitForSingleObject(handle, 2000); err != nil || state != windows.WAIT_OBJECT_0 {
+							t.Errorf("owned control process cleanup failed: wait=%d error_type=%T", state, err)
+						}
+					}
+					if err := windows.CloseHandle(handle); err != nil {
+						t.Errorf("close control process handle: error_type=%T", err)
+					}
+				}
+				if !waited {
+					<-done
+				}
+				// Closing readers only during cleanup cannot satisfy the natural EOF assertions.
+				if err := stdoutRead.Close(); err != nil {
+					t.Errorf("close stdout capture pipe: error_type=%T", err)
+				}
+				if err := stderrRead.Close(); err != nil {
+					t.Errorf("close stderr capture pipe: error_type=%T", err)
+				}
+				if !stdoutDrained {
+					<-stdoutDone
+				}
+				if !stderrDrained {
+					<-stderrDone
+				}
+			}()
+			stdoutCloseErr, stderrCloseErr := stdoutWrite.Close(), stderrWrite.Close()
+			if stdoutCloseErr != nil || stderrCloseErr != nil {
+				t.Fatalf("close parent capture writers: stdout_error_type=%T stderr_error_type=%T", stdoutCloseErr, stderrCloseErr)
+			}
+			if control.name == "timeout" {
+				readyCtx, readyCancel := context.WithTimeout(ctx, 5*time.Second)
+				defer readyCancel()
+				for _, name := range []string{"child", "descendant"} {
+					for {
+						data, readErr := os.ReadFile(filepath.Join(work, name+".ready"))
+						if readErr != nil && !os.IsNotExist(readErr) {
+							t.Fatalf("read control readiness: error_type=%T", readErr)
+						}
+						if readErr == nil {
+							var identity processIdentity
+							if err := json.Unmarshal(data, &identity); err != nil || identity.PID == 0 || identity.Creation == (windows.Filetime{}) {
+								t.Fatalf("invalid control readiness: error_type=%T", err)
+							}
+							handle, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE, false, identity.PID)
+							if err != nil {
+								t.Fatalf("open ready %s process: error_type=%T", name, err)
+							}
+							var creation, exit, kernel, user windows.Filetime
+							err = windows.GetProcessTimes(handle, &creation, &exit, &kernel, &user)
+							if err != nil || creation != identity.Creation {
+								closeErr := windows.CloseHandle(handle)
+								t.Fatalf("ready %s process identity changed: error_type=%T close_error_type=%T", name, err, closeErr)
+							}
+							// Only the verified lifetime may enter termination-authorized cleanup.
+							handles, pids = append(handles, handle), append(pids, int(identity.PID))
+							if state, err := windows.WaitForSingleObject(handle, 0); err != nil || state != uint32(windows.WAIT_TIMEOUT) {
+								t.Fatalf("ready %s process was not running: wait=%d error_type=%T", name, state, err)
+							}
+							break
+						}
+						select {
+						case err := <-done:
+							waited = true
+							t.Fatalf("helper exited before %s readiness: error_type=%T", name, err)
+						case <-readyCtx.Done():
+							t.Fatalf("control %s did not become ready", name)
+						case <-time.After(10 * time.Millisecond):
+						}
+					}
+				}
+				t.Log("stalled child and inherited-pipe descendant ready; process handles anchored")
+			}
+			err = <-done
+			waited = true
+			if ctx.Err() != nil {
+				t.Fatal("process helper reached the outer deadline")
+			}
+			code := -1
+			if process.ProcessState != nil {
+				code = process.ProcessState.ExitCode()
+			}
+			if code != control.code || (control.code == 0) != (err == nil) {
+				t.Fatalf("process helper status mismatch: got=%d want=%d error_type=%T", code, control.code, err)
+			}
+			for _, stream := range []struct {
+				name    string
+				done    <-chan error
+				drained *bool
+			}{{"stdout", stdoutDone, &stdoutDrained}, {"stderr", stderrDone, &stderrDrained}} {
+				select {
+				case err := <-stream.done:
+					*stream.drained = true
+					if err != nil {
+						t.Fatalf("%s capture failed before EOF: error_type=%T", stream.name, err)
+					}
+				case <-ctx.Done():
+					t.Fatalf("%s capture did not reach natural EOF before the outer deadline", stream.name)
+				}
+			}
+			if ctx.Err() != nil {
+				t.Fatal("capture reached EOF after the outer deadline")
+			}
+			if !bytes.Equal(stderr.Bytes(), stderrBytes) {
+				t.Fatal("process helper changed the separate stderr bytes")
+			}
+			if control.name != "timeout" {
+				if !bytes.Equal(stdout.Bytes(), stdoutBytes) {
+					t.Fatal("process helper changed the separate stdout bytes")
+				}
+				return
+			}
+			if !bytes.HasPrefix(stdout.Bytes(), stdoutBytes) {
+				t.Fatal("timeout lost or changed partial stdout bytes")
+			}
+			diagnostic := stdout.Bytes()[len(stdoutBytes):]
+			for _, private := range []string{helper, work, "synthetic-private-directory", "synthetic-private-argument", privateEnvironment, "synthetic-private-stdout", "synthetic-private-stderr"} {
+				if bytes.Contains(diagnostic, []byte(private)) {
+					t.Fatal("timeout diagnostic exposed private control data")
+				}
+			}
+			pattern := regexp.MustCompile(`(?m)^\s+shell_file_windows_test\.go:[0-9]+: native shell timed out: context deadline exceeded; elapsed=(\S+) process=true process_state=true pid=([0-9]+) exit=(-?[0-9]+) user_cpu=(\S+) system_cpu=(\S+) error_type=\*exec\.ExitError$`)
+			fields := pattern.FindSubmatch(diagnostic)
+			if len(diagnostic) > 2048 || len(fields) != 6 || string(fields[2]) != strconv.Itoa(pids[0]) {
+				t.Fatal("timeout diagnostic lacks bounded process metadata")
+			}
+			for _, index := range []int{1, 4, 5} {
+				if duration, err := time.ParseDuration(string(fields[index])); err != nil || duration < 0 {
+					t.Fatal("timeout diagnostic contains an invalid duration")
+				}
+			}
+			if elapsed, _ := time.ParseDuration(string(fields[1])); elapsed < 17*time.Second || elapsed >= 20*time.Second {
+				t.Fatal("timeout diagnostic does not match the inner deadline")
+			}
+			t.Logf("process helper failed before outer cancellation; elapsed=%s", time.Since(started))
+		})
+	}
+}
+
+// Native transport controls expose shell transformations and ready stdin.
 func TestShellFileWindowsTransportHelper(t *testing.T) {
 	separator := slices.Index(os.Args, "--")
 	if separator < 0 {
 		return
 	}
 	args := os.Args[separator+1:]
-	if len(args) != 2 {
+	if len(args) < 2 || args[0] != "prefilled-input" && args[0] != "prefilled-stdin" && len(args) != 2 {
 		t.Fatal("invalid transport helper arguments")
 	}
 	var err error
 	switch args[0] {
+	case "prefilled-input", "prefilled-stdin":
+		var data []byte
+		commandArgs := args[1:]
+		if args[0] == "prefilled-input" {
+			if len(args) < 3 {
+				t.Fatal("missing prefilled-input command")
+			}
+			data, err = os.ReadFile(args[1])
+			commandArgs = args[2:]
+		} else {
+			data, err = io.ReadAll(os.Stdin)
+		}
+		if err != nil {
+			break
+		}
+		reader, writer, pipeErr := os.Pipe()
+		if pipeErr != nil {
+			t.Fatal(pipeErr)
+		}
+		defer reader.Close()
+		defer writer.Close()
+		// These small fixtures must be ready before the CLI probes stdin.
+		if n, writeErr := writer.Write(data); writeErr != nil || n != len(data) {
+			t.Fatalf("prefill stdin: wrote %d of %d bytes: %v", n, len(data), writeErr)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatalf("close prefilled stdin writer: %v", err)
+		}
+		child := exec.Command(commandArgs[0], commandArgs[1:]...)
+		child.Stdin, child.Stdout, child.Stderr = reader, os.Stdout, os.Stderr
+		childErr := child.Run()
+		// os.Exit below bypasses deferred cleanup.
+		if err := reader.Close(); err != nil {
+			t.Fatalf("close prefilled stdin reader: %v", err)
+		}
+		if exit, ok := childErr.(*exec.ExitError); ok {
+			os.Exit(exit.ExitCode())
+		}
+		if childErr != nil {
+			t.Fatal(childErr)
+		}
 	case "produce":
 		var data []byte
 		data, err = os.ReadFile(args[1])

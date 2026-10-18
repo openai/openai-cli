@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/commands/codex"
 	"github.com/urfave/cli/v3"
 )
 
@@ -26,6 +27,9 @@ func (s *localUtilityPartialSink) Write(data []byte) (int, error) {
 }
 
 func TestLocalUtilityOutputFailureRecovery(t *testing.T) {
+	// The public Codex registration uses the platform launcher. Keep it offline
+	// even if an output-ordering regression reaches the launch path.
+	t.Setenv("PATH", t.TempDir())
 	for _, operation := range []string{"count", "inspect", "encodings", "licenses", "codex"} {
 		for _, format := range []string{"text", "json"} {
 			for _, fault := range []struct {
@@ -42,7 +46,14 @@ func TestLocalUtilityOutputFailureRecovery(t *testing.T) {
 					var root *cli.Command
 					args := []string{"openai", "--format", format, "--format-error", format}
 					if operation == "codex" {
-						root = codexTestCommand(sink, codexRejectOpen)
+						root = &cli.Command{Name: "openai", Writer: sink, ErrWriter: io.Discard, Reader: tokenizerRejectReader{},
+							Flags: []cli.Flag{
+								&cli.StringFlag{Name: "format", Value: "auto"},
+								&cli.StringFlag{Name: "transform"},
+								&cli.BoolFlag{Name: "raw-output"},
+							},
+						}
+						codex.Register(root)
 						args = append(args, "codex", "--destination", "docs", "--open")
 					} else {
 						root = tokenizerTestRoot(tokenizerRejectReader{}, sink)

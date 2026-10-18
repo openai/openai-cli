@@ -14,7 +14,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-var decisionsCreate = cli.Command{
+var decisionsCreate = requestflag.WithInnerFlags(cli.Command{
 	Name:    "create",
 	Usage:   "Use this endpoint to quickly answer classification or scoring questions about\nsome input. You can ask multiple questions in one request.",
 	Suggest: true,
@@ -38,6 +38,16 @@ var decisionsCreate = cli.Command{
 			BodyPath: "questions",
 		},
 		&requestflag.Flag[*string]{
+			Name:     "prompt-cache-key",
+			Usage:    "Partition prompt cache reuse by caller-provided key.",
+			BodyPath: "prompt_cache_key",
+		},
+		&requestflag.Flag[map[string]any]{
+			Name:     "prompt-cache-options",
+			Usage:    "Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`, which is currently the only supported value. See the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) for current details.",
+			BodyPath: "prompt_cache_options",
+		},
+		&requestflag.Flag[*string]{
 			Name:     "safety-identifier",
 			Usage:    "Opaque caller-provided end-user identifier, scoped by the verified org. Match Responses' limit; this is never the authenticated user identity.",
 			BodyPath: "safety_identifier",
@@ -45,7 +55,20 @@ var decisionsCreate = cli.Command{
 	},
 	Action:          handleDecisionsCreate,
 	HideHelpCommand: true,
-}
+}, map[string][]requestflag.HasOuterFlag{
+	"prompt-cache-options": {
+		&requestflag.InnerFlag[*string]{
+			Name:       "prompt-cache-options.mode",
+			Usage:      "Controls whether OpenAI automatically creates an implicit cache breakpoint. Defaults to `implicit`. With `implicit`, OpenAI creates one implicit breakpoint and writes up to the latest three explicit breakpoints in the request. With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit breakpoints. If there are no explicit breakpoints, the request does not use prompt caching.",
+			InnerField: "mode",
+		},
+		&requestflag.InnerFlag[string]{
+			Name:       "prompt-cache-options.ttl",
+			Usage:      "The minimum lifetime applied to every implicit and explicit cache breakpoint written by the request. Defaults to `30m`, which is currently the only supported value. The backend may retain cache entries for longer.",
+			InnerField: "ttl",
+		},
+	},
+})
 
 func handleDecisionsCreate(ctx context.Context, cmd *cli.Command) error {
 	client := openai.NewClient(getDefaultRequestOptions(cmd)...)
