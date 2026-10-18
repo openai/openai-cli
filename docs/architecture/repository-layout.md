@@ -142,13 +142,9 @@ its caller paths. Keep policy-only changes separate from implementation changes.
 
 ## Migration batches
 
-Track remaining work in [#520](https://github.com/openai/openai-cli/issues/520).
-Keep exactly one migration PR open, including drafts, and keep it independently
-buildable. Address feedback on that PR and wait for Conductor's verified merge
-notification before automatically starting the next slice from main. Prioritize
-confirmed post-merge repairs before continuing. Conductor owns queue and post-merge
-monitoring; implementation does not start duplicate polling or queue enrollment.
-Ownership-enforcement PRs #482 and #483 are complete.
+Keep exactly one migration PR open, including drafts, with each candidate
+independently buildable. Merge each PR and start the next slice from main rather
+than accumulating a stack. Ownership-enforcement PRs #482 and #483 are complete.
 
 1. Foundation: this layout/coverage contract; response transformations into
    `internal/output/transform/`; application execution into `internal/app/`.
