@@ -1023,6 +1023,7 @@ jobs:
               profile_recovery_cases = [
                   "missing_get", "duplicate_create", "missing_set", "missing_activate",
                   "missing_delete", "missing_status_selection", "missing_switch_selection",
+                  "status_positional_argument",
               ]
               profile_recovery_tests = {profile_recovery_root}
               for shell in ["bash", "zsh"]:
@@ -1035,8 +1036,8 @@ jobs:
                           profile_recovery_tests.update(required_cases(
                               f"{mode_root}/{output_format}", profile_recovery_cases,
                           ))
-              if len(profile_recovery_tests) != 103:
-                  raise SystemExit("profile recovery inventory must contain one root and 102 children")
+              if len(profile_recovery_tests) != 115:
+                  raise SystemExit("profile recovery inventory must contain one root and 114 children")
               suites["profile-copied-recovery-tests.jsonl"] = profile_recovery_tests
               strict_packages["profile-copied-recovery-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
           if os.environ["RUNNER_OS"] == "Linux":

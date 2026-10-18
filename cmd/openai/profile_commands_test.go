@@ -237,13 +237,14 @@ func TestMainProfileCopiedRecoveryPreservesInvocation(t *testing.T) {
 					for _, format := range []string{"text", "json", "jsonl"} {
 						t.Run(format, func(t *testing.T) {
 							for _, tc := range []struct{ name, args, recovery string }{
-								{"missing get", "profile get missing", "list"},
-								{"duplicate create", "profile create work", "set"},
-								{"missing set", "profile set missing --project proj_new", "list"},
-								{"missing activate", "profile activate missing", "list"},
-								{"missing delete", "profile delete missing", "list"},
-								{"missing status selection", "--profile missing auth status", "list"},
-								{"missing switch selection", "--profile missing auth switch --to-project proj_new", "list"},
+								{"missing get", "profile get missing", "profile list"},
+								{"duplicate create", "profile create work", "profile set"},
+								{"missing set", "profile set missing --project proj_new", "profile list"},
+								{"missing activate", "profile activate missing", "profile list"},
+								{"missing delete", "profile delete missing", "profile list"},
+								{"missing status selection", "--profile missing auth status", "profile list"},
+								{"missing switch selection", "--profile missing auth switch --to-project proj_new", "profile list"},
+								{"status positional argument", "auth status unexpected", "auth status --help"},
 							} {
 								t.Run(tc.name, func(t *testing.T) {
 									home, directory := t.TempDir(), t.TempDir()
@@ -267,20 +268,30 @@ func TestMainProfileCopiedRecoveryPreservesInvocation(t *testing.T) {
 									}
 									_, guidance, found := strings.Cut(message, "Use ")
 									require.True(t, found, "%s", message)
-									printedInvocation, _, found := strings.Cut(guidance, " profile "+tc.recovery)
+									printedInvocation, _, found := strings.Cut(guidance, " "+tc.recovery)
 									require.True(t, found, "%s", guidance)
 									require.Equal(t, invocation, printedInvocation)
-									recovery := printedInvocation + " profile " + tc.recovery
-									if tc.recovery == "set" {
+									recovery := printedInvocation + " " + tc.recovery
+									if tc.recovery == "profile set" {
 										// The guidance names an edit prefix; supply the intended profile and edit.
 										recovery += " work --project proj_recovered"
 									}
-									copied := runNativeShell(t, shell, directory, home, server.URL, recovery+" --format=json")
-									if tc.recovery == "set" {
+									if tc.recovery != "auth status --help" {
+										recovery += " --format=json"
+									}
+									copied := runNativeShell(t, shell, directory, home, server.URL, recovery)
+									if tc.recovery == "profile set" {
 										assertProfileJSON(t, copied, profileReceipt("set", "work", false, map[string]string{"project": "proj_recovered"}))
 										assertProfileJSON(t, profileCommand(t, home, directory, "profile", "get", "work"), profileRecord("work", false, map[string]string{"project": "proj_recovered"}))
+									} else if tc.recovery == "auth status --help" {
+										require.Zero(t, copied.code, "%s", copied.stderr)
+										require.Empty(t, copied.stderr)
+										require.Contains(t, copied.stdout, "Shows configured authentication offline by default.")
+										require.Contains(t, copied.stdout, invocation+" auth status")
 									} else {
 										assertProfileJSON(t, copied, []map[string]any{profileRecord("work", false, map[string]string{"project": "proj_original"})})
+									}
+									if tc.recovery != "profile set" {
 										after, err = os.ReadFile(registry)
 										require.NoError(t, err)
 										require.Equal(t, before, after)

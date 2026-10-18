@@ -103,7 +103,7 @@ func handleAuthStatus(ctx context.Context, command *cli.Command) error {
 	}
 	root := command.Root()
 	if command.Args().Present() {
-		return &localcommands.LocalError{Message: "Auth status takes no positional arguments. Use openai auth status --help."}
+		return &localcommands.LocalError{Message: "Auth status takes no positional arguments. Use " + errorHelpInvocation(root) + " auth status --help."}
 	}
 	if root.IsSet("transform") || root.IsSet("raw-output") {
 		return &localcommands.LocalError{Message: "Auth status does not support --transform or --raw-output. Use --format text or json."}
