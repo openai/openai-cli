@@ -147,7 +147,7 @@ func TestInputFileUploadPreservesMetadataAndLateReadError(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, upload.Close()) })
 	require.Equal(t, filepath.Base(path), upload.Filename())
 	require.True(t, strings.HasPrefix(upload.ContentType(), "text/plain"), upload.ContentType())
-	require.True(t, upload.hasKnownSize())
+	require.True(t, upload.KnownSize)
 	require.Equal(t, int64(len("synthetic payload")), upload.Size)
 	// Truncate the actual opened source after size inspection.
 	require.NoError(t, os.Truncate(path, 0))
