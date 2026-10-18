@@ -1,4 +1,4 @@
-package custom
+package clihelp_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/requestflag"
+	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/urfave/cli/v3"
 )
 
@@ -23,8 +24,8 @@ func TestDescribeRequestInputsPreservesDeclarations(t *testing.T) {
 	root := &cli.Command{Name: "openai", Commands: []*cli.Command{
 		{Name: "models", Category: "API RESOURCE", Commands: []*cli.Command{operation}}, handwritten,
 	}}
-	describeRequestInputs(root)
-	describeRequestInputs(root)
+	clihelp.DescribeRequestInputs(root)
+	clihelp.DescribeRequestInputs(root)
 	if !reflect.DeepEqual(*model, beforeModel) || !reflect.DeepEqual(*project, beforeProject) {
 		t.Fatal("presentation changed a request flag")
 	}
@@ -51,10 +52,10 @@ func TestDescribeRequestInputsSurvivesResourceCloning(t *testing.T) {
 		root := &cli.Command{Name: "openai", Writer: &out, Commands: []*cli.Command{
 			{Name: "admin:projects", Category: "API RESOURCE", Commands: []*cli.Command{operation}},
 		}}
-		describeRequestInputs(root)
+		clihelp.DescribeRequestInputs(root)
 		localcommands.ConfigureSubgroups(root)
 		args := append(append([]string{"openai"}, path...), "--help")
-		args, _, err := ConfigureHelp(root, args)
+		args, _, err := custom.ConfigureHelp(root, args)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -65,34 +66,6 @@ func TestDescribeRequestInputsSurvivesResourceCloning(t *testing.T) {
 			if !strings.Contains(strings.Join(strings.Fields(out.String()), " "), want) {
 				t.Errorf("route %q lost %q: %s", path, want, out.String())
 			}
-		}
-	}
-}
-
-func TestConfigureHelpImageLabelsAreOwnerScoped(t *testing.T) {
-	imageSize := &requestflag.Flag[string]{Name: "size"}
-	imageQuality := &requestflag.Flag[string]{Name: "quality"}
-	otherSize := &requestflag.Flag[string]{Name: "size"}
-	image := &cli.Command{Name: "generate", Flags: []cli.Flag{imageSize, imageQuality}}
-	other := &cli.Command{Name: "other", Flags: []cli.Flag{otherSize}}
-	root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "images", Commands: []*cli.Command{image}}, other}}
-	configureHelpGroups(root)
-	configureHelpGroups(root)
-	labels := image.Metadata["help-flag-labels"].([]clihelp.FlagLabel)
-	for name, want := range map[string]string{"size": "SIZE", "quality": "QUALITY"} {
-		count := 0
-		for _, label := range labels {
-			if label.Owner == image && reflect.DeepEqual(label.Names, []string{name}) && label.Label == want {
-				count++
-			}
-		}
-		if count != 1 {
-			t.Errorf("image label %s appears %d times", name, count)
-		}
-	}
-	for _, label := range other.Metadata["help-flag-labels"].([]clihelp.FlagLabel) {
-		if label.Owner == other {
-			t.Fatal("image label leaked to an unrelated command")
 		}
 	}
 }

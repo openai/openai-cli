@@ -54,6 +54,11 @@ Recovery uses parsed command positions and declared names; it neither echoes
 private operands nor executes corrections. Assembly installs the same framework
 suggestion hook in its original position.
 
+Request-input help annotations and their tests live in `internal/clihelp/`.
+Assembly annotates generated handlers before subgroup and task cloning. Positional
+metadata preserves declaration order and authored flag descriptions without
+changing request declarations or inventing positional inputs for handwritten commands.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

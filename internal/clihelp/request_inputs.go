@@ -1,16 +1,15 @@
-package custom
+package clihelp
 
 import (
 	"strings"
 
-	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/urfave/cli/v3"
 )
 
-// Annotate the generated handlers before handwritten commands and aliases are
-// installed. Generated handlers consume URL path inputs in declaration order;
+// DescribeRequestInputs annotates generated handlers before handwritten commands
+// and aliases are installed. Generated handlers consume URL path inputs in declaration order;
 // a handwritten flag's URL location alone does not establish positional syntax.
-func describeRequestInputs(root *cli.Command) {
+func DescribeRequestInputs(root *cli.Command) {
 	for _, resource := range root.Commands {
 		if resource.Category != "API RESOURCE" {
 			continue
@@ -20,7 +19,7 @@ func describeRequestInputs(root *cli.Command) {
 				continue
 			}
 			var positional []string
-			var descriptions []clihelp.FlagUsage
+			var descriptions []FlagUsage
 			for _, flag := range command.Flags {
 				path, ok := flag.(interface{ GetPathParam() string })
 				if !ok || path.GetPathParam() == "" || len(flag.Names()) == 0 {
@@ -29,7 +28,7 @@ func describeRequestInputs(root *cli.Command) {
 				name := flag.Names()[0]
 				positional = append(positional, name)
 				if doc, ok := flag.(cli.DocGenerationFlag); ok && strings.TrimSpace(doc.GetUsage()) == "" {
-					descriptions = append(descriptions, clihelp.FlagUsage{
+					descriptions = append(descriptions, FlagUsage{
 						Owner: command, Names: []string{name}, Usage: pathInputDescription(path.GetPathParam()),
 					})
 				}

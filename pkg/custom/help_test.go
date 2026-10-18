@@ -198,3 +198,31 @@ func TestConfigureHelpPreservesImageGuidance(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigureHelpImageLabelsAreOwnerScoped(t *testing.T) {
+	imageSize := &requestflag.Flag[string]{Name: "size"}
+	imageQuality := &requestflag.Flag[string]{Name: "quality"}
+	otherSize := &requestflag.Flag[string]{Name: "size"}
+	image := &cli.Command{Name: "generate", Flags: []cli.Flag{imageSize, imageQuality}}
+	other := &cli.Command{Name: "other", Flags: []cli.Flag{otherSize}}
+	root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "images", Commands: []*cli.Command{image}}, other}}
+	configureHelpGroups(root)
+	configureHelpGroups(root)
+	labels := image.Metadata["help-flag-labels"].([]clihelp.FlagLabel)
+	for name, want := range map[string]string{"size": "SIZE", "quality": "QUALITY"} {
+		count := 0
+		for _, label := range labels {
+			if label.Owner == image && reflect.DeepEqual(label.Names, []string{name}) && label.Label == want {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("image label %s appears %d times", name, count)
+		}
+	}
+	for _, label := range other.Metadata["help-flag-labels"].([]clihelp.FlagLabel) {
+		if label.Owner == other {
+			t.Fatal("image label leaked to an unrelated command")
+		}
+	}
+}

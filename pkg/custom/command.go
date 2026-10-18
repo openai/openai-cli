@@ -28,7 +28,7 @@ func ConfigureCommand(root *cli.Command) {
 	configureRootRequestFlags(root)
 	// Batch workflows preserve positional path inputs and need the same help annotations.
 	configureBatchCommands(root)
-	describeRequestInputs(root)
+	clihelp.DescribeRequestInputs(root)
 	registerImageModels(root)
 	configureReadableOutput(root)
 	configureModelsList(root)

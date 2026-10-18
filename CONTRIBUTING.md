@@ -61,7 +61,8 @@ below describes the current layout as the migration proceeds.
   shortcuts, and help-group metadata, alongside shared local-command and safe-error
   contracts. Assembly preserves the order in which these are configured.
 - `internal/clihelp/` owns help rendering, command typo matching, and recovery
-  guidance. It uses declared command/flag names and escaped local invocation
+  guidance and request-input help annotations. It uses declared command/flag
+  names and escaped local invocation
   metadata without echoing private operands or executing suggested corrections.
 - `pkg/custom/` contains remaining handwritten CLI commands, defaults, output-format
   policy, error handling, and presentation orchestration.
