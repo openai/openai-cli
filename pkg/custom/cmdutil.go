@@ -299,7 +299,7 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 			}
 		}
 	}
-	if isUTF8TextFile(sample) {
+	if requestconfig.IsUTF8TextFile(sample) {
 		if err := jsonview.WriteTerminalText(stdout, buffered); err != nil {
 			return "", &downloadSaveError{"Download incomplete. Output may contain partial bytes.", err}
 		}
@@ -401,7 +401,7 @@ func guessExtension(data []byte) string {
 	exts, err := mime.ExtensionsByType(ct)
 	if err == nil && len(exts) > 0 {
 		return exts[0]
-	} else if isUTF8TextFile(data) {
+	} else if requestconfig.IsUTF8TextFile(data) {
 		return ".txt"
 	} else {
 		return ".bin"

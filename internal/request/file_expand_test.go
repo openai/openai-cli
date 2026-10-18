@@ -30,7 +30,7 @@ func TestIsUTF8TextFile(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		require.Equal(t, tt.expected, isUTF8TextFile(tt.content))
+		require.Equal(t, tt.expected, IsUTF8TextFile(tt.content))
 	}
 }
 

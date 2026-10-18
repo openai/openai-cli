@@ -183,7 +183,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *OnceStdi
 					if err != nil {
 						return v, err
 					}
-					if isUTF8TextFile(content) {
+					if IsUTF8TextFile(content) {
 						return reflect.ValueOf(string(content)), nil
 					}
 					return reflect.ValueOf(base64.StdEncoding.EncodeToString(content)), nil
@@ -206,7 +206,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *OnceStdi
 					return v, nil
 				}
 				// If the file looks like a plain text UTF8 file format, then use the contents directly.
-				if isUTF8TextFile(content) {
+				if IsUTF8TextFile(content) {
 					return reflect.ValueOf(string(content)), nil
 				}
 				// Otherwise it's a binary file, so encode it with base64
@@ -261,9 +261,8 @@ func looksLikeFilePath(filename string, goos string) bool {
 	return goos == "windows" && strings.Contains(filename, "\\")
 }
 
-// Guess whether a file's contents are binary (e.g. a .jpg or .mp3), as opposed
-// to plain text (e.g. .txt or .md).
-func isUTF8TextFile(content []byte) bool {
+// IsUTF8TextFile reports whether content has a supported text MIME type and valid UTF-8.
+func IsUTF8TextFile(content []byte) bool {
 	// Go's DetectContentType follows https://mimesniff.spec.whatwg.org/ and
 	// these are the sniffable content types that are plain text:
 	textTypes := []string{
