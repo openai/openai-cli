@@ -2,7 +2,12 @@ package custom
 
 import (
 	"context"
+	"os"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/commands/codex"
+	"github.com/openai/openai-cli/internal/commands/manpages"
+	"github.com/openai/openai-cli/internal/commands/tokenize"
 	"github.com/urfave/cli/v3"
 )
 
@@ -29,19 +34,22 @@ func ConfigureCommand(root *cli.Command) {
 	configureImageSaving(root)
 	configureImagePickerCompletion(root)
 	configureImagePickerShellSetup(root)
+	configureShellSuggestions(root)
 	registerImagePreviewCommands(root)
 	configureReadableAudio(root)
 	configureReadableSpeech(root)
 	registerAdminSetup(root)
 	configureAdminCredentials(root)
-	configureCommandSubgroups(root)
-	configureTaskCommands(root)
+	localcommands.ConfigureSubgroups(root)
+	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
 	configureFileCommands(root)
-	registerTokenizerCommands(root)
-	registerCodexCommands(root)
-	configureCommandPresentation(root)
-	configureManpageCommands(root)
+	tokenize.Register(root)
+	codex.Register(root)
+	localcommands.ConfigurePresentation(root)
+	manpages.Configure(root, func(command *cli.Command, message string) error {
+		return ReportSaveReceipt(command, os.Stderr, message, nil)
+	})
 	configureOutputPolicy(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, mtlsClientFlags()...)

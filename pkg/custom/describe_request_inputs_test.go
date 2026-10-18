@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
@@ -51,7 +52,7 @@ func TestDescribeRequestInputsSurvivesResourceCloning(t *testing.T) {
 			{Name: "admin:projects", Category: "API RESOURCE", Commands: []*cli.Command{operation}},
 		}}
 		describeRequestInputs(root)
-		configureCommandSubgroups(root)
+		localcommands.ConfigureSubgroups(root)
 		args := append(append([]string{"openai"}, path...), "--help")
 		args, _, err := ConfigureHelp(root, args)
 		if err != nil {

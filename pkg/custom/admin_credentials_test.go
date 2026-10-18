@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -65,7 +66,7 @@ func TestAdminCredentialsCanonicalRequirementsSurviveRoutes(t *testing.T) {
 			case "compatibility":
 				path = []string{"admin:organization:projects", "list"}
 			case "renamed alias":
-				alias := cloneResourceCommand(root.Command("admin:organization:projects"))
+				alias := localcommands.CloneResourceCommand(root.Command("admin:organization:projects"))
 				alias.Name, alias.Hidden = "workspaces", false
 				alias.Aliases = []string{"workspace-alias"}
 				root.Commands = append(root.Commands, alias)

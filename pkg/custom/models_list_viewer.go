@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/jsonview"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-go/v3/packages/pagination"
 	"github.com/tidwall/gjson"
 )
@@ -66,7 +67,7 @@ func writeModelsList[T any](iter *outputIterator[T], opts ShowJSONOpts, width, h
 			return listNavigationPage{items: items, more: false}, nil
 		}, cancel)
 	}
-	out := outputWriter{ctx: opts.Context, out: opts.Stdout}
+	out := clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}
 	_, err = io.WriteString(out, content)
 	return errors.Join(err, iter.Err())
 }

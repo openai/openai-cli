@@ -6,6 +6,7 @@ import (
 	"io"
 	"testing"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -32,7 +33,7 @@ func TestLocalUtilityRoutingPreservesPreviousBefore(t *testing.T) {
 					return context.WithValue(ctx, contextKey{}, "preserved"), nil
 				},
 				Commands: []*cli.Command{{
-					Name: "synthetic-local", Metadata: map[string]any{localUtilityMetadata: true},
+					Name: "synthetic-local", Metadata: map[string]any{localcommands.LocalUtilityMetadata: true},
 					Action: func(ctx context.Context, _ *cli.Command) error {
 						actionCalls++
 						require.Equal(t, "preserved", ctx.Value(contextKey{}))
@@ -58,11 +59,11 @@ func TestLocalUtilityRoutingPreservesPreviousBefore(t *testing.T) {
 func TestLocalUtilityRoutingPreservesErrorCauseAndExitStatus(t *testing.T) {
 	t.Setenv("OPENAI_MTLS_CLIENT_CERT_FILE", "")
 	t.Setenv("OPENAI_MTLS_CLIENT_KEY_FILE", "")
-	want := &localUtilityError{message: "Synthetic local failure.", cause: cli.Exit("", 7)}
+	want := &localcommands.LocalError{Message: "Synthetic local failure.", Cause: cli.Exit("", 7)}
 	root := &cli.Command{
 		Name: "openai-test", Writer: io.Discard, ErrWriter: io.Discard,
 		Commands: []*cli.Command{{
-			Name: "synthetic-local", Metadata: map[string]any{localUtilityMetadata: true},
+			Name: "synthetic-local", Metadata: map[string]any{localcommands.LocalUtilityMetadata: true},
 			Action: func(context.Context, *cli.Command) error { return want },
 		}},
 	}

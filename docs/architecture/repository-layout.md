@@ -8,6 +8,44 @@ contracts live in `tests/cli/`.
 The tokenizer Unicode tables live in `generated/tokenizer/`; their producer is
 `scripts/generate-tokenizer-unicode.go`, while runtime code remains in
 `internal/tokenizer/`.
+The browser launcher and its platform/environment isolation tests now live in
+`internal/terminal/`; the Codex command retains destination selection, output
+ordering, and the launch deadline.
+
+Cancellation-aware output writing and sink/diagnostic error classification live
+in `internal/output/`, shared by handwritten commands and presentation code.
+
+Shared color profiles, automatic terminal presentation eligibility, and background
+theme detection live in `internal/terminal/`. Feature callers retain terminal
+detection for their output destinations, including wrapped batch output.
+
+The shared terminal output worker, frame painter, bounded cleanup, and diagnostic
+session isolation live in `internal/terminal/`. Tokenizer, audio workbench, and
+image previews use this runtime; its private `tokenizer __output` invocation and
+wire protocol remain unchanged. Feature implementations use this shared runtime
+without depending on one another.
+
+The complete tokenizer command, live editor, preview worker, and native input
+tests live in `internal/commands/tokenize/`. The encoding engine and generated
+Unicode tables remain in `internal/tokenizer/` and `generated/tokenizer/`.
+Shared borrowed-file reads live in `internal/input/`; frame layout and Windows
+console records live in `internal/terminal/`. Native admin and tokenizer tests
+share synthetic observer fixtures in `internal/testutil/console/`, without feature
+packages depending on one another.
+
+The complete Codex guide and its tests live in `internal/commands/codex/`.
+`internal/commands/` owns command-tree shaping (nested API routes, compatibility
+aliases, task shortcuts, and help-group metadata), alongside shared local-command
+and safe-error contracts. Its tests exercise both tree configuration and actual
+application assembly. The existing assembly sequence registers Codex before presentation
+and error policies are installed. Tokenizer retains its preceding registration
+position, including both private helper commands.
+
+Manpage rendering, flattened documentation trees, text/gzip file cleanup, and
+their tests live in `internal/commands/manpages/`. Application assembly supplies
+the shared save-receipt policy and configures the feature in its original position.
+The hidden `@manpages` entrypoint, generated flag declarations, manual paths,
+and existing developer/release artifact-generation commands remain unchanged.
 
 ## Product and compatibility contract
 
@@ -31,8 +69,10 @@ entrypoints, developer script entrypoints, and release artifacts working.
 | `generated/castiron/` | Castiron-owned checker tooling, documentation, and inventory. |
 | `generated/tokenizer/` | Unicode tables produced by the tokenizer table generator. |
 | `internal/app/` | Handwritten application assembly, invocation lifecycle, global policies, and ordered feature registration. |
+| `internal/commands/` | Shared command-tree routing, compatibility aliases, task shortcuts, help-group metadata, and local-feature contracts. |
 | `internal/commands/<feature>/` | Handwritten workflows grouped by feature: audio, images, files, models, admin, tokenize, and codex. |
 | `internal/request/` | Shared request configuration, credentials, transport setup, headers, input decoding, and upload encoding. |
+| `internal/input/` | Shared borrowed-file reads, preserving cancellation, descriptor flags, deadlines, and caller ownership. |
 | `internal/output/` | Shared output policy, transformations, formatting, streaming, paging, and error presentation. |
 | `internal/terminal/` | Shared completion, terminal rendering, and platform adapters. |
 | `internal/tokenizer/` | Tokenization implementation used by the handwritten commands. |

@@ -15,6 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/tidwall/gjson"
 )
@@ -179,7 +180,7 @@ func runListNavigation(opts ShowJSONOpts, fetch func() (listNavigationPage, erro
 	defer stop()
 	out := &listNavigationOutput{terminalOutputWriter: terminalOutputWriter{
 		// Tea must still restore terminal modes after request/program cancellation.
-		outputWriter: outputWriter{ctx: context.Background(), out: opts.Stdout}, file: opts.Stdout.(*os.File),
+		Writer: clioutput.Writer{Context: context.Background(), Sink: opts.Stdout}, file: opts.Stdout.(*os.File),
 	}, stop: stop}
 	program := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(out),
 		tea.WithContext(programContext), tea.WithWindowSize(width, height), tea.WithoutSignalHandler())
@@ -256,7 +257,7 @@ func (m *listNavigation) finish(out *listNavigationOutput, runErr error) error {
 			content, printErr = renderListNavigationLabels(printOpts, m.pages[m.index].items)
 		}
 		if printErr == nil {
-			_, printErr = (outputWriter{ctx: m.opts.Context, out: m.opts.Stdout}).WriteString(content)
+			_, printErr = (clioutput.Writer{Context: m.opts.Context, Sink: m.opts.Stdout}).WriteString(content)
 		}
 	}
 	return errors.Join(m.err, fetchErr, outputErr, runErr, printErr)
@@ -563,7 +564,7 @@ type listNavigationOutput struct {
 }
 
 func (w *listNavigationOutput) Write(data []byte) (int, error) {
-	n, err := w.outputWriter.Write(data)
+	n, err := w.Writer.Write(data)
 	if err != nil {
 		w.mu.Lock()
 		if w.err == nil {

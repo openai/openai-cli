@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,7 +20,7 @@ func TestImagePickerPromptFramePreservesEdgesAndCursor(t *testing.T) {
 				for _, focus := range []string{"prompt", "options"} {
 					m.focus = focus
 					view := m.View().Content
-					frame := ansi.Strip(imagePickerInlineFrame(view, width))
+					frame := ansi.Strip(cliterminal.InlineFrame(view, width))
 					require.Contains(t, frame, "╭ Prompt")
 					require.Contains(t, frame, "╮")
 					require.Contains(t, frame, "╯")

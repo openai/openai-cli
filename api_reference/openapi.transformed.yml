@@ -1691,11 +1691,11 @@ paths:
       - Audio
       summary: Create voice
       description: |
-        Create a custom voice you can use for audio output (for example, in Text-to-Speech and the Realtime API). This requires an audio sample and a previously uploaded consent recording.
+        Creates a voice from a text prompt or from a consent recording and an audio sample.
 
-        Send `name`, `audio_sample`, and the `consent` recording ID as multipart form data. The optional `type` defaults to `audio_sample`.
+        For prompt-based creation, send `type: "prompt"` with a `name` and `prompt` as JSON or multipart form data. For creation from an audio sample, send `type: "audio_sample"` with a `name`, `audio_sample`, and `consent` recording ID as multipart form data. The type defaults to `audio_sample` when omitted.
 
-        Returns the saved voice's metadata. See the [custom voices guide](https://developers.openai.com/api/docs/guides/text-to-speech#custom-voices) for requirements and best practices. Custom voices are limited to eligible customers.
+        Returns the saved voice's metadata. Voices created from text prompts are supported only in Live, not in Realtime or the speech endpoint. The response does not include preview audio.
       requestBody:
         required: true
         content:
@@ -1710,7 +1710,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/VoiceResource'
         '400':
-          description: Invalid voice request, consent recording, or audio sample.
+          description: Invalid voice request, prompt, script hint, model, consent recording, or audio sample.
           content:
             application/json:
               schema:
@@ -1735,9 +1735,13 @@ paths:
               curl https://api.openai.com/v1/audio/voices \
                 -X POST \
                 -H "Authorization: Bearer $OPENAI_API_KEY" \
-                -F "name=My new voice" \
-                -F "consent=cons_1234" \
-                -F "audio_sample=@audio_sample.wav;type=audio/x-wav"
+                -H "Content-Type: application/json" \
+                -d '{
+                  "type": "prompt",
+                  "name": "Warm narrator",
+                  "prompt": "A warm, calm narrator with a clear, measured delivery.",
+                  "model": "auto"
+                }'
   /batches:
     post:
       summary: Create batch
@@ -41542,7 +41546,7 @@ components:
                   `alloy`, `ash`, `ballad`, `coral`, `echo`, `fable`, `nova`, `onyx`,
                   `sage`, `shimmer`, `marin`, and `cedar`. You may also provide a
                   custom voice object with an `id`, for example `{ "id": "voice_1234" }`.
-                  Custom voices must be created from audio samples.
+                  Custom voices must be created from audio samples. Voices created from text prompts are supported only in Live.
               format:
                 type: string
                 enum:
@@ -43378,8 +43382,8 @@ components:
         user:
           type: string
           example: user-1234
-          description: |
-            A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
+          description: 'Deprecated: use `safety_identifier` instead. This parameter remains accepted for backward compatibility and is used when `safety_identifier` is omitted, null, or empty. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).'
+          deprecated: true
         input_fidelity:
           anyOf:
           - $ref: '#/components/schemas/InputFidelity'
@@ -43414,6 +43418,13 @@ components:
           example: high
           description: |
             The quality of the image that will be generated for GPT image models. The GPT image models support `low`, `medium`, and `high`. `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare`, including their `2026-09-08` snapshots, also support `xhigh` and `max`. Defaults to `auto`.
+        safety_identifier:
+          type:
+          - string
+          - 'null'
+          maxLength: 128
+          example: user-1234
+          description: A stable identifier for an end user in your organization, used for safety monitoring and abuse detection. Hash a username or email address to avoid sending identifying information. A non-empty value takes precedence over the deprecated `user` parameter. If omitted, null, or empty, the API uses `user` when available. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
       required:
       - prompt
       - image
@@ -43598,8 +43609,15 @@ components:
         user:
           type: string
           example: user-1234
-          description: |
-            A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
+          description: 'Deprecated: use `safety_identifier` instead. This parameter remains accepted for backward compatibility and is used when `safety_identifier` is omitted, null, or empty. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).'
+          deprecated: true
+        safety_identifier:
+          type:
+          - string
+          - 'null'
+          maxLength: 128
+          example: user-1234
+          description: A stable identifier for an end user in your organization, used for safety monitoring and abuse detection. Hash a username or email address to avoid sending identifying information. A non-empty value takes precedence over the deprecated `user` parameter. If omitted, null, or empty, the API uses `user` when available. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
       required:
       - prompt
     CreateImageVariationRequest:
@@ -44383,7 +44401,7 @@ components:
           description: Control the voice of your generated audio with additional instructions. Does not work with `tts-1` or `tts-1-hd`.
           maxLength: 4096
         voice:
-          description: 'The voice to use when generating the audio. Supported built-in voices are `alloy`, `ash`, `ballad`, `coral`, `echo`, `fable`, `onyx`, `nova`, `sage`, `shimmer`, `verse`, `marin`, and `cedar`. You may also provide a custom voice object with an `id`, for example `{ "id": "voice_1234" }`. Previews of the voices are available in the [Text to speech guide](https://developers.openai.com/api/docs/guides/text-to-speech#voice-options). Custom voices must be created from audio samples.'
+          description: 'The voice to use when generating the audio. Supported built-in voices are `alloy`, `ash`, `ballad`, `coral`, `echo`, `fable`, `onyx`, `nova`, `sage`, `shimmer`, `verse`, `marin`, and `cedar`. You may also provide a custom voice object with an `id`, for example `{ "id": "voice_1234" }`. Previews of the voices are available in the [Text to speech guide](https://developers.openai.com/api/docs/guides/text-to-speech#voice-options). Custom voices must be created from audio samples. Voices created from text prompts are supported only in Live.'
           title: Voice
           anyOf:
           - anyOf:
@@ -45275,9 +45293,11 @@ components:
         propertyName: type
         mapping:
           audio_sample: '#/components/schemas/CreateVoiceFromConsentRequest'
+          prompt: '#/components/schemas/CreateVoicePromptRequest'
       x-oai-default-discriminator-value: audio_sample
       anyOf:
       - $ref: '#/components/schemas/CreateVoiceFromConsentRequest'
+      - $ref: '#/components/schemas/CreateVoicePromptRequest'
     CustomToolCall:
       type: object
       title: Custom tool call
@@ -45821,9 +45841,8 @@ components:
         user:
           type: string
           example: user-1234
-          description: |
-            A unique identifier representing your end-user, which can help OpenAI
-            monitor and detect abuse.
+          description: 'Deprecated: use `safety_identifier` instead. This parameter remains accepted for backward compatibility and is used when `safety_identifier` is omitted, null, or empty. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).'
+          deprecated: true
         output_format:
           anyOf:
           - type: string
@@ -45873,6 +45892,13 @@ components:
           description: Stream partial image results as events.
         partial_images:
           $ref: '#/components/schemas/PartialImages'
+        safety_identifier:
+          type:
+          - string
+          - 'null'
+          maxLength: 128
+          example: user-1234
+          description: A stable identifier for an end user in your organization, used for safety monitoring and abuse detection. Hash a username or email address to avoid sending identifying information. A non-empty value takes precedence over the deprecated `user` parameter. If omitted, null, or empty, the API uses `user` when available. [Learn more](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
       required:
       - images
       - prompt
@@ -49168,6 +49194,11 @@ components:
           - jpeg
         usage:
           $ref: '#/components/schemas/ImagesUsage'
+        safety_identifier:
+          type:
+          - string
+          - 'null'
+          description: The effective safety identifier used for safety monitoring and abuse detection. This is the non-empty `safety_identifier` from the request, or the deprecated `user` value when `safety_identifier` is omitted, null, or empty.
       required:
       - type
       - b64_json
@@ -49352,6 +49383,11 @@ components:
           - jpeg
         usage:
           $ref: '#/components/schemas/ImagesUsage'
+        safety_identifier:
+          type:
+          - string
+          - 'null'
+          description: The effective safety identifier used for safety monitoring and abuse detection. This is the non-empty `safety_identifier` from the request, or the deprecated `user` value when `safety_identifier` is omitted, null, or empty.
       required:
       - type
       - b64_json
@@ -49687,6 +49723,11 @@ components:
           - max
         usage:
           $ref: '#/components/schemas/ImageGenUsage'
+        safety_identifier:
+          type:
+          - string
+          - 'null'
+          description: The effective safety identifier used for safety monitoring and abuse detection. This is the non-empty `safety_identifier` from the request, or the deprecated `user` value when `safety_identifier` is omitted, null, or empty.
       required:
       - created
       x-oaiMeta:
@@ -50623,6 +50664,8 @@ components:
           default: live
           x-stainless-const: true
           description: The session type. Always `live`.
+        triggers:
+          $ref: '#/components/schemas/triggers'
       required:
       - model
       - type
@@ -50666,6 +50709,9 @@ components:
       - $ref: '#/components/schemas/LiveInstructionsAppendParam'
       - $ref: '#/components/schemas/LiveThinkingAppendParam'
       - $ref: '#/components/schemas/LiveCommentaryAppendParam'
+      - $ref: '#/components/schemas/LiveDecisionCreateParam'
+      - $ref: '#/components/schemas/LiveDecisionItemCreateParam'
+      - $ref: '#/components/schemas/LiveDecisionItemDeleteParam'
       - $ref: '#/components/schemas/LiveResponseItemCreateParam'
       - $ref: '#/components/schemas/LiveResponseCreateParam'
       - $ref: '#/components/schemas/LiveSessionCloseParam'
@@ -50724,6 +50770,9 @@ components:
       - $ref: '#/components/schemas/LiveInstructionsAppendParam'
       - $ref: '#/components/schemas/LiveThinkingAppendParam'
       - $ref: '#/components/schemas/LiveCommentaryAppendParam'
+      - $ref: '#/components/schemas/LiveDecisionCreateParam'
+      - $ref: '#/components/schemas/LiveDecisionItemCreateParam'
+      - $ref: '#/components/schemas/LiveDecisionItemDeleteParam'
       - $ref: '#/components/schemas/LiveResponseItemCreateParam'
       - $ref: '#/components/schemas/LiveResponseCreateParam'
       - $ref: '#/components/schemas/LiveSessionCloseParam'
@@ -50778,6 +50827,8 @@ components:
           $ref: '#/components/schemas/input'
         client:
           $ref: '#/components/schemas/LiveClientConfigParam'
+        triggers:
+          $ref: '#/components/schemas/triggers'
       required:
       - model
       additionalProperties: false
@@ -50919,6 +50970,9 @@ components:
       - $ref: '#/components/schemas/LiveInstructionsAppendParam'
       - $ref: '#/components/schemas/LiveThinkingAppendParam'
       - $ref: '#/components/schemas/LiveCommentaryAppendParam'
+      - $ref: '#/components/schemas/LiveDecisionCreateParam'
+      - $ref: '#/components/schemas/LiveDecisionItemCreateParam'
+      - $ref: '#/components/schemas/LiveDecisionItemDeleteParam'
       - $ref: '#/components/schemas/LiveResponseItemCreateParam'
       - $ref: '#/components/schemas/LiveResponseCreateParam'
       - $ref: '#/components/schemas/LiveSessionCloseParam'
@@ -50956,6 +51010,9 @@ components:
       - $ref: '#/components/schemas/LiveInputTranscriptDelta'
       - $ref: '#/components/schemas/LiveOutputTranscriptDelta'
       - $ref: '#/components/schemas/LiveDelegationCreated'
+      - $ref: '#/components/schemas/LiveDecisionEvent'
+      - $ref: '#/components/schemas/LiveDecisionItemCreated'
+      - $ref: '#/components/schemas/LiveDecisionItemDeleted'
       - $ref: '#/components/schemas/LiveResponseEvent'
       - $ref: '#/components/schemas/LiveSessionUsageUpdated'
       - $ref: '#/components/schemas/LiveSessionClosed'
@@ -54904,7 +54961,7 @@ components:
             `marin`, and `cedar`. You may also provide a custom voice object with an
             `id`, for example `{ "id": "voice_1234" }`. Voice cannot be changed during
             the session once the model has responded with audio at least once.
-            Custom voices must be created from audio samples.
+            Custom voices must be created from audio samples. Voices created from text prompts are supported only in Live.
         output_audio_format:
           type: string
           enum:
@@ -58248,7 +58305,7 @@ components:
                     `marin`, and `cedar`. You may also provide a custom voice object with
                     an `id`, for example `{ "id": "voice_1234" }`. Voice cannot be changed
                     during the session once the model has responded with audio at least once.
-                    Custom voices must be created from audio samples.
+                    Custom voices must be created from audio samples. Voices created from text prompts are supported only in Live.
                     We recommend `marin` and `cedar` for best quality.
         tools:
           type: array
@@ -60821,7 +60878,7 @@ components:
             `marin`, and `cedar`. You may also provide a custom voice object with an
             `id`, for example `{ "id": "voice_1234" }`. Voice cannot be changed during
             the session once the model has responded with audio at least once.
-            Custom voices must be created from audio samples.
+            Custom voices must be created from audio samples. Voices created from text prompts are supported only in Live.
         input_audio_format:
           type: string
           description: |
@@ -61101,7 +61158,7 @@ components:
                     `marin`, and `cedar`. You may also provide a custom voice object with
                     an `id`, for example `{ "id": "voice_1234" }`. Voice cannot be changed
                     during the session once the model has responded with audio at least once.
-                    Custom voices must be created from audio samples.
+                    Custom voices must be created from audio samples. Voices created from text prompts are supported only in Live.
                     We recommend `marin` and `cedar` for best quality.
                 speed:
                   type: number
@@ -71725,7 +71782,7 @@ components:
     VoiceResource:
       type: object
       title: Voice
-      description: A custom voice that can be used for audio output.
+      description: A custom voice that can be used for audio output. Voices created from text prompts are supported only in Live.
       additionalProperties: false
       properties:
         object:
@@ -71742,6 +71799,10 @@ components:
           type: string
           enum:
           - audio_sample
+          - prompt
+        prompt:
+          type: string
+          description: The original text prompt used to create the voice. Present for prompt-generated voices with a stored prompt; omitted for audio-sample voices and older voices without a stored prompt.
         name:
           type: string
           description: The name of the voice.
@@ -78043,12 +78104,13 @@ components:
       - responses
     delegation:
       anyOf:
-      - description: Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` to let the API manage a Responses backend.
+      - description: Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` or `decisions` to delegate to the corresponding API.
         discriminator:
           propertyName: type
         anyOf:
         - $ref: '#/components/schemas/LiveClientDelegationParam'
         - $ref: '#/components/schemas/LiveResponsesDelegationParam'
+        - $ref: '#/components/schemas/LiveDecisionsDelegationParam'
       - type: 'null'
     store:
       description: Whether to store the session for later forking and recording download. Defaults to false for new sessions.
@@ -78235,7 +78297,7 @@ components:
       - $ref: '#/components/schemas/LiveInitialUserMessageItemParam'
       - $ref: '#/components/schemas/LiveInitialAssistantMessageItemParam'
     input:
-      description: Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and 8,192 rendered tokens in total.
+      description: Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and a configured rendered-token limit (8,192 by default).
       type: array
       items:
         $ref: '#/components/schemas/LiveInitialItem'
@@ -81837,6 +81899,10 @@ components:
           type: string
           minLength: 0
           maxLength: 10485760
+        prompt_cache_breakpoint:
+          anyOf:
+          - $ref: '#/components/schemas/DecisionPromptCacheBreakpoint'
+          - type: 'null'
       required:
       - type
       - text
@@ -81869,6 +81935,10 @@ components:
           - input_image
           default: input_image
           x-stainless-const: true
+        prompt_cache_breakpoint:
+          anyOf:
+          - $ref: '#/components/schemas/DecisionPromptCacheBreakpoint'
+          - type: 'null'
       required:
       - image_url
       - type
@@ -82096,6 +82166,37 @@ components:
           minLength: 0
           maxLength: 128
           description: Opaque caller-provided end-user identifier, scoped by the verified org. Match Responses' limit; this is never the authenticated user identity.
+        prompt_cache_key:
+          type:
+          - string
+          - 'null'
+          minLength: 0
+          maxLength: 64
+          description: Partition prompt cache reuse by caller-provided key.
+        prompt_cache_options:
+          type:
+          - object
+          - 'null'
+          properties:
+            ttl:
+              type: string
+              enum:
+              - 30m
+              default: 30m
+              x-stainless-const: true
+              description: The minimum lifetime applied to every implicit and explicit cache breakpoint written by the request. Defaults to `30m`, which is currently the only supported value. The backend may retain cache entries for longer.
+            mode:
+              type:
+              - string
+              - 'null'
+              enum:
+              - implicit
+              - explicit
+              - null
+              description: Controls whether OpenAI automatically creates an implicit cache breakpoint. Defaults to `implicit`. With `implicit`, OpenAI creates one implicit breakpoint and writes up to the latest three explicit breakpoints in the request. With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit breakpoints. If there are no explicit breakpoints, the request does not use prompt caching.
+          additionalProperties: false
+          title: Prompt cache options
+          description: Options for prompt caching. Supported for `gpt-5.6` and later models. By default, OpenAI automatically chooses one implicit cache breakpoint. You can add explicit breakpoints to content blocks with `prompt_cache_breakpoint`. Each request can write up to four breakpoints. For cache matching, OpenAI considers up to the latest 80 breakpoints in the conversation, without a content-block lookback limit. Set `mode` to `explicit` to disable the implicit breakpoint. The `ttl` defaults to `30m`, which is currently the only supported value. See the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) for current details.
       required:
       - model
       - input
@@ -91891,7 +91992,7 @@ components:
             type: string
           - type: 'null'
         input:
-          description: Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and 8,192 rendered tokens in total.
+          description: Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and a configured rendered-token limit (8,192 by default).
           type: array
           items:
             $ref: '#/components/schemas/LiveInitialItem'
@@ -91901,12 +92002,13 @@ components:
           $ref: '#/components/schemas/LiveInitialSessionAudioParam'
         delegation:
           anyOf:
-          - description: Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` to let the API manage a Responses backend.
+          - description: Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` or `decisions` to delegate to the corresponding API.
             discriminator:
               propertyName: type
             anyOf:
             - $ref: '#/components/schemas/LiveClientDelegationParam'
             - $ref: '#/components/schemas/LiveResponsesDelegationParam'
+            - $ref: '#/components/schemas/LiveDecisionsDelegationParam'
           - type: 'null'
         store:
           description: Whether to store the session for later forking and recording download. Defaults to false for new sessions.
@@ -91914,6 +92016,12 @@ components:
         client:
           description: Startup-only capabilities for an untrusted frontend attached to a unified WebRTC session. Trusted sideband connections are unaffected.
           $ref: '#/components/schemas/LiveClientConfigParam'
+        triggers:
+          description: At most one Decisions trigger per transcript event type. Triggers run independently of delegation. On update, omit triggers to keep the current configuration, send a list to replace it, or send an empty list to disable triggers.
+          type: array
+          items:
+            $ref: '#/components/schemas/LiveDecisionTriggerInputParam'
+          maxItems: 2
       required:
       - model
     LiveSessionStartEvent:
@@ -91969,7 +92077,7 @@ components:
             delegation:
               type: client
     LiveSessionUpdateParams:
-      description: Changes to an active Live session. Only delegation backend settings can be updated after startup.
+      description: Changes to an active Live session's delegation settings and transcript triggers.
       type: object
       properties:
         delegation:
@@ -91980,10 +92088,13 @@ components:
             anyOf:
             - $ref: '#/components/schemas/LiveClientDelegationParam'
             - $ref: '#/components/schemas/LiveResponsesDelegationUpdateParam'
+            - $ref: '#/components/schemas/LiveDecisionsDelegationUpdateParam'
           - type: 'null'
+        triggers:
+          $ref: '#/components/schemas/LiveSessionCreateParams/properties/triggers'
       required: []
     LiveSessionUpdateParam:
-      description: Update the delegation settings of an active Live session. The server acknowledges accepted changes with `session.updated`.
+      description: Update the delegation settings or transcript triggers of an active Live session. The server acknowledges accepted changes with `session.updated`.
       example:
         type: session.update
         event_id: evt_update_001
@@ -92009,7 +92120,7 @@ components:
           enum:
           - session.update
         session:
-          description: Sparse delegation updates. Omitted settings retain their values. The delegation type cannot change, including resetting Responses delegation to null or client. Model, frontend instructions, audio, and startup input are immutable.
+          description: Sparse delegation and trigger updates. Omitted settings retain their values. The delegation type cannot change. Model, frontend instructions, audio, and startup input are immutable.
           $ref: '#/components/schemas/LiveSessionUpdateParams'
       required:
       - type
@@ -92424,7 +92535,7 @@ components:
             type: string
           - type: 'null'
         input:
-          description: Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and 8,192 rendered tokens in total.
+          description: Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and a configured rendered-token limit (8,192 by default).
           type: array
           items:
             $ref: '#/components/schemas/LiveInitialItem'
@@ -92434,12 +92545,13 @@ components:
           $ref: '#/components/schemas/LiveInitialSessionAudioParam'
         delegation:
           anyOf:
-          - description: Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` to let the API manage a Responses backend.
+          - description: Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` or `decisions` to delegate to the corresponding API.
             discriminator:
               propertyName: type
             anyOf:
             - $ref: '#/components/schemas/LiveClientDelegationParam'
             - $ref: '#/components/schemas/LiveResponsesDelegationParam'
+            - $ref: '#/components/schemas/LiveDecisionsDelegationParam'
           - type: 'null'
         store:
           description: Whether to store the session for later forking and recording download. Defaults to false for new sessions.
@@ -92460,6 +92572,8 @@ components:
           type: string
           enum:
           - active
+        triggers:
+          $ref: '#/components/schemas/LiveSessionCreateParams/properties/triggers'
       required:
       - model
       - id
@@ -92985,11 +93099,11 @@ components:
           start_ms: 5400
           end_ms: 7200
     LiveDelegationItem:
-      description: Metadata for work delegated by the Live model. Client delegations are handled by your application; Responses delegations run on the configured backend.
+      description: Metadata for work delegated by the Live model to your application, Responses, or Decisions.
       type: object
       properties:
         id:
-          description: The unique ID of the delegation. Use this as delegation_id when replying to client-owned work or correlating Responses events.
+          description: The unique ID of the delegation. Use this as delegation_id when replying to client-owned work or correlating backend events.
           type: string
         type:
           description: The object type, always `delegation`.
@@ -92999,7 +93113,7 @@ components:
           enum:
           - delegation
         target:
-          description: 'Where the Live model delegated the work: `client` for your application, or `responses` for the configured Responses backend.'
+          description: 'Where the Live model delegated the work: `client`, `responses`, or `decisions`.'
           anyOf:
           - default: client
             x-stainless-const: true
@@ -93011,6 +93125,11 @@ components:
             type: string
             enum:
             - responses
+          - default: decisions
+            x-stainless-const: true
+            type: string
+            enum:
+            - decisions
         response_id:
           description: The ID of the Responses API response associated with a Responses delegation. Omitted for client delegations.
           type: string
@@ -93019,7 +93138,7 @@ components:
       - type
       - target
     LiveDelegationCreated:
-      description: Returned when the Live model delegates work to your application or a Responses backend. Contains delegation metadata and the position on the session timeline where the work was delegated.
+      description: Returned when the Live model delegates work to your application, Responses, or Decisions. Contains delegation metadata and the position on the session timeline where the work was delegated.
       example:
         type: session.delegation.created
         event_id: evt_delegation_001
@@ -93586,6 +93705,9 @@ components:
       - $ref: '#/components/schemas/LiveInputTranscriptDelta'
       - $ref: '#/components/schemas/LiveOutputTranscriptDelta'
       - $ref: '#/components/schemas/LiveDelegationCreated'
+      - $ref: '#/components/schemas/LiveDecisionEvent'
+      - $ref: '#/components/schemas/LiveDecisionItemCreated'
+      - $ref: '#/components/schemas/LiveDecisionItemDeleted'
       - $ref: '#/components/schemas/LiveResponseEvent'
       - $ref: '#/components/schemas/LiveSessionUsageUpdated'
       - $ref: '#/components/schemas/LiveSessionClosed'
@@ -106300,6 +106422,721 @@ components:
       - $ref: '#/components/schemas/BetaResponseCustomToolCallInputDoneEvent'
       discriminator:
         propertyName: type
+    DecisionPromptCacheBreakpoint:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum:
+          - explicit
+          default: explicit
+          x-stainless-const: true
+          description: The breakpoint mode. Always `explicit`.
+      required:
+      - mode
+      additionalProperties: false
+      title: Prompt cache breakpoint
+      description: Marks the exact end of a reusable prompt prefix. The breakpoint inherits its TTL from the request's `prompt_cache_options.ttl`; the boundary is not rounded to a token block.
+    CreateVoicePromptRequest:
+      type: object
+      title: Prompt
+      description: Creates a synthetic voice from a text description. Supports application/json or multipart/form-data.
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum:
+          - prompt
+          description: Set to `prompt` to create a voice from a text description.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: The name of the new voice.
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: A description of the desired voice. Must not contain only whitespace.
+        script_hint:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Optional text for the voice to speak during creation. If omitted, a script is generated from the prompt. Must not be blank after trimming whitespace; scripts that are too short are rejected.
+        model:
+          anyOf:
+          - type: string
+          - type: string
+            enum:
+            - auto
+            - 2026-10-08
+          default: auto
+          description: The voice creation model to use. Defaults to `auto`.
+      required:
+      - type
+      - name
+      - prompt
+    LiveDecisionChoiceParam:
+      type: object
+      properties:
+        value:
+          anyOf:
+          - type: string
+          - type: boolean
+        description:
+          type: string
+      required:
+      - value
+    LiveDecisionChoiceQuestionParam:
+      type: object
+      properties:
+        type:
+          default: choice
+          x-stainless-const: true
+          type: string
+          enum:
+          - choice
+        name:
+          type: string
+        instructions:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/LiveDecisionChoiceParam'
+          minItems: 2
+          maxItems: 255
+      required:
+      - type
+      - instructions
+      - choices
+    LiveDecisionPredicateQuestionParam:
+      type: object
+      properties:
+        type:
+          default: predicate
+          x-stainless-const: true
+          type: string
+          enum:
+          - predicate
+        name:
+          type: string
+        instructions:
+          type: string
+      required:
+      - type
+      - instructions
+    LiveDecisionScoreLevelParam:
+      type: object
+      properties:
+        label:
+          type: string
+        description:
+          type: string
+      required:
+      - label
+    LiveDecisionScoreQuestionParam:
+      type: object
+      properties:
+        type:
+          default: score
+          x-stainless-const: true
+          type: string
+          enum:
+          - score
+        name:
+          type: string
+        instructions:
+          type: string
+        levels:
+          type: array
+          items:
+            $ref: '#/components/schemas/LiveDecisionScoreLevelParam'
+          minItems: 2
+          maxItems: 10
+      required:
+      - type
+      - instructions
+      - levels
+    LiveDecisionQuestion:
+      discriminator:
+        propertyName: type
+      anyOf:
+      - $ref: '#/components/schemas/LiveDecisionChoiceQuestionParam'
+      - $ref: '#/components/schemas/LiveDecisionPredicateQuestionParam'
+      - $ref: '#/components/schemas/LiveDecisionScoreQuestionParam'
+    LiveDecisionsSettingsInputParam:
+      type: object
+      properties:
+        questions:
+          description: Native Decision API questions evaluated together, in order.
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionParam'
+          minItems: 1
+          maxItems: 64
+        model:
+          type: string
+          minLength: 1
+      required:
+      - questions
+      - model
+    LiveDecisionsDelegationParam:
+      type: object
+      properties:
+        type:
+          default: decisions
+          x-stainless-const: true
+          type: string
+          enum:
+          - decisions
+        decisions:
+          $ref: '#/components/schemas/LiveDecisionsSettingsInputParam'
+      required:
+      - type
+      - decisions
+    LiveDecisionQuestionsInputParam:
+      description: Questions evaluated using the current transcript and the session's shared Decision items.
+      type: object
+      properties:
+        questions:
+          description: Native Decision API questions evaluated together, in order.
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionParam'
+          minItems: 1
+          maxItems: 64
+      required:
+      - questions
+    LiveDecisionTriggerInputParam:
+      type: object
+      properties:
+        type:
+          default: decisions
+          x-stainless-const: true
+          type: string
+          enum:
+          - decisions
+        event_type:
+          type: string
+          enum:
+          - session.input_transcript.delta
+          - session.output_transcript.delta
+        decisions:
+          description: Questions evaluated using the current transcript and the session's shared Decision items.
+          $ref: '#/components/schemas/LiveDecisionQuestionsInputParam'
+      required:
+      - type
+      - event_type
+      - decisions
+      additionalProperties: false
+    triggers:
+      description: At most one Decisions trigger per transcript event type. Triggers run independently of delegation. On update, omit triggers to keep the current configuration, send a list to replace it, or send an empty list to disable triggers.
+      type: array
+      items:
+        $ref: '#/components/schemas/LiveDecisionTriggerInputParam'
+      maxItems: 2
+    LiveDecisionsSettingsInputParam-2:
+      type: object
+      properties:
+        questions:
+          description: Native Decision API questions evaluated together, in order.
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionParam'
+          minItems: 1
+          maxItems: 64
+        model:
+          type: string
+          minLength: 1
+      required:
+      - questions
+      - model
+    LiveDecisionsDelegationParam-2:
+      type: object
+      properties:
+        type:
+          default: decisions
+          x-stainless-const: true
+          type: string
+          enum:
+          - decisions
+        decisions:
+          $ref: '#/components/schemas/LiveDecisionsSettingsInputParam-2'
+      required:
+      - type
+      - decisions
+    LiveDecisionQuestionsInputParam-2:
+      description: Questions evaluated using the current transcript and the session's shared Decision items.
+      type: object
+      properties:
+        questions:
+          description: Native Decision API questions evaluated together, in order.
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionParam'
+          minItems: 1
+          maxItems: 64
+      required:
+      - questions
+    LiveDecisionTriggerInputParam-2:
+      type: object
+      properties:
+        type:
+          default: decisions
+          x-stainless-const: true
+          type: string
+          enum:
+          - decisions
+        event_type:
+          type: string
+          enum:
+          - session.input_transcript.delta
+          - session.output_transcript.delta
+        decisions:
+          description: Questions evaluated using the current transcript and the session's shared Decision items.
+          $ref: '#/components/schemas/LiveDecisionQuestionsInputParam-2'
+      required:
+      - type
+      - event_type
+      - decisions
+      additionalProperties: false
+    LiveDecisionsSettingsUpdateParam:
+      type: object
+      properties:
+        model:
+          type: string
+          minLength: 1
+        questions:
+          description: Native Decision API questions evaluated together, in order.
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionParam'
+          minItems: 1
+          maxItems: 64
+      required: []
+    LiveDecisionsDelegationUpdateParam:
+      type: object
+      properties:
+        type:
+          default: decisions
+          x-stainless-const: true
+          type: string
+          enum:
+          - decisions
+        decisions:
+          $ref: '#/components/schemas/LiveDecisionsSettingsUpdateParam'
+      required:
+      - type
+    LiveDecisionCreateParam:
+      description: Evaluate the configured questions using the current conversation and Decision inputs. Reusing an event_id is rejected for the lifetime of the session.
+      example:
+        type: decision.create
+        event_id: decision_1
+      type: object
+      properties:
+        event_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        type:
+          default: decision.create
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.create
+      required:
+      - event_id
+      - type
+      x-oaiMeta:
+        example:
+          type: decision.create
+          event_id: decision_1
+    LiveDecisionInputTextParam:
+      type: object
+      properties:
+        type:
+          description: The type of the input item. Always `input_text`.
+          default: input_text
+          x-stainless-const: true
+          type: string
+          enum:
+          - input_text
+        text:
+          description: The text input to the model.
+          type: string
+          maxLength: 10485760
+      required:
+      - type
+      - text
+    LiveDetailEnum:
+      type: string
+      enum:
+      - low
+      - high
+      - auto
+      - original
+    LiveDecisionInputImageParam:
+      type: object
+      properties:
+        type:
+          description: The type of the input item. Always `input_image`.
+          default: input_image
+          x-stainless-const: true
+          type: string
+          enum:
+          - input_image
+        image_url:
+          description: An inline image encoded as a data URL.
+          type: string
+          maxLength: 20971520
+          pattern: '^data:'
+        detail:
+          anyOf:
+          - description: The detail level of the image to be sent to the model. One of `high`, `low`, `auto`, or `original`. Defaults to `auto`.
+            $ref: '#/components/schemas/LiveDetailEnum'
+          - type: 'null'
+      required:
+      - type
+      - image_url
+    LiveDecisionInputItemParam:
+      type: object
+      properties:
+        id:
+          anyOf:
+          - description: The unique ID of this message item.
+            type: string
+          - type: 'null'
+        type:
+          default: message
+          x-stainless-const: true
+          type: string
+          enum:
+          - message
+        role:
+          description: The message role. Always `user`.
+          default: user
+          x-stainless-const: true
+          type: string
+          enum:
+          - user
+        content:
+          anyOf:
+          - description: The text input to the model.
+            type: string
+            maxLength: 10485760
+          - type: array
+            items:
+              discriminator:
+                propertyName: type
+              anyOf:
+              - $ref: '#/components/schemas/LiveDecisionInputTextParam'
+              - $ref: '#/components/schemas/LiveDecisionInputImageParam'
+            x-stainless-variantName: parts
+      required:
+      - role
+      - content
+    LiveDecisionItemCreateParam:
+      description: Append an input item for future decisions without starting an evaluation or changing Live voice context.
+      example:
+        type: decision.item.create
+        event_id: browser_1
+        item:
+          type: message
+          role: user
+          content:
+          - type: input_text
+            text: Wikipedia is open.
+      type: object
+      properties:
+        event_id:
+          anyOf:
+          - description: Optional client identifier for correlating this command with a server event's client_event_id or error.client_event_id.
+            type: string
+            maxLength: 512
+          - type: 'null'
+        type:
+          default: decision.item.create
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.item.create
+        item:
+          $ref: '#/components/schemas/LiveDecisionInputItemParam'
+      required:
+      - type
+      - item
+      x-oaiMeta:
+        example:
+          type: decision.item.create
+          event_id: browser_1
+          item:
+            type: message
+            role: user
+            content:
+            - type: input_text
+              text: Wikipedia is open.
+    LiveDecisionItemDeleteParam:
+      description: Delete an input item from future decisions without starting an evaluation or changing Live voice context.
+      example:
+        type: decision.item.delete
+        event_id: remove_browser_1
+        item_id: msg_browser_1
+      type: object
+      properties:
+        event_id:
+          anyOf:
+          - description: Optional client identifier for correlating this command with a server event's client_event_id or error.client_event_id.
+            type: string
+            maxLength: 512
+          - type: 'null'
+        type:
+          default: decision.item.delete
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.item.delete
+        item_id:
+          type: string
+          minLength: 1
+      required:
+      - type
+      - item_id
+      x-oaiMeta:
+        example:
+          type: decision.item.delete
+          event_id: remove_browser_1
+          item_id: msg_browser_1
+    LiveDecisionCompleted:
+      type: object
+      properties:
+        type:
+          default: decision.completed
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.completed
+        decision:
+          description: The native Decision API response, including its model, ordered answers, and token usage.
+          $ref: '#/components/schemas/DecisionResponse'
+      required:
+      - type
+      - decision
+    LiveDecisionEvent:
+      description: A Decision API event for a Live delegation or transcript trigger. For a trigger, source_event_id identifies the transcript delta that caused this evaluation.
+      example:
+        type: decision.event
+        event_id: evt_decision_1
+        delegation_id: del_abc123
+        trigger_id: null
+        source_event_type: null
+        source_event_id: null
+        event:
+          type: decision.completed
+          decision:
+            model: gpt-6-luna
+            answers:
+            - type: predicate
+              name: damaged
+              probability: 0.95
+            usage:
+              input_tokens: 42
+              input_tokens_details:
+                cached_tokens: 0
+                cache_write_tokens: 0
+              output_tokens: 0
+              output_tokens_details:
+                reasoning_tokens: 0
+              total_tokens: 42
+      type: object
+      properties:
+        type:
+          default: decision.event
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.event
+        event_id:
+          description: The unique ID of this Live server event.
+          type: string
+        delegation_id:
+          anyOf:
+          - description: The Live delegation ID, or null for a transcript trigger.
+            type: string
+          - type: 'null'
+        trigger_id:
+          anyOf:
+          - description: The Live-assigned ID of this trigger firing, or null for a delegation.
+            type: string
+          - type: 'null'
+        source_event_type:
+          anyOf:
+          - anyOf:
+            - default: session.input_transcript.delta
+              x-stainless-const: true
+              type: string
+              enum:
+              - session.input_transcript.delta
+            - default: session.output_transcript.delta
+              x-stainless-const: true
+              type: string
+              enum:
+              - session.output_transcript.delta
+          - type: 'null'
+        source_event_id:
+          anyOf:
+          - description: The event_id of the transcript delta that fired this trigger, or null for a delegation.
+            type: string
+          - type: 'null'
+        event:
+          $ref: '#/components/schemas/LiveDecisionCompleted'
+      required:
+      - type
+      - event_id
+      - delegation_id
+      - trigger_id
+      - source_event_type
+      - source_event_id
+      - event
+      x-oaiMeta:
+        example:
+          type: decision.event
+          event_id: evt_decision_1
+          delegation_id: del_abc123
+          trigger_id: null
+          source_event_type: null
+          source_event_id: null
+          event:
+            type: decision.completed
+            decision:
+              model: gpt-6-luna
+              answers:
+              - type: predicate
+                name: damaged
+                probability: 0.95
+              usage:
+                input_tokens: 42
+                input_tokens_details:
+                  cached_tokens: 0
+                  cache_write_tokens: 0
+                output_tokens: 0
+                output_tokens_details:
+                  reasoning_tokens: 0
+                total_tokens: 42
+    LiveDecisionStoredInputItemParam:
+      type: object
+      properties:
+        id:
+          description: The ID of the stored Decision input item.
+          type: string
+        type:
+          default: message
+          x-stainless-const: true
+          type: string
+          enum:
+          - message
+        role:
+          description: The message role. Always `user`.
+          default: user
+          x-stainless-const: true
+          type: string
+          enum:
+          - user
+        content:
+          anyOf:
+          - description: The text input to the model.
+            type: string
+            maxLength: 10485760
+          - type: array
+            items:
+              discriminator:
+                propertyName: type
+              anyOf:
+              - $ref: '#/components/schemas/LiveDecisionInputTextParam'
+              - $ref: '#/components/schemas/LiveDecisionInputImageParam'
+            x-stainless-variantName: parts
+      required:
+      - id
+      - role
+      - content
+    LiveDecisionItemCreated:
+      description: An input item was appended for future decisions.
+      example:
+        type: decision.item.created
+        event_id: evt_item_1
+        client_event_id: browser_1
+        item:
+          id: msg_browser_1
+          type: message
+          role: user
+          content:
+          - type: input_text
+            text: Wikipedia is open.
+      type: object
+      properties:
+        event_id:
+          description: The unique ID of the Live server event.
+          type: string
+        client_event_id:
+          description: The event_id of the client command associated with this server event, when supplied.
+          type: string
+        type:
+          default: decision.item.created
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.item.created
+        item:
+          $ref: '#/components/schemas/LiveDecisionStoredInputItemParam'
+      required:
+      - event_id
+      - type
+      - item
+      x-oaiMeta:
+        example:
+          type: decision.item.created
+          event_id: evt_item_1
+          client_event_id: browser_1
+          item:
+            id: msg_browser_1
+            type: message
+            role: user
+            content:
+            - type: input_text
+              text: Wikipedia is open.
+    LiveDecisionItemDeleted:
+      description: An input item was removed from future decisions.
+      example:
+        type: decision.item.deleted
+        event_id: evt_item_deleted_1
+        client_event_id: remove_browser_1
+        item_id: msg_browser_1
+      type: object
+      properties:
+        event_id:
+          description: The unique ID of the Live server event.
+          type: string
+        client_event_id:
+          description: The event_id of the client command associated with this server event, when supplied.
+          type: string
+        type:
+          default: decision.item.deleted
+          x-stainless-const: true
+          type: string
+          enum:
+          - decision.item.deleted
+        item_id:
+          type: string
+      required:
+      - event_id
+      - type
+      - item_id
+      x-oaiMeta:
+        example:
+          type: decision.item.deleted
+          event_id: evt_item_deleted_1
+          client_event_id: remove_browser_1
+          item_id: msg_browser_1
     OAuthErrorCode:
       anyOf:
       - enum:
@@ -108040,6 +108877,15 @@ x-oaiMeta:
       key: LiveCommentaryAppendParam
       path: <auto>
     - type: object
+      key: LiveDecisionCreateParam
+      path: <auto>
+    - type: object
+      key: LiveDecisionItemCreateParam
+      path: <auto>
+    - type: object
+      key: LiveDecisionItemDeleteParam
+      path: <auto>
+    - type: object
       key: LiveResponseItemCreateParam
       path: <auto>
     - type: object
@@ -108100,6 +108946,15 @@ x-oaiMeta:
       path: <auto>
     - type: object
       key: LiveDelegationCreated
+      path: <auto>
+    - type: object
+      key: LiveDecisionEvent
+      path: <auto>
+    - type: object
+      key: LiveDecisionItemCreated
+      path: <auto>
+    - type: object
+      key: LiveDecisionItemDeleted
       path: <auto>
     - type: object
       key: LiveResponseEvent

@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -94,7 +95,7 @@ func copySpeechSaveStream(ctx context.Context, destination io.Writer, source io.
 }
 
 func copySpeechStreamWithCompletion(ctx context.Context, destination io.Writer, source io.Reader, requireCompletion bool) error {
-	copying := &speechCopyReader{source: source, sink: outputWriter{ctx: ctx, out: destination}}
+	copying := &speechCopyReader{source: source, sink: clioutput.Writer{Context: ctx, Sink: destination}}
 	reader := bufio.NewReader(copying)
 	iter := &outputIterator[outputJSON]{
 		source: &speechEventIterator{reader: reader}, context: ctx,
@@ -120,7 +121,7 @@ func copySpeechStreamWithCompletion(ctx context.Context, destination io.Writer, 
 // Stop before reading further from the body after any failed or short write.
 type speechCopyReader struct {
 	source io.Reader
-	sink   outputWriter
+	sink   clioutput.Writer
 	err    error
 }
 
@@ -128,7 +129,7 @@ func (r *speechCopyReader) Read(data []byte) (int, error) {
 	if r.err != nil {
 		return 0, r.err
 	}
-	if err := r.sink.ctx.Err(); err != nil {
+	if err := r.sink.Context.Err(); err != nil {
 		return 0, err
 	}
 	n, err := r.source.Read(data)

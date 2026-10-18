@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/stretchr/testify/require"
 )
 
@@ -253,7 +254,7 @@ func TestSpeechRawRetainsFailureOnClosedFinalUnterminatedEvent(t *testing.T) {
 		_, err := WriteBinaryResponse(response, failOutputWriter{errors.New("broken pipe")}, "")
 		require.Contains(t, err.Error(), "the API reported an error while streaming")
 		require.NotContains(t, err.Error(), "synthetic-private")
-		require.False(t, isOutputBrokenPipe(err))
+		require.False(t, clioutput.IsBrokenPipe(err))
 		require.True(t, body.closed)
 	}
 }

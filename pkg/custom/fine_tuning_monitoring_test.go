@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -66,7 +67,7 @@ func TestFineTuningHelpCoversClonesAndPreservesDescriptions(t *testing.T) {
 		{Name: "retrieve"}, {Name: "list-events"}, {Name: "pause"}, {Name: "resume"},
 	}}
 	root := &cli.Command{Commands: []*cli.Command{jobs}}
-	configureCommandSubgroups(root)
+	localcommands.ConfigureSubgroups(root)
 	configureFineTuningHelpContent(root)
 	configureFineTuningHelpContent(root)
 	for _, group := range []*cli.Command{jobs, root.Command("fine-tuning").Command("jobs")} {

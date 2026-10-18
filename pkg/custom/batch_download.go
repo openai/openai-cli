@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
@@ -82,7 +83,7 @@ func handleBatchDownload(ctx context.Context, command *cli.Command) (err error) 
 	}
 	if path == "-" {
 		copyErr := writeBatchStdout(ctx, command.Root().Writer, func(out io.Writer) error {
-			_, copyErr := io.Copy(outputWriter{ctx: ctx, out: out}, response.Body)
+			_, copyErr := io.Copy(clioutput.Writer{Context: ctx, Sink: out}, response.Body)
 			return copyErr
 		})
 		return errors.Join(copyErr, response.Body.Close(), ctx.Err())
@@ -165,7 +166,7 @@ func writeBatchDownloadInDirectory(ctx context.Context, directory, name string, 
 	if err := file.Chmod(0o600); err != nil {
 		return 0, batchDownloadFailure("Could not prepare the output file permissions. No output file was published.", err)
 	}
-	written, copyErr := io.Copy(outputWriter{ctx: ctx, out: file}, body)
+	written, copyErr := io.Copy(clioutput.Writer{Context: ctx, Sink: file}, body)
 	bodyOpen = false
 	bodyCloseErr := body.Close()
 	fileOpen = false

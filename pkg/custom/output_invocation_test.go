@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/urfave/cli/v3"
 )
 
@@ -273,7 +274,7 @@ func TestOutputInvocationInterruptionsAndDiagnosticFailures(t *testing.T) {
 				!errors.As(err, &exit) || exit.ExitCode() != tc.code {
 				t.Fatalf("combined failure lost identity, causes, or exit ordering: %v", err)
 			}
-			var diagnostic *diagnosticWriteError
+			var diagnostic *clioutput.DiagnosticError
 			if errors.Is(err, os.ErrClosed) != tc.wantWrite || errors.As(err, &diagnostic) != tc.wantWrite {
 				t.Fatalf("interruption guard or diagnostic provenance changed: %v", err)
 			}
