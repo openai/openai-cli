@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
@@ -89,12 +90,12 @@ func registerProfileCommands(root *cli.Command) {
 
 func profileCommand(name, usage, example string) *cli.Command {
 	help := `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}EXAMPLE
-  {{$bin}} ` + example + "\n\n" + cli.CommandHelpTemplate + localUtilityGlobalHelp
+  {{$bin}} ` + example + "\n\n" + cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp
 	return &cli.Command{
 		Name: name, Usage: usage, HideHelpCommand: true, CustomHelpTemplate: help,
 		Description: "Works locally without API requests. Supports --format auto, text, json, or jsonl.",
 		Metadata: map[string]any{
-			localUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools",
+			localcommands.LocalUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools",
 			"completion-root-flag-values": map[string][]string{"format": {"auto", "text", "json", "jsonl"}},
 		},
 	}
@@ -246,10 +247,14 @@ func handleProfileCommand(ctx context.Context, command *cli.Command) error {
 		if committed {
 			message = "Saved profiles were updated, but the result could not be written."
 		}
-		return &localUtilityError{
-			message: message + " Inspect with " + errorHelpInvocation(root) + " profile list.",
-			cause:   err, preserveOnCancel: committed,
+		failure := &localcommands.LocalError{
+			Message: message + " Inspect with " + errorHelpInvocation(root) + " profile list.",
+			Cause:   err,
 		}
+		if committed {
+			return &localCancellationGuidanceError{LocalError: failure}
+		}
+		return failure
 	}
 	return nil
 }
@@ -371,7 +376,7 @@ func profileTextValue(value string) string {
 }
 
 func profileCommandStoreFailure(cause error) error {
-	var local *localUtilityError
+	var local *localcommands.LocalError
 	if errors.As(cause, &local) {
 		return cause
 	}
@@ -390,5 +395,5 @@ func profileCommandStoreFailure(cause error) error {
 }
 
 func profileFailure(message string, cause error) error {
-	return &localUtilityError{message: message, cause: cause}
+	return &localcommands.LocalError{Message: message, Cause: cause}
 }

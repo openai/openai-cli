@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
@@ -29,10 +30,10 @@ func registerAuthCommands(root *cli.Command) {
 Shows configured authentication offline by default.
 Use --verify --credential-kind api or admin to look up one authenticated principal.
 
-` + cli.CommandHelpTemplate + localUtilityGlobalHelp
+` + cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp
 	root.Commands = append(root.Commands, &cli.Command{
 		Name: "auth", Usage: "Inspect authentication configuration and identity", HideHelpCommand: true,
-		Metadata: map[string]any{localUtilityMetadata: true, "help-command-section": "Local tools"},
+		Metadata: map[string]any{localcommands.LocalUtilityMetadata: true, "help-command-section": "Local tools"},
 		Commands: []*cli.Command{{
 			Name: "status", Usage: "Show authentication configuration; optionally resolve one identity",
 			Description: "Reports API and Admin credentials separately, plus organization, project, and a sanitized base URL. " +
@@ -102,18 +103,18 @@ func handleAuthStatus(ctx context.Context, command *cli.Command) error {
 	}
 	root := command.Root()
 	if command.Args().Present() {
-		return &localUtilityError{message: "Auth status takes no positional arguments. Use openai auth status --help."}
+		return &localcommands.LocalError{Message: "Auth status takes no positional arguments. Use openai auth status --help."}
 	}
 	if root.IsSet("transform") || root.IsSet("raw-output") {
-		return &localUtilityError{message: "Auth status does not support --transform or --raw-output. Use --format text or json."}
+		return &localcommands.LocalError{Message: "Auth status does not support --transform or --raw-output. Use --format text or json."}
 	}
 	format := strings.ToLower(root.String("format"))
 	if format != "auto" && format != "text" && format != "json" {
-		return &localUtilityError{message: "Auth status supports --format auto, text, or json."}
+		return &localcommands.LocalError{Message: "Auth status supports --format auto, text, or json."}
 	}
 	verify, kind := command.Bool("verify"), command.String("credential-kind")
 	if verify && kind != "api" && kind != "admin" || !verify && command.IsSet("credential-kind") {
-		return &localUtilityError{message: "Use --verify with --credential-kind api or --credential-kind admin."}
+		return &localcommands.LocalError{Message: "Use --verify with --credential-kind api or --credential-kind admin."}
 	}
 	snapshot, err := resolveAuthStatusSnapshot(root, os.LookupEnv)
 	if err != nil {
@@ -130,13 +131,18 @@ func handleAuthStatus(ctx context.Context, command *cli.Command) error {
 		lookupErr = failure
 		if ctx.Err() != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return &localUtilityError{message: "Identity lookup timed out. Identity remains unknown.", cause: context.DeadlineExceeded}
+				return &localcommands.LocalError{Message: "Identity lookup timed out. Identity remains unknown.", Cause: context.DeadlineExceeded}
 			}
 			code := 130
 			if errors.Is(context.Cause(ctx), errAdminSetupTerminated) {
 				code = 143
 			}
-			return &authStatusLookupError{localUtilityError: &localUtilityError{message: "Identity lookup canceled.", cause: context.Canceled, preserveOnCancel: true}, code: code}
+			return &authStatusLookupError{
+				localCancellationGuidanceError: &localCancellationGuidanceError{
+					LocalError: &localcommands.LocalError{Message: "Identity lookup canceled.", Cause: context.Canceled},
+				},
+				code: code,
+			}
 		}
 		if kind == "api" {
 			report.APIIdentity = identity
@@ -172,7 +178,7 @@ func handleAuthStatus(ctx context.Context, command *cli.Command) error {
 			endpoint, readable.Text(report.BaseURL.Source))
 	}
 	if err != nil {
-		return &localUtilityError{message: "Could not write auth status. Check the output file or pipe before rerunning.", cause: errors.Join(err, lookupErr)}
+		return &localcommands.LocalError{Message: "Could not write auth status. Check the output file or pipe before rerunning.", Cause: errors.Join(err, lookupErr)}
 	}
 	return lookupErr
 }
@@ -221,7 +227,7 @@ func resolveAuthStatusSnapshot(root *cli.Command, lookup func(string) (string, b
 	environment := snapshotContextEnvironment(root, lookup)
 	literal, err := requestHeaders(root)
 	if err != nil {
-		return authStatusSnapshot{}, &localUtilityError{message: "Invalid --header. Use 'Name: Value' without control characters."}
+		return authStatusSnapshot{}, &localcommands.LocalError{Message: "Invalid --header. Use 'Name: Value' without control characters."}
 	}
 	inherited := inheritedContextHeaders(environment)
 	setting := func(flag, variable string) authStatusValue {
@@ -304,9 +310,12 @@ func resolveAuthStatusSnapshot(root *cli.Command, lookup func(string) (string, b
 }
 
 type authStatusLookupError struct {
-	*localUtilityError
+	*localCancellationGuidanceError
 	code int
 }
+
+// Keep the guidance wrapper in the error chain.
+func (e *authStatusLookupError) Unwrap() error { return e.localCancellationGuidanceError }
 
 func (e *authStatusLookupError) ExitCode() int { return e.code }
 
@@ -314,7 +323,7 @@ func (e *authStatusLookupError) ExitCode() int { return e.code }
 // Keep its request independent of SDK API/Admin fallback and API-body error rendering.
 func authStatusLookup(ctx context.Context, root *cli.Command, snapshot authStatusSnapshot, kind string) (authStatusIdentity, error) {
 	failure := func(reason, message string) (authStatusIdentity, error) {
-		return authStatusIdentity{Status: "unknown", Reason: reason}, &localUtilityError{message: message}
+		return authStatusIdentity{Status: "unknown", Reason: reason}, &localcommands.LocalError{Message: message}
 	}
 	endpoint, err := url.Parse(snapshot.baseURL)
 	if err != nil || endpoint.Scheme != "https" || endpoint.Hostname() != "api.openai.com" ||
@@ -543,7 +552,7 @@ func authStatusBaseURL(base authStatusValue) (authStatusEndpoint, bool, error) {
 	}
 	parsed, err := url.Parse(base.Value)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return authStatusEndpoint{}, false, &localUtilityError{message: "Configured base URL is invalid. Use an http:// or https:// URL."}
+		return authStatusEndpoint{}, false, &localcommands.LocalError{Message: "Configured base URL is invalid. Use an http:// or https:// URL."}
 	}
 	redacted := parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != ""
 	// Custom paths can contain credentials. Display only the origin and known public API paths.

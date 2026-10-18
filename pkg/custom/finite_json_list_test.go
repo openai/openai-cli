@@ -13,6 +13,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -280,7 +281,7 @@ func TestFiniteJSONListCancellationDuringBrokenPipe(t *testing.T) {
 		cancel()
 		require.ErrorIs(t, err, context.Canceled)
 		require.ErrorIs(t, err, syscall.EPIPE)
-		require.False(t, isOutputBrokenPipe(err), "cancellation must prevent EPIPE suppression")
+		require.False(t, clioutput.IsBrokenPipe(err), "cancellation must prevent EPIPE suppression")
 	}
 }
 

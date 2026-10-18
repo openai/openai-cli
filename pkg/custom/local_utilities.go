@@ -1,12 +1,16 @@
 package custom
 
-import "github.com/urfave/cli/v3"
+import (
+	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/urfave/cli/v3"
+)
 
-const localUtilityMetadata = "openai-local-utility"
+// Preserve authored cancellation guidance without changing the shared error contract.
+type localCancellationGuidanceError struct {
+	*localcommands.LocalError
+}
 
-const localUtilityGlobalHelp = `
-{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}Global option details: {{$bin}} --help
-`
+func (e *localCancellationGuidanceError) Unwrap() error { return e.LocalError }
 
 // IsLocalUtilityCommand identifies a registered utility after root flag parsing.
 // Request values and unregistered command names never select the local path.
@@ -16,17 +20,5 @@ func IsLocalUtilityCommand(command *cli.Command) bool {
 	}
 	root := command.Root()
 	selected := root.Command(root.Args().First())
-	return selected != nil && selected.Metadata[localUtilityMetadata] == true
+	return selected != nil && selected.Metadata[localcommands.LocalUtilityMetadata] == true
 }
-
-// Only locally defined messages belong here. Causes retain failure identity
-// without exposing input text, paths, configuration values, or launcher output.
-type localUtilityError struct {
-	message string
-	cause   error
-	// Keep proven committed outcomes visible when receipt delivery is canceled.
-	preserveOnCancel bool
-}
-
-func (e *localUtilityError) Error() string { return e.message }
-func (e *localUtilityError) Unwrap() error { return e.cause }

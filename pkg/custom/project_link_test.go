@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -84,7 +85,7 @@ func TestProjectLinkCompletionUsesSupportedFormats(t *testing.T) {
 		command := root.Command(name)
 		require.NotNil(t, command)
 		require.Equal(t, map[string][]string{"format": {"auto", "text", "json"}}, command.Metadata["completion-root-flag-values"])
-		require.Equal(t, true, command.Metadata[localUtilityMetadata])
+		require.Equal(t, true, command.Metadata[localcommands.LocalUtilityMetadata])
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/audiohistory"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -39,7 +40,7 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 	if err != nil {
 		return err
 	}
-	terminal, err := newTokenizerTerminalOutput(ctx, executable, output)
+	terminal, err := cliterminal.NewOutput(ctx, executable, output)
 	if err != nil {
 		return audioFailure("Could not prepare terminal output.", err)
 	}
@@ -70,12 +71,12 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 	if _, err = console.MakeRaw(); err != nil {
 		return err
 	}
-	painter := newTokenizerPainter(terminal, cancel)
+	painter := cliterminal.NewPainter(terminal, cancel)
 	defer painter.Stop()
 	m := newAudioWorkbench(ctx, command, next, store)
 	m.width, m.height = width, height
-	m.dark = codexGuideDarkBackground(os.Getenv("COLORFGBG"))
-	profile := prettyColorProfile(output, os.Environ())
+	m.dark = cliterminal.DarkBackground(os.Getenv("COLORFGBG"))
+	profile := cliterminal.ColorProfile(output, os.Environ(), isTerminal(output))
 	m.color = profile >= colorprofile.ANSI
 	inline := &audioWorkbenchInline{model: m, painter: painter, output: output, profile: profile, cancel: cancel}
 	program := tea.NewProgram(inline, tea.WithContext(ctx), tea.WithInput(input), tea.WithOutput(io.Discard), tea.WithoutSignalHandler(), tea.WithoutRenderer(), tea.WithWindowSize(width, height), tea.WithColorProfile(profile))
@@ -106,7 +107,7 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 	m.workers.close(cancel)
 	<-listenerDone
 	writeErr := painter.Stop()
-	cleanupErr := closeTokenizerEditorFrame(terminal, inline.close(), m.exitCode != 0 || contextErr != nil)
+	cleanupErr := cliterminal.CloseFrame(terminal, inline.close(), m.exitCode != 0 || contextErr != nil)
 	sessionErr := errors.Join(runErr, contextErr, audioFailureIf("Could not finish the audio terminal display.", errors.Join(writeErr, inline.err, cleanupErr)))
 	if m.exitCode != 0 {
 		return errors.Join(cli.Exit("", m.exitCode), sessionErr)
@@ -121,7 +122,7 @@ func runAudioWorkbench(parent context.Context, command *cli.Command, next cli.Ac
 }
 
 // Print after frame cleanup and native mode restoration, using the owned cancellable writer.
-func printAudioCommand(ctx context.Context, output tokenizerFrameOutput, commandText string) error {
+func printAudioCommand(ctx context.Context, output cliterminal.FrameOutput, commandText string) error {
 	if commandText == "" {
 		return nil
 	}
@@ -143,7 +144,7 @@ type audioWorkbenchSizeError struct{}
 // only bracketed paste, cursor visibility, and wrapping; keyboard modes stay put.
 type audioWorkbenchInline struct {
 	model                             *audioWorkbench
-	painter                           tokenizerFramePainter
+	painter                           cliterminal.FramePainter
 	output                            *os.File
 	profile                           colorprofile.Profile
 	cancel                            context.CancelFunc
@@ -232,7 +233,7 @@ func (p *audioWorkbenchInline) drawFrame(w, h int) {
 	if content == p.content && w == p.width && h == p.height {
 		return
 	}
-	p.painter.Frame(imagePickerInlineFrame(content, w))
+	p.painter.Frame(cliterminal.InlineFrame(content, w))
 	p.content, p.width, p.height = content, w, h
 }
 func (p *audioWorkbenchInline) close() string {

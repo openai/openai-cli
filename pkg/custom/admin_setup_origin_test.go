@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -189,7 +190,7 @@ func TestAdminSetupProfileResolutionFailures(t *testing.T) {
 			}
 			configureProfileContext(root)
 			err := root.Run(t.Context(), []string{root.Name, "--base-url=https://gateway.example.test/v1/", "admin:organization:projects", "list"})
-			var local *localUtilityError
+			var local *localcommands.LocalError
 			require.ErrorAs(t, err, &local)
 			require.NotContains(t, err.Error(), "synthetic-sensitive")
 		})

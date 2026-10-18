@@ -10,17 +10,17 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/openai/openai-cli/pkg/cmd"
+	"github.com/openai/openai-cli/generated/commands"
 )
 
 func TestMainCommandSubgroupsCoverGeneratedRoutes(t *testing.T) {
 	count := 0
-	for _, old := range cmd.Command.Commands {
+	for _, old := range commands.Command.Commands {
 		if old.Category != "API RESOURCE" || !strings.Contains(old.Name, ":") {
 			continue
 		}
 		count++
-		nested := cmd.Command
+		nested := commands.Command
 		for _, part := range strings.Split(old.Name, ":") {
 			nested = nested.Command(part)
 			if nested == nil {
@@ -215,7 +215,7 @@ func TestMainCommandSubgroupsPreserveAudioAndErrors(t *testing.T) {
 		}
 	}
 	got = runMainDispatch(t, "bash", "openai", "admin", "organizatio")
-	if got.code == 0 || !strings.Contains(got.stderr, "openai admin organization") {
+	if got.code != 3 || got.stdout != "" || got.stderr != "Unknown command. Did you mean: openai help admin organization?\nTo run it, correct only the command spelling. Keep your original options and arguments.\n" {
 		t.Fatalf("nested typo suggestion failed: %+v", got)
 	}
 }

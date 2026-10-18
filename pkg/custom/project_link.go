@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
@@ -71,12 +72,12 @@ func registerProjectLinkCommands(root *cli.Command) {
 		}
 		description += "\nSupports --format auto, text, or json. No positional arguments, --transform, or --raw-output."
 		help := `{{$bin := or (index .Root.Metadata "help-invocation") "openai"}}EXAMPLE
-  {{$bin}} ` + example + "\n\n" + cli.CommandHelpTemplate + localUtilityGlobalHelp
+  {{$bin}} ` + example + "\n\n" + cli.CommandHelpTemplate + localcommands.LocalUtilityGlobalHelp
 		root.Commands = append(root.Commands, &cli.Command{
 			Name: name, Usage: usage, Description: description, HideHelpCommand: true,
 			CustomHelpTemplate: help,
 			Metadata: map[string]any{
-				localUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools",
+				localcommands.LocalUtilityMetadata: true, "local-help-full": help, "help-command-section": "Local tools",
 				"completion-root-flag-values": map[string][]string{"format": {"auto", "text", "json"}},
 			},
 			Action: handleProjectLink,
@@ -344,5 +345,5 @@ func projectLinkText(status projectLinkStatus) string {
 }
 
 func projectLinkFailure(message string, cause error) error {
-	return &localUtilityError{message: message, cause: cause}
+	return &localcommands.LocalError{Message: message, Cause: cause}
 }

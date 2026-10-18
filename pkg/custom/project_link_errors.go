@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/urfave/cli/v3"
 )
 
@@ -58,19 +59,19 @@ func projectLinkCommittedSelectionFailure(action string, cause error) error {
 		outcome = "This folder has no saved link of its own. Its inherited project could not be resolved. "
 	}
 	if errors.Is(cause, context.Canceled) {
-		return &localUtilityError{
-			message: outcome + "The command was canceled. Inspect saved links before retrying.",
-			cause:   cause, preserveOnCancel: true,
-		}
+		return &localCancellationGuidanceError{LocalError: &localcommands.LocalError{
+			Message: outcome + "The command was canceled. Inspect saved links before retrying.",
+			Cause:   cause,
+		}}
 	}
-	var utility *localUtilityError
+	var utility *localcommands.LocalError
 	recovery := projectLinkRecovery(cause)
 	if errors.As(cause, &utility) {
 		// Profile selection can fail after the independent folder transaction.
 		// Keep its vetted recovery instead of blaming the folder registry.
 		recovery = utility.Error()
 	}
-	return &localUtilityError{message: outcome + recovery, cause: cause, preserveOnCancel: true}
+	return &localCancellationGuidanceError{LocalError: &localcommands.LocalError{Message: outcome + recovery, Cause: cause}}
 }
 
 func projectLinkOutputFailure(root *cli.Command, action string, cause error) error {
@@ -81,8 +82,12 @@ func projectLinkOutputFailure(root *cli.Command, action string, cause error) err
 	case "unlink":
 		message = "This folder has no saved link of its own. Its confirmation could not be written."
 	}
-	return &localUtilityError{
-		message: message + " Inspect with " + errorHelpInvocation(root) + " link.",
-		cause:   cause, preserveOnCancel: action == "link" || action == "unlink",
+	failure := &localcommands.LocalError{
+		Message: message + " Inspect with " + errorHelpInvocation(root) + " link.",
+		Cause:   cause,
 	}
+	if action == "link" || action == "unlink" {
+		return &localCancellationGuidanceError{LocalError: failure}
+	}
+	return failure
 }

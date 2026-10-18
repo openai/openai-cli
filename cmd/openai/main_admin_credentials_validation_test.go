@@ -263,7 +263,7 @@ func TestMainAdminCredentialsPrecedesFileExpansion(t *testing.T) {
 			var keyEnv []string
 			if configured {
 				name = "configured admin key"
-				want = "A local file could not be found. Check your file arguments and @file references."
+				want = "Could not open the file for --name. Check the path and permissions."
 				keyEnv = []string{"OPENAI_ADMIN_KEY=synthetic-admin-key"}
 			}
 			t.Run(strings.Join(route, "/")+"/"+name, func(t *testing.T) {

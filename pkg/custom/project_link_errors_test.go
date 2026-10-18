@@ -5,13 +5,41 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"testing"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
+
+func TestProjectLinkCancellationGuidanceRetainsErrorBoundary(t *testing.T) {
+	committed := projectLinkCommittedSelectionFailure("link", context.Canceled)
+	plain := &localcommands.LocalError{Message: "A different operation failed.", Cause: context.Canceled}
+	for _, test := range []struct {
+		name    string
+		failure error
+		want    string
+	}{
+		{"direct", committed, "The folder link was saved."},
+		{"wrapped", fmt.Errorf("synthetic-private: %w", committed), "The folder link was saved."},
+		{"plain_outer", &localcommands.LocalError{Message: "An outer operation failed.", Cause: committed}, "Request canceled."},
+		{"plain_first_join", errors.Join(plain, committed), "Request canceled."},
+		{"guidance_first_join", errors.Join(committed, plain), "The folder link was saved."},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.ErrorIs(t, test.failure, context.Canceled)
+			var shared *localcommands.LocalError
+			require.ErrorAs(t, test.failure, &shared)
+			var diagnostic bytes.Buffer
+			require.NoError(t, ShowCommandError(&cli.Command{Name: "openai"}, test.failure, &diagnostic))
+			require.Contains(t, diagnostic.String(), test.want)
+			require.NotContains(t, diagnostic.String(), "synthetic-private")
+		})
+	}
+}
 
 func TestProjectLinkStoreFailurePreservesCauses(t *testing.T) {
 	root := &cli.Command{Metadata: map[string]any{"help-invocation": "'/synthetic/CLI with spaces/openai'"}}

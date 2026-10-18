@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
 // imagePickerInline keeps one transient logical line below the shell transcript.
@@ -143,63 +144,12 @@ func (p *imagePickerInline) draw() {
 	if content == p.content && width == p.width && height == p.height {
 		return
 	}
-	_, _ = io.WriteString(p.output, imagePickerInlineFrame(content, width))
+	_, _ = io.WriteString(p.output, cliterminal.InlineFrame(content, width))
 	p.content, p.width, p.height = content, width, height
 	if p.resuming {
 		p.submitAfter = time.Now().Add(imagePickerResumeQuiet)
 		p.resuming = false
 	}
-}
-
-func imagePickerInlineFrame(content string, width int) string {
-	var frame strings.Builder
-	frame.WriteString("\r" + ansi.EraseScreenBelow)
-	if content == "" || width <= 0 {
-		return frame.String()
-	}
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		// A printable space completes the preceding row's pending wrap. CR
-		// then returns to column zero without breaking that logical line.
-		frame.WriteString(" \r")
-		used, clipped := 0, false
-		for len(line) > 0 {
-			sequence, cells, read := imagePickerSequence(line)
-			line = line[read:]
-			if cells == 0 {
-				frame.WriteString(sequence)
-			} else if !clipped && used+cells < width {
-				frame.WriteString(sequence)
-				used += cells
-			} else {
-				clipped = true
-			}
-		}
-		// Place the wrap boundary explicitly. Emoji clusters can occupy fewer
-		// cells than wcwidth reports; spaces alone would leave the cursor on
-		// the wrong row. The final cell is reserved from content above.
-		frame.WriteString(ansi.CursorHorizontalAbsolute(width))
-		frame.WriteByte(' ')
-	}
-	// CR cancels the pending wrap after the final boundary cell. All preceding
-	// rows were reached by autowrap, so this remains one logical terminal line.
-	frame.WriteByte('\r')
-	if len(lines) > 1 {
-		frame.WriteString(ansi.CursorUp(len(lines) - 1))
-	}
-	return frame.String()
-}
-
-// Count complete printable clusters, including ASCII-led keycap emoji. ANSI's
-// sequence decoder alone treats the leading digit as a separate byte. Taking
-// the larger width covers both scalar and grapheme-aware terminal presentation.
-func imagePickerSequence(text string) (sequence string, cells, read int) {
-	if text[0] == '\x1b' {
-		sequence, cells, read, _ = ansi.DecodeSequenceWc(text, 0, nil)
-		return
-	}
-	sequence, cells = ansi.FirstGraphemeCluster(text, ansi.WcWidth)
-	return sequence, max(cells, ansi.StringWidth(sequence)), len(sequence)
 }
 
 func (p *imagePickerInline) close() {

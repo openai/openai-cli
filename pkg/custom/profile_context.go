@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
 )
@@ -70,7 +71,7 @@ func selectedProfileName(root *cli.Command, lookup func(string) (string, bool), 
 	}
 	if name != "" {
 		if _, exists := registry.Profiles[name]; !exists {
-			return "", &localUtilityError{message: "Selected profile does not exist. Use " + errorHelpInvocation(root) + " profile list or create the profile first."}
+			return "", &localcommands.LocalError{Message: "Selected profile does not exist. Use " + errorHelpInvocation(root) + " profile list or create the profile first."}
 		}
 	}
 	return name, nil
@@ -93,11 +94,11 @@ func resolveSelectedProfile(ctx context.Context, root *cli.Command, lookup func(
 		return "", profileValues{}, nil
 	}
 	if err != nil {
-		return "", profileValues{}, &localUtilityError{message: "Could not locate saved profiles. Check your user configuration directory.", cause: err}
+		return "", profileValues{}, &localcommands.LocalError{Message: "Could not locate saved profiles. Check your user configuration directory.", Cause: err}
 	}
 	registry, err := loadProfiles(ctx, path)
 	if err != nil {
-		return "", profileValues{}, &localUtilityError{message: "Could not read saved profiles. Existing profiles were kept.", cause: err}
+		return "", profileValues{}, &localcommands.LocalError{Message: "Could not read saved profiles. Existing profiles were kept.", Cause: err}
 	}
 	name, err := selectedProfileName(root, lookup, registry)
 	return name, registry.Profiles[name], err

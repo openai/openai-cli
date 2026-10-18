@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/readable"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
 func imagePickerTitle(value string) string {
@@ -114,7 +115,7 @@ func (m *imagePicker) View() tea.View {
 	}
 	lines := []string{strong.Render("Create image")}
 	if height >= 18 && m.width >= 50 {
-		prompt = imagePickerPromptFit(prompt, width-4)
+		prompt = cliterminal.FitPrompt(prompt, width-4)
 		caption := "╭ Prompt "
 		// Match the painter's conservative width budget. Position the closing
 		// edge explicitly because terminals disagree on emoji cluster widths.
@@ -260,7 +261,7 @@ func (m *imagePicker) optionWindow(length, available int) (start, end int) {
 func imagePickerPromptTail(text string, width int) string {
 	remaining := 0
 	for rest := text; len(rest) > 0; {
-		_, cells, read := imagePickerSequence(rest)
+		_, cells, read := cliterminal.Sequence(rest)
 		remaining += cells
 		rest = rest[read:]
 	}
@@ -268,29 +269,11 @@ func imagePickerPromptTail(text string, width int) string {
 		return text
 	}
 	for remaining > width-1 {
-		_, cells, read := imagePickerSequence(text)
+		_, cells, read := cliterminal.Sequence(text)
 		remaining -= cells
 		text = text[read:]
 	}
 	return "…" + text
-}
-
-func imagePickerPromptFit(text string, width int) string {
-	var result strings.Builder
-	used := 0
-	for len(text) > 0 {
-		sequence, cells, read := imagePickerSequence(text)
-		if used+cells > width || used+cells == width && read < len(text) {
-			result.WriteRune('…')
-			used++
-			break
-		}
-		result.WriteString(sequence)
-		used += cells
-		text = text[read:]
-	}
-	result.WriteString(strings.Repeat(" ", max(0, width-used)))
-	return result.String()
 }
 
 // Leave room for previous shell output while keeping the active controls short.
@@ -317,7 +300,7 @@ func (m *imagePicker) commandLines(width int) []string {
 	var line strings.Builder
 	used, width := 0, max(1, width)
 	for len(command) > 0 {
-		sequence, cells, read := imagePickerSequence(command)
+		sequence, cells, read := cliterminal.Sequence(command)
 		command = command[read:]
 		if used > 0 && used+cells > width {
 			lines = append(lines, line.String())

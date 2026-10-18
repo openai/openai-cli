@@ -905,7 +905,8 @@ func TestMainAuthStatusIdentitySignals(t *testing.T) {
 			require.Equal(t, tc.code, got.code, "%s", got.stderr)
 			require.Empty(t, got.stdout)
 			require.Len(t, requests, 1)
-			decodeMainStructuredError(t, "json", got.stderr)
+			diagnostic := decodeMainStructuredError(t, "json", got.stderr)
+			require.Equal(t, "Identity lookup canceled.", diagnostic["message"])
 			assertAuthStatusPrivate(t, got, "synthetic-private-api-token", "synthetic-private-response-body")
 		})
 	}

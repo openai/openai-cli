@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openai/openai-cli/generated/commands"
 	"github.com/openai/openai-cli/internal/app"
-	"github.com/openai/openai-cli/pkg/cmd"
 	"github.com/stretchr/testify/require"
 )
 
@@ -640,6 +640,62 @@ func TestMainProfileQuietPreservesResults(t *testing.T) {
 	}
 }
 
+func TestMainProfileShellSuggestionFlagOwnership(t *testing.T) {
+	home, directory := t.TempDir(), t.TempDir()
+	createProfileFixture(t, home, directory, "work", "--project=proj_saved")
+	registryBefore, err := os.ReadFile(profileRegistryPath(home))
+	require.NoError(t, err)
+	startup := filepath.Join(home, "startup with spaces")
+	const original = "# personal startup\n"
+	require.NoError(t, os.WriteFile(startup, []byte(original), 0600))
+	server, requests := localUtilitiesRequestTrap(t)
+	environment := []string{
+		"OPENAI_PROFILE=missing", "OPENAI_BASE_URL=" + server.URL,
+		"OPENAI_API_KEY=synthetic-suggestion-key", "OPENAI_PICKER_SHELL=off", "ZDOTDIR=" + home,
+	}
+	assertUnchanged := func(t *testing.T) {
+		t.Helper()
+		registryAfter, err := os.ReadFile(profileRegistryPath(home))
+		require.NoError(t, err)
+		require.Equal(t, registryBefore, registryAfter, "suggestions must not change saved profiles")
+		startupAfter, err := os.ReadFile(startup)
+		require.NoError(t, err)
+		require.Equal(t, original, string(startupAfter), "suggestions must not change the startup file")
+		require.Zero(t, requests.Load(), "suggestions must remain offline")
+	}
+	baseline := runProjectLinkMain(t, home, directory, environment, "", "@completion", "zsh", "--suggest-executable")
+	require.Zero(t, baseline.code, "%s", baseline.stderr)
+	require.Empty(t, baseline.stderr)
+	require.Contains(t, baseline.stdout, "openai_suggestions_disable")
+	assertUnchanged(t)
+
+	t.Run("root_selection", func(t *testing.T) {
+		got := runProjectLinkMain(t, home, directory, environment, "",
+			"--profile=work", "@completion", "zsh", "--suggest-executable")
+		require.Zero(t, got.code, "%s", got.stderr)
+		require.Empty(t, got.stderr)
+		require.Equal(t, baseline.stdout, got.stdout, "root selection must not change the standalone suggestion script")
+		assertUnchanged(t)
+	})
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"local_startup_path", []string{"--profile", startup}},
+		{"local_empty_startup_path", []string{"--profile="}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"--profile=work", "@completion", "zsh", "--suggest-executable"}, tc.args...)
+			got := runProjectLinkMain(t, home, directory, environment, "", args...)
+			require.Equal(t, 2, got.code, "%s", got.stderr)
+			require.Empty(t, got.stdout)
+			require.Contains(t, got.stderr, "Print executable suggestions separately from picker setup.")
+			assertAuthStatusPrivate(t, got, startup, "synthetic-suggestion-key")
+			assertUnchanged(t)
+		})
+	}
+}
+
 func TestMainProfileCompletionFlagOwnership(t *testing.T) {
 	home, directory := t.TempDir(), t.TempDir()
 	createProfileFixture(t, home, directory, "work", "--project=proj_saved")
@@ -740,7 +796,7 @@ func TestMainProfileCanceledReceiptProcess(t *testing.T) {
 	separator := slices.Index(os.Args, "--")
 	require.GreaterOrEqual(t, separator, 0)
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd.Command.Writer = profileCancelReceiptWriter{cancel: cancel}
+	commands.Command.Writer = profileCancelReceiptWriter{cancel: cancel}
 	if os.Getenv("OPENAI_CLI_PROFILE_CANCEL_BEFORE") == "1" {
 		cancel()
 	}

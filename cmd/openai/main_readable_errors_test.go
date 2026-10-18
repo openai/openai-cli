@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openai/openai-cli/pkg/cmd"
+	"github.com/openai/openai-cli/generated/commands"
 	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/urfave/cli/v3"
 )
@@ -158,7 +158,7 @@ func TestMainSensitiveLocalErrors(t *testing.T) {
 			args: []string{"--base-url", "synthetic-private-host/?token=fake-secret", "models", "list"},
 		},
 		{
-			name: "missing file", want: "local file",
+			name: "missing file", want: "the file for --input",
 			args: []string{"responses", "create", "--model", "synthetic-model", "--input", "@" + missingFile},
 		},
 		{
@@ -212,15 +212,15 @@ func TestMainWrappedExitCodeProcess(t *testing.T) {
 	if os.Getenv("OPENAI_CLI_WRAPPED_ERROR_PROCESS") != "1" {
 		return
 	}
-	cmd.Command = &cli.Command{
-		Name: "openai", ErrWriter: &cmd.CommandErrorBuffer,
+	commands.Command = &cli.Command{
+		Name: "openai", ErrWriter: &commands.CommandErrorBuffer,
 		Commands: []*cli.Command{{Name: "synthetic", Category: "API RESOURCE", Commands: []*cli.Command{{
 			Name: "fail", Action: func(context.Context, *cli.Command) error {
 				return cli.Exit("synthetic-private-failure", 7)
 			},
 		}}}},
 	}
-	custom.ConfigureCommand(cmd.Command)
+	custom.ConfigureCommand(commands.Command)
 	os.Args = []string{"openai", "synthetic", "fail"}
 	main()
 	os.Exit(0)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
@@ -114,11 +115,6 @@ type outputPolicy struct {
 	diagnostics bool
 }
 
-// Diagnostic failures belong to stderr, even inside stdout's stream lifecycle.
-type diagnosticWriteError struct{ error }
-
-func (e *diagnosticWriteError) Unwrap() error { return e.error }
-
 func quietOutput(ctx context.Context) bool {
 	if ctx == nil {
 		return false
@@ -148,8 +144,8 @@ func writeOutputHint(opts ShowJSONOpts, message string) error {
 	if !outputDiagnosticsAllowed(opts.Context) {
 		return nil
 	}
-	if err := readable.WriteText(outputWriter{ctx: opts.Context, out: opts.Stderr}, message); err != nil {
-		return &diagnosticWriteError{err}
+	if err := readable.WriteText(clioutput.Writer{Context: opts.Context, Sink: opts.Stderr}, message); err != nil {
+		return &clioutput.DiagnosticError{Err: err}
 	}
 	return nil
 }
@@ -158,7 +154,7 @@ func writeOutputReceipt(ctx context.Context, message string) error {
 	if !outputDiagnosticsAllowed(ctx) {
 		return nil
 	}
-	return readable.WriteText(outputWriter{ctx: ctx, out: os.Stderr}, message)
+	return readable.WriteText(clioutput.Writer{Context: ctx, Sink: os.Stderr}, message)
 }
 
 func configureOutputPolicy(root *cli.Command) {
@@ -222,7 +218,7 @@ func finishOutputPolicy(ctx context.Context, command *cli.Command, label string,
 	}
 	diagnosticErr := writeVerboseResult(os.Stderr, label, format, err, elapsed)
 	if diagnosticErr != nil {
-		diagnosticErr = &diagnosticWriteError{diagnosticErr}
+		diagnosticErr = &clioutput.DiagnosticError{Err: diagnosticErr}
 	}
 	return errors.Join(err, diagnosticErr)
 }
@@ -234,7 +230,7 @@ func writeVerboseResult(out io.Writer, command, format string, failure error, el
 	if failure != nil {
 		result = "failed"
 	}
-	_, err := fmt.Fprintf(outputWriter{ctx: context.Background(), out: out},
+	_, err := fmt.Fprintf(clioutput.Writer{Context: context.Background(), Sink: out},
 		"Command: %s\nFormat option: %s\nElapsed: %s\nCommand result: %s\n",
 		command, format, elapsed.Round(time.Millisecond).String(), result)
 	return err
