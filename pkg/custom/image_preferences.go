@@ -2,10 +2,10 @@ package custom
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/openai/openai-cli/internal/imageprefs"
@@ -18,6 +18,18 @@ func imageInlinePreferencePath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(directory, "openai", "image-preferences.json"), nil
+}
+
+// Keep recovery paths useful without exposing resolved configuration values.
+func imageInlinePreferenceLocation(goos string) string {
+	switch goos {
+	case "darwin":
+		return "$HOME/Library/Application Support/openai/image-preferences.json"
+	case "windows":
+		return `%AppData%\openai\image-preferences.json`
+	default:
+		return "$XDG_CONFIG_HOME/openai/image-preferences.json, or $HOME/.config/openai/image-preferences.json when XDG_CONFIG_HOME is unset"
+	}
 }
 
 // An explicit flag, including auto, bypasses preferences. Pipes never need to
@@ -52,10 +64,10 @@ func imageInlinePreferenceCommands() []*cli.Command {
 				}
 				path, err := imageInlinePreferencePath()
 				if err != nil {
-					return imageSavingFailure("Could not find your configuration folder. Check HOME, APPDATA or XDG_CONFIG_HOME.", err)
+					return imageSavingFailure("Could not find your configuration folder. Check the environment settings for "+imageInlinePreferenceLocation(runtime.GOOS)+".", err)
 				}
 				if err := imageprefs.Save(ctx, path, mode == "on"); err != nil {
-					return imageSavingFailure(fmt.Sprintf("Could not save the inline preference. Existing settings were kept. Check permissions and the settings in %q; move an invalid file aside before trying again.", path), err)
+					return imageSavingFailure("Could not save the inline preference. Existing settings were kept. Check permissions and settings in "+imageInlinePreferenceLocation(runtime.GOOS)+". Move an invalid settings file aside before trying again.", err)
 				}
 				message := "Automatic image previews " + mode + ".\nOverride once: --inline auto|on|off\nView a saved image: openai images preview FILE"
 				if mode == "on" {

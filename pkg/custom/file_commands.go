@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/urfave/cli/v3"
 )
 
@@ -113,7 +114,7 @@ func configureFileCommands(root *cli.Command) {
 		if source == nil {
 			continue
 		}
-		command := cloneResourceCommand(source)
+		command := localcommands.CloneResourceCommand(source)
 		command.Name, command.Aliases, command.Hidden = route.name, nil, false
 		command.Usage = route.usage
 		if route.name == fileGetCommand {
@@ -133,7 +134,7 @@ func configureFileCommands(root *cli.Command) {
 			Examples:    []clihelp.Example{{Description: route.usage, Command: route.example}},
 		}
 		files.Commands = append(files.Commands, command)
-		markCompatibilityCommand(source)
+		localcommands.MarkCompatibilityCommand(source)
 	}
 	for name, rank := range map[string]int{"upload": 10, "get": 20, "download": 30} {
 		if command := files.Command(name); command != nil {

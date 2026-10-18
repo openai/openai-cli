@@ -10,7 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// Keep the CLI's sample-only voice validation and credential selection outside
+// Keep the CLI's voice validation and credential selection outside
 // generated handlers. Install before command aliases and presentation wrappers.
 func configureAudioVoices(root *cli.Command) {
 	voices := root.Command("audio:voices")

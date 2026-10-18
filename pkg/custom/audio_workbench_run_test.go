@@ -22,7 +22,7 @@ func TestAudioWorkbenchDrawSynchronizesGeometryAfterNonKeyMessage(t *testing.T) 
 			result := audioReviewResult("retained", false)
 			m.result, m.focus = &result, 4
 			m.note = "Audio retained. Space plays or stops. S saves the original bytes."
-			paint := &tokenizerRecordedFrames{}
+			paint := &audioRecordedFrames{}
 			inline := &audioWorkbenchInline{model: m, painter: paint, profile: colorprofile.ASCII, started: true}
 
 			// A non-key update runs before the queued WindowSizeMsg. The draw
@@ -61,3 +61,8 @@ func TestAudioWorkbenchDrawSynchronizesGeometryAfterNonKeyMessage(t *testing.T) 
 		})
 	}
 }
+
+type audioRecordedFrames struct{ strings.Builder }
+
+func (p *audioRecordedFrames) Control(data string) { _, _ = p.WriteString(data) }
+func (p *audioRecordedFrames) Frame(data string)   { _, _ = p.WriteString(data) }

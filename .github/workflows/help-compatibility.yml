@@ -56,7 +56,7 @@ jobs:
     if: github.event_name != 'push'
     needs: source
     permissions: {}
-    name: Help on ${{ matrix.os }}
+    name: ${{ matrix.shard == 'dispatch' && 'Help dispatch' || 'Help' }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
@@ -87,6 +87,7 @@ jobs:
             shells: cmd,powershell,pwsh
             environment: true
           - os: macos-15-intel
+            shard: contracts
             image-state: true
             image-models: true
             native-commands: true
@@ -117,6 +118,7 @@ jobs:
             pager: true
             bash-prefixes: true
           - os: windows-11-arm
+            shard: contracts
             image-state: true
             image-models: true
             native-commands: true
@@ -129,6 +131,20 @@ jobs:
             runner-arch: ARM64
             shells: cmd,powershell,pwsh
             environment: true
+          # Separate subprocess-heavy dispatch from the remaining contracts on
+          # the two slowest runners. Keep the other four platforms unsharded.
+          - os: macos-15-intel
+            shard: dispatch
+            goos: darwin
+            goarch: amd64
+            runner-arch: X64
+            shells: bash,zsh
+          - os: windows-11-arm
+            shard: dispatch
+            goos: windows
+            goarch: arm64
+            runner-arch: ARM64
+            shells: cmd,powershell,pwsh
     steps:
       - name: Download prepared source
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -193,7 +209,7 @@ jobs:
           expect -v
       - uses: ./.github/actions/link-go-sdk
       - name: Test native portable command contracts
-        if: matrix.native-commands && runner.os != 'Windows'
+        if: matrix.native-commands && runner.os != 'Windows' && matrix.shard != 'dispatch'
         shell: bash
         timeout-minutes: 10
         env:
@@ -203,7 +219,7 @@ jobs:
           go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAPIErrorsFormatPrecedenceAndExtraction|TestMainAPIErrorsPreserveJSONDetailsAndExtraction|TestMainAPIErrorsStructuredAcrossCommands|TestMainAPIErrorsWithUnexpectedJSONShapes|TestMainAPIErrorsWithoutJSONDetails|TestMainCommandGroupsHaveWorkflowDescriptions|TestMainCommandSubgroupsCoverGeneratedRoutes|TestMainCommandSubgroupsHelpAndCompletion|TestMainCommandSubgroupsLegacyPrefixCompletion|TestMainCommandSubgroupsPreserveAudioAndErrors|TestMainCommandSubgroupsPreserveBodyFlagScope|TestMainCommandSubgroupsPreserveRequestsAndOutput|TestMainCommandSubgroupsStreamingStaysIncremental|TestMainLocalErrorGuidance|TestMainLocalErrorsStayOnStderr|TestMainNestedHelpErrorFormatPrecedence|TestMainPreservesWrappedExitCode|TestMainReadableAPIArgumentGuidance|TestMainReadableDefaultAndExplicitText|TestMainReadableErrorsStayOnStderr|TestMainReadablePreservesExplicitFormatsAndExtraction|TestMainReadableRawOutputStreamsBeforeNextEvent|TestMainSensitiveLocalErrors|TestMainStreamErrorsPreserveEventDetails|TestMainTaskAdminRoutesPreserveCredentialAndFlagScope|TestMainTaskAudioUploadsPreserveRequestsAndOutput|TestMainTaskFileUploadPreservesMultipartAndOutput|TestMainTaskResourceRoutesPreserveAPIErrorsAndExit|TestMainTaskRouteCompletionProtocols|TestMainTaskRouteHelpStaysLocal|TestMainTaskRoutesPreserveAPIErrorsAndExit|TestMainTaskRoutesPreserveRequiredFlags|TestMainTaskSpeechPreservesJSONInputAndBinaryOutput|TestMainTaskWindowsAudioInterruptClosesStreams)$' \
             | tee "$RUNNER_TEMP/native-command-tests.jsonl"
       - name: Test Windows portable command and alias cancellation contracts
-        if: matrix.native-commands && runner.os == 'Windows'
+        if: matrix.native-commands && runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         timeout-minutes: 10
         env:
@@ -213,11 +229,25 @@ jobs:
           go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAPIErrorsFormatPrecedenceAndExtraction|TestMainAPIErrorsPreserveJSONDetailsAndExtraction|TestMainAPIErrorsStructuredAcrossCommands|TestMainAPIErrorsWithUnexpectedJSONShapes|TestMainAPIErrorsWithoutJSONDetails|TestMainCommandGroupsHaveWorkflowDescriptions|TestMainCommandSubgroupsCoverGeneratedRoutes|TestMainCommandSubgroupsHelpAndCompletion|TestMainCommandSubgroupsLegacyPrefixCompletion|TestMainCommandSubgroupsPreserveAudioAndErrors|TestMainCommandSubgroupsPreserveBodyFlagScope|TestMainCommandSubgroupsPreserveRequestsAndOutput|TestMainCommandSubgroupsStreamingStaysIncremental|TestMainLocalErrorGuidance|TestMainLocalErrorsStayOnStderr|TestMainNestedHelpErrorFormatPrecedence|TestMainPreservesWrappedExitCode|TestMainReadableAPIArgumentGuidance|TestMainReadableDefaultAndExplicitText|TestMainReadableErrorsStayOnStderr|TestMainReadablePreservesExplicitFormatsAndExtraction|TestMainReadableRawOutputStreamsBeforeNextEvent|TestMainSensitiveLocalErrors|TestMainStreamErrorsPreserveEventDetails|TestMainTaskAdminRoutesPreserveCredentialAndFlagScope|TestMainTaskAudioUploadsPreserveRequestsAndOutput|TestMainTaskFileUploadPreservesMultipartAndOutput|TestMainTaskResourceRoutesPreserveAPIErrorsAndExit|TestMainTaskRouteCompletionProtocols|TestMainTaskRouteHelpStaysLocal|TestMainTaskRoutesPreserveAPIErrorsAndExit|TestMainTaskRoutesPreserveRequiredFlags|TestMainTaskSpeechPreservesJSONInputAndBinaryOutput|TestMainTaskWindowsAudioInterruptClosesStreams)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'native-command-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Windows voice validation and upload ownership
+        if: (matrix.native-commands && runner.os == 'Windows') && matrix.shard != 'dispatch'
+        shell: pwsh
+        timeout-minutes: 10
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAudioVoiceDiscriminatorReferences|TestMainAudioVoiceMergedInputs|TestMainAudioVoicePreflight|TestMainAudioVoiceReferenceOrdering)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-voice-public-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 1 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestAudioVoiceBodyEmbeddingCancellationReleasesOwnedRead|TestAudioVoiceBodyEmbeddingPartialFailureClosesOnce|TestAudioVoiceBodyEmbeddingPreservesReplayAndOwnership|TestAudioVoiceBodyEmbeddingReadFailureRetainsCauses|TestAudioVoiceBodyEmbeddingTypeOpenFailureClosesOwnedInputs|TestAudioVoiceBodyEmbeddingValidationFailureClosesOwnedInputs)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-voice-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test help
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && matrix.shard != 'dispatch'
         run: go test ./internal/clihelp ./internal/requestflag -count=1 -v
       - name: Test Windows help
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         env:
           OPENAI_CLI_REQUIRE_WINDOWS_SYMLINKS: '1'
@@ -227,7 +257,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-help-invocation-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test public welcome startup
-        if: matrix.welcome-public && runner.os != 'Windows'
+        if: matrix.welcome-public && runner.os != 'Windows' && matrix.shard != 'dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -235,42 +265,44 @@ jobs:
             -run '^(TestMainWelcomeRedirectedOutputMatchesHelp|TestMainWelcomeExplicitArgumentsStayPlain|TestMainWelcomeBareInvocationStaysOffline)$' \
             | tee "$RUNNER_TEMP/welcome-public-tests.jsonl"
       - name: Test Windows public welcome startup
-        if: matrix.welcome-public && runner.os == 'Windows'
+        if: matrix.welcome-public && runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           go test -p 2 ./cmd/openai -count=1 -timeout=2m -v -json -run '^(TestMainWelcomeRedirectedOutputMatchesHelp|TestMainWelcomeExplicitArgumentsStayPlain|TestMainWelcomeBareInvocationStaysOffline)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'welcome-public-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      # The exhaustive command/flag inventory remains in CI's full Linux
+      # suite. Native help routes, flag placement and shell behavior stay here.
       - name: Test command dispatch and native shells
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && matrix.shard != 'contracts'
         shell: bash
         run: |
           set -euo pipefail
-          go test ./cmd/openai -run '^(TestMainHelp|TestMainDispatch|TestMainNativeShell)' -count=1 -v -json \
+          go test ./cmd/openai -run '^(TestMainHelp|TestMainDispatch|TestMainNativeShell)' -skip '^TestMainHelpFullReferencePreservesEveryFlag$' -count=1 -v -json \
             | tee "$RUNNER_TEMP/dispatch-tests.jsonl"
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
       - name: Test Windows command dispatch and native shells
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.shard != 'contracts'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test ./cmd/openai -run '^(TestMainHelp|TestMainDispatch|TestMainNativeShell)' -count=1 -v -json |
+          go test ./cmd/openai -run '^(TestMainHelp|TestMainDispatch|TestMainNativeShell)' -skip '^TestMainHelpFullReferencePreservesEveryFlag$' -count=1 -v -json |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'dispatch-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: ${{ matrix.shells }}
       - name: Test Windows tokenizer console reader
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes)' |
+          go test -p 2 ./internal/commands/tokenize -count=1 -timeout=2m -v -json -run '^TestTokenizer(ConsoleInput|InputSourcePreservesNonConsoleBytes)' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'tokenizer-reader-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test image command ordering
-        if: matrix.image-order && runner.os != 'Windows'
+        if: matrix.image-order && runner.os != 'Windows' && matrix.shard != 'dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -278,7 +310,7 @@ jobs:
             -run '^(TestMainImageCommandHelpOrder|TestMainImageCommandCompletionOrder)$' \
             | tee "$RUNNER_TEMP/image-command-order-tests.jsonl"
       - name: Test Windows image command ordering
-        if: matrix.image-order && runner.os == 'Windows'
+        if: matrix.image-order && runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -286,7 +318,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-command-order-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Linux Fish help invocation
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.shard != 'dispatch'
         shell: bash
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: fish
@@ -296,7 +328,7 @@ jobs:
             -run '^TestMainFishHelpInvocation$' \
             | tee "$RUNNER_TEMP/fish-help-invocation-tests.jsonl"
       - name: Test Linux Fish image help examples
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.shard != 'dispatch'
         shell: bash
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: fish
@@ -306,17 +338,75 @@ jobs:
             -run '^TestMainFishImageHelpExamples$' \
             | tee "$RUNNER_TEMP/fish-image-help-tests.jsonl"
       - name: Test Linux Fish completion
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.shard != 'dispatch'
         shell: bash
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: fish
         run: |
           set -euo pipefail
+          fish_version=$(fish --no-config -c 'printf "%s\n" $version')
+          if [[ ! $fish_version =~ ^([0-9]+)\.[0-9]+\.[0-9]+([-.+][[:alnum:].+-]+)?$ ]]; then
+            printf 'Unexpected Fish version: %s\n' "$fish_version" >&2
+            exit 1
+          fi
+          fish_major=${BASH_REMATCH[1]}
+          if (( 10#$fish_major >= 4 )); then
+            fish_suggestions=supported
+            suggestion_pattern='TestShellSuggestionsFish.*'
+          else
+            fish_suggestions=unsupported
+            suggestion_pattern='TestShellSuggestionsFish(RefusesUnsupportedVersionBeforeMutation|NoninteractiveDoesNotActivate)'
+            printf '%s\n' 'Fish executable suggestions: native refusal coverage only; Fish 4+ behavior requires a supported host.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          printf 'Fish %s: executable suggestion mode %s\n' "$fish_version" "$fish_suggestions"
+          printf 'OPENAI_CLI_CI_FISH_VERSION=%s\nOPENAI_CLI_CI_FISH_SUGGESTIONS=%s\n' "$fish_version" "$fish_suggestions" >> "$GITHUB_ENV"
           go test ./internal/autocomplete -count=1 -timeout=5m -v -json \
-            -run '^(TestFish(FileCompletionPreservesAssignments|PackagePickerFirstPrompt|PackagePreservesOrdinaryCompletions)|TestPickerFish(TabAndLifecycle|BindingsAndResourcing|RejectsOtherCommandLines)|TestPickerInstalledFish(HonorsSharedOptOut|RunsAfterUserConfiguration))$' \
+            -run "^(TestFish(FileCompletionPreservesAssignments|PackagePickerFirstPrompt|PackagePreservesOrdinaryCompletions)|TestPickerFish(TabAndLifecycle|BindingsAndResourcing|RejectsOtherCommandLines)|TestPickerInstalledFish(HonorsSharedOptOut|RunsAfterUserConfiguration)|${suggestion_pattern})$" \
             | tee "$RUNNER_TEMP/fish-tests.jsonl"
+      - name: Test Linux executable suggestion adapters
+        if: (runner.os == 'Linux' && env.OPENAI_CLI_CI_FISH_SUGGESTIONS == 'supported') && matrix.shard != 'dispatch'
+        shell: bash
+        timeout-minutes: 4
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: fish
+        run: |
+          set -euo pipefail
+          go test -p 1 ./internal/autocomplete -count=1 -timeout=3m -v -json \
+            -run '^(TestShellSuggestionsAdaptersUnavailableExecutable|TestShellSuggestionsAdaptersRefuseShadowedExecutable|TestShellSuggestionsAdaptersRecheckExecutablePrecedence|TestShellSuggestionsAdaptersRecheckRemovedExecutable)$/^fish$' \
+            | tee "$RUNNER_TEMP/fish-suggestion-adapter-tests.jsonl"
+      - name: Test Linux Bash and zsh executable suggestions
+        if: (runner.os == 'Linux') && matrix.shard != 'dispatch'
+        shell: bash
+        timeout-minutes: 4
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: bash,zsh
+          OPENAI_CLI_TEST_BASH: /bin/bash
+        run: |
+          set -euo pipefail
+          go test -p 1 ./internal/autocomplete -count=1 -timeout=3m -v -json \
+            -run '^(TestShellSuggestionMatcherCoversEverySingleEdit|TestShellSuggestionMatcherUsesBoundName|TestShellSuggestionScriptsResolveOnlyRendererTokens|TestShellSuggestionsBashDisableAndReenablePreservesTracing|TestShellSuggestionsBashNocasematchPreservesCaseOnlyReplacement|TestShellSuggestionsBashNocasematchPreservesExactMatchingAndOptions|TestShellSuggestionsBashNocasematchRejectsCaseOnlyBindingChange|TestShellSuggestionsBashRefusalPreservesExtglobOptions|TestShellSuggestionsBashRefusalPreservesParsedAliases|TestShellSuggestionsBashRefusalPreservesSourceProvenanceAndSiblingFiles|TestShellSuggestionsBashRefusalPreservesTracingPrivacy|TestShellSuggestionsBashRefusesExportedOrReadonlyHandler|TestShellSuggestionsBashRefusesPriorHandlerWithoutChangingNativeIdentity|TestShellSuggestionsBashRejectsForeignHandlerAfterDisable|TestShellSuggestionsBashZshAdvisoryAndPrivacy|TestShellSuggestionsBashZshFallbackDoesNotEchoCommandText|TestShellSuggestionsBashZshPreserveLaterReplacement|TestShellSuggestionsBashZshPreservePriorErrexit|TestShellSuggestionsBashZshPriorExitPrecedesAdvice|TestShellSuggestionsBashZshRefuseShadowedExecutable|TestShellSuggestionsBashZshRejectRebindingUntilDisabled|TestShellSuggestionsBashZshRejectRemovedCachedExecutable|TestShellSuggestionsRequireSafeBoundName|TestShellSuggestionsZshDisableAndReenablePreservesTracing|TestShellSuggestionsZshRefusalPreservesHandlerAttributes|TestShellSuggestionsZshRefusalPreservesTracingPrivacy|TestShellSuggestionsZshRefusesAutoloadWithoutLoadingHandler|TestShellSuggestionsZshRefusesEmptyPriorHandler|TestShellSuggestionsZshRefusesPriorHandlerWithoutChangingNativeIdentity|TestShellSuggestionsZshRejectsForeignHandlerAfterDisable|TestShellSuggestionsZshRejectsMissingAutoloadWithoutPartialActivation)$' \
+            | tee "$RUNNER_TEMP/bash-zsh-suggestion-tests.jsonl"
+      - name: Test Linux public executable suggestion setup
+        if: (runner.os == 'Linux') && matrix.shard != 'dispatch'
+        shell: bash
+        timeout-minutes: 4
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: bash,zsh,fish
+          OPENAI_CLI_TEST_BASH: /bin/bash
+        run: |
+          set -euo pipefail
+          shells='bash|zsh'
+          if test "$OPENAI_CLI_CI_FISH_SUGGESTIONS" = supported; then
+            shells+='|fish'
+          fi
+          go test -p 1 ./cmd/openai -count=1 -timeout=3m -v -json \
+            -run "^TestMainShellSuggestionsNative$/^(${shells})$" \
+            | tee "$RUNNER_TEMP/public-shell-suggestion-tests.jsonl"
       - name: Test Linux native command quoting
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.shard != 'dispatch'
         shell: bash
         env:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: zsh,fish
@@ -326,7 +416,7 @@ jobs:
             -run '^TestImagePickerNativeShellQuoting/(zsh|fish)$' \
             | tee "$RUNNER_TEMP/shell-quoting-tests.jsonl"
       - name: Test Windows Files upload and download routes
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -334,7 +424,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'files-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows image uploads and saved results
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -342,14 +432,14 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test image model discovery
-        if: matrix.image-models && runner.os != 'Windows'
+        if: matrix.image-models && runner.os != 'Windows' && matrix.shard != 'dispatch'
         shell: bash
         run: |
           set -euo pipefail
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainImageModels' \
             | tee "$RUNNER_TEMP/image-model-discovery-tests.jsonl"
       - name: Test Windows image model discovery
-        if: matrix.image-models && runner.os == 'Windows'
+        if: matrix.image-models && runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -357,7 +447,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-model-discovery-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows image save boundaries and interruption
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -365,7 +455,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-save-process-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows image filesystem helpers
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         env:
           OPENAI_CLI_REQUIRE_WINDOWS_SYMLINKS: '1'
@@ -375,7 +465,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-save-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows image model progress on stderr
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -383,7 +473,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-models-progress-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows audio output behavior
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -391,7 +481,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'audio-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows resource output and pagination
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -399,7 +489,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'resource-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows streaming text output
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -407,7 +497,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'streaming-text-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test list navigation and table helpers
-        if: matrix.list-helpers && runner.os != 'Windows'
+        if: matrix.list-helpers && runner.os != 'Windows' && matrix.shard != 'dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -418,7 +508,7 @@ jobs:
           go test -p 2 ./internal/readable -count=1 -timeout=2m -v -json -run '^(TestListTableKeepsIDsAndFitsWidth|TestListTableNarrowFallbackKeepsIDs|TestListTableEscapesEveryCell|TestListTableUnicodeWidths|TestListTableEmptyAndMalformedRows)$' \
             | tee "$RUNNER_TEMP/list-renderer-helper-tests.jsonl"
       - name: Test Windows list navigation and table helpers
-        if: matrix.list-helpers && runner.os == 'Windows'
+        if: matrix.list-helpers && runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -432,7 +522,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-renderer-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test image preferences and picker state
-        if: matrix.image-state && runner.os != 'Windows'
+        if: matrix.image-state && runner.os != 'Windows' && matrix.shard != 'dispatch'
         shell: bash
         env:
           GOMAXPROCS: "2"
@@ -444,7 +534,7 @@ jobs:
           go test -p 2 ./pkg/custom -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateRejectsExposedPermissions|TestImagePickerStateWriteFailureKeepsPrevious)$' \
             | tee "$RUNNER_TEMP/image-picker-state-tests.jsonl"
       - name: Test Windows image preferences and picker state
-        if: matrix.image-state && runner.os == 'Windows'
+        if: matrix.image-state && runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         env:
           GOMAXPROCS: "2"
@@ -458,7 +548,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-picker-state-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test request configuration
-        if: matrix.request-configuration && runner.os != 'Windows'
+        if: matrix.request-configuration && runner.os != 'Windows' && matrix.shard != 'dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -467,7 +557,7 @@ jobs:
           go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestRootRequestFlagsPreserveOwnershipAndMetadata|TestRootRequestFlagsPreserveMTLSPlacement|TestRootRequestFlagsRetainSourcesAliasesAndValidation|TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue)$' \
             | tee "$RUNNER_TEMP/request-configuration-helper-tests.jsonl"
       - name: Test Windows request configuration
-        if: matrix.request-configuration && runner.os == 'Windows'
+        if: matrix.request-configuration && runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -478,7 +568,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'request-configuration-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows native shell and download contracts
-        if: matrix.request-configuration && runner.os == 'Windows'
+        if: matrix.request-configuration && runner.os == 'Windows' && matrix.shard != 'dispatch'
         shell: pwsh
         env:
           GOMAXPROCS: '2'
@@ -492,7 +582,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-download-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test request environment restoration
-        if: matrix.environment
+        if: matrix.environment && matrix.shard != 'dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -500,7 +590,7 @@ jobs:
             -run '^TestRequestConfiguration(RestoresEnvironment|LeavesOtherEnvironmentCasesUnchanged)$' \
             | tee "$RUNNER_TEMP/environment-tests.jsonl"
       - name: Test gallery cleanup
-        if: matrix.gallery
+        if: matrix.gallery && matrix.shard != 'dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -508,7 +598,7 @@ jobs:
             -run '^TestCleanup(PreservesMalformedMetadata|ResumesAfterPartialArtifactRemoval)$' \
             | tee "$RUNNER_TEMP/gallery-tests.jsonl"
       - name: Test pager descriptor ownership
-        if: matrix.pager
+        if: matrix.pager && matrix.shard != 'dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -516,7 +606,7 @@ jobs:
             -run '^TestSocketPairPagerFailureKeepsReusedDescriptorOpen$' \
             | tee "$RUNNER_TEMP/pager-tests.jsonl"
       - name: Test Bash command prefixes
-        if: matrix.bash-prefixes
+        if: matrix.bash-prefixes && matrix.shard != 'dispatch'
         shell: bash
         env:
           OPENAI_CLI_TEST_BASH: /bin/bash
@@ -532,6 +622,7 @@ jobs:
       - name: Verify selected compatibility test execution
         shell: bash
         env:
+          COMPATIBILITY_SHARD: ${{ matrix.shard || 'all' }}
           CHECK_IMAGE_STATE: ${{ matrix.image-state || false }}
           CHECK_IMAGE_ORDER: ${{ matrix.image-order || false }}
           CHECK_IMAGE_MODELS: ${{ matrix.image-models || false }}
@@ -582,6 +673,164 @@ jobs:
               return {root} | {f"{root}/{child}" for child in children}
 
           strict_packages = {}
+          if os.environ["RUNNER_OS"] == "Linux":
+              fish_suggestion_cases = {
+                  'TestFishFileCompletionPreservesAssignments': [
+                      'openai_--file_assets/lo',
+                      'openai_--file=assets/lo',
+                      'openai_--image=assets/lo',
+                      'openai_--file=assets/a=',
+                      "openai_--file='assets/long_",
+                      'openai_--file=assets/l[',
+                      'openai_--file_--file=lo',
+                      'openai_--format=assets/lo',
+                      'openai_--missing=assets/lo',
+                      'openai_--_--file=assets/lo',
+                      "openai_--file='assets/a='",
+                      "openai_--file='assets/a=",
+                      'openai_--file="assets/a=',
+                      'openai_--file=assets/a\\=',
+                      "openai_--file='assets/equals_space=",
+                      'openai_--file=assets/colon:',
+                      'openai_--file=assets/back\\\\slash=',
+                      'openai_--file=$OPENAI_CLI_COMPLETION_ASSETS/lo',
+                      "openai_--format_'(touch_unsafe)'_--file=assets/lo",
+                      'openai_--format_(touch_unsafe)_--file=assets/lo',
+                  ],
+                  'TestFishPackagePickerFirstPrompt': [
+                      'enabled',
+                      'stable_opt-out',
+                      'stable_dangling_opt-out',
+                      'legacy_opt-out',
+                      'legacy_dangling_opt-out',
+                      'late_XDG_opt-out',
+                      'stable_opt-out_after_XDG_change',
+                      'disabled_in_config',
+                      'different_executable',
+                      'different_executable_after_prompt',
+                      'function_shadows_executable',
+                      'PATH-selected_test_is_ignored',
+                      'relative_home',
+                      'same_executable_through_symlink',
+                      'repeated_source',
+                      'personal_then_package',
+                      'package_then_personal',
+                  ],
+                  'TestFishPackagePreservesOrdinaryCompletions': [],
+                  'TestPickerFishBindingsAndResourcing': ['custom_binding', 'replacement_binding', 'disable_then_enable'],
+                  'TestPickerFishRejectsOtherCommandLines': [],
+                  'TestPickerFishTabAndLifecycle': [],
+                  'TestPickerInstalledFishHonorsSharedOptOut': ['absent', 'before_startup', 'before_prompt', 'disabled_in_config', 'nonempty', 'dangling_link'],
+                  'TestPickerInstalledFishRunsAfterUserConfiguration': ['config_binding', 'lazy_user_bindings', 'disabled_in_config'],
+                  'TestShellSuggestionsFishAbsentCurrentHandlerDoesNotReadInput': [],
+                  'TestShellSuggestionsFishAbsentPriorPreservesFallbackAndInput': [],
+                  'TestShellSuggestionsFishDelegatesArgumentsAndStatus': ['0', '42', '127'],
+                  'TestShellSuggestionsFishDescriptionValueIsNotEventMetadata': [],
+                  'TestShellSuggestionsFishMatcherAndPrivacy': [
+                      '"opneai"',
+                      '"opena"',
+                      '"xopenai"',
+                      '"openxai"',
+                      '"openaii"',
+                      '"opxnai"',
+                      '"Openai"',
+                      '"open-ai"',
+                      '"openai"',
+                      '"unrelated"',
+                      '"./opneai"',
+                      '"opneai\\n"',
+                      '"opneai\\x1b"',
+                      '"openai;"',
+                      '""',
+                      '"' + "a" * 1000 + '"',
+                  ],
+                  'TestShellSuggestionsFishNoninteractiveDoesNotActivate': [],
+                  'TestShellSuggestionsFishOriginalNameAndSelfReplacement': [],
+                  'TestShellSuggestionsFishPreservesEmptyHandlerAndInput': [],
+                  'TestShellSuggestionsFishPreservesLatePrivateCopyCollision': [],
+                  'TestShellSuggestionsFishPreservesMultilineHandlerLiterals': [],
+                  'TestShellSuggestionsFishPreservesPriorSelfRemoval': [],
+                  'TestShellSuggestionsFishPreservesSourceAndSiblingResource': [],
+                  'TestShellSuggestionsFishPublicLookupAndLifecycle': [],
+                  'TestShellSuggestionsFishRefusesCallerScopeWithoutMutation': [],
+                  'TestShellSuggestionsFishRefusesLegacyEventWithoutMutation': [],
+                  'TestShellSuggestionsFishRefusesSignalAndVariableEvents': ['--on-signal_USR1', '--on-variable_SUGGEST_EVENT_VARIABLE'],
+                  'TestShellSuggestionsFishRejectsPrivateCopyCollisions': ['__openai_suggestions_prior_1', '__openai_suggestions_current_1'],
+                  'TestShellSuggestionsFishRejectsUnsupportedEventsWithoutMutation': [],
+                  'TestShellSuggestionsFishRetainedWrapperAfterOwnedDisable': [],
+                  'TestShellSuggestionsFishRefusesUnsupportedVersionBeforeMutation': [],
+                  'TestShellSuggestionsFishRefusesForeignPendingStack': [],
+                  'TestShellSuggestionsFishRefusesAmbiguousSourceMetadata': [],
+                  'TestShellSuggestionsFishRefusesCompletionWrappers': ['initial', 'later'],
+                  'TestShellSuggestionsFishRestoresAfterInterruptedDelegation': ['owned', 'retained', 'nested-retained', 'disabled-retained'],
+                  'TestShellSuggestionsFishDefersEmittedEventsAndRestoresAfterRepeatedCalls': [],
+                  'TestShellSuggestionsFishTraceDoesNotDiscloseUnusedHandlerLiterals': [],
+              }
+              bash_zsh_suggestion_cases = {
+                  'TestShellSuggestionMatcherCoversEverySingleEdit': ['a', 'openai', 'future_cli2', 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'],
+                  'TestShellSuggestionMatcherUsesBoundName': ['openai', 'client', '_tool2'],
+                  'TestShellSuggestionScriptsResolveOnlyRendererTokens': [],
+                  'TestShellSuggestionsBashDisableAndReenablePreservesTracing': [],
+                  'TestShellSuggestionsBashNocasematchPreservesCaseOnlyReplacement': ['-s', '-u'],
+                  'TestShellSuggestionsBashNocasematchPreservesExactMatchingAndOptions': ['on', 'off'],
+                  'TestShellSuggestionsBashNocasematchRejectsCaseOnlyBindingChange': ['-s', '-u'],
+                  'TestShellSuggestionsBashRefusalPreservesExtglobOptions': [],
+                  'TestShellSuggestionsBashRefusalPreservesParsedAliases': [],
+                  'TestShellSuggestionsBashRefusalPreservesSourceProvenanceAndSiblingFiles': [],
+                  'TestShellSuggestionsBashRefusalPreservesTracingPrivacy': ['#00', 'set_-x'],
+                  'TestShellSuggestionsBashRefusesExportedOrReadonlyHandler': ['export', 'readonly', 'declare_-t'],
+                  'TestShellSuggestionsBashRefusesPriorHandlerWithoutChangingNativeIdentity': ['0', '42', '127'],
+                  'TestShellSuggestionsBashRejectsForeignHandlerAfterDisable': [],
+                  'TestShellSuggestionsBashZshAdvisoryAndPrivacy': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshFallbackDoesNotEchoCommandText': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshPreserveLaterReplacement': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshPreservePriorErrexit': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshPriorExitPrecedesAdvice': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshRefuseShadowedExecutable': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshRejectRebindingUntilDisabled': ['bash', 'zsh'],
+                  'TestShellSuggestionsBashZshRejectRemovedCachedExecutable': ['bash/after-setup', 'bash/before-setup', 'zsh/after-setup', 'zsh/before-setup'],
+                  'TestShellSuggestionsRequireSafeBoundName': [],
+                  'TestShellSuggestionsZshDisableAndReenablePreservesTracing': [],
+                  'TestShellSuggestionsZshRefusalPreservesHandlerAttributes': ['trace', 'trace-local', 'warn-nested', 'sticky-emulation'],
+                  'TestShellSuggestionsZshRefusalPreservesTracingPrivacy': ['#00', 'set_-x'],
+                  'TestShellSuggestionsZshRefusesAutoloadWithoutLoadingHandler': [],
+                  'TestShellSuggestionsZshRefusesEmptyPriorHandler': [],
+                  'TestShellSuggestionsZshRefusesPriorHandlerWithoutChangingNativeIdentity': ['setopt/0', 'setopt/42', 'setopt/127', 'unsetopt/0', 'unsetopt/42', 'unsetopt/127'],
+                  'TestShellSuggestionsZshRejectsForeignHandlerAfterDisable': [],
+                  'TestShellSuggestionsZshRejectsMissingAutoloadWithoutPartialActivation': [],
+              }
+              fish_version = os.environ["OPENAI_CLI_CI_FISH_VERSION"]
+              version_match = re.fullmatch(r"([0-9]+)\.[0-9]+\.[0-9]+([-.+][a-zA-Z0-9.+-]+)?", fish_version)
+              if version_match is None:
+                  raise SystemExit(f"Unexpected Fish version: {fish_version!r}")
+              fish_supported = int(version_match[1]) >= 4
+              if os.environ["OPENAI_CLI_CI_FISH_SUGGESTIONS"] != ("supported" if fish_supported else "unsupported"):
+                  raise SystemExit("Fish version and selected coverage disagree")
+              if not fish_supported:
+                  fish_suggestion_cases = {
+                      root: children for root, children in fish_suggestion_cases.items()
+                      if not root.startswith("TestShellSuggestionsFish") or root in {
+                          "TestShellSuggestionsFishRefusesUnsupportedVersionBeforeMutation",
+                          "TestShellSuggestionsFishNoninteractiveDoesNotActivate",
+                      }
+                  }
+              for filename, cases in [
+                  ("fish-tests.jsonl", fish_suggestion_cases),
+                  ("bash-zsh-suggestion-tests.jsonl", bash_zsh_suggestion_cases),
+              ]:
+                  suites[filename] = set().union(*(required_cases(root, children) for root, children in cases.items()))
+                  strict_packages[filename] = "github.com/openai/openai-cli/internal/autocomplete"
+              fish_adapter_roots = ['TestShellSuggestionsAdaptersUnavailableExecutable', 'TestShellSuggestionsAdaptersRefuseShadowedExecutable', 'TestShellSuggestionsAdaptersRecheckExecutablePrecedence', 'TestShellSuggestionsAdaptersRecheckRemovedExecutable']
+              if fish_supported:
+                  suites["fish-suggestion-adapter-tests.jsonl"] = set().union(*(
+                      required_cases(root, ["fish"]) for root in fish_adapter_roots
+                  ))
+                  strict_packages["fish-suggestion-adapter-tests.jsonl"] = "github.com/openai/openai-cli/internal/autocomplete"
+              suites["public-shell-suggestion-tests.jsonl"] = required_cases(
+                  "TestMainShellSuggestionsNative", ["bash", "zsh", "fish"] if fish_supported else ["bash", "zsh"],
+              )
+              strict_packages["public-shell-suggestion-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+
           if os.environ["CHECK_IMAGE_STATE"] == "true":
               preference_cases = {
                   'TestImagePreferenceDefaultAndReplacement': [],
@@ -1245,7 +1494,28 @@ jobs:
                       raise SystemExit("Windows task inventory contains duplicate names")
               suites["native-command-tests.jsonl"] = selected
               strict_packages["native-command-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+              if os.environ["RUNNER_OS"] == "Windows":
+                  for filename, key, package, roots, total in [
+                      ("windows-voice-public-tests.jsonl", "windows_voice_public", "github.com/openai/openai-cli/cmd/openai", 4, 138),
+                      ("windows-voice-helper-tests.jsonl", "windows_voice_helpers", "github.com/openai/openai-cli/pkg/custom", 6, 8),
+                  ]:
+                      cases = inventory[key]
+                      if len(cases) != roots or sum(len(children) for children in cases.values()) != total - roots:
+                          raise SystemExit(f"{filename}: voice inventory must contain {roots} roots and {total - roots} children")
+                      selected = set()
+                      for root, children in cases.items():
+                          selected.update(required_cases(root, children))
+                      if len(selected) != total:
+                          raise SystemExit(f"{filename}: voice inventory contains duplicate names")
+                      suites[filename] = selected
+                      strict_packages[filename] = package
+          shard = os.environ["COMPATIBILITY_SHARD"]
+          if shard not in {"all", "dispatch", "contracts"}:
+              raise SystemExit(f"unknown compatibility shard: {shard}")
           for filename, required in suites.items():
+              is_dispatch = filename == "dispatch-tests.jsonl"
+              if shard == "dispatch" and not is_dispatch or shard == "contracts" and is_dispatch:
+                  continue
               passed = set()
               package_passed = False
               exact_events = Counter()
@@ -1363,6 +1633,17 @@ jobs:
                       raise SystemExit(f"{filename}: expected each test run/pass and package start/pass exactly once")
               print(f"{filename}: {len(passed) - children} roots and {children} children passed; no skips")
           PY
+
+      - name: Retain Windows voice validation evidence
+        if: always() && matrix.native-commands && runner.os == 'Windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-voice-validation-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/windows-voice-public-tests.jsonl
+            ${{ runner.temp }}/windows-voice-helper-tests.jsonl
+          if-no-files-found: warn
+          retention-days: 7
 
   wsl1-pager:
     if: github.event_name != 'push'

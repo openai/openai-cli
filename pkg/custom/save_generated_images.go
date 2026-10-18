@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/imageoutput"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -190,7 +191,7 @@ func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writ
 	}
 	p.stopLoadingFeedback()
 	previewOutput := out
-	out = outputWriter{ctx: context.WithoutCancel(ctx), out: out}
+	out = clioutput.Writer{Context: context.WithoutCancel(ctx), Sink: out}
 	if saveErr != nil {
 		message := "The API responded, but no images could be saved. Check the image data and output folder before trying again."
 		if len(saved) > 0 {
