@@ -20,6 +20,7 @@ import (
 	"github.com/openai/openai-cli/internal/apiform"
 	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/debugmiddleware"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3/option"
 
@@ -521,7 +522,7 @@ func flagOptionsWithStdin(
 	}
 	// Validate literal headers before reading any request input. Flag validators
 	// include the supplied value in errors, which can expose credentials.
-	headers, err := requestHeaders(cmd)
+	headers, err := requestconfig.Headers(cmd)
 	if err != nil {
 		return nil, err
 	}

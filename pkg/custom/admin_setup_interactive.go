@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
@@ -170,7 +171,7 @@ func adminSetupRequestOptions(command *cli.Command) ([]option.RequestOption, str
 	if !strings.EqualFold(endpoint.Scheme, "https") && !(strings.EqualFold(endpoint.Scheme, "http") && loopback) {
 		return nil, "", &adminSetupError{message: "Admin setup requires HTTPS, except for a local loopback server.", code: 3}
 	}
-	headers, err := requestHeaders(command)
+	headers, err := requestconfig.Headers(command)
 	if err != nil {
 		return nil, "", err
 	}

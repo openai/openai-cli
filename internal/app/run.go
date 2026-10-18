@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/openai/openai-cli/generated/commands"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/urfave/cli/v3"
@@ -38,7 +39,7 @@ func Run(ctx context.Context, argv []string) int {
 	}
 	app := commands.Command
 	custom.ConfigureCommand(app)
-	app.Flags = append(app.Flags, custom.NewRequestHeaderFlag())
+	app.Flags = append(app.Flags, requestconfig.NewRequestHeaderFlag())
 
 	completing := len(argv) > 1 && argv[1] == "__complete"
 	if completing {

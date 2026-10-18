@@ -59,6 +59,12 @@ Assembly annotates generated handlers before subgroup and task cloning. Position
 metadata preserves declaration order and authored flag descriptions without
 changing request declarations or inventing positional inputs for handwritten commands.
 
+Literal request-header flags and validation live in `internal/request/`. Request
+preparation and admin authentication use the same parser, preserving validation
+before input reads and credential checks. `pkg/custom.NewRequestHeaderFlag` is a
+temporary forwarding function for the generated runtime bridge; remove it through
+an authoritative generator update rather than editing generated callers by hand.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation
@@ -136,9 +142,13 @@ its caller paths. Keep policy-only changes separate from implementation changes.
 
 ## Migration batches
 
-Keep at most three migration PRs open, with each candidate independently buildable.
-Merge a batch and rebase the next batch on main rather than accumulating a long
-stack. Finish ownership-enforcement PRs #482 and #483 before merging layout work.
+Track remaining work in [#520](https://github.com/openai/openai-cli/issues/520).
+Keep exactly one migration PR open, including drafts, and keep it independently
+buildable. Address feedback on that PR and wait for Conductor's verified merge
+notification before automatically starting the next slice from main. Prioritize
+confirmed post-merge repairs before continuing. Conductor owns queue and post-merge
+monitoring; implementation does not start duplicate polling or queue enrollment.
+Ownership-enforcement PRs #482 and #483 are complete.
 
 1. Foundation: this layout/coverage contract; response transformations into
    `internal/output/transform/`; application execution into `internal/app/`.
