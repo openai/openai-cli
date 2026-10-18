@@ -83,7 +83,7 @@ func configureFileCommands(root *cli.Command) {
 					return err
 				}
 			}
-			invocation := fileInvocation{display: errorHelpInvocation(command.Root())}
+			invocation := fileInvocation{display: clihelp.DisplayInvocation(command.Root())}
 			invocation.requestArgs, invocation.omitHint = fileReceiptRequestOptions(command.Root())
 			invocation.goRun = invocation.display == "go run ./cmd/"+command.Root().Name
 			if len(os.Args) > 0 {

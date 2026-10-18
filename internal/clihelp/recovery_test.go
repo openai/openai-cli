@@ -1,4 +1,4 @@
-package custom
+package clihelp
 
 import (
 	"context"
@@ -76,7 +76,7 @@ func TestCommandRecoveryParsedCommands(t *testing.T) {
 			if !errors.As(err, &exit) || exit.ExitCode() != 3 {
 				t.Fatalf("expected unknown-command status 3, got %v", err)
 			}
-			if got := commandRecoveryMessage(root); got != test.want {
+			if got := RecoveryMessage(root); got != test.want {
 				t.Fatalf("recovery = %q; want %q", got, test.want)
 			}
 		})
@@ -99,7 +99,7 @@ func TestCommandRecoveryHelpSuffixBoundaries(t *testing.T) {
 			if err := root.Run(t.Context(), []string{"openai", "zzzzzzzzzz"}); err == nil {
 				t.Fatal("expected an unknown command")
 			}
-			got := commandRecoveryAt(root.Command("admin"), "organizaton", test.remaining, true)
+			got := RecoveryAt(root.Command("admin"), "organizaton", test.remaining, true)
 			want := "Unknown help topic. Did you mean: " + test.want + "?"
 			if got != want {
 				t.Fatalf("recovery = %q; want %q", got, want)
@@ -115,7 +115,7 @@ func TestCommandRecoveryPreservesInvocation(t *testing.T) {
 		t.Fatal("expected an unknown command")
 	}
 	const want = "Unknown command. Did you mean: '/synthetic folder/openai' help models list?\nTo run it, correct only the command spelling. Keep your original options and arguments."
-	if got := commandRecoveryMessage(root); got != want {
+	if got := RecoveryMessage(root); got != want {
 		t.Fatalf("recovery = %q; want %q", got, want)
 	}
 }
@@ -126,12 +126,12 @@ func TestCommandRecoveryWithoutSuggestion(t *testing.T) {
 		if helpRequested {
 			prefix = "Unknown help topic."
 		}
-		if got := commandRecoveryAt(nil, "synthetic-private-input", nil, helpRequested); got != prefix+" Run openai help to see commands." {
+		if got := RecoveryAt(nil, "synthetic-private-input", nil, helpRequested); got != prefix+" Run openai help to see commands." {
 			t.Fatalf("nil command recovery = %q", got)
 		}
 		root := recoveryCommandFixture(t)
 		root.Suggest = false
-		if got := commandRecoveryAt(root, "modles", []string{"list"}, helpRequested); got != prefix+" Run openai help to see commands." {
+		if got := RecoveryAt(root, "modles", []string{"list"}, helpRequested); got != prefix+" Run openai help to see commands." {
 			t.Fatalf("disabled suggestion recovery = %q", got)
 		}
 	}

@@ -14,6 +14,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/clihelp"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
@@ -130,7 +131,7 @@ func imagePickerRequestMessage(root *cli.Command, err error, draftSaved bool) st
 			return fmt.Sprintf("  %s\n  %s\n\n"+
 				"  %s\n"+
 				"  Setup guide: %s help setup\n"+
-				"  Reopen the picker in this shell.", heading, cause, draft, errorHelpInvocation(root))
+				"  Reopen the picker in this shell.", heading, cause, draft, clihelp.DisplayInvocation(root))
 		}
 		switch apiError.StatusCode {
 		case http.StatusBadRequest, http.StatusUnprocessableEntity:

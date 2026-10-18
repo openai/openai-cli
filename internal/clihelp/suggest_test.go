@@ -1,4 +1,4 @@
-package custom
+package clihelp
 
 import (
 	"testing"
@@ -60,17 +60,17 @@ func TestSuggestCommand(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := suggestCommand(commands, tc.provided)
+			got := SuggestCommand(commands, tc.provided)
 			if got != tc.want {
-				t.Errorf("suggestCommand(%q) = %q, want %q", tc.provided, got, tc.want)
+				t.Errorf("SuggestCommand(%q) = %q, want %q", tc.provided, got, tc.want)
 			}
 		})
 	}
 }
 
 func TestSuggestCommandEmptyCommands(t *testing.T) {
-	if got := suggestCommand(nil, "anything"); got != "" {
-		t.Errorf("suggestCommand(nil, %q) = %q, want empty string", "anything", got)
+	if got := SuggestCommand(nil, "anything"); got != "" {
+		t.Errorf("SuggestCommand(nil, %q) = %q, want empty string", "anything", got)
 	}
 }
 
@@ -100,8 +100,8 @@ func TestWithinOneEdit(t *testing.T) {
 	}
 	for _, tc := range tests {
 		for _, pair := range [][2]string{{tc.a, tc.b}, {tc.b, tc.a}} {
-			if got := withinOneEdit(pair[0], pair[1]); got != tc.want {
-				t.Errorf("withinOneEdit(%q, %q) = %v, want %v", pair[0], pair[1], got, tc.want)
+			if got := WithinOneEdit(pair[0], pair[1]); got != tc.want {
+				t.Errorf("WithinOneEdit(%q, %q) = %v, want %v", pair[0], pair[1], got, tc.want)
 			}
 		}
 	}

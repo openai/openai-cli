@@ -47,6 +47,13 @@ the shared save-receipt policy and configures the feature in its original positi
 The hidden `@manpages` entrypoint, generated flag declarations, manual paths,
 and existing developer/release artifact-generation commands remain unchanged.
 
+Command typo matching and recovery guidance live with help rendering in
+`internal/clihelp/`, including the shared display of escaped local invocation
+metadata. Error presentation retains diagnostic classification and format policy.
+Recovery uses parsed command positions and declared names; it neither echoes
+private operands nor executes corrections. Assembly installs the same framework
+suggestion hook in its original position.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation
@@ -70,6 +77,7 @@ entrypoints, developer script entrypoints, and release artifacts working.
 | `generated/tokenizer/` | Unicode tables produced by the tokenizer table generator. |
 | `internal/app/` | Handwritten application assembly, invocation lifecycle, global policies, and ordered feature registration. |
 | `internal/commands/` | Shared command-tree routing, compatibility aliases, task shortcuts, help-group metadata, and local-feature contracts. |
+| `internal/clihelp/` | Help rendering, local onboarding, command typo matching, and safe recovery guidance. |
 | `internal/commands/<feature>/` | Handwritten workflows grouped by feature: audio, images, files, models, admin, tokenize, and codex. |
 | `internal/request/` | Shared request configuration, credentials, transport setup, headers, input decoding, and upload encoding. |
 | `internal/input/` | Shared borrowed-file reads, preserving cancellation, descriptor flags, deadlines, and caller ownership. |

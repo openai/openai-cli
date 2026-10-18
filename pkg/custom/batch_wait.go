@@ -324,7 +324,7 @@ func showBatchNextCommand(batch gjson.Result, opts ShowJSONOpts) error {
 	if batchHintNeedsRequestOptions(cmd.Root()) {
 		return readable.WriteText(opts.Stderr, "To wait for this batch, reuse the same connection and authentication options with batches retrieve --wait.")
 	}
-	return readable.WriteText(opts.Stderr, fmt.Sprintf("Follow this batch:\n  %s batches retrieve --batch-id=%s --wait", errorHelpInvocation(cmd.Root()), id))
+	return readable.WriteText(opts.Stderr, fmt.Sprintf("Follow this batch:\n  %s batches retrieve --batch-id=%s --wait", clihelp.DisplayInvocation(cmd.Root()), id))
 }
 
 // A new process inherits environment configuration but loses command-line

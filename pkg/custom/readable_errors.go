@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
@@ -155,7 +156,7 @@ const readableStreamErrorMessage = "The response stream failed. Output may be in
 const readableStreamErrorText = "The response stream failed.\nOutput may be incomplete.\nAPI error details: --format-error json."
 
 func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Error) string {
-	invocation := errorHelpInvocation(root)
+	invocation := clihelp.DisplayInvocation(root)
 	message := "The API could not complete the request."
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
@@ -228,15 +229,6 @@ func readableAPIRequestID(apierr *openai.Error) string {
 	return requestID
 }
 
-// Help's invocation is local display metadata, not part of the API response.
-func errorHelpInvocation(root *cli.Command) string {
-	invocation, _ := root.Metadata["help-invocation"].(string)
-	if invocation == "" {
-		return "openai"
-	}
-	return readable.Text(invocation)
-}
-
 var readableParameterPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:(?:\.[A-Za-z0-9_]+)|(?:\[[0-9]+\]))*$`)
 var readableParameterIndex = regexp.MustCompile(`\[[0-9]+\]`)
 
@@ -284,7 +276,7 @@ func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command) stri
 	if command == nil {
 		return message + "\nCheck your arguments with --help."
 	}
-	invocation := errorHelpInvocation(command.Root())
+	invocation := clihelp.DisplayInvocation(command.Root())
 	pathToCommand := strings.TrimPrefix(command.FullName(), command.Root().Name+" ")
 	return message + "\nOptions and examples: " + invocation + " help " + pathToCommand
 }

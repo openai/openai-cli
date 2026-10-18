@@ -108,7 +108,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	case errors.As(failure, &voiceTypeFailure):
 		return voiceTypeFailure.Error()
 	case errors.As(failure, &helpTopicFailure):
-		return commandRecoveryAt(helpTopicFailure.Parent, helpTopicFailure.Topic, helpTopicFailure.Remaining, true)
+		return clihelp.RecoveryAt(helpTopicFailure.Parent, helpTopicFailure.Topic, helpTopicFailure.Remaining, true)
 	case errors.As(failure, &adminCredentialsFailure):
 		return adminCredentialsFailure.Error()
 	case errors.As(failure, &inputFailure), errors.As(failure, &pathError):
@@ -252,7 +252,7 @@ func knownLocalError(command *cli.Command, message string) string {
 		}
 		return parserErrorGuidance(command, message)
 	case strings.HasPrefix(message, "No help topic for '"):
-		return commandRecoveryMessage(command)
+		return clihelp.RecoveryMessage(command)
 	case strings.HasPrefix(message, "Unknown help topic "):
 		return "Unknown help topic. Run openai help to see commands."
 	case strings.HasPrefix(message, "Failed to parse piped data as YAML/JSON:\n"):
@@ -269,7 +269,7 @@ func knownLocalError(command *cli.Command, message string) string {
 func parserErrorGuidance(command *cli.Command, message string) string {
 	invocation := "openai"
 	if command != nil {
-		invocation = errorHelpInvocation(command.Root())
+		invocation = clihelp.DisplayInvocation(command.Root())
 		if path := command.Path(); len(path) > 1 {
 			invocation += " " + strings.Join(path[1:], " ")
 		}
@@ -366,7 +366,7 @@ func suggestParserFlag(command *cli.Command, provided string) string {
 	for _, flag := range parserErrorFlags(command) {
 		names := flag.Names()
 		for _, name := range names {
-			if !withinOneEdit(strings.ToLower(name), provided) {
+			if !clihelp.WithinOneEdit(strings.ToLower(name), provided) {
 				continue
 			}
 			canonical := "--" + names[0]

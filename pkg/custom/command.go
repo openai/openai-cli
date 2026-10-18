@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/codex"
 	"github.com/openai/openai-cli/internal/commands/manpages"
@@ -67,5 +68,5 @@ func ConfigureCommand(root *cli.Command) {
 		}
 		return configureMTLS(ctx, command.Root())
 	}
-	cli.SuggestCommand = suggestCommand
+	cli.SuggestCommand = clihelp.SuggestCommand
 }

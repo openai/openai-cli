@@ -1,4 +1,4 @@
-package custom
+package clihelp
 
 import (
 	"fmt"
@@ -9,8 +9,8 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// This entire file is mostly taken from urfave/cli/v3's source, with the exception of suggestCommand which is
-// modified for a nicer error message and stricter matching, and its helpers suggestionThreshold and withinOneEdit.
+// This entire file is mostly taken from urfave/cli/v3's source, with the exception of SuggestCommand which is
+// modified for a nicer error message and stricter matching, and its helpers suggestionThreshold and WithinOneEdit.
 
 // jaroDistance is the measure of similarity between two strings. It returns a
 // value between 0 and 1, where 1 indicates identical strings and 0 indicates
@@ -103,12 +103,12 @@ func jaroWinkler(a, b string) float64 {
 // dissimilar to be a useful guess, so we stay silent rather than mislead.
 // 0.7 matches the boostThreshold used by jaroWinkler above — the prefix boost
 // only kicks in past that, so it's a natural "plausibly the same word" cutoff.
-// Names within one edit of the input are exempt; see suggestCommand.
+// Names within one edit of the input are exempt; see SuggestCommand.
 const suggestionThreshold = 0.7
 
-// withinOneEdit reports whether a and b differ by at most one insertion,
+// WithinOneEdit reports whether a and b differ by at most one insertion,
 // deletion, substitution, or transposition of adjacent characters.
-func withinOneEdit(a, b string) bool {
+func WithinOneEdit(a, b string) bool {
 	if len(a) < len(b) {
 		a, b = b, a
 	}
@@ -129,14 +129,14 @@ func withinOneEdit(a, b string) bool {
 		(i+1 < len(a) && a[i] == b[i+1] && a[i+1] == b[i] && a[i+2:] == b[i+2:])
 }
 
-// suggestCommand takes a list of commands and a provided string to suggest a
+// SuggestCommand takes a list of commands and a provided string to suggest a
 // command name, ignoring case. A name within one edit of the input is always
 // suggested and outranks every other name, because jaro-winkler undervalues
 // typos in short names ("rn" for "run") and misranks long names that share a
 // prefix. Otherwise the closest name must exceed suggestionThreshold. Returns an
 // empty string when no command is sufficiently similar; the upstream urfave/cli
 // error formatter omits the suggestion clause in that case.
-func suggestCommand(commands []*cli.Command, provided string) string {
+func SuggestCommand(commands []*cli.Command, provided string) string {
 	target := suggestCommandTarget(commands, provided)
 	if target == nil {
 		return ""
@@ -162,7 +162,7 @@ func suggestCommandTarget(commands []*cli.Command, provided string) *cli.Command
 		for _, name := range command.Names() {
 			name = strings.ToLower(name)
 			newDistance := jaroWinkler(name, provided)
-			if withinOneEdit(name, provided) {
+			if WithinOneEdit(name, provided) {
 				newDistance++ // outranks every name further away
 			}
 			if newDistance > distance {

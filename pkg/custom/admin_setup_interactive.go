@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
@@ -105,7 +106,7 @@ func handleAdminSetup(ctx context.Context, command *cli.Command) error {
 	}
 	if !adminSetupInputSupported {
 		return &adminSetupError{
-			message: errAdminSetupUnsupported.Error() + "\nFor manual setup, run: " + errorHelpInvocation(root) + " help setup admin",
+			message: errAdminSetupUnsupported.Error() + "\nFor manual setup, run: " + clihelp.DisplayInvocation(root) + " help setup admin",
 			code:    3,
 		}
 	}

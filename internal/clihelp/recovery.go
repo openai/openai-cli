@@ -1,16 +1,16 @@
-package custom
+package clihelp
 
 import (
 	"slices"
 	"strings"
 
-	"github.com/openai/openai-cli/internal/clihelp"
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
 
-// commandRecoveryMessage uses parsed positions, never the diagnostic text or
+// RecoveryMessage uses parsed positions, never the diagnostic text or
 // original argv. The parser has already removed recognized flags and values.
-func commandRecoveryMessage(command *cli.Command) string {
+func RecoveryMessage(command *cli.Command) string {
 	if command != nil {
 		command = command.Root()
 	}
@@ -24,15 +24,15 @@ func commandRecoveryMessage(command *cli.Command) string {
 		if cli.HelpFlag != nil {
 			helpRequested = slices.ContainsFunc(cli.HelpFlag.Names(), command.Bool)
 		}
-		return commandRecoveryAt(command, name, command.Args().Tail(), helpRequested)
+		return RecoveryAt(command, name, command.Args().Tail(), helpRequested)
 	}
-	return commandRecoveryAt(command, "", nil, false)
+	return RecoveryAt(command, "", nil, false)
 }
 
-// commandRecoveryAt emits help for declared command names. A corrected group
+// RecoveryAt emits help for declared command names. A corrected group
 // can retain an exact descendant path, but never an operand or an option value.
 // Running the original operation requires keeping its private request context.
-func commandRecoveryAt(command *cli.Command, name string, remaining []string, helpRequested bool) string {
+func RecoveryAt(command *cli.Command, name string, remaining []string, helpRequested bool) string {
 	message := "Unknown command."
 	if helpRequested {
 		message = "Unknown help topic."
@@ -41,10 +41,10 @@ func commandRecoveryAt(command *cli.Command, name string, remaining []string, he
 		return message + " Run openai help to see commands."
 	}
 	if command.Suggest {
-		candidates := clihelp.VisibleCommands(command)
+		candidates := VisibleCommands(command)
 		for _, child := range command.Commands {
 			compatibility, _ := child.Metadata["command-compatibility-alias"].(bool)
-			if child.Hidden && compatibility && (strings.Contains(name, ":") || withinOneEdit(strings.ToLower(name), strings.ToLower(child.Name))) {
+			if child.Hidden && compatibility && (strings.Contains(name, ":") || WithinOneEdit(strings.ToLower(name), strings.ToLower(child.Name))) {
 				candidates = append(candidates, child)
 			}
 		}
@@ -61,7 +61,7 @@ func commandRecoveryAt(command *cli.Command, name string, remaining []string, he
 				path = append(path, next.Name)
 				target = next
 			}
-			invocation := errorHelpInvocation(command.Root()) + " help"
+			invocation := DisplayInvocation(command.Root()) + " help"
 			if len(path) > 0 {
 				invocation += " " + strings.Join(path, " ")
 			}
@@ -72,7 +72,7 @@ func commandRecoveryAt(command *cli.Command, name string, remaining []string, he
 			return message
 		}
 	}
-	invocation := errorHelpInvocation(command.Root()) + " help"
+	invocation := DisplayInvocation(command.Root()) + " help"
 	if path := command.Path(); len(path) > 1 {
 		invocation += " " + strings.Join(path[1:], " ")
 	}
@@ -82,4 +82,14 @@ func commandRecoveryAt(command *cli.Command, name string, remaining []string, he
 func recoveryCommandVisible(command *cli.Command) bool {
 	compatibility, _ := command.Metadata["command-compatibility-alias"].(bool)
 	return command.Name != "help" && (!command.Hidden || compatibility)
+}
+
+// DisplayInvocation escapes local help metadata for display, using openai when
+// the invocation has not been configured. It never reads API response data.
+func DisplayInvocation(root *cli.Command) string {
+	invocation, _ := root.Metadata["help-invocation"].(string)
+	if invocation == "" {
+		return "openai"
+	}
+	return readable.Text(invocation)
 }
