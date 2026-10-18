@@ -24,14 +24,24 @@ func pipedDataAvailableWindows(fd uintptr) bool {
 	// open stdin pipe, and never consume bytes while probing.
 	deadline := time.Now().Add(10 * time.Millisecond)
 	for {
-		var available uint32
-		r, _, _ := procPeekNamedPipe.Call(fd, 0, 0, 0, uintptr(unsafe.Pointer(&available)), 0)
-		if r == 0 || available > 0 {
-			return r != 0 && available > 0
+		available, err := PeekPipe(fd)
+		if err != nil || available > 0 {
+			return err == nil && available > 0
 		}
 		if !time.Now().Before(deadline) {
 			return false
 		}
 		time.Sleep(time.Millisecond)
 	}
+}
+
+// PeekPipe reports available bytes without consuming or changing the borrowed handle.
+// Callers using os.File.SyscallConn may pass its Control handle without calling Fd.
+func PeekPipe(fd uintptr) (uint32, error) {
+	var available uint32
+	r, _, cause := procPeekNamedPipe.Call(fd, 0, 0, 0, uintptr(unsafe.Pointer(&available)), 0)
+	if r == 0 {
+		return available, cause
+	}
+	return available, nil
 }

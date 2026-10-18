@@ -9,7 +9,8 @@ import (
 	"os"
 	"syscall"
 	"time"
-	"unsafe"
+
+	cliinput "github.com/openai/openai-cli/internal/input"
 )
 
 func readBatchRequestInput(ctx context.Context, file *os.File, data []byte) (int, error) {
@@ -34,10 +35,7 @@ func readBatchRequestInput(ctx context.Context, file *os.File, data []byte) (int
 		var available uint32
 		var peekErr error
 		err := connection.Control(func(handle uintptr) {
-			ok, _, cause := procPeekNamedPipe.Call(handle, 0, 0, 0, uintptr(unsafe.Pointer(&available)), 0)
-			if ok == 0 {
-				peekErr = cause
-			}
+			available, peekErr = cliinput.PeekPipe(handle)
 		})
 		if err != nil {
 			if _, fileErr := file.Stat(); fileErr != nil {
