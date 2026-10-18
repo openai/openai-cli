@@ -1,4 +1,4 @@
-package custom
+package request
 
 import (
 	"context"
@@ -25,18 +25,18 @@ func TestMultipartPrematureEOFDoesNotCommitFinalBoundary(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(strings.Repeat("a", uploadSize)), 0o600))
 	file, err := os.Open(path)
 	require.NoError(t, err)
-	upload := fileUpload{
-		Reader: &exactLengthReadCloser{
+	upload := FileUpload{
+		Reader:    &exactLengthReadCloser{
 			exactLengthReader: exactLengthReader{
 				reader:    io.NewSectionReader(file, 0, uploadSize),
 				remaining: uploadSize,
 			},
 			closer: file,
 		},
-		filename:    filepath.Base(path),
-		contentType: "application/octet-stream",
-		size:        uploadSize,
-		knownSize:   true,
+		FileName:  filepath.Base(path),
+		MediaType: "application/octet-stream",
+		Size:      uploadSize,
+		KnownSize: true,
 	}
 
 	type receiverResult struct {
@@ -72,7 +72,7 @@ func TestMultipartPrematureEOFDoesNotCommitFinalBoundary(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	options, err := multipartRequestOptions(map[string]any{
+	options, err := MultipartRequestOptions(map[string]any{
 		"file":    upload,
 		"purpose": "assistants",
 	}, apiform.FormatBrackets)
@@ -94,7 +94,7 @@ func TestOpenFileUploadDoesNotRequireTempStorageBeforeRead(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "upload.txt")
 	require.NoError(t, os.WriteFile(path, []byte("streamed payload"), 0o600))
 	setUnavailableTempDir(t)
-	upload, err := openFileUpload(path)
+	upload, err := OpenFileUpload(path)
 	require.NoError(t, err)
 	contents, err := io.ReadAll(upload.Reader)
 	require.NoError(t, err)

@@ -1,4 +1,4 @@
-package custom
+package request
 
 import (
 	"errors"
@@ -12,29 +12,26 @@ import (
 	"github.com/openai/openai-cli/internal/binaryparam"
 )
 
-// fileUpload wraps an io.Reader with filename and content-type metadata for
+// FileUpload wraps an io.Reader with filename and content-type metadata for
 // use as a multipart form part. The apiform encoder detects the Filename and
 // ContentType methods and uses them to populate the Content-Disposition
-// filename and the Content-Type header on the part.
-type fileUpload struct {
-	io.Reader   // apiform checks for reader and reads its contents during encode
-	filename    string
-	contentType string
-	size        int64
-	knownSize   bool
+// filename and the Content-Type header on the part. The upload owns its Reader;
+// KnownSize distinguishes an exact byte count from an unknown-length source.
+type FileUpload struct {
+	io.Reader // apiform checks for reader and reads its contents during encode
+	FileName  string
+	MediaType string
+	Size      int64
+	KnownSize bool
 }
 
-func (f fileUpload) Filename() string    { return f.filename }
-func (f fileUpload) ContentType() string { return f.contentType }
-func (f fileUpload) Close() error {
+func (f FileUpload) Filename() string    { return f.FileName }
+func (f FileUpload) ContentType() string { return f.MediaType }
+func (f FileUpload) Close() error {
 	if closer, ok := f.Reader.(io.Closer); ok {
 		return closer.Close()
 	}
 	return nil
-}
-
-func (f fileUpload) hasKnownSize() bool {
-	return f.knownSize
 }
 
 type exactLengthReader struct {
@@ -104,20 +101,20 @@ func hasTrustworthyFileSize(file *os.File, info os.FileInfo) bool {
 	return n == 0 && errors.Is(err, io.EOF)
 }
 
-// openFileUpload opens path once. Ordinary files retain their exact stat size
+// OpenFileUpload opens path once. Ordinary files retain their exact stat size
 // so the request can stream with Content-Length. Virtual and unknown-length
 // files remain single-shot streams with chunked transfer encoding.
-func openFileUpload(path string) (fileUpload, error) {
+func OpenFileUpload(path string) (FileUpload, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return fileUpload{}, err
+		return FileUpload{}, err
 	}
 	info, err := file.Stat()
 	if err != nil {
-		return fileUpload{}, errors.Join(err, file.Close())
+		return FileUpload{}, errors.Join(err, file.Close())
 	}
 	if info.IsDir() {
-		return fileUpload{}, errors.Join(fmt.Errorf("read %s: is a directory", path), file.Close())
+		return FileUpload{}, errors.Join(fmt.Errorf("read %s: is a directory", path), file.Close())
 	}
 	contentType := mime.TypeByExtension(filepath.Ext(path))
 	if contentType == "" {
@@ -126,26 +123,26 @@ func openFileUpload(path string) (fileUpload, error) {
 	if !hasTrustworthyFileSize(file, info) {
 		reader, err := binaryparam.CancellableFile(file, info)
 		if err != nil {
-			return fileUpload{}, errors.Join(err, file.Close())
+			return FileUpload{}, errors.Join(err, file.Close())
 		}
-		return fileUpload{
-			Reader:      reader,
-			filename:    filepath.Base(path),
-			contentType: contentType,
+		return FileUpload{
+			Reader:    reader,
+			FileName:  filepath.Base(path),
+			MediaType: contentType,
 		}, nil
 	}
 
-	return fileUpload{
-		Reader: &exactLengthReadCloser{
+	return FileUpload{
+		Reader:    &exactLengthReadCloser{
 			exactLengthReader: exactLengthReader{
 				reader:    io.NewSectionReader(file, 0, info.Size()),
 				remaining: info.Size(),
 			},
 			closer: file,
 		},
-		filename:    filepath.Base(path),
-		contentType: contentType,
-		size:        info.Size(),
-		knownSize:   true,
+		FileName:  filepath.Base(path),
+		MediaType: contentType,
+		Size:      info.Size(),
+		KnownSize: true,
 	}, nil
 }

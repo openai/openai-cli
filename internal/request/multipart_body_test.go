@@ -1,4 +1,4 @@
-package custom
+package request
 
 import (
 	"context"
@@ -33,10 +33,10 @@ func TestMultipartRequestBodyStreamsWithBackpressure(t *testing.T) {
 	source := &countingReader{remaining: uploadSize}
 	upload := &recordingReadCloser{reader: source}
 	body := newMultipartRequestBody(map[string]any{
-		"file": fileUpload{
-			Reader:      upload,
-			filename:    "large.bin",
-			contentType: "application/octet-stream",
+		"file": FileUpload{
+			Reader:    upload,
+			FileName:  "large.bin",
+			MediaType: "application/octet-stream",
 		},
 	}, apiform.FormatBrackets)
 
@@ -70,7 +70,7 @@ func TestMultipartRequestBodyPropagatesProducerErrors(t *testing.T) {
 	readErr := errors.New("upload read failed")
 	upload := &recordingReadCloser{reader: errorReader{err: readErr}}
 	body := newMultipartRequestBody(map[string]any{
-		"file": fileUpload{Reader: upload, filename: "broken.bin"},
+		"file": FileUpload{Reader: upload, FileName: "broken.bin"},
 	}, apiform.FormatBrackets)
 	_, params, err := mime.ParseMediaType(body.ContentType())
 	require.NoError(t, err)
@@ -89,7 +89,7 @@ func TestMultipartRequestBodyJoinsCleanupErrorAfterSourceError(t *testing.T) {
 	closeErr := errors.New("upload close failed")
 	upload := &recordingReadCloser{reader: errorReader{err: readErr}, closeErr: closeErr}
 	body := newMultipartRequestBody(map[string]any{
-		"file": fileUpload{Reader: upload, filename: "broken.bin"},
+		"file": FileUpload{Reader: upload, FileName: "broken.bin"},
 	}, apiform.FormatBrackets)
 
 	_, err := io.ReadAll(body)
@@ -109,8 +109,8 @@ func TestMultipartRequestBodySourceErrorCannotBeParsedAsCompleteUpload(t *testin
 	}))
 	t.Cleanup(server.Close)
 
-	options, err := multipartRequestOptions(map[string]any{
-		"file": fileUpload{Reader: errorReader{err: readErr}, filename: "broken.bin"},
+	options, err := MultipartRequestOptions(map[string]any{
+		"file": FileUpload{Reader: errorReader{err: readErr}, FileName: "broken.bin"},
 	}, apiform.FormatBrackets)
 	require.NoError(t, err)
 	client := openai.NewClient(
@@ -131,7 +131,7 @@ func TestMultipartRequestBodySourceErrorCannotBeParsedAsCompleteUpload(t *testin
 func TestMultipartRequestBodyClosesOpenedFiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "upload.bin")
 	require.NoError(t, os.WriteFile(path, []byte("payload"), 0o600))
-	upload, err := openFileUpload(path)
+	upload, err := OpenFileUpload(path)
 	require.NoError(t, err)
 	file := uploadSourceFile(t, upload)
 	body := newMultipartRequestBody(map[string]any{"file": upload}, apiform.FormatBrackets)
@@ -152,11 +152,11 @@ func TestMultipartRequestBodyClosesEveryUpload(t *testing.T) {
 	third := &recordingReadCloser{reader: strings.NewReader("third")}
 	body := newMultipartRequestBody(map[string]any{
 		"files": []any{
-			fileUpload{Reader: first, filename: "first.txt"},
-			map[string]any{"nested": fileUpload{Reader: second, filename: "second.txt"}},
+			FileUpload{Reader: first, FileName: "first.txt"},
+			map[string]any{"nested": FileUpload{Reader: second, FileName: "second.txt"}},
 		},
-		"typed": map[string]fileUpload{
-			"nested": {Reader: third, filename: "third.txt"},
+		"typed": map[string]FileUpload{
+			"nested": {Reader: third, FileName: "third.txt"},
 		},
 	}, apiform.FormatBrackets)
 
@@ -180,7 +180,7 @@ func TestMultipartRequestBodyCloseCancelsEncoding(t *testing.T) {
 	readErr := errors.New("upload closed while reading")
 	upload := newCloseUnblocksReader(readErr)
 	body := newMultipartRequestBody(map[string]any{
-		"file": fileUpload{Reader: upload, filename: "blocked.bin"},
+		"file": FileUpload{Reader: upload, FileName: "blocked.bin"},
 	}, apiform.FormatBrackets)
 
 	readDone := make(chan error, 1)
@@ -210,7 +210,7 @@ func TestMultipartRequestBodyCloseBeforeRead(t *testing.T) {
 	source := &countingReader{remaining: 1024}
 	upload := &recordingReadCloser{reader: source}
 	body := newMultipartRequestBody(map[string]any{
-		"file": fileUpload{Reader: upload, filename: "unused.bin"},
+		"file": FileUpload{Reader: upload, FileName: "unused.bin"},
 	}, apiform.FormatBrackets)
 
 	require.NoError(t, body.Close())
@@ -219,30 +219,12 @@ func TestMultipartRequestBodyCloseBeforeRead(t *testing.T) {
 	require.Equal(t, int32(1), upload.closeCount.Load())
 }
 
-func TestMultipartRequestBodyDoesNotCloseUnownedReaders(t *testing.T) {
-	stdinLikeReader := &recordingReadCloser{reader: strings.NewReader("stdin payload")}
-	embedded, err := embedFiles(
-		map[string]any{"file": "@-"},
-		EmbedIOReader,
-		&onceStdinReader{stdinReader: stdinLikeReader},
-	)
-	require.NoError(t, err)
-	body := newMultipartRequestBody(embedded.(map[string]any), apiform.FormatBrackets)
-
-	data, err := io.ReadAll(body)
-	require.NoError(t, err)
-	require.Contains(t, string(data), "stdin payload")
-	waitForMultipartBody(t, body)
-	require.NoError(t, body.Close())
-	require.Zero(t, stdinLikeReader.closeCount.Load())
-}
-
 func TestMultipartRequestOptionsReject307And308ForUploads(t *testing.T) {
 	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
 		t.Run(fmt.Sprintf("status_%d", status), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "redirect-upload.txt")
 			require.NoError(t, os.WriteFile(path, []byte("redirect payload"), 0o600))
-			upload, err := openFileUpload(path)
+			upload, err := OpenFileUpload(path)
 			require.NoError(t, err)
 
 			var requestCount atomic.Int32
@@ -253,7 +235,7 @@ func TestMultipartRequestOptionsReject307And308ForUploads(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			options, err := multipartRequestOptions(map[string]any{
+			options, err := MultipartRequestOptions(map[string]any{
 				"file":    upload,
 				"purpose": "assistants",
 			}, apiform.FormatBrackets)
@@ -293,7 +275,7 @@ func TestMultipartRequestOptionsRetryScalarOnlyForms(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	options, err := multipartRequestOptions(map[string]any{"prompt": "hello"}, apiform.FormatBrackets)
+	options, err := MultipartRequestOptions(map[string]any{"prompt": "hello"}, apiform.FormatBrackets)
 	require.NoError(t, err)
 	client := openai.NewClient(
 		option.WithAPIKey("test-key"),
@@ -308,7 +290,7 @@ func TestMultipartRequestOptionsRetryScalarOnlyForms(t *testing.T) {
 func TestMultipartRequestOptionsDoNotRetryUploads(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "single-attempt.txt")
 	require.NoError(t, os.WriteFile(path, []byte("single attempt"), 0o600))
-	upload, err := openFileUpload(path)
+	upload, err := OpenFileUpload(path)
 	require.NoError(t, err)
 	sourceFile := uploadSourceFile(t, upload)
 
@@ -324,7 +306,7 @@ func TestMultipartRequestOptionsDoNotRetryUploads(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	options, err := multipartRequestOptions(map[string]any{
+	options, err := MultipartRequestOptions(map[string]any{
 		"file":    upload,
 		"purpose": "assistants",
 	}, apiform.FormatBrackets)
@@ -344,13 +326,13 @@ func TestMultipartRequestOptionsDoNotRetryUploads(t *testing.T) {
 func TestMultipartRequestOptionsPreserveIncompleteTransportError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "transport-error.txt")
 	require.NoError(t, os.WriteFile(path, []byte("never consumed"), 0o600))
-	upload, err := openFileUpload(path)
+	upload, err := OpenFileUpload(path)
 	require.NoError(t, err)
 	sourceFile := uploadSourceFile(t, upload)
 
 	transportErr := errors.New("dial failed before reading request body")
 	doer := &failingHTTPDoer{err: transportErr}
-	options, err := multipartRequestOptions(map[string]any{
+	options, err := MultipartRequestOptions(map[string]any{
 		"file":    upload,
 		"purpose": "assistants",
 	}, apiform.FormatBrackets)
@@ -370,8 +352,8 @@ func TestMultipartRequestOptionsPreserveIncompleteTransportError(t *testing.T) {
 
 func TestMultipartRequestOptionsCancellationClosesSourceOnce(t *testing.T) {
 	upload := newCloseUnblocksReader(errors.New("source closed"))
-	options, err := multipartRequestOptions(map[string]any{
-		"file": fileUpload{Reader: upload, filename: "blocked.bin"},
+	options, err := MultipartRequestOptions(map[string]any{
+		"file": FileUpload{Reader: upload, FileName: "blocked.bin"},
 	}, apiform.FormatBrackets)
 	require.NoError(t, err)
 	client := openai.NewClient(
@@ -405,8 +387,8 @@ func TestMultipartRequestOptionsCancellationClosesSourceOnce(t *testing.T) {
 func TestMultipartRequestOptionsStopCancellationWatcherAfterAttempt(t *testing.T) {
 	upload := &recordingReadCloser{reader: strings.NewReader("not consumed")}
 	doer := &retainingHTTPDoer{}
-	options, err := multipartRequestOptions(map[string]any{
-		"file": fileUpload{Reader: upload, filename: "retained.bin"},
+	options, err := MultipartRequestOptions(map[string]any{
+		"file": FileUpload{Reader: upload, FileName: "retained.bin"},
 	}, apiform.FormatBrackets)
 	require.NoError(t, err)
 	client := openai.NewClient(
@@ -430,7 +412,7 @@ func TestMultipartRequestOptionsStopCancellationWatcherAfterAttempt(t *testing.T
 func TestMultipartRequestOptionsSetContentLengthForRegularFiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "upload.txt")
 	require.NoError(t, os.WriteFile(path, []byte("known-size payload"), 0o600))
-	upload, err := openFileUpload(path)
+	upload, err := OpenFileUpload(path)
 	require.NoError(t, err)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -444,7 +426,7 @@ func TestMultipartRequestOptionsSetContentLengthForRegularFiles(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	options, err := multipartRequestOptions(map[string]any{
+	options, err := MultipartRequestOptions(map[string]any{
 		"file":    upload,
 		"purpose": "assistants",
 	}, apiform.FormatBrackets)
@@ -477,8 +459,8 @@ func TestMultipartRequestOptionsUseChunkedEncodingForUnknownSources(t *testing.T
 	t.Cleanup(server.Close)
 
 	upload := &recordingReadCloser{reader: strings.NewReader("payload")}
-	options, err := multipartRequestOptions(map[string]any{
-		"file": fileUpload{Reader: upload, filename: "upload.txt"},
+	options, err := MultipartRequestOptions(map[string]any{
+		"file": FileUpload{Reader: upload, FileName: "upload.txt"},
 	}, apiform.FormatBrackets)
 	require.NoError(t, err)
 	client := openai.NewClient(
@@ -498,9 +480,9 @@ func TestMultipartRequestOptionsUseChunkedEncodingForUnknownSources(t *testing.T
 func TestMultipartRequestOptionsCloseUploadsOnLengthFailure(t *testing.T) {
 	first := &recordingReadCloser{reader: strings.NewReader("first")}
 	second := &recordingReadCloser{reader: strings.NewReader("second")}
-	_, err := multipartRequestOptions(map[string]any{
-		"first":  fileUpload{Reader: first, filename: "first.bin", knownSize: true, size: math.MaxInt64},
-		"second": fileUpload{Reader: second, filename: "second.bin", knownSize: true, size: 1},
+	_, err := MultipartRequestOptions(map[string]any{
+		"first":  FileUpload{Reader: first, FileName: "first.bin", KnownSize: true, Size: math.MaxInt64},
+		"second": FileUpload{Reader: second, FileName: "second.bin", KnownSize: true, Size: 1},
 	}, apiform.FormatBrackets)
 	require.ErrorContains(t, err, "overflows int64")
 	require.Equal(t, int32(1), first.closeCount.Load())
@@ -508,7 +490,7 @@ func TestMultipartRequestOptionsCloseUploadsOnLengthFailure(t *testing.T) {
 }
 
 func TestOpenFileUploadRejectsDirectoriesBeforeRequest(t *testing.T) {
-	_, err := openFileUpload(t.TempDir())
+	_, err := OpenFileUpload(t.TempDir())
 	require.ErrorContains(t, err, "is a directory")
 }
 
@@ -517,12 +499,12 @@ func TestOpenFileUploadStreamsProcfsWithUnknownLength(t *testing.T) {
 		t.Skip("procfs reproduction is Linux-specific")
 	}
 	const path = "/proc/version"
-	upload, err := openFileUpload(path)
+	upload, err := OpenFileUpload(path)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
 		t.Skipf("%s is unavailable: %v", path, err)
 	}
 	require.NoError(t, err)
-	require.False(t, upload.knownSize)
+	require.False(t, upload.KnownSize)
 	sourceFile := upload.Reader.(*os.File)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -542,7 +524,7 @@ func TestOpenFileUploadStreamsProcfsWithUnknownLength(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	options, err := multipartRequestOptions(map[string]any{
+	options, err := MultipartRequestOptions(map[string]any{
 		"file":    upload,
 		"purpose": "assistants",
 	}, apiform.FormatBrackets)
@@ -561,24 +543,38 @@ func TestOpenFileUploadStreamsProcfsWithUnknownLength(t *testing.T) {
 func TestOpenFileUploadTreatsEmptyRegularFileAsKnownLength(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "empty.txt")
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
-	upload, err := openFileUpload(path)
+	upload, err := OpenFileUpload(path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, upload.Close()) })
 
-	require.True(t, upload.knownSize)
-	require.Zero(t, upload.size)
+	require.True(t, upload.KnownSize)
+	require.Zero(t, upload.Size)
 }
 
-func TestEmbedFilesClosesPartialUploadsOnError(t *testing.T) {
-	upload := &recordingReadCloser{reader: strings.NewReader("already opened")}
-	missingPath := FilePathValue(t.TempDir() + "/missing.bin")
+func TestMultipartRequestBodyDoesNotCloseBorrowedReaders(t *testing.T) {
+	stdinLikeReader := &recordingReadCloser{reader: strings.NewReader("stdin payload")}
+	body := newMultipartRequestBody(map[string]any{"file": stdinLikeReader}, apiform.FormatBrackets)
 
-	_, err := embedFiles([]any{
-		fileUpload{Reader: upload, filename: "opened.bin"},
-		missingPath,
-	}, EmbedIOReader, &onceStdinReader{})
-	require.Error(t, err)
-	require.Equal(t, int32(1), upload.closeCount.Load())
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "stdin payload")
+	waitForMultipartBody(t, body)
+	require.NoError(t, body.Close())
+	require.Zero(t, stdinLikeReader.closeCount.Load())
+}
+
+func TestMultipartRequestBodyCloseBeforeReadClosesOpenedFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "unused.bin")
+	require.NoError(t, os.WriteFile(path, []byte("never consumed"), 0o600))
+	upload, err := OpenFileUpload(path)
+	require.NoError(t, err)
+	file := uploadSourceFile(t, upload)
+	body := newMultipartRequestBody(map[string]any{"file": upload}, apiform.FormatBrackets)
+
+	require.NoError(t, body.Close())
+	waitForMultipartBody(t, body)
+	_, err = file.Stat()
+	require.ErrorIs(t, err, os.ErrClosed)
 }
 
 func waitForMultipartBody(t *testing.T, body *multipartRequestBody) {
@@ -590,7 +586,7 @@ func waitForMultipartBody(t *testing.T, body *multipartRequestBody) {
 	}
 }
 
-func uploadSourceFile(t *testing.T, upload fileUpload) *os.File {
+func uploadSourceFile(t *testing.T, upload FileUpload) *os.File {
 	t.Helper()
 	reader, ok := upload.Reader.(*exactLengthReadCloser)
 	require.True(t, ok, "regular upload must use an exact-length reader")

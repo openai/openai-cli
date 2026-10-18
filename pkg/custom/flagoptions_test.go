@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/stretchr/testify/require"
 )
 
@@ -388,7 +389,7 @@ func TestEmbedFilesUploadMetadata(t *testing.T) {
 			withEmbedded, err := embedFiles(map[string]any{"file": "@" + path}, EmbedIOReader, nil)
 			require.NoError(t, err)
 
-			upload, ok := withEmbedded.(map[string]any)["file"].(fileUpload)
+			upload, ok := withEmbedded.(map[string]any)["file"].(requestconfig.FileUpload)
 			require.True(t, ok, "expected fileUpload, got %T", withEmbedded.(map[string]any)["file"])
 			require.Equal(t, tc.basename, upload.Filename())
 			require.Equal(t, upload.ContentType(), tc.wantContentType)
@@ -402,7 +403,7 @@ func TestEmbedFilesUploadMetadata(t *testing.T) {
 			withEmbedded, err := embedFiles(map[string]any{"file": FilePathValue(path)}, EmbedIOReader, nil)
 			require.NoError(t, err)
 
-			upload, ok := withEmbedded.(map[string]any)["file"].(fileUpload)
+			upload, ok := withEmbedded.(map[string]any)["file"].(requestconfig.FileUpload)
 			require.True(t, ok, "expected fileUpload, got %T", withEmbedded.(map[string]any)["file"])
 			require.Equal(t, tc.basename, upload.Filename())
 			require.Equal(t, upload.ContentType(), tc.wantContentType)

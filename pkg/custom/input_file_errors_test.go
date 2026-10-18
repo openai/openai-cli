@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -147,7 +148,7 @@ func TestInputFileUploadPreservesMetadataAndLateReadError(t *testing.T) {
 	require.Equal(t, filepath.Base(path), upload.Filename())
 	require.True(t, strings.HasPrefix(upload.ContentType(), "text/plain"), upload.ContentType())
 	require.True(t, upload.hasKnownSize())
-	require.Equal(t, int64(len("synthetic payload")), upload.size)
+	require.Equal(t, int64(len("synthetic payload")), upload.Size)
 	// Truncate the actual opened source after size inspection.
 	require.NoError(t, os.Truncate(path, 0))
 	_, err = io.ReadAll(upload)
@@ -204,7 +205,7 @@ func TestInputFileExpansionRetainsFailedOpenAndPartialCleanup(t *testing.T) {
 		&requestflag.Flag[[]string]{Name: "image", BodyPath: "image", FileInput: true},
 	}}
 	_, err := embedRequestFiles(command, map[string]any{"image": []any{
-		fileUpload{Reader: &inputFileReader{Reader: opened, source: source}, filename: "synthetic-private-opened.txt"},
+		requestconfig.FileUpload{Reader: &inputFileReader{Reader: opened, source: source}, FileName: "synthetic-private-opened.txt"},
 		FilePathValue(filepath.Join(t.TempDir(), "synthetic-private-missing.txt")),
 	}}, "body", EmbedIOReader, nil)
 	require.ErrorIs(t, err, os.ErrNotExist)

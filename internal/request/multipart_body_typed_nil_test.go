@@ -1,4 +1,4 @@
-package custom
+package request
 
 import (
 	"context"
@@ -53,7 +53,7 @@ func TestMultipartRequestOptionsRetryTypedNilReaderAsScalar(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	options, err := multipartRequestOptions(map[string]any{
+	options, err := MultipartRequestOptions(map[string]any{
 		"file":   typedNilMultipartReader(),
 		"prompt": "hello",
 	}, apiform.FormatBrackets)
@@ -91,7 +91,7 @@ func TestMultipartRequestOptionsReplayTypedNilReaderAcrossRedirects(t *testing.T
 			}))
 			t.Cleanup(server.Close)
 
-			options, err := multipartRequestOptions(map[string]any{
+			options, err := MultipartRequestOptions(map[string]any{
 				"file":   typedNilMultipartReader(),
 				"prompt": "hello",
 			}, apiform.FormatBrackets)
@@ -111,7 +111,7 @@ func TestMultipartRequestOptionsReplayTypedNilReaderAcrossRedirects(t *testing.T
 func TestMultipartRequestOptionsKnownUploadAllowsTypedNilReaderField(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "payload.txt")
 	require.NoError(t, os.WriteFile(path, []byte("payload"), 0o600))
-	upload, err := openFileUpload(path)
+	upload, err := OpenFileUpload(path)
 	require.NoError(t, err)
 
 	var requestCount atomic.Int32
@@ -129,7 +129,7 @@ func TestMultipartRequestOptionsKnownUploadAllowsTypedNilReaderField(t *testing.
 	}))
 	t.Cleanup(server.Close)
 
-	options, err := multipartRequestOptions(map[string]any{
+	options, err := MultipartRequestOptions(map[string]any{
 		"file":     upload,
 		"optional": typedNilMultipartReader(),
 		"purpose":  "assistants",

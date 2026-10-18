@@ -1,4 +1,4 @@
-package custom
+package request
 
 import (
 	"io"
@@ -47,13 +47,13 @@ func TestMultipartRequestOptionsRejectInvalidHeadersBeforeReadingKnownLengthUplo
 
 			source := &countingReader{remaining: 7}
 			upload := &recordingReadCloser{reader: source}
-			_, err := multipartRequestOptions(map[string]any{
-				test.field: fileUpload{
-					Reader:      upload,
-					filename:    test.filename,
-					contentType: test.mediaType,
-					knownSize:   true,
-					size:        7,
+			_, err := MultipartRequestOptions(map[string]any{
+				test.field: FileUpload{
+					Reader:    upload,
+					FileName:  test.filename,
+					MediaType: test.mediaType,
+					KnownSize: true,
+					Size:      7,
 				},
 			}, apiform.FormatBrackets)
 
@@ -86,10 +86,10 @@ func TestMultipartRequestBodyRejectsInvalidHeadersBeforeReadingUnknownLengthUplo
 			source := &countingReader{remaining: 7}
 			upload := &recordingReadCloser{reader: source}
 			body := newMultipartRequestBody(map[string]any{
-				test.field: fileUpload{
-					Reader:      upload,
-					filename:    test.filename,
-					contentType: test.mediaType,
+				test.field: FileUpload{
+					Reader:    upload,
+					FileName:  test.filename,
+					MediaType: test.mediaType,
 				},
 			}, apiform.FormatBrackets)
 
@@ -107,7 +107,7 @@ func TestMultipartRequestBodyRejectsInvalidHeadersBeforeReadingUnknownLengthUplo
 func TestMultipartRequestOptionsRejectInvalidBufferedFieldNames(t *testing.T) {
 	t.Parallel()
 
-	_, err := multipartRequestOptions(map[string]any{
+	_, err := MultipartRequestOptions(map[string]any{
 		"outer": map[string]any{"bad\r\nX-Injected: value": "contents"},
 	}, apiform.FormatBrackets)
 	require.ErrorContains(t, err, "field name")

@@ -1,4 +1,4 @@
-package custom
+package request
 
 import (
 	"bytes"
@@ -121,17 +121,17 @@ func (b *multipartRequestBody) encode() {
 
 func (b *multipartRequestBody) cleanup() error {
 	b.cleanupOnce.Do(func() {
-		b.cleanupErr = closeFileUploads(b.bodyMap)
+		b.cleanupErr = CloseFileUploads(b.bodyMap)
 	})
 	return b.cleanupErr
 }
 
-// multipartRequestOptions keeps scalar-only forms buffered and replayable.
+// MultipartRequestOptions keeps scalar-only forms buffered and replayable.
 // Forms containing an upload stream exactly once: the SDK retry loop is
 // disabled because the CLI cannot promise that a reader will produce identical
 // bytes a second time. Regular files retain an exact Content-Length; unknown
 // sources use chunked transfer encoding.
-func multipartRequestOptions(
+func MultipartRequestOptions(
 	bodyMap map[string]any,
 	encodingFormat apiform.FormFormat,
 	observeBody ...func(io.Closer),
@@ -147,13 +147,13 @@ func multipartRequestOptions(
 		var err error
 		contentLength, err = multipartContentLength(bodyMap, encodingFormat, boundary)
 		if err != nil {
-			return nil, errors.Join(err, closeFileUploads(bodyMap))
+			return nil, errors.Join(err, CloseFileUploads(bodyMap))
 		}
 	}
 
 	body, err := newMultipartRequestBodyWithBoundary(bodyMap, encodingFormat, boundary)
 	if err != nil {
-		return nil, errors.Join(err, closeFileUploads(bodyMap))
+		return nil, errors.Join(err, CloseFileUploads(bodyMap))
 	}
 	for _, observe := range observeBody {
 		observe(body)
@@ -247,8 +247,8 @@ func inspectMultipartBody(value any) multipartBodyInfo {
 			info.knownLength = info.knownLength && childInfo.knownLength
 		}
 		return info
-	case fileUpload:
-		return multipartBodyInfo{hasUpload: true, knownLength: value.hasKnownSize()}
+	case FileUpload:
+		return multipartBodyInfo{hasUpload: true, knownLength: value.KnownSize}
 	default:
 		if isTypedNilReader(value) {
 			return multipartBodyInfo{knownLength: true}
@@ -264,14 +264,14 @@ func multipartContentLength(
 	boundary string,
 ) (int64, error) {
 	var uploadBytes int64
-	emptyValue, err := transformFileUploads(bodyMap, func(upload fileUpload) (fileUpload, error) {
-		if !upload.hasKnownSize() {
-			return fileUpload{}, errors.New("cannot determine multipart length for an unknown-size upload")
+	emptyValue, err := transformFileUploads(bodyMap, func(upload FileUpload) (FileUpload, error) {
+		if !upload.KnownSize {
+			return FileUpload{}, errors.New("cannot determine multipart length for an unknown-size upload")
 		}
-		if upload.size > math.MaxInt64-uploadBytes {
-			return fileUpload{}, errors.New("multipart content length overflows int64")
+		if upload.Size > math.MaxInt64-uploadBytes {
+			return FileUpload{}, errors.New("multipart content length overflows int64")
 		}
-		uploadBytes += upload.size
+		uploadBytes += upload.Size
 		upload.Reader = strings.NewReader("")
 		return upload, nil
 	})
@@ -298,10 +298,10 @@ func multipartContentLength(
 
 func transformFileUploads(
 	value any,
-	transform func(fileUpload) (fileUpload, error),
+	transform func(FileUpload) (FileUpload, error),
 ) (any, error) {
 	switch value := value.(type) {
-	case fileUpload:
+	case FileUpload:
 		return transform(value)
 	case map[string]any:
 		result := make(map[string]any, len(value))
@@ -334,10 +334,10 @@ func transformFileUploads(
 	}
 }
 
-// closeFileUploads closes every source owned by a fileUpload, including values
+// CloseFileUploads closes every source owned by a FileUpload, including values
 // nested inside maps and arrays. Other io.ReadClosers (notably stdin wrappers)
 // are intentionally left alone because this code does not own them.
-func closeFileUploads(value any) error {
+func CloseFileUploads(value any) error {
 	return closeFileUploadsValue(reflect.ValueOf(value))
 }
 
@@ -354,7 +354,7 @@ func closeFileUploadsValue(value reflect.Value) error {
 	}
 
 	if value.CanInterface() {
-		if upload, ok := value.Interface().(fileUpload); ok {
+		if upload, ok := value.Interface().(FileUpload); ok {
 			return upload.Close()
 		}
 	}

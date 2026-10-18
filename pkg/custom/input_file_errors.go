@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
@@ -111,13 +112,13 @@ func (s fileInputSource) readFile(path string) ([]byte, error) {
 	return data, s.failure(operation, err)
 }
 
-func (s fileInputSource) openUpload(path string) (fileUpload, error) {
-	upload, err := openFileUpload(path)
+func (s fileInputSource) openUpload(path string) (requestconfig.FileUpload, error) {
+	upload, err := requestconfig.OpenFileUpload(path)
 	if err != nil {
 		return upload, s.failure("open", err)
 	}
 	if s.option != "" {
-		// Preserve fileUpload's filename, content type, and exact length metadata.
+		// Preserve FileUpload's filename, content type, and exact length metadata.
 		upload.Reader = &inputFileReader{Reader: upload.Reader, source: s}
 	}
 	return upload, nil

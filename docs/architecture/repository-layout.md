@@ -78,6 +78,13 @@ existing positions and retains the local-command bypass. Native request-configur
 contracts remain with assembly and call the shared APIs directly, preserving
 Windows and WSL selections, test cases, and assertions.
 
+Multipart encoding and owned upload sources live in `internal/request/`, with
+streaming, retry/redirect, exact-length, header-validation, and cleanup unit tests.
+Request preparation and image/audio settings use the shared upload type while
+retaining feature inspection and value-safe input errors. Assembly integration
+tests exercise borrowed stdin ownership and aborted image actions through request
+options; encoder tests check owned-file cleanup and completion directly.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

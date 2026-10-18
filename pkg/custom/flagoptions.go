@@ -135,7 +135,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 			val := iter.Value()
 			newVal, err := embedFilesValue(val, embedStyle, stdin, goos, source.child(key.String()))
 			if err != nil {
-				return reflect.Value{}, errors.Join(err, closeFileUploads(result.Interface()))
+				return reflect.Value{}, errors.Join(err, requestconfig.CloseFileUploads(result.Interface()))
 			}
 			result.SetMapIndex(key, newVal)
 		}
@@ -150,7 +150,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 		for i := 0; i < v.Len(); i++ {
 			newVal, err := embedFilesValue(v.Index(i), embedStyle, stdin, goos, source)
 			if err != nil {
-				return reflect.Value{}, errors.Join(err, closeFileUploads(result.Slice(0, i).Interface()))
+				return reflect.Value{}, errors.Join(err, requestconfig.CloseFileUploads(result.Slice(0, i).Interface()))
 			}
 			result.Index(i).Set(newVal)
 		}
@@ -451,12 +451,12 @@ func embedAudioVoicesMultipartBody(cmd *cli.Command, bodyMap map[string]any, std
 	expandingRemaining := false
 	defer func() {
 		if err != nil {
-			if closeErr := closeFileUploads(pendingType); closeErr != nil {
+			if closeErr := requestconfig.CloseFileUploads(pendingType); closeErr != nil {
 				err = errors.Join(err, closeErr)
 			}
 			if !expandingRemaining {
 				// Generic expansion has not taken ownership of these existing uploads.
-				if closeErr := closeFileUploads(remaining); closeErr != nil {
+				if closeErr := requestconfig.CloseFileUploads(remaining); closeErr != nil {
 					err = errors.Join(err, closeErr)
 				}
 			}
@@ -537,11 +537,11 @@ func flagOptionsWithStdin(
 	}
 
 	// Once multipart files have been opened, close them on every error path
-	// until ownership is transferred to multipartRequestBody below.
+	// until ownership is transferred to the multipart request body below.
 	var pendingMultipartUploads any
 	defer func() {
 		if err != nil && pendingMultipartUploads != nil {
-			err = errors.Join(err, closeFileUploads(pendingMultipartUploads))
+			err = errors.Join(err, requestconfig.CloseFileUploads(pendingMultipartUploads))
 		}
 	}()
 
@@ -783,11 +783,11 @@ func flagOptionsWithStdin(
 		if state, ok := cmd.Metadata[imageMultipartMetadata].(*imageMultipartPreparation); ok {
 			observers = append(observers, func(body io.Closer) { state.body = body })
 		}
-		multipartOptions, err := multipartRequestOptions(bodyMap, encodingFormat, observers...)
+		multipartOptions, err := requestconfig.MultipartRequestOptions(bodyMap, encodingFormat, observers...)
 		if err != nil {
 			return nil, err
 		}
-		pendingMultipartUploads = nil // multipartRequestBody owns them now.
+		pendingMultipartUploads = nil // the multipart request body owns them now.
 		options = append(options, multipartOptions...)
 
 	case ApplicationJSON:
