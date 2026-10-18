@@ -11,7 +11,7 @@ import (
 
 // NewRequestHeaderFlag returns the repeatable, global flag for literal HTTP headers.
 func NewRequestHeaderFlag() cli.Flag {
-	return &requestHeaderFlag{Flag: requestflag.Flag[[]string]{
+	return &HeaderFlag{Flag: requestflag.Flag[[]string]{
 		Name:        "header",
 		Aliases:     []string{"H"},
 		Usage:       "Add a request header as 'Name: Value' (repeatable; last value wins; use OPENAI_CUSTOM_HEADERS for secrets)",
@@ -19,11 +19,12 @@ func NewRequestHeaderFlag() cli.Flag {
 	}}
 }
 
-type requestHeaderFlag struct {
+// HeaderFlag is the root-owned repeatable flag for literal request headers.
+type HeaderFlag struct {
 	requestflag.Flag[[]string]
 }
 
-func (*requestHeaderFlag) IsLocal() bool { return false }
+func (*HeaderFlag) IsLocal() bool { return false }
 
 // Headers parses literal header flags without echoing their values in errors.
 func Headers(cmd *cli.Command) (http.Header, error) {

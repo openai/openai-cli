@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
@@ -95,7 +96,7 @@ func configureGlobalFlagDescriptions(root *cli.Command) {
 			case "debug":
 				flag.Usage = "Write HTTP request and response diagnostics to stderr for troubleshooting. May include sensitive data."
 			}
-		case *requestHeaderFlag:
+		case *requestconfig.HeaderFlag:
 			flag.Usage = "Add an HTTP request header as 'Name: Value'.\n" +
 				"Repeat for multiple headers; the last value for each header name wins.\n" +
 				"Example: -H 'X-Request-Tag: cli-test'.\n" +
