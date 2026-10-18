@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -88,7 +89,7 @@ func TestAdminSetupVerificationRejectsRedirectWithoutChangingClient(t *testing.T
 		}
 		return verifyAdminSetup(ctx, options, []byte("synthetic-entered-key"))
 	})
-	root.Metadata = map[string]interface{}{mtlsHTTPClientMetadata: client}
+	root.Metadata = map[string]interface{}{requestconfig.MTLSHTTPClientMetadata: client}
 	root.ExitErrHandler = func(context.Context, *cli.Command, error) {}
 	err := root.Run(t.Context(), []string{root.Name, "--base-url", server.URL, "admin:organization:projects", "list"})
 	require.EqualError(t, err, "Verification stopped at a redirect. Check the configured base URL.")

@@ -1,4 +1,4 @@
-package custom
+package request
 
 import (
 	"errors"
@@ -6,19 +6,19 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// mtlsClientFlag permits one explicit value, independently of an environment default.
+// MTLSClientFlag permits one explicit value, independently of an environment default.
 // The embedded PostParse applies sources without consuming the explicit allowance.
-type mtlsClientFlag struct {
+type MTLSClientFlag struct {
 	cli.StringFlag
 	explicit bool
 }
 
-func (f *mtlsClientFlag) PreParse() error {
+func (f *MTLSClientFlag) PreParse() error {
 	f.explicit = false
 	return f.StringFlag.PreParse()
 }
 
-func (f *mtlsClientFlag) Set(name, value string) error {
+func (f *MTLSClientFlag) Set(name, value string) error {
 	if f.explicit {
 		return errors.New("can't duplicate this flag")
 	}
@@ -27,4 +27,4 @@ func (f *mtlsClientFlag) Set(name, value string) error {
 }
 
 // CLIStringFlag exposes metadata without changing parsing or source ownership.
-func (f *mtlsClientFlag) CLIStringFlag() *cli.StringFlag { return &f.StringFlag }
+func (f *MTLSClientFlag) CLIStringFlag() *cli.StringFlag { return &f.StringFlag }

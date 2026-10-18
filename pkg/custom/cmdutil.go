@@ -24,6 +24,7 @@ import (
 	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/readable"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3/option"
 
@@ -79,7 +80,7 @@ func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 	if baseURL := cmd.String("base-url"); baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
-	if httpClient, ok := cmd.Root().Metadata[mtlsHTTPClientMetadata].(*http.Client); ok {
+	if httpClient, ok := cmd.Root().Metadata[requestconfig.MTLSHTTPClientMetadata].(*http.Client); ok {
 		opts = append(opts, option.WithHTTPClient(httpClient))
 	}
 

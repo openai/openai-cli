@@ -80,12 +80,12 @@ func configureGlobalFlagDescriptions(root *cli.Command) {
 				flag.Usage = "Show part of a JSON error, such as 'message', using GJSON path syntax.\n" +
 					"API and local errors use 'message'; streamed errors can use 'error.message'.\n" +
 					"If the path does not match, keep the original error."
-			case mtlsClientCertFileFlag:
+			case requestconfig.MTLSClientCertFileFlag:
 				flag.Usage = "PEM client certificate file for mutual TLS (mTLS). Use with --mtls-client-key-file.\n" +
 					"Requires an explicit HTTPS endpoint through --base-url or OPENAI_BASE_URL.\n" +
 					"For certificate chains, put the client certificate first, then intermediates."
 				flag.HideDefault = true
-			case mtlsClientKeyFileFlag:
+			case requestconfig.MTLSClientKeyFileFlag:
 				flag.Usage = "PEM private key file matching the mTLS client certificate. Use with --mtls-client-cert-file."
 				flag.HideDefault = true
 			}

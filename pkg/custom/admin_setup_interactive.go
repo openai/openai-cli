@@ -182,7 +182,7 @@ func adminSetupRequestOptions(command *cli.Command) ([]option.RequestOption, str
 	// Keep the configured transport, including mTLS, but never forward a newly
 	// entered credential through a redirect. Do not change the shared client.
 	client := *http.DefaultClient
-	if configured, ok := command.Root().Metadata[mtlsHTTPClientMetadata].(*http.Client); ok && configured != nil {
+	if configured, ok := command.Root().Metadata[requestconfig.MTLSHTTPClientMetadata].(*http.Client); ok && configured != nil {
 		client = *configured
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

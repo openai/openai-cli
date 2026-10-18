@@ -72,6 +72,12 @@ file errors. Assembly retains flag registration and the setup hook in their
 existing positions. Shared synthetic certificate fixtures live in
 `internal/testutil/mtls/`; no runtime package imports these fixtures.
 
+Root request inheritance, mTLS flag declarations and lifecycle, and mTLS client
+metadata setup live in `internal/request/`. Assembly invokes them in their
+existing positions and retains the local-command bypass. Native request-configuration
+contracts remain with assembly and call the shared APIs directly, preserving
+Windows and WSL selections, test cases, and assertions.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

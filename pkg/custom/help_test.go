@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
@@ -23,7 +24,7 @@ type helpStringFlag struct{ *cli.StringFlag }
 func (f *helpStringFlag) CLIStringFlag() *cli.StringFlag { return f.StringFlag }
 
 func TestConfigureHelpWrappedStringMetadata(t *testing.T) {
-	flag := &cli.StringFlag{Name: mtlsClientKeyFileFlag, Value: "synthetic-private-path"}
+	flag := &cli.StringFlag{Name: requestconfig.MTLSClientKeyFileFlag, Value: "synthetic-private-path"}
 	root := &cli.Command{Flags: []cli.Flag{&helpStringFlag{flag}}}
 	configureGlobalFlagDescriptions(root)
 	if !flag.HideDefault || !strings.Contains(flag.Usage, "matching") || strings.Contains(root.Flags[0].String(), flag.Value) {

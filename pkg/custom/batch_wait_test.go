@@ -6,6 +6,7 @@ import (
 	"io"
 	"testing"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -59,8 +60,8 @@ func TestBatchHintRetainsOnlyReproducibleRequestContext(t *testing.T) {
 		{"organization", "organization", "OPENAI_ORG_ID", "org_env", []string{"--organization", "org_override"}, true},
 		{"admin key", "admin-api-key", "OPENAI_ADMIN_KEY", "", []string{"--admin-api-key", "synthetic-admin-key"}, true},
 		{"secret", "webhook-secret", "OPENAI_WEBHOOK_SECRET", "", []string{"--webhook-secret", "synthetic-secret"}, true},
-		{"certificate", mtlsClientCertFileFlag, mtlsClientCertFileEnv, "", []string{"--mtls-client-cert-file", "private-cert.pem"}, true},
-		{"client key", mtlsClientKeyFileFlag, mtlsClientKeyFileEnv, "", []string{"--mtls-client-key-file", "private-key.pem"}, true},
+		{"certificate", requestconfig.MTLSClientCertFileFlag, requestconfig.MTLSClientCertFileEnv, "", []string{"--mtls-client-cert-file", "private-cert.pem"}, true},
+		{"client key", requestconfig.MTLSClientKeyFileFlag, requestconfig.MTLSClientKeyFileEnv, "", []string{"--mtls-client-key-file", "private-key.pem"}, true},
 		{"header", "unused", "OPENAI_CUSTOM_HEADERS", "X-Example: inherited", []string{"--header", "X-Example: override"}, true},
 		{"environment headers", "unused", "OPENAI_CUSTOM_HEADERS", "X-Example: inherited", nil, false},
 		{"environment endpoint", "unused", "OPENAI_BASE_URL", "http://127.0.0.1:1", nil, false},

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/assert"
@@ -25,8 +26,8 @@ func TestMTLSClientFlags(t *testing.T) {
 		name    string
 		envName string
 	}{
-		{name: mtlsClientCertFileFlag, envName: mtlsClientCertFileEnv},
-		{name: mtlsClientKeyFileFlag, envName: mtlsClientKeyFileEnv},
+		{name: requestconfig.MTLSClientCertFileFlag, envName: requestconfig.MTLSClientCertFileEnv},
+		{name: requestconfig.MTLSClientKeyFileFlag, envName: requestconfig.MTLSClientKeyFileEnv},
 	}
 
 	for _, tt := range tests {
@@ -155,8 +156,8 @@ func TestCLIUsesMTLSFilesFromEnvironment(t *testing.T) {
 	configureTestServerTrust(t, server)
 
 	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
-	t.Setenv(mtlsClientCertFileEnv, certFile)
-	t.Setenv(mtlsClientKeyFileEnv, keyFile)
+	t.Setenv(requestconfig.MTLSClientCertFileEnv, certFile)
+	t.Setenv(requestconfig.MTLSClientKeyFileEnv, keyFile)
 	require.NoError(t, runMTLSTestCommandWithArgs(t, server.URL))
 
 	select {
@@ -194,7 +195,7 @@ func TestCLIRejectsIncompleteMTLSClientChain(t *testing.T) {
 func findCommandFlag(t *testing.T, name string) cli.Flag {
 	t.Helper()
 
-	for _, flag := range mtlsClientFlags() {
+	for _, flag := range requestconfig.MTLSClientFlags() {
 		if flag.Names()[0] == name {
 			return flag
 		}

@@ -12,6 +12,7 @@ import (
 	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/readable"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -344,8 +345,8 @@ func batchHintNeedsRequestOptions(root *cli.Command) bool {
 		{"organization", "OPENAI_ORG_ID"},
 		{"project", "OPENAI_PROJECT_ID"},
 		{"webhook-secret", "OPENAI_WEBHOOK_SECRET"},
-		{mtlsClientCertFileFlag, mtlsClientCertFileEnv},
-		{mtlsClientKeyFileFlag, mtlsClientKeyFileEnv},
+		{requestconfig.MTLSClientCertFileFlag, requestconfig.MTLSClientCertFileEnv},
+		{requestconfig.MTLSClientKeyFileFlag, requestconfig.MTLSClientKeyFileEnv},
 	} {
 		if root.IsSet(setting.flag) && root.String(setting.flag) != os.Getenv(setting.environment) {
 			return true

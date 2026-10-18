@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/openai/openai-go/v3"
@@ -27,8 +28,8 @@ func TestRootRequestFlagsPreserveOwnershipAndMetadata(t *testing.T) {
 		Flags:    []cli.Flag{project, apiKey, unrelated, format},
 		Commands: []*cli.Command{{Name: "create", Flags: []cli.Flag{endpoint}}},
 	}
-	configureRootRequestFlags(root)
-	wrapped := root.Flags[0].(*rootRequestFlag)
+	requestconfig.ConfigureRootFlags(root)
+	wrapped := root.Flags[0].(*requestconfig.RootRequestFlag)
 	require.Same(t, project, wrapped.RequestFlag())
 	require.Equal(t, []string{"project", "p"}, wrapped.Names())
 	require.Equal(t, "Project context", wrapped.GetUsage())
@@ -38,13 +39,13 @@ func TestRootRequestFlagsPreserveOwnershipAndMetadata(t *testing.T) {
 	require.Same(t, endpoint, root.Commands[0].Flags[0])
 	require.Same(t, unrelated, root.Flags[2])
 	require.Same(t, format, root.Flags[3])
-	configureRootRequestFlags(root)
+	requestconfig.ConfigureRootFlags(root)
 	require.Same(t, wrapped, root.Flags[0])
 }
 
 func TestRootRequestFlagsPreserveMTLSPlacement(t *testing.T) {
-	t.Setenv(mtlsClientCertFileEnv, "/missing/synthetic-env-certificate")
-	t.Setenv(mtlsClientKeyFileEnv, "/missing/synthetic-env-key")
+	t.Setenv(requestconfig.MTLSClientCertFileEnv, "/missing/synthetic-env-certificate")
+	t.Setenv(requestconfig.MTLSClientKeyFileEnv, "/missing/synthetic-env-key")
 	pki := mtlstest.NewPKI(t)
 	clientCAs := x509.NewCertPool()
 	require.True(t, clientCAs.AppendCertsFromPEM(pki.RootPEM))
@@ -81,7 +82,7 @@ func TestRootRequestFlagsPreserveMTLSPlacement(t *testing.T) {
 				},
 			}}}},
 		}
-		configureRootRequestFlags(root)
+		requestconfig.ConfigureRootFlags(root)
 		ConfigureCommand(root)
 		route := []string{"models", "list"}
 		args := append([]string{"openai"}, route[:position]...)
@@ -137,7 +138,7 @@ func TestRootRequestFlagsRetainSourcesAliasesAndValidation(t *testing.T) {
 					},
 				}}}},
 			}
-			configureRootRequestFlags(root)
+			requestconfig.ConfigureRootFlags(root)
 			err := root.Run(t.Context(), append([]string{"openai"}, tc.args...))
 			if tc.err != nil {
 				require.ErrorContains(t, err, tc.err.Error())

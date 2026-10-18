@@ -18,6 +18,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -30,7 +31,7 @@ func audioPreviewModel(t *testing.T, invocation string, flags ...string) *audioW
 		Flags:          []cli.Flag{NewRequestHeaderFlag()},
 	}
 	for _, name := range []string{"project", "organization", "base-url", "api-key", "admin-api-key", "webhook-secret",
-		mtlsClientCertFileFlag, mtlsClientKeyFileFlag} {
+		requestconfig.MTLSClientCertFileFlag, requestconfig.MTLSClientKeyFileFlag} {
 		root.Flags = append(root.Flags, &cli.StringFlag{Name: name})
 	}
 	var model *audioWorkbench
@@ -198,7 +199,7 @@ func TestAudioCommandPreviewGoRunUsesOriginDirectory(t *testing.T) {
 
 func TestAudioCommandPreviewSuppressesPrivateOverrides(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-fake-inherited")
-	for _, name := range []string{"OPENAI_ADMIN_KEY", "OPENAI_WEBHOOK_SECRET", mtlsClientCertFileEnv, mtlsClientKeyFileEnv} {
+	for _, name := range []string{"OPENAI_ADMIN_KEY", "OPENAI_WEBHOOK_SECRET", requestconfig.MTLSClientCertFileEnv, requestconfig.MTLSClientKeyFileEnv} {
 		t.Setenv(name, "")
 	}
 	for _, flags := range [][]string{
