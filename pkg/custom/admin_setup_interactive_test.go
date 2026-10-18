@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -25,9 +26,9 @@ func TestAdminSetupVerificationPreservesMTLS(t *testing.T) {
 	})
 	t.Setenv("OPENAI_ADMIN_KEY", "synthetic-environment-key")
 	t.Setenv("OPENAI_CUSTOM_HEADERS", "Authorization: Bearer synthetic-header-key\nX-Api-Key: synthetic-gateway-key")
-	pki := newMTLSTestPKI(t)
+	pki := mtlstest.NewPKI(t)
 	clientCAs := x509.NewCertPool()
-	require.True(t, clientCAs.AppendCertsFromPEM(pki.rootPEM))
+	require.True(t, clientCAs.AppendCertsFromPEM(pki.RootPEM))
 	type requestDetails struct {
 		authorization, gateway, method, uri string
 		chainLength                         int
@@ -46,7 +47,7 @@ func TestAdminSetupVerificationPreservesMTLS(t *testing.T) {
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	configureTestServerTrust(t, server)
-	certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
 	ConfigureCommand(root)
 	require.NoError(t, root.Run(t.Context(), []string{
 		root.Name, "--base-url", server.URL, "--admin-api-key", "synthetic-flag-key",

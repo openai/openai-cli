@@ -15,6 +15,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/apiquery"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -248,9 +249,9 @@ func TestAdminCredentialsAcceptCertificateOnlyMTLS(t *testing.T) {
 		_, err := client.Admin.Organization.Projects.List(ctx, openai.AdminOrganizationProjectListParams{})
 		return err
 	})
-	pki := newMTLSTestPKI(t)
+	pki := mtlstest.NewPKI(t)
 	clientCAs := x509.NewCertPool()
-	require.True(t, clientCAs.AppendCertsFromPEM(pki.rootPEM))
+	require.True(t, clientCAs.AppendCertsFromPEM(pki.RootPEM))
 	type requestDetails struct {
 		authorization string
 		chainLength   int
@@ -270,7 +271,7 @@ func TestAdminCredentialsAcceptCertificateOnlyMTLS(t *testing.T) {
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	configureTestServerTrust(t, server)
-	certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
 	ConfigureCommand(root)
 	require.NoError(t, root.Run(t.Context(), []string{
 		root.Name, "--base-url", server.URL,

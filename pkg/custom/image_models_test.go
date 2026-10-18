@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/imagemodels"
+	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/urfave/cli/v3"
 )
 
@@ -173,9 +174,9 @@ func TestImageModelsWriteErrors(t *testing.T) {
 
 func TestImageModelsUsesConfiguredMTLSClient(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "synthetic-models-key")
-	pki := newMTLSTestPKI(t)
+	pki := mtlstest.NewPKI(t)
 	clientCAs := x509.NewCertPool()
-	if !clientCAs.AppendCertsFromPEM(pki.rootPEM) {
+	if !clientCAs.AppendCertsFromPEM(pki.RootPEM) {
 		t.Fatal("could not configure synthetic client CA")
 	}
 	var requests atomic.Int32
@@ -195,7 +196,7 @@ func TestImageModelsUsesConfiguredMTLSClient(t *testing.T) {
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	configureTestServerTrust(t, server)
-	certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
 	var out, stderr strings.Builder
 	root := &cli.Command{
 		Name: "openai", Writer: &out, ErrWriter: &stderr,

@@ -66,8 +66,9 @@ below describes the current layout as the migration proceeds.
   metadata without echoing private operands or executing suggested corrections.
 - `pkg/custom/` contains remaining handwritten CLI commands, defaults, output-format
   policy, error handling, and presentation orchestration.
-- `internal/request/` owns literal request-header flags and value-safe validation,
-  shared by request dispatch and admin authentication.
+- `internal/request/` owns literal request-header flags, value-safe validation,
+  and endpoint-bound mTLS transport construction. Application assembly retains
+  mTLS flag registration and setup order.
 - `internal/output/transform/` selects or reshapes API responses before presentation.
 - `internal/` contains shared helpers for flags, request encoding, terminal
   output, and testing. For example, `internal/readable` renders labeled text

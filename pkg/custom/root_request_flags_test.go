@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/requestflag"
+	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -44,9 +45,9 @@ func TestRootRequestFlagsPreserveOwnershipAndMetadata(t *testing.T) {
 func TestRootRequestFlagsPreserveMTLSPlacement(t *testing.T) {
 	t.Setenv(mtlsClientCertFileEnv, "/missing/synthetic-env-certificate")
 	t.Setenv(mtlsClientKeyFileEnv, "/missing/synthetic-env-key")
-	pki := newMTLSTestPKI(t)
+	pki := mtlstest.NewPKI(t)
 	clientCAs := x509.NewCertPool()
-	require.True(t, clientCAs.AppendCertsFromPEM(pki.rootPEM))
+	require.True(t, clientCAs.AppendCertsFromPEM(pki.RootPEM))
 	requests := make(chan http.Header, 3)
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 {
@@ -60,7 +61,7 @@ func TestRootRequestFlagsPreserveMTLSPlacement(t *testing.T) {
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	configureTestServerTrust(t, server)
-	certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
 	flags := []string{"--project=proj-mtls", "--api-key=synthetic-mtls-key", "--base-url=" + server.URL,
 		"--mtls-client-cert-file=" + certFile, "--mtls-client-key-file=" + keyFile}
 	for _, position := range []int{0, 1, 2} {

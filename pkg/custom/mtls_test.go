@@ -2,24 +2,16 @@ package custom
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"io"
 	"log"
-	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
+	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,152 +43,11 @@ func TestMTLSClientFlags(t *testing.T) {
 	}
 }
 
-func TestNewMTLSHTTPClient(t *testing.T) {
-	t.Run("disabled", func(t *testing.T) {
-		t.Parallel()
-
-		client, err := newMTLSHTTPClient("", "", "")
-		require.NoError(t, err)
-		assert.Nil(t, client)
-	})
-
-	t.Run("requires certificate and key together", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := newMTLSHTTPClient("certificate.pem", "", "")
-		require.EqualError(t, err, "mTLS client certificate and key files must be configured together")
-
-		_, err = newMTLSHTTPClient("", "key.pem", "")
-		require.EqualError(t, err, "mTLS client certificate and key files must be configured together")
-	})
-
-	t.Run("requires an explicit HTTPS base URL", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := newMTLSHTTPClient("certificate.pem", "key.pem", "")
-		require.EqualError(t, err, "mTLS requires an explicit HTTPS base URL")
-
-		_, err = newMTLSHTTPClient("certificate.pem", "key.pem", "http://api.example.test")
-		require.EqualError(t, err, "mTLS requires an explicit HTTPS base URL")
-
-		_, err = newMTLSHTTPClient("certificate.pem", "key.pem", "https:///v1")
-		require.EqualError(t, err, "mTLS requires an explicit HTTPS base URL")
-	})
-
-	t.Run("does not expose supplied values in file errors", func(t *testing.T) {
-		t.Parallel()
-
-		inlineCertificate := "-----BEGIN CERTIFICATE-----\nsensitive-certificate-value\n-----END CERTIFICATE-----"
-		_, err := newMTLSHTTPClient(inlineCertificate, "key.pem", "https://api.example.test")
-		require.EqualError(t, err, "mTLS client certificate file does not exist")
-		assert.NotContains(t, err.Error(), inlineCertificate)
-
-		certFile := filepath.Join(t.TempDir(), "certificate.pem")
-		require.NoError(t, os.WriteFile(certFile, []byte("not a certificate"), 0o600))
-		inlineKey := "-----BEGIN PRIVATE KEY-----\nsensitive-private-key-value\n-----END PRIVATE KEY-----"
-		_, err = newMTLSHTTPClient(certFile, inlineKey, "https://api.example.test")
-		require.EqualError(t, err, "mTLS client key file does not exist")
-		assert.NotContains(t, err.Error(), inlineKey)
-	})
-
-	t.Run("rejects an invalid pair without exposing contents", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-		certFile := filepath.Join(dir, "certificate.pem")
-		keyFile := filepath.Join(dir, "key.pem")
-		certContents := "sensitive invalid certificate"
-		keyContents := "sensitive invalid private key"
-		require.NoError(t, os.WriteFile(certFile, []byte(certContents), 0o600))
-		require.NoError(t, os.WriteFile(keyFile, []byte(keyContents), 0o600))
-
-		_, err := newMTLSHTTPClient(certFile, keyFile, "https://api.example.test")
-		require.EqualError(t, err, "mTLS client certificate and key must be a valid matching PEM pair")
-		assert.NotContains(t, err.Error(), certContents)
-		assert.NotContains(t, err.Error(), keyContents)
-	})
-}
-
-func TestNewMTLSHTTPClientPreservesDefaultTransport(t *testing.T) {
-	pki := newMTLSTestPKI(t)
-	certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
-
-	proxyURL, err := url.Parse("http://proxy.example.test:8443")
-	require.NoError(t, err)
-	httpsProxyURL, err := url.Parse("https://proxy.example.test:8443")
-	require.NoError(t, err)
-	rootPool := x509.NewCertPool()
-	require.True(t, rootPool.AppendCertsFromPEM(pki.rootPEM))
-	baseTransport := &http.Transport{
-		Proxy: func(request *http.Request) (*url.URL, error) {
-			if request.URL.Host == "https-proxy-target.example.test" {
-				return httpsProxyURL, nil
-			}
-			return proxyURL, nil
-		},
-		TLSClientConfig: &tls.Config{
-			MinVersion: tls.VersionTLS13,
-			RootCAs:    rootPool,
-			ServerName: "api.example.test",
-		},
-	}
-
-	originalTransport := http.DefaultTransport
-	http.DefaultTransport = baseTransport
-	t.Cleanup(func() {
-		http.DefaultTransport = originalTransport
-	})
-
-	client, err := newMTLSHTTPClient(certFile, keyFile, "https://api.example.test")
-	require.NoError(t, err)
-	transport, ok := client.Transport.(*http.Transport)
-	require.True(t, ok)
-
-	assert.NotSame(t, baseTransport, transport)
-	assert.NotSame(t, baseTransport.TLSClientConfig, transport.TLSClientConfig)
-	assert.Empty(t, baseTransport.TLSClientConfig.Certificates)
-	assert.Empty(t, transport.TLSClientConfig.Certificates)
-	require.NotNil(t, transport.TLSClientConfig.GetClientCertificate)
-	selectedCertificate, err := transport.TLSClientConfig.GetClientCertificate(&tls.CertificateRequestInfo{})
-	require.NoError(t, err)
-	assert.Len(t, selectedCertificate.Certificate, 2)
-	assert.Same(t, rootPool, transport.TLSClientConfig.RootCAs)
-	assert.Equal(t, uint16(tls.VersionTLS13), transport.TLSClientConfig.MinVersion)
-	assert.Equal(t, "api.example.test", transport.TLSClientConfig.ServerName)
-	assert.Equal(t, openAISDKResponseHeaderTimeout, transport.ResponseHeaderTimeout)
-
-	request, err := http.NewRequest(http.MethodGet, "https://api.example.test", nil)
-	require.NoError(t, err)
-	actualProxyURL, err := transport.Proxy(request)
-	require.NoError(t, err)
-	assert.Equal(t, proxyURL, actualProxyURL)
-
-	httpsProxyRequest, err := http.NewRequest(http.MethodGet, "https://https-proxy-target.example.test", nil)
-	require.NoError(t, err)
-	actualProxyURL, err = transport.Proxy(httpsProxyRequest)
-	require.EqualError(t, err, "mTLS does not support HTTPS proxies")
-	assert.Nil(t, actualProxyURL)
-
-	sameOriginRedirect, err := http.NewRequest(http.MethodGet, "https://api.example.test/redirected", nil)
-	require.NoError(t, err)
-	require.NoError(t, client.CheckRedirect(sameOriginRedirect, []*http.Request{request}))
-	sameOriginDefaultPortRedirect, err := http.NewRequest(http.MethodGet, "https://API.example.test:443/redirected", nil)
-	require.NoError(t, err)
-	require.NoError(t, client.CheckRedirect(sameOriginDefaultPortRedirect, []*http.Request{request}))
-
-	crossOriginRedirect, err := http.NewRequest(http.MethodGet, "https://other.example.test", nil)
-	require.NoError(t, err)
-	assert.ErrorIs(t, client.CheckRedirect(crossOriginRedirect, []*http.Request{request}), http.ErrUseLastResponse)
-	crossOriginPortRedirect, err := http.NewRequest(http.MethodGet, "https://api.example.test:8443", nil)
-	require.NoError(t, err)
-	assert.ErrorIs(t, client.CheckRedirect(crossOriginPortRedirect, []*http.Request{request}), http.ErrUseLastResponse)
-}
-
 func TestCLIUsesMTLSClientCertificateChain(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-api-key")
-	pki := newMTLSTestPKI(t)
+	pki := mtlstest.NewPKI(t)
 	clientCAs := x509.NewCertPool()
-	require.True(t, clientCAs.AppendCertsFromPEM(pki.rootPEM))
+	require.True(t, clientCAs.AppendCertsFromPEM(pki.RootPEM))
 
 	type requestDetails struct {
 		authorization string
@@ -225,7 +76,7 @@ func TestCLIUsesMTLSClientCertificateChain(t *testing.T) {
 	t.Cleanup(server.Close)
 	configureTestServerTrust(t, server)
 
-	certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
 	require.NoError(t, runMTLSTestCommand(t, server.URL, certFile, keyFile))
 
 	select {
@@ -239,7 +90,7 @@ func TestCLIUsesMTLSClientCertificateChain(t *testing.T) {
 
 func TestCLIUsesMTLSClientCertificateWithUnrecognizedCAHint(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-api-key")
-	pki := newMTLSTestPKI(t)
+	pki := mtlstest.NewPKI(t)
 
 	requests := make(chan int, 1)
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -266,7 +117,7 @@ func TestCLIUsesMTLSClientCertificateWithUnrecognizedCAHint(t *testing.T) {
 	server.TLS.ClientCAs = clientCAs
 	configureTestServerTrust(t, server)
 
-	certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
 	require.NoError(t, runMTLSTestCommand(t, server.URL, certFile, keyFile))
 
 	select {
@@ -279,9 +130,9 @@ func TestCLIUsesMTLSClientCertificateWithUnrecognizedCAHint(t *testing.T) {
 
 func TestCLIUsesMTLSFilesFromEnvironment(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-api-key")
-	pki := newMTLSTestPKI(t)
+	pki := mtlstest.NewPKI(t)
 	clientCAs := x509.NewCertPool()
-	require.True(t, clientCAs.AppendCertsFromPEM(pki.rootPEM))
+	require.True(t, clientCAs.AppendCertsFromPEM(pki.RootPEM))
 
 	requests := make(chan int, 1)
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -303,7 +154,7 @@ func TestCLIUsesMTLSFilesFromEnvironment(t *testing.T) {
 	t.Cleanup(server.Close)
 	configureTestServerTrust(t, server)
 
-	certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
 	t.Setenv(mtlsClientCertFileEnv, certFile)
 	t.Setenv(mtlsClientKeyFileEnv, keyFile)
 	require.NoError(t, runMTLSTestCommandWithArgs(t, server.URL))
@@ -318,9 +169,9 @@ func TestCLIUsesMTLSFilesFromEnvironment(t *testing.T) {
 
 func TestCLIRejectsIncompleteMTLSClientChain(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-api-key")
-	pki := newMTLSTestPKI(t)
+	pki := mtlstest.NewPKI(t)
 	clientCAs := x509.NewCertPool()
-	require.True(t, clientCAs.AppendCertsFromPEM(pki.rootPEM))
+	require.True(t, clientCAs.AppendCertsFromPEM(pki.RootPEM))
 
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("server handler must not run when the client certificate chain cannot be verified")
@@ -336,7 +187,7 @@ func TestCLIRejectsIncompleteMTLSClientChain(t *testing.T) {
 	t.Cleanup(server.Close)
 	configureTestServerTrust(t, server)
 
-	certFile, keyFile := writeMTLSClientFiles(t, pki.clientLeafPEM, pki.clientKeyPEM)
+	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientLeafPEM, pki.ClientKeyPEM)
 	require.Error(t, runMTLSTestCommand(t, server.URL, certFile, keyFile))
 }
 
@@ -398,104 +249,4 @@ func configureTestServerTrust(t *testing.T, server *httptest.Server) {
 	t.Cleanup(func() {
 		http.DefaultTransport = originalTransport
 	})
-}
-
-type mtlsTestPKI struct {
-	rootPEM        []byte
-	clientLeafPEM  []byte
-	clientChainPEM []byte
-	clientKeyPEM   []byte
-}
-
-func newMTLSTestPKI(t *testing.T) mtlsTestPKI {
-	t.Helper()
-
-	now := time.Now()
-	rootTemplate := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "mTLS test root"},
-		NotBefore:             now.Add(-time.Hour),
-		NotAfter:              now.Add(time.Hour),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-	}
-	rootDER, rootCertificate, rootKey := createTestCertificate(t, rootTemplate, rootTemplate, nil)
-
-	intermediateTemplate := &x509.Certificate{
-		SerialNumber:          big.NewInt(2),
-		Subject:               pkix.Name{CommonName: "mTLS test intermediate"},
-		NotBefore:             now.Add(-time.Hour),
-		NotAfter:              now.Add(time.Hour),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		MaxPathLen:            0,
-		MaxPathLenZero:        true,
-	}
-	intermediateDER, intermediateCertificate, intermediateKey := createTestCertificate(
-		t,
-		intermediateTemplate,
-		rootCertificate,
-		rootKey,
-	)
-
-	clientTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(3),
-		Subject:      pkix.Name{CommonName: "mTLS test client"},
-		NotBefore:    now.Add(-time.Hour),
-		NotAfter:     now.Add(time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	clientDER, _, clientKey := createTestCertificate(
-		t,
-		clientTemplate,
-		intermediateCertificate,
-		intermediateKey,
-	)
-
-	clientKeyDER, err := x509.MarshalECPrivateKey(clientKey)
-	require.NoError(t, err)
-	clientLeafPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientDER})
-	intermediatePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: intermediateDER})
-
-	return mtlsTestPKI{
-		rootPEM:        pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER}),
-		clientLeafPEM:  clientLeafPEM,
-		clientChainPEM: append(clientLeafPEM, intermediatePEM...),
-		clientKeyPEM:   pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: clientKeyDER}),
-	}
-}
-
-func createTestCertificate(
-	t *testing.T,
-	template *x509.Certificate,
-	parent *x509.Certificate,
-	parentKey *ecdsa.PrivateKey,
-) ([]byte, *x509.Certificate, *ecdsa.PrivateKey) {
-	t.Helper()
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	if parentKey == nil {
-		parentKey = key
-	}
-
-	der, err := x509.CreateCertificate(rand.Reader, template, parent, &key.PublicKey, parentKey)
-	require.NoError(t, err)
-	certificate, err := x509.ParseCertificate(der)
-	require.NoError(t, err)
-	return der, certificate, key
-}
-
-func writeMTLSClientFiles(t *testing.T, certPEM, keyPEM []byte) (string, string) {
-	t.Helper()
-
-	dir := t.TempDir()
-	certFile := filepath.Join(dir, "client-chain.pem")
-	keyFile := filepath.Join(dir, "client-key.pem")
-	require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
-	require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
-	return certFile, keyFile
 }

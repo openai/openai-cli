@@ -65,6 +65,13 @@ before input reads and credential checks. `pkg/custom.NewRequestHeaderFlag` is a
 temporary forwarding function for the generated runtime bridge; remove it through
 an authoritative generator update rather than editing generated callers by hand.
 
+mTLS transport construction and its unit tests live in `internal/request/`.
+The factory preserves certificate-chain selection, default transport settings,
+response-header timeout, proxy handling, same-origin redirects, and value-safe
+file errors. Assembly retains flag registration and the setup hook in their
+existing positions. Shared synthetic certificate fixtures live in
+`internal/testutil/mtls/`; no runtime package imports these fixtures.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation
