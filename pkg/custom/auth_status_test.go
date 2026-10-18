@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -680,7 +681,7 @@ func TestAuthStatusIdentityOutputFailurePreservesLookupFailure(t *testing.T) {
 			root := authStatusTestRoot(authStatusFailWriter{err: syscall.EPIPE})
 			err := root.Run(t.Context(), []string{"openai", "auth", "status", "--format=json", "--verify", "--credential-kind=api"})
 			require.ErrorIs(t, err, syscall.EPIPE)
-			require.Equal(t, status == http.StatusOK, isOutputBrokenPipe(err), "lookup failure must prevent broken-pipe suppression")
+			require.Equal(t, status == http.StatusOK, clioutput.IsBrokenPipe(err), "lookup failure must prevent broken-pipe suppression")
 			require.True(t, body.closed)
 			require.NotContains(t, err.Error(), "synthetic-api")
 		})

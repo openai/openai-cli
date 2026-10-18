@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
@@ -310,7 +311,7 @@ func savedProfileRecord(registry profileRegistry, name string) profileRecord {
 }
 
 func writeProfileResult(ctx context.Context, writer io.Writer, format string, result any) error {
-	out := outputWriter{ctx: ctx, out: writer}
+	out := clioutput.Writer{Context: ctx, Sink: writer}
 	if format == "json" || format == "jsonl" {
 		encoder := json.NewEncoder(out)
 		if records, ok := result.([]profileRecord); ok && format == "jsonl" {

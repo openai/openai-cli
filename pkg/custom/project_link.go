@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
@@ -245,7 +246,7 @@ func handleProjectLink(ctx context.Context, command *cli.Command) error {
 		}
 		return err
 	}
-	writer := outputWriter{ctx: ctx, out: root.Writer}
+	writer := clioutput.Writer{Context: ctx, Sink: root.Writer}
 	if format == "json" {
 		err = json.NewEncoder(writer).Encode(status)
 	} else if status.Action == "inspect" || !quietOutput(ctx) {

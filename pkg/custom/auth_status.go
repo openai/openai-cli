@@ -16,6 +16,7 @@ import (
 	"time"
 
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
@@ -153,7 +154,7 @@ func handleAuthStatus(ctx context.Context, command *cli.Command) error {
 			report.Verified, report.VerifiedCredentialKind = true, kind
 		}
 	}
-	out := outputWriter{ctx: ctx, out: root.Writer}
+	out := clioutput.Writer{Context: ctx, Sink: root.Writer}
 	if format == "json" {
 		err = json.NewEncoder(out).Encode(report)
 	} else {
