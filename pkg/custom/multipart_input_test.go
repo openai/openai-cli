@@ -39,7 +39,7 @@ func TestMultipartRequestBodyDoesNotCloseUnownedReaders(t *testing.T) {
 
 func TestEmbedFilesClosesPartialUploadsOnError(t *testing.T) {
 	upload := &recordingReadCloser{reader: strings.NewReader("already opened")}
-	missingPath := FilePathValue(t.TempDir() + "/missing.bin")
+	missingPath := requestconfig.FilePathValue(t.TempDir() + "/missing.bin")
 
 	_, err := embedFiles([]any{
 		requestconfig.FileUpload{Reader: upload, FileName: "opened.bin"},

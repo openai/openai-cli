@@ -78,14 +78,6 @@ func (o *onceStdinReader) readAll() ([]byte, error) {
 	return io.ReadAll(r)
 }
 
-func isStdinPath(s string) bool {
-	switch s {
-	case "-", "/dev/fd/0", "/dev/stdin":
-		return true
-	}
-	return false
-}
-
 func embedFiles(obj any, embedStyle FileEmbedStyle, stdin *onceStdinReader) (any, error) {
 	return embedFilesForOS(obj, embedStyle, stdin, runtime.GOOS)
 }
@@ -157,20 +149,20 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 		return result, nil
 
 	case reflect.String:
-		if v.Type() == reflect.TypeOf(untrustedStdinValue("")) {
+		if v.Type() == reflect.TypeOf(requestconfig.UntrustedStdinValue("")) {
 			return reflect.ValueOf(v.String()), nil
 		}
 
 		// FilePathValue is always treated as a file path without needing the "@" prefix.
 		// These only appear on binary upload parameters (multipart/octet-stream), which
 		// always use EmbedIOReader.
-		if v.Type() == reflect.TypeOf(FilePathValue("")) {
+		if v.Type() == reflect.TypeOf(requestconfig.FilePathValue("")) {
 			s := v.String()
 			if s == "" {
 				return v, nil
 			}
 			if embedStyle == EmbedIOReader {
-				if isStdinPath(s) {
+				if requestconfig.IsStdinPath(s) {
 					r, err := stdin.read()
 					if err != nil {
 						return v, err
@@ -183,7 +175,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 				}
 				return reflect.ValueOf(upload), nil
 			}
-			if isStdinPath(s) {
+			if requestconfig.IsStdinPath(s) {
 				content, err := stdin.readAll()
 				if err != nil {
 					return v, err
@@ -207,7 +199,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 			if filename, ok := strings.CutPrefix(s, "@data://"); ok {
 				// The "@data://" prefix is for files you explicitly want to upload
 				// as base64-encoded (even if the file itself is plain text)
-				if isStdinPath(filename) {
+				if requestconfig.IsStdinPath(filename) {
 					content, err := stdin.readAll()
 					if err != nil {
 						return v, err
@@ -223,7 +215,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 				// The "@file://" prefix is for files that you explicitly want to
 				// upload as a string literal with backslash escapes (not base64
 				// encoded)
-				if isStdinPath(filename) {
+				if requestconfig.IsStdinPath(filename) {
 					content, err := stdin.readAll()
 					if err != nil {
 						return v, err
@@ -236,7 +228,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 				}
 				return reflect.ValueOf(string(content)), nil
 			} else if filename, ok := strings.CutPrefix(s, "@"); ok {
-				if isStdinPath(filename) {
+				if requestconfig.IsStdinPath(filename) {
 					content, err := stdin.readAll()
 					if err != nil {
 						return v, err
@@ -283,7 +275,7 @@ func embedFilesValue(v reflect.Value, embedStyle FileEmbedStyle, stdin *onceStdi
 					expectsFile = looksLikeFilePath(filename, goos)
 				}
 
-				if isStdinPath(filename) {
+				if requestconfig.IsStdinPath(filename) {
 					r, err := stdin.read()
 					if err != nil {
 						return v, err
@@ -377,9 +369,9 @@ func preflightAudioVoicesMultipartBody(cmd *cli.Command, bodyMap map[string]any)
 		value = *text
 	}
 	switch typed := value.(type) {
-	case untrustedStdinValue:
+	case requestconfig.UntrustedStdinValue:
 		value = string(typed)
-	case FilePathValue:
+	case requestconfig.FilePathValue:
 		if typed != "" {
 			return requireAudioVoicesFields(cmd, bodyMap, "name")
 		}
@@ -531,7 +523,7 @@ func flagOptionsWithStdin(
 		headerOptions = append(headerOptions, option.WithHeader(name, values[0]))
 	}
 
-	stdinSecurity, err := newStdinSecurity()
+	stdinSecurity, err := requestconfig.NewStdinSecurity()
 	if err != nil {
 		return nil, err
 	}
@@ -562,14 +554,14 @@ func flagOptionsWithStdin(
 	// Translate inner-field aliases in YAML values that came from flags (e.g.
 	// `--parent '{"alias": val}'` resolving to the canonical inner field).
 	if bodyMap, ok := requestContents.Body.(map[string]any); ok {
-		applyDataAliases(cmd, bodyMap)
+		requestconfig.ApplyDataAliases(cmd, bodyMap)
 	}
 	// Resolve explicit consumers before attempting automatic whole-request input.
 	// FileInput values must retain their literal path semantics during inspection.
-	if err := wrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
+	if err := requestconfig.WrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
 		return nil, err
 	}
-	explicitStdin, err := requestStdinConsumers(requestContents, ignoreStdin)
+	explicitStdin, err := requestconfig.StdinConsumers(requestContents, ignoreStdin)
 	if err != nil {
 		return nil, err
 	}
@@ -588,18 +580,18 @@ func flagOptionsWithStdin(
 				return nil, fmt.Errorf("Failed to parse piped data as YAML/JSON:\n%w", err)
 			}
 			if bodyMap, ok := bodyData.(map[string]any); ok {
-				applyDataAliases(cmd, bodyMap)
-				stdinSecurity.recordBodyFlags(cmd, bodyMap)
+				requestconfig.ApplyDataAliases(cmd, bodyMap)
+				stdinSecurity.RecordBodyFlags(cmd, bodyMap)
 				// Apply any matching keys from the piped data to path, query, and header flags
 				// that have not already been set via the command line.
-				if err := requestflag.ApplyStdinDataToFlagsWithProvenance(cmd, bodyMap, stdinSecurity.recordFlag); err != nil {
+				if err := requestflag.ApplyStdinDataToFlagsWithProvenance(cmd, bodyMap, stdinSecurity.RecordFlag); err != nil {
 					return nil, err
 				}
 				// Re-extract request contents now that flags may have been updated.
 				requestContents = requestflag.ExtractRequestContents(cmd)
-				stdinSecurity.protectFlagValues(&requestContents)
-				if stdinSecurity.enabled {
-					bodyMap = protectStdinValue(bodyMap).(map[string]any)
+				stdinSecurity.ProtectFlagValues(&requestContents)
+				if stdinSecurity.Enabled() {
+					bodyMap = requestconfig.ProtectStdinValue(bodyMap).(map[string]any)
 				}
 				// Remove keys that were consumed as query, header, or path params so they
 				// don't also leak into the request body via the maps.Copy merge below.
@@ -628,8 +620,8 @@ func flagOptionsWithStdin(
 					}
 				}
 			} else if bodyType != EmptyBody {
-				if stdinSecurity.enabled {
-					bodyData = protectStdinValue(bodyData)
+				if stdinSecurity.Enabled() {
+					bodyData = requestconfig.ProtectStdinValue(bodyData)
 				}
 				if flagMap, ok := requestContents.Body.(map[string]any); ok && len(flagMap) > 0 {
 					return nil, fmt.Errorf("Cannot merge flags with a body that is not a map: %v", bodyData)
@@ -666,10 +658,10 @@ func flagOptionsWithStdin(
 
 	// FileInput values are file paths, so wrap trusted values with FilePathValue
 	// for automatic expansion. In untrusted-stdin mode, reject piped values.
-	if err := wrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
+	if err := requestconfig.WrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
 		return nil, err
 	}
-	if _, err := requestStdinConsumers(requestContents, ignoreStdin); err != nil {
+	if _, err := requestconfig.StdinConsumers(requestContents, ignoreStdin); err != nil {
 		return nil, err
 	}
 
@@ -826,116 +818,4 @@ func flagOptionsWithStdin(
 	}
 
 	return append(options, headerOptions...), nil
-}
-
-// FilePathValue is a string wrapper that marks a value as a file path whose contents should be read
-// and embedded in the request. Unlike a regular string, embedFilesValue always treats a FilePathValue
-// as a file path without needing the "@" prefix.
-type FilePathValue string
-
-// applyDataAliases rewrites keys in a body map based on flag `DataAliases` metadata. For top-level flags,
-// `{alias: value}` becomes `{canonical: value}`. For inner flags (those registered under an outer flag
-// via WithInnerFlags), the alias translation is also applied to the nested map under the outer flag's
-// body path, so values like `--parent '{"alias": val}'` resolve to the canonical inner field name.
-func applyDataAliases(cmd *cli.Command, bodyMap map[string]any) {
-	for _, flag := range cmd.Flags {
-		// Inner flags: rewrite aliases inside the nested map under the outer flag's body path.
-		if inner, ok := flag.(requestflag.HasOuterFlag); ok {
-			outer, outerOk := inner.GetOuterFlag().(requestflag.InRequest)
-			if !outerOk {
-				continue
-			}
-			if nested, ok := bodyMap[outer.GetBodyPath()].(map[string]any); ok && inner.GetInnerField() != "" {
-				rewriteAliases(nested, inner.GetInnerField(), inner.GetDataAliases())
-			}
-			continue
-		}
-		// Top-level flags: rewrite aliases in the body map.
-		if inReq, ok := flag.(requestflag.InRequest); ok && inReq.GetBodyPath() != "" {
-			rewriteAliases(bodyMap, inReq.GetBodyPath(), inReq.GetDataAliases())
-		}
-	}
-}
-
-// rewriteAliases replaces each alias key in m with the canonical key, preserving the value. The
-// "canonical" key is the name the API itself expects (the OpenAPI property/field name) — e.g. for
-// a top-level flag, the parameter's BodyPath; for an inner flag, the inner field name. Aliases are
-// the user-facing alternate names declared via x-stainless-cli-data-alias.
-func rewriteAliases(m map[string]any, canonical string, aliases []string) {
-	for _, alias := range aliases {
-		if alias == "" || alias == canonical {
-			continue
-		}
-		if val, exists := m[alias]; exists {
-			m[canonical] = val
-			delete(m, alias)
-		}
-	}
-}
-
-// wrapFileInputValues replaces string values for FileInput flags (type: string, format: binary) with
-// FilePathValue sentinel values. embedFilesValue recognizes FilePathValue and reads the file contents
-// directly, so the user doesn't need to type the "@" prefix. Untrusted piped
-// file paths are rejected before any file can be opened.
-func wrapFileInputValues(cmd *cli.Command, contents *requestflag.RequestContents, stdinSecurity *stdinSecurity) error {
-	bodyMap, _ := contents.Body.(map[string]any)
-
-	for _, flag := range cmd.Flags {
-		inReq, ok := flag.(requestflag.InRequest)
-		if !ok || !inReq.IsFileInput() || inReq.IsBodyRoot() {
-			continue
-		}
-
-		var values map[string]any
-		var path string
-		if path = inReq.GetBodyPath(); path != "" {
-			values = bodyMap
-		} else if path = inReq.GetQueryPath(); path != "" {
-			values = contents.Queries
-		} else if path = inReq.GetHeaderPath(); path != "" {
-			values = contents.Headers
-		}
-		value, exists := values[path]
-		if !exists {
-			continue
-		}
-		if stdinSecurity.fileInputFromStdin(flag) {
-			return fmt.Errorf("file input %q from piped YAML/JSON is disabled when %s is enabled; provide --%s explicitly", path, untrustedStdinEnv, flag.Names()[0])
-		}
-		if wrapped, changed := wrapFileInputValue(value); changed {
-			values[path] = wrapped
-		}
-	}
-	return nil
-}
-
-func wrapFileInputValue(value any) (any, bool) {
-	switch v := value.(type) {
-	case string:
-		if v == "" {
-			return value, false
-		}
-		return FilePathValue(v), true
-
-	case []string:
-		result := make([]any, len(v))
-		for i, s := range v {
-			result[i] = FilePathValue(s)
-		}
-		return result, true
-
-	case []any:
-		result := make([]any, len(v))
-		for i, elem := range v {
-			if s, ok := elem.(string); ok {
-				result[i] = FilePathValue(s)
-			} else {
-				result[i] = elem
-			}
-		}
-		return result, true
-
-	default:
-		return value, false
-	}
 }

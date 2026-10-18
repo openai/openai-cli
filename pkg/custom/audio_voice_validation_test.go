@@ -110,7 +110,7 @@ func TestAudioVoiceBodyEmbeddingPartialFailureClosesOnce(t *testing.T) {
 		"type": requestconfig.FileUpload{Reader: source}, "name": "Synthetic", "consent": "cons_synthetic",
 		// This case checks a visited reader before a later expansion failure.
 		// It does not cover pre-owned readers after the failing array element.
-		"audio_sample": []any{requestconfig.FileUpload{Reader: sample}, FilePathValue(filepath.Join(t.TempDir(), "synthetic-private-missing.wav"))},
+		"audio_sample": []any{requestconfig.FileUpload{Reader: sample}, requestconfig.FilePathValue(filepath.Join(t.TempDir(), "synthetic-private-missing.wav"))},
 	}, &onceStdinReader{})
 	require.Nil(t, body)
 	require.ErrorIs(t, err, os.ErrNotExist)

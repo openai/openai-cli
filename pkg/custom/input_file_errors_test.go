@@ -73,7 +73,7 @@ func TestInputFileExpansionPreservesNonFileValues(t *testing.T) {
 	}}
 	missing := "@" + filepath.Join(t.TempDir(), "synthetic-private-missing.txt")
 	for _, style := range []FileEmbedStyle{EmbedText, EmbedIOReader} {
-		body := map[string]any{"input": []any{untrustedStdinValue(missing), "\\" + missing, nil, false, 0}}
+		body := map[string]any{"input": []any{requestconfig.UntrustedStdinValue(missing), "\\" + missing, nil, false, 0}}
 		embedded, err := embedRequestFiles(command, body, "body", style, nil)
 		require.NoError(t, err)
 		require.Equal(t, map[string]any{"input": []any{missing, missing, nil, false, 0}}, embedded)
@@ -206,7 +206,7 @@ func TestInputFileExpansionRetainsFailedOpenAndPartialCleanup(t *testing.T) {
 	}}
 	_, err := embedRequestFiles(command, map[string]any{"image": []any{
 		requestconfig.FileUpload{Reader: &inputFileReader{Reader: opened, source: source}, FileName: "synthetic-private-opened.txt"},
-		FilePathValue(filepath.Join(t.TempDir(), "synthetic-private-missing.txt")),
+		requestconfig.FilePathValue(filepath.Join(t.TempDir(), "synthetic-private-missing.txt")),
 	}}, "body", EmbedIOReader, nil)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	require.ErrorIs(t, err, closeCause)
@@ -218,7 +218,7 @@ func TestInputFileExpansionRetainsFailedOpenAndPartialCleanup(t *testing.T) {
 }
 
 func TestFlagOptionsRetainsFileOptionProvenance(t *testing.T) {
-	t.Setenv(untrustedStdinEnv, "false")
+	t.Setenv(requestconfig.UntrustedStdinEnv, "false")
 	path := filepath.Join(t.TempDir(), "synthetic-private-missing.bin")
 	command := &cli.Command{
 		Name: "upload", HideHelpCommand: true, Writer: io.Discard, ErrWriter: io.Discard,

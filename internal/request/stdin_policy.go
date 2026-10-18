@@ -1,4 +1,4 @@
-package custom
+package request
 
 import (
 	"fmt"
@@ -9,30 +9,39 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const untrustedStdinEnv = "OPENAI_UNTRUSTED_STDIN"
+// UntrustedStdinEnv selects literal interpretation of piped request values.
+const UntrustedStdinEnv = "OPENAI_UNTRUSTED_STDIN"
 
-// untrustedStdinValue preserves a string's origin until the shared file
+// UntrustedStdinValue preserves a string's origin until the shared file
 // expansion boundary, where its contents are always interpreted literally.
-type untrustedStdinValue string
+type UntrustedStdinValue string
 
-type stdinSecurity struct {
+// StdinSecurity tracks the origin of piped values for one request preparation.
+type StdinSecurity struct {
 	enabled    bool
 	stdinFlags map[cli.Flag]struct{}
 }
 
-func newStdinSecurity() (*stdinSecurity, error) {
-	value, exists := os.LookupEnv(untrustedStdinEnv)
+// Enabled reports whether piped values require literal interpretation.
+func (s *StdinSecurity) Enabled() bool {
+	return s.enabled
+}
+
+// NewStdinSecurity reads the untrusted-stdin setting for this request.
+func NewStdinSecurity() (*StdinSecurity, error) {
+	value, exists := os.LookupEnv(UntrustedStdinEnv)
 	if !exists {
-		return &stdinSecurity{}, nil
+		return &StdinSecurity{}, nil
 	}
 	enabled, err := strconv.ParseBool(value)
 	if err != nil {
-		return nil, fmt.Errorf("invalid %s value %q: expected a boolean", untrustedStdinEnv, value)
+		return nil, fmt.Errorf("invalid %s value %q: expected a boolean", UntrustedStdinEnv, value)
 	}
-	return &stdinSecurity{enabled: enabled}, nil
+	return &StdinSecurity{enabled: enabled}, nil
 }
 
-func (s *stdinSecurity) recordFlag(flag cli.Flag) {
+// RecordFlag records a flag populated from piped input.
+func (s *StdinSecurity) RecordFlag(flag cli.Flag) {
 	if !s.enabled {
 		return
 	}
@@ -45,7 +54,8 @@ func (s *stdinSecurity) recordFlag(flag cli.Flag) {
 	}
 }
 
-func (s *stdinSecurity) recordBodyFlags(cmd *cli.Command, data map[string]any) {
+// RecordBodyFlags records unset body flags represented in piped data.
+func (s *StdinSecurity) RecordBodyFlags(cmd *cli.Command, data map[string]any) {
 	if !s.enabled {
 		return
 	}
@@ -59,17 +69,18 @@ func (s *stdinSecurity) recordBodyFlags(cmd *cli.Command, data map[string]any) {
 			continue
 		}
 		if _, exists := data[bodyPath]; exists {
-			s.recordFlag(flag)
+			s.RecordFlag(flag)
 		}
 	}
 }
 
-func (s *stdinSecurity) fileInputFromStdin(flag cli.Flag) bool {
+func (s *StdinSecurity) fileInputFromStdin(flag cli.Flag) bool {
 	_, recorded := s.stdinFlags[flag]
 	return s.enabled && recorded
 }
 
-func (s *stdinSecurity) protectFlagValues(contents *requestflag.RequestContents) {
+// ProtectFlagValues preserves recorded values as literals during file expansion.
+func (s *StdinSecurity) ProtectFlagValues(contents *requestflag.RequestContents) {
 	if !s.enabled {
 		return
 	}
@@ -82,7 +93,7 @@ func (s *stdinSecurity) protectFlagValues(contents *requestflag.RequestContents)
 		protectRequestValue(contents.Queries, inRequest.GetQueryPath())
 		protectRequestValue(contents.Headers, inRequest.GetHeaderPath())
 		if inRequest.IsBodyRoot() {
-			contents.Body = protectStdinValue(contents.Body)
+			contents.Body = ProtectStdinValue(contents.Body)
 		} else {
 			protectRequestValue(body, inRequest.GetBodyPath())
 		}
@@ -111,40 +122,41 @@ func protectRequestValue(values map[string]any, path string) {
 		return
 	}
 	if value, exists := values[path]; exists {
-		values[path] = protectStdinValue(value)
+		values[path] = ProtectStdinValue(value)
 	}
 }
 
-func protectStdinValue(value any) any {
+// ProtectStdinValue marks ordinary string leaves while preserving other values.
+func ProtectStdinValue(value any) any {
 	switch value := value.(type) {
 	case string:
-		return untrustedStdinValue(value)
+		return UntrustedStdinValue(value)
 	case *string:
 		if value != nil {
-			return untrustedStdinValue(*value)
+			return UntrustedStdinValue(*value)
 		}
 	case map[string]any:
 		result := make(map[string]any, len(value))
 		for key, element := range value {
-			result[key] = protectStdinValue(element)
+			result[key] = ProtectStdinValue(element)
 		}
 		return result
 	case []any:
 		result := make([]any, len(value))
 		for index, element := range value {
-			result[index] = protectStdinValue(element)
+			result[index] = ProtectStdinValue(element)
 		}
 		return result
 	case []string:
 		result := make([]any, len(value))
 		for index, element := range value {
-			result[index] = untrustedStdinValue(element)
+			result[index] = UntrustedStdinValue(element)
 		}
 		return result
 	case []map[string]any:
 		result := make([]any, len(value))
 		for index, element := range value {
-			result[index] = protectStdinValue(element)
+			result[index] = ProtectStdinValue(element)
 		}
 		return result
 	}

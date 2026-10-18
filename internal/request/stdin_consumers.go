@@ -1,4 +1,4 @@
-package custom
+package request
 
 import (
 	"fmt"
@@ -8,9 +8,9 @@ import (
 	"github.com/openai/openai-cli/internal/requestflag"
 )
 
-// Inspect the same values that file embedding consumes, without reading them.
+// StdinConsumers counts the values that file embedding consumes, without reading them.
 // Count effective values so a replaced scalar flag does not claim stdin twice.
-func requestStdinConsumers(contents requestflag.RequestContents, reserved bool) (int, error) {
+func StdinConsumers(contents requestflag.RequestContents, reserved bool) (int, error) {
 	count := stdinConsumers(reflect.ValueOf(contents.Body)) +
 		stdinConsumers(reflect.ValueOf(contents.Queries)) +
 		stdinConsumers(reflect.ValueOf(contents.Headers))
@@ -48,7 +48,7 @@ func stdinConsumers(value reflect.Value) int {
 		}
 		return count
 	case reflect.String:
-		if value.Type() == reflect.TypeFor[untrustedStdinValue]() {
+		if value.Type() == reflect.TypeFor[UntrustedStdinValue]() {
 			return 0
 		}
 		path := value.String()
@@ -64,7 +64,7 @@ func stdinConsumers(value reflect.Value) int {
 				path = rest
 			}
 		}
-		if isStdinPath(path) {
+		if IsStdinPath(path) {
 			return 1
 		}
 	}

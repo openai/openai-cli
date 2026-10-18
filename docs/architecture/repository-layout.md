@@ -85,6 +85,14 @@ retaining feature inspection and value-safe input errors. Assembly integration
 tests exercise borrowed stdin ownership and aborted image actions through request
 options; encoder tests check owned-file cleanup and completion directly.
 
+Stdin provenance and consumer arbitration live in `internal/request/`, together
+with request-data alias normalization, explicit file-path markers, and binary
+file-input wrapping. Request preparation invokes these policies in its existing
+order, before file reads. Unit tests live beside the shared policies; the CLI
+contracts for literal untrusted input and trusted explicit overrides remain with
+request preparation. File expansion and stdin-reading orchestration remain in
+`pkg/custom/` pending their own extraction.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation
