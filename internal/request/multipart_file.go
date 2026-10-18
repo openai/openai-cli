@@ -133,7 +133,7 @@ func OpenFileUpload(path string) (FileUpload, error) {
 	}
 
 	return FileUpload{
-		Reader:    &exactLengthReadCloser{
+		Reader: &exactLengthReadCloser{
 			exactLengthReader: exactLengthReader{
 				reader:    io.NewSectionReader(file, 0, info.Size()),
 				remaining: info.Size(),

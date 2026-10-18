@@ -26,7 +26,7 @@ func TestMultipartPrematureEOFDoesNotCommitFinalBoundary(t *testing.T) {
 	file, err := os.Open(path)
 	require.NoError(t, err)
 	upload := FileUpload{
-		Reader:    &exactLengthReadCloser{
+		Reader: &exactLengthReadCloser{
 			exactLengthReader: exactLengthReader{
 				reader:    io.NewSectionReader(file, 0, uploadSize),
 				remaining: uploadSize,
