@@ -93,8 +93,10 @@ contracts for literal untrusted input and trusted explicit overrides remain with
 request preparation. File expansion, provenance-aware file reads, and the single-use parameter stdin
 reader now live in `internal/request/`, alongside their unit tests. Shared errors
 retain declared option/operation metadata and original causes; CLI error presentation
-remains with its existing owner. Feature preparation and automatic whole-request
-stdin orchestration remain in `pkg/custom/`.
+remains with its existing owner. Piped YAML/JSON reading, request-location routing,
+explicit-flag merging, and provenance propagation live in `internal/request/`.
+Request preparation retains pipe detection and whole-request input eligibility in
+`pkg/custom/`, alongside feature preparation.
 
 Streaming-mode resolution and its unit matrix live in `internal/request/`.
 Request preparation resolves dispatch from actual final-body Booleans at the
