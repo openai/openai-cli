@@ -1,4 +1,4 @@
-package custom
+package request
 
 import (
 	"encoding/base64"
@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/stretchr/testify/require"
 )
 
@@ -224,7 +223,7 @@ func TestEmbedFiles(t *testing.T) {
 		t.Run(tt.name+" text", func(t *testing.T) {
 			t.Parallel()
 
-			got, err := embedFiles(tt.input, EmbedText, nil)
+			got, err := EmbedFiles(tt.input, EmbedText, nil)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -236,7 +235,7 @@ func TestEmbedFiles(t *testing.T) {
 		t.Run(tt.name+" io.Reader", func(t *testing.T) {
 			t.Parallel()
 
-			_, err := embedFiles(tt.input, EmbedIOReader, nil)
+			_, err := EmbedFiles(tt.input, EmbedIOReader, nil)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -281,9 +280,9 @@ func TestEmbedFilesStdin(t *testing.T) {
 	t.Run("FilePathValueDash", func(t *testing.T) {
 		t.Parallel()
 
-		stdin := &onceStdinReader{stdinReader: strings.NewReader("stdin content")}
+		stdin := &OnceStdinReader{Reader: strings.NewReader("stdin content")}
 
-		withEmbedded, err := embedFiles(map[string]any{"file": requestconfig.FilePathValue("-")}, EmbedText, stdin)
+		withEmbedded, err := EmbedFiles(map[string]any{"file": FilePathValue("-")}, EmbedText, stdin)
 		require.NoError(t, err)
 		require.Equal(t, map[string]any{"file": "stdin content"}, withEmbedded)
 	})
@@ -291,9 +290,9 @@ func TestEmbedFilesStdin(t *testing.T) {
 	t.Run("FilePathValueDevStdin", func(t *testing.T) {
 		t.Parallel()
 
-		stdin := &onceStdinReader{stdinReader: strings.NewReader("stdin content")}
+		stdin := &OnceStdinReader{Reader: strings.NewReader("stdin content")}
 
-		withEmbedded, err := embedFiles(map[string]any{"file": requestconfig.FilePathValue("/dev/stdin")}, EmbedText, stdin)
+		withEmbedded, err := EmbedFiles(map[string]any{"file": FilePathValue("/dev/stdin")}, EmbedText, stdin)
 		require.NoError(t, err)
 		require.Equal(t, map[string]any{"file": "stdin content"}, withEmbedded)
 	})
@@ -301,11 +300,11 @@ func TestEmbedFilesStdin(t *testing.T) {
 	t.Run("MultipleFilePathValueDashesError", func(t *testing.T) {
 		t.Parallel()
 
-		stdin := &onceStdinReader{stdinReader: strings.NewReader("stdin content")}
+		stdin := &OnceStdinReader{Reader: strings.NewReader("stdin content")}
 
-		_, err := embedFiles(map[string]any{
-			"file1": requestconfig.FilePathValue("-"),
-			"file2": requestconfig.FilePathValue("-"),
+		_, err := EmbedFiles(map[string]any{
+			"file1": FilePathValue("-"),
+			"file2": FilePathValue("-"),
 		}, EmbedText, stdin)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "already been read")
@@ -314,9 +313,9 @@ func TestEmbedFilesStdin(t *testing.T) {
 	t.Run("FilePathValueDashUnavailableStdin", func(t *testing.T) {
 		t.Parallel()
 
-		stdin := &onceStdinReader{failureReason: "stdin is already being used for the request body"}
+		stdin := &OnceStdinReader{FailureReason: "stdin is already being used for the request body"}
 
-		_, err := embedFiles(map[string]any{"file": requestconfig.FilePathValue("-")}, EmbedText, stdin)
+		_, err := EmbedFiles(map[string]any{"file": FilePathValue("-")}, EmbedText, stdin)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "cannot read from stdin")
 		require.Contains(t, err.Error(), "request body")
@@ -325,9 +324,9 @@ func TestEmbedFilesStdin(t *testing.T) {
 	t.Run("AtDashEmbedText", func(t *testing.T) {
 		t.Parallel()
 
-		stdin := &onceStdinReader{stdinReader: strings.NewReader("piped content")}
+		stdin := &OnceStdinReader{Reader: strings.NewReader("piped content")}
 
-		withEmbedded, err := embedFiles(map[string]any{"data": "@-"}, EmbedText, stdin)
+		withEmbedded, err := EmbedFiles(map[string]any{"data": "@-"}, EmbedText, stdin)
 		require.NoError(t, err)
 		require.Equal(t, map[string]any{"data": "piped content"}, withEmbedded)
 	})
@@ -335,9 +334,9 @@ func TestEmbedFilesStdin(t *testing.T) {
 	t.Run("AtDashEmbedIOReader", func(t *testing.T) {
 		t.Parallel()
 
-		stdin := &onceStdinReader{stdinReader: strings.NewReader("piped content")}
+		stdin := &OnceStdinReader{Reader: strings.NewReader("piped content")}
 
-		withEmbedded, err := embedFiles(map[string]any{"data": "@-"}, EmbedIOReader, stdin)
+		withEmbedded, err := EmbedFiles(map[string]any{"data": "@-"}, EmbedIOReader, stdin)
 		require.NoError(t, err)
 
 		withEmbeddedMap := withEmbedded.(map[string]any)
@@ -354,9 +353,9 @@ func TestEmbedFilesStdin(t *testing.T) {
 		tmpDir := t.TempDir()
 		writeTestFile(t, tmpDir, "test.txt", "file content")
 
-		stdin := &onceStdinReader{stdinReader: strings.NewReader("unused stdin")}
+		stdin := &OnceStdinReader{Reader: strings.NewReader("unused stdin")}
 
-		withEmbedded, err := embedFiles(map[string]any{"file": requestconfig.FilePathValue(filepath.Join(tmpDir, "test.txt"))}, EmbedText, stdin)
+		withEmbedded, err := EmbedFiles(map[string]any{"file": FilePathValue(filepath.Join(tmpDir, "test.txt"))}, EmbedText, stdin)
 		require.NoError(t, err)
 		require.Equal(t, map[string]any{"file": "file content"}, withEmbedded)
 	})
@@ -386,10 +385,10 @@ func TestEmbedFilesUploadMetadata(t *testing.T) {
 			t.Parallel()
 
 			path := filepath.Join(tmpDir, tc.basename)
-			withEmbedded, err := embedFiles(map[string]any{"file": "@" + path}, EmbedIOReader, nil)
+			withEmbedded, err := EmbedFiles(map[string]any{"file": "@" + path}, EmbedIOReader, nil)
 			require.NoError(t, err)
 
-			upload, ok := withEmbedded.(map[string]any)["file"].(requestconfig.FileUpload)
+			upload, ok := withEmbedded.(map[string]any)["file"].(FileUpload)
 			require.True(t, ok, "expected fileUpload, got %T", withEmbedded.(map[string]any)["file"])
 			require.Equal(t, tc.basename, upload.Filename())
 			require.Equal(t, upload.ContentType(), tc.wantContentType)
@@ -400,10 +399,10 @@ func TestEmbedFilesUploadMetadata(t *testing.T) {
 			t.Parallel()
 
 			path := filepath.Join(tmpDir, tc.basename)
-			withEmbedded, err := embedFiles(map[string]any{"file": requestconfig.FilePathValue(path)}, EmbedIOReader, nil)
+			withEmbedded, err := EmbedFiles(map[string]any{"file": FilePathValue(path)}, EmbedIOReader, nil)
 			require.NoError(t, err)
 
-			upload, ok := withEmbedded.(map[string]any)["file"].(requestconfig.FileUpload)
+			upload, ok := withEmbedded.(map[string]any)["file"].(FileUpload)
 			require.True(t, ok, "expected fileUpload, got %T", withEmbedded.(map[string]any)["file"])
 			require.Equal(t, tc.basename, upload.Filename())
 			require.Equal(t, upload.ContentType(), tc.wantContentType)

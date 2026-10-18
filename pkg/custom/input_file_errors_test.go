@@ -42,14 +42,14 @@ func TestInputFileErrorsUseDeclaredRequestOptions(t *testing.T) {
 		{"literal dotted field", "body", "", map[string]any{"messages.content": missing}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := embedRequestFiles(command, test.body, test.area, EmbedText, nil)
+			_, err := requestconfig.EmbedRequestFiles(command, test.body, test.area, requestconfig.EmbedText, nil)
 			require.ErrorIs(t, err, os.ErrNotExist)
-			var input *inputFileError
+			var input *requestconfig.InputFileError
 			if test.option == "" {
 				require.False(t, errors.As(err, &input))
 			} else {
 				require.ErrorAs(t, err, &input)
-				require.Equal(t, test.option, input.option)
+				require.Equal(t, test.option, input.Option)
 				require.Contains(t, localErrorMessage(command, err), "the file for "+test.option+".")
 			}
 			require.NotContains(t, localErrorMessage(command, err), "synthetic-private")
@@ -57,53 +57,9 @@ func TestInputFileErrorsUseDeclaredRequestOptions(t *testing.T) {
 	}
 }
 
-func TestInputFileErrorsUseBodyRootOption(t *testing.T) {
-	command := &cli.Command{Flags: []cli.Flag{
-		&requestflag.Flag[any]{Name: "request", BodyRoot: true},
-	}}
-	_, err := embedRequestFiles(command, []any{"@" + filepath.Join(t.TempDir(), "missing.txt")}, "body", EmbedText, nil)
-	var input *inputFileError
-	require.ErrorAs(t, err, &input)
-	require.Equal(t, "--request", input.option)
-}
-
-func TestInputFileExpansionPreservesNonFileValues(t *testing.T) {
-	command := &cli.Command{Flags: []cli.Flag{
-		&requestflag.Flag[any]{Name: "input", BodyPath: "input"},
-	}}
-	missing := "@" + filepath.Join(t.TempDir(), "synthetic-private-missing.txt")
-	for _, style := range []FileEmbedStyle{EmbedText, EmbedIOReader} {
-		body := map[string]any{"input": []any{requestconfig.UntrustedStdinValue(missing), "\\" + missing, nil, false, 0}}
-		embedded, err := embedRequestFiles(command, body, "body", style, nil)
-		require.NoError(t, err)
-		require.Equal(t, map[string]any{"input": []any{missing, missing, nil, false, 0}}, embedded)
-	}
-}
-
-func TestInputFileFailurePreservesJoinedCausesAndExitStatus(t *testing.T) {
-	path := &os.PathError{Op: "open", Path: "synthetic-private-path", Err: os.ErrNotExist}
-	link := &os.LinkError{Op: "rename", Old: "synthetic-private-old", New: "synthetic-private-new", Err: os.ErrPermission}
-	exit := cli.Exit("synthetic-private-exit", 19)
-	cause := errors.Join(path, link, exit)
-	err := (fileInputSource{option: "--file"}).failure("open", cause)
-	require.ErrorIs(t, err, path)
-	require.ErrorIs(t, err, link)
-	var gotPath *os.PathError
-	var gotLink *os.LinkError
-	var gotExit cli.ExitCoder
-	require.ErrorAs(t, err, &gotPath)
-	require.ErrorAs(t, err, &gotLink)
-	require.ErrorAs(t, err, &gotExit)
-	require.Same(t, path, gotPath)
-	require.Same(t, link, gotLink)
-	require.Equal(t, 19, gotExit.ExitCode())
-	require.Same(t, cause, (fileInputSource{}).failure("open", cause))
-	require.NoError(t, (fileInputSource{option: "--file"}).failure("open", nil))
-}
-
 func TestInputFileReadRetainsActualPathErrorPrivately(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "synthetic-private-missing.txt")
-	_, err := (fileInputSource{option: "--input"}).readFile(path)
+	_, err := (requestconfig.FileInputSource{Option: "--input"}).ReadFile(path)
 	var cause *os.PathError
 	require.ErrorAs(t, err, &cause)
 	require.Equal(t, path, cause.Path)
@@ -114,56 +70,11 @@ func TestInputFileReadRetainsActualPathErrorPrivately(t *testing.T) {
 	require.NotContains(t, out.String(), path)
 }
 
-func TestInputFileReaderPreservesEOFAndJoinedFailures(t *testing.T) {
-	readFailure := errors.New("synthetic-private-read")
-	for _, test := range []struct {
-		name string
-		err  error
-	}{
-		{"EOF", io.EOF},
-		{"joined EOF", errors.Join(io.EOF, readFailure)},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			reader := &inputFileReader{Reader: errorReader{err: test.err}, source: fileInputSource{option: "--data"}}
-			_, err := reader.Read(make([]byte, 1))
-			require.ErrorIs(t, err, io.EOF)
-			if test.err == io.EOF {
-				require.Same(t, io.EOF, err)
-			} else {
-				require.ErrorIs(t, err, readFailure)
-				var input *inputFileError
-				require.ErrorAs(t, err, &input)
-				require.Equal(t, "--data", input.option)
-			}
-		})
-	}
-}
-
-func TestInputFileUploadPreservesMetadataAndLateReadError(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "synthetic-private-upload.txt")
-	require.NoError(t, os.WriteFile(path, []byte("synthetic payload"), 0o600))
-	upload, err := (fileInputSource{option: "--data"}).openUpload(path)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, upload.Close()) })
-	require.Equal(t, filepath.Base(path), upload.Filename())
-	require.True(t, strings.HasPrefix(upload.ContentType(), "text/plain"), upload.ContentType())
-	require.True(t, upload.KnownSize)
-	require.Equal(t, int64(len("synthetic payload")), upload.Size)
-	// Truncate the actual opened source after size inspection.
-	require.NoError(t, os.Truncate(path, 0))
-	_, err = io.ReadAll(upload)
-	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-	var input *inputFileError
-	require.ErrorAs(t, err, &input)
-	require.Equal(t, "--data", input.option)
-	require.Equal(t, "read", input.operation)
-}
-
 func TestInputFileErrorsPreserveCleanupPresentation(t *testing.T) {
 	readCause := &os.PathError{Op: "read", Path: "synthetic-private-input", Err: io.ErrUnexpectedEOF}
 	closeCause := &os.PathError{Op: "close", Path: "synthetic-private-input", Err: os.ErrPermission}
 	underlying := &recordingReadCloser{reader: errorReader{err: readCause}, closeErr: closeCause}
-	reader := &inputFileReader{Reader: underlying, source: fileInputSource{option: "--data"}}
+	reader := &requestconfig.InputFileReader{Reader: underlying, Source: requestconfig.FileInputSource{Option: "--data"}}
 	_, readErr := reader.Read(make([]byte, 1))
 	closeErr := reader.Close()
 	err := errors.Join(fmt.Errorf("synthetic-private-wrapper: %w", readErr), closeErr, readErr)
@@ -200,14 +111,14 @@ func TestInputFileErrorsPreserveCleanupPresentation(t *testing.T) {
 func TestInputFileExpansionRetainsFailedOpenAndPartialCleanup(t *testing.T) {
 	closeCause := errors.New("synthetic-private-close")
 	opened := &recordingReadCloser{reader: strings.NewReader("synthetic payload"), closeErr: closeCause}
-	source := fileInputSource{option: "--image"}
+	source := requestconfig.FileInputSource{Option: "--image"}
 	command := &cli.Command{Flags: []cli.Flag{
 		&requestflag.Flag[[]string]{Name: "image", BodyPath: "image", FileInput: true},
 	}}
-	_, err := embedRequestFiles(command, map[string]any{"image": []any{
-		requestconfig.FileUpload{Reader: &inputFileReader{Reader: opened, source: source}, FileName: "synthetic-private-opened.txt"},
+	_, err := requestconfig.EmbedRequestFiles(command, map[string]any{"image": []any{
+		requestconfig.FileUpload{Reader: &requestconfig.InputFileReader{Reader: opened, Source: source}, FileName: "synthetic-private-opened.txt"},
 		requestconfig.FilePathValue(filepath.Join(t.TempDir(), "synthetic-private-missing.txt")),
-	}}, "body", EmbedIOReader, nil)
+	}}, "body", requestconfig.EmbedIOReader, nil)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	require.ErrorIs(t, err, closeCause)
 	require.Equal(t, int32(1), opened.closeCount.Load())
@@ -231,15 +142,15 @@ func TestFlagOptionsRetainsFileOptionProvenance(t *testing.T) {
 	}
 	err := command.Run(t.Context(), []string{"upload", "--data", path})
 	require.ErrorIs(t, err, os.ErrNotExist)
-	var input *inputFileError
+	var input *requestconfig.InputFileError
 	require.ErrorAs(t, err, &input)
-	require.Equal(t, "--data", input.option)
+	require.Equal(t, "--data", input.Option)
 	require.Equal(t, "Could not open the file for --data. Check the path and permissions.", localErrorMessage(command, err))
 }
 
 func TestInputFileCleanupKeepsPrimaryGuidanceWithoutProvenance(t *testing.T) {
-	source := fileInputSource{option: "--file"}
-	cleanup := source.failure("close", &os.PathError{Op: "close", Path: "synthetic-private-cleanup", Err: os.ErrPermission})
+	source := requestconfig.FileInputSource{Option: "--file"}
+	cleanup := source.Failure("close", &os.PathError{Op: "close", Path: "synthetic-private-cleanup", Err: os.ErrPermission})
 	for _, test := range []struct {
 		name    string
 		primary error
@@ -266,7 +177,7 @@ func TestInputFilePresenterKeepsPrivatePathCauses(t *testing.T) {
 		for _, annotated := range []bool{false, true} {
 			failure := cause
 			if annotated {
-				failure = (fileInputSource{option: "--input"}).failure("open", cause)
+				failure = (requestconfig.FileInputSource{Option: "--input"}).Failure("open", cause)
 			}
 			for _, format := range []string{"text", "json"} {
 				root := readableErrorTestCommand(t, "--format-error", format)

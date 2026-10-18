@@ -14,6 +14,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
@@ -32,7 +33,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var typeError *json.UnmarshalTypeError
 	var syntaxError *json.SyntaxError
 	var pathError *os.PathError
-	var inputFailure *inputFileError
+	var inputFailure *requestconfig.InputFileError
 	var stdinFailure *requestflag.StdinValueError
 	var pagerFailure *pagerError
 	var imageFailure *imageSavingError

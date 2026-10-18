@@ -38,8 +38,8 @@ func TestProtectStdinValuePreservesLiterals(t *testing.T) {
 		},
 	}
 
-	for _, style := range []FileEmbedStyle{EmbedText, EmbedIOReader} {
-		got, err := embedFiles(requestconfig.ProtectStdinValue(input), style, nil)
+	for _, style := range []requestconfig.FileEmbedStyle{requestconfig.EmbedText, requestconfig.EmbedIOReader} {
+		got, err := requestconfig.EmbedFiles(requestconfig.ProtectStdinValue(input), style, nil)
 		require.NoError(t, err)
 		serialized, err := json.Marshal(got)
 		require.NoError(t, err)

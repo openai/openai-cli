@@ -15,6 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-go/v3"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/stretchr/testify/require"
 )
 
@@ -814,7 +815,7 @@ func TestImagePickerFileLookingPromptStaysLiteral(t *testing.T) {
 		m := pickerForTest(t)
 		m.settings.prompt = prompt
 		args := m.settings.args()
-		body, err := embedFiles(map[string]any{"prompt": pickerArg(t, args, "--prompt")}, EmbedText, &onceStdinReader{})
+		body, err := requestconfig.EmbedFiles(map[string]any{"prompt": pickerArg(t, args, "--prompt")}, requestconfig.EmbedText, &requestconfig.OnceStdinReader{})
 		require.NoError(t, err)
 		require.Equal(t, prompt, body.(map[string]any)["prompt"])
 	}

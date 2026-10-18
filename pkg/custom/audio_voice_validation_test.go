@@ -22,7 +22,7 @@ func TestAudioVoiceBodyEmbeddingPreservesReplayAndOwnership(t *testing.T) {
 	original := requestconfig.FileUpload{Reader: source, FileName: "voice-type.txt", MediaType: "text/plain"}
 	command := &cli.Command{Name: "create", Metadata: map[string]any{audioVoicesContextMetadata: t.Context()}}
 	input := map[string]any{"type": original, "name": "Synthetic", "consent": "cons_synthetic", "audio_sample": requestconfig.FileUpload{Reader: sample}}
-	body, err := embedAudioVoicesMultipartBody(command, input, &onceStdinReader{})
+	body, err := embedAudioVoicesMultipartBody(command, input, &requestconfig.OnceStdinReader{})
 	require.NoError(t, err)
 	require.Equal(t, original, input["type"])
 	require.EqualValues(t, 1, source.closeCount.Load())
@@ -53,7 +53,7 @@ func TestAudioVoiceBodyEmbeddingValidationFailureClosesOwnedInputs(t *testing.T)
 			command := &cli.Command{Name: "create", Metadata: map[string]any{audioVoicesContextMetadata: t.Context()}}
 			body, err := embedAudioVoicesMultipartBody(command, map[string]any{
 				"type": requestconfig.FileUpload{Reader: source}, "name": "Synthetic", "audio_sample": requestconfig.FileUpload{Reader: sample},
-			}, &onceStdinReader{})
+			}, &requestconfig.OnceStdinReader{})
 			require.Nil(t, body)
 			if tc.voiceType == "audio_sample" {
 				require.ErrorContains(t, err, `Required flags "consent" not set`)
@@ -76,7 +76,7 @@ func TestAudioVoiceBodyEmbeddingTypeOpenFailureClosesOwnedInputs(t *testing.T) {
 	body, err := embedAudioVoicesMultipartBody(command, map[string]any{
 		"type": "@" + filepath.Join(t.TempDir(), "synthetic-private-missing.txt"),
 		"name": "Synthetic", "audio_sample": requestconfig.FileUpload{Reader: sample},
-	}, &onceStdinReader{})
+	}, &requestconfig.OnceStdinReader{})
 	require.Nil(t, body)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	require.EqualValues(t, 1, sample.closeCount.Load())
@@ -91,7 +91,7 @@ func TestAudioVoiceBodyEmbeddingReadFailureRetainsCauses(t *testing.T) {
 	command := &cli.Command{Name: "create", Metadata: map[string]any{audioVoicesContextMetadata: t.Context()}}
 	body, err := embedAudioVoicesMultipartBody(command, map[string]any{
 		"type": requestconfig.FileUpload{Reader: source}, "name": "Synthetic", "audio_sample": requestconfig.FileUpload{Reader: sample},
-	}, &onceStdinReader{})
+	}, &requestconfig.OnceStdinReader{})
 	require.Nil(t, body)
 	require.ErrorIs(t, err, readErr)
 	require.ErrorIs(t, err, closeErr)
@@ -111,7 +111,7 @@ func TestAudioVoiceBodyEmbeddingPartialFailureClosesOnce(t *testing.T) {
 		// This case checks a visited reader before a later expansion failure.
 		// It does not cover pre-owned readers after the failing array element.
 		"audio_sample": []any{requestconfig.FileUpload{Reader: sample}, requestconfig.FilePathValue(filepath.Join(t.TempDir(), "synthetic-private-missing.wav"))},
-	}, &onceStdinReader{})
+	}, &requestconfig.OnceStdinReader{})
 	require.Nil(t, body)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	require.EqualValues(t, 1, source.closeCount.Load())
@@ -135,7 +135,7 @@ func TestAudioVoiceBodyEmbeddingCancellationReleasesOwnedRead(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		body, err := embedAudioVoicesMultipartBody(command, input, &onceStdinReader{})
+		body, err := embedAudioVoicesMultipartBody(command, input, &requestconfig.OnceStdinReader{})
 		done <- outcome{body, err}
 	}()
 	select {

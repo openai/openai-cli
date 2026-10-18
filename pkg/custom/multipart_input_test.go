@@ -17,10 +17,10 @@ const multipartTestTimeout = 5 * time.Second
 
 func TestMultipartRequestBodyDoesNotCloseUnownedReaders(t *testing.T) {
 	stdinLikeReader := &recordingReadCloser{reader: strings.NewReader("stdin payload")}
-	embedded, err := embedFiles(
+	embedded, err := requestconfig.EmbedFiles(
 		map[string]any{"file": "@-"},
-		EmbedIOReader,
-		&onceStdinReader{stdinReader: stdinLikeReader},
+		requestconfig.EmbedIOReader,
+		&requestconfig.OnceStdinReader{Reader: stdinLikeReader},
 	)
 	require.NoError(t, err)
 	var body io.ReadCloser
@@ -41,10 +41,10 @@ func TestEmbedFilesClosesPartialUploadsOnError(t *testing.T) {
 	upload := &recordingReadCloser{reader: strings.NewReader("already opened")}
 	missingPath := requestconfig.FilePathValue(t.TempDir() + "/missing.bin")
 
-	_, err := embedFiles([]any{
+	_, err := requestconfig.EmbedFiles([]any{
 		requestconfig.FileUpload{Reader: upload, FileName: "opened.bin"},
 		missingPath,
-	}, EmbedIOReader, &onceStdinReader{})
+	}, requestconfig.EmbedIOReader, &requestconfig.OnceStdinReader{})
 	require.Error(t, err)
 	require.Equal(t, int32(1), upload.closeCount.Load())
 }

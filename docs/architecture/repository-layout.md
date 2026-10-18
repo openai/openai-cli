@@ -90,8 +90,11 @@ with request-data alias normalization, explicit file-path markers, and binary
 file-input wrapping. Request preparation invokes these policies in its existing
 order, before file reads. Unit tests live beside the shared policies; the CLI
 contracts for literal untrusted input and trusted explicit overrides remain with
-request preparation. File expansion and stdin-reading orchestration remain in
-`pkg/custom/` pending their own extraction.
+request preparation. File expansion, provenance-aware file reads, and the single-use parameter stdin
+reader now live in `internal/request/`, alongside their unit tests. Shared errors
+retain declared option/operation metadata and original causes; CLI error presentation
+remains with its existing owner. Feature preparation and automatic whole-request
+stdin orchestration remain in `pkg/custom/`.
 
 ## Product and compatibility contract
 
