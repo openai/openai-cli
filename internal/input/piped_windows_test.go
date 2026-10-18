@@ -1,6 +1,6 @@
 //go:build windows
 
-package custom
+package input
 
 import (
 	"io"

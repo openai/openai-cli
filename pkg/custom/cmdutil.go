@@ -87,37 +87,6 @@ func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 	return opts
 }
 
-// isInputPiped tries to check for input being piped into the CLI which tells us that we should try to read
-// from stdin. This can be a bit tricky in some cases like when an stdin is connected to a pipe but nothing is
-// being piped in (this may happen in some environments like Cursor's integration terminal or CI), which is
-// why this function is a little more elaborate than it'd be otherwise.
-func isInputPiped() bool {
-	stat, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-
-	mode := stat.Mode()
-
-	// Regular file (redirect like < file.txt) — only if non-empty.
-	//
-	// Notably, on Unix the case like `< /dev/null` is handled below because `/dev/null` is not a regular
-	// file. On Windows, NUL appears as a regular file with size 0, so it's also handled correctly.
-	if mode.IsRegular() && stat.Size() > 0 {
-		return true
-	}
-
-	// For pipes/sockets (e.g. `echo foo | openai`), use an OS-specific check to determine whether
-	// data is actually available. Some environments like Cursor's integrated terminal connect stdin as a
-	// pipe even when nothing is being piped.
-	if mode&(os.ModeNamedPipe|os.ModeSocket) != 0 {
-		// Defined in either cmdutil_unix.go or cmdutil_windows.go.
-		return isPipedDataAvailableOSSpecific()
-	}
-
-	return false
-}
-
 func isTerminal(w io.Writer) bool {
 	switch v := w.(type) {
 	case batchTerminalWriter:

@@ -15,6 +15,7 @@ import (
 	"github.com/openai/openai-cli/internal/apiform"
 	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/debugmiddleware"
+	cliinput "github.com/openai/openai-cli/internal/input"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3/option"
@@ -263,7 +264,7 @@ func flagOptionsWithStdin(
 	}
 
 	stdinConsumedByPipe := false
-	if bodyType != ApplicationOctetStream && !ignoreStdin && explicitStdin == 0 && isInputPiped() {
+	if bodyType != ApplicationOctetStream && !ignoreStdin && explicitStdin == 0 && cliinput.IsPiped(os.Stdin) {
 		stdinConsumedByPipe, err = requestconfig.ReadPipedInput(cmd, stdin, &requestContents, stdinSecurity, bodyType != EmptyBody)
 		if err != nil {
 			return nil, err

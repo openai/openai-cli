@@ -95,8 +95,11 @@ reader now live in `internal/request/`, alongside their unit tests. Shared error
 retain declared option/operation metadata and original causes; CLI error presentation
 remains with its existing owner. Piped YAML/JSON reading, request-location routing,
 explicit-flag merging, and provenance propagation live in `internal/request/`.
-Request preparation retains pipe detection and whole-request input eligibility in
-`pkg/custom/`, alongside feature preparation.
+Request preparation retains whole-request input eligibility in `pkg/custom/`,
+alongside feature preparation. Non-consuming stdin classification and platform
+readiness probes live in `internal/input/`. They preserve the regular-file size
+check, short Unix/Windows probe windows, and caller ownership. Native Windows
+probe tests live beside the helper; CI retains their existing cases and flags.
 
 Streaming-mode resolution and its unit matrix live in `internal/request/`.
 Request preparation resolves dispatch from actual final-body Booleans at the
@@ -130,7 +133,7 @@ entrypoints, developer script entrypoints, and release artifacts working.
 | `internal/clihelp/` | Help rendering, local onboarding, command typo matching, and safe recovery guidance. |
 | `internal/commands/<feature>/` | Handwritten workflows grouped by feature: audio, images, files, models, admin, tokenize, and codex. |
 | `internal/request/` | Shared request configuration, credentials, transport setup, headers, input decoding, and upload encoding. |
-| `internal/input/` | Shared borrowed-file reads, preserving cancellation, descriptor flags, deadlines, and caller ownership. |
+| `internal/input/` | Shared non-consuming input probes and borrowed-file reads, preserving cancellation, descriptor flags, deadlines, and caller ownership. |
 | `internal/output/` | Shared output policy, transformations, formatting, streaming, paging, and error presentation. |
 | `internal/terminal/` | Shared completion, terminal rendering, and platform adapters. |
 | `internal/tokenizer/` | Tokenization implementation used by the handwritten commands. |
