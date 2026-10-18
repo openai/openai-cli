@@ -119,6 +119,78 @@ func TestMainVectorStoreSearchFailuresPrecedeEmptyMessage(t *testing.T) {
 	}
 }
 
+func TestMainVectorStoreSearchLocalInputRecovery(t *testing.T) {
+	const repairedBody = `{"query":"synthetic-private-query","filters":{"type":"eq","key":"category","value":"guides"},"ranking_options":{"score_threshold":0.5}}`
+	const helpPrefix = "Options and examples: "
+	for _, tc := range []struct {
+		name, broken, repaired, message string
+	}{
+		{"missing query file", "", "", "Could not open the file for --query. Check the path and permissions."},
+		{"JSON body", strings.Replace(repairedBody, "0.5", `"synthetic-private-value"`, 1), repairedBody, "Invalid piped input for --ranking-options.score-threshold. Expected a number, such as 0.5."},
+		{"YAML body", "query: synthetic-private-query\nfilters:\n  type: eq\n  key: category\n  value: guides\nranking_options:\n  score_threshold: synthetic-private-value\n", "query: synthetic-private-query\nfilters:\n  type: eq\n  key: category\n  value: guides\nranking_options:\n  score_threshold: 0.5\n", "Invalid piped input for --ranking-options.score-threshold. Expected a number, such as 0.5."},
+	} {
+		for _, format := range []string{"text", "json"} {
+			t.Run(tc.name+"/"+format, func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					assert.Equal(t, http.MethodPost, r.Method)
+					assert.Equal(t, "/vector_stores/vs_synthetic/search", r.URL.Path)
+					assert.Empty(t, r.URL.RawQuery)
+					assert.Equal(t, "proj_synthetic", r.Header.Get("OpenAI-Project"))
+					body, err := io.ReadAll(r.Body)
+					assert.NoError(t, err)
+					assert.JSONEq(t, repairedBody, string(body))
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, vectorStoreEmptySearch)
+				}))
+				defer server.Close()
+				args := []string{"--format", format, "--project", "proj_synthetic", "vector-stores", "search", "--vector-store-id", "vs_synthetic"}
+				var input *os.File
+				queryFile := filepath.Join(t.TempDir(), "synthetic-private-query.txt")
+				if tc.broken == "" {
+					args = append(args, "--query", "@"+queryFile, "--filters", `{"type":"eq","key":"category","value":"guides"}`, "--ranking-options.score-threshold", "0.5")
+				} else {
+					input = shellFileInput(t, []byte(tc.broken))
+				}
+				failed := runVectorStoreCommand(t, server, input, args...)
+				require.Equal(t, 1, failed.code, "%+v", failed)
+				require.Empty(t, failed.stdout)
+				require.Zero(t, requests.Load())
+				for _, hidden := range []string{"synthetic-private", "sk-fake-vector-store-test", "No matches", "Indexing state", "\x1b", "\a", "\r"} {
+					require.NotContains(t, failed.stderr, hidden)
+				}
+				message := strings.TrimSpace(failed.stderr)
+				if format == "json" {
+					var payload map[string]string
+					require.NoError(t, json.Unmarshal([]byte(failed.stderr), &payload))
+					require.Len(t, payload, 1)
+					message = payload["message"]
+				}
+				if tc.broken == "" {
+					require.Equal(t, tc.message, message)
+					require.NoError(t, os.WriteFile(queryFile, []byte("synthetic-private-query"), 0600))
+				} else {
+					require.Equal(t, tc.message+"\n"+helpPrefix+"openai vector-stores search --help", message)
+					_, help, found := strings.Cut(message, helpPrefix)
+					require.True(t, found)
+					copied := runVectorStoreCommand(t, server, nil, strings.Fields(help)[1:]...)
+					require.Zero(t, copied.code, "%+v", copied)
+					require.Empty(t, copied.stderr)
+					require.Contains(t, copied.stdout, "openai vector-stores search")
+					require.Zero(t, requests.Load())
+					input = shellFileInput(t, []byte(tc.repaired))
+				}
+				recovered := runVectorStoreCommand(t, server, input, args...)
+				require.Zero(t, recovered.code, "%+v", recovered)
+				require.Empty(t, recovered.stderr)
+				require.Equal(t, map[string]string{"text": vectorStoreNoMatches, "json": "[]\n"}[format], recovered.stdout)
+				require.EqualValues(t, 1, requests.Load())
+			})
+		}
+	}
+}
+
 func TestMainVectorStoreSearchPreservesResults(t *testing.T) {
 	for _, format := range []string{"auto", "text", "json", "jsonl", "yaml", "raw"} {
 		t.Run(format, func(t *testing.T) {
