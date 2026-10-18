@@ -355,6 +355,18 @@ jobs:
           go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=2m -v -json \
             -run '^TestMainProfileCopiedRecoveryPreservesInvocation$' \
             | tee "$RUNNER_TEMP/profile-copied-recovery-tests.jsonl"
+      - name: Test Windows copied profile recovery in native shells
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
+        shell: pwsh
+        timeout-minutes: 6
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: cmd,powershell,pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=5m -v -json -run '^TestMainProfileCopiedRecoveryPreservesInvocation$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'profile-copied-recovery-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test Windows voice validation and upload ownership
         if: (matrix.native-commands && runner.os == 'Windows') && matrix.shard != 'dispatch'
         shell: pwsh
@@ -1018,28 +1030,29 @@ jobs:
               "TestImagePickerProfileCommandNativeShellRoundTrip", profile_shells[os.environ["RUNNER_OS"]],
           )
           strict_packages["profile-native-shell-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
-          if os.environ["RUNNER_OS"] != "Windows":
-              profile_recovery_root = "TestMainProfileCopiedRecoveryPreservesInvocation"
-              profile_recovery_cases = [
-                  "missing_get", "duplicate_create", "missing_set", "missing_activate",
-                  "missing_delete", "missing_status_selection", "missing_switch_selection",
-                  "status_positional_argument",
-              ]
-              profile_recovery_tests = {profile_recovery_root}
-              for shell in ["bash", "zsh"]:
-                  shell_root = f"{profile_recovery_root}/{shell}"
-                  profile_recovery_tests.add(shell_root)
-                  for mode in ["empty_PATH", "competing_executable"]:
-                      mode_root = f"{shell_root}/{mode}"
-                      profile_recovery_tests.add(mode_root)
-                      for output_format in ["text", "json", "jsonl"]:
-                          profile_recovery_tests.update(required_cases(
-                              f"{mode_root}/{output_format}", profile_recovery_cases,
-                          ))
-              if len(profile_recovery_tests) != 115:
-                  raise SystemExit("profile recovery inventory must contain one root and 114 children")
-              suites["profile-copied-recovery-tests.jsonl"] = profile_recovery_tests
-              strict_packages["profile-copied-recovery-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+          profile_recovery_root = "TestMainProfileCopiedRecoveryPreservesInvocation"
+          profile_recovery_cases = [
+              "missing_get", "duplicate_create", "missing_set", "missing_activate",
+              "missing_delete", "missing_status_selection", "missing_switch_selection",
+              "status_positional_argument",
+          ]
+          profile_recovery_tests = {profile_recovery_root}
+          profile_recovery_shells = ["cmd", "powershell", "pwsh"] if os.environ["RUNNER_OS"] == "Windows" else ["bash", "zsh"]
+          for shell in profile_recovery_shells:
+              shell_root = f"{profile_recovery_root}/{shell}"
+              profile_recovery_tests.add(shell_root)
+              for mode in ["empty_PATH", "competing_executable"]:
+                  mode_root = f"{shell_root}/{mode}"
+                  profile_recovery_tests.add(mode_root)
+                  for output_format in ["text", "json", "jsonl"]:
+                      profile_recovery_tests.update(required_cases(
+                          f"{mode_root}/{output_format}", profile_recovery_cases,
+                      ))
+          expected_recovery_names = 172 if os.environ["RUNNER_OS"] == "Windows" else 115
+          if len(profile_recovery_tests) != expected_recovery_names:
+              raise SystemExit(f"profile recovery inventory must contain {expected_recovery_names} names")
+          suites["profile-copied-recovery-tests.jsonl"] = profile_recovery_tests
+          strict_packages["profile-copied-recovery-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
           if os.environ["RUNNER_OS"] == "Linux":
               fish_suggestion_cases = {
                   'TestFishFileCompletionPreservesAssignments': [

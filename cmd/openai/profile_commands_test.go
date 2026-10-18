@@ -198,28 +198,68 @@ func TestMainProfileValidationLeavesStateUnchanged(t *testing.T) {
 }
 
 func TestMainProfileCopiedRecoveryPreservesInvocation(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("this copied-command fixture executes native Bash and zsh")
-	}
 	work, name := buildNativeShellCLI(t)
 	binary := filepath.Join(work, name)
-	invocation := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "'"
 	server, requests := localUtilitiesRequestTrap(t)
-	required := strings.Split(os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS"), ",")
-	for _, shell := range []nativeShell{
+	shells := []nativeShell{
 		{name: "bash", executable: "bash", args: []string{"--noprofile", "--norc", "-c"}},
 		{name: "zsh", executable: "zsh", args: []string{"-f", "-c"}},
-	} {
+	}
+	if runtime.GOOS == "windows" {
+		shells = []nativeShell{
+			{name: "cmd", executable: "cmd.exe", args: []string{"/D", "/C"}},
+			{name: "powershell", executable: "powershell.exe", args: []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-Command"}},
+			{name: "pwsh", executable: "pwsh.exe", args: []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-Command"}},
+		}
+	}
+	required := strings.Split(os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS"), ",")
+	for _, name := range required {
+		if name != "" && !slices.ContainsFunc(shells, func(shell nativeShell) bool { return shell.name == name }) {
+			t.Fatalf("required shell %s is not configured on %s", name, runtime.GOOS)
+		}
+	}
+	// Resolve every shell before the cases replace PATH.
+	for i := range shells {
+		path, err := exec.LookPath(shells[i].executable)
+		if err != nil {
+			if runtime.GOOS == "windows" || slices.Contains(required, shells[i].name) {
+				t.Fatalf("required shell %s is unavailable: %v", shells[i].name, err)
+			}
+			shells[i].executable = ""
+			continue
+		}
+		path, err = filepath.Abs(path)
+		require.NoError(t, err)
+		shells[i].executable = path
+	}
+	if runtime.GOOS == "windows" {
+		// PowerShell needs an absolute command processor to execute the decoy.
+		t.Setenv("COMSPEC", shells[0].executable)
+		t.Setenv("PATHEXT", ".EXE;.COM;.BAT;.CMD")
+	}
+	for _, shell := range shells {
 		t.Run(shell.name, func(t *testing.T) {
-			path, err := exec.LookPath(shell.executable)
-			if err != nil {
-				if slices.Contains(required, shell.name) {
-					t.Fatalf("required shell is unavailable: %v", err)
-				}
+			if shell.executable == "" {
 				t.Skipf("%s is unavailable", shell.name)
 			}
-			shell.executable = path
-			t.Setenv("COMPLETION_STYLE", shell.name)
+			invocation := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "'"
+			if shell.name == "cmd" {
+				invocation = `"` + binary + `"`
+			} else if shell.name == "powershell" || shell.name == "pwsh" {
+				invocation = "& '" + strings.ReplaceAll(binary, "'", "''") + "'"
+			} else {
+				t.Setenv("COMPLETION_STYLE", shell.name)
+			}
+			run := func(t *testing.T, directory, home, script string) mainDispatchResult {
+				t.Helper()
+				if shell.name == "powershell" || shell.name == "pwsh" {
+					// Forward native stderr records without PowerShell's diagnostic decoration.
+					// The existing shell helper exits with the unchanged $LASTEXITCODE.
+					script = "$ErrorActionPreference = 'Continue'; $PSNativeCommandUseErrorActionPreference = $false; " + script +
+						" 2>&1 | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { [Console]::Error.WriteLine($_.Exception.Message) } else { [Console]::Out.WriteLine($_) } }"
+				}
+				return runNativeShell(t, shell, directory, home, server.URL, script)
+			}
 			for _, competing := range []bool{false, true} {
 				mode := "empty PATH"
 				if competing {
@@ -228,9 +268,27 @@ func TestMainProfileCopiedRecoveryPreservesInvocation(t *testing.T) {
 				t.Run(mode, func(t *testing.T) {
 					decoy, sentinel := t.TempDir(), filepath.Join(t.TempDir(), "invoked")
 					if competing {
-						script := "#!/bin/sh\nprintf 'wrong executable' > '" + strings.ReplaceAll(sentinel, "'", "'\\''") + "'\nexit 99\n"
-						require.NoError(t, os.WriteFile(filepath.Join(decoy, "openai"), []byte(script), 0o700))
+						if runtime.GOOS == "windows" {
+							t.Setenv("PROFILE_RECOVERY_DECOY_SENTINEL", sentinel)
+							script := "@echo off\r\n> \"%PROFILE_RECOVERY_DECOY_SENTINEL%\" echo wrong executable\r\nexit /b 99\r\n"
+							require.NoError(t, os.WriteFile(filepath.Join(decoy, "openai.cmd"), []byte(script), 0o600))
+						} else {
+							script := "#!/bin/sh\nprintf 'wrong executable' > '" + strings.ReplaceAll(sentinel, "'", "'\\''") + "'\nexit 99\n"
+							require.NoError(t, os.WriteFile(filepath.Join(decoy, "openai"), []byte(script), 0o700))
+						}
 						t.Setenv("PATH", decoy)
+						if runtime.GOOS == "windows" {
+							// Prove this shell selects the decoy before testing copied recovery.
+							control := run(t, t.TempDir(), t.TempDir(), "openai")
+							require.Equal(t, 99, control.code, "%s", control.stderr)
+							require.Empty(t, control.stdout)
+							require.Empty(t, control.stderr)
+							data, err := os.ReadFile(sentinel)
+							require.NoError(t, err)
+							require.Equal(t, "wrong executable", strings.TrimSpace(string(data)))
+							require.NoError(t, os.Remove(sentinel))
+							require.Zero(t, requests.Load(), "decoy control reached the API")
+						}
 					} else {
 						t.Setenv("PATH", "")
 					}
@@ -252,7 +310,7 @@ func TestMainProfileCopiedRecoveryPreservesInvocation(t *testing.T) {
 									before := []byte("{\"version\":1,\"default_profile\":null,\"profiles\":{\"work\":{\"project\":\"proj_original\"}}}\n")
 									require.NoError(t, os.MkdirAll(filepath.Dir(registry), 0o700))
 									require.NoError(t, os.WriteFile(registry, before, 0o600))
-									got := runNativeShell(t, shell, directory, home, server.URL,
+									got := run(t, directory, home,
 										invocation+" "+tc.args+" --format-error="+format)
 									require.Equal(t, 1, got.code, "%s", got.stderr)
 									require.Empty(t, got.stdout)
@@ -279,7 +337,7 @@ func TestMainProfileCopiedRecoveryPreservesInvocation(t *testing.T) {
 									if tc.recovery != "auth status --help" {
 										recovery += " --format=json"
 									}
-									copied := runNativeShell(t, shell, directory, home, server.URL, recovery)
+									copied := run(t, directory, home, recovery)
 									if tc.recovery == "profile set" {
 										assertProfileJSON(t, copied, profileReceipt("set", "work", false, map[string]string{"project": "proj_recovered"}))
 										assertProfileJSON(t, profileCommand(t, home, directory, "profile", "get", "work"), profileRecord("work", false, map[string]string{"project": "proj_recovered"}))
