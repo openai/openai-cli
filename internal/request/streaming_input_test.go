@@ -1,4 +1,4 @@
-package custom
+package request
 
 import (
 	"bytes"
@@ -36,7 +36,7 @@ func TestResolveStreamingInputMatrix(t *testing.T) {
 			cmd := &cli.Command{Flags: []cli.Flag{flag}}
 			original := []byte(test.body)
 			body := bytes.Clone(original)
-			if err := resolveStreamingInput(cmd, body); err != nil {
+			if err := ResolveStreamingInput(cmd, body); err != nil {
 				t.Fatal(err)
 			}
 			if !bytes.Equal(body, original) {
@@ -58,7 +58,7 @@ func TestResolveStreamingInputMatrix(t *testing.T) {
 		&cli.BoolFlag{Name: "stream"},
 	} {
 		t.Run("unrelated_"+flag.Names()[0], func(t *testing.T) {
-			if err := resolveStreamingInput(&cli.Command{Flags: []cli.Flag{flag}}, []byte(`{"stream":true}`)); err != nil {
+			if err := ResolveStreamingInput(&cli.Command{Flags: []cli.Flag{flag}}, []byte(`{"stream":true}`)); err != nil {
 				t.Fatal(err)
 			}
 			if flag.IsSet() {
@@ -67,7 +67,7 @@ func TestResolveStreamingInputMatrix(t *testing.T) {
 		})
 	}
 	flag := &requestflag.Flag[bool]{Name: "stream", BodyPath: "stream"}
-	if err := resolveStreamingInput(&cli.Command{Flags: []cli.Flag{flag}}, []byte(`{"stream":true}`)); err != nil {
+	if err := ResolveStreamingInput(&cli.Command{Flags: []cli.Flag{flag}}, []byte(`{"stream":true}`)); err != nil {
 		t.Fatal(err)
 	}
 	if !flag.Get().(bool) {

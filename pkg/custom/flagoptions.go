@@ -460,7 +460,7 @@ func flagOptionsWithStdin(
 		// Multipart dispatch follows actual Booleans without consuming uploads
 		// or interpreting strings that happen to resemble scalar values.
 		if streaming, ok := bodyMap["stream"].(bool); ok {
-			if err := resolveStreamingValue(cmd, streaming); err != nil {
+			if err := requestconfig.ResolveStreamingValue(cmd, streaming); err != nil {
 				return nil, err
 			}
 		}
@@ -486,7 +486,7 @@ func flagOptionsWithStdin(
 		if err := validateProjectAPIKeyUpdate(cmd, bodyBytes); err != nil {
 			return nil, err
 		}
-		if err := resolveStreamingInput(cmd, bodyBytes); err != nil {
+		if err := requestconfig.ResolveStreamingInput(cmd, bodyBytes); err != nil {
 			return nil, err
 		}
 		options = append(options, option.WithRequestBody("application/json", bodyBytes))

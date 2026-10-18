@@ -96,6 +96,12 @@ retain declared option/operation metadata and original causes; CLI error present
 remains with its existing owner. Feature preparation and automatic whole-request
 stdin orchestration remain in `pkg/custom/`.
 
+Streaming-mode resolution and its unit matrix live in `internal/request/`.
+Request preparation resolves dispatch from actual final-body Booleans at the
+existing JSON and multipart call sites, preserving explicit flag precedence and
+request bytes. Feature-specific inspection and body construction retain their
+current owners.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation
