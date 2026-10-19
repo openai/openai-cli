@@ -124,6 +124,22 @@ PROCESS_TESTS = {root for root in PROCESS_CASES} | {
 PROCESS_SELECTOR = "^(" + "|".join(PROCESS_CASES) + ")$"
 COMMAND_CASES_PATH = Path(__file__).with_name("wsl-command-cases.json")
 LOCAL_CASES_PATH = Path(__file__).with_name("wsl-local-state-cases.json")
+INDEPENDENT_PROCESS_ROOTS = {
+    "TestMainLocalUtilitiesIgnoreRemoteConfiguration",
+    "TestMainLocalUtilitiesRootFlagPlacement",
+    "TestMainLocalUtilitiesLegacyTokenizers",
+    "TestMainLocalUtilitiesNamesDoNotBypassRemoteValidation",
+    "TestMainLocalUtilitiesPreserveRemoteTokenCounter",
+    "TestMainLocalUtilitiesErrorsRemainLocal",
+    "TestMainTokenizerEditorNeverCapturesRedirectedInput",
+    "TestMainTokenizerEditorPlainFallbackEnvironments",
+    "TestMainTokenizerEditorRejectsUnsupportedModes",
+    "TestMainTokenizerEditorLeavesScriptResultsUnchanged",
+    "TestMainAdminSetupOfflineRoutes",
+    "TestMainAdminSetupIsReadOnly",
+    "TestMainAdminSetupPreservesOrdinarySetup",
+    "TestMainAdminSetupRejectsExtraArguments",
+}
 PROFILE_PHASES = {
     # Direct installer checks retain native errors before public commands redact them.
     "local-state": {"imageprefs": 70, "custom": 70, "autocomplete": 70,
@@ -770,14 +786,41 @@ def run_profile(commands, user, profile, suites, hashes, result):
     admit_profile(commands, remaining)
     result["profile_admission_seconds"] = sum(remaining.values())
     result["profile_results"] = {}
+
+    def run_local_process(cases, key):
+        # Both groups share the original process allowance, excluding other phases.
+        deadline, started = commands.deadline, time.monotonic()
+        commands.deadline = min(deadline, started + remaining["process"])
+        try:
+            names = run_selected_tests(commands, user, PAYLOAD_ROOT + "process.test", cases,
+                                       "local-" + key, 170, dynamic_loopback=key == "process")
+        finally:
+            remaining["process"] -= time.monotonic() - started
+            commands.deadline = deadline
+        if remaining["process"] <= 0:
+            raise RuntimeError("Local process checks exhausted their shared time budget")
+        result["profile_results"][key] = {"tests": names, "final_PASS": 1}
+
     for phase, seconds in list(remaining.items()):
         admit_profile(commands, remaining)
         if phase == "final":
             break
         if profile == "local-state":
-            names = run_selected_tests(commands, user, PAYLOAD_ROOT + phase + ".test", suites[phase],
-                                       "local-" + phase, seconds, dynamic_loopback=phase == "process")
-            result["profile_results"][phase] = {"tests": names, "final_PASS": 1}
+            if phase == "autocomplete":
+                independent = {root: suites["process"][root] for root in suites["process"]
+                               if root in INDEPENDENT_PROCESS_ROOTS}
+                if set(independent) != INDEPENDENT_PROCESS_ROOTS:
+                    raise RuntimeError("Missing independent local process roots")
+                run_local_process(independent, "process-independent")
+                admit_profile(commands, remaining)
+            if phase == "process":
+                dependent = {root: children for root, children in suites[phase].items()
+                             if root not in INDEPENDENT_PROCESS_ROOTS}
+                run_local_process(dependent, phase)
+            else:
+                names = run_selected_tests(commands, user, PAYLOAD_ROOT + phase + ".test", suites[phase],
+                                           "local-" + phase, seconds, dynamic_loopback=False)
+                result["profile_results"][phase] = {"tests": names, "final_PASS": 1}
         elif phase == "invocation":
             env = ["OPENAI_CLI_REQUIRE_NATIVE_SHELLS=bash",
                    "OPENAI_CLI_NATIVE_SHELL_BINARY=" + PAYLOAD_ROOT + "openai",

@@ -340,33 +340,97 @@ class ProfileAdmissionTests(unittest.TestCase):
                 commands.run.assert_not_called()
 
     def test_local_payloads_keep_separate_bounds_and_final_reserve(self):
-        suites = {name: {} for name in ("imageprefs", "custom", "autocomplete", "process", "clihelp")}
+        suites, _ = pilot.load_local_cases()
         commands, result = Mock(deadline=470.0), {}
+        def names(_commands, _user, _target, cases, *_args, **_kwargs):
+            return sorted(pilot.test_names(cases))
         with patch.object(pilot.time, "monotonic", return_value=0), \
-                patch.object(pilot, "run_selected_tests", return_value=[]) as selected:
+                patch.object(pilot, "run_selected_tests", side_effect=names) as selected:
             remaining = pilot.run_profile(commands, ["synthetic-user"], "local-state", suites, {}, result)
         self.assertEqual(remaining, {"final": 20})
         self.assertEqual(result["profile_admission_seconds"], 470)
         self.assertEqual([(call.args[2], call.args[4], call.args[5], call.kwargs) for call in selected.call_args_list], [
             ("/home/cli-compat/payload/imageprefs.test", "local-imageprefs", 70, {"dynamic_loopback": False}),
             ("/home/cli-compat/payload/custom.test", "local-custom", 70, {"dynamic_loopback": False}),
+            ("/home/cli-compat/payload/process.test", "local-process-independent", 170, {"dynamic_loopback": False}),
             ("/home/cli-compat/payload/autocomplete.test", "local-autocomplete", 70, {"dynamic_loopback": False}),
             ("/home/cli-compat/payload/process.test", "local-process", 170, {"dynamic_loopback": True}),
             ("/home/cli-compat/payload/clihelp.test", "local-clihelp", 70, {"dynamic_loopback": False}),
         ])
+        groups = [call.args[3] for call in selected.call_args_list if call.args[2].endswith("/process.test")]
+        self.assertEqual([len(group) for group in groups], [14, 14])
+        self.assertEqual([len(pilot.test_names(group)) for group in groups], [71, 71])
+        self.assertFalse(set(groups[0]) & set(groups[1]))
+        self.assertEqual({**groups[0], **groups[1]}, suites["process"])
+        self.assertTrue(all("AdminSetup" in root or "LocalUtilities" in root or "TokenizerEditor" in root
+                            for root in groups[0]))
+        self.assertEqual(sum(len(item["tests"]) for item in result["profile_results"].values()), 223)
+        self.assertEqual(commands.deadline, 470)
         commands.run.assert_not_called()
 
-    def test_autocomplete_failure_stops_before_public_process_tests(self):
-        suites = {name: {} for name in ("imageprefs", "custom", "autocomplete", "process", "clihelp")}
+    def test_autocomplete_failure_retains_independent_process_results(self):
+        suites, _ = pilot.load_local_cases()
         commands, result = Mock(deadline=470.0), {}
+        def names(_commands, _user, _target, cases, label, *_args, **_kwargs):
+            if label == "local-autocomplete":
+                raise RuntimeError("native rename failure")
+            return sorted(pilot.test_names(cases))
         with patch.object(pilot.time, "monotonic", return_value=0), \
-                patch.object(pilot, "run_selected_tests", side_effect=[[], [], RuntimeError("native rename failure")]) as selected:
+                patch.object(pilot, "run_selected_tests", side_effect=names) as selected:
             with self.assertRaisesRegex(RuntimeError, "native rename failure"):
                 pilot.run_profile(commands, [], "local-state", suites, {}, result)
         self.assertEqual([call.args[4] for call in selected.call_args_list],
-                         ["local-imageprefs", "local-custom", "local-autocomplete"])
-        self.assertEqual(set(result["profile_results"]), {"imageprefs", "custom"})
+                         ["local-imageprefs", "local-custom", "local-process-independent", "local-autocomplete"])
+        self.assertEqual(set(result["profile_results"]), {"imageprefs", "custom", "process-independent"})
+        self.assertEqual(len(result["profile_results"]["process-independent"]["tests"]), 71)
+        self.assertEqual(commands.deadline, 470)
         commands.run.assert_not_called()
+
+    def test_independent_process_failure_restores_deadline_and_stops_profile(self):
+        suites, _ = pilot.load_local_cases()
+        commands, result = Mock(deadline=470.0), {}
+        with patch.object(pilot.time, "monotonic", return_value=0), \
+                patch.object(pilot, "run_selected_tests", side_effect=[[], [], RuntimeError("process failure")]) as selected:
+            with self.assertRaisesRegex(RuntimeError, "process failure"):
+                pilot.run_profile(commands, [], "local-state", suites, {}, result)
+        self.assertEqual(selected.call_count, 3)
+        self.assertEqual(set(result["profile_results"]), {"imageprefs", "custom"})
+        self.assertEqual(commands.deadline, 470)
+
+    def test_process_groups_share_original_budget_across_autocomplete(self):
+        suites, _ = pilot.load_local_cases()
+        commands, result, clock, observed = Mock(deadline=470.0), {}, [0.0], []
+        def run(_commands, _user, _target, cases, label, *_args, **_kwargs):
+            if label == "local-process-independent":
+                observed.append((label, commands.deadline))
+                clock[0] += 37
+            elif label == "local-autocomplete":
+                clock[0] += 70
+            elif label == "local-process":
+                observed.append((label, commands.deadline))
+                clock[0] += 21
+            return sorted(pilot.test_names(cases))
+        with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(pilot, "run_selected_tests", side_effect=run):
+            pilot.run_profile(commands, [], "local-state", suites, {}, result)
+        self.assertEqual(observed, [("local-process-independent", 170), ("local-process", 240)])
+        self.assertEqual(commands.deadline, 470)
+        self.assertEqual(result["profile_admission_seconds"], 470)
+
+    def test_late_independent_result_cannot_be_accepted(self):
+        suites, _ = pilot.load_local_cases()
+        commands, result, clock = Mock(deadline=470.0), {}, [0.0]
+        def run(_commands, _user, _target, _cases, label, *_args, **_kwargs):
+            if label == "local-process-independent":
+                clock[0] = 170
+            return []
+        with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(pilot, "run_selected_tests", side_effect=run) as selected:
+            with self.assertRaisesRegex(RuntimeError, "shared time budget"):
+                pilot.run_profile(commands, [], "local-state", suites, {}, result)
+        self.assertEqual(selected.call_count, 3)
+        self.assertNotIn("process-independent", result["profile_results"])
+        self.assertEqual(commands.deadline, 470)
 
     def test_native_selector_is_exactly_three_bash_leaves(self):
         self.assertEqual(pilot.test_names(pilot.NATIVE_CASES), NATIVE_NAMES)
