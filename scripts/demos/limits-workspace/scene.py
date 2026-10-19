@@ -307,6 +307,8 @@ def main():
         raise AssertionError("the recorder runtime must use an owned synthetic /private/tmp directory")
     project = scene in {"project-limit", "alert-edit", "rate-update"}
     args = ["projects", "limits", "--project-id", "proj_demo"] if project else ["admin", "limits"]
+    if scene == "alert-print":
+        args.insert(0, "--base-url=" + os.environ["OPENAI_BASE_URL"])
     evidence = {"scene": scene, "width": width, "height": height, "command": ["openai", *args],
                 "keys": [], "checkpoints": [], "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
                 "parent_shell": "/bin/bash", "recorder_runtime": str(runtime),
