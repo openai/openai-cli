@@ -109,17 +109,25 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 	isAPI := errors.As(failure, &apierr)
 	var streamerr *ssestream.StreamError
 	isStream := !errors.Is(failure, context.Canceled) && errors.As(failure, &streamerr)
+	var limitsFailure *limitsWorkflowFailure
+	if errors.As(failure, &limitsFailure) {
+		// Aggregate source failures retain their causes, but expose only the
+		// workflow's safe outcome. Individual API payloads are not the result.
+		isAPI, isStream = false, false
+	}
 	if format == "text" && root.String("transform-error") == "" {
 		message := ""
 		var batchFailure *batchWorkflowError
-		if errors.As(failure, &batchFailure) {
+		if limitsFailure != nil {
+			message = limitsFailure.Error()
+		} else if errors.As(failure, &batchFailure) {
 			message = batchFailure.message
 		} else if isAPI && !errors.Is(failure, context.Canceled) {
 			message = readableAPIErrorMessage(root, failure, apierr)
 		} else if isStream {
 			message = readableStreamErrorText
 		} else {
-			message = localErrorMessage(root, failure)
+			message = readableLocalErrorMessage(root, failure)
 		}
 		return readable.WriteText(out, message)
 	}
@@ -161,10 +169,17 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
 		message = "Check API key, organization and project.\nKey setup: " + invocation + " help setup"
+		if required, _ := commandErrorContext(root, failure).Metadata[adminCredentialsRequiredMetadata].(bool); required {
+			message = "Check --admin-api-key or OPENAI_ADMIN_KEY and any Authorization override.\n" +
+				"Check the organization and API address.\nKey setup: " + invocation + " help setup admin"
+		}
 	case http.StatusForbidden:
 		message = "Check your key's permissions.\nCheck project access to this resource."
 	case http.StatusNotFound:
 		message = "Check the resource or model ID.\nCheck your key's access to it."
+		if guidance := readableSpendNotFoundMessage(root, failure); guidance != "" {
+			message = guidance
+		}
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		var contextual *commandError
 		var command *cli.Command
@@ -175,7 +190,11 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 	case http.StatusTooManyRequests:
 		message = "Wait before trying again."
 		switch apierr.Code {
-		case "insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded":
+		case "organization_spend_limit_exceeded":
+			message = readableOrganizationSpendLimitMessage(root)
+		case "organization_usage_limit_exceeded":
+			message = "Organization usage limit reached.\nCheck your organization's billing and usage limits."
+		case "insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "project_spend_limit_exceeded":
 			message = "API usage or billing limit reached.\nCheck your project's billing and limits."
 		}
 	case http.StatusConflict:

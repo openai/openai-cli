@@ -43,6 +43,7 @@ func ConfigureCommand(root *cli.Command) {
 	registerAdminSetup(root)
 	configureAdminCredentials(root)
 	localcommands.ConfigureSubgroups(root)
+	registerLimitsCommands(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
 	configureFileCommands(root)
