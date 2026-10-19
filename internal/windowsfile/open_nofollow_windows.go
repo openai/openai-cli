@@ -28,7 +28,9 @@ func OpenNoFollow(path string) (*os.File, error) {
 	attributes := windows.OBJECT_ATTRIBUTES{ObjectName: &objectName, Attributes: windows.OBJ_CASE_INSENSITIVE}
 	attributes.Length = uint32(unsafe.Sizeof(attributes))
 	var handle windows.Handle
-	err = windows.NtCreateFile(&handle, windows.FILE_GENERIC_WRITE, &attributes, &windows.IO_STATUS_BLOCK{}, nil,
+	// FileAttributeTagInfo requires FILE_READ_ATTRIBUTES independently of write
+	// access. Without it, the safety query rejects ordinary existing files.
+	err = windows.NtCreateFile(&handle, windows.FILE_GENERIC_WRITE|windows.FILE_READ_ATTRIBUTES, &attributes, &windows.IO_STATUS_BLOCK{}, nil,
 		windows.FILE_ATTRIBUTE_NORMAL, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, windows.FILE_OPEN,
 		windows.FILE_NON_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0)
 	if err != nil {
