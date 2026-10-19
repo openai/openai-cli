@@ -10,11 +10,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/openai/openai-cli/internal/commands/admin"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
@@ -22,6 +25,61 @@ func spendGuidanceTestCommand(resource, operation string) *cli.Command {
 	return &cli.Command{Name: operation, Metadata: map[string]any{
 		"openai-resource-command": resource, admin.CredentialsRequiredMetadata: true,
 	}}
+}
+
+func TestSpendErrorGuidanceResponseConversionProvenance(t *testing.T) {
+	command := spendGuidanceTestCommand("admin:organization:spend-alerts", "create")
+	options := ShowJSONOpts{Context: t.Context(), Format: "yaml", ExplicitFormat: true,
+		Operation:  "(resource) admin.organization.spend_alerts > (method) create",
+		OutputKind: OutputResponse, Stdout: io.Discard, Stderr: io.Discard}
+	failure := ShowJSON(gjson.Parse(`{"synthetic-private-response": broken}`), options)
+	var marker *spendMutationResponseError
+	var syntaxFailure *json.SyntaxError
+	require.ErrorAs(t, failure, &marker)
+	require.ErrorAs(t, failure, &syntaxFailure)
+	require.ErrorIs(t, failure, syntaxFailure)
+	require.Equal(t, syntaxFailure.Error(), failure.Error())
+	root := readableErrorTestCommand(t)
+	contextual := withCommandError(command, failure)
+	require.Contains(t, readableLocalErrorMessage(root, contextual), "The API may have received the change.")
+	require.Equal(t, "Could not decode JSON: invalid JSON syntax.", localErrorMessage(root, contextual))
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		joined := withCommandError(command, errors.Join(failure, cause))
+		require.ErrorIs(t, joined, syntaxFailure)
+		require.ErrorIs(t, joined, cause)
+		require.Equal(t, localErrorMessage(root, joined), readableLocalErrorMessage(root, joined))
+	}
+	writeFailure := &clioutput.WriteError{Err: syscall.EPIPE}
+	joined := errors.Join(failure, writeFailure)
+	require.ErrorIs(t, joined, syntaxFailure)
+	require.ErrorIs(t, joined, syscall.EPIPE)
+	require.False(t, clioutput.IsBrokenPipe(joined), "a closed pipe must not discard a response failure")
+	inputFailure := withCommandError(command, syntaxFailure)
+	require.Equal(t, localErrorMessage(root, inputFailure), readableLocalErrorMessage(root, inputFailure))
+	for _, kind := range []string{"read response", "error presentation"} {
+		t.Run(kind, func(t *testing.T) {
+			opts := options
+			if kind == "read response" {
+				opts.Operation = "(resource) admin.organization.spend_alerts > (method) retrieve"
+			} else {
+				opts.OutputKind = OutputUnspecified
+			}
+			err := ShowJSON(gjson.Parse(`{"synthetic-private-response": broken}`), opts)
+			require.ErrorAs(t, err, &syntaxFailure)
+			require.False(t, errors.As(err, &marker))
+		})
+	}
+	options.Stdout = failOutputWriter{err: syscall.EPIPE}
+	failure = ShowJSON(gjson.Parse(`{"id":"alert_synthetic"}`), options)
+	require.ErrorIs(t, failure, syscall.EPIPE)
+	require.True(t, clioutput.IsBrokenPipe(failure))
+	require.False(t, errors.As(failure, &marker), "sink failures must retain their output classification")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	options.Context = ctx
+	failure = ShowJSON(gjson.Parse(`{"synthetic-private-response": broken}`), options)
+	require.ErrorIs(t, failure, context.Canceled)
+	require.False(t, errors.As(failure, &marker), "pre-conversion cancellation must retain its classification")
 }
 
 func TestSpendErrorGuidanceAdminMetadata(t *testing.T) {
@@ -125,8 +183,28 @@ func TestSpendErrorGuidanceMutationReadRoutes(t *testing.T) {
 		{"admin:organization:spend-alerts", "create", "admin organization spend-alerts list"},
 		{"admin:organization:projects:spend-alerts", "create", "admin organization projects spend-alerts list"},
 		{"admin:organization:projects:spend-alerts", "update", "admin organization projects spend-alerts retrieve"},
+		{"admin:organization:projects:rate-limits", "update-rate-limit", "admin organization projects rate-limits list-rate-limits"},
 	} {
 		require.Contains(t, readableSpendMutationFailure(root, spendGuidanceTestCommand(test.resource, test.operation)), "help "+test.read)
+	}
+	network := &url.Error{Op: "Post", URL: "https://synthetic-private.invalid", Err: io.EOF}
+	for _, operation := range []string{"update-rate-limit", "list-rate-limits"} {
+		failure := withCommandError(spendGuidanceTestCommand("admin:organization:projects:rate-limits", operation), network)
+		var human, machine bytes.Buffer
+		require.NoError(t, ShowCommandError(root, failure, &human))
+		baseline := localErrorMessage(root, failure)
+		if operation == "update-rate-limit" {
+			require.Contains(t, human.String(), "The API response did not confirm the rate-limit change.")
+			require.Contains(t, human.String(), "help admin organization projects rate-limits list-rate-limits")
+			require.Contains(t, human.String(), spendRecoveryContext)
+		} else {
+			require.Equal(t, baseline+"\n", human.String())
+		}
+		require.NotContains(t, human.String(), "synthetic-private")
+		require.NoError(t, ShowCommandError(readableErrorTestCommand(t, "--format-error", "json"), failure, &machine))
+		var value map[string]any
+		require.NoError(t, json.Unmarshal(machine.Bytes(), &value))
+		require.Equal(t, map[string]any{"message": baseline}, value)
 	}
 }
 

@@ -75,7 +75,8 @@ func (e *limitsInterrupt) Unwrap() error { return e.error }
 // limitsWorkspaceOutput records failures that the terminal renderer may ignore.
 // Its output context stays active so shutdown can still restore terminal modes.
 type limitsWorkspaceOutput struct {
-	clioutput.TerminalWriter
+	clioutput.Writer
+	term.File
 	stop context.CancelFunc
 	mu   sync.Mutex
 	err  error
@@ -107,7 +108,7 @@ func (w *limitsWorkspaceOutput) Err() error {
 }
 
 func runLimitsWorkspace(ctx context.Context, cmd *cli.Command, backend limitsBackend, opts ShowJSONOpts) error {
-	file := opts.Stdout.(*os.File)
+	file := opts.Stdout.(term.File)
 	width, height, err := term.GetSize(file.Fd())
 	if err != nil {
 		return err
@@ -125,8 +126,8 @@ func runLimitsWorkspace(ctx context.Context, cmd *cli.Command, backend limitsBac
 	if err != nil || strings.HasPrefix(m.invocation, "go run ") {
 		m.omitPreview = true
 	}
-	m.output = &limitsWorkspaceOutput{TerminalWriter: clioutput.TerminalWriter{
-		Writer: clioutput.Writer{Context: context.Background(), Sink: opts.Stdout}, File: file}, stop: stop}
+	m.output = &limitsWorkspaceOutput{
+		Writer: clioutput.Writer{Context: context.Background(), Sink: opts.Stdout}, File: file, stop: stop}
 	options := []tea.ProgramOption{tea.WithInput(cmd.Root().Reader), tea.WithOutput(m.output), tea.WithContext(programContext), tea.WithWindowSize(width, height)}
 	if !m.color {
 		options = append(options, tea.WithColorProfile(colorprofile.NoTTY))

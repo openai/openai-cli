@@ -96,6 +96,145 @@ func followSpendRecoveryHelp(t *testing.T, env []string, diagnostic, label strin
 	return mainDispatchResult{}
 }
 
+func TestMainSpendErrorRecoveryResponseConversion(t *testing.T) {
+	for _, project := range []bool{false, true} {
+		for _, operation := range []struct{ resource, action string }{
+			{"spend-limit", "update"}, {"spend-limit", "delete"},
+			{"spend-alerts", "create"}, {"spend-alerts", "update"}, {"spend-alerts", "delete"},
+			{"rate-limits", "update-rate-limit"},
+		} {
+			if !project && operation.resource == "rate-limits" {
+				continue
+			}
+			t.Run(fmt.Sprintf("project=%t/%s/%s", project, operation.resource, operation.action), func(t *testing.T) {
+				var requests atomic.Int32
+				path := spendThresholdPath(project, operation.resource)
+				if operation.resource == "spend-alerts" && operation.action != "create" {
+					path += "/alert_synthetic"
+				} else if operation.resource == "rate-limits" {
+					path += "/rl_synthetic"
+				}
+				method := http.MethodPost
+				if operation.action == "delete" {
+					method = http.MethodDelete
+				}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					checkSpendRecoveryContext(t, r, "sk-fake-spend-admin")
+					if r.Method != method || r.URL.Path != path {
+						t.Errorf("unexpected mutation request: %s %s", r.Method, r.URL.Path)
+					}
+					body, err := io.ReadAll(r.Body)
+					if err != nil || method == http.MethodDelete && len(body) != 0 {
+						t.Errorf("unexpected mutation body: %s; %v", body, err)
+					}
+					if method != http.MethodDelete {
+						var fields map[string]any
+						if err := json.Unmarshal(body, &fields); err != nil {
+							t.Errorf("invalid mutation body: %s; %v", body, err)
+						} else if operation.resource == "rate-limits" {
+							if len(fields) != 1 || fields["max_requests_per_1_minute"] != float64(300) {
+								t.Errorf("rate-limit fields changed: %s", body)
+							}
+						} else if fields["threshold_amount"] != float64(10000) || fields["currency"] != "USD" || fields["interval"] != "month" {
+							t.Errorf("mutation fields changed: %s", body)
+						}
+					}
+					w.Header().Set("Content-Type", "application/json")
+					io.WriteString(w, `{"synthetic-private-response": broken}`)
+				}))
+				defer server.Close()
+				env := spendRecoveryEnvironment(t, server.URL)
+				argv := append([]string{"openai"}, spendThresholdArgs(project, operation.resource, operation.action)...)
+				if operation.resource == "rate-limits" {
+					argv = append(argv, "--rate-limit-id", "rl_synthetic", "--max-requests-per-1-minute", "300")
+				} else if operation.action != "delete" {
+					argv = append(argv, "--currency", "USD", "--interval", "month", "--threshold-amount", "10000")
+					if operation.resource == "spend-alerts" {
+						argv = append(argv, "--notification-channel", `{"type":"email","recipients":["synthetic@example.invalid"]}`)
+					}
+				}
+				argv = append(argv, "--format", "yaml")
+				got := runMainDispatchWithEnv(t, "bash", env, append(slices.Clone(argv), "--format-error", "text")...)
+				checkSpendRecoveryFailure(t, got, "The API may have received the change.", "Check its current state before repeating", "Keep the original API address")
+				if operation.resource == "rate-limits" {
+					checkSpendRecoveryFailure(t, got, "rate-limit change", "help admin organization projects rate-limits list-rate-limits")
+				}
+				followSpendRecoveryHelp(t, env, got.stderr, "Read options")
+				if requests.Load() != 1 {
+					t.Fatal("response conversion or read help repeated a mutation", requests.Load())
+				}
+				if operation.resource != "rate-limits" && (project || operation.resource != "spend-alerts" || operation.action != "create") {
+					return
+				}
+				const baseline = "Could not decode JSON: invalid JSON syntax."
+				for _, format := range []string{"json", "jsonl", "text"} {
+					args := append(slices.Clone(argv), "--format-error", format)
+					if format == "text" {
+						args = append(args, "--transform-error", "message")
+					}
+					before := requests.Load()
+					machine := runMainDispatchWithEnv(t, "bash", env, args...)
+					checkSpendRecoveryFailure(t, machine, baseline)
+					if requests.Load() != before+1 {
+						t.Fatal("machine error formatting retried the mutation")
+					}
+					if format == "text" {
+						if machine.stderr != baseline+"\n" {
+							t.Fatal("error extraction changed", machine.stderr)
+						}
+					} else {
+						var value map[string]any
+						if json.Unmarshal([]byte(machine.stderr), &value) != nil || len(value) != 1 || value["message"] != baseline {
+							t.Fatal("machine error contract changed", machine.stderr)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestMainSpendErrorRecoveryInputDecodeDoesNotClaimMutation(t *testing.T) {
+	for _, test := range []struct{ name, input string }{
+		{"syntax", `{"synthetic-private-input": broken}`},
+		{"type", `[{"synthetic-private-input":"value"}]`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer server.Close()
+			env := spendRecoveryEnvironment(t, server.URL)
+			argv := append([]string{"openai"}, spendThresholdArgs(false, "spend-alerts", "create")...)
+			argv = append(argv, "--currency", "USD", "--interval", "month", "--threshold-amount", "10000",
+				"--notification-channel", test.input, "--format", "yaml")
+			human := runMainDispatchWithEnv(t, "bash", env, append(slices.Clone(argv), "--format-error", "text")...)
+			checkSpendRecoveryFailure(t, human)
+			if human.stderr == "" || strings.Contains(human.stderr, "may have received") || strings.Contains(human.stderr, "before repeating") {
+				t.Fatal("input decoding incorrectly claimed an attempted mutation", human.stderr)
+			}
+			machine := runMainDispatchWithEnv(t, "bash", env, append(slices.Clone(argv), "--format-error", "json")...)
+			checkSpendRecoveryFailure(t, machine)
+			var value map[string]any
+			if json.Unmarshal([]byte(machine.stderr), &value) != nil || len(value) != 1 {
+				t.Fatal("invalid machine input error", machine.stderr)
+			}
+			message, ok := value["message"].(string)
+			if !ok || message == "" {
+				t.Fatal("machine input error omitted its message", machine.stderr)
+			}
+			extracted := runMainDispatchWithEnv(t, "bash", env, append(slices.Clone(argv), "--format-error", "text", "--transform-error", "message")...)
+			checkSpendRecoveryFailure(t, extracted)
+			if extracted.stderr != message+"\n" || requests.Load() != 0 {
+				t.Fatal("input error changed extraction or sent an HTTP request", extracted.stderr, requests.Load())
+			}
+		})
+	}
+}
+
 func TestMainSpendErrorRecoveryAdminSetup(t *testing.T) {
 	for _, args := range [][]string{
 		{"admin", "organization", "spend-limit", "retrieve"},

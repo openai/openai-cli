@@ -388,7 +388,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	opts.Transform = ""
 	formatted, err := formatJSON(res, opts)
 	if err != nil {
-		return err
+		return spendMutationResponseFailure(err, opts)
 	}
 	_, err = (clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}).Write(formatted)
 	return err

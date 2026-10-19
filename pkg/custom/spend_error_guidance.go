@@ -1,7 +1,9 @@
 package custom
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
@@ -17,6 +19,40 @@ func commandErrorContext(root *cli.Command, failure error) *cli.Command {
 }
 
 const spendRecoveryContext = "Keep the original API address, authentication, organization, and project options for any check."
+
+// Response conversion happens after the mutation returned successfully. Keep
+// that provenance separate from JSON errors raised while preparing a request.
+type spendMutationResponseError struct{ cause error }
+
+func (e *spendMutationResponseError) Error() string { return e.cause.Error() }
+func (e *spendMutationResponseError) Unwrap() error { return e.cause }
+
+func spendMutationResponseFailure(err error, opts ShowJSONOpts) error {
+	if opts.OutputKind != OutputResponse {
+		return err
+	}
+	switch opts.Operation {
+	case "(resource) admin.organization.spend_limit > (method) update",
+		"(resource) admin.organization.spend_limit > (method) delete",
+		"(resource) admin.organization.projects.spend_limit > (method) update",
+		"(resource) admin.organization.projects.spend_limit > (method) delete",
+		"(resource) admin.organization.spend_alerts > (method) create",
+		"(resource) admin.organization.spend_alerts > (method) update",
+		"(resource) admin.organization.spend_alerts > (method) delete",
+		"(resource) admin.organization.projects.spend_alerts > (method) create",
+		"(resource) admin.organization.projects.spend_alerts > (method) update",
+		"(resource) admin.organization.projects.spend_alerts > (method) delete",
+		"(resource) admin.organization.projects.rate_limits > (method) update_rate_limit":
+	default:
+		return err
+	}
+	var syntaxError *json.SyntaxError
+	var typeError *json.UnmarshalTypeError
+	if errors.As(err, &syntaxError) || errors.As(err, &typeError) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return &spendMutationResponseError{cause: err}
+	}
+	return err
+}
 
 // A status alone cannot establish configuration at an arbitrary API address.
 // Recovery uses declared command metadata, never request URLs or response prose.
@@ -68,6 +104,7 @@ func readableOrganizationSpendLimitMessage(root *cli.Command) string {
 
 func readableSpendMutationFailure(root, command *cli.Command) string {
 	path := ""
+	change := "spend change"
 	switch localcommands.ResourceName(command) {
 	case "admin:organization:spend-limit":
 		if command.Name == "update" || command.Name == "delete" {
@@ -88,11 +125,16 @@ func readableSpendMutationFailure(root, command *cli.Command) string {
 		case "update", "delete":
 			path = prefix + "retrieve"
 		}
+	case "admin:organization:projects:rate-limits":
+		if command.Name == "update-rate-limit" {
+			path = "admin organization projects rate-limits list-rate-limits"
+			change = "rate-limit change"
+		}
 	}
 	if path == "" {
 		return ""
 	}
-	return "The API response did not confirm the spend change.\n" +
+	return "The API response did not confirm the " + change + ".\n" +
 		"The API may have received the change.\n" +
 		"Check its current state before repeating the command.\n" +
 		"Read options: " + clihelp.DisplayInvocation(root) + " help " + path + "\n" +

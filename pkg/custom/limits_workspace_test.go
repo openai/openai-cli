@@ -23,6 +23,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
@@ -1256,9 +1257,9 @@ func TestLimitsWorkspaceOutputPreservesFailuresAndCleanup(t *testing.T) {
 						return 0, later
 					}
 				})
-				out := &limitsWorkspaceOutput{TerminalWriter: clioutput.TerminalWriter{
+				out := &limitsWorkspaceOutput{
 					Writer: clioutput.Writer{Context: context.Background(), Sink: sink},
-				}, stop: stop}
+					stop:   stop}
 				write := func(value string) (int, error) { return out.Write([]byte(value)) }
 				if method == "WriteString" {
 					write = func(value string) (int, error) { return io.WriteString(out, value) }
@@ -1291,13 +1292,13 @@ func TestLimitsWorkspaceOutputPreservesCancellation(t *testing.T) {
 			workspaceContext, stop := context.WithCancel(t.Context())
 			defer stop()
 			calls := 0
-			out := &limitsWorkspaceOutput{TerminalWriter: clioutput.TerminalWriter{
+			out := &limitsWorkspaceOutput{
 				Writer: clioutput.Writer{Context: outputContext, Sink: limitsWorkspaceWriteFunc(func(data []byte) (int, error) {
 					calls++
 					cancelOutput()
 					return len(data), nil
 				})},
-			}, stop: stop}
+				stop: stop}
 			wantBytes, wantCalls := len("result"), 1
 			if when == "before write" {
 				cancelOutput()
@@ -1316,39 +1317,48 @@ func TestLimitsWorkspaceOutputPreservesCancellation(t *testing.T) {
 }
 
 func TestLimitsWorkspaceOutputPreservesTerminalFile(t *testing.T) {
-	file, err := os.CreateTemp(t.TempDir(), "terminal-output")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { file.Close() })
-	if _, err := file.WriteString("input"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		t.Fatal(err)
-	}
-	var sink bytes.Buffer
-	out := &limitsWorkspaceOutput{TerminalWriter: clioutput.TerminalWriter{
-		Writer: clioutput.Writer{Context: t.Context(), Sink: &sink}, File: file,
-	}, stop: func() { t.Fatal("successful output canceled the workspace") }}
-	if out.Fd() != file.Fd() {
-		t.Fatal("output wrapper changed the descriptor used for terminal detection")
-	}
-	if _, err := io.WriteString(out, "output"); err != nil || sink.String() != "output" {
-		t.Fatal("output wrapper bypassed its guarded sink", err)
-	}
-	input := make([]byte, len("input"))
-	if _, err := io.ReadFull(out, input); err != nil || string(input) != "input" {
-		t.Fatal("output wrapper changed terminal reads", err)
-	}
-	if out.Err() != nil {
-		t.Fatal("successful writes recorded an error", out.Err())
-	}
-	if err := out.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
-		t.Fatal("output wrapper changed terminal file ownership", err)
+	for _, borrowed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("borrowed=%t", borrowed), func(t *testing.T) {
+			file, err := os.CreateTemp(t.TempDir(), "terminal-output")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { file.Close() })
+			if _, err := file.WriteString("input"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := file.Seek(0, io.SeekStart); err != nil {
+				t.Fatal(err)
+			}
+			var sink bytes.Buffer
+			out := &limitsWorkspaceOutput{
+				Writer: clioutput.Writer{Context: t.Context(), Sink: &sink}, File: file,
+				stop: func() { t.Fatal("successful output canceled the workspace") }}
+			if borrowed {
+				writer := terminal.BorrowedWriter{Writer: &sink, File: file}
+				out.Writer.Sink, out.File = writer, writer
+			}
+			if out.Fd() != file.Fd() {
+				t.Fatal("output wrapper changed the descriptor used for terminal detection")
+			}
+			if _, err := io.WriteString(out, "output"); err != nil || sink.String() != "output" {
+				t.Fatal("output wrapper bypassed its guarded sink", err)
+			}
+			input := make([]byte, len("input"))
+			if _, err := io.ReadFull(out, input); err != nil || string(input) != "input" {
+				t.Fatal("output wrapper changed terminal reads", err)
+			}
+			if out.Err() != nil {
+				t.Fatal("successful writes recorded an error", out.Err())
+			}
+			if err := out.Close(); err != nil {
+				t.Fatal(err)
+			}
+			_, err = file.Stat()
+			if borrowed && err != nil || !borrowed && !errors.Is(err, os.ErrClosed) {
+				t.Fatal("output wrapper changed terminal file ownership", err)
+			}
+		})
 	}
 }
 

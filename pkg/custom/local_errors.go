@@ -63,6 +63,11 @@ func localErrorMessageForDisplay(root *cli.Command, failure error, human bool) s
 	var batchFailure *batchcommands.WorkflowError
 	var limitsFailure *limitsWorkflowFailure
 	var finiteListFailure *clioutput.FiniteJSONListError
+	var spendResponseFailure *spendMutationResponseError
+	responseRecovery := ""
+	if human && errors.As(failure, &spendResponseFailure) {
+		responseRecovery = readableSpendMutationFailure(root, command)
+	}
 	switch {
 	case errors.As(failure, &limitsFailure):
 		return limitsFailure.Error()
@@ -83,6 +88,8 @@ func localErrorMessageForDisplay(root *cli.Command, failure error, human bool) s
 		return utilityFailure.Error()
 	case errors.Is(failure, context.DeadlineExceeded), errors.As(failure, &timeout) && timeout.Timeout():
 		return "The request timed out. The API may have received it; check its status before repeating it."
+	case responseRecovery != "":
+		return responseRecovery
 	case errors.As(failure, &modelsListFailure):
 		return modelsListFailure.Error()
 	case errors.As(failure, &finiteListFailure):
