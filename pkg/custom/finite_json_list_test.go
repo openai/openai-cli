@@ -21,11 +21,11 @@ import (
 
 func TestFiniteJSONListErrorClassification(t *testing.T) {
 	const want = "The API returned an invalid JSON list item. Output may be incomplete. Check the response source before repeating the command."
-	failure := &finiteJSONListError{}
+	failure := &clioutput.FiniteJSONListError{}
 	private := errors.New("synthetic-private-detail\x1b[2J")
 	for _, err := range []error{failure, fmt.Errorf("synthetic-private-wrapper: %w", failure), errors.Join(failure, private)} {
 		require.Equal(t, want, localErrorMessage(nil, err))
-		var origin *finiteJSONListError
+		var origin *clioutput.FiniteJSONListError
 		require.ErrorAs(t, err, &origin)
 		require.Same(t, failure, origin)
 		var out bytes.Buffer
@@ -188,7 +188,7 @@ func TestFiniteJSONListFailuresKeepIncompletePrefix(t *testing.T) {
 				require.ErrorIs(t, err, want)
 				require.Equal(t, 1, strings.Count(err.Error(), want.Error()), "report each failure once")
 			} else {
-				var malformed *finiteJSONListError
+				var malformed *clioutput.FiniteJSONListError
 				require.ErrorAs(t, err, &malformed)
 			}
 			if tc == "initial" {
@@ -328,42 +328,6 @@ func TestFiniteJSONListLargeRecordHasNoNewLimit(t *testing.T) {
 	var got []struct{ Value string }
 	require.NoError(t, json.Unmarshal(out.Bytes(), &got))
 	require.Equal(t, value, got[0].Value)
-}
-
-func TestFiniteJSONListTerminalPrefixKeepsFramingAndFailure(t *testing.T) {
-	for _, height := range []int{4, 100} {
-		for _, failure := range []error{nil, errors.New("synthetic later page")} {
-			out := outputFile(t)
-			previous := os.Stdout
-			os.Stdout = out
-			func() {
-				defer func() { os.Stdout = previous }()
-				source := &finiteListIterator{items: []finiteListRecord{`{"id":"one"}`, `{"id":"two"}`}}
-				source.next = func(n int) {
-					if n == 2 && failure != nil {
-						source.err = failure
-						source.items = source.items[:1]
-					}
-				}
-				opts := finiteListOpts(out)
-				iter := clioutput.NewIterator(source, clioutput.IteratorOptions{
-					Context:   opts.Context,
-					Transform: transformers.Identity,
-					Limit:     -1,
-				})
-				list := &finiteJSONList{iter: iter, opts: opts}
-				err := list.showTerminal(80, height)
-				if failure != nil {
-					require.ErrorIs(t, err, failure)
-					require.Contains(t, readOutput(t, out), `"one"`)
-					require.False(t, json.Valid([]byte(readOutput(t, out))))
-				} else {
-					require.NoError(t, err)
-					require.JSONEq(t, `[{"id":"one"},{"id":"two"}]`, readOutput(t, out))
-				}
-			}()
-		}
-	}
 }
 
 func TestFiniteJSONListTerminalPagerPreservesDocument(t *testing.T) {

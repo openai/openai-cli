@@ -39,6 +39,14 @@ the runtime; native and WSL jobs select the moved descriptor test without changi
 its cases. The WSL command-contract supplement retains its separate custom test
 binary and fixed inventory.
 
+Finite JSON list validation, incremental array framing, terminal prefix paging,
+and incomplete-output error classification live in `internal/output/`. Assembly
+retains format eligibility, initial error checks, and models selection before
+calling the shared writer. Existing public-entrypoint contracts retain finite
+versus streaming boundaries, item limits, prompt delivery, malformed-item privacy,
+large records, cancellation, and joined failures. The terminal-prefix unit contract
+lives beside the shared runtime; native shell inventories remain unchanged.
+
 Shared color profiles, automatic terminal presentation eligibility, and background
 theme detection live in `internal/terminal/`. Feature callers retain terminal
 detection for their output destinations, including wrapped batch output.

@@ -2,7 +2,6 @@ package custom
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,7 +24,6 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/charmbracelet/x/term"
-	"github.com/muesli/reflow/wrap"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
@@ -360,11 +358,6 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	return err
 }
 
-// Get the number of lines that would be output by writing the data to the terminal
-func countTerminalLines(data []byte, terminalWidth int) int {
-	return bytes.Count([]byte(wrap.String(string(data), terminalWidth)), []byte("\n"))
-}
-
 type hasRawJSON interface {
 	RawJSON() string
 }
@@ -473,7 +466,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 			return errors.Join(err, iter.Err())
 		}
 		output = append(output, formatted...)
-		numberOfNewlines += countTerminalLines(formatted, terminalWidth)
+		numberOfNewlines += clioutput.CountTerminalLines(formatted, terminalWidth)
 		if numberOfNewlines >= terminalHeight-3 {
 			usePager = true
 			break

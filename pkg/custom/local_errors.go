@@ -51,7 +51,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var navigationFailure *listNavigationError
 	var modelsListFailure *modelsListError
 	var batchFailure *batchWorkflowError
-	var finiteListFailure *finiteJSONListError
+	var finiteListFailure *clioutput.FiniteJSONListError
 	switch {
 	case errors.As(failure, &batchFailure):
 		return batchFailure.message
