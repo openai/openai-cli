@@ -115,7 +115,7 @@ func (list *finiteJSONList) next() ([]byte, error) {
 		return nil, list.err(&finiteJSONListError{})
 	}
 	data := item.Bytes()
-	if shouldUseColors(list.opts.Stdout) {
+	if clioutput.UseColors(isTerminal(list.opts.Stdout)) {
 		data = pretty.Color(data, pretty.TerminalStyle)
 	}
 	separator := "[\n"

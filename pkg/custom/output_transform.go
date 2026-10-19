@@ -50,15 +50,6 @@ func transformOutput(ctx context.Context, value gjson.Result, transform transfor
 	return value, ctx.Err()
 }
 
-func applyJSONPath(value gjson.Result, path string) gjson.Result {
-	if path != "" {
-		if extracted := value.Get(path); extracted.Exists() {
-			return extracted
-		}
-	}
-	return value
-}
-
 type outputJSON struct{ gjson.Result }
 
 func (value outputJSON) RawJSON() string { return value.Raw }

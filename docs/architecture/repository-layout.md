@@ -15,6 +15,14 @@ ordering, and the launch deadline.
 Cancellation-aware output writing and sink/diagnostic error classification live
 in `internal/output/`, shared by handwritten commands and presentation code.
 
+Single-result formatting, automatic format resolution, GJSON extraction,
+raw-string escaping, JSON/YAML/text rendering, and JSON color policy live in
+`internal/output/`. Callers retain classification of their final destination,
+including wrapped batch output and terminals behind pagers. Feature transforms,
+interactive exploration, streaming, paging, and output lifecycle retain their
+current owners. The format list still reaches the generated runtime bridge
+through a temporary `pkg/custom.OutputFormats` forwarding value.
+
 Shared color profiles, automatic terminal presentation eligibility, and background
 theme detection live in `internal/terminal/`. Feature callers retain terminal
 detection for their output destinations, including wrapped batch output.

@@ -25,19 +25,16 @@ import (
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/readable"
 	requestconfig "github.com/openai/openai-cli/internal/request"
-	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3/option"
 
-	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/term"
-	"github.com/itchyny/json2yaml"
 	"github.com/muesli/reflow/wrap"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/pretty"
 	"github.com/urfave/cli/v3"
 )
 
-var OutputFormats = []string{"auto", "text", "explore", "json", "jsonl", "pretty", "raw", "yaml"}
+// Temporary forwarding value for the generated runtime bridge.
+var OutputFormats = clioutput.Formats
 
 // ValidateBaseURL forwards scheme validation for the generated runtime bridge.
 func ValidateBaseURL(value, source string) error {
@@ -339,80 +336,15 @@ func guessExtension(data []byte) string {
 	}
 }
 
-func shouldUseColors(w io.Writer) bool {
-	if !isTerminal(w) || os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-	force, ok := os.LookupEnv("FORCE_COLOR")
-	if ok {
-		if force == "1" {
-			return true
-		}
-		if force == "0" {
-			return false
-		}
-	}
-	return isTerminal(w)
-}
-
 func formatJSON(res gjson.Result, opts ShowJSONOpts) ([]byte, error) {
 	return formatJSONForOutput(res, opts, opts.Stdout)
 }
 
-// formatJSONForOutput keeps the final destination available when a pager sits between
-// formatted output and the terminal.
+// Keep feature-specific destination classification outside shared formatting.
 func formatJSONForOutput(res gjson.Result, opts ShowJSONOpts, destination io.Writer) ([]byte, error) {
-	opts.Format = resolvedOutputFormat(opts)
-	res = applyJSONPath(res, opts.Transform)
-	// Modeled after `jq -r` (`--raw-output`): if the result is a string, print it without JSON quotes so that
-	// it's easier to pipe into other programs.
-	if opts.RawOutput && res.Type == gjson.String {
-		value := res.Str
-		if isTerminal(destination) {
-			value = jsonview.SanitizeTerminalString(value)
-		}
-		return []byte(value + "\n"), nil
-	}
-	switch strings.ToLower(opts.Format) {
-	case "text":
-		var text bytes.Buffer
-		err := readable.Write(&text, res)
-		return text.Bytes(), err
-	case "pretty":
-		var out bytes.Buffer
-		w := &colorprofile.Writer{Forward: &out, Profile: cliterminal.ColorProfile(destination, os.Environ(), isTerminal(destination))}
-		if _, err := w.WriteString(jsonview.RenderJSON(opts.Title, res) + "\n"); err != nil {
-			return nil, err
-		}
-		return out.Bytes(), nil
-	case "json":
-		prettyJSON := pretty.Pretty([]byte(res.Raw))
-		if shouldUseColors(destination) {
-			return pretty.Color(prettyJSON, pretty.TerminalStyle), nil
-		} else {
-			return prettyJSON, nil
-		}
-	case "jsonl":
-		// @ugly is gjson syntax for "no whitespace", so it fits on one line
-		oneLineJSON := res.Get("@ugly").Raw
-		if shouldUseColors(destination) {
-			bytes := append(pretty.Color([]byte(oneLineJSON), pretty.TerminalStyle), '\n')
-			return bytes, nil
-		} else {
-			return []byte(oneLineJSON + "\n"), nil
-		}
-	case "raw":
-		return []byte(res.Raw + "\n"), nil
-	case "yaml":
-		input := strings.NewReader(res.Raw)
-		var yaml strings.Builder
-		if err := json2yaml.Convert(&yaml, input); err != nil {
-			return nil, err
-		}
-		return []byte(yaml.String()), nil
-	default:
-		return nil, fmt.Errorf("Invalid format: %s, valid formats are: %s", opts.Format, strings.Join(OutputFormats, ", "))
-	}
+	return clioutput.FormatJSON(res, clioutput.FormatOptions{
+		Format: opts.Format, RawOutput: opts.RawOutput, Title: opts.Title, Transform: opts.Transform,
+	}, destination, isTerminal(destination))
 }
 
 const warningExploreNotSupported = "Warning: Output format 'explore' not supported for non-terminal output; falling back to 'json'\n"
@@ -488,7 +420,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	}
 	opts.Format = resolvedOutputFormat(opts)
 	projectAudio := opts.Transform == "" && !opts.RawOutput
-	res = applyJSONPath(res, opts.Transform)
+	res = clioutput.ApplyJSONPath(res, opts.Transform)
 
 	switch strings.ToLower(opts.Format) {
 	case "text":

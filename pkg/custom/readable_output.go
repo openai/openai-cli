@@ -15,17 +15,8 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// Automatic output is readable on every destination. Extraction keeps its
-// existing JSON/raw-string contract, including when stdout is redirected.
 func resolvedOutputFormat(opts ShowJSONOpts) string {
-	format := strings.ToLower(opts.Format)
-	if format == "" || format == "auto" {
-		if opts.Transform != "" || opts.RawOutput {
-			return "json"
-		}
-		return "text"
-	}
-	return format
+	return clioutput.ResolveFormat(clioutput.FormatOptions{Format: opts.Format, Transform: opts.Transform, RawOutput: opts.RawOutput})
 }
 
 func configureReadableOutput(root *cli.Command) {
@@ -73,7 +64,7 @@ func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts)
 	emitted := false
 	omitted := false
 	for iter.Next() {
-		value := applyJSONPath(iter.Current().Result, opts.Transform)
+		value := clioutput.ApplyJSONPath(iter.Current().Result, opts.Transform)
 		if opts.RawOutput && value.Type == gjson.String {
 			// Keep raw strings byte-for-byte in pipes and escape terminal
 			// controls using the same destination-aware formatter as ShowJSON.
