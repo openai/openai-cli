@@ -414,7 +414,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 		}
 		res = gjson.ParseBytes(encoded)
 	}
-	res, err := transformOutput(opts.Context, res, selectOutputTransformer(opts, selectTransformer))
+	res, err := clioutput.Transform(opts.Context, res, selectOutputTransformer(opts, selectTransformer))
 	if err != nil {
 		return err
 	}
@@ -510,13 +510,12 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	if handled, err := showModelsListSelection(source, itemsToDisplay, opts); handled {
 		return err
 	}
-	iter := &outputIterator[T]{
-		source:    source,
-		context:   opts.Context,
-		transform: selectOutputTransformer(opts, selectTransformer),
-		route:     transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind},
-		remaining: itemsToDisplay,
-	}
+	iter := clioutput.NewIterator(source, clioutput.IteratorOptions{
+		Context:   opts.Context,
+		Transform: selectOutputTransformer(opts, selectTransformer),
+		Route:     transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind},
+		Limit:     itemsToDisplay,
+	})
 	if handled, err := showModelsListViewer(source, iter, opts); handled {
 		return err
 	}

@@ -23,6 +23,14 @@ interactive exploration, streaming, paging, and output lifecycle retain their
 current owners. The format list still reaches the generated runtime bridge
 through a temporary `pkg/custom.OutputFormats` forwarding value.
 
+The lazy transformed-output iterator and its raw-JSON carrier live in
+`internal/output/`. Direct output, lists, streams, and the explorer share the
+same transformation-once and item-limit boundary, cancellation checks, stream
+failure/completion classifications, and completed-step error snapshots. Assembly
+retains feature-specific transformer selection and presentation; local error
+presentation uses the shared fixed stream-error type. Unit contracts for read
+limits and concurrent explorer error inspection live beside the iterator.
+
 Shared color profiles, automatic terminal presentation eligibility, and background
 theme detection live in `internal/terminal/`. Feature callers retain terminal
 detection for their output destinations, including wrapped batch output.

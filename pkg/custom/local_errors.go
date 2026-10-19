@@ -78,7 +78,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	case errors.As(failure, &navigationFailure):
 		return navigationFailure.Error()
 	case errors.As(failure, &streamFailure):
-		return streamFailure.message + "\nOutput may be incomplete."
+		return streamFailure.Message + "\nOutput may be incomplete."
 	case errors.As(failure, &stdinFailure):
 		message := "Could not apply piped input. Check the input's field names and value types."
 		for _, flag := range parserErrorFlags(command) {

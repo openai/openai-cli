@@ -36,11 +36,12 @@ func showFiniteJSONList[T any](source jsonview.Iterator[T], maximum int64, opts 
 			return true, err
 		}
 	}
-	iter := &outputIterator[T]{
-		source: &finiteJSONSource[T]{source: source}, context: opts.Context,
-		transform: selectOutputTransformer(opts, selectTransformer),
-		route:     transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}, remaining: maximum,
-	}
+	iter := clioutput.NewIterator(&finiteJSONSource[T]{source: source}, clioutput.IteratorOptions{
+		Context:   opts.Context,
+		Transform: selectOutputTransformer(opts, selectTransformer),
+		Route:     transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind},
+		Limit:     maximum,
+	})
 	list := &finiteJSONList{iter: iter, opts: opts}
 	if file, ok := opts.Stdout.(*os.File); ok && file == os.Stdout {
 		if isTerminal(file) {
@@ -56,8 +57,8 @@ func showFiniteJSONList[T any](source jsonview.Iterator[T], maximum int64, opts 
 	return true, list.write(opts.Stdout)
 }
 
-// Validate RawJSON before outputIterator's permissive parser can discard a
-// malformed suffix. Ordinary Go values still use outputIterator's JSON encoder.
+// Validate RawJSON before the shared iterator's permissive parser can discard a
+// malformed suffix. Ordinary Go values still use the shared iterator's JSON encoder.
 type finiteJSONSource[T any] struct {
 	source jsonview.Iterator[T]
 	err    error

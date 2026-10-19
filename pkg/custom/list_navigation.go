@@ -514,7 +514,7 @@ func renderListNavigationLabels(opts ShowJSONOpts, items []gjson.Result) (string
 		if i != 0 {
 			content.WriteByte('\n')
 		}
-		item, err := transformOutput(opts.Context, item, transform)
+		item, err := clioutput.Transform(opts.Context, item, transform)
 		if err != nil {
 			return "", err
 		}

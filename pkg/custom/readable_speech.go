@@ -97,11 +97,12 @@ func copySpeechSaveStream(ctx context.Context, destination io.Writer, source io.
 func copySpeechStreamWithCompletion(ctx context.Context, destination io.Writer, source io.Reader, requireCompletion bool) error {
 	copying := &speechCopyReader{source: source, sink: clioutput.Writer{Context: ctx, Sink: destination}}
 	reader := bufio.NewReader(copying)
-	iter := &outputIterator[outputJSON]{
-		source: &speechEventIterator{reader: reader}, context: ctx,
-		transform: transformers.Identity, remaining: -1,
-		route: transformers.Route{Operation: speechStreamOperation, OutputKind: OutputStreamEvent},
-	}
+	iter := clioutput.NewIterator(&speechEventIterator{reader: reader}, clioutput.IteratorOptions{
+		Context:   ctx,
+		Transform: transformers.Identity,
+		Limit:     -1,
+		Route:     transformers.Route{Operation: speechStreamOperation, OutputKind: OutputStreamEvent},
+	})
 	completed := false
 	for iter.Next() {
 		completed = completed || iter.Current().Get("type").Str == "speech.audio.done"
@@ -110,7 +111,7 @@ func copySpeechStreamWithCompletion(ctx context.Context, destination io.Writer, 
 		return errors.Join(iter.Err(), copying.err, ctx.Err())
 	}
 	if requireCompletion && !completed {
-		return &streamResultError{message: "The speech stream ended without a completion event."}
+		return &streamResultError{Message: "The speech stream ended without a completion event."}
 	}
 	_, tailErr := io.Copy(io.Discard, reader)
 	return errors.Join(iter.Err(), tailErr, ctx.Err())

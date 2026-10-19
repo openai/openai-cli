@@ -346,7 +346,11 @@ func TestFiniteJSONListTerminalPrefixKeepsFramingAndFailure(t *testing.T) {
 					}
 				}
 				opts := finiteListOpts(out)
-				iter := &outputIterator[finiteListRecord]{source: source, context: opts.Context, transform: transformers.Identity, remaining: -1}
+				iter := clioutput.NewIterator(source, clioutput.IteratorOptions{
+					Context:   opts.Context,
+					Transform: transformers.Identity,
+					Limit:     -1,
+				})
 				list := &finiteJSONList{iter: iter, opts: opts}
 				err := list.showTerminal(80, height)
 				if failure != nil {

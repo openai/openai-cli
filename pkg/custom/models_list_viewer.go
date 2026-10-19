@@ -17,7 +17,7 @@ import (
 // Models use the SDK's single-response Page, whose GetNextPage always returns
 // nil. Check that concrete pager before collecting its already-loaded items.
 // Cursor pagers never enter this path, even with misleading operation metadata.
-func showModelsListViewer[T any](source jsonview.Iterator[T], iter *outputIterator[T], opts ShowJSONOpts) (bool, error) {
+func showModelsListViewer[T any](source jsonview.Iterator[T], iter *clioutput.Iterator[T], opts ShowJSONOpts) (bool, error) {
 	_, singlePage := source.(*pagination.PageAutoPager[T])
 	_, selectedModels := any(source).(*selectedModelsIterator)
 	if !singlePage && !selectedModels {
@@ -38,7 +38,7 @@ func showModelsListViewer[T any](source jsonview.Iterator[T], iter *outputIterat
 	return true, writeModelsList(iter, opts, width, height)
 }
 
-func writeModelsList[T any](iter *outputIterator[T], opts ShowJSONOpts, width, height int) error {
+func writeModelsList[T any](iter *clioutput.Iterator[T], opts ShowJSONOpts, width, height int) error {
 	var items []gjson.Result
 	for iter.Next() {
 		items = append(items, iter.Current().Result)
