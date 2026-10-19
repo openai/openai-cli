@@ -45,7 +45,7 @@ type limitsWorkspace struct {
 	ctx                                           context.Context
 	cancel                                        context.CancelFunc
 	backend                                       limitsBackend
-	output                                        *listNavigationOutput
+	output                                        *limitsWorkspaceOutput
 	snapshot                                      limitsSnapshot
 	width, height, section, selection, focus      int
 	page, note, formError                         string
@@ -71,6 +71,40 @@ type limitsInterrupt struct{ error }
 func (*limitsInterrupt) ExitCode() int   { return 130 }
 func (e *limitsInterrupt) Unwrap() error { return e.error }
 
+// limitsWorkspaceOutput records failures that the terminal renderer may ignore.
+// Its output context stays active so shutdown can still restore terminal modes.
+type limitsWorkspaceOutput struct {
+	clioutput.TerminalWriter
+	stop context.CancelFunc
+	mu   sync.Mutex
+	err  error
+}
+
+var _ term.File = (*limitsWorkspaceOutput)(nil)
+
+func (w *limitsWorkspaceOutput) Write(data []byte) (int, error) {
+	n, err := w.Writer.Write(data)
+	if err != nil {
+		w.mu.Lock()
+		if w.err == nil {
+			w.err = err
+		}
+		w.mu.Unlock()
+		w.stop()
+	}
+	return n, err
+}
+
+func (w *limitsWorkspaceOutput) WriteString(data string) (int, error) {
+	return w.Write([]byte(data))
+}
+
+func (w *limitsWorkspaceOutput) Err() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.err
+}
+
 func runLimitsWorkspace(ctx context.Context, cmd *cli.Command, backend limitsBackend, opts ShowJSONOpts) error {
 	file := opts.Stdout.(*os.File)
 	width, height, err := term.GetSize(file.Fd())
@@ -90,8 +124,8 @@ func runLimitsWorkspace(ctx context.Context, cmd *cli.Command, backend limitsBac
 	if err != nil || strings.HasPrefix(m.invocation, "go run ") {
 		m.omitPreview = true
 	}
-	m.output = &listNavigationOutput{terminalOutputWriter: terminalOutputWriter{
-		Writer: clioutput.Writer{Context: context.Background(), Sink: opts.Stdout}, file: file}, stop: stop}
+	m.output = &limitsWorkspaceOutput{TerminalWriter: clioutput.TerminalWriter{
+		Writer: clioutput.Writer{Context: context.Background(), Sink: opts.Stdout}, File: file}, stop: stop}
 	options := []tea.ProgramOption{tea.WithInput(cmd.Root().Reader), tea.WithOutput(m.output), tea.WithContext(programContext), tea.WithWindowSize(width, height)}
 	if !m.color {
 		options = append(options, tea.WithColorProfile(colorprofile.NoTTY))

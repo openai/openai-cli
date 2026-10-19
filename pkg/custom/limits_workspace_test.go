@@ -700,7 +700,7 @@ func TestLimitsWorkspaceHTTPFailureRecovery(t *testing.T) {
 				if !m.locked || writes.Load() != 1 {
 					t.Fatal("Enter or refresh repeated a failed mutation")
 				}
-				m.output = &listNavigationOutput{err: &clioutput.WriteError{Err: syscall.EPIPE}}
+				m.output = &limitsWorkspaceOutput{err: &clioutput.WriteError{Err: syscall.EPIPE}}
 				failure := finishLimitsWorkspace(t.Context(), m, nil, ShowJSONOpts{Context: t.Context(), Format: "text", Stdout: io.Discard, Stderr: io.Discard})
 				if !errors.Is(failure, result.err) || !errors.Is(failure, syscall.EPIPE) || clioutput.IsBrokenPipe(failure) {
 					t.Fatal("finalization discarded the mutation or output failure")
@@ -776,6 +776,133 @@ type limitsFailingWriter struct{ err error }
 
 func (w limitsFailingWriter) Write([]byte) (int, error) { return 0, w.err }
 
+type limitsWorkspaceWriteFunc func([]byte) (int, error)
+
+func (write limitsWorkspaceWriteFunc) Write(data []byte) (int, error) { return write(data) }
+
+func TestLimitsWorkspaceOutputPreservesFailuresAndCleanup(t *testing.T) {
+	for _, method := range []string{"Write", "WriteString"} {
+		for _, failure := range []string{"sink error", "short write"} {
+			t.Run(method+"/"+failure, func(t *testing.T) {
+				ctx, stop := context.WithCancel(t.Context())
+				defer stop()
+				first, later := errors.New("synthetic output failure"), errors.New("later output failure")
+				want := first
+				if failure == "short write" {
+					want = io.ErrShortWrite
+				}
+				calls, cleanup := 0, ""
+				sink := limitsWorkspaceWriteFunc(func(data []byte) (int, error) {
+					calls++
+					switch calls {
+					case 1:
+						if failure == "short write" {
+							return 2, nil
+						}
+						return 2, first
+					case 2:
+						cleanup = string(data)
+						return len(data), nil
+					default:
+						return 0, later
+					}
+				})
+				out := &limitsWorkspaceOutput{TerminalWriter: clioutput.TerminalWriter{
+					Writer: clioutput.Writer{Context: context.Background(), Sink: sink},
+				}, stop: stop}
+				write := func(value string) (int, error) { return out.Write([]byte(value)) }
+				if method == "WriteString" {
+					write = func(value string) (int, error) { return io.WriteString(out, value) }
+				}
+				n, original := write("result")
+				var writeErr *clioutput.WriteError
+				if n != 2 || !errors.Is(original, want) || !errors.As(original, &writeErr) {
+					t.Fatalf("lost partial write or sink classification: n=%d err=%v", n, original)
+				}
+				if !errors.Is(ctx.Err(), context.Canceled) || out.Err() != original {
+					t.Fatal("output failure did not cancel the workspace and retain the original error")
+				}
+				const restore = "\x1b[?25h"
+				if n, err := io.WriteString(out, restore); n != len(restore) || err != nil || cleanup != restore {
+					t.Fatalf("workspace cancellation prevented terminal cleanup: n=%d err=%v", n, err)
+				}
+				if _, err := out.Write([]byte("later")); !errors.Is(err, later) || out.Err() != original {
+					t.Fatal("a later write replaced the first output failure")
+				}
+			})
+		}
+	}
+}
+
+func TestLimitsWorkspaceOutputPreservesCancellation(t *testing.T) {
+	for _, when := range []string{"before write", "during write"} {
+		t.Run(when, func(t *testing.T) {
+			outputContext, cancelOutput := context.WithCancel(t.Context())
+			defer cancelOutput()
+			workspaceContext, stop := context.WithCancel(t.Context())
+			defer stop()
+			calls := 0
+			out := &limitsWorkspaceOutput{TerminalWriter: clioutput.TerminalWriter{
+				Writer: clioutput.Writer{Context: outputContext, Sink: limitsWorkspaceWriteFunc(func(data []byte) (int, error) {
+					calls++
+					cancelOutput()
+					return len(data), nil
+				})},
+			}, stop: stop}
+			wantBytes, wantCalls := len("result"), 1
+			if when == "before write" {
+				cancelOutput()
+				wantBytes, wantCalls = 0, 0
+			}
+			n, err := io.WriteString(out, "result")
+			var writeErr *clioutput.WriteError
+			if n != wantBytes || calls != wantCalls || !errors.Is(err, context.Canceled) || errors.As(err, &writeErr) {
+				t.Fatalf("cancellation changed byte counts or became a sink failure: n=%d calls=%d err=%v", n, calls, err)
+			}
+			if out.Err() != err || !errors.Is(workspaceContext.Err(), context.Canceled) {
+				t.Fatal("cancellation did not stop the workspace and preserve its cause")
+			}
+		})
+	}
+}
+
+func TestLimitsWorkspaceOutputPreservesTerminalFile(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "terminal-output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { file.Close() })
+	if _, err := file.WriteString("input"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	var sink bytes.Buffer
+	out := &limitsWorkspaceOutput{TerminalWriter: clioutput.TerminalWriter{
+		Writer: clioutput.Writer{Context: t.Context(), Sink: &sink}, File: file,
+	}, stop: func() { t.Fatal("successful output canceled the workspace") }}
+	if out.Fd() != file.Fd() {
+		t.Fatal("output wrapper changed the descriptor used for terminal detection")
+	}
+	if _, err := io.WriteString(out, "output"); err != nil || sink.String() != "output" {
+		t.Fatal("output wrapper bypassed its guarded sink", err)
+	}
+	input := make([]byte, len("input"))
+	if _, err := io.ReadFull(out, input); err != nil || string(input) != "input" {
+		t.Fatal("output wrapper changed terminal reads", err)
+	}
+	if out.Err() != nil {
+		t.Fatal("successful writes recorded an error", out.Err())
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
+		t.Fatal("output wrapper changed terminal file ownership", err)
+	}
+}
+
 func TestLimitsWorkspaceFinalizationPreservesIndependentFailures(t *testing.T) {
 	for _, scenario := range []string{"read and terminal output", "mutation and terminal output", "cancellation and terminal output", "refresh and receipt output", "program and terminal output"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -789,21 +916,21 @@ func TestLimitsWorkspaceFinalizationPreservesIndependentFailures(t *testing.T) {
 			switch scenario {
 			case "program and terminal output":
 				runErr = errors.Join(original, tea.ErrProgramKilled)
-				m.output = &listNavigationOutput{err: writeErr}
+				m.output = &limitsWorkspaceOutput{err: writeErr}
 			case "read and terminal output":
 				m.workerError = original
-				m.output = &listNavigationOutput{err: writeErr}
+				m.output = &limitsWorkspaceOutput{err: writeErr}
 			case "mutation and terminal output":
 				m.mutationPending = true
 				m.mutationError = original
-				m.output = &listNavigationOutput{err: writeErr}
+				m.output = &limitsWorkspaceOutput{err: writeErr}
 			case "cancellation and terminal output":
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 				original = context.Canceled
 				m.interrupted = true
-				m.output = &listNavigationOutput{err: writeErr}
+				m.output = &limitsWorkspaceOutput{err: writeErr}
 			case "refresh and receipt output":
 				m.snapshot.Errors = []limitsSourceFailure{{Resource: "spend_alerts", Err: original}}
 				m.lastSaved = gjson.Parse(`{"object":"organization.spend_limit","threshold_amount":10001,"currency":"USD","interval":"month"}`)
