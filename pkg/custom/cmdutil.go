@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -150,7 +151,7 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 	if copyErr != nil {
 		return "", &downloadSaveError{"Download incomplete. The automatically selected file may contain partial output.", copyErr}
 	}
-	return fmt.Sprintf("Wrote output to: %s", filename), nil
+	return fmt.Sprintf("Wrote output to: %s", jsonview.SanitizeTerminalString(filename)), nil
 }
 
 func copyDownloadFile(file io.WriteCloser, source io.Reader) (err error) {
@@ -169,6 +170,14 @@ func createDownloadFile(response *http.Response, data []byte) (*os.File, error) 
 		if dispFilename, ok := params["filename"]; ok {
 			// Only use the last path component to prevent directory traversal
 			filename = filepath.Base(dispFilename)
+			// MIME decoding can introduce controls absent from the HTTP header.
+			// Normalize the automatic name before both exclusive and fallback creation.
+			filename = strings.Map(func(r rune) rune {
+				if unicode.IsControl(r) {
+					return '_'
+				}
+				return r
+			}, filename)
 			// Try to create the file with exclusive flag to avoid race conditions
 			file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 			if err == nil {
