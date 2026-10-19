@@ -22,3 +22,9 @@ func CreatePrivateDownloadFile(root *os.Root, name string) (*os.File, error) {
 	}
 	return file, err
 }
+
+// OpenDownloadDestination opens an existing output without following its final
+// reparse point or modifying its contents. nonblock applies only to Unix FIFOs.
+func OpenDownloadDestination(path string, nonblock bool) (*os.File, error) {
+	return windowsfile.OpenNoFollow(path)
+}

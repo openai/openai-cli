@@ -22,6 +22,65 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func TestWindowsDownloadOpenerPreservesRegularFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "output.bin")
+	if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, nonblock := range []bool{false, true} {
+		file, err := clioutput.OpenDownloadDestination(path, nonblock)
+		if err != nil {
+			t.Fatalf("open existing destination (nonblock=%t): %v", nonblock, err)
+		}
+		opened, statErr := file.Stat()
+		closeErr := file.Close()
+		if statErr != nil || closeErr != nil || !os.SameFile(before, opened) {
+			t.Fatalf("opened identity: stat=%v close=%v", statErr, closeErr)
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "keep" {
+		t.Fatalf("opening changed existing contents: %q, %v", data, err)
+	}
+}
+
+func TestWindowsDownloadOpenerRejectsReparsePoint(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "target.bin")
+	path := filepath.Join(directory, "output.bin")
+	if err := os.WriteFile(target, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	for _, nonblock := range []bool{false, true} {
+		file, err := clioutput.OpenDownloadDestination(path, nonblock)
+		if file != nil {
+			_ = file.Close()
+		}
+		if err == nil {
+			t.Fatal("opened a reparse-point destination")
+		}
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "keep" {
+		t.Fatalf("reparse target changed: %q, %v", data, err)
+	}
+}
+
+func TestWindowsDownloadDeviceDestination(t *testing.T) {
+	body := &failedDownloadBody{Reader: strings.NewReader("synthetic bytes")}
+	message, err := WriteBinaryResponse(&http.Response{Body: body}, io.Discard, os.DevNull)
+	if err != nil || message != "Wrote output to: "+os.DevNull || body.closed != 1 {
+		t.Fatalf("device output: message=%q err=%v closed=%d", message, err, body.closed)
+	}
+}
+
 func TestWindowsDownloadAutomaticConsole(t *testing.T) {
 	helper, err := os.Executable()
 	if err != nil {
