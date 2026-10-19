@@ -15,6 +15,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/commands/admin"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	"github.com/openai/openai-cli/internal/commands/models"
 	clioutput "github.com/openai/openai-cli/internal/output"
@@ -52,8 +53,8 @@ func localErrorMessageForDisplay(root *cli.Command, failure error, human bool) s
 	var projectAPIKeyUpdateFailure *projectAPIKeyUpdateError
 	var voiceTypeFailure *voiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
-	var adminCredentialsFailure *adminCredentialsError
-	var adminSetupFailure *adminSetupError
+	var adminCredentialsFailure *admin.CredentialsError
+	var adminSetupFailure *admin.SetupError
 	var utilityFailure *localcommands.LocalError
 	var downloadFailure *downloadSaveError
 	var receiptFailure *saveReceiptError

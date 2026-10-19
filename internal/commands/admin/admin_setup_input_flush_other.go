@@ -1,6 +1,6 @@
 //go:build !darwin && !linux
 
-package custom
+package admin
 
 import (
 	"os"

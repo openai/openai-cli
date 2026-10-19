@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/commands/admin"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -19,7 +20,7 @@ import (
 
 func spendGuidanceTestCommand(resource, operation string) *cli.Command {
 	return &cli.Command{Name: operation, Metadata: map[string]any{
-		"openai-resource-command": resource, adminCredentialsRequiredMetadata: true,
+		"openai-resource-command": resource, admin.CredentialsRequiredMetadata: true,
 	}}
 }
 
@@ -27,7 +28,7 @@ func TestSpendErrorGuidanceAdminMetadata(t *testing.T) {
 	root := readableErrorTestCommand(t)
 	root.Metadata["help-invocation"] = "'/tmp/synthetic app/openai'"
 	for _, required := range []bool{false, true} {
-		command := &cli.Command{Name: "retrieve", Metadata: map[string]any{adminCredentialsRequiredMetadata: required}}
+		command := &cli.Command{Name: "retrieve", Metadata: map[string]any{admin.CredentialsRequiredMetadata: required}}
 		failure := &openai.Error{StatusCode: http.StatusUnauthorized}
 		message := readableAPIErrorMessage(root, withCommandError(command, failure), failure)
 		want := "Key setup: '/tmp/synthetic app/openai' help setup"

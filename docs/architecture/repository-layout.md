@@ -196,6 +196,14 @@ generated commands do not call them. The generated runtime bridge still targets
 the remaining request/output adapters in `pkg/custom/`. The guarded terminal writer shared with the JSON explorer
 lives in `internal/output/` and retains its original file-close behavior.
 
+Admin credential requirements, setup help, verification, hidden key entry,
+and native input/output handling live in `internal/commands/admin/`. Assembly
+retains registration order and supplies output eligibility, terminal classification,
+diagnostics, and default request options. Request preparation still validates
+credentials at its original point. Native Windows executable contracts build the
+observer from the feature package; cross-layer verification/error tests retain
+actual assembly policies through test-only accessors.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

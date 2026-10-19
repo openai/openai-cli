@@ -171,6 +171,8 @@ func TestMainShellSuggestionsNative(t *testing.T) {
 			if shell.name == "fish" {
 				program = shellSuggestionNativeFish
 			} else if shell.name == "pwsh" {
+				// Keep PowerShell's module cache outside the configuration snapshot.
+				environment = append(environment, "PSModuleAnalysisCachePath="+filepath.Join(work, "ModuleAnalysisCache"))
 				program = shellSuggestionNativePowerShell
 			} else {
 				handler := "command_not_found_handle"

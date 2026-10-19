@@ -1,6 +1,6 @@
 //go:build windows
 
-package custom
+package admin
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const adminSetupConsoleReaderType = "*custom.adminSetupConsoleReader"
+const adminSetupConsoleReaderType = "*admin.adminSetupConsoleReader"
 
 // Native observers execute these checks against the production record converter.
 func adminSetupConsoleReaderContractChecks() map[string]bool {

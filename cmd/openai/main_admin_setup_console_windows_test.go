@@ -133,7 +133,7 @@ type adminConsoleTestFrame struct {
 // Existing Windows CI selects TestMainDispatch. The outer job owns the worker,
 // ConPTY hosts, and CLI children, including any blocked console teardown.
 func TestMainDispatchAdminSetupConsole(t *testing.T) {
-	adminConsoleTestWorker(t, "TestMainDispatchAdminSetupConsole", "./pkg/custom", adminConsoleRunCases)
+	adminConsoleTestWorker(t, "TestMainDispatchAdminSetupConsole", "./internal/commands/admin", adminConsoleRunCases)
 }
 
 // Share the owned worker and build lifecycle with other native console suites.
@@ -344,7 +344,7 @@ func adminConsoleRunCases(t *testing.T) {
 	} {
 		queueScenario := strings.HasPrefix(scenario.mode, "queue_")
 		name := scenario.name
-		expectedReaderType := "*custom.adminSetupConsoleReader"
+		expectedReaderType := "*admin.adminSetupConsoleReader"
 		t.Run(name, func(t *testing.T) {
 			var extra []string
 			if scenario.mode != "original" {
@@ -579,7 +579,7 @@ func adminConsoleObserveParity(t *testing.T, fixture, class, mode string) adminC
 		t.Fatal("could not bound the native parity observer")
 	}
 	session.send(t, map[string]any{"action": "start", "nonce": session.nonce})
-	expectedReader := "*custom.adminSetupConsoleReader"
+	expectedReader := "*admin.adminSetupConsoleReader"
 	ready, written, peeked, promptObserved := false, false, false, false
 	rawStorage := fixture == "repeat_raw_storage" || fixture == "alt_numpad_raw_storage"
 	var activeInputMode uint32

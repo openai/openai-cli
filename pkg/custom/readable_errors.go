@@ -13,6 +13,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/commands/admin"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
@@ -173,7 +174,7 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
 		message = "Check API key, organization and project.\nKey setup: " + invocation + " help setup"
-		if required, _ := commandErrorContext(root, failure).Metadata[adminCredentialsRequiredMetadata].(bool); required {
+		if required, _ := commandErrorContext(root, failure).Metadata[admin.CredentialsRequiredMetadata].(bool); required {
 			message = "Check --admin-api-key or OPENAI_ADMIN_KEY and any Authorization override.\n" +
 				"Check the organization and API address.\nKey setup: " + invocation + " help setup admin"
 		}

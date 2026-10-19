@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/commands/admin"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/transform"
 	"github.com/urfave/cli/v3"
@@ -55,13 +56,13 @@ func newLimitsCommand(project bool) *cli.Command {
 	}
 	return &cli.Command{
 		Name: "limits", Usage: "Inspect and manage hard spend limits and spend alerts.",
-		Metadata: map[string]any{adminCredentialsRequiredMetadata: true, "help-content": clihelp.Content{Examples: []clihelp.Example{{Description: "Open the limits workspace:", Command: example}}}},
+		Metadata: map[string]any{admin.CredentialsRequiredMetadata: true, "help-content": clihelp.Content{Examples: []clihelp.Example{{Description: "Open the limits workspace:", Command: example}}}},
 		Description: "Open the limits workspace in an interactive terminal. Every change requires review.\n" +
 			"Pipes, CI, explicit output formats, and show print a read-only overview.\n" +
 			"Project workspaces also manage project rate limits. Requires an admin key.\n" +
 			"Soft budgets, usage tiers, and organization rate catalogs require the Platform website.",
 		Flags: flags(), Action: limitsCommandAction(project, false),
-		Commands: []*cli.Command{{Name: "show", Usage: "Print a read-only limits overview.", Metadata: map[string]any{adminCredentialsRequiredMetadata: true}, Action: limitsCommandAction(project, true)}},
+		Commands: []*cli.Command{{Name: "show", Usage: "Print a read-only limits overview.", Metadata: map[string]any{admin.CredentialsRequiredMetadata: true}, Action: limitsCommandAction(project, true)}},
 	}
 }
 
