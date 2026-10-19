@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 import termios
@@ -13,10 +14,44 @@ SCENES = ("org-limit", "org-limit-delete", "project-limit", "alert-create", "ale
           "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print")
 
 
+def validate_rendered_checkpoints(root):
+    expected_rows = []
+    expected_pngs = {scene + ".png" for scene in SCENES}
+    expected_frames = {scene + "-frame.gif" for scene in SCENES}
+    for scene in SCENES:
+        evidence = json.loads((root / (scene + "-evidence.json")).read_text())
+        assert evidence["scene"] == scene
+        names = set()
+        for point in evidence["checkpoints"]:
+            name, seconds = point["name"], point["seconds"]
+            assert name and all(character in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in name)
+            assert name not in names, (scene, "duplicate checkpoint name", name)
+            names.add(name)
+            assert type(seconds) in {int, float} and math.isfinite(seconds) and seconds >= 0
+            frame, png = scene + "-" + name + "-frame.gif", scene + "-" + name + ".png"
+            expected_rows.append("\t".join((scene, name, str(seconds), frame, png)))
+            expected_frames.add(frame)
+            expected_pngs.add(png)
+        assert names, (scene, "missing checkpoints")
+    actual_rows = (root / "checkpoint-frames.txt").read_text().splitlines()
+    assert actual_rows == expected_rows, "rendered checkpoint names, times, or filenames differ from source evidence"
+    actual_pngs = {item.name for item in root.glob("*.png")}
+    actual_frames = {item.name for item in root.glob("*-frame.gif")}
+    assert actual_pngs == expected_pngs, ("PNG inventory mismatch", sorted(actual_pngs ^ expected_pngs))
+    assert actual_frames == expected_frames, ("checkpoint GIF inventory mismatch", sorted(actual_frames ^ expected_frames))
+    for name in expected_pngs | expected_frames:
+        artifact = root / name
+        assert artifact.is_file() and not artifact.is_symlink() and artifact.stat().st_size > 0, name
+    print("PASS: rendered checkpoint names, exact times, PNGs, and frame GIFs match source evidence without missing or extra files.")
+
+
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: validate.py OUTPUT_DIRECTORY")
+    if len(sys.argv) not in {2, 3} or len(sys.argv) == 3 and sys.argv[2] != "--rendered-checkpoints":
+        raise SystemExit("usage: validate.py OUTPUT_DIRECTORY [--rendered-checkpoints]")
     root = Path(sys.argv[1])
+    if len(sys.argv) == 3:
+        validate_rendered_checkpoints(root)
+        return
     requests = [json.loads(line) for line in (root / "requests.jsonl").read_text().splitlines()]
     for scene in SCENES:
         evidence = json.loads((root / (scene + "-evidence.json")).read_text())

@@ -61,6 +61,9 @@ The scene driver restores terminal output processing and closes every owned chil
 
 The recorder preserves raw child bytes, child casts, outer casts, request logs, hashes, and actual process statuses.
 The validator checks byte identity across all three capture forms.
+Checkpoint renderers receive no stdin. The recorder logs their exact names, timestamps, and output filenames.
+A second validation pass compares that inventory with source checkpoints and all PNG and frame-GIF filenames.
+It rejects missing, duplicate, altered, or unexpected checkpoint artifacts.
 It checks exact mutation bodies and guards against automatic retry after an uncertain write.
 Terminal captures merge stdout and stderr. They do not prove separate stream routing.
 

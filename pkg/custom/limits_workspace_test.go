@@ -697,6 +697,8 @@ func TestLimitsDraftExactAmountsAndPrefixPresence(t *testing.T) {
 		{name: "replace empty", original: `,"subject_prefix":"Existing"`, mode: 1, set: true},
 		{name: "clear null", original: `,"subject_prefix":"Existing"`, mode: 2, set: true, null: true},
 		{name: "edited value", value: "New prefix", set: true},
+		{name: "edited original", original: `,"subject_prefix":"Existing"`, value: "New prefix", set: true},
+		{name: "edited original to empty", original: `,"subject_prefix":"Existing"`, set: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := strings.Replace(limitsControllerAlert, `["synthetic@example.invalid"]}`, `["synthetic@example.invalid"]`+tc.original+`}`, 1)
@@ -782,11 +784,18 @@ func TestLimitsWorkspaceActionVisibleAtMinimumSize(t *testing.T) {
 				m.draft.inputs[0].SetValue("100.01")
 				if kind == "alert_create" {
 					m.draft.inputs[1].SetValue("synthetic@example.invalid")
+					m.draft.inputs[2].SetValue("Edited prefix")
+					if view := ansi.Strip(m.View().Content); !strings.Contains(view, "Prefix: Keep unless edited") {
+						t.Fatalf("edited prefix has misleading mode guidance: %q", view)
+					}
 				}
 			}
 			m.review()
 			if m.page != "review" {
 				t.Fatalf("fixture could not enter review: %s", m.formError)
+			}
+			if kind == "alert_create" && (!m.change.SubjectPrefixSet || m.change.SubjectPrefix == nil || *m.change.SubjectPrefix != "Edited prefix") {
+				t.Fatalf("review did not retain the edited prefix: %+v", m.change)
 			}
 			m.viewport.GotoBottom()
 			view := ansi.Strip(m.View().Content)

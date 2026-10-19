@@ -92,7 +92,7 @@ func (m *limitsWorkspace) View() tea.View {
 			body = append(body, line(m.draft.labels[i]), marker+ansi.Truncate(m.draft.inputs[i].View(), width, "…"))
 		}
 		if count == 3 {
-			modes := []string{"Preserve original", "Replace (empty is allowed)", "Clear to null"}
+			modes := []string{"Keep unless edited", "Replace (empty is allowed)", "Clear to null"}
 			body = append(body, mark("Prefix: "+modes[m.draft.prefixMode], m.focus == count))
 		}
 		body = append(body, mark("Review change", m.focus >= count && !(count == 3 && m.focus == count)))

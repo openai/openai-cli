@@ -66,14 +66,18 @@ shasum -a 256 -c "$demo_output/source-sha256.txt" > "$demo_output/source-validat
 "$demo_python" -I -B "$record_source/validate.py" "$demo_output" > "$demo_output/validation.txt"
 demo_assemble_capture 150 "${record_scenes[@]}"
 # Select checkpoint frames from the exact child captures. No UI text is reconstructed.
+: > "$demo_output/checkpoint-frames.txt"
 for record_scene in "${record_scenes[@]}"; do
   while IFS=$'\t' read -r record_name record_seconds; do
     "$demo_agg" --quiet "${demo_render_options[@]}" --select "$record_seconds" \
-      "$demo_output/$record_scene-evidence.child.cast" "$demo_output/$record_scene-$record_name-frame.gif"
-    "$demo_ffmpeg" -hide_banner -loglevel error -y -i "$demo_output/$record_scene-$record_name-frame.gif" \
-      -frames:v 1 "$demo_output/$record_scene-$record_name.png"
+      "$demo_output/$record_scene-evidence.child.cast" "$demo_output/$record_scene-$record_name-frame.gif" < /dev/null
+    "$demo_ffmpeg" -nostdin -hide_banner -loglevel error -y -i "$demo_output/$record_scene-$record_name-frame.gif" \
+      -frames:v 1 "$demo_output/$record_scene-$record_name.png" < /dev/null
+    printf '%s\t%s\t%s\t%s\t%s\n' "$record_scene" "$record_name" "$record_seconds" \
+      "$record_scene-$record_name-frame.gif" "$record_scene-$record_name.png" >> "$demo_output/checkpoint-frames.txt"
   done < <("$demo_python" -I -B -c 'import json,sys; data=json.load(open(sys.argv[1])); [print(item["name"]+"\t"+str(item["seconds"])) for item in data["checkpoints"]]' "$demo_output/$record_scene-evidence.json")
 done
+"$demo_python" -I -B "$record_source/validate.py" "$demo_output" --rendered-checkpoints >> "$demo_output/validation.txt"
 (
   cd "$demo_output"
   shasum -a 256 -- *.cast *.gif *.png *.txt *.json *.jsonl *.sh > SHA256SUMS
