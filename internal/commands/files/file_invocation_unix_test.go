@@ -1,6 +1,6 @@
 //go:build !windows
 
-package custom
+package files
 
 import (
 	"bytes"
@@ -34,7 +34,7 @@ func fileReceiptForExecutable(t *testing.T, executable, shell string) string {
 	}}}}
 	_, _, err := clihelp.Configure(root, os.Args)
 	require.NoError(t, err)
-	configureFileCommands(root)
+	Configure(root)
 	require.NoError(t, root.Run(t.Context(), []string{executable, "files", "upload", "--file", "synthetic.txt", "--purpose", "user_data"}))
 	_, command, found := strings.Cut(receipt.String(), "\nInspect it: ")
 	require.True(t, found, receipt.String())

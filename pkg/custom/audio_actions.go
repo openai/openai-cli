@@ -11,6 +11,7 @@ import (
 	"github.com/openai/openai-cli/internal/audiohistory"
 	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/readable"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
@@ -283,7 +284,7 @@ func (m *audioWorkbench) informationView() tea.View {
 	lines = append(lines, rows[start:min(len(rows), start+height)]...)
 	footer := "↑↓ scroll · Esc back"
 	if m.infoTitle == audioCommandTitle {
-		if _, omit := fileReceiptRequestOptions(m.command.Root()); !omit {
+		if _, omit := requestconfig.NextCommandOptions(m.command.Root()); !omit {
 			footer = "↑↓ · Ctrl+P print/exit · Esc back"
 		}
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/term"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
 )
 
@@ -561,7 +562,7 @@ func (m *imagePicker) activate(row imagePickerRow) tea.Cmd {
 	case "more":
 		m.page, m.selected = "more", 0
 	case "generate", "print":
-		if row.id == "print" && imagePickerShellQuoter(m.shell) == nil {
+		if row.id == "print" && cliterminal.ShellQuoter(m.shell) == nil {
 			m.note = imagePickerUnsupportedShell
 			return nil
 		}

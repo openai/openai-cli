@@ -1,4 +1,5 @@
-package custom
+// Package files owns handwritten file workflows and their result presentation.
+package files
 
 import (
 	"context"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
 
@@ -31,8 +33,8 @@ const (
 	fileGetCommand    = "get"
 )
 
-// Extend task routes after cloning so compatibility commands keep their output.
-func configureFileCommands(root *cli.Command) {
+// Configure extends task routes after cloning so compatibility commands keep their output.
+func Configure(root *cli.Command) {
 	files := root.Command("files")
 	if files == nil {
 		return
@@ -84,7 +86,7 @@ func configureFileCommands(root *cli.Command) {
 				}
 			}
 			invocation := fileInvocation{display: clihelp.DisplayInvocation(command.Root())}
-			invocation.requestArgs, invocation.omitHint = fileReceiptRequestOptions(command.Root())
+			invocation.requestArgs, invocation.omitHint = requestconfig.NextCommandOptions(command.Root())
 			invocation.goRun = invocation.display == "go run ./cmd/"+command.Root().Name
 			if len(os.Args) > 0 {
 				invocation.executable = os.Args[0]

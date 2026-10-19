@@ -1,6 +1,6 @@
 //go:build !darwin && !linux && !windows
 
-package custom
+package files
 
 import "errors"
 

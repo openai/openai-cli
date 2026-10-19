@@ -15,15 +15,14 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
-
+	"github.com/charmbracelet/x/term"
+	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/readable"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-go/v3/option"
-
-	"github.com/charmbracelet/x/term"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
@@ -279,7 +278,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	if err := opts.Context.Err(); err != nil {
 		return err
 	}
-	if handled, err := showFileResult(res, opts); handled {
+	if handled, err := filecommands.ShowResult(res, filecommands.ResultOptions{ReadableOptions: fileResultOptions(opts), Quiet: quietOutput(opts.Context)}); handled {
 		return err
 	}
 	if presentation, ok := savedImagePresentation(opts, OutputResponse); ok {
@@ -499,4 +498,10 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 		}
 		return iter.Err()
 	})
+}
+
+func fileResultOptions(opts ShowJSONOpts) clioutput.ReadableOptions {
+	result := readableOutputOptions(opts)
+	result.Terminal = isTerminal(opts.Stdout) && isTerminal(opts.Stderr)
+	return result
 }

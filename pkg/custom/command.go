@@ -7,6 +7,7 @@ import (
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/codex"
+	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/commands/manpages"
 	"github.com/openai/openai-cli/internal/commands/tokenize"
 	requestconfig "github.com/openai/openai-cli/internal/request"
@@ -45,7 +46,7 @@ func ConfigureCommand(root *cli.Command) {
 	localcommands.ConfigureSubgroups(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
-	configureFileCommands(root)
+	filecommands.Configure(root)
 	tokenize.Register(root)
 	codex.Register(root)
 	localcommands.ConfigurePresentation(root)

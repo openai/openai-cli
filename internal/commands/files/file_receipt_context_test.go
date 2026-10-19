@@ -1,4 +1,4 @@
-package custom
+package files
 
 import (
 	"bytes"
@@ -58,14 +58,14 @@ func TestFileReceiptRequestContext(t *testing.T) {
 				return nil
 			})
 			root.Writer, root.ErrWriter = io.Discard, io.Discard
-			root.Flags = []cli.Flag{&cli.StringFlag{Name: "base-url"}, NewRequestHeaderFlag()}
+			root.Flags = []cli.Flag{&cli.StringFlag{Name: "base-url"}, requestconfig.NewRequestHeaderFlag()}
 			for _, pair := range [][2]string{{"api-key", "OPENAI_API_KEY"}, {"admin-api-key", "OPENAI_ADMIN_KEY"}, {"webhook-secret", "OPENAI_WEBHOOK_SECRET"}, {"organization", "OPENAI_ORG_ID"}, {"project", "OPENAI_PROJECT_ID"}} {
 				root.Flags = append(root.Flags, &requestflag.Flag[string]{Name: pair[0], Sources: cli.EnvVars(pair[1])})
 			}
 			root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
 			requestconfig.ConfigureRootFlags(root)
 			localcommands.ConfigureTasks(root)
-			configureFileCommands(root)
+			Configure(root)
 			args := append([]string{"openai", "files", "upload", "source.txt", "--purpose=user_data"}, tc.flags...)
 			require.NoError(t, root.Run(t.Context(), args))
 		})

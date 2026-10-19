@@ -1,4 +1,4 @@
-package custom
+package files
 
 import (
 	"fmt"
@@ -11,15 +11,22 @@ import (
 	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/readable"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/tidwall/gjson"
 )
 
-// Only friendly file routes opt into terminal presentation. Downloads never do.
-func showFileResult(value gjson.Result, opts ShowJSONOpts) (bool, error) {
-	opts.setDefaults()
+// ResultOptions supplies destination classification and quiet policy from assembly.
+type ResultOptions struct {
+	clioutput.ReadableOptions
+	Quiet bool
+}
+
+// ShowResult presents friendly file routes. Downloads retain ordinary rendering.
+// The caller supplies a non-nil context and initialized output destinations.
+func ShowResult(value gjson.Result, opts ResultOptions) (bool, error) {
 	command, _ := opts.Context.Value(fileCommandKey{}).(string)
-	if command == "" || opts.OutputKind != OutputResponse || opts.Transform != "" || opts.RawOutput ||
-		resolvedOutputFormat(opts) != "text" || !isTerminal(opts.Stdout) || !isTerminal(opts.Stderr) {
+	if command == "" || opts.Route.OutputKind != transformers.OutputResponse || opts.Transform != "" || opts.RawOutput ||
+		clioutput.ResolveFormat(opts.FormatOptions) != "text" || !opts.Terminal {
 		return false, nil
 	}
 	if err := opts.Context.Err(); err != nil {
@@ -27,7 +34,7 @@ func showFileResult(value gjson.Result, opts ShowJSONOpts) (bool, error) {
 	}
 	out := clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}
 	switch {
-	case command == fileGetCommand && opts.Operation == "(resource) files > (method) retrieve":
+	case command == fileGetCommand && opts.Route.Operation == "(resource) files > (method) retrieve":
 		metadata, err := transformers.ProjectFileMetadata(opts.Context, value)
 		if err != nil {
 			return true, err
@@ -36,8 +43,8 @@ func showFileResult(value gjson.Result, opts ShowJSONOpts) (bool, error) {
 			return true, err
 		}
 		return true, readable.Write(out, metadata)
-	case command == fileUploadCommand && opts.Operation == "(resource) files > (method) create":
-		if quietOutput(opts.Context) {
+	case command == fileUploadCommand && opts.Route.Operation == "(resource) files > (method) create":
+		if opts.Quiet {
 			// Quiet suppresses the receipt, while ordinary rendering keeps data.
 			return false, nil
 		}
@@ -143,7 +150,7 @@ func writeFileReceipt(out io.Writer, value gjson.Result, shell string, invocatio
 	// The next workflow step is read-only. Never suggest a destination that could
 	// overwrite the source or another file when the command is copied later.
 	args = append(append([]string{}, invocation.requestArgs...), args...)
-	if command := formatImagePickerCommand(args, shell); command != "" {
+	if command := cliterminal.FormatCommand(args, shell); command != "" {
 		prefix := fileReceiptInvocation(invocation, shell)
 		if prefix == "" {
 			return nil
@@ -160,7 +167,7 @@ func fileReceiptInvocation(invocation fileInvocation, shell string) string {
 		return ""
 	}
 	if invocation.goRun {
-		quote := imagePickerShellQuoter(shell)
+		quote := cliterminal.ShellQuoter(shell)
 		packagePath, recognized := strings.CutPrefix(invocation.display, "go run ")
 		if quote == nil || !recognized || packagePath == "" || !filepath.IsAbs(invocation.goRunDir) || !utf8.ValidString(invocation.goRunDir) || strings.ContainsRune(invocation.goRunDir, 0) {
 			return ""
@@ -170,11 +177,11 @@ func fileReceiptInvocation(invocation fileInvocation, shell string) string {
 	if invocation.display == "" {
 		return "openai"
 	}
-	plain, _ := imagePickerQuoteProperties(invocation.display)
+	plain, _ := cliterminal.QuoteProperties(invocation.display)
 	if plain || invocation.executable == "" {
 		return invocation.display
 	}
-	quote := imagePickerShellQuoter(shell)
+	quote := cliterminal.ShellQuoter(shell)
 	if quote == nil {
 		return ""
 	}

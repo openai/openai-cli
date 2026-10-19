@@ -1,4 +1,4 @@
-package custom
+package terminal
 
 import (
 	"bytes"
@@ -29,7 +29,7 @@ func TestImagePickerNativeShellQuoting(t *testing.T) {
 				t.Skipf("%s is not installed", shell)
 			}
 			arguments := append([]string{"images", "generate", "--prompt"}, values...)
-			command := formatImagePickerCommand(arguments, shell)
+			command := FormatCommand(arguments, shell)
 			require.NotContains(t, command, "\x1b")
 			require.NotContains(t, command, "\n")
 			require.NotContains(t, command, "\u202e")

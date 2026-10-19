@@ -1,4 +1,4 @@
-package custom
+package terminal
 
 import (
 	"context"
@@ -6,20 +6,21 @@ import (
 	"strings"
 )
 
-// imagePickerParentShell identifies the immediate caller. The login shell in
+// ParentShell identifies the immediate caller. The login shell in
 // SHELL can differ from an interactive subshell, so it is not a fallback here.
-func imagePickerParentShell(ctx context.Context) string {
+func ParentShell(ctx context.Context) string {
 	if ctx.Err() != nil {
 		return ""
 	}
-	name, err := imagePickerParentProcessName()
+	name, err := ParentProcessName()
 	if err != nil || ctx.Err() != nil {
 		return ""
 	}
-	return imagePickerShellName(name)
+	return ShellName(name)
 }
 
-func imagePickerShellName(name string) string {
+// ShellName recognizes supported shells from a process name or executable path.
+func ShellName(name string) string {
 	name = filepath.Base(strings.ReplaceAll(name, `\`, "/"))
 	name = strings.TrimPrefix(strings.ToLower(name), "-")
 	name = strings.TrimSuffix(name, ".exe")

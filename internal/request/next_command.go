@@ -1,4 +1,4 @@
-package custom
+package request
 
 import (
 	"net/url"
@@ -7,12 +7,11 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
 
-// Reproduce request selection without copying credentials into terminal output.
-func fileReceiptRequestOptions(root *cli.Command) (args []string, omit bool) {
+// NextCommandOptions reproduces request selection without copying credentials into terminal output.
+func NextCommandOptions(root *cli.Command) (args []string, omit bool) {
 	if root.IsSet("header") {
 		return nil, true
 	}
@@ -20,8 +19,8 @@ func fileReceiptRequestOptions(root *cli.Command) (args []string, omit bool) {
 		{"api-key", "OPENAI_API_KEY"},
 		{"admin-api-key", "OPENAI_ADMIN_KEY"},
 		{"webhook-secret", "OPENAI_WEBHOOK_SECRET"},
-		{requestconfig.MTLSClientCertFileFlag, requestconfig.MTLSClientCertFileEnv},
-		{requestconfig.MTLSClientKeyFileFlag, requestconfig.MTLSClientKeyFileEnv},
+		{MTLSClientCertFileFlag, MTLSClientCertFileEnv},
+		{MTLSClientKeyFileFlag, MTLSClientKeyFileEnv},
 	} {
 		// The copied command can reuse inherited environment values. Any effective
 		// override requires a secret or private path that the receipt must not print.

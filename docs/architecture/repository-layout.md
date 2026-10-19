@@ -165,6 +165,14 @@ existing JSON and multipart call sites, preserving explicit flag precedence and
 request bytes. Feature-specific inspection and body construction retain their
 current owners.
 
+File upload/get/download route configuration and upload receipts live in
+`internal/commands/files/`, with their command, privacy, shell, and rendering tests.
+Assembly retains output eligibility and destination classification. Shared shell
+quoting and immediate-parent shell detection live in `internal/terminal/`, used by
+files, image picker, and audio previews. Safe request options for suggested next
+commands live in `internal/request/`; file receipts retain their Go-launcher
+traversal policy. Native shell CI selects the moved quoting test unchanged.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

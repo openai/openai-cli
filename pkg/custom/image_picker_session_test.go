@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -68,7 +69,7 @@ func TestImagePickerSelectionHistoryFollowsSuccessfulEcho(t *testing.T) {
 	require.Empty(t, diagnostic.String())
 	var output bytes.Buffer
 	require.NoError(t, finishImagePickerSelection(ctx, &output, &diagnostic, path, &result))
-	require.Equal(t, formatImagePickerCommand(result.Args, "bash")+"\n", output.String())
+	require.Equal(t, cliterminal.FormatCommand(result.Args, "bash")+"\n", output.String())
 	got, found, err := loadImagePickerState(ctx, path)
 	require.NoError(t, err)
 	require.True(t, found)
