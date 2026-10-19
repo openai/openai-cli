@@ -33,7 +33,7 @@ func InteractiveListOutput(opts ShowJSONOpts) bool {
 // JSONListPage is implemented by SDK explicit API page types.
 type JSONListPage[P any] = listview.JSONListPage[P]
 
-// ShowJSONPages is the generated runtime bridge's lazy page entrypoint.
+// ShowJSONPages retains the lazy-page entrypoint with assembly presentation policy.
 func ShowJSONPages[P JSONListPage[P]](first func(context.Context) (P, error), maximum int64, opts ShowJSONOpts, cursorField string) error {
 	opts.setDefaults()
 	return listview.ShowPages(first, maximum, listViewerOptions(opts), cursorField)

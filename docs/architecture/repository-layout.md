@@ -191,8 +191,9 @@ Shared list navigation, page fetching, loaded-page tables and labels, viewport
 sizing, worker cleanup, and post-restoration printing live in
 `internal/output/listview/`. Assembly supplies rendering and feature-specific
 print-hint/interrupt callbacks, so shared output does not import model commands.
-The generated `ShowJSONPages`/`InteractiveListOutput` bridge still uses temporary
-assembly adapters. The guarded terminal writer shared with the JSON explorer
+Assembly retains the `ShowJSONPages`/`InteractiveListOutput` entrypoints; current
+generated commands do not call them. The generated runtime bridge still targets
+the remaining request/output adapters in `pkg/custom/`. The guarded terminal writer shared with the JSON explorer
 lives in `internal/output/` and retains its original file-close behavior.
 
 ## Product and compatibility contract
