@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -28,7 +29,7 @@ func audioFirstRunTestRoot() *cli.Command {
 		{Name: "help", HideHelpCommand: true, Metadata: map[string]any{"help-topic-command": true},
 			Flags: []cli.Flag{&cli.BoolFlag{Name: "all", Hidden: true}}},
 	}}
-	configureRootRequestFlags(root)
+	requestconfig.ConfigureRootFlags(root)
 	registerAudioCommands(root)
 	root.Command("audio").Command("history").Aliases = []string{"past"}
 	return root

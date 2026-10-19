@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/openai/openai-cli/generated/commands"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-cli/pkg/custom"
 )
@@ -31,5 +32,6 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	custom.ConfigureCommand(commands.Command)
 	os.Exit(runShellTests(m))
 }

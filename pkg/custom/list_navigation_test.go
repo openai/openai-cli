@@ -15,6 +15,7 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/tidwall/gjson"
 )
 
@@ -266,7 +267,7 @@ func TestListNavigationOutputPreservesFailureAndRestoresModes(t *testing.T) {
 		return len(data), nil
 	})
 	out := &listNavigationOutput{terminalOutputWriter: terminalOutputWriter{
-		outputWriter: outputWriter{ctx: context.Background(), out: sink},
+		Writer: clioutput.Writer{Context: context.Background(), Sink: sink},
 	}, stop: stop}
 	out.Write([]byte("results"))
 	if !errors.Is(ctx.Err(), context.Canceled) {
@@ -335,7 +336,7 @@ func TestListNavigationOutputFailureDiagnostic(t *testing.T) {
 					}}
 				m.load()
 				out := &listNavigationOutput{terminalOutputWriter: terminalOutputWriter{
-					outputWriter: outputWriter{ctx: context.Background(), out: navigationWriteFunc(func([]byte) (int, error) {
+					Writer: clioutput.Writer{Context: context.Background(), Sink: navigationWriteFunc(func([]byte) (int, error) {
 						return 0, outputFailure
 					})},
 				}, stop: stop}

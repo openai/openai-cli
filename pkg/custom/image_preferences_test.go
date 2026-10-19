@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -60,6 +61,62 @@ func TestImageInlinePreferencePrecedence(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestImageInlinePreferenceFailureKeepsPrivatePathsAndOriginal(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "synthetic-private-home")
+	for _, name := range []string{"HOME", "APPDATA", "USERPROFILE", "XDG_CONFIG_HOME"} {
+		t.Setenv(name, home)
+	}
+	path, err := imageInlinePreferencePath()
+	require.NoError(t, err)
+	blocked := filepath.Dir(path)
+	require.NoError(t, os.MkdirAll(filepath.Dir(blocked), 0700))
+	original := []byte("synthetic-private-original")
+	require.NoError(t, os.WriteFile(blocked, original, 0600))
+	for _, mode := range []string{"on", "off"} {
+		root := &cli.Command{Name: "openai", Writer: &bytes.Buffer{}, ErrWriter: &bytes.Buffer{},
+			Flags:    []cli.Flag{&cli.StringFlag{Name: "format", Value: "auto"}},
+			Commands: []*cli.Command{{Name: "images", Commands: []*cli.Command{{Name: "inline", Commands: imageInlinePreferenceCommands()}}}},
+		}
+		failure := root.Run(t.Context(), []string{"openai", "images", "inline", mode})
+		var cause *os.PathError
+		require.ErrorAs(t, failure, &cause)
+		require.ErrorIs(t, failure, cause)
+		for _, format := range []string{"text", "json"} {
+			var diagnostic bytes.Buffer
+			require.NoError(t, ShowCommandError(readableErrorTestCommand(t, "--format-error", format), failure, &diagnostic))
+			require.Contains(t, diagnostic.String(), "Existing settings were kept.")
+			require.Contains(t, diagnostic.String(), "image-preferences.json")
+			location := imageInlinePreferenceLocation(runtime.GOOS)
+			if format == "json" {
+				location = strings.ReplaceAll(location, `\`, `\\`)
+			}
+			require.Contains(t, diagnostic.String(), location)
+			require.NotContains(t, diagnostic.String(), "synthetic-private")
+			require.NotContains(t, diagnostic.String(), home)
+		}
+		data, err := os.ReadFile(blocked)
+		require.NoError(t, err)
+		require.Equal(t, original, data)
+	}
+}
+
+func TestImageInlinePreferenceLocationUsesSymbolicPaths(t *testing.T) {
+	for _, name := range []string{"HOME", "APPDATA", "USERPROFILE", "XDG_CONFIG_HOME"} {
+		t.Setenv(name, "synthetic-private-config")
+	}
+	for _, tc := range []struct{ goos, want string }{
+		{"darwin", "$HOME/Library/Application Support/openai/image-preferences.json"},
+		{"windows", `%AppData%\openai\image-preferences.json`},
+		{"linux", "$XDG_CONFIG_HOME/openai/image-preferences.json, or $HOME/.config/openai/image-preferences.json when XDG_CONFIG_HOME is unset"},
+		{"freebsd", "$XDG_CONFIG_HOME/openai/image-preferences.json, or $HOME/.config/openai/image-preferences.json when XDG_CONFIG_HOME is unset"},
+	} {
+		t.Run(tc.goos, func(t *testing.T) {
+			require.Equal(t, tc.want, imageInlinePreferenceLocation(tc.goos))
+			require.NotContains(t, imageInlinePreferenceLocation(tc.goos), "synthetic-private")
+		})
 	}
 }
 

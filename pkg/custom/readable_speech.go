@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -70,7 +71,7 @@ func writeReadableSpeech(response *http.Response, stdout io.Writer, outfile stri
 	}
 	if outfile != "" || opts.Transform == "" && (strings.EqualFold(opts.Format, "raw") || opts.RawOutput) {
 		if file, ok := stdout.(*os.File); ok && file == os.Stdout {
-			return true, "", streamToStdout(func(out *os.File) error {
+			return true, "", clioutput.StreamToStdout(func(out *os.File) error {
 				return copySpeechStream(opts.Context, out, response.Body)
 			})
 		}
@@ -94,13 +95,14 @@ func copySpeechSaveStream(ctx context.Context, destination io.Writer, source io.
 }
 
 func copySpeechStreamWithCompletion(ctx context.Context, destination io.Writer, source io.Reader, requireCompletion bool) error {
-	copying := &speechCopyReader{source: source, sink: outputWriter{ctx: ctx, out: destination}}
+	copying := &speechCopyReader{source: source, sink: clioutput.Writer{Context: ctx, Sink: destination}}
 	reader := bufio.NewReader(copying)
-	iter := &outputIterator[outputJSON]{
-		source: &speechEventIterator{reader: reader}, context: ctx,
-		transform: transformers.Identity, remaining: -1,
-		route: transformers.Route{Operation: speechStreamOperation, OutputKind: OutputStreamEvent},
-	}
+	iter := clioutput.NewIterator(&speechEventIterator{reader: reader}, clioutput.IteratorOptions{
+		Context:   ctx,
+		Transform: transformers.Identity,
+		Limit:     -1,
+		Route:     transformers.Route{Operation: speechStreamOperation, OutputKind: OutputStreamEvent},
+	})
 	completed := false
 	for iter.Next() {
 		completed = completed || iter.Current().Get("type").Str == "speech.audio.done"
@@ -109,7 +111,7 @@ func copySpeechStreamWithCompletion(ctx context.Context, destination io.Writer, 
 		return errors.Join(iter.Err(), copying.err, ctx.Err())
 	}
 	if requireCompletion && !completed {
-		return &streamResultError{message: "The speech stream ended without a completion event."}
+		return &streamResultError{Message: "The speech stream ended without a completion event."}
 	}
 	_, tailErr := io.Copy(io.Discard, reader)
 	return errors.Join(iter.Err(), tailErr, ctx.Err())
@@ -120,7 +122,7 @@ func copySpeechStreamWithCompletion(ctx context.Context, destination io.Writer, 
 // Stop before reading further from the body after any failed or short write.
 type speechCopyReader struct {
 	source io.Reader
-	sink   outputWriter
+	sink   clioutput.Writer
 	err    error
 }
 
@@ -128,7 +130,7 @@ func (r *speechCopyReader) Read(data []byte) (int, error) {
 	if r.err != nil {
 		return 0, r.err
 	}
-	if err := r.sink.ctx.Err(); err != nil {
+	if err := r.sink.Context.Err(); err != nil {
 		return 0, err
 	}
 	n, err := r.source.Read(data)

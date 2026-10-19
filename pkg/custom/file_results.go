@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/jsonview"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/tidwall/gjson"
@@ -24,7 +25,7 @@ func showFileResult(value gjson.Result, opts ShowJSONOpts) (bool, error) {
 	if err := opts.Context.Err(); err != nil {
 		return true, err
 	}
-	out := outputWriter{ctx: opts.Context, out: opts.Stdout}
+	out := clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}
 	switch {
 	case command == fileGetCommand && opts.Operation == "(resource) files > (method) retrieve":
 		metadata, err := transformers.ProjectFileMetadata(opts.Context, value)

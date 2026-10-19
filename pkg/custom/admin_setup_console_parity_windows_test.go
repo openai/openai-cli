@@ -11,45 +11,15 @@ import (
 	"io"
 	"net"
 	"os"
-	"runtime"
 	"testing"
 	"time"
-	"unsafe"
 
+	consolefixture "github.com/openai/openai-cli/internal/testutil/console"
 	"golang.org/x/sys/windows"
 )
 
-var adminConsoleWriteInput = windows.NewLazySystemDLL("kernel32.dll").NewProc("WriteConsoleInputW")
-
-// Native fixture writer shared by parity and queue tests. The count describes
-// records accepted by Windows, not bytes delivered to a particular reader.
 func adminConsoleWriteNativeRecords(records []adminSetupConsoleInputRecord) (uint32, error) {
-	if len(records) == 0 {
-		return 0, nil
-	}
-	if unsafe.Sizeof(records[0]) != 20 || uint64(len(records)) > uint64(^uint32(0)) {
-		return 0, errors.New("native fixture record layout or count is invalid")
-	}
-	if err := adminConsoleWriteInput.Find(); err != nil {
-		return 0, err
-	}
-	input, err := windows.GetStdHandle(windows.STD_INPUT_HANDLE)
-	if err != nil {
-		return 0, err
-	}
-	var written uint32
-	result, _, callErr := adminConsoleWriteInput.Call(uintptr(input), uintptr(unsafe.Pointer(&records[0])), uintptr(len(records)), uintptr(unsafe.Pointer(&written)))
-	runtime.KeepAlive(records)
-	if result == 0 {
-		if callErr != nil && callErr != windows.ERROR_SUCCESS {
-			return written, callErr
-		}
-		return written, errors.New("native fixture record write failed")
-	}
-	if written > uint32(len(records)) {
-		return written, errors.New("native fixture returned an invalid write count")
-	}
-	return written, nil
+	return consolefixture.WriteRecords(records)
 }
 
 type adminConsoleParityInput struct {
@@ -62,7 +32,7 @@ type adminConsoleParityInput struct {
 // checks exact accepted keys, rejected inputs, and observed VT normalization.
 func adminConsoleParityFixture(name string) (adminConsoleParityInput, bool) {
 	key := func(character uint16) adminSetupConsoleInputRecord {
-		return adminSetupConsoleInputRecord{eventType: 1, keyDown: 1, repeat: 1, character: character}
+		return adminSetupConsoleInputRecord{EventType: 1, KeyDown: 1, Repeat: 1, Character: character}
 	}
 	text := func(value string) []adminSetupConsoleInputRecord {
 		records := make([]adminSetupConsoleInputRecord, 0, len(value))
@@ -93,7 +63,7 @@ func adminConsoleParityFixture(name string) (adminConsoleParityInput, bool) {
 		fixture.rawStorage = name == "repeat_raw_storage"
 		fixture.records = text(prefix + "0123456789abcdef0123456789abcdef")
 		repeated := key('a')
-		repeated.repeat = 37
+		repeated.Repeat = 37
 		fixture.records = append(fixture.records, repeated, key('\r'))
 	case "backspace_delete":
 		fixture.class = "accepted-input"
@@ -133,29 +103,29 @@ func adminConsoleParityFixture(name string) (adminConsoleParityInput, bool) {
 		fixture.records = text(prefix)
 		for _, virtualKey := range []uint16{0x10, 0x11, 0x12} {
 			down := key(0)
-			down.virtualKey = virtualKey
+			down.VirtualKey = virtualKey
 			switch virtualKey {
 			case 0x10:
-				down.controlState = 0x0010
+				down.ControlState = 0x0010
 			case 0x11:
-				down.controlState = 0x0008
+				down.ControlState = 0x0008
 			case 0x12:
-				down.controlState = 0x0002
+				down.ControlState = 0x0002
 			}
 			up := down
-			up.keyDown, up.controlState = 0, 0
+			up.KeyDown, up.ControlState = 0, 0
 			fixture.records = append(fixture.records, down, up)
 		}
 		release := key('z')
-		release.keyDown, release.virtualKey = 0, 'Z'
+		release.KeyDown, release.VirtualKey = 0, 'Z'
 		fixture.records = append(fixture.records, key('a'), release, key('\r'))
 	case "navigation":
 		navigation := key(0)
-		navigation.virtualKey, navigation.controlState = 0x25, 0x0100
+		navigation.VirtualKey, navigation.ControlState = 0x25, 0x0100
 		fixture.records = with(navigation, key('z'))
 	case "alt_ascii":
 		alt := key('b')
-		alt.virtualKey, alt.controlState = 'B', 0x0002
+		alt.VirtualKey, alt.ControlState = 'B', 0x0002
 		fixture.records = with(alt, key('z'))
 	case "altgr_translated_ascii":
 		fixture.class = "accepted-input"
@@ -164,7 +134,7 @@ func adminConsoleParityFixture(name string) (adminConsoleParityInput, bool) {
 	case "altgr_physical_ascii":
 		fixture.class = "accepted-input"
 		altgr := key('@')
-		altgr.virtualKey, altgr.controlState = 'Q', 0x0009
+		altgr.VirtualKey, altgr.ControlState = 'Q', 0x0009
 		fixture.records = with(altgr, key('z'))
 	case "alt_numpad_release", "malformed_alt_release", "alt_numpad_raw_storage":
 		fixture.class = "normalization-control"
@@ -172,17 +142,17 @@ func adminConsoleParityFixture(name string) (adminConsoleParityInput, bool) {
 			fixture.class = "accepted-input"
 		}
 		digit := key('6')
-		digit.virtualKey, digit.controlState = 0x66, 0x0022
+		digit.VirtualKey, digit.ControlState = 0x66, 0x0022
 		lastDigit := digit
-		lastDigit.character, lastDigit.virtualKey = '5', 0x65
+		lastDigit.Character, lastDigit.VirtualKey = '5', 0x65
 		if name == "alt_numpad_raw_storage" {
 			fixture.rawStorage = true
-			digit.character, lastDigit.character = 0, 0
+			digit.Character, lastDigit.Character = 0, 0
 		}
 		release := key('A')
-		release.keyDown, release.virtualKey, release.controlState = 0, 0x12, 0x0020
+		release.KeyDown, release.VirtualKey, release.ControlState = 0, 0x12, 0x0020
 		if name == "malformed_alt_release" {
-			fixture.class, release.character = "unsupported-record", 0
+			fixture.class, release.Character = "unsupported-record", 0
 		}
 		fixture.records = with(digit, lastDigit, release, key('z'))
 	default:
@@ -251,7 +221,7 @@ func TestAdminSetupConsoleParityChild(t *testing.T) {
 	if connection.SetDeadline(time.Now().Add(15*time.Second)) != nil {
 		t.Fatal("parity observer could not bound its control channel")
 	}
-	observer := &adminConsoleObserver{encoder: json.NewEncoder(connection)}
+	observer := &adminConsoleObserver{Observer: consolefixture.NewObserver(json.NewEncoder(connection))}
 	observer.send(map[string]any{"event": "hello", "nonce": nonce, "original": original, "scenario": "parity/" + name, "reader_mode": mode})
 	decoder := json.NewDecoder(io.LimitReader(connection, 64<<10))
 	var start adminConsoleControl

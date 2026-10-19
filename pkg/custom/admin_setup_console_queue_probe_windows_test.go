@@ -106,33 +106,33 @@ func adminConsolePeekFixture(expected []adminSetupConsoleInputRecord) adminConso
 		if i >= len(expected) || record != expected[i] {
 			evidence.RecordsMatchFixture = false
 		}
-		if record.eventType != 1 {
+		if record.EventType != 1 {
 			evidence.Categories["non-key"]++
 			continue
 		}
-		evidence.RepeatTotal += uint64(record.repeat)
-		evidence.MaxRepeat = max(evidence.MaxRepeat, record.repeat)
-		if record.repeat == 37 {
+		evidence.RepeatTotal += uint64(record.Repeat)
+		evidence.MaxRepeat = max(evidence.MaxRepeat, record.Repeat)
+		if record.Repeat == 37 {
 			evidence.Repeat37Records++
 		}
-		if record.keyDown != 0 {
+		if record.KeyDown != 0 {
 			evidence.KeyDownRecords++
-			if record.character == 0 && record.virtualKey >= 0x60 && record.virtualKey <= 0x69 && record.controlState&0x0003 != 0 {
+			if record.Character == 0 && record.VirtualKey >= 0x60 && record.VirtualKey <= 0x69 && record.ControlState&0x0003 != 0 {
 				evidence.ZeroCharacterAltDigits++
 			}
-		} else if record.character != 0 {
+		} else if record.Character != 0 {
 			evidence.CharacterKeyUpRecords++
-			if record.virtualKey == 0x12 && record.character == 'A' {
+			if record.VirtualKey == 0x12 && record.Character == 'A' {
 				evidence.AltReleaseARecords++
 			}
 		}
 		category := "non-ASCII"
 		switch {
-		case record.character == 0:
+		case record.Character == 0:
 			category = "NUL"
-		case record.character <= 0x7f:
-			category = adminConsoleByteCategory(byte(record.character))
-		case record.character >= 0xd800 && record.character <= 0xdfff:
+		case record.Character <= 0x7f:
+			category = adminConsoleByteCategory(byte(record.Character))
+		case record.Character >= 0xd800 && record.Character <= 0xdfff:
 			category = "surrogate"
 		}
 		evidence.Categories[category]++

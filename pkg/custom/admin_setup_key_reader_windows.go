@@ -8,12 +8,11 @@ import (
 	"os"
 	"sync/atomic"
 
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"golang.org/x/sys/windows"
 )
 
-type adminSetupConsoleInputRecord = consoleInputRecord
-
-var adminSetupReadConsoleInputEx = consoleReadInputEx
+type adminSetupConsoleInputRecord = cliterminal.ConsoleInputRecord
 
 type adminSetupConsoleReader struct {
 	input        windows.Handle // Borrowed. Never close shared stdin.
@@ -33,7 +32,7 @@ func newAdminSetupKeyReader(input io.Reader) (adminSetupKeyReader, error) {
 	if !ok || file == nil {
 		return nil, errAdminSetupKeyIO
 	}
-	if err := adminSetupReadConsoleInputEx.Find(); err != nil {
+	if err := cliterminal.PrepareConsoleInput(); err != nil {
 		return nil, errAdminSetupKeyIO
 	}
 	reader := &adminSetupConsoleReader{input: windows.Handle(file.Fd())}
@@ -143,7 +142,7 @@ func (reader *adminSetupConsoleReader) discardPendingSnapshot() error {
 }
 
 func readAdminSetupConsoleRecords(input windows.Handle, records []adminSetupConsoleInputRecord) (int, error) {
-	count, err := readConsoleInputRecords(input, records)
+	count, err := cliterminal.ReadConsoleInputRecords(input, records)
 	if err != nil {
 		return 0, errAdminSetupKeyIO
 	}
@@ -181,7 +180,7 @@ func (reader *adminSetupConsoleReader) copyRecords(output []byte) int {
 		reader.next++
 		value, emit := reader.recordCharacter(record)
 		if emit {
-			reader.pending, reader.repeats = value, uint32(max(record.repeat, 1))
+			reader.pending, reader.repeats = value, uint32(max(record.Repeat, 1))
 		}
 	}
 	return written
@@ -194,41 +193,41 @@ func (reader *adminSetupConsoleReader) copyRecords(output []byte) int {
 // Console VT translation normally removes physical modifier flags before storage.
 // Reject ambiguous raw Alt input rather than accepting a changed key.
 func (reader *adminSetupConsoleReader) recordCharacter(record adminSetupConsoleInputRecord) (byte, bool) {
-	if record.eventType != 1 {
+	if record.EventType != 1 {
 		return 0, false
 	}
-	alt := record.controlState&0x0003 != 0
-	ctrl := record.controlState&0x000c != 0
-	isAlt := record.virtualKey == 0x12 || record.virtualKey == 0xa4 || record.virtualKey == 0xa5
-	if record.keyDown == 0 {
+	alt := record.ControlState&0x0003 != 0
+	ctrl := record.ControlState&0x000c != 0
+	isAlt := record.VirtualKey == 0x12 || record.VirtualKey == 0xa4 || record.VirtualKey == 0xa5
+	if record.KeyDown == 0 {
 		if !isAlt {
 			return 0, false
 		}
 		composed := reader.altNumpad
 		reader.altNumpad = false
-		if record.character == 0 && !composed {
+		if record.Character == 0 && !composed {
 			return 0, false
 		}
 		// Alt-numpad produces its composed character on Alt release.
-		if record.character == 0 || record.character > 0x7f {
+		if record.Character == 0 || record.Character > 0x7f {
 			return 0x80, true
 		}
-		return byte(record.character), true
+		return byte(record.Character), true
 	}
-	if record.character == 0 && adminSetupConsoleModifier(record.virtualKey) {
+	if record.Character == 0 && adminSetupConsoleModifier(record.VirtualKey) {
 		return 0, false
 	}
-	if alt && !ctrl && record.virtualKey >= 0x60 && record.virtualKey <= 0x69 {
+	if alt && !ctrl && record.VirtualKey >= 0x60 && record.VirtualKey <= 0x69 {
 		reader.altNumpad = true
 		return 0, false
 	}
-	if record.character == 3 || record.character == 4 {
-		return byte(record.character), true
+	if record.Character == 3 || record.Character == 4 {
+		return byte(record.Character), true
 	}
-	if record.character == 0 || record.character > 0x7f || alt {
+	if record.Character == 0 || record.Character > 0x7f || alt {
 		return 0x80, true
 	}
-	return byte(record.character), true
+	return byte(record.Character), true
 }
 
 func adminSetupConsoleModifier(key uint16) bool {

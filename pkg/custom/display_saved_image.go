@@ -13,6 +13,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/imageoutput"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/terminalimage"
 )
@@ -22,7 +23,7 @@ var errImagePreviewUnavailable = errors.New("image cannot be displayed in this t
 // Separate rendered batch previews without adding space after the final entry.
 // A later skipped entry can leave the gap before its existing warning.
 func displaySavedImages(ctx context.Context, saved []imageoutput.SavedImage, out io.Writer, display func(imageoutput.SavedImage) (bool, error)) error {
-	separator := outputWriter{ctx: ctx, out: out}
+	separator := clioutput.Writer{Context: ctx, Sink: out}
 	for i, file := range saved {
 		if err := ctx.Err(); err != nil {
 			return err

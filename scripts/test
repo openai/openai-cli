@@ -58,7 +58,7 @@ go test ./... "$@"
 # CI compiles Windows tests in a parallel job; local runs still check both.
 if [[ "${SKIP_WINDOWS_TEST_COMPILE:-0}" != "1" ]]; then
   echo "==> Checking tests on Windows"
-  GOARCH=amd64 GOOS=windows go test -c ./... "$@"
-  # `go test -c` produces a bunch of .exe files; make sure to clean those up
-  find . -name "*.test.exe" -exec rm {} \;
+  # Let Go isolate and clean each package's temporary binary. Different
+  # packages may share a directory name; do not execute Windows binaries here.
+  GOARCH=amd64 GOOS=windows go test -exec=true ./... "$@"
 fi

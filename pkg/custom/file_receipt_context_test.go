@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -38,7 +40,7 @@ func TestFileReceiptRequestContext(t *testing.T) {
 		{"invalid project", []string{"--project=proj\x00name"}, nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, name := range []string{"OPENAI_ADMIN_KEY", "OPENAI_WEBHOOK_SECRET", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID", mtlsClientCertFileEnv, mtlsClientKeyFileEnv} {
+			for _, name := range []string{"OPENAI_ADMIN_KEY", "OPENAI_WEBHOOK_SECRET", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID", requestconfig.MTLSClientCertFileEnv, requestconfig.MTLSClientKeyFileEnv} {
 				t.Setenv(name, "")
 				require.NoError(t, os.Unsetenv(name))
 			}
@@ -60,9 +62,9 @@ func TestFileReceiptRequestContext(t *testing.T) {
 			for _, pair := range [][2]string{{"api-key", "OPENAI_API_KEY"}, {"admin-api-key", "OPENAI_ADMIN_KEY"}, {"webhook-secret", "OPENAI_WEBHOOK_SECRET"}, {"organization", "OPENAI_ORG_ID"}, {"project", "OPENAI_PROJECT_ID"}} {
 				root.Flags = append(root.Flags, &requestflag.Flag[string]{Name: pair[0], Sources: cli.EnvVars(pair[1])})
 			}
-			root.Flags = append(root.Flags, mtlsClientFlags()...)
-			configureRootRequestFlags(root)
-			configureTaskCommands(root)
+			root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
+			requestconfig.ConfigureRootFlags(root)
+			localcommands.ConfigureTasks(root)
 			configureFileCommands(root)
 			args := append([]string{"openai", "files", "upload", "source.txt", "--purpose=user_data"}, tc.flags...)
 			require.NoError(t, root.Run(t.Context(), args))

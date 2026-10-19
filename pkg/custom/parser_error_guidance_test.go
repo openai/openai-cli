@@ -16,12 +16,13 @@ func TestParserErrorGuidanceTypes(t *testing.T) {
 		flag cli.Flag
 		want string
 	}{
-		{"integer", &cli.IntFlag{Name: "value"}, "Expected an integer."},
-		{"unsigned integer", &cli.UintFlag{Name: "value"}, "Expected an integer."},
-		{"number", &cli.FloatFlag{Name: "value"}, "Expected a number."},
+		{"integer", &cli.IntFlag{Name: "value"}, "Expected an integer, such as 1."},
+		{"unsigned integer", &cli.UintFlag{Name: "value"}, "Expected an integer, such as 1."},
+		{"number", &cli.FloatFlag{Name: "value"}, "Expected a number, such as 0.5."},
 		{"boolean", &cli.BoolFlag{Name: "value"}, "Expected a boolean (true or false)."},
-		{"nullable integer", &requestflag.Flag[*int64]{Name: "value"}, "Expected an integer."},
-		{"nullable number", &requestflag.Flag[*float64]{Name: "value"}, "Expected a number."},
+		{"duration", &cli.DurationFlag{Name: "value"}, "Expected a duration, such as 1s."},
+		{"nullable integer", &requestflag.Flag[*int64]{Name: "value"}, "Expected an integer, such as 1."},
+		{"nullable number", &requestflag.Flag[*float64]{Name: "value"}, "Expected a number, such as 0.5."},
 		{"nullable boolean", &requestflag.Flag[*bool]{Name: "value"}, "Expected a boolean (true or false)."},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -103,7 +104,7 @@ func TestParserErrorTypeUsesChildFlag(t *testing.T) {
 	ConfigureCommandErrors(root)
 	err := root.Run(t.Context(), []string{"openai", "create", "-p", "synthetic-private-value"})
 	got := localErrorMessage(root, err)
-	if got != "Invalid value for --project. Expected an integer.\nOptions and examples: openai create --help" {
+	if got != "Invalid value for --project. Expected an integer, such as 1.\nOptions and examples: openai create --help" {
 		t.Errorf("shadowed flag diagnostic = %q", got)
 	}
 }
