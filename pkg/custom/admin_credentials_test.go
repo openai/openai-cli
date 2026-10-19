@@ -15,6 +15,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/apiquery"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/commands/admin"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/openai/openai-go/v3"
@@ -75,7 +76,7 @@ func TestAdminCredentialsCanonicalRequirementsSurviveRoutes(t *testing.T) {
 				path = []string{"workspace-alias", "list"}
 			}
 			err := root.Run(t.Context(), append([]string{root.Name}, path...))
-			var missing *adminCredentialsError
+			var missing *admin.CredentialsError
 			require.ErrorAs(t, err, &missing)
 			require.Zero(t, calls)
 			var contextual *commandError
@@ -165,7 +166,7 @@ func TestAdminCredentialsStandardServiceAuthentication(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, 1, calls)
 			} else {
-				var missing *adminCredentialsError
+				var missing *admin.CredentialsError
 				require.ErrorAs(t, err, &missing)
 				require.Zero(t, calls)
 			}
@@ -212,7 +213,7 @@ func TestAdminCredentialsEndpointOverrides(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, 1, calls)
 			} else {
-				var missing *adminCredentialsError
+				var missing *admin.CredentialsError
 				require.ErrorAs(t, err, &missing)
 				require.Zero(t, calls)
 			}
@@ -229,7 +230,7 @@ func TestAdminCredentialsTypedErrorPresentation(t *testing.T) {
 			})
 			ConfigureCommand(root)
 			err := root.Run(t.Context(), []string{root.Name, "--format-error", format, "admin", "organization", "projects", "list"})
-			var missing *adminCredentialsError
+			var missing *admin.CredentialsError
 			require.ErrorAs(t, err, &missing)
 			var output bytes.Buffer
 			require.NoError(t, ShowCommandError(root, fmt.Errorf("synthetic wrapper: %w", err), &output))

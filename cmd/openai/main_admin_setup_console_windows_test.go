@@ -133,7 +133,7 @@ type adminConsoleTestFrame struct {
 // Existing Windows CI selects TestMainDispatch. The outer job owns the worker,
 // ConPTY hosts, and CLI children, including any blocked console teardown.
 func TestMainDispatchAdminSetupConsole(t *testing.T) {
-	adminConsoleTestWorker(t, "TestMainDispatchAdminSetupConsole", "./pkg/custom", adminConsoleRunCases)
+	adminConsoleTestWorker(t, "TestMainDispatchAdminSetupConsole", "./internal/commands/admin", adminConsoleRunCases)
 }
 
 // Share the owned worker and build lifecycle with other native console suites.

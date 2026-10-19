@@ -1,4 +1,4 @@
-package custom
+package admin_test
 
 import (
 	"context"
@@ -10,8 +10,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/commands/admin"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
+	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -19,11 +21,11 @@ import (
 func TestAdminSetupVerificationPreservesMTLS(t *testing.T) {
 	const entered = "synthetic-entered-admin-key"
 	root := adminCredentialsTestCommand(t, func(ctx context.Context, command *cli.Command) error {
-		options, _, err := adminSetupRequestOptions(command)
+		options, _, err := admin.TestRequestOptions(command, custom.GetDefaultRequestOptions)
 		if err != nil {
 			return err
 		}
-		return verifyAdminSetup(ctx, options, []byte(entered))
+		return admin.TestVerifySetup(ctx, options, []byte(entered))
 	})
 	t.Setenv("OPENAI_ADMIN_KEY", "synthetic-environment-key")
 	t.Setenv("OPENAI_CUSTOM_HEADERS", "Authorization: Bearer synthetic-header-key\nX-Api-Key: synthetic-gateway-key")
@@ -49,7 +51,7 @@ func TestAdminSetupVerificationPreservesMTLS(t *testing.T) {
 	t.Cleanup(server.Close)
 	configureTestServerTrust(t, server)
 	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
-	ConfigureCommand(root)
+	custom.ConfigureCommand(root)
 	require.NoError(t, root.Run(t.Context(), []string{
 		root.Name, "--base-url", server.URL, "--admin-api-key", "synthetic-flag-key",
 		"--mtls-client-cert-file", certFile, "--mtls-client-key-file", keyFile,
@@ -83,11 +85,11 @@ func TestAdminSetupVerificationRejectsRedirectWithoutChangingClient(t *testing.T
 		return nil
 	}}
 	root := adminCredentialsTestCommand(t, func(ctx context.Context, command *cli.Command) error {
-		options, _, err := adminSetupRequestOptions(command)
+		options, _, err := admin.TestRequestOptions(command, custom.GetDefaultRequestOptions)
 		if err != nil {
 			return err
 		}
-		return verifyAdminSetup(ctx, options, []byte("synthetic-entered-key"))
+		return admin.TestVerifySetup(ctx, options, []byte("synthetic-entered-key"))
 	})
 	root.Metadata = map[string]interface{}{requestconfig.MTLSHTTPClientMetadata: client}
 	root.ExitErrHandler = func(context.Context, *cli.Command, error) {}

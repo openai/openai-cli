@@ -1,16 +1,19 @@
-package custom
+package admin_test
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/openai/openai-cli/internal/commands/admin"
+	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/require"
@@ -32,7 +35,7 @@ func TestAdminSetupCancellationPreservesCanonicalCause(t *testing.T) {
 		{name: "keyboard cancellation", active: true, wantCause: context.Canceled, wantCode: 130, wantMessage: "Admin setup canceled. No key was saved."},
 		{name: "parent cancellation", cause: context.Canceled, wantCause: context.Canceled, wantCode: 130, wantMessage: "Admin setup canceled. No key was saved."},
 		{name: "parent deadline", deadline: true, wantCause: context.DeadlineExceeded, wantCode: 1, wantMessage: "Admin setup timed out. No key was saved."},
-		{name: "SIGTERM cause mapping", cause: errAdminSetupTerminated, wantCause: context.Canceled, wantCode: 143, wantMessage: "Admin setup canceled. No key was saved."},
+		{name: "SIGTERM cause mapping", cause: admin.TestTerminated, wantCause: context.Canceled, wantCode: 143, wantMessage: "Admin setup canceled. No key was saved."},
 		{name: "private API parent cause", cause: privateAPI, wantCause: context.Canceled, wantCode: 130, wantMessage: "Admin setup canceled. No key was saved."},
 		{name: "private URL deadline cause", cause: privateURL, deadline: true, wantCause: context.DeadlineExceeded, wantCode: 1, wantMessage: "Admin setup timed out. No key was saved."},
 	} {
@@ -49,9 +52,9 @@ func TestAdminSetupCancellationPreservesCanonicalCause(t *testing.T) {
 			}
 			// Exercise parent propagation and signal-handler cleanup without sending
 			// process-wide signals. Actual signal delivery uses the public PTY tests.
-			ctx, stop := adminSetupSignalContext(parent)
+			ctx, stop := admin.TestSignalContext(parent)
 			defer stop()
-			err := adminSetupCanceled(ctx)
+			err := admin.TestCanceled(ctx)
 			require.EqualError(t, err, test.wantMessage)
 			require.ErrorIs(t, err, test.wantCause)
 			require.Equal(t, test.wantCause, errors.Unwrap(err))
@@ -111,7 +114,7 @@ func TestAdminSetupVerificationCancellationPreservesCause(t *testing.T) {
 					<-request.Context().Done()
 					return nil, &url.Error{Op: "Get", URL: "https://synthetic.invalid/?key=synthetic-private-key", Err: request.Context().Err()}
 				})}
-				err := verifyAdminSetup(parent, []option.RequestOption{
+				err := admin.TestVerifySetup(parent, []option.RequestOption{
 					option.WithBaseURL("http://127.0.0.1/v1"), option.WithHTTPClient(client), option.WithMaxRetries(0),
 				}, []byte("synthetic-admin-key"))
 				require.Equal(t, 1, requests)
@@ -140,12 +143,20 @@ func (transport adminSetupCancellationTransport) RoundTrip(request *http.Request
 func assertAdminSetupCancellationPresentation(t *testing.T, failure error, message string) {
 	t.Helper()
 	for _, format := range []string{"text", "json"} {
-		root := readableErrorTestCommand(t, "--format-error", format)
+		root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard, HideHelpCommand: true,
+			Metadata: map[string]any{"help-invocation": "./openai"},
+			Flags:    []cli.Flag{&cli.StringFlag{Name: "format", Value: "auto"}, &cli.StringFlag{Name: "format-error", Value: "auto"}, &cli.StringFlag{Name: "transform-error"}, &cli.StringFlag{Name: "transform"}, &cli.BoolFlag{Name: "raw-output"}},
+			Action:   func(context.Context, *cli.Command) error { return failure },
+		}
+		custom.ConfigureCommandErrors(root)
 		var out bytes.Buffer
 		// The normal command wrapper must retain the canonical cause and code.
-		wrapped := withCommandError(root, failure)
-		require.NoError(t, ShowCommandError(root, wrapped, &out))
-		assertReadableErrorContainsNoPrivateDetails(t, out.String())
+		wrapped := root.Run(t.Context(), []string{"openai", "--format-error", format})
+		require.ErrorIs(t, wrapped, failure)
+		require.NoError(t, custom.ShowCommandError(root, wrapped, &out))
+		for _, private := range []string{"synthetic-", "https://", "token=", "\x1b", "\a", "\u202e"} {
+			require.NotContains(t, out.String(), private)
+		}
 		if format == "text" {
 			require.Equal(t, message+"\n", out.String())
 		} else {

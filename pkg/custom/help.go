@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	"github.com/openai/openai-cli/internal/commands/admin"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -16,7 +17,7 @@ func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
 	configureHelpGroups(root)
 	configureImageHelpContent(root)
 	args, handled, err := clihelp.Configure(root, args)
-	configureAdminSetupHelp(root)
+	admin.ConfigureSetupHelp(root)
 	return args, handled, err
 }
 
