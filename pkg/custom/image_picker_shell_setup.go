@@ -13,6 +13,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/autocomplete"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -102,7 +103,7 @@ func configureImagePickerShellSetup(root *cli.Command) {
 		}
 		shell := command.Args().First()
 		if shell == "" && !command.Bool("automatic") {
-			shell = imagePickerParentShell(ctx)
+			shell = cliterminal.ParentShell(ctx)
 		}
 		if shell == "pwsh" {
 			return cli.Exit("PowerShell uses normal Tab completion. Type openai images generate and press Enter to open the image picker.", 2)
@@ -201,7 +202,7 @@ func imagePickerTabChoiceDirectory() (string, error) {
 }
 
 func imagePickerTabChoicePath(shell string) (string, error) {
-	if imagePickerShellName(shell) != shell || shell == "" {
+	if cliterminal.ShellName(shell) != shell || shell == "" {
 		return "", errors.New("unsupported Tab shortcut shell")
 	}
 	directory, err := imagePickerTabChoiceDirectory()

@@ -871,7 +871,7 @@ jobs:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
           SELECTED_POWERSHELL_DIRECTORY: ${{ steps.powershell.outputs.selected-directory }}
       - name: Check Windows stdin startup probing
-        run: go test ./pkg/custom -run '^TestWindowsPipedDataAvailable$' -count=1 -v
+        run: go test ./internal/input -run '^TestWindowsPipedDataAvailable$' -count=1 -v
       - name: Check native Windows shell and file commands
         if: matrix.existing-checks
         run: go test -p 2 ./cmd/openai -run '^TestMainShell' -skip '^TestMainShellSuggestions' -count=1 -v
@@ -885,7 +885,7 @@ jobs:
           GOMAXPROCS: '2'
       - name: Check native Windows Batch stdin and private staging
         run: |
-          go test -p 2 ./pkg/custom -run '^TestWindowsBatch(DownloadPrivateStagingAndPublication|OutputDirectory.*)$' -count=1 -timeout=1m -v
+          go test -p 2 ./internal/commands/batches -run '^TestWindowsBatch(DownloadPrivateStagingAndPublication|OutputDirectory.*)$' -count=1 -timeout=1m -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test -p 2 ./cmd/openai -run '^(TestMainBatchesStalledStdinDeadline|TestMainBatchesCompleteStdinControls)$' -count=1 -timeout=2m -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

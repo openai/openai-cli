@@ -11,7 +11,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
@@ -71,7 +73,7 @@ func errorOutputFormat(root *cli.Command) string {
 // prose, request values, URLs or arbitrary local diagnostics. Both renderer sinks
 // use out, including explorer output and warnings. Writer failures are returned.
 func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
-	return withBatchErrorOutput(failure, out, func(ctx context.Context, destination io.Writer) error {
+	return batchcommands.WithErrorOutput(failure, out, func(ctx context.Context, destination io.Writer) error {
 		return showCommandError(ctx, root, failure, destination)
 	})
 }
@@ -79,7 +81,7 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 // ShowCommandErrorFallback keeps secondary cancellation diagnostics bounded too.
 // Its result retains the original presentation failure and any fallback failure.
 func ShowCommandErrorFallback(failure, presentationErr error, out io.Writer) error {
-	fallbackErr := withBatchErrorOutput(failure, out, func(_ context.Context, destination io.Writer) error {
+	fallbackErr := batchcommands.WithErrorOutput(failure, out, func(_ context.Context, destination io.Writer) error {
 		_, err := fmt.Fprintln(destination, "Could not display the error.")
 		return err
 	})
@@ -96,7 +98,7 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 		return nil
 	}
 	format := errorOutputFormat(root)
-	if format == "explore" && interruptedBatchError(failure) {
+	if format == "explore" && batchcommands.InterruptedError(failure) {
 		format = "json"
 	}
 	// A rejected format can still be present in the parsed flag state. Present
@@ -110,9 +112,9 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 	isStream := !errors.Is(failure, context.Canceled) && errors.As(failure, &streamerr)
 	if format == "text" && root.String("transform-error") == "" {
 		message := ""
-		var batchFailure *batchWorkflowError
+		var batchFailure *batchcommands.WorkflowError
 		if errors.As(failure, &batchFailure) {
-			message = batchFailure.message
+			message = batchFailure.Error()
 		} else if isAPI && !errors.Is(failure, context.Canceled) {
 			message = readableAPIErrorMessage(root, failure, apierr)
 		} else if isStream {
@@ -155,7 +157,7 @@ const readableStreamErrorMessage = "The response stream failed. Output may be in
 const readableStreamErrorText = "The response stream failed.\nOutput may be incomplete.\nAPI error details: --format-error json."
 
 func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Error) string {
-	invocation := errorHelpInvocation(root)
+	invocation := clihelp.DisplayInvocation(root)
 	message := "The API could not complete the request."
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
@@ -228,15 +230,6 @@ func readableAPIRequestID(apierr *openai.Error) string {
 	return requestID
 }
 
-// Help's invocation is local display metadata, not part of the API response.
-func errorHelpInvocation(root *cli.Command) string {
-	invocation, _ := root.Metadata["help-invocation"].(string)
-	if invocation == "" {
-		return "openai"
-	}
-	return readable.Text(invocation)
-}
-
 var readableParameterPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:(?:\.[A-Za-z0-9_]+)|(?:\[[0-9]+\]))*$`)
 var readableParameterIndex = regexp.MustCompile(`\[[0-9]+\]`)
 
@@ -284,7 +277,7 @@ func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command) stri
 	if command == nil {
 		return message + "\nCheck your arguments with --help."
 	}
-	invocation := errorHelpInvocation(command.Root())
+	invocation := clihelp.DisplayInvocation(command.Root())
 	pathToCommand := strings.TrimPrefix(command.FullName(), command.Root().Name+" ")
 	return message + "\nOptions and examples: " + invocation + " help " + pathToCommand
 }

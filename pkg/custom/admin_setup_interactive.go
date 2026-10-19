@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/openai/openai-cli/internal/clihelp"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
@@ -105,7 +107,7 @@ func handleAdminSetup(ctx context.Context, command *cli.Command) error {
 	}
 	if !adminSetupInputSupported {
 		return &adminSetupError{
-			message: errAdminSetupUnsupported.Error() + "\nFor manual setup, run: " + errorHelpInvocation(root) + " help setup admin",
+			message: errAdminSetupUnsupported.Error() + "\nFor manual setup, run: " + clihelp.DisplayInvocation(root) + " help setup admin",
 			code:    3,
 		}
 	}
@@ -169,7 +171,7 @@ func adminSetupRequestOptions(command *cli.Command) ([]option.RequestOption, str
 	if !strings.EqualFold(endpoint.Scheme, "https") && !(strings.EqualFold(endpoint.Scheme, "http") && loopback) {
 		return nil, "", &adminSetupError{message: "Admin setup requires HTTPS, except for a local loopback server.", code: 3}
 	}
-	headers, err := requestHeaders(command)
+	headers, err := requestconfig.Headers(command)
 	if err != nil {
 		return nil, "", err
 	}
@@ -180,7 +182,7 @@ func adminSetupRequestOptions(command *cli.Command) ([]option.RequestOption, str
 	// Keep the configured transport, including mTLS, but never forward a newly
 	// entered credential through a redirect. Do not change the shared client.
 	client := *http.DefaultClient
-	if configured, ok := command.Root().Metadata[mtlsHTTPClientMetadata].(*http.Client); ok && configured != nil {
+	if configured, ok := command.Root().Metadata[requestconfig.MTLSHTTPClientMetadata].(*http.Client); ok && configured != nil {
 		client = *configured
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

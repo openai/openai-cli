@@ -3,13 +3,14 @@ package custom
 import (
 	"testing"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
 
 func TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue(t *testing.T) {
 	t.Setenv("OPENAI_TEST_MTLS_FILE", "environment.pem")
-	flag := &mtlsClientFlag{StringFlag: cli.StringFlag{
+	flag := &requestconfig.MTLSClientFlag{StringFlag: cli.StringFlag{
 		Name: "certificate", Sources: cli.EnvVars("OPENAI_TEST_MTLS_FILE"), TakesFile: true,
 	}}
 	require.NoError(t, flag.PreParse())

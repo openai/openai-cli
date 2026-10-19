@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
 
@@ -59,7 +60,7 @@ func checkAdminCredentials(command *cli.Command) error {
 		return nil
 	}
 	// Validate headers before considering authentication, matching FlagOptions.
-	headers, err := requestHeaders(command)
+	headers, err := requestconfig.Headers(command)
 	if err != nil {
 		return err
 	}

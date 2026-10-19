@@ -13,15 +13,16 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/requestflag"
+	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/urfave/cli/v3"
 )
 
 func TestBatchWorkflowUsesConfiguredMTLSTransport(t *testing.T) {
 	for _, operation := range []string{"wait", "download"} {
 		t.Run(operation, func(t *testing.T) {
-			pki := newMTLSTestPKI(t)
+			pki := mtlstest.NewPKI(t)
 			clientRoots := x509.NewCertPool()
-			if !clientRoots.AppendCertsFromPEM(pki.rootPEM) {
+			if !clientRoots.AppendCertsFromPEM(pki.RootPEM) {
 				t.Fatal("could not load synthetic client root")
 			}
 			var paths []string
@@ -45,7 +46,7 @@ func TestBatchWorkflowUsesConfiguredMTLSTransport(t *testing.T) {
 			server.StartTLS()
 			defer server.Close()
 			configureTestServerTrust(t, server)
-			certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+			certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
 			t.Setenv("OPENAI_API_KEY", "sk-fake-batches-mtls")
 			for _, name := range []string{"OPENAI_ADMIN_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID", "OPENAI_CUSTOM_HEADERS", "OPENAI_MTLS_CLIENT_CERT_FILE", "OPENAI_MTLS_CLIENT_KEY_FILE"} {
 				t.Setenv(name, "")

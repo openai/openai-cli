@@ -9,6 +9,8 @@ import (
 	"os"
 
 	"github.com/openai/openai-cli/generated/commands"
+	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/urfave/cli/v3"
@@ -24,13 +26,13 @@ func Run(ctx context.Context, argv []string) int {
 		}
 		return 0
 	}
-	if handled, err := custom.RunBatchOutputHelper(argv); handled {
+	if handled, err := batchcommands.RunBatchOutputHelper(argv); handled {
 		if err != nil {
 			return 1
 		}
 		return 0
 	}
-	if handled, err := custom.RunBatchDirectoryHelper(argv); handled {
+	if handled, err := batchcommands.RunBatchDirectoryHelper(argv); handled {
 		if err != nil {
 			return 1
 		}
@@ -38,7 +40,7 @@ func Run(ctx context.Context, argv []string) int {
 	}
 	app := commands.Command
 	custom.ConfigureCommand(app)
-	app.Flags = append(app.Flags, custom.NewRequestHeaderFlag())
+	app.Flags = append(app.Flags, requestconfig.NewRequestHeaderFlag())
 
 	completing := len(argv) > 1 && argv[1] == "__complete"
 	if completing {
@@ -100,7 +102,7 @@ func runWithRequestConfiguration(ctx context.Context, app *cli.Command, args []s
 				restoreBaseURL = true
 			}
 		} else if !localUtility && baseURLSet {
-			if err := custom.ValidateBaseURL(baseURL, "OPENAI_BASE_URL"); err != nil {
+			if err := requestconfig.ValidateBaseURL(baseURL, "OPENAI_BASE_URL"); err != nil {
 				return ctx, err
 			}
 		}

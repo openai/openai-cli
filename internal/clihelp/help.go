@@ -1,5 +1,5 @@
-// Package clihelp owns local onboarding and help-topic routing. Feature commands
-// supply complete guidance through command metadata.
+// Package clihelp owns local onboarding, help-topic routing, and safe command
+// recovery. Feature commands supply complete guidance through command metadata.
 package clihelp
 
 import (

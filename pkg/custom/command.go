@@ -4,10 +4,13 @@ import (
 	"context"
 	"os"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/codex"
+	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/commands/manpages"
 	"github.com/openai/openai-cli/internal/commands/tokenize"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
 
@@ -24,10 +27,10 @@ func ConfigureCommand(root *cli.Command) {
 	root.Metadata[configuredCommandMetadata] = true
 	configureCertificateCompatibility(root)
 	configureAudioVoices(root)
-	configureRootRequestFlags(root)
+	requestconfig.ConfigureRootFlags(root)
 	// Batch workflows preserve positional path inputs and need the same help annotations.
 	configureBatchCommands(root)
-	describeRequestInputs(root)
+	clihelp.DescribeRequestInputs(root)
 	registerImageModels(root)
 	configureReadableOutput(root)
 	configureModelsList(root)
@@ -43,7 +46,7 @@ func ConfigureCommand(root *cli.Command) {
 	localcommands.ConfigureSubgroups(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
-	configureFileCommands(root)
+	filecommands.Configure(root)
 	tokenize.Register(root)
 	codex.Register(root)
 	localcommands.ConfigurePresentation(root)
@@ -52,7 +55,7 @@ func ConfigureCommand(root *cli.Command) {
 	})
 	configureOutputPolicy(root)
 	ConfigureCommandErrors(root)
-	root.Flags = append(root.Flags, mtlsClientFlags()...)
+	root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
 	previousBefore := root.Before
 	root.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
 		if previousBefore != nil {
@@ -65,7 +68,7 @@ func ConfigureCommand(root *cli.Command) {
 		if IsLocalUtilityCommand(command) {
 			return ctx, nil
 		}
-		return configureMTLS(ctx, command.Root())
+		return requestconfig.ConfigureMTLS(ctx, command.Root())
 	}
-	cli.SuggestCommand = suggestCommand
+	cli.SuggestCommand = clihelp.SuggestCommand
 }
