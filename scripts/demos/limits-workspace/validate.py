@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import termios
 
 
 SCENES = ("org-limit", "org-limit-delete", "project-limit", "alert-create", "alert-edit",
@@ -22,6 +23,14 @@ def main():
         assert evidence["exit_status"] == expected_status, (scene, "incorrect child exit")
         assert evidence["cli_exit_status"] == evidence["exit_status"], (scene, "Bash changed the CLI exit status")
         assert evidence["parent_shell"] == "/bin/bash", (scene, "missing native Bash parent")
+        modes = evidence["terminal_modes"]
+        assert modes["snapshot_parent_pid"] == modes["bash_pid"], (scene, "terminal snapshot lacks its live Bash parent")
+        initial, restored = modes["initial"].copy(), modes["restored"].copy()
+        assert len(initial) == len(restored) == 7, (scene, "incomplete terminal mode snapshot")
+        if sys.platform == "darwin":
+            initial[3] &= ~termios.PENDIN
+            restored[3] &= ~termios.PENDIN
+        assert initial == restored, (scene, "terminal input mode was not restored")
         staged = evidence["staged_binary"]
         staged_path = Path(staged["path"])
         runtime = Path(evidence["recorder_runtime"])
@@ -80,6 +89,7 @@ def main():
     print("PASS: nine real workspace processes; exact child/raw/outer bytes; expected exits and mutation bodies.")
     print("PASS: one mutation per confirmed action; no retry after uncertain outcome; slow load canceled without mutation.")
     print("PASS: native Bash parents preserve CLI exits; staged binary hashes match; eight real command previews; staged files removed.")
+    print("PASS: all seven terminal mode fields restored before Bash exits; only Darwin PENDIN normalized.")
     print("LIMIT: inspect all checkpoint images and GIF frames before claiming visual acceptance.")
 
 

@@ -23,6 +23,13 @@ BASH_WORKSPACE = r'''trap ':' HUP INT TERM
 "$@"
 limits_scene_status=$?
 printf '%s\n' "$limits_scene_status" > "$DEMO_CLI_EXIT" || exit 74
+"$DEMO_TERMIOS_PYTHON" -I -B -c '
+import json, os, sys, termios
+attributes = termios.tcgetattr(0)
+attributes[6] = [value.hex() if isinstance(value, bytes) else value for value in attributes[6]]
+with open(sys.argv[1], "x", encoding="utf-8") as destination:
+    json.dump({"parent_pid": os.getppid(), "attributes": attributes}, destination)
+' "$DEMO_TERMIOS_SNAPSHOT" || exit 74
 exit "$limits_scene_status"
 '''
 
@@ -34,6 +41,10 @@ def write_text(path, value):
 
 
 class RelayTerminal(harness.Terminal):
+    def __init__(self, *args, terminal_snapshot, **kwargs):
+        self.terminal_snapshot = terminal_snapshot
+        super().__init__(*args, **kwargs)
+
     def read(self, duration=0.05):
         offset = len(self.raw)
         super().read(duration)
@@ -55,7 +66,14 @@ class RelayTerminal(harness.Terminal):
         drain(self, 0.15)
         if self.child.returncode != expected:
             raise AssertionError(f"workspace exit={self.child.returncode}, expected={expected}; tail={self.text()[-900:]}")
-        restored, initial = termios.tcgetattr(self.slave), self.initial.copy()
+        # Bash snapshots the modes before exiting its controlling PTY session.
+        snapshot = json.loads(self.terminal_snapshot.read_text())
+        if snapshot["parent_pid"] != self.child.pid:
+            raise AssertionError("terminal modes were not captured under the live Bash parent")
+        restored, initial = snapshot["attributes"].copy(), self.initial.copy()
+        initial[6] = [value.hex() if isinstance(value, bytes) else value for value in initial[6]]
+        self.terminal_modes = {"initial": initial.copy(), "restored": restored.copy(),
+                               "snapshot_parent_pid": snapshot["parent_pid"], "bash_pid": self.child.pid}
         if sys.platform == "darwin":
             restored[3] &= ~termios.PENDIN
             initial[3] &= ~termios.PENDIN
@@ -276,10 +294,12 @@ def main():
             home = Path(temporary) / "home"
             home.mkdir(mode=0o700)
             exit_receipt = Path(temporary) / "cli-exit-status"
+            terminal_snapshot = Path(temporary) / "terminal-modes.json"
             env = {"PATH": temporary + ":/usr/bin:/bin", "HOME": str(home), "TERM": "xterm-256color", "LANG": "en_US.UTF-8",
                    "GOMAXPROCS": "2", "PAGER": "cat", "OPENAI_API_KEY": "synthetic-demo-key",
                    "OPENAI_ADMIN_KEY": "synthetic-demo-admin-key", "OPENAI_BASE_URL": os.environ["OPENAI_BASE_URL"],
-                   "DEMO_CLI_EXIT": str(exit_receipt)}
+                   "DEMO_CLI_EXIT": str(exit_receipt), "DEMO_TERMIOS_PYTHON": sys.executable,
+                   "DEMO_TERMIOS_SNAPSHOT": str(terminal_snapshot)}
             if os.environ.get("DEMO_NO_COLOR", "1") == "1":
                 env.update(NO_COLOR="1", FORCE_COLOR="0")
             terminal = None
@@ -287,12 +307,14 @@ def main():
                 # Post-command status handling keeps Bash as the CLI's real parent.
                 # Both processes inherit the existing PTY session and process group.
                 shell_args = ["--noprofile", "--norc", "-c", BASH_WORKSPACE, "bash", str(staged), *args]
-                terminal = RelayTerminal("/bin/bash", shell_args, env, width=width, height=height, controlling_terminal=True)
+                terminal = RelayTerminal("/bin/bash", shell_args, env, width=width, height=height,
+                                         controlling_terminal=True, terminal_snapshot=terminal_snapshot)
                 run_scene(terminal, scene, evidence, output)
                 status_text = exit_receipt.read_text()
                 if status_text != str(terminal.child.returncode) + "\n":
                     raise AssertionError("Bash did not preserve the actual CLI exit status")
                 evidence["cli_exit_status"] = int(status_text)
+                evidence["terminal_modes"] = terminal.terminal_modes
                 evidence["staged_binary"]["sha256_after"] = hashlib.sha256(staged.read_bytes()).hexdigest()
                 if (evidence["staged_binary"]["sha256_after"] != evidence["binary_sha256"]
                         or hashlib.sha256(binary.read_bytes()).hexdigest() != evidence["binary_sha256"]):

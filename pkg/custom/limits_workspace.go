@@ -771,11 +771,11 @@ func (m *limitsWorkspace) costsSummary() string {
 	if m.snapshot.CostsTotal == "" {
 		return "Current-month Costs unavailable. ?: details"
 	}
-	status := "complete"
+	label := "Reported Costs"
 	if !m.snapshot.CostsComplete {
-		status = "incomplete"
+		label += " (incomplete)"
 	}
-	return "Costs: USD " + m.snapshot.CostsTotal + " (" + status + ")"
+	return label + ": USD " + m.snapshot.CostsTotal
 }
 
 func (m *limitsWorkspace) help() string {
@@ -810,7 +810,7 @@ func (m *limitsWorkspace) help() string {
 		text += "The current hard limit could not be confirmed.\nSet hard spend limit requires review and can create or replace a limit.\n\n"
 	}
 	if m.snapshot.CostsStart != 0 && m.snapshot.CostsEnd != 0 {
-		text += m.costsSummary() + "\nQueried period: " + time.Unix(m.snapshot.CostsStart, 0).UTC().Format(time.RFC3339) + " to " + time.Unix(m.snapshot.CostsEnd, 0).UTC().Format(time.RFC3339) + " (exclusive).\nCosts can lag and do not determine enforcement state.\n\n"
+		text += m.costsSummary() + "\nQueried period: " + time.Unix(m.snapshot.CostsStart, 0).UTC().Format(time.RFC3339) + " to " + time.Unix(m.snapshot.CostsEnd, 0).UTC().Format(time.RFC3339) + " (exclusive).\nToday's Costs remain partial.\nCosts can lag and do not determine enforcement state.\n\n"
 	}
 	text += "Soft budgets, independent enforcement settings, account tiers, credits, and organization rate catalogs need the website:\nhttps://platform.openai.com/settings/organization/limits\n\nThe public API exposes absolute-value alerts, not website percentage alerts or triggered status.\nRemoving a hard limit stops that cap; inspect soft budgets on the website.\n\nHistorical Costs command:\n" + invocation + " help admin usage costs\n\nThe workspace checks current state before saving. This check is not atomic.\nThe workspace sends each confirmed mutation once, without automatic retries.\nDirect API commands omit these safeguards and can retry.\n"
 	return text

@@ -985,17 +985,29 @@ func TestLimitsWorkspaceCostsAndEnforcementStayDistinct(t *testing.T) {
 	m.snapshot.CostsTotal, m.snapshot.CostsComplete = "123.000000000000000001", false
 	m.snapshot.CostsStart, m.snapshot.CostsEnd = 1790812800, 1792368000
 	view := m.View().Content
-	if !strings.Contains(view, "Costs: USD 123.000000000000000001 (incomplete)") || !strings.Contains(view, "Returned enforcement: inactive") {
+	if !strings.Contains(view, "Reported Costs (incomplete): USD 123.000000000000000001") || !strings.Contains(view, "Returned enforcement: inactive") {
 		t.Fatalf("workspace conflated Costs and returned enforcement: %q", view)
 	}
 	help := m.help()
-	if !strings.Contains(help, "Queried period:") || !strings.Contains(help, "Costs can lag and do not determine enforcement state") {
+	if !strings.Contains(help, "Queried period:") || !strings.Contains(help, "Today's Costs remain partial.") || !strings.Contains(help, "Costs can lag and do not determine enforcement state") {
 		t.Fatal("Costs view omitted its coverage and enforcement limitations")
 	}
+	m.snapshot.CostsComplete = true
+	view = m.View().Content
+	if !strings.Contains(view, "Reported Costs: USD 123.000000000000000001") || strings.Contains(view, "(complete)") || strings.Contains(view, "(incomplete)") {
+		t.Fatalf("complete pagination must not imply final Costs: %q", view)
+	}
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
-	for _, line := range strings.Split(ansi.Strip(m.View().Content), "\n") {
-		if ansi.StringWidth(line) > 40 {
-			t.Fatalf("minimum-size overview exceeded its width: %q", line)
+	for _, complete := range []bool{false, true} {
+		m.snapshot.CostsComplete = complete
+		view = ansi.Strip(m.View().Content)
+		if !complete && !strings.Contains(view, "Reported Costs (incomplete)") {
+			t.Fatalf("narrow overview hid incomplete Costs: %q", view)
+		}
+		for _, line := range strings.Split(view, "\n") {
+			if ansi.StringWidth(line) > 40 {
+				t.Fatalf("minimum-size overview exceeded its width: %q", line)
+			}
 		}
 	}
 }
