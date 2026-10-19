@@ -12,23 +12,13 @@ import (
 	"testing"
 	"time"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
 
 const responseStreamOperation = "(resource) responses > (method) create"
-
-func TestTextStreamBrokenPipeDoesNotHideFailureOrCancellation(t *testing.T) {
-	pipe := &outputWriteError{errors.New("write: broken pipe")}
-	require.True(t, isOutputBrokenPipe(pipe))
-	require.True(t, isOutputBrokenPipe(fmt.Errorf("wrapped: %w", pipe)))
-	require.True(t, isOutputBrokenPipe(errors.Join(pipe, pipe)))
-	for _, cause := range []error{context.Canceled, context.DeadlineExceeded, errors.New("the streamed response failed"), errors.New("upstream broken pipe")} {
-		require.False(t, isOutputBrokenPipe(errors.Join(pipe, cause)))
-		require.False(t, isOutputBrokenPipe(fmt.Errorf("wrapped: %w", errors.Join(pipe, cause))))
-	}
-}
 
 func TestTextStreamFailureSurvivesOutputErrorsAcrossFormats(t *testing.T) {
 	failure := errors.New("synthetic broken pipe")
@@ -57,7 +47,7 @@ func TestTextStreamFailureSurvivesOutputErrorsAcrossFormats(t *testing.T) {
 				require.ErrorIs(t, err, wantSink)
 				require.Contains(t, err.Error(), "the streamed response failed")
 				require.NotContains(t, err.Error(), "message")
-				require.False(t, isOutputBrokenPipe(err))
+				require.False(t, clioutput.IsBrokenPipe(err))
 				require.Equal(t, 1, iter.calls)
 			}()
 		}

@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -306,7 +305,8 @@ func TestImagePreferenceCancellationKeepsPathPrivate(t *testing.T) {
 			root := readableErrorTestCommand(t, "--format-error", format)
 			failure := imageInlinePreferenceCommands()[0].Action(ctx, root)
 			require.ErrorIs(t, failure, context.Canceled)
-			require.Contains(t, failure.Error(), strconv.Quote(path), "exercise the actual path-bearing preference failure")
+			require.Contains(t, failure.Error(), "Could not save the inline preference.")
+			require.NotContains(t, failure.Error(), path)
 			var output bytes.Buffer
 			require.NoError(t, ShowCommandError(root, withCommandError(root, failure), &output))
 			assertReadableErrorContainsNoPrivateDetails(t, output.String())

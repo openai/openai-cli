@@ -14,6 +14,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/clihelp"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
@@ -107,7 +109,7 @@ func writeImagePickerRequestMessage(ctx context.Context, out io.Writer, root *cl
 		message = lipgloss.NewStyle().Bold(true).Render(heading) + "\n" + body
 	}
 	message = strings.TrimRight(message, "\n") + "\n\n"
-	_, err := io.WriteString(outputWriter{ctx: ctx, out: out}, message)
+	_, err := io.WriteString(clioutput.Writer{Context: ctx, Sink: out}, message)
 	return err
 }
 
@@ -129,7 +131,7 @@ func imagePickerRequestMessage(root *cli.Command, err error, draftSaved bool) st
 			return fmt.Sprintf("  %s\n  %s\n\n"+
 				"  %s\n"+
 				"  Setup guide: %s help setup\n"+
-				"  Reopen the picker in this shell.", heading, cause, draft, errorHelpInvocation(root))
+				"  Reopen the picker in this shell.", heading, cause, draft, clihelp.DisplayInvocation(root))
 		}
 		switch apiError.StatusCode {
 		case http.StatusBadRequest, http.StatusUnprocessableEntity:
@@ -168,7 +170,7 @@ func imagePickerRecoverableRequest(err error) bool {
 		return false
 	}
 	switch failure := err.(type) {
-	case cli.ExitCoder, *imageSavingError, *outputWriteError:
+	case cli.ExitCoder, *imageSavingError, *clioutput.WriteError:
 		return false
 	case interface{ Unwrap() []error }:
 		causes := failure.Unwrap()

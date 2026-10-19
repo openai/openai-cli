@@ -54,12 +54,12 @@ var liveSessionsAccept = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.InnerFlag[map[string]any]{
 			Name:       "session.delegation",
-			Usage:      "Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` to let the API manage a Responses backend.",
+			Usage:      "Who handles tasks delegated by the Live model. Omitted or null selects your application; use `responses` or `decisions` to delegate to the corresponding API.",
 			InnerField: "delegation",
 		},
 		&requestflag.InnerFlag[[]map[string]any]{
 			Name:       "session.input",
-			Usage:      "Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and 8,192 rendered tokens in total.",
+			Usage:      "Ordered text-only history supplied before startup. Supports developer, user, and assistant messages with one text part each; at most 128 messages and a configured rendered-token limit (8,192 by default).",
 			InnerField: "input",
 		},
 		&requestflag.InnerFlag[*string]{
@@ -71,6 +71,11 @@ var liveSessionsAccept = requestflag.WithInnerFlags(cli.Command{
 			Name:       "session.store",
 			Usage:      "Whether to store the session for later forking and recording download. Defaults to false for new sessions.",
 			InnerField: "store",
+		},
+		&requestflag.InnerFlag[[]map[string]any]{
+			Name:       "session.triggers",
+			Usage:      "At most one Decisions trigger per transcript event type. Triggers run independently of delegation. On update, omit triggers to keep the current configuration, send a list to replace it, or send an empty list to disable triggers.",
+			InnerField: "triggers",
 		},
 	},
 })

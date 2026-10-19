@@ -11,6 +11,8 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/audiohistory"
+	localcommands "github.com/openai/openai-cli/internal/commands"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
@@ -108,10 +110,10 @@ func generateAudio(ctx context.Context, command *cli.Command, next cli.ActionFun
 		return audiohistory.Entry{}, err
 	}
 	values := map[string]any{
-		"input": untrustedStdinValue(settings.Input), "instructions": untrustedStdinValue(settings.Instructions),
-		"model": untrustedStdinValue(settings.Model), "voice": untrustedStdinValue(settings.Voice),
-		"response-format": untrustedStdinValue(settings.Format), "speed": settings.Speed,
-		"stream-format": untrustedStdinValue("audio"),
+		"input": requestconfig.UntrustedStdinValue(settings.Input), "instructions": requestconfig.UntrustedStdinValue(settings.Instructions),
+		"model": requestconfig.UntrustedStdinValue(settings.Model), "voice": requestconfig.UntrustedStdinValue(settings.Voice),
+		"response-format": requestconfig.UntrustedStdinValue(settings.Format), "speed": settings.Speed,
+		"stream-format": requestconfig.UntrustedStdinValue("audio"),
 	}
 	if settings.Instructions == "" {
 		delete(values, "instructions")
@@ -160,5 +162,5 @@ func validateAudioSettings(s audiohistory.Settings) error {
 }
 
 func audioFailure(message string, cause error) error {
-	return &localUtilityError{message: message, cause: cause}
+	return &localcommands.LocalError{Message: message, Cause: cause}
 }

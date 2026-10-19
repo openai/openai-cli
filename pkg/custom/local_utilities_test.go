@@ -5,6 +5,7 @@ import (
 	"io"
 	"testing"
 
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/urfave/cli/v3"
 )
 
@@ -40,8 +41,8 @@ func TestLocalUtilityParsedSelection(t *testing.T) {
 				HideHelpCommand: true, Action: action,
 				Flags: []cli.Flag{&cli.StringFlag{Name: "project"}},
 				Commands: []*cli.Command{
-					{Name: "tokenizer", Metadata: map[string]any{localUtilityMetadata: true}, Commands: []*cli.Command{{Name: "count", Action: action}}},
-					{Name: "codex", Metadata: map[string]any{localUtilityMetadata: true}, Action: action},
+					{Name: "tokenizer", Metadata: map[string]any{localcommands.LocalUtilityMetadata: true}, Commands: []*cli.Command{{Name: "count", Action: action}}},
+					{Name: "codex", Metadata: map[string]any{localcommands.LocalUtilityMetadata: true}, Action: action},
 					{Name: "responses", Flags: []cli.Flag{&cli.StringFlag{Name: "input"}}, Action: action, Commands: []*cli.Command{{Name: "codex", Action: action}}},
 					{Name: "help", Action: action},
 					{Name: "__complete", Action: action},

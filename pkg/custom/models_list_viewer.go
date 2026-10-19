@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/jsonview"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-go/v3/packages/pagination"
 	"github.com/tidwall/gjson"
 )
@@ -16,7 +17,7 @@ import (
 // Models use the SDK's single-response Page, whose GetNextPage always returns
 // nil. Check that concrete pager before collecting its already-loaded items.
 // Cursor pagers never enter this path, even with misleading operation metadata.
-func showModelsListViewer[T any](source jsonview.Iterator[T], iter *outputIterator[T], opts ShowJSONOpts) (bool, error) {
+func showModelsListViewer[T any](source jsonview.Iterator[T], iter *clioutput.Iterator[T], opts ShowJSONOpts) (bool, error) {
 	_, singlePage := source.(*pagination.PageAutoPager[T])
 	_, selectedModels := any(source).(*selectedModelsIterator)
 	if !singlePage && !selectedModels {
@@ -32,12 +33,12 @@ func showModelsListViewer[T any](source jsonview.Iterator[T], iter *outputIterat
 		return false, nil
 	}
 	if opts.Stdout == os.Stdout {
-		return true, streamToStdout(func(*os.File) error { return writeModelsList(iter, opts, width, height) })
+		return true, clioutput.StreamToStdout(func(*os.File) error { return writeModelsList(iter, opts, width, height) })
 	}
 	return true, writeModelsList(iter, opts, width, height)
 }
 
-func writeModelsList[T any](iter *outputIterator[T], opts ShowJSONOpts, width, height int) error {
+func writeModelsList[T any](iter *clioutput.Iterator[T], opts ShowJSONOpts, width, height int) error {
 	var items []gjson.Result
 	for iter.Next() {
 		items = append(items, iter.Current().Result)
@@ -66,7 +67,7 @@ func writeModelsList[T any](iter *outputIterator[T], opts ShowJSONOpts, width, h
 			return listNavigationPage{items: items, more: false}, nil
 		}, cancel)
 	}
-	out := outputWriter{ctx: opts.Context, out: opts.Stdout}
+	out := clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}
 	_, err = io.WriteString(out, content)
 	return errors.Join(err, iter.Err())
 }

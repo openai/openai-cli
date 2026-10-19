@@ -8,18 +8,23 @@ import (
 	"io"
 	"testing"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/pagination"
 	"github.com/stretchr/testify/require"
 )
 
-func staticModelIterator(t *testing.T, data string, maximum int64, initialError error) (*pagination.PageAutoPager[openai.Model], *outputIterator[openai.Model]) {
+func staticModelIterator(t *testing.T, data string, maximum int64, initialError error) (*pagination.PageAutoPager[openai.Model], *clioutput.Iterator[openai.Model]) {
 	t.Helper()
 	var page pagination.Page[openai.Model]
 	require.NoError(t, json.Unmarshal([]byte(`{"object":"list","data":`+data+`}`), &page))
 	source := pagination.NewPageAutoPager(&page, initialError)
-	return source, &outputIterator[openai.Model]{source: source, context: context.Background(), transform: transformers.Identity, remaining: maximum}
+	return source, clioutput.NewIterator(source, clioutput.IteratorOptions{
+		Context:   context.Background(),
+		Transform: transformers.Identity,
+		Limit:     maximum,
+	})
 }
 
 func TestModelsListViewerLoadedModelsAndLimit(t *testing.T) {
@@ -69,7 +74,8 @@ func TestModelsListViewerPreservesErrorsAndCancellation(t *testing.T) {
 	source, iter := staticModelIterator(t, `[{"id":"model-a","object":"model","owned_by":"synthetic"}]`, -1, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	opts.Context, iter.context = ctx, ctx
+	opts.Context = ctx
+	iter = clioutput.NewIterator(source, clioutput.IteratorOptions{Context: ctx, Transform: transformers.Identity, Limit: -1})
 	require.ErrorIs(t, writeModelsList(iter, opts, 80, 0), context.Canceled)
 	require.Zero(t, source.Index())
 	require.Empty(t, out.String())
@@ -89,7 +95,7 @@ func TestModelsListViewerNeverConsumesCursorPager(t *testing.T) {
 	// Its GetNextPage would need request configuration. Type rejection must occur
 	// before even reading the first loaded item, regardless of operation metadata.
 	source := pagination.NewCursorPageAutoPager(&pagination.CursorPage[openai.Model]{Data: []openai.Model{{ID: "unread"}}, HasMore: true}, nil)
-	iter := &outputIterator[openai.Model]{source: source}
+	iter := clioutput.NewIterator(source, clioutput.IteratorOptions{})
 	handled, err := showModelsListViewer(source, iter, ShowJSONOpts{Operation: "(resource) models > (method) list", OutputKind: OutputPageItem})
 	require.NoError(t, err)
 	require.False(t, handled)

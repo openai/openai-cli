@@ -37,7 +37,7 @@ func TestAudioVoiceInputs(t *testing.T) {
 	for _, tc := range []struct {
 		name, stdin, bodyFile, wantMissing, wantType string
 		flags                                        []string
-		wantSample, invalidType                      bool
+		wantSample, wantPrompt, invalidType          bool
 	}{
 		{name: "default missing both", flags: []string{"--name", "Synthetic"}, wantMissing: "--audio-sample, --consent"},
 		{name: "sample missing", flags: []string{"--name", "Synthetic", "--consent", "cons_fake"}, wantMissing: "--audio-sample"},
@@ -56,6 +56,11 @@ func TestAudioVoiceInputs(t *testing.T) {
 		{name: "JSON array type", stdin: `{"name":"Synthetic","type":["synthetic-private-unknown"],"consent":"cons_fake"}`, flags: []string{"--audio-sample", sample}, invalidType: true},
 		{name: "YAML mapping type", stdin: "name: Synthetic\ntype: {kind: synthetic-private-unknown}\nconsent: cons_fake\n", flags: []string{"--audio-sample", sample}, invalidType: true},
 		{name: "valid flag overrides invalid piped type", stdin: `{"name":"Synthetic","type":["synthetic-private-unknown"]}`, flags: []string{"--type", "audio_sample", "--consent", "cons_fake", "--audio-sample", sample}, wantType: "audio_sample", wantSample: true},
+		{name: "prompt flags", flags: []string{"--type", "prompt", "--name", "Synthetic", "--prompt", "Warm synthetic narrator", "--script-hint", "Hello friend", "--model", "2026-10-08"}, wantType: "prompt", wantPrompt: true},
+		{name: "piped prompt", stdin: `{"type":"prompt","name":"Synthetic","prompt":"Warm synthetic narrator","script_hint":"Hello friend","model":"2026-10-08"}`, wantType: "prompt", wantPrompt: true},
+		{name: "prompt missing", flags: []string{"--type", "prompt", "--name", "Synthetic"}, wantMissing: "--prompt"},
+		{name: "prompt name missing", flags: []string{"--type", "prompt", "--prompt", "Warm synthetic narrator"}, wantMissing: "--name"},
+		{name: "prompt missing both", flags: []string{"--type", "prompt"}, wantMissing: "--name, --prompt"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var requests atomic.Int32
@@ -86,6 +91,14 @@ func TestAudioVoiceInputs(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, f.Close())
 					require.Equal(t, "synthetic sample bytes", string(content))
+				}
+				if tc.wantPrompt {
+					require.Equal(t, "Warm synthetic narrator", r.FormValue("prompt"))
+					require.Equal(t, "Hello friend", r.FormValue("script_hint"))
+					require.Equal(t, "2026-10-08", r.FormValue("model"))
+					require.Empty(t, r.MultipartForm.File)
+					require.NotContains(t, r.MultipartForm.Value, "consent")
+					require.NotContains(t, r.MultipartForm.Value, "seed")
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, `{"id":"voice_synthetic","name":"Synthetic","type":"audio_sample"}`)

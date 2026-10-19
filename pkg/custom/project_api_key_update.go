@@ -1,6 +1,7 @@
 package custom
 
 import (
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
@@ -16,7 +17,7 @@ func (*projectAPIKeyUpdateError) Error() string {
 // Keep this CLI guard outside generated request types; the server still owns
 // value validation and expiry policy enforcement.
 func validateProjectAPIKeyUpdate(command *cli.Command, body []byte) error {
-	if command.Name != "update" || commandResourceName(command) != "admin:organization:projects:api-keys" {
+	if command.Name != "update" || localcommands.ResourceName(command) != "admin:organization:projects:api-keys" {
 		return nil
 	}
 	if !gjson.GetBytes(body, "scopes").Exists() && !gjson.GetBytes(body, "expires_in_seconds").Exists() {

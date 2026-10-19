@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -16,7 +17,7 @@ func TestConfigureCommandComposesBeforeAndRunsOnce(t *testing.T) {
 		Name: "openai-test",
 		Before: func(ctx context.Context, command *cli.Command) (context.Context, error) {
 			beforeCalls++
-			command.Root().Metadata[mtlsHTTPClientMetadata] = "stale"
+			command.Root().Metadata[requestconfig.MTLSHTTPClientMetadata] = "stale"
 			return context.WithValue(ctx, contextKey{}, "preserved"), nil
 		},
 		Commands: []*cli.Command{{
@@ -24,14 +25,14 @@ func TestConfigureCommandComposesBeforeAndRunsOnce(t *testing.T) {
 			Action: func(ctx context.Context, command *cli.Command) error {
 				actionCalls++
 				require.Equal(t, "preserved", ctx.Value(contextKey{}))
-				require.NotContains(t, command.Root().Metadata, mtlsHTTPClientMetadata)
+				require.NotContains(t, command.Root().Metadata, requestconfig.MTLSHTTPClientMetadata)
 				return nil
 			},
 		}},
 	}
 	ConfigureCommand(root)
 	ConfigureCommand(root)
-	for _, name := range []string{mtlsClientCertFileFlag, mtlsClientKeyFileFlag} {
+	for _, name := range []string{requestconfig.MTLSClientCertFileFlag, requestconfig.MTLSClientKeyFileFlag} {
 		count := 0
 		for _, flag := range root.Flags {
 			if flag.Names()[0] == name {

@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -36,13 +37,13 @@ func TestRenderListNavigationPageHintPolicy(t *testing.T) {
 				// Projects retain their full record in the labeled fallback, so
 				// that path has no omitted-field hint even without a policy.
 				wantHint := layout.table || resource.name != "admin.organization.projects"
-				require.Equal(t, wantHint, strings.HasSuffix(ordinary, resourceSummaryHint+"\n"))
+				require.Equal(t, wantHint, strings.HasSuffix(ordinary, clioutput.ResourceSummaryHint+"\n"))
 				hintCount := 0
 				if wantHint {
 					hintCount = 1
 				}
-				require.Equal(t, hintCount, strings.Count(ordinary, resourceSummaryHint))
-				data := strings.TrimSuffix(ordinary, resourceSummaryHint+"\n")
+				require.Equal(t, hintCount, strings.Count(ordinary, clioutput.ResourceSummaryHint))
+				data := strings.TrimSuffix(ordinary, clioutput.ResourceSummaryHint+"\n")
 				for _, policy := range []struct {
 					name  string
 					flags []string
@@ -71,7 +72,7 @@ func TestRenderListNavigationPageHintPolicy(t *testing.T) {
 						require.NoError(t, root.Run(t.Context(), append([]string{"openai"}, policy.flags...)))
 						want := data
 						if policy.hint && wantHint {
-							want += resourceSummaryHint + "\n"
+							want += clioutput.ResourceSummaryHint + "\n"
 						}
 						require.Equal(t, want, content, "policy may change only the optional hint")
 						require.Equal(t, original, items, "rendering must preserve original records and metadata")
@@ -131,7 +132,7 @@ func TestRenderListTablePage(t *testing.T) {
 	require.Contains(t, content, "ID")
 	require.Contains(t, content, "STATUS")
 	require.Contains(t, content, "batch_synthetic")
-	require.Equal(t, 1, strings.Count(content, resourceSummaryHint))
+	require.Equal(t, 1, strings.Count(content, clioutput.ResourceSummaryHint))
 	require.Equal(t, original, items[0].Raw)
 	// Rerendering reads only loaded values and cannot mutate their original JSON.
 	_, supported, err = renderListTablePage(t.Context(), "(resource) batches > (method) list", items, 1)

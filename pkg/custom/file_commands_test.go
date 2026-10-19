@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -42,7 +43,7 @@ func TestFileCommandsPreserveGeneratedFlagsAndDecoratedHooks(t *testing.T) {
 		source.After = func(context.Context, *cli.Command) error { return nil }
 		source.ShellComplete = func(context.Context, *cli.Command) {}
 	}
-	configureTaskCommands(root)
+	localcommands.ConfigureTasks(root)
 	configureFileCommands(root)
 	for _, pair := range [][2]string{{"create", "upload"}, {"retrieve", "get"}, {"content", "download"}} {
 		source, friendly := files.Command(pair[0]), files.Command(pair[1])
@@ -103,7 +104,7 @@ func TestFileUploadParsedArgumentsAndActionPassthrough(t *testing.T) {
 				require.Empty(t, command.Args().Slice(), "the generated action must not receive consumed paths")
 				return failure
 			})
-			configureTaskCommands(root)
+			localcommands.ConfigureTasks(root)
 			configureFileCommands(root)
 			err := root.Run(t.Context(), append([]string{"openai", "files", "upload"}, tc.args...))
 			if tc.wantError != "" {
@@ -136,7 +137,7 @@ func TestFileCommandsKeepPurposeValidationAndOldRoutes(t *testing.T) {
 				}
 				return failure
 			})
-			configureTaskCommands(root)
+			localcommands.ConfigureTasks(root)
 			configureFileCommands(root)
 			args := []string{"openai", "files", route, "file-example"}
 			if route == "create" {
@@ -153,7 +154,7 @@ func TestFileCommandsPreserveExistingFriendlyRoutes(t *testing.T) {
 	files := root.Command("files")
 	get, download := &cli.Command{Name: "get"}, &cli.Command{Name: "download"}
 	files.Commands = append(files.Commands, get, download)
-	configureTaskCommands(root)
+	localcommands.ConfigureTasks(root)
 	configureFileCommands(root)
 	require.Same(t, get, files.Command("get"))
 	require.Same(t, download, files.Command("download"))
@@ -166,7 +167,7 @@ func TestFileCommandsMakeWorkflowDiscoverable(t *testing.T) {
 	root := fileWorkflowCommandTree(func(context.Context, *cli.Command) error { return nil })
 	files := root.Command("files")
 	files.Commands = append(files.Commands, &cli.Command{Name: "list"}, &cli.Command{Name: "delete"})
-	configureTaskCommands(root)
+	localcommands.ConfigureTasks(root)
 	configureFileCommands(root)
 	require.Equal(t, "Upload, inspect, and download files.", files.Usage)
 	var names []string

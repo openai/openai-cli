@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -34,7 +35,7 @@ func TestAdminSetupOriginDisplayPreservesDestination(t *testing.T) {
 				require.Equal(t, test.display, display)
 				return verifyAdminSetup(ctx, options, []byte("synthetic-entered-admin-key"))
 			})
-			root.Metadata = map[string]any{mtlsHTTPClientMetadata: &http.Client{
+			root.Metadata = map[string]any{requestconfig.MTLSHTTPClientMetadata: &http.Client{
 				Transport: adminSetupOriginTransport(func(request *http.Request) (*http.Response, error) {
 					requests++
 					require.Equal(t, endpoint.Scheme, request.URL.Scheme)
