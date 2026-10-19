@@ -1,6 +1,6 @@
 //go:build windows
 
-package custom
+package output
 
 import (
 	"errors"
@@ -9,7 +9,8 @@ import (
 	"github.com/openai/openai-cli/internal/windowsfile"
 )
 
-func createPrivateDownloadFile(root *os.Root, name string) (*os.File, error) {
+// CreatePrivateDownloadFile exclusively creates private download staging inside root.
+func CreatePrivateDownloadFile(root *os.Root, name string) (*os.File, error) {
 	file, err := windowsfile.CreatePrivate(root, name)
 	switch {
 	case errors.Is(err, windowsfile.ErrInvalidName):

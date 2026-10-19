@@ -173,6 +173,14 @@ files, image picker, and audio previews. Safe request options for suggested next
 commands live in `internal/request/`; file receipts retain their Go-launcher
 traversal policy. Native shell CI selects the moved quoting test unchanged.
 
+Batch wait/download workflows, polling, cancellation, private directory creation,
+and output helper processes live in `internal/commands/batches/`. Assembly supplies
+request preparation, client middleware, output rendering, and diagnostic policy;
+startup dispatches the private helper entrypoints directly. Shared private download
+file creation lives in `internal/output/`, and the borrowed terminal writer adapter
+lives in `internal/terminal/`. Native download ACL assertions and borrowed socket
+fixtures live in `internal/testutil/`, preserving their existing test contracts.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

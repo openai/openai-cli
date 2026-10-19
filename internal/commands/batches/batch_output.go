@@ -1,4 +1,4 @@
-package custom
+package batches
 
 import (
 	"context"
@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	terminalio "github.com/openai/openai-cli/internal/terminal"
 )
 
 const batchOutputHelperArgument = "__batch-output"
@@ -33,15 +35,6 @@ func (w batchPipeWriter) Write(data []byte) (int, error) {
 	}
 	return n, err
 }
-
-type batchTerminalWriter struct {
-	io.Writer
-	file *os.File
-}
-
-func (w batchTerminalWriter) Fd() uintptr                { return w.file.Fd() }
-func (w batchTerminalWriter) Read(p []byte) (int, error) { return w.file.Read(p) }
-func (w batchTerminalWriter) Close() error               { return nil } // The destination is borrowed.
 
 // Start an owned writer only when presentation emits a warning or hint.
 // The operation deadline must also stop writes to its secondary output.
@@ -295,7 +288,7 @@ func streamBatchOutput(ctx context.Context, out *os.File, cleanupGrace time.Dura
 	}
 	var destination io.Writer = batchPipeWriter{file: dataWrite, stopped: &pipeStopped}
 	if terminal {
-		destination = batchTerminalWriter{Writer: destination, file: out}
+		destination = terminalio.BorrowedWriter{Writer: destination, File: out}
 	}
 	writeErr := write(destination)
 	closeErr := dataWrite.Close()
@@ -320,19 +313,20 @@ func streamBatchOutput(ctx context.Context, out *os.File, cleanupGrace time.Dura
 	return nil
 }
 
-func interruptedBatchError(failure error) bool {
-	var batch *batchWorkflowError
+// InterruptedError reports cancellation or timeout of a local batch workflow.
+func InterruptedError(failure error) bool {
+	var batch *WorkflowError
 	return errors.As(failure, &batch) &&
 		(errors.Is(failure, context.Canceled) || errors.Is(failure, context.DeadlineExceeded))
 }
 
-// Cancellation diagnostics get a separate bounded delivery window. A failed
+// WithErrorOutput gives cancellation diagnostics a separate bounded delivery window. A failed
 // delivery must not trigger another unbounded write to the same error sink.
-func withBatchErrorOutput(failure error, out io.Writer, render func(context.Context, io.Writer) error) error {
-	if !interruptedBatchError(failure) {
+func WithErrorOutput(failure error, out io.Writer, render func(context.Context, io.Writer) error) error {
+	if !InterruptedError(failure) {
 		return render(context.Background(), out)
 	}
-	var batch *batchWorkflowError
+	var batch *WorkflowError
 	if errors.As(failure, &batch) && batch.message == "" {
 		return nil
 	}

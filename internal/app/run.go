@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/openai/openai-cli/generated/commands"
+	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-cli/pkg/custom"
@@ -25,13 +26,13 @@ func Run(ctx context.Context, argv []string) int {
 		}
 		return 0
 	}
-	if handled, err := custom.RunBatchOutputHelper(argv); handled {
+	if handled, err := batchcommands.RunBatchOutputHelper(argv); handled {
 		if err != nil {
 			return 1
 		}
 		return 0
 	}
-	if handled, err := custom.RunBatchDirectoryHelper(argv); handled {
+	if handled, err := batchcommands.RunBatchDirectoryHelper(argv); handled {
 		if err != nil {
 			return 1
 		}

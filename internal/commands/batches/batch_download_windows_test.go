@@ -1,6 +1,6 @@
 //go:build windows
 
-package custom
+package batches
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	filepermstest "github.com/openai/openai-cli/internal/testutil/fileperms"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
 )
@@ -36,7 +37,7 @@ func TestWindowsBatchDownloadPrivateStagingAndPublication(t *testing.T) {
 				require.NoError(t, err)
 				require.True(t, staged.Mode().IsRegular())
 				require.Zero(t, staged.Size())
-				assertPrivateWindowsDownload(t, stage)
+				filepermstest.AssertPrivate(t, stage)
 			}
 			return reader.Read(p)
 		},
@@ -53,7 +54,7 @@ func TestWindowsBatchDownloadPrivateStagingAndPublication(t *testing.T) {
 	file, err := os.Open(path)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, file.Close()) }()
-	assertPrivateWindowsDownload(t, file)
+	filepermstest.AssertPrivate(t, file)
 	published, err := file.Stat()
 	require.NoError(t, err)
 	require.True(t, os.SameFile(staged, published))
@@ -86,7 +87,7 @@ func TestWindowsBatchOutputDirectoryPermissions(t *testing.T) {
 			file, err := os.Open(path)
 			require.NoError(t, err)
 			defer file.Close()
-			assertPrivateWindowsDownload(t, file)
+			filepermstest.AssertPrivate(t, file)
 			info, err := file.Stat()
 			require.NoError(t, err)
 			require.True(t, os.SameFile(destination.info, info))
@@ -97,7 +98,7 @@ func TestWindowsBatchOutputDirectoryPermissions(t *testing.T) {
 			saved, err := os.Open(result)
 			require.NoError(t, err)
 			defer saved.Close()
-			assertPrivateWindowsDownload(t, saved)
+			filepermstest.AssertPrivate(t, saved)
 			data, err := io.ReadAll(saved)
 			require.NoError(t, err)
 			require.Equal(t, payload, data)
@@ -195,7 +196,7 @@ func TestWindowsBatchOutputDirectoryPaths(t *testing.T) {
 			require.NoError(t, root.Close())
 			file, err := os.Open(path)
 			require.NoError(t, err)
-			assertPrivateWindowsDownload(t, file)
+			filepermstest.AssertPrivate(t, file)
 			require.NoError(t, file.Close())
 		})
 	}

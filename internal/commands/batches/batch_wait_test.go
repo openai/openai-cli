@@ -1,4 +1,4 @@
-package custom
+package batches
 
 import (
 	"context"
@@ -74,7 +74,7 @@ func TestBatchHintRetainsOnlyReproducibleRequestContext(t *testing.T) {
 			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard,
 				Flags: []cli.Flag{
 					&requestflag.Flag[string]{Name: tc.flag, Sources: cli.EnvVars(tc.environment)},
-					&cli.StringFlag{Name: "base-url"}, NewRequestHeaderFlag(),
+					&cli.StringFlag{Name: "base-url"}, requestconfig.NewRequestHeaderFlag(),
 				},
 				Action: func(_ context.Context, cmd *cli.Command) error {
 					if got := batchHintNeedsRequestOptions(cmd); got != tc.needsOptions {
@@ -133,7 +133,7 @@ func TestBatchWaitOptInPreservesGeneratedAction(t *testing.T) {
 				return nil
 			}}}}},
 		}
-		configureBatchCommands(root)
+		Configure(root, testOptions())
 		if err := root.Run(t.Context(), append([]string{"openai", "batches", "retrieve"}, flags...)); err != nil {
 			t.Fatal(err)
 		}
