@@ -85,6 +85,13 @@ stays with request assembly. The generated runtime bridge still reaches the
 shared implementation through temporary `pkg/custom/` adapters; remove these
 adapters through an authoritative generator update.
 
+Query, header, and final-body serialization live in `internal/request/`.
+Assembly supplies the existing image preparation, project validation, JSON
+observation, and multipart cleanup-tracking callbacks at their original encoding
+points. Literal header overrides remain last; assembly retains upload cleanup
+until serialization succeeds. Body-content aliases remain in `pkg/custom/` for
+the generated runtime bridge until its producer is updated.
+
 Multipart encoding and owned upload sources live in `internal/request/`, with
 streaming, retry/redirect, exact-length, header-validation, and cleanup unit tests.
 Request preparation and image/audio settings use the shared upload type while

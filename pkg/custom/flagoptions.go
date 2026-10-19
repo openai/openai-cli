@@ -2,7 +2,6 @@ package custom
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +11,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/openai/openai-cli/internal/apiform"
 	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/debugmiddleware"
 	cliinput "github.com/openai/openai-cli/internal/input"
@@ -23,13 +21,15 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-type BodyContentType int
+// Temporary aliases for the generated runtime bridge. Migrate generated callers
+// through their producer before removing these names.
+type BodyContentType = requestconfig.BodyContentType
 
 const (
-	EmptyBody BodyContentType = iota
-	MultipartFormEncoded
-	ApplicationJSON
-	ApplicationOctetStream
+	EmptyBody              = requestconfig.EmptyBody
+	MultipartFormEncoded   = requestconfig.MultipartFormEncoded
+	ApplicationJSON        = requestconfig.ApplicationJSON
+	ApplicationOctetStream = requestconfig.ApplicationOctetStream
 )
 
 const audioVoicesContextMetadata = "openai-audio-voices-create-context"
@@ -347,114 +347,24 @@ func flagOptionsWithStdin(
 		requestContents.Queries = queriesWithFiles.(map[string]any)
 	}
 
-	querySettings := apiquery.QuerySettings{
-		NestedFormat: nestedFormat,
-		ArrayFormat:  arrayFormat,
+	hooks := requestconfig.EncodingHooks{
+		PrepareMultipart: func(body map[string]any) error { return prepareImageMultipartBody(cmd, body) },
+		ValidateJSON:     func(body []byte) error { return validateProjectAPIKeyUpdate(cmd, body) },
+		ObserveJSON:      observeJSON,
 	}
-
-	// Add query parameters:
-	if values, err := apiquery.MarshalWithSettings(requestContents.Queries, querySettings); err != nil {
+	// Saving prepares uploads before the generated action takes over. Keep
+	// an idempotent closer for failures between preparation and dispatch.
+	if state, ok := cmd.Metadata[imageMultipartMetadata].(*imageMultipartPreparation); ok {
+		hooks.ObserveMultipart = func(body io.Closer) { state.body = body }
+	}
+	encodedOptions, err := requestconfig.EncodeOptions(cmd, requestContents, nestedFormat, arrayFormat, bodyType, hooks)
+	if err != nil {
 		return nil, err
-	} else {
-		for k, vs := range values {
-			if len(vs) == 0 {
-				options = append(options, option.WithQueryDel(k))
-			} else {
-				options = append(options, option.WithQuery(k, vs[0]))
-				for _, v := range vs[1:] {
-					options = append(options, option.WithQueryAdd(k, v))
-				}
-			}
-		}
 	}
-
-	// Add header parameters
-	headerSettings := apiquery.QuerySettings{
-		NestedFormat: apiquery.NestedQueryFormatDots,
-		ArrayFormat:  apiquery.ArrayQueryFormatRepeat,
-	}
-	if values, err := apiquery.MarshalWithSettings(requestContents.Headers, headerSettings); err != nil {
-		return nil, err
-	} else {
-		for k, vs := range values {
-			if len(vs) == 0 {
-				options = append(options, option.WithHeaderDel(k))
-			} else {
-				options = append(options, option.WithHeader(k, vs[0]))
-				for _, v := range vs[1:] {
-					options = append(options, option.WithHeaderAdd(k, v))
-				}
-			}
-		}
-	}
-
-	switch bodyType {
-	case EmptyBody:
-		break
-	case MultipartFormEncoded:
-		// For multipart/form-encoded, we need a map structure
-		bodyMap, ok := requestContents.Body.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("Cannot send a non-map value to a form-encoded endpoint: %v\n", requestContents.Body)
-		}
-		if err := prepareImageMultipartBody(cmd, bodyMap); err != nil {
-			return nil, err
-		}
-		// Multipart dispatch follows actual Booleans without consuming uploads
-		// or interpreting strings that happen to resemble scalar values.
-		if streaming, ok := bodyMap["stream"].(bool); ok {
-			if err := requestconfig.ResolveStreamingValue(cmd, streaming); err != nil {
-				return nil, err
-			}
-		}
-		encodingFormat := apiform.FormatBrackets
-		// Saving prepares uploads before the generated action takes over. Keep
-		// an idempotent closer for failures between preparation and dispatch.
-		var observers []func(io.Closer)
-		if state, ok := cmd.Metadata[imageMultipartMetadata].(*imageMultipartPreparation); ok {
-			observers = append(observers, func(body io.Closer) { state.body = body })
-		}
-		multipartOptions, err := requestconfig.MultipartRequestOptions(bodyMap, encodingFormat, observers...)
-		if err != nil {
-			return nil, err
-		}
+	if bodyType == MultipartFormEncoded {
 		pendingMultipartUploads = nil // the multipart request body owns them now.
-		options = append(options, multipartOptions...)
-
-	case ApplicationJSON:
-		bodyBytes, err := json.Marshal(requestContents.Body)
-		if err != nil {
-			return nil, err
-		}
-		if err := validateProjectAPIKeyUpdate(cmd, bodyBytes); err != nil {
-			return nil, err
-		}
-		if err := requestconfig.ResolveStreamingInput(cmd, bodyBytes); err != nil {
-			return nil, err
-		}
-		options = append(options, option.WithRequestBody("application/json", bodyBytes))
-		for _, observe := range observeJSON {
-			observe(bodyBytes)
-		}
-
-	case ApplicationOctetStream:
-		// If there is a body root parameter, that will handle setting the request body, we don't need to do it here.
-		for _, flag := range cmd.Flags {
-			if toSend, ok := flag.(requestflag.InRequest); ok && toSend.IsBodyRoot() {
-				return append(options, headerOptions...), nil
-			}
-		}
-		if bodyBytes, ok := requestContents.Body.([]byte); ok {
-			options = append(options, option.WithRequestBody("application/octet-stream", bodyBytes))
-		} else if bodyStr, ok := requestContents.Body.(string); ok {
-			options = append(options, option.WithRequestBody("application/octet-stream", []byte(bodyStr)))
-		} else {
-			return nil, fmt.Errorf("Unsupported body for application/octet-stream: %v", requestContents.Body)
-		}
-
-	default:
-		panic("Invalid body content type!")
 	}
+	options = append(options, encodedOptions...)
 
 	return append(options, headerOptions...), nil
 }
