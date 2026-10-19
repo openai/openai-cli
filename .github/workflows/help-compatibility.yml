@@ -159,6 +159,7 @@ jobs:
         with:
           cache-compilation: ${{ matrix.os == 'macos-15-intel' || matrix.os == 'windows-11-arm' }}
       - name: Verify native Go platform
+        id: native-go-platform
         shell: bash
         env:
           EXPECTED_GOOS: ${{ matrix.goos }}
@@ -208,6 +209,7 @@ jobs:
           fish --version
           expect -v
       - uses: ./.github/actions/link-go-sdk
+        id: link-go-sdk
       - name: Test native portable command contracts
         if: matrix.native-commands && runner.os != 'Windows' && matrix.shard != 'dispatch'
         shell: bash
@@ -473,11 +475,11 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-models-progress-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows audio output behavior
-        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch' && !cancelled() && steps.native-go-platform.outcome == 'success' && steps.link-go-sdk.outcome == 'success'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainReadableAudioJSONPreservesTextAndMetadata|TestMainReadableAudioTextAndSubtitles|TestMainReadableAudioTranscriptionStreamsBeforeDone|TestMainReadableAudioTranscriptionKeepsEventsAndMetadata|TestMainReadableAudioStreamFailuresKeepPartialOutput|TestMainReadableAudioSpeechFormatsAndDownloads|TestMainReadableAudioSpeechPreservesBinary|TestMainReadableAudioLargePayloads)$' |
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainReadableAudioJSONPreservesTextAndMetadata|TestMainReadableAudioTextAndSubtitles|TestMainReadableAudioTranscriptionStreamsBeforeDone|TestMainReadableAudioTranscriptionKeepsEventsAndMetadata|TestMainReadableAudioStreamFailuresKeepPartialOutput|TestMainReadableAudioSpeechFormatsAndDownloads|TestMainReadableAudioSpeechPreservesBinary|TestMainReadableAudioLargePayloads|TestMainAudioWorkbenchPlayUsesSyntheticLocalHelper|TestMainAudioWorkbenchWindowsPlayerCancellationStatusAndCleanup)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'audio-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows resource output and pagination
@@ -1084,6 +1086,10 @@ jobs:
                   required_cases("TestMainReadableAudio" + suffix, children)
                   for suffix, children in audio_cases.items()
               ))
+              suites["audio-tests.jsonl"] |= {
+                  "TestMainAudioWorkbenchPlayUsesSyntheticLocalHelper",
+              } | required_cases("TestMainAudioWorkbenchWindowsPlayerCancellationStatusAndCleanup", ["CTRL_C", "CTRL_BREAK"])
+              strict_packages["audio-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
               resource_cases = {
                   "TestMainResourceSummariesRetainActionFields": ["model", "file", "batch", "vector_store",
                       "vector_file", "vector_file_batch", "fine_tuning_job", "assistant", "thread_run"],
