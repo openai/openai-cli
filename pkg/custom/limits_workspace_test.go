@@ -218,13 +218,267 @@ func TestLimitsWorkspaceBusyAndFailedSavePreventRepeatedWrites(t *testing.T) {
 	}
 }
 
-func TestLimitsDraftCommandPreviewNativeShellPreservesArguments(t *testing.T) {
+func limitsControllerPrintedCommand(t *testing.T, m *limitsWorkspace) string {
+	t.Helper()
+	m.viewport.GotoBottom()
+	view := ansi.Strip(m.View().Content)
+	for _, visible := range []string{"Ctrl+P: print command and exit", "> Back", "Apply change"} {
+		if !strings.Contains(view, visible) {
+			t.Fatalf("review clipped %q at %d columns: %q", visible, m.width, view)
+		}
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if ansi.StringWidth(line) > m.width {
+			t.Fatalf("review exceeds %d columns: %q", m.width, line)
+		}
+	}
+	_, quit := m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	if quit == nil || !m.quitting || m.interrupted || m.commandToPrint == "" {
+		t.Fatal("Ctrl+P did not freeze the reviewed command and quit normally")
+	}
+	var out bytes.Buffer
+	if err := finishLimitsWorkspace(t.Context(), m, nil, ShowJSONOpts{Context: t.Context(), Format: "text", Stdout: &out, Stderr: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != m.commandToPrint+"\n" {
+		t.Fatalf("finalization changed the command or added prose: %q", out.String())
+	}
+	return out.String()
+}
+
+func TestLimitsWorkspacePrintFreezesReviewedCommand(t *testing.T) {
+	m, backend := newLimitsController(t, 40, 12)
+	limitsControllerReview(t, m)
+	if !strings.Contains(m.details, "Command preview (inspection only)") {
+		t.Fatal("wrapped review did not identify the command as inspection-only")
+	}
+	_, quit := m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	if quit == nil || m.commandToPrint == "" {
+		t.Fatal("review did not offer command printing")
+	}
+	frozen := m.commandToPrint
+	m.change.Amount, m.previewCommand = 99999, "changed after exit"
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	var out bytes.Buffer
+	err := finishLimitsWorkspace(t.Context(), m, nil, ShowJSONOpts{Context: t.Context(), Stdout: &out, Stderr: io.Discard})
+	if err != nil || out.String() != frozen+"\n" || backend.writes.Load() != 0 {
+		t.Fatalf("print changed reviewed bytes or sent a mutation: output=%q err=%v", out.String(), err)
+	}
+}
+
+func TestLimitsWorkspacePrintOmissionsAndUnavailableStates(t *testing.T) {
+	for _, scenario := range []string{"private context", "unsupported shell", "literal prefix", "go run", "locked", "refresh required", "busy", "small terminal", "canceled", "output failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			m, backend := newLimitsController(t, 40, 12)
+			m.change, m.page = limitsChange{Kind: "limit_set", Amount: 12525}, "review"
+			omitted := true
+			switch scenario {
+			case "private context":
+				m.omitPreview = true
+			case "unsupported shell":
+				m.shell = "unknown-shell"
+			case "literal prefix":
+				prefix := "\\@literal"
+				m.change = limitsChange{Kind: "alert_create", SubjectPrefixSet: true, SubjectPrefix: &prefix}
+			case "go run":
+				m.invocation, m.omitPreview = "go run ./cmd/openai", true
+			default:
+				omitted = false
+			}
+			m.setReview()
+			switch scenario {
+			case "locked":
+				m.locked = true
+			case "refresh required":
+				m.refreshRequired = true
+			case "busy":
+				m.busy = true
+			case "small terminal":
+				m.Update(tea.WindowSizeMsg{Width: 39, Height: 12})
+			case "canceled":
+				m.cancel()
+			case "output failure":
+				m.output = &limitsWorkspaceOutput{err: errors.New("synthetic sink failure")}
+			}
+			_, quit := m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+			if quit != nil || m.commandToPrint != "" || m.quitting || backend.writes.Load() != 0 {
+				t.Fatal("Ctrl+P exported an omitted command or bypassed an unavailable state")
+			}
+			if omitted && (m.previewCommand != "" || strings.Contains(m.View().Content, "Ctrl+P:")) {
+				t.Fatal("an omitted command retained its print action")
+			}
+		})
+	}
+}
+
+func TestLimitsWorkspacePrintPreservesFinalizationFailures(t *testing.T) {
+	for _, scenario := range []string{"caller cancellation", "interrupt", "program failure", "mutation failure", "terminal failure", "print failure", "short print"} {
+		t.Run(scenario, func(t *testing.T) {
+			m, _ := newLimitsController(t, 40, 12)
+			limitsControllerReview(t, m)
+			m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+			ctx := t.Context()
+			want := errors.New("synthetic independent failure")
+			var out bytes.Buffer
+			opts := ShowJSONOpts{Context: ctx, Format: "text", Stdout: &out, Stderr: io.Discard}
+			var runErr error
+			switch scenario {
+			case "caller cancellation":
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+				want = context.Canceled
+			case "interrupt":
+				m.interrupted = true
+				want = context.Canceled
+			case "program failure":
+				runErr = want
+			case "mutation failure":
+				m.locked, m.mutationError = true, want
+			case "terminal failure":
+				m.output = &limitsWorkspaceOutput{err: want}
+			case "print failure":
+				opts.Stdout = limitsFailingWriter{err: want}
+			case "short print":
+				want = io.ErrShortWrite
+				opts.Stdout = limitsWorkspaceWriteFunc(func(data []byte) (int, error) { return 1, nil })
+			}
+			err := finishLimitsWorkspace(ctx, m, runErr, opts)
+			if !errors.Is(err, want) || out.Len() != 0 {
+				t.Fatalf("print bypassed an independent failure: output=%q err=%v", out.String(), err)
+			}
+			if scenario == "interrupt" {
+				var interrupt *limitsInterrupt
+				if !errors.As(err, &interrupt) || interrupt.ExitCode() != 130 {
+					t.Fatal("print changed the interrupt exit status")
+				}
+			}
+			if scenario == "print failure" || scenario == "short print" {
+				if !strings.Contains(err.Error(), "Could not print the limits command") {
+					t.Fatalf("print failure lacks useful recovery: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestLimitsWorkspacePrintPreservesSourceFailures(t *testing.T) {
+	for _, source := range []string{"costs", "first-cap-404", "costs-with-receipt"} {
+		for _, printFails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/print-fails-%t", source, printFails), func(t *testing.T) {
+				m, backend := newLimitsController(t, 40, 12)
+				var sourceErr error = errors.New("synthetic Costs failure")
+				resource := "costs"
+				if source == "first-cap-404" {
+					sourceErr = &openai.Error{StatusCode: http.StatusNotFound}
+					resource = "spend_limit"
+					m.snapshot.LimitAbsent, m.snapshot.LimitUnconfirmed = false, true
+				}
+				m.snapshot.Errors = []limitsSourceFailure{{Resource: resource, Err: sourceErr}}
+				limitsControllerReview(t, m)
+				if source == "first-cap-404" && (!m.change.BeforeMissing || !strings.Contains(m.details, "creates or replaces")) {
+					t.Fatal("first-cap review lost its explicit uncertainty warning")
+				}
+				_, quit := m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+				if quit == nil || m.commandToPrint == "" {
+					t.Fatal("a nonfatal source failure removed the print action")
+				}
+				if source == "costs-with-receipt" {
+					m.lastSaved = gjson.Parse("{\"object\":\"organization.spend_limit\",\"threshold_amount\":10001,\"currency\":\"USD\",\"interval\":\"month\"}")
+					m.lastSavedOperation = limitsChangeOperation("limit_set", false)
+				}
+				var out bytes.Buffer
+				opts := ShowJSONOpts{Context: t.Context(), Format: "text", Stdout: &out, Stderr: io.Discard}
+				if printFails {
+					opts.Stdout = limitsFailingWriter{err: syscall.EPIPE}
+				}
+				err := finishLimitsWorkspace(t.Context(), m, nil, opts)
+				if !errors.Is(err, sourceErr) || backend.writes.Load() != 0 {
+					t.Fatalf("printing hid the source failure or sent a mutation: %v", err)
+				}
+				if printFails {
+					if !errors.Is(err, syscall.EPIPE) || clioutput.IsBrokenPipe(err) || out.Len() != 0 {
+						t.Fatalf("print failure masked the independent source failure: %v", err)
+					}
+					return
+				}
+				if source == "costs-with-receipt" {
+					if !strings.HasSuffix(out.String(), m.commandToPrint+"\n") || !strings.Contains(strings.TrimSuffix(out.String(), m.commandToPrint+"\n"), "USD 100.01") {
+						t.Fatalf("source failure lost the confirmed receipt or complete command: %q", out.String())
+					}
+				} else if out.String() != m.commandToPrint+"\n" {
+					t.Fatalf("source failure suppressed or changed the command: %q", out.String())
+				}
+			})
+		}
+	}
+}
+
+func TestLimitsWorkspacePrintPreservesConfirmedReceipt(t *testing.T) {
+	for _, scenario := range []string{"confirmed result", "receipt failure", "confirmed removal"} {
+		t.Run(scenario, func(t *testing.T) {
+			m, _ := newLimitsController(t, 40, 12)
+			limitsControllerReview(t, m)
+			m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+			m.lastSaved = gjson.Parse("{\"object\":\"organization.spend_limit\",\"threshold_amount\":10001,\"currency\":\"USD\",\"interval\":\"month\"}")
+			m.lastSavedOperation = limitsChangeOperation("limit_set", false)
+			if scenario == "confirmed removal" {
+				m.lastSaved = gjson.Parse("{\"object\":\"organization.spend_limit.deleted\",\"deleted\":true}")
+				m.lastSavedOperation = limitsChangeOperation("limit_delete", false)
+				m.snapshot.LimitUnconfirmed = true
+				m.snapshot.Errors = []limitsSourceFailure{{Resource: "spend_limit", Err: &openai.Error{StatusCode: http.StatusNotFound}}}
+			}
+			var out bytes.Buffer
+			opts := ShowJSONOpts{Context: t.Context(), Format: "text", Stdout: &out, Stderr: io.Discard}
+			if scenario == "receipt failure" {
+				opts.Stdout = limitsFailingWriter{err: syscall.EPIPE}
+			}
+			err := finishLimitsWorkspace(t.Context(), m, nil, opts)
+			if scenario == "receipt failure" {
+				if !errors.Is(err, syscall.EPIPE) || out.Len() != 0 {
+					t.Fatalf("print ignored a receipt failure: %v", err)
+				}
+				return
+			}
+			if err != nil || !strings.HasSuffix(out.String(), m.commandToPrint+"\n") {
+				t.Fatalf("confirmed receipt suppressed the command: %q err=%v", out.String(), err)
+			}
+			want := "USD 100.01"
+			if scenario == "confirmed removal" {
+				want = "Removal confirmed. Current hard-limit configuration was not returned (HTTP 404)."
+			}
+			if !strings.Contains(strings.TrimSuffix(out.String(), m.commandToPrint+"\n"), want) {
+				t.Fatalf("printing lost the preceding confirmed result: %q", out.String())
+			}
+		})
+	}
+}
+
+// This checks emitted PowerShell bytes; native PowerShell execution is separate.
+func TestLimitsWorkspacePrintedPowerShellCommandRetainsCallOperator(t *testing.T) {
+	for _, width := range []int{40, 80} {
+		t.Run(fmt.Sprintf("columns-%d", width), func(t *testing.T) {
+			m, backend := newLimitsController(t, width, 12)
+			m.change, m.page, m.shell = limitsChange{Kind: "limit_set", Amount: 12525}, "review", "pwsh"
+			m.previewExecutable = "C:\\Program Files\\" + strings.Repeat("long ", 20) + "Owner's Tools\\openai.exe"
+			m.requestArgs = []string{"--organization=org owner's"}
+			m.setReview()
+			command := limitsControllerPrintedCommand(t, m)
+			want := "& '" + strings.ReplaceAll(m.previewExecutable, "'", "''") + "' '--organization=org owner''s' admin organization spend-limit update --currency USD --interval month --threshold-amount 12525\n"
+			if command != want || backend.writes.Load() != 0 {
+				t.Fatalf("print changed PowerShell syntax or sent a mutation: %q", command)
+			}
+		})
+	}
+}
+
+func TestLimitsWorkspacePrintedCommandNativeShellPreservesArguments(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Bash/Zsh preview execution uses a POSIX recorder; native Windows requires separate coverage")
 	}
 	for _, shell := range []string{"bash", "zsh"} {
 		t.Run(shell, func(t *testing.T) {
-			binary, directory := audioPreviewExecutable(t, "openai limits' recorder")
+			binary, directory := audioPreviewExecutable(t, strings.Repeat("long ", 20)+"limits'\nrecorder")
 			marker := filepath.Join(t.TempDir(), "MUST_NOT_EXIST")
 			subject := "Owner's \"alert\"; $(touch " + marker + "); `touch " + marker + "` $HOME \\path\nnext line"
 			channel, err := json.Marshal(map[string]any{"type": "email", "recipients": []string{"finance@example.test"}, "subject_prefix": subject})
@@ -257,25 +511,28 @@ func TestLimitsDraftCommandPreviewNativeShellPreservesArguments(t *testing.T) {
 			}
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
-					review := limitsReview(tc.change, tc.projectID, requestArgs, false, shell, binary)
-					_, tail, found := strings.Cut(review, "\nDirect API command\n")
-					if !found {
-						t.Fatalf("review omitted its copyable command: %q", review)
-					}
-					command, guidance, found := strings.Cut(tail, "\n\n")
-					if !found || command == "" || !strings.HasPrefix(guidance, "This command skips the workspace preflight and can retry automatically.") {
-						t.Fatalf("review did not separate the executable command from its guidance: %q", tail)
-					}
-					capture := executeAudioPreview(t, shell, command, directory)
-					want := append(append([]string{}, requestArgs...), tc.want...)
-					if !reflect.DeepEqual(capture.args, want) {
-						t.Fatalf("printed command changed arguments:\n got: %q\nwant: %q", capture.args, want)
-					}
-					if len(capture.stdin) != 0 || capture.protected != "unset" {
-						t.Fatal("printed command unexpectedly supplied stdin or changed its environment")
-					}
-					if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
-						t.Fatalf("printed command executed subject text: %v", err)
+					for _, width := range []int{40, 80} {
+						t.Run(fmt.Sprintf("columns-%d", width), func(t *testing.T) {
+							m, backend := newLimitsController(t, width, 12)
+							m.change, m.page, m.shell = tc.change, "review", shell
+							m.snapshot.ProjectID, m.requestArgs, m.previewExecutable = tc.projectID, requestArgs, binary
+							m.setReview()
+							command := limitsControllerPrintedCommand(t, m)
+							if backend.writes.Load() != 0 {
+								t.Fatal("printing a command wrote to the backend")
+							}
+							capture := executeAudioPreview(t, shell, command, directory)
+							want := append(append([]string{}, requestArgs...), tc.want...)
+							if !reflect.DeepEqual(capture.args, want) {
+								t.Fatalf("printed command changed arguments:\n got: %q\nwant: %q", capture.args, want)
+							}
+							if len(capture.stdin) != 0 || capture.protected != "unset" {
+								t.Fatal("printed command unexpectedly supplied stdin or changed its environment")
+							}
+							if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+								t.Fatalf("printed command executed subject text: %v", err)
+							}
+						})
 					}
 				})
 			}
@@ -566,7 +823,7 @@ func TestLimitsDraftPreviewNamesDirectCommandDifferences(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh", "fish", "pwsh"} {
 		t.Run(shell, func(t *testing.T) {
 			preview := limitsReview(change, "", nil, false, shell, "/synthetic path/openai")
-			for _, want := range []string{"Direct API command", "skips the workspace preflight", "can retry automatically", "creates or replaces"} {
+			for _, want := range []string{"Command preview (inspection only)", "Ctrl+P prints the complete command", "skips the workspace preflight", "can retry automatically", "creates or replaces"} {
 				if !strings.Contains(preview, want) {
 					t.Errorf("preview omitted %q", want)
 				}
@@ -574,7 +831,7 @@ func TestLimitsDraftPreviewNamesDirectCommandDifferences(t *testing.T) {
 			if strings.Contains(preview, "Equivalent command") || strings.Contains(preview, "Not configured") {
 				t.Fatal("preview claimed unsupported equivalence or confirmed absence")
 			}
-			command := strings.SplitN(strings.SplitN(preview, "Direct API command\n", 2)[1], "\n", 2)[0]
+			command, _ := limitsCommand(change, "", nil, false, shell, "/synthetic path/openai")
 			if shell == "pwsh" && !strings.HasPrefix(command, "& '/synthetic path/openai' ") {
 				t.Fatalf("PowerShell preview cannot invoke the quoted executable: %q", command)
 			}

@@ -37,6 +37,7 @@ The isolated child environment includes only fake credentials and the fixture en
 | `org-limit-delete` | Organization | Remove the hard limit and retain its confirmed receipt after a missing-record refresh |
 | `project-limit` | Project | Replace the hard limit with USD 125.25 per month |
 | `alert-create` | Organization | Create a USD 75.50 monthly alert with synthetic email settings |
+| `alert-print` | Organization | Print the complete reviewed alert command after terminal restoration; perform no mutation |
 | `alert-edit` | Project | Change the alert to USD 150.25 and clear its prefix to null |
 | `alert-delete` | Organization | Delete the selected synthetic alert |
 | `rate-update` | Project | Change requests per minute to 250; preserve all other dimensions |
@@ -48,7 +49,10 @@ The driver reads to the review's end before selecting Apply.
 It checks that the fixture receives no mutation before confirmation.
 The uncertain scene checks one mutation, retained failure guidance, and exit status 1.
 The cancellation scene waits for the fixture's request marker and requires exit status 130.
-Successful scenes require exit status 0 and one mutation each.
+Successful mutation scenes require exit status 0 and one mutation each.
+The print scene uses Ctrl+P and requires exit status 0 with no mutation.
+It compares the complete printed command bytes after terminal restoration, including the final newline.
+Wrapped inspection rows do not establish command copyability.
 
 The fixture stores only synthetic request bodies, response hashes, and method/path/status records.
 It never logs request headers or credentials.
@@ -66,6 +70,8 @@ Planned screenshot evidence comes from recorded checkpoints:
 - Form: entered values, retained optional-field semantics, and visible Review action.
 - Review top: selected resource and original state.
 - Review Apply: explicit final action after scrolling through the complete review.
+- Review Print: the Ctrl+P action and the inspection-only command label.
+- Printed command: the complete command after terminal restoration, with no mutation.
 - Saved state: refreshed resource and confirmed outcome.
 - Uncertain state: retained draft and blocked retry guidance.
 - Loading state: cancellation remains available while a read is pending.

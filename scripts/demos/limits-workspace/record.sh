@@ -50,7 +50,7 @@ shasum -a 256 "$record_source/record.sh" "$record_source/server.py" "$record_sou
 demo_window_size="${record_width}x$((record_height+4))"
 demo_render_options=(--renderer resvg --font-family Menlo --font-size 18 --line-height 1.2 \
   --theme asciinema --fps-cap 15 --last-frame-duration 2)
-record_scenes=(org-limit org-limit-delete project-limit alert-create alert-edit alert-delete rate-update uncertain slow-cancel)
+record_scenes=(org-limit org-limit-delete project-limit alert-create alert-edit alert-delete rate-update uncertain slow-cancel alert-print)
 for record_scene in "${record_scenes[@]}"; do
   demo_capture_scene "$record_scene" 0 "$demo_runtime/after" "$demo_api_url/$record_scene/v1" \
     "$record_scene: ${record_width}x${record_height}" \

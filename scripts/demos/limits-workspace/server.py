@@ -15,7 +15,7 @@ from urllib.parse import urlsplit, parse_qs
 
 
 SCENES = ("org-limit", "org-limit-delete", "project-limit", "alert-create", "alert-edit",
-          "alert-delete", "rate-update", "uncertain", "slow-cancel")
+          "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print")
 
 
 def write_text(path, value):

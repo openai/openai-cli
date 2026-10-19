@@ -126,8 +126,7 @@ def mutations(scene):
 
 def checkpoint(terminal, evidence, output, name, required=()):
     screen = screen_text(terminal)
-    compact = "".join(line.rstrip() for line in screen.splitlines())
-    if not all(text in compact for text in required):
+    if not all(text in screen for text in required):
         raise AssertionError(f"checkpoint {name} omitted its required preview: {required!r}")
     write_text(Path(str(output) + f".{name}.txt"), screen)
     evidence["checkpoints"].append({"name": name, "seconds": time.monotonic() - terminal.started})
@@ -152,16 +151,15 @@ def review(terminal, evidence, scene, output):
     preview_seen = False
     for _ in range(40):
         screen = screen_text(terminal)
-        compact = "".join(line.rstrip() for line in screen.splitlines())
-        if "Command printing needs" in compact or "Command preview omitted" in compact:
+        if "Command printing needs" in screen or "Command preview omitted" in screen:
             raise AssertionError("review omitted the real command preview")
-        if not preview_seen and "Direct API command" in screen and evidence["staged_binary"]["path"] in compact:
+        if not preview_seen and "Command preview (inspection only)" in screen:
             checkpoint(terminal, evidence, output, "review-command",
-                       ("Direct API command", evidence["staged_binary"]["path"]))
+                       ("Command preview (inspection only)",))
             preview_seen = True
         if "Apply change" in screen and "Read to the end" not in screen:
             break
-        if not preview_seen and "Direct API command" in screen:
+        if not preview_seen and "Command preview" in screen:
             key(terminal, evidence, "Show command preview", b"\x1b[B")
         else:
             key(terminal, evidence, "PageDown", b"\x1b[6~")
@@ -171,6 +169,11 @@ def review(terminal, evidence, scene, output):
         raise AssertionError("review reached Apply without a command preview checkpoint")
     if mutations(scene):
         raise AssertionError("fixture received a mutation before explicit confirmation")
+    if scene == "alert-print":
+        wait_screen(terminal, ["Ctrl+P"])
+        checkpoint(terminal, evidence, output, "review-print", ("Ctrl+P",))
+        key(terminal, evidence, "Ctrl+P print and exit", b"\x10")
+        return
     key(terminal, evidence, "Tab to Apply", b"\t")
     wait_screen(terminal, ["> Apply change"])
     checkpoint(terminal, evidence, output, "review-apply")
@@ -198,20 +201,22 @@ def run_scene(terminal, scene, evidence, output):
     if scene.startswith("alert-"):
         key(terminal, evidence, "Alerts", b"\x1b[C")
         wait_screen(terminal, ["Create spend alert"])
-        if scene != "alert-create":
+        creating = scene in {"alert-create", "alert-print"}
+        if not creating:
             key(terminal, evidence, "Select alert", b"\x1b[B")
         if scene == "alert-delete":
             key(terminal, evidence, "Delete selected alert", b"d")
         else:
             key(terminal, evidence, "Edit alert", b"\r")
             wait_screen(terminal, ["Monthly USD", "Review change"])
-            replace(terminal, evidence, "Monthly USD", "75.50" if scene == "alert-create" else "150.25")
+            replace(terminal, evidence, "Monthly USD", "75.50" if creating else "150.25")
             key(terminal, evidence, "Recipients", b"\t")
-            if scene == "alert-create":
+            if creating:
                 replace(terminal, evidence, "Synthetic recipient", "finance@example.test")
             key(terminal, evidence, "Subject prefix", b"\t")
-            if scene == "alert-create":
-                replace(terminal, evidence, "Subject prefix", "Demo")
+            if creating:
+                prefix = "Demo team's budget $HOME; keep 'quoted' text" if scene == "alert-print" else "Demo"
+                replace(terminal, evidence, "Subject prefix", prefix)
             key(terminal, evidence, "Prefix mode", b"\t")
             if scene == "alert-edit":
                 key(terminal, evidence, "Replace prefix mode", b"\r")
@@ -242,7 +247,34 @@ def run_scene(terminal, scene, evidence, output):
         checkpoint(terminal, evidence, output, "form")
         key(terminal, evidence, "Review", b"\r")
     review(terminal, evidence, scene, output)
-    if scene == "uncertain":
+    if scene == "alert-print":
+        terminal.finish(0)
+        scene_requests = requests(scene)
+        if mutations(scene) or not scene_requests or any(item["method"] != "GET" for item in scene_requests):
+            raise AssertionError("printing a reviewed command must perform no mutation")
+        channel = json.dumps({"recipients": ["finance@example.test"],
+                              "subject_prefix": "Demo team's budget $HOME; keep 'quoted' text",
+                              "type": "email"}, sort_keys=True, separators=(",", ":"))
+        command = (evidence["staged_binary"]["path"] + " '--base-url=" + evidence["request_base_url"]
+                   + "' admin organization spend-alerts create"
+                   " --currency USD --interval month --threshold-amount 7550 --notification-channel '"
+                   + channel.replace("'", "'\\''") + "'")
+        output_flags = terminal.terminal_modes["initial"][1]
+        newline = "\r\n" if output_flags & termios.OPOST and output_flags & termios.ONLCR else "\n"
+        expected = (command + newline).encode()
+        restored = terminal.raw.rfind(b"\x1b[?1049l") + len(b"\x1b[?1049l")
+        start = len(terminal.raw) - len(expected)
+        if (start < restored or terminal.raw[start:] != expected
+                or terminal.raw[restored:].count(expected) != 1
+                or terminal.raw.rfind(b"\x1b[?25h") > start):
+            raise AssertionError("printed command bytes differ or precede terminal restoration")
+        with Path(str(output) + ".printed-command.raw.txt").open("xb") as destination:
+            if destination.write(terminal.raw[start:]) != len(expected):
+                raise OSError("incomplete printed command evidence write")
+        evidence["printed_command"] = {"byte_offset": start, "byte_length": len(expected),
+                                       "sha256": hashlib.sha256(expected).hexdigest()}
+        checkpoint(terminal, evidence, output, "printed-command")
+    elif scene == "uncertain":
         wait_screen(terminal, ["Save not confirmed", "Review change"])
         checkpoint(terminal, evidence, output, "uncertain")
         key(terminal, evidence, "Blocked repeat Enter", b"\r\r")
@@ -277,7 +309,8 @@ def main():
     args = ["projects", "limits", "--project-id", "proj_demo"] if project else ["admin", "limits"]
     evidence = {"scene": scene, "width": width, "height": height, "command": ["openai", *args],
                 "keys": [], "checkpoints": [], "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
-                "parent_shell": "/bin/bash", "recorder_runtime": str(runtime)}
+                "parent_shell": "/bin/bash", "recorder_runtime": str(runtime),
+                "request_base_url": os.environ["OPENAI_BASE_URL"]}
     print("$ openai " + " ".join(args), flush=True)
     original = termios.tcgetattr(1)
     relay = termios.tcgetattr(1)

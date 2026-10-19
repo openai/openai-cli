@@ -38,6 +38,7 @@ type limitsMenuItem struct {
 type limitsWorkspace struct {
 	detailsHeading                                string
 	previewExecutable                             string
+	previewCommand, commandToPrint                string
 	invocation                                    string
 	lastSavedOperation, workerSavedOperation      string
 	mutationError                                 error
@@ -256,15 +257,27 @@ func finishLimitsWorkspace(ctx context.Context, m *limitsWorkspace, runErr error
 		opts.Title = "Last confirmed result"
 		receiptErr = ShowJSON(m.lastSaved, opts)
 	}
+	var overviewErr error
 	if incomplete {
-		return errors.Join(&limitsWorkflowFailure{message: message, cause: operationErr}, receiptErr)
+		overviewErr = &limitsWorkflowFailure{message: message, cause: operationErr}
+		if m.commandToPrint == "" {
+			return errors.Join(overviewErr, receiptErr)
+		}
 	}
 	if receiptErr != nil {
-		return receiptErr
+		return errors.Join(overviewErr, receiptErr)
 	}
 	if removedLimitErr != nil && resolvedOutputFormat(opts) == "text" {
-		_, err := (clioutput.Writer{Context: ctx, Sink: opts.Stdout}).WriteString("Removal confirmed. Current hard-limit configuration was not returned (HTTP 404).\n")
-		return err
+		if _, err := (clioutput.Writer{Context: ctx, Sink: opts.Stdout}).WriteString("Removal confirmed. Current hard-limit configuration was not returned (HTTP 404).\n"); err != nil {
+			return errors.Join(overviewErr, err)
+		}
+	}
+	if m.commandToPrint != "" {
+		_, err := (clioutput.Writer{Context: ctx, Sink: opts.Stdout}).WriteString(m.commandToPrint + "\n")
+		if err != nil {
+			err = &limitsWorkflowFailure{message: "Could not print the limits command. Check terminal output and try again.", cause: err}
+		}
+		return errors.Join(overviewErr, err)
 	}
 	if m.lastSaved.Exists() {
 		return nil
@@ -461,13 +474,25 @@ func (m *limitsWorkspace) review() {
 		return
 	}
 	m.change, m.page, m.apply, m.formError = change, "review", false, ""
-	m.setDetails(limitsReview(change, m.snapshot.ProjectID, m.requestArgs, m.omitPreview, m.shell, m.previewExecutable))
+	m.setReview()
+}
+
+func (m *limitsWorkspace) setReview() {
+	m.previewCommand, _ = limitsCommand(m.change, m.snapshot.ProjectID, m.requestArgs, m.omitPreview, m.shell, m.previewExecutable)
+	m.setDetails(limitsReview(m.change, m.snapshot.ProjectID, m.requestArgs, m.omitPreview, m.shell, m.previewExecutable))
+}
+
+func (m *limitsWorkspace) detailsHeight() int {
+	if m.page == "review" && m.previewCommand != "" {
+		return max(1, m.height-6)
+	}
+	return max(1, m.height-5)
 }
 
 func (m *limitsWorkspace) setDetails(content string) {
 	m.details = content
 	m.viewport.SetWidth(max(1, m.width-2))
-	m.viewport.SetHeight(max(1, m.height-5))
+	m.viewport.SetHeight(m.detailsHeight())
 	m.viewport.SetContent(ansi.Hardwrap(content, max(1, m.width-2), true))
 	m.viewport.GotoTop()
 }
@@ -484,13 +509,13 @@ func (m *limitsWorkspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.apply = false
 		if m.page == "review" {
-			m.setDetails(limitsReview(m.change, m.snapshot.ProjectID, m.requestArgs, m.omitPreview, m.shell, m.previewExecutable))
+			m.setReview()
 		}
 		if m.page == "details" {
 			m.setDetails(m.details)
 		}
 		m.viewport.SetWidth(max(1, msg.Width-2))
-		m.viewport.SetHeight(max(1, msg.Height-5))
+		m.viewport.SetHeight(m.detailsHeight())
 		return m, nil
 	case limitsWorkResult:
 		m.busy = false
@@ -612,6 +637,14 @@ func (m *limitsWorkspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "review":
+			if key == "ctrl+p" {
+				if m.previewCommand != "" && !m.locked && !m.refreshRequired && m.ctx.Err() == nil && (m.output == nil || m.output.Err() == nil) {
+					m.commandToPrint, m.quitting = m.previewCommand, true
+					m.cancel()
+					return m, tea.Quit
+				}
+				return m, nil
+			}
 			if key == "tab" || key == "shift+tab" {
 				if m.viewport.AtBottom() {
 					m.apply = !m.apply
@@ -783,7 +816,7 @@ func (m *limitsWorkspace) help() string {
 	if invocation == "" {
 		invocation = "openai"
 	}
-	text := "Spend manages hard monthly USD limits.\nAlerts notify recipients; they do not enforce caps.\nRates manages six project rate fields.\n\nEvery change requires a before/after review.\nRead to the end, then Tab to Apply.\nBack remains the default action.\n\nUse r to refresh. Use i to inspect original fields.\nUse --max-items -1 to load complete lists.\n\n"
+	text := "Spend manages hard monthly USD limits.\nAlerts notify recipients; they do not enforce caps.\nRates manages six project rate fields.\n\nEvery change requires a before/after review.\nRead to the end, then Tab to Apply.\nBack remains the default action.\nCtrl+P prints the reviewed command and exits. Printing sends no change.\n\nUse r to refresh. Use i to inspect original fields.\nUse --max-items -1 to load complete lists.\n\n"
 	if m.locked {
 		m.mu.Lock()
 		failure := m.mutationError

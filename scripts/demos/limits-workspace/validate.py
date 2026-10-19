@@ -6,10 +6,11 @@ import json
 from pathlib import Path
 import sys
 import termios
+from urllib.parse import urlsplit
 
 
 SCENES = ("org-limit", "org-limit-delete", "project-limit", "alert-create", "alert-edit",
-          "alert-delete", "rate-update", "uncertain", "slow-cancel")
+          "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print")
 
 
 def main():
@@ -53,9 +54,47 @@ def main():
         assert relay[:-len(prompt)] == raw == child_bytes, (scene, "capture changed CLI bytes")
         assert hashlib.sha256(raw).hexdigest() == evidence["relayed_sha256"]
         mutations = [entry for entry in requests if entry["scene"] == scene and entry["method"] in {"POST", "DELETE"}]
-        assert len(mutations) == (0 if scene == "slow-cancel" else 1), (scene, "unexpected mutation count")
+        assert len(mutations) == (0 if scene in {"slow-cancel", "alert-print"} else 1), (scene, "unexpected mutation count")
         if scene == "slow-cancel":
             assert any(entry["scene"] == scene and entry["status"] == "held" for entry in requests)
+            continue
+        checkpoints = {point["name"]: point for point in evidence["checkpoints"]}
+        assert "review-command" in checkpoints
+        preview = (root / (scene + "-evidence.review-command.txt")).read_text()
+        assert "Command preview (inspection only)" in preview, (scene, "missing inspection preview")
+        assert "Command printing needs" not in preview and "Command preview omitted" not in preview
+        final_screen = (root / (scene + "-evidence.exit.txt")).read_text()
+        assert "> Apply change" not in final_screen, (scene, "stale confirmation after exit")
+        if scene == "alert-print":
+            scene_requests = [entry for entry in requests if entry["scene"] == scene]
+            assert scene_requests and all(entry["method"] == "GET" for entry in scene_requests)
+            assert "review-print" in checkpoints and "printed-command" in checkpoints
+            assert "review-apply" not in checkpoints
+            assert checkpoints["review-command"]["seconds"] < checkpoints["review-print"]["seconds"]
+            keys = [event["key"] for event in evidence["keys"]]
+            assert keys.count("Ctrl+P print and exit") == 1 and "Apply" not in keys
+            endpoint = urlsplit(evidence["request_base_url"])
+            assert endpoint.scheme == "http" and endpoint.hostname == "127.0.0.1" and endpoint.port
+            assert evidence["request_base_url"] == f"http://127.0.0.1:{endpoint.port}/alert-print/v1"
+            channel = json.dumps({"recipients": ["finance@example.test"],
+                                  "subject_prefix": "Demo team's budget $HOME; keep 'quoted' text",
+                                  "type": "email"}, sort_keys=True, separators=(",", ":"))
+            command = (staged["path"] + " '--base-url=" + evidence["request_base_url"]
+                       + "' admin organization spend-alerts create"
+                       " --currency USD --interval month --threshold-amount 7550 --notification-channel '"
+                       + channel.replace("'", "'\\''") + "'")
+            newline = "\r\n" if initial[1] & termios.OPOST and initial[1] & termios.ONLCR else "\n"
+            expected = (command + newline).encode()
+            printed = (root / (scene + "-evidence.printed-command.raw.txt")).read_bytes()
+            start = len(raw) - len(expected)
+            restored_end = raw.rfind(b"\x1b[?1049l") + len(b"\x1b[?1049l")
+            assert raw.rfind(b"\x1b[?1049l") > raw.rfind(b"\x1b[?1049h") >= 0
+            assert raw.rfind(b"\x1b[?25h") > raw.rfind(b"\x1b[?25l") >= 0
+            assert restored_end <= start and raw.rfind(b"\x1b[?25h") < start
+            assert printed == expected == raw[start:], (scene, "printed command bytes changed")
+            assert raw[restored_end:].count(expected) == 1
+            assert evidence["printed_command"] == {"byte_offset": start, "byte_length": len(expected),
+                                                   "sha256": hashlib.sha256(expected).hexdigest()}
             continue
         request = mutations[0]
         if scene in {"org-limit", "project-limit", "uncertain"}:
@@ -76,20 +115,14 @@ def main():
             assert request["status"] == "response_lost_after_write"
         else:
             assert request["status"] == 200
-        checkpoints = {point["name"]: point for point in evidence["checkpoints"]}
         assert "review-command" in checkpoints and "review-apply" in checkpoints
         assert checkpoints["review-command"]["seconds"] < checkpoints["review-apply"]["seconds"]
-        preview = (root / (scene + "-evidence.review-command.txt")).read_text()
-        preview = "".join(line.rstrip() for line in preview.splitlines())
-        assert "Direct API command" in preview and staged["path"] in preview, (scene, "missing real command preview")
-        assert "Command printing needs" not in preview and "Command preview omitted" not in preview
         assert [event["key"] for event in evidence["keys"]].count("Apply") == 1
-        final_screen = (root / (scene + "-evidence.exit.txt")).read_text()
-        assert "> Apply change" not in final_screen, (scene, "stale confirmation after exit")
-    print("PASS: nine real workspace processes; exact child/raw/outer bytes; expected exits and mutation bodies.")
+    print("PASS: ten real workspace processes; exact child/raw/outer bytes; expected exits and mutation bodies.")
     print("PASS: one mutation per confirmed action; no retry after uncertain outcome; slow load canceled without mutation.")
-    print("PASS: native Bash parents preserve CLI exits; staged binary hashes match; eight real command previews; staged files removed.")
+    print("PASS: native Bash parents preserve CLI exits; staged binary hashes match; nine inspection previews; staged files removed.")
     print("PASS: all seven terminal mode fields restored before Bash exits; only Darwin PENDIN normalized.")
+    print("PASS: Ctrl+P exits without mutation; the complete command prints byte-for-byte after terminal restoration.")
     print("LIMIT: inspect all checkpoint images and GIF frames before claiming visual acceptance.")
 
 

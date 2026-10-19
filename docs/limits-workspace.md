@@ -54,6 +54,7 @@ Values beyond that precision remain available in `costs.buckets`; the summary re
 | d | Delete the selected alert |
 | Escape | Return without saving |
 | q | Close the overview |
+| Ctrl+P | Print the reviewed command and exit without saving |
 | Ctrl+C | Interrupt from any state |
 
 The workspace needs at least 40 columns and 12 rows.
@@ -64,7 +65,11 @@ Every change opens a before-and-after review.
 Scroll to the end before selecting Apply.
 Back is the initial selection, including after resizing.
 The review shows a shell command when the CLI can reproduce the request context safely.
-It omits command previews that require private options.
+Wrapped command rows are for inspection only.
+Press Ctrl+P to print the complete command after the terminal screen restores.
+Copy the printed command when you want to run it later.
+Printing sends no change and preserves any earlier confirmed receipt.
+The workspace omits command previews that require private options or unsupported shells.
 Existing administration commands remain available for scripts.
 
 ```sh
@@ -82,7 +87,8 @@ Enter decimal dollars, such as `125.50`.
 The CLI converts dollars to integer cents without floating-point arithmetic.
 A hard limit must be at least USD 0.01.
 Enforcement can be delayed after the threshold is reached.
-Removing a hard limit removes enforcement.
+Removing a hard limit removes that limit’s enforcement.
+Parent limits can still apply.
 Use the Platform website to inspect or edit any retained soft budget.
 
 Alerts support creation, editing, and deletion.

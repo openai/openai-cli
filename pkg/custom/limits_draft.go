@@ -216,8 +216,17 @@ func limitsReview(c limitsChange, projectID string, requestArgs []string, omit b
 	result += "\nThe CLI checks the current record before saving. This check is not atomic.\n"
 	result += "The workspace sends this change once, without automatic retries.\n"
 	result = readable.Text(result)
+	command, reason := limitsCommand(c, projectID, requestArgs, omit, shell, executable...)
+	if command == "" {
+		return result + "\n" + reason + "\n"
+	}
+	return result + "\nCommand preview (inspection only)\n" + command + "\n\nCtrl+P prints the complete command and exits.\nThis command skips the workspace preflight and can retry automatically.\nRecheck current settings before running it.\n"
+}
+
+// Keep executable bytes separate from prose and viewport wrapping.
+func limitsCommand(c limitsChange, projectID string, requestArgs []string, omit bool, shell string, executable ...string) (string, string) {
 	if omit {
-		return result + "\nCommand preview omitted: request context cannot be reproduced safely.\n"
+		return "", "Command preview omitted: request context cannot be reproduced safely."
 	}
 	args := append([]string{}, requestArgs...)
 	args = append(args, "admin", "organization")
@@ -256,7 +265,7 @@ func limitsReview(c limitsChange, projectID string, requestArgs []string, omit b
 		if c.SubjectPrefixSet && c.SubjectPrefix != nil {
 			prefix := *c.SubjectPrefix
 			if strings.HasPrefix(prefix, "\\@") {
-				return result + "\nCommand preview omitted: the request parser cannot preserve this literal prefix.\n"
+				return "", "Command preview omitted: the request parser cannot preserve this literal prefix."
 			}
 			if strings.HasPrefix(prefix, "@") {
 				channelValues["subject_prefix"] = "\\" + prefix
@@ -272,7 +281,7 @@ func limitsReview(c limitsChange, projectID string, requestArgs []string, omit b
 	}
 	command := terminal.FormatCommand(args, shell)
 	if command == "" {
-		return result + "\nCommand printing needs Bash, zsh, fish or PowerShell 7.\n"
+		return "", "Command printing needs Bash, zsh, fish or PowerShell 7."
 	}
 	if len(executable) > 0 && executable[0] != "" {
 		command = terminal.ShellQuoter(shell)(executable[0]) + strings.TrimPrefix(command, "openai")
@@ -280,7 +289,7 @@ func limitsReview(c limitsChange, projectID string, requestArgs []string, omit b
 			command = "& " + command
 		}
 	}
-	return result + "\nDirect API command\n" + command + "\n\nThis command skips the workspace preflight and can retry automatically.\nRecheck current settings before running it.\n"
+	return command, ""
 }
 
 // Use the generated operation identity so successful receipts retain projections.
