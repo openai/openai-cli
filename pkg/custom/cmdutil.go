@@ -17,6 +17,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/commands/audio"
 	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
@@ -39,7 +40,7 @@ func ValidateBaseURL(value, source string) error {
 
 // GetDefaultRequestOptions keeps feature middleware composition with its current owner.
 func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
-	return requestconfig.DefaultOptions(cmd, Version, captureAudioText, captureSaveReceiptPolicy(cmd))
+	return requestconfig.DefaultOptions(cmd, Version, audio.CaptureText, captureSaveReceiptPolicy(cmd))
 }
 
 func isTerminal(w io.Writer) bool {
@@ -57,7 +58,7 @@ func isTerminal(w io.Writer) bool {
 //
 // Takes in a stdout reference so we can test this function without overriding os.Stdout in tests.
 func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile string) (message string, err error) {
-	body := &downloadResponseBody{ReadCloser: response.Body}
+	body := &clioutput.DownloadResponseBody{ReadCloser: response.Body}
 	copyResponse := *response
 	copyResponse.Body = body
 	response = &copyResponse
@@ -71,7 +72,7 @@ func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile stri
 						outcome = "Download incomplete. An automatically selected file may remain with partial output."
 					}
 				}
-				err = &downloadSaveError{outcome, closeErr}
+				err = clioutput.NewDownloadSaveError(outcome, closeErr)
 			} else {
 				err = errors.Join(err, closeErr)
 			}
@@ -81,20 +82,20 @@ func WriteBinaryResponse(response *http.Response, stdout io.Writer, outfile stri
 		}
 		message, err = reportResponseSaveReceipt(response, message, err)
 	}()
-	if handled, message, err := writeReadableSpeech(response, stdout, outfile); handled {
+	if handled, message, err := audio.WriteSpeech(response, stdout, outfile); handled {
 		return message, err
 	}
 
 	switch outfile {
 	case "-", "/dev/stdout":
-		return "", copyBinaryOutput(downloadContext(response), stdout, response.Body)
+		return "", clioutput.CopyBinaryOutput(clioutput.DownloadContext(response), stdout, response.Body)
 	case "":
 		if !isTerminal(os.Stdout) {
-			return "", copyBinaryOutput(downloadContext(response), stdout, response.Body)
+			return "", clioutput.CopyBinaryOutput(clioutput.DownloadContext(response), stdout, response.Body)
 		}
 		return writeAutomaticBinaryResponse(response, stdout)
 	default:
-		return writeManagedBinaryResponse(response, outfile)
+		return clioutput.WriteManagedBinaryResponse(response, outfile)
 	}
 }
 
@@ -104,7 +105,7 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 	buffered := bufio.NewReader(response.Body)
 	sample, err := buffered.Peek(512 + utf8.UTFMax - 1)
 	if err != nil && err != io.EOF {
-		return "", &downloadSaveError{"Download incomplete. No automatic destination file was created.", err}
+		return "", clioutput.NewDownloadSaveError("Download incomplete. No automatic destination file was created.", err)
 	}
 	if err != io.EOF && !utf8.Valid(sample) {
 		for trim := 1; trim < utf8.UTFMax && trim <= len(sample); trim++ {
@@ -117,46 +118,43 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 	}
 	if requestconfig.IsUTF8TextFile(sample) {
 		if err := jsonview.WriteTerminalText(stdout, buffered); err != nil {
-			return "", &downloadSaveError{"Download incomplete. Output may contain partial bytes.", err}
+			return "", clioutput.NewDownloadSaveError("Download incomplete. Output may contain partial bytes.", err)
 		}
 		return "", nil
 	}
 
 	file, err := createDownloadFile(response, sample)
 	if err != nil {
-		return "", &downloadSaveError{"Download incomplete. An automatic destination file could not be created.", err}
+		return "", clioutput.NewDownloadSaveError("Download incomplete. An automatic destination file could not be created.", err)
 	}
 	filename := file.Name()
 	owned, err := file.Stat()
 	if err != nil {
-		return "", &downloadSaveError{
+		return "", clioutput.NewDownloadSaveError(
 			"Download incomplete. An automatically selected file may remain with partial output.",
-			errors.Join(err, file.Close()),
-		}
+			errors.Join(err, file.Close()))
 	}
 	copyErr := copyDownloadFile(file, buffered)
 	current, verifyErr := os.Lstat(filename)
 	if verifyErr != nil {
-		return "", &downloadSaveError{
+		return "", clioutput.NewDownloadSaveError(
 			"Download incomplete. The automatic destination could not be verified; partial output may remain.",
-			errors.Join(copyErr, verifyErr),
-		}
+			errors.Join(copyErr, verifyErr))
 	}
 	if !os.SameFile(current, owned) {
-		return "", &downloadSaveError{
+		return "", clioutput.NewDownloadSaveError(
 			"Download incomplete. The automatic destination changed; downloaded bytes may remain elsewhere.",
-			errors.Join(copyErr, fmt.Errorf("download destination changed during streaming: %w", os.ErrInvalid)),
-		}
+			errors.Join(copyErr, fmt.Errorf("download destination changed during streaming: %w", os.ErrInvalid)))
 	}
 	if copyErr != nil {
-		return "", &downloadSaveError{"Download incomplete. The automatically selected file may contain partial output.", copyErr}
+		return "", clioutput.NewDownloadSaveError("Download incomplete. The automatically selected file may contain partial output.", copyErr)
 	}
 	return fmt.Sprintf("Wrote output to: %s", jsonview.SanitizeTerminalString(filename)), nil
 }
 
 func copyDownloadFile(file io.WriteCloser, source io.Reader) (err error) {
 	defer func() { err = errors.Join(err, file.Close()) }()
-	return copyDownloadData(context.Background(), file, source)
+	return clioutput.CopyDownloadData(context.Background(), file, source)
 }
 
 // Return a writable file handle to a new file, which attempts to choose a good filename
@@ -323,7 +321,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 			return presentation.plan.save(opts.Context, []byte(res.Raw), out)
 		})
 	}
-	if text, ok := audioTextResult(opts); ok {
+	if text, ok := audio.TextResult(opts.Context, opts.Operation, opts.OutputKind); ok {
 		if opts.Transform == "" && (strings.EqualFold(opts.Format, "raw") || opts.RawOutput) {
 			if opts.RawOutput && isTerminal(opts.Stdout) {
 				text = jsonview.SanitizeTerminalString(text)

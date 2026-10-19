@@ -880,7 +880,7 @@ jobs:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: cmd,powershell,pwsh
       - name: Check native Windows download completion and cleanup
         if: matrix.existing-checks
-        run: go test -p 2 ./pkg/custom -run '^(TestWindowsDownload|TestManagedDownload|TestDownload|TestAutomaticDownload|TestBinaryResponsePreserves|TestWriteBinaryResponse|TestReportSaveReceipt|TestSaveReceiptContext|TestResponseSaveReceipt)' -count=1 -v
+        run: go test -p 2 ./pkg/custom ./internal/output -run '^(TestWindowsDownload|TestManagedDownload|TestDownload|TestAutomaticDownload|TestBinaryResponsePreserves|TestWriteBinaryResponse|TestReportSaveReceipt|TestSaveReceiptContext|TestResponseSaveReceipt)' -count=1 -v
         env:
           GOMAXPROCS: '2'
       - name: Check native Windows Batch stdin and private staging

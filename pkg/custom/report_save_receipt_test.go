@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/urfave/cli/v3"
 )
 
@@ -75,7 +76,7 @@ func TestReportSaveReceiptFailures(t *testing.T) {
 			t.Fatal("empty receipt wrote bytes")
 		}
 		err := ReportSaveReceipt(cmd, sink, "Wrote output", nil)
-		var receiptErr *saveReceiptError
+		var receiptErr *clioutput.ReceiptError
 		if !errors.Is(err, sinkErr) || !errors.As(err, &receiptErr) {
 			t.Fatalf("receipt failure=%v", err)
 		}
@@ -209,7 +210,7 @@ func TestResponseSaveReceiptCompletion(t *testing.T) {
 					t.Fatalf("close failure=%v receipt writes=%d", err, writes)
 				}
 			case "receipt failure":
-				var failure *saveReceiptError
+				var failure *clioutput.ReceiptError
 				if !errors.Is(err, io.ErrClosedPipe) || !errors.As(err, &failure) || writes != 1 {
 					t.Fatalf("receipt failure=%v writes=%d", err, writes)
 				}

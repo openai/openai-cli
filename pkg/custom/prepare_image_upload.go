@@ -1,14 +1,10 @@
 package custom
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"strings"
-	"sync"
 
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/tidwall/gjson"
@@ -63,47 +59,20 @@ func prepareImageMultipartBody(command *cli.Command, body map[string]any) error 
 	return nil
 }
 
-// Scalar @file references arrive as upload readers after shared trusted-input
-// expansion. Inspect their contents once and replay the exact original bytes,
-// retaining multipart filenames/content types. Source image and mask readers
-// never enter this path and stay streamed. There is no new file-size limit.
+// Inspect scalar uploads with shared ownership; normalization remains image-specific.
 func inspectImageMultipartSetting(ctx context.Context, name string, value any) (any, any, error) {
-	if text, ok := value.(string); ok {
-		return inspectImageMultipartScalar(name, text), value, nil
+	inspected, replay, err := requestconfig.ReadMultipartScalar(ctx, name, value)
+	var readFailure *requestconfig.MultipartScalarError
+	if errors.As(err, &readFailure) {
+		return nil, replay, imageSavingFailure(readFailure.Error(), readFailure.Unwrap())
 	}
-	reader, ok := value.(io.Reader)
-	if !ok {
-		return value, value, nil
-	}
-	upload, owned := value.(requestconfig.FileUpload)
-	var closeOnce sync.Once
-	var closeErr error
-	closeSource := func() {
-		if owned {
-			closeOnce.Do(func() { closeErr = upload.Close() })
-		}
-	}
-	cancelDone := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() { defer close(cancelDone); closeSource() })
-	data, readErr := io.ReadAll(imageSettingReader{ctx, reader})
-	if !stop() {
-		<-cancelDone
-	}
-	closeSource()
-	var replay any = bytes.NewReader(data)
-	if owned {
-		upload.Reader = bytes.NewReader(data)
-		upload.Size, upload.KnownSize = int64(len(data)), true
-		replay = upload
-	}
-	if err := ctx.Err(); err != nil {
+	if err != nil {
 		return nil, replay, err
 	}
-	if readErr != nil || closeErr != nil {
-		// Reader errors may quote file contents. Keep only the known option name.
-		return nil, replay, imageSavingFailure(fmt.Sprintf("could not read --%s from its file", strings.ReplaceAll(name, "_", "-")), errors.Join(readErr, closeErr))
+	if text, ok := inspected.(string); ok {
+		inspected = inspectImageMultipartScalar(name, text)
 	}
-	return inspectImageMultipartScalar(name, string(data)), replay, nil
+	return inspected, replay, nil
 }
 
 // Multipart scalar text has the same meaning whether supplied by stdin or a
@@ -116,16 +85,4 @@ func inspectImageMultipartScalar(name, text string) any {
 		}
 	}
 	return text
-}
-
-type imageSettingReader struct {
-	context context.Context
-	source  io.Reader
-}
-
-func (r imageSettingReader) Read(buffer []byte) (int, error) {
-	if err := r.context.Err(); err != nil {
-		return 0, err
-	}
-	return r.source.Read(buffer)
 }
