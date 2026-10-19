@@ -31,7 +31,7 @@ jobs:
         os: [macos-15-intel, windows-11-arm]
     steps:
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -147,7 +147,7 @@ jobs:
             shells: cmd,powershell,pwsh
     steps:
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
@@ -1678,7 +1678,7 @@ jobs:
           "WSL_PAGER_WORK_DEADLINE=$($started.AddMinutes(20).ToString('o'))" >> $env:GITHUB_ENV
           "WSL_PAGER_CLEANUP_DEADLINE=$($started.AddMinutes(23).ToString('o'))" >> $env:GITHUB_ENV
       - name: Download prepared source
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-inputs
