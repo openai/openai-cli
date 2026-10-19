@@ -6,6 +6,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/commands/admin"
 	"github.com/openai/openai-cli/internal/commands/codex"
 	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/commands/manpages"
@@ -42,7 +43,7 @@ func ConfigureCommand(root *cli.Command) {
 	configureReadableAudio(root)
 	configureReadableSpeech(root)
 	registerAdminSetup(root)
-	configureAdminCredentials(root)
+	admin.ConfigureCredentials(root)
 	localcommands.ConfigureSubgroups(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)

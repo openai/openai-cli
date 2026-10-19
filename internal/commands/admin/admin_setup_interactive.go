@@ -1,4 +1,4 @@
-package custom
+package admin
 
 import (
 	"context"
@@ -59,23 +59,25 @@ Show manual setup for an ordinary API key:
   {{$run}} help setup
 `
 
-type adminSetupError struct {
+// SetupError preserves a safe setup diagnostic and canonical cancellation cause.
+type SetupError struct {
 	message string
 	code    int
 	// Only canonical context errors belong here, never backend or caller data.
 	cause error
 }
 
-func (err *adminSetupError) Error() string { return err.message }
-func (err *adminSetupError) Unwrap() error { return err.cause }
-func (err *adminSetupError) ExitCode() int {
+func (err *SetupError) Error() string { return err.message }
+func (err *SetupError) Unwrap() error { return err.cause }
+func (err *SetupError) ExitCode() int {
 	if err.code != 0 {
 		return err.code
 	}
 	return 1
 }
 
-func registerAdminSetup(root *cli.Command) {
+// RegisterSetup installs the secure interactive admin setup command.
+func RegisterSetup(root *cli.Command, policy Options) {
 	setup := root.Command("setup")
 	if setup == nil {
 		setup = &cli.Command{
@@ -88,40 +90,40 @@ func registerAdminSetup(root *cli.Command) {
 		setup.Commands = append(setup.Commands, &cli.Command{
 			Name: "admin", Usage: "Enter an admin key securely and verify access",
 			HideHelpCommand: true, CustomHelpTemplate: adminSetupInteractiveHelp,
-			Action: handleAdminSetup,
+			Action: func(ctx context.Context, command *cli.Command) error { return handleAdminSetup(ctx, command, policy) },
 		})
 	}
 }
 
-func handleAdminSetup(ctx context.Context, command *cli.Command) error {
+func handleAdminSetup(ctx context.Context, command *cli.Command, policy Options) error {
 	root := command.Root()
 	if command.Args().Present() {
-		return &adminSetupError{message: "Run setup admin without extra arguments. Enter the key only at the hidden prompt.", code: 3}
+		return &SetupError{message: "Run setup admin without extra arguments. Enter the key only at the hidden prompt.", code: 3}
 	}
 	if root.Bool("debug") {
-		return &adminSetupError{message: "Remove --debug before running setup admin. Interactive key entry does not support debug logging.", code: 3}
+		return &SetupError{message: "Remove --debug before running setup admin. Interactive key entry does not support debug logging.", code: 3}
 	}
-	if resolvedOutputFormat(ShowJSONOpts{Format: root.String("format")}) != "text" || errorOutputFormat(root) != "text" ||
+	if !policy.TextOutput(root) ||
 		root.String("transform") != "" || root.String("transform-error") != "" || root.Bool("raw-output") {
-		return &adminSetupError{message: "Interactive admin setup requires text output. Use help setup admin for noninteractive instructions.", code: 3}
+		return &SetupError{message: "Interactive admin setup requires text output. Use help setup admin for noninteractive instructions.", code: 3}
 	}
 	if !adminSetupInputSupported {
-		return &adminSetupError{
+		return &SetupError{
 			message: errAdminSetupUnsupported.Error() + "\nFor manual setup, run: " + clihelp.DisplayInvocation(root) + " help setup admin",
 			code:    3,
 		}
 	}
-	options, destination, err := adminSetupRequestOptions(command)
+	options, destination, err := adminSetupRequestOptions(command, policy.DefaultRequestOptions)
 	if err != nil {
 		return err
 	}
-	if !isTerminal(os.Stdin) || !isTerminal(root.Writer) || !isTerminal(os.Stderr) {
-		return &adminSetupError{message: "Run setup admin in a terminal without pipes or redirection. Use help setup admin for noninteractive instructions.", code: 3}
+	if !policy.IsTerminal(os.Stdin) || !policy.IsTerminal(root.Writer) || !policy.IsTerminal(os.Stderr) {
+		return &SetupError{message: "Run setup admin in a terminal without pipes or redirection. Use help setup admin for noninteractive instructions.", code: 3}
 	}
 	ctx, stop := adminSetupSignalContext(ctx)
 	defer stop()
 	if _, err := fmt.Fprintf(os.Stderr, "Admin key verification\n\nNeed a key? Open:\n  https://platform.openai.com/settings/organization/admin-keys\nSelect your organization.\nCreate an admin key.\nCopy the key into the hidden prompt below.\nOnly organization owners can create admin keys.\nIf you are not an owner, ask an owner to run the operation without sharing their key.\n\nDestination: %s\nThe key stays in this process. Ctrl+C cancels.\n\n", destination); err != nil {
-		return &adminSetupError{message: "Could not display admin setup. No verification request was sent."}
+		return &SetupError{message: "Could not display admin setup. No verification request was sent."}
 	}
 	key, err := readAdminSetupKey(ctx, os.Stdin, os.Stderr)
 	defer clear(key)
@@ -129,17 +131,17 @@ func handleAdminSetup(ctx context.Context, command *cli.Command) error {
 		return adminSetupCanceled(ctx)
 	}
 	if errors.Is(err, errAdminSetupKeyEmpty) {
-		return &adminSetupError{message: "No key was entered. Run setup admin again to retry."}
+		return &SetupError{message: "No key was entered. Run setup admin again to retry."}
 	}
 	if err != nil {
-		return &adminSetupError{message: "Could not read the key securely. Paste one key without spaces or line breaks, then press Enter."}
+		return &SetupError{message: "Could not read the key securely. Paste one key without spaces or line breaks, then press Enter."}
 	}
 	if len(key) == 0 {
-		return &adminSetupError{message: "No key was entered. Run setup admin again to retry."}
+		return &SetupError{message: "No key was entered. Run setup admin again to retry."}
 	}
-	if commandAllowsOutputDiagnostics(command) {
+	if policy.DiagnosticsAllowed(command) {
 		if _, err := fmt.Fprintln(os.Stderr, "Verifying admin access..."); err != nil {
-			return &adminSetupError{message: "Could not display admin setup. No verification request was sent."}
+			return &SetupError{message: "Could not display admin setup. No verification request was sent."}
 		}
 	}
 	if err := verifyAdminSetup(ctx, options, key); err != nil {
@@ -149,12 +151,12 @@ func handleAdminSetup(ctx context.Context, command *cli.Command) error {
 		return err
 	}
 	if _, err := fmt.Fprintln(root.Writer, "Admin access verified. The project-list request succeeded.\nNo key was saved. Later commands still need authentication."); err != nil {
-		return &adminSetupError{message: "Verification succeeded, but the CLI could not display the result. No key was saved."}
+		return &SetupError{message: "Verification succeeded, but the CLI could not display the result. No key was saved."}
 	}
 	return nil
 }
 
-func adminSetupRequestOptions(command *cli.Command) ([]option.RequestOption, string, error) {
+func adminSetupRequestOptions(command *cli.Command, defaultOptions func(*cli.Command) []option.RequestOption) ([]option.RequestOption, string, error) {
 	baseURL := command.String("base-url")
 	if baseURL == "" {
 		baseURL = os.Getenv("OPENAI_BASE_URL")
@@ -164,18 +166,18 @@ func adminSetupRequestOptions(command *cli.Command) ([]option.RequestOption, str
 	}
 	endpoint, err := url.Parse(baseURL)
 	if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
-		return nil, "", &adminSetupError{message: "Admin setup needs a base URL without embedded credentials, a query, or a fragment.", code: 3}
+		return nil, "", &SetupError{message: "Admin setup needs a base URL without embedded credentials, a query, or a fragment.", code: 3}
 	}
 	ip := net.ParseIP(endpoint.Hostname())
 	loopback := strings.EqualFold(endpoint.Hostname(), "localhost") || ip != nil && ip.IsLoopback()
 	if !strings.EqualFold(endpoint.Scheme, "https") && !(strings.EqualFold(endpoint.Scheme, "http") && loopback) {
-		return nil, "", &adminSetupError{message: "Admin setup requires HTTPS, except for a local loopback server.", code: 3}
+		return nil, "", &SetupError{message: "Admin setup requires HTTPS, except for a local loopback server.", code: 3}
 	}
 	headers, err := requestconfig.Headers(command)
 	if err != nil {
 		return nil, "", err
 	}
-	options := GetDefaultRequestOptions(command)
+	options := defaultOptions(command)
 	for name, values := range headers {
 		options = append(options, option.WithHeader(name, values[0]))
 	}
@@ -200,20 +202,20 @@ func verifyAdminSetup(ctx context.Context, options []option.RequestOption, key [
 	page, err := client.Admin.Organization.Projects.List(check, openai.AdminOrganizationProjectListParams{Limit: openai.Int(1)},
 		option.WithAdminAPIKey(string(key)), option.WithHeader("Authorization", "Bearer "+string(key)), option.WithResponseInto(&response))
 	if response != nil && response.StatusCode >= 300 && response.StatusCode < 400 {
-		return &adminSetupError{message: "Verification stopped at a redirect. Check the configured base URL."}
+		return &SetupError{message: "Verification stopped at a redirect. Check the configured base URL."}
 	}
 	if err == nil {
 		if page != nil && page.JSON.Data.Valid() {
 			return nil
 		}
-		return &adminSetupError{message: "The server did not return a project list. Check the configured base URL."}
+		return &SetupError{message: "The server did not return a project list. Check the configured base URL."}
 	}
 	// Discard backend errors. Their bodies and headers can reflect the key.
 	if check.Err() != nil {
 		if ctx.Err() != nil {
 			return adminSetupCanceled(ctx)
 		}
-		return &adminSetupError{
+		return &SetupError{
 			message: "Verification timed out after 15 seconds. Check your connection, then run setup admin again.",
 			cause:   context.DeadlineExceeded,
 		}
@@ -222,16 +224,16 @@ func verifyAdminSetup(ctx context.Context, options []option.RequestOption, key [
 	if errors.As(err, &apiError) {
 		switch {
 		case apiError.StatusCode == http.StatusUnauthorized:
-			return &adminSetupError{message: "The server rejected the admin key (401). Create an admin key for your organization, then retry."}
+			return &SetupError{message: "The server rejected the admin key (401). Create an admin key for your organization, then retry."}
 		case apiError.StatusCode == http.StatusForbidden:
-			return &adminSetupError{message: "The server denied admin access (403). Ask an organization owner to check your access."}
+			return &SetupError{message: "The server denied admin access (403). Ask an organization owner to check your access."}
 		case apiError.StatusCode >= 300 && apiError.StatusCode < 400:
-			return &adminSetupError{message: "Verification stopped at a redirect. Check the configured base URL."}
+			return &SetupError{message: "Verification stopped at a redirect. Check the configured base URL."}
 		default:
-			return &adminSetupError{message: "The server could not verify admin access. Try again later."}
+			return &SetupError{message: "The server could not verify admin access. Try again later."}
 		}
 	}
-	return &adminSetupError{message: "Could not verify admin access. Check your connection and the configured base URL."}
+	return &SetupError{message: "Could not verify admin access. Check your connection and the configured base URL."}
 }
 
 var errAdminSetupTerminated = errors.New("admin setup terminated")
@@ -264,11 +266,11 @@ func adminSetupCanceled(ctx context.Context) error {
 		cause = context.Canceled
 	}
 	if errors.Is(cause, context.DeadlineExceeded) {
-		return &adminSetupError{message: "Admin setup timed out. No key was saved.", cause: cause}
+		return &SetupError{message: "Admin setup timed out. No key was saved.", cause: cause}
 	}
 	code := 130
 	if errors.Is(context.Cause(ctx), errAdminSetupTerminated) {
 		code = 143
 	}
-	return &adminSetupError{message: "Admin setup canceled. No key was saved.", code: code, cause: cause}
+	return &SetupError{message: "Admin setup canceled. No key was saved.", code: code, cause: cause}
 }

@@ -1,6 +1,6 @@
 //go:build linux
 
-package custom
+package admin
 
 import (
 	"os"
