@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -148,7 +149,7 @@ func writeAutomaticBinaryResponse(response *http.Response, stdout io.Writer) (st
 	if copyErr != nil {
 		return "", clioutput.NewDownloadSaveError("Download incomplete. The automatically selected file may contain partial output.", copyErr)
 	}
-	return fmt.Sprintf("Wrote output to: %s", filename), nil
+	return fmt.Sprintf("Wrote output to: %s", jsonview.SanitizeTerminalString(filename)), nil
 }
 
 func copyDownloadFile(file io.WriteCloser, source io.Reader) (err error) {
@@ -167,10 +168,19 @@ func createDownloadFile(response *http.Response, data []byte) (*os.File, error) 
 		if dispFilename, ok := params["filename"]; ok {
 			// Only use the last path component to prevent directory traversal
 			filename = filepath.Base(dispFilename)
-			// Try to create the file with exclusive flag to avoid race conditions
-			file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-			if err == nil {
-				return file, nil
+			// MIME decoding can introduce controls absent from the HTTP header.
+			// Normalize the automatic name before both exclusive and fallback creation.
+			filename = normalizeDownloadFilename(filename)
+			if strings.HasPrefix(filename, ".") {
+				// Server suggestions must not select hidden configuration files,
+				// including through the collision fallback below.
+				filename = "file"
+			} else {
+				// Try to create the file with exclusive flag to avoid race conditions
+				file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+				if err == nil {
+					return file, nil
+				}
 			}
 		}
 	}
@@ -181,7 +191,33 @@ func createDownloadFile(response *http.Response, data []byte) (*os.File, error) 
 		ext = guessExtension(data)
 	}
 	base := strings.TrimSuffix(filename, ext)
-	return os.CreateTemp(".", base+"-*"+ext)
+	file, err := os.CreateTemp(".", base+"-*"+ext)
+	if err == nil {
+		return file, nil
+	}
+	// The suggested name may leave no room for CreateTemp's collision suffix.
+	// A short content-derived name works without assuming a filesystem limit.
+	file, fallbackErr := os.CreateTemp(".", "file-*"+guessExtension(data))
+	if fallbackErr != nil {
+		return nil, errors.Join(err, fallbackErr)
+	}
+	return file, nil
+}
+
+func normalizeDownloadFilename(filename string) string {
+	var normalized strings.Builder
+	normalized.Grow(len(filename))
+	for offset := 0; offset < len(filename); {
+		r, width := utf8.DecodeRuneInString(filename[offset:])
+		if unicode.IsControl(r) {
+			normalized.WriteByte('_')
+		} else {
+			// Preserve original bytes, including invalid UTF-8 in legacy names.
+			normalized.WriteString(filename[offset : offset+width])
+		}
+		offset += width
+	}
+	return normalized.String()
 }
 
 func guessExtension(data []byte) string {
