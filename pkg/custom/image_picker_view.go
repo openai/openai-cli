@@ -213,7 +213,7 @@ func (m *imagePicker) View() tea.View {
 				footer = "Ctrl+C exit · Enter run · ↑↓ scroll"
 			}
 		}
-		if imagePickerShellQuoter(m.shell) != nil && ansi.StringWidth(footer+" · Ctrl+P print") <= width {
+		if cliterminal.ShellQuoter(m.shell) != nil && ansi.StringWidth(footer+" · Ctrl+P print") <= width {
 			footer += " · Ctrl+P print"
 		}
 	} else if m.focus == "path" {
@@ -292,7 +292,7 @@ func (m *imagePicker) commandPreview(width, height int) ([]string, int, int) {
 }
 
 func (m *imagePicker) commandLines(width int) []string {
-	command := formatImagePickerCommand(m.settings.args(), m.shell)
+	command := cliterminal.FormatCommand(m.settings.args(), m.shell)
 	if command == "" {
 		command = imagePickerUnsupportedShell
 	}

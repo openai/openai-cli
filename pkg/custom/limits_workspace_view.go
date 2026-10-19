@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/openai/openai-cli/internal/readable"
 	"github.com/tidwall/gjson"
 )
 
@@ -28,7 +29,7 @@ func (m *limitsWorkspace) View() tea.View {
 		}
 		accent = accent.Foreground(lipgloss.Color(color))
 	}
-	line := func(s string) string { return ansi.Truncate(imagePickerLine(s), width, "…") }
+	line := func(s string) string { return ansi.Truncate(limitsSafeLine(s), width, "…") }
 	mark := func(s string, selected bool) string {
 		if selected {
 			return accent.Render("> " + line(s))
@@ -132,4 +133,9 @@ func (m *limitsWorkspace) View() tea.View {
 	}
 	view.Content = header + "\n" + strings.Join(rows, "\n") + strings.Repeat("\n", max(1, available-len(rows)+1)) + footer
 	return view
+}
+
+// Keep external text on one row after escaping terminal controls.
+func limitsSafeLine(value string) string {
+	return strings.NewReplacer("\n", " ↵ ", "\t", " → ").Replace(readable.Text(value))
 }

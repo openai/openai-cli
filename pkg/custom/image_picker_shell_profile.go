@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/autocomplete"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
 func imagePickerShellTarget(ctx context.Context, shell string, automatic bool, profileOverride string) ([]autocomplete.PickerInstallation, error) {
@@ -22,9 +23,9 @@ func imagePickerShellTarget(ctx context.Context, shell string, automatic bool, p
 		if shell == "" {
 			// Installer setup uses the preferred login shell, never executing SHELL.
 			if preferred := os.Getenv("SHELL"); imagePickerAbsolutePath(preferred) {
-				shell = imagePickerShellName(preferred)
+				shell = cliterminal.ShellName(preferred)
 			}
-			if shell == "" && imagePickerParentShell(ctx) == "pwsh" {
+			if shell == "" && cliterminal.ParentShell(ctx) == "pwsh" {
 				return nil, nil
 			}
 		}
@@ -65,9 +66,9 @@ func imagePickerShellTarget(ctx context.Context, shell string, automatic bool, p
 			return nil, errors.New("automatic shell setup does not accept a profile override")
 		}
 	} else if shell == "" {
-		shell = imagePickerParentShell(ctx)
+		shell = cliterminal.ParentShell(ctx)
 	}
-	if shell == "" || shell == "pwsh" || imagePickerShellName(shell) != shell {
+	if shell == "" || shell == "pwsh" || cliterminal.ShellName(shell) != shell {
 		return nil, errors.New("choose a supported shell: bash, zsh, or fish")
 	}
 	// Fish's startup directory follows XDG on every platform. CLI scripts stay

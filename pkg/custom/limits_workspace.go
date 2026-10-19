@@ -16,6 +16,8 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/clihelp"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	clirequest "github.com/openai/openai-cli/internal/request"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -81,8 +83,8 @@ func runLimitsWorkspace(ctx context.Context, cmd *cli.Command, backend limitsBac
 		color: os.Getenv("NO_COLOR") == "", dark: true,
 		viewport: viewport.New(viewport.WithWidth(max(1, width)), viewport.WithHeight(max(1, height-5)))}
 	m.viewport.SoftWrap, m.viewport.FillHeight = false, false
-	m.requestArgs, m.omitPreview = fileReceiptRequestOptions(cmd.Root())
-	m.shell = imagePickerParentShell(ctx)
+	m.requestArgs, m.omitPreview = clirequest.NextCommandOptions(cmd.Root())
+	m.shell = terminal.ParentShell(ctx)
 	m.invocation = clihelp.DisplayInvocation(cmd.Root())
 	m.previewExecutable, err = os.Executable()
 	if err != nil || strings.HasPrefix(m.invocation, "go run ") {
@@ -673,7 +675,7 @@ func (m *limitsWorkspace) limitReadable() bool {
 	return true
 }
 
-func limitsSafeJSON(value gjson.Result) string { return imagePickerLine(value.Raw) }
+func limitsSafeJSON(value gjson.Result) string { return limitsSafeLine(value.Raw) }
 
 func limitsPreflightHint(err error, invocation ...string) string {
 	bin := "openai"

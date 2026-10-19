@@ -885,7 +885,7 @@ jobs:
           GOMAXPROCS: '2'
       - name: Check native Windows Batch stdin and private staging
         run: |
-          go test -p 2 ./pkg/custom -run '^TestWindowsBatch(DownloadPrivateStagingAndPublication|OutputDirectory.*)$' -count=1 -timeout=1m -v
+          go test -p 2 ./internal/commands/batches -run '^TestWindowsBatch(DownloadPrivateStagingAndPublication|OutputDirectory.*)$' -count=1 -timeout=1m -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test -p 2 ./cmd/openai -run '^(TestMainBatchesStalledStdinDeadline|TestMainBatchesCompleteStdinControls)$' -count=1 -timeout=2m -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

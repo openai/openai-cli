@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/openai/openai-cli/internal/audiohistory"
 	"github.com/openai/openai-cli/internal/audiomedia"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
 
@@ -425,7 +426,7 @@ func (m *audioWorkbench) updateModal(message tea.Msg, key string) tea.Cmd {
 	}
 	if m.modal == "info" {
 		if m.infoTitle == audioCommandTitle && key == "ctrl+p" {
-			if _, omit := fileReceiptRequestOptions(m.command.Root()); omit {
+			if _, omit := requestconfig.NextCommandOptions(m.command.Root()); omit {
 				return nil
 			}
 			m.commandToPrint = m.commandPreview()

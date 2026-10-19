@@ -9,6 +9,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	"github.com/openai/openai-cli/internal/readable"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/tidwall/gjson"
 )
 
@@ -269,12 +270,12 @@ func limitsReview(c limitsChange, projectID string, requestArgs []string, omit b
 			args = append(args, "--"+strings.ReplaceAll(field.key, "_", "-"), strconv.FormatInt(value, 10))
 		}
 	}
-	command := formatImagePickerCommand(args, shell)
+	command := terminal.FormatCommand(args, shell)
 	if command == "" {
-		return result + "\n" + imagePickerUnsupportedShell + "\n"
+		return result + "\nCommand printing needs Bash, zsh, fish or PowerShell 7.\n"
 	}
 	if len(executable) > 0 && executable[0] != "" {
-		command = imagePickerShellQuoter(shell)(executable[0]) + strings.TrimPrefix(command, "openai")
+		command = terminal.ShellQuoter(shell)(executable[0]) + strings.TrimPrefix(command, "openai")
 		if shell == "pwsh" {
 			command = "& " + command
 		}

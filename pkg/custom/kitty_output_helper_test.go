@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	"github.com/openai/openai-cli/internal/terminalimage"
 )
 
@@ -15,13 +16,13 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
-	if handled, err := RunBatchOutputHelper(os.Args); handled {
+	if handled, err := batchcommands.RunBatchOutputHelper(os.Args); handled {
 		if err != nil {
 			os.Exit(1)
 		}
 		os.Exit(0)
 	}
-	if handled, err := RunBatchDirectoryHelper(os.Args); handled {
+	if handled, err := batchcommands.RunBatchDirectoryHelper(os.Args); handled {
 		if err != nil {
 			os.Exit(1)
 		}

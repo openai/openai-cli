@@ -412,7 +412,7 @@ jobs:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: zsh,fish
         run: |
           set -euo pipefail
-          go test ./pkg/custom -count=1 -timeout=2m -v -json \
+          go test ./internal/terminal -count=1 -timeout=2m -v -json \
             -run '^TestImagePickerNativeShellQuoting/(zsh|fish)$' \
             | tee "$RUNNER_TEMP/shell-quoting-tests.jsonl"
       - name: Test Windows Files upload and download routes

@@ -14,8 +14,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/openai/openai-go/v3"
 	requestconfig "github.com/openai/openai-cli/internal/request"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
+	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -475,7 +476,7 @@ func TestImagePickerLongPromptKeepsSettingChangesVisible(t *testing.T) {
 	require.Contains(t, preview, "--background transparent")
 	require.Contains(t, preview, "--count 1")
 	fullCommand := formatImagePickerCommandBash(m.settings.args())
-	require.Contains(t, fullCommand, imagePickerShellQuote(m.settings.prompt))
+	require.Contains(t, fullCommand, cliterminal.ShellQuote(m.settings.prompt))
 }
 
 func TestImagePickerCommandScrollPreservesEveryCharacter(t *testing.T) {
@@ -878,5 +879,5 @@ func TestImagePickerOutputFailureCancels(t *testing.T) {
 }
 
 func formatImagePickerCommandBash(args []string) string {
-	return formatImagePickerCommand(args, "bash")
+	return cliterminal.FormatCommand(args, "bash")
 }
