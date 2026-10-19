@@ -115,6 +115,80 @@ func limitsWorkflowSuccess(t *testing.T, project bool, r *http.Request) (int, st
 	}
 }
 
+func TestMainLimitsWorkflowBaseURLSecurity(t *testing.T) {
+	const remote = "http://fake-user:fake-password@remote.example/v1?token=fake-private"
+	for _, project := range []bool{false, true} {
+		t.Run(fmt.Sprintf("project=%t", project), func(t *testing.T) {
+			var proxyRequests atomic.Int32
+			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				proxyRequests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				io.WriteString(w, `{"error":{"message":"synthetic proxy rejects all destinations"}}`)
+			}))
+			t.Cleanup(proxy.Close)
+			home := t.TempDir()
+			env := adminCredentialsProxyEnv(proxy.URL, []string{"HOME=" + home, "XDG_CONFIG_HOME=" + home,
+				"OPENAI_API_KEY=sk-fake-spend-project", "OPENAI_ADMIN_KEY=sk-fake-spend-admin"})
+			for _, source := range []string{"flag", "environment"} {
+				for _, format := range []string{"text", "json"} {
+					t.Run(source+"/"+format, func(t *testing.T) {
+						args := []string{"openai", "--format-error", format}
+						childEnv := append([]string{}, env...)
+						wantSource := "OPENAI_BASE_URL"
+						if source == "flag" {
+							args = append(args, "--base-url", remote)
+							wantSource = "--base-url"
+						} else {
+							childEnv = append(childEnv, "OPENAI_BASE_URL="+remote)
+						}
+						got := runMainDispatchWithEnv(t, "bash", childEnv, append(args, limitsWorkflowArgs(project, true)...)...)
+						if got.code != 1 || got.stdout != "" || proxyRequests.Load() != 0 {
+							t.Fatalf("remote HTTP reached the overview: code=%d requests=%d", got.code, proxyRequests.Load())
+						}
+						message := got.stderr
+						if format == "json" {
+							var value map[string]string
+							if err := json.Unmarshal([]byte(got.stderr), &value); err != nil || len(value) != 1 {
+								t.Fatal("remote HTTP rejection did not preserve a structured diagnostic")
+							}
+							message = value["message"]
+						}
+						if !strings.Contains(message, wantSource) || !strings.Contains(message, "HTTPS") {
+							t.Fatal("remote HTTP rejection omitted its setting or recovery")
+						}
+						for _, private := range []string{"fake-", "remote.example", "\x1b"} {
+							if strings.Contains(got.stderr, private) {
+								t.Fatal("remote HTTP diagnostic exposed URL or credential contents")
+							}
+						}
+					})
+				}
+			}
+			t.Run("loopback flag overrides remote environment", func(t *testing.T) {
+				server, requests := newLimitsWorkflowServer(t, func(r *http.Request) (int, string) {
+					return limitsWorkflowSuccess(t, project, r)
+				})
+				childEnv := append(append([]string{}, env...), "OPENAI_BASE_URL="+remote)
+				args := append([]string{"openai", "--format", "json", "--base-url", server.URL}, limitsWorkflowArgs(project, true)...)
+				got := runMainDispatchWithEnv(t, "bash", childEnv, args...)
+				if got.code != 0 || got.stderr != "" || !json.Valid([]byte(got.stdout)) || proxyRequests.Load() != 0 {
+					t.Fatalf("loopback override failed: code=%d proxy_requests=%d", got.code, proxyRequests.Load())
+				}
+				paths := []string{spendThresholdPath(project, "spend-limit"), spendThresholdPath(project, "spend-alerts"), "/organization/costs"}
+				if project {
+					paths = append(paths, "/organization/projects/proj_synthetic", spendThresholdPath(true, "rate-limits"))
+				}
+				for _, path := range paths {
+					if requests.count(path) != 1 {
+						t.Errorf("loopback overview requested %s %d times", path, requests.count(path))
+					}
+				}
+			})
+		})
+	}
+}
+
 func TestMainLimitsWorkflowReadableAndFormats(t *testing.T) {
 	for _, project := range []bool{false, true} {
 		for _, mode := range []string{"bare", "show", "text", "JSON", "jsonl", "raw", "yaml", "pretty", "extraction", "raw-output"} {
