@@ -87,3 +87,28 @@ func TestCreateDownloadFilePreservesInvalidUTF8(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateDownloadFileLongNormalizedCollision(t *testing.T) {
+	for _, name := range []string{
+		strings.Repeat("a", 250) + "\t.bin",
+		strings.Repeat("é", 125) + "\t.bin",
+		"a." + strings.Repeat("a", 252) + "\t",
+	} {
+		t.Run(fmt.Sprintf("bytes=%d/extension=%d", len(name), len(filepath.Ext(name))), func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			occupied := strings.ReplaceAll(name, "\t", "_")
+			require.NoError(t, os.WriteFile(occupied, []byte("keep"), 0600))
+			response := &http.Response{Header: http.Header{"Content-Disposition": {"attachment; filename*=UTF-8''" + url.PathEscape(name)}}}
+			file, err := createDownloadFile(response, []byte("%PDF-1.7\nsynthetic"))
+			require.NoError(t, err)
+			require.NotEqual(t, occupied, filepath.Base(file.Name()))
+			_, err = file.WriteString("new download")
+			require.NoError(t, err)
+			require.NoError(t, file.Close())
+			assertDownloadPermissions(t, file.Name(), 0600)
+			data, err := os.ReadFile(occupied)
+			require.NoError(t, err)
+			require.Equal(t, "keep", string(data))
+		})
+	}
+}

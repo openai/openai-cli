@@ -187,7 +187,17 @@ func createDownloadFile(response *http.Response, data []byte) (*os.File, error) 
 		ext = guessExtension(data)
 	}
 	base := strings.TrimSuffix(filename, ext)
-	return os.CreateTemp(".", base+"-*"+ext)
+	file, err := os.CreateTemp(".", base+"-*"+ext)
+	if err == nil {
+		return file, nil
+	}
+	// The suggested name may leave no room for CreateTemp's collision suffix.
+	// A short content-derived name works without assuming a filesystem limit.
+	file, fallbackErr := os.CreateTemp(".", "file-*"+guessExtension(data))
+	if fallbackErr != nil {
+		return nil, errors.Join(err, fallbackErr)
+	}
+	return file, nil
 }
 
 func normalizeDownloadFilename(filename string) string {

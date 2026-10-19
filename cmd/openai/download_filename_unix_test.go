@@ -16,9 +16,13 @@ import (
 
 func TestMainAutomaticDownloadFilenameControls(t *testing.T) {
 	python, err := exec.LookPath("python3")
-	require.NoError(t, err)
+	if err != nil {
+		t.Skip("Python 3 is required for automatic-download PTY checks")
+	}
 	bash, err := exec.LookPath("bash")
-	require.NoError(t, err)
+	if err != nil {
+		t.Skip("Bash is required for automatic-download PTY checks")
+	}
 	payload := []byte{0, 255, 254, 'b', 'i', 'n', '\n'}
 	for _, filename := range []struct{ name, encoded, want string }{
 		{"layout", "report%0AForged%09status.bin", "report_Forged_status.bin"},
