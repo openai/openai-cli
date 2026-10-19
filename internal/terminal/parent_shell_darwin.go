@@ -1,4 +1,4 @@
-package custom
+package terminal
 
 import (
 	"os"
@@ -6,7 +6,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func imagePickerParentProcessName() (string, error) {
+// ParentProcessName returns the immediate parent process name.
+func ParentProcessName() (string, error) {
 	info, err := unix.SysctlKinfoProc("kern.proc.pid", os.Getppid())
 	if err != nil {
 		return "", err

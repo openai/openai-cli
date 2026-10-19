@@ -1,4 +1,4 @@
-package custom
+package files
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -91,7 +92,7 @@ func TestFileReceiptGoRunInvocationCapturesCheckout(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh", "fish", "pwsh"} {
 		t.Run(shell, func(t *testing.T) {
 			got := fileReceiptInvocation(invocation, shell)
-			require.Equal(t, "go -C "+imagePickerShellQuoter(shell)(directory)+" run ./cmd/openai", got)
+			require.Equal(t, "go -C "+cliterminal.ShellQuoter(shell)(directory)+" run ./cmd/openai", got)
 			require.NotContains(t, got, "go-build123")
 		})
 	}

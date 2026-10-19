@@ -1,9 +1,10 @@
 //go:build !darwin && !linux && !windows
 
-package custom
+package terminal
 
 import "errors"
 
-func imagePickerParentProcessName() (string, error) {
+// ParentProcessName returns the immediate parent process name.
+func ParentProcessName() (string, error) {
 	return "", errors.New("parent shell detection is unavailable on this platform")
 }

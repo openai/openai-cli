@@ -1,4 +1,4 @@
-package custom
+package terminal
 
 import (
 	"os"
@@ -6,7 +6,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func imagePickerParentProcessName() (string, error) {
+// ParentProcessName returns the immediate parent process name.
+func ParentProcessName() (string, error) {
 	parent, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(os.Getppid()))
 	if err != nil {
 		return "", err

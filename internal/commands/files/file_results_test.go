@@ -1,4 +1,4 @@
-package custom
+package files
 
 import (
 	"bytes"
@@ -12,6 +12,8 @@ import (
 	"time"
 
 	clioutput "github.com/openai/openai-cli/internal/output"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -25,13 +27,13 @@ func TestFileResultPreservesNonterminalOutput(t *testing.T) {
 				for _, extraction := range []string{"", "id"} {
 					for _, raw := range []bool{false, true} {
 						var stdout, stderr bytes.Buffer
-						opts := ShowJSONOpts{
-							Context:   context.WithValue(t.Context(), fileCommandKey{}, route),
-							Operation: "(resource) files > (method) create", OutputKind: OutputResponse,
-							Format: format, ExplicitFormat: format != "", Transform: extraction, RawOutput: raw,
-							Stdout: &stdout, Stderr: &stderr,
-						}
-						handled, err := showFileResult(gjson.Parse(fileReceiptFixture), opts)
+						opts := ResultOptions{ReadableOptions: clioutput.ReadableOptions{
+							Context:       context.WithValue(t.Context(), fileCommandKey{}, route),
+							Route:         transformers.Route{Operation: "(resource) files > (method) create", OutputKind: transformers.OutputResponse},
+							FormatOptions: clioutput.FormatOptions{Format: format, Transform: extraction, RawOutput: raw},
+							Stdout:        &stdout, Stderr: &stderr,
+						}}
+						handled, err := ShowResult(gjson.Parse(fileReceiptFixture), opts)
 						require.NoError(t, err)
 						require.False(t, handled)
 						require.Empty(t, stdout.String())
@@ -225,7 +227,7 @@ func TestFileReceiptQuotesExecutableNamedLikeGoRun(t *testing.T) {
 	invocation := fileInvocation{display: name, executable: name}
 	for _, shell := range []string{"bash", "zsh", "fish", "pwsh"} {
 		t.Run(shell, func(t *testing.T) {
-			quoted := imagePickerShellQuoter(shell)(name)
+			quoted := cliterminal.ShellQuoter(shell)(name)
 			if shell == "pwsh" {
 				quoted = "& " + quoted
 			}
@@ -234,7 +236,11 @@ func TestFileReceiptQuotesExecutableNamedLikeGoRun(t *testing.T) {
 	}
 	// Only the help-selected development invocation may remain shell syntax.
 	checkout := t.TempDir()
-	require.Equal(t, "go -C "+imagePickerShellQuoter("bash")(checkout)+" run ./cmd/openai", fileReceiptInvocation(fileInvocation{
+	require.Equal(t, "go -C "+cliterminal.ShellQuoter("bash")(checkout)+" run ./cmd/openai", fileReceiptInvocation(fileInvocation{
 		display: "go run ./cmd/openai", executable: "/tmp/go-build123/b001/exe/openai", goRun: true, goRunDir: checkout,
 	}, "bash"))
 }
+
+type failOutputWriter struct{ err error }
+
+func (w failOutputWriter) Write([]byte) (int, error) { return 0, w.err }

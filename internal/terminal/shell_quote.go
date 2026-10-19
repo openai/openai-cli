@@ -1,4 +1,4 @@
-package custom
+package terminal
 
 import (
 	"fmt"
@@ -6,7 +6,8 @@ import (
 	"unicode"
 )
 
-func imagePickerQuoteProperties(value string) (plain, control bool) {
+// QuoteProperties reports whether a value is shell-safe without quotes and contains controls.
+func QuoteProperties(value string) (plain, control bool) {
 	plain = value != ""
 	for _, r := range value {
 		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("_./:-", r)) {
@@ -17,8 +18,9 @@ func imagePickerQuoteProperties(value string) (plain, control bool) {
 	return
 }
 
-func imagePickerFishQuote(value string) string {
-	if plain, _ := imagePickerQuoteProperties(value); plain {
+// FishQuote quotes one argument for fish.
+func FishQuote(value string) string {
+	if plain, _ := QuoteProperties(value); plain {
 		return value
 	}
 	// Fish joins adjacent quoted and escaped fragments into one argument. Its
@@ -40,8 +42,9 @@ func imagePickerFishQuote(value string) string {
 	return b.String()
 }
 
-func imagePickerPowerShellQuote(value string) string {
-	plain, control := imagePickerQuoteProperties(value)
+// PowerShellQuote quotes one argument for PowerShell 7.
+func PowerShellQuote(value string) string {
+	plain, control := QuoteProperties(value)
 	if plain {
 		return value
 	}

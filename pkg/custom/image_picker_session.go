@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
 // Persistence belongs to the interactive session, never direct API commands.
@@ -19,7 +20,7 @@ func runImagePickerSession(ctx context.Context, input, output *os.File, options 
 	if options.Shell == "" {
 		// Enter launches have no hook-provided shell. Match the immediate
 		// caller so the displayed command can be pasted back into that shell.
-		options.Shell = imagePickerParentShell(ctx)
+		options.Shell = cliterminal.ParentShell(ctx)
 	}
 	if ctx.Err() != nil || input == nil || output == nil || !term.IsTerminal(input.Fd()) || !term.IsTerminal(output.Fd()) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
 		return runImagePicker(ctx, input, output, options)
@@ -97,7 +98,7 @@ func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writ
 	if result.Canceled || len(result.Args) < 4 || (len(result.Args)-2)%2 != 0 {
 		return fmt.Errorf("no image request was selected")
 	}
-	command := formatImagePickerCommand(result.Args, result.shell)
+	command := cliterminal.FormatCommand(result.Args, result.shell)
 	if command == "" {
 		if result.PrintOnly {
 			return imageSavingFailure(imagePickerUnsupportedShell, nil)

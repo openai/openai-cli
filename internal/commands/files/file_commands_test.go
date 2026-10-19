@@ -1,4 +1,4 @@
-package custom
+package files
 
 import (
 	"context"
@@ -44,7 +44,7 @@ func TestFileCommandsPreserveGeneratedFlagsAndDecoratedHooks(t *testing.T) {
 		source.ShellComplete = func(context.Context, *cli.Command) {}
 	}
 	localcommands.ConfigureTasks(root)
-	configureFileCommands(root)
+	Configure(root)
 	for _, pair := range [][2]string{{"create", "upload"}, {"retrieve", "get"}, {"content", "download"}} {
 		source, friendly := files.Command(pair[0]), files.Command(pair[1])
 		require.NotSame(t, source, friendly)
@@ -105,7 +105,7 @@ func TestFileUploadParsedArgumentsAndActionPassthrough(t *testing.T) {
 				return failure
 			})
 			localcommands.ConfigureTasks(root)
-			configureFileCommands(root)
+			Configure(root)
 			err := root.Run(t.Context(), append([]string{"openai", "files", "upload"}, tc.args...))
 			if tc.wantError != "" {
 				require.ErrorContains(t, err, tc.wantError)
@@ -138,7 +138,7 @@ func TestFileCommandsKeepPurposeValidationAndOldRoutes(t *testing.T) {
 				return failure
 			})
 			localcommands.ConfigureTasks(root)
-			configureFileCommands(root)
+			Configure(root)
 			args := []string{"openai", "files", route, "file-example"}
 			if route == "create" {
 				args = []string{"openai", "files", route, "--file", "file-example"}
@@ -155,12 +155,12 @@ func TestFileCommandsPreserveExistingFriendlyRoutes(t *testing.T) {
 	get, download := &cli.Command{Name: "get"}, &cli.Command{Name: "download"}
 	files.Commands = append(files.Commands, get, download)
 	localcommands.ConfigureTasks(root)
-	configureFileCommands(root)
+	Configure(root)
 	require.Same(t, get, files.Command("get"))
 	require.Same(t, download, files.Command("download"))
 	require.False(t, files.Command("retrieve").Hidden)
 	require.False(t, files.Command("content").Hidden)
-	require.NotPanics(t, func() { configureFileCommands(&cli.Command{Name: "openai"}) })
+	require.NotPanics(t, func() { Configure(&cli.Command{Name: "openai"}) })
 }
 
 func TestFileCommandsMakeWorkflowDiscoverable(t *testing.T) {
@@ -168,7 +168,7 @@ func TestFileCommandsMakeWorkflowDiscoverable(t *testing.T) {
 	files := root.Command("files")
 	files.Commands = append(files.Commands, &cli.Command{Name: "list"}, &cli.Command{Name: "delete"})
 	localcommands.ConfigureTasks(root)
-	configureFileCommands(root)
+	Configure(root)
 	require.Equal(t, "Upload, inspect, and download files.", files.Usage)
 	var names []string
 	for _, command := range clihelp.VisibleCommands(files) {

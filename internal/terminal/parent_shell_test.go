@@ -1,9 +1,10 @@
-package custom
+package terminal
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestImagePickerParentShellNames(t *testing.T) {
@@ -12,11 +13,11 @@ func TestImagePickerParentShellNames(t *testing.T) {
 		{`C:\Program Files\PowerShell\7\pwsh.exe`, "pwsh"},
 		{"/bin/sh", ""}, {"powershell.exe", ""}, {"python3", ""}, {"", ""},
 	} {
-		require.Equal(t, tc.want, imagePickerShellName(tc.name), tc.name)
+		require.Equal(t, tc.want, ShellName(tc.name), tc.name)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.Empty(t, imagePickerParentShell(ctx))
+	require.Empty(t, ParentShell(ctx))
 }
 
 func TestImagePickerDetectedShellCommand(t *testing.T) {
@@ -26,13 +27,13 @@ func TestImagePickerDetectedShellCommand(t *testing.T) {
 		{"powershell.exe", ""}, {"/bin/sh", ""}, {"python3", ""}, {"", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			shell := imagePickerShellName(tc.name)
-			command := formatImagePickerCommand([]string{"images", "generate", "--prompt", "a cat's portrait"}, shell)
+			shell := ShellName(tc.name)
+			command := FormatCommand([]string{"images", "generate", "--prompt", "a cat's portrait"}, shell)
 			if tc.want == "" {
 				require.Empty(t, command, "an unknown detector result must not select Bash")
 			} else {
 				require.NotEmpty(t, command)
-				require.Equal(t, formatImagePickerCommand([]string{"images", "generate", "--prompt", "a cat's portrait"}, tc.want), command)
+				require.Equal(t, FormatCommand([]string{"images", "generate", "--prompt", "a cat's portrait"}, tc.want), command)
 			}
 		})
 	}

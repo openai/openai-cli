@@ -1,10 +1,12 @@
-package custom
+package files
 
 import (
 	"context"
 	"os"
 	"path/filepath"
 	"strings"
+
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
 // Files can cross one verified Go launcher when help recognized a go-run
@@ -14,7 +16,7 @@ func fileReceiptShell(ctx context.Context, invocation fileInvocation) string {
 		return ""
 	}
 	pid := os.Getppid()
-	name, err := imagePickerParentProcessName()
+	name, err := cliterminal.ParentProcessName()
 	if err != nil || os.Getppid() != pid {
 		return ""
 	}
@@ -31,7 +33,7 @@ func fileReceiptShellName(ctx context.Context, goRun bool, parent string, goCall
 	if ctx.Err() != nil {
 		return ""
 	}
-	if shell := imagePickerShellName(parent); shell != "" {
+	if shell := cliterminal.ShellName(parent); shell != "" {
 		return shell
 	}
 	name := filepath.Base(strings.ReplaceAll(parent, `\`, "/"))
@@ -43,5 +45,5 @@ func fileReceiptShellName(ctx context.Context, goRun bool, parent string, goCall
 		return ""
 	}
 	// Unsupported wrappers stop resolution. Never search older ancestors or SHELL.
-	return imagePickerShellName(caller)
+	return cliterminal.ShellName(caller)
 }
