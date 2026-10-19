@@ -18,6 +18,14 @@ spec = importlib.util.spec_from_file_location("limits_demo_terminal", Path(__fil
 harness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(harness)
 
+# Trapped signals retain their default disposition in the foreground CLI child.
+BASH_WORKSPACE = r'''trap ':' HUP INT TERM
+"$@"
+limits_scene_status=$?
+printf '%s\n' "$limits_scene_status" > "$DEMO_CLI_EXIT" || exit 74
+exit "$limits_scene_status"
+'''
+
 
 def write_text(path, value):
     with Path(path).open("x", encoding="utf-8") as destination:
@@ -98,8 +106,11 @@ def mutations(scene):
     return [item for item in requests(scene) if item["method"] in {"POST", "DELETE"}]
 
 
-def checkpoint(terminal, evidence, output, name):
+def checkpoint(terminal, evidence, output, name, required=()):
     screen = screen_text(terminal)
+    compact = "".join(line.rstrip() for line in screen.splitlines())
+    if not all(text in compact for text in required):
+        raise AssertionError(f"checkpoint {name} omitted its required preview: {required!r}")
     write_text(Path(str(output) + f".{name}.txt"), screen)
     evidence["checkpoints"].append({"name": name, "seconds": time.monotonic() - terminal.started})
     drain(terminal, 0.6)
@@ -120,13 +131,26 @@ def replace(terminal, evidence, label, value):
 def review(terminal, evidence, scene, output):
     wait_screen(terminal, ["> Back", "Enter: select"])
     checkpoint(terminal, evidence, output, "review-top")
-    for _ in range(30):
+    preview_seen = False
+    for _ in range(40):
         screen = screen_text(terminal)
+        compact = "".join(line.rstrip() for line in screen.splitlines())
+        if "Command printing needs" in compact or "Command preview omitted" in compact:
+            raise AssertionError("review omitted the real command preview")
+        if not preview_seen and "Direct API command" in screen and evidence["staged_binary"]["path"] in compact:
+            checkpoint(terminal, evidence, output, "review-command",
+                       ("Direct API command", evidence["staged_binary"]["path"]))
+            preview_seen = True
         if "Apply change" in screen and "Read to the end" not in screen:
             break
-        key(terminal, evidence, "PageDown", b"\x1b[6~")
+        if not preview_seen and "Direct API command" in screen:
+            key(terminal, evidence, "Show command preview", b"\x1b[B")
+        else:
+            key(terminal, evidence, "PageDown", b"\x1b[6~")
     else:
         raise AssertionError("review never exposed its final action")
+    if not preview_seen:
+        raise AssertionError("review reached Apply without a command preview checkpoint")
     if mutations(scene):
         raise AssertionError("fixture received a mutation before explicit confirmation")
     key(terminal, evidence, "Tab to Apply", b"\t")
@@ -227,26 +251,54 @@ def main():
     binary = shutil.which("openai")
     if binary is None:
         raise RuntimeError("immutable CLI binary is unavailable")
+    binary = Path(binary).resolve(strict=True)
+    runtime = Path(os.environ["DEMO_RUNTIME_DIRECTORY"]).resolve(strict=True)
+    if runtime.parent != Path("/private/tmp") or not runtime.name.startswith("cli-demo."):
+        raise AssertionError("the recorder runtime must use an owned synthetic /private/tmp directory")
     project = scene in {"project-limit", "alert-edit", "rate-update"}
     args = ["projects", "limits", "--project-id", "proj_demo"] if project else ["admin", "limits"]
     evidence = {"scene": scene, "width": width, "height": height, "command": ["openai", *args],
-                "keys": [], "checkpoints": [], "binary_sha256": hashlib.sha256(Path(binary).read_bytes()).hexdigest()}
+                "keys": [], "checkpoints": [], "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+                "parent_shell": "/bin/bash", "recorder_runtime": str(runtime)}
     print("$ openai " + " ".join(args), flush=True)
     original = termios.tcgetattr(1)
     relay = termios.tcgetattr(1)
     relay[1] &= ~termios.OPOST
     try:
         termios.tcsetattr(1, termios.TCSANOW, relay)
-        with tempfile.TemporaryDirectory(prefix="limits-demo-home-") as temporary:
-            env = {"PATH": "/usr/bin:/bin", "HOME": temporary, "TERM": "xterm-256color", "LANG": "en_US.UTF-8",
+        with tempfile.TemporaryDirectory(prefix="openai-limits-demo-", dir=runtime) as temporary:
+            staged = Path(temporary) / "openai"
+            shutil.copy2(binary, staged)
+            staged_hash = hashlib.sha256(staged.read_bytes()).hexdigest()
+            if staged_hash != evidence["binary_sha256"]:
+                raise AssertionError("staged CLI differs from the supplied binary")
+            evidence["staged_binary"] = {"path": str(staged), "sha256_before": staged_hash}
+            home = Path(temporary) / "home"
+            home.mkdir(mode=0o700)
+            exit_receipt = Path(temporary) / "cli-exit-status"
+            env = {"PATH": temporary + ":/usr/bin:/bin", "HOME": str(home), "TERM": "xterm-256color", "LANG": "en_US.UTF-8",
                    "GOMAXPROCS": "2", "PAGER": "cat", "OPENAI_API_KEY": "synthetic-demo-key",
-                   "OPENAI_ADMIN_KEY": "synthetic-demo-admin-key", "OPENAI_BASE_URL": os.environ["OPENAI_BASE_URL"]}
+                   "OPENAI_ADMIN_KEY": "synthetic-demo-admin-key", "OPENAI_BASE_URL": os.environ["OPENAI_BASE_URL"],
+                   "DEMO_CLI_EXIT": str(exit_receipt)}
             if os.environ.get("DEMO_NO_COLOR", "1") == "1":
                 env.update(NO_COLOR="1", FORCE_COLOR="0")
             terminal = None
             try:
-                terminal = RelayTerminal(binary, args, env, width=width, height=height, controlling_terminal=True)
+                # Post-command status handling keeps Bash as the CLI's real parent.
+                # Both processes inherit the existing PTY session and process group.
+                shell_args = ["--noprofile", "--norc", "-c", BASH_WORKSPACE, "bash", str(staged), *args]
+                terminal = RelayTerminal("/bin/bash", shell_args, env, width=width, height=height, controlling_terminal=True)
                 run_scene(terminal, scene, evidence, output)
+                status_text = exit_receipt.read_text()
+                if status_text != str(terminal.child.returncode) + "\n":
+                    raise AssertionError("Bash did not preserve the actual CLI exit status")
+                evidence["cli_exit_status"] = int(status_text)
+                evidence["staged_binary"]["sha256_after"] = hashlib.sha256(staged.read_bytes()).hexdigest()
+                if (evidence["staged_binary"]["sha256_after"] != evidence["binary_sha256"]
+                        or hashlib.sha256(binary.read_bytes()).hexdigest() != evidence["binary_sha256"]):
+                    raise AssertionError("supplied or staged CLI changed during capture")
+                if str(binary).encode() in terminal.raw:
+                    raise AssertionError("capture exposed the private binary source path")
                 evidence.update(exit_status=terminal.child.returncode, relayed_bytes=len(terminal.raw),
                                 relayed_sha256=hashlib.sha256(terminal.raw).hexdigest())
                 with Path(str(output) + ".tty").open("xb") as destination:
@@ -258,6 +310,9 @@ def main():
             finally:
                 if terminal is not None:
                     terminal.close()
+        evidence["staged_binary"]["removed"] = not Path(temporary).exists()
+        if not evidence["staged_binary"]["removed"]:
+            raise AssertionError("owned staged CLI directory remains after cleanup")
     finally:
         termios.tcsetattr(1, termios.TCSANOW, original)
     write_text(Path(str(output) + ".json"), json.dumps(evidence, indent=2) + "\n")

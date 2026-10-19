@@ -20,6 +20,16 @@ def main():
         evidence = json.loads((root / (scene + "-evidence.json")).read_text())
         expected_status = 130 if scene == "slow-cancel" else 1 if scene == "uncertain" else 0
         assert evidence["exit_status"] == expected_status, (scene, "incorrect child exit")
+        assert evidence["cli_exit_status"] == evidence["exit_status"], (scene, "Bash changed the CLI exit status")
+        assert evidence["parent_shell"] == "/bin/bash", (scene, "missing native Bash parent")
+        staged = evidence["staged_binary"]
+        staged_path = Path(staged["path"])
+        runtime = Path(evidence["recorder_runtime"])
+        assert runtime.parent == Path("/private/tmp") and runtime.name.startswith("cli-demo.")
+        assert staged_path.name == "openai" and staged_path.parent.parent == runtime
+        assert staged_path.parent.name.startswith("openai-limits-demo-")
+        assert staged["sha256_before"] == staged["sha256_after"] == evidence["binary_sha256"]
+        assert staged["removed"] is True and not staged_path.parent.exists(), (scene, "staged CLI cleanup incomplete")
         assert (evidence["width"], evidence["height"]) in {(80, 24), (40, 12)}
         raw = (root / (scene + "-evidence.tty")).read_bytes()
         child = [json.loads(line) for line in (root / (scene + "-evidence.child.cast")).read_text().splitlines()]
@@ -57,12 +67,19 @@ def main():
             assert request["status"] == "response_lost_after_write"
         else:
             assert request["status"] == 200
-        assert "review-apply" in {point["name"] for point in evidence["checkpoints"]}
+        checkpoints = {point["name"]: point for point in evidence["checkpoints"]}
+        assert "review-command" in checkpoints and "review-apply" in checkpoints
+        assert checkpoints["review-command"]["seconds"] < checkpoints["review-apply"]["seconds"]
+        preview = (root / (scene + "-evidence.review-command.txt")).read_text()
+        preview = "".join(line.rstrip() for line in preview.splitlines())
+        assert "Direct API command" in preview and staged["path"] in preview, (scene, "missing real command preview")
+        assert "Command printing needs" not in preview and "Command preview omitted" not in preview
         assert [event["key"] for event in evidence["keys"]].count("Apply") == 1
         final_screen = (root / (scene + "-evidence.exit.txt")).read_text()
         assert "> Apply change" not in final_screen, (scene, "stale confirmation after exit")
     print("PASS: nine real workspace processes; exact child/raw/outer bytes; expected exits and mutation bodies.")
     print("PASS: one mutation per confirmed action; no retry after uncertain outcome; slow load canceled without mutation.")
+    print("PASS: native Bash parents preserve CLI exits; staged binary hashes match; eight real command previews; staged files removed.")
     print("LIMIT: inspect all checkpoint images and GIF frames before claiming visual acceptance.")
 
 

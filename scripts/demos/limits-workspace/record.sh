@@ -14,7 +14,8 @@ case "$record_width" in 80) record_height=24;; 40) record_height=12;; *) echo 'D
 case "$record_no_color" in 0|1) ;; *) echo 'DEMO_NO_COLOR must be 0 or 1.' >&2; exit 2;; esac
 source "$record_source/../capture_and_render.sh"
 # This workflow has one candidate binary. Passing it twice reuses the shared lifecycle.
-demo_prepare_capture "$record_root" "$1" "$1" "$2" "$2" "$3" "$record_source/server.py"
+# The shared cleanup also owns synthetic executable paths shown in command previews.
+TMPDIR=/private/tmp demo_prepare_capture "$record_root" "$1" "$1" "$2" "$2" "$3" "$record_source/server.py"
 demo_python="$(command -v python3)"
 record_digest="$(shasum -a 256 "$demo_after" | cut -d ' ' -f 1)"
 demo_start_api "$demo_output/requests.jsonl" "$demo_output/fixtures.json" "$demo_runtime/gates"
@@ -56,6 +57,7 @@ for record_scene in "${record_scenes[@]}"; do
     "DEMO_PYTHON=$demo_python" "DEMO_ASCIINEMA=$demo_asciinema" "DEMO_DRIVER=$record_source/scene.py" \
     "DEMO_SCENE_NAME=$record_scene" "DEMO_EVIDENCE_BASE=$demo_output/$record_scene-evidence" \
     "DEMO_WIDTH=$record_width" "DEMO_HEIGHT=$record_height" "DEMO_NO_COLOR=$record_no_color" \
+    "DEMO_RUNTIME_DIRECTORY=$demo_runtime" \
     "DEMO_GATE_DIRECTORY=$demo_runtime/gates" "DEMO_REQUEST_LOG=$demo_output/requests.jsonl"
 done
 demo_stop_api
