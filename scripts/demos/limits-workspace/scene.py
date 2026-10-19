@@ -211,7 +211,7 @@ def run_scene(terminal, scene, evidence, output):
         key(terminal, evidence, "Quit", b"q")
         terminal.finish(1)
     else:
-        wait_screen(terminal, ["Removal confirmed" if scene == "org-limit-delete" else "Saved successfully"], ["Loading", "Saving"])
+        wait_screen(terminal, ["Removal confirmed" if scene == "org-limit-delete" else "Change confirmed."], ["Loading", "Saving"])
         checkpoint(terminal, evidence, output, "saved")
         key(terminal, evidence, "Quit", b"q")
         terminal.finish(0)

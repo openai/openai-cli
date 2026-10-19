@@ -48,7 +48,7 @@ def main():
                                                                 "subject_prefix": "Demo" if scene == "alert-create" else None}}
         elif scene == "org-limit-delete":
             assert request["method"] == "DELETE" and request["path"].endswith("/spend_limit")
-            assert request["body"] is None
+            assert request.get("body") is None
         elif scene == "alert-delete":
             assert request["method"] == "DELETE" and request["path"].endswith("/spend_alerts/alert_demo")
         elif scene == "rate-update":
