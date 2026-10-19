@@ -2,15 +2,32 @@ package custom
 
 import (
 	"fmt"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestNormalizeDownloadFilenamePreservesBytes(t *testing.T) {
+	for _, tc := range []struct{ name, header, want string }{
+		{"legacy invalid bytes", "attachment; filename=\"report-\xff\xfe.bin\"", "report-\xff\xfe.bin"},
+		{"encoded invalid bytes and controls", "attachment; filename*=UTF-8''report-%FF%09%C2%9B.bin", "report-\xff__.bin"},
+		{"valid Unicode", "attachment; filename*=UTF-8''r%C3%A9sum%C3%A9.bin", "résumé.bin"},
+		{"maximum byte component", "attachment; filename=\"" + strings.Repeat("\xff", 251) + ".bin\"", strings.Repeat("\xff", 251) + ".bin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, params, err := mime.ParseMediaType(tc.header)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, normalizeDownloadFilename(params["filename"]))
+		})
+	}
+}
 
 func TestCreateDownloadFileNormalizesDecodedControls(t *testing.T) {
 	for _, control := range []rune{0, '\t', '\n', '\r', 0x1b, 0x7f, 0x80, 0x85, 0x9b, 0x9d, 0x9f} {
@@ -36,6 +53,37 @@ func TestCreateDownloadFileNormalizesDecodedControls(t *testing.T) {
 			data, err := os.ReadFile(file.Name())
 			require.NoError(t, err)
 			require.Equal(t, "original", string(data))
+		})
+	}
+}
+
+func TestCreateDownloadFilePreservesInvalidUTF8(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows filenames use Unicode rather than arbitrary byte strings")
+	}
+	for _, tc := range []struct{ name, filename, want string }{
+		{"legacy header", "report-\xff\xfe.bin", "report-\xff\xfe.bin"},
+		{"controls beside invalid bytes", "report-\xff\t\u009b.bin", "report-\xff__.bin"},
+		{"maximum byte component", strings.Repeat("\xff", 251) + ".bin", strings.Repeat("\xff", 251) + ".bin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			// Verify the filesystem accepts the unchanged destination before checking
+			// header handling, including the 255-byte component boundary.
+			if err := os.WriteFile(tc.want, nil, 0600); err != nil {
+				t.Skipf("filesystem does not support this byte filename: %v", err)
+			}
+			require.NoError(t, os.Remove(tc.want))
+			response := &http.Response{Header: http.Header{"Content-Disposition": {"attachment; filename=\"" + tc.filename + "\""}}}
+			file, err := createDownloadFile(response, []byte{0xff})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, filepath.Base(file.Name()))
+			_, err = file.WriteString("synthetic bytes")
+			require.NoError(t, err)
+			require.NoError(t, file.Close())
+			data, err := os.ReadFile(tc.want)
+			require.NoError(t, err)
+			require.Equal(t, "synthetic bytes", string(data))
 		})
 	}
 }

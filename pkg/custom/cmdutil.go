@@ -172,12 +172,7 @@ func createDownloadFile(response *http.Response, data []byte) (*os.File, error) 
 			filename = filepath.Base(dispFilename)
 			// MIME decoding can introduce controls absent from the HTTP header.
 			// Normalize the automatic name before both exclusive and fallback creation.
-			filename = strings.Map(func(r rune) rune {
-				if unicode.IsControl(r) {
-					return '_'
-				}
-				return r
-			}, filename)
+			filename = normalizeDownloadFilename(filename)
 			// Try to create the file with exclusive flag to avoid race conditions
 			file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 			if err == nil {
@@ -193,6 +188,22 @@ func createDownloadFile(response *http.Response, data []byte) (*os.File, error) 
 	}
 	base := strings.TrimSuffix(filename, ext)
 	return os.CreateTemp(".", base+"-*"+ext)
+}
+
+func normalizeDownloadFilename(filename string) string {
+	var normalized strings.Builder
+	normalized.Grow(len(filename))
+	for offset := 0; offset < len(filename); {
+		r, width := utf8.DecodeRuneInString(filename[offset:])
+		if unicode.IsControl(r) {
+			normalized.WriteByte('_')
+		} else {
+			// Preserve original bytes, including invalid UTF-8 in legacy names.
+			normalized.WriteString(filename[offset : offset+width])
+		}
+		offset += width
+	}
+	return normalized.String()
 }
 
 func guessExtension(data []byte) string {
