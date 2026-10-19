@@ -197,7 +197,7 @@ func TestMainSpendErrorRecoveryResponseConversion(t *testing.T) {
 
 func TestMainSpendErrorRecoveryInputDecodeDoesNotClaimMutation(t *testing.T) {
 	for _, test := range []struct{ name, input string }{
-		{"syntax", `{"synthetic-private-input": broken}`},
+		{"syntax", `[synthetic-private-input not closed`},
 		{"type", `[{"synthetic-private-input":"value"}]`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -208,15 +208,15 @@ func TestMainSpendErrorRecoveryInputDecodeDoesNotClaimMutation(t *testing.T) {
 			}))
 			defer server.Close()
 			env := spendRecoveryEnvironment(t, server.URL)
-			argv := append([]string{"openai"}, spendThresholdArgs(false, "spend-alerts", "create")...)
+			argv := spendThresholdArgs(false, "spend-alerts", "create")
 			argv = append(argv, "--currency", "USD", "--interval", "month", "--threshold-amount", "10000",
-				"--notification-channel", test.input, "--format", "yaml")
-			human := runMainDispatchWithEnv(t, "bash", env, append(slices.Clone(argv), "--format-error", "text")...)
+				"--notification-channel", test.input)
+			human := runMainDispatchWithEnv(t, "bash", env, append([]string{"openai", "--format", "yaml", "--format-error", "text"}, argv...)...)
 			checkSpendRecoveryFailure(t, human)
 			if human.stderr == "" || strings.Contains(human.stderr, "may have received") || strings.Contains(human.stderr, "before repeating") {
 				t.Fatal("input decoding incorrectly claimed an attempted mutation", human.stderr)
 			}
-			machine := runMainDispatchWithEnv(t, "bash", env, append(slices.Clone(argv), "--format-error", "json")...)
+			machine := runMainDispatchWithEnv(t, "bash", env, append([]string{"openai", "--format", "yaml", "--format-error", "json"}, argv...)...)
 			checkSpendRecoveryFailure(t, machine)
 			var value map[string]any
 			if json.Unmarshal([]byte(machine.stderr), &value) != nil || len(value) != 1 {
@@ -226,7 +226,7 @@ func TestMainSpendErrorRecoveryInputDecodeDoesNotClaimMutation(t *testing.T) {
 			if !ok || message == "" {
 				t.Fatal("machine input error omitted its message", machine.stderr)
 			}
-			extracted := runMainDispatchWithEnv(t, "bash", env, append(slices.Clone(argv), "--format-error", "text", "--transform-error", "message")...)
+			extracted := runMainDispatchWithEnv(t, "bash", env, append([]string{"openai", "--format", "yaml", "--format-error", "text", "--transform-error", "message"}, argv...)...)
 			checkSpendRecoveryFailure(t, extracted)
 			if extracted.stderr != message+"\n" || requests.Load() != 0 {
 				t.Fatal("input error changed extraction or sent an HTTP request", extracted.stderr, requests.Load())

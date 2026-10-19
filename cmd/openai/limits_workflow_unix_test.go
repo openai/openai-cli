@@ -27,15 +27,20 @@ import (
 type limitsBorrowedOutputProbe struct {
 	fail   bool
 	writes atomic.Int32
+	ready  atomic.Bool
 	failed atomic.Bool
 }
 
 func (w *limitsBorrowedOutputProbe) Write(data []byte) (int, error) {
 	w.writes.Add(1)
-	if w.fail && bytes.Contains(data, []byte("q: quit")) && !w.failed.Swap(true) {
+	if w.fail && w.ready.Load() && !w.failed.Swap(true) {
 		return 0, errors.New("synthetic-private-borrowed-output")
 	}
-	return os.Stdout.Write(data)
+	n, err := os.Stdout.Write(data)
+	if err == nil && n == len(data) && bytes.Contains(data, []byte("q: quit")) {
+		w.ready.Store(true)
+	}
+	return n, err
 }
 
 // Exercise production startup with the supported embedding writer installed.
@@ -134,7 +139,7 @@ func TestMainLimitsWorkflowBorrowedTerminalWriter(t *testing.T) {
 }
 
 // The private PTY follows the existing process-test cleanup pattern. Only the
-// ready workspace receives a key; output failure ends without injected input.
+// ready workspace receives a key; output failure ends after a redraw signal.
 const limitsBorrowedTerminalPTY = `
 import errno, fcntl, json, os, pty, selectors, signal, struct, subprocess, sys, termios, time
 def interrupted(signum, frame):
@@ -180,6 +185,9 @@ try:
             if not sent and mode in ("quit", "interrupt") and b"q: quit" in output[0]:
                 key = b"\x03" if mode == "interrupt" else b"q"
                 os.write(master, key)
+                sent = True
+            elif not sent and mode == "write-failure" and b"q: quit" in output[0]:
+                os.kill(process.pid, signal.SIGWINCH)
                 sent = True
     code = process.wait(timeout=2)
     completed = True
