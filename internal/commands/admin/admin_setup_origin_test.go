@@ -1,4 +1,4 @@
-package custom
+package admin_test
 
 import (
 	"context"
@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/commands/admin"
 	requestconfig "github.com/openai/openai-cli/internal/request"
+	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -28,12 +30,12 @@ func TestAdminSetupOriginDisplayPreservesDestination(t *testing.T) {
 			require.NoError(t, err)
 			requests := 0
 			root := adminCredentialsTestCommand(t, func(ctx context.Context, command *cli.Command) error {
-				options, display, err := adminSetupRequestOptions(command)
+				options, display, err := admin.TestRequestOptions(command, custom.GetDefaultRequestOptions)
 				if err != nil {
 					return err
 				}
 				require.Equal(t, test.display, display)
-				return verifyAdminSetup(ctx, options, []byte("synthetic-entered-admin-key"))
+				return admin.TestVerifySetup(ctx, options, []byte("synthetic-entered-admin-key"))
 			})
 			root.Metadata = map[string]any{requestconfig.MTLSHTTPClientMetadata: &http.Client{
 				Transport: adminSetupOriginTransport(func(request *http.Request) (*http.Response, error) {

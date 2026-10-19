@@ -1,4 +1,4 @@
-package custom
+package admin
 
 import (
 	"context"
@@ -95,8 +95,8 @@ MANUAL SETUP FOR SCRIPTS OR REPEATED COMMANDS
 This page only shows instructions. No key has been entered or checked yet.
 `
 
-// Add the admin guide after clihelp creates the existing help/setup command.
-func configureAdminSetupHelp(root *cli.Command) {
+// ConfigureSetupHelp adds the admin guide after clihelp creates help/setup.
+func ConfigureSetupHelp(root *cli.Command) {
 	help := root.Command("help")
 	if help == nil {
 		return

@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	"github.com/openai/openai-cli/internal/commands/admin"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-go/v3/option"
-
 	"github.com/urfave/cli/v3"
 )
 
@@ -207,7 +207,7 @@ func flagOptionsWithStdin(
 	}
 	hooks := requestconfig.PreparationHooks{
 		PreflightMultipart:  func(body map[string]any) error { return preflightAudioVoicesMultipartBody(cmd, body) },
-		ValidateCredentials: func() error { return checkAdminCredentials(cmd) },
+		ValidateCredentials: func() error { return admin.CheckCredentials(cmd) },
 		Encoding: requestconfig.EncodingHooks{
 			PrepareMultipart: func(body map[string]any) error { return prepareImageMultipartBody(cmd, body) },
 			ValidateJSON:     func(body []byte) error { return validateProjectAPIKeyUpdate(cmd, body) },

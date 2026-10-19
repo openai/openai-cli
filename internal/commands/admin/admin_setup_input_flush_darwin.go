@@ -1,6 +1,6 @@
 //go:build darwin
 
-package custom
+package admin
 
 import (
 	"os"
