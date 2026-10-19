@@ -1,6 +1,6 @@
 //go:build !windows
 
-package custom
+package output
 
 import (
 	"fmt"
@@ -8,23 +8,23 @@ import (
 	"os/exec"
 	"syscall"
 
-	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/charmbracelet/x/term"
 	"golang.org/x/sys/unix"
 )
 
-func streamOutputOSSpecific(label string, generateOutput func(w *os.File) error) error {
+func StreamToPager(label string, generateOutput func(w *os.File) error) error {
 	// Try to use socket pair for better buffer control
 	pagerInput, pid, err := openSocketPairPager(label)
 	if err != nil || pagerInput == nil {
 		// Fall back to pipe if socket setup fails
-		return streamToPagerWithPipe(label, generateOutput)
+		return StreamToPagerWithPipe(label, generateOutput)
 	}
 	defer pagerInput.Close()
 
 	// If we would be streaming to a terminal and aren't forcing color one way
 	// or the other, we should configure things to use color so the pager gets
 	// colorized input.
-	if isTerminal(os.Stdout) && os.Getenv("FORCE_COLOR") == "" {
+	if term.IsTerminal(os.Stdout.Fd()) && os.Getenv("FORCE_COLOR") == "" {
 		os.Setenv("FORCE_COLOR", "1")
 	}
 
@@ -41,7 +41,7 @@ func streamOutputOSSpecific(label string, generateOutput func(w *os.File) error)
 	var wstatus syscall.WaitStatus
 	_, err = syscall.Wait4(pid, &wstatus, 0, nil)
 	// Preserve generation errors, but only after closing and reaping the pager.
-	if outputErr != nil && !clioutput.IsBrokenPipe(outputErr) {
+	if outputErr != nil && !IsBrokenPipe(outputErr) {
 		return outputErr
 	}
 	if wstatus.ExitStatus() != 0 {

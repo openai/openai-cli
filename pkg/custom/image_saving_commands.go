@@ -241,7 +241,7 @@ func (p imagePresentation) output(write func(io.Writer) error) error {
 		// Use the existing SIGPIPE protection, retaining saving errors even when
 		// reporting a completed path also encounters a closed pipe.
 		var result error
-		_ = streamToStdout(func(*os.File) error { result = write(out); return nil })
+		_ = clioutput.StreamToStdout(func(*os.File) error { result = write(out); return nil })
 		return result
 	}
 	return write(out)

@@ -1,6 +1,6 @@
 //go:build !windows
 
-package custom
+package output
 
 import (
 	"os"
@@ -54,8 +54,8 @@ func TestPagerCommand(t *testing.T) {
 // arguments through instead of resolving the whole value as one executable name.
 func TestStreamToPagerPassesPagerArguments(t *testing.T) {
 	paths := map[string]func(string, func(*os.File) error) error{
-		"pipe":   streamToPagerWithPipe,
-		"socket": streamOutputOSSpecific,
+		"pipe":   StreamToPagerWithPipe,
+		"socket": StreamToPager,
 	}
 	for name, stream := range paths {
 		t.Run(name, func(t *testing.T) {

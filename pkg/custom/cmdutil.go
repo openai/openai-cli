@@ -11,11 +11,8 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -55,114 +52,6 @@ func isTerminal(w io.Writer) bool {
 	default:
 		return false
 	}
-}
-
-func streamOutput(label string, generateOutput func(w *os.File) error) error {
-	// For non-tty output (probably a pipe), write directly to stdout
-	if !isTerminal(os.Stdout) {
-		return streamToStdout(generateOutput)
-	}
-
-	// When streaming output on Unix-like systems, there's a special trick involving creating two socket pairs
-	// that we prefer because it supports small buffer sizes which results in less pagination per buffer. The
-	// constructs needed to run it don't exist on Windows builds, so we have this function broken up into
-	// OS-specific files with conditional build comments. Under Windows (and in case our fancy constructs fail
-	// on Unix), we fall back to using pipes (`streamToPagerWithPipe`), which are OS agnostic.
-	//
-	// Defined in either cmdutil_unix.go or cmdutil_windows.go.
-	return streamOutputOSSpecific(label, generateOutput)
-}
-
-// pagerCommand splits PAGER into an executable and its arguments. $PAGER is written
-// as a command line by the tools this CLI is used beside (git, gh, man), so
-// "less -R" has to reach less rather than be resolved as a single executable name.
-// When the first word does not resolve, the whole value is kept, so a configuration
-// that works today keeps working, including an executable path that contains spaces.
-func pagerCommand() []string {
-	pager := strings.TrimSpace(os.Getenv("PAGER"))
-	if pager == "" {
-		return []string{"less"}
-	}
-	// Prefer a complete executable path before treating spaces as argument
-	// separators; a path containing spaces may itself be executable.
-	if _, err := exec.LookPath(pager); err == nil {
-		return []string{pager}
-	}
-	if command := strings.Fields(pager); len(command) > 1 {
-		if _, err := exec.LookPath(command[0]); err == nil {
-			return command
-		}
-	}
-	return []string{pager}
-}
-
-// pagerError distinguishes pager setup and process failures from the request,
-// formatter, or output callback. Keep the cause available to errors.Is/As.
-type pagerError struct{ error }
-
-func (e *pagerError) Unwrap() error { return e.error }
-
-func wrapPagerError(err error) error {
-	if err == nil {
-		return nil
-	}
-	return &pagerError{err}
-}
-
-func streamToPagerWithPipe(label string, generateOutput func(w *os.File) error) error {
-	r, w, err := os.Pipe()
-	if err != nil {
-		return wrapPagerError(err)
-	}
-	defer r.Close()
-	defer w.Close()
-
-	command := pagerCommand()
-	if _, err := exec.LookPath(command[0]); err != nil {
-		return wrapPagerError(err)
-	}
-
-	cmd := exec.Command(command[0], command[1:]...)
-	cmd.Stdin = r
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(),
-		"LESS=-X -r -P "+label,
-		"MORE=-r -P "+label,
-	)
-
-	if err := cmd.Start(); err != nil {
-		return wrapPagerError(err)
-	}
-
-	if err := r.Close(); err != nil {
-		return wrapPagerError(err)
-	}
-
-	// If we would be streaming to a terminal and aren't forcing color one way
-	// or the other, we should configure things to use color so the pager gets
-	// colorized input.
-	if isTerminal(os.Stdout) && os.Getenv("FORCE_COLOR") == "" {
-		os.Setenv("FORCE_COLOR", "1")
-	}
-
-	outputErr := generateOutput(w)
-	// Deliver EOF and reap the pager even when output generation failed.
-	w.Close()
-	waitErr := cmd.Wait()
-	if outputErr != nil && !clioutput.IsBrokenPipe(outputErr) {
-		return outputErr
-	}
-	return wrapPagerError(waitErr)
-}
-
-func streamToStdout(generateOutput func(w *os.File) error) error {
-	signal.Ignore(syscall.SIGPIPE)
-	err := generateOutput(os.Stdout)
-	if clioutput.IsBrokenPipe(err) {
-		return nil
-	}
-	return err
 }
 
 // WriteBinaryResponse writes a binary response to stdout or a file.
@@ -522,7 +411,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	opts.Format = resolvedOutputFormat(opts)
 	if opts.Format == "text" {
 		if stdout, ok := opts.Stdout.(*os.File); ok && stdout == os.Stdout {
-			return streamToStdout(func(*os.File) error { return showReadableIterator(iter, opts) })
+			return clioutput.StreamToStdout(func(*os.File) error { return showReadableIterator(iter, opts) })
 		}
 		return showReadableIterator(iter, opts)
 	}
@@ -565,7 +454,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	// Event streams cannot wait for a page of output. Preserve stdout's
 	// signal/error handling while delivering each formatted event.
 	if opts.OutputKind == OutputStreamEvent {
-		return streamToStdout(func(out *os.File) error { return writeUnpaged(out) })
+		return clioutput.StreamToStdout(func(out *os.File) error { return writeUnpaged(out) })
 	}
 
 	terminalWidth, terminalHeight, err := term.GetSize(os.Stdout.Fd())
@@ -592,7 +481,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	}
 
 	if !usePager {
-		return streamToStdout(func(stdout *os.File) error {
+		return clioutput.StreamToStdout(func(stdout *os.File) error {
 			if _, err := (clioutput.Writer{Context: opts.Context, Sink: stdout}).Write(output); err != nil {
 				return errors.Join(err, iter.Err())
 			}
@@ -600,7 +489,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 		})
 	}
 
-	return streamOutput(opts.Title, func(pager *os.File) error {
+	return clioutput.Stream(opts.Title, func(pager *os.File) error {
 		if _, err := (clioutput.Writer{Context: opts.Context, Sink: pager}).Write(output); err != nil {
 			return errors.Join(err, iter.Err())
 		}

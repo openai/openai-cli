@@ -602,7 +602,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test ./pkg/custom -count=1 -timeout=2m -v -json \
+          go test ./internal/output -count=1 -timeout=2m -v -json \
             -run '^TestSocketPairPagerFailureKeepsReusedDescriptorOpen$' \
             | tee "$RUNNER_TEMP/pager-tests.jsonl"
       - name: Test Bash command prefixes
@@ -1658,9 +1658,11 @@ jobs:
         include:
           - name: Pager descriptor ownership on Ubuntu WSL 1
             arguments: ''
+            package: ./internal/output
             artifact: wsl-pager
           - name: Command contracts on Ubuntu WSL 1
             arguments: --command-contracts
+            package: ./pkg/custom
             artifact: wsl-command-contracts
     steps:
       - name: Reserve WSL cleanup time
@@ -1700,7 +1702,7 @@ jobs:
           GOTOOLCHAIN: local
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') ./pkg/custom
+          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') '${{ matrix.package }}'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-process.test') ./cmd/openai
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

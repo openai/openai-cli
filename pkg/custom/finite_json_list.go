@@ -52,7 +52,7 @@ func showFiniteJSONList[T any](source jsonview.Iterator[T], maximum int64, opts 
 			return true, list.showTerminal(width, height)
 		}
 		// Preserve lone consumer EPIPE success without hiding joined failures.
-		return true, streamToStdout(func(out *os.File) error { return list.write(out) })
+		return true, clioutput.StreamToStdout(func(out *os.File) error { return list.write(out) })
 	}
 	return true, list.write(opts.Stdout)
 }
@@ -160,7 +160,7 @@ func (list *finiteJSONList) showTerminal(width, height int) error {
 			lines += countTerminalLines(data, width)
 		}
 		if err != nil || data == nil || list.done {
-			return streamToStdout(func(out *os.File) error {
+			return clioutput.StreamToStdout(func(out *os.File) error {
 				_, writeErr := (clioutput.Writer{Context: list.opts.Context, Sink: out}).Write(prefix.Bytes())
 				return list.err(errors.Join(err, writeErr))
 			})
@@ -168,7 +168,7 @@ func (list *finiteJSONList) showTerminal(width, height int) error {
 	}
 	// Keep existing long-output paging. The prefix holds at most one screen plus
 	// the item crossing that screen, independent of the total list length.
-	return streamOutput(list.opts.Title, func(out *os.File) error {
+	return clioutput.Stream(list.opts.Title, func(out *os.File) error {
 		if _, err := (clioutput.Writer{Context: list.opts.Context, Sink: out}).Write(prefix.Bytes()); err != nil {
 			return list.err(err)
 		}

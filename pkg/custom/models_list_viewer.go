@@ -33,7 +33,7 @@ func showModelsListViewer[T any](source jsonview.Iterator[T], iter *clioutput.It
 		return false, nil
 	}
 	if opts.Stdout == os.Stdout {
-		return true, streamToStdout(func(*os.File) error { return writeModelsList(iter, opts, width, height) })
+		return true, clioutput.StreamToStdout(func(*os.File) error { return writeModelsList(iter, opts, width, height) })
 	}
 	return true, writeModelsList(iter, opts, width, height)
 }

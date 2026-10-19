@@ -71,7 +71,7 @@ func writeReadableSpeech(response *http.Response, stdout io.Writer, outfile stri
 	}
 	if outfile != "" || opts.Transform == "" && (strings.EqualFold(opts.Format, "raw") || opts.RawOutput) {
 		if file, ok := stdout.(*os.File); ok && file == os.Stdout {
-			return true, "", streamToStdout(func(out *os.File) error {
+			return true, "", clioutput.StreamToStdout(func(out *os.File) error {
 				return copySpeechStream(opts.Context, out, response.Body)
 			})
 		}
