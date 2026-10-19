@@ -185,10 +185,10 @@ func finishLimitsWorkspace(ctx context.Context, m *limitsWorkspace, runErr error
 	if pending || m.locked {
 		message = "A limits change may have succeeded. Check its current state before repeating it.\n" + m.readRecovery()
 		if mutationErr != nil {
-			humanDetail = limitsMutationHint(mutationErr, m.invocation)
+			humanDetail = limitsMutationRecovery(mutationErr, m.invocation, false)
 		}
 	} else if m.refreshRequired {
-		message = limitsPreflightHint(mutationErr, m.invocation)
+		message = limitsPreflightRecovery(mutationErr, false, m.invocation) + "\n" + m.readRecovery()
 		if m.lastSaved.Exists() {
 			message += "\nA preceding change was confirmed. The latest change was not sent."
 		}
@@ -748,21 +748,37 @@ func (m *limitsWorkspace) limitReadable() bool {
 func limitsSafeJSON(value gjson.Result) string { return limitsSafeLine(value.Raw) }
 
 func limitsPreflightHint(err error, invocation ...string) string {
+	return limitsPreflightRecovery(err, true, invocation...)
+}
+
+func limitsPreflightRecovery(err error, inWorkspace bool, invocation ...string) string {
 	bin := "openai"
 	if len(invocation) != 0 && invocation[0] != "" {
 		bin = invocation[0]
+	}
+	refresh := "Press r to refresh."
+	validation := "Recheck the request fields and scope, then press r to refresh."
+	baseline := "Press r to refresh this draft's baseline."
+	conflict := "Press r to refresh and review the new baseline."
+	interrupted := "Press r to refresh before trying again."
+	wait := "Wait before refreshing. Check API error details if this continues."
+	if !inWorkspace {
+		refresh = "Reopen the limits workspace and review current settings before another change."
+		validation = "Recheck the request fields and scope.\n" + refresh
+		baseline, conflict, interrupted = refresh, refresh, refresh
+		wait = "Wait before reopening the limits workspace. Check API error details if this continues."
 	}
 	var apiErr *openai.Error
 	if errors.As(err, &apiErr) {
 		switch apiErr.StatusCode {
 		case 400, 422:
-			return fmt.Sprintf("The API returned HTTP %d. No write sent.\nRecheck the request fields and scope, then press r to refresh.", apiErr.StatusCode)
+			return fmt.Sprintf("The API returned HTTP %d. No write sent.\n%s", apiErr.StatusCode, validation)
 		case 401:
 			return "Admin authentication failed. No write sent.\nKey setup: " + bin + " help setup admin"
 		case 403:
 			return "The API denied access. No write sent.\nCheck Admin-key permissions and organization or project access.\nAccess setup: " + bin + " help setup admin"
 		case 404:
-			return "The requested resource was not returned. No write sent.\nCheck the API address, scope, and resource ID. Press r to refresh."
+			return "The requested resource was not returned. No write sent.\nCheck the API address, scope, and resource ID. " + refresh
 		case 429:
 			switch apiErr.Code {
 			case "organization_spend_limit_exceeded":
@@ -772,26 +788,26 @@ func limitsPreflightHint(err error, invocation ...string) string {
 			case "insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "organization_usage_limit_exceeded":
 				return "The API reports a billing or usage limit. No write sent.\nCheck billing and approved usage: https://platform.openai.com/settings/organization/limits"
 			default:
-				return "The API returned HTTP 429. No write sent.\nWait before refreshing. Check API error details if this continues."
+				return "The API returned HTTP 429. No write sent.\n" + wait
 			}
 		default:
-			return fmt.Sprintf("The API returned HTTP %d. No write sent.\nPress r to refresh. If this continues, check API availability and access.", apiErr.StatusCode)
+			return fmt.Sprintf("The API returned HTTP %d. No write sent.\n%s If this continues, check API availability and access.", apiErr.StatusCode, refresh)
 		}
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return "The check was interrupted. No write sent. Press r to refresh before trying again."
+		return "The check was interrupted. No write sent. " + interrupted
 	}
 	if err == nil {
-		return "No change sent. Press r to refresh this draft's baseline."
+		return "No change sent. " + baseline
 	}
 	// Only exact locally defined messages select specific recovery guidance.
 	switch err.Error() {
 	case "Rate-limit editing requires a complete list. Reopen with a larger --max-items value or -1.":
 		return "No write sent. Reopen with --max-items -1 to check every rate record."
 	case "The configuration changed. Refresh before applying this change.":
-		return "Record changed. No write sent. Press r to refresh and review the new baseline."
+		return "Record changed. No write sent. " + conflict
 	default:
-		return "No change sent. Press r to refresh this draft's baseline."
+		return "No change sent. " + baseline
 	}
 }
 
@@ -878,11 +894,18 @@ func limitsReadHint(err error, invocation string) string {
 }
 
 func limitsMutationHint(err error, invocation string) string {
+	return limitsMutationRecovery(err, invocation, true)
+}
+
+func limitsMutationRecovery(err error, invocation string, inWorkspace bool) string {
 	var apiErr *openai.Error
 	if errors.As(err, &apiErr) {
 		switch apiErr.StatusCode {
 		case 401, 403, 404, 429:
-			return strings.ReplaceAll(limitsPreflightHint(err, invocation), "No write sent.", "The change is not confirmed.")
+			if !inWorkspace && apiErr.StatusCode == 404 {
+				return "The requested resource was not returned. The change is not confirmed.\nCheck the API address, scope, and resource ID. Read the current record before another change."
+			}
+			return strings.ReplaceAll(limitsPreflightRecovery(err, inWorkspace, invocation), "No write sent.", "The change is not confirmed.")
 		case 400, 422:
 			return fmt.Sprintf("The API returned HTTP %d. The change is not confirmed.\nRecheck the reviewed fields. Read the current record before another change.", apiErr.StatusCode)
 		default:

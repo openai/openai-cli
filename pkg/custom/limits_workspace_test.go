@@ -1016,10 +1016,11 @@ func TestLimitsWorkspaceHTTPFailureRecovery(t *testing.T) {
 				if operation == "preflight" {
 					baseline = fmt.Sprintf("The API returned HTTP %d. No write sent.\n", status)
 					if status == 400 || status == 422 {
-						baseline += "Recheck the request fields and scope, then press r to refresh."
+						baseline += "Recheck the request fields and scope.\nReopen the limits workspace and review current settings before another change."
 					} else {
-						baseline += "Press r to refresh. If this continues, check API availability and access."
+						baseline += "Reopen the limits workspace and review current settings before another change. If this continues, check API availability and access."
 					}
+					baseline += "\n" + m.readRecovery()
 				}
 				for _, args := range [][]string{nil, {"--format", "json", "--format-error", "text"}, {"--format", "text", "--format-error", "json"}, {"--format-error", "text", "--transform-error", "message"}} {
 					root := readableErrorTestCommand(t, args...)
@@ -1029,6 +1030,9 @@ func TestLimitsWorkspaceHTTPFailureRecovery(t *testing.T) {
 					}
 					if strings.Contains(out.String(), "synthetic-private") || strings.Contains(out.String(), "\x1b") {
 						t.Fatal("final diagnostic exposed response data")
+					}
+					if strings.Contains(strings.ToLower(out.String()), "press r") {
+						t.Fatal("final diagnostic directed the user to a closed workspace")
 					}
 					switch {
 					case root.String("transform-error") != "":
@@ -1058,6 +1062,130 @@ func TestLimitsWorkspaceHTTPFailureRecovery(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestLimitsWorkspaceExitRecoveryUsesProcessActions(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		cause      error
+	}{
+		{"authentication", "help setup admin", &openai.Error{StatusCode: 401, Message: "synthetic-private-response"}},
+		{"access", "organization or project access", &openai.Error{StatusCode: 403, Message: "synthetic-private-response"}},
+		{"missing", "scope, and resource ID", &openai.Error{StatusCode: 404, Message: "synthetic-private-response"}},
+		{"rate", "Wait before reopening", &openai.Error{StatusCode: 429, Code: "unknown_synthetic_code", Message: "synthetic-private-response"}},
+		{"organization cap", "help admin organization spend-limit retrieve", &openai.Error{StatusCode: 429, Code: "organization_spend_limit_exceeded"}},
+		{"project cap", "help admin organization projects spend-limit retrieve", &openai.Error{StatusCode: 429, Code: "project_spend_limit_exceeded"}},
+		{"billing", "https://platform.openai.com/settings/organization/limits", &openai.Error{StatusCode: 429, Code: "credit_balance_exhausted"}},
+		{"canceled", "check was interrupted", context.Canceled},
+		{"deadline", "check was interrupted", context.DeadlineExceeded},
+		{"changed", "Record changed", errors.New("The configuration changed. Refresh before applying this change.")},
+		{"incomplete rates", "Reopen with --max-items -1", errors.New("Rate-limit editing requires a complete list. Reopen with a larger --max-items value or -1.")},
+		{"unknown", "Reopen the limits workspace", errors.New("synthetic-private-response\x1b[2J")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, backend := newLimitsController(t, 40, 12)
+			m.invocation, m.snapshot.ProjectID = "custom-openai", "synthetic-private-project"
+			limitsControllerReview(t, m)
+			m.mutationError = &limitsMutationFailure{Err: tc.cause, Attempted: false}
+			m.Update(limitsWorkResult{mutation: true, err: m.mutationError})
+			limitsControllerKey(m, tea.KeyF1)
+			if tc.name == "missing" || tc.name == "canceled" || tc.name == "deadline" || tc.name == "changed" || tc.name == "unknown" {
+				if !strings.Contains(m.details, "Press r to refresh") {
+					t.Fatal("in-workspace recovery lost its keyboard action")
+				}
+			}
+			limitsControllerKey(m, tea.KeyEscape)
+			limitsControllerKey(m, 'q')
+			m.lastSaved = gjson.Parse(strings.Replace(limitsTestLimit, "organization.spend_limit", "project.spend_limit", 1))
+			m.lastSavedOperation = limitsChangeOperation("limit_set", true)
+			var receipt bytes.Buffer
+			failure := finishLimitsWorkspace(t.Context(), m, nil, ShowJSONOpts{Context: t.Context(), Format: "json", ExplicitFormat: true, Stdout: &receipt, Stderr: io.Discard})
+			var safe *limitsWorkflowFailure
+			if !errors.As(failure, &safe) || !errors.Is(failure, tc.cause) || backend.writes.Load() != 0 {
+				t.Fatal("final recovery lost the cause, failure, or zero-write outcome")
+			}
+			if !gjson.Valid(receipt.String()) || gjson.Get(receipt.String(), "threshold_amount").Int() != 10000 || !strings.Contains(safe.Error(), "A preceding change was confirmed.") {
+				t.Fatal("final recovery discarded the preceding confirmed result")
+			}
+			for _, args := range [][]string{nil, {"--format-error", "json"}, {"--format-error", "text", "--transform-error", "message"}} {
+				root := readableErrorTestCommand(t, args...)
+				var out bytes.Buffer
+				if err := ShowCommandError(root, failure, &out); err != nil {
+					t.Fatal(err)
+				}
+				text := out.String()
+				if strings.Contains(text, "synthetic-private") || strings.Contains(text, "\x1b") || strings.Contains(strings.ToLower(text), "press r") || strings.Contains(text, "may have succeeded") {
+					t.Fatal("final recovery leaked private data, keyboard actions, or mutation uncertainty")
+				}
+				for _, want := range []string{tc.want, "custom-openai help admin organization projects spend-limit retrieve", "original connection, authentication, and scope options"} {
+					if !strings.Contains(text, want) {
+						t.Fatalf("final recovery omitted %q", want)
+					}
+				}
+				if root.String("transform-error") != "" {
+					if text != safe.Error()+"\n" {
+						t.Fatal("extracted message differs from the canonical final recovery")
+					}
+				} else if errorOutputFormat(root) == "json" {
+					var value map[string]any
+					if err := json.Unmarshal(out.Bytes(), &value); err != nil || len(value) != 1 || value["message"] != safe.Error() {
+						t.Fatal("machine error schema or message changed")
+					}
+				}
+			}
+		})
+	}
+	for _, status := range []int{404, 429} {
+		t.Run(fmt.Sprintf("uncertain/%d", status), func(t *testing.T) {
+			m, _ := newLimitsController(t, 80, 24)
+			cause := &openai.Error{StatusCode: status, Message: "synthetic-private-response"}
+			m.locked, m.mutationError = true, &limitsMutationFailure{Err: cause, Attempted: true}
+			if status == 404 && !strings.Contains(m.help(), "Press r to refresh") {
+				t.Fatal("in-workspace mutation recovery lost its keyboard guidance")
+			}
+			failure := finishLimitsWorkspace(t.Context(), m, nil, ShowJSONOpts{Context: t.Context(), Stdout: io.Discard, Stderr: io.Discard})
+			if !errors.Is(failure, cause) {
+				t.Fatal("final mutation recovery lost its cause")
+			}
+			baseline := "A limits change may have succeeded. Check its current state before repeating it.\n" + m.readRecovery()
+			var human, machine bytes.Buffer
+			if err := ShowCommandError(readableErrorTestCommand(t), failure, &human); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(strings.ToLower(human.String()), "press r") || strings.Contains(human.String(), "synthetic-private") || !strings.Contains(human.String(), baseline) {
+				t.Fatal("final mutation recovery lost uncertainty or exposed an invalid action")
+			}
+			if status == 404 && !strings.Contains(human.String(), "Read the current record before another change.") {
+				t.Fatal("uncertain 404 did not require a new read")
+			}
+			if err := ShowCommandError(readableErrorTestCommand(t, "--format-error", "json"), failure, &machine); err != nil {
+				t.Fatal(err)
+			}
+			var value map[string]any
+			if err := json.Unmarshal(machine.Bytes(), &value); err != nil || len(value) != 1 || value["message"] != baseline {
+				t.Fatal("final mutation recovery changed the machine contract")
+			}
+		})
+	}
+	t.Run("interrupted preflight and output failure", func(t *testing.T) {
+		m, _ := newLimitsController(t, 80, 24)
+		cause := &openai.Error{StatusCode: 404, Message: "synthetic-private-response"}
+		m.refreshRequired, m.interrupted = true, true
+		m.mutationError = &limitsMutationFailure{Err: errors.Join(cause, context.Canceled), Attempted: false}
+		m.output = &limitsWorkspaceOutput{err: &clioutput.WriteError{Err: syscall.EPIPE}}
+		failure := finishLimitsWorkspace(t.Context(), m, tea.ErrInterrupted, ShowJSONOpts{Context: t.Context(), Stdout: io.Discard, Stderr: io.Discard})
+		var interrupt interface{ ExitCode() int }
+		if !errors.Is(failure, cause) || !errors.Is(failure, context.Canceled) || !errors.Is(failure, syscall.EPIPE) || clioutput.IsBrokenPipe(failure) || !errors.As(failure, &interrupt) || interrupt.ExitCode() != 130 {
+			t.Fatal("final preflight recovery lost a joined cause or interruption status")
+		}
+		var out bytes.Buffer
+		if err := ShowCommandError(readableErrorTestCommand(t), failure, &out); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out.String(), "synthetic-private") || strings.Contains(strings.ToLower(out.String()), "press r") || !strings.Contains(out.String(), "No write sent.") || !strings.Contains(out.String(), "Reopen the limits workspace") {
+			t.Fatal("interrupted final preflight recovery lost its process-safe action")
+		}
+	})
 }
 
 func TestLimitsWorkspaceCanceledMutationRecovery(t *testing.T) {

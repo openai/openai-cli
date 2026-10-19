@@ -57,6 +57,8 @@ Wrapped inspection rows do not establish command copyability.
 The preflight scene loads the overview before returning HTTP 400 from the confirmation read.
 It retains the draft, blocks review before refresh, and checks F1 recovery at both widths.
 Normal exit preserves the failure and hides private response data. No mutation occurs.
+Final recovery tells users to reopen the workspace and preserve the original request scope.
+The recorder rejects workspace keyboard actions in failure diagnostics after terminal restoration.
 
 The fixture stores only synthetic request bodies, response hashes, and method/path/status records.
 It never logs request headers or credentials.

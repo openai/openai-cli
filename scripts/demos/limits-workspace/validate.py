@@ -88,6 +88,13 @@ def main():
         assert relay.endswith(prompt), (scene, "missing restored prompt")
         assert relay[:-len(prompt)] == raw == child_bytes, (scene, "capture changed CLI bytes")
         assert hashlib.sha256(raw).hexdigest() == evidence["relayed_sha256"]
+        if expected_status != 0:
+            restored = raw.rfind(b"\x1b[?1049l")
+            assert restored >= 0, (scene, "final diagnostic lacks terminal restoration")
+            diagnostic = b" ".join(raw[restored + len(b"\x1b[?1049l"):].lower().split())
+            for action in (b"press r", b"use r to", b"refresh with r", b"press ?", b"press f1", b"use f1",
+                           b"f1 for", b"f1:", b"ctrl+p", b"tab to apply"):
+                assert action not in diagnostic, (scene, "final diagnostic names an action from the closed workspace")
         mutations = [entry for entry in requests if entry["scene"] == scene and entry["method"] in {"POST", "DELETE"}]
         assert len(mutations) == (0 if scene in {"slow-cancel", "alert-print", "preflight-400"} else 1), (scene, "unexpected mutation count")
         if scene == "slow-cancel":
@@ -151,7 +158,10 @@ def main():
             assert b"synthetic-private-preflight" not in raw, (scene, "private response leaked")
             restored_end = raw.rfind(b"\x1b[?1049l") + len(b"\x1b[?1049l")
             diagnostic = raw[restored_end:]
-            assert all(message in diagnostic for message in (b"HTTP 400", b"No write sent.", b"request fields and scope", b"press r to refresh"))
+            assert all(message in diagnostic for message in (b"HTTP 400", b"No write sent.", b"request fields and scope",
+                                                            b"Reopen the limits workspace", b"review current settings",
+                                                            b"help admin organization spend-limit retrieve",
+                                                            b"original connection, authentication, and scope options"))
             assert b"may have succeeded" not in diagnostic
             continue
         request = mutations[0]

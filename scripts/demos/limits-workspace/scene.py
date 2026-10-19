@@ -297,7 +297,10 @@ def run_scene(terminal, scene, evidence, output):
             raise AssertionError("preflight recovery exposed private response data")
         restored = terminal.raw.rfind(b"\x1b[?1049l") + len(b"\x1b[?1049l")
         diagnostic = terminal.raw[restored:]
-        for message in (b"HTTP 400", b"No write sent.", b"request fields and scope", b"press r to refresh"):
+        for message in (b"HTTP 400", b"No write sent.", b"request fields and scope",
+                        b"Reopen the limits workspace", b"review current settings",
+                        b"help admin organization spend-limit retrieve",
+                        b"original connection, authentication, and scope options"):
             if message not in diagnostic:
                 raise AssertionError("normal exit lost the preflight diagnostic")
         if b"may have succeeded" in diagnostic:
@@ -384,6 +387,15 @@ def main():
                     raise AssertionError("supplied or staged CLI changed during capture")
                 if str(binary).encode() in terminal.raw:
                     raise AssertionError("capture exposed the private binary source path")
+                if terminal.child.returncode != 0:
+                    restored = terminal.raw.rfind(b"\x1b[?1049l")
+                    if restored < 0:
+                        raise AssertionError("final diagnostic lacks terminal restoration")
+                    diagnostic = b" ".join(terminal.raw[restored + len(b"\x1b[?1049l"):].lower().split())
+                    for action in (b"press r", b"use r to", b"refresh with r", b"press ?", b"press f1", b"use f1",
+                                   b"f1 for", b"f1:", b"ctrl+p", b"tab to apply"):
+                        if action in diagnostic:
+                            raise AssertionError("final diagnostic names an action from the closed workspace")
                 evidence.update(exit_status=terminal.child.returncode, relayed_bytes=len(terminal.raw),
                                 relayed_sha256=hashlib.sha256(terminal.raw).hexdigest())
                 with Path(str(output) + ".tty").open("xb") as destination:
