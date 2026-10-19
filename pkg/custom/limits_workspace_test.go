@@ -910,6 +910,8 @@ func TestLimitsWorkspaceHTTPFailureRecovery(t *testing.T) {
 					if r.Method == http.MethodGet && (operation == "mutation" || operation == "preflight" && !preflight) {
 						if strings.HasSuffix(r.URL.Path, "/spend_limit") {
 							limitsTestWrite(t, w, limitsTestLimit)
+						} else if strings.HasSuffix(r.URL.Path, "/costs") {
+							limitsTestWrite(t, w, `{"object":"page","data":[],"has_more":false}`)
 						} else {
 							limitsTestWrite(t, w, `{"object":"list","data":[],"has_more":false}`)
 						}
