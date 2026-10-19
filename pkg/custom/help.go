@@ -54,7 +54,7 @@ func configureGlobalFlagDescriptions(root *cli.Command) {
 		case *cli.StringFlag:
 			switch flag.Name {
 			case "base-url":
-				flag.Usage = "Send API requests to this endpoint.\nEnv: OPENAI_BASE_URL"
+				flag.Usage = "Send API requests to this endpoint. HTTPS is required except for localhost or loopback IP addresses.\nEnv: OPENAI_BASE_URL"
 				flag.DefaultText = "https://api.openai.com/v1"
 			case "format":
 				flag.Usage = "Choose how results are displayed. Format names are case-insensitive.\n" +

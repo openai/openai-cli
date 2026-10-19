@@ -175,7 +175,9 @@ explicit API error details can contain server-supplied sensitive data.
 - `--help` - Show command line usage
 - `--debug` - Enable debug logging. This includes HTTP request/response details and bodies; do not share debug logs if they may contain sensitive payloads.
 - `--version`, `-v` - Show the CLI version
-- `--base-url` - Use a custom API backend URL
+- `--base-url` - Use a custom API backend URL. HTTPS is required except for
+  `localhost` or literal loopback IP addresses such as `127.0.0.1` and `::1`.
+  This also applies to `OPENAI_BASE_URL`; remote HTTP backends must enable HTTPS.
 - `--header`, `-H` - Add a literal request header as `Name: Value`; repeat for multiple headers
 - `--format` - Change the output format (`auto`, `text`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`); `auto` selects readable text unless extracting data
 - `--format-error` - Change the stderr error format (`auto`, `text`, `explore`, `json`, `jsonl`, `pretty`, `raw`, `yaml`); `auto` selects readable summaries unless extracting error data
