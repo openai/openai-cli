@@ -57,6 +57,9 @@ below describes the current layout as the migration proceeds.
   the encoding engine.
 - `internal/commands/manpages/` owns manual rendering, text/gzip file cleanup,
   and tests. Application assembly supplies the shared save-receipt policy.
+- `internal/commands/models/` owns model-list selection, filter parsing, loading
+  lifecycle, tables, and loaded-response presentation. Shared terminal list
+  navigation and loaded-page rendering live in `internal/output/listview/`.
 - `internal/commands/` owns nested API routes, compatibility aliases, task
   shortcuts, and help-group metadata, alongside shared local-command and safe-error
   contracts. Assembly preserves the order in which these are configured.

@@ -1,6 +1,7 @@
-package custom
+package models
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -11,11 +12,11 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// The automatic models view lists IDs and owners. Explicit formats and printing
+// RenderTable lists IDs and owners. Explicit formats and printing
 // retain the complete records through their existing presentation paths.
-func renderModelsListTable(opts ShowJSONOpts, items []gjson.Result, width int) (string, bool, error) {
-	options, _ := opts.Context.Value(modelsListOptionsKey{}).(modelsListOptions)
-	models, supported, err := transformers.ProjectModelsList(opts.Context, items, options.selection.Descending)
+func RenderTable(ctx context.Context, items []gjson.Result, width int, diagnostics bool) (string, bool, error) {
+	options, _ := ctx.Value(modelsListOptionsKey{}).(modelsListOptions)
+	models, supported, err := transformers.ProjectModelsList(ctx, items, options.selection.Descending)
 	if err != nil || !supported {
 		return "", supported, err
 	}
@@ -25,7 +26,7 @@ func renderModelsListTable(opts ShowJSONOpts, items []gjson.Result, width int) (
 	rows := make([][]string, 0, len(models))
 	idWidth, ownerWidth := len("ID"), len("OWNER")
 	for _, model := range models {
-		if err := opts.Context.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return "", true, err
 		}
 		owner := "(unknown)"
@@ -50,7 +51,7 @@ func renderModelsListTable(opts ShowJSONOpts, items []gjson.Result, width int) (
 		content.WriteString(table)
 	} else {
 		for index, row := range rows {
-			if err := opts.Context.Err(); err != nil {
+			if err := ctx.Err(); err != nil {
 				return "", true, err
 			}
 			if index != 0 {
@@ -60,7 +61,7 @@ func renderModelsListTable(opts ShowJSONOpts, items []gjson.Result, width int) (
 			fmt.Fprintf(&content, "ID: %s\nOwned by: %s\n", row[0], row[1])
 		}
 	}
-	if err := opts.Context.Err(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return "", true, err
 	}
 	noun := "models"
@@ -68,16 +69,16 @@ func renderModelsListTable(opts ShowJSONOpts, items []gjson.Result, width int) (
 		noun = "model"
 	}
 	fmt.Fprintf(&content, "\nListed %d %s.\n", len(models), noun)
-	if outputDiagnosticsAllowed(opts.Context) {
+	if diagnostics {
 		content.WriteString(ansi.Wrap("Details: --format json", max(1, width), ""))
 		content.WriteByte('\n')
 	}
-	return content.String(), true, opts.Context.Err()
+	return content.String(), true, ctx.Err()
 }
 
-// Models arrive in one response, so printing includes every selected record.
+// PrintHint describes printing every selected record from the single response.
 // Keep counts whole when the terminal cannot fit the complete hint.
-func modelsListPrintHint(count, width int) string {
+func PrintHint(count, width int) string {
 	full := fmt.Sprintf("p: print all %d records, quit", count)
 	if count == 1 {
 		full = "p: print 1 record, quit"

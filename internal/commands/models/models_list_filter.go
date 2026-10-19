@@ -1,4 +1,4 @@
-package custom
+package models
 
 import (
 	"strings"
@@ -11,16 +11,16 @@ import (
 func parseModelsListFilter(expression string) (byte, string, error) {
 	rest := strings.TrimLeftFunc(expression, modelsListFilterSpace)
 	if !strings.HasPrefix(rest, "id") {
-		return 0, "", &modelsListError{"--filter accepts id=VALUE for exact matching or id~REGEX for regular expression matching."}
+		return 0, "", &ListError{"--filter accepts id=VALUE for exact matching or id~REGEX for regular expression matching."}
 	}
 	rest = strings.TrimLeftFunc(rest[2:], modelsListFilterSpace)
 	if len(rest) == 0 || rest[0] != '=' && rest[0] != '~' {
-		return 0, "", &modelsListError{"--filter accepts id=VALUE for exact matching or id~REGEX for regular expression matching."}
+		return 0, "", &ListError{"--filter accepts id=VALUE for exact matching or id~REGEX for regular expression matching."}
 	}
 	operator := rest[0]
 	rest = strings.TrimLeftFunc(rest[1:], modelsListFilterSpace)
 	if rest == "" {
-		return 0, "", &modelsListError{"--filter requires an operand after = or ~. Use quotes for an empty operand."}
+		return 0, "", &ListError{"--filter requires an operand after = or ~. Use quotes for an empty operand."}
 	}
 	var operand strings.Builder
 	var quote byte
@@ -57,7 +57,7 @@ func parseModelsListFilter(expression string) (byte, string, error) {
 		value, size := utf8.DecodeRuneInString(rest[position:])
 		if modelsListFilterSpace(value) {
 			if strings.TrimLeftFunc(rest[position:], modelsListFilterSpace) != "" {
-				return 0, "", &modelsListError{"--filter accepts one operand. Quote spaces and Boolean-looking text; additional expressions are not supported."}
+				return 0, "", &ListError{"--filter accepts one operand. Quote spaces and Boolean-looking text; additional expressions are not supported."}
 			}
 			break
 		}
@@ -65,7 +65,7 @@ func parseModelsListFilter(expression string) (byte, string, error) {
 		position += size
 	}
 	if quote != 0 {
-		return 0, "", &modelsListError{"--filter has an unterminated quote. Close the single or double quote."}
+		return 0, "", &ListError{"--filter has an unterminated quote. Close the single or double quote."}
 	}
 	return operator, operand.String(), nil
 }

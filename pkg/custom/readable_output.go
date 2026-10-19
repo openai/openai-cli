@@ -2,10 +2,8 @@ package custom
 
 import (
 	"context"
-	"os"
 	"strings"
 
-	"github.com/charmbracelet/x/term"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/urfave/cli/v3"
@@ -38,18 +36,6 @@ func configureReadableOutput(root *cli.Command) {
 		}
 	}
 }
-
-// Preserve terminal detection when the interactive viewer uses guarded output.
-type terminalOutputWriter struct {
-	clioutput.Writer
-	file *os.File
-}
-
-var _ term.File = terminalOutputWriter{}
-
-func (w terminalOutputWriter) Fd() uintptr                { return w.file.Fd() }
-func (w terminalOutputWriter) Read(p []byte) (int, error) { return w.file.Read(p) }
-func (w terminalOutputWriter) Close() error               { return w.file.Close() }
 
 // Assembly supplies destination classification and the current diagnostic policy.
 func readableOutputOptions(opts ShowJSONOpts) clioutput.ReadableOptions {
