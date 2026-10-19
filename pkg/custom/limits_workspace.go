@@ -730,9 +730,9 @@ func (m *limitsWorkspace) sourceSummary() string {
 		}
 		return "Hard spend limit unavailable. Refresh to retry."
 	case 1:
-		return fmt.Sprintf("%d alerts loaded. Complete: %t", len(m.snapshot.Alerts), m.snapshot.AlertsComplete)
+		return fmt.Sprintf("Alerts loaded: %d Complete: %t", len(m.snapshot.Alerts), m.snapshot.AlertsComplete)
 	default:
-		return fmt.Sprintf("%d rate records loaded. Complete: %t", len(m.snapshot.Rates), m.snapshot.RatesComplete)
+		return fmt.Sprintf("Rate records loaded: %d Complete: %t", len(m.snapshot.Rates), m.snapshot.RatesComplete)
 	}
 }
 
