@@ -274,6 +274,34 @@ def run_scene(terminal, scene, evidence, output):
         evidence["printed_command"] = {"byte_offset": start, "byte_length": len(expected),
                                        "sha256": hashlib.sha256(expected).hexdigest()}
         checkpoint(terminal, evidence, output, "printed-command")
+    elif scene == "preflight-400":
+        wait_screen(terminal, ["HTTP 400", "125.25", "Review change"], ["Saving"])
+        checkpoint(terminal, evidence, output, "preflight", ("HTTP 400", "125.25"))
+        key(terminal, evidence, "Blocked review before refresh", b"\r\r")
+        wait_screen(terminal, ["Refresh with r", "125.25", "Review change"])
+        checkpoint(terminal, evidence, output, "refresh-required", ("Refresh with r", "125.25"))
+        key(terminal, evidence, "F1 recovery", b"\x1bOP")
+        help_screen = wait_screen(terminal, ["HTTP 400", "Recheck"])
+        compact_help = "".join(help_screen.split())
+        for message in ("No write sent.", "request fields and scope", "press r to refresh"):
+            if "".join(message.split()) not in compact_help:
+                raise AssertionError("preflight help omitted status or recovery guidance")
+        checkpoint(terminal, evidence, output, "preflight-help", ("HTTP 400",))
+        key(terminal, evidence, "Back", b"\x1b")
+        wait_screen(terminal, ["Set hard spend limit"])
+        key(terminal, evidence, "Quit", b"q")
+        terminal.finish(1)
+        if mutations(scene):
+            raise AssertionError("failed preflight sent a mutation")
+        if b"synthetic-private-preflight" in terminal.raw:
+            raise AssertionError("preflight recovery exposed private response data")
+        restored = terminal.raw.rfind(b"\x1b[?1049l") + len(b"\x1b[?1049l")
+        diagnostic = terminal.raw[restored:]
+        for message in (b"HTTP 400", b"No write sent.", b"request fields and scope", b"press r to refresh"):
+            if message not in diagnostic:
+                raise AssertionError("normal exit lost the preflight diagnostic")
+        if b"may have succeeded" in diagnostic:
+            raise AssertionError("preflight exit incorrectly claimed an uncertain mutation")
     elif scene == "uncertain":
         wait_screen(terminal, ["Save not confirmed", "Review change"])
         checkpoint(terminal, evidence, output, "uncertain")

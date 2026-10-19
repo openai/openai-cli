@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 
 SCENES = ("org-limit", "org-limit-delete", "project-limit", "alert-create", "alert-edit",
-          "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print")
+          "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print", "preflight-400")
 
 
 def validate_rendered_checkpoints(root):
@@ -55,7 +55,7 @@ def main():
     requests = [json.loads(line) for line in (root / "requests.jsonl").read_text().splitlines()]
     for scene in SCENES:
         evidence = json.loads((root / (scene + "-evidence.json")).read_text())
-        expected_status = 130 if scene == "slow-cancel" else 1 if scene == "uncertain" else 0
+        expected_status = 130 if scene == "slow-cancel" else 1 if scene in {"uncertain", "preflight-400"} else 0
         assert evidence["exit_status"] == expected_status, (scene, "incorrect child exit")
         assert evidence["cli_exit_status"] == evidence["exit_status"], (scene, "Bash changed the CLI exit status")
         assert evidence["parent_shell"] == "/bin/bash", (scene, "missing native Bash parent")
@@ -89,7 +89,7 @@ def main():
         assert relay[:-len(prompt)] == raw == child_bytes, (scene, "capture changed CLI bytes")
         assert hashlib.sha256(raw).hexdigest() == evidence["relayed_sha256"]
         mutations = [entry for entry in requests if entry["scene"] == scene and entry["method"] in {"POST", "DELETE"}]
-        assert len(mutations) == (0 if scene in {"slow-cancel", "alert-print"} else 1), (scene, "unexpected mutation count")
+        assert len(mutations) == (0 if scene in {"slow-cancel", "alert-print", "preflight-400"} else 1), (scene, "unexpected mutation count")
         if scene == "slow-cancel":
             assert any(entry["scene"] == scene and entry["status"] == "held" for entry in requests)
             continue
@@ -131,6 +131,29 @@ def main():
             assert evidence["printed_command"] == {"byte_offset": start, "byte_length": len(expected),
                                                    "sha256": hashlib.sha256(expected).hexdigest()}
             continue
+        if scene == "preflight-400":
+            scene_requests = [entry for entry in requests if entry["scene"] == scene]
+            assert scene_requests and all(entry["method"] == "GET" for entry in scene_requests)
+            limit_reads = [entry for entry in scene_requests if entry["path"].endswith("/spend_limit")]
+            assert [entry["status"] for entry in limit_reads] == [200, 400], (scene, "preflight did not follow a successful overview")
+            assert all(entry["status"] == 200 for entry in scene_requests if not entry["path"].endswith("/spend_limit"))
+            required = ("review-command", "review-apply", "preflight", "refresh-required", "preflight-help")
+            assert all(name in checkpoints for name in required)
+            assert all(checkpoints[left]["seconds"] < checkpoints[right]["seconds"] for left, right in zip(required, required[1:]))
+            keys = [event["key"] for event in evidence["keys"]]
+            assert keys.count("Apply") == keys.count("Blocked review before refresh") == keys.count("F1 recovery") == 1
+            for name, messages in (("preflight", ("HTTP 400", "125.25", "Review change")),
+                                   ("refresh-required", ("Refresh with r", "125.25", "Review change")),
+                                   ("preflight-help", ("HTTP 400", "No write sent.", "request fields and scope", "press r to refresh"))):
+                screen = (root / (scene + "-evidence." + name + ".txt")).read_text()
+                compact = "".join(screen.split())
+                assert all("".join(message.split()) in compact for message in messages), (scene, name, "missing recovery evidence")
+            assert b"synthetic-private-preflight" not in raw, (scene, "private response leaked")
+            restored_end = raw.rfind(b"\x1b[?1049l") + len(b"\x1b[?1049l")
+            diagnostic = raw[restored_end:]
+            assert all(message in diagnostic for message in (b"HTTP 400", b"No write sent.", b"request fields and scope", b"press r to refresh"))
+            assert b"may have succeeded" not in diagnostic
+            continue
         request = mutations[0]
         if scene in {"org-limit", "project-limit", "uncertain"}:
             assert request["body"] == {"currency": "USD", "interval": "month", "threshold_amount": 12525}
@@ -153,11 +176,12 @@ def main():
         assert "review-command" in checkpoints and "review-apply" in checkpoints
         assert checkpoints["review-command"]["seconds"] < checkpoints["review-apply"]["seconds"]
         assert [event["key"] for event in evidence["keys"]].count("Apply") == 1
-    print("PASS: ten real workspace processes; exact child/raw/outer bytes; expected exits and mutation bodies.")
+    print("PASS: eleven real workspace processes; exact child/raw/outer bytes; expected exits and mutation bodies.")
     print("PASS: one mutation per confirmed action; no retry after uncertain outcome; slow load canceled without mutation.")
-    print("PASS: native Bash parents preserve CLI exits; staged binary hashes match; nine inspection previews; staged files removed.")
+    print("PASS: native Bash parents preserve CLI exits; staged binary hashes match; ten inspection previews; staged files removed.")
     print("PASS: all seven terminal mode fields restored before Bash exits; only Darwin PENDIN normalized.")
     print("PASS: Ctrl+P exits without mutation; the complete command prints byte-for-byte after terminal restoration.")
+    print("PASS: preflight HTTP 400 retains the draft; safe F1 recovery; zero mutations; normal exit preserves failure.")
     print("LIMIT: inspect all checkpoint images and GIF frames before claiming visual acceptance.")
 
 

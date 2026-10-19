@@ -43,6 +43,7 @@ The isolated child environment includes only fake credentials and the fixture en
 | `rate-update` | Project | Change requests per minute to 250; preserve all other dimensions |
 | `uncertain` | Organization | Apply a synthetic write, lose its response, and verify that repetition stays blocked |
 | `slow-cancel` | Organization | Cancel a held read with Ctrl+C; perform no mutation |
+| `preflight-400` | Organization | Reject the preflight read, retain the draft, explain recovery, and exit with failure without mutation |
 
 Each mutation scene opens a form or deletion review.
 The driver reads to the review's end before selecting Apply.
@@ -53,6 +54,9 @@ Successful mutation scenes require exit status 0 and one mutation each.
 The print scene uses Ctrl+P and requires exit status 0 with no mutation.
 It compares the complete printed command bytes after terminal restoration, including the final newline.
 Wrapped inspection rows do not establish command copyability.
+The preflight scene loads the overview before returning HTTP 400 from the confirmation read.
+It retains the draft, blocks review before refresh, and checks F1 recovery at both widths.
+Normal exit preserves the failure and hides private response data. No mutation occurs.
 
 The fixture stores only synthetic request bodies, response hashes, and method/path/status records.
 It never logs request headers or credentials.
@@ -77,6 +81,7 @@ Planned screenshot evidence comes from recorded checkpoints:
 - Printed command: the complete command after terminal restoration, with no mutation.
 - Saved state: refreshed resource and confirmed outcome.
 - Uncertain state: retained draft and blocked retry guidance.
+- Preflight recovery: retained draft, required refresh, HTTP status, and field/scope guidance.
 - Loading state: cancellation remains available while a read is pending.
 - Final scene frame: restored shell, actual result, and no stale confirmation question.
 

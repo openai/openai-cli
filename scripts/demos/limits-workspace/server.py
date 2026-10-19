@@ -15,7 +15,7 @@ from urllib.parse import urlsplit, parse_qs
 
 
 SCENES = ("org-limit", "org-limit-delete", "project-limit", "alert-create", "alert-edit",
-          "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print")
+          "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print", "preflight-400")
 
 
 def write_text(path, value):
@@ -51,6 +51,7 @@ def main():
     gate = Path(sys.argv[4])
     gate.mkdir()
     states = {name: initial_state(name in {"project-limit", "alert-edit", "rate-update"}) for name in SCENES}
+    limit_reads = {name: 0 for name in SCENES}
     write_text(sys.argv[3], json.dumps({"data": "synthetic only", "initial": states}, indent=2) + "\n")
     stop, lock, failures = threading.Event(), threading.Lock(), []
     with open(sys.argv[2], "x", encoding="utf-8") as log:
@@ -106,7 +107,13 @@ def main():
                                 if time.monotonic() >= deadline:
                                     raise TimeoutError("slow scene did not confirm cancellation")
                             return
+                        limit_reads[scene] += 1
                         result = state["limit"]
+                        if scene == "preflight-400" and limit_reads[scene] > 1:
+                            status, result = 400, {"error": {
+                                "message": "synthetic-private-preflight-message\u001b[2J",
+                                "param": "synthetic-private-preflight-field\nline",
+                                "code": "synthetic-private-preflight-code\u001b]0;title\u0007"}}
                         if result is None:
                             status, result = 404, {"error": {"message": "Synthetic limit is absent"}}
                     elif self.command == "POST":

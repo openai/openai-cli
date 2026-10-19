@@ -901,11 +901,13 @@ func TestLimitsPreflightGuidancePreservesFailureScope(t *testing.T) {
 
 func TestLimitsWorkspaceHTTPFailureRecovery(t *testing.T) {
 	for _, status := range []int{400, 422, 409, 503} {
-		for _, operation := range []string{"read", "mutation"} {
+		for _, operation := range []string{"read", "preflight", "mutation"} {
 			t.Run(fmt.Sprintf("%s/%d", operation, status), func(t *testing.T) {
-				var writes atomic.Int32
+				var writes, preflightReads atomic.Int32
+				var rejectPreflight atomic.Bool
 				backend := limitsTestBackend(t, "", 100, func(w http.ResponseWriter, r *http.Request) {
-					if r.Method == http.MethodGet && operation == "mutation" {
+					preflight := r.Method == http.MethodGet && operation == "preflight" && rejectPreflight.Load() && strings.HasSuffix(r.URL.Path, "/spend_limit")
+					if r.Method == http.MethodGet && (operation == "mutation" || operation == "preflight" && !preflight) {
 						if strings.HasSuffix(r.URL.Path, "/spend_limit") {
 							limitsTestWrite(t, w, limitsTestLimit)
 						} else {
@@ -916,6 +918,9 @@ func TestLimitsWorkspaceHTTPFailureRecovery(t *testing.T) {
 					if r.Method != http.MethodGet {
 						writes.Add(1)
 					}
+					if preflight {
+						preflightReads.Add(1)
+					}
 					w.WriteHeader(status)
 					limitsTestWrite(t, w, `{"error":{"message":"synthetic-private-message\u001b[2J","param":"synthetic-private-param\nline","code":"synthetic-private-code\u001b]0;title\u0007"}}`)
 				})
@@ -925,18 +930,43 @@ func TestLimitsWorkspaceHTTPFailureRecovery(t *testing.T) {
 				if operation == "read" {
 					result = limitsControllerRun(t, m.load())
 				} else {
-					backend.client = openai.NewClient(append(backend.client.Options, option.WithMaxRetries(3))...)
-					m.snapshot.LimitAbsent, m.snapshot.Limit = false, gjson.Parse(limitsTestLimit)
+					if operation == "preflight" {
+						overview := limitsControllerRun(t, m.load())
+						if overview.err != nil || len(overview.snapshot.Errors) != 0 || overview.snapshot.Limit.Raw != limitsTestLimit {
+							t.Fatal("preflight fixture did not load a successful overview")
+						}
+						m.Update(overview)
+						rejectPreflight.Store(true)
+					} else {
+						backend.client = openai.NewClient(append(backend.client.Options, option.WithMaxRetries(3))...)
+						m.snapshot.LimitAbsent, m.snapshot.Limit = false, gjson.Parse(limitsTestLimit)
+					}
 					limitsControllerReview(t, m)
 					m.viewport.GotoBottom()
 					limitsControllerKey(m, tea.KeyTab)
 					result = limitsControllerRun(t, limitsControllerKey(m, tea.KeyEnter))
 					var attempted *limitsMutationFailure
-					if !errors.As(result.err, &attempted) || !attempted.Attempted || writes.Load() != 1 {
-						t.Fatal("failed mutation lost its attempted state or sent more than once")
+					wantAttempted, wantWrites := operation == "mutation", int32(0)
+					if wantAttempted {
+						wantWrites = 1
+					}
+					if !errors.As(result.err, &attempted) || attempted.Attempted != wantAttempted || writes.Load() != wantWrites {
+						t.Fatal("failed operation changed its attempted state or mutation count")
 					}
 				}
 				m.Update(result)
+				if operation == "preflight" {
+					if m.locked || !m.refreshRequired || m.page != "form" || m.draft.inputs[0].Value() != "100.01" || m.change.Before.Raw != limitsTestLimit || m.change.Amount != 10001 {
+						t.Fatal("HTTP preflight failure discarded the draft or changed its recovery state")
+					}
+					if !strings.Contains(m.formError, fmt.Sprintf("HTTP %d", status)) || strings.Contains(m.formError, "synthetic-private") || strings.Contains(m.formError, "\x1b") {
+						t.Fatal("preflight form omitted the status or exposed response data")
+					}
+					m.setFocus(len(m.draft.inputs))
+					if next := limitsControllerKey(m, tea.KeyEnter); next != nil || m.page != "form" || m.busy || !m.refreshRequired || preflightReads.Load() != 1 || writes.Load() != 0 {
+						t.Fatal("HTTP preflight failure allowed review or another request before refresh")
+					}
+				}
 				limitsControllerKey(m, tea.KeyF1)
 				if !strings.Contains(m.details, fmt.Sprintf("HTTP %d", status)) || strings.Contains(m.details, "synthetic-private") || strings.Contains(m.details, "\x1b") {
 					t.Fatal("recovery omitted the status or exposed response data")
@@ -956,22 +986,39 @@ func TestLimitsWorkspaceHTTPFailureRecovery(t *testing.T) {
 					}
 					return
 				}
-				if !m.locked || !strings.Contains(m.details, "It may have succeeded") || strings.Contains(m.details, "No write sent.") {
-					t.Fatal("HTTP failure removed mutation uncertainty or the write lock")
-				}
-				limitsControllerKey(m, tea.KeyEscape)
-				limitsControllerKey(m, tea.KeyEnter)
-				m.Update(limitsControllerRun(t, limitsControllerKey(m, 'r')))
-				limitsControllerKey(m, tea.KeyEnter)
-				if !m.locked || writes.Load() != 1 {
-					t.Fatal("Enter or refresh repeated a failed mutation")
+				if operation == "preflight" {
+					if !strings.Contains(m.details, "No write sent.") || !strings.Contains(m.details, "press r to refresh") && !strings.Contains(m.details, "Press r to refresh") || strings.Contains(m.details, "It may have succeeded") {
+						t.Fatal("preflight recovery lost safe refresh guidance or claimed a possible mutation")
+					}
+					if (status == 409 || status == 503) && !strings.Contains(m.details, "API availability and access") {
+						t.Fatal("preflight recovery omitted availability and access guidance")
+					}
+				} else {
+					if !m.locked || !strings.Contains(m.details, "It may have succeeded") || strings.Contains(m.details, "No write sent.") {
+						t.Fatal("HTTP failure removed mutation uncertainty or the write lock")
+					}
+					limitsControllerKey(m, tea.KeyEscape)
+					limitsControllerKey(m, tea.KeyEnter)
+					m.Update(limitsControllerRun(t, limitsControllerKey(m, 'r')))
+					limitsControllerKey(m, tea.KeyEnter)
+					if !m.locked || writes.Load() != 1 {
+						t.Fatal("Enter or refresh repeated a failed mutation")
+					}
 				}
 				m.output = &limitsWorkspaceOutput{err: &clioutput.WriteError{Err: syscall.EPIPE}}
 				failure := finishLimitsWorkspace(t.Context(), m, nil, ShowJSONOpts{Context: t.Context(), Format: "text", Stdout: io.Discard, Stderr: io.Discard})
 				if !errors.Is(failure, result.err) || !errors.Is(failure, syscall.EPIPE) || clioutput.IsBrokenPipe(failure) {
-					t.Fatal("finalization discarded the mutation or output failure")
+					t.Fatal("finalization discarded the operation or output failure")
 				}
 				baseline := "A limits change may have succeeded. Check its current state before repeating it.\n" + m.readRecovery()
+				if operation == "preflight" {
+					baseline = fmt.Sprintf("The API returned HTTP %d. No write sent.\n", status)
+					if status == 400 || status == 422 {
+						baseline += "Recheck the request fields and scope, then press r to refresh."
+					} else {
+						baseline += "Press r to refresh. If this continues, check API availability and access."
+					}
+				}
 				for _, args := range [][]string{nil, {"--format", "json", "--format-error", "text"}, {"--format", "text", "--format-error", "json"}, {"--format-error", "text", "--transform-error", "message"}} {
 					root := readableErrorTestCommand(t, args...)
 					var out bytes.Buffer
@@ -992,6 +1039,12 @@ func TestLimitsWorkspaceHTTPFailureRecovery(t *testing.T) {
 							t.Fatal("machine error message changed")
 						}
 					default:
+						if operation == "preflight" {
+							if !strings.Contains(out.String(), baseline) || strings.Contains(out.String(), "may have succeeded") {
+								t.Fatal("final text lost preflight status, outcome, or recovery guidance")
+							}
+							break
+						}
 						if !strings.Contains(out.String(), fmt.Sprintf("HTTP %d", status)) || !strings.Contains(out.String(), "may have succeeded") {
 							t.Fatal("final text lost HTTP status or mutation uncertainty")
 						}

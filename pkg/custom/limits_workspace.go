@@ -755,6 +755,8 @@ func limitsPreflightHint(err error, invocation ...string) string {
 	var apiErr *openai.Error
 	if errors.As(err, &apiErr) {
 		switch apiErr.StatusCode {
+		case 400, 422:
+			return fmt.Sprintf("The API returned HTTP %d. No write sent.\nRecheck the request fields and scope, then press r to refresh.", apiErr.StatusCode)
 		case 401:
 			return "Admin authentication failed. No write sent.\nKey setup: " + bin + " help setup admin"
 		case 403:
@@ -772,6 +774,8 @@ func limitsPreflightHint(err error, invocation ...string) string {
 			default:
 				return "The API returned HTTP 429. No write sent.\nWait before refreshing. Check API error details if this continues."
 			}
+		default:
+			return fmt.Sprintf("The API returned HTTP %d. No write sent.\nPress r to refresh. If this continues, check API availability and access.", apiErr.StatusCode)
 		}
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
