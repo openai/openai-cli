@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -26,6 +27,7 @@ import (
 	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
 
@@ -473,13 +475,74 @@ func TestLimitsWorkspacePrintedPowerShellCommandRetainsCallOperator(t *testing.T
 	}
 }
 
+func limitsPreviewExecutable(t *testing.T, name string) (string, string) {
+	t.Helper()
+	directory := filepath.Join(t.TempDir(), "CLI preview's directory")
+	require.NoError(t, os.Mkdir(directory, 0700))
+	path := filepath.Join(directory, name)
+	// This executable records shell arguments and stdin. It cannot call the API.
+	const script = `#!/bin/sh
+set -eu
+printf '%s\000' "$@" > "$LIMITS_PREVIEW_ARGS"
+printf '%s' "${OPENAI_UNTRUSTED_STDIN-unset}" > "$LIMITS_PREVIEW_PROTECTED"
+/bin/cat > "$LIMITS_PREVIEW_STDIN"
+`
+	require.NoError(t, os.WriteFile(path, []byte(script), 0700))
+	return path, directory
+}
+
+type limitsPreviewCapture struct {
+	args      []string
+	stdin     []byte
+	protected string
+}
+
+func executeLimitsPreview(t *testing.T, shell, command, pathDirectory string) limitsPreviewCapture {
+	t.Helper()
+	path := "/bin/" + shell
+	if _, err := os.Stat(path); err != nil {
+		if strings.Contains(","+os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS")+",", ","+shell+",") {
+			t.Fatalf("required native shell %s is unavailable", shell)
+		}
+		t.Skipf("native %s is unavailable", shell)
+	}
+	directory := t.TempDir()
+	argsPath, stdinPath, protectedPath := filepath.Join(directory, "argv"), filepath.Join(directory, "stdin"), filepath.Join(directory, "protected")
+	args := []string{"--noprofile", "--norc", "-c", command}
+	if shell == "zsh" {
+		args = []string{"-f", "-c", command}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	process := exec.CommandContext(ctx, path, args...)
+	process.WaitDelay = 250 * time.Millisecond
+	process.Dir = t.TempDir()
+	process.Env = []string{"PATH=" + pathDirectory + ":/usr/bin:/bin", "LANG=en_US.UTF-8",
+		"LIMITS_PREVIEW_ARGS=" + argsPath, "LIMITS_PREVIEW_STDIN=" + stdinPath,
+		"LIMITS_PREVIEW_PROTECTED=" + protectedPath}
+	var stdout, stderr bytes.Buffer
+	process.Stdout, process.Stderr = &stdout, &stderr
+	require.NoError(t, process.Run(), "shell=%s stderr=%q", shell, stderr.String())
+	require.NoError(t, ctx.Err())
+	require.Empty(t, stdout.String())
+	require.Empty(t, stderr.String())
+	rawArgs, err := os.ReadFile(argsPath)
+	require.NoError(t, err)
+	require.True(t, bytes.HasSuffix(rawArgs, []byte{0}))
+	input, err := os.ReadFile(stdinPath)
+	require.NoError(t, err)
+	protected, err := os.ReadFile(protectedPath)
+	require.NoError(t, err)
+	return limitsPreviewCapture{strings.Split(string(rawArgs[:len(rawArgs)-1]), "\x00"), input, string(protected)}
+}
+
 func TestLimitsWorkspacePrintedCommandNativeShellPreservesArguments(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Bash/Zsh preview execution uses a POSIX recorder; native Windows requires separate coverage")
 	}
 	for _, shell := range []string{"bash", "zsh"} {
 		t.Run(shell, func(t *testing.T) {
-			binary, directory := audioPreviewExecutable(t, strings.Repeat("long ", 20)+"limits'\nrecorder")
+			binary, directory := limitsPreviewExecutable(t, strings.Repeat("long ", 20)+"limits'\nrecorder")
 			marker := filepath.Join(t.TempDir(), "MUST_NOT_EXIST")
 			subject := "Owner's \"alert\"; $(touch " + marker + "); `touch " + marker + "` $HOME \\path\nnext line"
 			channel, err := json.Marshal(map[string]any{"type": "email", "recipients": []string{"finance@example.test"}, "subject_prefix": subject})
@@ -522,7 +585,7 @@ func TestLimitsWorkspacePrintedCommandNativeShellPreservesArguments(t *testing.T
 							if backend.writes.Load() != 0 {
 								t.Fatal("printing a command wrote to the backend")
 							}
-							capture := executeAudioPreview(t, shell, command, directory)
+							capture := executeLimitsPreview(t, shell, command, directory)
 							want := append(append([]string{}, requestArgs...), tc.want...)
 							if !reflect.DeepEqual(capture.args, want) {
 								t.Fatalf("printed command changed arguments:\n got: %q\nwant: %q", capture.args, want)
