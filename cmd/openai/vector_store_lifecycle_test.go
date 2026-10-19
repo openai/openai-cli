@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -23,12 +24,14 @@ func TestMainVectorStoreLifecycle(t *testing.T) {
 	const expiration = `{"anchor":"last_active_at","days":7}`
 	const attributes = `{"category":"guides","revision":0,"active":false}`
 	const chunking = `{"type":"static","static":{"max_chunk_size_tokens":1200,"chunk_overlap_tokens":200}}`
-	const store = `{"id":"vs_owned","object":"vector_store","name":"Synthetic guides","status":"completed","expires_after":` + expiration + `}`
+	const metadata = `{"category":"guides","empty":""}`
+	const store = `{"id":"vs_owned","object":"vector_store","name":"Synthetic guides","status":"completed","created_at":1700000000,"last_active_at":1700000100,"usage_bytes":1234,"file_counts":{"in_progress":0,"completed":1,"failed":0,"cancelled":0,"total":1},"expires_after":` + expiration + `,"expires_at":1700604900,"metadata":` + metadata + `,"future_field":{"retained":true}}`
 	const file = `{"id":"file_owned","object":"vector_store.file","vector_store_id":"vs_owned","status":"completed","attributes":` + attributes + `,"chunking_strategy":` + chunking + `}`
 	const failedFile = `{"id":"file_owned","object":"vector_store.file","vector_store_id":"vs_owned","status":"failed","last_error":{"code":"unsupported_file","message":"synthetic unsupported document"}}`
 	const batch = `{"id":"batch_owned","object":"vector_store.files_batch","vector_store_id":"vs_owned","status":"in_progress","file_counts":{"in_progress":1,"completed":1,"failed":0,"cancelled":0,"total":2}}`
 	for _, tc := range []struct {
 		name, method, path, query, body, input, response, want string
+		format                                                 string
 		args                                                   []string
 		status                                                 int
 	}{
@@ -40,6 +43,25 @@ func TestMainVectorStoreLifecycle(t *testing.T) {
 		{
 			name: "store retrieve expiration", method: http.MethodGet, path: storePath,
 			args: []string{"vector-stores", "retrieve", "--vector-store-id", "vs_owned"}, response: store,
+		},
+		{
+			name: "store retrieve raw details", method: http.MethodGet, path: storePath, format: "raw",
+			args: []string{"vector-stores", "retrieve", "--vector-store-id", "vs_owned"}, response: store,
+		},
+		{
+			name: "store extract metadata", method: http.MethodGet, path: storePath,
+			args: []string{"vector-stores", "retrieve", "--vector-store-id", "vs_owned", "--transform", "metadata"}, response: store, want: metadata,
+		},
+		{
+			name: "store rename preserves input metadata", method: http.MethodPost, path: storePath,
+			args:  []string{"vector-stores", "update", "--vector-store-id", "vs_owned", "--name", "Synthetic guides"},
+			input: `{"name":"Previous name","metadata":` + metadata + `}`,
+			body:  `{"name":"Synthetic guides","metadata":` + metadata + `}`, response: store,
+		},
+		{
+			name: "store update metadata", method: http.MethodPost, path: storePath,
+			args: []string{"vector-stores", "update", "--vector-store-id", "vs_owned", "--metadata", metadata},
+			body: `{"metadata":` + metadata + `}`, response: store,
 		},
 		{
 			name: "store update expiration", method: http.MethodPost, path: storePath,
@@ -169,7 +191,11 @@ func TestMainVectorStoreLifecycle(t *testing.T) {
 			if tc.input != "" {
 				input = shellFileInput(t, []byte(tc.input))
 			}
-			got := runVectorStoreCommand(t, server, input, append([]string{"--format", "json"}, tc.args...)...)
+			format := tc.format
+			if format == "" {
+				format = "json"
+			}
+			got := runVectorStoreCommand(t, server, input, append([]string{"--format", format}, tc.args...)...)
 			require.EqualValues(t, 1, requests.Load(), "one command must not poll or delete additional resources")
 			if tc.status != 0 {
 				require.Equal(t, 1, got.code, "%+v", got)
@@ -184,7 +210,83 @@ func TestMainVectorStoreLifecycle(t *testing.T) {
 			if want == "" {
 				want = tc.response
 			}
-			require.JSONEq(t, want, got.stdout)
+			if format == "raw" {
+				require.Equal(t, want+"\n", got.stdout)
+			} else {
+				require.JSONEq(t, want, got.stdout)
+			}
+		})
+	}
+}
+
+func TestMainVectorStoreListPagination(t *testing.T) {
+	const first = `{"id":"vs_first","object":"vector_store","name":"First store","created_at":1700000000,"metadata":{"category":"guides"}}`
+	const second = `{"id":"vs_second","object":"vector_store","name":"Second store","created_at":1700000100,"metadata":{"category":"notes"},"future_field":true}`
+	const firstPage = `{"object":"list","data":[` + first + `],"first_id":"vs_first","last_id":"vs_first","has_more":true}`
+	const secondPage = `{"object":"list","data":[` + second + `],"first_id":"vs_second","last_id":"vs_second","has_more":false}`
+	for _, tc := range []struct {
+		name, format, maximum, want string
+		requests                    int32
+		failSecond                  bool
+	}{
+		{"all JSON records", "json", "-1", `[` + first + `,` + second + `]`, 2, false},
+		{"bounded JSON records", "json", "1", `[` + first + `]`, 1, false},
+		{"raw first page", "raw", "-1", firstPage, 1, false},
+		{"later JSON failure", "json", "-1", "", 2, true},
+		{"later JSONL failure", "jsonl", "-1", first, 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				page := requests.Add(1)
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Equal(t, "/vector_stores", r.URL.Path)
+				query := url.Values{"limit": {"1"}, "order": {"asc"}, "after": {"vs_prior"}}
+				if page == 2 {
+					query.Set("after", "vs_first")
+				}
+				assert.Equal(t, query, r.URL.Query())
+				body, err := io.ReadAll(r.Body)
+				assert.NoError(t, err)
+				assert.Empty(t, body)
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("x-should-retry", "false")
+				switch {
+				case page == 1:
+					_, _ = io.WriteString(w, firstPage)
+				case page == 2 && tc.failSecond:
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = io.WriteString(w, `{"error":{"type":"permission_error","message":"synthetic later page denied"}}`)
+				case page == 2:
+					_, _ = io.WriteString(w, secondPage)
+				default:
+					t.Errorf("unexpected page request %d", page)
+					w.WriteHeader(http.StatusBadRequest)
+				}
+			}))
+			defer server.Close()
+			got := runVectorStoreCommand(t, server, nil, "--format", tc.format,
+				"vector-stores", "list", "--after", "vs_prior", "--limit", "1", "--order", "asc", "--max-items", tc.maximum)
+			require.Equal(t, tc.requests, requests.Load())
+			if tc.failSecond {
+				require.Equal(t, 1, got.code, "%+v", got)
+				require.True(t, json.Valid([]byte(got.stderr)), "%q", got.stderr)
+				require.Contains(t, got.stderr, "synthetic later page denied")
+				if tc.format == "json" {
+					require.False(t, json.Valid([]byte(got.stdout)), "failed pagination must not claim a complete array")
+					require.True(t, strings.HasPrefix(got.stdout, "[\n"), "%q", got.stdout)
+					require.JSONEq(t, first, strings.TrimSpace(strings.TrimPrefix(got.stdout, "[\n")))
+					return
+				}
+			} else {
+				require.Zero(t, got.code, "%+v", got)
+				require.Empty(t, got.stderr)
+			}
+			if tc.format == "raw" {
+				require.Equal(t, tc.want+"\n", got.stdout)
+			} else {
+				require.JSONEq(t, tc.want, got.stdout)
+			}
 		})
 	}
 }
