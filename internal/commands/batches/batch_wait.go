@@ -1,4 +1,4 @@
-package custom
+package batches
 
 import (
 	"context"
@@ -9,34 +9,34 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/readable"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
 
-// batchWorkflowError contains only local guidance, never API prose or paths.
-type batchWorkflowError struct {
+// WorkflowError contains only local guidance, never API prose or paths.
+type WorkflowError struct {
 	message string
 	code    int
 	cause   error
 }
 
-func (e *batchWorkflowError) Error() string { return e.message }
-func (e *batchWorkflowError) Unwrap() error { return e.cause }
-func (e *batchWorkflowError) ExitCode() int {
+func (e *WorkflowError) Error() string { return e.message }
+func (e *WorkflowError) Unwrap() error { return e.cause }
+func (e *WorkflowError) ExitCode() int {
 	if e.code != 0 {
 		return e.code
 	}
 	return 1
 }
 
-func batchError(message string) error { return &batchWorkflowError{message: message} }
+func batchError(message string) error { return &WorkflowError{message: message} }
 
 func batchContextError(err error) error {
 	quiet := interruptedBatchDiagnostic(err)
@@ -50,21 +50,21 @@ func batchContextError(err error) error {
 		if quiet {
 			message = ""
 		}
-		return &batchWorkflowError{message: message, code: code, cause: err}
+		return &WorkflowError{message: message, code: code, cause: err}
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		message := "Local batch wait timed out. The remote batch was not canceled. Retrieve it again to continue waiting."
 		if quiet {
 			message = ""
 		}
-		return &batchWorkflowError{message: message, code: 124, cause: err}
+		return &WorkflowError{message: message, code: 124, cause: err}
 	}
 	return err
 }
 
 type batchCreateContextKey struct{}
 
-func configureBatchCommands(root *cli.Command) {
+func (w workflow) configureBatchCommands(root *cli.Command) {
 	for _, resource := range root.Commands {
 		if resource.Name != "batches" {
 			continue
@@ -90,16 +90,16 @@ func configureBatchCommands(root *cli.Command) {
 						}
 						return previous(ctx, cmd)
 					}
-					return waitForBatch(ctx, cmd)
+					return w.waitForBatch(ctx, cmd)
 				}
 			}
 		}
-		resource.Commands = append(resource.Commands, newBatchWaitCommand(), newBatchDownloadCommand())
+		resource.Commands = append(resource.Commands, w.newBatchWaitCommand(), w.newBatchDownloadCommand())
 		return
 	}
 }
 
-func newBatchWaitCommand() *cli.Command {
+func (w workflow) newBatchWaitCommand() *cli.Command {
 	command := &cli.Command{
 		Name: "wait", Usage: "Wait for a batch and optionally save its results",
 		Description:     "Waits without submitting or canceling remote work. Use --output-dir to save available output.jsonl and error.jsonl without overwriting files.",
@@ -110,7 +110,7 @@ func newBatchWaitCommand() *cli.Command {
 			&cli.DurationFlag{Name: "wait-timeout", Usage: "Total local duration, including downloads; 0 waits without a deadline"},
 			&cli.StringFlag{Name: "output-dir", TakesFile: true, Usage: "Save available result files in this directory; create it if absent"},
 		},
-		Action: waitForBatch,
+		Action: w.waitForBatch,
 	}
 	command.Metadata = map[string]any{"help-content": clihelp.Content{
 		Description: command.Description,
@@ -120,7 +120,7 @@ func newBatchWaitCommand() *cli.Command {
 }
 
 // Parse once, preserving generated positional, @file, and piped input semantics.
-func batchRequestOptions(ctx context.Context, cmd *cli.Command) ([]option.RequestOption, error) {
+func (w workflow) batchRequestOptions(ctx context.Context, cmd *cli.Command) ([]option.RequestOption, error) {
 	args := cmd.Args().Slice()
 	if !cmd.IsSet("batch-id") && len(args) > 0 {
 		if err := cmd.Set("batch-id", args[0]); err != nil {
@@ -131,14 +131,14 @@ func batchRequestOptions(ctx context.Context, cmd *cli.Command) ([]option.Reques
 	if len(args) > 0 {
 		return nil, batchError("Unexpected extra arguments. Use one batch ID.")
 	}
-	options, err := flagOptionsWithStdin(cmd, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, EmptyBody, false, batchRequestInput{ctx: ctx, file: os.Stdin})
+	options, err := w.options.RequestOptions(cmd, batchRequestInput{ctx: ctx, file: os.Stdin})
 	if ctx.Err() != nil {
 		return nil, errors.Join(ctx.Err(), err)
 	}
 	return options, err
 }
 
-func waitForBatch(ctx context.Context, cmd *cli.Command) (err error) {
+func (w workflow) waitForBatch(ctx context.Context, cmd *cli.Command) (err error) {
 	interval, timeout := cmd.Duration("poll-interval"), cmd.Duration("wait-timeout")
 	if interval <= 0 || timeout < 0 {
 		return batchError("--poll-interval must be positive, and --wait-timeout must be zero or positive.")
@@ -157,7 +157,7 @@ func waitForBatch(ctx context.Context, cmd *cli.Command) (err error) {
 			err = batchContextError(errors.Join(ctx.Err(), context.Cause(ctx), err))
 		}
 	}()
-	options, err := batchRequestOptions(ctx, cmd)
+	options, err := w.batchRequestOptions(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -168,18 +168,18 @@ func waitForBatch(ctx context.Context, cmd *cli.Command) (err error) {
 			return err
 		}
 	}
-	if batchHumanTerminal(ctx, cmd.Root()) {
+	if w.options.HumanTerminal(ctx, cmd.Root()) {
 		err = writeBatchStdout(ctx, os.Stderr, func(progress io.Writer) error {
-			return pollBatch(ctx, cmd, options, interval, progress, destination)
+			return w.pollBatch(ctx, cmd, options, interval, progress, destination)
 		})
 	} else {
-		err = pollBatch(ctx, cmd, options, interval, nil, destination)
+		err = w.pollBatch(ctx, cmd, options, interval, nil, destination)
 	}
 	return err
 }
 
-func pollBatch(ctx context.Context, cmd *cli.Command, options []option.RequestOption, interval time.Duration, progress io.Writer, destination *batchOutputDirectory) error {
-	client := openai.NewClient(GetDefaultRequestOptions(cmd)...)
+func (w workflow) pollBatch(ctx context.Context, cmd *cli.Command, options []option.RequestOption, interval time.Duration, progress io.Writer, destination *batchOutputDirectory) error {
+	client := openai.NewClient(w.options.DefaultRequestOptions(cmd)...)
 	var previous string
 	for {
 		var raw []byte
@@ -212,9 +212,9 @@ func pollBatch(ctx context.Context, cmd *cli.Command, options []option.RequestOp
 		if terminal {
 			var downloadErr error
 			if destination != nil {
-				downloadErr = collectBatchFiles(ctx, cmd, client, options, batch, destination)
+				downloadErr = w.collectBatchFiles(ctx, cmd, client, options, batch, destination)
 			}
-			outputErr := batchShowJSON(ctx, cmd, batch, "retrieve")
+			outputErr := w.batchShowJSON(ctx, cmd, batch, "retrieve")
 			if ctx.Err() != nil {
 				return errors.Join(batchContextError(errors.Join(ctx.Err(), outputErr, downloadErr)), result)
 			}
@@ -279,36 +279,23 @@ func batchProgress(batch gjson.Result) string {
 	return "Batch status: " + status
 }
 
-func batchShowJSON(ctx context.Context, cmd *cli.Command, batch gjson.Result, operation string) error {
+func (w workflow) batchShowJSON(ctx context.Context, cmd *cli.Command, batch gjson.Result, operation string) error {
 	root := cmd.Root()
-	diagnostics := batchTerminalWriter{Writer: batchDiagnosticWriter{ctx: ctx, file: os.Stderr}, file: os.Stderr}
+	diagnostics := terminal.BorrowedWriter{Writer: batchDiagnosticWriter{ctx: ctx, file: os.Stderr}, File: os.Stderr}
 	return writeBatchStdoutWithCleanup(ctx, root.Writer, batchOutputCleanupGrace, func(out io.Writer) error {
-		return ShowJSON(batch, ShowJSONOpts{
-			// Batch supplies signal cancellation and preserves its exit status.
-			CallerHandlesSignals: true,
-			Context:              ctx, Operation: "(resource) batches > (method) " + operation, OutputKind: OutputResponse,
-			Format: root.String("format"), ExplicitFormat: root.IsSet("format"), RawOutput: root.Bool("raw-output"),
-			Transform: root.String("transform"), Title: "batches " + operation, Stdout: out, Stderr: diagnostics,
-		})
+		return w.options.ShowResult(ctx, cmd, batch, operation, out, diagnostics)
 	})
 }
 
-func batchHumanTerminal(ctx context.Context, root *cli.Command) bool {
-	return outputDiagnosticsAllowed(ctx) && isTerminal(root.Writer) && isTerminal(os.Stderr) && !root.Bool("debug") &&
-		!root.Bool("raw-output") && root.String("transform") == "" &&
-		root.String("transform-error") == "" && errorOutputFormat(root) == "text" &&
-		resolvedOutputFormat(ShowJSONOpts{Format: root.String("format")}) == "text"
-}
-
-func showBatchNextCommand(batch gjson.Result, opts ShowJSONOpts) error {
-	opts.setDefaults()
-	if opts.Operation != "(resource) batches > (method) create" || opts.OutputKind != OutputResponse ||
-		!isTerminal(opts.Stdout) || !isTerminal(opts.Stderr) || opts.Transform != "" || opts.RawOutput ||
-		resolvedOutputFormat(opts) != "text" {
+// ShowNextCommand renders a safe follow-up hint after batch creation.
+func ShowNextCommand(batch gjson.Result, opts HintOptions) error {
+	if opts.Route != "(resource) batches > (method) create" || !opts.Response ||
+		!opts.Terminal || opts.Transform != "" || opts.RawOutput ||
+		opts.Format != "text" {
 		return nil
 	}
 	cmd, ok := opts.Context.Value(batchCreateContextKey{}).(*cli.Command)
-	if !ok || !batchHumanTerminal(opts.Context, cmd.Root()) {
+	if !ok || !opts.HumanTerminal(opts.Context, cmd.Root()) {
 		return nil
 	}
 	id := batch.Get("id").String()

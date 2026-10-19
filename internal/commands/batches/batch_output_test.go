@@ -1,4 +1,4 @@
-package custom
+package batches
 
 import (
 	"context"
@@ -43,7 +43,7 @@ func TestBatchCancellationDiagnosticsPreserveIndependentFailures(t *testing.T) {
 			&os.PathError{Op: "write", Path: "independent", Err: os.ErrClosed},
 		} {
 			for _, joined := range []bool{false, true} {
-				err := withBatchErrorOutput(batchContextError(context.DeadlineExceeded), io.Discard,
+				err := WithErrorOutput(batchContextError(context.DeadlineExceeded), io.Discard,
 					func(ctx context.Context, _ io.Writer) error {
 						<-ctx.Done()
 						if joined {
@@ -62,7 +62,7 @@ func TestBatchCancellationDiagnosticsPreserveIndependentFailures(t *testing.T) {
 func TestBatchCancellationDiagnosticsBoundOnlyTheirOwnDelivery(t *testing.T) {
 	// This path uses an in-memory writer, so its delivery deadline can use virtual time.
 	synctest.Test(t, func(t *testing.T) {
-		err := withBatchErrorOutput(batchContextError(context.DeadlineExceeded), io.Discard,
+		err := WithErrorOutput(batchContextError(context.DeadlineExceeded), io.Discard,
 			func(ctx context.Context, _ io.Writer) error {
 				<-ctx.Done()
 				return ctx.Err()
@@ -71,7 +71,7 @@ func TestBatchCancellationDiagnosticsBoundOnlyTheirOwnDelivery(t *testing.T) {
 			t.Fatalf("owned delivery deadline would trigger another diagnostic: %v", err)
 		}
 		independent := errors.New("ordinary diagnostic failure")
-		err = withBatchErrorOutput(independent, io.Discard, func(ctx context.Context, _ io.Writer) error {
+		err = WithErrorOutput(independent, io.Discard, func(ctx context.Context, _ io.Writer) error {
 			if _, bounded := ctx.Deadline(); bounded {
 				t.Fatal("ordinary error acquired the batch cleanup deadline")
 			}

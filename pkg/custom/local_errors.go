@@ -14,6 +14,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
@@ -50,11 +51,11 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var receiptFailure *saveReceiptError
 	var navigationFailure *listNavigationError
 	var modelsListFailure *modelsListError
-	var batchFailure *batchWorkflowError
+	var batchFailure *batchcommands.WorkflowError
 	var finiteListFailure *clioutput.FiniteJSONListError
 	switch {
 	case errors.As(failure, &batchFailure):
-		return batchFailure.message
+		return batchFailure.Error()
 	case errors.As(failure, &adminSetupFailure):
 		return adminSetupFailure.Error()
 	case errors.As(failure, &downloadFailure):

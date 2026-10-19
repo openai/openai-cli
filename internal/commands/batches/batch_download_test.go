@@ -1,4 +1,4 @@
-package custom
+package batches
 
 import (
 	"bytes"
@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -40,9 +41,9 @@ func batchDownloadTestCommand(t *testing.T, server string, out io.Writer) *cli.C
 			&cli.StringFlag{Name: "transform"},
 			&cli.StringFlag{Name: "project"},
 			&cli.BoolFlag{Name: "raw-output"},
-			NewRequestHeaderFlag(),
+			requestconfig.NewRequestHeaderFlag(),
 		},
-		Commands: []*cli.Command{{Name: "batches", Commands: []*cli.Command{newBatchDownloadCommand()}}},
+		Commands: []*cli.Command{{Name: "batches", Commands: []*cli.Command{(workflow{options: testOptions()}).newBatchDownloadCommand()}}},
 	}
 }
 

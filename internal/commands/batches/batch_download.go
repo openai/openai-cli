@@ -1,4 +1,4 @@
-package custom
+package batches
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func newBatchDownloadCommand() *cli.Command {
+func (w workflow) newBatchDownloadCommand() *cli.Command {
 	return &cli.Command{
 		Name: "download", Usage: "Download a batch output, error, or input file",
 		Description:     "Downloads exact file bytes without overwriting existing files. Use --output - for stdout. Output formats affect receipts and errors, never file bytes.",
@@ -30,11 +30,11 @@ func newBatchDownloadCommand() *cli.Command {
 			&cli.StringFlag{Name: "file", Value: "output", Usage: "Select output, error, or input"},
 			&cli.StringFlag{Name: "output", Required: true, TakesFile: true, Usage: "Save to a new file, or use - for exact bytes on stdout"},
 		},
-		Action: handleBatchDownload,
+		Action: w.handleBatchDownload,
 	}
 }
 
-func handleBatchDownload(ctx context.Context, command *cli.Command) (err error) {
+func (w workflow) handleBatchDownload(ctx context.Context, command *cli.Command) (err error) {
 	selection := command.String("file")
 	if selection != "output" && selection != "error" && selection != "input" {
 		return batchError("Choose --file output, error, or input.")
@@ -56,11 +56,11 @@ func handleBatchDownload(ctx context.Context, command *cli.Command) (err error) 
 			err = batchContextError(errors.Join(err, contextErr))
 		}
 	}()
-	options, err := batchRequestOptions(ctx, command)
+	options, err := w.batchRequestOptions(ctx, command)
 	if err != nil {
 		return err
 	}
-	client := openai.NewClient(GetDefaultRequestOptions(command)...)
+	client := openai.NewClient(w.options.DefaultRequestOptions(command)...)
 	batch, err := client.Batches.Get(ctx, command.String("batch-id"), options...)
 	if err != nil {
 		return err
@@ -102,7 +102,7 @@ func handleBatchDownload(ctx context.Context, command *cli.Command) (err error) 
 	if err != nil {
 		return err
 	}
-	return batchShowJSON(ctx, command, gjson.ParseBytes(receipt), "download")
+	return w.batchShowJSON(ctx, command, gjson.ParseBytes(receipt), "download")
 }
 
 // The directory handle anchors every staging and publication operation. A hard
@@ -144,7 +144,7 @@ func writeBatchDownloadInDirectory(ctx context.Context, directory, name string, 
 		return 0, batchDownloadFailure("The output path already exists or cannot be checked. Choose a new --output path.", err)
 	}
 	temporary := ".openai-batch-" + rand.Text()
-	file, err := createPrivateDownloadFile(root, temporary)
+	file, err := clioutput.CreatePrivateDownloadFile(root, temporary)
 	if err != nil {
 		return 0, batchDownloadFailure("Could not prepare the output file. Check directory permissions and available space.", err)
 	}
@@ -219,7 +219,7 @@ func removeBatchDownloadTemporary(root *os.Root, name string, owned os.FileInfo)
 }
 
 func batchDownloadFailure(message string, cause error) error {
-	return &batchWorkflowError{message: message, code: 1, cause: cause}
+	return &WorkflowError{message: message, code: 1, cause: cause}
 }
 
 type batchOutputDirectory struct {
@@ -272,7 +272,7 @@ func createBatchOutputDirectory(ctx context.Context, path string) (os.FileInfo, 
 	return observed, err
 }
 
-func collectBatchFiles(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, batch gjson.Result, destination *batchOutputDirectory) error {
+func (w workflow) collectBatchFiles(ctx context.Context, cmd *cli.Command, client openai.Client, options []option.RequestOption, batch gjson.Result, destination *batchOutputDirectory) error {
 	switch batch.Get("status").String() {
 	case "completed", "failed", "expired", "cancelled":
 	default:
@@ -296,7 +296,7 @@ func collectBatchFiles(ctx context.Context, cmd *cli.Command, client openai.Clie
 		}
 		value := batch.Get(selection + "_file_id")
 		if value.Type == gjson.Null || value.Type == gjson.String && value.String() == "" {
-			if err := batchCollectionReceipt(ctx, cmd, "No "+selection+" file returned."); err != nil {
+			if err := w.batchCollectionReceipt(ctx, cmd, "No "+selection+" file returned."); err != nil {
 				failures = append(failures, err)
 			}
 			continue
@@ -314,13 +314,13 @@ func collectBatchFiles(ctx context.Context, cmd *cli.Command, client openai.Clie
 		}
 		if err != nil {
 			message := fmt.Sprintf("Could not save %s.jsonl. Retry with batches download --file %s --output NEW_PATH.", selection, selection)
-			var local *batchWorkflowError
+			var local *WorkflowError
 			var apierr *openai.Error
 			switch {
 			case errors.As(err, &local):
 				message += "\n" + local.message
 			case errors.As(err, &apierr):
-				message += "\n" + readableAPIErrorMessage(cmd.Root(), err, apierr)
+				message += "\n" + w.options.APIErrorMessage(cmd.Root(), err, apierr)
 			}
 			problems = append(problems, message)
 			failures = append(failures, err)
@@ -331,15 +331,15 @@ func collectBatchFiles(ctx context.Context, cmd *cli.Command, client openai.Clie
 		if !os.IsPathSeparator(path[len(path)-1]) && !(filepath.VolumeName(path) == path && strings.HasSuffix(path, ":")) {
 			path += string(os.PathSeparator)
 		}
-		if err := batchCollectionReceipt(ctx, cmd, fmt.Sprintf("Saved %q", path+name)); err != nil {
+		if err := w.batchCollectionReceipt(ctx, cmd, fmt.Sprintf("Saved %q", path+name)); err != nil {
 			failures = append(failures, err)
 		}
 	}
 	return finish()
 }
 
-func batchCollectionReceipt(ctx context.Context, cmd *cli.Command, message string) error {
-	if !batchHumanTerminal(ctx, cmd.Root()) {
+func (w workflow) batchCollectionReceipt(ctx context.Context, cmd *cli.Command, message string) error {
+	if !w.options.HumanTerminal(ctx, cmd.Root()) {
 		return nil
 	}
 	return writeBatchStdout(ctx, os.Stderr, func(out io.Writer) error {

@@ -22,6 +22,7 @@ import (
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/readable"
 	requestconfig "github.com/openai/openai-cli/internal/request"
+	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -42,8 +43,8 @@ func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 
 func isTerminal(w io.Writer) bool {
 	switch v := w.(type) {
-	case batchTerminalWriter:
-		return term.IsTerminal(v.file.Fd())
+	case terminal.BorrowedWriter:
+		return term.IsTerminal(v.File.Fd())
 	case *os.File:
 		return term.IsTerminal(v.Fd())
 	default:
