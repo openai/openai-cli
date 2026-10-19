@@ -60,8 +60,16 @@ below describes the current layout as the migration proceeds.
 - `internal/commands/` owns nested API routes, compatibility aliases, task
   shortcuts, and help-group metadata, alongside shared local-command and safe-error
   contracts. Assembly preserves the order in which these are configured.
+- `internal/clihelp/` owns help rendering, command typo matching, and recovery
+  guidance and request-input help annotations. It uses declared command/flag
+  names and escaped local invocation
+  metadata without echoing private operands or executing suggested corrections.
 - `pkg/custom/` contains remaining handwritten CLI commands, defaults, output-format
   policy, error handling, and presentation orchestration.
+- `internal/request/` owns root request inheritance, literal header and mTLS
+  flag definitions, value-safe validation, mTLS transport construction, and client
+  metadata setup. Application assembly retains registration order and the local
+  command bypass.
 - `internal/output/transform/` selects or reshapes API responses before presentation.
 - `internal/` contains shared helpers for flags, request encoding, terminal
   output, and testing. For example, `internal/readable` renders labeled text

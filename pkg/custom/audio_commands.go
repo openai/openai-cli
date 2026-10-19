@@ -12,6 +12,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/audiohistory"
 	"github.com/openai/openai-cli/internal/audiomedia"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
@@ -193,7 +194,7 @@ func showAudioData(ctx context.Context, command *cli.Command, value any) error {
 		return ShowJSON(gjson.ParseBytes(data), ShowJSONOpts{Context: ctx, Format: strings.ToLower(root.String("format")), ExplicitFormat: root.IsSet("format"), RawOutput: root.Bool("raw-output"), Transform: root.String("transform"), Stdout: root.Writer, Stderr: root.ErrWriter, Title: "audio " + command.Name})
 	}
 	if root.Writer == os.Stdout {
-		return streamToStdout(func(*os.File) error { return write() })
+		return clioutput.StreamToStdout(func(*os.File) error { return write() })
 	}
 	return write()
 }

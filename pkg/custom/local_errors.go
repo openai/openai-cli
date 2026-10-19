@@ -14,6 +14,8 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	clioutput "github.com/openai/openai-cli/internal/output"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
@@ -32,9 +34,9 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var typeError *json.UnmarshalTypeError
 	var syntaxError *json.SyntaxError
 	var pathError *os.PathError
-	var inputFailure *inputFileError
+	var inputFailure *requestconfig.InputFileError
 	var stdinFailure *requestflag.StdinValueError
-	var pagerFailure *pagerError
+	var pagerFailure *clioutput.PagerError
 	var imageFailure *imageSavingError
 	var streamFailure *streamResultError
 	var imageModelsFailure *imageModelsError
@@ -49,7 +51,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var navigationFailure *listNavigationError
 	var modelsListFailure *modelsListError
 	var batchFailure *batchWorkflowError
-	var finiteListFailure *finiteJSONListError
+	var finiteListFailure *clioutput.FiniteJSONListError
 	switch {
 	case errors.As(failure, &batchFailure):
 		return batchFailure.message
@@ -77,7 +79,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	case errors.As(failure, &navigationFailure):
 		return navigationFailure.Error()
 	case errors.As(failure, &streamFailure):
-		return streamFailure.message + "\nOutput may be incomplete."
+		return streamFailure.Message + "\nOutput may be incomplete."
 	case errors.As(failure, &stdinFailure):
 		message := "Could not apply piped input. Check the input's field names and value types."
 		for _, flag := range parserErrorFlags(command) {
@@ -108,7 +110,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	case errors.As(failure, &voiceTypeFailure):
 		return voiceTypeFailure.Error()
 	case errors.As(failure, &helpTopicFailure):
-		return commandRecoveryAt(helpTopicFailure.Parent, helpTopicFailure.Topic, helpTopicFailure.Remaining, true)
+		return clihelp.RecoveryAt(helpTopicFailure.Parent, helpTopicFailure.Topic, helpTopicFailure.Remaining, true)
 	case errors.As(failure, &adminCredentialsFailure):
 		return adminCredentialsFailure.Error()
 	case errors.As(failure, &inputFailure), errors.As(failure, &pathError):
@@ -252,7 +254,7 @@ func knownLocalError(command *cli.Command, message string) string {
 		}
 		return parserErrorGuidance(command, message)
 	case strings.HasPrefix(message, "No help topic for '"):
-		return commandRecoveryMessage(command)
+		return clihelp.RecoveryMessage(command)
 	case strings.HasPrefix(message, "Unknown help topic "):
 		return "Unknown help topic. Run openai help to see commands."
 	case strings.HasPrefix(message, "Failed to parse piped data as YAML/JSON:\n"):
@@ -269,7 +271,7 @@ func knownLocalError(command *cli.Command, message string) string {
 func parserErrorGuidance(command *cli.Command, message string) string {
 	invocation := "openai"
 	if command != nil {
-		invocation = errorHelpInvocation(command.Root())
+		invocation = clihelp.DisplayInvocation(command.Root())
 		if path := command.Path(); len(path) > 1 {
 			invocation += " " + strings.Join(path[1:], " ")
 		}
@@ -366,7 +368,7 @@ func suggestParserFlag(command *cli.Command, provided string) string {
 	for _, flag := range parserErrorFlags(command) {
 		names := flag.Names()
 		for _, name := range names {
-			if !withinOneEdit(strings.ToLower(name), provided) {
+			if !clihelp.WithinOneEdit(strings.ToLower(name), provided) {
 				continue
 			}
 			canonical := "--" + names[0]

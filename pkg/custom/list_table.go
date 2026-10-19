@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/charmbracelet/x/ansi"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/tidwall/gjson"
@@ -21,7 +22,7 @@ func renderListTablePage(ctx context.Context, operation string, items []gjson.Re
 		return "", false, nil
 	}
 	if len(rows) > 0 && outputDiagnosticsAllowed(ctx) {
-		content += ansi.Wrap(resourceSummaryHint, width, "") + "\n"
+		content += ansi.Wrap(clioutput.ResourceSummaryHint, width, "") + "\n"
 	}
 	return content, true, nil
 }

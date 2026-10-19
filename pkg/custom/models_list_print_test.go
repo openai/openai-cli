@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -31,5 +32,5 @@ func TestModelsListPrintKeepsCompleteRecords(t *testing.T) {
 	ordinary, err := renderListNavigationLabels(opts, items)
 	require.NoError(t, err)
 	require.NotContains(t, ordinary, "Created:")
-	require.Contains(t, ordinary, resourceSummaryHint)
+	require.Contains(t, ordinary, clioutput.ResourceSummaryHint)
 }

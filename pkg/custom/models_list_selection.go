@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/openai/openai-cli/internal/jsonview"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-go/v3/packages/pagination"
 	"github.com/tidwall/gjson"
@@ -19,7 +20,11 @@ func showModelsListSelection[T any](source jsonview.Iterator[T], maximum int64, 
 	if _, singlePage := source.(*pagination.PageAutoPager[T]); !singlePage {
 		return true, &modelsListError{"Model selection requires a single models response."}
 	}
-	iter := &outputIterator[T]{source: source, context: opts.Context, transform: transformers.Identity, remaining: -1}
+	iter := clioutput.NewIterator(source, clioutput.IteratorOptions{
+		Context:   opts.Context,
+		Transform: transformers.Identity,
+		Limit:     -1,
+	})
 	var items []gjson.Result
 	for iter.Next() {
 		items = append(items, iter.Current().Result)
