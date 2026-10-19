@@ -518,7 +518,7 @@ func renderListNavigationLabels(opts ShowJSONOpts, items []gjson.Result) (string
 		if err != nil {
 			return "", err
 		}
-		hidden, err := writeReadableResource(&content, item, opts)
+		hidden, err := clioutput.WriteReadableResource(&content, item, readableOutputOptions(opts))
 		if err != nil {
 			return "", err
 		}
@@ -527,7 +527,7 @@ func renderListNavigationLabels(opts ShowJSONOpts, items []gjson.Result) (string
 	if len(items) == 0 {
 		content.WriteString("No results.\n")
 	} else if omitted && outputDiagnosticsAllowed(opts.Context) {
-		fmt.Fprintln(&content, resourceSummaryHint)
+		fmt.Fprintln(&content, clioutput.ResourceSummaryHint)
 	}
 	return content.String(), opts.Context.Err()
 }

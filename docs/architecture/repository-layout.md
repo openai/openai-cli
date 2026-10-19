@@ -18,10 +18,10 @@ in `internal/output/`, shared by handwritten commands and presentation code.
 Single-result formatting, automatic format resolution, GJSON extraction,
 raw-string escaping, JSON/YAML/text rendering, and JSON color policy live in
 `internal/output/`. Callers retain classification of their final destination,
-including wrapped batch output and terminals behind pagers. Feature transforms,
-interactive exploration, streaming, paging, and output lifecycle retain their
-current owners. The format list still reaches the generated runtime bridge
-through a temporary `pkg/custom.OutputFormats` forwarding value.
+including wrapped batch output and terminals behind pagers. Feature-specific
+selection, interactive exploration, and output lifecycle retain their current
+owners. The format list still reaches the generated runtime bridge through a
+temporary `pkg/custom.OutputFormats` forwarding value.
 
 The lazy transformed-output iterator and its raw-JSON carrier live in
 `internal/output/`. Direct output, lists, streams, and the explorer share the
@@ -46,6 +46,13 @@ calling the shared writer. Existing public-entrypoint contracts retain finite
 versus streaming boundaries, item limits, prompt delivery, malformed-item privacy,
 large records, cancellation, and joined failures. The terminal-prefix unit contract
 lives beside the shared runtime; native shell inventories remain unchanged.
+
+Readable record iteration, incremental text/audio stream projection, and resource
+summary rendering live in `internal/output/`. Assembly supplies the selected
+route, extraction/raw options, destination classification, and diagnostic
+permission; feature selection and invocation policy retain their owners. Lists
+still emit one final summary notice on stderr, and event streams write as they
+arrive without preloading or paging. Public-entrypoint tests remain with assembly.
 
 Shared color profiles, automatic terminal presentation eligibility, and background
 theme detection live in `internal/terminal/`. Feature callers retain terminal

@@ -1,20 +1,19 @@
-package custom
+package output
 
 import (
 	"errors"
 
 	"github.com/openai/openai-cli/internal/jsonview"
-	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-cli/internal/readable"
 )
 
-// showReadableStream keeps API projection separate from incremental rendering.
+// writeReadableStream keeps API projection separate from incremental rendering.
 // Neither stage consumes ahead, buffers a response, or opens a pager.
-func showReadableStream(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts) error {
-	out := clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}
+func writeReadableStream(iter jsonview.Iterator[JSON], opts ReadableOptions) error {
+	out := Writer{Context: opts.Context, Sink: opts.Stdout}
 	writer := readable.NewStreamWriter(out)
-	route := transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind}
+	route := opts.Route
 	for iter.Next() {
 		value := iter.Current().Result
 		event, projected := transformers.ProjectTextStream(value, route)

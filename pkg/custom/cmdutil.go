@@ -325,12 +325,12 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 				}
 			}
 			out := clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}
-			omitted, err := writeReadableResource(out, res, opts)
+			omitted, err := clioutput.WriteReadableResource(out, res, readableOutputOptions(opts))
 			if err != nil {
 				return err
 			}
 			if omitted {
-				return writeOutputHint(opts, resourceSummaryHint)
+				return writeOutputHint(opts, clioutput.ResourceSummaryHint)
 			}
 			return nil
 		}
@@ -404,9 +404,9 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 	opts.Format = resolvedOutputFormat(opts)
 	if opts.Format == "text" {
 		if stdout, ok := opts.Stdout.(*os.File); ok && stdout == os.Stdout {
-			return clioutput.StreamToStdout(func(*os.File) error { return showReadableIterator(iter, opts) })
+			return clioutput.StreamToStdout(func(*os.File) error { return clioutput.WriteReadableIterator(iter, readableOutputOptions(opts)) })
 		}
-		return showReadableIterator(iter, opts)
+		return clioutput.WriteReadableIterator(iter, readableOutputOptions(opts))
 	}
 
 	if strings.ToLower(opts.Format) == "explore" {
