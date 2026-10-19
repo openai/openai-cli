@@ -61,7 +61,11 @@ func TestAgentsDuplicateImagesPresenter(t *testing.T) {
 					}
 					var compact bytes.Buffer
 					require.NoError(t, json.Compact(&compact, out.Bytes()))
-					require.Equal(t, value, compact.String(), "machine output must retain duplicate keys and complete values")
+					want := value
+					if format == "json" && !stream {
+						want = "[" + value + "]" // finite JSON lists use one array document.
+					}
+					require.Equal(t, want, compact.String(), "machine output must retain duplicate keys and complete values")
 					require.Empty(t, diagnostic.String())
 				})
 			}

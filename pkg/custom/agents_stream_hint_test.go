@@ -70,7 +70,7 @@ func TestAgentsStreamSummaryHintPreservesDiagnosticFailure(t *testing.T) {
 	var diagnostic *clioutput.DiagnosticError
 	require.ErrorAs(t, err, &diagnostic)
 	require.Contains(t, stdout.String(), "completed")
-	require.NoError(t, ShowJSONIterator(streamItems(agentsHintCompletedEvent), -1, opts))
+	require.NoError(t, ShowJSONIterator(streamItems(`{"type":"future.event","field":"complete"}`), 1, opts))
 	opts.Operation = "(resource) responses > (method) create"
 	require.NoError(t, ShowJSONIterator(streamItems(`{"type":"response.completed"}`), -1, opts))
 }

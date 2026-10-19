@@ -273,15 +273,27 @@ func TestAgentsMessageOnlyBodyRejectsAmbiguousRawKeys(t *testing.T) {
 }
 
 func TestAgentsEventRetryInvalidHeaderNameCannotSupplyKey(t *testing.T) {
-	command := &cli.Command{Name: "create"}
-	root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "beta:agents:sessions:events", Commands: []*cli.Command{command}}}}
-	commands.ConfigureSubgroups(root)
-	body := []byte(`{"events":[` + agentsRetryEvent + `]}`)
-	t.Setenv("OPENAI_CUSTOM_HEADERS", "Idempotency-Key: key_invalid_name")
-	require.NotEmpty(t, agentsResolvedRequestOptions(command, nil, nil, body), "Unicode case folding must not establish an HTTP header")
-	t.Setenv("OPENAI_CUSTOM_HEADERS", "")
-	require.NotEmpty(t, agentsResolvedRequestOptions(command, map[string]any{"Idempotency-Key": "key_invalid_name"}, nil, body))
-	require.NotEmpty(t, agentsResolvedRequestOptions(command, nil, http.Header{"Idempotency-Key": {"first", "second"}}, body), "duplicate wire values cannot establish the supported key")
+	for _, route := range []string{"beta agents sessions events", "beta:agents:sessions:events"} {
+		t.Run(route, func(t *testing.T) {
+			ran := false
+			command := &cli.Command{Name: "create", Action: func(_ context.Context, command *cli.Command) error {
+				ran = true
+				require.Equal(t, "beta:agents:sessions:events", commands.ResourceName(command))
+				body := []byte(`{"events":[` + agentsRetryEvent + `]}`)
+				t.Setenv("OPENAI_CUSTOM_HEADERS", "Idempotency-Key: key_invalid_name")
+				require.NotEmpty(t, agentsResolvedRequestOptions(command, nil, nil, body), "Unicode case folding must not establish an HTTP header")
+				t.Setenv("OPENAI_CUSTOM_HEADERS", "")
+				require.NotEmpty(t, agentsResolvedRequestOptions(command, map[string]any{"Idempotency-Key": "key_invalid_name"}, nil, body))
+				require.NotEmpty(t, agentsResolvedRequestOptions(command, nil, http.Header{"Idempotency-Key": {"first", "second"}}, body), "duplicate wire values cannot establish the supported key")
+				return nil
+			}}
+			root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "beta:agents:sessions:events", Category: "API RESOURCE", Commands: []*cli.Command{command}}}}
+			commands.ConfigureSubgroups(root)
+			args := append([]string{"openai"}, strings.Fields(route)...)
+			require.NoError(t, root.Run(t.Context(), append(args, "create")))
+			require.True(t, ran)
+		})
+	}
 }
 
 func TestAgentsEventRetryRequiresMessageOnlyFinalBody(t *testing.T) {

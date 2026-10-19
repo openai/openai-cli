@@ -32,20 +32,21 @@ func TestFlagOptionsResolvedJSONOptionsPreserveOrderAndWirePrecedence(t *testing
 				dir := t.TempDir()
 				bodyPath, headerPath := filepath.Join(dir, "body.json"), filepath.Join(dir, "header.txt")
 				body := `{"stream":true,"value":"` + value + `"}`
-				require.NoError(t, os.WriteFile(bodyPath, []byte(body), 0600))
+				require.NoError(t, os.WriteFile(bodyPath, []byte(value), 0600))
 				require.NoError(t, os.WriteFile(headerPath, []byte(value), 0600))
+				stream := &requestflag.Flag[bool]{Name: "stream", BodyPath: "stream"}
 				root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard,
 					Flags: []cli.Flag{NewRequestHeaderFlag()},
 					Commands: []*cli.Command{{Name: "create", Flags: []cli.Flag{
-						&requestflag.Flag[any]{Name: "body", BodyRoot: true},
-						&requestflag.Flag[bool]{Name: "stream", BodyPath: "stream"},
+						&requestflag.Flag[map[string]any]{Name: "body", BodyRoot: true},
+						stream,
 						&requestflag.Flag[string]{Name: "trace", HeaderPath: "X-Trace"},
 					}, Action: func(ctx context.Context, command *cli.Command) error {
 						opts, err := FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatRepeat,
 							ApplicationJSON, true, strings.NewReader(""), PreparationHooks{
 								ResolvedJSONOptions: func(parameters map[string]any, headers http.Header, encoded []byte) []option.RequestOption {
 									events = append(events, "options")
-									require.True(t, command.Bool("stream"))
+									require.Equal(t, true, stream.Get())
 									require.Equal(t, value, parameters["X-Trace"])
 									require.Equal(t, "literal", headers.Get("X-Trace"))
 									require.JSONEq(t, body, string(encoded))
@@ -53,7 +54,7 @@ func TestFlagOptionsResolvedJSONOptionsPreserveOrderAndWirePrecedence(t *testing
 								},
 								Encoding: EncodingHooks{ValidateJSON: func([]byte) error {
 									events = append(events, "validate")
-									require.False(t, command.IsSet("stream"))
+									require.False(t, stream.IsSet())
 									if reject {
 										return failure
 									}
@@ -76,7 +77,8 @@ func TestFlagOptionsResolvedJSONOptionsPreserveOrderAndWirePrecedence(t *testing
 						return client.Post(ctx, "synthetic", nil, nil, opts...)
 					}}},
 				}
-				err := root.Run(t.Context(), []string{"openai", "--header", "X-Trace: literal", "create", "--body", "@" + bodyPath, "--trace", "@" + headerPath})
+				input := `{"stream":true,"value":"@` + bodyPath + `"}`
+				err := root.Run(t.Context(), []string{"openai", "--header", "X-Trace: literal", "create", "--body", input, "--trace", "@" + headerPath})
 				if reject {
 					require.ErrorIs(t, err, failure)
 					require.Equal(t, []string{"validate"}, events)

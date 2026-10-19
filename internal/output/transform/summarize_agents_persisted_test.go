@@ -140,7 +140,15 @@ func TestAgentsPersistedResourcesPreserveExplicitData(t *testing.T) {
 				require.Contains(t, out.String(), expected)
 				require.NotContains(t, diagnostic.String(), persistedSummaryHint)
 				if format != "yaml" && format != "pretty" {
-					require.Equal(t, expected, gjson.Get(out.String(), path).Str)
+					lookup := path
+					if method == "list" && format == "json" {
+						// Finite JSON lists use one array in the current output contract.
+						result := gjson.Parse(out.String())
+						require.True(t, result.IsArray())
+						require.Len(t, result.Array(), 1)
+						lookup = "0." + path
+					}
+					require.Equal(t, expected, gjson.Get(out.String(), lookup).Str)
 				}
 				if format == "raw" || format == "jsonl" {
 					require.Equal(t, value+"\n", out.String())
