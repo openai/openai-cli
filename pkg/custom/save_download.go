@@ -91,47 +91,33 @@ type downloadDestination struct {
 	file     *os.File
 }
 
-// resolveDownloadDestination preserves dangling leaf symlinks. Resolve each parent
-// before cleaning its path: symlink/../file can differ from lexical path cleaning.
+// Resolve the parent before cleaning its path: symlink/../file can differ from
+// lexical path cleaning. The final entry must never select a symlink target.
 func resolveDownloadDestination(path string) (string, error) {
-	visited := make(map[string]bool)
-	for {
-		directory, name := filepath.Split(path)
-		if directory == "" {
-			directory = "."
-		}
-		parent, err := filepath.EvalSymlinks(directory)
-		if err != nil {
-			return "", err
-		}
-		parent, err = filepath.Abs(parent)
-		if err != nil {
-			return "", err
-		}
-		resolved := filepath.Join(parent, name)
-		info, err := os.Lstat(resolved)
-		if errors.Is(err, os.ErrNotExist) {
-			return resolved, nil
-		}
-		if err != nil {
-			return "", err
-		}
-		if info.Mode()&os.ModeSymlink == 0 {
-			return resolved, nil
-		}
-		if visited[resolved] {
-			return "", fmt.Errorf("download destination contains a symlink cycle: %w", os.ErrInvalid)
-		}
-		visited[resolved] = true
-		target, err := os.Readlink(resolved)
-		if err != nil {
-			return "", err
-		}
-		path = target
-		if !filepath.IsAbs(target) {
-			path = parent + string(filepath.Separator) + target
-		}
+	directory, name := filepath.Split(path)
+	if directory == "" {
+		directory = "."
 	}
+	parent, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		return "", err
+	}
+	parent, err = filepath.Abs(parent)
+	if err != nil {
+		return "", err
+	}
+	resolved := filepath.Join(parent, name)
+	info, err := os.Lstat(resolved)
+	if errors.Is(err, os.ErrNotExist) {
+		return resolved, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", errDownloadSymlink
+	}
+	return resolved, nil
 }
 
 func prepareDownloadDestination(path string) (*downloadDestination, error) {
@@ -140,12 +126,15 @@ func prepareDownloadDestination(path string) (*downloadDestination, error) {
 		return nil, err
 	}
 	destination := &downloadDestination{path: path, resolved: resolved}
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return destination, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, errDownloadSymlink
 	}
 	destination.original = info
 	if !info.Mode().IsRegular() {
@@ -153,26 +142,37 @@ func prepareDownloadDestination(path string) (*downloadDestination, error) {
 	}
 	// Nonblocking open prevents a concurrently substituted FIFO from hanging.
 	// The opened descriptor must still match the inspected regular file.
-	file, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+	file, err := destination.open(true)
 	if err != nil {
 		return nil, err
-	}
-	opened, err := file.Stat()
-	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
-		return nil, errors.Join(err, errDownloadDestinationChanged, file.Close())
 	}
 	destination.file = file
 	return destination, nil
 }
 
 var errDownloadDestinationChanged = errors.New("download destination changed during transfer")
+var errDownloadSymlink = errors.New("symlink download destinations are not supported")
+
+// Open without creating or truncating anything, and verify the inspected entry
+// before writing. The platform opener atomically refuses final-entry symlinks.
+func (d *downloadDestination) open(nonblock bool) (*os.File, error) {
+	file, err := clioutput.OpenDownloadDestination(d.path, nonblock)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := file.Stat()
+	if err != nil || opened.Mode().Type() != d.original.Mode().Type() || !os.SameFile(d.original, opened) {
+		return nil, errors.Join(err, errDownloadDestinationChanged, file.Close())
+	}
+	return file, nil
+}
 
 func (d *downloadDestination) verify() error {
 	resolved, err := resolveDownloadDestination(d.path)
 	if err != nil || resolved != d.resolved {
 		return errors.Join(errDownloadDestinationChanged, err)
 	}
-	current, err := os.Stat(d.path)
+	current, err := os.Lstat(d.path)
 	if d.original == nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -274,7 +274,7 @@ func writeManagedDownloadResponse(
 	if destination.original != nil && !destination.original.Mode().IsRegular() {
 		// Keep special-file streaming and signal behavior. In particular, opening
 		// a FIFO can block before a descriptor exists for cancellation to close.
-		file, openErr := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+		file, openErr := destination.open(false)
 		if openErr != nil {
 			return "", openErr
 		}
@@ -355,7 +355,7 @@ func writeManagedDownloadResponse(
 			return "", publishErr
 		}
 		outcome = "Download finished, but final save verification or temporary-file cleanup failed. The saved file may remain."
-		current, statErr := os.Stat(outfile)
+		current, statErr := os.Lstat(outfile)
 		if statErr != nil || !os.SameFile(current, saved) {
 			return "", errors.Join(errDownloadDestinationChanged, statErr)
 		}
@@ -370,7 +370,7 @@ func writeManagedDownloadResponse(
 			return "", err
 		}
 		destination.file = nil
-		current, statErr := os.Stat(outfile)
+		current, statErr := os.Lstat(outfile)
 		if statErr != nil || !os.SameFile(current, destination.original) {
 			return "", errors.Join(errDownloadDestinationChanged, statErr)
 		}

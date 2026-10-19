@@ -143,7 +143,7 @@ func TestManagedDownloadRejectsConcurrentDestinationChanges(t *testing.T) {
 	}
 }
 
-func TestManagedDownloadDanglingSymlinkFailure(t *testing.T) {
+func TestManagedDownloadRejectsDanglingSymlinkBeforeRead(t *testing.T) {
 	directory := t.TempDir()
 	target := filepath.Join(directory, "target.bin")
 	middle := filepath.Join(directory, "middle.bin")
@@ -155,7 +155,7 @@ func TestManagedDownloadDanglingSymlinkFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := io.NopCloser(&errorAfterDownloadReader{Reader: strings.NewReader("partial"), err: io.ErrUnexpectedEOF})
-	if _, err := WriteBinaryResponse(&http.Response{Body: body}, io.Discard, path); !errors.Is(err, io.ErrUnexpectedEOF) {
+	if _, err := WriteBinaryResponse(&http.Response{Body: body}, io.Discard, path); !errors.Is(err, errDownloadSymlink) {
 		t.Fatalf("save error = %v", err)
 	}
 	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
