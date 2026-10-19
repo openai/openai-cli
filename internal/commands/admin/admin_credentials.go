@@ -1,4 +1,4 @@
-package custom
+package admin
 
 import (
 	"net/url"
@@ -9,11 +9,13 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-type adminCredentialsError struct{ invocation string }
+// CredentialsError provides fixed guidance for missing admin authentication.
+type CredentialsError struct{ invocation string }
 
-const adminCredentialsRequiredMetadata = "admin-credentials-required"
+// CredentialsRequiredMetadata marks admin operations before command-tree cloning.
+const CredentialsRequiredMetadata = "admin-credentials-required"
 
-func (err *adminCredentialsError) Error() string {
+func (err *CredentialsError) Error() string {
 	invocation := err.invocation
 	if invocation == "" {
 		invocation = "openai"
@@ -28,9 +30,9 @@ For key creation and manual setup instructions, run:
   ` + invocation + ` help setup admin`
 }
 
-// Mark canonical generated operations before subgroup cloning. Request setup
+// ConfigureCredentials marks canonical generated operations before subgroup cloning. Request setup
 // checks credentials after positional and required-input validation.
-func configureAdminCredentials(root *cli.Command) {
+func ConfigureCredentials(root *cli.Command) {
 	for _, resource := range root.Commands {
 		if resource.Category != "API RESOURCE" ||
 			(!strings.HasPrefix(resource.Name, "admin:") && resource.Name != "fine-tuning:checkpoints:permissions") {
@@ -43,17 +45,18 @@ func configureAdminCredentials(root *cli.Command) {
 			if operation.Metadata == nil {
 				operation.Metadata = map[string]any{}
 			}
-			operation.Metadata[adminCredentialsRequiredMetadata] = true
+			operation.Metadata[CredentialsRequiredMetadata] = true
 		}
 	}
 }
 
-func checkAdminCredentials(command *cli.Command) error {
-	if required, _ := command.Metadata[adminCredentialsRequiredMetadata].(bool); !required {
+// CheckCredentials validates effective admin authentication after input validation.
+func CheckCredentials(command *cli.Command) error {
+	if required, _ := command.Metadata[CredentialsRequiredMetadata].(bool); !required {
 		return nil
 	}
 	invocation, _ := command.Root().Metadata["help-invocation"].(string)
-	missing := &adminCredentialsError{invocation: invocation}
+	missing := &CredentialsError{invocation: invocation}
 	// Custom endpoints own their authentication contracts and server errors.
 	// Do not infer whether an arbitrary gateway requires credentials.
 	if !usesStandardAdminService(command) {
