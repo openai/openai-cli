@@ -8,14 +8,10 @@ import (
 	"maps"
 	"os"
 	"reflect"
-	"slices"
 	"strings"
 
 	"github.com/openai/openai-cli/internal/apiquery"
-	"github.com/openai/openai-cli/internal/debugmiddleware"
-	cliinput "github.com/openai/openai-cli/internal/input"
 	requestconfig "github.com/openai/openai-cli/internal/request"
-	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/urfave/cli/v3"
@@ -209,162 +205,25 @@ func flagOptionsWithStdin(
 	if prepared, ok, err := consumeImageSavingRequest(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin); ok {
 		return prepared, err
 	}
-	// Validate literal headers before reading any request input. Flag validators
-	// include the supplied value in errors, which can expose credentials.
-	headers, err := requestconfig.Headers(cmd)
-	if err != nil {
-		return nil, err
+	hooks := requestconfig.PreparationHooks{
+		PreflightMultipart:  func(body map[string]any) error { return preflightAudioVoicesMultipartBody(cmd, body) },
+		ValidateCredentials: func() error { return checkAdminCredentials(cmd) },
+		Encoding: requestconfig.EncodingHooks{
+			PrepareMultipart: func(body map[string]any) error { return prepareImageMultipartBody(cmd, body) },
+			ValidateJSON:     func(body []byte) error { return validateProjectAPIKeyUpdate(cmd, body) },
+			ObserveJSON:      observeJSON,
+			ObserveMultipart: func(body io.Closer) {
+				// Look up the feature state only when the encoded body is ready.
+				if state, ok := cmd.Metadata[imageMultipartMetadata].(*imageMultipartPreparation); ok {
+					state.body = body
+				}
+			},
+		},
 	}
-	headerOptions := make([]option.RequestOption, 0, len(headers))
-	for name, values := range headers {
-		headerOptions = append(headerOptions, option.WithHeader(name, values[0]))
-	}
-
-	stdinSecurity, err := requestconfig.NewStdinSecurity()
-	if err != nil {
-		return nil, err
-	}
-
-	// Once multipart files have been opened, close them on every error path
-	// until ownership is transferred to the multipart request body below.
-	var pendingMultipartUploads any
-	defer func() {
-		if err != nil && pendingMultipartUploads != nil {
-			err = errors.Join(err, requestconfig.CloseFileUploads(pendingMultipartUploads))
-		}
-	}()
-
-	if cmd.Bool("debug") {
-		sensitiveHeaders := slices.Collect(maps.Keys(headers))
-		// The SDK reads environment headers. Match its name parsing so these
-		// values receive the same redaction as explicit header flags.
-		for line := range strings.SplitSeq(os.Getenv("OPENAI_CUSTOM_HEADERS"), "\n") {
-			if name, _, ok := strings.Cut(line, ":"); ok {
-				sensitiveHeaders = append(sensitiveHeaders, strings.TrimSpace(name))
-			}
-		}
-		options = append(options, option.WithMiddleware(debugmiddleware.NewRequestLogger(sensitiveHeaders...).Middleware()))
-	}
-
-	requestContents := requestflag.ExtractRequestContents(cmd)
-
-	// Translate inner-field aliases in YAML values that came from flags (e.g.
-	// `--parent '{"alias": val}'` resolving to the canonical inner field).
-	if bodyMap, ok := requestContents.Body.(map[string]any); ok {
-		requestconfig.ApplyDataAliases(cmd, bodyMap)
-	}
-	// Resolve explicit consumers before attempting automatic whole-request input.
-	// FileInput values must retain their literal path semantics during inspection.
-	if err := requestconfig.WrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
-		return nil, err
-	}
-	explicitStdin, err := requestconfig.StdinConsumers(requestContents, ignoreStdin)
-	if err != nil {
-		return nil, err
-	}
-
-	stdinConsumedByPipe := false
-	if bodyType != ApplicationOctetStream && !ignoreStdin && explicitStdin == 0 && cliinput.IsPiped(os.Stdin) {
-		stdinConsumedByPipe, err = requestconfig.ReadPipedInput(cmd, stdin, &requestContents, stdinSecurity, bodyType != EmptyBody)
-		if err != nil {
-			return nil, err
+	if _, voiceAction := cmd.Metadata[audioVoicesContextMetadata].(context.Context); voiceAction {
+		hooks.EmbedMultipart = func(body map[string]any, stdin *requestconfig.OnceStdinReader) (map[string]any, error) {
+			return embedAudioVoicesMultipartBody(cmd, body, stdin)
 		}
 	}
-
-	if missingFlags := requestflag.GetMissingRequiredFlags(cmd, requestContents.Body); len(missingFlags) > 0 {
-		if len(missingFlags) == 1 {
-			return nil, fmt.Errorf("Required flag %q not set\nRun '%s --help' for usage information", missingFlags[0].Names()[0], cmd.FullName())
-		} else {
-			names := []string{}
-			for _, flag := range missingFlags {
-				names = append(names, flag.Names()[0])
-			}
-			return nil, fmt.Errorf("Required flags %q not set\nRun '%s --help' for usage information", strings.Join(names, ", "), cmd.FullName())
-		}
-	}
-
-	if bodyType == MultipartFormEncoded {
-		if bodyMap, ok := requestContents.Body.(map[string]any); ok {
-			if err := preflightAudioVoicesMultipartBody(cmd, bodyMap); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	if err := checkAdminCredentials(cmd); err != nil {
-		return nil, err
-	}
-
-	// FileInput values are file paths, so wrap trusted values with FilePathValue
-	// for automatic expansion. In untrusted-stdin mode, reject piped values.
-	if err := requestconfig.WrapFileInputValues(cmd, &requestContents, stdinSecurity); err != nil {
-		return nil, err
-	}
-	if _, err := requestconfig.StdinConsumers(requestContents, ignoreStdin); err != nil {
-		return nil, err
-	}
-
-	// Determine stdin availability for FileInput params that use "-".
-	var stdinReader requestconfig.OnceStdinReader
-	if ignoreStdin {
-		stdinReader = requestconfig.OnceStdinReader{FailureReason: "stdin is already being used for the request body"}
-	} else if stdinConsumedByPipe {
-		stdinReader = requestconfig.OnceStdinReader{FailureReason: "stdin was already consumed by piped YAML/JSON input"}
-	} else {
-		stdinReader = requestconfig.OnceStdinReader{Reader: stdin}
-	}
-
-	// Embed files passed as "@file.jpg" in the request body, headers, and query:
-	embedStyle := requestconfig.EmbedText
-	if bodyType == ApplicationOctetStream || bodyType == MultipartFormEncoded {
-		embedStyle = requestconfig.EmbedIOReader
-	}
-
-	var embedded any
-	bodyMap, bodyIsMap := requestContents.Body.(map[string]any)
-	_, voiceAction := cmd.Metadata[audioVoicesContextMetadata].(context.Context)
-	if bodyType == MultipartFormEncoded && bodyIsMap && voiceAction {
-		embedded, err = embedAudioVoicesMultipartBody(cmd, bodyMap, &stdinReader)
-	} else {
-		embedded, err = requestconfig.EmbedRequestFiles(cmd, requestContents.Body, "body", embedStyle, &stdinReader)
-	}
-	if err != nil {
-		return nil, err
-	}
-	requestContents.Body = embedded
-	if bodyType == MultipartFormEncoded {
-		pendingMultipartUploads = embedded
-	}
-
-	if headersWithFiles, err := requestconfig.EmbedRequestFiles(cmd, requestContents.Headers, "header", requestconfig.EmbedText, &stdinReader); err != nil {
-		return nil, err
-	} else {
-		requestContents.Headers = headersWithFiles.(map[string]any)
-	}
-	if queriesWithFiles, err := requestconfig.EmbedRequestFiles(cmd, requestContents.Queries, "query", requestconfig.EmbedText, &stdinReader); err != nil {
-		return nil, err
-	} else {
-		requestContents.Queries = queriesWithFiles.(map[string]any)
-	}
-
-	hooks := requestconfig.EncodingHooks{
-		PrepareMultipart: func(body map[string]any) error { return prepareImageMultipartBody(cmd, body) },
-		ValidateJSON:     func(body []byte) error { return validateProjectAPIKeyUpdate(cmd, body) },
-		ObserveJSON:      observeJSON,
-	}
-	// Saving prepares uploads before the generated action takes over. Keep
-	// an idempotent closer for failures between preparation and dispatch.
-	if state, ok := cmd.Metadata[imageMultipartMetadata].(*imageMultipartPreparation); ok {
-		hooks.ObserveMultipart = func(body io.Closer) { state.body = body }
-	}
-	encodedOptions, err := requestconfig.EncodeOptions(cmd, requestContents, nestedFormat, arrayFormat, bodyType, hooks)
-	if err != nil {
-		return nil, err
-	}
-	if bodyType == MultipartFormEncoded {
-		pendingMultipartUploads = nil // the multipart request body owns them now.
-	}
-	options = append(options, encodedOptions...)
-
-	return append(options, headerOptions...), nil
+	return requestconfig.FlagOptions(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin, stdin, hooks)
 }

@@ -109,9 +109,14 @@ reader now live in `internal/request/`, alongside their unit tests. Shared error
 retain declared option/operation metadata and original causes; CLI error presentation
 remains with its existing owner. Piped YAML/JSON reading, request-location routing,
 explicit-flag merging, and provenance propagation live in `internal/request/`.
-Request preparation retains whole-request input eligibility in `pkg/custom/`,
-alongside feature preparation. Non-consuming stdin classification and platform
-readiness probes live in `internal/input/`. They preserve the regular-file size
+Shared flag-to-request preparation, whole-request input eligibility, literal-header
+validation, debug middleware setup, required-flag checks, and failure cleanup live
+in `internal/request/`. Assembly retains prepared-image reuse and supplies audio
+preflight/expansion, admin credential validation, and encoding callbacks in their
+existing order. The temporary `pkg/custom.FlagOptions` adapter connects generated
+callers to this shared pipeline; feature implementations remain with their owners.
+
+Non-consuming stdin classification and platform readiness probes live in `internal/input/`. They preserve the regular-file size
 check, short Unix/Windows probe windows, and caller ownership. Native Windows
 probe tests live beside the helper; CI retains their existing cases and flags.
 
