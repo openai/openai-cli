@@ -44,7 +44,7 @@ func (s *agentsStream[T]) Next() bool {
 	s.state.Observe(value, s.route)
 	if s.failure == nil {
 		if message := transformers.AgentsStreamFailure(value, s.route); message != "" {
-			s.failure = &streamResultError{message}
+			s.failure = &streamResultError{Message: message}
 		}
 	}
 	return true
@@ -56,7 +56,7 @@ func (s *agentsStream[T]) Err() error {
 	err := errors.Join(s.err, s.failure, s.source.Err())
 	if err == nil && s.ended {
 		if message := s.state.CompletionError(s.route); message != "" {
-			return &streamResultError{message}
+			return &streamResultError{Message: message}
 		}
 	}
 	return err

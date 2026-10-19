@@ -102,7 +102,7 @@ func TestAgentsResourceRuntimeListHintsOnceAndPreservesFailures(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		opts := ShowJSONOpts{Operation: "(resource) beta.agents.sessions.traces > (method) list", OutputKind: OutputPageItem,
 			Stdout: &stdout, Stderr: &stderr}
-		source := &transformTestIterator{items: []any{outputJSON{gjson.Parse(agentsTraceFixture)}, outputJSON{gjson.Parse(agentsTraceFixture)}}, err: pageErr}
+		source := &transformTestIterator{items: []any{outputJSON{Result: gjson.Parse(agentsTraceFixture)}, outputJSON{Result: gjson.Parse(agentsTraceFixture)}}, err: pageErr}
 		if failedSink {
 			opts.Stderr = resourceSummaryTestWriter(func(data []byte) (int, error) {
 				require.Equal(t, 3, source.calls)

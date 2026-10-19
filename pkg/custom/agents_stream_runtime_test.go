@@ -24,7 +24,7 @@ func (s *agentsOwnedStream) Next() bool {
 	s.current, s.values = s.values[0], s.values[1:]
 	return true
 }
-func (s *agentsOwnedStream) Current() outputJSON { return outputJSON{s.current} }
+func (s *agentsOwnedStream) Current() outputJSON { return outputJSON{Result: s.current} }
 func (s *agentsOwnedStream) Err() error          { return s.readErr }
 func (s *agentsOwnedStream) Close() error        { s.closes++; return s.closeErr }
 
