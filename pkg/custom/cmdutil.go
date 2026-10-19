@@ -173,10 +173,16 @@ func createDownloadFile(response *http.Response, data []byte) (*os.File, error) 
 			// MIME decoding can introduce controls absent from the HTTP header.
 			// Normalize the automatic name before both exclusive and fallback creation.
 			filename = normalizeDownloadFilename(filename)
-			// Try to create the file with exclusive flag to avoid race conditions
-			file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-			if err == nil {
-				return file, nil
+			if strings.HasPrefix(filename, ".") {
+				// Server suggestions must not select hidden configuration files,
+				// including through the collision fallback below.
+				filename = "file"
+			} else {
+				// Try to create the file with exclusive flag to avoid race conditions
+				file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+				if err == nil {
+					return file, nil
+				}
 			}
 		}
 	}

@@ -112,3 +112,34 @@ func TestCreateDownloadFileLongNormalizedCollision(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateDownloadFileUsesVisibleNamesForHiddenSuggestions(t *testing.T) {
+	for _, name := range []string{".zshenv", ".bashrc", ".profile", ".env", ".gitconfig", ".config.json", "../../.zshenv", ".", "..", ""} {
+		t.Run(name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			response := &http.Response{Header: http.Header{"Content-Disposition": {"attachment; filename*=UTF-8''" + url.PathEscape(name)}}}
+			file, err := createDownloadFile(response, []byte("%PDF-1.7\nsynthetic"))
+			require.NoError(t, err)
+			require.True(t, strings.HasPrefix(filepath.Base(file.Name()), "file-"), file.Name())
+			require.Equal(t, ".pdf", filepath.Ext(file.Name()))
+			require.NoError(t, file.Close())
+			assertDownloadPermissions(t, file.Name(), 0600)
+			entries, err := os.ReadDir(".")
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+		})
+	}
+	t.Run("existing hidden file", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		require.NoError(t, os.WriteFile(".config.json", []byte("keep"), 0600))
+		response := &http.Response{Header: http.Header{"Content-Disposition": {"attachment; filename=\".config.json\""}}}
+		file, err := createDownloadFile(response, []byte("%PDF-1.7\nsynthetic"))
+		require.NoError(t, err)
+		require.True(t, strings.HasPrefix(filepath.Base(file.Name()), "file-"), file.Name())
+		require.Equal(t, ".pdf", filepath.Ext(file.Name()))
+		require.NoError(t, file.Close())
+		data, err := os.ReadFile(".config.json")
+		require.NoError(t, err)
+		require.Equal(t, "keep", string(data))
+	})
+}
