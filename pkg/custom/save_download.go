@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+
+	clioutput "github.com/openai/openai-cli/internal/output"
 )
 
 // downloadSaveError reports the destination's state without exposing local paths.
@@ -497,11 +499,11 @@ func downloadSignalContext(parent context.Context) (context.Context, func()) {
 }
 
 // Use the existing process SIGPIPE protection only for actual stdout. Keep the
-// copy errors unmarked so streamToStdout cannot suppress an observed failure.
+// copy errors unmarked so clioutput.StreamToStdout cannot suppress an observed failure.
 func copyBinaryOutput(ctx context.Context, destination io.Writer, source io.Reader) error {
 	var err error
 	if file, ok := destination.(*os.File); ok && file == os.Stdout {
-		err = streamToStdout(func(stdout *os.File) error {
+		err = clioutput.StreamToStdout(func(stdout *os.File) error {
 			return copyDownloadData(ctx, stdout, source)
 		})
 	} else {

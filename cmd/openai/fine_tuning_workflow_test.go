@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,6 +20,10 @@ const fineTuningJob = `{"id":"ftjob_example","object":"fine_tuning.job","status"
 const fineTuningEventPage = `{"object":"list","data":[{"id":"ftevent_example","object":"fine_tuning.job.event","created_at":17,"level":"info","message":"Synthetic training paused","type":"message"}],"has_more":false}`
 const fineTuningCheckpointPage = `{"object":"list","data":[{"id":"ftckpt_example","object":"fine_tuning.job.checkpoint","created_at":17,"fine_tuning_job_id":"ftjob_example","fine_tuned_model_checkpoint":"ft:synthetic:checkpoint","step_number":1,"metrics":{"train_loss":0.5}}],"has_more":false}`
 const fineTuningPermissionPage = `{"object":"list","data":[{"id":"perm_example","object":"checkpoint.permission","created_at":17,"project_id":"proj_shared"}],"has_more":false}`
+const fineTuningStringCheckGrader = `{"type":"string_check","name":"Synthetic grader","input":"{{sample.output_text}}","reference":"{{item.label}}","operation":"eq"}`
+const fineTuningGraderResult = `{"reward":1,"sub_rewards":{},"model_grader_token_usage_per_model":{},"metadata":{"name":"Synthetic grader","type":"string_check","execution_time":0.01,"scores":{},"token_usage":null,"sampled_model_name":null,"errors":{` +
+	`"formula_parse_error":false,"sample_parse_error":false,"truncated_observation_error":false,"unresponsive_reward_error":false,"invalid_variable_error":false,"other_error":false,` +
+	`"python_grader_server_error":false,"python_grader_server_error_type":null,"python_grader_runtime_error":false,"python_grader_runtime_error_details":null,"model_grader_server_error":false,"model_grader_refusal_error":false,"model_grader_parse_error":false,"model_grader_server_error_details":null}}}`
 const fineTuningEmptyMessage = "No fine-tuning jobs returned.\nTraining eligibility was not checked.\n"
 
 func TestMainFineTuningEmptyJobsModes(t *testing.T) {
@@ -175,16 +180,21 @@ func TestMainFineTuningMonitoringAndSharingRequests(t *testing.T) {
 		group, method, verb, path, response string
 		args                                []string
 		admin                               bool
+		body                                string
 	}{
-		{"jobs", "list", "GET", "/fine_tuning/jobs", fineTuningEmptyPage, []string{"--after", "ftjob_cursor", "--limit", "2", "--metadata", `{"source":"synthetic"}`}, false},
-		{"jobs", "retrieve", "GET", "/fine_tuning/jobs/ftjob_example", fineTuningJob, []string{"--fine-tuning-job-id", "ftjob_example"}, false},
-		{"jobs", "list-events", "GET", "/fine_tuning/jobs/ftjob_example/events", fineTuningEventPage, []string{"--fine-tuning-job-id", "ftjob_example", "--after", "ftevent_example", "--limit", "2"}, false},
-		{"jobs", "pause", "POST", "/fine_tuning/jobs/ftjob_example/pause", fineTuningJob, []string{"--fine-tuning-job-id", "ftjob_example"}, false},
-		{"jobs", "resume", "POST", "/fine_tuning/jobs/ftjob_example/resume", fineTuningJob, []string{"--fine-tuning-job-id", "ftjob_example"}, false},
-		{"jobs:checkpoints", "list", "GET", "/fine_tuning/jobs/ftjob_example/checkpoints", fineTuningCheckpointPage, []string{"--fine-tuning-job-id", "ftjob_example"}, false},
-		{"checkpoints:permissions", "list", "GET", "/fine_tuning/checkpoints/ft:synthetic:checkpoint/permissions", fineTuningPermissionPage, []string{"--fine-tuned-model-checkpoint", "ft:synthetic:checkpoint", "--project-id", "proj_shared", "--order", "ascending"}, true},
-		{"checkpoints:permissions", "create", "POST", "/fine_tuning/checkpoints/ft:synthetic:checkpoint/permissions", fineTuningPermissionPage, []string{"--fine-tuned-model-checkpoint", "ft:synthetic:checkpoint", "--project-id", "proj_shared", "--project-id", "proj_second"}, true},
-		{"checkpoints:permissions", "delete", "DELETE", "/fine_tuning/checkpoints/ft:synthetic:checkpoint/permissions/perm_example", `{"id":"perm_example","object":"checkpoint.permission","deleted":true}`, []string{"--fine-tuned-model-checkpoint", "ft:synthetic:checkpoint", "--permission-id", "perm_example"}, true},
+		{"jobs", "list", "GET", "/fine_tuning/jobs", fineTuningEmptyPage, []string{"--after", "ftjob_cursor", "--limit", "2", "--metadata", `{"source":"synthetic"}`}, false, ""},
+		{"jobs", "retrieve", "GET", "/fine_tuning/jobs/ftjob_example", fineTuningJob, []string{"--fine-tuning-job-id", "ftjob_example"}, false, ""},
+		{"jobs", "list-events", "GET", "/fine_tuning/jobs/ftjob_example/events", fineTuningEventPage, []string{"--fine-tuning-job-id", "ftjob_example", "--after", "ftevent_example", "--limit", "2"}, false, ""},
+		{"jobs", "cancel", "POST", "/fine_tuning/jobs/ftjob_example/cancel", strings.Replace(fineTuningJob, `"paused"`, `"cancelled"`, 1), []string{"--fine-tuning-job-id", "ftjob_example"}, false, ""},
+		{"jobs", "pause", "POST", "/fine_tuning/jobs/ftjob_example/pause", fineTuningJob, []string{"--fine-tuning-job-id", "ftjob_example"}, false, ""},
+		{"jobs", "resume", "POST", "/fine_tuning/jobs/ftjob_example/resume", fineTuningJob, []string{"--fine-tuning-job-id", "ftjob_example"}, false, ""},
+		{"jobs:checkpoints", "list", "GET", "/fine_tuning/jobs/ftjob_example/checkpoints", fineTuningCheckpointPage, []string{"--fine-tuning-job-id", "ftjob_example"}, false, ""},
+		{"checkpoints:permissions", "list", "GET", "/fine_tuning/checkpoints/ft:synthetic:checkpoint/permissions", fineTuningPermissionPage, []string{"--fine-tuned-model-checkpoint", "ft:synthetic:checkpoint", "--project-id", "proj_shared", "--order", "ascending"}, true, ""},
+		{"checkpoints:permissions", "retrieve", "GET", "/fine_tuning/checkpoints/ft:synthetic:checkpoint/permissions", fineTuningPermissionPage, []string{"--fine-tuned-model-checkpoint", "ft:synthetic:checkpoint", "--project-id", "proj_shared", "--order", "ascending", "--after", "perm_cursor", "--limit", "2"}, true, ""},
+		{"checkpoints:permissions", "create", "POST", "/fine_tuning/checkpoints/ft:synthetic:checkpoint/permissions", fineTuningPermissionPage, []string{"--fine-tuned-model-checkpoint", "ft:synthetic:checkpoint", "--project-id", "proj_shared", "--project-id", "proj_second"}, true, `{"project_ids":["proj_shared","proj_second"]}`},
+		{"checkpoints:permissions", "delete", "DELETE", "/fine_tuning/checkpoints/ft:synthetic:checkpoint/permissions/perm_example", `{"id":"perm_example","object":"checkpoint.permission","deleted":true}`, []string{"--fine-tuned-model-checkpoint", "ft:synthetic:checkpoint", "--permission-id", "perm_example"}, true, ""},
+		{"alpha:graders", "run", "POST", "/fine_tuning/alpha/graders/run", fineTuningGraderResult, []string{"--grader", fineTuningStringCheckGrader, "--model-sample", "synthetic answer", "--item", `{"label":"synthetic answer"}`}, false, `{"grader":` + fineTuningStringCheckGrader + `,"model_sample":"synthetic answer","item":{"label":"synthetic answer"}}`},
+		{"alpha:graders", "validate", "POST", "/fine_tuning/alpha/graders/validate", `{"grader":` + fineTuningStringCheckGrader + `}`, []string{"--grader", fineTuningStringCheckGrader}, false, `{"grader":` + fineTuningStringCheckGrader + `}`},
 	} {
 		for _, colon := range []bool{false, true} {
 			name := tc.group + "/" + tc.method
@@ -213,16 +223,19 @@ func TestMainFineTuningMonitoringAndSharingRequests(t *testing.T) {
 					if tc.group == "jobs" && tc.method == "list" && (r.URL.Query().Get("after") != "ftjob_cursor" || r.URL.Query().Get("limit") != "2" || r.URL.Query().Get("metadata[source]") != "synthetic") {
 						t.Error("job list filters changed")
 					}
-					if tc.admin && tc.method == "list" && (r.URL.Query().Get("project_id") != "proj_shared" || r.URL.Query().Get("order") != "ascending") {
+					if tc.admin && (tc.method == "list" || tc.method == "retrieve") && (r.URL.Query().Get("project_id") != "proj_shared" || r.URL.Query().Get("order") != "ascending") {
 						t.Error("sharing permission filters changed")
 					}
-					if tc.admin && tc.method == "create" {
-						var body struct {
-							ProjectIDs []string `json:"project_ids"`
-						}
-						if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.Join(body.ProjectIDs, ",") != "proj_shared,proj_second" {
-							t.Errorf("sharing body changed: %+v, error=%v", body, err)
-						}
+					if tc.admin && tc.method == "retrieve" && (r.URL.Query().Get("after") != "perm_cursor" || r.URL.Query().Get("limit") != "2") {
+						t.Error("sharing permission cursor changed")
+					}
+					body, err := io.ReadAll(r.Body)
+					assert.NoError(t, err)
+					if tc.body == "" {
+						assert.Empty(t, body, "bodyless operation gained a request body")
+					} else {
+						assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+						assert.JSONEq(t, tc.body, string(body))
 					}
 					w.Header().Set("Content-Type", "application/json")
 					_, _ = io.WriteString(w, tc.response)
@@ -246,44 +259,30 @@ func TestMainFineTuningMonitoringAndSharingRequests(t *testing.T) {
 }
 
 func TestMainFineTuningJobBodyInputs(t *testing.T) {
+	// These fixtures verify request construction, not model eligibility or live acceptance.
+	const jobBody = `{"model":"synthetic-model","training_file":"file_training","metadata":{"source":"synthetic"}}`
+	const supervised = `{"type":"supervised","supervised":{"hyperparameters":{"batch_size":"auto","n_epochs":2,"learning_rate_multiplier":0.5}}}`
+	const dpo = `{"type":"dpo","dpo":{"hyperparameters":{"beta":0.1,"n_epochs":1}}}`
+	const reinforcement = `{"type":"reinforcement","reinforcement":{"grader":` + fineTuningStringCheckGrader + `,"hyperparameters":{"reasoning_effort":"low","compute_multiplier":0.5,"eval_interval":1,"eval_samples":1}}}`
+	const integration = `{"type":"wandb","wandb":{"project":"wandb_synthetic","entity":"synthetic-team","name":"Synthetic run","tags":["synthetic","parity"]}}`
+	const reinforcementBody = `{"model":"synthetic-model","training_file":"file_training","metadata":{"source":"synthetic"},"method":` + reinforcement + `}`
 	trainingPath := filepath.Join(t.TempDir(), "training id.txt")
 	require.NoError(t, os.WriteFile(trainingPath, []byte("file_training"), 0o600))
 	for _, tc := range []struct {
-		name, input string
-		flags       []string
+		name, input, wantBody string
+		flags                 []string
 	}{
-		{"flags", "", []string{"--model", "synthetic-model", "--training-file", "file_training", "--metadata", `{"source":"synthetic"}`}},
-		{"file", "", []string{"--model", "synthetic-model", "--training-file", "@" + trainingPath, "--metadata", `{"source":"synthetic"}`}},
-		{"JSON override", `{"model":"overridden-model","training_file":"file_training","metadata":{"source":"synthetic"},"seed":null}`, []string{"--model", "synthetic-model"}},
-		{"YAML", "model: synthetic-model\ntraining_file: file_training\nmetadata:\n  source: synthetic\n", nil},
+		{"flags", "", jobBody, []string{"--model", "synthetic-model", "--training-file", "file_training", "--metadata", `{"source":"synthetic"}`}},
+		{"file", "", jobBody, []string{"--model", "synthetic-model", "--training-file", "@" + trainingPath, "--metadata", `{"source":"synthetic"}`}},
+		{"JSON override", `{"model":"overridden-model","training_file":"file_training","metadata":{"source":"synthetic"},"seed":null}`, `{"model":"synthetic-model","training_file":"file_training","metadata":{"source":"synthetic"},"seed":null}`, []string{"--model", "synthetic-model"}},
+		{"YAML", "model: synthetic-model\ntraining_file: file_training\nmetadata:\n  source: synthetic\n", jobBody, nil},
+		{"supervised inner flags", "", `{"model":"synthetic-model","training_file":"file_training","validation_file":"file_validation","metadata":{"source":"synthetic"},"seed":0,"method":` + supervised + `}`, []string{"--model", "synthetic-model", "--training-file", "file_training", "--validation-file", "file_validation", "--metadata", `{"source":"synthetic"}`, "--seed", "0", "--method.type", "supervised", "--method.supervised", `{"hyperparameters":{"batch_size":"auto","n_epochs":2,"learning_rate_multiplier":0.5}}`}},
+		{"DPO", "", `{"model":"synthetic-model","training_file":"file_training","metadata":{"source":"synthetic"},"method":` + dpo + `}`, []string{"--model", "synthetic-model", "--training-file", "file_training", "--metadata", `{"source":"synthetic"}`, "--method", dpo}},
+		{"reinforcement JSON", reinforcementBody, reinforcementBody, nil},
+		{"job integration", "", `{"model":"synthetic-model","training_file":"file_training","metadata":{"source":"synthetic"},"method":` + supervised + `,"integrations":[` + integration + `]}`, []string{"--model", "synthetic-model", "--training-file", "file_training", "--metadata", `{"source":"synthetic"}`, "--method", supervised, "--integration", "[" + integration + "]"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var requests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests.Add(1)
-				if r.Method != http.MethodPost || r.URL.Path != "/fine_tuning/jobs" {
-					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-				}
-				var body map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Error(err)
-				}
-				if body["model"] != "synthetic-model" || body["training_file"] != "file_training" {
-					t.Errorf("job inputs changed: %+v", body)
-				}
-				metadata, ok := body["metadata"].(map[string]any)
-				if !ok || metadata["source"] != "synthetic" {
-					t.Errorf("metadata changed: %+v", body["metadata"])
-				}
-				if tc.name == "JSON override" {
-					if seed, exists := body["seed"]; !exists || seed != nil {
-						t.Error("explicit null seed changed")
-					}
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, fineTuningJob)
-			}))
-			defer server.Close()
+			server, requests := globalFlagsServer(t, fineTuningJob)
 			var input *os.File
 			if tc.input != "" {
 				path := filepath.Join(t.TempDir(), "input.json")
@@ -294,11 +293,18 @@ func TestMainFineTuningJobBodyInputs(t *testing.T) {
 				defer input.Close()
 			}
 			args := append([]string{"openai", "fine-tuning", "jobs", "create", "--format", "json"}, tc.flags...)
-			got := runMainDispatchWithStdin(t, "bash", []string{"OPENAI_BASE_URL=" + server.URL, "OPENAI_API_KEY=synthetic-api-key", "FORCE_COLOR=0"}, input, args...)
+			got := runMainDispatchWithStdin(t, "bash", []string{"OPENAI_BASE_URL=" + server.URL, "OPENAI_API_KEY=synthetic-api-key", "OPENAI_ADMIN_KEY=synthetic-unused-admin-key", "OPENAI_PROJECT_ID=proj_header", "OPENAI_ORG_ID=org_header", "FORCE_COLOR=0"}, input, args...)
 			require.Zero(t, got.code, "%+v", got)
 			require.Empty(t, got.stderr)
 			require.JSONEq(t, fineTuningJob, got.stdout)
-			require.EqualValues(t, 1, requests.Load())
+			request := globalFlagsOneRequest(t, requests)
+			require.Equal(t, http.MethodPost, request.method)
+			require.Equal(t, "/fine_tuning/jobs", request.path)
+			require.Equal(t, "application/json", request.header.Get("Content-Type"))
+			require.Equal(t, "Bearer synthetic-api-key", request.header.Get("Authorization"))
+			require.Equal(t, "proj_header", request.header.Get("OpenAI-Project"))
+			require.Equal(t, "org_header", request.header.Get("OpenAI-Organization"))
+			require.JSONEq(t, tc.wantBody, string(request.body))
 		})
 	}
 }

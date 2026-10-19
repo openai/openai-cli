@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/openai/openai-cli/internal/apiform"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -59,19 +60,19 @@ func TestImageMultipartScalarInspectionPreservesText(t *testing.T) {
 
 func TestImageMultipartScalarInspectionPreservesFileMetadataAndOwnership(t *testing.T) {
 	source := &recordingReadCloser{reader: strings.NewReader("A purple sky\r\n")}
-	original := fileUpload{Reader: source, filename: "prompt.txt", contentType: "text/plain"}
+	original := requestconfig.FileUpload{Reader: source, FileName: "prompt.txt", MediaType: "text/plain"}
 	inspected, replay, err := inspectImageMultipartSetting(t.Context(), "prompt", original)
 	require.NoError(t, err)
 	require.Equal(t, "A purple sky\r\n", inspected)
-	upload := replay.(fileUpload)
-	require.Equal(t, original.filename, upload.filename)
-	require.Equal(t, original.contentType, upload.contentType)
-	require.EqualValues(t, len("A purple sky\r\n"), upload.size)
-	require.True(t, upload.knownSize)
+	upload := replay.(requestconfig.FileUpload)
+	require.Equal(t, original.FileName, upload.FileName)
+	require.Equal(t, original.MediaType, upload.MediaType)
+	require.EqualValues(t, len("A purple sky\r\n"), upload.Size)
+	require.True(t, upload.KnownSize)
 	contents, err := io.ReadAll(upload)
 	require.NoError(t, err)
 	require.Equal(t, "A purple sky\r\n", string(contents))
-	require.NoError(t, closeFileUploads(replay))
+	require.NoError(t, requestconfig.CloseFileUploads(replay))
 	require.EqualValues(t, 1, source.closeCount.Load())
 }
 
@@ -79,12 +80,12 @@ func TestImageMultipartScalarInspectionReadFailureIsPrivateAndClosesSource(t *te
 	readErr := errors.New("synthetic-private-file-contents")
 	closeErr := errors.New("synthetic-private-close-error")
 	source := &recordingReadCloser{reader: errorReader{err: readErr}, closeErr: closeErr}
-	_, replay, err := inspectImageMultipartSetting(t.Context(), "response_format", fileUpload{Reader: source})
+	_, replay, err := inspectImageMultipartSetting(t.Context(), "response_format", requestconfig.FileUpload{Reader: source})
 	require.ErrorContains(t, err, "--response-format")
 	require.ErrorIs(t, err, readErr)
 	require.ErrorIs(t, err, closeErr)
 	require.NotContains(t, err.Error(), "synthetic-private")
-	require.NoError(t, closeFileUploads(replay))
+	require.NoError(t, requestconfig.CloseFileUploads(replay))
 	require.EqualValues(t, 1, source.closeCount.Load())
 }
 
@@ -94,7 +95,7 @@ func TestImageMultipartScalarInspectionCancellationReleasesOwnedRead(t *testing.
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := inspectImageMultipartSetting(ctx, "prompt", fileUpload{Reader: source})
+		_, _, err := inspectImageMultipartSetting(ctx, "prompt", requestconfig.FileUpload{Reader: source})
 		done <- err
 	}()
 	select {
@@ -119,14 +120,12 @@ func TestImageUploadPreparationClosesWhenActionAborts(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			failure := errors.New("synthetic action failure")
-			var upload fileUpload
-			var prepared *multipartRequestBody
+			var prepared io.ReadCloser
 			command := &cli.Command{Name: "edit", Reader: strings.NewReader(""), Writer: io.Discard,
 				Flags: []cli.Flag{&requestflag.Flag[string]{Name: "image", BodyPath: "image", FileInput: true}},
 				Action: imageSavingWorkflow(func(ctx context.Context, command *cli.Command) error {
 					state := command.Metadata[imageMultipartMetadata].(*imageMultipartPreparation)
-					prepared = state.body.(*multipartRequestBody)
-					upload = prepared.bodyMap["image"].(fileUpload)
+					prepared = state.body.(io.ReadCloser)
 					if cancelAction {
 						cancel()
 						return ctx.Err()
@@ -142,13 +141,8 @@ func TestImageUploadPreparationClosesWhenActionAborts(t *testing.T) {
 				require.ErrorIs(t, err, failure)
 			}
 			require.NotNil(t, prepared)
-			_, err = io.ReadAll(upload)
-			require.ErrorIs(t, err, os.ErrClosed)
-			select {
-			case <-prepared.done:
-			case <-time.After(5 * time.Second):
-				t.Fatal("unconsumed multipart encoder did not stop")
-			}
+			_, err = io.ReadAll(prepared)
+			require.ErrorIs(t, err, io.ErrClosedPipe)
 		})
 	}
 }
@@ -156,7 +150,7 @@ func TestImageUploadPreparationClosesWhenActionAborts(t *testing.T) {
 func TestImageUploadPreparedBodyClosesOnce(t *testing.T) {
 	source := &recordingReadCloser{reader: strings.NewReader("synthetic image")}
 	var body io.Closer
-	_, err := multipartRequestOptions(map[string]any{"image": fileUpload{Reader: source}}, apiform.FormatBrackets, func(prepared io.Closer) { body = prepared })
+	_, err := requestconfig.MultipartRequestOptions(map[string]any{"image": requestconfig.FileUpload{Reader: source}}, apiform.FormatBrackets, func(prepared io.Closer) { body = prepared })
 	require.NoError(t, err)
 	require.NotNil(t, body)
 	require.NoError(t, body.Close())
@@ -176,8 +170,8 @@ func TestAudioVoiceTypeFileCancellationReleasesOwnedRead(t *testing.T) {
 		Metadata: map[string]any{audioVoicesContextMetadata: ctx},
 	}
 	body := map[string]any{
-		"type":         fileUpload{Reader: source},
-		"audio_sample": fileUpload{Reader: sample},
+		"type":         requestconfig.FileUpload{Reader: source},
+		"audio_sample": requestconfig.FileUpload{Reader: sample},
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -197,7 +191,7 @@ func TestAudioVoiceTypeFileCancellationReleasesOwnedRead(t *testing.T) {
 	}
 	require.EqualValues(t, 1, source.closeCount.Load())
 	// FlagOptions performs this cleanup on its error path after inspection.
-	require.NoError(t, closeFileUploads(body))
+	require.NoError(t, requestconfig.CloseFileUploads(body))
 	require.EqualValues(t, 1, source.closeCount.Load())
 	require.EqualValues(t, 1, sample.closeCount.Load())
 }

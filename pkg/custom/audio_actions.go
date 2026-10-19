@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
+	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/readable"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
@@ -223,7 +224,7 @@ func (m *audioWorkbench) setupHelpText() string {
 			return "Close this form before following these steps.\nThen reopen audio speak in that shell.\n\n" + buffer.String()
 		}
 	}
-	return "Close this form and run:\n\n" + errorHelpInvocation(root) + " help setup\n\nThen reopen audio speak in the same shell."
+	return "Close this form and run:\n\n" + clihelp.DisplayInvocation(root) + " help setup\n\nThen reopen audio speak in the same shell."
 }
 
 func (m *audioWorkbench) infoRows() []string {

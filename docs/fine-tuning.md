@@ -13,6 +13,31 @@ Replace `ftjob_example` with a returned job ID. Events are a snapshot, not a con
 Inspect the job's `status` and `error` fields before choosing a recovery action.
 Use `--format json` for full API fields, including unfamiliar statuses and checkpoint metadata.
 
+## Available commands and dashboard limits
+
+These command paths follow `openai fine-tuning`:
+
+| Purpose | Existing command paths |
+| --- | --- |
+| Inspect jobs | `jobs list`, `jobs retrieve`, `jobs list-events` |
+| Manage supported training jobs | `jobs create`, `jobs cancel`, `jobs pause`, `jobs resume` |
+| Inspect checkpoint metadata | `jobs checkpoints list` |
+| Manage checkpoint sharing | `checkpoints permissions list`, `checkpoints permissions retrieve`, `checkpoints permissions create`, `checkpoints permissions delete` |
+| Validate or run a reinforcement grader | `alpha graders validate`, `alpha graders run` |
+
+Job creation accepts supervised, DPO, and reinforcement method settings through `--method` or a JSON request body.
+These inputs do not bypass training eligibility. Inspect `jobs create --help` before submitting a request.
+Job-level Weights & Biases settings use `jobs create --integration`.
+That option does not store organization integration credentials.
+
+The CLI does not provide dashboard charts, automatic event polling, or a model-comparison interface.
+Use job, event, and checkpoint responses to inspect their underlying data.
+Job listing supports the public API's `--after`, `--limit`, and `--metadata` filters.
+Dashboard-specific status, model, and user filters have no matching public list flags.
+Organization integration credential configuration and checkpoint-weight export have no documented public CLI workflow.
+Dashboard controls can depend on organization eligibility and internal feature gates.
+Their appearance does not establish a public API contract.
+
 ## Empty results and access errors
 
 A successful empty jobs request prints:
@@ -76,7 +101,7 @@ A checkpoint-export workflow needs a supported public contract and an agreed cus
 
 ## Availability
 
-Checked October 9, 2026 against the [official availability timeline](https://developers.openai.com/api/docs/deprecations#update-to-openais-self-serve-fine-tuning):
+Checked October 18, 2026 against the [official availability timeline](https://developers.openai.com/api/docs/deprecations#update-to-openais-self-serve-fine-tuning):
 
 - Since May 7, 2026, organizations without previous fine-tuning cannot create jobs or train.
 - Since July 2, 2026, organizations without fine-tuned inference during the preceding 60 days cannot create jobs.
@@ -85,5 +110,8 @@ Checked October 9, 2026 against the [official availability timeline](https://dev
 
 January 6 is not a general inference shutdown date. An empty list does not check these eligibility conditions.
 Check the linked timeline for updates before planning training or migration.
+
+The CLI retains supported commands for existing customers and scripts during this transition.
+The API enforces eligibility and job-state restrictions. A command's presence does not grant training access.
 
 Local fixture tests verify CLI behavior. They do not establish account eligibility or live service acceptance.

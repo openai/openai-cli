@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/urfave/cli/v3"
 )
 
@@ -228,7 +229,7 @@ func TestLocalErrorMessagePagerFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, stream := range map[string]func(string, func(*os.File) error) error{
-		"pipe": streamToPagerWithPipe, "socket": streamOutputOSSpecific,
+		"pipe": clioutput.StreamToPagerWithPipe, "socket": clioutput.StreamToPager,
 	} {
 		for _, pager := range []string{"fake-sensitive-missing-pager", filepath.Join(dir, "fake-sensitive-missing-path"), invalidPager, failedPager} {
 			t.Run(name+"/"+filepath.Base(pager), func(t *testing.T) {
@@ -237,7 +238,7 @@ func TestLocalErrorMessagePagerFailures(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected pager failure")
 				}
-				var origin *pagerError
+				var origin *clioutput.PagerError
 				if !errors.As(err, &origin) || errors.Unwrap(origin) == nil {
 					t.Fatalf("pager failure lost its origin or cause: %T", err)
 				}
@@ -262,17 +263,5 @@ func TestLocalErrorMessagePagerFailures(t *testing.T) {
 				t.Errorf("upstream cancellation changed: %v", err)
 			}
 		})
-	}
-}
-
-func TestPagerErrorPreservesCause(t *testing.T) {
-	if got := wrapPagerError(nil); got != nil {
-		t.Errorf("wrapped nil = %v", got)
-	}
-	cause := &os.PathError{Op: "open", Path: "fake-sensitive-path", Err: os.ErrNotExist}
-	err := wrapPagerError(cause)
-	var pathError *os.PathError
-	if !errors.Is(err, os.ErrNotExist) || !errors.As(err, &pathError) || pathError != cause || err.Error() != cause.Error() {
-		t.Errorf("wrapped error lost its cause: %v", err)
 	}
 }

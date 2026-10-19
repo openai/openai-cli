@@ -871,7 +871,7 @@ jobs:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
           SELECTED_POWERSHELL_DIRECTORY: ${{ steps.powershell.outputs.selected-directory }}
       - name: Check Windows stdin startup probing
-        run: go test ./pkg/custom -run '^TestWindowsPipedDataAvailable$' -count=1 -v
+        run: go test ./internal/input -run '^TestWindowsPipedDataAvailable$' -count=1 -v
       - name: Check native Windows shell and file commands
         if: matrix.existing-checks
         run: go test -p 2 ./cmd/openai -run '^TestMainShell' -skip '^TestMainShellSuggestions' -count=1 -v

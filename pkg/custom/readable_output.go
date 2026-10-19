@@ -2,30 +2,17 @@ package custom
 
 import (
 	"context"
-	"errors"
-	"io"
 	"os"
 	"strings"
 
 	"github.com/charmbracelet/x/term"
-	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
-	"github.com/openai/openai-cli/internal/readable"
-	"github.com/tidwall/gjson"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/urfave/cli/v3"
 )
 
-// Automatic output is readable on every destination. Extraction keeps its
-// existing JSON/raw-string contract, including when stdout is redirected.
 func resolvedOutputFormat(opts ShowJSONOpts) string {
-	format := strings.ToLower(opts.Format)
-	if format == "" || format == "auto" {
-		if opts.Transform != "" || opts.RawOutput {
-			return "json"
-		}
-		return "text"
-	}
-	return format
+	return clioutput.ResolveFormat(clioutput.FormatOptions{Format: opts.Format, Transform: opts.Transform, RawOutput: opts.RawOutput})
 }
 
 func configureReadableOutput(root *cli.Command) {
@@ -64,54 +51,17 @@ func (w terminalOutputWriter) Fd() uintptr                { return w.file.Fd() }
 func (w terminalOutputWriter) Read(p []byte) (int, error) { return w.file.Read(p) }
 func (w terminalOutputWriter) Close() error               { return w.file.Close() }
 
-// Render records as they arrive, keeping stream state separate from list records.
-func showReadableIterator(iter jsonview.Iterator[outputJSON], opts ShowJSONOpts) error {
-	if opts.OutputKind == OutputStreamEvent && opts.Transform == "" && !opts.RawOutput {
-		return showReadableStream(iter, opts)
+// Assembly supplies destination classification and the current diagnostic policy.
+func readableOutputOptions(opts ShowJSONOpts) clioutput.ReadableOptions {
+	emptyMessage, _ := fineTuningEmptyResult(opts)
+	return clioutput.ReadableOptions{
+		Context:            opts.Context,
+		Route:              transformers.Route{Operation: opts.Operation, OutputKind: opts.OutputKind},
+		FormatOptions:      clioutput.FormatOptions{Format: opts.Format, RawOutput: opts.RawOutput, Title: opts.Title, Transform: opts.Transform},
+		Stdout:             opts.Stdout,
+		Stderr:             opts.Stderr,
+		Terminal:           isTerminal(opts.Stdout),
+		DiagnosticsAllowed: outputDiagnosticsAllowed(opts.Context),
+		EmptyMessage:       emptyMessage,
 	}
-	out := clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}
-	emitted := false
-	omitted := false
-	for iter.Next() {
-		value := applyJSONPath(iter.Current().Result, opts.Transform)
-		if opts.RawOutput && value.Type == gjson.String {
-			// Keep raw strings byte-for-byte in pipes and escape terminal
-			// controls using the same destination-aware formatter as ShowJSON.
-			formatted, err := formatJSON(iter.Current().Result, opts)
-			if err != nil {
-				return errors.Join(err, iter.Err())
-			}
-			if _, err := out.Write(formatted); err != nil {
-				return errors.Join(err, iter.Err())
-			}
-			emitted = true
-			continue
-		}
-		if emitted {
-			if _, err := io.WriteString(out, "\n"); err != nil {
-				return errors.Join(err, iter.Err())
-			}
-		}
-		hidden, err := writeReadableResource(out, value, opts)
-		if err != nil {
-			return errors.Join(err, iter.Err())
-		}
-		omitted = omitted || hidden
-		emitted = true
-	}
-	if omitted {
-		if err := writeOutputHint(opts, resourceSummaryHint); err != nil {
-			return errors.Join(err, iter.Err())
-		}
-	}
-	if err := iter.Err(); err != nil {
-		return err
-	}
-	if !emitted {
-		if text, ok := fineTuningEmptyResult(opts); ok {
-			return readable.WriteText(out, text)
-		}
-		return readable.WriteText(out, "No results.")
-	}
-	return opts.Context.Err()
 }
