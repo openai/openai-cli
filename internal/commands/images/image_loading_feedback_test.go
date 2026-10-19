@@ -78,26 +78,6 @@ func (b *lockedLoadingBuffer) String() string {
 	return b.buffer.String()
 }
 
-func CheckTestImageLoadingLeavesNoninteractiveActionUnchanged(assembly AssemblyForTest, t *testing.T) {
-	for _, plan := range []*imageOutputPlan{nil, {}} {
-		command := &cli.Command{Name: "generate", Writer: io.Discard}
-		ctx := t.Context()
-		sentinel := errors.New("original action failure")
-		called := false
-		err := runWithImageLoading(ctx, command, plan, func(got context.Context, gotCommand *cli.Command) error {
-			called = true
-			require.Same(t, ctx, got)
-			require.Same(t, command, gotCommand)
-			return sentinel
-		}, assembly.Saving)
-		require.True(t, called)
-		require.Same(t, sentinel, err)
-		if plan != nil {
-			require.Nil(t, plan.stopLoading)
-		}
-	}
-}
-
 func TestImageLoadingInterruptRetainsCause(t *testing.T) {
 	cause := imageSavingFailure("Check saved files before trying again.", context.Canceled)
 	err := &imageLoadingInterrupt{cause}
@@ -135,3 +115,23 @@ func TestImageLoadingStopsBeforeVisibleOutput(t *testing.T) {
 type loadingTestWriter func([]byte) (int, error)
 
 func (w loadingTestWriter) Write(p []byte) (int, error) { return w(p) }
+
+func TestImageLoadingLeavesNoninteractiveActionUnchanged(t *testing.T) {
+	for _, plan := range []*imageOutputPlan{nil, {}} {
+		command := &cli.Command{Name: "generate", Writer: io.Discard}
+		ctx := t.Context()
+		sentinel := errors.New("original action failure")
+		called := false
+		err := runWithImageLoading(ctx, command, plan, func(got context.Context, gotCommand *cli.Command) error {
+			called = true
+			require.Same(t, ctx, got)
+			require.Same(t, command, gotCommand)
+			return sentinel
+		}, SavingOptions{})
+		require.True(t, called)
+		require.Same(t, sentinel, err)
+		if plan != nil {
+			require.Nil(t, plan.stopLoading)
+		}
+	}
+}

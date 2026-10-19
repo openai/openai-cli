@@ -9,10 +9,6 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func registerImageModels(root *cli.Command) {
-	images.RegisterModels(root, ImageModelOptions())
-}
-
 // ImageModelOptions binds discovery to application policy.
 func ImageModelOptions() images.ModelOptions {
 	return images.ModelOptions{
@@ -32,18 +28,6 @@ func ImageModelOptions() images.ModelOptions {
 			})
 		},
 	}
-}
-
-func configureImageSaving(root *cli.Command) {
-	images.ConfigureSaving(root, ImageSavingOptions())
-}
-
-func configureImagePickerCompletion(root *cli.Command) { images.ConfigureCompletion(root) }
-func configureImagePickerShellSetup(root *cli.Command) {
-	images.ConfigureShellSetup(root, writeOutputReceipt)
-}
-func registerImagePreviewCommands(root *cli.Command) {
-	images.RegisterPreview(root, ImagePreviewOptions())
 }
 
 func isSavedImageRoute(opts ShowJSONOpts, kind OutputKind) bool {

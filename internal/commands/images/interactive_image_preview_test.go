@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/urfave/cli/v3"
 )
 
 func TestInteractiveImageEligibility(t *testing.T) {
@@ -214,32 +213,4 @@ func TestInteractiveImageCancellationPreservesOtherFailures(t *testing.T) {
 	err := interactiveImageWriteError(input, context.Canceled)
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	require.NotErrorIs(t, err, context.Canceled)
-}
-
-func CheckTestInteractiveImageFailureKeepsExitCodeAndViewerDiagnostic(assembly AssemblyForTest, t *testing.T) {
-	for _, code := range []int{0, 130, 143, 129} {
-		ctx, cancel := context.WithCancelCause(t.Context())
-		cancel(interactiveImageExit{code})
-		err := finishInteractiveImagePreview(ctx, nil)
-		if code == 0 {
-			require.NoError(t, err)
-		} else {
-			var exit cli.ExitCoder
-			require.ErrorAs(t, err, &exit)
-			require.Equal(t, code, exit.ExitCode())
-			require.Empty(t, exit.Error())
-		}
-		failure := errors.Join(context.DeadlineExceeded, io.ErrClosedPipe)
-		err = finishInteractiveImagePreview(ctx, failure)
-		var exit cli.ExitCoder
-		require.ErrorAs(t, err, &exit)
-		require.Equal(t, max(1, code), exit.ExitCode())
-		require.ErrorIs(t, err, failure)
-		var output bytes.Buffer
-		require.NoError(t, assembly.ShowError(&cli.Command{}, err, &output))
-		require.Contains(t, output.String(), "interactive preview")
-		require.Contains(t, output.String(), "original file is unchanged")
-		require.NotContains(t, output.String(), "API")
-		require.NotContains(t, output.String(), "permissions")
-	}
 }

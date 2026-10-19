@@ -10,6 +10,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/openai/openai-cli/internal/commands/codex"
 	filecommands "github.com/openai/openai-cli/internal/commands/files"
+	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/openai/openai-cli/internal/commands/manpages"
 	"github.com/openai/openai-cli/internal/commands/tokenize"
 	requestconfig "github.com/openai/openai-cli/internal/request"
@@ -33,14 +34,14 @@ func ConfigureCommand(root *cli.Command) {
 	// Batch workflows preserve positional path inputs and need the same help annotations.
 	configureBatchCommands(root)
 	clihelp.DescribeRequestInputs(root)
-	registerImageModels(root)
+	images.RegisterModels(root, ImageModelOptions())
 	configureReadableOutput(root)
 	configureModelsList(root)
-	configureImageSaving(root)
-	configureImagePickerCompletion(root)
-	configureImagePickerShellSetup(root)
+	images.ConfigureSaving(root, ImageSavingOptions())
+	images.ConfigureCompletion(root)
+	images.ConfigureShellSetup(root, writeOutputReceipt)
 	configureShellSuggestions(root)
-	registerImagePreviewCommands(root)
+	images.RegisterPreview(root, ImagePreviewOptions())
 	audio.ConfigureText(root)
 	configureReadableSpeech(root)
 	registerAdminSetup(root)

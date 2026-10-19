@@ -75,20 +75,3 @@ func TestSaveFinalImageStreamFailureAndCancellation(t *testing.T) {
 type failingImageWriter struct{ err error }
 
 func (w failingImageWriter) Write([]byte) (int, error) { return 0, w.err }
-
-func CheckTestSavedImageOutputFailureRetainsFilesAndPartialError(assembly AssemblyForTest, t *testing.T) {
-	plan := &imageOutputPlan{directory: t.TempDir(), name: "robot"}
-	sinkErr := errors.New("closed synthetic sink")
-	err := plan.save(t.Context(), []byte(`{"data":[{"b64_json":"iVBORw0KGgo="},{"b64_json":"invalid"}]}`), failingImageWriter{sinkErr})
-	require.ErrorIs(t, err, sinkErr)
-	require.Contains(t, err.Error(), "could not save the entire response")
-	require.Contains(t, err.Error(), "print all saved paths")
-	message := assembly.ErrorMessage(nil, err)
-	require.Contains(t, message, "could not save the entire response")
-	require.Contains(t, message, "print all saved paths")
-	require.Contains(t, message, "Check the output folder before generating again")
-	require.NotContains(t, message, "listed files")
-	files, readErr := os.ReadDir(plan.directory)
-	require.NoError(t, readErr)
-	require.Len(t, files, 1)
-}

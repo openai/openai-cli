@@ -1,4 +1,4 @@
-package images
+package images_test
 
 import (
 	"crypto/tls"

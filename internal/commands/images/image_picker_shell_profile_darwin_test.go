@@ -1,6 +1,6 @@
 //go:build darwin
 
-package images
+package images_test
 
 import (
 	"context"
@@ -11,17 +11,18 @@ import (
 	"time"
 
 	"github.com/openai/openai-cli/internal/autocomplete"
+	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/stretchr/testify/require"
 )
 
-func CheckTestImagePickerMacOSShellConfigChangesShareDecisionLock(assembly AssemblyForTest, t *testing.T) {
+func TestImagePickerMacOSShellConfigChangesShareDecisionLock(t *testing.T) {
 	for _, shell := range []string{"zsh", "fish"} {
 		t.Run(shell, func(t *testing.T) {
-			home := pickerShellSetupHome(t)
+			home := images.TestPickerShellSetupHome(t)
 			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config-a"))
-			first, err := imagePickerShellTarget(t.Context(), shell, false, "")
+			first, err := images.TestImagePickerShellTarget(t.Context(), shell, false, "")
 			require.NoError(t, err)
-			choice, err := imagePickerTabChoicePath(shell)
+			choice, err := images.TestImagePickerTabChoicePath(shell)
 			require.NoError(t, err)
 			acquired, release := make(chan struct{}), make(chan struct{})
 			finished := make(chan error, 1)
@@ -43,17 +44,17 @@ func CheckTestImagePickerMacOSShellConfigChangesShareDecisionLock(assembly Assem
 				require.NoError(t, <-finished)
 			}()
 			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config-b"))
-			second, err := imagePickerShellTarget(t.Context(), shell, false, "")
+			second, err := images.TestImagePickerShellTarget(t.Context(), shell, false, "")
 			require.NoError(t, err)
-			secondChoice, err := imagePickerTabChoicePath(shell)
+			secondChoice, err := images.TestImagePickerTabChoicePath(shell)
 			require.NoError(t, err)
 			require.Equal(t, choice, secondChoice)
 			ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 			defer cancel()
-			output, err := runPickerShellSetup(assembly, t, ctx, shell, "--uninstall-picker")
+			output, err := runPickerShellSetup(t, ctx, shell, "--uninstall-picker")
 			require.ErrorIs(t, err, context.DeadlineExceeded, "shared preferences require the same decision lock across XDG roots")
 			require.Empty(t, output)
-			declined, err := imagePickerTabDeclined(shell)
+			declined, err := images.TestImagePickerTabDeclined(shell)
 			require.NoError(t, err)
 			require.False(t, declined, "a blocked uninstall must not change the shared preference")
 			require.Equal(t, filepath.Join(home, ".openai", "shell"), filepath.Dir(choice))
@@ -69,26 +70,24 @@ func CheckTestImagePickerMacOSShellConfigChangesShareDecisionLock(assembly Assem
 	}
 }
 
-func CheckTestImagePickerMacOSShellSetupRetainsLegacyScriptRoot(assembly AssemblyForTest, t *testing.T) {
-	home := pickerShellSetupHome(t)
-	legacy, err := imagePickerSelectShellTargets("zsh", "", imagePickerShellPaths{
-		home: home, config: filepath.Join(home, "old-xdg"), zdotdir: home,
-	})
+func TestImagePickerMacOSShellSetupRetainsLegacyScriptRoot(t *testing.T) {
+	home := images.TestPickerShellSetupHome(t)
+	legacy, err := images.TestImagePickerSelectShellTargets("zsh", "", images.ShellPathsForTest(home, filepath.Join(home, "old-xdg"), home))
 	require.NoError(t, err)
 	personal := []byte("# personal startup\n")
 	require.NoError(t, os.WriteFile(legacy[0].Profile, personal, 0600))
 	installed, err := autocomplete.InstallPicker(t.Context(), legacy[0])
 	require.NoError(t, err)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "new-xdg"))
-	current, err := imagePickerShellTarget(t.Context(), "zsh", false, "")
+	current, err := images.TestImagePickerShellTarget(t.Context(), "zsh", false, "")
 	require.NoError(t, err)
 	require.NotEqual(t, legacy[0].Directory, current[0].Directory)
-	_, err = runPickerShellSetup(assembly, t, t.Context(), "zsh", "--install-picker")
+	_, err = runPickerShellSetup(t, t.Context(), "zsh", "--install-picker")
 	require.NoError(t, err)
 	profile, err := os.ReadFile(legacy[0].Profile)
 	require.NoError(t, err)
 	require.Contains(t, string(profile), installed.ScriptPath)
-	_, err = runPickerShellSetup(assembly, t, t.Context(), "zsh", "--uninstall-picker")
+	_, err = runPickerShellSetup(t, t.Context(), "zsh", "--uninstall-picker")
 	require.NoError(t, err)
 	profile, err = os.ReadFile(legacy[0].Profile)
 	require.NoError(t, err)
@@ -97,7 +96,7 @@ func CheckTestImagePickerMacOSShellSetupRetainsLegacyScriptRoot(assembly Assembl
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
-func CheckTestImagePickerMacOSFishOptOutAcrossConfigurationRoots(assembly AssemblyForTest, t *testing.T) {
+func TestImagePickerMacOSFishOptOutAcrossConfigurationRoots(t *testing.T) {
 	fish, err := exec.LookPath("fish")
 	if err != nil {
 		t.Skip("fish is unavailable")
@@ -111,14 +110,14 @@ func CheckTestImagePickerMacOSFishOptOutAcrossConfigurationRoots(assembly Assemb
 		{"lazy", "set -g fish_key_bindings fish_vi_key_bindings\nfunction fish_user_key_bindings\n  bind -M insert \\t custom_tab\n  bind -M default \\t custom_tab\nend\n"},
 	} {
 		t.Run(bindings.name, func(t *testing.T) {
-			home := pickerShellSetupHome(t)
+			home := images.TestPickerShellSetupHome(t)
 			firstConfig, secondConfig := filepath.Join(home, "fish-a"), filepath.Join(home, "fish-b")
 			t.Setenv("XDG_CONFIG_HOME", firstConfig)
-			_, err := runPickerShellSetup(assembly, t, t.Context(), "fish", "--install-picker")
+			_, err := runPickerShellSetup(t, t.Context(), "fish", "--install-picker")
 			require.NoError(t, err)
-			targets, err := imagePickerShellTarget(t.Context(), "fish", false, "")
+			targets, err := images.TestImagePickerShellTarget(t.Context(), "fish", false, "")
 			require.NoError(t, err)
-			optOut, err := imagePickerTabChoicePath("fish")
+			optOut, err := images.TestImagePickerTabChoicePath("fish")
 			require.NoError(t, err)
 			require.Equal(t, optOut, targets[0].OptOutPath)
 			profileBefore, err := os.ReadFile(targets[0].Profile)
@@ -146,10 +145,10 @@ func CheckTestImagePickerMacOSFishOptOutAcrossConfigurationRoots(assembly Assemb
 						if phase.enabled {
 							action = "--install-picker"
 						}
-						_, err := runPickerShellSetup(assembly, t, t.Context(), "fish", action)
+						_, err := runPickerShellSetup(t, t.Context(), "fish", action)
 						require.NoError(t, err)
 					}
-					declined, err := imagePickerTabDeclined("fish")
+					declined, err := images.TestImagePickerTabDeclined("fish")
 					require.NoError(t, err)
 					require.Equal(t, !phase.enabled, declined)
 					result := filepath.Join(t.TempDir(), "result")

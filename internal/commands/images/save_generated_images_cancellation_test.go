@@ -1,4 +1,4 @@
-package images
+package images_test
 
 import (
 	"bytes"
@@ -15,7 +15,9 @@ import (
 	"testing"
 
 	"github.com/goccy/go-yaml"
+	"github.com/openai/openai-cli/internal/commands/images"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -23,7 +25,7 @@ import (
 
 // Match TestSaveResponseCancellation's deterministic second-file boundary,
 // then exercise the public response and error presenters around that saver.
-func CheckTestSavedImageCancellationPreservesRecovery(assembly AssemblyForTest, t *testing.T) {
+func TestSavedImageCancellationPreservesRecovery(t *testing.T) {
 	var fixture bytes.Buffer
 	require.NoError(t, png.Encode(&fixture, image.NewRGBA(image.Rect(0, 0, 1, 1))))
 	encoded := base64.StdEncoding.EncodeToString(fixture.Bytes())
@@ -61,19 +63,19 @@ func CheckTestSavedImageCancellationPreservesRecovery(assembly AssemblyForTest, 
 				var receipt bytes.Buffer
 				receiptCalls := 0
 				sinkErr := errors.New("synthetic-private-sink \x1b]52;c;synthetic-secret\a")
-				writer := loadingTestWriter(func(data []byte) (int, error) {
+				writer := images.TestLoadingTestWriter(func(data []byte) (int, error) {
 					receiptCalls++
 					require.ErrorIs(t, ctx.Err(), context.Canceled, "completed paths must print after cancellation")
 					_, err := os.Stat(second)
 					require.ErrorIs(t, err, os.ErrNotExist, "incomplete output must be removed before its receipt")
 					if failReceipt {
-						return failingImageWriter{sinkErr}.Write(data)
+						return errorSink{sinkErr}.Write(data)
 					}
 					return receipt.Write(data)
 				})
-				plan := &imageOutputPlan{directory: directory, name: "robot", inline: "off"}
-				presentation := context.WithValue(checking, imagePresentationKey{}, imagePresentation{plan, writer})
-				failure := assembly.ShowJSON(response, PresentationForTest{
+				plan := images.NewOutputPlanForTest(directory, "robot", "off")
+				presentation := images.WithPresentationForTest(checking, plan, writer)
+				failure := custom.ShowJSON(response, custom.ShowJSONOpts{
 					Context: presentation, Operation: imageGenerationOperation, OutputKind: OutputResponse,
 					Format: "auto", Stdout: writer, Stderr: io.Discard,
 				})
@@ -99,12 +101,12 @@ func CheckTestSavedImageCancellationPreservesRecovery(assembly AssemblyForTest, 
 				root := readableErrorTestCommand(t, "--format-error", format)
 				for _, interrupted := range []bool{false, true} {
 					wrapped := failure
-					wantStatus := 1 // main's fallback; no native process execution is claimed here.
+					wantStatus := 1
 					if interrupted {
-						wrapped = &imageLoadingInterrupt{failure}
+						wrapped = images.InterruptForTest(failure)
 						wantStatus = 130
 					}
-					wrapped = assembly.WrapError(root, wrapped)
+					wrapped = imageWrapError(root, wrapped)
 					require.ErrorIs(t, wrapped, context.Canceled)
 					if failReceipt {
 						require.ErrorIs(t, wrapped, sinkErr)
@@ -116,7 +118,7 @@ func CheckTestSavedImageCancellationPreservesRecovery(assembly AssemblyForTest, 
 					}
 					require.Equal(t, wantStatus, status)
 					var diagnostic bytes.Buffer
-					require.NoError(t, assembly.ShowError(root, wrapped, &diagnostic))
+					require.NoError(t, custom.ShowCommandError(root, wrapped, &diagnostic))
 					assertReadableErrorContainsNoPrivateDetails(t, diagnostic.String())
 					require.NotContains(t, diagnostic.String(), encoded)
 					message := diagnostic.String()
@@ -141,17 +143,7 @@ func CheckTestSavedImageCancellationPreservesRecovery(assembly AssemblyForTest, 
 	}
 }
 
-type imageSaveCancellationContext struct {
-	context.Context
-	check func()
-}
-
-func (c imageSaveCancellationContext) Err() error {
-	c.check()
-	return c.Context.Err()
-}
-
-func CheckTestSavedImageCancellationWithoutCompletedFiles(assembly AssemblyForTest, t *testing.T) {
+func TestSavedImageCancellationWithoutCompletedFiles(t *testing.T) {
 	var fixture bytes.Buffer
 	require.NoError(t, png.Encode(&fixture, image.NewRGBA(image.Rect(0, 0, 1, 1))))
 	encoded := base64.StdEncoding.EncodeToString(fixture.Bytes())
@@ -182,21 +174,21 @@ func CheckTestSavedImageCancellationWithoutCompletedFiles(assembly AssemblyForTe
 					boundaryReached = true
 					cancel()
 				}}
-				plan := &imageOutputPlan{directory: directory, name: "synthetic-private-image", inline: "off"}
-				plan.loadingStage = func(stage clioutput.LoadingStage) {
+				plan := images.NewOutputPlanForTest(directory, "synthetic-private-image", "off")
+				plan.SetLoadingStageForTest(func(stage clioutput.LoadingStage) {
 					if boundary == "before_first_save" && stage == clioutput.LoadingSaving {
 						boundaryReached = true
 						cancel()
 					}
-				}
+				})
 				var receipt bytes.Buffer
 				receiptCalls := 0
-				writer := loadingTestWriter(func(data []byte) (int, error) {
+				writer := images.TestLoadingTestWriter(func(data []byte) (int, error) {
 					receiptCalls++
 					return receipt.Write(data)
 				})
-				presentation := context.WithValue(checking, imagePresentationKey{}, imagePresentation{plan, writer})
-				failure := assembly.ShowJSON(response, PresentationForTest{
+				presentation := images.WithPresentationForTest(checking, plan, writer)
+				failure := custom.ShowJSON(response, custom.ShowJSONOpts{
 					Context: presentation, Operation: imageGenerationOperation, OutputKind: OutputResponse,
 					Format: "auto", Stdout: writer, Stderr: io.Discard,
 				})
@@ -217,12 +209,12 @@ func CheckTestSavedImageCancellationWithoutCompletedFiles(assembly AssemblyForTe
 				root := readableErrorTestCommand(t, "--format-error", format)
 				for _, interrupted := range []bool{false, true} {
 					wrapped := failure
-					wantStatus := 1 // main's fallback; this check does not execute a native process.
+					wantStatus := 1
 					if interrupted {
-						wrapped = &imageLoadingInterrupt{failure}
+						wrapped = images.InterruptForTest(failure)
 						wantStatus = 130
 					}
-					wrapped = assembly.WrapError(root, wrapped)
+					wrapped = imageWrapError(root, wrapped)
 					require.ErrorIs(t, wrapped, context.Canceled)
 					status := 1
 					var exit cli.ExitCoder
@@ -231,7 +223,7 @@ func CheckTestSavedImageCancellationWithoutCompletedFiles(assembly AssemblyForTe
 					}
 					require.Equal(t, wantStatus, status)
 					var diagnostic bytes.Buffer
-					require.NoError(t, assembly.ShowError(root, wrapped, &diagnostic))
+					require.NoError(t, custom.ShowCommandError(root, wrapped, &diagnostic))
 					assertReadableErrorContainsNoPrivateDetails(t, diagnostic.String())
 					require.NotContains(t, diagnostic.String(), directory)
 					require.NotContains(t, diagnostic.String(), encoded)
@@ -257,14 +249,14 @@ func CheckTestSavedImageCancellationWithoutCompletedFiles(assembly AssemblyForTe
 	}
 }
 
-func CheckTestSavedImageFailureWithoutCompletedFilesKeepsRecovery(assembly AssemblyForTest, t *testing.T) {
+func TestSavedImageFailureWithoutCompletedFilesKeepsRecovery(t *testing.T) {
 	response := gjson.Parse(`{"data":[{"b64_json":"synthetic-private-invalid-base64"}]}`)
 	for _, format := range []string{"text", "json"} {
 		t.Run(format, func(t *testing.T) {
-			plan := &imageOutputPlan{directory: t.TempDir(), name: "robot", inline: "off"}
+			plan := images.NewOutputPlanForTest(t.TempDir(), "robot", "off")
 			var receipt bytes.Buffer
-			presentation := context.WithValue(t.Context(), imagePresentationKey{}, imagePresentation{plan, &receipt})
-			failure := assembly.ShowJSON(response, PresentationForTest{
+			presentation := images.WithPresentationForTest(t.Context(), plan, &receipt)
+			failure := custom.ShowJSON(response, custom.ShowJSONOpts{
 				Context: presentation, Operation: imageGenerationOperation, OutputKind: OutputResponse,
 				Format: "auto", Stdout: &receipt, Stderr: io.Discard,
 			})
@@ -272,14 +264,14 @@ func CheckTestSavedImageFailureWithoutCompletedFilesKeepsRecovery(assembly Assem
 			require.ErrorAs(t, failure, &malformed)
 			require.False(t, errors.Is(failure, context.Canceled))
 			require.Empty(t, receipt.String())
-			entries, err := os.ReadDir(plan.directory)
+			entries, err := os.ReadDir(plan.DirectoryForTest())
 			require.NoError(t, err)
 			require.Empty(t, entries)
 			root := readableErrorTestCommand(t, "--format-error", format)
 			var diagnostic bytes.Buffer
-			require.NoError(t, assembly.ShowError(root, assembly.WrapError(root, failure), &diagnostic))
+			require.NoError(t, custom.ShowCommandError(root, imageWrapError(root, failure), &diagnostic))
 			assertReadableErrorContainsNoPrivateDetails(t, diagnostic.String())
-			require.NotContains(t, diagnostic.String(), plan.directory)
+			require.NotContains(t, diagnostic.String(), plan.DirectoryForTest())
 			want := "The API responded, but no images could be saved. Check the image data and output folder before trying again."
 			if format == "json" {
 				var document map[string]any
@@ -292,24 +284,24 @@ func CheckTestSavedImageFailureWithoutCompletedFilesKeepsRecovery(assembly Assem
 	}
 }
 
-func CheckTestImagePreferenceCancellationKeepsPathPrivate(assembly AssemblyForTest, t *testing.T) {
+func TestImagePreferenceCancellationKeepsPathPrivate(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "synthetic-private-home")
 	for _, key := range []string{"HOME", "APPDATA", "XDG_CONFIG_HOME"} {
 		t.Setenv(key, home)
 	}
-	path, err := imageInlinePreferencePath()
+	path, err := images.TestImageInlinePreferencePath()
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	for _, format := range []string{"text", "json"} {
 		t.Run(format, func(t *testing.T) {
 			root := readableErrorTestCommand(t, "--format-error", format)
-			failure := imageInlinePreferenceCommands(assembly.Preview.Receipt)[0].Action(ctx, root)
+			failure := images.TestImageInlinePreferenceCommands(custom.ImagePreviewOptions().Receipt)[0].Action(ctx, root)
 			require.ErrorIs(t, failure, context.Canceled)
 			require.Contains(t, failure.Error(), "Could not save the inline preference.")
 			require.NotContains(t, failure.Error(), path)
 			var output bytes.Buffer
-			require.NoError(t, assembly.ShowError(root, assembly.WrapError(root, failure), &output))
+			require.NoError(t, custom.ShowCommandError(root, imageWrapError(root, failure), &output))
 			assertReadableErrorContainsNoPrivateDetails(t, output.String())
 			require.NotContains(t, output.String(), path)
 			if format == "json" {
@@ -326,11 +318,11 @@ func CheckTestImagePreferenceCancellationKeepsPathPrivate(assembly AssemblyForTe
 	}
 }
 
-func CheckTestSavedImageCancellationOutputModes(assembly AssemblyForTest, t *testing.T) {
+func TestSavedImageCancellationOutputModes(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	plan := &imageOutputPlan{directory: t.TempDir(), name: "robot", inline: "off"}
-	failure := plan.save(ctx, []byte(`{"data":[]}`), io.Discard)
+	plan := images.NewOutputPlanForTest(t.TempDir(), "robot", "off")
+	failure := plan.SaveForTest(ctx, []byte(`{"data":[]}`), io.Discard)
 	require.ErrorIs(t, failure, context.Canceled)
 	want := "Request canceled."
 	for _, test := range []struct {
@@ -346,7 +338,7 @@ func CheckTestSavedImageCancellationOutputModes(assembly AssemblyForTest, t *tes
 		t.Run(test.name, func(t *testing.T) {
 			root := readableErrorTestCommand(t, test.args...)
 			var output bytes.Buffer
-			require.NoError(t, assembly.ShowError(root, failure, &output))
+			require.NoError(t, custom.ShowCommandError(root, failure, &output))
 			switch test.format {
 			case "text":
 				require.Equal(t, want+"\n", output.String())
@@ -364,13 +356,13 @@ func CheckTestSavedImageCancellationOutputModes(assembly AssemblyForTest, t *tes
 				require.Equal(t, map[string]any{"message": want}, document)
 			}
 			sinkErr := errors.New("synthetic diagnostic sink failure")
-			require.ErrorIs(t, assembly.ShowError(root, failure, errorSink{sinkErr}), sinkErr)
+			require.ErrorIs(t, custom.ShowCommandError(root, failure, errorSink{sinkErr}), sinkErr)
 			require.ErrorIs(t, failure, context.Canceled)
 		})
 	}
 }
 
-func CheckTestSavedImageCancellationAfterReceiptKeepsSavedResult(assembly AssemblyForTest, t *testing.T) {
+func TestSavedImageCancellationAfterReceiptKeepsSavedResult(t *testing.T) {
 	var fixture bytes.Buffer
 	require.NoError(t, png.Encode(&fixture, image.NewRGBA(image.Rect(0, 0, 1, 1))))
 	encoded := base64.StdEncoding.EncodeToString(fixture.Bytes())
@@ -391,12 +383,12 @@ func CheckTestSavedImageCancellationAfterReceiptKeepsSavedResult(assembly Assemb
 			t.Run(inline+"/"+test.name, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				plan := &imageOutputPlan{directory: t.TempDir(), name: "synthetic-private-image", inline: inline}
-				path := filepath.Join(plan.directory, "synthetic-private-image.png")
+				plan := images.NewOutputPlanForTest(t.TempDir(), "synthetic-private-image", inline)
+				path := filepath.Join(plan.DirectoryForTest(), "synthetic-private-image.png")
 				var receipt bytes.Buffer
 				receiptCalls := 0
-				// This writer is nonterminal, so auto does not request a preview.
-				writer := loadingTestWriter(func(data []byte) (int, error) {
+
+				writer := images.TestLoadingTestWriter(func(data []byte) (int, error) {
 					receiptCalls++
 					require.NoError(t, ctx.Err(), "cancel only after saving and printing the completed path")
 					completed, err := os.ReadFile(path)
@@ -406,8 +398,8 @@ func CheckTestSavedImageCancellationAfterReceiptKeepsSavedResult(assembly Assemb
 					cancel()
 					return n, err
 				})
-				presentation := context.WithValue(ctx, imagePresentationKey{}, imagePresentation{plan, writer})
-				failure := assembly.ShowJSON(response, PresentationForTest{
+				presentation := images.WithPresentationForTest(ctx, plan, writer)
+				failure := custom.ShowJSON(response, custom.ShowJSONOpts{
 					Context: presentation, Operation: imageGenerationOperation, OutputKind: OutputResponse,
 					Format: "auto", Stdout: writer, Stderr: io.Discard,
 				})
@@ -417,19 +409,19 @@ func CheckTestSavedImageCancellationAfterReceiptKeepsSavedResult(assembly Assemb
 				completed, err := os.ReadFile(path)
 				require.NoError(t, err)
 				require.Equal(t, fixture.Bytes(), completed)
-				entries, err := os.ReadDir(plan.directory)
+				entries, err := os.ReadDir(plan.DirectoryForTest())
 				require.NoError(t, err)
 				require.Len(t, entries, 1)
 				require.Equal(t, filepath.Base(path), entries[0].Name())
 				root := readableErrorTestCommand(t, test.args...)
 				for _, interrupted := range []bool{false, true} {
 					wrapped := failure
-					wantStatus := 1 // main's fallback; no native process execution is claimed here.
+					wantStatus := 1
 					if interrupted {
-						wrapped = &imageLoadingInterrupt{failure}
+						wrapped = images.InterruptForTest(failure)
 						wantStatus = 130
 					}
-					wrapped = assembly.WrapError(root, wrapped)
+					wrapped = imageWrapError(root, wrapped)
 					require.ErrorIs(t, wrapped, context.Canceled)
 					status := 1
 					var exit cli.ExitCoder
@@ -438,9 +430,9 @@ func CheckTestSavedImageCancellationAfterReceiptKeepsSavedResult(assembly Assemb
 					}
 					require.Equal(t, wantStatus, status)
 					var diagnostic bytes.Buffer
-					require.NoError(t, assembly.ShowError(root, wrapped, &diagnostic))
+					require.NoError(t, custom.ShowCommandError(root, wrapped, &diagnostic))
 					assertReadableErrorContainsNoPrivateDetails(t, diagnostic.String())
-					require.NotContains(t, diagnostic.String(), plan.directory)
+					require.NotContains(t, diagnostic.String(), plan.DirectoryForTest())
 					require.NotContains(t, diagnostic.String(), encoded)
 					message := diagnostic.String()
 					want := "Images were saved, but the command was canceled. Use the saved files; no need to generate again."
@@ -469,4 +461,14 @@ func CheckTestSavedImageCancellationAfterReceiptKeepsSavedResult(assembly Assemb
 			})
 		}
 	}
+}
+
+type imageSaveCancellationContext struct {
+	context.Context
+	check func()
+}
+
+func (c imageSaveCancellationContext) Err() error {
+	c.check()
+	return c.Context.Err()
 }

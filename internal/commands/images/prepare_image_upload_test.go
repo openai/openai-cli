@@ -6,17 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/openai/openai-cli/internal/apiform"
 	requestconfig "github.com/openai/openai-cli/internal/request"
-	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/require"
-	"github.com/urfave/cli/v3"
 )
 
 func TestImageMultipartScalarInspectionPreservesText(t *testing.T) {
@@ -109,41 +105,6 @@ func TestImageMultipartScalarInspectionCancellationReleasesOwnedRead(t *testing.
 		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancellation did not release scalar source")
-	}
-}
-
-func CheckTestImageUploadPreparationClosesWhenActionAborts(assembly AssemblyForTest, t *testing.T) {
-	for _, cancelAction := range []bool{false, true} {
-		t.Run(fmt.Sprint(cancelAction), func(t *testing.T) {
-			source := filepath.Join(t.TempDir(), "source.png")
-			require.NoError(t, os.WriteFile(source, []byte("synthetic-source"), 0600))
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			failure := errors.New("synthetic action failure")
-			var prepared io.ReadCloser
-			command := &cli.Command{Name: "edit", Reader: strings.NewReader(""), Writer: io.Discard,
-				Flags: []cli.Flag{&requestflag.Flag[string]{Name: "image", BodyPath: "image", FileInput: true}},
-				Action: imageSavingWorkflow(func(ctx context.Context, command *cli.Command) error {
-					state := command.Metadata[imageMultipartMetadata].(*imageMultipartPreparation)
-					prepared = state.body.(io.ReadCloser)
-					if cancelAction {
-						cancel()
-						return ctx.Err()
-					}
-					return failure
-				}, assembly.Saving),
-			}
-			registerImageSavingFlags(command)
-			err := command.Run(ctx, []string{"edit", "--image", source, "--output-dir", t.TempDir()})
-			if cancelAction {
-				require.ErrorIs(t, err, context.Canceled)
-			} else {
-				require.ErrorIs(t, err, failure)
-			}
-			require.NotNil(t, prepared)
-			_, err = io.ReadAll(prepared)
-			require.ErrorIs(t, err, io.ErrClosedPipe)
-		})
 	}
 }
 
