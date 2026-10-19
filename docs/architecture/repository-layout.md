@@ -78,6 +78,13 @@ existing positions and retains the local-command bypass. Native request-configur
 contracts remain with assembly and call the shared APIs directly, preserving
 Windows and WSL selections, test cases, and assertions.
 
+Default client options and base-URL scheme validation live in `internal/request/`.
+They preserve CLI metadata, credential and root-project overrides, selected mTLS
+transport, and caller-supplied middleware order. Feature middleware composition
+stays with request assembly. The generated runtime bridge still reaches the
+shared implementation through temporary `pkg/custom/` adapters; remove these
+adapters through an authoritative generator update.
+
 Multipart encoding and owned upload sources live in `internal/request/`, with
 streaming, retry/redirect, exact-length, header-validation, and cleanup unit tests.
 Request preparation and image/audio settings use the shared upload type while

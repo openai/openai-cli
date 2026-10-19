@@ -39,52 +39,14 @@ import (
 
 var OutputFormats = []string{"auto", "text", "explore", "json", "jsonl", "pretty", "raw", "yaml"}
 
-// ValidateBaseURL checks that a base URL is correctly prefixed with a protocol scheme and produces a better
-// error message than the person would see otherwise if it doesn't.
+// ValidateBaseURL forwards scheme validation for the generated runtime bridge.
 func ValidateBaseURL(value, source string) error {
-	if value != "" && !strings.HasPrefix(value, "http://") && !strings.HasPrefix(value, "https://") {
-		return fmt.Errorf("%s %q is missing a scheme (expected http:// or https://)", source, value)
-	}
-	return nil
+	return requestconfig.ValidateBaseURL(value, source)
 }
 
+// GetDefaultRequestOptions keeps feature middleware composition with its current owner.
 func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
-	opts := []option.RequestOption{
-		option.WithHeader("User-Agent", fmt.Sprintf("OpenAI/CLI %s", Version)),
-		option.WithHeader("X-Stainless-Lang", "cli"),
-		option.WithHeader("X-Stainless-Package-Version", Version),
-		option.WithHeader("X-Stainless-Runtime", "cli"),
-		option.WithHeader("X-Stainless-CLI-Command", cmd.FullName()),
-		option.WithMiddleware(captureAudioText),
-		option.WithMiddleware(captureSaveReceiptPolicy(cmd)),
-	}
-	if cmd.IsSet("api-key") {
-		opts = append(opts, option.WithAPIKey(cmd.String("api-key")))
-	}
-	if cmd.IsSet("admin-api-key") {
-		opts = append(opts, option.WithAdminAPIKey(cmd.String("admin-api-key")))
-	}
-	if cmd.IsSet("organization") {
-		opts = append(opts, option.WithOrganization(cmd.String("organization")))
-	}
-	// Endpoint body fields named project must not select the request's project context.
-	root := cmd.Root()
-	if root.IsSet("project") {
-		opts = append(opts, option.WithProject(root.String("project")))
-	}
-	if cmd.IsSet("webhook-secret") {
-		opts = append(opts, option.WithWebhookSecret(cmd.String("webhook-secret")))
-	}
-
-	// Override base URL if the --base-url flag is provided
-	if baseURL := cmd.String("base-url"); baseURL != "" {
-		opts = append(opts, option.WithBaseURL(baseURL))
-	}
-	if httpClient, ok := cmd.Root().Metadata[requestconfig.MTLSHTTPClientMetadata].(*http.Client); ok {
-		opts = append(opts, option.WithHTTPClient(httpClient))
-	}
-
-	return opts
+	return requestconfig.DefaultOptions(cmd, Version, captureAudioText, captureSaveReceiptPolicy(cmd))
 }
 
 func isTerminal(w io.Writer) bool {

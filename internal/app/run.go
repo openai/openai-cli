@@ -101,7 +101,7 @@ func runWithRequestConfiguration(ctx context.Context, app *cli.Command, args []s
 				restoreBaseURL = true
 			}
 		} else if !localUtility && baseURLSet {
-			if err := custom.ValidateBaseURL(baseURL, "OPENAI_BASE_URL"); err != nil {
+			if err := requestconfig.ValidateBaseURL(baseURL, "OPENAI_BASE_URL"); err != nil {
 				return ctx, err
 			}
 		}
