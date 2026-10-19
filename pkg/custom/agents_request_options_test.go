@@ -3,6 +3,7 @@ package custom
 import (
 	"context"
 	"fmt"
+	"github.com/openai/openai-cli/internal/commands"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -67,7 +68,7 @@ func TestAgentsSourceNoRetryPreservesMutationAndReadPolicies(t *testing.T) {
 					},
 				}}}},
 			}
-			configureCommandSubgroups(root)
+			commands.ConfigureSubgroups(root)
 			err := root.Run(context.Background(), append([]string{"openai"}, test.args...))
 			var apiError *openai.Error
 			require.ErrorAs(t, err, &apiError)

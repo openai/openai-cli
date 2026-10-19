@@ -195,9 +195,12 @@ func TestMainTaskSpeechPreservesJSONInputAndBinaryOutput(t *testing.T) {
 			if index == 0 {
 				want = got
 				require.Zero(t, want.code)
-				require.Empty(t, want.stderr)
 				if output == "-" {
+					require.Empty(t, want.stderr)
 					require.Equal(t, audio, want.stdout)
+				} else {
+					require.Empty(t, want.stdout)
+					require.Equal(t, "Wrote output to: "+path+"\n", want.stderr)
 				}
 			}
 			require.Equal(t, want, got, route)

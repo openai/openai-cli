@@ -307,7 +307,7 @@ func TestMainReadableKeepsAPIErrorOnStderr(t *testing.T) {
 			t.Fatalf("error routing changed: %+v", got)
 		}
 		if len(prefix) == 0 || prefix[0] == "--format" {
-			if !strings.HasPrefix(got.stderr, "Request failed (400 Bad Request).\n") || strings.Contains(got.stderr, "synthetic invalid request") {
+			if !strings.HasPrefix(got.stderr, "HTTP 400: Bad Request.\n") || strings.Contains(got.stderr, "synthetic invalid request") {
 				t.Fatalf("expected a safe readable error summary: %+v", got)
 			}
 			continue

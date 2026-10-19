@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/openai/openai-cli/pkg/transformers"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 )
 
 func TestAgentsStreamFailurePreservesTrailingRecords(t *testing.T) {
@@ -24,7 +24,7 @@ func TestAgentsStreamFailurePreservesTrailingRecords(t *testing.T) {
 		t.Fatal("unexpected extra record")
 	}
 	var outcome *streamResultError
-	if !errors.As(stream.Err(), &outcome) || outcome.message != "the agent turn failed" {
+	if !errors.As(stream.Err(), &outcome) || outcome.Message != "the agent turn failed" {
 		t.Fatalf("outcome=%v", stream.Err())
 	}
 }

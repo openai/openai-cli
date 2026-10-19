@@ -7,9 +7,13 @@ import (
 	"strings"
 	"testing"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
+
+const agentsHintOmittedEvent = `{"type":"agent.output.command_execution_output.delta","session_id":"sess_test","turn_id":"turn_test","item_id":"item_test","output_index":0,"delta":"synthetic tool transcript"}`
+const agentsHintCompletedEvent = `{"type":"agent.session.turn.completed","session_id":"sess_test","turn_id":"turn_test","turn":{"id":"turn_test","status":"completed","subagent_id":null}}`
 
 func TestAgentsStreamSummaryHintUsesOutputPolicy(t *testing.T) {
 	for _, test := range []struct {
@@ -30,22 +34,21 @@ func TestAgentsStreamSummaryHintUsesOutputPolicy(t *testing.T) {
 	} {
 		t.Run(strings.Join(test.flags, " "), func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			stdout.WriteString("selected result\n")
 			root := &cli.Command{Name: "openai", Flags: []cli.Flag{
 				&cli.StringFlag{Name: "format"}, &cli.StringFlag{Name: "format-error"},
 				&cli.StringFlag{Name: "transform"}, &cli.StringFlag{Name: "transform-error"},
 				&cli.BoolFlag{Name: "raw-output"},
 			}, Commands: []*cli.Command{{Name: "synthetic", Action: func(ctx context.Context, command *cli.Command) error {
-				return writeAgentsStreamSummaryHint(ShowJSONOpts{
+				return ShowJSONIterator(streamItems(agentsHintOmittedEvent, agentsHintCompletedEvent), -1, ShowJSONOpts{
 					Context: ctx, Operation: "(resource) beta.agents.sessions.events > (method) stream", OutputKind: OutputStreamEvent,
 					Format: command.Root().String("format"), Transform: command.Root().String("transform"),
 					RawOutput: command.Root().Bool("raw-output"), Stdout: &stdout, Stderr: &stderr,
-				}, true)
+				})
 			}}}}
 			configureOutputPolicy(root)
 			args := append([]string{"openai"}, test.flags...)
 			require.NoError(t, root.Run(context.Background(), append(args, "synthetic")))
-			require.Equal(t, "selected result\n", stdout.String())
+			require.NotContains(t, stdout.String(), "Some fields omitted.")
 			if test.want {
 				require.Equal(t, "Some fields omitted. Use --format jsonl for complete events.\n", stderr.String())
 			} else {
@@ -57,17 +60,19 @@ func TestAgentsStreamSummaryHintUsesOutputPolicy(t *testing.T) {
 
 func TestAgentsStreamSummaryHintPreservesDiagnosticFailure(t *testing.T) {
 	cause := errors.New("synthetic diagnostic write failure")
+	var stdout bytes.Buffer
 	opts := ShowJSONOpts{Context: context.Background(), Format: "text",
 		Operation: "(resource) beta.agents.sessions.events > (method) stream", OutputKind: OutputStreamEvent,
-		Stderr: outputPolicyFailureWriter{cause},
+		Stdout: &stdout, Stderr: outputPolicyFailureWriter{cause},
 	}
-	err := writeAgentsStreamSummaryHint(opts, true)
+	err := ShowJSONIterator(streamItems(agentsHintOmittedEvent, agentsHintCompletedEvent), -1, opts)
 	require.ErrorIs(t, err, cause)
-	var diagnostic *diagnosticWriteError
+	var diagnostic *clioutput.DiagnosticError
 	require.ErrorAs(t, err, &diagnostic)
-	require.NoError(t, writeAgentsStreamSummaryHint(opts, false))
+	require.Contains(t, stdout.String(), "completed")
+	require.NoError(t, ShowJSONIterator(streamItems(agentsHintCompletedEvent), -1, opts))
 	opts.Operation = "(resource) responses > (method) create"
-	require.NoError(t, writeAgentsStreamSummaryHint(opts, true))
+	require.NoError(t, ShowJSONIterator(streamItems(`{"type":"response.completed"}`), -1, opts))
 }
 
 func TestAgentsStreamRuntimeWritesOnePolicyControlledHint(t *testing.T) {

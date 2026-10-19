@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/readable"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
 func imagePickerTitle(value string) string {
@@ -114,8 +115,8 @@ func (m *imagePicker) View() tea.View {
 	}
 	lines := []string{strong.Render("Create image")}
 	if height >= 18 && m.width >= 50 {
-		prompt = imagePickerPromptFit(prompt, width-4)
-		caption := "╭─ Prompt "
+		prompt = cliterminal.FitPrompt(prompt, width-4)
+		caption := "╭ Prompt "
 		// Match the painter's conservative width budget. Position the closing
 		// edge explicitly because terminals disagree on emoji cluster widths.
 		row := border.Render("│") + input.Render(ansi.EraseCharacter(width-2)+" "+prompt+" ") +
@@ -131,7 +132,7 @@ func (m *imagePicker) View() tea.View {
 		}
 		lines = append(lines, border.Render(caption), "  "+prompt)
 	}
-	heading := strong.Render(m.heading())
+	heading := strong.Render("  " + m.heading())
 	if m.width < 60 && m.page != "path" {
 		heading += muted.Render(" · Tab switch")
 	}
@@ -146,9 +147,11 @@ func (m *imagePicker) View() tea.View {
 		}
 		lines = append(lines, highlight(path, true))
 	}
-	// Prompt, command and help remain visible. The option list scrolls
+	// Prompt, command and contextual help remain visible. The option list scrolls
 	// independently, keeping every selected choice accessible in a short terminal.
-	reserved := len(lines) + 1 + len(commandLines)
+	showFooter := m.focus != "prompt" || !m.hidePromptHint
+	// Keep the same layout when a resumed prompt hides its routine hint.
+	reserved := len(lines) + len(commandLines) + 1
 	if m.note != "" {
 		reserved++
 	}
@@ -158,15 +161,24 @@ func (m *imagePicker) View() tea.View {
 		reserved++
 	}
 	available := max(1, height-reserved)
-	start := max(0, min(m.selected-available+1, len(rows)-available))
-	end := min(len(rows), start+available)
+	start, end := m.optionWindow(len(rows), available)
+	choiceWidth := 0
+	for _, row := range rows {
+		if row.id == "choice" {
+			choiceWidth = max(choiceWidth, ansi.StringWidth(row.label))
+		}
+	}
+	choiceWidth = min(choiceWidth, width-5)
 	for i := start; i < end; i++ {
 		row := rows[i]
 		text := row.label
 		if row.id == "choice" {
-			field := m.field
-			if row.value == m.value(field) {
-				text += "  ✓"
+			text = ansi.Truncate(text, choiceWidth, "…")
+			text += strings.Repeat(" ", choiceWidth-ansi.StringWidth(text)) + "  "
+			if row.value == m.value(m.field) {
+				text += "✓"
+			} else {
+				text += " "
 			}
 			if row.detail != "" {
 				text += "  " + row.detail
@@ -201,7 +213,7 @@ func (m *imagePicker) View() tea.View {
 				footer = "Ctrl+C exit · Enter run · ↑↓ scroll"
 			}
 		}
-		if imagePickerShellQuoter(m.shell) != nil && ansi.StringWidth(footer+" · Ctrl+P print") <= width {
+		if cliterminal.ShellQuoter(m.shell) != nil && ansi.StringWidth(footer+" · Ctrl+P print") <= width {
 			footer += " · Ctrl+P print"
 		}
 	} else if m.focus == "path" {
@@ -219,16 +231,37 @@ func (m *imagePicker) View() tea.View {
 	if m.note != "" {
 		lines = append(lines, muted.Render(imagePickerLine(m.note)))
 	}
-	lines = append(lines, muted.Render(footer))
+	if showFooter {
+		lines = append(lines, muted.Render(footer))
+	} else {
+		lines = append(lines, "")
+	}
 	view.Content = m.fit(lines, width, height)
 	return view
+}
+
+// Cache only the visible option window. Repeated views keep the same offset;
+// page changes reset it, and selection or size changes move it only as needed.
+func (m *imagePicker) optionWindow(length, available int) (start, end int) {
+	if m.optionPage != m.page || m.optionField != m.field {
+		m.optionOffset, m.optionPage, m.optionField = 0, m.page, m.field
+	}
+	start = max(0, min(m.optionOffset, length-available))
+	selected := max(0, min(m.selected, length-1))
+	if selected < start {
+		start = selected
+	} else if selected >= start+available {
+		start = selected - available + 1
+	}
+	m.optionOffset = start
+	return start, min(length, start+available)
 }
 
 // Fit complete clusters using the same width bound as the inline painter.
 func imagePickerPromptTail(text string, width int) string {
 	remaining := 0
 	for rest := text; len(rest) > 0; {
-		_, cells, read := imagePickerSequence(rest)
+		_, cells, read := cliterminal.Sequence(rest)
 		remaining += cells
 		rest = rest[read:]
 	}
@@ -236,29 +269,11 @@ func imagePickerPromptTail(text string, width int) string {
 		return text
 	}
 	for remaining > width-1 {
-		_, cells, read := imagePickerSequence(text)
+		_, cells, read := cliterminal.Sequence(text)
 		remaining -= cells
 		text = text[read:]
 	}
 	return "…" + text
-}
-
-func imagePickerPromptFit(text string, width int) string {
-	var result strings.Builder
-	used := 0
-	for len(text) > 0 {
-		sequence, cells, read := imagePickerSequence(text)
-		if used+cells > width || used+cells == width && read < len(text) {
-			result.WriteRune('…')
-			used++
-			break
-		}
-		result.WriteString(sequence)
-		used += cells
-		text = text[read:]
-	}
-	result.WriteString(strings.Repeat(" ", max(0, width-used)))
-	return result.String()
 }
 
 // Leave room for previous shell output while keeping the active controls short.
@@ -277,7 +292,7 @@ func (m *imagePicker) commandPreview(width, height int) ([]string, int, int) {
 }
 
 func (m *imagePicker) commandLines(width int) []string {
-	command := formatImagePickerCommand(m.settings.args(), m.shell)
+	command := cliterminal.FormatCommand(m.settings.args(), m.shell)
 	if command == "" {
 		command = imagePickerUnsupportedShell
 	}
@@ -285,7 +300,7 @@ func (m *imagePicker) commandLines(width int) []string {
 	var line strings.Builder
 	used, width := 0, max(1, width)
 	for len(command) > 0 {
-		sequence, cells, read := imagePickerSequence(command)
+		sequence, cells, read := cliterminal.Sequence(command)
 		command = command[read:]
 		if used > 0 && used+cells > width {
 			lines = append(lines, line.String())

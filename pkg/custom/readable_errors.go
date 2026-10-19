@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
@@ -27,7 +29,15 @@ func apiErrorValue(apierr *openai.Error) gjson.Result {
 	raw := apierr.RawJSON()
 	if gjson.Valid(raw) {
 		value := gjson.Parse(raw)
-		if value.Type != gjson.Null {
+		hasDetails := value.Type != gjson.Null
+		if value.IsObject() {
+			hasDetails = false
+			value.ForEach(func(_, _ gjson.Result) bool {
+				hasDetails = true
+				return false
+			})
+		}
+		if hasDetails {
 			return value
 		}
 	}
@@ -62,6 +72,22 @@ func errorOutputFormat(root *cli.Command) string {
 // prose, request values, URLs or arbitrary local diagnostics. Both renderer sinks
 // use out, including explorer output and warnings. Writer failures are returned.
 func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
+	return withBatchErrorOutput(failure, out, func(ctx context.Context, destination io.Writer) error {
+		return showCommandError(ctx, root, failure, destination)
+	})
+}
+
+// ShowCommandErrorFallback keeps secondary cancellation diagnostics bounded too.
+// Its result retains the original presentation failure and any fallback failure.
+func ShowCommandErrorFallback(failure, presentationErr error, out io.Writer) error {
+	fallbackErr := withBatchErrorOutput(failure, out, func(_ context.Context, destination io.Writer) error {
+		_, err := fmt.Fprintln(destination, "Could not display the error.")
+		return err
+	})
+	return errors.Join(presentationErr, fallbackErr)
+}
+
+func showCommandError(ctx context.Context, root *cli.Command, failure error, out io.Writer) error {
 	if failure == nil {
 		return nil
 	}
@@ -71,6 +97,9 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 		return nil
 	}
 	format := errorOutputFormat(root)
+	if format == "explore" && interruptedBatchError(failure) {
+		format = "json"
+	}
 	// A rejected format can still be present in the parsed flag state. Present
 	// its validation error using text, rather than failing to render it again.
 	if !slices.Contains(OutputFormats, format) {
@@ -82,10 +111,13 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 	isStream := !errors.Is(failure, context.Canceled) && errors.As(failure, &streamerr)
 	if format == "text" && root.String("transform-error") == "" {
 		message := ""
-		if isAPI && !errors.Is(failure, context.Canceled) {
+		var batchFailure *batchWorkflowError
+		if errors.As(failure, &batchFailure) {
+			message = batchFailure.message
+		} else if isAPI && !errors.Is(failure, context.Canceled) {
 			message = readableAPIErrorMessage(root, failure, apierr)
 		} else if isStream {
-			message = readableStreamErrorMessage
+			message = readableStreamErrorText
 		} else {
 			message = localErrorMessage(root, failure)
 		}
@@ -113,25 +145,26 @@ func ShowCommandError(root *cli.Command, failure error, out io.Writer) error {
 		value = gjson.ParseBytes(data)
 	}
 	return ShowJSON(value, ShowJSONOpts{
-		Context:   outputPolicyContext(context.Background(), root),
-		Operation: "", OutputKind: OutputUnspecified,
+		Context: outputPolicyContext(ctx, root), Operation: "", OutputKind: OutputUnspecified,
 		Format: format, ExplicitFormat: root.IsSet("format-error") || root.IsSet("format"),
 		Stdout: out, Stderr: out, Title: "Error", Transform: root.String("transform-error"),
 	})
 }
 
+// Keep the existing structured fallback payload independent of human guidance.
 const readableStreamErrorMessage = "The response stream failed. Output may be incomplete.\nFor API error details, add --format-error json."
+const readableStreamErrorText = "The response stream failed.\nOutput may be incomplete.\nAPI error details: --format-error json."
 
 func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Error) string {
-	invocation := errorHelpInvocation(root)
+	invocation := clihelp.DisplayInvocation(root)
 	message := "The API could not complete the request."
 	switch apierr.StatusCode {
 	case http.StatusUnauthorized:
-		message = "Authentication failed. Check your API key, organization, and project.\nKey setup: " + invocation + " help setup"
+		message = "Check API key, organization and project.\nKey setup: " + invocation + " help setup"
 	case http.StatusForbidden:
-		message = "Access denied. Check the key's permissions and your project's access to this resource."
+		message = "Check your key's permissions.\nCheck project access to this resource."
 	case http.StatusNotFound:
-		message = "The requested resource or model was not found or is not available to your key."
+		message = "Check the resource or model ID.\nCheck your key's access to it."
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		var contextual *commandError
 		var command *cli.Command
@@ -140,30 +173,60 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 		}
 		message = readableAPIArgumentMessage(apierr, command)
 	case http.StatusTooManyRequests:
-		message = "Rate limit reached. Wait before trying again."
+		message = "Wait before trying again."
 		switch apierr.Code {
 		case "insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded":
-			message = "API usage or billing limit reached. Check your project's billing and limits."
+			message = "API usage or billing limit reached.\nCheck your project's billing and limits."
 		}
 	case http.StatusConflict:
-		message = "The resource changed or is not ready for this operation. Check its current status."
+		message = "The resource changed or is not ready.\nCheck its current status."
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
-		message = "The request timed out. The API may have received it; check its status before repeating it."
+		message = "The request timed out.\nThe API may have received the request.\nCheck its status before trying again."
 	default:
 		if apierr.StatusCode >= 500 {
-			message = "The API is temporarily unavailable. The request may have been received; check its status before repeating it."
+			message = "The API is temporarily unavailable.\nThe API may have received the request.\nCheck its status before trying again."
 		}
 	}
-	return fmt.Sprintf("Request failed (%d %s).\n%s\nFor API error details, add --format-error json.", apierr.StatusCode, http.StatusText(apierr.StatusCode), message)
+	if apierr.StatusCode > 0 {
+		status := fmt.Sprintf("HTTP %d", apierr.StatusCode)
+		if reason := http.StatusText(apierr.StatusCode); reason != "" {
+			status += ": " + reason
+		}
+		header := status + ".\n"
+		if requestID := readableAPIRequestID(apierr); requestID != "" {
+			header += "Request ID: " + requestID + "\n"
+		}
+		message = header + message
+	}
+	return message + "\nAPI error details: --format-error json."
 }
 
-// Help's invocation is local display metadata, not part of the API response.
-func errorHelpInvocation(root *cli.Command) string {
-	invocation, _ := root.Metadata["help-invocation"].(string)
-	if invocation == "" {
-		return "openai"
+// Accept only bounded, single-line returned identifiers.
+func readableAPIRequestID(apierr *openai.Error) string {
+	if apierr == nil {
+		return ""
 	}
-	return readable.Text(invocation)
+	// A caller-supplied header can be reflected by the server. Inspect keys only.
+	if apierr.Request != nil {
+		for name := range apierr.Request.Header {
+			if strings.EqualFold(name, "X-Request-ID") {
+				return ""
+			}
+		}
+	}
+	if apierr.Response == nil {
+		return ""
+	}
+	requestID := apierr.Response.Header.Get("X-Request-ID")
+	if len(requestID) == 0 || len(requestID) > 256 {
+		return ""
+	}
+	for _, c := range requestID {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
+			return ""
+		}
+	}
+	return requestID
 }
 
 var readableParameterPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:(?:\.[A-Za-z0-9_]+)|(?:\[[0-9]+\]))*$`)
@@ -213,7 +276,7 @@ func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command) stri
 	if command == nil {
 		return message + "\nCheck your arguments with --help."
 	}
-	invocation := errorHelpInvocation(command.Root())
+	invocation := clihelp.DisplayInvocation(command.Root())
 	pathToCommand := strings.TrimPrefix(command.FullName(), command.Root().Name+" ")
 	return message + "\nOptions and examples: " + invocation + " help " + pathToCommand
 }
@@ -272,7 +335,7 @@ func readableParameterChoices(command *cli.Command, path string) string {
 	// Keep choices scoped to API resources whose contract declares them. A
 	// different model can impose additional restrictions, so these are guidance,
 	// not a new client-side validation policy.
-	switch commandResourceName(command) {
+	switch localcommands.ResourceName(command) {
 	case "embeddings":
 		if path == "encoding_format" {
 			return "float or base64."

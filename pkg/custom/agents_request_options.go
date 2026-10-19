@@ -1,6 +1,7 @@
 package custom
 
 import (
+	"github.com/openai/openai-cli/internal/commands"
 	"net/http"
 	"os"
 	"strings"
@@ -16,7 +17,7 @@ func agentsRequestOptions(command *cli.Command) []option.RequestOption {
 	if command.Name != "create" {
 		return nil
 	}
-	switch commandResourceName(command) {
+	switch commands.ResourceName(command) {
 	case "beta:agents", "beta:agents:sessions":
 		return []option.RequestOption{option.WithMaxRetries(0)}
 	}
@@ -29,7 +30,7 @@ func agentsResolvedRequestOptions(command *cli.Command, parameterHeaders map[str
 	if command.Name != "create" {
 		return nil
 	}
-	switch commandResourceName(command) {
+	switch commands.ResourceName(command) {
 	case "beta:agents:sessions":
 		return agentsSessionCreationRequestOptions(body)
 	case "beta:agents:sessions:events":

@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"testing"
 
-	"github.com/openai/openai-cli/pkg/transformers"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,12 +21,11 @@ func agentsExplorerRecords() []string {
 	return values
 }
 
-func agentsExplorerOutput(values []string, limit int64) *outputIterator[any] {
+func agentsExplorerOutput(values []string, limit int64) *clioutput.Iterator[any] {
 	route := transformers.Route{Operation: "(resource) beta.agents.sessions.events > (method) stream", OutputKind: OutputStreamEvent}
-	return &outputIterator[any]{
-		source:  &agentsStream[any]{source: streamItems(values...), route: route},
-		context: context.Background(), transform: transformers.Identity, route: route, remaining: limit,
-	}
+	return clioutput.NewIterator(&agentsStream[any]{source: streamItems(values...), route: route}, clioutput.IteratorOptions{
+		Context: context.Background(), Transform: transformers.Identity, Route: route, Limit: limit,
+	})
 }
 
 func TestAgentsExplorerKeepsFailureTailAvailableAfterPreload(t *testing.T) {
@@ -38,7 +38,7 @@ func TestAgentsExplorerKeepsFailureTailAvailableAfterPreload(t *testing.T) {
 		require.NoError(t, explorer.Err(), "preload must not interpret an observed outcome as EOF")
 		var failure *streamResultError
 		require.ErrorAs(t, original.Err(), &failure, "local explorer exit must retain the observed failure")
-		require.Equal(t, "the agent turn failed", failure.message)
+		require.Equal(t, "the agent turn failed", failure.Message)
 	}
 	require.False(t, explorer.Next())
 	require.ErrorContains(t, explorer.Err(), "the agent turn failed")

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"strings"
 	"testing"
 
@@ -24,7 +25,7 @@ func TestAgentsResourceRuntimeReportsTraceOmission(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, stdout.String(), "turn_synthetic")
 	require.NotContains(t, stdout.String(), "trace detail")
-	require.Equal(t, resourceSummaryHint+"\n", stderr.String())
+	require.Equal(t, clioutput.ResourceSummaryHint+"\n", stderr.String())
 }
 
 func TestAgentsResourceRuntimeSummarizesRequiredUpdatedAt(t *testing.T) {
@@ -38,7 +39,7 @@ func TestAgentsResourceRuntimeSummarizesRequiredUpdatedAt(t *testing.T) {
 	require.Contains(t, stdout.String(), "Analyst")
 	require.NotContains(t, stdout.String(), "synthetic instructions")
 	require.NotContains(t, stdout.String(), "Updated at")
-	require.Equal(t, resourceSummaryHint+"\n", stderr.String())
+	require.Equal(t, clioutput.ResourceSummaryHint+"\n", stderr.String())
 }
 
 func TestAgentsResourceRuntimePreservesDataModesAndExtraction(t *testing.T) {
@@ -53,7 +54,7 @@ func TestAgentsResourceRuntimePreservesDataModesAndExtraction(t *testing.T) {
 				require.NoError(t, err)
 				require.Contains(t, stdout.String(), "synthetic instructions")
 				require.Contains(t, stdout.String(), "updated_at")
-				require.NotContains(t, stderr.String(), resourceSummaryHint)
+				require.NotContains(t, stderr.String(), clioutput.ResourceSummaryHint)
 			})
 		}
 	}
@@ -87,7 +88,7 @@ func TestAgentsResourceRuntimeHintHonorsDiagnosticPolicy(t *testing.T) {
 			require.NoError(t, root.Run(context.Background(), append([]string{"openai"}, flags...)))
 			require.NotContains(t, stdout.String(), "synthetic instructions")
 			if len(flags) == 0 {
-				require.Equal(t, resourceSummaryHint+"\n", stderr.String())
+				require.Equal(t, clioutput.ResourceSummaryHint+"\n", stderr.String())
 			} else {
 				require.Empty(t, stderr.String())
 			}
@@ -105,7 +106,7 @@ func TestAgentsResourceRuntimeListHintsOnceAndPreservesFailures(t *testing.T) {
 		if failedSink {
 			opts.Stderr = resourceSummaryTestWriter(func(data []byte) (int, error) {
 				require.Equal(t, 3, source.calls)
-				require.Equal(t, resourceSummaryHint+"\n", string(data))
+				require.Equal(t, clioutput.ResourceSummaryHint+"\n", string(data))
 				return 0, hintErr
 			})
 		}
@@ -114,11 +115,11 @@ func TestAgentsResourceRuntimeListHintsOnceAndPreservesFailures(t *testing.T) {
 		if failedSink {
 			require.ErrorIs(t, err, hintErr)
 		} else {
-			require.Equal(t, resourceSummaryHint+"\n", stderr.String())
+			require.Equal(t, clioutput.ResourceSummaryHint+"\n", stderr.String())
 		}
 		require.Equal(t, 2, strings.Count(stdout.String(), "turn_synthetic"))
 		require.NotContains(t, stdout.String(), "trace detail")
-		require.NotContains(t, stdout.String(), resourceSummaryHint)
+		require.NotContains(t, stdout.String(), clioutput.ResourceSummaryHint)
 	}
 }
 
@@ -142,6 +143,6 @@ func TestAgentsResourceRuntimeCreateAndUpdateRetainSummaryHint(t *testing.T) {
 			Stdout: &stdout, Stderr: &stderr,
 		}))
 		require.NotContains(t, stdout.String(), "synthetic instructions")
-		require.Equal(t, resourceSummaryHint+"\n", stderr.String())
+		require.Equal(t, clioutput.ResourceSummaryHint+"\n", stderr.String())
 	}
 }

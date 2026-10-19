@@ -25,7 +25,7 @@ func TestImagePickerLayoutCommonSettingsVisible(t *testing.T) {
 	for _, focus := range []string{"prompt", "options", "command"} {
 		m.focus = focus
 		view := ansi.Strip(m.View().Content)
-		require.Contains(t, view, "╭─ Prompt")
+		require.Contains(t, view, "╭ Prompt")
 		for _, row := range m.rows() {
 			require.Contains(t, view, row.label, "focus=%s row=%s", focus, row.id)
 		}
@@ -236,7 +236,7 @@ func TestImagePickerLayoutNoColorKeepsSelectionVisible(t *testing.T) {
 			require.Regexp(t, `^\x1b\[(?:0|1|22)?m$`, sequence, "NO_COLOR permits emphasis without SGR colors")
 		}
 		require.Contains(t, ansi.Strip(view), "› Transparent")
-		require.Contains(t, ansi.Strip(view), "Auto  ✓")
+		require.Regexp(t, `(?m)^\s+Auto +✓`, ansi.Strip(view))
 		require.Contains(t, ansi.Strip(view), "Ctrl+C exit")
 	}
 }

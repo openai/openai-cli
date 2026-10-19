@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestMainDispatchOutputPipedFormatsIgnoreForcedDecoration(t *testing.T) {
@@ -118,6 +119,11 @@ func TestMainDispatchOutputVerboseKeepsDataAndProtectsMachineErrors(t *testing.T
 				strings.Contains(got.stderr, "Command result:") != tc.verbose || strings.Contains(got.stderr, "synthetic-private-organization") {
 				t.Fatalf("verbose policy changed data, privacy, or failure status: %+v", got)
 			}
+			if tc.verbose {
+				removeVerboseElapsed(t, got.stderr)
+			} else if strings.Contains(got.stderr, "Elapsed:") {
+				t.Fatalf("suppressed verbose timing reached stderr: %+v", got)
+			}
 			if tc.failure && !tc.verbose {
 				var detail map[string]any
 				if json.Unmarshal([]byte(got.stderr), &detail) != nil || got.stdout != "" {
@@ -190,9 +196,53 @@ func TestMainDispatchOutputVerboseBinaryKeepsBytesAndLabelsFormatOption(t *testi
 	}))
 	defer server.Close()
 	got := runReadableCommand(t, server, "--verbose", "files", "content", "file_synthetic", "--output", "-")
-	if got.code != 0 || got.stdout != payload || got.stderr != "Command: files content\nFormat option: auto\nCommand result: completed\n" {
+	details, _ := removeVerboseElapsed(t, got.stderr)
+	if got.code != 0 || got.stdout != payload || details != "Command: files content\nFormat option: auto\nCommand result: completed\n" {
 		t.Fatalf("verbose changed binary data or reported its bytes as text: %+v", got)
 	}
+}
+
+func TestMainDispatchOutputVerboseElapsedIncludesCommandWork(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		time.Sleep(50 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, readableModelResponse)
+	}))
+	defer server.Close()
+	got := runReadableCommand(t, server, "--verbose", "--format", "raw", "--format-error", "text", "models", "retrieve", "model_synthetic")
+	details, elapsed := removeVerboseElapsed(t, got.stderr)
+	if got.code != 0 || got.stdout != readableModelResponse+"\n" ||
+		details != "Command: models retrieve\nFormat option: raw\nCommand result: completed\n" || requests.Load() != 1 {
+		t.Fatalf("timing changed data, diagnostics, requests, or status: %+v; requests=%d", got, requests.Load())
+	}
+	if elapsed < 40*time.Millisecond {
+		t.Fatalf("elapsed time omitted delayed command work: %s", elapsed)
+	}
+}
+
+func removeVerboseElapsed(t *testing.T, details string) (string, time.Duration) {
+	t.Helper()
+	var remaining strings.Builder
+	var elapsed time.Duration
+	count := 0
+	for line := range strings.SplitAfterSeq(details, "\n") {
+		if value, ok := strings.CutPrefix(line, "Elapsed: "); ok {
+			count++
+			var err error
+			elapsed, err = time.ParseDuration(strings.TrimSuffix(value, "\n"))
+			if err != nil || elapsed < 0 || elapsed%time.Millisecond != 0 {
+				t.Fatalf("invalid rounded elapsed time in stderr: %q", line)
+			}
+		} else {
+			remaining.WriteString(line)
+		}
+	}
+	if count != 1 {
+		t.Fatalf("stderr must contain one elapsed time, got %d: %q", count, details)
+	}
+	return remaining.String(), elapsed
 }
 
 func TestMainDispatchOutputQuietPreservesSavedImagePaths(t *testing.T) {

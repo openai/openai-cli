@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/imageoutput"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -55,18 +56,28 @@ type imageOutputPlan struct {
 	diagnostics     io.Writer
 	partialImages   int64
 	stopLoading     func()
+	loadingPrompt   string
+	loadingStage    func(imageLoadingStage)
 }
 
 // A private classification carries locally authored guidance through the shared
 // error presenter. Causes remain available to errors.Is without printing data.
 type imageSavingError struct {
-	message string
-	cause   error
+	message          string
+	cause            error
+	preserveOnCancel bool
 }
 
-func (e *imageSavingError) Error() string                  { return e.message }
-func (e *imageSavingError) Unwrap() error                  { return e.cause }
-func imageSavingFailure(message string, cause error) error { return &imageSavingError{message, cause} }
+func (e *imageSavingError) Error() string { return e.message }
+func (e *imageSavingError) Unwrap() error { return e.cause }
+func imageSavingFailure(message string, cause error) error {
+	return &imageSavingError{message: message, cause: cause}
+}
+
+// Only path-free saving outcomes opt in; other image errors can include private paths.
+func imageSavingResultFailure(message string, cause error) error {
+	return &imageSavingError{message: message, cause: cause, preserveOnCancel: true}
+}
 
 func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Result) (*imageOutputPlan, bool, error) {
 	streaming := body.Get("stream").Type == gjson.True
@@ -128,6 +139,8 @@ func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Re
 		return nil, false, imageSavingFailure("Could not use this image filename. Try a shorter --name or another --output-dir.", err)
 	}
 	plan := &imageOutputPlan{directory: directory, name: name, defaults: make(map[string]any), partialImages: partials}
+	// File, stdin, and other direct request contents are not display text.
+	plan.loadingPrompt, _ = ctx.Value(imagePickerLoadingPromptKey{}).(string)
 	set := func(field string, value any) {
 		plan.defaults[field] = value
 		plan.options = append(plan.options, option.WithJSONSet(field, value))
@@ -171,16 +184,22 @@ func prepareImageSaving(ctx context.Context, command *cli.Command, body gjson.Re
 }
 
 func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writer) error {
+	p.setLoadingStage(imageLoadingSaving)
 	saved, saveErr := imageoutput.SaveResponse(ctx, response, p.directory, p.name)
+	if saveErr == nil && len(saved) > 0 {
+		p.setLoadingStage(imageLoadingSaved)
+	}
 	p.stopLoadingFeedback()
 	previewOutput := out
-	out = outputWriter{ctx: context.WithoutCancel(ctx), out: out}
+	out = clioutput.Writer{Context: context.WithoutCancel(ctx), Sink: out}
 	if saveErr != nil {
 		message := "The API responded, but no images could be saved. Check the image data and output folder before trying again."
 		if len(saved) > 0 {
 			message = fmt.Sprintf("Saved %d image(s), but could not save the entire response. The listed files are kept; do not generate those images again.", len(saved))
+			saveErr = imageSavingResultFailure(message, saveErr)
+		} else {
+			saveErr = imageSavingFailure(message, saveErr)
 		}
-		saveErr = imageSavingFailure(message, saveErr)
 	}
 	for _, file := range saved {
 		// Quoting keeps paths useful without allowing terminal control injection.
@@ -190,16 +209,20 @@ func (p *imageOutputPlan) save(ctx context.Context, response []byte, out io.Writ
 			if saveErr != nil {
 				message = fmt.Sprintf("Saved %d image(s), but could not save the entire response or print all saved paths. Check the output folder before generating again.", len(saved))
 			}
-			return imageSavingFailure(message, errors.Join(saveErr, err))
+			return imageSavingResultFailure(message, errors.Join(saveErr, err))
 		}
 	}
 	if saveErr != nil {
 		return saveErr
 	}
-	for _, file := range saved {
-		if err := displaySavedImage(ctx, file, previewOutput, p.diagnostics, p.inline); err != nil {
-			return imageSavingFailure("Images were saved, but the preview could not finish. Use the saved files; no need to generate again.", err)
+	if err := displaySavedImages(ctx, saved, previewOutput, func(file imageoutput.SavedImage) (bool, error) {
+		return displaySavedImage(ctx, file, previewOutput, p.diagnostics, p.inline)
+	}); err != nil {
+		message := "Images were saved, but the preview could not finish. Use the saved files; no need to generate again."
+		if errors.Is(err, context.Canceled) {
+			message = "Images were saved, but the command was canceled. Use the saved files; no need to generate again."
 		}
+		return imageSavingResultFailure(message, err)
 	}
 	return nil
 }

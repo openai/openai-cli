@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/openai/openai-cli/internal/commands"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/openai/openai-cli/pkg/transformers"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/require"
@@ -97,7 +98,7 @@ func TestAgentsSessionCreationActionScopeAndContextIsolation(t *testing.T) {
 	action := func(ctx context.Context, command *cli.Command) error {
 		require.Equal(t, "parent context", ctx.Value(parentKey{}))
 		cell, _ := ctx.Value(agentsSessionCreationKey{}).(*agentsSessionCreationIntent)
-		calls = append(calls, commandResourceName(command)+"/"+command.Name)
+		calls = append(calls, commands.ResourceName(command)+"/"+command.Name)
 		if cell != nil {
 			require.False(t, cell.withoutInput.Load(), "new actions must start strict")
 			cell.withoutInput.Store(true)
@@ -111,7 +112,7 @@ func TestAgentsSessionCreationActionScopeAndContextIsolation(t *testing.T) {
 		{Name: "beta:agents", Category: "API RESOURCE", Commands: []*cli.Command{{Name: "create", Action: action}}},
 	}}
 	configureAgentsSessionCreation(root)
-	configureCommandSubgroups(root)
+	commands.ConfigureSubgroups(root)
 	ctx := context.WithValue(context.Background(), parentKey{}, "parent context")
 	for _, args := range [][]string{
 		{"openai", "beta", "agents", "sessions", "create"},

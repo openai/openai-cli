@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/openai/openai-cli/internal/jsonview"
-	"github.com/openai/openai-cli/pkg/transformers"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/tidwall/gjson"
 )
 

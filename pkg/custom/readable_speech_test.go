@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/stretchr/testify/require"
 )
 
@@ -114,18 +115,25 @@ func TestSpeechOutputPreservesExactRawBytesAndStatus(t *testing.T) {
 				message, err := WriteBinaryResponse(response, &out, outfile)
 				if tc.wantError == "" {
 					require.NoError(t, err)
+				} else if mode == "file" {
+					var saveErr *downloadSaveError
+					require.ErrorAs(t, err, &saveErr)
+					require.ErrorContains(t, saveErr.cause, tc.wantError)
+					require.Empty(t, message)
 				} else {
 					require.EqualError(t, err, tc.wantError)
 					require.Empty(t, message)
 				}
 				require.True(t, body.closed)
 				if mode == "file" {
-					data, err := os.ReadFile(outfile)
-					require.NoError(t, err)
-					require.Equal(t, wire, string(data))
 					require.Empty(t, out.String())
 					if tc.wantError == "" {
+						data, err := os.ReadFile(outfile)
+						require.NoError(t, err)
+						require.Equal(t, wire, string(data))
 						require.Equal(t, "Wrote output to: "+outfile, message)
+					} else {
+						require.NoFileExists(t, outfile)
 					}
 				} else {
 					require.Equal(t, wire, out.String())
@@ -246,7 +254,7 @@ func TestSpeechRawRetainsFailureOnClosedFinalUnterminatedEvent(t *testing.T) {
 		_, err := WriteBinaryResponse(response, failOutputWriter{errors.New("broken pipe")}, "")
 		require.Contains(t, err.Error(), "the API reported an error while streaming")
 		require.NotContains(t, err.Error(), "synthetic-private")
-		require.False(t, isOutputBrokenPipe(err))
+		require.False(t, clioutput.IsBrokenPipe(err))
 		require.True(t, body.closed)
 	}
 }

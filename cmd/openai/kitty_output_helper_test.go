@@ -4,7 +4,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/openai/openai-cli/generated/commands"
 	"github.com/openai/openai-cli/internal/terminalimage"
+	"github.com/openai/openai-cli/pkg/custom"
 )
 
 // Match the executable dispatch when a terminal test launches its writer helper.
@@ -15,5 +17,21 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	if handled, err := custom.RunBatchOutputHelper(os.Args); handled {
+		if err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	if runBatchDirectoryFixture(os.Args) {
+		os.Exit(0)
+	}
+	if handled, err := custom.RunBatchDirectoryHelper(os.Args); handled {
+		if err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	custom.ConfigureCommand(commands.Command)
+	os.Exit(runShellTests(m))
 }

@@ -9,12 +9,13 @@ import (
 	"syscall"
 	"testing"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
 
 func TestResourceSummaryNoticePreservesFinalErrors(t *testing.T) {
-	const hint = "Summary; use --format json for full data."
+	const hint = "Full data: --format json."
 	item := outputJSON{gjson.Parse(`{"id":"file_summary","object":"file","created_at":17}`)}
 	upstreamErr := errors.New("synthetic page failure")
 	writeErr := errors.New("synthetic notice failure")
@@ -39,7 +40,7 @@ func TestResourceSummaryNoticePreservesFinalErrors(t *testing.T) {
 			}
 			if errors.Is(tc.err, syscall.EPIPE) {
 				require.ErrorIs(t, err, syscall.EPIPE, "stderr failure must remain beside the page failure")
-				require.False(t, isOutputBrokenPipe(err))
+				require.False(t, clioutput.IsBrokenPipe(err))
 			} else {
 				require.ErrorIs(t, err, want)
 			}

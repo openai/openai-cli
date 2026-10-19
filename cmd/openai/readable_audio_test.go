@@ -297,7 +297,7 @@ func TestMainReadableAudioSpeechFormatsAndDownloads(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "speech.sse")
 	got = runReadableCommand(t, server, append(append([]string{"--format", "json"}, args...), "--output", path)...)
 	saved, err := os.ReadFile(path)
-	if got.code != 0 || got.stderr != "" || err != nil || string(saved) != wire || !strings.Contains(got.stdout, path) {
+	if got.code != 0 || got.stderr != "" || got.stdout != "" || err != nil || string(saved) != wire {
 		t.Fatalf("speech output file changed bytes or failed: %+v, error=%v", got, err)
 	}
 }
@@ -315,7 +315,7 @@ func TestMainReadableAudioSpeechPreservesBinary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "speech.mp3")
 	got := runReadableCommand(t, server, append(args, "--output", path)...)
 	saved, err := os.ReadFile(path)
-	if got.code != 0 || got.stderr != "" || err != nil || string(saved) != body {
+	if got.code != 0 || got.stdout != "" || got.stderr != "Wrote output to: "+path+"\n" || err != nil || string(saved) != body {
 		t.Fatalf("binary audio download changed: %+v, error=%v", got, err)
 	}
 }

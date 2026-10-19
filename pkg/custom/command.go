@@ -2,7 +2,15 @@ package custom
 
 import (
 	"context"
+	"os"
 
+	"github.com/openai/openai-cli/internal/clihelp"
+	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/commands/codex"
+	filecommands "github.com/openai/openai-cli/internal/commands/files"
+	"github.com/openai/openai-cli/internal/commands/manpages"
+	"github.com/openai/openai-cli/internal/commands/tokenize"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
 
@@ -17,25 +25,39 @@ func ConfigureCommand(root *cli.Command) {
 		return
 	}
 	root.Metadata[configuredCommandMetadata] = true
-	configureRootRequestFlags(root)
-	describeRequestInputs(root)
+	configureCertificateCompatibility(root)
+	configureAudioVoices(root)
+	requestconfig.ConfigureRootFlags(root)
+	// Batch workflows preserve positional path inputs and need the same help annotations.
+	configureBatchCommands(root)
+	clihelp.DescribeRequestInputs(root)
 	registerImageModels(root)
 	configureReadableOutput(root)
+	configureModelsList(root)
 	configureImageSaving(root)
 	configureImagePickerCompletion(root)
 	configureImagePickerShellSetup(root)
+	configureShellSuggestions(root)
 	registerImagePreviewCommands(root)
 	configureReadableAudio(root)
 	configureReadableSpeech(root)
+	registerAdminSetup(root)
+	configureAdminCredentials(root)
 	describeAgentsCommands(root)
 	configureAgentsSessionCreation(root)
-	configureCommandSubgroups(root)
-	configureTaskCommands(root)
-	configureCommandPresentation(root)
-	configureManpageCommands(root)
+	localcommands.ConfigureSubgroups(root)
+	localcommands.ConfigureTasks(root)
+	registerAudioCommands(root)
+	filecommands.Configure(root)
+	tokenize.Register(root)
+	codex.Register(root)
+	localcommands.ConfigurePresentation(root)
+	manpages.Configure(root, func(command *cli.Command, message string) error {
+		return ReportSaveReceipt(command, os.Stderr, message, nil)
+	})
 	configureOutputPolicy(root)
 	ConfigureCommandErrors(root)
-	root.Flags = append(root.Flags, mtlsClientFlags()...)
+	root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
 	previousBefore := root.Before
 	root.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
 		if previousBefore != nil {
@@ -45,7 +67,10 @@ func ConfigureCommand(root *cli.Command) {
 				return ctx, err
 			}
 		}
-		return configureMTLS(ctx, command.Root())
+		if IsLocalUtilityCommand(command) {
+			return ctx, nil
+		}
+		return requestconfig.ConfigureMTLS(ctx, command.Root())
 	}
-	cli.SuggestCommand = suggestCommand
+	cli.SuggestCommand = clihelp.SuggestCommand
 }

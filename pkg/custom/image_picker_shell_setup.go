@@ -12,6 +12,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/autocomplete"
+	localcommands "github.com/openai/openai-cli/internal/commands"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -88,18 +90,20 @@ func configureImagePickerShellSetup(root *cli.Command) {
 		install, remove := command.Bool("install-picker"), command.Bool("uninstall-picker")
 		if !install && !remove {
 			if command.Bool("automatic") || command.IsSet("profile") {
-				return cli.Exit("Use --install-picker or --uninstall-picker with setup options.", 2)
+				const message = "Use --install-picker or --uninstall-picker with setup options."
+				return &localcommands.LocalError{Message: message, Cause: cli.Exit(message, 2)}
 			}
 			return next(ctx, command)
 		}
 		if install && remove || command.Bool("picker") || command.Args().Len() > 1 ||
 			command.IsSet("profile") && command.String("profile") == "" ||
 			command.Bool("automatic") && (remove || command.IsSet("profile") || command.Args().Len() > 0) {
-			return cli.Exit("Choose one setup action. Automatic setup does not accept a shell or profile override.", 2)
+			const message = "Choose one setup action. Automatic setup does not accept a shell or profile override."
+			return &localcommands.LocalError{Message: message, Cause: cli.Exit(message, 2)}
 		}
 		shell := command.Args().First()
 		if shell == "" && !command.Bool("automatic") {
-			shell = imagePickerParentShell(ctx)
+			shell = cliterminal.ParentShell(ctx)
 		}
 		if shell == "pwsh" {
 			return cli.Exit("PowerShell uses normal Tab completion. Type openai images generate and press Enter to open the image picker.", 2)
@@ -198,7 +202,7 @@ func imagePickerTabChoiceDirectory() (string, error) {
 }
 
 func imagePickerTabChoicePath(shell string) (string, error) {
-	if imagePickerShellName(shell) != shell || shell == "" {
+	if cliterminal.ShellName(shell) != shell || shell == "" {
 		return "", errors.New("unsupported Tab shortcut shell")
 	}
 	directory, err := imagePickerTabChoiceDirectory()

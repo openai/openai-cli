@@ -1,5 +1,5 @@
-// Package clihelp owns local onboarding and help-topic routing. Feature commands
-// supply complete guidance through command metadata.
+// Package clihelp owns local onboarding, help-topic routing, and safe command
+// recovery. Feature commands supply complete guidance through command metadata.
 package clihelp
 
 import (
@@ -108,6 +108,10 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 	}
 	configureCommandHelp(root, root.Metadata["help-invocation"].(string), "")
 	if len(args) <= 1 {
+		// Preserve original invocation intent before normalizing bare startup
+		// to help. Each Configure call installs a fresh, unwrapped callback.
+		complete := root.Metadata["complete-help"].(func() string)
+		root.Metadata["complete-help"] = func() string { return welcomeHeader(root) + complete() }
 		return []string{root.Name, "--help"}, true, nil
 	}
 	if args[1] == "__complete" {
@@ -134,10 +138,20 @@ func Configure(root *cli.Command, args []string) ([]string, bool, error) {
 			out := append(append([]string(nil), args[:helpAt]...), "help")
 			out = append(out, args[helpAt:i]...)
 			literal := false
-			for _, topic := range args[i+1:] {
+			for j := i + 1; j < len(args); j++ {
+				topic := args[j]
 				literal = literal || topic == "--"
-				if literal || topic != "--help" && topic != "-h" && topic != "--h" {
-					out = append(out, topic)
+				if !literal && (topic == "--help" || topic == "-h" || topic == "--h") {
+					continue
+				}
+				out = append(out, topic)
+				if !literal && strings.HasPrefix(topic, "-") {
+					name, _, assigned := strings.Cut(strings.TrimLeft(topic, "-"), "=")
+					if flag, ok := rootFlag(root, name).(cli.DocGenerationFlag); ok && flag.TakesValue() && !assigned && j+1 < len(args) {
+						// A flag value may itself spell a help switch or delimiter.
+						j++
+						out = append(out, args[j])
+					}
 				}
 			}
 			return out, true, nil
@@ -367,10 +381,11 @@ func legacyHelpNotice(command *cli.Command) string {
 func showHelpTopics(ctx context.Context, command *cli.Command) error {
 	root := command.Root()
 	parent, target := root, root
-	for _, topic := range command.Args().Slice() {
+	topics := command.Args().Slice()
+	for i, topic := range topics {
 		next := target.Command(topic)
 		if next == nil || !allowsHelpTopic(next) || topic == "help" {
-			return &UnknownTopicError{Parent: target, Topic: topic}
+			return &UnknownTopicError{Parent: target, Topic: topic, Remaining: append([]string(nil), topics[i+1:]...)}
 		}
 		parent, target = target, next
 	}
@@ -383,8 +398,9 @@ func showHelpTopics(ctx context.Context, command *cli.Command) error {
 // UnknownTopicError retains the last valid group for safe local recovery guidance.
 // Presenters can suggest declared commands without echoing an untrusted topic.
 type UnknownTopicError struct {
-	Parent *cli.Command
-	Topic  string
+	Parent    *cli.Command
+	Topic     string
+	Remaining []string
 }
 
 func (e *UnknownTopicError) Error() string {

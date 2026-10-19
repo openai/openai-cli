@@ -20,8 +20,11 @@ type globalFlagsRequest struct {
 	body         []byte
 }
 
-func globalFlagsServer(t *testing.T, response string) (*httptest.Server, <-chan globalFlagsRequest) {
+func globalFlagsServer(t *testing.T, response string, status ...int) (*httptest.Server, <-chan globalFlagsRequest) {
 	t.Helper()
+	if len(status) > 1 {
+		t.Fatal("request fixture accepts at most one response status")
+	}
 	requests := make(chan globalFlagsRequest, 32)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -30,6 +33,9 @@ func globalFlagsServer(t *testing.T, response string) (*httptest.Server, <-chan 
 		}
 		requests <- globalFlagsRequest{r.Method, r.URL.Path, r.Header.Clone(), body}
 		w.Header().Set("Content-Type", "application/json")
+		if len(status) == 1 {
+			w.WriteHeader(status[0])
+		}
 		if _, err := io.WriteString(w, response); err != nil {
 			t.Error(err)
 		}
@@ -93,7 +99,7 @@ func TestMainGlobalFlagsPlacementHeadersAndOutput(t *testing.T) {
 						globalFlagsAt([]string{"models", "list"}, flags, position)...)
 					wantStderr := ""
 					if format == "text" {
-						wantStderr = "Summary; use --format json for full data.\n"
+						wantStderr = "Full data: --format json.\n"
 					}
 					if got.code != 0 || got.stderr != wantStderr {
 						t.Fatalf("command failed: %+v", got)
@@ -111,8 +117,8 @@ func TestMainGlobalFlagsPlacementHeadersAndOutput(t *testing.T) {
 					}
 					switch format {
 					case "json":
-						var item map[string]any
-						if err := json.Unmarshal([]byte(got.stdout), &item); err != nil || item["id"] != "model_synthetic" || item["created"] != float64(17) {
+						var items []map[string]any
+						if err := json.Unmarshal([]byte(got.stdout), &items); err != nil || len(items) != 1 || items[0]["id"] != "model_synthetic" || items[0]["created"] != float64(17) {
 							t.Fatalf("JSON items changed: %q; error=%v", got.stdout, err)
 						}
 					case "text":

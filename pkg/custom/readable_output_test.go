@@ -8,26 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openai/openai-cli/pkg/transformers"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
-
-func TestResolvedOutputFormat(t *testing.T) {
-	for _, tc := range []struct {
-		format, transform string
-		raw               bool
-		want              string
-	}{
-		{"", "", false, "text"}, {"AuTo", "", false, "text"},
-		{"auto", "id", false, "json"}, {"auto", "", true, "json"},
-		{"TEXT", "id", false, "text"}, {"JSONL", "", false, "jsonl"},
-		{"raw", "id", true, "raw"}, {"unknown", "", false, "unknown"},
-	} {
-		require.Equal(t, tc.want, resolvedOutputFormat(ShowJSONOpts{Format: tc.format, Transform: tc.transform, RawOutput: tc.raw}))
-	}
-}
 
 func TestReadableBoundaryExtractionAndInjectedWriters(t *testing.T) {
 	value := gjson.Parse(`{"id":"first","nested":{"id":"second"},"text":"a\u001b\n"}`)

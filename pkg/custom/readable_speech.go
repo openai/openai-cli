@@ -6,14 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
 	"strings"
 
-	"github.com/openai/openai-cli/pkg/transformers"
+	clioutput "github.com/openai/openai-cli/internal/output"
+	transformers "github.com/openai/openai-cli/internal/output/transform"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
@@ -28,6 +28,10 @@ func configureReadableSpeech(root *cli.Command) {
 		return
 	}
 	command := resource.Command("create")
+	command.Description += "\n\nRun without command flags in a terminal to open speech controls. " +
+		"The form retains audio, text, and instructions in private local history. " +
+		"Use audio history, inspect, play, and export for retained results. " +
+		"Explicit flags and pipes preserve direct output."
 	next := command.Action
 	command.Action = func(ctx context.Context, command *cli.Command) error {
 		root := command.Root()
@@ -39,6 +43,7 @@ func configureReadableSpeech(root *cli.Command) {
 		}
 		return next(context.WithValue(ctx, speechOutputKey{}, opts), command)
 	}
+	command.Action = audioWorkbenchWorkflow(command.Action)
 }
 
 // Speech shares the generated download path. Intercept only this command's SSE
@@ -47,6 +52,9 @@ func configureReadableSpeech(root *cli.Command) {
 func writeReadableSpeech(response *http.Response, stdout io.Writer, outfile string) (bool, string, error) {
 	if response == nil || response.Request == nil || response.StatusCode >= 300 {
 		return false, "", nil
+	}
+	if capture, ok := response.Request.Context().Value(audioCaptureKey{}).(*audioCapture); ok {
+		return true, "", capture.receive(response)
 	}
 	opts, ok := response.Request.Context().Value(speechOutputKey{}).(ShowJSONOpts)
 	if !ok {
@@ -58,19 +66,12 @@ func writeReadableSpeech(response *http.Response, stdout io.Writer, outfile stri
 	}
 	opts.Context = response.Request.Context()
 	if outfile != "" && outfile != "-" && outfile != "/dev/stdout" {
-		file, err := os.OpenFile(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-		if err != nil {
-			return true, "", err
-		}
-		copyErr := copySpeechStream(opts.Context, file, response.Body)
-		if err := errors.Join(copyErr, file.Close()); err != nil {
-			return true, "", err
-		}
-		return true, fmt.Sprintf("Wrote output to: %s", outfile), nil
+		message, err := writeManagedDownloadResponse(response, outfile, copySpeechSaveStream)
+		return true, message, err
 	}
 	if outfile != "" || opts.Transform == "" && (strings.EqualFold(opts.Format, "raw") || opts.RawOutput) {
 		if file, ok := stdout.(*os.File); ok && file == os.Stdout {
-			return true, "", streamToStdout(func(out *os.File) error {
+			return true, "", clioutput.StreamToStdout(func(out *os.File) error {
 				return copySpeechStream(opts.Context, out, response.Body)
 			})
 		}
@@ -85,17 +86,32 @@ func writeReadableSpeech(response *http.Response, stdout io.Writer, outfile stri
 // Failures retain bytes already read, then stop consuming the response using the
 // same failure and incomplete-result contract as formatted output.
 func copySpeechStream(ctx context.Context, destination io.Writer, source io.Reader) error {
-	copying := &speechCopyReader{source: source, sink: outputWriter{ctx: ctx, out: destination}}
+	return copySpeechStreamWithCompletion(ctx, destination, source, false)
+}
+
+// An explicit-path speech save needs a speech completion event before success.
+func copySpeechSaveStream(ctx context.Context, destination io.Writer, source io.Reader) error {
+	return copySpeechStreamWithCompletion(ctx, destination, source, true)
+}
+
+func copySpeechStreamWithCompletion(ctx context.Context, destination io.Writer, source io.Reader, requireCompletion bool) error {
+	copying := &speechCopyReader{source: source, sink: clioutput.Writer{Context: ctx, Sink: destination}}
 	reader := bufio.NewReader(copying)
-	iter := &outputIterator[outputJSON]{
-		source: &speechEventIterator{reader: reader}, context: ctx,
-		transform: transformers.Identity, remaining: -1,
-		route: transformers.Route{Operation: speechStreamOperation, OutputKind: OutputStreamEvent},
-	}
+	iter := clioutput.NewIterator(&speechEventIterator{reader: reader}, clioutput.IteratorOptions{
+		Context:   ctx,
+		Transform: transformers.Identity,
+		Limit:     -1,
+		Route:     transformers.Route{Operation: speechStreamOperation, OutputKind: OutputStreamEvent},
+	})
+	completed := false
 	for iter.Next() {
+		completed = completed || iter.Current().Get("type").Str == "speech.audio.done"
 	}
 	if iter.Err() != nil || copying.err != nil || ctx.Err() != nil {
 		return errors.Join(iter.Err(), copying.err, ctx.Err())
+	}
+	if requireCompletion && !completed {
+		return &streamResultError{Message: "The speech stream ended without a completion event."}
 	}
 	_, tailErr := io.Copy(io.Discard, reader)
 	return errors.Join(iter.Err(), tailErr, ctx.Err())
@@ -106,7 +122,7 @@ func copySpeechStream(ctx context.Context, destination io.Writer, source io.Read
 // Stop before reading further from the body after any failed or short write.
 type speechCopyReader struct {
 	source io.Reader
-	sink   outputWriter
+	sink   clioutput.Writer
 	err    error
 }
 
@@ -114,7 +130,7 @@ func (r *speechCopyReader) Read(data []byte) (int, error) {
 	if r.err != nil {
 		return 0, r.err
 	}
-	if err := r.sink.ctx.Err(); err != nil {
+	if err := r.sink.Context.Err(); err != nil {
 		return 0, err
 	}
 	n, err := r.source.Read(data)

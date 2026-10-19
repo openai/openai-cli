@@ -3,6 +3,7 @@ package custom
 import (
 	"context"
 	"fmt"
+	"github.com/openai/openai-cli/internal/commands"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -146,7 +147,7 @@ func runAgentsRetryRequest(t *testing.T, input agentsRetryInput) ([]agentsRetryR
 			},
 		}}}},
 	}
-	configureCommandSubgroups(root)
+	commands.ConfigureSubgroups(root)
 	path := strings.Split(input.resource, ":")
 	if input.colonRoute {
 		path = []string{input.resource}
@@ -272,7 +273,9 @@ func TestAgentsMessageOnlyBodyRejectsAmbiguousRawKeys(t *testing.T) {
 }
 
 func TestAgentsEventRetryInvalidHeaderNameCannotSupplyKey(t *testing.T) {
-	command := &cli.Command{Name: "create", Metadata: map[string]any{resourceCommandMetadata: "beta:agents:sessions:events"}}
+	command := &cli.Command{Name: "create"}
+	root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "beta:agents:sessions:events", Commands: []*cli.Command{command}}}}
+	commands.ConfigureSubgroups(root)
 	body := []byte(`{"events":[` + agentsRetryEvent + `]}`)
 	t.Setenv("OPENAI_CUSTOM_HEADERS", "Idempotency-Key: key_invalid_name")
 	require.NotEmpty(t, agentsResolvedRequestOptions(command, nil, nil, body), "Unicode case folding must not establish an HTTP header")
