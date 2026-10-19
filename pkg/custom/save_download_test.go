@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	clioutput "github.com/openai/openai-cli/internal/output"
 )
 
 type failedDownloadBody struct {
@@ -131,7 +133,7 @@ func TestManagedDownloadRejectsConcurrentDestinationChanges(t *testing.T) {
 				},
 			}
 			message, err := WriteBinaryResponse(&http.Response{Body: io.NopCloser(body)}, io.Discard, path)
-			if err == nil || message != "" || !errors.Is(err, errDownloadDestinationChanged) {
+			if err == nil || message != "" || !errors.Is(err, clioutput.ErrDownloadDestinationChanged) {
 				t.Fatalf("save = %q, %v; want concurrent-change error", message, err)
 			}
 			actual, readErr := os.ReadFile(path)
@@ -220,7 +222,7 @@ func TestManagedDownloadRetainsReplacedStage(t *testing.T) {
 			return errors.New("staging file missing")
 		},
 	}
-	if _, err := WriteBinaryResponse(&http.Response{Body: io.NopCloser(body)}, io.Discard, path); !errors.Is(err, errDownloadDestinationChanged) {
+	if _, err := WriteBinaryResponse(&http.Response{Body: io.NopCloser(body)}, io.Discard, path); !errors.Is(err, clioutput.ErrDownloadDestinationChanged) {
 		t.Fatalf("save error = %v", err)
 	}
 	data, err := os.ReadFile(replacement)
@@ -264,7 +266,7 @@ func TestManagedDownloadCancellationClosesSource(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("canceled save error = %v", err)
 		}
-		var failure *downloadSaveError
+		var failure *clioutput.DownloadSaveError
 		if !errors.As(err, &failure) || failure.ExitCode() != 130 {
 			t.Errorf("canceled save did not preserve exit 130: %v", err)
 		}
@@ -297,65 +299,10 @@ func TestDownloadPreservesSimultaneousReadWriteCloseFailures(t *testing.T) {
 	}
 }
 
-type failedDownloadCompletion struct {
-	closeTrackingDownloadFile
-	truncateErr   error
-	truncateCalls int
-	shortWrite    bool
-}
-
-func (f *failedDownloadCompletion) Truncate(int64) error {
-	f.truncateCalls++
-	return f.truncateErr
-}
-func (f *failedDownloadCompletion) Write(data []byte) (int, error) {
-	if f.shortWrite {
-		return len(data) - 1, nil
-	}
-	return f.closeTrackingDownloadFile.Write(data)
-}
-
-func TestManagedDownloadCompletionFailures(t *testing.T) {
-	for _, kind := range []string{"truncate", "write", "short write", "close", "canceled"} {
-		t.Run(kind, func(t *testing.T) {
-			failure := errors.New("synthetic completion failure")
-			file := &failedDownloadCompletion{}
-			ctx := context.Background()
-			switch kind {
-			case "truncate":
-				file.truncateErr = failure
-			case "write":
-				file.writeErr, file.writeLimit = failure, 3
-			case "short write":
-				file.shortWrite, failure = true, io.ErrShortWrite
-			case "close":
-				file.closeErr = failure
-			case "canceled":
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithCancel(ctx)
-				cancel()
-				failure = context.Canceled
-			}
-			sourceClose := errors.New("synthetic staging close failure")
-			source := &failedDownloadBody{Reader: strings.NewReader("complete download"), closeErr: sourceClose}
-			err := completeExistingDownload(ctx, file, source)
-			if !errors.Is(err, failure) || !errors.Is(err, sourceClose) {
-				t.Errorf("completion lost failure causes: %v", err)
-			}
-			if source.closed != 1 || file.closeCalls != 1 {
-				t.Errorf("source closes=%d, destination closes=%d; want one each", source.closed, file.closeCalls)
-			}
-			if kind == "canceled" && file.truncateCalls != 0 {
-				t.Error("canceled completion truncated the existing file")
-			}
-		})
-	}
-}
-
 func TestDownloadDoesNotSuppressErrorsJoinedWithEOF(t *testing.T) {
 	failure := errors.New("synthetic source failure")
 	var destination bytes.Buffer
-	err := copyDownloadData(context.Background(), &destination, simultaneousDownloadReader{errors.Join(io.EOF, failure)})
+	err := clioutput.CopyDownloadData(context.Background(), &destination, simultaneousDownloadReader{errors.Join(io.EOF, failure)})
 	if !errors.Is(err, failure) {
 		t.Errorf("source failure was lost: %v", err)
 	}
@@ -414,10 +361,10 @@ func TestManagedDownloadCopyCallbackRejectsSemanticFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	failure := errors.New("synthetic event failure")
-	body := &downloadResponseBody{ReadCloser: io.NopCloser(strings.NewReader("valid wire framing with failure event"))}
-	_, err := writeManagedDownloadResponse(&http.Response{Body: body}, path,
+	body := &clioutput.DownloadResponseBody{ReadCloser: io.NopCloser(strings.NewReader("valid wire framing with failure event"))}
+	_, err := clioutput.WriteManagedDownloadResponse(&http.Response{Body: body}, path,
 		func(ctx context.Context, destination io.Writer, source io.Reader) error {
-			return errors.Join(copyDownloadData(ctx, destination, source), failure)
+			return errors.Join(clioutput.CopyDownloadData(ctx, destination, source), failure)
 		})
 	if !errors.Is(err, failure) {
 		t.Errorf("semantic copy failure was lost: %v", err)
@@ -443,51 +390,6 @@ func TestBinaryResponsePreservesSourceWriteAndBodyCloseFailures(t *testing.T) {
 	}
 	if message != "" || body.closed != 1 || output.closeCalls != 0 {
 		t.Errorf("message=%q, source closes=%d, stdout closes=%d", message, body.closed, output.closeCalls)
-	}
-}
-
-func TestManagedDownloadPublicationWithoutHardlinks(t *testing.T) {
-	for _, concurrent := range []bool{false, true} {
-		t.Run(map[bool]string{false: "exclusive fallback", true: "concurrent destination"}[concurrent], func(t *testing.T) {
-			directory := t.TempDir()
-			stage, err := newDownloadStage(directory)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() {
-				if err := stage.cleanup(); err != nil {
-					t.Error(err)
-				}
-			}()
-			payload := []byte{0, 255, 128, 10}
-			if _, err := stage.file.Write(payload); err != nil {
-				t.Fatal(err)
-			}
-			if err := stage.closeWriter(); err != nil {
-				t.Fatal(err)
-			}
-			link := func(string, string) error {
-				if concurrent {
-					if err := os.WriteFile(filepath.Join(directory, "output.bin"), []byte("unrelated"), 0o600); err != nil {
-						return err
-					}
-				}
-				return errors.New("synthetic filesystem without hardlink support")
-			}
-			saved, incomplete, err := publishNewDownload(context.Background(), stage, "output.bin", link)
-			if concurrent {
-				if err == nil || saved != nil || incomplete {
-					t.Errorf("concurrent publication = %v, %v, %v", saved, incomplete, err)
-				}
-				payload = []byte("unrelated")
-			} else if err != nil || saved == nil || incomplete {
-				t.Errorf("fallback publication = %v, %v, %v", saved, incomplete, err)
-			}
-			actual, readErr := os.ReadFile(filepath.Join(directory, "output.bin"))
-			if readErr != nil || !bytes.Equal(actual, payload) {
-				t.Errorf("published bytes = %q, %v", actual, readErr)
-			}
-		})
 	}
 }
 
@@ -550,7 +452,7 @@ func TestBinaryProcessStdoutPreservesObservedSourceFailure(t *testing.T) {
 		sourceErr := errors.New("synthetic upstream failure returned with bytes")
 		body := &failedDownloadBody{Reader: simultaneousDownloadReader{sourceErr}}
 		_, err := WriteBinaryResponse(&http.Response{Body: body}, os.Stdout, "-")
-		var failure *downloadSaveError
+		var failure *clioutput.DownloadSaveError
 		if errors.Is(err, sourceErr) && errors.Is(err, syscall.EPIPE) &&
 			errors.As(err, &failure) && body.closed == 1 {
 			fmt.Fprintln(os.Stderr, "observed source and stdout errors; source closed")
@@ -611,27 +513,27 @@ func TestAutomaticDownloadFailureMessagesPreserveState(t *testing.T) {
 			}
 			response := &http.Response{Body: io.NopCloser(source), Header: http.Header{"Content-Disposition": {`attachment; filename="synthetic.bin"`}}}
 			message, err := writeAutomaticBinaryResponse(response, io.Discard)
-			var failure *downloadSaveError
+			var failure *clioutput.DownloadSaveError
 			if message != "" || !errors.Is(err, io.ErrUnexpectedEOF) || !errors.As(err, &failure) {
 				t.Fatalf("automatic result = %q, %v", message, err)
 			}
 			switch kind {
 			case "before destination":
-				if !strings.Contains(failure.message, "No automatic destination") {
-					t.Errorf("wrong pre-destination message: %q", failure.message)
+				if !strings.Contains(failure.Error(), "No automatic destination") {
+					t.Errorf("wrong pre-destination message: %q", failure.Error())
 				}
 				if _, err := os.Stat("synthetic.bin"); !errors.Is(err, os.ErrNotExist) {
 					t.Errorf("unexpected destination: %v", err)
 				}
 			case "partial retained":
 				data, err := os.ReadFile("synthetic.bin")
-				if err != nil || !bytes.Equal(data, content) || !strings.Contains(failure.message, "may contain partial output") {
-					t.Errorf("partial state or message changed: %q, %v", failure.message, err)
+				if err != nil || !bytes.Equal(data, content) || !strings.Contains(failure.Error(), "may contain partial output") {
+					t.Errorf("partial state or message changed: %q, %v", failure.Error(), err)
 				}
 			case "destination replaced":
 				data, err := os.ReadFile("synthetic.bin")
-				if err != nil || string(data) != "unrelated replacement" || !strings.Contains(failure.message, "destination changed") {
-					t.Errorf("replacement state or message changed: %q, %v", failure.message, err)
+				if err != nil || string(data) != "unrelated replacement" || !strings.Contains(failure.Error(), "destination changed") {
+					t.Errorf("replacement state or message changed: %q, %v", failure.Error(), err)
 				}
 			}
 		})
@@ -648,12 +550,12 @@ func TestAutomaticDownloadSourceCloseFailure(t *testing.T) {
 	body := &failedDownloadBody{Reader: bytes.NewReader(content), closeErr: closeErr}
 	response := &http.Response{Body: body, Header: http.Header{"Content-Disposition": {`attachment; filename="synthetic.bin"`}}}
 	message, err := WriteBinaryResponse(response, io.Discard, "")
-	var failure *downloadSaveError
+	var failure *clioutput.DownloadSaveError
 	if message != "" || !errors.Is(err, closeErr) || !errors.As(err, &failure) || body.closed != 1 {
 		t.Fatalf("late close failure = %q, %v, closes=%d", message, err, body.closed)
 	}
-	if !strings.Contains(failure.message, "automatically selected file may remain") {
-		t.Errorf("late close message = %q", failure.message)
+	if !strings.Contains(failure.Error(), "automatically selected file may remain") {
+		t.Errorf("late close message = %q", failure.Error())
 	}
 	data, readErr := os.ReadFile("synthetic.bin")
 	if readErr != nil || !bytes.Equal(data, content) {

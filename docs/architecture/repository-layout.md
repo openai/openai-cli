@@ -204,6 +204,22 @@ credentials at its original point. Native Windows executable contracts build the
 observer from the feature package; cross-layer verification/error tests retain
 actual assembly policies through test-only accessors.
 
+Audio speech controls, local history/inspect/play/export commands, voice creation,
+transcript capture, and speech streaming live in `internal/commands/audio/`.
+Application assembly preserves registration order, local-command bypass, first-run
+setup eligibility, request options, output formatting, and receipt policy. Audio
+storage and media processing remain in `internal/audiohistory/` and
+`internal/audiomedia/`; the feature does not import assembly or image commands.
+
+Shared download staging, destination verification, cancellation-aware copying,
+and process-signal handling live in `internal/output/`, alongside safe error
+metadata and receipt failure types. Assembly retains binary response selection
+and receipt eligibility. Scalar-upload reading, owned-source cleanup, and replay
+live in `internal/request/`; image-specific scalar normalization stays with image
+handling. Shared choice labels live in `internal/readable/`. Native Windows
+publication and voice validation contracts retain their exact test/subcase
+inventories and now verify their owning packages.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

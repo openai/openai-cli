@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -123,12 +124,12 @@ func TestReadableAPIRequestIDValidationAndBounds(t *testing.T) {
 }
 
 func TestReadableAPIRequestIDNilAndMissingMetadata(t *testing.T) {
-	require.Empty(t, readableAPIRequestID(nil))
+	require.Empty(t, clioutput.APIRequestID(nil))
 	for _, apierr := range []*openai.Error{
 		{}, {Request: &http.Request{}}, {Response: &http.Response{}},
 		{Response: &http.Response{Header: http.Header{"Unrelated-Id": {"synthetic-private"}}}},
 	} {
-		require.Empty(t, readableAPIRequestID(apierr))
+		require.Empty(t, clioutput.APIRequestID(apierr))
 	}
 	var out bytes.Buffer
 	require.NoError(t, ShowCommandError(requestIDErrorCommand(t), nil, &out))
@@ -136,9 +137,9 @@ func TestReadableAPIRequestIDNilAndMissingMetadata(t *testing.T) {
 	// Only the API error's actual Request governs reflection, not Response.Request.
 	apierr := requestIDError(t, http.StatusBadRequest, "req_returned")
 	apierr.Response.Request = &http.Request{Header: http.Header{"X-Request-Id": {"different-request"}}}
-	require.Equal(t, "req_returned", readableAPIRequestID(apierr))
+	require.Equal(t, "req_returned", clioutput.APIRequestID(apierr))
 	apierr.Request = &http.Request{}
-	require.Equal(t, "req_returned", readableAPIRequestID(apierr))
+	require.Equal(t, "req_returned", clioutput.APIRequestID(apierr))
 }
 
 func TestReadableAPIRequestIDSuppressesCallerHeaderReflection(t *testing.T) {
