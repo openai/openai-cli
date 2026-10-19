@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/stretchr/testify/require"
 )
 
@@ -127,5 +128,5 @@ func TestImagePickerShellTargetCanceled(t *testing.T) {
 	cancel()
 	_, err := imagePickerShellTarget(ctx, "zsh", false, "")
 	require.ErrorIs(t, err, context.Canceled)
-	require.Empty(t, imagePickerParentShell(ctx))
+	require.Empty(t, cliterminal.ParentShell(ctx))
 }

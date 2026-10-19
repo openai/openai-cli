@@ -7,6 +7,7 @@ import (
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/codex"
+	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	"github.com/openai/openai-cli/internal/commands/manpages"
 	"github.com/openai/openai-cli/internal/commands/tokenize"
 	requestconfig "github.com/openai/openai-cli/internal/request"
@@ -45,7 +46,7 @@ func ConfigureCommand(root *cli.Command) {
 	localcommands.ConfigureSubgroups(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
-	configureFileCommands(root)
+	filecommands.Configure(root)
 	tokenize.Register(root)
 	codex.Register(root)
 	registerProjectLinkCommands(root)
@@ -70,6 +71,13 @@ func ConfigureCommand(root *cli.Command) {
 		}
 		if IsLocalUtilityCommand(command) {
 			return ctx, nil
+		}
+		baseURL, source := command.Root().String("base-url"), "--base-url"
+		if baseURL == "" {
+			baseURL, source = os.Getenv("OPENAI_BASE_URL"), "OPENAI_BASE_URL"
+		}
+		if err := requestconfig.ValidateBaseURL(baseURL, source); err != nil {
+			return ctx, err
 		}
 		return requestconfig.ConfigureMTLS(ctx, command.Root())
 	}

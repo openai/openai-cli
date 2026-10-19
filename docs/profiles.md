@@ -47,6 +47,9 @@ openai profile set work --unset project --unset base_url
 Repeat the flag to remove multiple fields.
 Setting and unsetting the same field fails before the CLI writes anything.
 Saved base URLs must use HTTP or HTTPS without user information, query parameters, or fragments.
+Requests require HTTPS, except for HTTP endpoints on localhost or a loopback IP address.
+Offline inspection and editing remain available for older saved endpoints.
+An explicit flag or environment override takes precedence over the saved endpoint.
 
 ## Select and switch
 

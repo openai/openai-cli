@@ -249,6 +249,17 @@ func resolvedCommandRequestContext(command *cli.Command) (resolvedRequestContext
 
 func resolvedRequestOptions(command *cli.Command) []option.RequestOption {
 	result, err := resolvedCommandRequestContext(command)
+	// Validate only the endpoint used for a request. Offline inspection and
+	// repair must remain available, including when another source overrides it.
+	if err == nil && strings.HasPrefix(result.BaseURL.Source, "profile:") {
+		if invalid := requestconfig.ValidateBaseURL(result.BaseURL.Value, "Saved profile base URL"); invalid != nil {
+			err = &localcommands.LocalError{
+				Message: "Saved profile base URL must use HTTPS, except for localhost or a loopback IP address. Use " +
+					clihelp.DisplayInvocation(command.Root()) + " profile set --help for update options.",
+				Cause: invalid,
+			}
+		}
+	}
 	if err != nil {
 		return []option.RequestOption{option.WithMaxRetries(0), option.WithMiddleware(func(*http.Request, option.MiddlewareNext) (*http.Response, error) { return nil, err })}
 	}

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -71,7 +72,7 @@ func TestImagePickerSelectionHistoryFollowsSuccessfulEcho(t *testing.T) {
 	require.Empty(t, diagnostic.String())
 	var output bytes.Buffer
 	require.NoError(t, finishImagePickerSelection(ctx, &output, &diagnostic, path, &result))
-	require.Equal(t, formatImagePickerCommand(result.Args, "bash")+"\n", output.String())
+	require.Equal(t, cliterminal.FormatCommand(result.Args, "bash")+"\n", output.String())
 	got, found, err := loadImagePickerState(ctx, path)
 	require.NoError(t, err)
 	require.True(t, found)
@@ -102,7 +103,7 @@ func TestImagePickerProfileDisplayRemainsEphemeral(t *testing.T) {
 				if test.explicit {
 					wantArgs = append([]string{"--profile", test.profile}, requestArgs...)
 				}
-				wantCommand := formatImagePickerCommand(wantArgs, shell)
+				wantCommand := cliterminal.FormatCommand(wantArgs, shell)
 				require.Equal(t, wantCommand, strings.Join(model.commandLines(40), ""))
 				require.NotContains(t, wantCommand, "\u202e")
 				require.NotContains(t, wantCommand, "\u200b")
@@ -129,7 +130,7 @@ func TestImagePickerProfileDisplayRemainsEphemeral(t *testing.T) {
 				restored, err := newImagePicker(restoreImagePickerDraft(imagePickerOptions{Shell: shell}, saved))
 				require.NoError(t, err)
 				require.Nil(t, restored.profile)
-				require.Equal(t, formatImagePickerCommand(requestArgs, shell), strings.Join(restored.commandLines(40), ""))
+				require.Equal(t, cliterminal.FormatCommand(requestArgs, shell), strings.Join(restored.commandLines(40), ""))
 				restored, err = newImagePicker(restoreImagePickerDraft(options, saved))
 				require.NoError(t, err)
 				require.Equal(t, wantCommand, strings.Join(restored.commandLines(40), ""))

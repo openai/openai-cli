@@ -11,6 +11,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiomedia"
 	"github.com/openai/openai-cli/internal/readable"
+	requestconfig "github.com/openai/openai-cli/internal/request"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
 // Keep the audio form aligned with the image picker's palette and cell budgets.
@@ -342,7 +344,7 @@ func (m *audioWorkbench) fitAudio(lines []string) string {
 // The complete command remains horizontally scrollable, including instructions.
 func (m *audioWorkbench) commandPreview() string {
 	s := m.effectiveSettings()
-	requestArgs, omit := fileReceiptRequestOptions(m.command.Root())
+	requestArgs, omit := requestconfig.NextCommandOptions(m.command.Root())
 	if omit {
 		return "Command preview unavailable with private request overrides."
 	}
@@ -360,5 +362,5 @@ func (m *audioWorkbench) commandPreview() string {
 
 func audioShellQuote(value string) string {
 	// Reuse the existing shell quoter, including its exact control-byte escapes.
-	return imagePickerShellQuote(value)
+	return cliterminal.ShellQuote(value)
 }

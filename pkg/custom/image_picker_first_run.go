@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/autocomplete"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
 )
 
@@ -68,7 +69,7 @@ func waitForImagePickerFirstRun(ctx context.Context, setup func(context.Context)
 
 func setupImagePickerShellOnFirstRun(ctx context.Context, args []string) {
 	// The immediate shell may differ from the account's login shell.
-	shell := imagePickerParentShell(ctx)
+	shell := cliterminal.ParentShell(ctx)
 	if !imagePickerFirstRunEligible(args, os.Getenv, true, true, true, shell) {
 		return
 	}

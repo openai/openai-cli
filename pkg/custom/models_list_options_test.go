@@ -5,46 +5,14 @@ import (
 	"context"
 	"errors"
 	"io"
-	"strings"
 	"testing"
 
-	"github.com/openai/openai-cli/internal/requestflag"
+	"github.com/openai/openai-cli/internal/commands/models"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/pagination"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
-
-func TestModelsListLimitHelpDefaultKeepsPresence(t *testing.T) {
-	for _, test := range []struct {
-		args  []string
-		set   bool
-		value int64
-	}{
-		{nil, false, 0},
-		{[]string{"--max-items", "0"}, true, 0},
-		{[]string{"--max-items", "-1"}, true, -1},
-	} {
-		limit := &requestflag.Flag[int64]{Name: "max-items"}
-		unrelated := &requestflag.Flag[int64]{Name: "max-items"}
-		called := false
-		command := modelsOptionsCommand(func(_ context.Context, command *cli.Command) error {
-			called = true
-			require.Equal(t, test.set, command.IsSet("max-items"))
-			require.Equal(t, test.value, command.Value("max-items"))
-			return nil
-		})
-		command.Command("models").Command("list").Flags = []cli.Flag{limit}
-		command.Command("files").Command("list").Flags = []cli.Flag{unrelated}
-		configureModelsList(command)
-		require.Equal(t, "unlimited", limit.GetDefaultText())
-		require.Zero(t, limit.Default)
-		require.Empty(t, unrelated.DefaultText)
-		require.NoError(t, command.Run(t.Context(), append([]string{"openai", "models", "list"}, test.args...)))
-		require.True(t, called)
-		require.Equal(t, "unlimited", limit.GetDefaultText())
-	}
-}
 
 func TestModelsListOptionsValidateBeforeAction(t *testing.T) {
 	for _, test := range []struct {
@@ -75,36 +43,6 @@ func TestModelsListOptionsValidateBeforeAction(t *testing.T) {
 	}
 }
 
-func TestModelsListOptionsAreScopedAndPreserveContext(t *testing.T) {
-	for _, test := range []struct {
-		args                 []string
-		selected, descending bool
-	}{
-		{[]string{"models", "list"}, false, false},
-		{[]string{"models", "list", "--sort-by", "~id"}, true, true},
-		{[]string{"models", "list", "--filter", ` id = "synthetic value" `}, true, false},
-	} {
-		called := false
-		ctx, cancel := context.WithCancel(t.Context())
-		command := modelsOptionsCommand(func(got context.Context, _ *cli.Command) error {
-			called = true
-			options, selected := got.Value(modelsListOptionsKey{}).(modelsListOptions)
-			require.Equal(t, test.selected, selected)
-			require.Equal(t, test.descending, options.selection.Descending)
-			cancel()
-			require.ErrorIs(t, got.Err(), context.Canceled)
-			return nil
-		})
-		configureModelsList(command)
-		require.NoError(t, command.Run(ctx, append([]string{"openai"}, test.args...)))
-		require.True(t, called)
-		for _, flag := range command.Command("files").Command("list").Flags {
-			require.NotContains(t, flag.Names(), "filter")
-			require.NotContains(t, flag.Names(), "sort-by")
-		}
-	}
-}
-
 func modelsOptionsCommand(action cli.ActionFunc) *cli.Command {
 	return &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard,
 		Flags: []cli.Flag{&cli.StringFlag{Name: "format"}},
@@ -113,20 +51,6 @@ func modelsOptionsCommand(action cli.ActionFunc) *cli.Command {
 			{Name: "files", Commands: []*cli.Command{{Name: "list"}}},
 		},
 	}
-}
-
-func TestModelsListFilterOperandRemainsExact(t *testing.T) {
-	for _, value := range []string{" leading and trailing ", "value=with=equals", `"literal quotes"`, "model AND other", `single' and "double" quotes`, `model\path`, "model\nline", "\x00\xff"} {
-		quoted := `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value) + `"`
-		options, err := parseModelsListOptions("id="+quoted, true, "id")
-		require.NoError(t, err)
-		require.NotNil(t, options.selection.ExactID)
-		require.Equal(t, value, *options.selection.ExactID)
-	}
-	options, err := parseModelsListOptions("id~(?i)^model$", true, "id")
-	require.NoError(t, err)
-	require.True(t, options.selection.Pattern.MatchString("MODEL"))
-	require.False(t, options.selection.Pattern.MatchString("prefix-MODEL"))
 }
 
 func TestModelsListSelectionUsesExistingFormats(t *testing.T) {
@@ -142,10 +66,9 @@ func TestModelsListSelectionUsesExistingFormats(t *testing.T) {
 	} {
 		t.Run(test.format+test.transform, func(t *testing.T) {
 			source, _ := staticModelIterator(t, `[{"id":"skip","object":"model"},{"id":"model-a","object":"model"},{"id":"model-c","object":"model","detail":"preserved"}]`, -1, nil)
-			options, err := parseModelsListOptions("id~^model-", true, "~id")
-			require.NoError(t, err)
+			selectionContext := modelSelectionContext(t, "id~^model-", true, "~id")
 			var out bytes.Buffer
-			opts := ShowJSONOpts{Context: context.WithValue(t.Context(), modelsListOptionsKey{}, options),
+			opts := ShowJSONOpts{Context: selectionContext,
 				Operation: "(resource) models > (method) list", OutputKind: OutputPageItem,
 				Format: test.format, ExplicitFormat: true, Transform: test.transform, RawOutput: test.raw, Stdout: &out}
 			require.NoError(t, ShowJSONIterator(source, 1, opts))
@@ -175,7 +98,7 @@ func TestModelsListSelectionPreservesFailures(t *testing.T) {
 	} {
 		source, _ := staticModelIterator(t, test.data, -1, test.upstream)
 		var out bytes.Buffer
-		opts := ShowJSONOpts{Context: context.WithValue(t.Context(), modelsListOptionsKey{}, modelsListOptions{}),
+		opts := ShowJSONOpts{Context: modelSelectionContext(t, "", false, "id"),
 			Operation: "(resource) models > (method) list", OutputKind: OutputPageItem, Stdout: &out}
 		err := ShowJSONIterator(source, test.maximum, opts)
 		if test.want != nil {
@@ -189,7 +112,7 @@ func TestModelsListSelectionPreservesFailures(t *testing.T) {
 }
 
 func TestModelsListSelectionRejectsCursorAndPreservesCancellation(t *testing.T) {
-	opts := ShowJSONOpts{Context: context.WithValue(t.Context(), modelsListOptionsKey{}, modelsListOptions{}),
+	opts := ShowJSONOpts{Context: modelSelectionContext(t, "", false, "id"),
 		Operation: "(resource) models > (method) list", OutputKind: OutputPageItem, Stdout: io.Discard}
 	cursor := pagination.NewCursorPageAutoPager(&pagination.CursorPage[openai.Model]{Data: []openai.Model{{ID: "unread"}}, HasMore: true}, nil)
 	handled, err := showModelsListSelection(cursor, -1, opts)
@@ -202,11 +125,25 @@ func TestModelsListSelectionRejectsCursorAndPreservesCancellation(t *testing.T) 
 	source, _ := staticModelIterator(t, `[{"object":"model","id":"unread"}]`, -1, nil)
 	require.ErrorIs(t, ShowJSONIterator(source, -1, opts), context.Canceled)
 	require.Zero(t, source.Index())
-	options, err := parseModelsListOptions("id=missing", true, "id")
-	require.NoError(t, err)
-	opts.Context = context.WithValue(t.Context(), modelsListOptionsKey{}, options)
+	selectionContext := modelSelectionContext(t, "id=missing", true, "id")
+	opts.Context = selectionContext
 	var out bytes.Buffer
 	opts.Stdout = &out
 	require.NoError(t, ShowJSONIterator(source, -1, opts))
 	require.Equal(t, "No results.\n", out.String())
+}
+
+// Exercise selection context through feature registration, not private context keys.
+func modelSelectionContext(t *testing.T, filter string, filterSet bool, order string) context.Context {
+	t.Helper()
+	var selected context.Context
+	root := modelsOptionsCommand(func(ctx context.Context, _ *cli.Command) error { selected = ctx; return nil })
+	models.Configure(root, models.Options{})
+	args := []string{"openai", "models", "list", "--sort-by", order}
+	if filterSet {
+		args = append(args, "--filter", filter)
+	}
+	require.NoError(t, root.Run(t.Context(), args))
+	require.NotNil(t, selected)
+	return selected
 }

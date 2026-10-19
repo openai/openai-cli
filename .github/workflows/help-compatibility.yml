@@ -159,6 +159,7 @@ jobs:
         with:
           cache-compilation: ${{ matrix.os == 'macos-15-intel' || matrix.os == 'windows-11-arm' }}
       - name: Verify native Go platform
+        id: native-go-platform
         shell: bash
         env:
           EXPECTED_GOOS: ${{ matrix.goos }}
@@ -208,6 +209,7 @@ jobs:
           fish --version
           expect -v
       - uses: ./.github/actions/link-go-sdk
+        id: link-go-sdk
       - name: Test native portable command contracts
         if: matrix.native-commands && runner.os != 'Windows' && matrix.shard != 'dispatch'
         shell: bash
@@ -237,7 +239,7 @@ jobs:
           GOMAXPROCS: '2'
         run: |
           set -euo pipefail
-          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=3m -v -json -run '^(TestMainAuthStatusOfflineOutputAndDiagnostics|TestMainAuthStatusCredentialAndContextPrecedence|TestMainAuthStatusPreservesStdin|TestMainAuthStatusDoesNotLoadMTLS|TestMainAuthStatusSanitizesURLsAndTerminalControls|TestMainAuthStatusErrorsRemainPrivate|TestMainAuthStatusIdentitySelectionAndRequestBoundary|TestMainAuthStatusIdentityProviderAndCredentialRejections|TestMainAuthStatusIdentitySelectionRequiresExplicitVerification|TestMainAuthStatusIdentityFailuresRemainUnknownAndPrivate|TestMainAuthStatusIdentityNullableFieldsAndSupportedEndpoints|TestMainAuthStatusIdentityAuthorizationPrecedence|TestMainAuthStatusIdentityTextEscapesTerminalControls|TestMainAuthStatusIdentityDeadline|TestMainProfileShellSuggestionFlagOwnership|TestMainProfileLifecycleAndExactSchemas|TestMainProfileEditsNeverSaveAmbientValues|TestMainProfileStatusMatchesRequestContext|TestMainProfileProjectBypassesMalformedFolderRegistry|TestMainProfileMissingSelectionPreservesCommittedFolderLink|TestMainProfileCancellationPreservesCommittedOutcomes|TestMainProjectLinkOfflineLifecycle|TestMainProjectLinkQuietPreservesInspectionAndJSON|TestMainProjectLinkRequestPrecedence|TestMainProjectLinkDirectoryScope|TestMainProjectLinkMalformedRegistryFailsBeforeRequests|TestMainAuthStatusIdentitySpacedBearerRemainsPrivate)$' \
+          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=3m -v -json -run '^(TestMainAuthStatusOfflineOutputAndDiagnostics|TestMainAuthStatusCredentialAndContextPrecedence|TestMainAuthStatusPreservesStdin|TestMainAuthStatusDoesNotLoadMTLS|TestMainAuthStatusSanitizesURLsAndTerminalControls|TestMainAuthStatusErrorsRemainPrivate|TestMainAuthStatusIdentitySelectionAndRequestBoundary|TestMainAuthStatusIdentityProviderAndCredentialRejections|TestMainAuthStatusIdentitySelectionRequiresExplicitVerification|TestMainAuthStatusIdentityFailuresRemainUnknownAndPrivate|TestMainAuthStatusIdentityNullableFieldsAndSupportedEndpoints|TestMainAuthStatusIdentityAuthorizationPrecedence|TestMainAuthStatusIdentityTextEscapesTerminalControls|TestMainAuthStatusIdentityDeadline|TestMainProfileShellSuggestionFlagOwnership|TestMainProfileLifecycleAndExactSchemas|TestMainProfileEditsNeverSaveAmbientValues|TestMainProfileBaseURLUsesActualEffectiveEndpoint|TestMainProfileBaseURLRequestPolicy|TestMainProfileBaseURLPolicyPreservesAllowedEndpointsAndOverrides|TestMainProfileStatusMatchesRequestContext|TestMainProfileProjectBypassesMalformedFolderRegistry|TestMainProfileMissingSelectionPreservesCommittedFolderLink|TestMainProfileCancellationPreservesCommittedOutcomes|TestMainProjectLinkOfflineLifecycle|TestMainProjectLinkQuietPreservesInspectionAndJSON|TestMainProjectLinkRequestPrecedence|TestMainProjectLinkDirectoryScope|TestMainProjectLinkMalformedRegistryFailsBeforeRequests|TestMainAuthStatusIdentitySpacedBearerRemainsPrivate)$' \
             | tee "$RUNNER_TEMP/auth-profile-tests.jsonl"
       - name: Test Windows authentication, profiles, and project links
         if: runner.os == 'Windows' && matrix.shard != 'dispatch'
@@ -247,7 +249,7 @@ jobs:
           GOMAXPROCS: '2'
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=3m -v -json -run '^(TestMainAuthStatusOfflineOutputAndDiagnostics|TestMainAuthStatusCredentialAndContextPrecedence|TestMainAuthStatusPreservesStdin|TestMainAuthStatusDoesNotLoadMTLS|TestMainAuthStatusSanitizesURLsAndTerminalControls|TestMainAuthStatusErrorsRemainPrivate|TestMainAuthStatusIdentitySelectionAndRequestBoundary|TestMainAuthStatusIdentityProviderAndCredentialRejections|TestMainAuthStatusIdentitySelectionRequiresExplicitVerification|TestMainAuthStatusIdentityFailuresRemainUnknownAndPrivate|TestMainAuthStatusIdentityNullableFieldsAndSupportedEndpoints|TestMainAuthStatusIdentityAuthorizationPrecedence|TestMainAuthStatusIdentityTextEscapesTerminalControls|TestMainAuthStatusIdentityDeadline|TestMainProfileShellSuggestionFlagOwnership|TestMainProfileLifecycleAndExactSchemas|TestMainProfileEditsNeverSaveAmbientValues|TestMainProfileStatusMatchesRequestContext|TestMainProfileProjectBypassesMalformedFolderRegistry|TestMainProfileMissingSelectionPreservesCommittedFolderLink|TestMainProfileCancellationPreservesCommittedOutcomes|TestMainProjectLinkOfflineLifecycle|TestMainProjectLinkQuietPreservesInspectionAndJSON|TestMainProjectLinkRequestPrecedence|TestMainProjectLinkDirectoryScope|TestMainProjectLinkMalformedRegistryFailsBeforeRequests|TestMainAuthStatusIdentitySpacedBearerRemainsPrivate)$' |
+          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=3m -v -json -run '^(TestMainAuthStatusOfflineOutputAndDiagnostics|TestMainAuthStatusCredentialAndContextPrecedence|TestMainAuthStatusPreservesStdin|TestMainAuthStatusDoesNotLoadMTLS|TestMainAuthStatusSanitizesURLsAndTerminalControls|TestMainAuthStatusErrorsRemainPrivate|TestMainAuthStatusIdentitySelectionAndRequestBoundary|TestMainAuthStatusIdentityProviderAndCredentialRejections|TestMainAuthStatusIdentitySelectionRequiresExplicitVerification|TestMainAuthStatusIdentityFailuresRemainUnknownAndPrivate|TestMainAuthStatusIdentityNullableFieldsAndSupportedEndpoints|TestMainAuthStatusIdentityAuthorizationPrecedence|TestMainAuthStatusIdentityTextEscapesTerminalControls|TestMainAuthStatusIdentityDeadline|TestMainProfileShellSuggestionFlagOwnership|TestMainProfileLifecycleAndExactSchemas|TestMainProfileEditsNeverSaveAmbientValues|TestMainProfileBaseURLUsesActualEffectiveEndpoint|TestMainProfileBaseURLRequestPolicy|TestMainProfileBaseURLPolicyPreservesAllowedEndpointsAndOverrides|TestMainProfileStatusMatchesRequestContext|TestMainProfileProjectBypassesMalformedFolderRegistry|TestMainProfileMissingSelectionPreservesCommittedFolderLink|TestMainProfileCancellationPreservesCommittedOutcomes|TestMainProjectLinkOfflineLifecycle|TestMainProjectLinkQuietPreservesInspectionAndJSON|TestMainProjectLinkRequestPrecedence|TestMainProjectLinkDirectoryScope|TestMainProjectLinkMalformedRegistryFailsBeforeRequests|TestMainAuthStatusIdentitySpacedBearerRemainsPrivate)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'auth-profile-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test identity transport and local command error contracts
@@ -550,7 +552,7 @@ jobs:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: zsh,fish
         run: |
           set -euo pipefail
-          go test ./pkg/custom -count=1 -timeout=2m -v -json \
+          go test ./internal/terminal -count=1 -timeout=2m -v -json \
             -run '^TestImagePickerNativeShellQuoting/(zsh|fish)$' \
             | tee "$RUNNER_TEMP/shell-quoting-tests.jsonl"
       - name: Test Windows Files upload and download routes
@@ -611,11 +613,11 @@ jobs:
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-models-progress-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows audio output behavior
-        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch' && !cancelled() && steps.native-go-platform.outcome == 'success' && steps.link-go-sdk.outcome == 'success'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainReadableAudioJSONPreservesTextAndMetadata|TestMainReadableAudioTextAndSubtitles|TestMainReadableAudioTranscriptionStreamsBeforeDone|TestMainReadableAudioTranscriptionKeepsEventsAndMetadata|TestMainReadableAudioStreamFailuresKeepPartialOutput|TestMainReadableAudioSpeechFormatsAndDownloads|TestMainReadableAudioSpeechPreservesBinary|TestMainReadableAudioLargePayloads)$' |
+          go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^(TestMainReadableAudioJSONPreservesTextAndMetadata|TestMainReadableAudioTextAndSubtitles|TestMainReadableAudioTranscriptionStreamsBeforeDone|TestMainReadableAudioTranscriptionKeepsEventsAndMetadata|TestMainReadableAudioStreamFailuresKeepPartialOutput|TestMainReadableAudioSpeechFormatsAndDownloads|TestMainReadableAudioSpeechPreservesBinary|TestMainReadableAudioLargePayloads|TestMainAudioWorkbenchPlayUsesSyntheticLocalHelper|TestMainAudioWorkbenchWindowsPlayerCancellationStatusAndCleanup)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'audio-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Windows resource output and pagination
@@ -639,7 +641,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLargeFieldPreservedAndPrewrapped|TestListNavigationPrintPageCancelsWithoutFetching|TestListNavigationLabelsPreserveLongIDs|TestListNavigationNarrowFooterKeepsQuitAndPrintVisible|TestListNavigationErrorPresentation|TestListNavigationCompleteFirstPageFitsScreen|TestListNavigationContentFitsDisplayCells|TestListNavigationShortResultPreservesErrorsAndHistory|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' \
+          go test -p 2 ./pkg/custom ./internal/output/listview -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLargeFieldPreservedAndPrewrapped|TestListNavigationPrintPageCancelsWithoutFetching|TestListNavigationLabelsPreserveLongIDs|TestListNavigationNarrowFooterKeepsQuitAndPrintVisible|TestListNavigationErrorPresentation|TestListNavigationCompleteFirstPageFitsScreen|TestListNavigationContentFitsDisplayCells|TestListNavigationShortResultPreservesErrorsAndHistory|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' \
             | tee "$RUNNER_TEMP/list-navigation-helper-tests.jsonl"
           go test -p 2 ./internal/output/transform -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' \
             | tee "$RUNNER_TEMP/list-projection-helper-tests.jsonl"
@@ -650,7 +652,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLargeFieldPreservedAndPrewrapped|TestListNavigationPrintPageCancelsWithoutFetching|TestListNavigationLabelsPreserveLongIDs|TestListNavigationNarrowFooterKeepsQuitAndPrintVisible|TestListNavigationErrorPresentation|TestListNavigationCompleteFirstPageFitsScreen|TestListNavigationContentFitsDisplayCells|TestListNavigationShortResultPreservesErrorsAndHistory|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' |
+          go test -p 2 ./pkg/custom ./internal/output/listview -count=1 -timeout=2m -v -json -run '^(TestListPageFetcherWaitsAndPreservesPageSize|TestShowJSONPagesZeroRetainsRequestErrors|TestListPageFetcherStopsEmptyAndStalledCursors|TestListPageFetcherCancellationPreventsRequests|TestListNavigationUsesLoadedRowsBeforeOneRequest|TestListNavigationOutputPreservesFailureAndRestoresModes|TestListNavigationOutputFailureDiagnostic|TestListNavigationQuitRetainsRealFailures|TestListNavigationLargeFieldPreservedAndPrewrapped|TestListNavigationPrintPageCancelsWithoutFetching|TestListNavigationLabelsPreserveLongIDs|TestListNavigationNarrowFooterKeepsQuitAndPrintVisible|TestListNavigationErrorPresentation|TestListNavigationCompleteFirstPageFitsScreen|TestListNavigationContentFitsDisplayCells|TestListNavigationShortResultPreservesErrorsAndHistory|TestRenderListNavigationPageHintPolicy|TestRenderListNavigationPageCancelsProjection|TestRenderListTablePage|TestRenderListTablePageEmptyAndUnsupported)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'list-navigation-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test -p 2 ./internal/output/transform -count=1 -timeout=2m -v -json -run '^(TestProjectListTableCanceledContext|TestListTableCountsCancellation|TestProjectListTableKnownResources|TestProjectListTableMissingOptionalFields|TestProjectListTableEmptyPagesAndRoutes|TestProjectListTablePreservesOriginalStrings|TestProjectListTableFallsBackForEntirePage|TestProjectListTablePreservesErrorsAndMalformedFields|TestProjectListTableByteSizes)$' |
@@ -842,6 +844,12 @@ jobs:
                   "TestMainAuthStatusIdentityMTLSFIFOs", ["certificate", "key"],
               )
               strict_packages["auth-identity-fifo-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+          profile_request_commands = ["models/list", "admin/organization/projects/list"]
+          profile_request_policy_endpoints = [
+              "http://private-profile.invalid/private-path",
+              "http://192.0.2.1/private-path",
+              "http://[2001:db8::1]/private-path",
+          ]
           auth_profile_cases = {
               "TestMainAuthStatusOfflineOutputAndDiagnostics": [
                   "auto",
@@ -959,6 +967,27 @@ jobs:
                   "jsonl"
               ],
               "TestMainProfileEditsNeverSaveAmbientValues": [],
+              "TestMainProfileBaseURLUsesActualEffectiveEndpoint": [
+                  "profile", "empty_profile_production_reset", "empty_flag_keeps_profile",
+                  "empty_flag_keeps_production_reset", "environment", "empty_flag_keeps_environment",
+                  "root_overrides_environment", "empty_environment_remains_empty",
+              ],
+              "TestMainProfileBaseURLRequestPolicy": profile_request_policy_endpoints + [
+                  f"{endpoint}/{command}/{selection}/{output_format}"
+                  for endpoint in profile_request_policy_endpoints
+                  for command in profile_request_commands
+                  for selection in ["default", "environment", "flag"]
+                  for output_format in ["text", "json"]
+              ],
+              "TestMainProfileBaseURLPolicyPreservesAllowedEndpointsAndOverrides": [
+                  f"{command}/{source}/{endpoint}"
+                  for command in profile_request_commands
+                  for endpoint in [
+                      "https://allowed.invalid/v1", "http://localhost:8888/v1",
+                      "http://127.0.0.1:8888/v1", "http://[::1]:8888/v1",
+                  ]
+                  for source in ["profile", "flag", "environment"]
+              ],
               "TestMainProfileStatusMatchesRequestContext": [
                   "saved_default",
                   "explicit_root_over_custom_headers",
@@ -1034,7 +1063,7 @@ jobs:
           profile_recovery_cases = [
               "missing_get", "duplicate_create", "missing_set", "missing_activate",
               "missing_delete", "missing_status_selection", "missing_switch_selection",
-              "status_positional_argument",
+              "status_positional_argument", "saved_endpoint_request_policy",
           ]
           profile_recovery_tests = {profile_recovery_root}
           profile_recovery_shells = ["cmd", "powershell", "pwsh"] if os.environ["RUNNER_OS"] == "Windows" else ["bash", "zsh"]
@@ -1048,7 +1077,7 @@ jobs:
                       profile_recovery_tests.update(required_cases(
                           f"{mode_root}/{output_format}", profile_recovery_cases,
                       ))
-          expected_recovery_names = 172 if os.environ["RUNNER_OS"] == "Windows" else 115
+          expected_recovery_names = 190 if os.environ["RUNNER_OS"] == "Windows" else 127
           if len(profile_recovery_tests) != expected_recovery_names:
               raise SystemExit(f"profile recovery inventory must contain {expected_recovery_names} names")
           suites["profile-copied-recovery-tests.jsonl"] = profile_recovery_tests
@@ -1464,6 +1493,10 @@ jobs:
                   required_cases("TestMainReadableAudio" + suffix, children)
                   for suffix, children in audio_cases.items()
               ))
+              suites["audio-tests.jsonl"] |= {
+                  "TestMainAudioWorkbenchPlayUsesSyntheticLocalHelper",
+              } | required_cases("TestMainAudioWorkbenchWindowsPlayerCancellationStatusAndCleanup", ["CTRL_C", "CTRL_BREAK"])
+              strict_packages["audio-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
               resource_cases = {
                   "TestMainResourceSummariesRetainActionFields": ["model", "file", "batch", "vector_store",
                       "vector_file", "vector_file_batch", "fine_tuning_job", "assistant", "thread_run"],

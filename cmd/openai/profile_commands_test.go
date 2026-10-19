@@ -303,17 +303,32 @@ func TestMainProfileCopiedRecoveryPreservesInvocation(t *testing.T) {
 								{"missing status selection", "--profile missing auth status", "profile list"},
 								{"missing switch selection", "--profile missing auth switch --to-project proj_new", "profile list"},
 								{"status positional argument", "auth status unexpected", "auth status --help"},
+								{"saved endpoint request policy", "--profile work --api-key synthetic-profile-policy-key models list", "profile set --help"},
 							} {
 								t.Run(tc.name, func(t *testing.T) {
 									home, directory := t.TempDir(), t.TempDir()
 									registry := profileRegistryPath(home)
 									before := []byte("{\"version\":1,\"default_profile\":null,\"profiles\":{\"work\":{\"project\":\"proj_original\"}}}\n")
+									prefix := ""
+									if tc.recovery == "profile set --help" {
+										before = []byte("{\"version\":1,\"default_profile\":null,\"profiles\":{\"work\":{\"project\":\"proj_original\",\"base_url\":\"http://private-profile.invalid/private-path\"}}}\n")
+										// Remove the helper's endpoint override. Trap any regression through a local proxy.
+										switch shell.name {
+										case "cmd":
+											prefix = "set \"OPENAI_BASE_URL=\"\r\nset \"HTTP_PROXY=" + server.URL + "\"\r\nset \"NO_PROXY=\"\r\n"
+										case "powershell", "pwsh":
+											prefix = "Remove-Item Env:OPENAI_BASE_URL -ErrorAction SilentlyContinue; $env:HTTP_PROXY = '" + server.URL + "'; $env:NO_PROXY = ''; "
+										default:
+											prefix = "unset OPENAI_BASE_URL; export HTTP_PROXY='" + server.URL + "'; export NO_PROXY=''; "
+										}
+									}
 									require.NoError(t, os.MkdirAll(filepath.Dir(registry), 0o700))
 									require.NoError(t, os.WriteFile(registry, before, 0o600))
 									got := run(t, directory, home,
-										invocation+" "+tc.args+" --format-error="+format)
+										prefix+invocation+" "+tc.args+" --format-error="+format)
 									require.Equal(t, 1, got.code, "%s", got.stderr)
 									require.Empty(t, got.stdout)
+									require.Zero(t, requests.Load(), "failed command reached the API")
 									after, err := os.ReadFile(registry)
 									require.NoError(t, err)
 									require.Equal(t, before, after, "failed command changed saved profiles")
@@ -323,6 +338,10 @@ func TestMainProfileCopiedRecoveryPreservesInvocation(t *testing.T) {
 										require.NoError(t, json.Unmarshal([]byte(got.stderr), &value))
 										require.Len(t, value, 1)
 										message = value["message"]
+									}
+									if tc.recovery == "profile set --help" {
+										require.Contains(t, message, "Saved profile base URL must use HTTPS, except for localhost or a loopback IP address.")
+										assertAuthStatusPrivate(t, got, "private-profile.invalid", "private-path", "synthetic-profile-policy-key", home)
 									}
 									_, guidance, found := strings.Cut(message, "Use ")
 									require.True(t, found, "%s", message)
@@ -334,10 +353,10 @@ func TestMainProfileCopiedRecoveryPreservesInvocation(t *testing.T) {
 										// The guidance names an edit prefix; supply the intended profile and edit.
 										recovery += " work --project proj_recovered"
 									}
-									if tc.recovery != "auth status --help" {
+									if !strings.HasSuffix(tc.recovery, " --help") {
 										recovery += " --format=json"
 									}
-									copied := run(t, directory, home, recovery)
+									copied := run(t, directory, home, prefix+recovery)
 									if tc.recovery == "profile set" {
 										assertProfileJSON(t, copied, profileReceipt("set", "work", false, map[string]string{"project": "proj_recovered"}))
 										assertProfileJSON(t, profileCommand(t, home, directory, "profile", "get", "work"), profileRecord("work", false, map[string]string{"project": "proj_recovered"}))
@@ -346,6 +365,11 @@ func TestMainProfileCopiedRecoveryPreservesInvocation(t *testing.T) {
 										require.Empty(t, copied.stderr)
 										require.Contains(t, copied.stdout, "Shows configured authentication offline by default.")
 										require.Contains(t, copied.stdout, invocation+" auth status")
+									} else if tc.recovery == "profile set --help" {
+										require.Zero(t, copied.code, "%s", copied.stderr)
+										require.Empty(t, copied.stderr)
+										require.Contains(t, copied.stdout, "Edit only explicit saved profile fields")
+										require.Contains(t, copied.stdout, invocation+" profile set")
 									} else {
 										assertProfileJSON(t, copied, []map[string]any{profileRecord("work", false, map[string]string{"project": "proj_original"})})
 									}
@@ -970,6 +994,92 @@ func TestMainProfileBaseURLUsesActualEffectiveEndpoint(t *testing.T) {
 		})
 	}
 	assertProfileJSON(t, profileCommand(t, home, directory, "profile", "get", "empty"), profileRecord("empty", false, map[string]string{"base_url": ""}))
+}
+
+func TestMainProfileBaseURLRequestPolicy(t *testing.T) {
+	for _, endpoint := range []string{
+		"http://private-profile.invalid/private-path", "http://192.0.2.1/private-path", "http://[2001:db8::1]/private-path",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			home, directory := t.TempDir(), t.TempDir()
+			createProfileFixture(t, home, directory, "private-profile", "--base-url="+endpoint)
+			require.Zero(t, profileCommand(t, home, directory, "profile", "activate", "private-profile").code)
+			before, err := os.ReadFile(profileRegistryPath(home))
+			require.NoError(t, err)
+			for _, command := range [][]string{{"models", "list"}, {"admin", "organization", "projects", "list"}} {
+				for _, selection := range []string{"default", "environment", "flag"} {
+					for _, format := range []string{"text", "json"} {
+						t.Run(strings.Join(command, "/")+"/"+selection+"/"+format, func(t *testing.T) {
+							env := []string{"OPENAI_ADMIN_KEY=synthetic-admin-key"}
+							args := []string{"--format=raw", "--format-error=" + format}
+							if selection == "environment" {
+								env = append(env, "OPENAI_PROFILE=private-profile")
+							} else if selection == "flag" {
+								args = append(args, "--profile=private-profile")
+							}
+							// The subprocess replaces the transport before main. No destination can receive a request.
+							got := runProfileURLMain(t, home, directory, env, append(args, command...))
+							require.Equal(t, 1, got.code)
+							require.Empty(t, got.stdout)
+							require.Contains(t, got.stderr, "Saved profile base URL must use HTTPS")
+							require.Contains(t, got.stderr, "except for localhost or a loopback IP address.")
+							require.Contains(t, got.stderr, "openai profile set --help")
+							require.NotContains(t, got.stderr, "captured-url=", "the transport must not execute")
+							assertAuthStatusPrivate(t, got, endpoint, "private-profile", "private-path", "synthetic-url-key", "synthetic-admin-key", home)
+							if format == "json" {
+								require.True(t, json.Valid([]byte(got.stderr)), "%s", got.stderr)
+							}
+						})
+					}
+				}
+			}
+			for _, command := range [][]string{{"auth", "status"}, {"profile", "get", "private-profile"}, {"profile", "set", "--help"}} {
+				got := runProfileURLMain(t, home, directory, nil, command)
+				require.Zero(t, got.code, "%s", got.stderr)
+				require.Empty(t, got.stderr, "offline inspection and the printed recovery command must work")
+			}
+			after, err := os.ReadFile(profileRegistryPath(home))
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+			got := profileCommand(t, home, directory, "profile", "set", "private-profile", "--base-url=https://repaired.invalid/v1")
+			require.Zero(t, got.code, "%s", got.stderr)
+			got = runProfileURLMain(t, home, directory, nil, []string{"models", "list", "--format=raw"})
+			require.Zero(t, got.code, "%s", got.stderr)
+			require.Equal(t, "captured-url=https://repaired.invalid/v1/models\n", got.stderr)
+		})
+	}
+}
+
+func TestMainProfileBaseURLPolicyPreservesAllowedEndpointsAndOverrides(t *testing.T) {
+	for _, command := range [][]string{{"models", "list"}, {"admin", "organization", "projects", "list"}} {
+		for _, endpoint := range []string{"https://allowed.invalid/v1", "http://localhost:8888/v1", "http://127.0.0.1:8888/v1", "http://[::1]:8888/v1"} {
+			for _, source := range []string{"profile", "flag", "environment"} {
+				t.Run(strings.Join(command, "/")+"/"+source+"/"+endpoint, func(t *testing.T) {
+					home, directory := t.TempDir(), t.TempDir()
+					saved := "http://unused-profile.invalid/v1"
+					if source == "profile" {
+						saved = endpoint
+					}
+					createProfileFixture(t, home, directory, "work", "--base-url="+saved)
+					env := []string{"OPENAI_ADMIN_KEY=synthetic-admin-key"}
+					args := []string{"--profile=work", "--format=raw"}
+					if source == "flag" {
+						args = append(args, "--base-url="+endpoint)
+					} else if source == "environment" {
+						env = append(env, "OPENAI_BASE_URL="+endpoint)
+					}
+					got := runProfileURLMain(t, home, directory, env, append(args, command...))
+					require.Zero(t, got.code, "%s", got.stderr)
+					suffix := "/models"
+					if command[0] == "admin" {
+						suffix = "/organization/projects"
+					}
+					require.Equal(t, "captured-url="+endpoint+suffix+"\n", got.stderr)
+					require.Equal(t, globalFlagsPage+"\n", got.stdout)
+				})
+			}
+		}
+	}
 }
 
 func TestMainProfileAdminEndpointPreflightMatchesSelection(t *testing.T) {

@@ -165,6 +165,37 @@ existing JSON and multipart call sites, preserving explicit flag precedence and
 request bytes. Feature-specific inspection and body construction retain their
 current owners.
 
+File upload/get/download route configuration and upload receipts live in
+`internal/commands/files/`, with their command, privacy, shell, and rendering tests.
+Assembly retains output eligibility and destination classification. Shared shell
+quoting and immediate-parent shell detection live in `internal/terminal/`, used by
+files, image picker, and audio previews. Safe request options for suggested next
+commands live in `internal/request/`; file receipts retain their Go-launcher
+traversal policy. Native shell CI selects the moved quoting test unchanged.
+
+Batch wait/download workflows, polling, cancellation, private directory creation,
+and output helper processes live in `internal/commands/batches/`. Assembly supplies
+request preparation, client middleware, output rendering, and diagnostic policy;
+startup dispatches the private helper entrypoints directly. Shared private download
+file creation lives in `internal/output/`, and the borrowed terminal writer adapter
+lives in `internal/terminal/`. Native download ACL assertions and borrowed socket
+fixtures live in `internal/testutil/`, preserving their existing test contracts.
+
+Model-list flags, filter parsing, selection, loading lifecycle, ID/owner tables,
+and loaded-response presentation live in `internal/commands/models/`. Assembly
+retains eligibility and diagnostic policy, supplies loading feedback, and reconnects
+selected records to the normal output pipeline. Selection still admits only the
+SDK single-response models pager; cursor pagers remain lazy.
+
+Shared list navigation, page fetching, loaded-page tables and labels, viewport
+sizing, worker cleanup, and post-restoration printing live in
+`internal/output/listview/`. Assembly supplies rendering and feature-specific
+print-hint/interrupt callbacks, so shared output does not import model commands.
+Assembly retains the `ShowJSONPages`/`InteractiveListOutput` entrypoints; current
+generated commands do not call them. The generated runtime bridge still targets
+the remaining request/output adapters in `pkg/custom/`. The guarded terminal writer shared with the JSON explorer
+lives in `internal/output/` and retains its original file-close behavior.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

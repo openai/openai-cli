@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/internal/output/listview"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -27,7 +28,7 @@ func TestRenderListNavigationPageHintPolicy(t *testing.T) {
 				items := []gjson.Result{gjson.Parse(resource.input)}
 				original := append([]gjson.Result(nil), items...)
 				opts := ShowJSONOpts{Context: t.Context(), Operation: "(resource) " + resource.name + " > (method) list", OutputKind: OutputPageItem}
-				_, fits, err := renderListTablePage(t.Context(), opts.Operation, items, layout.width)
+				_, fits, err := listview.RenderTable(t.Context(), opts.Operation, items, layout.width, outputDiagnosticsAllowed(t.Context()))
 				require.NoError(t, err)
 				require.Equal(t, layout.table, fits, "the fixture must exercise the selected renderer")
 				ordinary, err := renderListNavigationPage(opts, items, layout.width)
@@ -121,35 +122,4 @@ func (ctx *cancelListTableContext) Err() error {
 		ctx.cancel()
 	}
 	return ctx.Context.Err()
-}
-
-func TestRenderListTablePage(t *testing.T) {
-	items := []gjson.Result{gjson.Parse(`{"object":"batch","id":"batch_synthetic","status":"completed","created_at":1}`)}
-	original := items[0].Raw
-	content, supported, err := renderListTablePage(t.Context(), "(resource) batches > (method) list", items, 80)
-	require.NoError(t, err)
-	require.True(t, supported)
-	require.Contains(t, content, "ID")
-	require.Contains(t, content, "STATUS")
-	require.Contains(t, content, "batch_synthetic")
-	require.Equal(t, 1, strings.Count(content, clioutput.ResourceSummaryHint))
-	require.Equal(t, original, items[0].Raw)
-	// Rerendering reads only loaded values and cannot mutate their original JSON.
-	_, supported, err = renderListTablePage(t.Context(), "(resource) batches > (method) list", items, 1)
-	require.NoError(t, err)
-	require.False(t, supported)
-	require.Equal(t, original, items[0].Raw)
-}
-
-func TestRenderListTablePageEmptyAndUnsupported(t *testing.T) {
-	content, supported, err := renderListTablePage(t.Context(), "(resource) files > (method) list", nil, 80)
-	require.NoError(t, err)
-	require.True(t, supported)
-	require.Equal(t, "No results.\n", content)
-	for _, op := range []string{"", "(resource) files > (method) retrieve", "(resource) images > (method) models", "(resource) models > (method) list"} {
-		content, supported, err = renderListTablePage(t.Context(), op, nil, 80)
-		require.NoError(t, err)
-		require.False(t, supported)
-		require.Empty(t, content)
-	}
 }

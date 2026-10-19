@@ -14,7 +14,10 @@ import (
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
+	"github.com/openai/openai-cli/internal/commands/models"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/internal/output/listview"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -48,13 +51,13 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var utilityFailure *localcommands.LocalError
 	var downloadFailure *downloadSaveError
 	var receiptFailure *saveReceiptError
-	var navigationFailure *listNavigationError
-	var modelsListFailure *modelsListError
-	var batchFailure *batchWorkflowError
+	var navigationFailure *listview.PaginationError
+	var modelsListFailure *models.ListError
+	var batchFailure *batchcommands.WorkflowError
 	var finiteListFailure *clioutput.FiniteJSONListError
 	switch {
 	case errors.As(failure, &batchFailure):
-		return batchFailure.message
+		return batchFailure.Error()
 	case errors.As(failure, &adminSetupFailure):
 		return adminSetupFailure.Error()
 	case errors.As(failure, &downloadFailure):
@@ -170,6 +173,9 @@ func knownLocalError(command *cli.Command, message string) string {
 		return message
 	}
 	for _, source := range []string{"OPENAI_BASE_URL", "--base-url"} {
+		if message == source+requestconfig.BaseURLHTTPSRequired || message == source+requestconfig.BaseURLHostRequired {
+			return message + "."
+		}
 		if tail, ok := afterQuotedValue(message, source+" "); ok && tail == " is missing a scheme (expected http:// or https://)" {
 			return source + " must start with http:// or https://."
 		}
@@ -199,8 +205,11 @@ func knownLocalError(command *cli.Command, message string) string {
 	}
 	if tail, ok := afterQuotedValue(message, "invalid value "); ok {
 		if rest, ok := strings.CutPrefix(tail, " for flag -"); ok {
-			name, _, found := strings.Cut(rest, ": ")
+			name, reason, found := strings.Cut(rest, ": ")
 			if flag := declaredErrorFlag(command, name); found && flag != "" {
+				if flag == "--base-url" && (reason == flag+requestconfig.BaseURLHTTPSRequired || reason == flag+requestconfig.BaseURLHostRequired) {
+					return parserErrorGuidance(command, reason+".")
+				}
 				if flag == "--format" || flag == "--format-error" {
 					return "Invalid output format. Choose one of: " + strings.Join(OutputFormats, ", ") + "."
 				}
