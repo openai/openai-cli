@@ -1,4 +1,4 @@
-package custom
+package models
 
 import (
 	"context"
@@ -17,12 +17,13 @@ type modelsListOptions struct {
 	applied   bool
 }
 
-// Messages contain only fixed guidance, never filter values or response data.
-type modelsListError struct{ message string }
+// ListError contains only fixed guidance, never filter values or response data.
+type ListError struct{ message string }
 
-func (e *modelsListError) Error() string { return e.message }
+func (e *ListError) Error() string { return e.message }
 
-func configureModelsList(root *cli.Command) {
+// Configure installs model-list flags and the loading/selection lifecycle.
+func Configure(root *cli.Command, policy Options) {
 	resource := root.Command("models")
 	if resource == nil || resource.Command("list") == nil {
 		return
@@ -54,16 +55,16 @@ Use --format json for complete records. Filtering and sorting do not support --f
 	next := command.Action
 	command.Action = func(ctx context.Context, command *cli.Command) error {
 		if !command.IsSet("filter") && !command.IsSet("sort-by") {
-			return runWithModelsListLoading(ctx, command, next)
+			return runWithModelsListLoading(ctx, command, next, policy)
 		}
 		options, err := parseModelsListOptions(command.String("filter"), command.IsSet("filter"), command.String("sort-by"))
 		if err != nil {
 			return err
 		}
 		if strings.EqualFold(command.Root().String("format"), "raw") {
-			return &modelsListError{"--filter and --sort-by do not support --format raw. Use --format json for selected complete records."}
+			return &ListError{"--filter and --sort-by do not support --format raw. Use --format json for selected complete records."}
 		}
-		return runWithModelsListLoading(context.WithValue(ctx, modelsListOptionsKey{}, options), command, next)
+		return runWithModelsListLoading(context.WithValue(ctx, modelsListOptionsKey{}, options), command, next, policy)
 	}
 }
 
@@ -74,7 +75,7 @@ func parseModelsListOptions(filter string, filterSet bool, order string) (models
 	case "~id":
 		options.selection.Descending = true
 	default:
-		return options, &modelsListError{"--sort-by accepts id or ~id. Quote ~id for descending order."}
+		return options, &ListError{"--sort-by accepts id or ~id. Quote ~id for descending order."}
 	}
 	if !filterSet {
 		return options, nil
@@ -89,7 +90,7 @@ func parseModelsListOptions(filter string, filterSet bool, order string) (models
 	case '~':
 		pattern, err := regexp.Compile(value)
 		if err != nil {
-			return options, &modelsListError{"--filter has an invalid regular expression. Use id~REGEX with RE2 syntax."}
+			return options, &ListError{"--filter has an invalid regular expression. Use id~REGEX with RE2 syntax."}
 		}
 		options.selection.Pattern = pattern
 	}

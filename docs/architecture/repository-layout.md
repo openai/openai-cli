@@ -181,6 +181,21 @@ file creation lives in `internal/output/`, and the borrowed terminal writer adap
 lives in `internal/terminal/`. Native download ACL assertions and borrowed socket
 fixtures live in `internal/testutil/`, preserving their existing test contracts.
 
+Model-list flags, filter parsing, selection, loading lifecycle, ID/owner tables,
+and loaded-response presentation live in `internal/commands/models/`. Assembly
+retains eligibility and diagnostic policy, supplies loading feedback, and reconnects
+selected records to the normal output pipeline. Selection still admits only the
+SDK single-response models pager; cursor pagers remain lazy.
+
+Shared list navigation, page fetching, loaded-page tables and labels, viewport
+sizing, worker cleanup, and post-restoration printing live in
+`internal/output/listview/`. Assembly supplies rendering and feature-specific
+print-hint/interrupt callbacks, so shared output does not import model commands.
+Assembly retains the `ShowJSONPages`/`InteractiveListOutput` entrypoints; current
+generated commands do not call them. The generated runtime bridge still targets
+the remaining request/output adapters in `pkg/custom/`. The guarded terminal writer shared with the JSON explorer
+lives in `internal/output/` and retains its original file-close behavior.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

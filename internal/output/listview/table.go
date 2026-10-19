@@ -1,4 +1,4 @@
-package custom
+package listview
 
 import (
 	"context"
@@ -10,9 +10,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// renderListTablePage only presents loaded API items. The caller owns routing,
+// RenderTable only presents loaded API items. The caller owns routing,
 // automatic-terminal selection, fetching, cancellation, and fallback output.
-func renderListTablePage(ctx context.Context, operation string, items []gjson.Result, width int) (string, bool, error) {
+func RenderTable(ctx context.Context, operation string, items []gjson.Result, width int, diagnostics bool) (string, bool, error) {
 	headers, rows, supported, err := transformers.ProjectListTable(ctx, operation, items)
 	if err != nil || !supported {
 		return "", false, err
@@ -21,7 +21,7 @@ func renderListTablePage(ctx context.Context, operation string, items []gjson.Re
 	if !fits {
 		return "", false, nil
 	}
-	if len(rows) > 0 && outputDiagnosticsAllowed(ctx) {
+	if len(rows) > 0 && diagnostics {
 		content += ansi.Wrap(clioutput.ResourceSummaryHint, width, "") + "\n"
 	}
 	return content, true, nil
