@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -110,6 +111,8 @@ type CompletionResult struct {
 	FileValuePrefix string
 	// Older adapters cannot preserve paths for newly enabled file values.
 	requiresFileValueSupport bool
+	// Older Bash/Zsh adapters cannot safely insert every quoted static value.
+	requiresStaticValueSupport bool
 }
 
 func isFlag(arg string) bool {
@@ -308,7 +311,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 			usedFlags = append(usedFlags, *flag)
 			if docFlag, ok := (*flag).(cli.DocGenerationFlag); ok && docFlag.TakesValue() && !assigned {
 				if i == len(preceding)-1 {
-					return flagValueCompletion(*flag)
+					return flagValueCompletion(root, cmd, *flag, unquoteStaticValue(current, completionStyle), "", completionStyle)
 				}
 				i += 2
 			} else {
@@ -355,13 +358,31 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 		}
 	}
 
+	// Some shells retain quotes around the current argument. Only opt known
+	// static values into this path; file and free-form completion stay unchanged.
+	if !literal {
+		if unquoted := unquoteStaticValue(current, completionStyle); unquoted != current && isFlag(unquoted) {
+			if name, value, assigned := strings.Cut(unquoted, "="); assigned {
+				if flag := findFlag(flags, name); flag != nil {
+					if doc, ok := (*flag).(cli.DocGenerationFlag); ok && doc.TakesValue() {
+						// Quotes inside the outer argument are literal value data.
+						result := flagValueCompletion(root, cmd, *flag, value, name+"=", completionStyle)
+						if len(result.Completions) != 0 {
+							return result
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Complete assigned values before matching flag names.
 	if isFlag(current) && !literal {
-		if name, _, assigned := strings.Cut(current, "="); assigned {
+		if name, value, assigned := strings.Cut(current, "="); assigned {
 			result := CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
 			if flag := findFlag(flags, name); flag != nil {
 				if doc, ok := (*flag).(cli.DocGenerationFlag); ok && doc.TakesValue() {
-					result = flagValueCompletion(*flag)
+					result = flagValueCompletion(root, cmd, *flag, unquoteStaticValue(value, completionStyle), name+"=", completionStyle)
 					if result.Behavior == ShellCompletionBehaviorFile {
 						result.FileValuePrefix = name + "="
 						result.requiresFileValueSupport = true
@@ -388,7 +409,7 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	if fileFlag != "" && !helpTopics && (literal || !isFlag(current)) {
 		if positionalCount == 0 {
 			if flag := findFlag(flags, fileFlag); flag != nil && !slices.Contains(usedFlags, *flag) {
-				result := flagValueCompletion(*flag)
+				result := flagValueCompletion(root, cmd, *flag, current, "", completionStyle)
 				if result.Behavior == ShellCompletionBehaviorFile {
 					result.requiresFileValueSupport = true
 					return result
@@ -421,7 +442,38 @@ func getAllPossibleCompletions(completionStyle CompletionStyle, root *cli.Comman
 	}
 }
 
-func flagValueCompletion(flag cli.Flag) CompletionResult {
+func flagValueCompletion(root, selected *cli.Command, flag cli.Flag, prefix, assignment string, style CompletionStyle) CompletionResult {
+	values, _ := root.Metadata["completion-flag-values"].(map[cli.Flag][]string)
+	choices := values[flag]
+	// Overrides apply only to this selected command and the actual root flag.
+	// A same-name local flag must keep its own completion contract.
+	overrides, _ := selected.Metadata["completion-root-flag-values"].(map[string][]string)
+	for _, rootFlag := range root.Flags {
+		if rootFlag == flag {
+			if override, ok := overrides[rootFlag.Names()[0]]; ok {
+				choices = override
+			}
+			break
+		}
+	}
+	var completions []ShellCompletion
+	for _, value := range choices {
+		if strings.HasPrefix(value, prefix) {
+			name := value
+			// Readline replaces the word after '='. Other adapters replace the
+			// complete assigned argument through their existing value protocol.
+			if style != CompletionStyleBash {
+				name = assignment + name
+			}
+			completions = append(completions, NewShellCompletion(name, ""))
+		}
+	}
+	if len(completions) != 0 {
+		return CompletionResult{
+			Completions:                completions,
+			requiresStaticValueSupport: style == CompletionStyleBash || style == CompletionStyleZsh,
+		}
+	}
 	if wrapped, ok := flag.(interface{ CLIStringFlag() *cli.StringFlag }); ok {
 		flag = wrapped.CLIStringFlag()
 	}
@@ -432,6 +484,17 @@ func flagValueCompletion(flag cli.Flag) CompletionResult {
 		return CompletionResult{Behavior: ShellCompletionBehaviorFile}
 	}
 	return CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+}
+
+// Zsh and Fish retain current-word quotes. Bash and PowerShell already decode
+// that layer. Remove it once for static matching, without evaluating syntax.
+func unquoteStaticValue(value string, style CompletionStyle) string {
+	if style != CompletionStyleZsh && style != CompletionStyleFish ||
+		len(value) == 0 || value[0] != '\'' && value[0] != '"' {
+		return value
+	}
+	quote := value[:1]
+	return strings.TrimSuffix(value[1:], quote)
 }
 
 func completionCommands(command *cli.Command) []*cli.Command {
@@ -489,6 +552,24 @@ func ExecuteShellCompletion(ctx context.Context, cmd *cli.Command) error {
 	// the marker; older loaded adapters keep their existing completion behavior.
 	if result.requiresFileValueSupport && os.Getenv("OPENAI_CLI_COMPLETION_FILE_VALUES") != "1" {
 		result = CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+	}
+	if result.requiresStaticValueSupport && os.Getenv("OPENAI_CLI_COMPLETION_STATIC_VALUES") != "1" {
+		result = CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+	}
+	if completionStyle == CompletionStyleBash && result.requiresStaticValueSupport {
+		// Readline's filename mode appends '/' when a replacement is a directory.
+		// The adapter supplies the assignment part included in its replacement.
+		// Only static values use this safeguard; commands and flags stay unchanged.
+		prefix := os.Getenv("OPENAI_CLI_COMPLETION_BASH_VALUE_PREFIX")
+		// Launch wrappers can change directories before invoking the CLI.
+		directory := os.Getenv("OPENAI_CLI_COMPLETION_BASH_CWD")
+		for _, completion := range result.Completions {
+			if info, err := os.Stat(filepath.Join(directory, prefix+completion.Name)); err == nil && info.IsDir() {
+				// Filtering one choice could select an unintended alternative.
+				result = CompletionResult{Behavior: ShellCompletionBehaviorNoComplete}
+				break
+			}
+		}
 	}
 	if result.FileValuePrefix != "" {
 		if _, err := fmt.Fprintln(cmd.Writer, result.FileValuePrefix); err != nil {

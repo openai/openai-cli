@@ -54,6 +54,7 @@ func ConfigureCommand(root *cli.Command) {
 		return ReportSaveReceipt(command, os.Stderr, message, nil)
 	})
 	configureOutputPolicy(root)
+	configureCompletionValues(root)
 	ConfigureCommandErrors(root)
 	root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
 	previousBefore := root.Before
