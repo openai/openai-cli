@@ -121,6 +121,9 @@ func showCommandError(ctx context.Context, root *cli.Command, failure error, out
 		var batchFailure *batchcommands.WorkflowError
 		if limitsFailure != nil {
 			message = limitsFailure.Error()
+			if limitsFailure.humanDetail != "" {
+				message += "\n" + limitsFailure.humanDetail
+			}
 		} else if errors.As(failure, &batchFailure) {
 			message = batchFailure.Error()
 		} else if isAPI && !errors.Is(failure, context.Canceled) {

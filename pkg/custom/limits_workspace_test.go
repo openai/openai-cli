@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -22,6 +24,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
 )
 
@@ -621,6 +624,132 @@ func TestLimitsPreflightGuidancePreservesFailureScope(t *testing.T) {
 		got := limitsPreflightHint(err, "custom-openai")
 		if !strings.Contains(got, tc.want) || strings.Contains(got, tc.reject) || strings.Contains(got, err.Message) || !strings.Contains(got, "No write sent.") {
 			t.Errorf("status=%d code=%s yielded unsafe or incorrect recovery: %q", tc.status, tc.code, got)
+		}
+		for _, hint := range []string{limitsReadHint(err, "custom-openai"), limitsMutationHint(err, "custom-openai")} {
+			if !strings.Contains(hint, tc.want) || strings.Contains(hint, tc.reject) || strings.Contains(hint, err.Message) || strings.Contains(hint, "No write sent.") {
+				t.Errorf("status=%d code=%s lost its read or mutation classification: %q", tc.status, tc.code, hint)
+			}
+		}
+	}
+}
+
+func TestLimitsWorkspaceHTTPFailureRecovery(t *testing.T) {
+	for _, status := range []int{400, 422, 409, 503} {
+		for _, operation := range []string{"read", "mutation"} {
+			t.Run(fmt.Sprintf("%s/%d", operation, status), func(t *testing.T) {
+				var writes atomic.Int32
+				backend := limitsTestBackend(t, "", 100, func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodGet && operation == "mutation" {
+						if strings.HasSuffix(r.URL.Path, "/spend_limit") {
+							limitsTestWrite(t, w, limitsTestLimit)
+						} else {
+							limitsTestWrite(t, w, `{"object":"list","data":[],"has_more":false}`)
+						}
+						return
+					}
+					if r.Method != http.MethodGet {
+						writes.Add(1)
+					}
+					w.WriteHeader(status)
+					limitsTestWrite(t, w, `{"error":{"message":"synthetic-private-message\u001b[2J","param":"synthetic-private-param\nline","code":"synthetic-private-code\u001b]0;title\u0007"}}`)
+				})
+				m, _ := newLimitsController(t, 80, 24)
+				m.backend = backend
+				var result limitsWorkResult
+				if operation == "read" {
+					result = limitsControllerRun(t, m.load())
+				} else {
+					backend.client = openai.NewClient(append(backend.client.Options, option.WithMaxRetries(3))...)
+					m.snapshot.LimitAbsent, m.snapshot.Limit = false, gjson.Parse(limitsTestLimit)
+					limitsControllerReview(t, m)
+					m.viewport.GotoBottom()
+					limitsControllerKey(m, tea.KeyTab)
+					result = limitsControllerRun(t, limitsControllerKey(m, tea.KeyEnter))
+					var attempted *limitsMutationFailure
+					if !errors.As(result.err, &attempted) || !attempted.Attempted || writes.Load() != 1 {
+						t.Fatal("failed mutation lost its attempted state or sent more than once")
+					}
+				}
+				m.Update(result)
+				limitsControllerKey(m, tea.KeyF1)
+				if !strings.Contains(m.details, fmt.Sprintf("HTTP %d", status)) || strings.Contains(m.details, "synthetic-private") || strings.Contains(m.details, "\x1b") {
+					t.Fatal("recovery omitted the status or exposed response data")
+				}
+				if status == 400 || status == 422 {
+					fields := "request fields and scope"
+					if operation == "mutation" {
+						fields = "reviewed fields"
+					}
+					if !strings.Contains(m.details, fields) {
+						t.Fatal("validation recovery did not identify fields to recheck")
+					}
+				}
+				if operation == "read" {
+					if writes.Load() != 0 || !strings.Contains(m.details, "No change was attempted.") || strings.Contains(m.details, "It may have succeeded") {
+						t.Fatal("read failure was presented as an attempted mutation")
+					}
+					return
+				}
+				if !m.locked || !strings.Contains(m.details, "It may have succeeded") || strings.Contains(m.details, "No write sent.") {
+					t.Fatal("HTTP failure removed mutation uncertainty or the write lock")
+				}
+				limitsControllerKey(m, tea.KeyEscape)
+				limitsControllerKey(m, tea.KeyEnter)
+				m.Update(limitsControllerRun(t, limitsControllerKey(m, 'r')))
+				limitsControllerKey(m, tea.KeyEnter)
+				if !m.locked || writes.Load() != 1 {
+					t.Fatal("Enter or refresh repeated a failed mutation")
+				}
+				m.output = &listNavigationOutput{err: &clioutput.WriteError{Err: syscall.EPIPE}}
+				failure := finishLimitsWorkspace(t.Context(), m, nil, ShowJSONOpts{Context: t.Context(), Format: "text", Stdout: io.Discard, Stderr: io.Discard})
+				if !errors.Is(failure, result.err) || !errors.Is(failure, syscall.EPIPE) || clioutput.IsBrokenPipe(failure) {
+					t.Fatal("finalization discarded the mutation or output failure")
+				}
+				baseline := "A limits change may have succeeded. Check its current state before repeating it.\n" + m.readRecovery()
+				for _, args := range [][]string{nil, {"--format", "json", "--format-error", "text"}, {"--format", "text", "--format-error", "json"}, {"--format-error", "text", "--transform-error", "message"}} {
+					root := readableErrorTestCommand(t, args...)
+					var out bytes.Buffer
+					if err := ShowCommandError(root, failure, &out); err != nil {
+						t.Fatal(err)
+					}
+					if strings.Contains(out.String(), "synthetic-private") || strings.Contains(out.String(), "\x1b") {
+						t.Fatal("final diagnostic exposed response data")
+					}
+					switch {
+					case root.String("transform-error") != "":
+						if out.String() != baseline+"\n" {
+							t.Fatal("extracted error message changed")
+						}
+					case errorOutputFormat(root) == "json":
+						var value map[string]any
+						if err := json.Unmarshal(out.Bytes(), &value); err != nil || len(value) != 1 || value["message"] != baseline {
+							t.Fatal("machine error message changed")
+						}
+					default:
+						if !strings.Contains(out.String(), fmt.Sprintf("HTTP %d", status)) || !strings.Contains(out.String(), "may have succeeded") {
+							t.Fatal("final text lost HTTP status or mutation uncertainty")
+						}
+						if (status == 400 || status == 422) && !strings.Contains(out.String(), "reviewed fields") {
+							t.Fatal("final text omitted validation recovery")
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestLimitsWorkspaceCanceledMutationRecovery(t *testing.T) {
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		m, _ := newLimitsController(t, 80, 24)
+		m.locked, m.mutationError = true, &limitsMutationFailure{Err: cause, Attempted: true}
+		failure := finishLimitsWorkspace(t.Context(), m, nil, ShowJSONOpts{Context: t.Context(), Format: "text", Stdout: io.Discard, Stderr: io.Discard})
+		var out bytes.Buffer
+		if err := ShowCommandError(readableErrorTestCommand(t), failure, &out); err != nil {
+			t.Fatal(err)
+		}
+		if !errors.Is(failure, cause) || !strings.Contains(out.String(), "interrupted") || strings.Contains(out.String(), "Check the API address and connection") || !strings.Contains(out.String(), "may have succeeded") {
+			t.Fatal("canceled mutation lost its cause or gave connection advice")
 		}
 	}
 }

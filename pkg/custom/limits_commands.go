@@ -16,7 +16,9 @@ import (
 // Aggregate workflows retain their causes without presenting private source errors.
 type limitsWorkflowFailure struct {
 	message string
-	cause   error
+	// Only the text error presenter includes this additional recovery guidance.
+	humanDetail string
+	cause       error
 }
 
 func (failure *limitsWorkflowFailure) Error() string { return failure.message }

@@ -146,9 +146,12 @@ func finishLimitsWorkspace(ctx context.Context, m *limitsWorkspace, runErr error
 		causes = append(causes, mutationErr)
 	}
 	incomplete := m.refreshRequired || sourcesIncomplete || workerErr != nil
-	message := ""
+	message, humanDetail := "", ""
 	if pending || m.locked {
 		message = "A limits change may have succeeded. Check its current state before repeating it.\n" + m.readRecovery()
+		if mutationErr != nil {
+			humanDetail = limitsMutationHint(mutationErr, m.invocation)
+		}
 	} else if m.refreshRequired {
 		message = limitsPreflightHint(mutationErr, m.invocation)
 		if m.lastSaved.Exists() {
@@ -205,7 +208,7 @@ func finishLimitsWorkspace(ctx context.Context, m *limitsWorkspace, runErr error
 	}
 	if outputErr != nil || interrupted || ctx.Err() != nil || pending || m.locked || programErr != nil {
 		if message != "" {
-			operationErr = &limitsWorkflowFailure{message: message, cause: operationErr}
+			operationErr = &limitsWorkflowFailure{message: message, humanDetail: humanDetail, cause: operationErr}
 		}
 		failure := errors.Join(operationErr, outputErr)
 		if interrupted {
@@ -787,8 +790,15 @@ func limitsReadHint(err error, invocation string) string {
 		return summary.Error() + "\nCosts options: " + invocation + " help admin usage costs"
 	}
 	var apiErr *openai.Error
-	if errors.As(err, &apiErr) && (apiErr.StatusCode == 401 || apiErr.StatusCode == 403 || apiErr.StatusCode == 404 || apiErr.StatusCode == 429) {
-		return strings.ReplaceAll(limitsPreflightHint(err, invocation), "No write sent.", "No change was attempted.")
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case 401, 403, 404, 429:
+			return strings.ReplaceAll(limitsPreflightHint(err, invocation), "No write sent.", "No change was attempted.")
+		case 400, 422:
+			return fmt.Sprintf("The API returned HTTP %d. No change was attempted.\nRecheck the request fields and scope, then refresh.", apiErr.StatusCode)
+		default:
+			return fmt.Sprintf("The API returned HTTP %d. No change was attempted.\nPress r to refresh. If this continues, check API availability and access.", apiErr.StatusCode)
+		}
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "The read was interrupted. Press r to refresh."
@@ -798,8 +808,18 @@ func limitsReadHint(err error, invocation string) string {
 
 func limitsMutationHint(err error, invocation string) string {
 	var apiErr *openai.Error
-	if errors.As(err, &apiErr) && (apiErr.StatusCode == 401 || apiErr.StatusCode == 403 || apiErr.StatusCode == 404 || apiErr.StatusCode == 429) {
-		return strings.ReplaceAll(limitsPreflightHint(err, invocation), "No write sent.", "The change is not confirmed.")
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case 401, 403, 404, 429:
+			return strings.ReplaceAll(limitsPreflightHint(err, invocation), "No write sent.", "The change is not confirmed.")
+		case 400, 422:
+			return fmt.Sprintf("The API returned HTTP %d. The change is not confirmed.\nRecheck the reviewed fields. Read the current record before another change.", apiErr.StatusCode)
+		default:
+			return fmt.Sprintf("The API returned HTTP %d. The change is not confirmed.\nRead the current record before another change.", apiErr.StatusCode)
+		}
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "The response was interrupted. The change is not confirmed.\nRead the current record before another change."
 	}
 	if err != nil {
 		switch err.Error() {
