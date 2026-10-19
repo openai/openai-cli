@@ -3,9 +3,9 @@ package custom
 import (
 	"context"
 	"errors"
-	"github.com/openai/openai-cli/internal/clihelp"
 	"os"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/urfave/cli/v3"
 )

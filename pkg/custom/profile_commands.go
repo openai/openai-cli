@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/openai/openai-cli/internal/clihelp"
 	"io"
 	"os"
 	"slices"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"

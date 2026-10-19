@@ -2,15 +2,15 @@ package custom
 
 import (
 	"context"
-	"github.com/openai/openai-cli/internal/clihelp"
-	requestconfig "github.com/openai/openai-cli/internal/request"
 	"net/http"
 	"net/url"
 	"os"
 	"slices"
 	"strings"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
 )

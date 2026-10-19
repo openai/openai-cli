@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/openai/openai-cli/internal/clihelp"
-	requestconfig "github.com/openai/openai-cli/internal/request"
 	"io"
 	"mime"
 	"net/http"
@@ -17,9 +15,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/urfave/cli/v3"
 )
 

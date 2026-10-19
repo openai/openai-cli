@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	requestconfig "github.com/openai/openai-cli/internal/request"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
 )

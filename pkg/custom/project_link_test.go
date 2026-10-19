@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	requestconfig "github.com/openai/openai-cli/internal/request"
 	"io"
 	"net/http"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"testing"
 
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"

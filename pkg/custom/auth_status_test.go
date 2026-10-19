@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	requestconfig "github.com/openai/openai-cli/internal/request"
-	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"io"
 	"log"
 	"math/big"
@@ -26,7 +24,9 @@ import (
 	"time"
 
 	clioutput "github.com/openai/openai-cli/internal/output"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
+	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/require"

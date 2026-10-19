@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"io"
 	"log"
 	"math/big"
@@ -20,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/openai/openai-go/v3"
 
 	requestconfig "github.com/openai/openai-cli/internal/request"
