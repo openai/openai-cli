@@ -242,7 +242,7 @@ jobs:
           go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAudioVoiceDiscriminatorReferences|TestMainAudioVoiceMergedInputs|TestMainAudioVoicePreflight|TestMainAudioVoiceReferenceOrdering)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-voice-public-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 1 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestAudioVoiceBodyEmbeddingCancellationReleasesOwnedRead|TestAudioVoiceBodyEmbeddingPartialFailureClosesOnce|TestAudioVoiceBodyEmbeddingPreservesReplayAndOwnership|TestAudioVoiceBodyEmbeddingReadFailureRetainsCauses|TestAudioVoiceBodyEmbeddingTypeOpenFailureClosesOwnedInputs|TestAudioVoiceBodyEmbeddingValidationFailureClosesOwnedInputs)$' |
+          go test -p 1 ./internal/commands/audio -count=1 -timeout=2m -v -json -run '^(TestAudioVoiceBodyEmbeddingCancellationReleasesOwnedRead|TestAudioVoiceBodyEmbeddingPartialFailureClosesOnce|TestAudioVoiceBodyEmbeddingPreservesReplayAndOwnership|TestAudioVoiceBodyEmbeddingReadFailureRetainsCauses|TestAudioVoiceBodyEmbeddingTypeOpenFailureClosesOwnedInputs|TestAudioVoiceBodyEmbeddingValidationFailureClosesOwnedInputs)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-voice-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test help
@@ -580,8 +580,11 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainShellWindowsNative$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-native-shell-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^TestWindowsDownload(AutomaticConsole|PrivateCreation|PrivatePublication|PreservesExistingDACL)$' |
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^TestWindowsDownload(AutomaticConsole|PrivateCreation|PreservesExistingDACL)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-download-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 2 ./internal/output -count=1 -timeout=2m -v -json -run '^TestWindowsDownloadPrivatePublication$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-download-publication-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test request environment restoration
         if: matrix.environment && matrix.shard != 'dispatch'
@@ -1444,13 +1447,16 @@ jobs:
                   windows_download_cases = {
                       "TestWindowsDownloadAutomaticConsole": [],
                       "TestWindowsDownloadPrivateCreation": [],
-                      "TestWindowsDownloadPrivatePublication": ["hardlink", "exclusive_copy"],
                       "TestWindowsDownloadPreservesExistingDACL": ["complete", "source_failure"],
                   }
                   suites["windows-download-tests.jsonl"] = set().union(*(
                       required_cases(root, children) for root, children in windows_download_cases.items()
                   ))
                   strict_packages["windows-download-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+                  suites["windows-download-publication-tests.jsonl"] = required_cases(
+                      "TestWindowsDownloadPrivatePublication", ["hardlink", "exclusive_copy"]
+                  )
+                  strict_packages["windows-download-publication-tests.jsonl"] = "github.com/openai/openai-cli/internal/output"
 
           if os.environ["CHECK_ENVIRONMENT"] == "true":
               suites["environment-tests.jsonl"] = required_cases(
@@ -1503,7 +1509,7 @@ jobs:
               if os.environ["RUNNER_OS"] == "Windows":
                   for filename, key, package, roots, total in [
                       ("windows-voice-public-tests.jsonl", "windows_voice_public", "github.com/openai/openai-cli/cmd/openai", 4, 138),
-                      ("windows-voice-helper-tests.jsonl", "windows_voice_helpers", "github.com/openai/openai-cli/pkg/custom", 6, 8),
+                      ("windows-voice-helper-tests.jsonl", "windows_voice_helpers", "github.com/openai/openai-cli/internal/commands/audio", 6, 8),
                   ]:
                       cases = inventory[key]
                       if len(cases) != roots or sum(len(children) for children in cases.values()) != total - roots:

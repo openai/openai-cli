@@ -11,16 +11,6 @@ import (
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 )
 
-func imagePickerTitle(value string) string {
-	if value == "xhigh" {
-		return "Extra high"
-	}
-	if value == "" {
-		return ""
-	}
-	return strings.ToUpper(value[:1]) + value[1:]
-}
-
 func imagePickerSizeLabel(size string) string {
 	switch size {
 	case "1024x1024":

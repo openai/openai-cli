@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/term"
+	"github.com/openai/openai-cli/internal/readable"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
 )
@@ -423,9 +424,9 @@ func (m *imagePicker) rows() []imagePickerRow {
 	rows := []imagePickerRow{
 		{id: "model", label: "Model", value: s.model},
 		{id: "size", label: "Size / aspect", value: imagePickerSizeLabel(s.size)},
-		{id: "quality", label: "Quality", value: imagePickerTitle(s.quality)},
+		{id: "quality", label: "Quality", value: readable.ChoiceTitle(s.quality)},
 		{id: "count", label: "Images", value: s.count},
-		{id: "background", label: "Background", value: imagePickerTitle(s.background)},
+		{id: "background", label: "Background", value: readable.ChoiceTitle(s.background)},
 	}
 	return append(rows, m.folderRow(), imagePickerRow{id: "more", label: "More options", value: strings.ToUpper(s.format)})
 }
@@ -467,7 +468,7 @@ func (m *imagePicker) choices(field string) []imagePickerRow {
 	}
 	rows := make([]imagePickerRow, 0, len(values))
 	for _, value := range values {
-		row := imagePickerRow{id: "choice", value: value, label: imagePickerTitle(value)}
+		row := imagePickerRow{id: "choice", value: value, label: readable.ChoiceTitle(value)}
 		switch field {
 		case "model":
 			row.label = value
