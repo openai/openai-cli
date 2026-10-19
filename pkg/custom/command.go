@@ -68,6 +68,13 @@ func ConfigureCommand(root *cli.Command) {
 		if IsLocalUtilityCommand(command) {
 			return ctx, nil
 		}
+		baseURL, source := command.Root().String("base-url"), "--base-url"
+		if baseURL == "" {
+			baseURL, source = os.Getenv("OPENAI_BASE_URL"), "OPENAI_BASE_URL"
+		}
+		if err := requestconfig.ValidateBaseURL(baseURL, source); err != nil {
+			return ctx, err
+		}
 		return requestconfig.ConfigureMTLS(ctx, command.Root())
 	}
 	cli.SuggestCommand = clihelp.SuggestCommand
