@@ -17,6 +17,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/admin"
 	"github.com/openai/openai-cli/internal/commands/audio"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
+	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/openai/openai-cli/internal/commands/models"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/listview"
@@ -42,10 +43,10 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var inputFailure *requestconfig.InputFileError
 	var stdinFailure *requestflag.StdinValueError
 	var pagerFailure *clioutput.PagerError
-	var imageFailure *imageSavingError
+	var imageFailure *images.SavingError
 	var scalarFailure *requestconfig.MultipartScalarError
 	var streamFailure *streamResultError
-	var imageModelsFailure *imageModelsError
+	var imageModelsFailure *images.ModelsError
 	var projectAPIKeyUpdateFailure *projectAPIKeyUpdateError
 	var voiceTypeFailure *audio.VoiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
@@ -68,8 +69,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	case errors.As(failure, &receiptFailure):
 		return receiptFailure.Error()
 	case errors.Is(failure, context.Canceled):
-		if errors.As(failure, &imageFailure) && imageFailure.preserveOnCancel {
-			return imageFailure.message
+		if errors.As(failure, &imageFailure) && imageFailure.PreserveOnCancel() {
+			return imageFailure.Error()
 		}
 		return "Request canceled."
 	case errors.As(failure, &utilityFailure):
@@ -81,7 +82,7 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	case errors.As(failure, &finiteListFailure):
 		return finiteListFailure.Error()
 	case errors.As(failure, &imageFailure):
-		return imageFailure.message
+		return imageFailure.Error()
 	case errors.As(failure, &scalarFailure):
 		return scalarFailure.Error()
 	case errors.As(failure, &navigationFailure):

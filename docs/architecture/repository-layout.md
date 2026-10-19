@@ -220,6 +220,19 @@ handling. Shared choice labels live in `internal/readable/`. Native Windows
 publication and voice validation contracts retain their exact test/subcase
 inventories and now verify their owning packages.
 
+Image model discovery, picker/editor state, image request preparation, saving,
+stream handling, local previews/preferences, and shell setup mechanics live in
+`internal/commands/images/`. Assembly supplies request preparation and presentation
+callbacks, retains output-route eligibility, and owns first-run worker admission
+and the foreground timeout. Feature metadata and saved-image stream cleanup stay
+private to the feature. Cross-layer tests use real assembly callbacks; native
+state-persistence checks retain their exact test and subcase inventories.
+
+Delayed loading feedback shared by images and model listing lives in
+`internal/output/`. Terminal writer classification lives in `internal/terminal/`
+and preserves both file and borrowed-file handling. These shared packages do not
+import command features or assembly.
+
 ## Product and compatibility contract
 
 This repository ships the `openai` executable. Its Go packages are implementation

@@ -57,6 +57,9 @@ below describes the current layout as the migration proceeds.
   the encoding engine.
 - `internal/commands/manpages/` owns manual rendering, text/gzip file cleanup,
   and tests. Application assembly supplies the shared save-receipt policy.
+- `internal/commands/images/` owns image model discovery, picker drafts, saving,
+  streaming previews, local preview preferences, and shell setup mechanics.
+  Assembly supplies request/presentation policy and foreground first-run admission.
 - `internal/commands/audio/` owns speech controls, local history/playback commands,
   voice creation and validation, and transcript/speech response handling.
   Assembly supplies request and presentation policies.
@@ -110,7 +113,7 @@ recurring generated problems in the authoritative schema or generator when
 available.
 
 Handwritten features are moving into `internal/commands/<feature>/`; Codex,
-tokenizer, manpages, files, batches, models, admin, and audio are there now. Remaining behavior belongs in `pkg/custom/`,
+tokenizer, manpages, files, batches, models, admin, audio, and images are there now. Remaining behavior belongs in `pkg/custom/`,
 `internal/output/transform/`, and focused `internal/` helpers. Keep
 `cmd/openai/` focused on startup and wiring. Generated code calls handwritten
 request/output helpers through a generated runtime bridge.

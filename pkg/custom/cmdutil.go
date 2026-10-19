@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/commands/audio"
 	filecommands "github.com/openai/openai-cli/internal/commands/files"
+	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/openai/openai-cli/internal/jsonview"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	transformers "github.com/openai/openai-cli/internal/output/transform"
@@ -43,16 +44,7 @@ func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 	return requestconfig.DefaultOptions(cmd, Version, audio.CaptureText, captureSaveReceiptPolicy(cmd))
 }
 
-func isTerminal(w io.Writer) bool {
-	switch v := w.(type) {
-	case terminal.BorrowedWriter:
-		return term.IsTerminal(v.File.Fd())
-	case *os.File:
-		return term.IsTerminal(v.Fd())
-	default:
-		return false
-	}
-}
+func isTerminal(w io.Writer) bool { return terminal.IsWriterTerminal(w) }
 
 // WriteBinaryResponse writes a binary response to stdout or a file.
 //
@@ -316,10 +308,10 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	if handled, err := filecommands.ShowResult(res, filecommands.ResultOptions{ReadableOptions: fileResultOptions(opts), Quiet: quietOutput(opts.Context)}); handled {
 		return err
 	}
-	if presentation, ok := savedImagePresentation(opts, OutputResponse); ok {
-		return presentation.output(func(out io.Writer) error {
-			return presentation.plan.save(opts.Context, []byte(res.Raw), out)
-		})
+	if isSavedImageRoute(opts, OutputResponse) {
+		if handled, err := images.ShowSavedResponse(opts.Context, []byte(res.Raw)); handled {
+			return err
+		}
 	}
 	if text, ok := audio.TextResult(opts.Context, opts.Operation, opts.OutputKind); ok {
 		if opts.Transform == "" && (strings.EqualFold(opts.Format, "raw") || opts.RawOutput) {
@@ -404,10 +396,10 @@ func ShowJSONIterator[T any](iter jsonview.Iterator[T], itemsToDisplay int64, op
 func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, opts ShowJSONOpts, selectTransformer transformerSelector) (resultErr error) {
 	opts.setDefaults()
 	stopModelsListLoading(opts)
-	if presentation, ok := savedImagePresentation(opts, OutputStreamEvent); ok {
-		return presentation.output(func(out io.Writer) error {
-			return saveFinalImageStream(opts.Context, source, presentation.plan, out)
-		})
+	if isSavedImageRoute(opts, OutputStreamEvent) {
+		if handled, err := images.ShowSavedStream(opts.Context, source, quietOutput(opts.Context)); handled {
+			return err
+		}
 	}
 	// SDK streams own response bodies and timers. Close even when presentation
 	// stops at a limit, cancellation, or an output failure. Saved-image streams

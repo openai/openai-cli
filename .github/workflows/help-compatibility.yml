@@ -533,7 +533,7 @@ jobs:
           set -euo pipefail
           go test -p 2 ./internal/imageprefs -count=1 -timeout=3m -v -json -run '^(TestImagePreferenceDefaultAndReplacement|TestImagePreferenceInvalidSettingsRemainUntouched|TestImagePreferenceConcurrentWritesAndCancellation|TestImagePreferenceWaitingWriterKeepsNewSchema|TestImagePreferenceWaitingWriterCancellationAndReplacement|TestImagePreferenceRejectsUnsafePaths|TestImagePreferenceRejectsUnsafeWriterLocks|TestImagePreferencePermissionFailuresKeepFile)$' \
             | tee "$RUNNER_TEMP/image-preference-state-tests.jsonl"
-          go test -p 2 ./pkg/custom -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateRejectsExposedPermissions|TestImagePickerStateWriteFailureKeepsPrevious)$' \
+          go test -p 2 ./internal/commands/images -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateRejectsExposedPermissions|TestImagePickerStateWriteFailureKeepsPrevious)$' \
             | tee "$RUNNER_TEMP/image-picker-state-tests.jsonl"
       - name: Test Windows image preferences and picker state
         if: matrix.image-state && runner.os == 'Windows' && matrix.shard != 'dispatch'
@@ -546,7 +546,7 @@ jobs:
           go test -p 2 ./internal/imageprefs -count=1 -timeout=3m -v -json -run '^(TestImagePreferenceDefaultAndReplacement|TestImagePreferenceInvalidSettingsRemainUntouched|TestImagePreferenceConcurrentWritesAndCancellation|TestImagePreferenceWaitingWriterKeepsNewSchema|TestImagePreferenceWaitingWriterCancellationAndReplacement|TestImagePreferenceRejectsUnsafePaths|TestImagePreferenceRejectsUnsafeWriterLocks|TestImagePreferenceWindowsAccessDeniedKeepsFile)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-preference-state-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./pkg/custom -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateWindowsAccessDeniedKeepsPrevious)$' |
+          go test -p 2 ./internal/commands/images -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateWindowsAccessDeniedKeepsPrevious)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-picker-state-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test request configuration
@@ -871,7 +871,7 @@ jobs:
                   picker_cases["TestImagePickerStateWriteFailureKeepsPrevious"] = []
               for filename, package, cases in [
                   ("image-preference-state-tests.jsonl", "internal/imageprefs", preference_cases),
-                  ("image-picker-state-tests.jsonl", "pkg/custom", picker_cases),
+                  ("image-picker-state-tests.jsonl", "internal/commands/images", picker_cases),
               ]:
                   suites[filename] = set().union(*(required_cases(root, children) for root, children in cases.items()))
                   strict_packages[filename] = "github.com/openai/openai-cli/" + package
