@@ -177,8 +177,9 @@ The file uses a versioned schema:
 {"version":1,"default_profile":null,"profiles":{"work":{"project":"proj_demo"}}}
 ```
 
-Mutations lock the registry, validate its contents, and replace it atomically.
+Mutations lock the registry and validate its contents before replacement.
+Replacement is atomic on Unix; other platforms do not guarantee atomic replacement.
 The CLI rejects malformed schemas, duplicate keys, unknown fields, unsupported versions, and dangling defaults.
-Failures preserve existing registry bytes.
+Validation failures preserve existing registry bytes.
 Store no credentials or credential references in this file.
 The profile registry remains separate from `project-links.json`.
