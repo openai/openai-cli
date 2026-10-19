@@ -191,7 +191,7 @@ func TestAdminCredentialsEndpointOverrides(t *testing.T) {
 		{name: "standard flag overrides custom environment", envURL: "https://gateway.example.test/v1", args: []string{"--base-url", "https://api.openai.com/v1"}},
 		{name: "custom flag overrides standard environment", envURL: "https://api.openai.com/v1", args: []string{"--base-url", "https://gateway.example.test/v1"}, wantAllowed: true},
 		{name: "empty flag retains custom environment", envURL: "https://gateway.example.test/v1", args: []string{"--base-url", ""}, wantAllowed: true},
-		{name: "custom HTTP endpoint", args: []string{"--base-url", "http://api.openai.com/v1"}, wantAllowed: true},
+		{name: "custom loopback HTTP endpoint", args: []string{"--base-url", "http://127.0.0.1:8080/v1"}, wantAllowed: true},
 		{name: "custom port", args: []string{"--base-url", "https://api.openai.com:8443/v1"}, wantAllowed: true},
 		{name: "custom mtls port", args: []string{"--base-url", "https://mtls.api.openai.com:8443/v1"}, wantAllowed: true},
 		{name: "custom mtls suffix", args: []string{"--base-url", "https://mtls.api.openai.com.example.test/v1"}, wantAllowed: true},

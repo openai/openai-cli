@@ -168,6 +168,9 @@ func knownLocalError(command *cli.Command, message string) string {
 		return message
 	}
 	for _, source := range []string{"OPENAI_BASE_URL", "--base-url"} {
+		if message == source+requestconfig.BaseURLHTTPSRequired || message == source+requestconfig.BaseURLHostRequired {
+			return message + "."
+		}
 		if tail, ok := afterQuotedValue(message, source+" "); ok && tail == " is missing a scheme (expected http:// or https://)" {
 			return source + " must start with http:// or https://."
 		}
@@ -197,8 +200,11 @@ func knownLocalError(command *cli.Command, message string) string {
 	}
 	if tail, ok := afterQuotedValue(message, "invalid value "); ok {
 		if rest, ok := strings.CutPrefix(tail, " for flag -"); ok {
-			name, _, found := strings.Cut(rest, ": ")
+			name, reason, found := strings.Cut(rest, ": ")
 			if flag := declaredErrorFlag(command, name); found && flag != "" {
+				if flag == "--base-url" && (reason == flag+requestconfig.BaseURLHTTPSRequired || reason == flag+requestconfig.BaseURLHostRequired) {
+					return parserErrorGuidance(command, reason+".")
+				}
 				if flag == "--format" || flag == "--format-error" {
 					return "Invalid output format. Choose one of: " + strings.Join(OutputFormats, ", ") + "."
 				}
