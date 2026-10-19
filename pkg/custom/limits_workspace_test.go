@@ -3,10 +3,14 @@ package custom
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -194,7 +198,7 @@ func TestLimitsWorkspaceBusyAndFailedSavePreventRepeatedWrites(t *testing.T) {
 	}
 	close(release)
 	m.Update(limitsControllerRun(t, command))
-	if !m.locked || m.apply || m.page != "form" || m.draft.inputs[0].Value() != "100.01" || !strings.Contains(m.formError, "inspect") {
+	if !m.locked || m.apply || m.page != "form" || m.draft.inputs[0].Value() != "100.01" || !strings.Contains(m.formError, "Press ? for recovery") {
 		t.Fatalf("failed save discarded draft or unlocked writes: page=%s locked=%t error=%q", m.page, m.locked, m.formError)
 	}
 	m.setFocus(len(m.draft.inputs))
@@ -204,6 +208,75 @@ func TestLimitsWorkspaceBusyAndFailedSavePreventRepeatedWrites(t *testing.T) {
 	m.work.Wait()
 	if b.writes.Load() != 1 || m.busy || !m.locked {
 		t.Fatal("failed save permitted an unconfirmed repeat")
+	}
+	limitsControllerKey(m, '?')
+	if m.page != "details" || !strings.Contains(m.details, "It may have succeeded") || !strings.Contains(m.details, "help admin organization spend-limit retrieve") {
+		t.Fatal("failed save did not provide uncertainty guidance and a safe read")
+	}
+}
+
+func TestLimitsDraftCommandPreviewNativeShellPreservesArguments(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Bash/Zsh preview execution uses a POSIX recorder; native Windows requires separate coverage")
+	}
+	for _, shell := range []string{"bash", "zsh"} {
+		t.Run(shell, func(t *testing.T) {
+			binary, directory := audioPreviewExecutable(t, "openai limits' recorder")
+			marker := filepath.Join(t.TempDir(), "MUST_NOT_EXIST")
+			subject := "Owner's \"alert\"; $(touch " + marker + "); `touch " + marker + "` $HOME \\path\nnext line"
+			channel, err := json.Marshal(map[string]any{"type": "email", "recipients": []string{"finance@example.test"}, "subject_prefix": subject})
+			if err != nil {
+				t.Fatal(err)
+			}
+			requestArgs := []string{"--organization=org owner's", "--project=proj root's", "--base-url=https://example.invalid/proxy/v1"}
+			cases := []struct {
+				name      string
+				projectID string
+				change    limitsChange
+				want      []string
+			}{
+				{name: "organization-limit", change: limitsChange{Kind: "limit_set", Amount: 12525},
+					want: []string{"admin", "organization", "spend-limit", "update", "--currency", "USD", "--interval", "month", "--threshold-amount", "12525"}},
+				{name: "project-limit", projectID: "proj target's", change: limitsChange{Kind: "limit_set", Amount: 12525},
+					want: []string{"admin", "organization", "projects", "spend-limit", "update", "--project-id", "proj target's", "--currency", "USD", "--interval", "month", "--threshold-amount", "12525"}},
+				{name: "organization-limit-delete", change: limitsChange{Kind: "limit_delete"},
+					want: []string{"admin", "organization", "spend-limit", "delete"}},
+				{name: "project-limit-delete", projectID: "proj target's", change: limitsChange{Kind: "limit_delete"},
+					want: []string{"admin", "organization", "projects", "spend-limit", "delete", "--project-id", "proj target's"}},
+				{name: "alert-create", change: limitsChange{Kind: "alert_create", Amount: 7550, Recipients: []string{"finance@example.test"}, SubjectPrefixSet: true, SubjectPrefix: &subject},
+					want: []string{"admin", "organization", "spend-alerts", "create", "--currency", "USD", "--interval", "month", "--threshold-amount", "7550", "--notification-channel", string(channel)}},
+				{name: "alert-update", projectID: "proj target's", change: limitsChange{Kind: "alert_update", ID: "alert owner's", Amount: 15025, Recipients: []string{"finance@example.test"}, SubjectPrefixSet: true, SubjectPrefix: &subject},
+					want: []string{"admin", "organization", "projects", "spend-alerts", "update", "--project-id", "proj target's", "--alert-id", "alert owner's", "--currency", "USD", "--interval", "month", "--threshold-amount", "15025", "--notification-channel", string(channel)}},
+				{name: "alert-delete", projectID: "proj target's", change: limitsChange{Kind: "alert_delete", ID: "alert owner's"},
+					want: []string{"admin", "organization", "projects", "spend-alerts", "delete", "--project-id", "proj target's", "--alert-id", "alert owner's"}},
+				{name: "rate-update", projectID: "proj target's", change: limitsChange{Kind: "rate_update", ID: "rl owner's", RateValues: map[string]int64{"max_requests_per_1_minute": -1}},
+					want: []string{"admin", "organization", "projects", "rate-limits", "update-rate-limit", "--project-id", "proj target's", "--rate-limit-id", "rl owner's", "--max-requests-per-1-minute", "-1"}},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					review := limitsReview(tc.change, tc.projectID, requestArgs, false, shell, binary)
+					_, tail, found := strings.Cut(review, "\nDirect API command\n")
+					if !found {
+						t.Fatalf("review omitted its copyable command: %q", review)
+					}
+					command, guidance, found := strings.Cut(tail, "\n\n")
+					if !found || command == "" || !strings.HasPrefix(guidance, "This command skips the workspace preflight and can retry automatically.") {
+						t.Fatalf("review did not separate the executable command from its guidance: %q", tail)
+					}
+					capture := executeAudioPreview(t, shell, command, directory)
+					want := append(append([]string{}, requestArgs...), tc.want...)
+					if !reflect.DeepEqual(capture.args, want) {
+						t.Fatalf("printed command changed arguments:\n got: %q\nwant: %q", capture.args, want)
+					}
+					if len(capture.stdin) != 0 || capture.protected != "unset" {
+						t.Fatal("printed command unexpectedly supplied stdin or changed its environment")
+					}
+					if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("printed command executed subject text: %v", err)
+					}
+				})
+			}
+		})
 	}
 }
 
@@ -634,7 +707,7 @@ func TestLimitsWorkspaceReceiptUsesMutationProjection(t *testing.T) {
 			m.workerSaved = gjson.Parse(`{"object":"organization.spend_limit","threshold_amount":10001,"currency":"USD","interval":"month","enforcement":{"status":"inactive"}}`)
 			m.workerSavedOperation = limitsChangeOperation("limit_set", false)
 			var out bytes.Buffer
-			err := finishLimitsWorkspace(t.Context(), m, nil, ShowJSONOpts{Context: t.Context(), Format: format, Stdout: &out, Stderr: io.Discard})
+			err := finishLimitsWorkspace(t.Context(), m, nil, ShowJSONOpts{Context: t.Context(), Format: format, ExplicitFormat: true, Stdout: &out, Stderr: io.Discard})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -642,7 +715,7 @@ func TestLimitsWorkspaceReceiptUsesMutationProjection(t *testing.T) {
 				if !strings.Contains(out.String(), "USD 100.01") || !strings.Contains(out.String(), "inactive") {
 					t.Fatalf("receipt lost threshold units or returned state: %q", out.String())
 				}
-			} else if !strings.Contains(out.String(), `"threshold_amount": 10001`) || strings.Contains(out.String(), "spend_threshold") {
+			} else if !gjson.Valid(out.String()) || gjson.Get(out.String(), "threshold_amount").Raw != "10001" || strings.Contains(out.String(), "spend_threshold") {
 				t.Fatalf("machine receipt changed threshold data: %q", out.String())
 			}
 		})
