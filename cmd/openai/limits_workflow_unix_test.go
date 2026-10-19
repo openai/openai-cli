@@ -37,7 +37,7 @@ func (w *limitsBorrowedOutputProbe) Write(data []byte) (int, error) {
 		return 0, errors.New("synthetic-private-borrowed-output")
 	}
 	n, err := os.Stdout.Write(data)
-	if err == nil && n == len(data) && bytes.Contains(data, []byte("q: quit")) {
+	if err == nil && n == len(data) && bytes.Contains(data, []byte("Website controls and source errors: ?")) {
 		w.ready.Store(true)
 	}
 	return n, err
@@ -129,6 +129,9 @@ func TestMainLimitsWorkflowBorrowedTerminalWriter(t *testing.T) {
 			if test.exit == 0 && (!strings.Contains(got.Stdout[leave:], "Limits workspace closed.") || got.Stderr != "borrowed-terminal-verified\n") {
 				t.Fatalf("workspace did not close normally after restoration: %+v", got)
 			}
+			if test.mode == "write-failure" && got.Stderr != "Could not write command output. Check your terminal, output file, or receiving command.\nborrowed-terminal-verified\n" {
+				t.Fatalf("workspace output failure omitted safe recovery: %q", got.Stderr)
+			}
 			for _, path := range []string{spendThresholdPath(test.project, "spend-limit"), spendThresholdPath(test.project, "spend-alerts"), "/organization/costs"} {
 				if requests.count(path) != 1 {
 					t.Errorf("workspace did not load %s exactly once", path)
@@ -182,11 +185,11 @@ try:
             output[key.data].extend(data)
             if len(output[key.data]) > 2 << 20:
                 raise RuntimeError("borrowed terminal capture exceeded its allowance")
-            if not sent and mode in ("quit", "interrupt") and b"q: quit" in output[0]:
+            if not sent and mode in ("quit", "interrupt") and b"Website controls and source errors: ?" in output[0]:
                 key = b"\x03" if mode == "interrupt" else b"q"
                 os.write(master, key)
                 sent = True
-            elif not sent and mode == "write-failure" and b"q: quit" in output[0]:
+            elif not sent and mode == "write-failure" and b"Website controls and source errors: ?" in output[0]:
                 os.kill(process.pid, signal.SIGWINCH)
                 sent = True
     code = process.wait(timeout=2)

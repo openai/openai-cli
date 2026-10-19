@@ -10,9 +10,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/ssestream"
@@ -190,6 +192,65 @@ func TestCommandErrorStructuredLocalFallbackDoesNotEchoDiagnostic(t *testing.T) 
 	}
 }
 
+func TestCommandErrorOutputFailureHumanGuidance(t *testing.T) {
+	const humanMessage = "Could not write command output. Check your terminal, output file, or receiving command."
+	const machineMessage = "The command could not be completed. Check your arguments with --help."
+	cause := errors.New("synthetic-private-prompt https://synthetic.invalid/?token=synthetic-secret \x1b]52;c;synthetic-secret\a")
+	writer := clioutput.Writer{Context: t.Context(), Sink: errorSink{cause}}
+	_, failure := writer.Write([]byte("synthetic output"))
+	var writeFailure *clioutput.WriteError
+	require.ErrorAs(t, failure, &writeFailure)
+	for _, test := range []struct {
+		name  string
+		flags []string
+		want  string
+	}{
+		{"human", nil, humanMessage},
+		{"quiet", []string{"--quiet"}, humanMessage},
+		{"JSON", []string{"--format-error", "json"}, machineMessage},
+		{"extraction", []string{"--format-error", "text", "--transform-error", "message"}, machineMessage},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var out bytes.Buffer
+			require.NoError(t, ShowCommandError(readableErrorTestCommand(t, test.flags...), failure, &out))
+			if test.name == "JSON" {
+				var value map[string]string
+				require.NoError(t, json.Unmarshal(out.Bytes(), &value))
+				require.Equal(t, map[string]string{"message": test.want}, value)
+			} else {
+				require.Equal(t, test.want+"\n", out.String())
+			}
+			assertReadableErrorContainsNoPrivateDetails(t, out.String())
+			require.ErrorIs(t, failure, cause)
+		})
+	}
+	var value any
+	syntaxFailure := json.Unmarshal([]byte(`{"synthetic-private-prompt":`), &value)
+	require.Error(t, syntaxFailure)
+	for _, test := range []struct {
+		name  string
+		cause error
+	}{
+		{"cancellation", context.Canceled},
+		{"deadline", context.DeadlineExceeded},
+		{"syntax", syntaxFailure},
+		{"file", &os.PathError{Op: "write", Path: "synthetic-private-output", Err: os.ErrPermission}},
+		{"API", &openai.Error{StatusCode: http.StatusForbidden}},
+	} {
+		t.Run("precedence/"+test.name, func(t *testing.T) {
+			root := readableErrorTestCommand(t)
+			var baseline, out bytes.Buffer
+			require.NoError(t, ShowCommandError(root, test.cause, &baseline))
+			joined := errors.Join(failure, test.cause)
+			require.NoError(t, ShowCommandError(root, joined, &out))
+			require.Equal(t, baseline.String(), out.String())
+			assertReadableErrorContainsNoPrivateDetails(t, out.String())
+			require.ErrorIs(t, joined, cause)
+			require.ErrorIs(t, joined, test.cause)
+		})
+	}
+}
+
 func TestCommandErrorInvalidFormatStillPresentsSafely(t *testing.T) {
 	root := readableErrorTestCommand(t, "--format-error", "synthetic-secret")
 	var out bytes.Buffer
@@ -209,6 +270,7 @@ func readableErrorTestCommand(t *testing.T, args ...string) *cli.Command {
 			&cli.StringFlag{Name: "transform-error"},
 			&cli.StringFlag{Name: "transform"},
 			&cli.BoolFlag{Name: "raw-output"},
+			&cli.BoolFlag{Name: "quiet"},
 		},
 		Action: func(context.Context, *cli.Command) error { return nil },
 	}

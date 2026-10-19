@@ -161,6 +161,10 @@ func localErrorMessageForDisplay(root *cli.Command, failure error, human bool) s
 	if errors.As(failure, &networkError) || errors.As(failure, &connectionError) {
 		return "Could not connect to the API. Check your connection, proxy, and --base-url setting."
 	}
+	var writeFailure *clioutput.WriteError
+	if human && errors.As(failure, &writeFailure) {
+		return "Could not write command output. Check your terminal, output file, or receiving command."
+	}
 	// The usage buffer is deliberately not a fallback: it repeats raw values.
 	return "The command could not be completed. Check your arguments with --help."
 }
