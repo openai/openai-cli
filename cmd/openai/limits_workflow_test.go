@@ -287,12 +287,16 @@ func TestMainLimitsWorkflowAmbiguousAndOptionalRecords(t *testing.T) {
 	if got.code != 0 || got.stderr != "" {
 		t.Fatalf("ambiguous records lost read-only access: %+v", got)
 	}
-	for _, text := range []string{"Threshold amount: 10000", "Threshold amount: 90000", "Currency: USD", "Currency: EUR", "Max requests per 1 minute: 0", "Future: first", "Future: second"} {
+	// Ambiguous rates keep source keys; numeric segments require quoted labels.
+	for _, text := range []string{
+		"Threshold amount: 10000", "Threshold amount: 90000", "Currency: USD", "Currency: EUR",
+		`"max_requests_per_1_minute": 0`, `"max_tokens_per_1_minute": 7`, "Future: first", "Future: second",
+	} {
 		if !strings.Contains(got.stdout, text) {
 			t.Errorf("readable overview lost %q: %q", text, got.stdout)
 		}
 	}
-	for _, absent := range []string{"Spend threshold:", "Alerts notify;", "not reported in this response", "Max images", "Max audio", "Max requests per day", "Max batch"} {
+	for _, absent := range []string{"Spend threshold:", "Alerts notify;", "not reported in this response", "Max requests per minute:", "Max tokens per minute:", "Max images", "Max audio", "Max requests per day", "Max batch"} {
 		if strings.Contains(got.stdout, absent) {
 			t.Errorf("ambiguous overview invented %q: %q", absent, got.stdout)
 		}

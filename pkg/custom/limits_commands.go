@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/transform"
 	"github.com/urfave/cli/v3"
 )
@@ -107,8 +108,15 @@ func limitsCommandAction(project, show bool) cli.ActionFunc {
 				return errors.Join(sourceErr, ctx.Err(), err)
 			}
 		}
-		outputErr := ShowJSON(value, opts)
-		return errors.Join(sourceErr, ctx.Err(), outputErr)
+		write := func() error {
+			outputErr := ShowJSON(value, opts)
+			return errors.Join(sourceErr, ctx.Err(), outputErr)
+		}
+		if file, ok := opts.Stdout.(*os.File); ok && file == os.Stdout {
+			// Join source failures before classifying a closed stdout pipe.
+			return clioutput.StreamToStdout(func(*os.File) error { return write() })
+		}
+		return write()
 	}
 }
 
