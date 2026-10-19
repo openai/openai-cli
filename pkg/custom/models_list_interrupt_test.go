@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/openai/openai-cli/internal/output/listview"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -17,8 +18,8 @@ func TestModelsListExternalInterruptPreservesStatusAndFailures(t *testing.T) {
 		for _, outputErr := range []error{nil, io.ErrClosedPipe} {
 			for _, runErr := range []error{tea.ErrInterrupted, errors.Join(tea.ErrProgramKilled, tea.ErrInterrupted)} {
 				request, cancel := context.WithCancel(t.Context())
-				model := &listNavigation{opts: ShowJSONOpts{Context: t.Context(), Operation: operation}, cancel: cancel}
-				err := model.finish(&listNavigationOutput{err: outputErr}, runErr)
+				model := listview.New(listViewerOptions(ShowJSONOpts{Context: t.Context(), Operation: operation}), nil, cancel, 80, 1)
+				err := model.Finish(outputErr, runErr)
 				require.ErrorIs(t, request.Err(), context.Canceled)
 				require.ErrorIs(t, err, tea.ErrInterrupted)
 				if outputErr != nil {
@@ -50,16 +51,16 @@ func TestModelsListViewerInterruptStatus(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			for _, loaded := range []bool{false, true} {
 				ctx, cancel := context.WithCancel(t.Context())
-				model := &listNavigation{opts: ShowJSONOpts{Context: t.Context(), Operation: test.operation}, cancel: cancel}
+				model := listview.New(listViewerOptions(ShowJSONOpts{Context: t.Context(), Operation: test.operation}), func() (listview.Page, error) {
+					return listview.Page{Items: []gjson.Result{gjson.Parse(`{"id":"model-a","object":"model","created":123,"owned_by":"openai"}`)}}, nil
+				}, cancel, 80, 1)
 				if loaded {
-					model.pages = []listNavigationPage{{items: []gjson.Result{gjson.Parse(`{"id":"model-a","object":"model","created":123,"owned_by":"openai"}`)}}}
+					model.Update(model.Init()())
 				}
 				_, quit := model.Update(test.key)
 				require.NotNil(t, quit)
-				require.True(t, model.quitting)
-				require.False(t, model.printPage)
 				require.ErrorIs(t, ctx.Err(), context.Canceled)
-				err := model.finish(&listNavigationOutput{}, tea.ErrProgramKilled)
+				err := model.Finish(nil, tea.ErrProgramKilled)
 				if test.interrupted {
 					require.ErrorIs(t, err, context.Canceled)
 					var exit cli.ExitCoder

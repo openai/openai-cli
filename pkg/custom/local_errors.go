@@ -15,7 +15,9 @@ import (
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
+	"github.com/openai/openai-cli/internal/commands/models"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/internal/output/listview"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -49,8 +51,8 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var utilityFailure *localcommands.LocalError
 	var downloadFailure *downloadSaveError
 	var receiptFailure *saveReceiptError
-	var navigationFailure *listNavigationError
-	var modelsListFailure *modelsListError
+	var navigationFailure *listview.PaginationError
+	var modelsListFailure *models.ListError
 	var batchFailure *batchcommands.WorkflowError
 	var finiteListFailure *clioutput.FiniteJSONListError
 	switch {

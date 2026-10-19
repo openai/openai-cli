@@ -411,7 +411,7 @@ func showJSONIterator[T any](source jsonview.Iterator[T], itemsToDisplay int64, 
 
 	if strings.ToLower(opts.Format) == "explore" {
 		if isTerminal(opts.Stdout) {
-			out := terminalOutputWriter{clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}, opts.Stdout.(*os.File)}
+			out := clioutput.TerminalWriter{Writer: clioutput.Writer{Context: opts.Context, Sink: opts.Stdout}, File: opts.Stdout.(*os.File)}
 			err := jsonview.ExploreJSONStreamWithOutput(opts.Title, iter, out)
 			if iterErr := iter.Err(); iterErr != nil && !errors.Is(err, iterErr) {
 				return errors.Join(err, iterErr)
