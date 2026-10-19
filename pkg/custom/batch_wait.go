@@ -12,6 +12,7 @@ import (
 	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/clihelp"
 	"github.com/openai/openai-cli/internal/readable"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -324,7 +325,7 @@ func showBatchNextCommand(batch gjson.Result, opts ShowJSONOpts) error {
 	if batchHintNeedsRequestOptions(cmd.Root()) {
 		return readable.WriteText(opts.Stderr, "To wait for this batch, reuse the same connection and authentication options with batches retrieve --wait.")
 	}
-	return readable.WriteText(opts.Stderr, fmt.Sprintf("Follow this batch:\n  %s batches retrieve --batch-id=%s --wait", errorHelpInvocation(cmd.Root()), id))
+	return readable.WriteText(opts.Stderr, fmt.Sprintf("Follow this batch:\n  %s batches retrieve --batch-id=%s --wait", clihelp.DisplayInvocation(cmd.Root()), id))
 }
 
 // A new process inherits environment configuration but loses command-line
@@ -345,8 +346,8 @@ func batchHintNeedsRequestOptions(root *cli.Command) bool {
 		{"organization", "OPENAI_ORG_ID"},
 		{"project", "OPENAI_PROJECT_ID"},
 		{"webhook-secret", "OPENAI_WEBHOOK_SECRET"},
-		{mtlsClientCertFileFlag, mtlsClientCertFileEnv},
-		{mtlsClientKeyFileFlag, mtlsClientKeyFileEnv},
+		{requestconfig.MTLSClientCertFileFlag, requestconfig.MTLSClientCertFileEnv},
+		{requestconfig.MTLSClientKeyFileFlag, requestconfig.MTLSClientKeyFileEnv},
 	} {
 		if root.IsSet(setting.flag) && root.String(setting.flag) != os.Getenv(setting.environment) {
 			return true

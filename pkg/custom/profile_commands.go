@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/openai/openai-cli/internal/clihelp"
 	"io"
 	"os"
 	"slices"
@@ -174,7 +175,7 @@ func handleProfileCommand(ctx context.Context, command *cli.Command) error {
 			result = records
 		} else {
 			if _, exists := registry.Profiles[name]; !exists {
-				return profileFailure("That profile does not exist. Use "+errorHelpInvocation(root)+" profile list to inspect saved names.", nil)
+				return profileFailure("That profile does not exist. Use "+clihelp.DisplayInvocation(root)+" profile list to inspect saved names.", nil)
 			}
 			result = savedProfileRecord(registry, name)
 		}
@@ -195,13 +196,13 @@ func handleProfileCommand(ctx context.Context, command *cli.Command) error {
 			values, exists := registry.Profiles[name]
 			if action == "create" {
 				if exists {
-					return profileFailure("That profile already exists. Use "+errorHelpInvocation(root)+" profile set to edit its saved fields.", nil)
+					return profileFailure("That profile already exists. Use "+clihelp.DisplayInvocation(root)+" profile set to edit its saved fields.", nil)
 				}
 				registry.Profiles[name] = profileValues{}
 				return nil
 			}
 			if !exists {
-				return profileFailure("That profile does not exist. Use "+errorHelpInvocation(root)+" profile list to inspect saved names.", nil)
+				return profileFailure("That profile does not exist. Use "+clihelp.DisplayInvocation(root)+" profile list to inspect saved names.", nil)
 			}
 			switch action {
 			case "set":
@@ -249,7 +250,7 @@ func handleProfileCommand(ctx context.Context, command *cli.Command) error {
 			message = "Saved profiles were updated, but the result could not be written."
 		}
 		failure := &localcommands.LocalError{
-			Message: message + " Inspect with " + errorHelpInvocation(root) + " profile list.",
+			Message: message + " Inspect with " + clihelp.DisplayInvocation(root) + " profile list.",
 			Cause:   err,
 		}
 		if committed {

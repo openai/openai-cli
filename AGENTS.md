@@ -18,6 +18,8 @@ and reshaping live in `internal/output/transform/`. Use cohesive `internal/` hel
 shared implementation, including text rendering and terminal escaping.
 `internal/commands/` owns command-tree routing, compatibility aliases, shortcuts,
 help-group metadata, and shared feature contracts; assembly owns their order.
+`internal/clihelp/` owns help rendering, command suggestions, and safe recovery
+guidance; recovery must not echo private operands or execute corrections.
 Keep `cmd/openai/main.go` focused on startup and wiring. Reuse existing packages
 and explain the distinct responsibility of any new package. Preserve command
 compatibility, generated ownership, and the separate `api_reference/go.mod`

@@ -16,6 +16,8 @@ import (
 
 	"github.com/openai/openai-cli/internal/apiquery"
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	requestconfig "github.com/openai/openai-cli/internal/request"
+	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/require"
@@ -27,7 +29,7 @@ func adminCredentialsTestCommand(t *testing.T, action cli.ActionFunc) *cli.Comma
 	profileCommandTestEnvironment(t)
 	for _, name := range []string{
 		"OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_CUSTOM_HEADERS", "OPENAI_BASE_URL",
-		mtlsClientCertFileEnv, mtlsClientKeyFileEnv,
+		requestconfig.MTLSClientCertFileEnv, requestconfig.MTLSClientKeyFileEnv,
 	} {
 		t.Setenv(name, "")
 	}
@@ -157,7 +159,7 @@ func TestAdminCredentialsStandardServiceAuthentication(t *testing.T) {
 			ConfigureCommand(root)
 			operation := root.Command("admin").Command("organization").Command("projects").Command("list")
 			operation.Before = func(ctx context.Context, command *cli.Command) (context.Context, error) {
-				command.Root().Metadata[mtlsHTTPClientMetadata] = tc.mtlsClient
+				command.Root().Metadata[requestconfig.MTLSHTTPClientMetadata] = tc.mtlsClient
 				return ctx, nil
 			}
 			args := append([]string{root.Name, "admin", "organization", "projects", "list"}, tc.args...)
@@ -416,9 +418,9 @@ func TestAdminCredentialsAcceptCertificateOnlyMTLS(t *testing.T) {
 		_, err := client.Admin.Organization.Projects.List(ctx, openai.AdminOrganizationProjectListParams{})
 		return err
 	})
-	pki := newMTLSTestPKI(t)
+	pki := mtlstest.NewPKI(t)
 	clientCAs := x509.NewCertPool()
-	require.True(t, clientCAs.AppendCertsFromPEM(pki.rootPEM))
+	require.True(t, clientCAs.AppendCertsFromPEM(pki.RootPEM))
 	type requestDetails struct {
 		authorization string
 		chainLength   int
@@ -438,7 +440,7 @@ func TestAdminCredentialsAcceptCertificateOnlyMTLS(t *testing.T) {
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	configureTestServerTrust(t, server)
-	certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
 	ConfigureCommand(root)
 	require.NoError(t, root.Run(t.Context(), []string{
 		root.Name, "--base-url", server.URL,

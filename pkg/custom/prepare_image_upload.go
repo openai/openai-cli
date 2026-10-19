@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
 )
@@ -74,7 +75,7 @@ func inspectImageMultipartSetting(ctx context.Context, name string, value any) (
 	if !ok {
 		return value, value, nil
 	}
-	upload, owned := value.(fileUpload)
+	upload, owned := value.(requestconfig.FileUpload)
 	var closeOnce sync.Once
 	var closeErr error
 	closeSource := func() {
@@ -92,7 +93,7 @@ func inspectImageMultipartSetting(ctx context.Context, name string, value any) (
 	var replay any = bytes.NewReader(data)
 	if owned {
 		upload.Reader = bytes.NewReader(data)
-		upload.size, upload.knownSize = int64(len(data)), true
+		upload.Size, upload.KnownSize = int64(len(data)), true
 		replay = upload
 	}
 	if err := ctx.Err(); err != nil {

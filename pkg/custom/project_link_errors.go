@@ -3,6 +3,7 @@ package custom
 import (
 	"context"
 	"errors"
+	"github.com/openai/openai-cli/internal/clihelp"
 	"os"
 
 	localcommands "github.com/openai/openai-cli/internal/commands"
@@ -21,7 +22,7 @@ func projectLinkStoreFailure(root *cli.Command, action string, cause error) erro
 	}
 	message := operation + projectLinkRecovery(cause) + "This command did not change saved links."
 	if action == "resolve" {
-		message += " Inspect with " + errorHelpInvocation(root) + " link."
+		message += " Inspect with " + clihelp.DisplayInvocation(root) + " link."
 	}
 	return projectLinkFailure(message, cause)
 }
@@ -83,7 +84,7 @@ func projectLinkOutputFailure(root *cli.Command, action string, cause error) err
 		message = "This folder has no saved link of its own. Its confirmation could not be written."
 	}
 	failure := &localcommands.LocalError{
-		Message: message + " Inspect with " + errorHelpInvocation(root) + " link.",
+		Message: message + " Inspect with " + clihelp.DisplayInvocation(root) + " link.",
 		Cause:   cause,
 	}
 	if action == "link" || action == "unlink" {

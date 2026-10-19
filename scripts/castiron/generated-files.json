@@ -579,7 +579,7 @@
     },
     "generated/commands/moderation_test.go": {
       "mode": "100644",
-      "sha256": "d1be88e5aab19734dccf92729db270c22c58d79c2865da2dd8e9e408aeb1da85"
+      "sha256": "d39a0e043b2e685a5caeeb67a62aab29704a2bd31b90ab6a67b686d952735e84"
     },
     "generated/commands/response.go": {
       "mode": "100644",

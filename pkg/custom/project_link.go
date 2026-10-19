@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"io"
 	"os"
 	"path/filepath"
@@ -20,7 +21,7 @@ import (
 // Track argv separately from PostParse: request flags count environment values
 // as sets too. Inspecting a link must never save an ambient project selection.
 type projectLinkFlag struct {
-	*rootRequestFlag
+	*requestconfig.RootRequestFlag
 	explicit bool
 	context  context.Context
 }
@@ -28,11 +29,11 @@ type projectLinkFlag struct {
 func (f *projectLinkFlag) PreParse() error {
 	f.explicit = false
 	f.context = nil
-	return f.rootRequestFlag.PreParse()
+	return f.RootRequestFlag.PreParse()
 }
 
 func (f *projectLinkFlag) Set(name, value string) error {
-	if err := f.rootRequestFlag.Set(name, value); err != nil {
+	if err := f.RootRequestFlag.Set(name, value); err != nil {
 		return err
 	}
 	f.explicit = true
@@ -41,8 +42,8 @@ func (f *projectLinkFlag) Set(name, value string) error {
 
 func registerProjectLinkCommands(root *cli.Command) {
 	for i, flag := range root.Flags {
-		if project, ok := flag.(*rootRequestFlag); ok && project.Name == "project" {
-			root.Flags[i] = &projectLinkFlag{rootRequestFlag: project}
+		if project, ok := flag.(*requestconfig.RootRequestFlag); ok && project.Name == "project" {
+			root.Flags[i] = &projectLinkFlag{RootRequestFlag: project}
 		}
 	}
 	previousBefore := root.Before
@@ -283,7 +284,7 @@ func projectLinkEffectiveProject(ctx context.Context, root *cli.Command, folder 
 		project, source = environment, "environment"
 	}
 	if root.IsSet("header") {
-		if headers, err := requestHeaders(root); err == nil {
+		if headers, err := requestconfig.Headers(root); err == nil {
 			if values := headers.Values("OpenAI-Project"); len(values) != 0 {
 				project, source = values[0], "header"
 			}

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	requestconfig "github.com/openai/openai-cli/internal/request"
+	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"io"
 	"log"
 	"math/big"
@@ -43,7 +45,7 @@ func authStatusTestRoot(out io.Writer) *cli.Command {
 		{"organization", "OPENAI_ORG_ID"}, {"project", "OPENAI_PROJECT_ID"}} {
 		root.Flags = append(root.Flags, &requestflag.Flag[string]{Name: pair[0], Sources: cli.EnvVars(pair[1])})
 	}
-	configureRootRequestFlags(root)
+	requestconfig.ConfigureRootFlags(root)
 	registerAuthCommands(root)
 	ConfigureCommandErrors(root)
 	return root
@@ -218,7 +220,7 @@ func TestAuthStatusMatchesSDKAuthorizationSelection(t *testing.T) {
 				root := authStatusTestRoot(io.Discard)
 				root.Commands = append(root.Commands, &cli.Command{Name: "probe", Action: func(ctx context.Context, c *cli.Command) error {
 					options := GetDefaultRequestOptions(c)
-					headers, err := requestHeaders(c)
+					headers, err := requestconfig.Headers(c)
 					if err != nil {
 						return err
 					}
@@ -731,12 +733,12 @@ func TestAuthStatusIdentityCommandReuseClearsVerification(t *testing.T) {
 }
 
 func TestAuthStatusIdentityMTLSReaderRegularAndCancellation(t *testing.T) {
-	pki := newMTLSTestPKI(t)
-	certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+	pki := mtlstest.NewPKI(t)
+	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
 	for _, tc := range []struct {
 		kind, path string
 		want       []byte
-	}{{"certificate", certFile, pki.clientChainPEM}, {"key", keyFile, pki.clientKeyPEM}} {
+	}{{"certificate", certFile, pki.ClientChainPEM}, {"key", keyFile, pki.ClientKeyPEM}} {
 		t.Run(tc.kind, func(t *testing.T) {
 			data, err := authStatusReadMTLSFile(t.Context(), tc.kind, tc.path)
 			require.NoError(t, err)
@@ -761,7 +763,7 @@ func TestAuthStatusIdentityMTLSReaderRegularAndCancellation(t *testing.T) {
 		defer cancel()
 		var visited []string
 		var certificate []byte
-		client, err := newMTLSHTTPClientWithReader(certFile, keyFile, "https://api.openai.com/v1/", func(kind, path string) ([]byte, error) {
+		client, err := requestconfig.NewMTLSHTTPClientWithReader(certFile, keyFile, "https://api.openai.com/v1/", func(kind, path string) ([]byte, error) {
 			visited = append(visited, kind)
 			data, err := authStatusReadMTLSFile(ctx, kind, path)
 			if kind == "certificate" {
@@ -782,12 +784,12 @@ func TestAuthStatusIdentityMTLSReaderSymlinks(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows symlink creation requires a separate native privilege fixture")
 	}
-	pki := newMTLSTestPKI(t)
-	certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+	pki := mtlstest.NewPKI(t)
+	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
 	for _, tc := range []struct {
 		kind, path string
 		want       []byte
-	}{{"certificate", certFile, pki.clientChainPEM}, {"key", keyFile, pki.clientKeyPEM}} {
+	}{{"certificate", certFile, pki.ClientChainPEM}, {"key", keyFile, pki.ClientKeyPEM}} {
 		t.Run(tc.kind, func(t *testing.T) {
 			link := filepath.Join(t.TempDir(), tc.kind+".pem")
 			require.NoError(t, os.Symlink(tc.path, link))
@@ -812,8 +814,8 @@ func TestAuthStatusIdentityVerifiedTLSAndMTLS(t *testing.T) {
 		{"mTLS closes response", "admin", true, true, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			pki := newMTLSTestPKI(t)
-			certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+			pki := mtlstest.NewPKI(t)
+			certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
 			now := time.Now()
 			name := "api.openai.com"
 			if !tc.matchingName {
@@ -824,7 +826,7 @@ func TestAuthStatusIdentityVerifiedTLSAndMTLS(t *testing.T) {
 				NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
 				KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 			}
-			serverDER, serverCertificate, serverKey := createTestCertificate(t, template, template, nil)
+			serverDER, serverCertificate, serverKey := mtlstest.CreateCertificate(t, template, template, nil)
 			serverKeyDER, err := x509.MarshalECPrivateKey(serverKey)
 			require.NoError(t, err)
 			serverPair, err := tls.X509KeyPair(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}),
@@ -832,7 +834,7 @@ func TestAuthStatusIdentityVerifiedTLSAndMTLS(t *testing.T) {
 			require.NoError(t, err)
 			clear(serverKeyDER)
 			clientRoots := x509.NewCertPool()
-			require.True(t, clientRoots.AppendCertsFromPEM(pki.rootPEM))
+			require.True(t, clientRoots.AppendCertsFromPEM(pki.RootPEM))
 			type observation struct {
 				method, path, host, serverName, negotiatedProtocol string
 				protocolMajor                                      int
@@ -901,15 +903,15 @@ func TestAuthStatusIdentityVerifiedTLSAndMTLS(t *testing.T) {
 			}
 			http.DefaultTransport = transport
 			t.Cleanup(func() { transport.CloseIdleConnections(); http.DefaultTransport = original })
-			t.Setenv(mtlsClientCertFileEnv, "")
-			t.Setenv(mtlsClientKeyFileEnv, "")
+			t.Setenv(requestconfig.MTLSClientCertFileEnv, "")
+			t.Setenv(requestconfig.MTLSClientKeyFileEnv, "")
 			authStatusTestEnvironment(t, map[string]string{
 				"OPENAI_API_KEY": "synthetic-private-tls-api", "OPENAI_ADMIN_KEY": "synthetic-private-tls-admin",
 				"OPENAI_BASE_URL": "https://api.openai.com/v1/", "OPENAI_ORG_ID": "org_tls", "OPENAI_PROJECT_ID": "proj_tls",
 			})
 			var output bytes.Buffer
 			root := authStatusTestRoot(&output)
-			root.Flags = append(root.Flags, mtlsClientFlags()...)
+			root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
 			args := []string{"openai", "auth", "status", "--verify", "--credential-kind=" + tc.kind, "--format=json",
 				"--header=Cookie: synthetic-private-cookie", "--header=X-Synthetic: synthetic-private-header"}
 			if tc.mtls {
@@ -925,7 +927,7 @@ func TestAuthStatusIdentityVerifiedTLSAndMTLS(t *testing.T) {
 			require.Equal(t, int32(1), dialCount.Load(), "lookup must perform one TLS connection without fallback")
 			var report map[string]any
 			require.NoError(t, json.Unmarshal(output.Bytes(), &report))
-			for _, secret := range []string{"synthetic-private-tls-api", "synthetic-private-tls-admin", "synthetic-private-cookie", "synthetic-private-header", certFile, keyFile, string(pki.clientKeyPEM)} {
+			for _, secret := range []string{"synthetic-private-tls-api", "synthetic-private-tls-admin", "synthetic-private-cookie", "synthetic-private-header", certFile, keyFile, string(pki.ClientKeyPEM)} {
 				require.NotContains(t, output.String(), secret)
 				if err != nil {
 					require.NotContains(t, err.Error(), secret)
@@ -956,7 +958,7 @@ func TestAuthStatusIdentityVerifiedTLSAndMTLS(t *testing.T) {
 			require.Empty(t, item.headers.Values("Cookie"))
 			require.Empty(t, item.headers.Values("X-Synthetic"))
 			if tc.mtls {
-				leaf, _ := pem.Decode(pki.clientLeafPEM)
+				leaf, _ := pem.Decode(pki.ClientLeafPEM)
 				require.NotNil(t, leaf)
 				require.Equal(t, leaf.Bytes, item.clientLeaf)
 				require.Equal(t, 2, item.clientCertificates)

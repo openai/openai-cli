@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -38,7 +39,7 @@ func TestAdminSetupOriginDisplayPreservesDestination(t *testing.T) {
 				require.Equal(t, test.display, display)
 				return verifyAdminSetup(ctx, options, []byte("synthetic-entered-admin-key"))
 			})
-			root.Metadata = map[string]any{mtlsHTTPClientMetadata: &http.Client{
+			root.Metadata = map[string]any{requestconfig.MTLSHTTPClientMetadata: &http.Client{
 				Transport: adminSetupOriginTransport(func(request *http.Request) (*http.Response, error) {
 					requests++
 					require.Equal(t, endpoint.Scheme, request.URL.Scheme)
@@ -104,7 +105,7 @@ func TestAdminSetupProfileEndpointOptions(t *testing.T) {
 			})
 			require.NoError(t, err)
 			configureProfileContext(root)
-			root.Metadata = map[string]any{mtlsHTTPClientMetadata: &http.Client{
+			root.Metadata = map[string]any{requestconfig.MTLSHTTPClientMetadata: &http.Client{
 				Transport: adminSetupOriginTransport(func(request *http.Request) (*http.Response, error) {
 					requests++
 					require.Equal(t, expected.Scheme, request.URL.Scheme)
@@ -247,7 +248,7 @@ func TestAdminSetupProfileEndpointLoopback(t *testing.T) {
 			client := server.Client()
 			redirects := 0
 			client.CheckRedirect = func(*http.Request, []*http.Request) error { redirects++; return nil }
-			root.Metadata = map[string]any{mtlsHTTPClientMetadata: client}
+			root.Metadata = map[string]any{requestconfig.MTLSHTTPClientMetadata: client}
 			root.ExitErrHandler = func(context.Context, *cli.Command, error) {}
 			err = root.Run(t.Context(), []string{root.Name, "admin:organization:projects", "list"})
 			if status == http.StatusOK {

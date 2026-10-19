@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/openai/openai-cli/internal/clihelp"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"io"
 	"mime"
 	"net/http"
@@ -104,7 +106,7 @@ func handleAuthStatus(ctx context.Context, command *cli.Command) error {
 	}
 	root := command.Root()
 	if command.Args().Present() {
-		return &localcommands.LocalError{Message: "Auth status takes no positional arguments. Use " + errorHelpInvocation(root) + " auth status --help."}
+		return &localcommands.LocalError{Message: "Auth status takes no positional arguments. Use " + clihelp.DisplayInvocation(root) + " auth status --help."}
 	}
 	if root.IsSet("transform") || root.IsSet("raw-output") {
 		return &localcommands.LocalError{Message: "Auth status does not support --transform or --raw-output. Use --format text or json."}
@@ -226,7 +228,7 @@ type authStatusSnapshot struct {
 
 func resolveAuthStatusSnapshot(root *cli.Command, lookup func(string) (string, bool)) (authStatusSnapshot, error) {
 	environment := snapshotContextEnvironment(root, lookup)
-	literal, err := requestHeaders(root)
+	literal, err := requestconfig.Headers(root)
 	if err != nil {
 		return authStatusSnapshot{}, &localcommands.LocalError{Message: "Invalid --header. Use 'Name: Value' without control characters."}
 	}
@@ -355,9 +357,9 @@ func authStatusLookup(ctx context.Context, root *cli.Command, snapshot authStatu
 		}
 		return failure("request_failed", "Could not resolve identity. Check your connection and retry.")
 	}
-	cert, _ := root.Value(mtlsClientCertFileFlag).(string)
-	key, _ := root.Value(mtlsClientKeyFileFlag).(string)
-	client, err := newMTLSHTTPClientWithReader(cert, key, snapshot.explicitBaseURL, func(kind, path string) ([]byte, error) {
+	cert, _ := root.Value(requestconfig.MTLSClientCertFileFlag).(string)
+	key, _ := root.Value(requestconfig.MTLSClientKeyFileFlag).(string)
+	client, err := requestconfig.NewMTLSHTTPClientWithReader(cert, key, snapshot.explicitBaseURL, func(kind, path string) ([]byte, error) {
 		return authStatusReadMTLSFile(ctx, kind, path)
 	})
 	if err != nil {

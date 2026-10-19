@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"io"
 	"net/http"
 	"os"
@@ -28,7 +29,7 @@ func projectLinkTestCommand(out io.Writer) *cli.Command {
 		},
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 	}
-	configureRootRequestFlags(root)
+	requestconfig.ConfigureRootFlags(root)
 	registerProjectLinkCommands(root)
 	return root
 }

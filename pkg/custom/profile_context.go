@@ -2,6 +2,8 @@ package custom
 
 import (
 	"context"
+	"github.com/openai/openai-cli/internal/clihelp"
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"net/http"
 	"net/url"
 	"os"
@@ -71,7 +73,7 @@ func selectedProfileName(root *cli.Command, lookup func(string) (string, bool), 
 	}
 	if name != "" {
 		if _, exists := registry.Profiles[name]; !exists {
-			return "", &localcommands.LocalError{Message: "Selected profile does not exist. Use " + errorHelpInvocation(root) + " profile list or create the profile first."}
+			return "", &localcommands.LocalError{Message: "Selected profile does not exist. Use " + clihelp.DisplayInvocation(root) + " profile list or create the profile first."}
 		}
 	}
 	return name, nil
@@ -234,7 +236,7 @@ func resolvedCommandRequestContext(command *cli.Command) (resolvedRequestContext
 		result, err = *selected.resolved, selected.err
 	} else {
 		var literal http.Header
-		literal, err = requestHeaders(root)
+		literal, err = requestconfig.Headers(root)
 		if err == nil {
 			result, err = resolveRequestContext(requestResolutionContext(root), root, snapshotContextEnvironment(root, os.LookupEnv), literal)
 		}

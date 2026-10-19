@@ -12,7 +12,9 @@ import (
 	"reflect"
 	"testing"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
+	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/require"
@@ -29,8 +31,8 @@ func TestRootRequestFlagsPreserveOwnershipAndMetadata(t *testing.T) {
 		Flags:    []cli.Flag{project, apiKey, unrelated, format},
 		Commands: []*cli.Command{{Name: "create", Flags: []cli.Flag{endpoint}}},
 	}
-	configureRootRequestFlags(root)
-	wrapped := root.Flags[0].(*rootRequestFlag)
+	requestconfig.ConfigureRootFlags(root)
+	wrapped := root.Flags[0].(*requestconfig.RootRequestFlag)
 	require.Same(t, project, wrapped.RequestFlag())
 	require.Equal(t, []string{"project", "p"}, wrapped.Names())
 	require.Equal(t, "Project context", wrapped.GetUsage())
@@ -40,7 +42,7 @@ func TestRootRequestFlagsPreserveOwnershipAndMetadata(t *testing.T) {
 	require.Same(t, endpoint, root.Commands[0].Flags[0])
 	require.Same(t, unrelated, root.Flags[2])
 	require.Same(t, format, root.Flags[3])
-	configureRootRequestFlags(root)
+	requestconfig.ConfigureRootFlags(root)
 	require.Same(t, wrapped, root.Flags[0])
 }
 
@@ -77,8 +79,8 @@ func TestRootRequestFlagsExplicitAssignmentProvenance(t *testing.T) {
 							Name: "list",
 							Action: func(_ context.Context, command *cli.Command) error {
 								called = true
-								wrapped := command.Root().Flags[0].(*rootRequestFlag)
-								require.Equal(t, tc.explicit, wrapped.explicitlySet)
+								wrapped := command.Root().Flags[0].(*requestconfig.RootRequestFlag)
+								require.Equal(t, tc.explicit, wrapped.ExplicitRequestFlag())
 								require.True(t, command.Root().IsSet(name))
 								require.Equal(t, tc.want, command.Root().String(name))
 								require.Equal(t, tc.want, command.String(name))
@@ -86,7 +88,7 @@ func TestRootRequestFlagsExplicitAssignmentProvenance(t *testing.T) {
 							},
 						}}}},
 					}
-					configureRootRequestFlags(root)
+					requestconfig.ConfigureRootFlags(root)
 					require.NoError(t, root.Run(t.Context(), append([]string{"openai"}, tc.args...)))
 					require.True(t, called)
 				})
@@ -96,16 +98,16 @@ func TestRootRequestFlagsExplicitAssignmentProvenance(t *testing.T) {
 }
 
 func TestRootRequestFlagPreParseResetsInvocationState(t *testing.T) {
-	wrapped := &rootRequestFlag{Flag: &requestflag.Flag[string]{Name: "project", Default: "default-project"}}
+	wrapped := &requestconfig.RootRequestFlag{Flag: &requestflag.Flag[string]{Name: "project", Default: "default-project"}}
 	require.NoError(t, wrapped.PreParse())
-	require.False(t, wrapped.explicitlySet)
+	require.False(t, wrapped.ExplicitRequestFlag())
 	require.False(t, wrapped.IsSet())
 	require.NoError(t, wrapped.Set("project", "explicit-project"))
-	require.True(t, wrapped.explicitlySet)
+	require.True(t, wrapped.ExplicitRequestFlag())
 	require.Equal(t, 1, wrapped.Count())
 
 	require.NoError(t, wrapped.PreParse())
-	require.False(t, wrapped.explicitlySet)
+	require.False(t, wrapped.ExplicitRequestFlag())
 	require.False(t, wrapped.IsSet())
 	require.Zero(t, wrapped.Count())
 	require.Equal(t, "default-project", wrapped.Get())
@@ -127,8 +129,8 @@ func TestRootRequestFlagsResetProvenanceAcrossRuns(t *testing.T) {
 			root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard,
 				Flags: []cli.Flag{definition}, Commands: []*cli.Command{{Name: "models", Commands: []*cli.Command{{Name: "list"}}}},
 			}
-			configureRootRequestFlags(root)
-			wrapped := root.Flags[0].(*rootRequestFlag)
+			requestconfig.ConfigureRootFlags(root)
+			wrapped := root.Flags[0].(*requestconfig.RootRequestFlag)
 			// Root sources precede descendant arguments, so Count includes source and explicit assignments.
 			for _, tc := range []struct {
 				name, environment, want string
@@ -187,7 +189,7 @@ func TestRootRequestFlagPreParsePreservesCurrentDefinition(t *testing.T) {
 		QueryPath: "synthetic_query", HeaderPath: "X-Synthetic", BodyPath: "synthetic_body", BodyRoot: true,
 		PathParam: "synthetic_path", Const: true, FileInput: true, DataAliases: []string{"synthetic_alias"},
 	}
-	wrapped := &rootRequestFlag{Flag: definition}
+	wrapped := &requestconfig.RootRequestFlag{Flag: definition}
 	require.NoError(t, wrapped.PreParse())
 	require.NoError(t, wrapped.Set("project", "synthetic-explicit"))
 	definition.Usage, definition.Default = "Updated synthetic usage", "synthetic-updated"
@@ -299,11 +301,11 @@ func TestRootRequestFlagsReuseMatchesStatusAndSDKRequests(t *testing.T) {
 }
 
 func TestRootRequestFlagsPreserveMTLSPlacement(t *testing.T) {
-	t.Setenv(mtlsClientCertFileEnv, "/missing/synthetic-env-certificate")
-	t.Setenv(mtlsClientKeyFileEnv, "/missing/synthetic-env-key")
-	pki := newMTLSTestPKI(t)
+	t.Setenv(requestconfig.MTLSClientCertFileEnv, "/missing/synthetic-env-certificate")
+	t.Setenv(requestconfig.MTLSClientKeyFileEnv, "/missing/synthetic-env-key")
+	pki := mtlstest.NewPKI(t)
 	clientCAs := x509.NewCertPool()
-	require.True(t, clientCAs.AppendCertsFromPEM(pki.rootPEM))
+	require.True(t, clientCAs.AppendCertsFromPEM(pki.RootPEM))
 	requests := make(chan http.Header, 3)
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 {
@@ -317,7 +319,7 @@ func TestRootRequestFlagsPreserveMTLSPlacement(t *testing.T) {
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	configureTestServerTrust(t, server)
-	certFile, keyFile := writeMTLSClientFiles(t, pki.clientChainPEM, pki.clientKeyPEM)
+	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
 	flags := []string{"--project=proj-mtls", "--api-key=synthetic-mtls-key", "--base-url=" + server.URL,
 		"--mtls-client-cert-file=" + certFile, "--mtls-client-key-file=" + keyFile}
 	for _, position := range []int{0, 1, 2} {
@@ -337,7 +339,7 @@ func TestRootRequestFlagsPreserveMTLSPlacement(t *testing.T) {
 				},
 			}}}},
 		}
-		configureRootRequestFlags(root)
+		requestconfig.ConfigureRootFlags(root)
 		ConfigureCommand(root)
 		route := []string{"models", "list"}
 		args := append([]string{"openai"}, route[:position]...)
@@ -393,7 +395,7 @@ func TestRootRequestFlagsRetainSourcesAliasesAndValidation(t *testing.T) {
 					},
 				}}}},
 			}
-			configureRootRequestFlags(root)
+			requestconfig.ConfigureRootFlags(root)
 			err := root.Run(t.Context(), append([]string{"openai"}, tc.args...))
 			if tc.err != nil {
 				require.ErrorContains(t, err, tc.err.Error())

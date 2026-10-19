@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"io"
 	"log"
 	"math/big"
@@ -21,13 +22,14 @@ import (
 
 	"github.com/openai/openai-go/v3"
 
+	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
 
 func TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue(t *testing.T) {
 	t.Setenv("OPENAI_TEST_MTLS_FILE", "environment.pem")
-	flag := &mtlsClientFlag{StringFlag: cli.StringFlag{
+	flag := &requestconfig.MTLSClientFlag{StringFlag: cli.StringFlag{
 		Name: "certificate", Sources: cli.EnvVars("OPENAI_TEST_MTLS_FILE"), TakesFile: true,
 	}}
 	require.NoError(t, flag.PreParse())
@@ -51,7 +53,7 @@ func TestMTLSClientFlagEnvironmentDoesNotConsumeExplicitValue(t *testing.T) {
 func TestMTLSClientFlagPreParsePreservesCurrentDefinition(t *testing.T) {
 	var destination string
 	var validated []string
-	flag := &mtlsClientFlag{StringFlag: cli.StringFlag{
+	flag := &requestconfig.MTLSClientFlag{StringFlag: cli.StringFlag{
 		Name: "certificate", Category: "Synthetic category", DefaultText: "Synthetic default",
 		HideDefault: true, Usage: "Synthetic usage", Sources: cli.EnvVars("OPENAI_TEST_MTLS_METADATA"),
 		Required: true, Hidden: true, Deprecated: "Synthetic deprecation", Local: true,
@@ -81,7 +83,6 @@ func TestMTLSClientFlagPreParsePreservesCurrentDefinition(t *testing.T) {
 		}
 	}
 	require.False(t, flag.IsSet())
-	require.False(t, flag.explicit)
 	require.Zero(t, flag.Count())
 	require.Equal(t, "synthetic-updated.pem", destination)
 	require.Equal(t, []string{"synthetic-default.pem", "synthetic-explicit.pem", "synthetic-updated.pem"}, validated)
@@ -97,23 +98,23 @@ func TestMTLSClientFlagsReuseEnvironmentForTLS(t *testing.T) {
 		"OPENAI_API_KEY": "synthetic-mtls-reuse-api", "OPENAI_BASE_URL": "https://api.openai.com/v1/",
 		"OPENAI_ORG_ID": "org_mtls_reuse", "OPENAI_PROJECT_ID": "proj_mtls_reuse",
 	})
-	first, second := newMTLSTestPKI(t), newMTLSTestPKI(t)
-	firstCert, firstKey := writeMTLSClientFiles(t, first.clientChainPEM, first.clientKeyPEM)
-	secondCert, secondKey := writeMTLSClientFiles(t, second.clientChainPEM, second.clientKeyPEM)
-	firstLeaf, _ := pem.Decode(first.clientLeafPEM)
-	secondLeaf, _ := pem.Decode(second.clientLeafPEM)
+	first, second := mtlstest.NewPKI(t), mtlstest.NewPKI(t)
+	firstCert, firstKey := mtlstest.WriteClientFiles(t, first.ClientChainPEM, first.ClientKeyPEM)
+	secondCert, secondKey := mtlstest.WriteClientFiles(t, second.ClientChainPEM, second.ClientKeyPEM)
+	firstLeaf, _ := pem.Decode(first.ClientLeafPEM)
+	secondLeaf, _ := pem.Decode(second.ClientLeafPEM)
 	require.NotNil(t, firstLeaf)
 	require.NotNil(t, secondLeaf)
 	clientRoots := x509.NewCertPool()
-	require.True(t, clientRoots.AppendCertsFromPEM(first.rootPEM))
-	require.True(t, clientRoots.AppendCertsFromPEM(second.rootPEM))
+	require.True(t, clientRoots.AppendCertsFromPEM(first.RootPEM))
+	require.True(t, clientRoots.AppendCertsFromPEM(second.RootPEM))
 	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(102), DNSNames: []string{"api.openai.com"},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
-	serverDER, serverCertificate, serverKey := createTestCertificate(t, template, template, nil)
+	serverDER, serverCertificate, serverKey := mtlstest.CreateCertificate(t, template, template, nil)
 	serverKeyDER, err := x509.MarshalECPrivateKey(serverKey)
 	require.NoError(t, err)
 	serverPair, err := tls.X509KeyPair(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}),
@@ -168,7 +169,7 @@ func TestMTLSClientFlagsReuseEnvironmentForTLS(t *testing.T) {
 			var output bytes.Buffer
 			root := authStatusTestRoot(&output)
 			root.Commands = append(root.Commands, &cli.Command{Name: "models", Action: func(ctx context.Context, command *cli.Command) error {
-				if client, ok := command.Root().Metadata[mtlsHTTPClientMetadata].(*http.Client); ok {
+				if client, ok := command.Root().Metadata[requestconfig.MTLSHTTPClientMetadata].(*http.Client); ok {
 					defer client.CloseIdleConnections()
 				}
 				defer transport.CloseIdleConnections()
@@ -195,11 +196,11 @@ func TestMTLSClientFlagsReuseEnvironmentForTLS(t *testing.T) {
 				{name: "removed environment", removed: true},
 				{name: "final environment", cert: firstCert, key: firstKey, leaf: firstLeaf.Bytes},
 			} {
-				t.Setenv(mtlsClientCertFileEnv, tc.cert)
-				t.Setenv(mtlsClientKeyFileEnv, tc.key)
+				t.Setenv(requestconfig.MTLSClientCertFileEnv, tc.cert)
+				t.Setenv(requestconfig.MTLSClientKeyFileEnv, tc.key)
 				if tc.removed {
-					require.NoError(t, os.Unsetenv(mtlsClientCertFileEnv))
-					require.NoError(t, os.Unsetenv(mtlsClientKeyFileEnv))
+					require.NoError(t, os.Unsetenv(requestconfig.MTLSClientCertFileEnv))
+					require.NoError(t, os.Unsetenv(requestconfig.MTLSClientKeyFileEnv))
 				}
 				output.Reset()
 				args := []string{"openai", "models"}
