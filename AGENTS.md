@@ -28,7 +28,7 @@ module.
 
 ## Custom-code budget
 
-Follow [the custom-code guidance](scripts/castiron/CUSTOM_CODE.md). Budget changes
+Follow [the custom-code guidance](generated/castiron/CUSTOM_CODE.md). Budget changes
 belong in a separate PR containing only `.castiron-ratchet.json`, with an explicit justification
 in the PR description. Increases require a **human approving review** before merging.
 Agents may investigate and draft proposals, but must not approve budget increases

@@ -191,7 +191,8 @@ class BudgetTests(GitTestCase):
         ) as measured:
             self.evaluate(self.base)
         self.assertEqual(
-            measured.call_args.kwargs, {"public": False, "fetch": False, "require_head_hash": True}
+            measured.call_args.kwargs,
+            {"public": False, "fetch": False, "require_head_hash": True, "target_branch": "main"}
         )
 
     def test_queue_isolates_prs_but_uses_main_budget_for_combined_tree(self) -> None:

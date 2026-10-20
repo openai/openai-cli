@@ -7,7 +7,7 @@ for cross-SDK improvements; repository-specific customizations use the normal
 three-way merge and are allowed.
 The reporter uses Python 3.10+, Git, and `gh`; it does not import SDK code.
 
-Run `python3 -m unittest discover -s scripts/castiron -p 'test_custom_code*.py'`
+Run `python3 -m unittest discover -s generated/castiron -p 'test_custom_code*.py'`
 for the offline suite. Install Node.js to exercise the workflow publishers too.
 See [CUSTOM_CODE.md](CUSTOM_CODE.md) for budget policy and activation.
 The report comment includes commands to inspect the exact custom-code patch.

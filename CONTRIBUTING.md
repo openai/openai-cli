@@ -161,7 +161,7 @@ but must not approve increases or bypass the gate. Keep default CODEOWNERS.
 Lower the ceiling after cleanup while retaining headroom; decreases must still
 fit the measured usage.
 
-See [custom-code technical details](scripts/castiron/CUSTOM_CODE.md) for accounting,
+See [custom-code technical details](generated/castiron/CUSTOM_CODE.md) for accounting,
 local checks, trusted CI, and activation instructions.
 
 ## Security requirements
