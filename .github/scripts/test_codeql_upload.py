@@ -248,6 +248,39 @@ class PublisherTest(unittest.TestCase):
             publisher.report(get, "test/cli", 1, dict(id=42, run_attempt=2))
         self.assertEqual(self.writes, [])
 
+    def test_parallel_main_next_pr_runs_do_not_supersede_each_other(self):
+        for target, other_target in [("main", "next"), ("next", "main")]:
+            with self.subTest(target=target):
+                self.pr["base"]["ref"] = target
+                other_pr = copy.deepcopy(self.pr)
+                other_pr["number"] = 4
+                other_pr["base"]["ref"] = other_target
+                self.responses["pulls/4"] = other_pr
+                other = dict(self.run, id=43, pull_requests=[{"number": 4}])
+                def get(route, **kwargs):
+                    if "actions/workflows/codeql.yml/runs?" in route:
+                        return {"workflow_runs": [other]}
+                    return self.get(route, **kwargs)
+                self.assertEqual(publisher.destination(get, "test/cli", 1,
+                                                       dict(id=42, run_attempt=2))[1], self.target)
+
+    def test_supersession_fallback_requires_unique_same_pr(self):
+        other = dict(self.run, id=43, pull_requests=[])
+        self.responses[f"commits/{HEAD}/pulls?per_page=100&page=1"] = [{"number": 3}]
+        def get(route, **kwargs):
+            if "actions/workflows/codeql.yml/runs?" in route:
+                return {"workflow_runs": [other]}
+            return self.get(route, **kwargs)
+        with self.assertRaises(publisher.StaleRun):
+            publisher.destination(get, "test/cli", 1, dict(id=42, run_attempt=2))
+        other_pr = copy.deepcopy(self.pr)
+        other_pr["number"] = 4
+        other_pr["base"]["ref"] = "next"
+        self.responses["pulls/4"] = other_pr
+        self.responses[f"commits/{HEAD}/pulls?per_page=100&page=1"].append({"number": 4})
+        self.assertEqual(publisher.destination(get, "test/cli", 1,
+                                               dict(id=42, run_attempt=2))[1], self.target)
+
     def partial_rerun(self):
         actions = dict(name="CodeQL analysis (actions)", run_id=42, run_attempt=1,
                        head_sha=HEAD, status="completed", conclusion="success", started_at=START1)
