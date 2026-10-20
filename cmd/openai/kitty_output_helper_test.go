@@ -7,7 +7,7 @@ import (
 	"github.com/openai/openai-cli/generated/commands"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	"github.com/openai/openai-cli/internal/terminalimage"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 )
 
 // Match executable dispatch when tests launch private helpers.
@@ -39,6 +39,6 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
-	custom.ConfigureCommand(commands.Command)
+	appconfig.ConfigureCommand(commands.Command)
 	os.Exit(runShellTests(m))
 }
