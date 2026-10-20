@@ -176,6 +176,18 @@ def review(terminal, evidence, scene, output):
         return
     key(terminal, evidence, "Tab to Apply", b"\t")
     wait_screen(terminal, ["> Apply change"])
+    if scene == "alert-create":
+        checkpoint(terminal, evidence, output, "review-before-help", ("> Apply change",))
+        key(terminal, evidence, "Review help", b"\x1bOP")
+        wait_screen(terminal, ["Spend manages hard monthly"])
+        checkpoint(terminal, evidence, output, "review-help")
+        key(terminal, evidence, "Return to review", b"\x1b")
+        wait_screen(terminal, ["> Back", "Apply change"], ["> Apply change"])
+        checkpoint(terminal, evidence, output, "review-return", ("> Back",))
+        if mutations(scene):
+            raise AssertionError("returning from help applied the draft")
+        key(terminal, evidence, "Select Apply again", b"\t")
+        wait_screen(terminal, ["> Apply change"])
     checkpoint(terminal, evidence, output, "review-apply")
     key(terminal, evidence, "Apply", b"\r")
 
@@ -209,7 +221,8 @@ def run_scene(terminal, scene, evidence, output):
         else:
             key(terminal, evidence, "Edit alert", b"\r")
             wait_screen(terminal, ["Monthly USD", "Review change"])
-            replace(terminal, evidence, "Monthly USD", "75.50" if creating else "150.25")
+            amount = "75.505" if scene == "alert-create" else "75.50" if creating else "150.25"
+            replace(terminal, evidence, "Monthly USD", amount)
             key(terminal, evidence, "Recipients", b"\t")
             if creating:
                 replace(terminal, evidence, "Synthetic recipient", "finance@example.test")
@@ -224,6 +237,35 @@ def run_scene(terminal, scene, evidence, output):
             key(terminal, evidence, "Review action", b"\t")
             checkpoint(terminal, evidence, output, "form")
             key(terminal, evidence, "Review", b"\r")
+            if scene == "alert-create":
+                wait_screen(terminal, ["Enter a USD amount", "Review change"])
+                checkpoint(terminal, evidence, output, "validation", ("Enter a USD amount",))
+                if mutations(scene):
+                    raise AssertionError("an invalid amount sent a mutation")
+                key(terminal, evidence, "Validation help", b"\x1bOP")
+                wait_screen(terminal, ["Draft details", "two decimal places."])
+                checkpoint(terminal, evidence, output, "validation-help", ("two decimal places.",))
+                key(terminal, evidence, "Repeated help", b"\x1bOP")
+                key(terminal, evidence, "Return to draft", b"\x1b")
+                wait_screen(terminal, ["> Review change", "Demo", "Enter a USD amount"])
+                checkpoint(terminal, evidence, output, "draft-return", ("> Review change", "Demo"))
+                for _ in range(4):
+                    key(terminal, evidence, "Previous alert field", b"\x1b[Z")
+                wait_screen(terminal, ["Monthly USD", "75.505"])
+                replace(terminal, evidence, "Correct Monthly USD", "75.50")
+                for _ in range(4):
+                    key(terminal, evidence, "Next alert field", b"\t")
+                key(terminal, evidence, "Review corrected draft", b"\r")
+                wait_screen(terminal, ["> Back", "Enter: select"])
+                key(terminal, evidence, "Escape from review", b"\x1b")
+                wait_screen(terminal, ["> Review change", "Demo"])
+                for _ in range(4):
+                    key(terminal, evidence, "Inspect retained alert amount", b"\x1b[Z")
+                wait_screen(terminal, ["Monthly USD", "75.50", "Review change"])
+                checkpoint(terminal, evidence, output, "review-back", ("Monthly USD", "75.50"))
+                for _ in range(4):
+                    key(terminal, evidence, "Return to review action", b"\t")
+                key(terminal, evidence, "Review retained draft", b"\r")
     elif scene == "org-limit-delete":
         key(terminal, evidence, "Select removal", b"\x1b[B")
         wait_screen(terminal, ["Remove hard spend limit"])
@@ -287,7 +329,10 @@ def run_scene(terminal, scene, evidence, output):
             if "".join(message.split()) not in compact_help:
                 raise AssertionError("preflight help omitted status or recovery guidance")
         checkpoint(terminal, evidence, output, "preflight-help", ("HTTP 400",))
-        key(terminal, evidence, "Back", b"\x1b")
+        key(terminal, evidence, "Return to retained draft", b"\x1b")
+        wait_screen(terminal, ["125.25", "Review change"])
+        checkpoint(terminal, evidence, output, "preflight-draft", ("125.25", "Review change"))
+        key(terminal, evidence, "Back to overview", b"\x1b")
         wait_screen(terminal, ["Set hard spend limit"])
         key(terminal, evidence, "Quit", b"q")
         terminal.finish(1)

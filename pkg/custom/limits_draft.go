@@ -194,6 +194,22 @@ func limitsReview(c limitsChange, projectID string, requestArgs []string, omit b
 	if c.ID != "" {
 		result += "ID: " + c.ID + "\n"
 	}
+	if c.Kind == "limit_set" || c.Kind == "limit_delete" || strings.HasPrefix(c.Kind, "alert_") {
+		label, previous := "Hard spend limit", "Not confirmed"
+		if strings.HasPrefix(c.Kind, "alert_") {
+			label = "Alert threshold"
+		}
+		if c.Before.Exists() {
+			previous = limitsThresholdLabel(c.Before)
+		} else if c.Kind == "alert_create" {
+			previous = "New alert"
+		}
+		next := "USD " + formatLimitsDollars(c.Amount) + " / month"
+		if strings.HasSuffix(c.Kind, "_delete") {
+			next = "Remove this resource"
+		}
+		result += "\n" + label + "\nBefore: " + previous + "\nAfter: " + next + "\n"
+	}
 	result += "\nBefore\n" + before + "\n\nAfter\n"
 	if strings.HasSuffix(c.Kind, "_delete") {
 		result += "Remove this resource.\n"

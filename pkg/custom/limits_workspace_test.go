@@ -22,6 +22,7 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/terminal"
@@ -870,6 +871,276 @@ func TestLimitsWorkspaceActionVisibleAtMinimumSize(t *testing.T) {
 	}
 }
 
+func TestLimitsWorkspaceHelpRestoresDraftAndReview(t *testing.T) {
+	t.Run("form", func(t *testing.T) {
+		m, backend := newLimitsController(t, 40, 12)
+		m.begin("alert_update", gjson.Parse(limitsControllerAlert))
+		values := []string{"123.45", "finance@example.test", "Edited $HOME prefix"}
+		for i, value := range values {
+			m.draft.inputs[i].SetValue(value)
+			m.draft.inputs[i].SetCursor(i + 1)
+		}
+		for mode := 0; mode < 3; mode++ {
+			m.draft.prefixMode = mode
+			for focus := 0; focus < 5; focus++ {
+				m.setFocus(focus)
+				before, err := m.draft.validate()
+				require.NoError(t, err)
+				for _, key := range []rune{tea.KeyF1, tea.KeyF1, '?', tea.KeyEscape} {
+					require.Nil(t, limitsControllerKey(m, key))
+				}
+				require.Equal(t, "form", m.page)
+				require.Equal(t, focus, m.focus)
+				require.Equal(t, mode, m.draft.prefixMode)
+				for i, value := range values {
+					require.Equal(t, value, m.draft.inputs[i].Value())
+					require.Equal(t, i == focus, m.draft.inputs[i].Focused())
+					require.Equal(t, i+1, m.draft.inputs[i].Position())
+				}
+				after, err := m.draft.validate()
+				require.NoError(t, err)
+				require.Equal(t, limitsChangeBody(before), limitsChangeBody(after))
+			}
+		}
+		require.Zero(t, backend.writes.Load())
+		require.Zero(t, backend.reads.Load())
+	})
+	for _, resized := range []bool{false, true} {
+		t.Run(fmt.Sprintf("review_resize_%t", resized), func(t *testing.T) {
+			m, backend := newLimitsController(t, 80, 24)
+			limitsControllerReview(t, m)
+			command := m.previewCommand
+			m.viewport.GotoBottom()
+			review := m.viewport.View()
+			limitsControllerKey(m, tea.KeyTab)
+			require.True(t, m.apply)
+			limitsControllerKey(m, tea.KeyF1)
+			limitsControllerKey(m, tea.KeyF1)
+			if resized {
+				m.Update(tea.WindowSizeMsg{Width: 40, Height: 13})
+			}
+			limitsControllerKey(m, tea.KeyEscape)
+			require.Equal(t, "review", m.page)
+			require.False(t, m.apply)
+			require.Equal(t, command, m.previewCommand)
+			require.Equal(t, "100.01", m.draft.inputs[0].Value())
+			if resized {
+				require.Zero(t, m.viewport.YOffset())
+				require.False(t, m.viewport.AtBottom())
+				limitsControllerKey(m, tea.KeyTab)
+				require.False(t, m.apply, "resize must require rereading before Apply")
+			} else {
+				require.Equal(t, review, m.viewport.View())
+				require.True(t, m.viewport.AtBottom())
+			}
+			require.Zero(t, backend.writes.Load())
+		})
+	}
+	t.Run("home_and_inspection", func(t *testing.T) {
+		m, backend := newLimitsController(t, 40, 12)
+		m.snapshot.Alerts = []gjson.Result{gjson.Parse(limitsControllerAlert)}
+		m.section, m.selection = 1, 1
+		for _, key := range []rune{tea.KeyF1, tea.KeyF1, tea.KeyEscape, 'i', tea.KeyF1, tea.KeyEscape} {
+			require.Nil(t, limitsControllerKey(m, key))
+		}
+		require.Equal(t, "home", m.page)
+		require.Equal(t, 1, m.section)
+		require.Equal(t, 1, m.selection)
+		require.False(t, m.quitting)
+		require.Zero(t, backend.writes.Load())
+	})
+}
+
+func TestLimitsWorkspaceReviewEscapeMatchesBack(t *testing.T) {
+	for _, key := range []rune{tea.KeyEscape, tea.KeyEnter} {
+		t.Run(fmt.Sprintf("key_%d", key), func(t *testing.T) {
+			m, backend := newLimitsController(t, 40, 13)
+			m.begin("alert_update", gjson.Parse(limitsControllerAlert))
+			m.draft.inputs[0].SetValue("125.25")
+			m.draft.inputs[2].SetValue("Changed prefix")
+			m.draft.prefixMode = 1
+			m.setFocus(4)
+			limitsControllerKey(m, tea.KeyEnter)
+			require.Equal(t, "review", m.page)
+			require.False(t, m.apply)
+			if key == tea.KeyEscape {
+				m.viewport.GotoBottom()
+				limitsControllerKey(m, tea.KeyTab)
+				require.True(t, m.apply)
+			}
+			limitsControllerKey(m, key)
+			require.Equal(t, "form", m.page)
+			require.Equal(t, 4, m.focus)
+			require.Equal(t, 1, m.draft.prefixMode)
+			require.Equal(t, "125.25", m.draft.inputs[0].Value())
+			require.Equal(t, "Changed prefix", m.draft.inputs[2].Value())
+			require.False(t, m.apply)
+			limitsControllerKey(m, tea.KeyEnter)
+			require.Equal(t, "review", m.page)
+			require.False(t, m.apply)
+			require.Equal(t, int64(12525), m.change.Amount)
+			require.Equal(t, "Changed prefix", *m.change.SubjectPrefix)
+			require.Zero(t, backend.writes.Load())
+		})
+	}
+}
+
+func TestLimitsWorkspaceFormDiagnosticsFitAndRemainAccessible(t *testing.T) {
+	for _, width := range []int{40, 80} {
+		for _, height := range []int{12, 13, 14, 24} {
+			for _, state := range []string{"validation", "preflight", "uncertain"} {
+				t.Run(fmt.Sprintf("%dx%d_%s", width, height, state), func(t *testing.T) {
+					m, backend := newLimitsController(t, width, height)
+					m.begin("alert_create", gjson.Result{})
+					m.draft.inputs[0].SetValue("125.25")
+					m.draft.inputs[1].SetValue("Name <finance@example.test>")
+					m.review()
+					require.Equal(t, "form", m.page)
+					require.Contains(t, m.formError, "without display names")
+					if state != "validation" {
+						m.draft.inputs[1].SetValue("finance@example.test")
+						m.review()
+						m.mutationError = &limitsMutationFailure{
+							Attempted: state == "uncertain",
+							Err:       &openai.Error{StatusCode: 400, Message: "synthetic-private-response"},
+						}
+						m.Update(limitsWorkResult{mutation: true, err: m.mutationError})
+					}
+					outcome := strings.SplitN(m.formError, "\n", 2)[0]
+					for focus := 0; focus < 5; focus++ {
+						m.setFocus(focus)
+						for _, dark := range []bool{false, true} {
+							m.color, m.dark = false, dark
+							raw := m.View().Content
+							var monochrome bytes.Buffer
+							writer := colorprofile.Writer{Forward: &monochrome, Profile: colorprofile.NoTTY}
+							_, err := io.WriteString(&writer, raw)
+							require.NoError(t, err)
+							view := monochrome.String()
+							require.Contains(t, strings.Join(strings.Fields(view), " "), outcome)
+							for _, control := range []string{"Review change", "F1: help", "Esc: back", "Ctrl+C"} {
+								require.Contains(t, view, control)
+							}
+							if state == "preflight" {
+								require.Contains(t, view, "r: refresh")
+							}
+							require.NotContains(t, view, "\x1b")
+							require.NotContains(t, view, "synthetic-private-response")
+							require.LessOrEqual(t, len(strings.Split(view, "\n")), height)
+							for _, line := range strings.Split(view, "\n") {
+								require.LessOrEqual(t, ansi.StringWidth(line), width)
+							}
+						}
+					}
+					limitsControllerKey(m, tea.KeyF1)
+					require.Equal(t, "details", m.page)
+					require.NotContains(t, m.details, "synthetic-private-response")
+					if state == "validation" {
+						require.Contains(t, m.details, outcome)
+					} else if state == "preflight" {
+						require.Contains(t, m.details, outcome)
+						require.Contains(t, m.details, "request fields and scope")
+					} else {
+						require.Contains(t, m.details, "It may have succeeded")
+					}
+					m.viewport.GotoBottom()
+					require.True(t, m.viewport.AtBottom())
+					limitsControllerKey(m, tea.KeyEscape)
+					require.Equal(t, "form", m.page)
+					require.Equal(t, 4, m.focus)
+					require.Equal(t, "125.25", m.draft.inputs[0].Value())
+					require.Zero(t, backend.writes.Load())
+				})
+			}
+		}
+	}
+}
+
+func TestLimitsWorkspaceListStatusStaysVisible(t *testing.T) {
+	for _, complete := range []bool{false, true} {
+		t.Run(fmt.Sprintf("complete_%t", complete), func(t *testing.T) {
+			m, backend := newLimitsController(t, 40, 12)
+			m.snapshot.ProjectID = "proj_synthetic"
+			m.snapshot.Alerts = []gjson.Result{gjson.Parse(limitsControllerAlert)}
+			m.snapshot.Rates = []gjson.Result{gjson.Parse(limitsControllerRate)}
+			m.snapshot.AlertsComplete, m.snapshot.RatesComplete = complete, complete
+			m.snapshot.CostsTotal, m.snapshot.CostsComplete = "1.23", false
+			for _, section := range []int{1, 2} {
+				m.section = section
+				status, label, tab := "Incomplete.", "Alerts loaded: 1", "[Alerts]"
+				if complete {
+					status = "Complete."
+				}
+				if section == 2 {
+					label, tab = "Rate records loaded: 1", "[Rates]"
+				}
+				for _, colored := range []bool{false, true} {
+					for _, dark := range []bool{false, true} {
+						m.color, m.dark = colored, dark
+						view := ansi.Strip(m.View().Content)
+						require.Contains(t, view, status+" "+label)
+						require.Contains(t, view, tab)
+						require.Contains(t, view, "Reported Costs (incomplete): USD 1.23")
+						require.Contains(t, view, "q: quit")
+						require.NotContains(t, view, "true")
+						require.NotContains(t, view, "false")
+						require.LessOrEqual(t, len(strings.Split(view, "\n")), m.height)
+						for _, line := range strings.Split(view, "\n") {
+							require.LessOrEqual(t, ansi.StringWidth(line), m.width)
+						}
+					}
+				}
+			}
+			require.Zero(t, backend.writes.Load())
+		})
+	}
+}
+
+func TestLimitsWorkspaceReviewShowsExactDollarChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, before, amount, previous, next string
+	}{
+		{"limit", "limit_set", limitsTestLimit, "125.25", "USD 100.00 / month", "USD 125.25 / month"},
+		{"alert", "alert_update", limitsControllerAlert, "0.00", "USD 100.00 / month", "USD 0.00 / month"},
+		{"new_alert", "alert_create", "", "0.01", "New alert", "USD 0.01 / month"},
+		{"unknown_limit", "limit_set", "", "125.25", "Not confirmed", "USD 125.25 / month"},
+		{"large_limit", "limit_set", strings.Replace(limitsTestLimit, "10000", "9223372036854775806", 1), "92233720368547758.07", "USD 92233720368547758.06 / month", "USD 92233720368547758.07 / month"},
+		{"remove_limit", "limit_delete", limitsTestLimit, "", "USD 100.00 / month", "Remove this resource"},
+		{"remove_alert", "alert_delete", limitsControllerAlert, "", "USD 100.00 / month", "Remove this resource"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, backend := newLimitsController(t, 40, 12)
+			m.snapshot.LimitAbsent = tc.before == ""
+			m.begin(tc.kind, gjson.Parse(tc.before))
+			if len(m.draft.inputs) != 0 {
+				m.draft.inputs[0].SetValue(tc.amount)
+				if tc.kind == "alert_create" {
+					m.draft.inputs[1].SetValue("finance@example.test")
+				}
+				action := len(m.draft.inputs)
+				if action == 3 {
+					action++
+				}
+				m.setFocus(action)
+				limitsControllerKey(m, tea.KeyEnter)
+			}
+			require.Equal(t, "review", m.page, m.formError)
+			require.False(t, m.apply)
+			require.Contains(t, m.details, "Before: "+tc.previous)
+			require.Contains(t, m.details, "After: "+tc.next)
+			if tc.before != "" {
+				require.Contains(t, m.details, tc.before)
+			}
+			if tc.amount != "" {
+				require.Contains(t, m.previewCommand, fmt.Sprintf("--threshold-amount %d", m.change.Amount))
+				require.Contains(t, m.details, fmt.Sprintf(`"threshold_amount": %d`, m.change.Amount))
+			}
+			require.Contains(t, m.details, "\n"+m.previewCommand+"\n")
+			require.Zero(t, backend.writes.Load())
+		})
+	}
+}
+
 func TestLimitsDraftCommandPreviewPreservesPublicRoutes(t *testing.T) {
 	for _, tc := range []struct {
 		change limitsChange
@@ -1064,6 +1335,10 @@ func TestLimitsWorkspaceHTTPFailureRecovery(t *testing.T) {
 						t.Fatal("HTTP failure removed mutation uncertainty or the write lock")
 					}
 					limitsControllerKey(m, tea.KeyEscape)
+					if m.page != "form" {
+						t.Fatal("recovery help did not restore the locked draft")
+					}
+					limitsControllerKey(m, tea.KeyEscape)
 					limitsControllerKey(m, tea.KeyEnter)
 					m.Update(limitsControllerRun(t, limitsControllerKey(m, 'r')))
 					limitsControllerKey(m, tea.KeyEnter)
@@ -1157,6 +1432,10 @@ func TestLimitsWorkspaceExitRecoveryUsesProcessActions(t *testing.T) {
 				if !strings.Contains(m.details, "Press r to refresh") {
 					t.Fatal("in-workspace recovery lost its keyboard action")
 				}
+			}
+			limitsControllerKey(m, tea.KeyEscape)
+			if m.page != "form" {
+				t.Fatal("recovery help did not restore the rejected draft")
 			}
 			limitsControllerKey(m, tea.KeyEscape)
 			limitsControllerKey(m, 'q')

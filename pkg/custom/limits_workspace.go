@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/openai/openai-cli/internal/clihelp"
 	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/internal/readable"
 	clirequest "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
@@ -37,6 +38,8 @@ type limitsMenuItem struct {
 
 type limitsWorkspace struct {
 	detailsHeading                                string
+	detailsReturnPage                             string
+	detailsReturnOffset                           int
 	previewExecutable                             string
 	previewCommand, commandToPrint                string
 	invocation                                    string
@@ -513,6 +516,7 @@ func (m *limitsWorkspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.setReview()
 		}
 		if m.page == "details" {
+			m.detailsReturnOffset = 0
 			m.setDetails(m.details)
 		}
 		m.viewport.SetWidth(max(1, msg.Width-2))
@@ -563,13 +567,35 @@ func (m *limitsWorkspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if key == "esc" {
-			m.page, m.apply = "home", false
+			m.apply = false
+			switch m.page {
+			case "details":
+				m.page, m.detailsReturnPage = m.detailsReturnPage, ""
+				switch m.page {
+				case "review":
+					m.setReview()
+					m.viewport.SetYOffset(m.detailsReturnOffset)
+				case "form":
+					m.setFocus(m.focus)
+				default:
+					m.page = "home"
+				}
+			case "review":
+				m.page = "form"
+				m.setFocus(m.focus)
+			default:
+				m.page = "home"
+			}
 			return m, nil
 		}
 		if m.small() {
 			return m, nil
 		}
 		if key == "f1" || key == "?" && m.page != "form" || key == "?" && m.locked {
+			if m.page != "details" {
+				m.detailsReturnPage, m.detailsReturnOffset = m.page, m.viewport.YOffset()
+			}
+			m.apply = false
 			m.page, m.detailsHeading = "details", "Limits workspace help"
 			m.setDetails(m.help())
 			return m, nil
@@ -602,6 +628,7 @@ func (m *limitsWorkspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				row := rows[m.selection]
 				if key == "i" {
 					if row.value.Exists() {
+						m.detailsReturnPage = "home"
 						m.page, m.detailsHeading = "details", "Original API record"
 						m.setDetails(limitsSafeJSON(row.value))
 					}
@@ -655,7 +682,7 @@ func (m *limitsWorkspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if key == "enter" {
 				if !m.apply {
 					m.page = "form"
-					m.setFocus(0)
+					m.setFocus(m.focus)
 					return m, nil
 				}
 				if m.viewport.AtBottom() && !m.locked && m.ctx.Err() == nil && (m.output == nil || m.output.Err() == nil) {
@@ -731,9 +758,15 @@ func (m *limitsWorkspace) sourceSummary() string {
 		}
 		return "Hard spend limit unavailable. Refresh to retry."
 	case 1:
-		return fmt.Sprintf("Alerts loaded: %d Complete: %t", len(m.snapshot.Alerts), m.snapshot.AlertsComplete)
+		if !m.snapshot.AlertsComplete {
+			return fmt.Sprintf("Incomplete. Alerts loaded: %d", len(m.snapshot.Alerts))
+		}
+		return fmt.Sprintf("Complete. Alerts loaded: %d", len(m.snapshot.Alerts))
 	default:
-		return fmt.Sprintf("Rate records loaded: %d Complete: %t", len(m.snapshot.Rates), m.snapshot.RatesComplete)
+		if !m.snapshot.RatesComplete {
+			return fmt.Sprintf("Incomplete. Rate records loaded: %d", len(m.snapshot.Rates))
+		}
+		return fmt.Sprintf("Complete. Rate records loaded: %d", len(m.snapshot.Rates))
 	}
 }
 
@@ -848,6 +881,8 @@ func (m *limitsWorkspace) help() string {
 		failure := m.mutationError
 		m.mu.Unlock()
 		text = limitsPreflightHint(failure, invocation) + "\n\n" + text
+	} else if m.formError != "" && (m.page == "form" || m.detailsReturnPage == "form") {
+		text = "Draft details\n" + readable.Text(m.formError) + "\n\n" + text
 	}
 	for _, failure := range m.snapshot.Errors {
 		// Source names come from our loader, never response text.

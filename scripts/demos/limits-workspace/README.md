@@ -36,7 +36,7 @@ The isolated child environment includes only fake credentials and the fixture en
 | `org-limit` | Organization | Replace the hard limit with USD 125.25 per month |
 | `org-limit-delete` | Organization | Remove the hard limit and retain its confirmed receipt after a missing-record refresh |
 | `project-limit` | Project | Replace the hard limit with USD 125.25 per month |
-| `alert-create` | Organization | Create a USD 75.50 monthly alert with synthetic email settings |
+| `alert-create` | Organization | Correct an invalid amount, retain the draft through help and Back, then create a USD 75.50 alert |
 | `alert-print` | Organization | Print the complete reviewed alert command after terminal restoration; perform no mutation |
 | `alert-edit` | Project | Change the alert to USD 150.25 and clear its prefix to null |
 | `alert-delete` | Organization | Delete the selected synthetic alert |
@@ -48,6 +48,10 @@ The isolated child environment includes only fake credentials and the fixture en
 Each mutation scene opens a form or deletion review.
 The driver reads to the review's end before selecting Apply.
 It checks that the fixture receives no mutation before confirmation.
+The create-alert scene checks visible validation errors and complete help text.
+Repeated help preserves the draft, prefix mode, and selected Review action.
+Escape from review returns to the draft. Help from review clears Apply selection.
+The final request verifies the retained amount, recipient, and prefix.
 The uncertain scene checks one mutation, retained failure guidance, and exit status 1.
 The cancellation scene waits for the fixture's request marker and requires exit status 130.
 Successful mutation scenes require exit status 0 and one mutation each.
@@ -56,6 +60,7 @@ It compares the complete printed command bytes after terminal restoration, inclu
 Wrapped inspection rows do not establish command copyability.
 The preflight scene loads the overview before returning HTTP 400 from the confirmation read.
 It retains the draft, blocks review before refresh, and checks F1 recovery at both widths.
+Escape from help returns to the retained draft before another Escape opens the overview.
 Normal exit preserves the failure and hides private response data. No mutation occurs.
 Final recovery tells users to reopen the workspace and preserve the original request scope.
 The recorder rejects workspace keyboard actions in failure diagnostics after terminal restoration.

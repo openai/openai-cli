@@ -144,14 +144,15 @@ def main():
             limit_reads = [entry for entry in scene_requests if entry["path"].endswith("/spend_limit")]
             assert [entry["status"] for entry in limit_reads] == [200, 400], (scene, "preflight did not follow a successful overview")
             assert all(entry["status"] == 200 for entry in scene_requests if not entry["path"].endswith("/spend_limit"))
-            required = ("review-command", "review-apply", "preflight", "refresh-required", "preflight-help")
+            required = ("review-command", "review-apply", "preflight", "refresh-required", "preflight-help", "preflight-draft")
             assert all(name in checkpoints for name in required)
             assert all(checkpoints[left]["seconds"] < checkpoints[right]["seconds"] for left, right in zip(required, required[1:]))
             keys = [event["key"] for event in evidence["keys"]]
             assert keys.count("Apply") == keys.count("Blocked review before refresh") == keys.count("F1 recovery") == 1
             for name, messages in (("preflight", ("HTTP 400", "125.25", "Review change")),
                                    ("refresh-required", ("Refresh with r", "125.25", "Review change")),
-                                   ("preflight-help", ("HTTP 400", "No write sent.", "request fields and scope", "press r to refresh"))):
+                                   ("preflight-help", ("HTTP 400", "No write sent.", "request fields and scope", "press r to refresh")),
+                                   ("preflight-draft", ("125.25", "Review change"))):
                 screen = (root / (scene + "-evidence." + name + ".txt")).read_text()
                 compact = "".join(screen.split())
                 assert all("".join(message.split()) in compact for message in messages), (scene, name, "missing recovery evidence")
@@ -164,6 +165,18 @@ def main():
                                                             b"original connection, authentication, and scope options"))
             assert b"may have succeeded" not in diagnostic
             continue
+        if scene == "alert-create":
+            required = ("validation", "validation-help", "draft-return", "review-back",
+                        "review-top", "review-before-help", "review-help", "review-return", "review-apply", "saved")
+            assert all(name in checkpoints for name in required)
+            assert all(checkpoints[left]["seconds"] < checkpoints[right]["seconds"] for left, right in zip(required, required[1:]))
+            for name, messages in (("validation", ("Enter a USD amount", "Review change")),
+                                   ("validation-help", ("Draft details", "two decimal places.")),
+                                   ("draft-return", ("> Review change", "Demo")),
+                                   ("review-back", ("Monthly USD", "75.50")),
+                                   ("review-return", ("> Back", "Apply change"))):
+                screen = (root / (scene + "-evidence." + name + ".txt")).read_text()
+                assert all(message in screen for message in messages), (scene, name, "missing draft recovery evidence")
         request = mutations[0]
         if scene in {"org-limit", "project-limit", "uncertain"}:
             assert request["body"] == {"currency": "USD", "interval": "month", "threshold_amount": 12525}

@@ -47,7 +47,7 @@ func (m *limitsWorkspace) View() tea.View {
 		}
 		for i := range sections {
 			if i == m.section {
-				sections[i] = "[" + sections[i] + "]"
+				sections[i] = accent.Render("[" + sections[i] + "]")
 			}
 		}
 		body = append(body, strings.Join(sections, "   "), line(m.sourceSummary()), line(m.costsSummary()))
@@ -81,25 +81,41 @@ func (m *limitsWorkspace) View() tea.View {
 	case "form":
 		body = append(body, "Tab: next field · Shift+Tab: previous")
 		count := len(m.draft.inputs)
-		start := max(0, min(m.focus, count-1)-max(0, (m.height-9)/2))
-		end := min(count, start+max(1, (m.height-7)/2))
+		var notice []string
+		if m.formError != "" {
+			first := limitsSafeLine(strings.SplitN(m.formError, "\n", 2)[0])
+			notice = strings.Split(ansi.Wrap(first, width, ""), "\n")
+			if len(notice) > 2 {
+				notice = []string{notice[0], ansi.Truncate(strings.Join(notice[1:], " "), width, "…")}
+			}
+		}
+		// Reserve navigation, Review, diagnostics, and the optional prefix action before fields.
+		fieldRows := m.height - 4 - 2 - len(notice)
+		if count == 3 {
+			fieldRows--
+		}
+		visible := max(1, fieldRows/2)
+		start := max(0, min(m.focus, count-1)-visible+1)
+		end := min(count, start+visible)
 		for i := start; i < end; i++ {
 			m.draft.inputs[i].SetWidth(max(1, width-4))
-			marker := "  "
+			marker, label := "  ", line(m.draft.labels[i])
 			if i == m.focus {
 				marker = "> "
+				label = accent.Render(label)
 			}
-			body = append(body, line(m.draft.labels[i]), marker+ansi.Truncate(m.draft.inputs[i].View(), width, "…"))
+			body = append(body, label, marker+ansi.Truncate(m.draft.inputs[i].View(), width, "…"))
 		}
 		if count == 3 {
 			modes := []string{"Keep unless edited", "Replace (empty is allowed)", "Clear to null"}
 			body = append(body, mark("Prefix: "+modes[m.draft.prefixMode], m.focus == count))
 		}
 		body = append(body, mark("Review change", m.focus >= count && !(count == 3 && m.focus == count)))
-		if m.formError != "" {
-			body = append(body, line(strings.SplitN(m.formError, "\n", 2)[0]))
-		}
+		body = append(body, notice...)
 		footer = "Enter: next / select\nF1: help  Esc: back  Ctrl+C: quit"
+		if m.refreshRequired {
+			footer = "r: refresh  Enter: next field\nF1: help  Esc: back  Ctrl+C: quit"
+		}
 	case "review", "details":
 		body = append(body, m.viewport.View())
 		if m.page == "review" {
@@ -111,9 +127,9 @@ func (m *limitsWorkspace) View() tea.View {
 				apply = "  Read to the end before applying"
 			}
 			body = append(body, line(back+"   "+apply))
-			footer = "↑/↓: scroll  Tab: action  Enter: select\nEsc: back  Ctrl+C: quit"
+			footer = "↑/↓: scroll  Tab: action  Enter: select\nF1: help  Esc: back  Ctrl+C: quit"
 			if m.previewCommand != "" {
-				footer = "↑/↓: scroll  Tab: action  Enter: select\nCtrl+P: print command and exit\nEsc: back  Ctrl+C: quit"
+				footer = "↑/↓: scroll  Tab: action  Enter: select\nCtrl+P: print command and exit\nF1: help  Esc: back  Ctrl+C: quit"
 			}
 		} else {
 			footer = "↑/↓: scroll  Esc: back  Ctrl+C: quit"
