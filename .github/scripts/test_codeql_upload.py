@@ -97,8 +97,10 @@ class PublisherTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     self.destination()
 
-    def test_main_and_merge_queue(self):
-        for event, branch in [("push", "main"), ("merge_group", "gh-readonly-queue/main/pr-3-test")]:
+    def test_release_targets_and_merge_queue(self):
+        for event, branch in [("push", "main"), ("push", "next"),
+                              ("merge_group", "gh-readonly-queue/main/pr-3-test"),
+                              ("merge_group", "gh-readonly-queue/next/pr-3-test")]:
             self.run.update(event=event, head_branch=branch)
             route = "git/ref/heads/" + publisher.quote(branch, safe="")
             self.responses[route] = {"ref": "refs/heads/" + branch, "object": {"sha": HEAD}}
@@ -106,6 +108,26 @@ class PublisherTest(unittest.TestCase):
             self.responses[route]["object"]["sha"] = BASE
             with self.assertRaises(publisher.StaleRun):
                 self.destination()
+
+    def test_next_pr_and_fallback_discovery(self):
+        self.pr["base"]["ref"] = "next"
+        self.assertEqual(self.destination(), self.target)
+        self.run["pull_requests"] = []
+        self.responses[f"commits/{HEAD}/pulls?per_page=100&page=1"] = []
+        self.responses["pulls?state=open&head=test%3Afeature&per_page=100&page=1"] = [{"number": 3}]
+        self.assertEqual(self.destination(), self.target)
+
+    def test_rejects_unapproved_targets_and_queue_prefixes(self):
+        for branch in ["feature", "next-door", "gh-readonly-queue/next", "gh-readonly-queue/next-door/pr-3"]:
+            for event in ["push", "merge_group"]:
+                with self.subTest(branch=branch, event=event):
+                    self.run.update(event=event, head_branch=branch)
+                    with self.assertRaises(RuntimeError):
+                        self.destination()
+        self.setUp()
+        self.pr["base"]["ref"] = "next-door"
+        with self.assertRaises(publisher.StaleRun):
+            self.destination()
 
     def test_artifact_cannot_choose_category_or_revision(self):
         report = publisher.read_artifact(self.archive(), self.run, self.target, "go")
@@ -225,6 +247,39 @@ class PublisherTest(unittest.TestCase):
         with self.assertRaises(publisher.StaleRun):
             publisher.report(get, "test/cli", 1, dict(id=42, run_attempt=2))
         self.assertEqual(self.writes, [])
+
+    def test_parallel_main_next_pr_runs_do_not_supersede_each_other(self):
+        for target, other_target in [("main", "next"), ("next", "main")]:
+            with self.subTest(target=target):
+                self.pr["base"]["ref"] = target
+                other_pr = copy.deepcopy(self.pr)
+                other_pr["number"] = 4
+                other_pr["base"]["ref"] = other_target
+                self.responses["pulls/4"] = other_pr
+                other = dict(self.run, id=43, pull_requests=[{"number": 4}])
+                def get(route, **kwargs):
+                    if "actions/workflows/codeql.yml/runs?" in route:
+                        return {"workflow_runs": [other]}
+                    return self.get(route, **kwargs)
+                self.assertEqual(publisher.destination(get, "test/cli", 1,
+                                                       dict(id=42, run_attempt=2))[1], self.target)
+
+    def test_supersession_fallback_requires_unique_same_pr(self):
+        other = dict(self.run, id=43, pull_requests=[])
+        self.responses[f"commits/{HEAD}/pulls?per_page=100&page=1"] = [{"number": 3}]
+        def get(route, **kwargs):
+            if "actions/workflows/codeql.yml/runs?" in route:
+                return {"workflow_runs": [other]}
+            return self.get(route, **kwargs)
+        with self.assertRaises(publisher.StaleRun):
+            publisher.destination(get, "test/cli", 1, dict(id=42, run_attempt=2))
+        other_pr = copy.deepcopy(self.pr)
+        other_pr["number"] = 4
+        other_pr["base"]["ref"] = "next"
+        self.responses["pulls/4"] = other_pr
+        self.responses[f"commits/{HEAD}/pulls?per_page=100&page=1"].append({"number": 4})
+        self.assertEqual(publisher.destination(get, "test/cli", 1,
+                                               dict(id=42, run_attempt=2))[1], self.target)
 
     def partial_rerun(self):
         actions = dict(name="CodeQL analysis (actions)", run_id=42, run_attempt=1,
