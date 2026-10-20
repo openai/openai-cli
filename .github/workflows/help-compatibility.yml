@@ -362,6 +362,28 @@ jobs:
           go test -p 1 ./pkg/custom -parallel=1 -count=1 -timeout=1m -v -json -run '^(TestAuthStatusIdentityMTLSReaderRegularAndCancellation|TestAuthStatusIdentityVerifiedTLSAndMTLS|TestRootRequestFlagPreParseResetsInvocationState|TestRootRequestFlagsResetProvenanceAcrossRuns|TestRootRequestFlagPreParsePreservesCurrentDefinition|TestRootRequestFlagsReuseMatchesStatusAndSDKRequests|TestAuthStatusIdentityCommandReuseClearsVerification|TestAuthStatusIdentityRejectsReflectedSpacedBearer|TestMTLSClientFlagPreParsePreservesCurrentDefinition|TestMTLSClientFlagsReuseEnvironmentForTLS|TestProjectLinkCancellationGuidanceRetainsErrorBoundary)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'auth-identity-tls-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test Unix Audio profile preview contracts
+        if: runner.os != 'Windows' && matrix.shard != 'dispatch'
+        shell: bash
+        timeout-minutes: 3
+        env:
+          GOMAXPROCS: '2'
+          OPENAI_CLI_REQUIRE_NATIVE_SHELLS: bash,zsh
+        run: |
+          set -euo pipefail
+          go test -p 1 ./internal/commands/audio -parallel=1 -count=1 -timeout=2m -v -json -run '^(TestAudioProfileRequestContext|TestAudioCopiedCommandsPreserveProfileSelector)$' \
+            | tee "$RUNNER_TEMP/audio-profile-tests.jsonl"
+      - name: Test Windows Audio profile preview privacy
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
+        shell: pwsh
+        timeout-minutes: 3
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 1 ./internal/commands/audio -parallel=1 -count=1 -timeout=2m -v -json -run '^TestAudioProfileRequestContext$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'audio-profile-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
       - name: Test Unix Admin profile endpoint contracts
         if: runner.os != 'Windows' && matrix.shard != 'dispatch'
         shell: bash
@@ -495,7 +517,7 @@ jobs:
           go test -p 1 ./cmd/openai -count=1 -timeout=5m -v -json -run '^(TestMainAudioVoiceDiscriminatorReferences|TestMainAudioVoiceMergedInputs|TestMainAudioVoicePreflight|TestMainAudioVoiceReferenceOrdering)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-voice-public-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 1 ./pkg/custom -count=1 -timeout=2m -v -json -run '^(TestAudioVoiceBodyEmbeddingCancellationReleasesOwnedRead|TestAudioVoiceBodyEmbeddingPartialFailureClosesOnce|TestAudioVoiceBodyEmbeddingPreservesReplayAndOwnership|TestAudioVoiceBodyEmbeddingReadFailureRetainsCauses|TestAudioVoiceBodyEmbeddingTypeOpenFailureClosesOwnedInputs|TestAudioVoiceBodyEmbeddingValidationFailureClosesOwnedInputs)$' |
+          go test -p 1 ./internal/commands/audio -count=1 -timeout=2m -v -json -run '^(TestAudioVoiceBodyEmbeddingCancellationReleasesOwnedRead|TestAudioVoiceBodyEmbeddingPartialFailureClosesOnce|TestAudioVoiceBodyEmbeddingPreservesReplayAndOwnership|TestAudioVoiceBodyEmbeddingReadFailureRetainsCauses|TestAudioVoiceBodyEmbeddingTypeOpenFailureClosesOwnedInputs|TestAudioVoiceBodyEmbeddingValidationFailureClosesOwnedInputs)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-voice-helper-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test help
@@ -833,8 +855,11 @@ jobs:
           go test -p 2 ./cmd/openai -count=1 -timeout=3m -v -json -run '^TestMainShellWindowsNative$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-native-shell-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^TestWindowsDownload(AutomaticConsole|PrivateCreation|PrivatePublication|PreservesExistingDACL)$' |
+          go test -p 2 ./pkg/custom -count=1 -timeout=2m -v -json -run '^TestWindowsDownload(AutomaticConsole|PrivateCreation|PreservesExistingDACL)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-download-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 2 ./internal/output -count=1 -timeout=2m -v -json -run '^TestWindowsDownloadPrivatePublication$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'windows-download-publication-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test request environment restoration
         if: matrix.environment && matrix.shard != 'dispatch'
@@ -928,6 +953,18 @@ jobs:
               return {root} | {f"{root}/{child}" for child in children}
 
           strict_packages = {}
+          audio_profile_cases = {
+              "TestAudioProfileRequestContext": ["environment_credentials", "explicit_profile", "explicit_empty_profile", "profile_and_request_selection", "request_selection", "explicit_empty_project", "same_inherited_key", "different_key", "empty_key_override", "admin_key_override", "webhook_secret_override", "header_override", "certificate_override", "private_key_override", "URL_user_info", "URL_query", "URL_fragment", "URL_empty_query", "invalid_project", "invalid_profile_NUL", "invalid_profile_UTF-8", "profile_with_secret_override", "profile_with_private_URL"],
+          }
+          if os.environ["RUNNER_OS"] != "Windows":
+              audio_profile_cases["TestAudioCopiedCommandsPreserveProfileSelector"] = ["bash", "bash/explicit", "bash/explicit_empty", "bash/inherited", "bash/inherited_empty", "bash/child_ownership", "bash/root_and_child_ownership", "zsh", "zsh/explicit", "zsh/explicit_empty", "zsh/inherited", "zsh/inherited_empty", "zsh/child_ownership", "zsh/root_and_child_ownership"]
+          suites["audio-profile-tests.jsonl"] = set().union(*(
+              required_cases(root, children) for root, children in audio_profile_cases.items()
+          ))
+          expected_audio_profile_names = 24 if os.environ["RUNNER_OS"] == "Windows" else 39
+          if len(suites["audio-profile-tests.jsonl"]) != expected_audio_profile_names:
+              raise SystemExit("audio-profile-tests.jsonl: unexpected migration inventory")
+          strict_packages["audio-profile-tests.jsonl"] = "github.com/openai/openai-cli/internal/commands/audio"
           admin_profile_credentials_cases = {
               "TestAdminCredentialsProfileEndpointsMatchRequests": ["absent_profile_endpoint", "disabled_environment_selector", "disabled_profile", "empty_environment_retains_credential_guard", "empty_flag_retains_profile", "empty_literal_header_overrides_admin_key", "empty_profile_endpoint", "environment_gateway", "environment_replaces_profile", "explicit_selector", "flag_gateway", "flag_replaces_environment_and_profile", "saved_gateway", "standard_mtls_profile", "standard_profile", "standard_profile_admin_key", "standard_profile_literal_header"],
               "TestAdminCredentialsProfileResolutionFailures": ["malformed=false", "malformed=true"],
@@ -1994,13 +2031,16 @@ jobs:
                   windows_download_cases = {
                       "TestWindowsDownloadAutomaticConsole": [],
                       "TestWindowsDownloadPrivateCreation": [],
-                      "TestWindowsDownloadPrivatePublication": ["hardlink", "exclusive_copy"],
                       "TestWindowsDownloadPreservesExistingDACL": ["complete", "source_failure"],
                   }
                   suites["windows-download-tests.jsonl"] = set().union(*(
                       required_cases(root, children) for root, children in windows_download_cases.items()
                   ))
                   strict_packages["windows-download-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+                  suites["windows-download-publication-tests.jsonl"] = required_cases(
+                      "TestWindowsDownloadPrivatePublication", ["hardlink", "exclusive_copy"]
+                  )
+                  strict_packages["windows-download-publication-tests.jsonl"] = "github.com/openai/openai-cli/internal/output"
 
           if os.environ["CHECK_ENVIRONMENT"] == "true":
               suites["environment-tests.jsonl"] = required_cases(
@@ -2053,7 +2093,7 @@ jobs:
               if os.environ["RUNNER_OS"] == "Windows":
                   for filename, key, package, roots, total in [
                       ("windows-voice-public-tests.jsonl", "windows_voice_public", "github.com/openai/openai-cli/cmd/openai", 4, 138),
-                      ("windows-voice-helper-tests.jsonl", "windows_voice_helpers", "github.com/openai/openai-cli/pkg/custom", 6, 8),
+                      ("windows-voice-helper-tests.jsonl", "windows_voice_helpers", "github.com/openai/openai-cli/internal/commands/audio", 6, 8),
                   ]:
                       cases = inventory[key]
                       if len(cases) != roots or sum(len(children) for children in cases.values()) != total - roots:
@@ -2199,6 +2239,7 @@ jobs:
             ${{ runner.temp }}/auth-profile-tests.jsonl
             ${{ runner.temp }}/admin-profile-credentials-tests.jsonl
             ${{ runner.temp }}/admin-profile-setup-tests.jsonl
+            ${{ runner.temp }}/audio-profile-tests.jsonl
             ${{ runner.temp }}/auth-identity-signal-tests.jsonl
             ${{ runner.temp }}/auth-identity-tls-tests.jsonl
             ${{ runner.temp }}/auth-identity-built-cli-tests.jsonl

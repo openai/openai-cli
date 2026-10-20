@@ -2,6 +2,7 @@ package custom
 
 import (
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/urfave/cli/v3"
 )
 
@@ -15,7 +16,7 @@ func (e *localCancellationGuidanceError) Unwrap() error { return e.LocalError }
 // IsLocalUtilityCommand identifies a registered utility after root flag parsing.
 // Request values and unregistered command names never select the local path.
 func IsLocalUtilityCommand(command *cli.Command) bool {
-	if isLocalAudioCommand(command) {
+	if audio.IsLocalCommand(command) {
 		return true
 	}
 	root := command.Root()

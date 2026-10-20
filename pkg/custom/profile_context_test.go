@@ -18,7 +18,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/openai/openai-cli/internal/audiohistory"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	filecommands "github.com/openai/openai-cli/internal/commands/files"
@@ -26,6 +25,7 @@ import (
 	transformers "github.com/openai/openai-cli/internal/output/transform"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/tidwall/gjson"
 
 	"github.com/openai/openai-go/v3"
@@ -263,7 +263,7 @@ func profileReceiptArguments(args ...string) [][]byte {
 }
 
 // The action replaces the API response, while public configuration captures the invocation.
-func profileContextFileAndAudio(t *testing.T, fixture profileReceiptFixture) (*audioWorkbench, []string, bool, string) {
+func profileContextFileReceipt(t *testing.T, fixture profileReceiptFixture) ([]string, bool, string) {
 	t.Helper()
 	authStatusTestEnvironment(t, map[string]string{"OPENAI_API_KEY": "sk-fake-inherited"})
 	t.Setenv("OPENAI_PROFILE", fixture.Environment)
@@ -271,7 +271,7 @@ func profileContextFileAndAudio(t *testing.T, fixture profileReceiptFixture) (*a
 		t.Setenv(name, "")
 		require.NoError(t, os.Unsetenv(name))
 	}
-	var model *audioWorkbench
+	actionRan := false
 	var requestArgs []string
 	var omitHint bool
 	var receipt bytes.Buffer
@@ -280,7 +280,7 @@ func profileContextFileAndAudio(t *testing.T, fixture profileReceiptFixture) (*a
 		&requestflag.Flag[string]{Name: "purpose", Required: true, BodyPath: "purpose"},
 	}, Action: func(ctx context.Context, command *cli.Command) error {
 		requestArgs, omitHint = requestconfig.NextCommandOptions(command.Root())
-		model = newAudioWorkbench(ctx, command, nil, audiohistory.Store{})
+		actionRan = true
 		handled, err := filecommands.ShowResult(gjson.Parse(`{"object":"file","id":"file-example","filename":"upload space.txt","purpose":"user_data","bytes":13}`), filecommands.ResultOptions{
 			ReadableOptions: clioutput.ReadableOptions{
 				Context: ctx, Route: transformers.Route{Operation: "(resource) files > (method) create", OutputKind: transformers.OutputResponse},
@@ -294,7 +294,7 @@ func profileContextFileAndAudio(t *testing.T, fixture profileReceiptFixture) (*a
 		create.Flags = append(create.Flags, &cli.StringFlag{Name: "profile"})
 	}
 	root := &cli.Command{Name: "openai", Writer: io.Discard, ErrWriter: io.Discard,
-		Metadata: map[string]any{"help-invocation": audioShellQuote(fixture.Executable)},
+		Metadata: map[string]any{"help-invocation": cliterminal.ShellQuote(fixture.Executable)},
 		Flags:    []cli.Flag{&cli.StringFlag{Name: "base-url"}, requestconfig.NewRequestHeaderFlag()},
 		Commands: []*cli.Command{{Name: "files", Commands: []*cli.Command{create}}},
 	}
@@ -311,8 +311,8 @@ func profileContextFileAndAudio(t *testing.T, fixture profileReceiptFixture) (*a
 		args = append(args, string(arg))
 	}
 	require.NoError(t, root.Run(t.Context(), args))
-	require.NotNil(t, model, "upload action must run")
-	return model, requestArgs, omitHint, receipt.String()
+	require.True(t, actionRan, "upload action must run")
+	return requestArgs, omitHint, receipt.String()
 }
 
 // The shell owns the helper PID and records its wait before the command returns.
@@ -347,7 +347,7 @@ cleanup() {
   exit 130
 }
 trap 'cleanup "$@"' TERM INT
-"$1" -test.run='^TestFileAndAudioCopiedCommandsPreserveProfileSelector$' -test.count=1 -test.timeout=5s &
+"$1" -test.run='^TestFileCopiedCommandsPreserveProfileSelector$' -test.count=1 -test.timeout=5s &
 helper=$!
 printf '%s\n' "$helper" > "$3"
 wait "$helper"
@@ -488,7 +488,7 @@ func TestFileReceiptRequestContext(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append([]string{"files", "upload", "source.txt", "--purpose=user_data"}, tc.flags...)
 			fixture := profileReceiptFixture{Arguments: profileReceiptArguments(args...), Environment: "inherited-profile", Executable: "openai"}
-			model, requestArgs, omitHint, receipt := profileContextFileAndAudio(t, fixture)
+			requestArgs, omitHint, receipt := profileContextFileReceipt(t, fixture)
 			require.Equal(t, tc.want, requestArgs)
 			require.Equal(t, tc.omit, omitHint)
 			require.Contains(t, receipt, "Uploaded upload space.txt (13 B)")
@@ -497,16 +497,6 @@ func TestFileReceiptRequestContext(t *testing.T) {
 			}
 			for _, secret := range []string{"sk-fake", "fake-secret", "/synthetic/private/"} {
 				require.NotContains(t, receipt, secret)
-			}
-			model.input.SetValue("SYNTHETIC_PRIVATE_EDITOR_TEXT")
-			preview := model.commandPreview()
-			if tc.omit {
-				require.Equal(t, "Command preview unavailable with private request overrides.", preview)
-			} else {
-				require.Contains(t, preview, "OPENAI_UNTRUSTED_STDIN=true")
-			}
-			for _, secret := range []string{"sk-fake", "fake-secret", "/synthetic/private/", "inherited-profile"} {
-				require.NotContains(t, preview, secret)
 			}
 			t.Run("native receipt", func(t *testing.T) {
 				receipt := profileContextNativeFileReceipt(t, "bash", fixture)
@@ -519,7 +509,7 @@ func TestFileReceiptRequestContext(t *testing.T) {
 	}
 }
 
-func TestFileAndAudioCopiedCommandsPreserveProfileSelector(t *testing.T) {
+func TestFileCopiedCommandsPreserveProfileSelector(t *testing.T) {
 	if path := os.Getenv("OPENAI_CLI_PROFILE_RECEIPT_FIXTURE"); path != "" {
 		// Cooperative fallback also stops a blocked helper if its parent trap is delayed.
 		done := make(chan struct{})
@@ -552,13 +542,13 @@ func TestFileAndAudioCopiedCommandsPreserveProfileSelector(t *testing.T) {
 		previous := os.Args
 		os.Args = []string{fixture.Executable}
 		defer func() { os.Args = previous }()
-		_, _, _, receipt := profileContextFileAndAudio(t, fixture)
+		_, _, receipt := profileContextFileReceipt(t, fixture)
 		require.NoError(t, os.WriteFile(os.Getenv("OPENAI_CLI_PROFILE_RECEIPT_OUTPUT"), []byte(receipt), 0600))
 		return
 	}
 	for _, shell := range []string{"bash", "zsh"} {
 		t.Run(shell, func(t *testing.T) {
-			binary, directory := audioPreviewExecutable(t, "openai preview's binary")
+			binary, directory := profilePreviewExecutable(t, "openai preview's binary")
 			for _, tc := range []struct {
 				name, environment, rootFlag, childFlag string
 				want                                   []string
@@ -581,33 +571,85 @@ func TestFileAndAudioCopiedCommandsPreserveProfileSelector(t *testing.T) {
 					}
 					fixture := profileReceiptFixture{Arguments: profileReceiptArguments(args...), Environment: tc.environment,
 						Executable: binary, ChildProfile: tc.childFlag != ""}
-					model, requestArgs, omitHint, _ := profileContextFileAndAudio(t, fixture)
+					requestArgs, omitHint, _ := profileContextFileReceipt(t, fixture)
 					require.Equal(t, tc.want, requestArgs)
 					require.False(t, omitHint)
 					receipt := profileContextNativeFileReceipt(t, shell, fixture)
 					_, copiedFile, found := strings.Cut(receipt, "\nInspect it: ")
 					require.True(t, found, receipt)
-					fileCapture := executeAudioPreview(t, shell, strings.TrimSpace(copiedFile), directory)
+					fileCapture := executeProfilePreview(t, shell, strings.TrimSpace(copiedFile), directory)
 					require.Equal(t, append(append([]string{}, tc.want...), "files", "get", "file-example"), fileCapture.args)
 					require.Empty(t, fileCapture.stdin)
 					require.Equal(t, "unset", fileCapture.protected)
 
-					model.settings.Format = "wav"
-					model.input.SetValue("@synthetic 'literal' text")
-					preview := model.commandPreview()
-					for _, copied := range []string{copiedFile, preview} {
-						require.NotContains(t, copied, "/synthetic/private/")
-						require.NotContains(t, copied, "inherited-profile")
-						for _, character := range strings.TrimSpace(copied) {
-							require.False(t, unicode.IsControl(character) || unicode.Is(unicode.Cf, character), "literal control in copied command")
-						}
+					require.NotContains(t, copiedFile, "/synthetic/private/")
+					require.NotContains(t, copiedFile, "inherited-profile")
+					for _, character := range strings.TrimSpace(copiedFile) {
+						require.False(t, unicode.IsControl(character) || unicode.Is(unicode.Cf, character), "literal control in copied command")
 					}
-					audioCapture := executeAudioPreview(t, shell, preview, directory)
-					require.Equal(t, append(append([]string{}, tc.want...), "audio", "speak", "--output", "speech.wav"), audioCapture.args)
-					require.Equal(t, "true", audioCapture.protected)
-					assertAudioPreviewJSON(t, model, audioCapture.stdin)
 				})
 			}
 		})
 	}
+}
+
+func profilePreviewExecutable(t *testing.T, name string) (string, string) {
+	t.Helper()
+	directory := filepath.Join(t.TempDir(), "CLI preview's directory")
+	require.NoError(t, os.Mkdir(directory, 0700))
+	path := filepath.Join(directory, name)
+	// This executable records shell arguments and stdin. It cannot call the API.
+	const script = `#!/bin/sh
+set -eu
+printf '%s\000' "$@" > "$AUDIO_PREVIEW_ARGS"
+printf '%s' "${OPENAI_UNTRUSTED_STDIN-unset}" > "$AUDIO_PREVIEW_PROTECTED"
+/bin/cat > "$AUDIO_PREVIEW_STDIN"
+`
+	require.NoError(t, os.WriteFile(path, []byte(script), 0700))
+	return path, directory
+}
+
+type profilePreviewCapture struct {
+	args      []string
+	stdin     []byte
+	protected string
+}
+
+func executeProfilePreview(t *testing.T, shell, command, pathDirectory string) profilePreviewCapture {
+	t.Helper()
+	path := "/bin/" + shell
+	if _, err := os.Stat(path); err != nil {
+		if strings.Contains(","+os.Getenv("OPENAI_CLI_REQUIRE_NATIVE_SHELLS")+",", ","+shell+",") {
+			t.Fatalf("required native shell %s is unavailable", shell)
+		}
+		t.Skipf("native %s is unavailable", shell)
+	}
+	directory := t.TempDir()
+	argsPath, stdinPath, protectedPath := filepath.Join(directory, "argv"), filepath.Join(directory, "stdin"), filepath.Join(directory, "protected")
+	args := []string{"--noprofile", "--norc", "-c", command}
+	if shell == "zsh" {
+		args = []string{"-f", "-c", command}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	process := exec.CommandContext(ctx, path, args...)
+	process.WaitDelay = 250 * time.Millisecond
+	process.Dir = t.TempDir()
+	process.Env = []string{"PATH=" + pathDirectory + ":/usr/bin:/bin", "LANG=en_US.UTF-8",
+		"AUDIO_PREVIEW_ARGS=" + argsPath, "AUDIO_PREVIEW_STDIN=" + stdinPath,
+		"AUDIO_PREVIEW_PROTECTED=" + protectedPath}
+	var stdout, stderr bytes.Buffer
+	process.Stdout, process.Stderr = &stdout, &stderr
+	require.NoError(t, process.Run(), "shell=%s stderr=%q", shell, stderr.String())
+	require.NoError(t, ctx.Err())
+	require.Empty(t, stdout.String())
+	require.Empty(t, stderr.String())
+	rawArgs, err := os.ReadFile(argsPath)
+	require.NoError(t, err)
+	require.True(t, bytes.HasSuffix(rawArgs, []byte{0}))
+	input, err := os.ReadFile(stdinPath)
+	require.NoError(t, err)
+	protected, err := os.ReadFile(protectedPath)
+	require.NoError(t, err)
+	return profilePreviewCapture{strings.Split(string(rawArgs[:len(rawArgs)-1]), "\x00"), input, string(protected)}
 }

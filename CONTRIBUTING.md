@@ -57,6 +57,9 @@ below describes the current layout as the migration proceeds.
   the encoding engine.
 - `internal/commands/manpages/` owns manual rendering, text/gzip file cleanup,
   and tests. Application assembly supplies the shared save-receipt policy.
+- `internal/commands/audio/` owns speech controls, local history/playback commands,
+  voice creation and validation, and transcript/speech response handling.
+  Assembly supplies request and presentation policies.
 - `internal/commands/admin/` owns admin credential requirements, setup help,
   verification, and secure native key entry.
 - `internal/commands/models/` owns model-list selection, filter parsing, loading
@@ -73,14 +76,15 @@ below describes the current layout as the migration proceeds.
   policy, error handling, and presentation orchestration.
 - `internal/request/` owns root request inheritance, literal header and mTLS
   flag definitions, value-safe validation, mTLS transport construction, and client
-  metadata setup. Application assembly retains registration order and the local
+  metadata setup and scalar-upload inspection/replay. Application assembly retains registration order and the local
   command bypass.
 - `internal/output/transform/` selects or reshapes API responses before presentation.
 - `internal/` contains shared helpers for flags, request encoding, terminal
   output, and testing. For example, `internal/readable` renders labeled text
   and escapes terminal controls for results and errors.
-- `internal/output/` owns cancellation-aware writing and distinguishes output-sink
-  failures from diagnostics and upstream errors.
+- `internal/output/` owns cancellation-aware writing, staged downloads, safe error
+  metadata, and receipt failures. It distinguishes output-sink failures from
+  diagnostics and upstream errors.
 - `internal/terminal/` owns browser launching and child-process environment
   isolation, color profiles, automatic terminal presentation, background themes,
   cancellable terminal frame output, frame layout, and native Windows input
@@ -106,7 +110,7 @@ recurring generated problems in the authoritative schema or generator when
 available.
 
 Handwritten features are moving into `internal/commands/<feature>/`; Codex,
-tokenizer, and manpages are there now. Remaining behavior belongs in `pkg/custom/`,
+tokenizer, manpages, files, batches, models, admin, and audio are there now. Remaining behavior belongs in `pkg/custom/`,
 `internal/output/transform/`, and focused `internal/` helpers. Keep
 `cmd/openai/` focused on startup and wiring. Generated code calls handwritten
 request/output helpers through a generated runtime bridge.

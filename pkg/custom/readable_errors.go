@@ -7,15 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
-	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/tidwall/gjson"
@@ -194,7 +193,7 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 			status += ": " + reason
 		}
 		header := status + ".\n"
-		if requestID := readableAPIRequestID(apierr); requestID != "" {
+		if requestID := clioutput.APIRequestID(apierr); requestID != "" {
 			header += "Request ID: " + requestID + "\n"
 		}
 		message = header + message
@@ -202,42 +201,11 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 	return message + "\nAPI error details: --format-error json."
 }
 
-// Accept only bounded, single-line returned identifiers.
-func readableAPIRequestID(apierr *openai.Error) string {
-	if apierr == nil {
-		return ""
-	}
-	// A caller-supplied header can be reflected by the server. Inspect keys only.
-	if apierr.Request != nil {
-		for name := range apierr.Request.Header {
-			if strings.EqualFold(name, "X-Request-ID") {
-				return ""
-			}
-		}
-	}
-	if apierr.Response == nil {
-		return ""
-	}
-	requestID := apierr.Response.Header.Get("X-Request-ID")
-	if len(requestID) == 0 || len(requestID) > 256 {
-		return ""
-	}
-	for _, c := range requestID {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
-			return ""
-		}
-	}
-	return requestID
-}
-
-var readableParameterPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:(?:\.[A-Za-z0-9_]+)|(?:\[[0-9]+\]))*$`)
-var readableParameterIndex = regexp.MustCompile(`\[[0-9]+\]`)
-
 // Parameter names are untrusted API data. Match only paths declared by this
 // exact command, and print only the matching locally defined flag name. Never
 // display an arbitrary param, server message, rejected value, or remote choice.
 func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command) string {
-	flagName, path := readableParameterFlag(command, apierr.Param)
+	flagName, path := clioutput.ParameterFlag(command, apierr.Param)
 	message := "The API rejected the request."
 	if flagName != "" {
 		message = "The API rejected " + flagName + "."
@@ -280,53 +248,6 @@ func readableAPIArgumentMessage(apierr *openai.Error, command *cli.Command) stri
 	invocation := clihelp.DisplayInvocation(command.Root())
 	pathToCommand := strings.TrimPrefix(command.FullName(), command.Root().Name+" ")
 	return message + "\nOptions and examples: " + invocation + " help " + pathToCommand
-}
-
-func readableParameterFlag(command *cli.Command, parameter string) (name, path string) {
-	if command == nil || !readableParameterPattern.MatchString(parameter) {
-		return "", ""
-	}
-	// Normalizing array positions makes messages[0].content and
-	// messages.0.content resolve to the same declared request path.
-	parts := strings.Split(readableParameterIndex.ReplaceAllString(parameter, ""), ".")
-	named := parts[:0]
-	for _, part := range parts {
-		if strings.Trim(part, "0123456789") != "" {
-			named = append(named, part)
-		}
-	}
-	parameter = strings.Join(named, ".")
-	for _, flag := range command.Flags {
-		for _, candidate := range readableFlagPaths(flag) {
-			if candidate == "" || len(candidate) <= len(path) || parameter != candidate && !strings.HasPrefix(parameter, candidate+".") {
-				continue
-			}
-			if len(flag.Names()) == 0 {
-				continue
-			}
-			name, path = "--"+flag.Names()[0], candidate
-			if len(flag.Names()[0]) == 1 {
-				name = "-" + flag.Names()[0]
-			}
-		}
-	}
-	return name, path
-}
-
-func readableFlagPaths(flag cli.Flag) []string {
-	if inner, ok := flag.(requestflag.HasOuterFlag); ok {
-		paths := readableFlagPaths(inner.GetOuterFlag())
-		for i := range paths {
-			if paths[i] != "" {
-				paths[i] += "." + inner.GetInnerField()
-			}
-		}
-		return paths
-	}
-	if parameter, ok := flag.(requestflag.InRequest); ok {
-		return []string{parameter.GetBodyPath(), parameter.GetQueryPath(), parameter.GetPathParam()}
-	}
-	return nil
 }
 
 func readableParameterChoices(command *cli.Command, path string) string {

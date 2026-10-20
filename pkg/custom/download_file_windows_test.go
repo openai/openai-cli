@@ -22,6 +22,65 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func TestWindowsDownloadOpenerPreservesRegularFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "output.bin")
+	if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, nonblock := range []bool{false, true} {
+		file, err := clioutput.OpenDownloadDestination(path, nonblock)
+		if err != nil {
+			t.Fatalf("open existing destination (nonblock=%t): %v", nonblock, err)
+		}
+		opened, statErr := file.Stat()
+		closeErr := file.Close()
+		if statErr != nil || closeErr != nil || !os.SameFile(before, opened) {
+			t.Fatalf("opened identity: stat=%v close=%v", statErr, closeErr)
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "keep" {
+		t.Fatalf("opening changed existing contents: %q, %v", data, err)
+	}
+}
+
+func TestWindowsDownloadOpenerRejectsReparsePoint(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "target.bin")
+	path := filepath.Join(directory, "output.bin")
+	if err := os.WriteFile(target, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	for _, nonblock := range []bool{false, true} {
+		file, err := clioutput.OpenDownloadDestination(path, nonblock)
+		if file != nil {
+			_ = file.Close()
+		}
+		if err == nil {
+			t.Fatal("opened a reparse-point destination")
+		}
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "keep" {
+		t.Fatalf("reparse target changed: %q, %v", data, err)
+	}
+}
+
+func TestWindowsDownloadDeviceDestination(t *testing.T) {
+	body := &failedDownloadBody{Reader: strings.NewReader("synthetic bytes")}
+	message, err := WriteBinaryResponse(&http.Response{Body: body}, io.Discard, os.DevNull)
+	if err != nil || message != "Wrote output to: "+os.DevNull || body.closed != 1 {
+		t.Fatalf("device output: message=%q err=%v closed=%d", message, err, body.closed)
+	}
+}
+
 func TestWindowsDownloadAutomaticConsole(t *testing.T) {
 	helper, err := os.Executable()
 	if err != nil {
@@ -109,50 +168,6 @@ func TestWindowsDownloadPrivateCreation(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(directory, "download.bin")); err != nil || string(data) != "synthetic" {
 		t.Fatalf("existing file changed: %q %v", data, err)
-	}
-}
-
-func TestWindowsDownloadPrivatePublication(t *testing.T) {
-	for _, fallback := range []bool{false, true} {
-		t.Run(map[bool]string{false: "hardlink", true: "exclusive copy"}[fallback], func(t *testing.T) {
-			directory := t.TempDir()
-			stage, err := newDownloadStage(directory)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer requireNoDownloadStages(t, directory)
-			defer func() {
-				if err := stage.cleanup(); err != nil {
-					t.Error(err)
-				}
-			}()
-			filepermstest.AssertPrivate(t, stage.file)
-			payload := []byte{0, 255, 128, 's', '\n'}
-			if _, err := stage.file.Write(payload); err != nil {
-				t.Fatal(err)
-			}
-			if err := stage.closeWriter(); err != nil {
-				t.Fatal(err)
-			}
-			link := stage.root.Link
-			if fallback {
-				link = func(string, string) error { return errors.New("synthetic unsupported hardlink") }
-			}
-			saved, incomplete, err := publishNewDownload(context.Background(), stage, "output.bin", link)
-			if err != nil || incomplete || saved == nil {
-				t.Fatalf("publication=%v incomplete=%t error=%v", saved, incomplete, err)
-			}
-			file, err := os.Open(filepath.Join(directory, "output.bin"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer file.Close()
-			filepermstest.AssertPrivate(t, file)
-			data, err := io.ReadAll(file)
-			if err != nil || !bytes.Equal(data, payload) {
-				t.Fatalf("published bytes=%x error=%v", data, err)
-			}
-		})
 	}
 }
 

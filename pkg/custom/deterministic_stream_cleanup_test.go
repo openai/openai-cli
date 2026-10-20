@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/ssestream"
@@ -234,14 +235,14 @@ func (b *deterministicSpeechBody) Close() error { b.closes++; return nil }
 func TestDeterministicStreamCleanupKeepsSpeechBodyOwner(t *testing.T) {
 	body := &deterministicSpeechBody{Reader: strings.NewReader("data: {\"type\":\"speech.audio.done\"}\n\ndata: [DONE]\n\n")}
 	opts := ShowJSONOpts{OutputKind: OutputStreamEvent, Operation: speechStreamOperation, Format: "jsonl", ExplicitFormat: true}
-	ctx := context.WithValue(t.Context(), speechOutputKey{}, opts)
+	ctx := testSpeechContext(t, t.Context(), opts)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://synthetic.invalid/audio/speech", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	response := &http.Response{Request: request, StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: body}
 	var out bytes.Buffer
-	handled, _, err := writeReadableSpeech(response, &out, "")
+	handled, _, err := audio.WriteSpeech(response, &out, "")
 	if !handled || err != nil || body.closes != 0 || out.String() != "{\"type\":\"speech.audio.done\"}\n" {
 		t.Fatalf("speech ownership changed: handled=%v err=%v closes=%d output=%q", handled, err, body.closes, out.String())
 	}
