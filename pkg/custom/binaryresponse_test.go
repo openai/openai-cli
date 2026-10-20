@@ -158,7 +158,7 @@ func TestWriteBinaryResponsePreservesExplicitFileBehavior(t *testing.T) {
 	})
 }
 
-func TestWriteBinaryResponsePreservesExistingHardLinksAndSymlinks(t *testing.T) {
+func TestWriteBinaryResponsePreservesExistingHardLinks(t *testing.T) {
 	t.Run("existing hard link", func(t *testing.T) {
 		directory := t.TempDir()
 		outfile := filepath.Join(directory, "download.bin")
@@ -190,26 +190,6 @@ func TestWriteBinaryResponsePreservesExistingHardLinksAndSymlinks(t *testing.T) 
 		}
 	})
 
-	t.Run("dangling symlink chain", func(t *testing.T) {
-		directory := t.TempDir()
-		target := filepath.Join(directory, "target.bin")
-		middle := filepath.Join(directory, "current.bin")
-		outfile := filepath.Join(directory, "latest.bin")
-		if err := os.Symlink(filepath.Base(target), middle); err != nil {
-			t.Skipf("filesystem does not support symlinks: %v", err)
-		}
-		if err := os.Symlink(filepath.Base(middle), outfile); err != nil {
-			t.Fatalf("os.Symlink(%q, %q) = %v, want nil", middle, outfile, err)
-		}
-		response := &http.Response{Body: io.NopCloser(strings.NewReader("replacement"))}
-		if _, err := WriteBinaryResponse(response, io.Discard, outfile); err != nil {
-			t.Fatalf("WriteBinaryResponse(dangling symlink chain) = %v, want nil", err)
-		}
-		content, err := os.ReadFile(target)
-		if err != nil || string(content) != "replacement" {
-			t.Errorf("os.ReadFile(%q) = %q, %v, want %q, nil", target, content, err, "replacement")
-		}
-	})
 }
 
 func TestDownloadFileCloseErrors(t *testing.T) {

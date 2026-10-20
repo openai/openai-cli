@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/urfave/cli/v3"
 )
@@ -17,13 +18,6 @@ func commandAllowsOutputDiagnostics(command *cli.Command) bool {
 	root := command.Root()
 	return !root.Bool("quiet") && errorOutputFormat(root) == "text" && root.String("transform-error") == ""
 }
-
-type saveReceiptError struct{ cause error }
-
-func (e *saveReceiptError) Error() string {
-	return "The output was saved, but its receipt could not be written."
-}
-func (e *saveReceiptError) Unwrap() error { return e.cause }
 
 type saveReceiptPolicyKey struct{}
 
@@ -78,7 +72,7 @@ func (policy saveReceiptPolicy) report(message string, operationErr error) error
 		return operationErr
 	}
 	if err := readable.WriteText(policy.stderr, message); err != nil {
-		return errors.Join(operationErr, &saveReceiptError{cause: err})
+		return errors.Join(operationErr, clioutput.NewReceiptError(err))
 	}
 	return nil
 }

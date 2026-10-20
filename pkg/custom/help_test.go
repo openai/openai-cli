@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	imagecommands "github.com/openai/openai-cli/internal/commands/images"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -155,9 +156,9 @@ func TestConfigureHelpPreservesImageGuidance(t *testing.T) {
 		{Name: "unrelated", Description: "Keep this description", CustomHelpTemplate: "Keep this template"},
 	}}
 	root := &cli.Command{Name: "openai", Commands: []*cli.Command{images}}
-	configureImageSaving(root)
-	registerImagePreviewCommands(root)
-	registerImageModels(root)
+	imagecommands.ConfigureSaving(root, ImageSavingOptions())
+	imagecommands.RegisterPreview(root, ImagePreviewOptions())
+	imagecommands.RegisterModels(root, ImageModelOptions())
 	wantGuidance := map[string][]string{
 		"generate":         {"interactive terminal", "picker reopens", "Ctrl+C exits", "~/Downloads/gpt-images/", "--format json", "without --name or --output-dir", "depend on the model"},
 		"edit":             {"Replace photo.png", "Keeps your original", "~/Downloads/gpt-images/", "existing folder", "--format json", "depend on the model"},

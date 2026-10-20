@@ -28,8 +28,8 @@ func configureModelsList(root *cli.Command) {
 			if !commandAllowsOutputDiagnostics(command) {
 				return func() {}
 			}
-			stop, _ := startLoadingFeedback(ctx, os.Stderr, "Loading models", "", loadingAnimationSupported(os.Getenv),
-				imageLoadingSpinner(os.Getenv, runtime.GOOS), func() (int, int) {
+			stop, _ := clioutput.StartLoadingFeedback(ctx, os.Stderr, "Loading models", "", clioutput.LoadingAnimationSupported(os.Getenv),
+				clioutput.LoadingSpinner(os.Getenv, runtime.GOOS), func() (int, int) {
 					width, height, _ := term.GetSize(os.Stderr.Fd())
 					return width, height
 				})

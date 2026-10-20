@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/urfave/cli/v3"
 )
 
@@ -69,7 +70,7 @@ func TestLocalUtilityFirstRunSuppression(t *testing.T) {
 	// Temporary HOME process tests also encounter the later real-home guard.
 	for _, shell := range []string{"bash", "zsh", "fish"} {
 		getenv := func(string) string { return "" }
-		if !imagePickerFirstRunEligible([]string{"openai", "models", "list"}, getenv, true, true, true, shell) {
+		if !images.FirstRunEligible([]string{"openai", "models", "list"}, getenv, true, true, true, shell) {
 			t.Fatalf("%s control did not enable ordinary first-run setup", shell)
 		}
 		for _, args := range [][]string{
@@ -80,7 +81,7 @@ func TestLocalUtilityFirstRunSuppression(t *testing.T) {
 			{"openai", "codex", "--destination", "config"},
 			{"openai", "--format", "json", "help", "tokenizer", "count"},
 		} {
-			if imagePickerFirstRunEligible(args, getenv, true, true, true, shell) {
+			if images.FirstRunEligible(args, getenv, true, true, true, shell) {
 				t.Errorf("%s: local utility allowed automatic shell setup: %q", shell, args)
 			}
 		}

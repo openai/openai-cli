@@ -15,7 +15,9 @@ import (
 	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/admin"
+	"github.com/openai/openai-cli/internal/commands/audio"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
+	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/openai/openai-cli/internal/commands/models"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/listview"
@@ -41,17 +43,18 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	var inputFailure *requestconfig.InputFileError
 	var stdinFailure *requestflag.StdinValueError
 	var pagerFailure *clioutput.PagerError
-	var imageFailure *imageSavingError
+	var imageFailure *images.SavingError
+	var scalarFailure *requestconfig.MultipartScalarError
 	var streamFailure *streamResultError
-	var imageModelsFailure *imageModelsError
+	var imageModelsFailure *images.ModelsError
 	var projectAPIKeyUpdateFailure *projectAPIKeyUpdateError
-	var voiceTypeFailure *voiceTypeError
+	var voiceTypeFailure *audio.VoiceTypeError
 	var helpTopicFailure *clihelp.UnknownTopicError
 	var adminCredentialsFailure *admin.CredentialsError
 	var adminSetupFailure *admin.SetupError
 	var utilityFailure *localcommands.LocalError
-	var downloadFailure *downloadSaveError
-	var receiptFailure *saveReceiptError
+	var downloadFailure *clioutput.DownloadSaveError
+	var receiptFailure *clioutput.ReceiptError
 	var navigationFailure *listview.PaginationError
 	var modelsListFailure *models.ListError
 	var batchFailure *batchcommands.WorkflowError
@@ -62,12 +65,12 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	case errors.As(failure, &adminSetupFailure):
 		return adminSetupFailure.Error()
 	case errors.As(failure, &downloadFailure):
-		return downloadFailure.message
+		return downloadFailure.Error()
 	case errors.As(failure, &receiptFailure):
 		return receiptFailure.Error()
 	case errors.Is(failure, context.Canceled):
-		if errors.As(failure, &imageFailure) && imageFailure.preserveOnCancel {
-			return imageFailure.message
+		if errors.As(failure, &imageFailure) && imageFailure.PreserveOnCancel() {
+			return imageFailure.Error()
 		}
 		return "Request canceled."
 	case errors.As(failure, &utilityFailure):
@@ -79,7 +82,9 @@ func localErrorMessage(root *cli.Command, failure error) string {
 	case errors.As(failure, &finiteListFailure):
 		return finiteListFailure.Error()
 	case errors.As(failure, &imageFailure):
-		return imageFailure.message
+		return imageFailure.Error()
+	case errors.As(failure, &scalarFailure):
+		return scalarFailure.Error()
 	case errors.As(failure, &navigationFailure):
 		return navigationFailure.Error()
 	case errors.As(failure, &streamFailure):

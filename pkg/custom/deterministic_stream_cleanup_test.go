@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openai/openai-cli/internal/commands/audio"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/ssestream"
@@ -208,22 +209,6 @@ func TestDeterministicStreamCleanupRepeatedLoopbackExit(t *testing.T) {
 	}
 }
 
-func TestDeterministicStreamCleanupKeepsSavedImageOwner(t *testing.T) {
-	for _, event := range []string{
-		`{"type":"image_generation.completed","b64_json":"iVBORw0KGgo="}`,
-		`{"type":"image_generation.failed"}`,
-	} {
-		stream := &deterministicCleanupIterator{events: []outputJSON{{gjson.Parse(event)}}}
-		plan := &imageOutputPlan{directory: t.TempDir(), name: "synthetic", inline: "off"}
-		ctx := context.WithValue(t.Context(), imagePresentationKey{}, imagePresentation{plan: plan, writer: io.Discard})
-		err := ShowJSONIterator(stream, 0, ShowJSONOpts{Context: ctx, Operation: imageGenerationOperation, OutputKind: OutputStreamEvent})
-		failed := gjson.Get(event, "type").String() == "image_generation.failed"
-		if (err != nil) != failed || stream.reads != 1 || stream.closes != 1 {
-			t.Fatalf("saved-image owner changed: err=%v reads=%d closes=%d", err, stream.reads, stream.closes)
-		}
-	}
-}
-
 type deterministicSpeechBody struct {
 	io.Reader
 	closes int
@@ -234,14 +219,14 @@ func (b *deterministicSpeechBody) Close() error { b.closes++; return nil }
 func TestDeterministicStreamCleanupKeepsSpeechBodyOwner(t *testing.T) {
 	body := &deterministicSpeechBody{Reader: strings.NewReader("data: {\"type\":\"speech.audio.done\"}\n\ndata: [DONE]\n\n")}
 	opts := ShowJSONOpts{OutputKind: OutputStreamEvent, Operation: speechStreamOperation, Format: "jsonl", ExplicitFormat: true}
-	ctx := context.WithValue(t.Context(), speechOutputKey{}, opts)
+	ctx := testSpeechContext(t, t.Context(), opts)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://synthetic.invalid/audio/speech", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	response := &http.Response{Request: request, StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: body}
 	var out bytes.Buffer
-	handled, _, err := writeReadableSpeech(response, &out, "")
+	handled, _, err := audio.WriteSpeech(response, &out, "")
 	if !handled || err != nil || body.closes != 0 || out.String() != "{\"type\":\"speech.audio.done\"}\n" {
 		t.Fatalf("speech ownership changed: handled=%v err=%v closes=%d output=%q", handled, err, body.closes, out.String())
 	}

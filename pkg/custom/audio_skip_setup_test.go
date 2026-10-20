@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	audiocommands "github.com/openai/openai-cli/internal/commands/audio"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/require"
@@ -51,7 +52,7 @@ func TestAudioFirstRunScannerKeepsFlagsAndValuesDistinct(t *testing.T) {
 		{"openai", "audio", "--help", "inspect"},
 		{"openai", "audio", "history", "--unknown-leaf-option"},
 	} {
-		require.True(t, skipAudioFirstRunSetup(root, args), "%q", args)
+		require.True(t, audiocommands.SkipFirstRunSetup(root, args), "%q", args)
 	}
 	for _, args := range [][]string{
 		{"openai", "audio", "speak", "--input", "history"},
@@ -69,10 +70,10 @@ func TestAudioFirstRunScannerKeepsFlagsAndValuesDistinct(t *testing.T) {
 		{"openai", "help", "help", "audio", "history"},
 		{"openai", "--all", "audio", "history"},
 	} {
-		require.False(t, skipAudioFirstRunSetup(root, args), "%q", args)
+		require.False(t, audiocommands.SkipFirstRunSetup(root, args), "%q", args)
 	}
-	require.False(t, skipAudioFirstRunSetup(nil, []string{"openai", "audio", "history"}))
-	require.False(t, skipAudioFirstRunSetup(root, nil))
+	require.False(t, audiocommands.SkipFirstRunSetup(nil, []string{"openai", "audio", "history"}))
+	require.False(t, audiocommands.SkipFirstRunSetup(root, nil))
 }
 
 func TestAudioFirstRunScannerResetsDoubleDashAtChildDispatch(t *testing.T) {
@@ -85,7 +86,7 @@ func TestAudioFirstRunScannerResetsDoubleDashAtChildDispatch(t *testing.T) {
 		{"openai", "--project", "--", "audio", "history"},
 		{"openai", "help", "--", "audio", "history"},
 	} {
-		require.True(t, skipAudioFirstRunSetup(root, args), "%q", args)
+		require.True(t, audiocommands.SkipFirstRunSetup(root, args), "%q", args)
 	}
 	for _, args := range [][]string{
 		{"openai", "--", "--project", "audio", "history"},
@@ -93,7 +94,7 @@ func TestAudioFirstRunScannerResetsDoubleDashAtChildDispatch(t *testing.T) {
 		{"openai", "--", "audio", "--project", "history"},
 		{"openai", "help", "--", "audio", "--project", "ignored", "history"},
 	} {
-		require.False(t, skipAudioFirstRunSetup(root, args), "%q", args)
+		require.False(t, audiocommands.SkipFirstRunSetup(root, args), "%q", args)
 	}
 }
 
@@ -102,43 +103,43 @@ func TestAudioFirstRunScannerUsesFlagOwnershipAndCurrentDeclarations(t *testing.
 	audio := root.Command("audio")
 	root.Flags = append(root.Flags, &cli.StringFlag{Name: "root-only", Local: true},
 		&cli.StringFlag{Name: "selector", Aliases: []string{"S"}})
-	require.True(t, skipAudioFirstRunSetup(root, []string{"openai", "--root-only", "audio", "audio", "history"}))
-	require.False(t, skipAudioFirstRunSetup(root, []string{"openai", "audio", "--root-only", "value", "history"}))
-	require.False(t, skipAudioFirstRunSetup(root, []string{"openai", "help", "--root-only", "value", "audio", "history"}))
+	require.True(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "--root-only", "audio", "audio", "history"}))
+	require.False(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "audio", "--root-only", "value", "history"}))
+	require.False(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "help", "--root-only", "value", "audio", "history"}))
 	root.Command("help").Flags = append(root.Command("help").Flags, &cli.StringFlag{Name: "topic-probe", Aliases: []string{"T"}})
-	require.True(t, skipAudioFirstRunSetup(root, []string{"openai", "help", "-T", "audio", "audio", "history"}))
-	require.False(t, skipAudioFirstRunSetup(root, []string{"openai", "help", "-T", "audio", "history"}))
-	require.True(t, skipAudioFirstRunSetup(root, []string{"openai", "audio", "-S", "audio", "history"}))
+	require.True(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "help", "-T", "audio", "audio", "history"}))
+	require.False(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "help", "-T", "audio", "history"}))
+	require.True(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "audio", "-S", "audio", "history"}))
 	audio.Flags = append(audio.Flags, &cli.BoolFlag{Name: "selector", Local: true})
-	require.True(t, skipAudioFirstRunSetup(root, []string{"openai", "audio", "--selector", "history"}))
-	require.False(t, skipAudioFirstRunSetup(root, []string{"openai", "audio", "-S", "value", "history"}), "shadowed ancestor aliases must not remain active")
+	require.True(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "audio", "--selector", "history"}))
+	require.False(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "audio", "-S", "value", "history"}), "shadowed ancestor aliases must not remain active")
 	args := []string{"openai", "--future", "audio", "audio", "history"}
-	require.False(t, skipAudioFirstRunSetup(root, args))
+	require.False(t, audiocommands.SkipFirstRunSetup(root, args))
 	root.Flags = append(root.Flags, &cli.StringFlag{Name: "future"})
-	require.True(t, skipAudioFirstRunSetup(root, args), "new flag declarations must apply without a cache refresh")
+	require.True(t, audiocommands.SkipFirstRunSetup(root, args), "new flag declarations must apply without a cache refresh")
 	root.Flags[len(root.Flags)-1] = &cli.BoolFlag{Name: "future"}
-	require.False(t, skipAudioFirstRunSetup(root, args), "changed flag arity must apply immediately")
+	require.False(t, audiocommands.SkipFirstRunSetup(root, args), "changed flag arity must apply immediately")
 	root.MutuallyExclusiveFlags = []cli.MutuallyExclusiveFlags{{Flags: [][]cli.Flag{{&cli.StringFlag{Name: "grouped-option"}}}}}
-	require.True(t, skipAudioFirstRunSetup(root, []string{"openai", "--grouped-option", "audio", "audio", "history"}))
-	audio.Command("history").Metadata[localAudioMetadata] = false
-	require.False(t, skipAudioFirstRunSetup(root, []string{"openai", "audio", "history"}))
-	audio.Command("history").Metadata[localAudioMetadata] = true
+	require.True(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "--grouped-option", "audio", "audio", "history"}))
+	audio.Command("history").Metadata[audiocommands.LocalMetadata] = false
+	require.False(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "audio", "history"}))
+	audio.Command("history").Metadata[audiocommands.LocalMetadata] = true
 	audio.Command("history").Aliases = append(audio.Command("history").Aliases, "archive")
-	require.True(t, skipAudioFirstRunSetup(root, []string{"openai", "sound", "archive"}))
+	require.True(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "sound", "archive"}))
 	root.Commands[0] = &cli.Command{Name: "audio", Commands: []*cli.Command{{Name: "history"}}}
-	require.False(t, skipAudioFirstRunSetup(root, []string{"openai", "audio", "history"}), "replaced nodes must not reuse old metadata")
+	require.False(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "audio", "history"}), "replaced nodes must not reuse old metadata")
 }
 
 func TestAudioFirstRunScannerRespectsDeclaredFlagParsingPolicy(t *testing.T) {
 	root := audioFirstRunTestRoot()
 	root.SkipFlagParsing = true
-	require.False(t, skipAudioFirstRunSetup(root, []string{"openai", "--project", "ignored", "audio", "history"}))
-	require.True(t, skipAudioFirstRunSetup(root, []string{"openai", "audio", "--project", "ignored", "history"}))
+	require.False(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "--project", "ignored", "audio", "history"}))
+	require.True(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "audio", "--project", "ignored", "history"}))
 	root.SkipFlagParsing = false
 	stop := 0
 	root.StopOnNthArg = &stop
-	require.False(t, skipAudioFirstRunSetup(root, []string{"openai", "--project", "ignored", "audio", "history"}))
-	require.True(t, skipAudioFirstRunSetup(root, []string{"openai", "audio", "--project", "ignored", "history"}))
+	require.False(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "--project", "ignored", "audio", "history"}))
+	require.True(t, audiocommands.SkipFirstRunSetup(root, []string{"openai", "audio", "--project", "ignored", "history"}))
 }
 
 type audioFirstRunFlagSpy struct {
@@ -160,7 +161,7 @@ func TestAudioFirstRunScannerNeverRunsParserCallbacks(t *testing.T) {
 	root.Flags = append(root.Flags, spy)
 	args := []string{"openai", "-F", "audio", "audio", "history"}
 	copyArgs := append([]string(nil), args...)
-	require.True(t, skipAudioFirstRunSetup(root, args))
+	require.True(t, audiocommands.SkipFirstRunSetup(root, args))
 	require.Positive(t, spy.names.Load())
 	require.Positive(t, spy.values.Load())
 	require.Equal(t, copyArgs, args)
