@@ -789,8 +789,44 @@ func TestMainAuthStatusIdentityFailuresRemainUnknownAndPrivate(t *testing.T) {
 			require.Equal(t, "not_configured", status.AdminIdentity.Reason)
 			decodeMainStructuredError(t, "json", got.stderr)
 			assertAuthStatusPrivate(t, got, secret, "synthetic-private-response-body", "synthetic-private-transport-details", "synthetic-private-redirect")
+			require.Contains(t, got.stderr, "Options and examples: openai auth status --help")
+			if tc.name == "unauthorized" || tc.name == "malformed JSON" {
+				assertAuthStatusIdentityRecovery(t, got, "json")
+				text, textRequests := runAuthStatusIdentity(t, fixture, []string{"OPENAI_API_KEY=" + secret},
+					"--verify", "--credential-kind=api", "--format=text", "--format-error=text", "--debug")
+				require.Equal(t, got.code, text.code)
+				require.Len(t, textRequests, 1)
+				require.Contains(t, text.stdout, "API identity: unknown ("+tc.reason+")")
+				assertAuthStatusPrivate(t, text, secret, "synthetic-private-response-body", "synthetic-private-transport-details", "synthetic-private-redirect")
+				assertAuthStatusIdentityRecovery(t, text, "text")
+			}
 		})
 	}
+}
+
+func assertAuthStatusIdentityRecovery(t *testing.T, got mainDispatchResult, format string) {
+	t.Helper()
+	message := strings.TrimSpace(got.stderr)
+	if format == "json" {
+		var value map[string]string
+		require.NoError(t, json.Unmarshal([]byte(got.stderr), &value))
+		require.Len(t, value, 1)
+		message = value["message"]
+	}
+	_, recovery, found := strings.Cut(message, "\nOptions and examples: ")
+	require.True(t, found, "%s", message)
+	require.Equal(t, "openai auth status --help", recovery)
+	// Execute the printed arguments through main, with the same synthetic transport.
+	// The fixed prefix matches this helper's invocation and status route.
+	args := strings.Fields(recovery)
+	copied, requests := runAuthStatusIdentity(t, authStatusIdentitySuccessFixture(),
+		[]string{"OPENAI_API_KEY=synthetic-private-recovery-token"}, args[3:]...)
+	require.Zero(t, copied.code, "%s", copied.stderr)
+	require.Empty(t, copied.stderr)
+	require.Empty(t, requests, "help recovery must not verify credentials")
+	require.Contains(t, copied.stdout, "Shows configured authentication offline by default.")
+	require.Contains(t, copied.stdout, "openai auth status")
+	assertAuthStatusPrivate(t, copied, "synthetic-private-recovery-token")
 }
 
 func TestMainAuthStatusIdentityNullableFieldsAndSupportedEndpoints(t *testing.T) {
@@ -868,6 +904,7 @@ func TestMainAuthStatusIdentityDeadline(t *testing.T) {
 	require.Equal(t, "timed_out", status.APIIdentity.Reason)
 	decodeMainStructuredError(t, "json", got.stderr)
 	assertAuthStatusPrivate(t, got, "synthetic-private-api-token")
+	assertAuthStatusIdentityRecovery(t, got, "json")
 }
 
 func TestMainAuthStatusIdentitySignals(t *testing.T) {

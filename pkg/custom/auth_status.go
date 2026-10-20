@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -127,17 +128,18 @@ func handleAuthStatus(ctx context.Context, command *cli.Command) error {
 	var lookupErr error
 	if verify {
 		var stop func()
-		ctx, stop = adminSetupSignalContext(ctx)
+		ctx, stop = clioutput.DownloadSignalContext(ctx)
 		defer stop()
 		report.Offline = false
 		identity, failure := authStatusLookup(ctx, root, snapshot, kind)
 		lookupErr = failure
 		if ctx.Err() != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return &localcommands.LocalError{Message: "Identity lookup timed out. Identity remains unknown.", Cause: context.DeadlineExceeded}
+				return &localcommands.LocalError{Message: authStatusIdentityGuidance(root, "Identity lookup timed out. Identity remains unknown."), Cause: context.DeadlineExceeded}
 			}
 			code := 130
-			if errors.Is(context.Cause(ctx), errAdminSetupTerminated) {
+			var signalErr *clioutput.DownloadSignalError
+			if errors.As(context.Cause(ctx), &signalErr) && signalErr != nil && signalErr.SignalExitCode() == 143 {
 				code = 143
 			}
 			return &authStatusLookupError{
@@ -322,10 +324,17 @@ func (e *authStatusLookupError) Unwrap() error { return e.localCancellationGuida
 
 func (e *authStatusLookupError) ExitCode() int { return e.code }
 
+func authStatusIdentityGuidance(root *cli.Command, message string) string {
+	return message + "\nOptions and examples: " + clihelp.DisplayInvocation(root) + " auth status --help"
+}
+
 // The provider returns an authenticated principal, not a key ID or membership assertion.
 // Keep its request independent of SDK API/Admin fallback and API-body error rendering.
 func authStatusLookup(ctx context.Context, root *cli.Command, snapshot authStatusSnapshot, kind string) (authStatusIdentity, error) {
 	failure := func(reason, message string) (authStatusIdentity, error) {
+		if reason != "canceled" {
+			message = authStatusIdentityGuidance(root, message)
+		}
 		return authStatusIdentity{Status: "unknown", Reason: reason}, &localcommands.LocalError{Message: message}
 	}
 	endpoint, err := url.Parse(snapshot.baseURL)
@@ -577,7 +586,7 @@ func skipContextFirstRunSetup(root *cli.Command, args []string) bool {
 		return false
 	}
 	lineage := []*cli.Command{root}
-	flags, help := audioSetupParsesFlags(root), false
+	flags, help := contextSetupParsesFlags(root), false
 	for index := 1; index < len(args); index++ {
 		arg := args[index]
 		if flags && strings.TrimSpace(arg) == "--" {
@@ -587,7 +596,7 @@ func skipContextFirstRunSetup(root *cli.Command, args []string) bool {
 		if flags && strings.HasPrefix(strings.TrimSpace(arg), "-") {
 			token := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(arg), "-"), "-")
 			name, _, assigned := strings.Cut(token, "=")
-			shape, ok := audioSetupFlag(lineage, name).(interface{ TakesValue() bool })
+			shape, ok := contextSetupFlag(lineage, name).(interface{ TakesValue() bool })
 			if !ok {
 				return false
 			}
@@ -600,7 +609,7 @@ func skipContextFirstRunSetup(root *cli.Command, args []string) bool {
 			help = true
 			if declared := root.Command("help"); declared != nil {
 				lineage = append(lineage, declared)
-				flags = audioSetupParsesFlags(declared)
+				flags = contextSetupParsesFlags(declared)
 			}
 			continue
 		}
@@ -608,4 +617,62 @@ func skipContextFirstRunSetup(root *cli.Command, args []string) bool {
 		return selected != nil && (selected == root.Command("auth") || selected == root.Command("profile"))
 	}
 	return false
+}
+
+// Read declarations before CLI startup without applying flags or changing command state.
+func contextSetupParsesFlags(command *cli.Command) bool {
+	return !command.SkipFlagParsing && (command.StopOnNthArg == nil || *command.StopOnNthArg != 0)
+}
+
+func contextSetupDeclaredFlags(command *cli.Command) []cli.Flag {
+	flags := append([]cli.Flag(nil), command.Flags...)
+	for _, group := range command.MutuallyExclusiveFlags {
+		for _, alternatives := range group.Flags {
+			flags = append(flags, alternatives...)
+		}
+	}
+	// The CLI adds its declared help flag during startup. Read its metadata
+	// without running setupCommandGraph or mutating these command declarations.
+	if !command.HideHelp && cli.HelpFlag != nil {
+		flags = append(flags, cli.HelpFlag)
+	}
+	return flags
+}
+
+func contextSetupFlag(lineage []*cli.Command, name string) cli.Flag {
+	local := contextSetupDeclaredFlags(lineage[len(lineage)-1])
+	for _, flag := range local {
+		if flag != nil && slices.Contains(flag.Names(), name) {
+			return flag
+		}
+	}
+	for index := len(lineage) - 2; index >= 0; index-- {
+		for _, flag := range contextSetupDeclaredFlags(lineage[index]) {
+			persistent, ok := flag.(cli.LocalFlag)
+			if !ok || persistent.IsLocal() {
+				continue
+			}
+			names := flag.Names()
+			if !slices.Contains(names, name) {
+				continue
+			}
+			// The parser suppresses an ancestor flag as a whole when any of its
+			// aliases belongs to the current command, not only the queried alias.
+			shadowed := false
+			for _, current := range local {
+				if current == nil {
+					continue
+				}
+				for _, alias := range current.Names() {
+					if slices.Contains(names, alias) {
+						shadowed = true
+					}
+				}
+			}
+			if !shadowed {
+				return flag
+			}
+		}
+	}
+	return nil
 }

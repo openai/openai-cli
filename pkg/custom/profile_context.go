@@ -100,7 +100,7 @@ func resolveSelectedProfile(ctx context.Context, root *cli.Command, lookup func(
 	}
 	registry, err := loadProfiles(ctx, path)
 	if err != nil {
-		return "", profileValues{}, &localcommands.LocalError{Message: "Could not read saved profiles. Existing profiles were kept.", Cause: err}
+		return "", profileValues{}, &localcommands.LocalError{Message: "Could not read saved profiles. Existing profiles were kept. Check the saved profile file in your user configuration directory. Use " + clihelp.DisplayInvocation(root) + " profile --help for saved-profile options.", Cause: err}
 	}
 	name, err := selectedProfileName(root, lookup, registry)
 	return name, registry.Profiles[name], err

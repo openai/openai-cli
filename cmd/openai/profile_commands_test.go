@@ -534,6 +534,68 @@ func TestMainProfileMissingSelectionPreservesCommittedFolderLink(t *testing.T) {
 	require.Zero(t, requests.Load(), "folder links and profile selection must remain offline")
 }
 
+func TestMainProfileReadFailureRecovery(t *testing.T) {
+	for _, failure := range []string{"malformed", "unreadable directory"} {
+		t.Run(failure, func(t *testing.T) {
+			home, directory := t.TempDir(), t.TempDir()
+			registry := profileRegistryPath(home)
+			require.NoError(t, os.MkdirAll(filepath.Dir(registry), 0700))
+			saved := registry
+			if failure == "unreadable directory" {
+				require.NoError(t, os.Mkdir(registry, 0700))
+				saved = filepath.Join(registry, "synthetic-private-preserved")
+			}
+			before := []byte("{synthetic-private-invalid-profile")
+			require.NoError(t, os.WriteFile(saved, before, 0600))
+			info, err := os.Lstat(registry)
+			require.NoError(t, err)
+			for _, command := range [][]string{{"auth", "status"}, {"models", "list"}, {"admin", "organization", "projects", "list"}} {
+				for _, format := range []string{"text", "json"} {
+					args := append([]string{"--profile=work", "--format=" + format, "--format-error=" + format}, command...)
+					// The existing capture transport prevents any external request.
+					got := runProfileURLMain(t, home, directory, []string{"OPENAI_ADMIN_KEY=synthetic-admin-key"}, args)
+					require.Equal(t, 1, got.code, "%q: %s", args, got.stderr)
+					require.Empty(t, got.stdout)
+					require.NotContains(t, got.stderr, "captured-url=", "the transport must not execute")
+					message := strings.TrimSpace(got.stderr)
+					if format == "json" {
+						var value map[string]string
+						require.NoError(t, json.Unmarshal([]byte(got.stderr), &value))
+						require.Len(t, value, 1)
+						message = value["message"]
+					}
+					require.Contains(t, message, "Could not read saved profiles. Existing profiles were kept.")
+					require.Contains(t, message, "Check the saved profile file in your user configuration directory.")
+					_, guidance, found := strings.Cut(message, "Use ")
+					require.True(t, found, "%s", message)
+					recovery, found := strings.CutSuffix(guidance, " for saved-profile options.")
+					require.True(t, found, "%s", guidance)
+					require.Equal(t, "openai profile --help", recovery)
+					copied := runProfileURLMain(t, home, directory, nil, strings.Fields(recovery)[1:])
+					require.Zero(t, copied.code, "%s", copied.stderr)
+					require.Empty(t, copied.stderr, "help recovery must not execute the transport")
+					require.Contains(t, copied.stdout, "Profiles store nonsecret settings only.")
+					assertAuthStatusPrivate(t, got, home, "synthetic-private-invalid-profile", "synthetic-private-preserved", "synthetic-url-key", "synthetic-admin-key")
+					assertAuthStatusPrivate(t, copied, home, "synthetic-private-invalid-profile", "synthetic-private-preserved", "synthetic-url-key", "synthetic-admin-key")
+				}
+			}
+			after, err := os.ReadFile(saved)
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+			current, err := os.Lstat(registry)
+			require.NoError(t, err)
+			require.True(t, os.SameFile(info, current), "recovery must preserve the stored object")
+			require.Equal(t, info.Mode(), current.Mode())
+			if info.IsDir() {
+				entries, err := os.ReadDir(registry)
+				require.NoError(t, err)
+				require.Len(t, entries, 1)
+				require.Equal(t, filepath.Base(saved), entries[0].Name())
+			}
+		})
+	}
+}
+
 func TestMainProfileEndpointProjectRemainsBodyField(t *testing.T) {
 	home, directory := t.TempDir(), t.TempDir()
 	createProfileFixture(t, home, directory, "work", "--project=proj_profile")

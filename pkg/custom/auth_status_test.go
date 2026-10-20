@@ -452,6 +452,7 @@ func TestAuthStatusIdentityRejectsInvalidOrReflectedResponse(t *testing.T) {
 			})
 			report, output, err := authStatusRunJSON(t, t.Context(), "--verify", "--credential-kind=api")
 			require.Error(t, err)
+			require.Contains(t, err.Error(), "Options and examples: openai auth status --help")
 			require.Equal(t, 1, calls)
 			require.True(t, responseBody.closed)
 			authStatusUnknownIdentity(t, report, "api", "invalid_response")
@@ -519,6 +520,7 @@ func TestAuthStatusIdentityStatusErrorsAndRedirects(t *testing.T) {
 			})
 			report, output, err := authStatusRunJSON(t, t.Context(), "--verify", "--credential-kind=api")
 			require.Error(t, err)
+			require.Contains(t, err.Error(), "Options and examples: openai auth status --help")
 			require.Equal(t, 1, calls, "identity lookup must not redirect or retry")
 			require.True(t, body.closed)
 			authStatusUnknownIdentity(t, report, "api", "")
@@ -561,20 +563,39 @@ func TestAuthStatusIdentityTransportFailureAndCancellation(t *testing.T) {
 		require.NotContains(t, output+err.Error(), "synthetic-api")
 	})
 	t.Run("in flight cancellation", func(t *testing.T) {
-		authStatusTestEnvironment(t, map[string]string{"OPENAI_API_KEY": "synthetic-api"})
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		calls := 0
-		authStatusTestTransport(t, func(request *http.Request) (*http.Response, error) {
-			calls++
-			cancel()
-			<-request.Context().Done()
-			return nil, request.Context().Err()
-		})
-		_, output, err := authStatusRunJSON(t, ctx, "--verify", "--credential-kind=api")
-		require.ErrorIs(t, err, context.Canceled)
-		require.Equal(t, 1, calls)
-		require.NotContains(t, output+err.Error(), "synthetic-api")
+		for _, tc := range []struct {
+			name  string
+			cause error
+		}{
+			{"private cause", errors.New("synthetic-private-parent-cause")},
+			{"zero-value signal cause", &clioutput.DownloadSignalError{}},
+			{"typed-nil signal cause", (*clioutput.DownloadSignalError)(nil)},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				authStatusTestEnvironment(t, map[string]string{"OPENAI_API_KEY": "synthetic-api"})
+				ctx, cancel := context.WithCancelCause(t.Context())
+				defer cancel(nil)
+				calls := 0
+				authStatusTestTransport(t, func(request *http.Request) (*http.Response, error) {
+					calls++
+					cancel(tc.cause)
+					<-request.Context().Done()
+					return nil, request.Context().Err()
+				})
+				_, output, err := authStatusRunJSON(t, ctx, "--verify", "--credential-kind=api")
+				require.ErrorIs(t, err, context.Canceled)
+				require.NotErrorIs(t, err, tc.cause)
+				var exit cli.ExitCoder
+				require.ErrorAs(t, err, &exit)
+				require.Equal(t, 130, exit.ExitCode())
+				var signalCause *clioutput.DownloadSignalError
+				require.False(t, errors.As(err, &signalCause), "the safe error must not retain the parent cause")
+				require.Equal(t, 1, calls)
+				require.NotContains(t, output+err.Error(), "synthetic-private-parent-cause")
+				require.NotContains(t, output+err.Error(), "download canceled by a process signal")
+				require.NotContains(t, output+err.Error(), "synthetic-api")
+			})
+		}
 	})
 }
 
@@ -663,13 +684,24 @@ func TestAuthStatusIdentityParentDeadline(t *testing.T) {
 		body = &authStatusDeadlineBody{ctx: request.Context()}
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: body}, nil
 	})
-	_, output, err := authStatusRunJSON(t, ctx, "--verify", "--credential-kind=api")
+	var output bytes.Buffer
+	root := authStatusTestRoot(&output)
+	if root.Metadata == nil {
+		root.Metadata = map[string]any{}
+	}
+	root.Metadata["help-invocation"] = "'/synthetic/CLI with spaces/openai'"
+	err := root.Run(ctx, []string{"openai", "auth", "status", "--format=json", "--verify", "--credential-kind=api"})
+	if output.Len() > 0 {
+		var report map[string]any
+		require.NoError(t, json.Unmarshal(output.Bytes(), &report), "status output must remain valid JSON")
+	}
 	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Contains(t, err.Error(), "Options and examples: '/synthetic/CLI with spaces/openai' auth status --help")
 	require.NotErrorIs(t, err, context.Canceled)
 	require.Equal(t, 1, calls)
 	require.True(t, body.closed)
-	require.NotContains(t, output+err.Error(), "synthetic-api")
-	require.NotContains(t, output, `"status":"resolved"`)
+	require.NotContains(t, output.String()+err.Error(), "synthetic-api")
+	require.NotContains(t, output.String(), `"status":"resolved"`)
 }
 
 func TestAuthStatusIdentityOutputFailurePreservesLookupFailure(t *testing.T) {
@@ -974,6 +1006,71 @@ func TestAuthStatusIdentityVerifiedTLSAndMTLS(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, true, report["verified"])
 			require.Equal(t, tc.kind, report["verified_credential_kind"])
+		})
+	}
+}
+
+func TestAuthStatusFirstRunDeclaredFlags(t *testing.T) {
+	t.Setenv("OPENAI_CONTEXT_SCAN_TEST", "synthetic-environment-value")
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		change func(*cli.Command)
+		want   bool
+	}{
+		{name: "hidden alias", args: []string{"-s", "value", "auth"}, want: true},
+		{name: "hidden operand", args: []string{"-s", "auth", "models"}},
+		{name: "grouped alias", args: []string{"-g", "value", "auth"}, want: true},
+		{name: "grouped operand", args: []string{"-g", "profile", "models"}},
+		{name: "inherited hidden", args: []string{"help", "-s", "value", "auth"}, want: true},
+		{name: "inherited grouped", args: []string{"help", "-g", "value", "profile"}, want: true},
+		{name: "root local", args: []string{"--local", "value", "auth"}, want: true},
+		{name: "ancestor local", args: []string{"help", "--local", "value", "auth"}},
+		{name: "shadowed ancestor name", args: []string{"help", "--ancestor", "value", "auth"}},
+		{name: "shadowed ancestor alias", args: []string{"help", "-a", "value", "auth"}},
+		{name: "local alias", args: []string{"help", "--shadow", "auth"}, want: true},
+		{name: "command alias", args: []string{"identity", "status"}, want: true},
+		{name: "help flag", args: []string{"-h", "auth"}, want: true},
+		{name: "hidden help", args: []string{"-h", "auth"}, change: func(root *cli.Command) { root.HideHelp = true }},
+		{name: "skip flag parsing", args: []string{"--hidden", "value", "auth"}, change: func(root *cli.Command) { root.SkipFlagParsing = true }},
+		{name: "zero flag positions", args: []string{"--hidden", "value", "auth"}, change: func(root *cli.Command) { zero := 0; root.StopOnNthArg = &zero }},
+		{name: "help skips flags", args: []string{"help", "--hidden", "value", "auth"}, change: func(root *cli.Command) { root.Command("help").SkipFlagParsing = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			destination := "synthetic-original-destination"
+			hidden := &cli.StringFlag{Name: "hidden", Aliases: []string{"s"}, Hidden: true, Value: "declared", Destination: &destination, Sources: cli.EnvVars("OPENAI_CONTEXT_SCAN_TEST")}
+			grouped := &cli.StringFlag{Name: "grouped", Aliases: []string{"g"}, Hidden: true}
+			help := &cli.Command{Name: "help", Flags: []cli.Flag{&cli.BoolFlag{Name: "child", Aliases: []string{"shadow"}}}}
+			root := &cli.Command{Name: "openai", Flags: []cli.Flag{
+				hidden,
+				&cli.StringFlag{Name: "ancestor", Aliases: []string{"a", "shadow"}},
+				&cli.StringFlag{Name: "local", Local: true},
+			}, Commands: []*cli.Command{
+				{Name: "auth", Aliases: []string{"identity"}, Hidden: true},
+				{Name: "profile"}, {Name: "models"}, help,
+			}, MutuallyExclusiveFlags: []cli.MutuallyExclusiveFlags{{Category: "grouped declarations", Flags: [][]cli.Flag{{grouped}}}}}
+			if tc.change != nil {
+				tc.change(root)
+			}
+			hiddenBefore, groupedBefore := *hidden, *grouped
+			flagsBefore := append([]cli.Flag(nil), root.Flags...)
+			helpFlagsBefore := append([]cli.Flag(nil), help.Flags...)
+			commandsBefore := append([]*cli.Command(nil), root.Commands...)
+			args := append([]string{"openai"}, tc.args...)
+			argsBefore := append([]string(nil), args...)
+			for attempt := 0; attempt < 2; attempt++ {
+				require.Equal(t, tc.want, skipContextFirstRunSetup(root, args))
+				require.Equal(t, argsBefore, args)
+				require.Equal(t, flagsBefore, root.Flags)
+				require.Equal(t, helpFlagsBefore, help.Flags)
+				require.Equal(t, commandsBefore, root.Commands)
+				require.Equal(t, hiddenBefore, *hidden)
+				require.Equal(t, groupedBefore, *grouped)
+				require.Equal(t, "synthetic-original-destination", destination)
+				require.Same(t, help, help.Root(), "the scan must not initialize command parents")
+				require.Nil(t, root.Metadata)
+				require.Nil(t, help.Metadata)
+			}
 		})
 	}
 }
