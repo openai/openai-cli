@@ -15,7 +15,7 @@ against main, and additions and deletions never cancel. Replacing 500 generated
 lines with 500 handwritten lines costs 1,000 lines. Deleting a generated file
 counts all its removed lines. Restoring generated content reduces the budget.
 
-The checker reuses `scripts/castiron/custom_code_report.py` without changing its
+The checker reuses `generated/castiron/custom_code_report.py` without changing its
 snapshot/hash validation or generated-file ownership. It counts generated-owned
 files, including runtime code, tests, and generated documentation. Wholly
 handwritten-only files are outside this existing report's scope. Changes in
@@ -46,7 +46,7 @@ zero customizations can opt into schema v2 through a policy-only PR:
 ```
 
 First land shared compiler/verifier support and regenerate the SDK, including
-`scripts/castiron/generated-files.json`. Then activate strict policy. Both the
+`generated/castiron/generated-files.json`. Then activate strict policy. Both the
 main policy and a proposed activation are enforced; strict policy cannot be
 downgraded. A policy change cannot be combined with SDK or generated-source edits.
 SDK promotion rejects policy-file changes; submit the policy-only PR directly
@@ -132,13 +132,13 @@ merge during generation.
 Run from the SDK repository with Python 3.10+; no SDK dependencies are needed:
 
 ```sh
-python3 -m unittest discover -s scripts/castiron -p 'test_custom_code*.py'
+python3 -m unittest discover -s generated/castiron -p 'test_custom_code*.py'
 ```
 
 Use a **trusted checkout's** script to inspect committed revisions:
 
 ```sh
-python3 -I scripts/castiron/custom_code_budget.py check \
+python3 -I generated/castiron/custom_code_budget.py check \
   --repo /path/to/sdk --base FULL_MAIN_SHA --head FULL_CANDIDATE_SHA \
   --public --fetch --out /tmp/custom-code-budget
 ```

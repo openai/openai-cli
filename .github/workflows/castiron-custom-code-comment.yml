@@ -56,7 +56,7 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
-          python3 -I scripts/castiron/custom_code_report.py trusted-report \
+          python3 -I generated/castiron/custom_code_report.py trusted-report \
             --repo "$RUNNER_TEMP/castiron-objects.git" \
             --base "$(git rev-parse HEAD)" \
             --repository "$REPOSITORY" --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" \
@@ -98,7 +98,7 @@ jobs:
           if [[ "$SOURCE_EVENT" == pull_request ]]; then
             reuse=(--trusted-report-dir "$RUNNER_TEMP/castiron-custom-code")
           fi
-          python3 -I scripts/castiron/custom_code_budget.py github \
+          python3 -I generated/castiron/custom_code_budget.py github \
             --repository "$REPOSITORY" --event-path "$GITHUB_EVENT_PATH" \
             --trusted-sha "$trusted_sha" --repo "$RUNNER_TEMP/castiron-objects.git" \
             "${reuse[@]}" --out "$RUNNER_TEMP/custom-code-budget"
@@ -276,7 +276,7 @@ jobs:
           ARTIFACT_RUN_ID: ${{ github.run_id }}
           ARTIFACT_RUN_ATTEMPT: ${{ needs.compute.outputs.artifact-run-attempt }}
         run: |
-          python3 -I scripts/castiron/custom_code_report.py comment \
+          python3 -I generated/castiron/custom_code_report.py comment \
             --report "$RUNNER_TEMP/castiron-custom-code/report.json" \
             --repository "$REPOSITORY" --pr "$PR_NUMBER" --run-id "$RUN_ID" \
             --run-attempt "$RUN_ATTEMPT" \

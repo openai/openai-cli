@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  REPORTER_SHA256: 4dc056b460d688cbe3035bd9649820f77e489424d0c9c48bd3f19ed4dfb7e9b4
+  REPORTER_SHA256: 14e5a2cd874f46941465bd465083c08566341a8b064bc137e5daf905bcfa578e
 
 jobs:
   queue-signal:
@@ -54,10 +54,10 @@ jobs:
           persist-credentials: false
 
       - name: Verify the reporter matches its generated workflow
-        run: printf '%s  %s\n' "$REPORTER_SHA256" scripts/castiron/custom_code_report.py | sha256sum --check --strict
+        run: printf '%s  %s\n' "$REPORTER_SHA256" generated/castiron/custom_code_report.py | sha256sum --check --strict
 
       - name: Test snapshot isolation and the custom-code budget
-        run: python3 -m unittest discover -s scripts/castiron -p 'test_custom_code*.py'
+        run: python3 -m unittest discover -s generated/castiron -p 'test_custom_code*.py'
 
       - name: Validate the codegen hash and report custom code
         env:
@@ -69,13 +69,14 @@ jobs:
           GIT_CONFIG_VALUE_1: '!gh auth git-credential'
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TARGET_BRANCH: ${{ github.event.pull_request.base.ref }}
           PUBLIC_REPOSITORY: ${{ !github.event.repository.private }}
         run: |
           git fetch --quiet --no-tags origin "$BASE_SHA" "$HEAD_SHA"
           mode=()
           if [[ "$PUBLIC_REPOSITORY" == true ]]; then mode=(--public); fi
-          python3 -I scripts/castiron/custom_code_report.py report \
-            --base "$BASE_SHA" --head "$HEAD_SHA" \
+          python3 -I generated/castiron/custom_code_report.py report \
+            --base "$BASE_SHA" --head "$HEAD_SHA" --target-branch "$TARGET_BRANCH" \
             --fetch --require-head-hash "${mode[@]}" \
             --out "$RUNNER_TEMP/castiron-custom-code"
 

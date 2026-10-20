@@ -349,12 +349,14 @@ def evaluate(
     pull_heads: list[str] | None = None,
     measurement: tuple[dict[str, Any], bytes] | None = None,
     policy_sha: str | None = None,
+    target_branch: str = "main",
 ) -> tuple[dict[str, Any], bytes]:
     """In a queue, isolate each PR but budget the complete merged candidate."""
     base, head = report.require_sha(base), report.require_sha(head)
     policy = cast(str, report.require_sha(policy_sha or base))
     result: dict[str, Any] = {
         "base_sha": base,
+        "target_branch": target_branch,
         "policy_sha": policy,
         "head_sha": head,
         "checks": {},
@@ -391,6 +393,7 @@ def evaluate(
                 public=public,
                 fetch=fetch,
                 require_head_hash=True,
+                target_branch=target_branch,
             )
         )
         added, removed = count_custom_lines(measured)
@@ -652,6 +655,7 @@ def github_evaluate(
         pull_heads=pull_heads,
         measurement=measurement,
         policy_sha=main,
+        target_branch=branch,
     )
     result["target_branch"] = branch
     return result, patch
@@ -672,6 +676,7 @@ def main() -> int:
     local.add_argument("--head", required=True)
     local.add_argument("--public", action="store_true")
     local.add_argument("--fetch", action="store_true")
+    local.add_argument("--target-branch", choices=sorted(report.TARGET_BRANCHES), default="main")
     github = commands.add_parser("github")
     github.add_argument("--repository", required=True)
     github.add_argument("--event-path", type=Path, required=True)
@@ -706,7 +711,12 @@ def main() -> int:
     try:
         if args.command == "check":
             result, patch = evaluate(
-                args.repo, args.base, args.head, public=args.public, fetch=args.fetch
+                args.repo,
+                args.base,
+                args.head,
+                public=args.public,
+                fetch=args.fetch,
+                target_branch=args.target_branch,
             )
         else:
             result, patch = github_evaluate(

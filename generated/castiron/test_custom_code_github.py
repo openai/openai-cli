@@ -109,7 +109,7 @@ class GitHubReportTests(GitTestCase):
         base = self.commit()
         legitimate, _ = report.build_report(self.repo, base, base, require_head_hash=True)
         self.write("generated.py", "generated\n# custom\n")
-        self.write("scripts/castiron/custom_code_report.py", "raise RuntimeError('PR code ran')\n")
+        self.write("generated/castiron/custom_code_report.py", "raise RuntimeError('PR code ran')\n")
         self.write("report.json", json.dumps(legitimate))
         head = self.commit()
         self.write(
@@ -629,6 +629,7 @@ class GitHubBudgetTests(unittest.TestCase):
                 pull_heads=None,
                 measurement=None,
                 policy_sha=self.base,
+                target_branch="main",
             )
 
     def test_stale_pull_and_wrong_target_fail_before_objects_created(self) -> None:
