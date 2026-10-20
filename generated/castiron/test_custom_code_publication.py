@@ -116,7 +116,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("git fetch", comment)
         self.assertIn("--artifact-run-id", comment)
         digest = hashlib.sha256(
-            (workflows.parents[1] / "scripts/castiron/custom_code_report.py").read_bytes()
+            (workflows.parents[1] / "generated/castiron/custom_code_report.py").read_bytes()
         ).hexdigest()
         self.assertIn(f"REPORTER_SHA256: {digest}", producer)
 
