@@ -11,7 +11,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/apiquery"
 	requestconfig "github.com/openai/openai-cli/internal/request"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/urfave/cli/v3"
 )
 
@@ -31,13 +31,13 @@ func adminCredentialsTestCommand(t *testing.T, action cli.ActionFunc) *cli.Comma
 			&cli.StringFlag{Name: "base-url"},
 			&cli.StringFlag{Name: "format", Value: "auto"},
 			&cli.StringFlag{Name: "format-error", Value: "auto"},
-			custom.NewRequestHeaderFlag(),
+			appconfig.NewRequestHeaderFlag(),
 		},
 		Commands: []*cli.Command{{
 			Name: "admin:organization:projects", Category: "API RESOURCE",
 			Commands: []*cli.Command{{Name: "list", Action: func(ctx context.Context, command *cli.Command) error {
 				// Generated actions validate request input before checking credentials.
-				if _, err := custom.FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatRepeat, custom.EmptyBody, false); err != nil {
+				if _, err := appconfig.FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatRepeat, appconfig.EmptyBody, false); err != nil {
 					return err
 				}
 				return action(ctx, command)

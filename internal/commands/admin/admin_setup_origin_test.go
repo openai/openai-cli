@@ -14,10 +14,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	appconfig "github.com/openai/openai-cli/internal/app"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/admin"
 	requestconfig "github.com/openai/openai-cli/internal/request"
-	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
@@ -38,7 +38,7 @@ func TestAdminSetupOriginDisplayPreservesDestination(t *testing.T) {
 			require.NoError(t, err)
 			requests := 0
 			root := adminCredentialsTestCommand(t, func(ctx context.Context, command *cli.Command) error {
-				options, display, err := admin.TestRequestOptions(command, custom.GetDefaultRequestOptions)
+				options, display, err := admin.TestRequestOptions(command, appconfig.GetDefaultRequestOptions)
 				if err != nil {
 					return err
 				}
@@ -86,7 +86,7 @@ func TestAdminSetupProfileEndpointOptions(t *testing.T) {
 			requests := 0
 			root := adminCredentialsTestCommand(t, nil)
 			bridge := func(ctx context.Context, command *cli.Command) error {
-				options, display, err := admin.TestRequestOptions(command, custom.GetDefaultRequestOptions)
+				options, display, err := admin.TestRequestOptions(command, appconfig.GetDefaultRequestOptions)
 				if err != nil {
 					return err
 				}
@@ -145,7 +145,7 @@ func TestAdminSetupProfileEndpointRejectsUnsafeOverrides(t *testing.T) {
 			helperCalls := 0
 			probeOptions := func(command *cli.Command) ([]option.RequestOption, string, error) {
 				helperCalls++
-				return admin.TestRequestOptions(command, custom.GetDefaultRequestOptions)
+				return admin.TestRequestOptions(command, appconfig.GetDefaultRequestOptions)
 			}
 			bridge := func(_ context.Context, command *cli.Command) error {
 				options, display, err := probeOptions(command)
@@ -195,7 +195,7 @@ func TestAdminSetupProfileResolutionFailures(t *testing.T) {
 			helperCalls := 0
 			probeOptions := func(command *cli.Command) ([]option.RequestOption, string, error) {
 				helperCalls++
-				return admin.TestRequestOptions(command, custom.GetDefaultRequestOptions)
+				return admin.TestRequestOptions(command, appconfig.GetDefaultRequestOptions)
 			}
 			bridge := func(_ context.Context, command *cli.Command) error {
 				options, display, err := probeOptions(command)
@@ -253,7 +253,7 @@ func TestAdminSetupProfileEndpointLoopback(t *testing.T) {
 			t.Cleanup(server.Close)
 			root := adminCredentialsTestCommand(t, nil)
 			bridge := func(ctx context.Context, command *cli.Command) error {
-				options, display, err := admin.TestRequestOptions(command, custom.GetDefaultRequestOptions)
+				options, display, err := admin.TestRequestOptions(command, appconfig.GetDefaultRequestOptions)
 				if err != nil {
 					return err
 				}
@@ -388,7 +388,7 @@ func TestAdminSetupRegisteredEndpointPolicy(t *testing.T) {
 // Keep production root preparation. The bridge exercises setup request options after it.
 func configureAdminSetupProfileProbe(t *testing.T, root *cli.Command, bridge cli.ActionFunc, client *http.Client) *int {
 	t.Helper()
-	custom.ConfigureCommand(root)
+	appconfig.ConfigureCommand(root)
 	setup := root.Command("setup")
 	require.NotNil(t, setup)
 	command := setup.Command("admin")

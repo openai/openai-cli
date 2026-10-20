@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/commands/images"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -30,7 +30,7 @@ func TestImageInlinePreferenceFailureKeepsPrivatePathsAndOriginal(t *testing.T) 
 	for _, mode := range []string{"on", "off"} {
 		root := &cli.Command{Name: "openai", Writer: &bytes.Buffer{}, ErrWriter: &bytes.Buffer{},
 			Flags:    []cli.Flag{&cli.StringFlag{Name: "format", Value: "auto"}},
-			Commands: []*cli.Command{{Name: "images", Commands: []*cli.Command{{Name: "inline", Commands: images.TestImageInlinePreferenceCommands(custom.ImagePreviewOptions().Receipt)}}}},
+			Commands: []*cli.Command{{Name: "images", Commands: []*cli.Command{{Name: "inline", Commands: images.TestImageInlinePreferenceCommands(appconfig.ImagePreviewOptions().Receipt)}}}},
 		}
 		failure := root.Run(t.Context(), []string{"openai", "images", "inline", mode})
 		var cause *os.PathError
@@ -38,7 +38,7 @@ func TestImageInlinePreferenceFailureKeepsPrivatePathsAndOriginal(t *testing.T) 
 		require.ErrorIs(t, failure, cause)
 		for _, format := range []string{"text", "json"} {
 			var diagnostic bytes.Buffer
-			require.NoError(t, custom.ShowCommandError(readableErrorTestCommand(t, "--format-error", format), failure, &diagnostic))
+			require.NoError(t, appconfig.ShowCommandError(readableErrorTestCommand(t, "--format-error", format), failure, &diagnostic))
 			require.Contains(t, diagnostic.String(), "Existing settings were kept.")
 			require.Contains(t, diagnostic.String(), "image-preferences.json")
 			location := images.TestImageInlinePreferenceLocation(runtime.GOOS)
@@ -99,7 +99,7 @@ func TestImageInlinePreferenceWarningTerminal(t *testing.T) {
 						cancel()
 					}
 					return nil
-				}, custom.ImageSavingOptions()),
+				}, appconfig.ImageSavingOptions()),
 			}
 			images.TestRegisterImageSavingFlags(command)
 			err = command.Run(ctx, []string{"generate", "--output-dir", t.TempDir()})
@@ -130,8 +130,8 @@ func TestImagePreviewCommandsRegisterOnceAndRejectFormats(t *testing.T) {
 	for _, argv := range [][]string{{"images", "preview"}, {"images", "preview", "one", "two"}, {"--format", "json", "images", "preview", "one"}, {"--transform", "id", "images", "inline", "on"}, {"--raw-output", "images", "inline", "off"}, {"images", "inline", "on", "extra"}} {
 		t.Run(strings.Join(argv, " "), func(t *testing.T) {
 			root := &cli.Command{Name: "openai", Writer: &bytes.Buffer{}, ErrWriter: &bytes.Buffer{}, Flags: []cli.Flag{&cli.StringFlag{Name: "format", Value: "auto"}, &cli.StringFlag{Name: "transform"}, &cli.BoolFlag{Name: "raw-output"}}, Commands: []*cli.Command{{Name: "images"}}}
-			custom.ConfigureCommand(root)
-			custom.ConfigureCommand(root)
+			appconfig.ConfigureCommand(root)
+			appconfig.ConfigureCommand(root)
 			require.NotNil(t, root.Command("images").Command("preview"))
 			require.NotNil(t, root.Command("images").Command("inline").Command("off"))
 			require.Error(t, root.Run(t.Context(), append([]string{"openai"}, argv...)))
@@ -154,13 +154,13 @@ func TestImagePreviewRegistrationPreservesInlineCommands(t *testing.T) {
 				shared.Commands = append(shared.Commands, &cli.Command{Name: "existing"})
 			}
 			if order == "saved first" {
-				custom.ConfigureCommand(root)
+				appconfig.ConfigureCommand(root)
 				addOtherCommands()
 			} else {
 				addOtherCommands()
-				custom.ConfigureCommand(root)
+				appconfig.ConfigureCommand(root)
 			}
-			custom.ConfigureCommand(root)
+			appconfig.ConfigureCommand(root)
 			require.Same(t, shared, images.Command("inline"))
 			counts := map[string]int{}
 			for _, command := range images.Commands {

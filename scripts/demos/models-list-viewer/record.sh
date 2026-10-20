@@ -49,10 +49,10 @@ SCENE
 } > "$demo_output/metadata.txt"
 shasum -a 256 "$demo_source/record.sh" "$demo_source/scene.py" "$demo_source/server.py" \
   "$demo_root/scripts/demos/capture_and_render.sh" "$demo_root/scripts/image_picker_harness.py" \
-  "$demo_root/internal/commands/models/models_list_viewer.go" "$demo_root/pkg/custom/list_navigation.go" \
+  "$demo_root/internal/commands/models/models_list_viewer.go" "$demo_root/internal/app/list_navigation.go" \
   "$demo_root/internal/commands/models/models_list_table.go" "$demo_root/internal/output/transform/project_models_list.go" \
   "$demo_root/internal/commands/models/models_list_loading.go" \
-  "$demo_root/pkg/custom/models_policy.go" "$demo_root/internal/output/listview/navigation.go" \
+  "$demo_root/internal/app/models_policy.go" "$demo_root/internal/output/listview/navigation.go" \
   > "$demo_output/source-sha256.txt"
 cp "$demo_runtime/scene.sh" "$demo_output/scene.sh"
 demo_window_size="${demo_width}x36"

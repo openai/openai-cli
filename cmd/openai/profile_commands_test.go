@@ -955,7 +955,7 @@ func TestMainProfileCanceledReceiptProcess(t *testing.T) {
 	if os.Getenv("OPENAI_CLI_PROFILE_CANCEL_BEFORE") == "1" {
 		cancel()
 	}
-	os.Exit(app.Run(ctx, os.Args[separator+1:]))
+	os.Exit(app.Run(ctx, os.Args[separator+1:], commands.Command))
 }
 
 func TestMainProfileCancellationPreservesCommittedOutcomes(t *testing.T) {

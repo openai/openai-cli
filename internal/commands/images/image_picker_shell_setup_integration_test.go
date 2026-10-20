@@ -15,7 +15,7 @@ import (
 	"github.com/openai/openai-cli/internal/autocomplete"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/images"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -47,7 +47,7 @@ func runPickerShellSetupWithDiagnostics(t *testing.T, ctx context.Context, args 
 		Commands:       []*cli.Command{{Name: "@completion", Action: autocomplete.OutputCompletionScript}},
 	}
 	images.ConfigureCompletion(root)
-	images.ConfigureShellSetup(root, custom.ImagePreviewOptions().Receipt)
+	images.ConfigureShellSetup(root, appconfig.ImagePreviewOptions().Receipt)
 	err = root.Run(ctx, append([]string{"openai", "@completion"}, args...))
 	os.Stderr = previousStderr
 	closeErr := diagnostics.Close()
@@ -118,7 +118,7 @@ func TestImagePickerShellSetupRejectsPowerShellWithoutWriting(t *testing.T) {
 			require.Empty(t, output)
 			require.Empty(t, diagnostic)
 			var presented bytes.Buffer
-			require.NoError(t, custom.ShowCommandError(readableErrorTestCommand(t), err, &presented))
+			require.NoError(t, appconfig.ShowCommandError(readableErrorTestCommand(t), err, &presented))
 			require.Contains(t, presented.String(), "PowerShell uses normal Tab completion")
 			entries, err := os.ReadDir(home)
 			require.NoError(t, err)
@@ -151,7 +151,7 @@ func TestImagePickerShellSetupValidationPreservesRecoveryAndExit(t *testing.T) {
 			require.True(t, errors.Is(failure, local.Cause))
 			for _, format := range []string{"text", "json"} {
 				var presented bytes.Buffer
-				require.NoError(t, custom.ShowCommandError(readableErrorTestCommand(t, "--format-error", format), failure, &presented))
+				require.NoError(t, appconfig.ShowCommandError(readableErrorTestCommand(t, "--format-error", format), failure, &presented))
 				require.Contains(t, presented.String(), tc.message)
 				require.NotContains(t, presented.String(), "synthetic-private")
 			}

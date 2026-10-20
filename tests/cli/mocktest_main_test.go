@@ -6,10 +6,10 @@ import (
 
 	"github.com/openai/openai-cli/generated/commands"
 	"github.com/openai/openai-cli/internal/mocktest"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 )
 
 func TestMain(m *testing.M) {
-	custom.ConfigureCommand(commands.Command)
+	appconfig.ConfigureCommand(commands.Command)
 	os.Exit(mocktest.RunTests(m))
 }

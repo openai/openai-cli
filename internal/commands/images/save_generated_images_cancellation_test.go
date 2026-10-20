@@ -17,7 +17,7 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/openai/openai-cli/internal/commands/images"
 	clioutput "github.com/openai/openai-cli/internal/output"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"
@@ -75,7 +75,7 @@ func TestSavedImageCancellationPreservesRecovery(t *testing.T) {
 				})
 				plan := images.NewOutputPlanForTest(directory, "robot", "off")
 				presentation := images.WithPresentationForTest(checking, plan, writer)
-				failure := custom.ShowJSON(response, custom.ShowJSONOpts{
+				failure := appconfig.ShowJSON(response, appconfig.ShowJSONOpts{
 					Context: presentation, Operation: imageGenerationOperation, OutputKind: OutputResponse,
 					Format: "auto", Stdout: writer, Stderr: io.Discard,
 				})
@@ -118,7 +118,7 @@ func TestSavedImageCancellationPreservesRecovery(t *testing.T) {
 					}
 					require.Equal(t, wantStatus, status)
 					var diagnostic bytes.Buffer
-					require.NoError(t, custom.ShowCommandError(root, wrapped, &diagnostic))
+					require.NoError(t, appconfig.ShowCommandError(root, wrapped, &diagnostic))
 					assertReadableErrorContainsNoPrivateDetails(t, diagnostic.String())
 					require.NotContains(t, diagnostic.String(), encoded)
 					message := diagnostic.String()
@@ -188,7 +188,7 @@ func TestSavedImageCancellationWithoutCompletedFiles(t *testing.T) {
 					return receipt.Write(data)
 				})
 				presentation := images.WithPresentationForTest(checking, plan, writer)
-				failure := custom.ShowJSON(response, custom.ShowJSONOpts{
+				failure := appconfig.ShowJSON(response, appconfig.ShowJSONOpts{
 					Context: presentation, Operation: imageGenerationOperation, OutputKind: OutputResponse,
 					Format: "auto", Stdout: writer, Stderr: io.Discard,
 				})
@@ -223,7 +223,7 @@ func TestSavedImageCancellationWithoutCompletedFiles(t *testing.T) {
 					}
 					require.Equal(t, wantStatus, status)
 					var diagnostic bytes.Buffer
-					require.NoError(t, custom.ShowCommandError(root, wrapped, &diagnostic))
+					require.NoError(t, appconfig.ShowCommandError(root, wrapped, &diagnostic))
 					assertReadableErrorContainsNoPrivateDetails(t, diagnostic.String())
 					require.NotContains(t, diagnostic.String(), directory)
 					require.NotContains(t, diagnostic.String(), encoded)
@@ -256,7 +256,7 @@ func TestSavedImageFailureWithoutCompletedFilesKeepsRecovery(t *testing.T) {
 			plan := images.NewOutputPlanForTest(t.TempDir(), "robot", "off")
 			var receipt bytes.Buffer
 			presentation := images.WithPresentationForTest(t.Context(), plan, &receipt)
-			failure := custom.ShowJSON(response, custom.ShowJSONOpts{
+			failure := appconfig.ShowJSON(response, appconfig.ShowJSONOpts{
 				Context: presentation, Operation: imageGenerationOperation, OutputKind: OutputResponse,
 				Format: "auto", Stdout: &receipt, Stderr: io.Discard,
 			})
@@ -269,7 +269,7 @@ func TestSavedImageFailureWithoutCompletedFilesKeepsRecovery(t *testing.T) {
 			require.Empty(t, entries)
 			root := readableErrorTestCommand(t, "--format-error", format)
 			var diagnostic bytes.Buffer
-			require.NoError(t, custom.ShowCommandError(root, imageWrapError(root, failure), &diagnostic))
+			require.NoError(t, appconfig.ShowCommandError(root, imageWrapError(root, failure), &diagnostic))
 			assertReadableErrorContainsNoPrivateDetails(t, diagnostic.String())
 			require.NotContains(t, diagnostic.String(), plan.DirectoryForTest())
 			want := "The API responded, but no images could be saved. Check the image data and output folder before trying again."
@@ -296,12 +296,12 @@ func TestImagePreferenceCancellationKeepsPathPrivate(t *testing.T) {
 	for _, format := range []string{"text", "json"} {
 		t.Run(format, func(t *testing.T) {
 			root := readableErrorTestCommand(t, "--format-error", format)
-			failure := images.TestImageInlinePreferenceCommands(custom.ImagePreviewOptions().Receipt)[0].Action(ctx, root)
+			failure := images.TestImageInlinePreferenceCommands(appconfig.ImagePreviewOptions().Receipt)[0].Action(ctx, root)
 			require.ErrorIs(t, failure, context.Canceled)
 			require.Contains(t, failure.Error(), "Could not save the inline preference.")
 			require.NotContains(t, failure.Error(), path)
 			var output bytes.Buffer
-			require.NoError(t, custom.ShowCommandError(root, imageWrapError(root, failure), &output))
+			require.NoError(t, appconfig.ShowCommandError(root, imageWrapError(root, failure), &output))
 			assertReadableErrorContainsNoPrivateDetails(t, output.String())
 			require.NotContains(t, output.String(), path)
 			if format == "json" {
@@ -338,7 +338,7 @@ func TestSavedImageCancellationOutputModes(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := readableErrorTestCommand(t, test.args...)
 			var output bytes.Buffer
-			require.NoError(t, custom.ShowCommandError(root, failure, &output))
+			require.NoError(t, appconfig.ShowCommandError(root, failure, &output))
 			switch test.format {
 			case "text":
 				require.Equal(t, want+"\n", output.String())
@@ -356,7 +356,7 @@ func TestSavedImageCancellationOutputModes(t *testing.T) {
 				require.Equal(t, map[string]any{"message": want}, document)
 			}
 			sinkErr := errors.New("synthetic diagnostic sink failure")
-			require.ErrorIs(t, custom.ShowCommandError(root, failure, errorSink{sinkErr}), sinkErr)
+			require.ErrorIs(t, appconfig.ShowCommandError(root, failure, errorSink{sinkErr}), sinkErr)
 			require.ErrorIs(t, failure, context.Canceled)
 		})
 	}
@@ -399,7 +399,7 @@ func TestSavedImageCancellationAfterReceiptKeepsSavedResult(t *testing.T) {
 					return n, err
 				})
 				presentation := images.WithPresentationForTest(ctx, plan, writer)
-				failure := custom.ShowJSON(response, custom.ShowJSONOpts{
+				failure := appconfig.ShowJSON(response, appconfig.ShowJSONOpts{
 					Context: presentation, Operation: imageGenerationOperation, OutputKind: OutputResponse,
 					Format: "auto", Stdout: writer, Stderr: io.Discard,
 				})
@@ -430,7 +430,7 @@ func TestSavedImageCancellationAfterReceiptKeepsSavedResult(t *testing.T) {
 					}
 					require.Equal(t, wantStatus, status)
 					var diagnostic bytes.Buffer
-					require.NoError(t, custom.ShowCommandError(root, wrapped, &diagnostic))
+					require.NoError(t, appconfig.ShowCommandError(root, wrapped, &diagnostic))
 					assertReadableErrorContainsNoPrivateDetails(t, diagnostic.String())
 					require.NotContains(t, diagnostic.String(), plan.DirectoryForTest())
 					require.NotContains(t, diagnostic.String(), encoded)

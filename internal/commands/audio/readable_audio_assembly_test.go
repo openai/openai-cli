@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/commands/audio"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -21,12 +21,12 @@ func TestAudioTextPresentationFormatsAndCancellation(t *testing.T) {
 			ctx, cancel := context.WithCancel(audio.TextContextForTest(t.Context(), "Spoken words"))
 			defer cancel()
 			var out strings.Builder
-			opts := custom.ShowJSONOpts{Context: ctx, Operation: "(resource) audio.transcriptions > (method) create", OutputKind: custom.OutputResponse, Stdout: &out, Format: tc.format, ExplicitFormat: true}
-			require.NoError(t, custom.ShowJSON(gjson.Result{}, opts))
+			opts := appconfig.ShowJSONOpts{Context: ctx, Operation: "(resource) audio.transcriptions > (method) create", OutputKind: appconfig.OutputResponse, Stdout: &out, Format: tc.format, ExplicitFormat: true}
+			require.NoError(t, appconfig.ShowJSON(gjson.Result{}, opts))
 			require.Equal(t, tc.want, out.String())
 			out.Reset()
 			cancel()
-			require.ErrorIs(t, custom.ShowJSON(gjson.Result{}, opts), context.Canceled)
+			require.ErrorIs(t, appconfig.ShowJSON(gjson.Result{}, opts), context.Canceled)
 			require.Empty(t, out.String())
 		})
 	}
@@ -34,7 +34,7 @@ func TestAudioTextPresentationFormatsAndCancellation(t *testing.T) {
 
 func TestAudioTextRawReportsShortWrite(t *testing.T) {
 	ctx := audio.TextContextForTest(t.Context(), "Spoken words")
-	err := custom.ShowJSON(gjson.Result{}, custom.ShowJSONOpts{Context: ctx, Operation: "(resource) audio.translations > (method) create", OutputKind: custom.OutputResponse, Stdout: shortDownloadWriter{}, Format: "raw", ExplicitFormat: true})
+	err := appconfig.ShowJSON(gjson.Result{}, appconfig.ShowJSONOpts{Context: ctx, Operation: "(resource) audio.translations > (method) create", OutputKind: appconfig.OutputResponse, Stdout: shortDownloadWriter{}, Format: "raw", ExplicitFormat: true})
 	require.ErrorIs(t, err, io.ErrShortWrite)
 }
 
@@ -51,7 +51,7 @@ func TestAudioTextPreservesExtractionAndEmptyResults(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := audio.TextContextForTest(t.Context(), tc.input)
 			var out strings.Builder
-			err := custom.ShowJSON(gjson.Result{}, custom.ShowJSONOpts{Context: ctx, Operation: "(resource) audio.transcriptions > (method) create", OutputKind: custom.OutputResponse, Stdout: &out, Format: tc.format, ExplicitFormat: true, RawOutput: tc.raw, Transform: tc.transform})
+			err := appconfig.ShowJSON(gjson.Result{}, appconfig.ShowJSONOpts{Context: ctx, Operation: "(resource) audio.transcriptions > (method) create", OutputKind: appconfig.OutputResponse, Stdout: &out, Format: tc.format, ExplicitFormat: true, RawOutput: tc.raw, Transform: tc.transform})
 			require.NoError(t, err)
 			require.Equal(t, tc.want, out.String())
 		})
