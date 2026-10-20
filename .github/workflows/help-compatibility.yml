@@ -467,7 +467,7 @@ jobs:
             macOS) export OPENAI_CLI_REQUIRE_NATIVE_SHELLS=bash,zsh; selected_shells='bash|zsh' ;;
             *) exit 1 ;;
           esac
-          go test -p 1 ./pkg/custom -parallel=1 -count=1 -timeout=1m -v -json \
+          go test -p 1 ./internal/commands/images -parallel=1 -count=1 -timeout=1m -v -json \
             -run "^TestImagePickerProfileCommandNativeShellRoundTrip$/^($selected_shells)$" \
             | tee "$RUNNER_TEMP/profile-native-shell-tests.jsonl"
       - name: Test Windows profile command native PowerShell
@@ -479,7 +479,7 @@ jobs:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 1 ./pkg/custom -parallel=1 -count=1 -timeout=1m -v -json -run '^TestImagePickerProfileCommandNativeShellRoundTrip$/^pwsh$' |
+          go test -p 1 ./internal/commands/images -parallel=1 -count=1 -timeout=1m -v -json -run '^TestImagePickerProfileCommandNativeShellRoundTrip$/^pwsh$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'profile-native-shell-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Unix copied profile recovery in native shells
@@ -808,7 +808,7 @@ jobs:
           set -euo pipefail
           go test -p 2 ./internal/imageprefs -count=1 -timeout=3m -v -json -run '^(TestImagePreferenceDefaultAndReplacement|TestImagePreferenceInvalidSettingsRemainUntouched|TestImagePreferenceConcurrentWritesAndCancellation|TestImagePreferenceWaitingWriterKeepsNewSchema|TestImagePreferenceWaitingWriterCancellationAndReplacement|TestImagePreferenceRejectsUnsafePaths|TestImagePreferenceRejectsUnsafeWriterLocks|TestImagePreferencePermissionFailuresKeepFile)$' \
             | tee "$RUNNER_TEMP/image-preference-state-tests.jsonl"
-          go test -p 2 ./pkg/custom -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateRejectsExposedPermissions|TestImagePickerStateWriteFailureKeepsPrevious)$' \
+          go test -p 2 ./internal/commands/images -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateRejectsExposedPermissions|TestImagePickerStateWriteFailureKeepsPrevious)$' \
             | tee "$RUNNER_TEMP/image-picker-state-tests.jsonl"
       - name: Test Windows image preferences and picker state
         if: matrix.image-state && runner.os == 'Windows' && matrix.shard != 'dispatch'
@@ -821,7 +821,7 @@ jobs:
           go test -p 2 ./internal/imageprefs -count=1 -timeout=3m -v -json -run '^(TestImagePreferenceDefaultAndReplacement|TestImagePreferenceInvalidSettingsRemainUntouched|TestImagePreferenceConcurrentWritesAndCancellation|TestImagePreferenceWaitingWriterKeepsNewSchema|TestImagePreferenceWaitingWriterCancellationAndReplacement|TestImagePreferenceRejectsUnsafePaths|TestImagePreferenceRejectsUnsafeWriterLocks|TestImagePreferenceWindowsAccessDeniedKeepsFile)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-preference-state-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -p 2 ./pkg/custom -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateWindowsAccessDeniedKeepsPrevious)$' |
+          go test -p 2 ./internal/commands/images -count=1 -timeout=3m -v -json -run '^(TestImagePickerStateRoundTripAndPrivateReplacement|TestImagePickerStateIgnoresLegacyPrompt|TestImagePickerStateMalformedAndUnknownRemainUntouched|TestImagePickerStateCanceledWriteKeepsPreviousAndCleansTemporary|TestImagePickerStateConcurrentSavesKeepWholeRecords|TestImagePickerStateLimitIncludesPromptWithoutLimitingGeneration|TestImagePickerStateAcceptsExactPersistenceLimit|TestImagePickerStateRejectsUnstableSaveFolders|TestImagePickerStateRejectsSpecialFilesAndSymlinks|TestImagePickerStateWindowsAccessDeniedKeepsPrevious)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'image-picker-state-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test request configuration
@@ -1242,7 +1242,7 @@ jobs:
           suites["profile-native-shell-tests.jsonl"] = required_cases(
               "TestImagePickerProfileCommandNativeShellRoundTrip", profile_shells[os.environ["RUNNER_OS"]],
           )
-          strict_packages["profile-native-shell-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+          strict_packages["profile-native-shell-tests.jsonl"] = "github.com/openai/openai-cli/internal/commands/images"
           profile_recovery_root = "TestMainProfileCopiedRecoveryPreservesInvocation"
           profile_recovery_cases = [
               "missing_get", "duplicate_create", "missing_set", "missing_activate",
@@ -1459,7 +1459,7 @@ jobs:
                   picker_cases["TestImagePickerStateWriteFailureKeepsPrevious"] = []
               for filename, package, cases in [
                   ("image-preference-state-tests.jsonl", "internal/imageprefs", preference_cases),
-                  ("image-picker-state-tests.jsonl", "pkg/custom", picker_cases),
+                  ("image-picker-state-tests.jsonl", "internal/commands/images", picker_cases),
               ]:
                   suites[filename] = set().union(*(required_cases(root, children) for root, children in cases.items()))
                   strict_packages[filename] = "github.com/openai/openai-cli/" + package
@@ -2329,12 +2329,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-app.test') ./internal/app
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -c -o (Join-Path $env:RUNNER_TEMP 'wsl-images.test') ./internal/commands/images
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go mod verify
           exit $LASTEXITCODE
       - name: Run compatibility checks in disposable Ubuntu WSL 1
         shell: pwsh
         timeout-minutes: 16
-        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') --process-binary (Join-Path $env:RUNNER_TEMP 'wsl-process.test') --app-binary (Join-Path $env:RUNNER_TEMP 'wsl-app.test') ${{ matrix.arguments }}
+        run: python -I -B scripts/check-wsl-pager.py --binary (Join-Path $env:RUNNER_TEMP 'wsl-pager.test') --process-binary (Join-Path $env:RUNNER_TEMP 'wsl-process.test') --app-binary (Join-Path $env:RUNNER_TEMP 'wsl-app.test') --images-binary (Join-Path $env:RUNNER_TEMP 'wsl-images.test') ${{ matrix.arguments }}
       - name: Reconcile the owned WSL distribution
         if: always()
         shell: pwsh

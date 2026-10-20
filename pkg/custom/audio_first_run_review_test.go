@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	audiocommands "github.com/openai/openai-cli/internal/commands/audio"
+	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -30,7 +31,7 @@ func TestAudioReviewLocalCommandsSuppressFirstRunSetup(t *testing.T) {
 				{"openai", "audio", "--format", "json", leaf},
 				{"openai", "help", "audio", leaf},
 			} {
-				require.True(t, imagePickerFirstRunEligible(args, getenv, true, true, true, shell), "nil-root policy remains unchanged")
+				require.True(t, images.FirstRunEligible(args, getenv, true, true, true, shell), "nil-root policy remains unchanged")
 				require.True(t, audiocommands.SkipFirstRunSetup(root, args), "registered local audio path must skip setup: %q", args)
 			}
 		}

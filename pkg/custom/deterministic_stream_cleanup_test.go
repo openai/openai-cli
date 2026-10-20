@@ -209,22 +209,6 @@ func TestDeterministicStreamCleanupRepeatedLoopbackExit(t *testing.T) {
 	}
 }
 
-func TestDeterministicStreamCleanupKeepsSavedImageOwner(t *testing.T) {
-	for _, event := range []string{
-		`{"type":"image_generation.completed","b64_json":"iVBORw0KGgo="}`,
-		`{"type":"image_generation.failed"}`,
-	} {
-		stream := &deterministicCleanupIterator{events: []outputJSON{{gjson.Parse(event)}}}
-		plan := &imageOutputPlan{directory: t.TempDir(), name: "synthetic", inline: "off"}
-		ctx := context.WithValue(t.Context(), imagePresentationKey{}, imagePresentation{plan: plan, writer: io.Discard})
-		err := ShowJSONIterator(stream, 0, ShowJSONOpts{Context: ctx, Operation: imageGenerationOperation, OutputKind: OutputStreamEvent})
-		failed := gjson.Get(event, "type").String() == "image_generation.failed"
-		if (err != nil) != failed || stream.reads != 1 || stream.closes != 1 {
-			t.Fatalf("saved-image owner changed: err=%v reads=%d closes=%d", err, stream.reads, stream.closes)
-		}
-	}
-}
-
 type deterministicSpeechBody struct {
 	io.Reader
 	closes int

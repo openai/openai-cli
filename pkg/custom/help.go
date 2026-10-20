@@ -4,7 +4,9 @@ import (
 	"strings"
 
 	"github.com/openai/openai-cli/internal/clihelp"
+	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/admin"
+	imagecommands "github.com/openai/openai-cli/internal/commands/images"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
@@ -12,7 +14,7 @@ import (
 
 // ConfigureHelp decorates help without changing API commands or their defaults.
 func ConfigureHelp(root *cli.Command, args []string) ([]string, bool, error) {
-	orderImageCommands(root)
+	localcommands.OrderImages(root)
 	configureGlobalFlagDescriptions(root)
 	configureHelpGroups(root)
 	configureImageHelpContent(root)
@@ -140,7 +142,7 @@ func configureImageHelpContent(root *cli.Command) {
 			Examples: []clihelp.Example{{Description: "Create a variation with images edit:", Command: `images edit --image "photo.png" --prompt "Create a variation of this image" --name variation`}},
 		},
 		"preview": {
-			Description: imagePreviewDetails + "\nReplace photo.png with your saved image's path.\n" +
+			Description: imagecommands.PreviewDetails + "\nReplace photo.png with your saved image's path.\n" +
 				"Pipes, CI and terminals without supported graphics or color cannot display previews.\n" +
 				"Preview limits: 64 MiB and 16 megapixels. Larger originals are still kept.",
 			Examples:          []clihelp.Example{{Description: "View a saved image:", Command: `images preview "photo.png"`}},

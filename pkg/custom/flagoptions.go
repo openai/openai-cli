@@ -7,6 +7,7 @@ import (
 	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/commands/admin"
 	"github.com/openai/openai-cli/internal/commands/audio"
+	"github.com/openai/openai-cli/internal/commands/images"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
@@ -48,22 +49,17 @@ func flagOptionsWithStdin(
 	stdin io.Reader,
 	observeJSON ...func([]byte),
 ) (options []option.RequestOption, err error) {
-	if prepared, ok, err := consumeImageSavingRequest(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin); ok {
+	if prepared, ok, err := images.ConsumeSavingRequest(cmd, nestedFormat, arrayFormat, bodyType, ignoreStdin); ok {
 		return prepared, err
 	}
 	hooks := requestconfig.PreparationHooks{
 		PreflightMultipart:  func(body map[string]any) error { return audio.PreflightVoiceBody(cmd, body) },
 		ValidateCredentials: func() error { return admin.CheckCredentials(cmd) },
 		Encoding: requestconfig.EncodingHooks{
-			PrepareMultipart: func(body map[string]any) error { return prepareImageMultipartBody(cmd, body) },
+			PrepareMultipart: func(body map[string]any) error { return images.PrepareMultipartBody(cmd, body) },
 			ValidateJSON:     func(body []byte) error { return validateProjectAPIKeyUpdate(cmd, body) },
 			ObserveJSON:      observeJSON,
-			ObserveMultipart: func(body io.Closer) {
-				// Look up the feature state only when the encoded body is ready.
-				if state, ok := cmd.Metadata[imageMultipartMetadata].(*imageMultipartPreparation); ok {
-					state.body = body
-				}
-			},
+			ObserveMultipart: func(body io.Closer) { images.ObserveMultipart(cmd, body) },
 		},
 	}
 	if audio.IsVoiceAction(cmd) {

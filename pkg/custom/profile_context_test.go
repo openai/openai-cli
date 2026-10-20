@@ -19,6 +19,7 @@ import (
 	"unicode"
 
 	localcommands "github.com/openai/openai-cli/internal/commands"
+	audiocommands "github.com/openai/openai-cli/internal/commands/audio"
 	batchcommands "github.com/openai/openai-cli/internal/commands/batches"
 	filecommands "github.com/openai/openai-cli/internal/commands/files"
 	clioutput "github.com/openai/openai-cli/internal/output"
@@ -154,18 +155,27 @@ func TestProfileContextSelectorCommandReuse(t *testing.T) {
 			require.NoError(t, err)
 			root := profileContextTestRoot(t)
 			var got []string
+			var wantExplicit bool
+			var wantSelection string
 			root.Command("auth").Command("status").Action = func(_ context.Context, _ *cli.Command) error {
+				require.Equal(t, wantExplicit, root.IsSet("profile"))
+				require.Equal(t, wantSelection, root.String("profile"))
 				report, err := resolveAuthStatus(root, os.LookupEnv)
 				got = append(got, report.Project.Value)
 				return err
 			}
-			for _, args := range [][]string{
-				{"openai", "--profile=work", "auth", "status"},
-				{"openai", "auth", "status"},
-				{"openai", "--profile=", "auth", "status"},
-				{"openai", "auth", "status"},
+			for _, invocation := range []struct {
+				args     []string
+				explicit bool
+				selected string
+			}{
+				{[]string{"openai", "--profile=work", "auth", "status"}, true, "work"},
+				{[]string{"openai", "auth", "status"}, false, ""},
+				{[]string{"openai", "--profile=", "auth", "status"}, true, ""},
+				{[]string{"openai", "auth", "status"}, false, ""},
 			} {
-				require.NoError(t, root.Run(t.Context(), args))
+				wantExplicit, wantSelection = invocation.explicit, invocation.selected
+				require.NoError(t, root.Run(t.Context(), invocation.args))
 			}
 			require.Equal(t, []string{work, fallback, "", fallback}, got)
 		})
@@ -652,4 +662,91 @@ func executeProfilePreview(t *testing.T, shell, command, pathDirectory string) p
 	protected, err := os.ReadFile(protectedPath)
 	require.NoError(t, err)
 	return profilePreviewCapture{strings.Split(string(rawArgs[:len(rawArgs)-1]), "\x00"), input, string(protected)}
+}
+
+func TestAuthStatusSkipsFirstRunSetupByDeclaredCommand(t *testing.T) {
+	root := authStatusTestRoot(nil)
+	configureProfileContext(root)
+	registerProfileCommands(root)
+	root.Commands = append(root.Commands, &cli.Command{Name: "models", Commands: []*cli.Command{{Name: "list"}}})
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"openai", "auth", "status"}, true},
+		{[]string{"openai", "profile", "list"}, true},
+		{[]string{"openai", "--profile", "work", "auth", "switch", "--to-project", "proj_next"}, true},
+		{[]string{"openai", "--profile", "profile", "models", "list"}, false},
+		{[]string{"openai", "help", "profile", "list"}, true},
+		{[]string{"openai", "--api-key", "synthetic", "auth", "status"}, true},
+		{[]string{"openai", "--api-key=synthetic", "auth", "--format=json", "status"}, true},
+		{[]string{"openai", "help", "auth", "status"}, true},
+		{[]string{"openai", "--", "auth", "status"}, true},
+		{[]string{"openai", "auth", "--help"}, true},
+		{[]string{"openai", "auth", "status", "--unknown"}, true},
+		{[]string{"openai", "--debug=false", "auth", "status"}, true},
+		{[]string{"openai", "--api-key", "auth", "models", "list"}, false},
+		{[]string{"openai", "--header", "X-Test: auth", "models", "list"}, false},
+		{[]string{"openai", "--base-url=auth", "models", "list"}, false},
+		{[]string{"openai", "models", "list", "auth"}, false},
+		{[]string{"openai", "--unknown", "auth", "status"}, false},
+		{[]string{"openai", "--api-key", "auth"}, false},
+		{[]string{"openai"}, false},
+	} {
+		require.Equal(t, tc.want, skipContextFirstRunSetup(root, tc.args), "%q", tc.args)
+	}
+	require.False(t, skipContextFirstRunSetup(nil, []string{"openai", "auth", "status"}))
+	require.False(t, skipContextFirstRunSetup(&cli.Command{}, []string{"openai", "auth", "status"}))
+}
+
+func TestContextFirstRunPreservesLinkTokenExclusion(t *testing.T) {
+	declared := authStatusTestRoot(nil)
+	configureProfileContext(declared)
+	registerProfileCommands(declared)
+	declared.Commands = append(declared.Commands,
+		&cli.Command{Name: "models", Commands: []*cli.Command{{Name: "list"}}},
+		&cli.Command{Name: "audio", Commands: []*cli.Command{
+			{Name: "voices", Metadata: map[string]any{audiocommands.LocalMetadata: true}},
+			{Name: "generate"},
+		}},
+	)
+	for _, root := range []struct {
+		name    string
+		command *cli.Command
+	}{
+		{"absent", nil},
+		{"empty", &cli.Command{}},
+		{"declared", declared},
+	} {
+		for _, test := range []struct {
+			args []string
+			want bool
+		}{
+			{nil, false},
+			{[]string{"openai"}, false},
+			{[]string{"link"}, false},
+			{[]string{"unlink"}, false},
+			{[]string{"openai", "link"}, true},
+			{[]string{"openai", "unlink"}, true},
+			{[]string{"openai", "--project", "proj_fixture", "link"}, true},
+			{[]string{"openai", "--project", "proj_fixture", "unlink"}, true},
+			{[]string{"openai", "--api-key", "link", "models", "list"}, true},
+			{[]string{"openai", "--api-key", "unlink", "models", "list"}, true},
+			{[]string{"openai", "models", "list", "link"}, true},
+			{[]string{"openai", "models", "list", "unlink"}, true},
+			{[]string{"openai", "--api-key=link", "models", "list"}, false},
+			{[]string{"openai", "--api-key=unlink", "models", "list"}, false},
+			{[]string{"openai", "--api-key", "synthetic-link", "models", "list"}, false},
+			{[]string{"openai", "models", "list", "linked"}, false},
+			{[]string{"openai", "models", "list", "unlink-extra"}, false},
+			{[]string{"openai", "models", "list"}, false},
+		} {
+			require.Equal(t, test.want, skipContextFirstRunSetup(root.command, test.args), "%s: %q", root.name, test.args)
+		}
+	}
+	localAudio := []string{"openai", "audio", "voices"}
+	require.True(t, audiocommands.SkipFirstRunSetup(declared, localAudio))
+	require.False(t, skipContextFirstRunSetup(declared, localAudio))
+	require.False(t, audiocommands.SkipFirstRunSetup(nil, localAudio))
+	require.False(t, audiocommands.SkipFirstRunSetup(declared, []string{"openai", "audio", "generate"}))
 }

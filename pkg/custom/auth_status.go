@@ -582,7 +582,17 @@ func authStatusBaseURL(base authStatusValue) (authStatusEndpoint, bool, error) {
 // Identify local context commands before optional shell setup can spawn a worker.
 // Consume root flag values by declaration, so a request value named "auth" does not match.
 func skipContextFirstRunSetup(root *cli.Command, args []string) bool {
-	if root == nil || len(args) < 2 || root.Command("auth") == nil && root.Command("profile") == nil {
+	if len(args) < 2 {
+		return false
+	}
+	// Preserve the conservative token exclusion before optional setup starts.
+	// This also applies without a root and never parses or rewrites arguments.
+	for _, argument := range args[1:] {
+		if argument == "link" || argument == "unlink" {
+			return true
+		}
+	}
+	if root == nil || root.Command("auth") == nil && root.Command("profile") == nil {
 		return false
 	}
 	lineage := []*cli.Command{root}
