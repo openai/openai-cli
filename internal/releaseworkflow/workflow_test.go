@@ -20,7 +20,7 @@ const (
 	releaseInputsArtifact  = "openai-release-inputs"
 	checkoutAction         = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 	setupGoAction          = "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
-	uploadArtifactAction   = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+	uploadArtifactAction   = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
 	downloadArtifactAction = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
 )
 
