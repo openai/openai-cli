@@ -76,7 +76,7 @@ func TestProjectLinkSkipsFirstRunShellSetup(t *testing.T) {
 		{"openai", "--project=proj_work", "link"}, {"openai", "unlink"},
 		{"openai", "help", "link"}, {"openai", "unlink", "--help"},
 	} {
-		require.False(t, imagePickerFirstRunEligible(args, func(string) string { return "" }, true, true, true, "bash"))
+		require.True(t, skipContextFirstRunSetup(nil, args))
 	}
 }
 
