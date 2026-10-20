@@ -1,4 +1,4 @@
-package custom
+package app
 
 import (
 	"context"
@@ -31,7 +31,7 @@ func audioFirstRunTestRoot() *cli.Command {
 			Flags: []cli.Flag{&cli.BoolFlag{Name: "all", Hidden: true}}},
 	}}
 	requestconfig.ConfigureRootFlags(root)
-	registerAudioCommands(root)
+	audiocommands.RegisterLocal(root, audiocommands.LocalOptions{})
 	root.Command("audio").Command("history").Aliases = []string{"past"}
 	return root
 }

@@ -51,7 +51,7 @@ func Run(ctx context.Context, argv []string) int {
 	custom.ConfigureCommandErrors(app)
 
 	if err == nil {
-		custom.SetupImagePickerShellOnFirstRun(ctx, argv, app)
+		SetupImagePickerShellOnFirstRun(ctx, argv, app)
 		err = custom.RunWithOutputPolicy(ctx, app, func(ctx context.Context) error {
 			return runWithRequestConfiguration(ctx, app, args, completing)
 		})

@@ -355,3 +355,8 @@ Keep release, signing, CODEOWNER, merge-queue, and trusted-main controls intact.
 Help assembly and its contracts live in `internal/app/`: root flag descriptions,
 feature help content, flag groups, and admin setup guidance are configured there
 in the existing order. Rendering remains in `internal/clihelp/`.
+
+Optional first-run shell setup admission lives in `internal/app/`, alongside
+invocation. Its existing terminal checks, synchronous audio command traversal,
+argument copy, single-worker limit, and 250 ms foreground wait are unchanged.
+Image shell installation mechanics remain in `internal/commands/images/`.
