@@ -1220,7 +1220,7 @@ jobs:
               required_cases(root, children) for root, children in auth_profile_cases.items()
           ))
           strict_packages["auth-profile-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
-          if len(auth_profile_cases) != 31 or len(suites["auth-profile-tests.jsonl"]) != 246:
+          if len(auth_profile_cases) != 32 or len(suites["auth-profile-tests.jsonl"]) != 249:
               raise SystemExit("auth-profile-tests.jsonl: unexpected Admin integration inventory")
           if os.environ["RUNNER_OS"] != "Windows":
               suites["auth-identity-signal-tests.jsonl"] = required_cases(
