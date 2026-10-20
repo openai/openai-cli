@@ -957,7 +957,7 @@ func TestArtifactBuildCacheIsSeparateAndRefreshable(t *testing.T) {
 	if cache.With["key"] != prefix+"${{ github.sha }}" || strings.TrimSpace(fmt.Sprint(cache.With["restore-keys"])) != prefix {
 		t.Errorf("artifact cache inputs=%v, want revision-specific save and compatible artifact-only restore", cache.With)
 	}
-	if cache.Uses != "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830" {
+	if cache.Uses != "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" {
 		t.Errorf("artifact cache action=%q, want reviewed cache action with success-only post-save", cache.Uses)
 	}
 	for _, step := range job.Steps {
