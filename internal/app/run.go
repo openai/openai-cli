@@ -47,7 +47,7 @@ func Run(ctx context.Context, argv []string) int {
 		prepareForAutocomplete(app)
 	}
 
-	args, _, err := custom.ConfigureHelp(app, argv)
+	args, _, err := ConfigureHelp(app, argv)
 	custom.ConfigureCommandErrors(app)
 
 	if err == nil {

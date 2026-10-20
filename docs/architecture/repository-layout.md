@@ -351,3 +351,7 @@ entrypoint contracts, check platform compilation, and verify that generated file
 and dependency manifests are untouched. For generator changes, additionally
 verify regenerated snapshots and a repeat generation with no unexplained drift.
 Keep release, signing, CODEOWNER, merge-queue, and trusted-main controls intact.
+
+Help assembly and its contracts live in `internal/app/`: root flag descriptions,
+feature help content, flag groups, and admin setup guidance are configured there
+in the existing order. Rendering remains in `internal/clihelp/`.

@@ -97,7 +97,7 @@ below describes the current layout as the migration proceeds.
 - `internal/testutil/console/` contains shared synthetic Windows console records
   and observer fixtures used only by native feature tests.
 - `internal/app/` owns invocation, request-environment scope, completion setup,
-  output policy, and exit-status selection. Command assembly still uses the
+  output policy, help assembly, and exit-status selection. Command assembly still uses the
   existing generated tree during the layout migration.
 - `api_reference/openapi.transformed.yml` contains the OpenAPI specification
   used by the mock server.
