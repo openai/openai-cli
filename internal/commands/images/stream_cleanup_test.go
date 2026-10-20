@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/commands/images"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/tidwall/gjson"
 )
 
@@ -17,7 +17,7 @@ func TestDeterministicStreamCleanupKeepsSavedImageOwner(t *testing.T) {
 		stream := &deterministicCleanupIterator{events: []images.TestOutputJSON{{Result: gjson.Parse(event)}}}
 		plan := images.NewOutputPlanForTest(t.TempDir(), "synthetic", "off")
 		ctx := images.WithPresentationForTest(t.Context(), plan, io.Discard)
-		err := custom.ShowJSONIterator(stream, 0, custom.ShowJSONOpts{Context: ctx, Operation: imageGenerationOperation, OutputKind: OutputStreamEvent})
+		err := appconfig.ShowJSONIterator(stream, 0, appconfig.ShowJSONOpts{Context: ctx, Operation: imageGenerationOperation, OutputKind: OutputStreamEvent})
 		failed := gjson.Get(event, "type").String() == "image_generation.failed"
 		if (err != nil) != failed || stream.reads != 1 || stream.closes != 1 {
 			t.Fatalf("saved-image owner changed: err=%v reads=%d closes=%d", err, stream.reads, stream.closes)

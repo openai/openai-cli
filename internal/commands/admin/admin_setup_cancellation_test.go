@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/openai/openai-cli/internal/commands/admin"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/require"
@@ -148,12 +148,12 @@ func assertAdminSetupCancellationPresentation(t *testing.T, failure error, messa
 			Flags:    []cli.Flag{&cli.StringFlag{Name: "format", Value: "auto"}, &cli.StringFlag{Name: "format-error", Value: "auto"}, &cli.StringFlag{Name: "transform-error"}, &cli.StringFlag{Name: "transform"}, &cli.BoolFlag{Name: "raw-output"}},
 			Action:   func(context.Context, *cli.Command) error { return failure },
 		}
-		custom.ConfigureCommandErrors(root)
+		appconfig.ConfigureCommandErrors(root)
 		var out bytes.Buffer
 		// The normal command wrapper must retain the canonical cause and code.
 		wrapped := root.Run(t.Context(), []string{"openai", "--format-error", format})
 		require.ErrorIs(t, wrapped, failure)
-		require.NoError(t, custom.ShowCommandError(root, wrapped, &out))
+		require.NoError(t, appconfig.ShowCommandError(root, wrapped, &out))
 		for _, private := range []string{"synthetic-", "https://", "token=", "\x1b", "\a", "\u202e"} {
 			require.NotContains(t, out.String(), private)
 		}

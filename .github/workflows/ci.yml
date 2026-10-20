@@ -92,7 +92,7 @@ jobs:
       - name: Check native macOS picker metadata and profile transactions
         run: go test ./internal/autocomplete -run '^TestPicker' -count=1 -v
       - name: Check native macOS shell targeting and setup decisions
-        run: go test ./internal/commands/images ./pkg/custom -run '^TestImagePicker(Shell|FirstRun|TabChoice|MacOS)' -count=1 -v
+        run: go test ./internal/commands/images ./internal/app -run '^TestImagePicker(Shell|FirstRun|TabChoice|MacOS)' -count=1 -v
 
   minimum-unix-shells:
     name: Minimum Unix executable suggestions
@@ -880,7 +880,7 @@ jobs:
           OPENAI_CLI_REQUIRE_NATIVE_SHELLS: cmd,powershell,pwsh
       - name: Check native Windows download completion and cleanup
         if: matrix.existing-checks
-        run: go test -p 2 ./pkg/custom ./internal/output -run '^(TestWindowsDownload|TestManagedDownload|TestDownload|TestAutomaticDownload|TestBinaryResponsePreserves|TestWriteBinaryResponse|TestReportSaveReceipt|TestSaveReceiptContext|TestResponseSaveReceipt)' -count=1 -v
+        run: go test -p 2 ./internal/app ./internal/output -run '^(TestWindowsDownload|TestManagedDownload|TestDownload|TestAutomaticDownload|TestBinaryResponsePreserves|TestWriteBinaryResponse|TestReportSaveReceipt|TestSaveReceiptContext|TestResponseSaveReceipt)' -count=1 -v
         env:
           GOMAXPROCS: '2'
       - name: Check native Windows Batch stdin and private staging
