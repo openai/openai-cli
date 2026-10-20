@@ -421,6 +421,10 @@ class CustomCodeTests(GitTestCase):
             with self.subTest(value=value):
                 self.git("checkout", "--detach", "-q", base)
                 stats = self.git("show", f"{base}:.castiron.stats.yml")
+                self.write(".castiron.stats.yml", stats + f"\n# pending snapshot: {snapshot}\n")
+                commented = self.commit("mention snapshot without adopting it")
+                self.git("update-ref", "refs/remotes/origin/main", commented)
+                self.assertFalse(report.legacy_snapshot_on_main(self.repo, snapshot, fetch=False))
                 self.write(".castiron.stats.yml", stats + f"\npublic_codegen_sha: {value}\n")
                 adopted = self.commit("adopt formatted snapshot")
                 self.git("update-ref", "refs/remotes/origin/main", adopted)

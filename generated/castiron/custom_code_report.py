@@ -221,7 +221,7 @@ def legacy_snapshot_on_main(repo: Path, commit: str, *, fetch: bool) -> bool:
             "log",
             "--first-parent",
             "--format=%H",
-            f"-S{require_sha(commit)}",
+            f"-G{require_sha(commit)}",
             "refs/remotes/origin/main",
             "--",
             ".castiron.stats.yml",
