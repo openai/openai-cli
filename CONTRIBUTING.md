@@ -77,8 +77,8 @@ below describes the current layout as the migration proceeds.
   metadata without echoing private operands or executing suggested corrections.
 - `internal/app/` owns command assembly, defaults, request/output policy, error
   handling, and presentation orchestration.
-- `pkg/custom/` is a temporary adapter for generated callers; it contains no
-  independent behavior and will disappear when Castiron updates its imports.
+- Generated runtime adapters call `internal/app/` directly; no `pkg/custom/`
+  compatibility package is retained.
 - `internal/request/` owns root request inheritance, literal header and mTLS
   flag definitions, value-safe validation, mTLS transport construction, and client
   metadata setup and scalar-upload inspection/replay. Application assembly retains registration order and the local

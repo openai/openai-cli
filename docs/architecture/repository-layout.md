@@ -20,8 +20,7 @@ raw-string escaping, JSON/YAML/text rendering, and JSON color policy live in
 `internal/output/`. Callers retain classification of their final destination,
 including wrapped batch output and terminals behind pagers. Feature-specific
 selection, interactive exploration, and output lifecycle retain their current
-owners. The format list still reaches the generated runtime bridge through a
-temporary `pkg/custom.OutputFormats` forwarding value.
+owners. The generated runtime bridge reads the format list from `internal/app.OutputFormats`.
 
 The lazy transformed-output iterator and its raw-JSON carrier live in
 `internal/output/`. Direct output, lists, streams, and the explorer share the
@@ -100,9 +99,7 @@ changing request declarations or inventing positional inputs for handwritten com
 
 Literal request-header flags and validation live in `internal/request/`. Request
 preparation and admin authentication use the same parser, preserving validation
-before input reads and credential checks. `pkg/custom.NewRequestHeaderFlag` is a
-temporary forwarding function for the generated runtime bridge; remove it through
-an authoritative generator update rather than editing generated callers by hand.
+before input reads and credential checks. The generated runtime bridge calls `internal/app.NewRequestHeaderFlag` directly.
 
 mTLS transport construction and its unit tests live in `internal/request/`.
 The factory preserves certificate-chain selection, default transport settings,
@@ -120,16 +117,13 @@ Windows and WSL selections, test cases, and assertions.
 Default client options and base-URL scheme validation live in `internal/request/`.
 They preserve CLI metadata, credential and root-project overrides, selected mTLS
 transport, and caller-supplied middleware order. Feature middleware composition
-stays with request assembly. The generated runtime bridge still reaches the
-shared implementation through temporary `pkg/custom/` adapters; remove these
-adapters through an authoritative generator update.
+stays with request assembly. The generated runtime bridge reaches the shared implementation through `internal/app/`.
 
 Query, header, and final-body serialization live in `internal/request/`.
 Assembly supplies the existing image preparation, project validation, JSON
 observation, and multipart cleanup-tracking callbacks at their original encoding
 points. Literal header overrides remain last; assembly retains upload cleanup
-until serialization succeeds. Body-content aliases remain in `pkg/custom/` for
-the generated runtime bridge until its producer is updated.
+until serialization succeeds. The generated runtime bridge uses body-content aliases from `internal/app/`.
 
 Multipart encoding and owned upload sources live in `internal/request/`, with
 streaming, retry/redirect, exact-length, header-validation, and cleanup unit tests.
@@ -152,8 +146,8 @@ Shared flag-to-request preparation, whole-request input eligibility, literal-hea
 validation, debug middleware setup, required-flag checks, and failure cleanup live
 in `internal/request/`. Assembly retains prepared-image reuse and supplies audio
 preflight/expansion, admin credential validation, and encoding callbacks in their
-existing order. The temporary `pkg/custom.FlagOptions` adapter connects generated
-callers to this shared pipeline; feature implementations remain with their owners.
+existing order. The generated runtime bridge calls `internal/app.FlagOptions` for this shared
+pipeline; feature implementations remain with their owners.
 
 Non-consuming stdin classification and platform readiness probes live in `internal/input/`. They preserve the regular-file size
 check, short Unix/Windows probe windows, and caller ownership. Native Windows
@@ -192,8 +186,7 @@ sizing, worker cleanup, and post-restoration printing live in
 `internal/output/listview/`. Assembly supplies rendering and feature-specific
 print-hint/interrupt callbacks, so shared output does not import model commands.
 Assembly retains the `ShowJSONPages`/`InteractiveListOutput` entrypoints; current
-generated commands do not call them. The generated runtime bridge still targets
-the remaining request/output adapters in `pkg/custom/`. The guarded terminal writer shared with the JSON explorer
+generated commands do not call them. The generated runtime bridge targets request/output policy in `internal/app/`. The guarded terminal writer shared with the JSON explorer
 lives in `internal/output/` and retains its original file-close behavior.
 
 Admin credential requirements, setup help, verification, hidden key entry,
@@ -365,6 +358,5 @@ Application assembly, feature request/output policy, errors, and presentation
 orchestration now live in `internal/app/`, with their tests. `cmd/openai` passes
 the generated command tree to `app.Run`, so application policy never imports
 generated commands. Shared request/output implementations keep their existing
-packages. `pkg/custom/runtime.go` contains only the adapter required by current
-Castiron-generated callers; remove it through the producer migration, rather than
-editing generated files. No external Go import compatibility is maintained.
+packages. Castiron-generated callers now import `internal/app/` directly, and the
+temporary `pkg/custom/` adapter has been removed through the producer migration. No external Go import compatibility is maintained.
