@@ -43,7 +43,7 @@ jobs:
           CANDIDATE_SHA: ${{ github.sha }}
         run: python3 scripts/ci/reference_shadow.py --base "$BASE_SHA" --head "$CANDIDATE_SHA" --pr-head "$PR_HEAD_SHA" --output "$RUNNER_TEMP/reference-shadow.json"
       - name: Retain shadow observation
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: reference-shadow-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/reference-shadow.json
@@ -416,7 +416,7 @@ jobs:
           PY
       - name: Retain minimum shell evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: minimum-unix-shells-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/minimum-shell-*.jsonl
@@ -692,7 +692,7 @@ jobs:
           PY
       - name: Retain native Unix PowerShell evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: minimum-unix-powershell-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -1031,7 +1031,7 @@ jobs:
           PY
       - name: Retain native Windows suggestion evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-suggestions-${{ matrix.goarch }}-${{ matrix.powershell }}-${{ github.run_attempt }}
           path: |
@@ -1255,7 +1255,7 @@ jobs:
       - name: Retain audit log
         if: always()
         continue-on-error: true # Diagnostic upload does not replace shard validation.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: error-audit-${{ matrix.shard }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/error-audit.jsonl
