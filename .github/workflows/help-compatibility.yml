@@ -239,7 +239,7 @@ jobs:
           GOMAXPROCS: '2'
         run: |
           set -euo pipefail
-          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=3m -v -json -run '^(TestMainAuthStatusOfflineOutputAndDiagnostics|TestMainAuthStatusCredentialAndContextPrecedence|TestMainAuthStatusPreservesStdin|TestMainAuthStatusDoesNotLoadMTLS|TestMainAuthStatusSanitizesURLsAndTerminalControls|TestMainAuthStatusErrorsRemainPrivate|TestMainAuthStatusIdentitySelectionAndRequestBoundary|TestMainAuthStatusIdentityProviderAndCredentialRejections|TestMainAuthStatusIdentitySelectionRequiresExplicitVerification|TestMainAuthStatusIdentityFailuresRemainUnknownAndPrivate|TestMainAuthStatusIdentityNullableFieldsAndSupportedEndpoints|TestMainAuthStatusIdentityAuthorizationPrecedence|TestMainAuthStatusIdentityTextEscapesTerminalControls|TestMainAuthStatusIdentityDeadline|TestMainProfileShellSuggestionFlagOwnership|TestMainProfileLifecycleAndExactSchemas|TestMainProfileEditsNeverSaveAmbientValues|TestMainProfileBaseURLUsesActualEffectiveEndpoint|TestMainProfileBaseURLRequestPolicy|TestMainProfileBaseURLPolicyPreservesAllowedEndpointsAndOverrides|TestMainProfileStatusMatchesRequestContext|TestMainProfileProjectBypassesMalformedFolderRegistry|TestMainProfileMissingSelectionPreservesCommittedFolderLink|TestMainProfileCancellationPreservesCommittedOutcomes|TestMainProjectLinkOfflineLifecycle|TestMainProjectLinkQuietPreservesInspectionAndJSON|TestMainProjectLinkRequestPrecedence|TestMainProjectLinkDirectoryScope|TestMainProjectLinkMalformedRegistryFailsBeforeRequests|TestMainAuthStatusIdentitySpacedBearerRemainsPrivate)$' \
+          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=3m -v -json -run '^(TestMainAuthStatusOfflineOutputAndDiagnostics|TestMainAuthStatusCredentialAndContextPrecedence|TestMainAuthStatusPreservesStdin|TestMainAuthStatusDoesNotLoadMTLS|TestMainAuthStatusSanitizesURLsAndTerminalControls|TestMainAuthStatusErrorsRemainPrivate|TestMainAuthStatusIdentitySelectionAndRequestBoundary|TestMainAuthStatusIdentityProviderAndCredentialRejections|TestMainAuthStatusIdentitySelectionRequiresExplicitVerification|TestMainAuthStatusIdentityFailuresRemainUnknownAndPrivate|TestMainAuthStatusIdentityNullableFieldsAndSupportedEndpoints|TestMainAuthStatusIdentityAuthorizationPrecedence|TestMainAuthStatusIdentityTextEscapesTerminalControls|TestMainAuthStatusIdentityDeadline|TestMainProfileShellSuggestionFlagOwnership|TestMainProfileLifecycleAndExactSchemas|TestMainProfileEditsNeverSaveAmbientValues|TestMainProfileBaseURLUsesActualEffectiveEndpoint|TestMainProfileBaseURLRequestPolicy|TestMainProfileBaseURLPolicyPreservesAllowedEndpointsAndOverrides|TestMainProfileStatusMatchesRequestContext|TestMainProfileProjectBypassesMalformedFolderRegistry|TestMainProfileMissingSelectionPreservesCommittedFolderLink|TestMainProfileCancellationPreservesCommittedOutcomes|TestMainProjectLinkOfflineLifecycle|TestMainProjectLinkQuietPreservesInspectionAndJSON|TestMainProjectLinkRequestPrecedence|TestMainProjectLinkDirectoryScope|TestMainProjectLinkMalformedRegistryFailsBeforeRequests|TestMainProfileAdminEndpointPreflightMatchesSelection|TestMainAuthStatusIdentitySpacedBearerRemainsPrivate)$' \
             | tee "$RUNNER_TEMP/auth-profile-tests.jsonl"
       - name: Test Windows authentication, profiles, and project links
         if: runner.os == 'Windows' && matrix.shard != 'dispatch'
@@ -249,9 +249,98 @@ jobs:
           GOMAXPROCS: '2'
         run: |
           $ErrorActionPreference = 'Stop'
-          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=3m -v -json -run '^(TestMainAuthStatusOfflineOutputAndDiagnostics|TestMainAuthStatusCredentialAndContextPrecedence|TestMainAuthStatusPreservesStdin|TestMainAuthStatusDoesNotLoadMTLS|TestMainAuthStatusSanitizesURLsAndTerminalControls|TestMainAuthStatusErrorsRemainPrivate|TestMainAuthStatusIdentitySelectionAndRequestBoundary|TestMainAuthStatusIdentityProviderAndCredentialRejections|TestMainAuthStatusIdentitySelectionRequiresExplicitVerification|TestMainAuthStatusIdentityFailuresRemainUnknownAndPrivate|TestMainAuthStatusIdentityNullableFieldsAndSupportedEndpoints|TestMainAuthStatusIdentityAuthorizationPrecedence|TestMainAuthStatusIdentityTextEscapesTerminalControls|TestMainAuthStatusIdentityDeadline|TestMainProfileShellSuggestionFlagOwnership|TestMainProfileLifecycleAndExactSchemas|TestMainProfileEditsNeverSaveAmbientValues|TestMainProfileBaseURLUsesActualEffectiveEndpoint|TestMainProfileBaseURLRequestPolicy|TestMainProfileBaseURLPolicyPreservesAllowedEndpointsAndOverrides|TestMainProfileStatusMatchesRequestContext|TestMainProfileProjectBypassesMalformedFolderRegistry|TestMainProfileMissingSelectionPreservesCommittedFolderLink|TestMainProfileCancellationPreservesCommittedOutcomes|TestMainProjectLinkOfflineLifecycle|TestMainProjectLinkQuietPreservesInspectionAndJSON|TestMainProjectLinkRequestPrecedence|TestMainProjectLinkDirectoryScope|TestMainProjectLinkMalformedRegistryFailsBeforeRequests|TestMainAuthStatusIdentitySpacedBearerRemainsPrivate)$' |
+          go test -p 1 ./cmd/openai -parallel=1 -count=1 -timeout=3m -v -json -run '^(TestMainAuthStatusOfflineOutputAndDiagnostics|TestMainAuthStatusCredentialAndContextPrecedence|TestMainAuthStatusPreservesStdin|TestMainAuthStatusDoesNotLoadMTLS|TestMainAuthStatusSanitizesURLsAndTerminalControls|TestMainAuthStatusErrorsRemainPrivate|TestMainAuthStatusIdentitySelectionAndRequestBoundary|TestMainAuthStatusIdentityProviderAndCredentialRejections|TestMainAuthStatusIdentitySelectionRequiresExplicitVerification|TestMainAuthStatusIdentityFailuresRemainUnknownAndPrivate|TestMainAuthStatusIdentityNullableFieldsAndSupportedEndpoints|TestMainAuthStatusIdentityAuthorizationPrecedence|TestMainAuthStatusIdentityTextEscapesTerminalControls|TestMainAuthStatusIdentityDeadline|TestMainProfileShellSuggestionFlagOwnership|TestMainProfileLifecycleAndExactSchemas|TestMainProfileEditsNeverSaveAmbientValues|TestMainProfileBaseURLUsesActualEffectiveEndpoint|TestMainProfileBaseURLRequestPolicy|TestMainProfileBaseURLPolicyPreservesAllowedEndpointsAndOverrides|TestMainProfileStatusMatchesRequestContext|TestMainProfileProjectBypassesMalformedFolderRegistry|TestMainProfileMissingSelectionPreservesCommittedFolderLink|TestMainProfileCancellationPreservesCommittedOutcomes|TestMainProjectLinkOfflineLifecycle|TestMainProjectLinkQuietPreservesInspectionAndJSON|TestMainProjectLinkRequestPrecedence|TestMainProjectLinkDirectoryScope|TestMainProjectLinkMalformedRegistryFailsBeforeRequests|TestMainProfileAdminEndpointPreflightMatchesSelection|TestMainAuthStatusIdentitySpacedBearerRemainsPrivate)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'auth-profile-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
+      - name: Test native Windows PowerShell literal reference completion
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
+        shell: pwsh
+        timeout-minutes: 4
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-Command pwsh -CommandType Application -ErrorAction Stop | Out-Null
+          $temporary = [IO.Path]::GetFullPath((Join-Path $env:RUNNER_TEMP 'powershell-reference-tmp'))
+          New-Item -ItemType Directory -Path $temporary -Force | Out-Null
+          $env:GOTMPDIR = $temporary
+          $log = Join-Path $env:RUNNER_TEMP 'powershell-reference-tests.jsonl'
+          $receipt = Join-Path $env:RUNNER_TEMP 'powershell-reference-receipt.json'
+          go test -p 1 ./internal/autocomplete -parallel=1 -count=1 -timeout=3m -v -json -run '^TestPowerShellReferenceCompletionUsesLiteralPaths$' |
+            Tee-Object -FilePath $log -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          import hashlib, json, os, re, sys
+          from collections import Counter
+          from pathlib import Path
+
+          log, temporary, receipt = map(Path, sys.argv[1:])
+          root = "TestPowerShellReferenceCompletionUsesLiteralPaths"
+          package = "github.com/openai/openai-cli/internal/autocomplete"
+          fixed = ["'@safe", "@file://safe", "@data://safe", "text@safe", "--format=@safe", "@nested/safe", "'@nested/safe", "\"@nested/safe", "'@bracket[dir]/safe", "'@tick`dir/safe", "'@apostrophe''s/safe", "'@missing[dir]/safe"]
+          if os.name != "nt" or not temporary.is_absolute():
+              raise SystemExit("PowerShell reference evidence requires a native Windows absolute temporary directory")
+          if any(ord(char) < 32 or ord(char) > 126 for char in str(temporary)):
+              raise SystemExit("PowerShell reference temporary directory must have a printable ASCII name")
+          # Go 1.26 TempDir uses the test name, a uint32 decimal suffix, and numbered children.
+          # t.Run replaces spaces with underscores in its reported name.
+          temporary_name = str(temporary).replace(" ", "_")
+          dynamic_pattern = re.compile(
+              re.escape(root + "/'@file://" + temporary_name + "\\" + root)
+              + r"[0-9]{1,10}\\001\\nested\\safe"
+          )
+          counts, names = Counter(), set()
+          for line in log.read_text(encoding="utf-8-sig").splitlines():
+              if not line.strip():
+                  continue
+              event = json.loads(line)
+              action, name = event.get("Action"), event.get("Test", "")
+              if action in {"fail", "skip", "build-fail"}:
+                  raise SystemExit("PowerShell reference evidence contains a failure or skip")
+              if action == "build-output":
+                  continue
+              if event.get("Package") != package:
+                  raise SystemExit("PowerShell reference evidence contains another package")
+              if action not in {"start", "run", "pass", "output"}:
+                  raise SystemExit("PowerShell reference evidence contains an unexpected event")
+              if name:
+                  names.add(name)
+              if action in {"start", "run", "pass"}:
+                  counts[action, name] += 1
+          required = {root} | {root + "/" + child for child in fixed}
+          dynamic = {name for name in names if dynamic_pattern.fullmatch(name)}
+          if len(dynamic) != 1:
+              raise SystemExit("PowerShell reference evidence requires one exact temporary-path case")
+          required |= dynamic
+          expected = Counter({("start", ""): 1, ("pass", ""): 1})
+          expected.update({(action, name): 1 for action in ("run", "pass") for name in required})
+          if len(required) != 14 or names != required or counts != expected:
+              raise SystemExit("PowerShell reference evidence has missing, duplicate, or unexpected names")
+          record = {
+              "state": "EXACT_NATIVE_INVENTORY_PASSED",
+              "package": package, "root": root, "fixed_subcases": fixed,
+              "dynamic_absolute_path_cases": 1, "named_results": 14,
+              "skips": 0, "failures": 0,
+              "runner_os": os.environ.get("RUNNER_OS"),
+              "runner_arch": os.environ.get("RUNNER_ARCH"),
+              "raw_log_sha256": hashlib.sha256(log.read_bytes()).hexdigest(),
+              "test_source_sha256": hashlib.sha256(Path("internal/autocomplete/powershell_reference_test.go").read_bytes()).hexdigest(),
+              "script_source_sha256": hashlib.sha256(Path("internal/autocomplete/shellscripts/pwsh_autocomplete.ps1").read_bytes()).hexdigest(),
+          }
+          receipt.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+          print("PowerShell reference: 14 exact named results passed; no skips")
+          '@ | python - $log $temporary $receipt
+          exit $LASTEXITCODE
+      - name: Retain native PowerShell reference receipt
+        if: always() && runner.os == 'Windows' && matrix.shard != 'dispatch'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: powershell-reference-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/powershell-reference-receipt.json
+            ${{ runner.temp }}/powershell-reference-tests.jsonl
+          if-no-files-found: warn
+          retention-days: 7
       - name: Test identity transport and local command error contracts
         if: runner.os != 'Windows' && matrix.shard != 'dispatch'
         shell: bash
@@ -272,6 +361,32 @@ jobs:
           $ErrorActionPreference = 'Stop'
           go test -p 1 ./pkg/custom -parallel=1 -count=1 -timeout=1m -v -json -run '^(TestAuthStatusIdentityMTLSReaderRegularAndCancellation|TestAuthStatusIdentityVerifiedTLSAndMTLS|TestRootRequestFlagPreParseResetsInvocationState|TestRootRequestFlagsResetProvenanceAcrossRuns|TestRootRequestFlagPreParsePreservesCurrentDefinition|TestRootRequestFlagsReuseMatchesStatusAndSDKRequests|TestAuthStatusIdentityCommandReuseClearsVerification|TestAuthStatusIdentityRejectsReflectedSpacedBearer|TestMTLSClientFlagPreParsePreservesCurrentDefinition|TestMTLSClientFlagsReuseEnvironmentForTLS|TestProjectLinkCancellationGuidanceRetainsErrorBoundary)$' |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'auth-identity-tls-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          exit $LASTEXITCODE
+      - name: Test Unix Admin profile endpoint contracts
+        if: runner.os != 'Windows' && matrix.shard != 'dispatch'
+        shell: bash
+        timeout-minutes: 3
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          set -euo pipefail
+          go test -p 1 ./pkg/custom -parallel=1 -count=1 -timeout=1m -v -json -run '^(TestAdminCredentialsProfileEndpointsMatchRequests|TestAdminCredentialsProfileResolutionFailures|TestAdminCredentialsProfileEndpointSnapshot|TestAdminProfileEndpointDoesNotAuthorizeMTLS)$' \
+            | tee "$RUNNER_TEMP/admin-profile-credentials-tests.jsonl"
+          go test -p 1 ./internal/commands/admin -parallel=1 -count=1 -timeout=1m -v -json -run '^(TestAdminSetupProfileEndpointOptions|TestAdminSetupProfileEndpointRejectsUnsafeOverrides|TestAdminSetupProfileResolutionFailures|TestAdminSetupProfileEndpointLoopback|TestAdminSetupRegisteredEndpointPolicy)$' \
+            | tee "$RUNNER_TEMP/admin-profile-setup-tests.jsonl"
+      - name: Test Windows Admin profile endpoint contracts
+        if: runner.os == 'Windows' && matrix.shard != 'dispatch'
+        shell: pwsh
+        timeout-minutes: 3
+        env:
+          GOMAXPROCS: '2'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -p 1 ./pkg/custom -parallel=1 -count=1 -timeout=1m -v -json -run '^(TestAdminCredentialsProfileEndpointsMatchRequests|TestAdminCredentialsProfileResolutionFailures|TestAdminCredentialsProfileEndpointSnapshot|TestAdminProfileEndpointDoesNotAuthorizeMTLS)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'admin-profile-credentials-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p 1 ./internal/commands/admin -parallel=1 -count=1 -timeout=1m -v -json -run '^(TestAdminSetupProfileEndpointOptions|TestAdminSetupProfileEndpointRejectsUnsafeOverrides|TestAdminSetupProfileResolutionFailures|TestAdminSetupProfileEndpointLoopback|TestAdminSetupRegisteredEndpointPolicy)$' |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'admin-profile-setup-tests.jsonl') -Encoding utf8NoBOM -ErrorAction Stop
           exit $LASTEXITCODE
       - name: Test Unix identity credential symlinks and special files
         if: runner.os != 'Windows' && matrix.shard != 'dispatch'
@@ -813,6 +928,31 @@ jobs:
               return {root} | {f"{root}/{child}" for child in children}
 
           strict_packages = {}
+          admin_profile_credentials_cases = {
+              "TestAdminCredentialsProfileEndpointsMatchRequests": ["absent_profile_endpoint", "disabled_environment_selector", "disabled_profile", "empty_environment_retains_credential_guard", "empty_flag_retains_profile", "empty_literal_header_overrides_admin_key", "empty_profile_endpoint", "environment_gateway", "environment_replaces_profile", "explicit_selector", "flag_gateway", "flag_replaces_environment_and_profile", "saved_gateway", "standard_mtls_profile", "standard_profile", "standard_profile_admin_key", "standard_profile_literal_header"],
+              "TestAdminCredentialsProfileResolutionFailures": ["malformed=false", "malformed=true"],
+              "TestAdminCredentialsProfileEndpointSnapshot": [],
+              "TestAdminProfileEndpointDoesNotAuthorizeMTLS": ["admin", "setup"],
+          }
+          suites["admin-profile-credentials-tests.jsonl"] = set().union(*(
+              required_cases(root, children) for root, children in admin_profile_credentials_cases.items()
+          ))
+          if len(suites["admin-profile-credentials-tests.jsonl"]) != 25:
+              raise SystemExit("admin-profile-credentials-tests.jsonl: unexpected inventory size")
+          strict_packages["admin-profile-credentials-tests.jsonl"] = "github.com/openai/openai-cli/pkg/custom"
+          admin_profile_setup_cases = {
+              "TestAdminSetupProfileEndpointOptions": ["absent_saved_endpoint", "disabled_default", "empty_flag_retains_profile", "empty_saved_endpoint", "environment_overrides_profile", "environment_selector", "escaped_saved_origin", "flag_overrides_environment", "saved_destination"],
+              "TestAdminSetupProfileEndpointRejectsUnsafeOverrides": ["embedded_credential", "empty_environment", "environment_HTTP", "fragment", "profile_HTTP", "query"],
+              "TestAdminSetupProfileResolutionFailures": ["malformed", "missing"],
+              "TestAdminSetupProfileEndpointLoopback": ["Forbidden", "Found", "OK"],
+              "TestAdminSetupRegisteredEndpointPolicy": ["empty_endpoint", "callback_error", "nil_callback", "unrelated_metadata"],
+          }
+          suites["admin-profile-setup-tests.jsonl"] = set().union(*(
+              required_cases(root, children) for root, children in admin_profile_setup_cases.items()
+          ))
+          if len(suites["admin-profile-setup-tests.jsonl"]) != 29:
+              raise SystemExit("admin-profile-setup-tests.jsonl: unexpected inventory size")
+          strict_packages["admin-profile-setup-tests.jsonl"] = "github.com/openai/openai-cli/internal/commands/admin"
           suites["auth-identity-tls-tests.jsonl"] = required_cases(
               "TestAuthStatusIdentityMTLSReaderRegularAndCancellation",
               ["certificate", "key", "directory", "pre-canceled", "canceled_between_PEM_files"],
@@ -1034,10 +1174,13 @@ jobs:
               "TestMainProjectLinkDirectoryScope": [],
               "TestMainProjectLinkMalformedRegistryFailsBeforeRequests": []
           }
+          auth_profile_cases["TestMainProfileAdminEndpointPreflightMatchesSelection"] = ["saved_gateway", "standard_profile", "empty_profile_endpoint", "empty_selector", "environment_selector", "empty_environment_selector", "flag_selector_overrides_environment", "standard_flag_overrides_profile", "standard_environment_overrides_profile", "gateway_flag_overrides_standard_profile", "gateway_environment_overrides_standard_profile", "empty_flag_retains_profile", "empty_environment_retains_credential_guard", "unknown_profile_preserves_selection_error"]
           suites["auth-profile-tests.jsonl"] = set().union(*(
               required_cases(root, children) for root, children in auth_profile_cases.items()
           ))
           strict_packages["auth-profile-tests.jsonl"] = "github.com/openai/openai-cli/cmd/openai"
+          if len(auth_profile_cases) != 31 or len(suites["auth-profile-tests.jsonl"]) != 246:
+              raise SystemExit("auth-profile-tests.jsonl: unexpected Admin integration inventory")
           if os.environ["RUNNER_OS"] != "Windows":
               suites["auth-identity-signal-tests.jsonl"] = required_cases(
                   "TestMainAuthStatusIdentitySignals", ["SIGINT", "SIGTERM", "SIGINT_body", "SIGTERM_body"],
@@ -2054,6 +2197,8 @@ jobs:
           name: auth-profile-${{ matrix.os }}-${{ matrix.shard || 'all' }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/auth-profile-tests.jsonl
+            ${{ runner.temp }}/admin-profile-credentials-tests.jsonl
+            ${{ runner.temp }}/admin-profile-setup-tests.jsonl
             ${{ runner.temp }}/auth-identity-signal-tests.jsonl
             ${{ runner.temp }}/auth-identity-tls-tests.jsonl
             ${{ runner.temp }}/auth-identity-built-cli-tests.jsonl
