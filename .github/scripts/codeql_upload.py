@@ -71,14 +71,14 @@ def destination(get, repository, repository_id, source):
             associated = list(pages(get, f"{root}/commits/{run['head_sha']}/pulls"))
         if not associated:
             head = quote(run["head_repository"]["owner"]["login"] + ":" + run["head_branch"], safe="")
-            associated = list(pages(get, f"{root}/pulls?state=open&base=main&head={head}"))
+            associated = list(pages(get, f"{root}/pulls?state=open&head={head}"))
         candidates = []
         for number in sorted({int(p["number"]) for p in associated}):
             pr = get(f"{root}/pulls/{number}")
             if (pr["state"] == "open" and pr["head"]["sha"] == run["head_sha"] and
                     pr["head"]["ref"] == run["head_branch"] and
                     (pr["head"]["repo"] or {}).get("id") == run["head_repository"]["id"] and
-                    pr["base"]["repo"]["id"] == repository_id and pr["base"]["ref"] == "main"):
+                    pr["base"]["repo"]["id"] == repository_id and pr["base"]["ref"] in {"main", "next"}):
                 candidates.append(pr)
         if len(candidates) != 1:
             raise StaleRun("No unique current pull request for this run")
@@ -97,8 +97,8 @@ def destination(get, repository, repository_id, source):
     else:
         branch = run["head_branch"]
         if (run["head_repository"]["id"] != repository_id or
-                not (run["event"] == "push" and branch == "main" or
-                     run["event"] == "merge_group" and branch.startswith("gh-readonly-queue/main/"))):
+                not (run["event"] == "push" and branch in {"main", "next"} or
+                     run["event"] == "merge_group" and branch.startswith(("gh-readonly-queue/main/", "gh-readonly-queue/next/")))):
             raise RuntimeError("Unexpected source event or branch")
         ref, sha = "refs/heads/" + branch, run["head_sha"]
         current = get(f"{root}/git/ref/heads/{quote(branch, safe='')}", missing_ok=True)
