@@ -12,7 +12,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/openai/openai-cli/internal/requestflag"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -35,7 +35,7 @@ func TestImageUploadPreparationClosesWhenActionAborts(t *testing.T) {
 						return ctx.Err()
 					}
 					return failure
-				}, custom.ImageSavingOptions()),
+				}, appconfig.ImageSavingOptions()),
 			}
 			images.TestRegisterImageSavingFlags(command)
 			err := command.Run(ctx, []string{"edit", "--image", source, "--output-dir", t.TempDir()})

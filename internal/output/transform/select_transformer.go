@@ -1,5 +1,5 @@
 // Package transform contains CLI-owned response transformations. Presentation
-// and output formats belong to pkg/custom and its internal rendering helpers.
+// and output formats belong to internal/app and shared output helpers.
 package transform
 
 import (

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/commands/images"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -33,7 +33,7 @@ func TestInteractiveImageFailureKeepsExitCodeAndViewerDiagnostic(t *testing.T) {
 		require.Equal(t, max(1, code), exit.ExitCode())
 		require.ErrorIs(t, err, failure)
 		var output bytes.Buffer
-		require.NoError(t, custom.ShowCommandError(&cli.Command{}, err, &output))
+		require.NoError(t, appconfig.ShowCommandError(&cli.Command{}, err, &output))
 		require.Contains(t, output.String(), "interactive preview")
 		require.Contains(t, output.String(), "original file is unchanged")
 		require.NotContains(t, output.String(), "API")

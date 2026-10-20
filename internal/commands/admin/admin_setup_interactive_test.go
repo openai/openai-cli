@@ -13,7 +13,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/admin"
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -21,7 +21,7 @@ import (
 func TestAdminSetupVerificationPreservesMTLS(t *testing.T) {
 	const entered = "synthetic-entered-admin-key"
 	root := adminCredentialsTestCommand(t, func(ctx context.Context, command *cli.Command) error {
-		options, _, err := admin.TestRequestOptions(command, custom.GetDefaultRequestOptions)
+		options, _, err := admin.TestRequestOptions(command, appconfig.GetDefaultRequestOptions)
 		if err != nil {
 			return err
 		}
@@ -51,7 +51,7 @@ func TestAdminSetupVerificationPreservesMTLS(t *testing.T) {
 	t.Cleanup(server.Close)
 	configureTestServerTrust(t, server)
 	certFile, keyFile := mtlstest.WriteClientFiles(t, pki.ClientChainPEM, pki.ClientKeyPEM)
-	custom.ConfigureCommand(root)
+	appconfig.ConfigureCommand(root)
 	require.NoError(t, root.Run(t.Context(), []string{
 		root.Name, "--base-url", server.URL, "--admin-api-key", "synthetic-flag-key",
 		"--mtls-client-cert-file", certFile, "--mtls-client-key-file", keyFile,
@@ -85,7 +85,7 @@ func TestAdminSetupVerificationRejectsRedirectWithoutChangingClient(t *testing.T
 		return nil
 	}}
 	root := adminCredentialsTestCommand(t, func(ctx context.Context, command *cli.Command) error {
-		options, _, err := admin.TestRequestOptions(command, custom.GetDefaultRequestOptions)
+		options, _, err := admin.TestRequestOptions(command, appconfig.GetDefaultRequestOptions)
 		if err != nil {
 			return err
 		}

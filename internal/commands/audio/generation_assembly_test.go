@@ -5,13 +5,13 @@ import (
 
 	"github.com/openai/openai-cli/internal/apiquery"
 	"github.com/openai/openai-cli/internal/commands/audio"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
 )
 
 func buildAudioRequestOptions(command *cli.Command) ([]option.RequestOption, error) {
-	return custom.FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, custom.ApplicationJSON, true)
+	return appconfig.FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, appconfig.ApplicationJSON, true)
 }
 
 func TestAudioGenerationPreservesLiteralEditorValuesAndRestoresFlags(t *testing.T) {

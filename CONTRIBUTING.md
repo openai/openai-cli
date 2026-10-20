@@ -75,8 +75,10 @@ below describes the current layout as the migration proceeds.
   guidance and request-input help annotations. It uses declared command/flag
   names and escaped local invocation
   metadata without echoing private operands or executing suggested corrections.
-- `pkg/custom/` contains remaining handwritten CLI commands, defaults, output-format
-  policy, error handling, and presentation orchestration.
+- `internal/app/` owns command assembly, defaults, request/output policy, error
+  handling, and presentation orchestration.
+- `pkg/custom/` is a temporary adapter for generated callers; it contains no
+  independent behavior and will disappear when Castiron updates its imports.
 - `internal/request/` owns root request inheritance, literal header and mTLS
   flag definitions, value-safe validation, mTLS transport construction, and client
   metadata setup and scalar-upload inspection/replay. Application assembly retains registration order and the local
@@ -97,8 +99,8 @@ below describes the current layout as the migration proceeds.
 - `internal/testutil/console/` contains shared synthetic Windows console records
   and observer fixtures used only by native feature tests.
 - `internal/app/` owns invocation, request-environment scope, completion setup,
-  output policy, help assembly, and exit-status selection. Command assembly still uses the
-  existing generated tree during the layout migration.
+  output policy, help assembly, and exit-status selection. `cmd/openai` passes in the
+  generated tree; application code does not import generated commands.
 - `api_reference/openapi.transformed.yml` contains the OpenAPI specification
   used by the mock server.
 - `scripts/` contains the local development, build, and test commands.
@@ -113,7 +115,7 @@ recurring generated problems in the authoritative schema or generator when
 available.
 
 Handwritten features are moving into `internal/commands/<feature>/`; Codex,
-tokenizer, manpages, files, batches, models, admin, audio, and images are there now. Remaining behavior belongs in `pkg/custom/`,
+tokenizer, manpages, files, batches, models, admin, audio, and images are there now. Application policy belongs in `internal/app/`,
 `internal/output/transform/`, and focused `internal/` helpers. Keep
 `cmd/openai/` focused on startup and wiring. Generated code calls handwritten
 request/output helpers through a generated runtime bridge.

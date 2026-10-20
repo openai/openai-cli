@@ -18,7 +18,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/images"
 	"github.com/openai/openai-cli/internal/imagemodels"
 	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/urfave/cli/v3"
 )
 
@@ -42,7 +42,7 @@ func TestImageModelsErrorClassification(t *testing.T) {
 		for _, format := range []string{"text", "json"} {
 			root := readableErrorTestCommand(t, "--format-error", format)
 			var out strings.Builder
-			if err := custom.ShowCommandError(root, wrapped, &out); err != nil {
+			if err := appconfig.ShowCommandError(root, wrapped, &out); err != nil {
 				t.Fatal(err)
 			}
 			message := strings.TrimSpace(out.String())
@@ -94,7 +94,7 @@ func TestImageModelsUsesConfiguredMTLSClient(t *testing.T) {
 		Flags:    []cli.Flag{&cli.StringFlag{Name: "base-url"}, &cli.StringFlag{Name: "format", Value: "json"}},
 		Commands: []*cli.Command{{Name: "images"}},
 	}
-	custom.ConfigureCommand(root)
+	appconfig.ConfigureCommand(root)
 	if err := root.Run(t.Context(), []string{"openai", "--base-url", server.URL + "/v1/",
 		"--mtls-client-cert-file", certFile, "--mtls-client-key-file", keyFile, "images", "models"}); err != nil {
 		t.Fatal(err)
@@ -163,6 +163,6 @@ func imageModelsOutputCommand(out, stderr io.Writer, report images.TestImageMode
 	return &cli.Command{Name: "openai", Writer: out, Flags: []cli.Flag{
 		&cli.StringFlag{Name: "format", Value: "auto"}, &cli.StringFlag{Name: "transform"}, &cli.BoolFlag{Name: "raw-output"},
 	}, Action: func(ctx context.Context, command *cli.Command) error {
-		return images.TestWriteImageModelsData(ctx, command, report, stderr, custom.ImageModelOptions())
+		return images.TestWriteImageModelsData(ctx, command, report, stderr, appconfig.ImageModelOptions())
 	}}
 }

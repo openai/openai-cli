@@ -360,3 +360,11 @@ Optional first-run shell setup admission lives in `internal/app/`, alongside
 invocation. Its existing terminal checks, synchronous audio command traversal,
 argument copy, single-worker limit, and 250 ms foreground wait are unchanged.
 Image shell installation mechanics remain in `internal/commands/images/`.
+
+Application assembly, feature request/output policy, errors, and presentation
+orchestration now live in `internal/app/`, with their tests. `cmd/openai` passes
+the generated command tree to `app.Run`, so application policy never imports
+generated commands. Shared request/output implementations keep their existing
+packages. `pkg/custom/runtime.go` contains only the adapter required by current
+Castiron-generated callers; remove it through the producer migration, rather than
+editing generated files. No external Go import compatibility is maintained.
