@@ -794,7 +794,7 @@ selector = selectors.DefaultSelector()
 output = [bytearray(), bytearray()]
 process = None
 completed = False
-steps = [(b"> Name", b"Synthetic receiver\x1b[Bhttps://example.com/webhook\x1b[B \r"),
+steps = [(b"> Name", b"Synthetic receiver\x1b[Bhttps://example.com/webhook\x1b[B\x1b[B\x1b[B \r"),
          (b"Create endpoint now?", b"y\r\r\r")] if config["Confirm"] else []
 step = 0
 try:

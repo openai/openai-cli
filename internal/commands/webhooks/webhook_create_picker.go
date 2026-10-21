@@ -142,6 +142,14 @@ func (i *webhookCreateInput) edit(key tea.KeyPressMsg) bool {
 // The editing fields stay together; stage identifies the focused field.
 // Only final review replaces the editing form.
 // Search only changes the visible rows; selected event names remain exact.
+type webhookCreateEventFocus int
+
+const (
+	webhookCreateCategory webhookCreateEventFocus = iota
+	webhookCreateSearch
+	webhookCreateChoices
+)
+
 type webhookCreatePicker struct {
 	stage, width, height int
 	name, url, search    webhookCreateInput
@@ -149,6 +157,7 @@ type webhookCreatePicker struct {
 	selected             map[string]bool
 	current, offset      int
 	category             int
+	eventFocus           webhookCreateEventFocus
 	reviewOffset         int
 	reviewFocused        bool
 	confirmYes           bool
@@ -243,6 +252,9 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.stage < 3 && !m.reviewFocused {
+			if m.stage == 2 {
+				m.eventFocus = webhookCreateSearch
+			}
 			if !m.input().insert(msg.Content) {
 				m.note = "Paste one line without control characters."
 			} else {
@@ -260,6 +272,11 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "shift+tab" {
 			if m.reviewFocused {
 				m.reviewFocused = false
+				m.eventFocus = webhookCreateChoices
+			} else if m.stage == 3 {
+				m.stage, m.eventFocus = 2, webhookCreateChoices
+			} else if m.stage == 2 && m.eventFocus > webhookCreateCategory {
+				m.eventFocus--
 			} else {
 				m.stage = max(0, m.stage-1)
 			}
@@ -271,6 +288,7 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.stage = max(0, m.stage-1)
 			} else {
 				m.stage++
+				m.eventFocus = webhookCreateCategory
 			}
 			m.note = ""
 			return m, nil
@@ -279,6 +297,7 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			switch key {
 			case "up":
 				m.reviewFocused = false
+				m.eventFocus = webhookCreateChoices
 			case "enter", "tab":
 				m.reviewFocused = false
 				m.advance()
@@ -306,17 +325,37 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "tab" && m.stage < 2 {
 			// Move freely between visible fields. Review validates the whole draft.
 			m.stage++
+			m.eventFocus = webhookCreateCategory
 			m.note, m.confirmYes = "", false
 			return m, nil
 		}
-		if key == "enter" || key == "tab" {
+		if m.stage < 2 && key == "enter" {
 			m.advance()
 			return m, nil
 		}
 		if m.stage == 2 {
+			if m.eventFocus != webhookCreateChoices {
+				switch key {
+				case "enter", "tab", "down":
+					m.eventFocus++
+					m.note = ""
+					return m, nil
+				case "up":
+					if m.eventFocus == webhookCreateSearch {
+						m.eventFocus = webhookCreateCategory
+					} else {
+						m.stage = 1
+					}
+					m.note = ""
+					return m, nil
+				}
+			}
 			matches := m.filteredEvents()
 			switch key {
 			case "left", "right":
+				if m.eventFocus == webhookCreateSearch {
+					break // Search retains ordinary text-cursor movement.
+				}
 				direction := 1
 				if key == "left" {
 					direction = -1
@@ -328,7 +367,7 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "up":
 				if m.current == 0 {
-					m.stage, m.note = 1, ""
+					m.eventFocus, m.note = webhookCreateSearch, ""
 				} else {
 					m.current--
 				}
@@ -341,6 +380,12 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "space", " ":
+				if m.eventFocus == webhookCreateSearch {
+					break // Spaces belong to the search text while editing it.
+				}
+				if m.eventFocus != webhookCreateChoices {
+					return m, nil
+				}
 				if len(matches) != 0 {
 					event := matches[m.current]
 					m.selected[event] = !m.selected[event]
@@ -348,6 +393,9 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "ctrl+a":
+				if m.eventFocus != webhookCreateChoices {
+					break
+				}
 				allSelected := len(matches) > 0
 				for _, event := range matches {
 					allSelected = allSelected && m.selected[event]
@@ -357,6 +405,20 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.note = ""
 				return m, nil
+			case "tab":
+				m.reviewFocused = true
+				return m, nil
+			case "enter":
+				m.advance()
+				return m, nil
+			}
+			if m.eventFocus != webhookCreateSearch {
+				editing := key == "backspace" || key == "delete" || key == "ctrl+u" || key == "ctrl+k" ||
+					key == "home" || key == "end" || key == "ctrl+e"
+				if msg.Text == "" && !editing {
+					return m, nil
+				}
+				m.eventFocus = webhookCreateSearch
 			}
 		}
 		previous := string(m.input().value)
@@ -408,6 +470,7 @@ func (m *webhookCreatePicker) advance() {
 		}
 	}
 	m.stage++
+	m.eventFocus = webhookCreateCategory
 	m.note, m.confirmYes, m.reviewOffset, m.reviewFocused = "", false, 0, false
 }
 
@@ -540,16 +603,18 @@ func (m *webhookCreatePicker) View() tea.View {
 			x, y = x+2, y+1
 		}
 		cursor = tea.NewCursor(x, y)
-		cursor.Shape = tea.CursorBlock
+		// Tea encodes (shape*2)+1+steady. This pair emits ANSI style 0,
+		// which uses the terminal's configured cursor instead of forcing a shape.
+		cursor.Shape = tea.CursorShape(-1)
 		cursor.Blink = false
 	}
 	switch m.stage {
 	case 0, 1, 2:
-		field := func(label string, input *webhookCreateInput, placeholder string, focused bool) string {
+		field := func(label string, input *webhookCreateInput, placeholder string, focused bool, row int) string {
 			label = fmt.Sprintf("%-6s ", label)
 			if focused {
 				value, column := input.viewport(inner-9, placeholder)
-				cursorAt(column, m.stage)
+				cursorAt(column, row)
 				return strong.Render("> "+label) + value
 			}
 			value := webhookCreateLine(string(input.value))
@@ -560,46 +625,25 @@ func (m *webhookCreatePicker) View() tea.View {
 			}
 			return "  " + strong.Render(label) + value
 		}
-		body = append(body, field("Name", &m.name, "Webhook", m.stage == 0),
-			field("URL", &m.url, "https://example.com/webhook", m.stage == 1))
+		body = append(body, field("Name", &m.name, "Webhook", m.stage == 0, 0),
+			field("URL", &m.url, "https://example.com/webhook", m.stage == 1, 1))
 		if !compact {
 			body = append(body, "")
 		}
-		body = append(body, strong.Render("  Events ")+ansi.Truncate("‹ "+m.categories()[m.category]+" ›", inner-9, "…"))
-		search := ansi.Truncate(webhookCreateLine(string(m.search.value)), inner-9, "…")
-		if m.stage == 2 && !m.reviewFocused && search != "" {
-			var column int
-			search, column = m.search.viewport(inner-9, "Type to filter events")
-			row := 3
-			if !compact {
-				row++
-			}
-			cursorAt(column, row)
-		} else if search == "" {
-			search = quiet.Render(ansi.Truncate("Type to filter events", inner-9, "…"))
+		eventLabel := "  Events "
+		if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateCategory {
+			eventLabel = "> Events "
 		}
-		body = append(body, quiet.Render("  Search ")+search)
+		body = append(body, strong.Render(eventLabel)+ansi.Truncate("‹ "+m.categories()[m.category]+" ›", inner-9, "…"))
+		body = append(body, field("Search", &m.search, "Type an event or group name",
+			m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateSearch, len(body)))
 		if !compact {
 			body = append(body, "")
 		}
 		matches := m.filteredEvents()
-		footer := []string{controls("↑↓ move", "Enter next", "Esc cancel")}
-		if m.stage == 2 {
-			footer = []string{controls("↑↓ move", "←→ category", "Space select", "Ctrl+A all", "Esc cancel")}
-			if inner < 62 {
-				footer = []string{controls("↑↓ move", "←→ category"), controls("Space select", "Enter", "Esc")}
-			}
-			if compact && m.note != "" {
-				footer = []string{controls("Space select", "Enter", "Esc")}
-			}
-			if m.reviewFocused {
-				footer = []string{controls("↑ back", "Enter continue", "Esc cancel")}
-				if inner < 38 {
-					footer = []string{controls("↑ back", "Enter", "Esc")}
-				}
-			}
-		} else if inner < 34 {
-			footer = []string{controls("↑↓ move", "Enter next", "Esc")}
+		var footer []string
+		if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateChoices {
+			footer = []string{controls("Space select", "Ctrl+A all")}
 		}
 		// Reserve complete controls before sizing the event viewport.
 		overhead, tail := 1, 1+len(footer)
@@ -626,7 +670,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			marker, tick := " ", " "
 			if index == m.current {
 				currentRow = len(rows)
-				if m.stage == 2 && !m.reviewFocused {
+				if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateChoices {
 					marker = ">"
 				}
 			}
@@ -635,7 +679,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			}
 			name := ansi.Truncate(webhookCreateLine(event), inner-6, "…")
 			checkbox := marker + " [" + tick + "] "
-			emphasized := m.selected[event] || index == m.current && m.stage == 2 && !m.reviewFocused
+			emphasized := m.selected[event] || index == m.current && m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateChoices
 			if emphasized {
 				checkbox = selected.Render(checkbox)
 			}
@@ -676,9 +720,6 @@ func (m *webhookCreatePicker) View() tea.View {
 		} else {
 			action = strong.Render(action)
 		}
-		if m.stage == 2 && inner >= 38 {
-			action += quiet.Render("  Enter")
-		}
 		body = append(body, action)
 		body = append(body, footer...)
 		if m.note != "" {
@@ -708,10 +749,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			choice = " No   [Yes, create]"
 		}
 		body = append(body, strong.Render("Create endpoint now?"), active(choice))
-		hint := controls("←→ choose", "Enter confirm", "Esc cancel")
-		if inner < 40 {
-			hint = controls("←→ choose", "Enter confirm")
-		}
+		hint := controls("←→ choose", "Enter confirm")
 		body = append(body, hint)
 	}
 	if m.stage == 3 && m.note != "" {
