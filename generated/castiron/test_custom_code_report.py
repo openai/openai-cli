@@ -289,6 +289,48 @@ class CustomCodeTests(GitTestCase):
                     self.repo, snapshot, metadata, target_branch="next", fetch=False
                 )
 
+    def test_prepare_public_next_root_and_descendant(self) -> None:
+        generated, base = self.baseline()
+        self.git("branch", "codegen/test", generated)
+        self.git("checkout", "--detach", generated)
+        metadata = {
+            "schema_version": "castiron-checkpoint/v2",
+            "release_target": "next",
+            "record": {"generation_id": GENERATION, "source_branch": "test"},
+        }
+        encoded = base64.b64encode(json.dumps(metadata).encode()).decode()
+        checkpoint = self.commit(f"codegen\n\nGeneration metadata: {encoded}")
+        self.git("branch", "codegen/castiron/next/test", checkpoint)
+        self.git("checkout", "--detach", base)
+        stats = report.read_stats(self.repo, base) | {
+            "codegen_sha": checkpoint,
+            "codegen_hash": report.hash_codegen_commit(self.repo, checkpoint),
+        }
+        self.write(".castiron.stats.yml", "".join(f"{k}: {v}\n" for k, v in stats.items()))
+        head = self.commit("next checkpoint")
+        self.git("remote", "add", "origin", str(self.repo))
+        public = self.repo / "public"
+        self.git("clone", "--no-local", str(self.repo), str(public))
+        report.git(public, "checkout", "--detach", base)
+        public_remote = self.repo / "public.git"
+        report.git(public, "init", "--bare", str(public_remote))
+        report.git(public, "remote", "set-url", "origin", str(public_remote))
+        report.git(public, "push", "origin", f"{base}:refs/heads/main")
+        for branch in ("castiron/next", "castiron/next/test"):
+            with self.subTest(branch=branch):
+                snapshot = report.prepare_public_snapshot(
+                    self.repo, base, head, public, base, branch
+                )
+                self.assertEqual(snapshot["branch"], f"codegen/{branch}")
+                metadata = report.public_metadata(public, snapshot["commit"])
+                self.assertEqual(metadata["Target"], "next")
+                with self.assertRaisesRegex(report.ReportError, "cannot authorize a main"):
+                    report.validate_public_target(
+                        public, snapshot["commit"], metadata, target_branch="main", fetch=False
+                    )
+        with self.assertRaises(report.ReportError):
+            report.prepare_public_snapshot(self.repo, base, head, public, base, "castiron/nextish")
+
     def test_legacy_public_snapshot_requires_trusted_main_adoption(self) -> None:
         generated, base = self.baseline()
         branch = "codegen/castiron/promotions/pr-42"
@@ -362,6 +404,23 @@ class CustomCodeTests(GitTestCase):
                 )
                 self.git("update-ref", "refs/remotes/origin/main", formatted)
                 report.resolve_public_baseline(self.repo, formatted, fetch=False, require_hash=True)
+
+        # Replacing a comment with the field preserves the SHA occurrence count.
+        original_stats = self.git("show", f"{base}:.castiron.stats.yml") + "\n"
+        self.write(".castiron.stats.yml", original_stats + f"# candidate: {legacy}\n")
+        self.git("add", ".castiron.stats.yml")
+        mentioned = self.git(
+            "commit-tree", self.git("write-tree"), "-p", base, "-m", "mention candidate"
+        )
+        self.git("update-ref", "refs/remotes/origin/main", mentioned)
+        self.assertFalse(report.legacy_snapshot_on_main(self.repo, legacy, fetch=False))
+        self.write(".castiron.stats.yml", original_stats + f"public_codegen_sha: {legacy}\n")
+        self.git("add", ".castiron.stats.yml")
+        adopted = self.git(
+            "commit-tree", self.git("write-tree"), "-p", mentioned, "-m", "adopt candidate"
+        )
+        self.git("update-ref", "refs/remotes/origin/main", adopted)
+        report.resolve_public_baseline(self.repo, adopted, fetch=False, require_hash=True)
 
         # Explicit next metadata cannot be grandfathered, even with an old locator.
         explicit_next = self.git(
