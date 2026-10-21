@@ -12,6 +12,7 @@ import re
 import shutil
 import signal
 import stat
+import struct
 import sys
 import tempfile
 import time
@@ -26,6 +27,11 @@ DONE = "PROFILE_PROBE_DONE"
 LIMIT = 1048576
 SMALL = 65536
 SYSTEM_STARTUP_FILES = (Path("/etc/profile"), Path("/etc/bash.bashrc"))
+CI_ADMISSION_VARIABLES = ("CI", "GITHUB_ACTIONS", "GITLAB_CI", "TF_BUILD", "BUILDKITE", "JENKINS_URL", "TEAMCITY_VERSION")
+FIRST_USE_COMMAND = ("test -t 0 && test -t 1 && test -t 2 || exit 91; "
+                     'test "$(command -v openai)" = "$OPENAI_PROFILE_BIN/openai" || exit 92; '
+                     'openai --help; first_use_status=$?; '
+                     "printf '\\nFIRST_USE_STATUS:%s\\n' \"$first_use_status\"; exit \"$first_use_status\"")
 REFUSAL_GUIDANCE = (
     " Type openai images generate and press Enter to use the picker."
     " Some startup files or preferences may already have changed."
@@ -128,6 +134,162 @@ def recheck_system_sources(before):
     return after, after == before
 
 
+def profile_events(data, watch):
+    """Decode bounded Linux inotify evidence, including queue-loss failures."""
+    if len(data) > SMALL:
+        raise RuntimeError("profile event bytes exceeded64KiB")
+    result, offset = [], 0
+    while offset < len(data):
+        if len(data) - offset < 16 or len(result) >= 256:
+            raise RuntimeError("invalid or excessive profile events")
+        descriptor, mask, _cookie, length = struct.unpack_from("iIII", data, offset)
+        offset += 16
+        if descriptor != watch or mask & (0x4000 | 0x8000) or length > len(data) - offset:
+            raise RuntimeError("profile event watch lost evidence")
+        name = data[offset:offset + length].rstrip(b"\0").decode("utf-8")
+        offset += length
+        result.append({"name": name, "mask": mask})
+    return result
+
+
+def staging_events(events, attempted):
+    created, deleted, sequence = [], [], []
+    active, seen = set(), set()
+    for item in events:
+        if re.fullmatch(r"\.openai-picker-[A-Z2-7]{26}", item["name"]):
+            name = item["name"]
+            if item["mask"] == 0x100:
+                assert name not in seen, "profile staging creation was duplicated"
+                seen.add(name)
+                active.add(name)
+                created.append(name)
+            elif item["mask"] == 0x200:
+                assert name in active, "profile staging deletion preceded creation or was duplicated"
+                active.remove(name)
+                deleted.append(name)
+            else:
+                raise AssertionError("profile staging moved or changed type")
+            sequence.append(item)
+    assert not active, "profile staging cleanup was incomplete"
+    assert bool(created) == attempted, "first-use setup admission differed"
+    return {"created": created, "deleted": deleted, "sequence": sequence}
+
+
+class ProfileObserver:
+    """Observe the disposable account home without polling or modifying product code."""
+    def __init__(self, home):
+        import ctypes
+        library = ctypes.CDLL(None, use_errno=True)
+        library.inotify_init1.argtypes, library.inotify_init1.restype = [ctypes.c_int], ctypes.c_int
+        library.inotify_add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+        library.inotify_add_watch.restype = ctypes.c_int
+        self.fd = library.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
+        if self.fd < 0:
+            raise OSError(ctypes.get_errno(), "inotify_init1 failed")
+        complete = False
+        try:
+            self.watch = library.inotify_add_watch(self.fd, os.fsencode(home), 0x100 | 0x200 | 0x40 | 0x80)
+            if self.watch < 0:
+                raise OSError(ctypes.get_errno(), "inotify_add_watch failed")
+            complete = True
+        finally:
+            if not complete:
+                picker.cleanup_fixture_resources(self.close)
+
+    def read(self):
+        data = bytearray()
+        while True:
+            try:
+                chunk = os.read(self.fd, SMALL + 1 - len(data))
+            except BlockingIOError:
+                return profile_events(data, self.watch)
+            if not chunk or len(data) + len(chunk) > SMALL:
+                raise RuntimeError("profile event stream ended or exceeded64KiB")
+            data.extend(chunk)
+
+    def close(self):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+
+def first_use_admission(binary, bash, env, deadline, report):
+    # This check must never touch a developer's account home. The controller
+    # creates this exact account in its exclusively owned disposable WSL image.
+    if not sys.platform.startswith("linux") or "microsoft" not in os.uname().release.lower():
+        raise RuntimeError("first-use admission requires the disposable WSL account")
+    import pwd
+    account = pwd.getpwuid(os.getuid())
+    home = Path("/home/cli-compat")
+    assert (account.pw_name, account.pw_uid, account.pw_dir, os.geteuid()) == ("cli-compat", 2000, str(home), 2000)
+    assert os.environ.get("HOME") == str(home) and not home.is_symlink()
+    assert Path(binary) == home / "payload/openai", "first-use candidate is outside the owned payload"
+    assert home.stat().st_uid == 2000 and stat.S_IMODE(home.stat().st_mode) & 0o022 == 0
+    assert not any((home / name).exists() or (home / name).is_symlink() for name in (".openai", ".config")), "first-use account already contains settings"
+    profiles = [home / name for name in (".bashrc", ".bash_profile", ".bash_login", ".profile", ".bash_logout")]
+    before = [system_source(path) for path in profiles]
+    child_env = {**env, "HOME": str(home), "USERPROFILE": str(home),
+                 "XDG_CONFIG_HOME": str(home / ".config"), "NO_COLOR": "1"}
+    admitted_env = {key: value for key, value in child_env.items() if key not in CI_ADMISSION_VARIABLES}
+    evidence = {"account": {"name": account.pw_name, "uid": account.pw_uid, "home": str(home)},
+                "calls": [], "profiles_before": before, "profiles_unchanged": False,
+                "cleanup_complete": False,
+                "cleanup_scope": "Owned child groups, PTYs and inotify descriptor; account state belongs to outer distribution cleanup.",
+                "streams": "stdin, stdout and stderr share one PTY; complete merged output is compared byte-for-byte.",
+                "attempt_evidence": "Native inotify creation and deletion of profile replacement staging files.",
+                "removed_environment_variables": [key for key in CI_ADMISSION_VARIABLES if key in child_env]}
+    report["first_use_admission"] = evidence
+    marker = home / ".openai/shell/image-picker.tab-off-bash"
+    observer, terminal = ProfileObserver(home), None
+    baseline = None
+    try:
+        for label, attempted in (("ci-ineligible", False), ("eligible-first", True),
+                                 ("eligible-repeat", True), ("opted-out", False)):
+            if time.monotonic() + 8 > deadline:
+                raise TimeoutError("insufficient startup time for first-use admission")
+            if label == "opted-out":
+                descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                os.close(descriptor)
+                marker_before = system_source(marker)
+            assert observer.read() == [], "unexpected profile event before invocation"
+            terminal = picker.Terminal(bash, ["--noprofile", "--norc", "-c", FIRST_USE_COMMAND],
+                                       child_env if label == "ci-ineligible" else admitted_env,
+                                       controlling_terminal=True, max_output_bytes=LIMIT,
+                                       max_event_bytes=LIMIT, max_events=16384,
+                                       deadline=min(deadline, time.monotonic() + 8),
+                                       retain_child_identity=True, cwd=home)
+            try:
+                while terminal.running():
+                    terminal.read()
+                terminal.drain_eof()
+                raw = bytes(terminal.raw)
+                assert terminal.child.returncode == 0 and terminal.eof, "ordinary help failed or lacked PTY EOF"
+                assert raw.endswith(b"\r\nFIRST_USE_STATUS:0\r\n"), "ordinary help lost its real status"
+                if baseline is None:
+                    assert b"NAME:\r\n   openai" in raw and b"SYNOPSIS:\r\n" in raw, "negative control did not execute help"
+                    baseline = raw
+                assert raw == baseline, "first-use setup changed ordinary help output"
+                events = observer.read()
+                observed = staging_events(events, attempted)
+                assert [system_source(path) for path in profiles] == before, "first-use setup changed a startup profile"
+                evidence["calls"].append({"case": label, "attempted_setup": attempted, "staging": observed,
+                                          "exit_code": terminal.child.returncode, "pty_eof": terminal.eof,
+                                          "pty_bytes": len(raw), "pty_sha256": hashlib.sha256(raw).hexdigest(),
+                                          "pty_base64": base64.b64encode(raw).decode("ascii")})
+            finally:
+                picker.cleanup_fixture_resources(terminal.close)
+                terminal = None
+        assert system_source(marker) == marker_before, "ordinary help changed the opt-out marker"
+        evidence.update(profiles_after=[system_source(path) for path in profiles], profiles_unchanged=True,
+                        opt_out_preserved=True, call_count=4)
+    finally:
+        actions = [observer.close]
+        if terminal is not None:
+            actions.insert(0, terminal.close)
+        picker.cleanup_fixture_resources(*actions)
+        evidence["cleanup_complete"] = True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("cli")
@@ -135,9 +297,12 @@ def main():
     parser.add_argument("mode", choices=("login", "nonlogin"))
     parser.add_argument("--setup-contract", choices=("supported", "refused"), default="supported")
     parser.add_argument("--autocomplete-test-binary")
+    parser.add_argument("--first-use-admission", action="store_true")
     options = parser.parse_args()
     if options.setup_contract == "refused" and not options.autocomplete_test_binary:
         parser.error("--setup-contract refused requires --autocomplete-test-binary")
+    if options.first_use_admission and (options.setup_contract != "refused" or options.mode != "nonlogin"):
+        parser.error("--first-use-admission requires refused nonlogin startup")
     binary, bash = (str(Path(value).resolve(strict=True)) for value in (options.cli, options.bash))
     exporter = str(Path(options.autocomplete_test_binary).resolve(strict=True)) if options.autocomplete_test_binary else None
     mode, contract = options.mode, options.setup_contract
@@ -198,6 +363,8 @@ def main():
             hasattr(os, key) for key in ("waitid", "WNOWAIT", "P_PID"))
         report.update(locale=selected_locale, locale_source=locale_source,
                       retained_child_identity=retain_identity)
+        if options.first_use_admission:
+            first_use_admission(binary, bash, env, deadline, report)
 
         def admit(seconds):
             if time.monotonic() + seconds > deadline:
@@ -300,7 +467,9 @@ def main():
         marker = home / ".openai/shell/image-picker.tab-off-bash"
         if contract == "refused":
             report["installation_scope"] = "Seeded existing state tests activation and cleanup, not installation."
-            report["automatic_setup_scope"] = "Not exercised: private HOME differs from the account home."
+            report["automatic_setup_scope"] = ("Separate account-home admission is recorded in first_use_admission."
+                                               if options.first_use_admission else
+                                               "Not exercised: private HOME differs from the account home.")
 
             def write_new(path, data):
                 descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -421,7 +590,9 @@ def main():
     except Exception as error:
         report["failures"].append(str(error)[:2000])
     finally:
-        cleanup_incomplete = False
+        # First-use children borrow the same private PATH and temporary paths.
+        # Preserve that root if their nested cleanup could not finish.
+        cleanup_incomplete = report.get("first_use_admission", {}).get("cleanup_complete", True) is not True
 
         def cleanup(label, action, *args, blocks_removal=True):
             nonlocal cleanup_incomplete

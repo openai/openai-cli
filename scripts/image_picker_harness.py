@@ -293,6 +293,7 @@ def capture_fixture(argv, *, env, cwd=None, timeout=10, limit=1048576, owned_pro
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
+                        # The owned process group can exit before the cleanup signal arrives.
                         pass
 
             actions.extend((process.stdout.close, process.stderr.close, stop_child, partial(process.wait, timeout=2)))

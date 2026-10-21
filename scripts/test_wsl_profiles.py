@@ -113,6 +113,25 @@ def capability_output(contract="refused", errno="ENOSYS", receipt=None):
             + f"PICKER_CAPABILITY {encoded}\nPASS\n".encode())
 
 
+def first_use_receipt():
+    output = b"NAME:\r\n   openai - Synthetic help\r\nSYNOPSIS:\r\n   openai [options]\r\n\r\nFIRST_USE_STATUS:0\r\n"
+    profiles = [{"path": "/home/cli-compat/" + name, "present": False}
+                for name in (".bashrc", ".bash_profile", ".bash_login", ".profile", ".bash_logout")]
+    result = {"account": {"name": "cli-compat", "uid": 2000, "home": "/home/cli-compat"},
+              "call_count": 4, "cleanup_complete": True, "profiles_unchanged": True, "opt_out_preserved": True,
+              "removed_environment_variables": ["CI"], "profiles_before": profiles, "profiles_after": deepcopy(profiles),
+              "calls": []}
+    for name, attempted in (("ci-ineligible", False), ("eligible-first", True),
+                            ("eligible-repeat", True), ("opted-out", False)):
+        stage = [".openai-picker-" + "A" * 26] if attempted else []
+        result["calls"].append({"case": name, "attempted_setup": attempted, "exit_code": 0, "pty_eof": True,
+                                "staging": {"created": stage, "deleted": stage.copy(),
+                                            "sequence": [{"name": value, "mask": mask} for value in stage
+                                                         for mask in (0x100, 0x200)]},
+                                **captured_fields("pty", output)})
+    return result
+
+
 def refused_startup_receipt(case):
     receipt = valid_receipt(case.removesuffix("-refused"))
     receipt.update(case=case, setup_contract="refused", setup_call_count=7, expected_setup_calls=7,
@@ -122,6 +141,9 @@ def refused_startup_receipt(case):
                                           "stdout_eof": True, "stderr_eof": True, "exporter_stdout_bytes": 128,
                                           "exporter_stderr_bytes": 0, "exporter_stdout_sha256": "a" * 64,
                                           "profile_count": 2, "script_count": 2})
+    if case == "bash-nonlogin-refused":
+        receipt["automatic_setup_scope"] = "Separate account-home admission is recorded in first_use_admission."
+        receipt["first_use_admission"] = first_use_receipt()
     for field in ("original_profiles_unchanged", "seeded_profiles_unchanged", "recovery_evidence_unchanged",
                   "absent_profiles_preserved", "opt_out_created", "generated_scripts_removed",
                   "unselected_profile_unchanged"):
@@ -731,8 +753,11 @@ class ProfileAdmissionTests(unittest.TestCase):
             ("startup-nonlogin", 130), ("models", 40),
         ])
         for call, mode in zip(calls[2:4], ("login", "nonlogin")):
-            self.assertEqual(call.args[1][-5:], [mode, "--setup-contract", "refused", "--autocomplete-test-binary",
-                                                "/home/cli-compat/payload/autocomplete.test"])
+            expected = [mode, "--setup-contract", "refused", "--autocomplete-test-binary",
+                        "/home/cli-compat/payload/autocomplete.test"]
+            if mode == "nonlogin":
+                expected.append("--first-use-admission")
+            self.assertEqual(call.args[1][-len(expected):], expected)
             self.assertEqual(result["profile_results"]["startup-" + mode]["case"], "bash-" + mode + "-refused")
         for call in (calls[0], calls[1], calls[4]):
             self.assertNotIn("--setup-contract", call.args[1])
@@ -740,6 +765,78 @@ class ProfileAdmissionTests(unittest.TestCase):
 
 
 class DriverReceiptTests(unittest.TestCase):
+    def test_first_use_requires_two_attempts_and_two_negative_controls(self):
+        pilot.require_first_use_receipt(first_use_receipt())
+        for index in range(4):
+            for fault in ("no-stage", "stage", "unremoved-stage", "wrong-status", "missing-eof"):
+                bad = first_use_receipt()
+                call = bad["calls"][index]
+                if fault == "no-stage":
+                    call["staging"] = {"created": [], "deleted": [], "sequence": []}
+                elif fault == "stage":
+                    call["staging"] = {"created": [".openai-picker-" + "B" * 26],
+                                       "deleted": [".openai-picker-" + "B" * 26],
+                                       "sequence": [{"name": ".openai-picker-" + "B" * 26, "mask": mask}
+                                                    for mask in (0x100, 0x200)]}
+                elif fault == "unremoved-stage":
+                    call["staging"]["created"].append(".openai-picker-" + "C" * 26)
+                elif fault == "wrong-status":
+                    call["exit_code"] = 1
+                else:
+                    call["pty_eof"] = False
+                if (fault == "no-stage" and index in (0, 3)) or (fault == "stage" and index in (1, 2)):
+                    continue
+                with self.subTest(index=index, fault=fault), self.assertRaises(RuntimeError):
+                    pilot.require_first_use_receipt(bad)
+
+    def test_first_use_rejects_output_changes_and_incomplete_source_identity(self):
+        variants = []
+        for index in (1, 2, 3):
+            bad = first_use_receipt()
+            raw = base64.b64decode(bad["calls"][index]["pty_base64"])
+            bad["calls"][index].update(captured_fields("pty", b"unexpected setup diagnostic\r\n" + raw))
+            variants.append(bad)
+        for field in ("cleanup_complete", "profiles_unchanged", "opt_out_preserved"):
+            bad = first_use_receipt()
+            bad[field] = False
+            variants.append(bad)
+        bad = first_use_receipt()
+        bad["profiles_after"][0]["present"] = True
+        variants.append(bad)
+        bad = first_use_receipt()
+        bad["profiles_before"][0] = bad["profiles_after"][0] = {"path": "/home/cli-compat/.bashrc"}
+        variants.append(bad)
+        bad = first_use_receipt()
+        bad["account"]["home"] = "/private/home"
+        variants.append(bad)
+        bad = first_use_receipt()
+        bad["removed_environment_variables"].append("HOME")
+        variants.append(bad)
+        for index, receipt in enumerate(variants):
+            with self.subTest(index=index), self.assertRaises(RuntimeError):
+                pilot.require_first_use_receipt(receipt)
+
+    def test_refused_nonlogin_requires_first_use_evidence(self):
+        case = "bash-nonlogin-refused"
+        for value in (None, {}, first_use_receipt() | {"calls": []}):
+            receipt = refused_startup_receipt(case)
+            receipt["first_use_admission"] = value
+            with self.subTest(value=value), self.assertRaises(RuntimeError):
+                pilot.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
+
+    def test_first_use_rejects_reordered_duplicate_and_incomplete_staging_events(self):
+        for fault in ("reverse", "duplicate", "incomplete"):
+            receipt = first_use_receipt()
+            sequence = receipt["calls"][1]["staging"]["sequence"]
+            if fault == "reverse":
+                sequence.reverse()
+            elif fault == "duplicate":
+                sequence.extend(sequence.copy())
+            else:
+                sequence.pop()
+            with self.subTest(fault=fault), self.assertRaises(RuntimeError):
+                pilot.require_first_use_receipt(receipt)
+
     def test_startup_requires_bound_unchanged_system_sources(self):
         good = valid_receipt("bash-login")
         variants = []

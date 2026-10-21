@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
@@ -376,12 +377,15 @@ class TerminalTests(unittest.TestCase):
                     if descriptor == 20:
                         raise failure
 
+                def trigger():
+                    try:
+                        raise error
+                    finally:
+                        terminal.close()
+
                 with unittest.mock.patch.object(harness.os, "close", side_effect=close) as handles:
                     with self.assertRaises(type(error)) as caught:
-                        try:
-                            raise error
-                        finally:
-                            terminal.close()
+                        trigger()
                 self.assertIs(caught.exception, error)
                 self.assertIs(error.__cause__, failure)
                 self.assertEqual(error.fixture_cleanup_errors, (failure,))
@@ -1077,6 +1081,21 @@ class RefusedStartupContractTests(unittest.TestCase):
             root = Path(directory) / "owned"
             root.mkdir()
             argv = ["fixture", binary, bash, mode, "--setup-contract", "refused", "--autocomplete-test-binary", exporter]
+            if fault == "first-use-cleanup":
+                argv.append("--first-use-admission")
+
+                def failed_admission(_binary, _bash, _env, _deadline, report):
+                    report["first_use_admission"] = {"cleanup_complete": False}
+                    close = unittest.mock.Mock(side_effect=OSError("first-use terminal cleanup failed"))
+                    try:
+                        close()
+                    finally:
+                        try:
+                            startup.picker.cleanup_fixture_resources(close)
+                        finally:
+                            self.assertEqual(close.call_count, 2)
+
+                stack.enter_context(unittest.mock.patch.object(startup, "first_use_admission", side_effect=failed_admission))
             stack.enter_context(unittest.mock.patch.object(startup.sys, "argv", argv))
             stack.enter_context(unittest.mock.patch.object(startup.tempfile, "mkdtemp", return_value=str(root)))
             stack.enter_context(unittest.mock.patch.object(startup, "SYSTEM_STARTUP_FILES", ()))
@@ -1089,7 +1108,7 @@ class RefusedStartupContractTests(unittest.TestCase):
             stack.enter_context(unittest.mock.patch.object(startup.picker, "Terminal", Terminal))
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 status = startup.main()
-            self.assertFalse(root.exists())
+            self.assertEqual(root.exists(), fault == "first-use-cleanup")
         timer.assert_has_calls([unittest.mock.call(signal.ITIMER_REAL, 115), unittest.mock.call(signal.ITIMER_REAL, 0)])
         lines = stdout.getvalue().splitlines()
         report = json.loads(lines[0][len("RECEIPT: "):])
@@ -1127,6 +1146,85 @@ class RefusedStartupContractTests(unittest.TestCase):
                 self.assertEqual(markers, [])
                 self.assertEqual(stderr, "FAIL: bash-login-refused\n")
                 self.assertTrue(report["failures"])
+
+    def test_failed_first_use_cleanup_retains_shared_root_and_never_passes(self):
+        status, report, markers, stderr, calls = self.run_lifecycle("nonlogin", "first-use-cleanup")
+        self.assertEqual((status, markers, stderr, calls), (1, [], "FAIL: bash-nonlogin-refused\n", []))
+        self.assertFalse(report["first_use_admission"]["cleanup_complete"])
+        self.assertFalse(report["cleanup_complete"])
+        self.assertIn("first-use terminal cleanup failed", report["failures"])
+
+
+class FirstUseAdmissionTests(unittest.TestCase):
+    @staticmethod
+    def event(mask, name=None, watch=7):
+        name = (name or ".openai-picker-" + "A" * 26).encode() + b"\0"
+        name += b"\0" * (-len(name) % 4)
+        return struct.pack("iIII", watch, mask, 0, len(name)) + name
+
+    def test_admission_requires_observed_staging_and_complete_cleanup(self):
+        events = startup.profile_events(self.event(0x100) + self.event(0x200), 7)
+        self.assertEqual(startup.staging_events(events, True),
+                         {"created": [".openai-picker-" + "A" * 26], "deleted": [".openai-picker-" + "A" * 26],
+                          "sequence": events})
+        self.assertEqual(startup.staging_events([], False), {"created": [], "deleted": [], "sequence": []})
+        for values, expected in (([], True), (events, False), (events[:1], True), (events[1:], False)):
+            with self.subTest(values=values, expected=expected), self.assertRaises(AssertionError):
+                startup.staging_events(values, expected)
+
+    def test_staging_rejects_delete_before_create_and_duplicate_pairs(self):
+        create, delete = self.event(0x100), self.event(0x200)
+        for data in (delete + create, create + delete + create + delete,
+                     create + create + delete + delete, create + delete + delete):
+            with self.subTest(data=data), self.assertRaises(AssertionError):
+                startup.staging_events(startup.profile_events(data, 7), True)
+
+    def test_unrelated_account_events_cannot_prove_admission(self):
+        for name in (".bash_history", ".openai", ".openai-picker-recovery-example", ".openai-picker-short"):
+            events = startup.profile_events(self.event(0x100, name) + self.event(0x200, name), 7)
+            with self.subTest(name=name), self.assertRaises(AssertionError):
+                startup.staging_events(events, True)
+
+    def test_event_loss_truncation_wrong_watch_and_overflow_fail(self):
+        valid = self.event(0x100)
+        for data in (valid[:-1], valid[:15], self.event(0x4000, watch=-1), self.event(0x8000),
+                     self.event(0x100, watch=8), valid * 257, b"x" * (startup.SMALL + 1)):
+            with self.subTest(size=len(data)), self.assertRaises(RuntimeError):
+                startup.profile_events(data, 7)
+        for mask in (0x40, 0x80, 0x40000100):
+            with self.subTest(mask=mask), self.assertRaises(AssertionError):
+                startup.staging_events(startup.profile_events(self.event(mask), 7), True)
+
+    def test_observer_drains_events_without_timing_polling_and_closes_once(self):
+        observer = startup.ProfileObserver.__new__(startup.ProfileObserver)
+        observer.fd, observer.watch = 99, 7
+        with unittest.mock.patch.object(startup.os, "read", side_effect=[self.event(0x100), self.event(0x200), BlockingIOError]), \
+                unittest.mock.patch.object(startup.os, "close") as close:
+            startup.staging_events(observer.read(), True)
+            observer.close()
+            observer.close()
+        close.assert_called_once_with(99)
+
+    def test_first_use_rejects_host_execution_before_observer_or_child_creation(self):
+        with unittest.mock.patch.object(startup.sys, "platform", "darwin"), \
+                unittest.mock.patch.object(startup, "ProfileObserver") as observer, \
+                unittest.mock.patch.object(startup.picker, "Terminal") as terminal:
+            with self.assertRaisesRegex(RuntimeError, "disposable WSL account"):
+                startup.first_use_admission("unused", "unused", {}, 10, {})
+        observer.assert_not_called()
+        terminal.assert_not_called()
+
+    def test_first_use_flag_requires_refused_nonlogin_before_resource_creation(self):
+        for mode, contract in (("login", "refused"), ("nonlogin", "supported")):
+            argv = ["fixture", "cli", "bash", mode, "--setup-contract", contract,
+                    "--autocomplete-test-binary", "exporter", "--first-use-admission"]
+            with self.subTest(mode=mode, contract=contract), \
+                    unittest.mock.patch.object(startup.sys, "argv", argv), \
+                    unittest.mock.patch.object(startup.tempfile, "mkdtemp") as create, redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as raised:
+                    startup.main()
+                self.assertEqual(raised.exception.code, 2)
+                create.assert_not_called()
 
 
 class FixtureFileTests(unittest.TestCase):

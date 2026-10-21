@@ -709,7 +709,10 @@ def require_driver_pass(stdout, stderr, code, names, receipt_case=None):
             seeded = receipt.get("seeded_existing_state")
             if (receipt.get("setup_contract") != "refused"
                     or receipt.get("installation_scope") != "Seeded existing state tests activation and cleanup, not installation."
-                    or receipt.get("automatic_setup_scope") != "Not exercised: private HOME differs from the account home."
+                    or receipt.get("automatic_setup_scope") != (
+                        "Separate account-home admission is recorded in first_use_admission."
+                        if receipt_case == "bash-nonlogin-refused" else
+                        "Not exercised: private HOME differs from the account home.")
                     or not isinstance(seeded, dict) or seeded.get("contract") != "seeded-existing-state"
                     or seeded.get("stdout_eof") is not True or seeded.get("stderr_eof") is not True
                     or any(type(seeded.get(key)) is not int or seeded[key] != value for key, value in
@@ -718,6 +721,8 @@ def require_driver_pass(stdout, stderr, code, names, receipt_case=None):
                     or not 0 < seeded["exporter_stdout_bytes"] <= 1048576
                     or not re.fullmatch(r"[0-9a-f]{64}", str(seeded.get("exporter_stdout_sha256", "")))):
                 raise RuntimeError("Refused startup receipt lost its seeded-state evidence boundary")
+            if receipt_case == "bash-nonlogin-refused":
+                require_first_use_receipt(receipt.get("first_use_admission"))
         sources = receipt.get("system_sources")
         if (not isinstance(sources, list) or len(sources) != 2
                 or any(not isinstance(item, dict) for item in sources)
@@ -802,6 +807,79 @@ def require_driver_pass(stdout, stderr, code, names, receipt_case=None):
     if any(receipt.get(key) is not True for key in required_true):
         raise RuntimeError("WSL shell receipt lacks complete output or cleanup")
     return receipt
+
+
+def require_first_use_receipt(receipt):
+    if (not isinstance(receipt, dict)
+            or receipt.get("account") != {"name": "cli-compat", "uid": 2000, "home": "/home/cli-compat"}
+            or type(receipt.get("call_count")) is not int or receipt["call_count"] != 4
+            or any(receipt.get(key) is not True for key in ("cleanup_complete", "profiles_unchanged", "opt_out_preserved"))
+            or receipt.get("removed_environment_variables") != ["CI"]):
+        raise RuntimeError("First-use receipt lost its admission or cleanup contract")
+    before = receipt.get("profiles_before")
+    expected_paths = ["/home/cli-compat/" + name for name in
+                      (".bashrc", ".bash_profile", ".bash_login", ".profile", ".bash_logout")]
+    if (not isinstance(before, list) or len(before) != 5 or any(not isinstance(item, dict) for item in before)
+            or [item.get("path") for item in before] != expected_paths
+            or receipt.get("profiles_after") != before):
+        raise RuntimeError("First-use receipt lost unchanged account profiles")
+    identity_fields = {"device", "inode", "mode", "uid", "gid", "size", "mtime_ns", "ctime_ns"}
+    for source in before:
+        if source.get("present") is False and set(source) == {"path", "present"}:
+            continue
+        identity = source.get("identity")
+        if (source.get("present") is not True or not isinstance(identity, dict)
+                or set(identity) != identity_fields or any(type(value) is not int for value in identity.values())
+                or identity["size"] != source.get("bytes") or identity["mode"] & 0o170000 != 0o100000):
+            raise RuntimeError("First-use receipt lost profile identity")
+        receipt_bytes({"profile_base64": source.get("content_base64"), "profile_bytes": source.get("bytes"),
+                       "profile_sha256": source.get("sha256")}, "profile", 65536)
+    calls = receipt.get("calls")
+    expected = (("ci-ineligible", False), ("eligible-first", True), ("eligible-repeat", True), ("opted-out", False))
+    if not isinstance(calls, list) or len(calls) != len(expected):
+        raise RuntimeError("First-use receipt lost an invocation")
+    baseline = None
+    for item, (name, attempted) in zip(calls, expected):
+        if (not isinstance(item, dict) or item.get("case") != name
+                or item.get("attempted_setup") is not attempted
+                or type(item.get("exit_code")) is not int or item["exit_code"] != 0
+                or item.get("pty_eof") is not True):
+            raise RuntimeError("First-use receipt changed its cases, status or EOF")
+        raw = receipt_bytes(item, "pty", 1048576)
+        if baseline is None:
+            baseline = raw
+        if (raw != baseline or b"NAME:\r\n   openai" not in raw or b"SYNOPSIS:\r\n" not in raw
+                or not raw.endswith(b"\r\nFIRST_USE_STATUS:0\r\n")):
+            raise RuntimeError("First-use receipt changed ordinary help output")
+        stages = item.get("staging")
+        if not isinstance(stages, dict) or set(stages) != {"created", "deleted", "sequence"}:
+            raise RuntimeError("First-use receipt lost staging evidence")
+        for values in (stages["created"], stages["deleted"]):
+            if (not isinstance(values, list) or len(values) > 256
+                    or any(not isinstance(value, str) or not re.fullmatch(r"\.openai-picker-[A-Z2-7]{26}", value)
+                           for value in values)):
+                raise RuntimeError("First-use receipt has invalid staging evidence")
+        sequence = stages["sequence"]
+        if not isinstance(sequence, list) or len(sequence) > 256:
+            raise RuntimeError("First-use receipt lost ordered staging events")
+        active, seen, created, deleted = set(), set(), [], []
+        for event in sequence:
+            if (not isinstance(event, dict) or set(event) != {"name", "mask"}
+                    or event["name"] not in stages["created"]):
+                raise RuntimeError("First-use receipt has an unknown staging event")
+            name = event["name"]
+            if event["mask"] == 0x100 and name not in seen:
+                seen.add(name)
+                active.add(name)
+                created.append(name)
+            elif event["mask"] == 0x200 and name in active:
+                active.remove(name)
+                deleted.append(name)
+            else:
+                raise RuntimeError("First-use receipt duplicated or reordered a staging event")
+        if (active or created != stages["created"] or deleted != stages["deleted"]
+                or bool(created) != attempted):
+            raise RuntimeError("First-use receipt lacks the required positive and negative admission controls")
 
 
 def receipt_bytes(item, field, limit):
@@ -958,6 +1036,8 @@ def run_profile(commands, user, profile, suites, hashes, result, setup_contract=
                     args += ["--setup-contract", "refused", "--autocomplete-test-binary",
                              PAYLOAD_ROOT + "autocomplete.test"]
                     receipt += "-refused"
+                    if mode == "nonlogin":
+                        args.append("--first-use-admission")
                 names = {receipt}
             else:
                 script, args, guest_seconds = "check-wsl-models.py", [], 30

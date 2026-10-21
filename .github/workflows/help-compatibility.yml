@@ -1770,7 +1770,7 @@ jobs:
             profile: local-state
             package: ./internal/commands/images
             artifact: wsl-local-state
-          - name: Bash startup and executable contracts on Ubuntu WSL 1
+          - name: Bash startup, first use and executable contracts on Ubuntu WSL 1
             arguments: --profile shell-contracts --setup-contract refused
             profile: shell-contracts
             artifact: wsl-shell-contracts
