@@ -28,8 +28,20 @@ func (e *spendMutationResponseError) Error() string { return e.cause.Error() }
 func (e *spendMutationResponseError) Unwrap() error { return e.cause }
 
 func spendMutationResponseFailure(err error, opts ShowJSONOpts) error {
-	if opts.OutputKind != OutputResponse {
+	if !isSpendMutationResponse(opts) {
 		return err
+	}
+	var syntaxError *json.SyntaxError
+	var typeError *json.UnmarshalTypeError
+	if errors.As(err, &syntaxError) || errors.As(err, &typeError) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return &spendMutationResponseError{cause: err}
+	}
+	return err
+}
+
+func isSpendMutationResponse(opts ShowJSONOpts) bool {
+	if opts.OutputKind != OutputResponse {
+		return false
 	}
 	switch opts.Operation {
 	case "(resource) admin.organization.spend_limit > (method) update",
@@ -43,15 +55,10 @@ func spendMutationResponseFailure(err error, opts ShowJSONOpts) error {
 		"(resource) admin.organization.projects.spend_alerts > (method) update",
 		"(resource) admin.organization.projects.spend_alerts > (method) delete",
 		"(resource) admin.organization.projects.rate_limits > (method) update_rate_limit":
+		return true
 	default:
-		return err
+		return false
 	}
-	var syntaxError *json.SyntaxError
-	var typeError *json.UnmarshalTypeError
-	if errors.As(err, &syntaxError) || errors.As(err, &typeError) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return &spendMutationResponseError{cause: err}
-	}
-	return err
 }
 
 // A status alone cannot establish configuration at an arbitrary API address.

@@ -195,6 +195,48 @@ func TestMainSpendErrorRecoveryResponseConversion(t *testing.T) {
 	}
 }
 
+func TestMainSpendMutationInvalidResponseFormats(t *testing.T) {
+	for _, target := range []struct {
+		name string
+		args []string
+	}{
+		{"organization limit", []string{"admin", "organization", "spend-limit", "update", "--currency", "USD", "--interval", "month", "--threshold-amount", "10000"}},
+		{"project alert", []string{"projects", "spend-alerts", "create", "--project-id", "proj_synthetic", "--currency", "USD", "--interval", "month", "--threshold-amount", "10000", "--notification-channel", `{"type":"email","recipients":["synthetic@example.invalid"]}`}},
+		{"project rate", []string{"projects", "rate-limits", "update-rate-limit", "--project-id", "proj_synthetic", "--rate-limit-id", "rl_synthetic", "--max-tokens-per-1-day", "0"}},
+	} {
+		for _, body := range []string{"", `{"synthetic-private-response": broken}`} {
+			t.Run(fmt.Sprintf("%s/empty=%t", target.name, body == ""), func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					checkSpendRecoveryContext(t, r, "sk-fake-spend-admin")
+					if r.Method != http.MethodPost {
+						t.Errorf("unexpected mutation method: %s", r.Method)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					io.WriteString(w, body)
+				}))
+				defer server.Close()
+				for _, output := range [][]string{
+					nil, {"--format", "auto"}, {"--format", "text"}, {"--format", "json"},
+					{"--format", "jsonl"}, {"--format", "raw"}, {"--format", "pretty"}, {"--format", "yaml"},
+					{"--format", "text", "--transform", "synthetic-private-response"},
+				} {
+					t.Run(strings.Join(output, " "), func(t *testing.T) {
+						args := append([]string{"openai", "--format-error", "text"}, target.args...)
+						before := requests.Load()
+						got := runMainDispatchWithEnv(t, "bash", spendRecoveryEnvironment(t, server.URL), append(args, output...)...)
+						checkSpendRecoveryFailure(t, got, "The API may have received the change.", "Check its current state before repeating")
+						if requests.Load() != before+1 {
+							t.Fatal("invalid response retried the mutation")
+						}
+					})
+				}
+			})
+		}
+	}
+}
+
 func TestMainSpendErrorRecoveryInputDecodeDoesNotClaimMutation(t *testing.T) {
 	for _, test := range []struct{ name, input string }{
 		{"syntax", `[synthetic-private-input not closed`},

@@ -1758,6 +1758,34 @@ func TestLimitsWorkspaceFinalizationPreservesIndependentFailures(t *testing.T) {
 	}
 }
 
+func TestLimitsWorkspaceConfirmedSaveSurvivesTerminalFailure(t *testing.T) {
+	for _, kind := range []string{"limit_set", "alert_create", "limit_delete"} {
+		t.Run(kind, func(t *testing.T) {
+			m, _ := newLimitsController(t, 80, 24)
+			m.workerSaved = gjson.Parse(`{"object":"organization.spend_limit","threshold_amount":10000,"currency":"USD","interval":"month"}`)
+			if kind == "alert_create" {
+				m.workerSaved = gjson.Parse(limitsControllerAlert)
+			} else if kind == "limit_delete" {
+				m.workerSaved = gjson.Parse(`{"object":"organization.spend_limit.deleted","deleted":true}`)
+			}
+			m.workerSavedOperation = limitsChangeOperation(kind, false)
+			m.output = &limitsWorkspaceOutput{err: &clioutput.WriteError{Err: syscall.EPIPE}}
+			var out bytes.Buffer
+			err := finishLimitsWorkspace(t.Context(), m, tea.ErrProgramKilled, ShowJSONOpts{Context: t.Context(), Format: "text", Stdout: &out, Stderr: io.Discard})
+			var safe *limitsWorkflowFailure
+			if !errors.As(err, &safe) || !errors.Is(err, syscall.EPIPE) || clioutput.IsBrokenPipe(err) {
+				t.Fatalf("terminal failure hid the confirmed outcome: %v", err)
+			}
+			if !strings.Contains(safe.Error(), "change was confirmed") || !strings.Contains(safe.Error(), "terminal output failed") || !strings.Contains(safe.Error(), "before another change") {
+				t.Fatalf("missing confirmed-save recovery: %v", err)
+			}
+			if out.Len() != 0 || m.mutationPending || m.lastSaved.Raw != m.workerSaved.Raw {
+				t.Fatal("finalization repeated output or lost the confirmed result")
+			}
+		})
+	}
+}
+
 func TestLimitsWorkspaceReceiptUsesMutationProjection(t *testing.T) {
 	for _, format := range []string{"text", "json"} {
 		t.Run(format, func(t *testing.T) {

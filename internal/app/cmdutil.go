@@ -305,6 +305,16 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	if err := opts.Context.Err(); err != nil {
 		return err
 	}
+	// Validate before projections or extraction can conceal an invalid response.
+	if isSpendMutationResponse(opts) && !gjson.Valid(res.Raw) {
+		var raw json.RawMessage
+		if err := json.Unmarshal([]byte(res.Raw), &raw); err != nil {
+			return spendMutationResponseFailure(err, opts)
+		}
+	}
+	if err := opts.Context.Err(); err != nil {
+		return err
+	}
 	if handled, err := filecommands.ShowResult(res, filecommands.ResultOptions{ReadableOptions: fileResultOptions(opts), Quiet: quietOutput(opts.Context)}); handled {
 		return err
 	}

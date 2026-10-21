@@ -207,6 +207,9 @@ func finishLimitsWorkspace(ctx context.Context, m *limitsWorkspace, runErr error
 	if m.output != nil {
 		outputErr = m.output.Err()
 	}
+	if outputErr != nil && m.lastSaved.Exists() && message == "" {
+		message = "A limits change was confirmed, but terminal output failed. Inspect its current state before another change.\n" + m.readRecovery()
+	}
 	interrupted := m.interrupted || errors.Is(runErr, tea.ErrInterrupted)
 	if ctx.Err() != nil {
 		causes = append(causes, ctx.Err())
