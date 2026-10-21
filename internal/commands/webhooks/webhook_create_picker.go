@@ -139,7 +139,8 @@ func (i *webhookCreateInput) edit(key tea.KeyPressMsg) bool {
 	return true
 }
 
-// Each field and the final confirmation has a single, visible action.
+// The editing fields stay together; stage identifies the focused field.
+// Only final review replaces the editing form.
 // Search only changes the visible rows; selected event names remain exact.
 type webhookCreatePicker struct {
 	stage, width, height int
@@ -228,7 +229,9 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.note = "Paste one line without control characters."
 			} else {
 				m.note = ""
-				m.current, m.offset = 0, 0
+				if m.stage == 2 {
+					m.current, m.offset = 0, 0
+				}
 			}
 		}
 	case tea.KeyPressMsg:
@@ -259,6 +262,12 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if key == "tab" && m.stage < 2 {
+			// Move freely between visible fields. Review validates the whole draft.
+			m.stage++
+			m.note, m.confirmYes = "", false
+			return m, nil
+		}
 		if key == "enter" || key == "tab" {
 			m.advance()
 			return m, nil
@@ -279,6 +288,16 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					m.note = ""
 				}
 				return m, nil
+			case "ctrl+a":
+				allSelected := len(matches) > 0
+				for _, event := range matches {
+					allSelected = allSelected && m.selected[event]
+				}
+				for _, event := range matches {
+					m.selected[event] = !allSelected
+				}
+				m.note = ""
+				return m, nil
 			}
 		}
 		previous := string(m.input().value)
@@ -286,7 +305,9 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.note = "Use one line without control characters."
 		} else if previous != string(m.input().value) {
 			m.note = ""
-			m.current, m.offset = 0, 0
+			if m.stage == 2 {
+				m.current, m.offset = 0, 0
+			}
 		}
 	}
 	return m, nil
@@ -317,8 +338,13 @@ func (m *webhookCreatePicker) advance() {
 			return
 		}
 	case 2:
-		if len(settings.events) == 0 {
-			m.note = "Select at least one event with Space."
+		if err := validateWebhookCreateSettings(settings); err != nil {
+			m.note = err.Error()
+			if strings.TrimSpace(settings.name) == "" || utf8.RuneCountInString(settings.name) > 256 {
+				m.stage = 0
+			} else if validateWebhookCreateURL(settings.url) != nil {
+				m.stage = 1
+			}
 			return
 		}
 	}
@@ -438,59 +464,111 @@ func (m *webhookCreatePicker) View() tea.View {
 		}
 		return selected.Render(s + padding)
 	}
-	body := []string{}
-	footer := "Enter next · Shift+Tab back · Esc cancel"
-	if width < 44 {
-		footer = "Enter next · Esc cancel"
+	compact := height < 14
+	if compact && m.stage < 3 {
+		inner = width // Short terminals omit decoration, not fields or controls.
 	}
+	body := []string{}
+	footer, extraFooter := "", ""
 	switch m.stage {
-	case 0:
-		body = append(body, active("> Name  "+m.name.display(inner-8, "Webhook")),
-			quiet.Render(clip("Optional; default: Webhook")), "",
-			clip("Choose a name to recognize this endpoint."))
-	case 1:
-		body = append(body, active("> URL   "+m.url.display(inner-8, "https://example.com/webhook")), "",
-			clip("OpenAI sends events to this HTTPS receiver."))
-	case 2:
-		body = append(body, "Search: "+m.search.display(inner-8, "event or group"))
-		matches := m.filteredEvents()
-		body = append(body, quiet.Render(clip(fmt.Sprintf("%d selected · %d matching events", len(m.settings().events), len(matches)))))
-		// Reserve title, border, hints, and a note. Every event may start a group.
-		available := min(8, max(1, (height-8)/2))
-		m.current = min(m.current, max(0, len(matches)-1))
-		m.offset = min(m.offset, max(0, len(matches)-available))
-		if m.current < m.offset {
-			m.offset = m.current
-		} else if m.current >= m.offset+available {
-			m.offset = m.current - available + 1
+	case 0, 1, 2:
+		field := func(label string, input *webhookCreateInput, placeholder string, focused bool) string {
+			prefix := fmt.Sprintf("  %-6s ", label)
+			if focused {
+				return active(">" + prefix[1:] + input.display(inner-9, placeholder))
+			}
+			value := webhookCreateLine(string(input.value))
+			if value == "" {
+				value = quiet.Render(ansi.Truncate(placeholder, inner-9, "…"))
+			} else {
+				value = ansi.Truncate(value, inner-9, "…")
+			}
+			return quiet.Render(prefix) + value
 		}
+		body = append(body, field("Name", &m.name, "Webhook", m.stage == 0),
+			field("URL", &m.url, "https://example.com/webhook", m.stage == 1))
+		if !compact {
+			body = append(body, "")
+		}
+		search := ansi.Truncate(webhookCreateLine(string(m.search.value)), inner-9, "…")
+		if m.stage == 2 {
+			search = m.search.display(inner-9, "Search events or groups")
+		} else if search == "" {
+			search = quiet.Render(ansi.Truncate("Search events or groups", inner-9, "…"))
+		}
+		eventLabel := quiet.Render("  Events ")
+		if m.stage == 2 {
+			eventLabel = strong.Render("  Events ")
+		}
+		body = append(body, eventLabel+search)
+		matches := m.filteredEvents()
+		summary := fmt.Sprintf("%d selected · %d matching events", len(m.settings().events), len(matches))
+		if compact {
+			summary = fmt.Sprintf("%d selected · %d matches", len(m.settings().events), len(matches))
+		}
+		body = append(body, quiet.Render(clip(summary)))
+		// Reserve the title, fields, note and nearby hints before sizing the list.
+		available := max(1, height-12)
+		if compact {
+			available = max(1, height-8)
+		}
+		m.current = min(m.current, max(0, len(matches)-1))
+		rows := []string{}
+		currentRow := 0
 		lastGroup := ""
-		for index := m.offset; index < min(len(matches), m.offset+available); index++ {
-			event := matches[index]
+		for index, event := range matches {
 			_, group := webhookCreateEventGroup(event)
-			if group != lastGroup {
-				body = append(body, quiet.Render(clip(group)))
+			if !compact && group != lastGroup {
+				rows = append(rows, quiet.Render(clip("  "+group)))
 				lastGroup = group
 			}
 			marker, tick := " ", " "
 			if index == m.current {
-				marker = ">"
+				currentRow = len(rows)
+				if m.stage == 2 {
+					marker = ">"
+				}
 			}
 			if m.selected[event] {
 				tick = "x"
 			}
 			row := clip(marker + " [" + tick + "] " + webhookCreateLine(event))
-			if index == m.current {
+			if index == m.current && m.stage == 2 {
 				row = active(row)
+			} else if m.selected[event] {
+				row = strong.Bold(false).Render(row)
 			}
-			body = append(body, row)
+			rows = append(rows, row)
 		}
-		if len(matches) == 0 {
+		m.offset = min(m.offset, max(0, len(rows)-available))
+		if currentRow < m.offset {
+			m.offset = max(0, currentRow-1)
+		} else if currentRow >= m.offset+available {
+			m.offset = currentRow - available + 1
+		}
+		if len(rows) == 0 {
 			body = append(body, clip("No matches. Edit the search."))
+		} else {
+			body = append(body, rows[m.offset:min(len(rows), m.offset+available)]...)
 		}
-		footer = "↑↓ move · Space select · Enter review"
+		body = append(body, clip(m.note))
+		footer = "Tab fields · Enter next · Shift+Tab back"
+		extraFooter = "Optional; default: Webhook · Esc cancel"
+		if m.stage == 1 {
+			extraFooter = "Public HTTPS receiver URL · Esc cancel"
+		} else if m.stage == 2 {
+			footer = "↑↓ move · Space select · Ctrl+A all matching"
+			extraFooter = "Enter review · Shift+Tab URL · Esc cancel"
+		}
 		if width < 44 {
-			footer = "↑↓ · Space select · Enter · Esc"
+			footer = "Tab fields · Enter next"
+			extraFooter = "Esc cancel · default: Webhook"
+			if m.stage == 1 {
+				extraFooter = "HTTPS receiver · Esc cancel"
+			} else if m.stage == 2 {
+				footer = "↑↓ · Space · Ctrl+A matches"
+				extraFooter = "Enter review · Esc cancel"
+			}
 		}
 	case 3:
 		settings := m.settings()
@@ -500,6 +578,9 @@ func (m *webhookCreatePicker) View() tea.View {
 		}
 		wrapped := strings.Split(ansi.Hardwrap(strings.Join(details, "\n"), inner, false), "\n")
 		available := max(1, height-8)
+		if !compact {
+			available-- // Leave a blank line between the heading and panel.
+		}
 		m.reviewOffset = min(m.reviewOffset, max(0, len(wrapped)-available))
 		body = append(body, wrapped[m.reviewOffset:min(len(wrapped), m.reviewOffset+available)]...)
 		if len(wrapped) > available {
@@ -515,14 +596,21 @@ func (m *webhookCreatePicker) View() tea.View {
 			footer = "←→ choose · Enter · Esc cancel"
 		}
 	}
-	if m.note != "" {
+	if m.stage == 3 && m.note != "" {
 		body = append(body, clip(m.note))
 	}
 	lines := []string{strong.Render("Create webhook endpoint")}
-	lines = append(lines, strings.Split(panel.Width(width).Render(strings.Join(body, "\n")), "\n")...)
+	if !compact {
+		lines = append(lines, "")
+	}
+	if compact && m.stage < 3 {
+		lines = append(lines, body...)
+	} else {
+		lines = append(lines, strings.Split(panel.Width(width).Render(strings.Join(body, "\n")), "\n")...)
+	}
 	lines = append(lines, quiet.Render(footer))
-	if m.stage == 2 && height >= 12 {
-		lines = append(lines, quiet.Render("Type to search · Shift+Tab back · Esc cancel"))
+	if extraFooter != "" {
+		lines = append(lines, quiet.Render(extraFooter))
 	}
 	return m.frame(lines, width, height)
 }

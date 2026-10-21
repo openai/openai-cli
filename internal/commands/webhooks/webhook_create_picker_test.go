@@ -87,6 +87,7 @@ func TestWebhookCreatePickerRequiresFieldsAndEvents(t *testing.T) {
 
 func TestWebhookCreatePickerSearchRetainsSelectionsAndUnknownNames(t *testing.T) {
 	m := newWebhookCreatePicker([]string{"response.completed", "new.family.event", "response.failed", "batch.completed", "new.family.event"})
+	m.url.insert("https://example.invalid/webhook")
 	m.stage = 2
 	require.Len(t, m.events, 4)
 	webhookCreatePaste(m, "responses")
@@ -166,6 +167,7 @@ func TestWebhookCreatePickerResizeKeepsAllChoicesAccessible(t *testing.T) {
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		for range len(events) {
 			content := ansi.Strip(m.View().Content)
+			require.Contains(t, content, "> [ ] "+m.filteredEvents()[m.current], "the focused event must stay visible after scrolling")
 			lines := strings.Split(content, "\n")
 			require.LessOrEqual(t, len(lines), size[1]-1)
 			for _, line := range lines {
@@ -293,7 +295,10 @@ func TestWebhookCreatePickerCompactFrameAndCleanup(t *testing.T) {
 			"response.failed", "eval.run.succeeded", "video.completed", "safety.alert.created", "future.event"})
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		initial := ansi.Strip(m.View().Content)
-		require.LessOrEqual(t, strings.Count(initial, "\n")+1, 9, "the first prompt must use content height")
+		require.LessOrEqual(t, strings.Count(initial, "\n")+1, min(18, size[1]-1), "the combined form must stay compact")
+		for _, field := range []string{"Name", "URL", "Events"} {
+			require.Contains(t, initial, field, "every editing field must be visible from the start")
+		}
 		require.NotContains(t, initial, "1/4")
 		previousHeight := 0
 		for _, stage := range []int{0, 1, 2, 3, 2, 0} {
@@ -345,6 +350,76 @@ func TestWebhookCreatePickerThemeAndPlainSelection(t *testing.T) {
 			require.Equal(t, plain, ansi.Strip(colored), "theme must not change content or alignment")
 		}
 	}
+}
+
+func TestWebhookCreatePickerKeepsEditingFieldsTogether(t *testing.T) {
+	m := newWebhookCreatePicker([]string{"response.completed", "response.failed"})
+	for stage := range 3 {
+		m.stage = stage
+		view := ansi.Strip(m.View().Content)
+		require.True(t, strings.HasPrefix(view, "Create webhook endpoint\n\n"), "separate the heading from the form")
+		for _, value := range []string{"Name", "Webhook", "URL", "https://example.com/webhook", "Events", "response.completed", "response.failed"} {
+			require.Contains(t, view, value, "changing focus must not replace the other fields")
+		}
+		require.Equal(t, 1, strings.Count(view, "Create webhook endpoint"))
+	}
+}
+
+func TestWebhookCreatePickerCanSelectEventsBeforeCompletingURL(t *testing.T) {
+	m := newWebhookCreatePicker([]string{"response.completed"})
+	webhookCreateKey(m, tea.KeyTab)
+	webhookCreateKey(m, tea.KeyTab)
+	require.Equal(t, 2, m.stage, "Tab must allow editing visible fields in any order")
+	webhookCreateKey(m, ' ')
+	webhookCreateKey(m, tea.KeyEnter)
+	require.Equal(t, 1, m.stage, "review must return focus to the missing URL")
+	require.Contains(t, m.note, "https://")
+	require.False(t, m.confirmed)
+	require.True(t, m.selected["response.completed"])
+	webhookCreatePaste(m, "https://example.invalid/webhook")
+	webhookCreateKey(m, tea.KeyEnter)
+	webhookCreateKey(m, tea.KeyEnter)
+	require.Equal(t, 3, m.stage)
+	require.False(t, m.confirmYes, "choosing fields must never consent to creation")
+	webhookCreateKey(m, tea.KeyEnter)
+	require.True(t, m.canceled)
+	require.False(t, m.confirmed)
+}
+
+func TestWebhookCreatePickerReviewValidatesSkippedName(t *testing.T) {
+	m := newWebhookCreatePicker([]string{"response.completed"})
+	webhookCreatePaste(m, strings.Repeat("n", 257))
+	webhookCreateKey(m, tea.KeyTab)
+	webhookCreatePaste(m, "https://example.invalid/webhook")
+	webhookCreateKey(m, tea.KeyTab)
+	webhookCreateKey(m, ' ')
+	webhookCreateKey(m, tea.KeyEnter)
+	require.Equal(t, 0, m.stage)
+	require.Contains(t, m.note, "256")
+	require.False(t, m.confirmed)
+	require.True(t, m.selected["response.completed"])
+}
+
+func TestWebhookCreatePickerSelectAllOnlyChangesMatchingEvents(t *testing.T) {
+	m := newWebhookCreatePicker([]string{"batch.completed", "response.completed", "response.failed"})
+	m.stage = 2
+	m.selected["batch.completed"] = true
+	webhookCreatePaste(m, "response")
+	selectAll := tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}
+	m.Update(selectAll)
+	require.Len(t, m.settings().events, 3)
+	require.False(t, m.confirmed)
+	require.False(t, m.confirmYes)
+	m.Update(selectAll)
+	require.Equal(t, []string{"batch.completed"}, m.settings().events, "hidden selections must survive clearing matches")
+	webhookCreatePaste(m, "-no-matches")
+	m.Update(selectAll)
+	require.Equal(t, []string{"batch.completed"}, m.settings().events)
+	m.stage = 0
+	m.name.insert("Original")
+	m.Update(selectAll)
+	require.Equal(t, 0, m.name.cursor, "Ctrl+A in a text field must retain its editing meaning")
+	require.Equal(t, "Original", string(m.name.value))
 }
 
 func TestWebhookCreatePickerCompactBudgetKeepsControls(t *testing.T) {

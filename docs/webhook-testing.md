@@ -22,8 +22,12 @@ openai webhooks create
 4. Review the settings.
 5. Choose Yes to create the endpoint.
 
+Name, URL, and event choices stay visible in one form.
+Use Tab and Shift+Tab to move between fields. Review validates the complete draft before creation.
 The CLI loads available events from your authenticated project.
 Type to search the grouped list. Use arrow keys to move and Space to select events.
+While choosing events, Ctrl+A selects all matching events. Press it again to clear those matches.
+Selections outside the search remain unchanged.
 Selections remain when you change the search. Press Enter to review them.
 Use Shift+Tab to go back. Press Escape or Ctrl+C to cancel.
 The final confirmation defaults to No.

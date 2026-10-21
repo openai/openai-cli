@@ -10,8 +10,8 @@ The candidate adds receiver advice, an inspection command, and a retry command o
 
 Two additional candidate scenes show event discovery and guided creation.
 The catalog contains four synthetic event names across three groups.
-The guided scene enters a name and URL, then searches for response events.
-It selects `response.completed` and `response.failed` with Space and arrow keys.
+The guided scene edits the name, URL, and events in one visible form, then opens final review.
+It searches for response events and selects both matches with Ctrl+A.
 It checks an empty search, then restores the search and both selections.
 It returns from review to event selection with Shift+Tab, then opens review again.
 The review initially selects No.
@@ -83,7 +83,8 @@ Transcript checks require complete text after wrapping but do not establish visu
 `discovery.png` shows grouped events.
 `guided.png` shows the created endpoint and next steps.
 Its footer keeps the synthetic-data label visible when the result scrolls the initial heading.
-`guided-name.png`, `guided-url.png`, `guided-events.png`, and `guided-review.png` show intermediate form steps.
+`guided-name.png`, `guided-url.png`, and `guided-events.png` show focus within the combined form.
+`guided-review.png` shows final review before creation.
 `guided-confirm.png` shows the explicit Yes selection before submission.
 Additional frames show empty search results, restored selections, and back navigation.
 Each frame retains the terminal replay and synthetic data labels.

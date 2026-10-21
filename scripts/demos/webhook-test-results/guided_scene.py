@@ -47,9 +47,13 @@ def checkpoint(terminal, evidence, name):
     screen = wait_screen(terminal, "Create webhook endpoint")
     if screen.count("Create webhook endpoint") != 1:
         raise AssertionError("rendered screen retained an old form title")
-    if "0 selected · 4 matching events" in screen:
+    if name not in {"name", "url"} and "0 selected · 4 matching events" in screen:
         raise AssertionError("rendered screen retained the unfiltered event list")
-    if name in {"review", "review-return", "confirm"} and "Search:" in screen:
+    if name in {"name", "url", "events", "back"}:
+        for field in ("Name", "URL", "Events"):
+            if field not in screen:
+                raise AssertionError("combined form omitted " + field)
+    if name in {"review", "review-return", "confirm"} and "matching events" in screen:
         raise AssertionError("review retained the event-search screen")
     evidence["screens"][name] = screen
     evidence["checkpoints"][name] = time.monotonic() - terminal.started
@@ -115,14 +119,10 @@ def main():
         paste(terminal, "https://example.com/webhook")
         checkpoint(terminal, evidence, "url")
         terminal.send(b"\r")
-        terminal.wait("Space select")
+        terminal.wait("Ctrl+A")
         paste(terminal, "response")
         wait_screen(terminal, "2 matching events")
-        terminal.send(b" ")
-        wait_screen(terminal, "1 selected")
-        terminal.send(harness.DOWN)
-        pause(terminal, 0.2)
-        terminal.send(b" ")
+        terminal.send(b"\x01")  # Ctrl+A selects all matching response events.
         wait_screen(terminal, "2 selected")
         checkpoint(terminal, evidence, "events")
         terminal.send(b"\x15")  # Ctrl+U clears the search, not the selected events.

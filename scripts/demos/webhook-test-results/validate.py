@@ -71,13 +71,16 @@ def main():
     assert times == sorted(times) and len(set(times)) == 9
     for name, screen in evidence["screens"].items():
         assert screen.count("Create webhook endpoint") == 1, "old form title survived"
-        assert "0 selected · 4 matching events" not in screen, "old event list survived"
+        if name not in {"name", "url"}:
+            assert "0 selected · 4 matching events" not in screen, "old event list survived"
+        if name in {"name", "url", "events", "back"}:
+            assert all(field in screen for field in ("Name", "URL", "Events")), "combined form lost a field"
         if name in {"events", "restored-events", "back"}:
             assert "2 selected · 2 matching events" in screen
         elif name == "no-matches":
             assert "2 selected · 0 matching events" in screen and "No matches." in screen
         elif name in {"review", "review-return"}:
-            assert "[No]   Yes, create" in screen and "Search:" not in screen
+            assert "[No]   Yes, create" in screen and "matching events" not in screen
     assert "Create webhook endpoint" not in evidence["result_screen"]
     assert "Create endpoint now?" not in evidence["result_screen"]
     raw = (output / "guided-evidence.tty").read_bytes()
