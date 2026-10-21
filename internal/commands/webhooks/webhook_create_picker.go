@@ -149,6 +149,7 @@ type webhookCreatePicker struct {
 	selected             map[string]bool
 	current, offset      int
 	reviewOffset         int
+	reviewFocused        bool
 	confirmYes           bool
 	confirmed, canceled  bool
 	color                bool
@@ -224,7 +225,7 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.width < 36 || m.height < 10 {
 			return m, nil
 		}
-		if m.stage < 3 {
+		if m.stage < 3 && !m.reviewFocused {
 			if !m.input().insert(msg.Content) {
 				m.note = "Paste one line without control characters."
 			} else {
@@ -240,8 +241,31 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		key := msg.String()
 		if key == "shift+tab" {
-			m.stage = max(0, m.stage-1)
+			if m.reviewFocused {
+				m.reviewFocused = false
+			} else {
+				m.stage = max(0, m.stage-1)
+			}
 			m.confirmYes, m.note = false, ""
+			return m, nil
+		}
+		if m.stage < 2 && (key == "up" || key == "down") {
+			if key == "up" {
+				m.stage = max(0, m.stage-1)
+			} else {
+				m.stage++
+			}
+			m.note = ""
+			return m, nil
+		}
+		if m.reviewFocused {
+			switch key {
+			case "up":
+				m.reviewFocused = false
+			case "enter", "tab":
+				m.reviewFocused = false
+				m.advance()
+			}
 			return m, nil
 		}
 		if m.stage == 3 {
@@ -276,10 +300,18 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			matches := m.filteredEvents()
 			switch key {
 			case "up":
-				m.current = max(0, m.current-1)
+				if m.current == 0 {
+					m.stage, m.note = 1, ""
+				} else {
+					m.current--
+				}
 				return m, nil
 			case "down":
-				m.current = min(max(0, len(matches)-1), m.current+1)
+				if m.current >= len(matches)-1 {
+					m.reviewFocused = true
+				} else {
+					m.current++
+				}
 				return m, nil
 			case "space", " ":
 				if len(matches) != 0 {
@@ -349,7 +381,7 @@ func (m *webhookCreatePicker) advance() {
 		}
 	}
 	m.stage++
-	m.note, m.confirmYes, m.reviewOffset = "", false, 0
+	m.note, m.confirmYes, m.reviewOffset, m.reviewFocused = "", false, 0, false
 }
 
 func validateWebhookCreateSettings(settings webhookCreateSettings) error {
@@ -469,13 +501,18 @@ func (m *webhookCreatePicker) View() tea.View {
 		inner = width // Short terminals omit decoration, not fields or controls.
 	}
 	body := []string{}
-	footer, extraFooter := "", ""
 	switch m.stage {
 	case 0, 1, 2:
 		field := func(label string, input *webhookCreateInput, placeholder string, focused bool) string {
-			prefix := fmt.Sprintf("  %-6s ", label)
+			label = fmt.Sprintf("%-6s ", label)
 			if focused {
-				return active(">" + prefix[1:] + input.display(inner-9, placeholder))
+				value := input.display(inner-9, placeholder)
+				padding := strings.Repeat(" ", max(0, inner-9-ansi.StringWidth(value)))
+				blue := selected.Foreground(lipgloss.Color(accent))
+				if !m.color {
+					blue = selected
+				}
+				return blue.Render("> ") + blue.Bold(m.color).Render(label) + selected.Render(value+padding)
 			}
 			value := webhookCreateLine(string(input.value))
 			if value == "" {
@@ -483,7 +520,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			} else {
 				value = ansi.Truncate(value, inner-9, "…")
 			}
-			return quiet.Render(prefix) + value
+			return "  " + strong.Render(label) + value
 		}
 		body = append(body, field("Name", &m.name, "Webhook", m.stage == 0),
 			field("URL", &m.url, "https://example.com/webhook", m.stage == 1))
@@ -491,26 +528,20 @@ func (m *webhookCreatePicker) View() tea.View {
 			body = append(body, "")
 		}
 		search := ansi.Truncate(webhookCreateLine(string(m.search.value)), inner-9, "…")
-		if m.stage == 2 {
+		if m.stage == 2 && !m.reviewFocused {
 			search = m.search.display(inner-9, "Search events or groups")
 		} else if search == "" {
 			search = quiet.Render(ansi.Truncate("Search events or groups", inner-9, "…"))
 		}
-		eventLabel := quiet.Render("  Events ")
-		if m.stage == 2 {
-			eventLabel = strong.Render("  Events ")
-		}
-		body = append(body, eventLabel+search)
+		body = append(body, strong.Render("  Events ")+search)
 		matches := m.filteredEvents()
-		summary := fmt.Sprintf("%d selected · %d matching events", len(m.settings().events), len(matches))
-		if compact {
-			summary = fmt.Sprintf("%d selected · %d matches", len(m.settings().events), len(matches))
+		if !compact {
+			body = append(body, "")
 		}
-		body = append(body, quiet.Render(clip(summary)))
-		// Reserve the title, fields, note and nearby hints before sizing the list.
+		// Keep the fields, review action and validation message visible together.
 		available := max(1, height-12)
 		if compact {
-			available = max(1, height-8)
+			available = max(1, height-6)
 		}
 		m.current = min(m.current, max(0, len(matches)-1))
 		rows := []string{}
@@ -525,7 +556,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			marker, tick := " ", " "
 			if index == m.current {
 				currentRow = len(rows)
-				if m.stage == 2 {
+				if m.stage == 2 && !m.reviewFocused {
 					marker = ">"
 				}
 			}
@@ -533,7 +564,7 @@ func (m *webhookCreatePicker) View() tea.View {
 				tick = "x"
 			}
 			row := clip(marker + " [" + tick + "] " + webhookCreateLine(event))
-			if index == m.current && m.stage == 2 {
+			if index == m.current && m.stage == 2 && !m.reviewFocused {
 				row = active(row)
 			} else if m.selected[event] {
 				row = strong.Bold(false).Render(row)
@@ -551,25 +582,16 @@ func (m *webhookCreatePicker) View() tea.View {
 		} else {
 			body = append(body, rows[m.offset:min(len(rows), m.offset+available)]...)
 		}
-		body = append(body, clip(m.note))
-		footer = "Tab fields · Enter next · Shift+Tab back"
-		extraFooter = "Optional; default: Webhook · Esc cancel"
-		if m.stage == 1 {
-			extraFooter = "Public HTTPS receiver URL · Esc cancel"
-		} else if m.stage == 2 {
-			footer = "↑↓ move · Space select · Ctrl+A all matching"
-			extraFooter = "Enter review · Shift+Tab URL · Esc cancel"
+		if !compact {
+			body = append(body, "")
 		}
-		if width < 44 {
-			footer = "Tab fields · Enter next"
-			extraFooter = "Esc cancel · default: Webhook"
-			if m.stage == 1 {
-				extraFooter = "HTTPS receiver · Esc cancel"
-			} else if m.stage == 2 {
-				footer = "↑↓ · Space · Ctrl+A matches"
-				extraFooter = "Enter review · Esc cancel"
-			}
+		action := "  [ Review ]"
+		if m.reviewFocused {
+			action = active("> [ Review ]")
+		} else {
+			action = strong.Render(action)
 		}
+		body = append(body, action, clip("  "+m.note))
 	case 3:
 		settings := m.settings()
 		details := []string{"Name: " + webhookCreateLine(settings.name), "URL: " + webhookCreateLine(settings.url), "Events:"}
@@ -577,7 +599,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			details = append(details, "  "+webhookCreateLine(event))
 		}
 		wrapped := strings.Split(ansi.Hardwrap(strings.Join(details, "\n"), inner, false), "\n")
-		available := max(1, height-8)
+		available := max(1, height-7)
 		if !compact {
 			available-- // Leave a blank line between the heading and panel.
 		}
@@ -591,10 +613,6 @@ func (m *webhookCreatePicker) View() tea.View {
 			choice = " No   [Yes, create]"
 		}
 		body = append(body, strong.Render("Create endpoint now?"), active(choice))
-		footer = "←→ choose · Enter confirm · Esc cancel"
-		if width < 44 {
-			footer = "←→ choose · Enter · Esc cancel"
-		}
 	}
 	if m.stage == 3 && m.note != "" {
 		body = append(body, clip(m.note))
@@ -607,10 +625,6 @@ func (m *webhookCreatePicker) View() tea.View {
 		lines = append(lines, body...)
 	} else {
 		lines = append(lines, strings.Split(panel.Width(width).Render(strings.Join(body, "\n")), "\n")...)
-	}
-	lines = append(lines, quiet.Render(footer))
-	if extraFooter != "" {
-		lines = append(lines, quiet.Render(extraFooter))
 	}
 	return m.frame(lines, width, height)
 }

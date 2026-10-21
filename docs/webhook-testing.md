@@ -23,7 +23,8 @@ openai webhooks create
 5. Choose Yes to create the endpoint.
 
 Name, URL, and event choices stay visible in one form.
-Use Tab and Shift+Tab to move between fields. Review validates the complete draft before creation.
+Use Up and Down to move through the fields and event list. Tab and Shift+Tab also move between fields.
+Choose Review below the events, or press Enter from the event list. Review validates the complete draft before creation.
 The CLI loads available events from your authenticated project.
 Type to search the grouped list. Use arrow keys to move and Space to select events.
 While choosing events, Ctrl+A selects all matching events. Press it again to clear those matches.
@@ -31,7 +32,7 @@ Selections outside the search remain unchanged.
 Selections remain when you change the search. Press Enter to review them.
 Use Shift+Tab to go back. Press Escape or Ctrl+C to cancel.
 The final confirmation defaults to No.
-The form stays inline and uses a compact panel with nearby keyboard hints.
+The form stays inline and keeps the fields and Review action together.
 It preserves terminal scrollback and supports both light and dark terminal colors.
 Set `NO_COLOR=1` for plain output; selection markers remain visible.
 

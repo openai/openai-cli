@@ -59,7 +59,7 @@ func TestWebhookCreatePickerConfirmationDefaultsToNo(t *testing.T) {
 
 func TestWebhookCreatePickerRequiresFieldsAndEvents(t *testing.T) {
 	m := newWebhookCreatePicker([]string{"response.completed"})
-	require.Contains(t, m.View().Content, "default: Webhook")
+	require.Contains(t, m.View().Content, "Webhook")
 	webhookCreateKey(m, tea.KeyEnter)
 	require.Equal(t, "Webhook", m.settings().name)
 	for _, invalid := range []string{"", "example.invalid/hook", "http://example.invalid/hook", "https://", "https://user:password@example.invalid/hook", "https://example.invalid/#fragment"} {
@@ -177,6 +177,7 @@ func TestWebhookCreatePickerResizeKeepsAllChoicesAccessible(t *testing.T) {
 			webhookCreateKey(m, tea.KeyDown)
 		}
 		m.current = 0
+		m.reviewFocused = false
 		m.selected = map[string]bool{}
 	}
 }
@@ -347,7 +348,67 @@ func TestWebhookCreatePickerThemeAndPlainSelection(t *testing.T) {
 				marker = "\x1b[38;2;138;168;255;48;2;52;61;88m>"
 			}
 			require.Contains(t, colored, marker, "focus marker must use the theme's blue accent")
+			color := "138;168;255"
+			if !dark {
+				color = "49;89;188"
+			}
+			for _, label := range []string{"Name", "URL", "Events"} {
+				require.Regexp(t, "\\x1b\\[[^m]*38;2;"+color+"[^m]*m *"+label, colored, "field labels keep their accent when focus changes")
+			}
 			require.Equal(t, plain, ansi.Strip(colored), "theme must not change content or alignment")
+		}
+	}
+}
+
+func TestWebhookCreatePickerArrowNavigationIncludesReview(t *testing.T) {
+	m := newWebhookCreatePicker([]string{"response.completed", "response.failed"})
+	m.name.insert("My webhook")
+	m.url.insert("https://example.invalid/webhook")
+	webhookCreateKey(m, tea.KeyDown)
+	require.Equal(t, 1, m.stage)
+	webhookCreateKey(m, tea.KeyUp)
+	require.Equal(t, 0, m.stage)
+	webhookCreateKey(m, tea.KeyDown)
+	webhookCreateKey(m, tea.KeyDown)
+	require.Equal(t, 2, m.stage)
+	webhookCreateKey(m, ' ')
+	webhookCreateKey(m, tea.KeyDown)
+	webhookCreateKey(m, tea.KeyDown)
+	require.True(t, m.reviewFocused)
+	require.Contains(t, ansi.Strip(m.View().Content), "> [ Review ]")
+	before := m.settings()
+	webhookCreatePaste(m, "hidden text")
+	webhookCreateKey(m, ' ')
+	require.Equal(t, before, m.settings(), "review focus must not edit hidden fields or toggle an event")
+	webhookCreateKey(m, tea.KeyUp)
+	require.False(t, m.reviewFocused)
+	webhookCreateKey(m, tea.KeyUp)
+	webhookCreateKey(m, tea.KeyUp)
+	require.Equal(t, 1, m.stage)
+	webhookCreateKey(m, tea.KeyDown)
+	webhookCreateKey(m, tea.KeyDown)
+	webhookCreateKey(m, tea.KeyDown)
+	require.True(t, m.reviewFocused)
+	webhookCreateKey(m, tea.KeyEnter)
+	require.Equal(t, 3, m.stage)
+	require.False(t, m.confirmYes)
+	webhookCreateKey(m, tea.KeyEnter)
+	require.True(t, m.canceled)
+	require.False(t, m.confirmed)
+}
+
+func TestWebhookCreatePickerOmitsCountersAndFooter(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {36, 10}} {
+		for stage := range 4 {
+			m := newWebhookCreatePicker([]string{"response.completed"})
+			m.width, m.height, m.stage = size[0], size[1], stage
+			view := ansi.Strip(m.View().Content)
+			for _, removed := range []string{" selected ·", "matching events", "Tab fields", "Enter next", "Shift+Tab", "Esc cancel", "Space select", "Ctrl+A"} {
+				require.NotContains(t, view, removed)
+			}
+			if stage < 3 {
+				require.Contains(t, view, "[ Review ]")
+			}
 		}
 	}
 }
@@ -431,9 +492,9 @@ func TestWebhookCreatePickerCompactBudgetKeepsControls(t *testing.T) {
 			m.selected[m.events[0]] = true
 			m.note = "Check this value before continuing."
 			view := ansi.Strip(m.View().Content)
-			require.Contains(t, view, "Esc", "size=%v stage=%d", size, stage)
-			if stage == 2 {
-				require.Contains(t, view, "Space")
+			require.NotContains(t, view, "Tab fields", "size=%v stage=%d", size, stage)
+			if stage < 3 {
+				require.Contains(t, view, "[ Review ]")
 			}
 			if stage == 3 {
 				require.Contains(t, view, "Create endpoint now?")

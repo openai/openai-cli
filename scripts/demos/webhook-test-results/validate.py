@@ -72,15 +72,15 @@ def main():
     for name, screen in evidence["screens"].items():
         assert screen.count("Create webhook endpoint") == 1, "old form title survived"
         if name not in {"name", "url"}:
-            assert "0 selected · 4 matching events" not in screen, "old event list survived"
+            assert "[ ] batch.completed" not in screen and "[ ] future.demo_event" not in screen, "old event list survived"
         if name in {"name", "url", "events", "back"}:
             assert all(field in screen for field in ("Name", "URL", "Events")), "combined form lost a field"
         if name in {"events", "restored-events", "back"}:
-            assert "2 selected · 2 matching events" in screen
+            assert "[x] response.completed" in screen and "[x] response.failed" in screen
         elif name == "no-matches":
-            assert "2 selected · 0 matching events" in screen and "No matches." in screen
+            assert "No matches." in screen and "[x]" not in screen
         elif name in {"review", "review-return"}:
-            assert "[No]   Yes, create" in screen and "matching events" not in screen
+            assert "[No]   Yes, create" in screen and "Search events or groups" not in screen and "[x]" not in screen
     assert "Create webhook endpoint" not in evidence["result_screen"]
     assert "Create endpoint now?" not in evidence["result_screen"]
     raw = (output / "guided-evidence.tty").read_bytes()

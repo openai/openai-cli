@@ -630,7 +630,7 @@ func TestMainWebhookWorkflowPTYRejectsInvalidCatalogs(t *testing.T) {
 			if !strings.Contains(got.stderr, "webhooks event-types list") && !strings.Contains(got.stderr, "Check your project") {
 				t.Fatalf("catalog failure lacks actionable stderr: %+v", got)
 			}
-			if strings.Contains(got.stdout, "default: Webhook") || strings.Contains(got.stdout, "signing_secret") {
+			if strings.Contains(got.stdout, "Create webhook endpoint") || strings.Contains(got.stdout, "signing_secret") {
 				t.Fatalf("invalid catalog opened the form or displayed a result: %q", got.stdout)
 			}
 		})
@@ -794,9 +794,10 @@ selector = selectors.DefaultSelector()
 output = [bytearray(), bytearray()]
 process = None
 completed = False
-steps = [(b"default: Webhook", b"Synthetic receiver\r"),
-         (b"URL   ", b"https://example.com/webhook\r"),
-         (b"Space select", b" \r"), (b"Create endpoint now?", b"y\r\r\r")] if config["Confirm"] else []
+steps = [(b"> Name", b"Synthetic receiver\x1b[B"),
+         (b"> URL", b"https://example.com/webhook\x1b[B"),
+         ("▏Search events or groups".encode(), b" \r"),
+         (b"Create endpoint now?", b"y\r\r\r")] if config["Confirm"] else []
 step = 0
 try:
     # Retain the supervisor's process group so its deadline covers this child.
