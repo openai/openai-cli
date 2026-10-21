@@ -666,7 +666,8 @@ class ProfileAdmissionTests(unittest.TestCase):
         self.assertEqual(len(executed), 227)
         self.assertEqual(len(omitted), 44)
         self.assertFalse(executed & omitted)
-        self.assertEqual(executed | omitted, inventory)
+        self.assertEqual(executed | omitted,
+                         (inventory - {DYNAMIC}) | {WELCOME + "/http://127.0.0.1:12345"})
         self.assertEqual(omitted, pilot.test_names({root: suites["autocomplete"][root]
                                                   for root in pilot.SUPPORTED_AUTOCOMPLETE_ROOTS})
                          | pilot.test_names({root: children for root, children in suites["process"].items()
