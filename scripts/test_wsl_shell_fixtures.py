@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -180,6 +181,46 @@ class CaptureTests(unittest.TestCase):
                 self.assertEqual(fake.signals, [(321, signal.SIGKILL)])
                 self.assertTrue(fake.process.stdout.closed and fake.process.stderr.closed)
 
+    def test_read_interrupt_survives_ordinary_cleanup_failures(self):
+        for error in (KeyboardInterrupt("capture interrupted"), SystemExit(7), GeneratorExit("capture closed")):
+            with self.subTest(error=type(error).__name__):
+                fake = Capture([b"x"], [], code=None, read_error=error)
+                first, second = OSError("selector close"), OSError("stdout close")
+                fake.selector.close = unittest.mock.Mock(side_effect=first)
+                fake.process.stdout.close = unittest.mock.Mock(side_effect=second)
+                with self.assertRaises(type(error)) as caught:
+                    fake.run()
+                self.assertIs(caught.exception, error)
+                self.assertEqual(error.fixture_cleanup_errors, (first, second))
+                self.assertIs(error.__cause__, second)
+                self.assertTrue(fake.process.stderr.closed)
+                self.assertEqual(fake.signals, [(321, signal.SIGKILL)])
+                self.assertEqual(fake.waits, [2])
+                self.assertFalse(fake.process.fixture_cleanup_complete)
+
+    def test_cleanup_interrupts_attempt_later_pipe_and_child_cleanup(self):
+        for phase in ("selector", "stdout", "stderr", "kill", "wait"):
+            for error in (KeyboardInterrupt("cleanup interrupted"), SystemExit(7)):
+                with self.subTest(phase=phase, error=type(error).__name__):
+                    fake = Capture([b"x"], [], code=None, read_error=OSError("read failed"))
+                    if phase == "selector":
+                        fake.selector.close = unittest.mock.Mock(side_effect=error)
+                    elif phase in ("stdout", "stderr"):
+                        getattr(fake.process, phase).close = unittest.mock.Mock(side_effect=error)
+                    elif phase == "kill":
+                        fake.kill = unittest.mock.Mock(side_effect=error)
+                    else:
+                        fake.wait_error = error
+                    with self.assertRaises(type(error)) as caught:
+                        fake.run()
+                    self.assertIs(caught.exception, error)
+                    if phase != "stdout":
+                        self.assertTrue(fake.process.stdout.closed)
+                    if phase != "stderr":
+                        self.assertTrue(fake.process.stderr.closed)
+                    self.assertEqual(fake.waits, [2])
+                    self.assertFalse(fake.process.fixture_cleanup_complete)
+
     def test_failed_join_cannot_report_success(self):
         fake = Capture([b""], [b""], wait_error=subprocess.TimeoutExpired("fake", 2))
         with self.assertRaises(subprocess.TimeoutExpired):
@@ -304,6 +345,51 @@ class TerminalTests(unittest.TestCase):
             kill.assert_called_once_with(456, signal.SIGKILL)
             terminal.child.wait.assert_called_once_with(timeout=5)
 
+    def test_close_interrupt_attempts_both_pty_handles_and_child_wait(self):
+        for phase in ("kill", "master", "slave"):
+            for error in (KeyboardInterrupt("PTY interrupted"), SystemExit(7)):
+                with self.subTest(phase=phase, error=type(error).__name__):
+                    terminal = self.terminal()
+                    terminal.child.poll.return_value = None
+
+                    def close(descriptor):
+                        if descriptor == (20 if phase == "master" else 21 if phase == "slave" else -1):
+                            raise error
+
+                    with unittest.mock.patch.object(harness.os, "close", side_effect=close) as handles, \
+                            unittest.mock.patch.object(harness.os, "killpg", side_effect=error if phase == "kill" else None):
+                        with self.assertRaises(type(error)) as caught:
+                            terminal.close()
+                    self.assertIs(caught.exception, error)
+                    self.assertEqual(handles.call_args_list, [unittest.mock.call(20), unittest.mock.call(21)])
+                    terminal.child.wait.assert_called_once_with(timeout=5)
+                    self.assertEqual(terminal._master_closed, phase != "master")
+                    self.assertEqual(terminal._slave_closed, phase != "slave")
+
+    def test_close_failure_preserves_pending_interrupt_and_later_cleanup(self):
+        for error in (KeyboardInterrupt("PTY execution interrupted"), SystemExit(7)):
+            with self.subTest(error=type(error).__name__):
+                terminal = self.terminal()
+                failure = OSError("master close failed")
+
+                def close(descriptor):
+                    if descriptor == 20:
+                        raise failure
+
+                with unittest.mock.patch.object(harness.os, "close", side_effect=close) as handles:
+                    with self.assertRaises(type(error)) as caught:
+                        try:
+                            raise error
+                        finally:
+                            terminal.close()
+                self.assertIs(caught.exception, error)
+                self.assertIs(error.__cause__, failure)
+                self.assertEqual(error.fixture_cleanup_errors, (failure,))
+                self.assertEqual(handles.call_args_list, [unittest.mock.call(20), unittest.mock.call(21)])
+                terminal.child.wait.assert_called_once_with(timeout=5)
+                self.assertFalse(terminal._master_closed)
+                self.assertTrue(terminal._slave_closed)
+
     def test_retained_exit_observation_does_not_reap(self):
         terminal = self.terminal()
         terminal.retain_child_identity = True
@@ -367,21 +453,39 @@ class DriverCleanupTests(unittest.TestCase):
         return worker
 
     def run_driver(self, driver, *, children=(), failure=None, terminal=None, server=None, worker=None,
-                   signal_number=None, recheck_error=None, kill_error=None, replace_root=False):
+                   signal_number=None, recheck_error=None, kill_error=None, replace_root=False,
+                   expected_interrupt=None, probe_error=None, root_error=None, alarm_error=None, fixture_capture=None):
         """Run the real entrypoint with no child, thread, socket, alarm, or real signal."""
         server = server if server is not None else unittest.mock.Mock(server_port=54321)
         worker = worker if worker is not None else self.worker()
         probe = unittest.mock.Mock()
         probe.connect_ex.return_value = errno.ECONNREFUSED
+        probe.connect_ex.side_effect = probe_error
         callbacks = {}
+        previous_handlers = {selected: object() for selected in (signal.SIGALRM, signal.SIGTERM, signal.SIGINT)}
+        current_handlers = previous_handlers.copy()
         stdout, stderr = io.StringIO(), io.StringIO()
         with tempfile.TemporaryDirectory(prefix="driver-cleanup-control-") as directory, ExitStack() as stack:
             root = Path(directory) / "owned"
             root.mkdir()
 
             def register(selected_signal, callback):
+                previous = current_handlers[selected_signal]
+                current_handlers[selected_signal] = callback
                 if callable(callback):
                     callbacks[selected_signal] = callback
+                return previous
+
+            remove = driver.shutil.rmtree
+
+            def remove_root(path, *args, **kwargs):
+                if Path(path) == root and root_error is not None:
+                    raise root_error
+                return remove(path, *args, **kwargs)
+
+            def alarm(_kind, seconds):
+                if seconds == 0 and alarm_error is not None:
+                    raise alarm_error
 
             def locale(_requested, _env, owned):
                 owned.extend(children)
@@ -390,7 +494,7 @@ class DriverCleanupTests(unittest.TestCase):
                     root.mkdir()
                 if signal_number is not None:
                     callbacks[signal_number](signal_number, None)
-                if terminal is None:
+                if terminal is None and fixture_capture is None:
                     raise failure if failure is not None else RuntimeError("synthetic execution failure")
                 return "C.UTF-8", "synthetic"
 
@@ -413,21 +517,39 @@ class DriverCleanupTests(unittest.TestCase):
             stack.enter_context(unittest.mock.patch.object(driver.tempfile, "mkdtemp", return_value=str(root)))
             stack.enter_context(unittest.mock.patch.object(driver.time, "monotonic", return_value=1))
             stack.enter_context(unittest.mock.patch.object(driver.signal, "signal", side_effect=register))
-            timer = stack.enter_context(unittest.mock.patch.object(driver.signal, "setitimer"))
+            timer = stack.enter_context(unittest.mock.patch.object(driver.signal, "setitimer", side_effect=alarm))
+            stack.enter_context(unittest.mock.patch.object(driver.shutil, "rmtree", side_effect=remove_root))
             kill = stack.enter_context(unittest.mock.patch.object(driver.os, "killpg", side_effect=kill_error))
             stack.enter_context(unittest.mock.patch.object(driver.picker, "fixture_utf8_locale", side_effect=locale))
-            capture = stack.enter_context(unittest.mock.patch.object(driver.picker, "capture_fixture", side_effect=install))
+            capture = stack.enter_context(unittest.mock.patch.object(driver.picker, "capture_fixture",
+                                                                     side_effect=fixture_capture or install))
             launch = stack.enter_context(unittest.mock.patch.object(driver.picker, "Terminal", return_value=terminal))
             stack.enter_context(unittest.mock.patch.object(models.http.server, "HTTPServer", return_value=server))
             stack.enter_context(unittest.mock.patch.object(models.threading, "Thread", return_value=worker))
             sockets = stack.enter_context(unittest.mock.patch.object(models.socket, "socket"))
             sockets.return_value.__enter__.return_value = probe
             with redirect_stdout(stdout), redirect_stderr(stderr):
-                status = driver.main()
+                if expected_interrupt is None:
+                    status = driver.main()
+                else:
+                    with self.assertRaises(type(expected_interrupt)) as caught:
+                        driver.main()
+                    self.assertIs(caught.exception, expected_interrupt)
+                    if isinstance(expected_interrupt, SystemExit):
+                        self.assertEqual(caught.exception.code, expected_interrupt.code)
             retained = root.exists()
             if terminal is None:
-                capture.assert_not_called()
                 launch.assert_not_called()
+                if fixture_capture is None:
+                    capture.assert_not_called()
+        self.assertEqual(current_handlers, previous_handlers)
+        self.assertEqual(timer.call_args_list, [unittest.mock.call(signal.ITIMER_REAL, 115 if driver is startup else 25),
+                                               unittest.mock.call(signal.ITIMER_REAL, 0)])
+        if expected_interrupt is not None:
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertEqual(stderr.getvalue(), "")
+            return SimpleNamespace(retained=retained, server=server, worker=worker,
+                                   probe=probe, sockets=sockets, kill=kill)
         lines = stdout.getvalue().splitlines()
         self.assertEqual(status, 1)
         self.assertEqual(len(lines), 1)
@@ -438,8 +560,6 @@ class DriverCleanupTests(unittest.TestCase):
         self.assertEqual(report["exit_code"], 1)
         self.assertTrue(report["failures"])
         self.assertEqual(stderr.getvalue(), "FAIL: " + report["case"] + "\n")
-        self.assertEqual(timer.call_args_list, [unittest.mock.call(signal.ITIMER_REAL, 115 if driver is startup else 25),
-                                               unittest.mock.call(signal.ITIMER_REAL, 0)])
         with self.assertRaises(RuntimeError):
             pilot.require_driver_pass(stdout.getvalue().encode(), stderr.getvalue().encode(), status,
                                       {report["case"]}, report["case"])
@@ -448,7 +568,7 @@ class DriverCleanupTests(unittest.TestCase):
 
     def test_execution_failures_keep_receipt_and_owned_cleanup(self):
         for driver in (startup, models):
-            for error in (OSError("synthetic failure"), KeyboardInterrupt(), SystemExit(7), RuntimeError("x" * 30000)):
+            for error in (OSError("synthetic failure"), RuntimeError("x" * 30000)):
                 with self.subTest(driver=driver.__name__, error=type(error).__name__):
                     child = self.child()
                     got = self.run_driver(driver, children=[child], failure=error)
@@ -467,8 +587,95 @@ class DriverCleanupTests(unittest.TestCase):
                     child.wait.assert_called_once_with(timeout=2)
                     self.assertTrue(got.report["cleanup_complete"])
 
+    def test_process_statuses_distinguish_control_exceptions_and_real_signals(self):
+        program = r"""
+import importlib.util, json, os, signal, sys
+from pathlib import Path
+from unittest.mock import Mock, patch
+from contextlib import ExitStack
+script, mode, directory = sys.argv[1:]
+root = Path(directory) / "owned"
+root.mkdir()
+spec = importlib.util.spec_from_file_location("driver", script)
+driver = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(driver)
+child = Mock(pid=321, fixture_stdout_eof=True, fixture_stderr_eof=True)
+child.poll.return_value = 0
+server = Mock(server_port=54321)
+worker = Mock()
+worker.is_alive.return_value = True
+worker.join.side_effect = lambda **_: setattr(worker.is_alive, "return_value", False)
+probe = Mock()
+probe.connect_ex.return_value = 111
+selected = (signal.SIGALRM, signal.SIGTERM, signal.SIGINT)
+previous = {sig: signal.getsignal(sig) for sig in selected}
+
+def interrupt(_requested, _env, owned):
+    owned.append(child)
+    if mode == "KeyboardInterrupt":
+        raise KeyboardInterrupt("synthetic control")
+    if mode == "SystemExit":
+        raise SystemExit(7)
+    os.kill(os.getpid(), getattr(signal, mode))
+    raise AssertionError("signal handler returned")
+
+with ExitStack() as stack:
+    stack.enter_context(patch.object(driver.tempfile, "mkdtemp", return_value=str(root)))
+    stack.enter_context(patch.object(driver.signal, "setitimer"))
+    stack.enter_context(patch.object(driver.picker, "fixture_utf8_locale", side_effect=interrupt))
+    argv = [script, script, script]
+    if "shell-startup" in script:
+        argv.append("login")
+        stack.enter_context(patch.object(driver, "SYSTEM_STARTUP_FILES", ()))
+        stack.enter_context(patch.object(driver, "recheck_system_sources", return_value=([], True)))
+    else:
+        probe.connect_ex.return_value = driver.errno.ECONNREFUSED
+        stack.enter_context(patch.object(driver.http.server, "HTTPServer", return_value=server))
+        stack.enter_context(patch.object(driver.threading, "Thread", return_value=worker))
+        sockets = stack.enter_context(patch.object(driver.socket, "socket"))
+        sockets.return_value.__enter__.return_value = probe
+    stack.enter_context(patch.object(driver.sys, "argv", argv))
+    try:
+        status = driver.main()
+    finally:
+        Path(directory, "cleanup.json").write_text(json.dumps({
+            "root_removed": not root.exists(), "child_waits": child.wait.call_count,
+            "server_closed": server.server_close.call_count, "worker_joined": worker.join.call_count,
+            "listener_probes": probe.connect_ex.call_count,
+            "signals_restored": all(signal.getsignal(sig) == previous[sig] for sig in selected)}))
+raise SystemExit(status)
+"""
+        for driver in (startup, models):
+            for mode in ("KeyboardInterrupt", "SystemExit", "SIGINT", "SIGTERM", "SIGALRM"):
+                with self.subTest(driver=driver.__name__, mode=mode), tempfile.TemporaryDirectory() as directory:
+                    got = subprocess.run([sys.executable, "-I", "-B", "-c", program, str(driver.__file__), mode, directory],
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5, check=False)
+                    cleanup = json.loads(Path(directory, "cleanup.json").read_text())
+                    self.assertTrue(cleanup["root_removed"])
+                    self.assertTrue(cleanup["signals_restored"])
+                    self.assertEqual(cleanup["child_waits"], 1)
+                    for field in ("server_closed", "worker_joined", "listener_probes"):
+                        self.assertEqual(cleanup[field], 1 if driver is models else 0)
+                    self.assertNotIn(b"PASS:", got.stdout + got.stderr)
+                    if mode == "KeyboardInterrupt":
+                        self.assertIn(got.returncode, (-signal.SIGINT, 128 + signal.SIGINT))
+                        self.assertEqual(got.stdout, b"")
+                        self.assertIn(b"KeyboardInterrupt: synthetic control", got.stderr)
+                    elif mode == "SystemExit":
+                        self.assertEqual((got.returncode, got.stdout, got.stderr), (7, b"", b""))
+                    else:
+                        self.assertEqual(got.returncode, 1)
+                        lines = got.stdout.decode().splitlines()
+                        self.assertEqual(len(lines), 1)
+                        self.assertTrue(lines[0].startswith("RECEIPT: "))
+                        report = json.loads(lines[0][len("RECEIPT: "):])
+                        self.assertEqual(report["exit_code"], 1)
+                        self.assertTrue(report["cleanup_complete"])
+                        self.assertIn("fixture interrupted", report["failures"][0])
+                        self.assertEqual(got.stderr, ("FAIL: " + report["case"] + "\n").encode())
+
     def test_terminal_failure_does_not_skip_owned_children(self):
-        for error in (OSError("terminal close"), KeyboardInterrupt("terminal close"), SystemExit(7)):
+        for error in (OSError("terminal close"),):
             with self.subTest(error=type(error).__name__):
                 terminal = unittest.mock.Mock(raw=bytearray(), events=[], child=SimpleNamespace(returncode=None))
                 terminal.wait.side_effect = OSError("synthetic prompt failure")
@@ -483,7 +690,7 @@ class DriverCleanupTests(unittest.TestCase):
 
     def test_child_failure_does_not_skip_later_owned_children(self):
         for driver in (startup, models):
-            for error in (OSError("child wait"), KeyboardInterrupt("child wait"), SystemExit(7), None):
+            for error in (OSError("child wait"), None):
                 with self.subTest(driver=driver.__name__, error=type(error).__name__):
                     first, second = self.child(), self.child(654)
                     first.wait.side_effect = error
@@ -511,7 +718,7 @@ class DriverCleanupTests(unittest.TestCase):
 
     def test_fixture_failure_does_not_skip_later_cleanup(self):
         for stage in ("shutdown", "server_close"):
-            for error in (OSError("fixture failure"), KeyboardInterrupt("fixture failure"), SystemExit(7)):
+            for error in (OSError("fixture failure"),):
                 with self.subTest(stage=stage, error=type(error).__name__):
                     server, worker = unittest.mock.Mock(server_port=54321), self.worker()
                     getattr(server, stage).side_effect = error
@@ -530,12 +737,12 @@ class DriverCleanupTests(unittest.TestCase):
     def test_all_fixture_cleanup_failures_retain_their_diagnostics(self):
         server, worker = unittest.mock.Mock(server_port=54321), self.worker()
         server.shutdown.side_effect = OSError("shutdown failed")
-        server.server_close.side_effect = KeyboardInterrupt("close interrupted")
-        worker.join.side_effect = SystemExit(7)
+        server.server_close.side_effect = OSError("close failed")
+        worker.join.side_effect = OSError("join failed")
         got = self.run_driver(models, server=server, worker=worker)
         self.assertIn("fixture shutdown: shutdown failed", got.report["failures"])
-        self.assertIn("fixture close: close interrupted", got.report["failures"])
-        self.assertIn("fixture join: 7", got.report["failures"])
+        self.assertIn("fixture close: close failed", got.report["failures"])
+        self.assertIn("fixture join: join failed", got.report["failures"])
         worker.join.assert_called_once_with(timeout=2)
         got.sockets.assert_not_called()
         self.assertFalse(got.report["fixture_thread_joined"])
@@ -552,7 +759,7 @@ class DriverCleanupTests(unittest.TestCase):
         self.assertTrue(got.retained)
 
     def test_source_recheck_failure_still_cleans_owned_children(self):
-        for error in (OSError("recheck failed"), KeyboardInterrupt("recheck interrupted"), SystemExit(7)):
+        for error in (OSError("recheck failed"),):
             with self.subTest(error=type(error).__name__):
                 child = self.child()
                 got = self.run_driver(startup, children=[child], recheck_error=error)
@@ -560,6 +767,144 @@ class DriverCleanupTests(unittest.TestCase):
                 self.assertIn("system source recheck: " + str(error), got.report["failures"])
                 self.assertTrue(got.report["cleanup_complete"])
                 self.assertFalse(got.retained)
+
+    def test_execution_interrupts_propagate_after_owned_cleanup(self):
+        for driver in (startup, models):
+            for error in (KeyboardInterrupt("execution interrupted"), SystemExit(7)):
+                with self.subTest(driver=driver.__name__, error=type(error).__name__):
+                    child = self.child()
+                    got = self.run_driver(driver, children=[child], failure=error, expected_interrupt=error)
+                    child.wait.assert_called_once_with(timeout=2)
+                    self.assertFalse(got.retained)
+                    if driver is models:
+                        got.server.shutdown.assert_called_once_with()
+                        got.server.server_close.assert_called_once_with()
+                        got.worker.join.assert_called_once_with(timeout=2)
+                        got.probe.connect_ex.assert_called_once_with(("127.0.0.1", 54321))
+
+    def test_capture_interrupt_survives_cleanup_failure_through_driver_entrypoint(self):
+        for driver in (startup, models):
+            for error in (KeyboardInterrupt("capture interrupted"), SystemExit(7), GeneratorExit("capture closed")):
+                with self.subTest(driver=driver.__name__, error=type(error).__name__):
+                    fake = Capture([b"x"], [], code=None, read_error=error)
+                    failure = OSError("stdout close failed")
+                    fake.process.stdout.close = unittest.mock.Mock(side_effect=failure)
+
+                    def capture(_argv, *, owned_processes, **_kwargs):
+                        return fake.run(owned_processes=owned_processes)
+
+                    got = self.run_driver(driver, expected_interrupt=error, fixture_capture=capture)
+                    self.assertIs(error.__cause__, failure)
+                    self.assertEqual(error.fixture_cleanup_errors, (failure,))
+                    self.assertEqual(fake.waits, [2, 2])
+                    self.assertTrue(fake.process.stderr.closed)
+                    self.assertTrue(got.retained)
+
+    def test_fresh_shell_interrupt_survives_ordinary_terminal_cleanup_failure(self):
+        for error in (KeyboardInterrupt("prompt interrupted"), SystemExit(7)):
+            with self.subTest(error=type(error).__name__):
+                terminal = unittest.mock.Mock(raw=bytearray(), events=[], child=SimpleNamespace(returncode=None))
+                terminal.wait.side_effect = error
+                failure = OSError("terminal close failed")
+                terminal.close.side_effect = failure
+                child = self.child()
+                got = self.run_driver(startup, children=[child], terminal=terminal, expected_interrupt=error)
+                self.assertIs(error.__cause__, failure)
+                self.assertEqual(error.fixture_cleanup_errors, (failure,))
+                self.assertEqual(terminal.close.call_count, 2)
+                child.wait.assert_called_once_with(timeout=2)
+                self.assertTrue(got.retained)
+
+    def test_incomplete_capture_cleanup_retains_private_root(self):
+        for driver in (startup, models):
+            with self.subTest(driver=driver.__name__):
+                child = self.child()
+                child.fixture_cleanup_complete = False
+                got = self.run_driver(driver, children=[child])
+                self.assertFalse(got.report["cleanup_complete"])
+                self.assertTrue(got.retained)
+                self.assertIn("child pipes: fixture pipe cleanup was incomplete", got.report["failures"])
+
+    def test_terminal_interrupts_propagate_after_owned_child_cleanup(self):
+        for error in (KeyboardInterrupt("terminal close"), SystemExit(7)):
+            with self.subTest(error=type(error).__name__):
+                terminal = unittest.mock.Mock(raw=bytearray(), events=[], child=SimpleNamespace(returncode=None))
+                terminal.wait.side_effect = OSError("synthetic prompt failure")
+                terminal.close.side_effect = error
+                child = self.child()
+                got = self.run_driver(startup, children=[child], terminal=terminal, expected_interrupt=error)
+                self.assertEqual(terminal.close.call_count, 2)
+                child.wait.assert_called_once_with(timeout=2)
+                self.assertTrue(got.retained)
+
+    def test_child_interrupts_propagate_after_later_cleanup(self):
+        for driver in (startup, models):
+            for stage in ("kill", "wait"):
+                for error in (KeyboardInterrupt("child interrupted"), SystemExit(7)):
+                    with self.subTest(driver=driver.__name__, stage=stage, error=type(error).__name__):
+                        first, second = self.child(), self.child(654)
+                        if stage == "wait":
+                            first.wait.side_effect = error
+                        else:
+                            first.poll.return_value = None
+                        got = self.run_driver(driver, children=[first, second], expected_interrupt=error,
+                                              kill_error=error if stage == "kill" else None)
+                        first.wait.assert_called_once_with(timeout=2)
+                        second.wait.assert_called_once_with(timeout=2)
+                        self.assertTrue(got.retained)
+                        if driver is models:
+                            got.worker.join.assert_called_once_with(timeout=2)
+                            got.probe.connect_ex.assert_called_once()
+
+    def test_fixture_interrupts_propagate_after_later_cleanup(self):
+        for stage in ("shutdown", "server_close", "join", "listener"):
+            for error in (KeyboardInterrupt("fixture interrupted"), SystemExit(7)):
+                with self.subTest(stage=stage, error=type(error).__name__):
+                    server, worker = unittest.mock.Mock(server_port=54321), self.worker()
+                    if stage in ("shutdown", "server_close"):
+                        getattr(server, stage).side_effect = error
+                    elif stage == "join":
+                        worker.join.side_effect = error
+                    got = self.run_driver(models, server=server, worker=worker, expected_interrupt=error,
+                                          probe_error=error if stage == "listener" else None)
+                    server.shutdown.assert_called_once_with()
+                    server.server_close.assert_called_once_with()
+                    worker.join.assert_called_once_with(timeout=2)
+                    if stage == "join":
+                        got.sockets.assert_not_called()
+                    else:
+                        got.probe.connect_ex.assert_called_once_with(("127.0.0.1", 54321))
+                    self.assertTrue(got.retained)
+
+    def test_recheck_interrupts_propagate_after_resource_cleanup(self):
+        for error in (KeyboardInterrupt("recheck interrupted"), SystemExit(7)):
+            with self.subTest(error=type(error).__name__):
+                child = self.child()
+                got = self.run_driver(startup, children=[child], recheck_error=error, expected_interrupt=error)
+                child.wait.assert_called_once_with(timeout=2)
+                self.assertFalse(got.retained)
+
+    def test_alarm_and_root_interrupts_propagate_with_signal_restoration(self):
+        for driver in (startup, models):
+            for stage in ("alarm", "root"):
+                for error in (KeyboardInterrupt("cleanup interrupted"), SystemExit(7)):
+                    with self.subTest(driver=driver.__name__, stage=stage, error=type(error).__name__):
+                        child = self.child()
+                        got = self.run_driver(driver, children=[child], expected_interrupt=error,
+                                              alarm_error=error if stage == "alarm" else None,
+                                              root_error=error if stage == "root" else None)
+                        child.wait.assert_called_once_with(timeout=2)
+                        self.assertTrue(got.retained)
+
+    def test_ordinary_cleanup_failure_does_not_replace_execution_interrupt(self):
+        for driver in (startup, models):
+            for error in (KeyboardInterrupt("execution interrupted"), SystemExit(7)):
+                with self.subTest(driver=driver.__name__, error=type(error).__name__):
+                    first, second = self.child(), self.child(654)
+                    first.wait.side_effect = OSError("wait failed")
+                    got = self.run_driver(driver, children=[first, second], failure=error, expected_interrupt=error)
+                    second.wait.assert_called_once_with(timeout=2)
+                    self.assertTrue(got.retained)
 
     def test_replaced_private_root_is_retained(self):
         for driver in (startup, models):

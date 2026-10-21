@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Check one Bash Models filter/sort/limit command against a finite loopback response."""
+from contextlib import ExitStack
 import errno
 import hashlib
 import http.server
@@ -48,10 +49,11 @@ def main():
     def interrupted(signum, _frame):
         raise TimeoutError("Models fixture interrupted or exceeded25seconds")
 
-    for selected_signal in (signal.SIGALRM, signal.SIGTERM, signal.SIGINT):
-        signal.signal(selected_signal, interrupted)
-    signal.setitimer(signal.ITIMER_REAL, 25)
+    handlers = {}
     try:
+        for selected_signal in (signal.SIGALRM, signal.SIGTERM, signal.SIGINT):
+            handlers[selected_signal] = signal.signal(selected_signal, interrupted)
+        signal.setitimer(signal.ITIMER_REAL, 25)
         owners = ("openai", "system", "demo-research-team")
         items = [{"id": f"demo-text-2026-10-01-{index:03d}", "object": "model", "created": 1700000000,
                   "owned_by": owners[index % len(owners)],
@@ -149,70 +151,92 @@ def main():
                       response_bytes=len(body), response_sha256=body_hash)
         assert time.monotonic() < deadline, "Models scene exceeded25seconds"
         report["exit_code"] = 0
-    except BaseException as error:
+    except Exception as error:
         report["failures"].append(str(error)[:2000])
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        cleanup_errors = []
-        for process in owned:
+        cleanup_incomplete = False
+
+        def cleanup(label, action, *args, blocks_removal=True):
+            nonlocal cleanup_incomplete
+            complete = False
             try:
+                action(*args)
+                complete = True
+            except Exception as error:
+                report["exit_code"] = 1
+                report["failures"].append(label + ": " + str(error)[:1000])
+            finally:
+                # Control exceptions propagate through ExitStack after later cleanup callbacks.
+                if not complete and blocks_removal:
+                    cleanup_incomplete = True
+
+        def close_child(process):
+            def stop_child():
                 if process.poll() is None:
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
                         # The owned group exited; still reap the child and verify pipe EOF.
                         pass
-                process.wait(timeout=2)
-                if not process.fixture_stdout_eof or not process.fixture_stderr_eof:
-                    cleanup_errors.append("Models pipe EOF was not observed")
-            except BaseException as error:
-                cleanup_errors.append("child cleanup: " + str(error)[:1000])
-        if server is not None:
-            try:
-                if worker is not None and worker.is_alive():
-                    server.shutdown()
-            except BaseException as error:
-                cleanup_errors.append("fixture shutdown: " + str(error)[:1000])
-            try:
-                server.server_close()
-            except BaseException as error:
-                cleanup_errors.append("fixture close: " + str(error)[:1000])
-        report["fixture_thread_joined"] = False
-        if worker is not None:
-            try:
-                worker.join(timeout=2)
-                assert not worker.is_alive(), "Models fixture thread remained alive"
-                report["fixture_thread_joined"] = True
-            except BaseException as error:
-                cleanup_errors.append("fixture join: " + str(error)[:1000])
-        if port is not None and (worker is None or report["fixture_thread_joined"]):
-            try:
+
+            def check_pipes():
+                assert process.fixture_stdout_eof and process.fixture_stderr_eof, "Models pipe EOF was not observed"
+                assert getattr(process, "fixture_cleanup_complete", True), "fixture pipe cleanup was incomplete"
+
+            with ExitStack() as child_cleanup:
+                child_cleanup.callback(cleanup, "child pipes", check_pipes)
+                child_cleanup.callback(cleanup, "child wait", lambda: process.wait(timeout=2))
+                child_cleanup.callback(cleanup, "child stop", stop_child)
+
+        def stop_server():
+            if worker is not None and worker.is_alive():
+                server.shutdown()
+
+        def join_worker():
+            worker.join(timeout=2)
+            assert not worker.is_alive(), "Models fixture thread remained alive"
+            report["fixture_thread_joined"] = True
+
+        def check_listener():
+            if worker is None or report["fixture_thread_joined"]:
                 with socket.socket() as probe:
                     probe.settimeout(1)
                     result = probe.connect_ex(("127.0.0.1", port))
                 report["listener_errno"] = result
                 assert result == errno.ECONNREFUSED, "Models fixture listener remained open"
-            except BaseException as error:
-                cleanup_errors.append("fixture listener: " + str(error)[:1000])
-        with lock:
-            report.update(request_count=requests["count"], accepted_request_count=requests["accepted"])
-            if requests != {"count": 1, "accepted": 1, "failures": []}:
-                report["exit_code"] = 1
-                report["failures"].append("request count or fixture failure")
-        if not cleanup_errors:
-            try:
+
+        def record_requests():
+            with lock:
+                report.update(request_count=requests["count"], accepted_request_count=requests["accepted"])
+                if requests != {"count": 1, "accepted": 1, "failures": []}:
+                    report["exit_code"] = 1
+                    report["failures"].append("request count or fixture failure")
+
+        def remove_root():
+            if not cleanup_incomplete:
                 info = root.lstat()
                 assert stat.S_ISDIR(info.st_mode) and (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino)
                 shutil.rmtree(root)
                 assert not root.exists()
                 report["cleanup_complete"] = True
-            except BaseException as error:
-                cleanup_errors.append("root cleanup: " + str(error)[:1000])
-        if cleanup_errors:
-            report["exit_code"] = 1
-            report["failures"].extend(cleanup_errors)
+
+        report["fixture_thread_joined"] = False
+        with ExitStack() as cleanup_stack:
+            # Callbacks run in reverse order. Register all phases before running any cleanup.
+            for selected_signal, previous in handlers.items():
+                cleanup_stack.callback(cleanup, "signal restoration", signal.signal, selected_signal, previous, blocks_removal=False)
+            cleanup_stack.callback(cleanup, "root cleanup", remove_root)
+            cleanup_stack.callback(cleanup, "request accounting", record_requests, blocks_removal=False)
+            if port is not None:
+                cleanup_stack.callback(cleanup, "fixture listener", check_listener)
+            if worker is not None:
+                cleanup_stack.callback(cleanup, "fixture join", join_worker)
+            if server is not None:
+                cleanup_stack.callback(cleanup, "fixture close", server.server_close)
+                cleanup_stack.callback(cleanup, "fixture shutdown", stop_server)
+            for process in reversed(owned):
+                cleanup_stack.callback(cleanup, "child cleanup", close_child, process)
+            cleanup_stack.callback(cleanup, "alarm cancellation", signal.setitimer, signal.ITIMER_REAL, 0)
     report["cleanup_scope"] = "Owned child, observed pipe EOF, fixture worker/listener, and private root; no complete descendant census."
     encoded = json.dumps(report, separators=(",", ":"))
     assert len(encoded.encode()) <= 65536, "Models receipt exceeded its bound"

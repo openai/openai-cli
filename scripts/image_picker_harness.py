@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Shared PTY and synthetic loopback fixtures for picker process checks."""
+from contextlib import ExitStack
+from functools import partial
 import base64
 import errno
 import fcntl
@@ -30,6 +32,26 @@ PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4
 ANSI = re.compile(r'\x1b\][^\x07]*?(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]')
 DOWN, UP, HOME, END = b'\x1b[B', b'\x1b[A', b'\x1b[H', b'\x1b[F'
 PRINT = b'\x10'  # Ctrl+P prints the complete command without making a request.
+
+
+def cleanup_fixture_resources(*actions):
+    """Attempt every owned cleanup action; ordinary failures must not replace control exceptions."""
+    def close(action, _kind, pending, traceback):
+        try:
+            action()
+        except Exception as error:
+            if isinstance(pending, BaseException) and not isinstance(pending, Exception):
+                # Keep every cleanup diagnostic, the original status, and the final error chain.
+                pending.fixture_cleanup_errors = (*getattr(pending, "fixture_cleanup_errors", ()), error)
+                raise pending.with_traceback(traceback) from error
+            raise
+        return False
+
+    pending = sys.exc_info()
+    stack = ExitStack()
+    for action in reversed(actions):
+        stack.push(partial(close, action))
+    stack.__exit__(*pending)
 
 
 class Terminal:
@@ -176,7 +198,7 @@ class Terminal:
             assert b'\x1b[?2004h' not in self.raw, 'direct command entered the picker'
 
     def close(self):
-        try:
+        def stop_child():
             # A retained, unreaped leader keeps its PID reserved, even after exit.
             signal_owned = (self.child.returncode is None and not self._identity_lost
                             if self.retain_child_identity else self.child.poll() is None)
@@ -186,16 +208,19 @@ class Terminal:
                 except ProcessLookupError:
                     # The process can exit between poll() and killpg().
                     pass
-        finally:
-            # Darwin can keep a session leader exiting until the controlling
-            # PTY's parent handles close. Close them before waiting to reap it.
+
+        def close_master():
             if not self._master_closed:
                 os.close(self.master)
                 self._master_closed = True
+
+        def close_slave():
             if not self._slave_closed:
                 os.close(self.slave)
                 self._slave_closed = True
-        self.child.wait(timeout=5)
+
+        # Darwin needs the controlling PTY handles closed before the final child wait.
+        cleanup_fixture_resources(stop_child, close_master, close_slave, partial(self.child.wait, timeout=5))
 
     def drain_eof(self, timeout=2):
         """Observe PTY EOF after the child exits, without the parent's slave holding it open."""
@@ -258,22 +283,22 @@ def capture_fixture(argv, *, env, cwd=None, timeout=10, limit=1048576, owned_pro
         result.stderr_eof = 'stderr' in eof
         return result
     finally:
-        try:
-            selector.close()
-        finally:
-            if process is not None:
-                try:
-                    process.stdout.close()
-                    process.stderr.close()
-                finally:
-                    # Do not poll here: a failed drain may have an exited, unreaped leader.
-                    # Its reserved PID lets us stop the owned group before the final wait.
-                    if process.returncode is None:
-                        try:
-                            os.killpg(process.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                    process.wait(timeout=2)
+        actions = [selector.close]
+        if process is not None:
+            process.fixture_cleanup_complete = False
+
+            def stop_child():
+                # Do not poll: an exited, unreaped leader still reserves the owned group identity.
+                if process.returncode is None:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+            actions.extend((process.stdout.close, process.stderr.close, stop_child, partial(process.wait, timeout=2)))
+        cleanup_fixture_resources(*actions)
+        if process is not None:
+            process.fixture_cleanup_complete = True
 
 
 def read_fixture_file(path, limit=65536):

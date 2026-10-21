@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check one supported or refused Bash setup lifecycle through three private-PTY sessions."""
 import argparse
+from contextlib import ExitStack
 import base64
 import hashlib
 import importlib.util
@@ -154,10 +155,11 @@ def main():
     def interrupted(signum, _frame):
         raise TimeoutError("startup fixture interrupted or exceeded115seconds")
 
-    for selected_signal in (signal.SIGALRM, signal.SIGTERM, signal.SIGINT):
-        signal.signal(selected_signal, interrupted)
-    signal.setitimer(signal.ITIMER_REAL, 115)
+    handlers = {}
     try:
+        for selected_signal in (signal.SIGALRM, signal.SIGTERM, signal.SIGINT):
+            handlers[selected_signal] = signal.signal(selected_signal, interrupted)
+        signal.setitimer(signal.ITIMER_REAL, 115)
         for source in SYSTEM_STARTUP_FILES:
             report["system_sources"].append(system_source(source))
         bindir = root / "bin"
@@ -292,7 +294,7 @@ def main():
                 item["pty_sha256"] = hashlib.sha256(terminal.raw).hexdigest()
                 item["pty_base64"] = base64.b64encode(terminal.raw).decode("ascii")
                 item["event_count"] = len(terminal.events)
-                terminal.close()
+                picker.cleanup_fixture_resources(terminal.close)
                 terminal = None
 
         marker = home / ".openai/shell/image-picker.tab-off-bash"
@@ -416,10 +418,26 @@ def main():
         assert all(item["pty_eof"] and not item["forced_cleanup"] for item in report["fresh_shells"])
         assert time.monotonic() < deadline, "startup lifecycle exceeded115seconds"
         report["exit_code"] = 0
-    except BaseException as error:
+    except Exception as error:
         report["failures"].append(str(error)[:2000])
     finally:
-        try:
+        cleanup_incomplete = False
+
+        def cleanup(label, action, *args, blocks_removal=True):
+            nonlocal cleanup_incomplete
+            complete = False
+            try:
+                action(*args)
+                complete = True
+            except Exception as error:
+                report["exit_code"] = 1
+                report["failures"].append(label + ": " + str(error)[:2000])
+            finally:
+                # Control exceptions propagate through ExitStack after later cleanup callbacks.
+                if not complete and blocks_removal:
+                    cleanup_incomplete = True
+
+        def recheck_sources():
             after, unchanged = recheck_system_sources(report["system_sources"])
             report["system_sources_after"] = after
             report["system_sources_unchanged"] = unchanged and len(after) == len(SYSTEM_STARTUP_FILES)
@@ -427,42 +445,44 @@ def main():
                 raise RuntimeError("system startup sources changed or the initial snapshot was incomplete")
             if time.monotonic() >= deadline:
                 raise TimeoutError("system source recheck exceeded the startup deadline")
-        except BaseException as error:
-            report["exit_code"] = 1
-            report["failures"].append("system source recheck: " + str(error)[:2000])
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        cleanup_errors = []
-        if terminal is not None:
-            try:
-                terminal.close()
-            except BaseException as error:
-                cleanup_errors.append("terminal cleanup: " + str(error)[:2000])
-        for process in owned:
-            try:
+
+        def close_child(process):
+            def stop_child():
                 if process.poll() is None:
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
                         # The owned group exited; still reap the child and verify pipe EOF.
                         pass
-                process.wait(timeout=2)
+
+            def check_pipes():
                 assert process.fixture_stdout_eof and process.fixture_stderr_eof, "setup pipe EOF was not observed"
-            except BaseException as error:
-                cleanup_errors.append("child cleanup: " + str(error)[:2000])
-        if not cleanup_errors:
-            try:
+                assert getattr(process, "fixture_cleanup_complete", True), "fixture pipe cleanup was incomplete"
+
+            with ExitStack() as child_cleanup:
+                child_cleanup.callback(cleanup, "child pipes", check_pipes)
+                child_cleanup.callback(cleanup, "child wait", lambda: process.wait(timeout=2))
+                child_cleanup.callback(cleanup, "child stop", stop_child)
+
+        def remove_root():
+            if not cleanup_incomplete:
                 info = root.lstat()
                 assert stat.S_ISDIR(info.st_mode) and (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino)
                 shutil.rmtree(root)
                 assert not root.exists()
                 report["cleanup_complete"] = True
-            except BaseException as error:
-                cleanup_errors.append("root cleanup: " + str(error)[:2000])
-        if cleanup_errors:
-            report["exit_code"] = 1
-            report["failures"].extend(cleanup_errors)
+
+        with ExitStack() as cleanup_stack:
+            # Callbacks run in reverse order. Register all phases before running any cleanup.
+            for selected_signal, previous in handlers.items():
+                cleanup_stack.callback(cleanup, "signal restoration", signal.signal, selected_signal, previous, blocks_removal=False)
+            cleanup_stack.callback(cleanup, "root cleanup", remove_root)
+            for process in reversed(owned):
+                cleanup_stack.callback(cleanup, "child cleanup", close_child, process)
+            if terminal is not None:
+                cleanup_stack.callback(cleanup, "terminal cleanup", terminal.close)
+            cleanup_stack.callback(cleanup, "system source recheck", recheck_sources, blocks_removal=False)
+            cleanup_stack.callback(cleanup, "alarm cancellation", signal.setitimer, signal.ITIMER_REAL, 0)
     report.update(setup_call_count=len(report["setup_calls"]), fresh_shell_count=len(report["fresh_shells"]),
                   expected_setup_calls=expected_calls, expected_fresh_shells=3, request_count=None,
                   request_count_scope="Not measured; these are local setup commands.",
