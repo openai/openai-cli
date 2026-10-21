@@ -105,11 +105,11 @@ var languages = map[string]string{
 // Run owns the listener, private launch file, and all active API sessions.
 func Run(ctx context.Context, options Options) error {
 	if options.Connect == nil || options.OpenBrowser == nil || options.Writer == nil {
-		return errors.New("Live translation could not start: browser or API configuration is missing.")
+		return Failure("Live translation could not start: browser or API configuration is missing.")
 	}
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
-		return errors.New("Could not open the local translation page. Check local network permissions.")
+		return Failure("Could not open the local translation page. Check local network permissions.")
 	}
 	defer listener.Close()
 	ctx, cancel := context.WithCancel(ctx)
@@ -117,7 +117,7 @@ func Run(ctx context.Context, options Options) error {
 	c := &companion{ctx: ctx, options: options, origin: "http://" + listener.Addr().String(), token: rand.Text()}
 	launch, cleanup, err := c.launchFile()
 	if err != nil {
-		return errors.New("Could not create the private browser launch page. Check temporary-folder permissions.")
+		return Failure("Could not create the private browser launch page. Check temporary-folder permissions.")
 	}
 	defer cleanup()
 	server := &http.Server{Handler: c, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: time.Minute}
@@ -152,7 +152,7 @@ func Run(ctx context.Context, options Options) error {
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
-		return errors.New("The local translation page stopped. Start live translation again.")
+		return Failure("The local translation page stopped. Start live translation again.")
 	}
 }
 

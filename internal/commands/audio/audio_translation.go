@@ -58,16 +58,16 @@ func ConfigureLiveTranslation(root *cli.Command, policy TranslationOptions) {
 			return next(ctx, command)
 		}
 		if command.Args().Present() {
-			return errors.New("Live translation does not accept positional arguments. Select the audio source in the browser.")
+			return audioFailure("Live translation does not accept positional arguments. Select the audio source in the browser.", nil)
 		}
 		for _, name := range []string{"file", "model", "prompt", "response-format", "temperature"} {
 			if command.IsSet(name) {
-				return errors.New("Use --live by itself for microphone or tab translation. Use --file and --model for saved audio.")
+				return audioFailure("Use --live by itself for microphone or tab translation. Use --file and --model for saved audio.", nil)
 			}
 		}
 		for _, name := range []string{"format", "format-error", "raw-output", "quiet", "transform", "transform-error"} {
 			if command.Root().IsSet(name) {
-				return errors.New("Live translation opens a browser. Omit output-format overrides, or use file translation for command output.")
+				return audioFailure("Live translation opens a browser. Omit output-format overrides, or use file translation for command output.", nil)
 			}
 		}
 		options, err := policy.RequestOptions(command)
@@ -89,6 +89,10 @@ func ConfigureLiveTranslation(root *cli.Command, policy TranslationOptions) {
 		var interrupted *clioutput.DownloadSignalError
 		if errors.As(context.Cause(ctx), &interrupted) {
 			return cli.Exit("", interrupted.SignalExitCode())
+		}
+		var failure audiolive.Failure
+		if errors.As(err, &failure) {
+			return audioFailure(failure.Error(), err)
 		}
 		return err
 	}
