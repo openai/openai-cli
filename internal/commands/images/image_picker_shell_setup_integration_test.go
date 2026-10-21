@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/openai/openai-cli/internal/autocomplete"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/images"
-	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -27,7 +27,7 @@ func TestImagePickerShellSetupCapabilityErrors(t *testing.T) {
 	pathFailure := &os.PathError{Op: "rename", Path: "synthetic-private-startup\x1b", Err: operation}
 	linkFailure := &os.LinkError{Op: "rename", Old: "synthetic-private-old", New: "synthetic-private-new", Err: operation}
 	for _, tc := range []struct {
-		name string
+		name  string
 		cause error
 	}{
 		{"direct", operation},
@@ -51,7 +51,9 @@ func TestImagePickerShellSetupCapabilityErrors(t *testing.T) {
 					require.NoError(t, appconfig.ShowCommandError(command, failure, &output))
 					message := strings.TrimSpace(output.String())
 					if format == "json" {
-						var value struct { Message string `json:"message"` }
+						var value struct {
+							Message string `json:"message"`
+						}
 						require.NoError(t, json.Unmarshal(output.Bytes(), &value))
 						message = value.Message
 					}

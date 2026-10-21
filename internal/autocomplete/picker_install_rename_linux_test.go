@@ -18,8 +18,8 @@ import (
 
 func TestPickerRenameCapabilityClassification(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		err error
+		name        string
+		err         error
 		unsupported bool
 	}{
 		{"success", nil, false},
@@ -324,8 +324,8 @@ func requireNativePickerSnapshot(t *testing.T, before map[string]pickerFileSnaps
 // must attribute it as seeded existing state, never successful installation.
 func TestPickerStartupFixtureExport(t *testing.T) {
 	var request struct {
-		Directory string `json:"directory"`
-		Profiles []string `json:"profiles"`
+		Directory string   `json:"directory"`
+		Profiles  []string `json:"profiles"`
 	}
 	input := os.Getenv("OPENAI_CLI_PICKER_FIXTURE_REQUEST")
 	if input == "" {
@@ -340,10 +340,10 @@ func TestPickerStartupFixtureExport(t *testing.T) {
 	require.GreaterOrEqual(t, len(request.Profiles), 1)
 	require.LessOrEqual(t, len(request.Profiles), 4)
 	type fixture struct {
-		Profile string `json:"profile"`
+		Profile    string `json:"profile"`
 		ScriptName string `json:"script_name"`
-		Script string `json:"script"`
-		Block string `json:"block"`
+		Script     string `json:"script"`
+		Block      string `json:"block"`
 	}
 	fixtures := make([]fixture, 0, len(request.Profiles))
 	seen := make(map[string]bool)

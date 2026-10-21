@@ -75,7 +75,9 @@ func TestMainPickerShellSetupNativeContract(t *testing.T) {
 					}
 					message := strings.TrimSpace(got.stderr)
 					if format == "json" {
-						var value struct { Message string `json:"message"` }
+						var value struct {
+							Message string `json:"message"`
+						}
 						if err := json.Unmarshal([]byte(got.stderr), &value); err != nil {
 							t.Fatalf("refusal is not one structured error: %v, %q", err, got.stderr)
 						}
