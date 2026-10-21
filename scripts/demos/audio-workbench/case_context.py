@@ -391,6 +391,8 @@ class CaseContext:
         if self.navigation:
             self.seeded_entry_list = [self.seed_history(self.private, self.env)]
         width, height = (40, 12) if self.name in ("compact", "navigation-compact", "failure-compact") else (90, 34)
+        if self.name == "wide":
+            width = 186
         self.terminal = self.new_terminal(str(self.args.binary), ["audio", "speak"], self.env, width=width, height=height)
         self.result["initial_size"] = [width, height]
         self.wait(self.terminal, "Text to speech")

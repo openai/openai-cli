@@ -969,6 +969,34 @@ def compact_case(ctx):
     assert len(server.records) == 1, "Compact cancellation generated speech"
 
 
+def wide_case(ctx):
+    terminal, result, server = ctx.terminal, ctx.result, ctx.server
+    visible = ctx.wait(terminal, "Text to speech")
+    border = visible.split("╭", 1)[1].split("╮", 1)[0]
+    assert len(border) + 2 == 96, "Wide composer escaped its reading column"
+    ctx.mark(terminal, "wide-empty-form", result)
+    draft = "Hello. This draft stays near its settings."
+    ctx.paste(terminal, draft)
+    terminal.send(b"\t\t" + ctx.picker.END)
+    ctx.wait(terminal, "› More actions…")
+    for keys, label in [(ctx.picker.LEFT, "History"), (ctx.picker.LEFT, "Generate speech"),
+                        (ctx.picker.RIGHT, "History"), (ctx.picker.RIGHT, "More actions…")]:
+        terminal.send(keys)
+        ctx.wait(terminal, "› " + label)
+        assert not server.records, "Horizontal navigation generated speech"
+    ctx.mark(terminal, "wide-actions", result)
+    terminal.send(b"\r")
+    visible = ctx.wait(terminal, "› History")
+    assert draft in visible and "Settings" in visible, "More actions lost form context"
+    ctx.mark(terminal, "wide-more", result)
+    terminal.send(b"\x1b")
+    ctx.wait(terminal, "› More actions…")
+    terminal.send(b"\x03")
+    terminal.finish(130)
+    assert not server.records and not server.failures, "Wide form navigation sent a request"
+    result.update(reading_column=96, horizontal_navigation=True, zero_requests=True)
+
+
 def busy_cancel_case(ctx):
     terminal = ctx.terminal
     server = ctx.server
@@ -1068,6 +1096,7 @@ def stopped_reader_case(ctx):
 SCENARIOS = {
     "workflow": workflow_case,
     "compact": compact_case,
+    "wide": wide_case,
     "navigation": navigation_case,
     "navigation-compact": navigation_case,
     "failure": failure_case,
