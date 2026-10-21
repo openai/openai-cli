@@ -3,6 +3,11 @@
 ## [1.40.1](https://github.com/openai/openai-cli/compare/v1.40.0...v1.40.1) (2026-10-21)
 
 
+### Bug Fixes
+
+* **completion:** show recovery guidance when WSL shortcut setup or removal cannot safely update shell files ([#497](https://github.com/openai/openai-cli/issues/497)) ([c73035a](https://github.com/openai/openai-cli/commit/c73035a0da29bfdb718801a3646715a38094219d))
+
+
 ### Chores
 
 * **deps:** update openai-go to v3.85.0 ([#576](https://github.com/openai/openai-cli/issues/576)) ([442d8ae](https://github.com/openai/openai-cli/commit/442d8aede60889508b80549487d7fcdbc8a88bf2))
