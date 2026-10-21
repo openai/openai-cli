@@ -20,10 +20,17 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+const (
+	audioSettingHistory = 5
+	audioSettingMore    = 6
+)
+
 type audioWorkResult struct {
 	entry      audiohistory.Entry
 	analysis   audiomedia.Analysis
 	measured   bool
+	position   time.Duration
+	finished   bool
 	savedPaths []string
 }
 type audioWorkMessage struct {
@@ -77,7 +84,7 @@ type audioWorkbench struct {
 	workers                    *audioWorkers
 	settings                   audiohistory.Settings
 	input, instructions, path  textarea.Model
-	speedInput                 textarea.Model
+	speedInput, saveFolder     textarea.Model
 	focus, setting, choice     int
 	modal                      string
 	choices                    []string
@@ -107,6 +114,8 @@ type audioWorkbench struct {
 	playID                     uint64
 	playCancel                 context.CancelFunc
 	playDone                   <-chan struct{}
+	playProgress               *audioPlaybackProgress
+	saveFocus                  int
 }
 
 func newAudioWorkbench(ctx context.Context, command *cli.Command, next cli.ActionFunc, store audiohistory.Store) *audioWorkbench {
@@ -125,7 +134,7 @@ func newAudioWorkbench(ctx context.Context, command *cli.Command, next cli.Actio
 		return t
 	}
 	m := &audioWorkbench{ctx: ctx, command: command, next: next, store: store, workers: &audioWorkers{}, settings: audioDefaultSettings(), color: os.Getenv("NO_COLOR") == "", dark: true,
-		input: newEditor("Enter text to speak"), instructions: newEditor("Add speaking instructions (optional)"), path: newEditor("Path for the original audio file"), speedInput: newEditor("Speed from 0.25 to 4")}
+		input: newEditor("Enter text to speak"), instructions: newEditor("Add speaking instructions (optional)"), path: newEditor("Filename for the original audio file"), saveFolder: newEditor("Folder for saved audio"), speedInput: newEditor("1.00")}
 	m.instructions.SetValue(audioInstructionsExample)
 	m.invocation, _ = command.Root().Metadata["help-invocation"].(string)
 	if m.invocation == "" {
@@ -147,12 +156,30 @@ func audioTick() tea.Cmd {
 func (m *audioWorkbench) usable() bool { return m.width >= 40 && m.height >= 12 }
 
 func (m *audioWorkbench) resizeEditors() {
-	for _, editor := range []*textarea.Model{&m.input, &m.instructions, &m.path, &m.speedInput} {
+	for _, editor := range []*textarea.Model{&m.input, &m.instructions, &m.path, &m.saveFolder, &m.speedInput} {
 		width := max(1, m.audioWidth()-4)
+		if (editor == &m.path || editor == &m.saveFolder) && m.modal == "save" {
+			labelWidth := 14
+			if m.height < 24 || m.width < 60 {
+				labelWidth = 8
+			}
+			width = max(1, m.audioWidth()-labelWidth-3)
+		}
+		if editor == &m.instructions && m.height >= 24 && m.width >= 60 {
+			width = max(1, m.audioWidth()-17)
+		}
 		if editor.Width() != width {
 			editor.SetWidth(width)
 		}
 		height := 1
+		if (editor == &m.path || editor == &m.saveFolder) && m.modal == "save" {
+			// Reserve the other control rows, feedback, and the terminal's spare row.
+			reserved := 5 + len(m.feedbackLines())
+			if m.height >= 24 && m.width >= 60 {
+				reserved += 2
+			}
+			height = min(4, max(1, editor.LineInfo().Height), max(1, m.height-1-reserved))
+		}
 		if m.height >= 24 && (editor == &m.input || editor == &m.instructions) {
 			height = min(3, 1+strings.Count(editor.Value(), "\n"))
 		}
@@ -178,6 +205,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 	case tea.BackgroundColorMsg:
 		m.dark = msg.IsDark()
 	case audioWorkTick:
+		m.capturePlaybackProgress()
 		if m.busy || m.playing {
 			return m, audioTick()
 		}
@@ -186,6 +214,11 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			if msg.playID != m.playID {
 				return m, nil
 			}
+			m.capturePlaybackProgress()
+			if m.result != nil {
+				m.result.finished = msg.err == nil
+			}
+			m.playProgress = nil
 			if m.playCancel != nil {
 				m.playCancel()
 				m.playCancel = nil
@@ -281,6 +314,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 			if m.modal != "" {
 				m.modal = ""
 				m.path.Blur()
+				m.saveFolder.Blur()
 				m.speedInput.Blur()
 				m.lastFinished = time.Now()
 				return m, nil
@@ -314,6 +348,9 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 		if handled, command := m.navigateSection(key); handled {
 			return m, command
 		}
+		if key == "ctrl+o" && m.result != nil {
+			return m, m.focusSection(4)
+		}
 		if key == "ctrl+g" {
 			return m, m.generate(false)
 		}
@@ -338,6 +375,10 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 		}
 		if m.focus == 4 {
 			switch key {
+			case "left", "right", "shift+left", "shift+right":
+				if m.resultAction == 0 {
+					m.seekResult(key)
+				}
 			case "space", "enter":
 				if time.Since(m.lastFinished) < 750*time.Millisecond {
 					return m, nil
@@ -371,9 +412,7 @@ func (m *audioWorkbench) Update(message tea.Msg) (model tea.Model, command tea.C
 		return m, nil
 	}
 	if m.modal == "save" {
-		var cmd tea.Cmd
-		m.path, cmd = m.path.Update(message)
-		return m, cmd
+		return m, m.updateSaveEditor(message)
 	}
 	if m.modal == "speed" {
 		var cmd tea.Cmd
@@ -407,7 +446,9 @@ func (m *audioWorkbench) activateSetting() tea.Cmd {
 		return m.speedInput.Focus()
 	case 4:
 		return m.generate(false)
-	case 5:
+	case audioSettingHistory:
+		return m.history()
+	case audioSettingMore:
 		m.modal, m.moreChoice = "more", 0
 		return nil
 	}
@@ -474,27 +515,7 @@ func (m *audioWorkbench) updateModal(message tea.Msg, key string) tea.Cmd {
 		return nil
 	}
 	if m.modal == "save" {
-		if key != "enter" {
-			var cmd tea.Cmd
-			m.path, cmd = m.path.Update(message)
-			return cmd
-		}
-		path := m.path.Value()
-		if path == "" || strings.ContainsAny(path, "\r\n\x00") || path == "-" || path == "/dev/stdout" {
-			m.note = "Enter a file path for saving."
-			return nil
-		}
-		m.modal = ""
-		m.path.Blur()
-		id := m.result.entry.ID
-		return m.work("export", func(ctx context.Context) audioWorkMessage {
-			snapshot, err := m.store.Open(ctx, id)
-			if err != nil {
-				return audioWorkMessage{kind: "export", err: classifiedAudioFailure(audioHistoryFailure, "Could not open retained audio for saving.", err)}
-			}
-			err = errors.Join(exportAudio(ctx, snapshot, path, nil), snapshot.Close())
-			return audioWorkMessage{kind: "export", path: path, entryID: id, err: audioFailureIf("Could not save the original audio file.", err)}
-		})
+		return m.updateSave(message, key)
 	}
 	count := len(m.choices)
 	if m.modal == "history" {
@@ -609,6 +630,11 @@ func (m *audioWorkbench) history() tea.Cmd {
 }
 
 func (m *audioWorkbench) stopPlayback() {
+	m.capturePlaybackProgress()
+	if m.playing && m.result != nil {
+		m.result.finished = false
+	}
+	m.playProgress = nil
 	if m.playCancel != nil {
 		m.playCancel()
 		m.playCancel = nil
@@ -628,6 +654,13 @@ func (m *audioWorkbench) togglePlayback() tea.Cmd {
 		m.stopPlayback()
 		return nil
 	}
+	offset := m.result.playbackPosition()
+	if m.result.finished {
+		offset, m.result.position, m.result.finished = 0, 0, false
+	}
+	if duration := m.result.seekDuration(); duration > 0 && offset >= duration {
+		return nil
+	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.playCancel = cancel
 	m.playID++
@@ -637,6 +670,8 @@ func (m *audioWorkbench) togglePlayback() tea.Cmd {
 	done := make(chan struct{})
 	m.playDone = done
 	m.playing = true
+	progress := &audioPlaybackProgress{entryID: entryID}
+	m.playProgress = progress
 	m.note = audioPlayingNote
 	return tea.Batch(m.workers.command(ctx, func(ctx context.Context) audioWorkMessage {
 		defer close(done)
@@ -651,7 +686,7 @@ func (m *audioWorkbench) togglePlayback() tea.Cmd {
 		}
 		snapshot, err := m.store.Open(ctx, entryID)
 		if err == nil {
-			err = errors.Join(audiomedia.Play(ctx, snapshot.File, snapshot.Entry.Settings.Format, 0), snapshot.Close())
+			err = errors.Join(audiomedia.PlayWithProgress(ctx, snapshot.File, snapshot.Entry.Settings.Format, offset, progress.record), snapshot.Close())
 		}
 		message.err = audioFailureIf("Could not play the retained audio.", err)
 		return message

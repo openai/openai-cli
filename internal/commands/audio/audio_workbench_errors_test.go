@@ -59,7 +59,7 @@ func TestAudioWorkbenchPartialHistoryFailureIsVisibleWithUsableEntries(t *testin
 		require.Contains(t, view, "Error details")
 		require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 		require.Equal(t, "history", m.modal)
-		require.Contains(t, audioFeedbackView(t, m), "Enter select · Esc back")
+		require.Contains(t, audioFeedbackView(t, m), "Enter open · Esc back")
 		_, command := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		require.NotNil(t, command, "valid history selection was disabled by its corrupt neighbor")
 	}
@@ -131,7 +131,11 @@ func TestAudioWorkbenchPlaybackCompletionOwnsOnlyItsActiveNote(t *testing.T) {
 					case "saved":
 						require.Contains(t, view, "Saved: saved.wav")
 					default:
-						require.Contains(t, view, "Play audio")
+						action := "Replay audio"
+						if completion != nil {
+							action = "Play audio"
+						}
+						require.Contains(t, view, action)
 						require.False(t, m.activeFailure(), "an earlier error replaced completed playback feedback")
 					}
 				})
@@ -322,7 +326,7 @@ func TestAudioWorkbenchFailureGuidanceFollowsEscapeTransitions(t *testing.T) {
 				require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 				require.Empty(t, m.modal)
 				require.Equal(t, 2, m.focus)
-				require.Equal(t, 5, m.setting)
+				require.Equal(t, audioSettingMore, m.setting)
 				// A choice dialog still returns to the form before result focus.
 				require.Nil(t, audioReviewKey(m, tea.KeyHome))
 				require.Nil(t, audioReviewKey(m, tea.KeyEnter))

@@ -75,7 +75,7 @@ func TestAudioEditorSaveValidationRemainsVisible(t *testing.T) {
 			require.Nil(t, cmd)
 			require.Equal(t, "save", m.modal)
 			require.Equal(t, value, m.path.Value())
-			require.Contains(t, m.View().Content, "Enter a file path for saving.")
+			require.Contains(t, m.View().Content, "Enter a filename for saving.")
 			require.False(t, m.busy)
 		}
 	}

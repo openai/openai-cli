@@ -49,7 +49,7 @@ func TestAudioFailureShows401BeforeEscape(t *testing.T) {
 	require.Empty(t, m.modal)
 	require.False(t, m.quit)
 	require.Equal(t, 2, m.focus)
-	require.Equal(t, 5, m.setting)
+	require.Equal(t, audioSettingMore, m.setting)
 	require.Equal(t, "A synthetic draft remains editable.", m.input.Value())
 	require.ErrorIs(t, m.lastErr, failure)
 }
@@ -61,7 +61,7 @@ func TestAudioFailureCompactPreservesCauseRecoveryAndFocus(t *testing.T) {
 			m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 			m.input.SetValue("Synthetic text")
 			m.focusSection(focus)
-			m.setting = 5
+			m.setting = audioSettingMore
 			if focus == 4 {
 				retained := audioReviewResult("retained", false)
 				m.result = &retained
@@ -79,7 +79,7 @@ func TestAudioFailureCompactPreservesCauseRecoveryAndFocus(t *testing.T) {
 				require.Equal(t, "retained", m.result.entry.ID)
 				audioReviewKey(m, tea.KeyTab)
 				require.Contains(t, audioFeedbackView(t, m), "› Play audio")
-				require.Contains(t, audioFeedbackView(t, m), "Duration")
+				require.Contains(t, audioFeedbackView(t, m), "00:00.000 / 00:01.000")
 			}
 		})
 	}
@@ -142,7 +142,7 @@ func TestAudioFailureDetailsRestoreParentWithoutActions(t *testing.T) {
 			require.False(t, m.instructions.Focused())
 			if tc.parent == "" {
 				require.Equal(t, 2, m.focus)
-				require.Equal(t, 5, m.setting)
+				require.Equal(t, audioSettingMore, m.setting)
 			}
 		})
 	}

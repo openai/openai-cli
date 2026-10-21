@@ -87,7 +87,7 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			}
 			m.setting--
 		case "down":
-			if m.setting == 5 {
+			if m.setting == audioSettingMore {
 				if m.result != nil {
 					m.resultAction = 0
 					return true, m.focusSection(4)
@@ -98,7 +98,7 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 		case "home":
 			m.setting = 0
 		case "end":
-			m.setting = 5
+			m.setting = audioSettingMore
 		default:
 			return false, nil
 		}
@@ -109,7 +109,7 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 			if m.resultAction > 0 {
 				m.resultAction--
 			} else {
-				m.setting = 5
+				m.setting = audioSettingMore
 				return true, m.focusSection(2)
 			}
 		case "down":

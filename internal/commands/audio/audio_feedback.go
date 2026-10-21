@@ -107,6 +107,9 @@ func audioFailureFeedback(command *cli.Command, operation string, failure error)
 		return audioFeedback{Summary: "History changed during this action.", Action: "Reopen History and select the result again."}
 	}
 	feedback := audioStageFeedback(stage)
+	if stage == "export" && errors.Is(failure, syscall.ENAMETOOLONG) {
+		return audioFeedback{Summary: "Save path is too long.", Action: "Use a shorter filename or folder."}
+	}
 	if errors.Is(failure, os.ErrPermission) {
 		feedback.Summary = audioStageLabel(stage) + ": access denied."
 		if stage == "export" {

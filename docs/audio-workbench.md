@@ -73,11 +73,17 @@ The form keeps the original error for its existing exit diagnostics and status.
 Completed results show their format and byte count.
 When analysis succeeds, they also show a waveform derived from decoded samples and duration.
 Result labels retain the original generation settings when you change the form.
-Result arrows select Play audio or Save audio. Enter performs the selected action.
-With the result focused, Space plays or stops it. Playback always starts from the beginning.
+Up and Down select Play audio or Save audio. Enter performs the selected action.
+Left and Right move the playback position. Shift moves five waveform bars. Seeking stops playback.
+Space plays from the selected position or stops playback.
+The marker follows player-reported progress. Players without progress reports keep a stationary marker.
 With the result focused, S opens Save and H opens History.
-Save exports the original audio bytes to your chosen path.
-History reopens a retained result and restores its settings without generation.
+Save exports the complete original audio, including when playback starts from a selected position.
+The default destination is `~/Downloads/gpt-audio`, with a filename derived from the retained prompt.
+Enter confirms the suggested destination. Tab edits Filename or Save to without moving values below their labels.
+Enter on Save to finishes editing; it does not save. Default-name collisions receive numbered filenames.
+History is available directly in the form and through More actions.
+History shows prompt previews and generation metadata. Opening an entry restores its settings without generation.
 
 Native WAV analysis supports PCM at 8, 16, 24, or 32 bits and floating-point samples at 32 or 64 bits.
 API PCM also supports waveform analysis without external tools.
@@ -86,7 +92,7 @@ Those WAV variants include compressed encodings, RF64, and streaming headers wit
 Playback requires FFplay. Audio requiring external decoding also needs FFmpeg.
 The CLI does not install either tool.
 Missing tools do not delete retained audio or prevent exporting its original bytes.
-The form supports Play, Stop, and Replay. It does not provide pause or seek controls.
+The form supports Play, Stop, Replay, and seeking. It does not provide a separate Pause control.
 
 The chooser includes the seven models, thirteen voices, and six formats shown in the supplied Playground screenshots.
 The API determines model access and availability.

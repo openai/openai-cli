@@ -171,7 +171,7 @@ func TestAudioActionsSetupGuideIsLocalAndPreservesWriters(t *testing.T) {
 	require.Nil(t, audioReviewKey(m, tea.KeyEnter))
 	require.Empty(t, m.modal)
 	require.Equal(t, 2, m.focus)
-	require.Equal(t, 5, m.setting)
+	require.Equal(t, audioSettingMore, m.setting)
 	require.Nil(t, audioReviewKey(m, tea.KeyEnter))
 	require.Equal(t, "more", m.modal)
 	require.Equal(t, 0, m.moreChoice, "Repeated Enter must select a local action, not generate")
@@ -260,4 +260,21 @@ func TestAudioActionsLocalValidationKeepsOriginalExitContract(t *testing.T) {
 	audioReviewKey(m, tea.KeyEscape)
 	require.NotNil(t, audioReviewKey(m, tea.KeyEscape))
 	require.Zero(t, m.exitCode)
+}
+
+func TestAudioHistoryOpensDirectlyWithoutGenerating(t *testing.T) {
+	m := audioReviewModel(t)
+	result := audioSaveControllerResult(t, m, "Synthetic retained bytes")
+	m.input.SetValue("A draft must remain editable")
+	m.focus, m.setting = 2, audioSettingHistory
+	command := audioReviewKey(m, tea.KeyEnter)
+	require.NotNil(t, command)
+	message := audioSaveControllerRun(t, command)
+	require.Equal(t, "history", message.kind)
+	require.NoError(t, message.err)
+	m.Update(message)
+	require.Equal(t, "history", m.modal)
+	require.Len(t, m.entries, 1)
+	require.Same(t, result, m.result)
+	require.Equal(t, "A draft must remain editable", m.input.Value())
 }

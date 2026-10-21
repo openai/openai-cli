@@ -2,7 +2,10 @@ package audio
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -44,14 +47,128 @@ func (m *audioWorkbench) openSave() tea.Cmd {
 		return nil
 	}
 	m.modal, m.note = "save", ""
-	m.path.SetValue("speech-" + m.result.entry.ID + "." + m.result.entry.Settings.Format)
-	return m.path.Focus()
+	path, err := audioDefaultSavePath(m.result.entry)
+	if err != nil {
+		m.note = err.Error()
+	}
+	if path != "" {
+		path = filepath.Base(path)
+	}
+	m.path.SetValue(path)
+	m.saveFolder.SetValue(audioDefaultSaveFolder)
+	m.resizeEditors()
+	return m.focusSave(2)
+}
+
+func (m *audioWorkbench) focusSave(focus int) tea.Cmd {
+	m.input.Blur()
+	m.instructions.Blur()
+	m.path.Blur()
+	m.saveFolder.Blur()
+	m.saveFocus = (focus + 3) % 3
+	switch m.saveFocus {
+	case 0:
+		return m.path.Focus()
+	case 1:
+		return m.saveFolder.Focus()
+	}
+	return nil
+}
+
+func (m *audioWorkbench) updateSaveEditor(message tea.Msg) tea.Cmd {
+	var command tea.Cmd
+	switch m.saveFocus {
+	case 0:
+		m.path, command = m.path.Update(message)
+	case 1:
+		m.saveFolder, command = m.saveFolder.Update(message)
+	}
+	return command
+}
+
+func (m *audioWorkbench) updateSave(message tea.Msg, key string) tea.Cmd {
+	switch key {
+	case "tab":
+		return m.focusSave(m.saveFocus + 1)
+	case "shift+tab":
+		return m.focusSave(m.saveFocus - 1)
+	case "up", "down":
+		if m.saveFocus == 2 {
+			if key == "up" {
+				return m.focusSave(1)
+			}
+			return nil
+		}
+		editor := &m.path
+		if m.saveFocus == 1 {
+			editor = &m.saveFolder
+		}
+		if !editor.HasSelection() {
+			line := editor.LineInfo()
+			if key == "up" && editor.Line() == 0 && line.RowOffset == 0 && m.saveFocus == 1 {
+				return m.focusSave(0)
+			}
+			if key == "down" && editor.Line() == editor.LineCount()-1 {
+				end := *editor
+				end.CursorEnd()
+				last := end.LineInfo()
+				// Match the form editor's cursor-only wrap-row behavior.
+				if line.RowOffset+1 == last.RowOffset && last.StartColumn == end.Column() {
+					return m.updateSaveEditor(tea.KeyPressMsg{Code: tea.KeyEnd})
+				}
+				if line.RowOffset == line.Height-1 {
+					return m.focusSave(m.saveFocus + 1)
+				}
+			}
+		}
+	case "enter":
+		if m.saveFocus == 1 {
+			if err := audioSaveFolderError(m.saveFolder.Value()); err != nil {
+				m.note = err.Error()
+				return nil
+			}
+			m.note = ""
+			return m.focusSave(2)
+		}
+		filename, folder := m.path.Value(), m.saveFolder.Value()
+		if err := audioSaveFilenameError(filename); err != nil {
+			m.note = err.Error()
+			return nil
+		}
+		if !audioSaveHasPath(filename) {
+			if err := audioSaveFolderError(folder); err != nil {
+				m.note = err.Error()
+				return m.focusSave(1)
+			}
+		}
+		if m.result == nil {
+			return nil
+		}
+		m.modal = ""
+		m.path.Blur()
+		m.saveFolder.Blur()
+		id, store := m.result.entry.ID, m.store
+		return m.work("export", func(ctx context.Context) audioWorkMessage {
+			path, useDefault, err := audioSaveDestination(filename, folder)
+			if err != nil {
+				return audioWorkMessage{kind: "export", err: audioFailureIf(err.Error(), err)}
+			}
+			snapshot, err := store.Open(ctx, id)
+			if err != nil {
+				return audioWorkMessage{kind: "export", err: classifiedAudioFailure(audioHistoryFailure, "Could not open retained audio for saving.", err)}
+			}
+			savedPath, err := saveWorkbenchAudio(ctx, snapshot, path, useDefault)
+			err = errors.Join(err, snapshot.Close())
+			return audioWorkMessage{kind: "export", path: savedPath, entryID: id, err: audioFailureIf("Could not save the original audio file.", err)}
+		})
+	}
+	return m.updateSaveEditor(message)
 }
 
 func (m *audioWorkbench) restoreEditorFocus() tea.Cmd {
 	switch m.modal {
 	case "save":
-		return m.path.Focus()
+		return m.focusSave(m.saveFocus)
 	case "speed":
 		return m.speedInput.Focus()
 	case "":
@@ -85,7 +202,7 @@ func (m *audioWorkbench) updateMore(key string) tea.Cmd {
 	default:
 		m.modal = ""
 		m.focusSection(2)
-		m.setting = 5
+		m.setting = audioSettingMore
 		switch selected {
 		case "History":
 			return m.history()
@@ -148,7 +265,7 @@ func (m *audioWorkbench) leaveRecovery() tea.Cmd {
 	}
 	m.recoveryInfo = nil
 	if m.modal == "" {
-		m.setting = 5
+		m.setting = audioSettingMore
 		return m.focusSection(2)
 	}
 	return m.restoreEditorFocus()
@@ -298,6 +415,7 @@ Enter chooses the highlighted action.
 
 Enter in Text or Instructions creates speech.
 Ctrl+G also creates speech.
+Ctrl+O opens generated audio without starting playback.
 Alt+Enter adds a new line.
 
 Instructions start with an editable example.
@@ -310,6 +428,13 @@ Clear removes the current draft, not History or saved files.
 
 Choose Play audio or Save audio in the result.
 Space plays or stops; S opens Save.
+Left and Right on Play choose the playback start.
+Shift+Left and Shift+Right move five waveform bars.
+Seeking stops playback. Press Space to play from the selected time.
+The marker follows FFplay's reported playback position.
+If FFplay does not report progress, the marker keeps its selected position.
+Waveform height scales to each recording. Playback volume stays unchanged.
+Save always exports the complete original recording.
 
 Esc returns from a menu or result.
 Esc from the form exits. Ctrl+C cancels and exits.`

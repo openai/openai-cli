@@ -281,7 +281,7 @@ func TestAudioNavigationSettingsArrowsDoNotWrapOrActivate(t *testing.T) {
 				result := audioReviewResult("retained", false)
 				m.result = &result
 			}
-			for setting := 1; setting <= 5; setting++ {
+			for setting := 1; setting <= audioSettingMore; setting++ {
 				audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 				require.Equal(t, 2, m.focus)
 				require.Equal(t, setting, m.setting)
@@ -290,7 +290,7 @@ func TestAudioNavigationSettingsArrowsDoNotWrapOrActivate(t *testing.T) {
 				audioNavigationKey(t, m, tea.KeyPressMsg{Code: key})
 				expected := 0
 				if key == tea.KeyEnd {
-					expected = 5
+					expected = audioSettingMore
 				}
 				require.Equal(t, expected, m.setting)
 				require.Equal(t, 2, m.focus)
@@ -300,10 +300,10 @@ func TestAudioNavigationSettingsArrowsDoNotWrapOrActivate(t *testing.T) {
 				require.Equal(t, 4, m.focus)
 			} else {
 				require.Equal(t, 2, m.focus)
-				require.Equal(t, 5, m.setting)
+				require.Equal(t, audioSettingMore, m.setting)
 			}
-			m.focus, m.setting = 2, 5
-			for setting := 4; setting >= 0; setting-- {
+			m.focus, m.setting = 2, audioSettingMore
+			for setting := audioSettingMore - 1; setting >= 0; setting-- {
 				audioNavigationKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
 				require.Equal(t, 2, m.focus)
 				require.Equal(t, setting, m.setting)
@@ -361,7 +361,7 @@ func TestAudioNavigationCommandScrollingStaysBounded(t *testing.T) {
 	require.Nil(t, audioReviewKey(m, tea.KeyEscape))
 	require.Equal(t, "more", m.modal)
 	require.Equal(t, 2, m.focus)
-	require.Equal(t, 5, m.setting)
+	require.Equal(t, audioSettingMore, m.setting)
 }
 
 func TestAudioNavigationRespectsBusyTinyAndModalGuards(t *testing.T) {

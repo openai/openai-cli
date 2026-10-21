@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import struct
 import sys
 import termios
 import time
@@ -139,7 +140,7 @@ def failure_case(ctx):
     result["requests_before_explicit_retry"] = len(server.records)
 
     terminal.send(b"\x07")
-    visible_failure(("Duration 00:02.000", "Play audio"),
+    visible_failure(("00:00.000 / 00:02.000", "Play audio"),
                     absent=(summary, protocol_summary, "HTTP status:", ctx.fixture.FAILURE_REQUEST_ID))
     ctx.mark(terminal, "failure-recovered-result", result)
     assert len(server.records) == 2, "Explicit retry did not produce exactly one new request"
@@ -157,13 +158,15 @@ def failure_case(ctx):
     assert original == ctx.fixture.WAV, "Successful retry did not retain original WAV bytes"
     (ctx.args.output / "failure-inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
     (ctx.args.output / "failure-recovered.wav").write_bytes(original)
-    terminal.send(b"\x1b[Z" + ctx.picker.END + b"\r")
+    terminal.send(b"\x1b")
+    main_form()
+    terminal.send(b"\t\t" + ctx.picker.END + b"\r")
     visible_failure(("More actions", "Back to form"), absent=("Last error",))
     terminal.send(b"\x1b")
     main_form()
     visible_failure(("› More actions…",))
     terminal.send(b"\t")
-    visible_failure(("Duration 00:02.000", "› Play audio"))
+    visible_failure(("00:00.000 / 00:02.000", "› Play audio"))
     result["failure_checks"] = {
         "http_status": 401, "request_id": ctx.fixture.FAILURE_REQUEST_ID,
         "safe_details_visible": True, "untrusted_message_canaries_absent": True,
@@ -272,8 +275,8 @@ def navigation_case(ctx):
     result = ctx.result
     up, down, ss3_up, ss3_down = b"\x1b[A", b"\x1b[B", b"\x1bOA", b"\x1bOB"
     backtab = b"\x1b[Z"
-    focus = {"text": "› Text", "instructions": "› Instructions", "model": "› Model",
-             "more": "› More actions…", "generate": "› [ Generate speech ]", "history": "› History",
+    focus = {"text": ("╭─", "More actions…"), "instructions": "› Instructions", "model": "› Model",
+             "more": "› More actions…", "generate": "› Generate speech", "history": "› History",
              "play": "› Play audio", "save": "› Save audio…", "command": "Command · Bash/zsh"}
     result["navigation_checks"] = []
 
@@ -316,8 +319,10 @@ def navigation_case(ctx):
     check("Escape returns to Model", "model", b"\x1b")
     check("End selects More", "more", ctx.picker.END)
     check("More Down stays bounded without result", "more", down)
-    check("More Up selects Generate", "generate", up)
-    check("Generate Down selects More", "more", ss3_down)
+    check("More Up selects History", "history", up)
+    check("History Up selects Generate", "generate", up)
+    check("Generate Down selects History", "history", ss3_down)
+    check("History Down selects More", "more", down)
     check("Tab More to Text for long command", "text", b"\t")
     ctx.paste(terminal, "Command inspection sample. " * 180)
     check("long command draft stays local", "text")
@@ -349,8 +354,12 @@ def navigation_case(ctx):
     check("Instructions Up enters Text", "text", up)
 
     editor_columns = terminal.initial_size[0] - 8
-    result["exact_width_editor_columns"] = editor_columns
+    result["exact_width_editor_columns"] = {}
     for editor in ("text", "instructions"):
+        editor_columns = terminal.initial_size[0] - 8
+        if editor == "instructions" and terminal.initial_size[0] >= 60 and terminal.initial_size[1] >= 24:
+            editor_columns = min(100, terminal.initial_size[0] - 4) - 17
+        result["exact_width_editor_columns"][editor] = editor_columns
         for name, value in (("single-line", "Boundary"), ("multiline", "First line\nSecond line\nThird line"),
                             ("wrapped-unicode", "界🙂e\u0301 " * 26), ("exact-width-unicode", "界" * editor_columns)):
             prefix = editor + " " + name
@@ -387,9 +396,9 @@ def navigation_case(ctx):
 
     check("select Settings for History", "model", b"\t\t")
     open_more("History")
-    check("open local History", "Enter select · Esc back", b"\r")
+    check("open local History", "Enter open · Esc back", b"\r")
     check("restore local result", "play", b"\r")
-    ctx.wait(terminal, "Duration 00:02.000")
+    ctx.wait(terminal, "00:00.000 / 00:02.000")
     ctx.mark(terminal, result["case"] + "-restored-result", result)
     check("reverse Tab Result to Settings", "more", backtab)
     check("More Down enters Play", "play", down)
@@ -646,19 +655,83 @@ def workflow_case(ctx):
     public = ctx.public
     private = ctx.private
     playback = ctx.playback
+
+    def player_record(index):
+        deadline = time.monotonic() + 3
+        while True:
+            records = playback.read_text().splitlines() if playback.exists() else []
+            if len(records) > index:
+                return json.loads(records[index])
+            assert time.monotonic() < deadline, "The fake player did not receive generated audio"
+            ctx.drain(terminal, .05)
+
+    def marker_column(visible):
+        # Asciinema text preserves soft wraps as one logical line. This fixture
+        # uses only single-cell characters, so recorded widths recover its rows.
+        width = terminal.initial_size[0]
+        for event in terminal.events:
+            if event[1] == "r":
+                width = int(event[2].split("x")[0])
+        physical = []
+        for line in visible.splitlines():
+            assert all(32 <= ord(char) < 127 or char in "│┃╻╹█▀▄─·›…←→↑↓" for char in line), \
+                "Waveform fixture contains a character with an unverified cell width"
+            physical.extend([line[start:start + width] for start in range(0, len(line), width)] or [""])
+        indices = [index for index, row in enumerate(physical) if "│" in row]
+        assert len(indices) == 5, "The result did not expose its five-row waveform"
+        assert indices == list(range(indices[0], indices[0] + 5)), "Waveform rows were not contiguous"
+        rows = [physical[index] for index in indices]
+        assert all(row.count("│") == 1 for row in rows), "A waveform row contained multiple playback markers"
+        columns = {row.index("│") for row in rows}
+        assert len(columns) == 1, "The playback marker did not span the waveform"
+        return columns.pop()
+
+    def advance_player(played, initial, following, clock):
+        assert played["stats"], "Workbench playback did not request FFplay status"
+        ctx.drain(terminal, .2)
+        before = ctx.wait(terminal, initial)
+        before_column = marker_column(before)
+        # The fake clock remains fixed until this process-specific release.
+        # Wall-clock passage alone must not advance the displayed position.
+        ctx.drain(terminal, .3)
+        assert initial in ctx.screen(terminal), "Playback advanced without a helper clock report"
+        ctx.playback_clock.write_text(json.dumps({"pid": played["pid"], "clock": clock}))
+        ctx.wait(terminal, following)
+        # A PTY read can end after the timeline and before the action rows.
+        # Require both values in one snapshot before judging playback state.
+        after = ctx.wait(terminal, "Stop audio")
+        assert following in after, "Reported playback position disappeared before its controls appeared"
+        after_column = marker_column(after)
+        assert after_column > before_column, "Helper progress did not move the waveform marker"
+        assert "Stop audio" in after, "Playback ended before its reported position appeared"
+        return {"reported_seconds": clock, "before": initial, "after": following,
+                "marker_before": before_column, "marker_after": after_column,
+                "stationary_before_report": True}
+
+    def saved_file(path):
+        deadline = time.monotonic() + 3
+        while not path.exists() or path.read_bytes() != ctx.fixture.WAV:
+            assert time.monotonic() < deadline, "Save did not export the complete original recording"
+            ctx.drain(terminal, .05)
+        ctx.wait(terminal, "Saved:", absent=("Saving audio", "Enter save · Esc back"))
+
     result["resize_checkpoints"] = not ctx.args.no_resize
     ctx.mark(terminal, "initial-form", result)
     ctx.paste(terminal, ctx.fixture.TEXT)
     terminal.send(b"\t")
-    ctx.wait(terminal, ("╭ Instructions ", "› Instructions"))
+    visible = ctx.wait(terminal, "› Instructions")
+    assert "╭" in visible and "╰" in visible, "Instructions replaced the primary input box"
     terminal.send(b"\x01\x0b")
     ctx.paste(terminal, ctx.fixture.INSTRUCTIONS)
+    ctx.mark(terminal, "instructions-editor", result)
     terminal.send(b"\t\r")
     ctx.wait(terminal, "gpt-4o-mini-tts-2025-12-15")
     terminal.send(ctx.picker.DOWN * 2)
     ctx.mark(terminal, "model-choices", result)
     terminal.send(b"\r")
-    ctx.wait(terminal, "Model          gpt-4o-mini-tts-2025-12-15")
+    visible = ctx.wait(terminal, "Model          gpt-4o-mini-tts-2025-12-15")
+    assert "╭" in visible and "╰" in visible, "Settings replaced the primary input box"
+    ctx.mark(terminal, "settings-form", result)
     terminal.send(ctx.picker.DOWN + b"\r")
     ctx.wait(terminal, "Enter select · Esc back")
     terminal.send(ctx.picker.UP * 3)
@@ -677,7 +750,9 @@ def workflow_case(ctx):
     ctx.mark(terminal, "selected-settings", result)
     assert not server.records, "Choosing or typing generated speech"
     terminal.send(b"\x07")
-    ctx.wait(terminal, "Duration 00:02.000")
+    visible = ctx.wait(terminal, "00:00.000 / 00:02.000")
+    assert "More actions…" not in visible and "Instructions" not in visible, "Playback still displayed the editing form"
+    marker_column(visible)
     ctx.mark(terminal, "generated-result", result)
     assert len(server.records) == 1, "Generation request count changed"
     request = server.records[0]["body"]
@@ -694,35 +769,106 @@ def workflow_case(ctx):
     (ctx.args.output / "inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
     terminal.send(b" ")
     ctx.wait(terminal, "Stop audio")
-    deadline = time.monotonic() + 3
-    while not playback.exists() and time.monotonic() < deadline:
-        ctx.drain(terminal, .05)
-    assert playback.exists(), "The fake player never received generated audio"
-    played = json.loads(playback.read_text().splitlines()[0])
+    played = player_record(0)
     assert played["sha256"] == hashlib.sha256(ctx.fixture.WAV).hexdigest()
+    progress = [advance_player(played, "00:00.000 / 00:02.000", "00:00.600 / 00:02.000", .6)]
+    ctx.mark(terminal, "playback-progress", result)
     terminal.send(b" ")
     ctx.wait(terminal, "Play audio")
+    terminal.send(b"\x1b[D" * 35)
+    ctx.wait(terminal, "00:00.000 / 00:02.000")
+    # Seven boundaries at the wide layout's 35 bars select exactly 400 ms.
+    terminal.send(b"\x1b[C" * 7)
+    ctx.wait(terminal, "00:00.400 / 00:02.000")
+    ctx.mark(terminal, "selected-playback-start", result)
+    assert len(playback.read_text().splitlines()) == 1, "Seeking started playback"
+    assert len(server.records) == 1, "Seeking generated speech"
+    terminal.send(b" ")
+    ctx.wait(terminal, "Stop audio")
+    played = player_record(1)
+    samples = ctx.fixture.WAV[44 + 9600 * 2:]
+    header = bytearray(ctx.fixture.WAV[:44])
+    struct.pack_into("<I", header, 4, 36 + len(samples))
+    struct.pack_into("<I", header, 40, len(samples))
+    expected = bytes(header) + samples
+    assert played["bytes"] == len(expected)
+    assert played["sha256"] == hashlib.sha256(expected).hexdigest(), "Player received the wrong selected samples"
+    progress.append(advance_player(played, "00:00.400 / 00:02.000", "00:01.000 / 00:02.000", .6))
+    # Seeking an active result stops it without starting another helper.
+    terminal.send(b"\x1b[D" * 35)
+    ctx.wait(terminal, "00:00.000 / 00:02.000")
+    ctx.wait(terminal, "Play audio")
+    assert len(playback.read_text().splitlines()) == 2, "Seeking restarted playback"
+    result["seek"] = {"offset_ms": 400, "frames_skipped": 9600,
+                      "played_bytes": len(expected), "explicit_play": True,
+                      "seek_stopped_playback": True, "requests": 1}
+    result["playback_progress"] = progress
     terminal.send(b"s")
-    ctx.wait(terminal, "Save original audio to:")
-    terminal.send(b"\x01\x0b-\r")
-    ctx.wait(terminal, "Enter a file path for saving.")
+    ctx.wait(terminal, "Filename")
+    terminal.send(b"\t\x01\x0b-\r")
+    ctx.wait(terminal, "Enter a filename for saving.")
     assert len(server.records) == 1, "Invalid save path generated speech"
     ctx.mark(terminal, "save-validation", result)
     destination = private / "saved speech.wav"
     terminal.send(b"\x01\x0b")
     ctx.paste(terminal, str(destination))
     terminal.send(b"\r")
-    ctx.wait(terminal, "Saved:")
+    saved_file(destination)
     assert destination.read_bytes() == ctx.fixture.WAV
     (ctx.args.output / "exported.wav").write_bytes(destination.read_bytes())
     ctx.mark(terminal, "saved-result", result)
-    terminal.send(b"\x1b[Z" + ctx.picker.END + b"\r")
+    default_folder = private / "Downloads" / "gpt-audio"
+    assert not default_folder.exists(), "Custom Save created the default audio folder"
+    default_name = "hello-from-the-audio-workbench-this-clip-is"
+    defaults = [default_folder / (default_name + suffix + ".wav") for suffix in ("", "-2")]
+    for path in defaults:
+        terminal.send(b"s")
+        ctx.wait(terminal, "Filename")
+        ctx.mark(terminal, "save-default" + ("-2" if path == defaults[1] else ""), result)
+        if path == defaults[1]:
+            terminal.send(b"\t\t")
+            ctx.wait(terminal, "› Save to")
+            ctx.mark(terminal, "save-folder" + ("-2" if path == defaults[1] else ""), result)
+            terminal.send(b"\t")
+            ctx.wait(terminal, "› Save audio")
+            if path == defaults[1]:
+                terminal.send(b"\x1b[Z\x1b[Z")
+                ctx.wait(terminal, "› Filename")
+        terminal.send(b"\r")
+        saved_file(path)
+    assert all(path.read_bytes() == ctx.fixture.WAV for path in defaults)
+    assert destination.read_bytes() == ctx.fixture.WAV, "Default Save changed the explicit export"
+    result["default_save"] = {"directory": "~/Downloads/gpt-audio", "filenames": [path.name for path in defaults],
+                              "prompt_derived": True, "numbered_collision": True, "original_bytes_preserved": True}
+    ctx.mark(terminal, "default-saved-result", result)
+    terminal.send(b"s")
+    ctx.wait(terminal, "Filename")
+    terminal.send(b"\t\x01\x0b")
+    ctx.paste(terminal, "chosen-folder.wav")
+    terminal.send(b"\t\x01\x0b")
+    ctx.paste(terminal, str(private))
+    terminal.send(b"\r")
+    ctx.wait(terminal, "› Save audio")
+    assert not (private / "chosen-folder.wav").exists(), "Committing the folder saved audio"
+    terminal.send(b"\r")
+    saved_file(private / "chosen-folder.wav")
+    assert (private / "chosen-folder.wav").read_bytes() == ctx.fixture.WAV
+    terminal.send(b"\x1b")
+    ctx.wait(terminal, ("╭─", "More actions…"))
+    played_before_listen = len(playback.read_text().splitlines())
+    terminal.send(b"\x0f")
+    ctx.wait(terminal, "Play audio")
+    assert len(playback.read_text().splitlines()) == played_before_listen, "Listen shortcut started playback"
+    ctx.mark(terminal, "listen-shortcut", result)
+    terminal.send(b"\x1b")
+    ctx.wait(terminal, ("╭─", "More actions…"))
+    terminal.send(b"\t\t" + ctx.picker.END + ctx.picker.UP)
     ctx.wait(terminal, "› History")
     terminal.send(b"\r")
-    ctx.wait(terminal, entry["id"])
+    ctx.wait(terminal, ctx.fixture.TEXT.splitlines()[0])
     ctx.mark(terminal, "history", result)
     terminal.send(b"\r")
-    ctx.wait(terminal, "Duration 00:02.000")
+    ctx.wait(terminal, "00:00.000 / 00:02.000")
     ctx.wait(terminal, "Play audio", absent=("Opening audio",))
     ctx.mark(terminal, "restored-result", result)
     if not ctx.args.no_resize:
@@ -736,9 +882,9 @@ def workflow_case(ctx):
         assert len(server.records) == 1, "Small terminal accepted a hidden submission"
         ctx.mark(terminal, "too-small", result)
         terminal.resize(90, 34)
-        ctx.wait(terminal, "Duration 00:02.000")
+        ctx.wait(terminal, "00:00.000 / 00:02.000")
     terminal.send(b"\x1b")
-    ctx.wait(terminal, ("╭ Text ", "› Text"))
+    ctx.wait(terminal, ("╭─", "More actions…"))
     terminal.send(b"\t\t" + ctx.picker.HOME + ctx.picker.DOWN + b"\r")
     ctx.wait(terminal, "Enter select · Esc back")
     terminal.send(ctx.picker.DOWN + b"\r")
@@ -747,22 +893,27 @@ def workflow_case(ctx):
     terminal.send(ctx.picker.END + b"\r")
     ctx.wait(terminal, "› History")
     terminal.send(ctx.picker.DOWN + b"\r")
-    ctx.wait(terminal, "Result: Ballad")
+    ctx.wait(terminal, "Ballad · WAV")
     ctx.mark(terminal, "voice-audition", result)
     assert len(server.records) == 2 and server.records[1]["body"]["input"] == ctx.fixture.AUDITION
     assert json.loads(public(["--format", "json", "audio", "history"])) == entries
     terminal.send(b"\x1b")
-    ctx.wait(terminal, "Result: Ash")
+    ctx.wait(terminal, ("╭─", "More actions…"))
+    terminal.send(b"\t\t\t")
+    ctx.wait(terminal, "Ash · WAV")
+    terminal.send(b"\x1b")
+    ctx.wait(terminal, ("╭─", "More actions…"))
     terminal.send(b"\t\t" + ctx.picker.END + b"\r")
     ctx.wait(terminal, "› History")
     terminal.send(ctx.picker.DOWN * 2)
     ctx.wait(terminal, "› Clear form")
     terminal.send(b"\r")
-    ctx.wait(terminal, "› More actions…", absent=("Result:", ctx.fixture.TEXT.splitlines()[0], ctx.fixture.INSTRUCTIONS,
+    ctx.wait(terminal, "› More actions…", absent=("Audio ready", ctx.fixture.TEXT.splitlines()[0], ctx.fixture.INSTRUCTIONS,
                                                 ctx.fixture.DEFAULT_INSTRUCTIONS))
     ctx.mark(terminal, "cleared-form", result)
     assert json.loads(public(["--format", "json", "audio", "history"])) == entries
     assert destination.read_bytes() == ctx.fixture.WAV and len(server.records) == 2
+    assert all(path.read_bytes() == ctx.fixture.WAV for path in defaults), "Clear removed a default export"
     terminal.send(b"\x03")
     terminal.finish(130)
 
@@ -776,7 +927,7 @@ def compact_case(ctx):
     ctx.paste(terminal, ctx.fixture.TEXT)
     assert not server.records, "Typing generated speech"
     terminal.send(b"\x07")
-    ctx.wait(terminal, "Duration 00:02.000")
+    ctx.wait(terminal, "00:00.000 / 00:02.000")
     assert len(server.records) == 1, "Compact generation request count changed"
     request = server.records[0]["body"]
     assert request["input"] == ctx.fixture.TEXT and request.get("instructions", "") == ctx.fixture.DEFAULT_INSTRUCTIONS
@@ -794,6 +945,16 @@ def compact_case(ctx):
     (ctx.args.output / "compact-exported.wav").write_bytes(original)
     (ctx.args.output / "compact-inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
     ctx.mark(terminal, "compact-40x12", result)
+    terminal.send(b"s")
+    ctx.wait(terminal, "Filename")
+    ctx.wait(terminal, "Enter save · Tab edit · Esc back")
+    ctx.mark(terminal, "compact-save", result)
+    terminal.send(b"\t\t")
+    ctx.wait(terminal, "› Save to")
+    ctx.wait(terminal, "Enter done · Esc back")
+    ctx.mark(terminal, "compact-save-folder", result)
+    terminal.send(b"\x1b")
+    ctx.wait(terminal, "Play audio")
     assert not any(event[1] == "r" for event in terminal.events), "Fixed-size capture contains a resize"
     result["fixed_geometry"] = True
     result["original_audio_sha256"] = hashlib.sha256(original).hexdigest()

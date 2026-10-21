@@ -23,7 +23,7 @@ func (m *audioWorkbench) activeFailure() bool {
 }
 
 func (m *audioWorkbench) failureSummaryRows() []string {
-	width := max(1, m.audioWidth()-2)
+	width := m.failureTextWidth()
 	rows := []string{m.strong().Render("! " + ansi.Truncate(readable.Text(m.failure.Summary), width, "…"))}
 	action := strings.Split(ansi.Wrap(readable.Text(m.failure.Action), width, ""), "\n")
 	for i, line := range action[:min(2, len(action))] {
@@ -45,9 +45,23 @@ func (m *audioWorkbench) failureDetailRows() []string {
 	}
 	var rows []string
 	for _, value := range values {
-		rows = append(rows, strings.Split(ansi.Wrap(readable.Text(value), m.audioWidth(), ""), "\n")...)
+		rows = append(rows, strings.Split(ansi.Wrap(readable.Text(value), m.failureTextWidth(), ""), "\n")...)
 	}
 	return rows
+}
+
+func (m *audioWorkbench) failureTextWidth() int {
+	if m.height < 24 || m.width < 60 {
+		return m.audioWidth()
+	}
+	return max(1, m.audioWidth()-2)
+}
+
+func (m *audioWorkbench) failureIndent() string {
+	if m.height < 24 || m.width < 60 {
+		return ""
+	}
+	return "  "
 }
 
 func (m *audioWorkbench) failureDetailHeight() int { return max(1, m.height-5) }
@@ -56,17 +70,23 @@ func (m *audioWorkbench) failureView() tea.View {
 	rows := m.failureDetailRows()
 	height := m.failureDetailHeight()
 	start := min(m.failureOffset, max(0, len(rows)-height))
-	lines := []string{m.strong().Render("Error details"), ""}
-	lines = append(lines, rows[start:min(len(rows), start+height)]...)
-	lines = append(lines, "", m.muted().Render("↑↓ scroll · Esc back"))
+	lines := []string{m.strong().Render("  Error details"), ""}
+	for _, row := range rows[start:min(len(rows), start+height)] {
+		lines = append(lines, m.failureIndent()+row)
+	}
+	lines = append(lines, "", "  "+m.muted().Render("↑↓ scroll · Esc back"))
 	return tea.NewView(m.fitAudio(lines))
 }
 
 func (m *audioWorkbench) recoveryView() tea.View {
 	items := m.recoveryItems()
-	lines := strings.Split(ansi.Wrap(m.strong().Render(readable.Text(m.failure.Summary)), m.audioWidth(), ""), "\n")
-	lines = append(lines, "")
-	lines = append(lines, strings.Split(ansi.Wrap(readable.Text(m.failure.Action), m.audioWidth(), ""), "\n")...)
+	lines := []string{}
+	for _, row := range strings.Split(ansi.Wrap(readable.Text(m.failure.Summary), m.failureTextWidth(), ""), "\n") {
+		lines = append(lines, m.failureIndent()+m.strong().Render(row))
+	}
+	for _, row := range strings.Split(ansi.Wrap(readable.Text(m.failure.Action), m.failureTextWidth(), ""), "\n") {
+		lines = append(lines, m.failureIndent()+m.muted().Render(row))
+	}
 	// Keep every action reachable when long guidance consumes a small terminal.
 	budget := m.height - 2 - len(items)
 	if len(lines) > budget {
