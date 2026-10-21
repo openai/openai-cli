@@ -90,7 +90,7 @@ func TestSpendMutationResponseValidationPreservesCancellation(t *testing.T) {
 			checking := &cancelListTableContext{Context: ctx, cancel: cancel, after: 2}
 			var out bytes.Buffer
 			err := ShowJSON(gjson.Parse(body), ShowJSONOpts{Context: checking, Format: "text",
-				Operation: "(resource) admin.organization.spend_alerts > (method) create",
+				Operation:  "(resource) admin.organization.spend_alerts > (method) create",
 				OutputKind: OutputResponse, Stdout: &out, Stderr: io.Discard})
 			require.ErrorIs(t, err, context.Canceled)
 			require.Empty(t, out.String())
