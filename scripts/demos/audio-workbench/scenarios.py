@@ -420,7 +420,8 @@ def navigation_case(ctx):
     assert "Command preview" not in visible and "printf" not in visible, "Main form retained advanced command content"
     ctx.mark(terminal, result["case"] + "-complete", result)
     result["navigation_check_count"] = len(result["navigation_checks"])
-    assert result["navigation_check_count"] == 185, "Navigation inventory changed"
+    # Direct History adds a stop between Generate and More in both directions.
+    assert result["navigation_check_count"] == 187, "Navigation inventory changed"
     zero_requests()
     terminal.send(b"\x03")
     terminal.finish(130)
