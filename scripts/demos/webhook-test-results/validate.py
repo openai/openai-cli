@@ -80,7 +80,7 @@ def main():
         elif name == "no-matches":
             assert "No matches." in screen and "[x]" not in screen
         elif name in {"review", "review-return"}:
-            assert "[No]   Yes, create" in screen and "Search events or groups" not in screen and "[x]" not in screen
+            assert "[No]   Yes, create" in screen and "Type to filter events" not in screen and "[x]" not in screen
     assert "Create webhook endpoint" not in evidence["result_screen"]
     assert "Create endpoint now?" not in evidence["result_screen"]
     raw = (output / "guided-evidence.tty").read_bytes()

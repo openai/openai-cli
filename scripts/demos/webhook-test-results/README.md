@@ -15,7 +15,7 @@ It searches for response events and selects both matches with Ctrl+A.
 It checks an empty search, then restores the search and both selections.
 It returns from review to event selection with Shift+Tab, then opens review again.
 The review initially selects No.
-The compact panel retains terminal scrollback and keeps Review inside the form.
+The compact panel retains terminal scrollback and keeps Continue to confirmation inside the form.
 Tall terminals do not stretch the panel.
 The driver chooses Yes before pressing Enter.
 The fixture verifies both subscriptions and rejects creation before confirmation or duplicate creation.

@@ -202,7 +202,7 @@ func TestWebhookCreatePickerReviewCanScrollCompleteURLAndSelections(t *testing.T
 		}
 		scrollHint := -1
 		for i := 2; i < len(lines); i++ {
-			if strings.HasPrefix(lines[i], "↑↓ review ") {
+			if strings.HasPrefix(lines[i], "↑↓ settings ") {
 				scrollHint = i
 				break
 			}
@@ -387,7 +387,7 @@ func TestWebhookCreatePickerArrowNavigationIncludesReview(t *testing.T) {
 	webhookCreateKey(m, tea.KeyDown)
 	webhookCreateKey(m, tea.KeyDown)
 	require.True(t, m.reviewFocused)
-	require.Contains(t, ansi.Strip(m.View().Content), "> [ Review ]")
+	require.Contains(t, ansi.Strip(m.View().Content), "> [ Continue to confirmation ]")
 	before := m.settings()
 	webhookCreatePaste(m, "hidden text")
 	webhookCreateKey(m, ' ')
@@ -419,7 +419,7 @@ func TestWebhookCreatePickerKeepsOnlyContextualControls(t *testing.T) {
 				require.NotContains(t, view, removed)
 			}
 			if stage < 3 {
-				require.Contains(t, view, "[ Review ]")
+				require.Contains(t, view, "[ Continue to confirmation ]")
 			}
 		}
 	}
@@ -506,12 +506,12 @@ func TestWebhookCreatePickerCompactBudgetKeepsControls(t *testing.T) {
 			view := ansi.Strip(m.View().Content)
 			require.NotContains(t, view, "Tab fields", "size=%v stage=%d", size, stage)
 			if stage < 3 {
-				require.Contains(t, view, "[ Review ]")
+				require.Contains(t, view, "[ Continue to confirmation ]")
 			}
 			if stage == 3 {
 				require.Contains(t, view, "Create endpoint now?")
 				require.Contains(t, view, "[No]   Yes, create")
-				require.Contains(t, view, "↑↓ review")
+				require.Contains(t, view, "↑↓ settings")
 			}
 		}
 	}
@@ -688,41 +688,40 @@ func TestWebhookPickerCleanupCancellationKeepsRealErrors(t *testing.T) {
 	}
 }
 
-func TestWebhookCreatePickerNativeCursorAndCompactSpacing(t *testing.T) {
+func TestWebhookCreatePickerSteadyCursorAndCompactSpacing(t *testing.T) {
 	for _, size := range [][2]int{{80, 24}, {36, 10}, {40, 12}} {
 		m := newWebhookCreatePicker([]string{"response.completed", "response.failed"})
 		m.width, m.height, m.color = size[0], size[1], true
 		for stage := range 3 {
 			m.stage = stage
 			view := m.View()
-			require.NotNil(t, view.Cursor)
-			require.Equal(t, tea.CursorUnderline, view.Cursor.Shape)
-			lines := strings.Split(ansi.Strip(view.Content), "\n")
 			require.NotContains(t, view.Content, "▏")
 			require.NotRegexp(t, `\x1b\[[^m]*48;`, view.Content, "focus must not paint a highlight bar")
-			require.Less(t, view.Cursor.Y, len(lines))
-			require.Contains(t, lines[view.Cursor.Y], []string{"Name", "URL", "Events"}[stage])
-			column := 9
-			if size[1] >= 15 {
-				column += 2
-			}
-			require.Equal(t, column, view.Cursor.X)
 			if stage == 2 {
+				require.Nil(t, view.Cursor, "category browsing has no flashing search cursor")
+				require.Contains(t, view.Content, "←→ category")
 				require.Contains(t, view.Content, "Space select")
-				require.Contains(t, view.Content, "Enter review")
+				require.Contains(t, view.Content, "Enter continue")
 			}
 			input := m.input()
 			input.insert(strings.Repeat("猫🙂", 30))
 			for _, position := range []int{0, len(input.value) / 2, len(input.value)} {
 				input.cursor = position
-				inputWidth := min(76, size[0]-2) - 9
+				inputWidth, column := min(76, size[0]-2)-9, 9
 				if size[1] >= 15 {
 					inputWidth -= 4
+					column += 2
 				}
 				_, offset := input.viewport(inputWidth, "")
 				painted := m.View()
+				require.NotNil(t, painted.Cursor)
+				require.Equal(t, tea.CursorBlock, painted.Cursor.Shape)
+				require.False(t, painted.Cursor.Blink)
 				require.Equal(t, column+offset, painted.Cursor.X)
 				require.Less(t, painted.Cursor.X, size[0]-2)
+				lines := strings.Split(ansi.Strip(painted.Content), "\n")
+				require.Less(t, painted.Cursor.Y, len(lines))
+				require.Contains(t, lines[painted.Cursor.Y], []string{"Name", "URL", "Search"}[stage])
 			}
 		}
 		m.reviewFocused = true
@@ -730,6 +729,38 @@ func TestWebhookCreatePickerNativeCursorAndCompactSpacing(t *testing.T) {
 		m.canceled = true
 		require.Nil(t, m.View().Cursor)
 	}
+}
+
+func TestWebhookCreatePickerCategorySelectionPreservesSubscriptions(t *testing.T) {
+	m := newWebhookCreatePicker([]string{"response.completed", "batch.completed", "response.failed", "future.event"})
+	m.stage = 2
+	require.Equal(t, []string{"All event types", "Batches", "Background responses", "Other"}, m.categories())
+	webhookCreateKey(m, tea.KeyRight)
+	require.Equal(t, []string{"batch.completed"}, m.filteredEvents())
+	webhookCreateKey(m, ' ')
+	webhookCreatePaste(m, "no matches")
+	require.Empty(t, m.filteredEvents())
+	webhookCreateKey(m, tea.KeyRight)
+	require.Empty(t, m.search.value, "switching categories clears the local search")
+	require.Zero(t, m.current)
+	require.Zero(t, m.offset)
+	require.Equal(t, []string{"response.completed", "response.failed"}, m.filteredEvents())
+	m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	require.ElementsMatch(t, []string{"batch.completed", "response.completed", "response.failed"}, m.settings().events)
+	webhookCreateKey(m, tea.KeyRight)
+	require.Equal(t, []string{"future.event"}, m.filteredEvents())
+	webhookCreateKey(m, ' ')
+	webhookCreateKey(m, tea.KeyRight)
+	require.Zero(t, m.category, "category browsing wraps to all events")
+	require.Len(t, m.filteredEvents(), 4)
+	webhookCreateKey(m, tea.KeyLeft)
+	require.Equal(t, 3, m.category)
+	require.Len(t, m.settings().events, 4, "category changes must preserve hidden selections")
+	m.stage = 0
+	m.name.insert("Name")
+	webhookCreateKey(m, tea.KeyLeft)
+	require.Equal(t, 3, m.name.cursor, "text fields retain ordinary cursor keys")
+	require.Equal(t, 3, m.category)
 }
 
 func TestWebhookCreatePickerDoesNotEndWithEmptyGroupHeading(t *testing.T) {

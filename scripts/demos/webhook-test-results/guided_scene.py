@@ -53,7 +53,7 @@ def checkpoint(terminal, evidence, name):
         for field in ("Name", "URL", "Events"):
             if field not in screen:
                 raise AssertionError("combined form omitted " + field)
-    if name in {"review", "review-return", "confirm"} and ("Search events or groups" in screen or "[x]" in screen):
+    if name in {"review", "review-return", "confirm"} and ("Type to filter events" in screen or "[x]" in screen):
         raise AssertionError("review retained the event-search screen")
     evidence["screens"][name] = screen
     evidence["checkpoints"][name] = time.monotonic() - terminal.started

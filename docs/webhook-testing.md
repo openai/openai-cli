@@ -19,21 +19,22 @@ openai webhooks create
 1. Enter a name. Leave it blank to use the displayed `Webhook` default.
 2. Enter your receiver's HTTPS URL.
 3. Select the events your receiver handles.
-4. Review the settings.
+4. Continue to confirmation and check the settings.
 5. Choose Yes to create the endpoint.
 
 Name, URL, and event choices stay visible in one form.
 Use Up and Down to move through the fields and event list. Tab and Shift+Tab also move between fields.
-Choose Review below the events, or press Enter from the event list. Review validates the complete draft before creation.
+Choose Continue to confirmation, or press Enter from the event list. The confirmation shows every setting before creation.
 The CLI loads available events from your authenticated project.
-Type to search the grouped list. Use arrow keys to move and Space to select events.
+Use Left and Right to choose an event category. Use Up and Down to move and Space to select events.
+Type to filter events in that category. Changing category clears the search and preserves selections.
 While choosing events, Ctrl+A selects all matching events. Press it again to clear those matches.
 Selections outside the search remain unchanged.
-Selections remain when you change the search. Press Enter to review them.
+Selections remain when you change the search. Press Enter to check the selected settings.
 Use Shift+Tab to go back. Press Escape or Ctrl+C to cancel.
 The final confirmation defaults to No.
-The form stays inline and keeps the fields and Review action together.
-A text cursor marks the input position. Brief controls appear for the active field.
+The form stays inline and keeps the fields and confirmation action together.
+A steady text cursor marks the input position. Brief controls appear for the active field.
 It preserves terminal scrollback and supports both light and dark terminal colors.
 Set `NO_COLOR=1` for plain output; selection markers remain visible.
 

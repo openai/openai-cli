@@ -148,6 +148,7 @@ type webhookCreatePicker struct {
 	events               []string
 	selected             map[string]bool
 	current, offset      int
+	category             int
 	reviewOffset         int
 	reviewFocused        bool
 	confirmYes           bool
@@ -194,11 +195,27 @@ func (m *webhookCreatePicker) settings() webhookCreateSettings {
 	return result
 }
 
+// Categories come from the current catalog, including ordinary future event names.
+func (m *webhookCreatePicker) categories() []string {
+	groups := []string{"All event types"}
+	for _, event := range m.events {
+		_, group := webhookCreateEventGroup(event)
+		if !slices.Contains(groups, group) {
+			groups = append(groups, group)
+		}
+	}
+	return groups
+}
+
 func (m *webhookCreatePicker) filteredEvents() []string {
 	query := strings.ToLower(string(m.search.value))
+	category := m.categories()[m.category]
 	var matches []string
 	for _, event := range m.events {
 		_, group := webhookCreateEventGroup(event)
+		if m.category != 0 && group != category {
+			continue
+		}
 		if strings.Contains(strings.ToLower(event), query) || strings.Contains(strings.ToLower(group), query) {
 			matches = append(matches, event)
 		}
@@ -299,6 +316,16 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.stage == 2 {
 			matches := m.filteredEvents()
 			switch key {
+			case "left", "right":
+				direction := 1
+				if key == "left" {
+					direction = -1
+				}
+				count := len(m.categories())
+				m.category = (m.category + direction + count) % count
+				m.search = webhookCreateInput{}
+				m.current, m.offset, m.note = 0, 0, ""
+				return m, nil
 			case "up":
 				if m.current == 0 {
 					m.stage, m.note = 1, ""
@@ -501,7 +528,8 @@ func (m *webhookCreatePicker) View() tea.View {
 			x, y = x+2, y+1
 		}
 		cursor = tea.NewCursor(x, y)
-		cursor.Shape = tea.CursorUnderline
+		cursor.Shape = tea.CursorBlock
+		cursor.Blink = false
 	}
 	switch m.stage {
 	case 0, 1, 2:
@@ -525,29 +553,30 @@ func (m *webhookCreatePicker) View() tea.View {
 		if !compact {
 			body = append(body, "")
 		}
+		body = append(body, strong.Render("  Events ")+ansi.Truncate("‹ "+m.categories()[m.category]+" ›", inner-9, "…"))
 		search := ansi.Truncate(webhookCreateLine(string(m.search.value)), inner-9, "…")
-		if m.stage == 2 && !m.reviewFocused {
+		if m.stage == 2 && !m.reviewFocused && search != "" {
 			var column int
-			search, column = m.search.viewport(inner-9, "Search events or groups")
-			row := 2
+			search, column = m.search.viewport(inner-9, "Type to filter events")
+			row := 3
 			if !compact {
 				row++
 			}
 			cursorAt(column, row)
 		} else if search == "" {
-			search = quiet.Render(ansi.Truncate("Search events or groups", inner-9, "…"))
+			search = quiet.Render(ansi.Truncate("Type to filter events", inner-9, "…"))
 		}
-		body = append(body, strong.Render("  Events ")+search)
+		body = append(body, quiet.Render("  Search ")+search)
 		matches := m.filteredEvents()
-		if m.stage == 2 && !m.reviewFocused {
-			hint := "  Type to filter · Space select · Ctrl+A all"
+		if m.stage == 2 && !m.reviewFocused && m.note == "" {
+			hint := "  ←→ category · Space select · Ctrl+A all"
 			if inner < 42 {
-				hint = "Type filter · Space select"
+				hint = "←→ category · Space select"
 			}
 			body = append(body, quiet.Render(clip(hint)))
 		}
 		// Reserve fields, controls and validation before sizing the event viewport.
-		overhead, tail := 1, 2 // Heading; Review and its controls.
+		overhead, tail := 1, 2 // Heading; continuation and its controls.
 		if !compact {
 			overhead += 2
 			tail++
@@ -563,7 +592,7 @@ func (m *webhookCreatePicker) View() tea.View {
 		lastGroup := ""
 		for index, event := range matches {
 			_, group := webhookCreateEventGroup(event)
-			if !compact && group != lastGroup {
+			if !compact && m.category == 0 && group != lastGroup {
 				headingRows[len(rows)] = true
 				rows = append(rows, quiet.Render(clip("  "+group)))
 				lastGroup = group
@@ -604,18 +633,18 @@ func (m *webhookCreatePicker) View() tea.View {
 		if !compact {
 			body = append(body, "")
 		}
-		action := "  [ Review ]"
+		action := "  [ Continue to confirmation ]"
 		if m.reviewFocused {
-			action = active("> [ Review ]")
+			action = active("> [ Continue to confirmation ]")
 		} else {
 			action = strong.Render(action)
 		}
 		body = append(body, action)
 		hint := "↑↓ move · Enter next · Esc cancel"
 		if m.stage == 2 {
-			hint = "↑↓ move · Enter review · Esc cancel"
+			hint = "↑↓ move · Enter continue · Esc cancel"
 		}
-		if inner < 34 {
+		if inner < 37 {
 			hint = strings.Replace(hint, "Esc cancel", "Esc", 1)
 		}
 		body = append(body, quiet.Render(clip(hint)))
@@ -639,7 +668,7 @@ func (m *webhookCreatePicker) View() tea.View {
 		m.reviewOffset = min(m.reviewOffset, max(0, len(wrapped)-available))
 		body = append(body, wrapped[m.reviewOffset:min(len(wrapped), m.reviewOffset+available)]...)
 		if len(wrapped) > available {
-			body = append(body, quiet.Render(clip(fmt.Sprintf("↑↓ review %d-%d/%d", m.reviewOffset+1, min(len(wrapped), m.reviewOffset+available), len(wrapped)))))
+			body = append(body, quiet.Render(clip(fmt.Sprintf("↑↓ settings %d-%d/%d", m.reviewOffset+1, min(len(wrapped), m.reviewOffset+available), len(wrapped)))))
 		}
 		choice := "[No]   Yes, create"
 		if m.confirmYes {
