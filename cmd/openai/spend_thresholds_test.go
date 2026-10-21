@@ -550,18 +550,25 @@ func TestMainSpendThresholdLargeUnknownField(t *testing.T) {
 		io.WriteString(w, body)
 	}))
 	defer server.Close()
-	args := spendThresholdArgs(false, "spend-limit", "retrieve")
-	got := runSpendThresholdCommand(t, server, args...)
-	if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "Spend threshold: USD 100.00 per month") || !strings.Contains(got.stdout, "Future: "+value+"\n") {
-		t.Fatalf("large readable response lost data: code=%d stderr=%q output bytes=%d", got.code, got.stderr, len(got.stdout))
-	}
-	got = runSpendThresholdCommand(t, server, append([]string{"--format", "raw"}, args...)...)
-	if got.code != 0 || got.stderr != "" || got.stdout != body+"\n" {
-		t.Fatalf("large raw response changed: code=%d stderr=%q output bytes=%d", got.code, got.stderr, len(got.stdout))
-	}
-	got = runSpendThresholdCommand(t, server, append([]string{"--transform", "future", "--raw-output"}, args...)...)
-	if got.code != 0 || got.stderr != "" || got.stdout != value+"\n" {
-		t.Fatalf("large extracted field changed: code=%d stderr=%q output bytes=%d", got.code, got.stderr, len(got.stdout))
+	for _, action := range []string{"retrieve", "update"} {
+		t.Run(action, func(t *testing.T) {
+			args := spendThresholdArgs(false, "spend-limit", action)
+			if action == "update" {
+				args = append(args, "--currency", "USD", "--interval", "month", "--threshold-amount", "10000")
+			}
+			got := runSpendThresholdCommand(t, server, args...)
+			if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "Spend threshold: USD 100.00 per month") || !strings.Contains(got.stdout, "Future: "+value+"\n") {
+				t.Fatalf("large readable response lost data: code=%d stderr=%q output bytes=%d", got.code, got.stderr, len(got.stdout))
+			}
+			got = runSpendThresholdCommand(t, server, append([]string{"--format", "raw"}, args...)...)
+			if got.code != 0 || got.stderr != "" || got.stdout != body+"\n" {
+				t.Fatalf("large raw response changed: code=%d stderr=%q output bytes=%d", got.code, got.stderr, len(got.stdout))
+			}
+			got = runSpendThresholdCommand(t, server, append([]string{"--transform", "future", "--raw-output"}, args...)...)
+			if got.code != 0 || got.stderr != "" || got.stdout != value+"\n" {
+				t.Fatalf("large extracted field changed: code=%d stderr=%q output bytes=%d", got.code, got.stderr, len(got.stdout))
+			}
+		})
 	}
 }
 
