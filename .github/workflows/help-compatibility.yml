@@ -1680,6 +1680,12 @@ jobs:
         shell: bash
         run: tar -xzf - < "$RUNNER_TEMP/ci-inputs/ci-source.tar.gz"
       - uses: ./.github/actions/setup-compatibility-go
+      - name: Check fixture interruption and cleanup controls
+        shell: bash
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          /usr/bin/timeout --signal=TERM --kill-after=5s 45s python3 -I -B scripts/test_wsl_shell_fixtures.py -v 2>&1 | tee "$RUNNER_TEMP/picker-fixture-controls.log"
       - name: Build native setup executables
         shell: bash
         timeout-minutes: 6
@@ -1736,6 +1742,7 @@ jobs:
             ${{ runner.temp }}/picker-*.stdout
             ${{ runner.temp }}/picker-*.stderr
             ${{ runner.temp }}/picker-startup-*.log
+            ${{ runner.temp }}/picker-fixture-controls.log
           if-no-files-found: warn
           retention-days: 7
 
