@@ -341,7 +341,7 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 	if compact {
 		lines = append(lines, rows...)
 	} else {
-		lines = append(lines, webhookCreatePanel(rows, width, panelSplit, dividers, panel, rule)...)
+		lines = webhookCreatePanel(rows, width, panelSplit, dividers, panel, rule, "Existing webhooks", strong)
 	}
 	return m.frame(lines, width, height)
 }

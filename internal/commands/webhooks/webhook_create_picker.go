@@ -646,7 +646,7 @@ func (m *webhookCreatePicker) View() tea.View {
 	cursorAt := func(column, row int) {
 		x, y := valueColumn+column, 1+row
 		if !compact {
-			x, y = x+2, y+1
+			x += 2
 		}
 		cursor = tea.NewCursor(x, y)
 		cursor.Shape = tea.CursorBar
@@ -842,7 +842,7 @@ func (m *webhookCreatePicker) View() tea.View {
 	if compact && m.stage < 3 {
 		lines = append(lines, body...)
 	} else {
-		lines = append(lines, webhookCreatePanel(body, width, panelSplit, dividers, panel, rule)...)
+		lines = webhookCreatePanel(body, width, panelSplit, dividers, panel, rule, "Create webhook endpoint", strong)
 	}
 	view := m.frame(lines, width, height)
 	view.Cursor = cursor
@@ -873,7 +873,7 @@ func webhookCreateControls(width int, color bool, quiet lipgloss.Style, bindings
 }
 
 // Connect section rules to the outer frame without changing content row geometry.
-func webhookCreatePanel(rows []string, width, split int, dividers map[int]string, panel, rule lipgloss.Style) []string {
+func webhookCreatePanel(rows []string, width, split int, dividers map[int]string, panel, rule lipgloss.Style, title string, heading lipgloss.Style) []string {
 	lines := strings.Split(panel.Width(width).Render(strings.Join(rows, "\n")), "\n")
 	line := func(left, junction, right string) string {
 		middle := strings.Repeat("─", width-2)
@@ -882,9 +882,8 @@ func webhookCreatePanel(rows []string, width, split int, dividers map[int]string
 		}
 		return rule.Render(left + middle + right)
 	}
-	if split > 0 {
-		lines[0] = line("╭", "┬", "╮")
-	}
+	caption := ansi.Truncate(" "+title+" ", width-3, "…")
+	lines[0] = rule.Render("╭─") + heading.Render(caption) + rule.Render(strings.Repeat("─", width-ansi.StringWidth(caption)-3)+"╮")
 	for row, junction := range dividers {
 		lines[row+1] = line("├", junction, "┤")
 	}

@@ -209,18 +209,18 @@ func TestWebhookCreatePickerReviewCanScrollCompleteURLAndSelections(t *testing.T
 			}
 		}
 		scrollHint := -1
-		for i := 2; i < len(lines); i++ {
+		for i := 1; i < len(lines); i++ {
 			if strings.HasPrefix(lines[i], "↑↓ settings ") {
 				scrollHint = i
 				break
 			}
-			index := m.reviewOffset + i - 2
+			index := m.reviewOffset + i - 1
 			if previous, exists := rows[index]; exists {
 				require.Equal(t, previous, lines[i], "review rows must remain stable while scrolling")
 			}
 			rows[index] = lines[i]
 		}
-		require.Greater(t, scrollHint, 2, "the review must show content and its scroll range")
+		require.Greater(t, scrollHint, 1, "the review must show content and its scroll range")
 		webhookCreateKey(m, tea.KeyDown)
 	}
 	var complete strings.Builder
@@ -498,7 +498,7 @@ func TestWebhookCreatePickerKeepsEditingFieldsTogether(t *testing.T) {
 	for stage := range 3 {
 		m.stage = stage
 		view := ansi.Strip(m.View().Content)
-		require.True(t, strings.HasPrefix(view, "Create webhook endpoint\n╭"), "keep the heading beside the form")
+		require.True(t, strings.HasPrefix(view, "╭─ Create webhook endpoint "), "keep the heading beside the form")
 		for _, value := range []string{"Name", "Webhook", "URL", "https://example.com/webhook", "Events", "response.completed", "response.failed"} {
 			require.Contains(t, view, value, "changing focus must not replace the other fields")
 		}

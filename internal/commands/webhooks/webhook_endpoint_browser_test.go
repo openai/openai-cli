@@ -191,7 +191,7 @@ func TestWebhookCreateEndpointDetailsScrollCompleteValuesWithVisibleControls(t *
 			require.Contains(t, view, "Tab actions")
 			require.Contains(t, view, "Esc back")
 			lines := strings.Split(view, "\n")
-			start, column := 2, 11
+			start, column := 1, 11
 			if size[1] < 15 {
 				start, column = 1, 9
 			}
