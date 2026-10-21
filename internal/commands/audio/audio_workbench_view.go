@@ -176,7 +176,11 @@ func (m *audioWorkbench) inlineEditorRows(name string, editor textarea.Model, ac
 }
 
 func (m *audioWorkbench) plainEditorRows(name string, editor textarea.Model, active bool) []string {
-	rows := []string{m.label(m.muted().Render(name), active)}
+	label := m.muted()
+	if active {
+		label = m.accent().Bold(false)
+	}
+	rows := []string{m.label(label.Render(name), active)}
 	for _, line := range strings.Split(m.editorView(editor), "\n") {
 		rows = append(rows, "  "+line)
 	}
