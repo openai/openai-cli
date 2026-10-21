@@ -3,7 +3,9 @@
 This recipe compares published webhook test output with recovery guidance in the expanded workflow.
 Use published commit `5351ddb021263896da3a6871b621e19d38e8ffe9` for the before binary.
 Both binaries receive identical synthetic test results: API HTTP 200, `success: true`, and receiver HTTP 500.
-Both binaries print the same result and exit zero.
+Both binaries report the same delivery failure and exit zero.
+The candidate prints the submitted endpoint and event before the result.
+It identifies the project when available, or explains that the API key determines the project.
 The candidate adds receiver advice, an inspection command, and a retry command on stderr.
 
 Two additional candidate scenes show event discovery and guided creation.

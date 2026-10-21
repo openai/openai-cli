@@ -184,6 +184,7 @@ Default, `--format auto`, and `--format text` use readable results and optional 
 The CLI prints the complete create response before optional guidance, including the one-time signing secret.
 
 If creation loses its response, list endpoints before repeating it. The API might have created the endpoint already.
-Cancellation after submission also shows this uncertainty and tells you to inspect the original project before repeating create.
+Guided cancellation after submission also shows this uncertainty.
+It tells you to inspect the original project before repeating create.
 The guided flow adds no retry loop; the existing SDK retry policy still applies.
 If you lose a signing secret, rotate it and update your receiver.

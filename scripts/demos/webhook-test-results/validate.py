@@ -37,8 +37,12 @@ def main():
                 advice = ("Repeat --event-type", "Choose events interactively: openai webhooks create")
                 assert all(stdout.count(field) == 1 for field in fields), "catalog omitted or duplicated a field"
             else:
-                fields = ("Test request completed.", "Delivery failed: endpoint returned HTTP 500.",
-                          'Webhook endpoint ID: "wh_demo"', 'Event type: "response.completed"')
+                outcome = ("Test request completed.", "Delivery failed: endpoint returned HTTP 500.")
+                if scene == "before":
+                    fields = outcome + ('Webhook endpoint ID: "wh_demo"', 'Event type: "response.completed"')
+                else:
+                    fields = ("Project: determined by API key (ID unavailable)", "Endpoint: wh_demo",
+                              "Event: response.completed", "") + outcome
                 assert stdout == "\n".join(fields) + "\n", "readable result changed"
                 advice = ()
                 if scene == "after":
@@ -99,7 +103,7 @@ def main():
     (output / "guided-frame-times.json").write_text(json.dumps({
         name: when + offset - 0.1 for name, when in evidence["checkpoints"].items()
     }, indent=2) + "\n")
-    print("PASS: preserved result stdout and exit zero; recovery advice reaches stderr.")
+    print("PASS: baseline and candidate result layouts match; exit zero and recovery advice are preserved.")
     print("PASS: grouped catalog and confirmed creation retain both selected events and the synthetic signing secret.")
     print("PASS: fixture equality, eight bounded requests, terminal dimensions, and unchanged guided relay bytes.")
     print("PASS: filtered, empty-search, restored, and review screens contain one form without stale rows.")
