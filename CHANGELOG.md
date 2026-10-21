@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.40.0](https://github.com/openai/openai-cli/compare/v1.39.1...v1.40.0) (2026-10-21)
+
+
+### Features
+
+* **api:** add custom voice consent management ([#572](https://github.com/openai/openai-cli/issues/572)) ([7080124](https://github.com/openai/openai-cli/commit/708012431f8e4f64d20489e290690d6ed8ecdc30))
+
+
+### Chores
+
+* **api:** clarify cache-write token totals ([#570](https://github.com/openai/openai-cli/issues/570)) ([bd86692](https://github.com/openai/openai-cli/commit/bd866925a3fcf0dc6877067678f37df445ffd60a))
+
 ## [1.39.1](https://github.com/openai/openai-cli/compare/v1.39.0...v1.39.1) (2026-10-21)
 
 
