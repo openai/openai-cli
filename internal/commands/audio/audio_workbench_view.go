@@ -89,6 +89,9 @@ func (m *audioWorkbench) plainEditorRows(name string, editor textarea.Model, act
 // Use one outlined editor in roomy forms, as in the image picker.
 // Keep the terminal background and the compact form unchanged.
 func (m *audioWorkbench) formEditorRows(name string, editor textarea.Model, active bool) []string {
+	if !active {
+		editor.Blur()
+	}
 	if name == "Instructions" {
 		if m.height < 24 || m.width < 60 {
 			return m.plainEditorRows(name, editor, active)
@@ -166,7 +169,7 @@ func (m *audioWorkbench) View() tea.View {
 		lines = append(lines, m.resultRows(compact, true)...)
 		return tea.NewView(m.fitAudio(lines))
 	}
-	lines = append(lines, m.formRows(compact)...)
+	lines = append(lines, m.formRows(compact, true)...)
 	if !compact {
 		lines = append(lines, "")
 	}
@@ -207,7 +210,7 @@ func (m *audioWorkbench) View() tea.View {
 }
 
 // Reuse the same field layout while opening secondary actions.
-func (m *audioWorkbench) formRows(compact bool) []string {
+func (m *audioWorkbench) formRows(compact, interactive bool) []string {
 	var lines []string
 	for i, editor := range []textarea.Model{m.input, m.instructions} {
 		if i > 0 && !compact {
@@ -219,8 +222,8 @@ func (m *audioWorkbench) formRows(compact bool) []string {
 			if !compact && editor.Value() != "" {
 				lines = append(lines, "  "+m.muted().Render(readable.Text(strings.ReplaceAll(editor.Value(), "\n", " "))))
 			}
-		} else if m.modal == "" && m.focus == i || i == 0 && !compact {
-			lines = append(lines, m.formEditorRows(name, editor, m.modal == "" && m.focus == i)...)
+		} else if interactive && m.focus == i || i == 0 && !compact {
+			lines = append(lines, m.formEditorRows(name, editor, interactive && m.focus == i)...)
 		} else {
 			value := readable.Text(strings.ReplaceAll(editor.Value(), "\n", " "))
 			if value == "" {
@@ -239,7 +242,7 @@ func (m *audioWorkbench) formRows(compact bool) []string {
 		values[1] += " (unavailable)"
 	}
 	for index, name := range []string{"Model", "Voice", "Format", "Speed"} {
-		active := m.modal == "" && m.focus == 2 && m.setting == index
+		active := interactive && m.focus == 2 && m.setting == index
 		label := m.muted().Render(fmt.Sprintf("%-14s", name))
 		lines = append(lines, m.label(label+" "+readable.Text(values[index]), active))
 	}
@@ -395,7 +398,7 @@ func (m *audioWorkbench) moreView() tea.View {
 	items := m.moreItems()
 	lines := []string{m.strong().Render("  More actions")}
 	if m.height >= 24 && m.width >= 60 {
-		context := append([]string{m.strong().Render("  Text to speech")}, m.formRows(false)...)
+		context := append([]string{m.strong().Render("  Text to speech")}, m.formRows(false, false)...)
 		if len(context)+len(items)+4 <= m.height-1 {
 			lines = append(context, "", m.strong().Render("  More actions"))
 		} else {
