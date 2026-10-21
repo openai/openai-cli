@@ -192,7 +192,7 @@ Roomy terminals show timestamps and selected-recording metadata.
 Compact terminals preserve prompt space and keep the selected recording visible.
 More actions keeps the draft visible above its list when space permits, as in the image picker.
 Escape returns to the form; the menu omits a duplicate Back action.
-Roomy results show the default export folder beside Save audio.
+Results show the default export folder below the playback and Save controls.
 Only completed exports show a Saved receipt. Waveform columns use narrow strokes instead of filled blocks.
 Roomy result views leave one blank row between the waveform and playback time.
 
