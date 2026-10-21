@@ -1083,7 +1083,7 @@ func TestLimitsWorkspaceListStatusStaysVisible(t *testing.T) {
 						require.Contains(t, view, status+" "+label)
 						require.Contains(t, view, tab)
 						require.Contains(t, view, "Reported Costs (incomplete): USD 1.23")
-						require.Contains(t, view, "q: quit")
+						require.Contains(t, view, "q quit")
 						require.NotContains(t, view, "true")
 						require.NotContains(t, view, "false")
 						require.LessOrEqual(t, len(strings.Split(view, "\n")), m.height)
