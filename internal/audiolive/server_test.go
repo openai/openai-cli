@@ -8,6 +8,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -249,5 +253,79 @@ func TestCompanionRejectsConcurrentSessionsAndEventReaders(t *testing.T) {
 	case <-session.closed:
 	case <-time.After(time.Second):
 		t.Fatal("browser disconnect did not stop API session")
+	}
+}
+
+func TestCompanionRunCancellationRemovesPrivateLaunchFile(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var launch string
+	err := Run(ctx, Options{
+		Connect: func(context.Context, Config) (Session, error) { t.Fatal("unexpected API connection"); return nil, nil },
+		Writer:  io.Discard,
+		OpenBrowser: func(_ context.Context, target string) error {
+			u, err := url.Parse(target)
+			if err != nil {
+				return err
+			}
+			launch = filepath.FromSlash(u.Path)
+			info, err := os.Stat(launch)
+			if err != nil {
+				return err
+			}
+			if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
+				t.Error("launch file was not private")
+			}
+			data, err := os.ReadFile(launch)
+			if err != nil {
+				return err
+			}
+			if !bytes.Contains(data, []byte("127.0.0.1:")) {
+				t.Error("launch file omitted loopback address")
+			}
+			cancel()
+			return nil
+		},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation, got %v", err)
+	}
+	if launch == "" {
+		t.Fatal("browser launcher did not run")
+	}
+	if _, err := os.Stat(launch); !os.IsNotExist(err) {
+		t.Fatal("private launch file remained")
+	}
+	if _, err := os.Stat(filepath.Dir(launch)); !os.IsNotExist(err) {
+		t.Fatal("private launch directory remained")
+	}
+}
+
+func TestCompanionCanceledOpeningCannotPublishLateSession(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	session := newFakeSession()
+	c, _ := testCompanion(t, func(context.Context, Config) (Session, error) { close(entered); <-release; return session, nil })
+	ctx, cancel := context.WithCancel(t.Context())
+	request := httptest.NewRequest(http.MethodPost, c.origin+"/start", strings.NewReader(`{"language":"en"}`)).WithContext(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); c.start(httptest.NewRecorder(), request) }()
+	<-entered
+	cancel()
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("opening did not finish")
+	}
+	select {
+	case <-session.closed:
+	default:
+		t.Fatal("late session was not aborted")
+	}
+	c.mu.Lock()
+	active := c.active
+	c.mu.Unlock()
+	if active != nil {
+		t.Fatal("canceled request published a session")
 	}
 }

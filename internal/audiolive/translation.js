@@ -195,11 +195,13 @@
     const bytes = Uint8Array.from(atob(event.delta), c => c.charCodeAt(0));
     if (!bytes.length) return;
     if (bytes.length % (2 * channels)) throw new Error('The service returned incomplete audio. Received audio remains available.');
+    const view = new DataView(bytes.buffer), frames = bytes.length / (2 * channels);
+    let buffer;
+    try { buffer = outputContext.createBuffer(channels,frames,rate); }
+    catch (_) { throw new Error('The browser cannot decode this audio format. Start again with another browser.'); }
     replaceRecording(run);
     outputRate = rate; outputChannels = channels;
     if (!sampleCount) framesPerPeak = Math.max(1,Math.round(rate / 100));
-    const view = new DataView(bytes.buffer), frames = bytes.length / (2 * channels);
-    const buffer = outputContext.createBuffer(channels,frames,rate);
     const samples = Array.from({length:channels},(_,i) => buffer.getChannelData(i));
     for (let i = 0; i < frames; i++) {
       for (let channel = 0; channel < channels; channel++) {
@@ -216,10 +218,13 @@
       }
     }
     chunks.push(bytes);
-    const source = outputContext.createBufferSource(); source.buffer = buffer; source.connect(outputGain);
-    nextStart = Math.max(outputContext.currentTime + .025,nextStart);
-    segments.push({start:nextStart,duration:buffer.duration,offset:sampleCount / outputRate});
-    source.start(nextStart); nextStart += buffer.duration; sampleCount += frames;
+    const offset = sampleCount / outputRate; sampleCount += frames;
+    try {
+      const source = outputContext.createBufferSource(); source.buffer = buffer; source.connect(outputGain);
+      const start = Math.max(outputContext.currentTime + .025,nextStart);
+      source.start(start);
+      segments.push({start,duration:buffer.duration,offset}); nextStart = start + buffer.duration;
+    } catch (_) { throw new Error('Audio was received, but playback failed. Save the recording or choose another output device.'); }
   }
 
   function wavBlob() {

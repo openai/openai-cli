@@ -12,7 +12,6 @@ function page(options = {}) {
   if (options.noTabAudio) tracks[0].kind = 'video';
   const stream = {getTracks:()=>tracks,getAudioTracks:()=>tracks.filter(track=>track.kind==='audio')};
   let eventController, frame;
-  const eventStream = new ReadableStream({start(controller){eventController=controller;}});
   class Element {
     constructor(id) { this.id=id;this.value='';this.checked=true;this.hidden=false;this.disabled=false;this.options=[];this.children=[];this.currentTime=0;this.paused=true;this.clientWidth=500; }
     get textContent(){return this.children.map(child=>child.textContent).join('');}
@@ -39,8 +38,8 @@ function page(options = {}) {
     close(){this.state='closed';return this.output && options.closeOutput ? options.closeOutput : Promise.resolve();}
     createGain(){return {gain:{value:1},connect(){}};}
     createMediaStreamSource(){return {connect(){},disconnect(){}};}
-    createBuffer(channels,frames,rate){const values=Array.from({length:channels},()=>new Float32Array(frames));return {duration:frames/rate,getChannelData:index=>values[index]};}
-    createBufferSource(){return {connect(){},start(){}};}
+    createBuffer(channels,frames,rate){if(options.bufferFail)throw new Error('Unsupported sample rate');const values=Array.from({length:channels},()=>new Float32Array(frames));return {duration:frames/rate,getChannelData:index=>values[index]};}
+    createBufferSource(){return {connect(){},start(){if(options.playFail)throw new Error('Playback failed');}};}
     setSinkId(){return Promise.resolve();}
   }
   class AudioWorkletNode {
@@ -56,8 +55,8 @@ function page(options = {}) {
     fetch:async(url,config)=>{
       calls.push({url,config});
       if(url==='/start')return options.failStart ? new Response('Your API key was not accepted.',{status:401}) : new Response(JSON.stringify({id:'synthetic-session'}));
-      if(url.startsWith('/events')){config.signal.addEventListener('abort',()=>{try{eventController.error(new DOMException('aborted','AbortError'));}catch(_){}},{once:true});return new Response(eventStream);}
-      if(url.startsWith('/stop')){emit({type:'session.closed'});eventController.close();}
+      if(url.startsWith('/events')){const eventStream=new ReadableStream({start(controller){eventController=controller;}});const controller=eventController;config.signal.addEventListener('abort',()=>{try{controller.error(new DOMException('aborted','AbortError'));}catch(_){}},{once:true});return new Response(eventStream);}
+      if(url.startsWith('/stop')){emit({type:'session.closed'});}
       return new Response(null,{status:204});
     },
     URL:{createObjectURL(blob){const id='blob:synthetic-'+blobs.size;blobs.set(id,blob);return id;},revokeObjectURL(){}},
@@ -66,7 +65,7 @@ function page(options = {}) {
     atob:value=>Buffer.from(value,'base64').toString('binary'),queueMicrotask,
   };
   context.window=context;
-  function emit(event){eventController.enqueue(new TextEncoder().encode(JSON.stringify(event)+'\n'));}
+  function emit(event){eventController.enqueue(new TextEncoder().encode(JSON.stringify(event)+'\n'));if(event.type==='session.closed')eventController.close();}
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'translation.js'),'utf8'),context);
   return {elements,calls,contexts,nodes,tracks,downloads,emit,timers,frame:()=>frame(),close:()=>context.pagehide?.()};
 }
@@ -198,4 +197,25 @@ test('an old setup failure cannot reset a replacement session after delayed clea
   release();await failed;
   assert.equal(p.elements.get('status').textContent,'Translating');
   assert.equal(p.elements.get('start').textContent,'Stop session');p.close();
+});
+
+test('decoder rejection preserves the preceding completed recording',async()=>{
+  const options={},p=page(options);await p.elements.get('start').onclick();
+  const pcm=Buffer.from(new Int16Array([123,-123]).buffer);
+  p.emit({type:'session.output_audio.delta',delta:pcm.toString('base64')});await settle();
+  // Keep the stream open so a second session can use this fixture's event source.
+  p.emit({type:'session.closed'});await settle();
+  await p.elements.get('start').onclick();options.bufferFail=true;
+  p.emit({type:'session.output_audio.delta',delta:pcm.toString('base64'),sample_rate:1});await settle();
+  assert.match(p.elements.get('error').textContent,/cannot decode/);
+  p.elements.get('download').onclick();assert.deepEqual(Buffer.from(await p.downloads[0].blob.arrayBuffer()).subarray(44),pcm);p.close();
+});
+
+test('playback scheduling failure retains received audio for saving',async()=>{
+  const p=page({playFail:true});await p.elements.get('start').onclick();
+  const pcm=Buffer.from(new Int16Array([321,-321]).buffer);
+  p.emit({type:'session.output_audio.delta',delta:pcm.toString('base64')});await settle();
+  assert.match(p.elements.get('error').textContent,/playback failed/);
+  assert.equal(p.elements.get('download').disabled,false);
+  p.elements.get('download').onclick();assert.deepEqual(Buffer.from(await p.downloads[0].blob.arrayBuffer()).subarray(44),pcm);p.close();
 });
