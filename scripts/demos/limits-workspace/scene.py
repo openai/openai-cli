@@ -627,6 +627,9 @@ def main():
                 terminal = RelayTerminal("/bin/bash", shell_args, env, width=width, height=height,
                                          controlling_terminal=True, terminal_snapshot=terminal_snapshot)
                 run_scene(terminal, scene, evidence, output)
+                # Preserve observed quiet time without adding terminal bytes or moving checkpoints.
+                evidence["observation_end_seconds"] = time.monotonic() - terminal.started
+                terminal.events.append([evidence["observation_end_seconds"], "o", ""])
                 status_text = exit_receipt.read_text()
                 if status_text != str(terminal.child.returncode) + "\n":
                     raise AssertionError("Bash did not preserve the actual CLI exit status")

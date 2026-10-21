@@ -16,7 +16,7 @@ import (
 )
 
 const limitsWorkflowProject = `{"id":"proj_synthetic","object":"organization.project","name":"Synthetic project","status":"active","future":0.100000000000000001}`
-const limitsWorkflowRate = `{"id":"rl_synthetic","object":"project.rate_limit","model":"synthetic-model","max_requests_per_1_minute":0,"max_tokens_per_1_minute":9007199254740993,"max_audio_megabytes_per_1_minute":1.25,"future":{"exact":123456789012345678901234567890}}`
+const limitsWorkflowRate = `{"id":"rl_synthetic","object":"project.rate_limit","model":"synthetic-model","max_requests_per_1_minute":0,"max_tokens_per_1_minute":9007199254740993,"max_tokens_per_1_day":9007199254740995,"max_audio_megabytes_per_1_minute":1.25,"future":{"exact":123456789012345678901234567890}}`
 
 func limitsWorkflowArgs(project bool, show bool) []string {
 	args := []string{"admin", "limits"}
@@ -200,7 +200,11 @@ func TestMainLimitsWorkflowReadableAndFormats(t *testing.T) {
 				switch mode {
 				case "bare", "show":
 				case "extraction":
-					args = append([]string{"--transform", "spend_limit.threshold_amount"}, args...)
+					field := "spend_limit.threshold_amount"
+					if project {
+						field = "project_rate_limits.0.max_tokens_per_1_day"
+					}
+					args = append([]string{"--transform", field}, args...)
 				case "raw-output":
 					args = append([]string{"--raw-output"}, args...)
 				default:
@@ -228,7 +232,7 @@ func TestMainLimitsWorkflowReadableAndFormats(t *testing.T) {
 						}
 					}
 					if project {
-						for _, text := range []string{"Max requests per minute: 0", "Max tokens per minute: 9007199254740993", "Max audio megabytes per minute: 1.25"} {
+						for _, text := range []string{"Max requests per minute: 0", "Max tokens per minute: 9007199254740993", "Max tokens per day: 9007199254740995", "Max audio megabytes per minute: 1.25"} {
 							if !strings.Contains(got.stdout, text) {
 								t.Errorf("rate units lost %q: %q", text, got.stdout)
 							}
@@ -241,7 +245,11 @@ func TestMainLimitsWorkflowReadableAndFormats(t *testing.T) {
 						}
 					}
 				case "extraction":
-					if got.stdout != "9007199254740993\n" {
+					wantExtraction := "9007199254740993\n"
+					if project {
+						wantExtraction = "9007199254740995\n"
+					}
+					if got.stdout != wantExtraction {
 						t.Errorf("overview extraction changed: %q", got.stdout)
 					}
 				default:

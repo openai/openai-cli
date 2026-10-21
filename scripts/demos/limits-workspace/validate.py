@@ -16,6 +16,29 @@ SCENES = ("org-limit", "org-limit-delete", "project-limit", "alert-create", "ale
           "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print", "preflight-400", "preflight-recover")
 
 
+def validate_child_timeline(evidence, child):
+    """Bind checkpoints and the byte-free final event to actual observation time."""
+    end = evidence["observation_end_seconds"]
+    valid_time = lambda value: type(value) in {int, float} and math.isfinite(value) and value >= 0
+    assert valid_time(end), "invalid observation end"
+    assert len(child) >= 2 and child[0].get("version") == 2, "missing child cast header"
+    assert (child[0].get("width"), child[0].get("height")) == (evidence["width"], evidence["height"])
+    assert child[-1] == [end, "o", ""], "missing byte-free observation-end event"
+    previous = 0
+    for index, event in enumerate(child[1:], 1):
+        assert type(event) is list and len(event) == 3, "invalid child event"
+        seconds, kind, data = event
+        assert valid_time(seconds) and previous <= seconds <= end, "invalid child event time"
+        assert kind in {"o", "r"} and type(data) is str, "invalid child event payload"
+        assert data or index == len(child) - 1 and kind == "o", "unexpected empty child event"
+        previous = seconds
+    previous = 0
+    for point in evidence["checkpoints"]:
+        seconds = point["seconds"]
+        assert valid_time(seconds) and previous <= seconds <= end, "checkpoint exceeds its observation interval"
+        previous = seconds
+
+
 def restored_offset(raw, loading=False):
     """Require readiness and every emitted terminal reset before ordinary output."""
     ready = raw.find(b"Loading" if loading else b"Website controls and source errors: ?")
@@ -141,6 +164,7 @@ def main():
         raw = (root / (scene + "-evidence.tty")).read_bytes()
         restored_offset(raw, loading=scene == "slow-cancel")
         child = [json.loads(line) for line in (root / (scene + "-evidence.child.cast")).read_text().splitlines()]
+        validate_child_timeline(evidence, child)
         observer = observed_scene(root, scene, evidence, child)
         assert observer.bytes_observed == evidence["observer"]["bytes_observed"] == len(raw)
         assert evidence["observer"]["source_manifest_sha256"] == "9d048014421425452323fff126d2b460d33357aef64692d07f9e142b6b9888ad"

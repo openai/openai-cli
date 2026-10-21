@@ -78,6 +78,9 @@ The scene driver restores terminal output processing and closes every owned chil
 
 The recorder preserves raw child bytes, child casts, outer casts, request logs, hashes, and actual process statuses.
 The validator checks byte identity across all three capture forms.
+The child cast ends with an empty output event at the actual observation-end timestamp.
+This event preserves observed quiet time without adding terminal bytes or changing checkpoint times.
+The validator requires finite, monotonic event times and checkpoints within that observation interval.
 It independently replays child bytes and resize events through pinned pyte and wcwidth sources.
 The observer answers cursor queries at their actual positions, including fragmented and repeated queries.
 The recorder probes query fragmentation, keyboard controls, cursor bounds, and history before recording.

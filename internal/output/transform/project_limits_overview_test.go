@@ -33,7 +33,7 @@ func TestProjectLimitsOverviewSpendScopes(t *testing.T) {
 }
 
 func TestProjectLimitsOverviewExactRateUnits(t *testing.T) {
-	const rate = `{"object":"project.rate_limit","id":"rl_synthetic","model":"synthetic-model","max_requests_per_1_minute":0,"max_tokens_per_1_minute":9007199254740993123456789,"max_images_per_1_minute":-1,"max_audio_megabytes_per_1_minute":0.1234567890123456789,"max_requests_per_1_day":1e9,"batch_1_day_max_input_tokens":9223372036854775807,"future":{"count":9007199254740993}}`
+	const rate = `{"object":"project.rate_limit","id":"rl_synthetic","model":"synthetic-model","max_requests_per_1_minute":0,"max_tokens_per_1_minute":9007199254740993123456789,"max_images_per_1_minute":-1,"max_audio_megabytes_per_1_minute":0.1234567890123456789,"max_requests_per_1_day":1e9,"max_tokens_per_1_day":9007199254740995,"batch_1_day_max_input_tokens":9223372036854775807,"future":{"count":9007199254740993}}`
 	raw := `{"scope":"project","project_id":"proj_synthetic","project":{"id":"proj_synthetic","future":1e100},"spend_limit":null,"spend_limit_configured":false,"spend_alerts":[],"spend_alerts_complete":true,"project_rate_limits":[` + rate + `],"project_rate_limits_complete":true,"source_errors":[]}`
 	value, err := ProjectLimitsOverview(t.Context(), gjson.Parse(raw))
 	if err != nil {
@@ -44,6 +44,7 @@ func TestProjectLimitsOverviewExactRateUnits(t *testing.T) {
 		"max_requests_per_minute": "0", "max_tokens_per_minute": "9007199254740993123456789",
 		"max_images_per_minute": "-1", "max_audio_megabytes_per_minute": "0.1234567890123456789",
 		"max_requests_per_day": "1e9", "max_batch_input_tokens_per_day": "9223372036854775807",
+		"max_tokens_per_day": "9007199254740995",
 	} {
 		if projected.Get(label).Raw != want {
 			t.Errorf("rate %s changed units or precision: %s", label, projected.Raw)
@@ -65,6 +66,9 @@ func TestProjectLimitsOverviewRatePresenceAndAmbiguity(t *testing.T) {
 	for _, raw := range []string{
 		`{"object":"project.rate_limit","id":"rl_synthetic"}`,
 		`{"object":"project.rate_limit","max_requests_per_1_minute":null,"max_tokens_per_1_minute":"100"}`,
+		`{"object":"project.rate_limit","max_tokens_per_1_day":null}`,
+		`{"object":"project.rate_limit","max_tokens_per_1_day":"100"}`,
+		`{"object":"project.rate_limit","max_tokens_per_1_day":100,"max_tokens_per_day":null}`,
 		`{"object":"project.rate_limit","max_requests_per_1_minute":100,"max_requests_per_minute":null}`,
 		`{"object":"project.rate_limit","max_requests_per_1_minute":100,"max_requests_per_1_minute":900}`,
 		`{"object":"project.rate_limit","max_requests_per_1_minute":100,"max_requests_per_1_\u006dinute":900}`,

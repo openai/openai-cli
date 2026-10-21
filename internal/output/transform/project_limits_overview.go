@@ -99,6 +99,7 @@ var limitsOverviewRateLabels = map[string]string{
 	"max_images_per_1_minute":          "max_images_per_minute",
 	"max_audio_megabytes_per_1_minute": "max_audio_megabytes_per_minute",
 	"max_requests_per_1_day":           "max_requests_per_day",
+	"max_tokens_per_1_day":             "max_tokens_per_day",
 	"batch_1_day_max_input_tokens":     "max_batch_input_tokens_per_day",
 }
 
