@@ -457,12 +457,12 @@ def load_command_cases():
         raise RuntimeError("Expected a regular WSL command-contract inventory")
     data = COMMAND_CASES_PATH.read_bytes()
     suites = json.loads(data, object_pairs_hook=unique_object)
-    if not isinstance(suites, dict) or set(suites) != {"custom", "process", "app"}:
+    if not isinstance(suites, dict) or set(suites) != {"custom", "images", "process", "app"}:
         raise RuntimeError("Invalid WSL command-contract inventory")
     excluded = set(PROCESS_CASES) | {ROOT, "TestMainDispatchProcess", "TestMainWrappedExitCodeProcess",
                                       "TestRequestConfigurationChildEnvironment"}
     selected = set()
-    for package, roots, names in (("custom", 10, 71), ("process", 65, 577), ("app", 2, 12)):
+    for package, roots, names in (("custom", 4, 9), ("images", 6, 62), ("process", 65, 577), ("app", 2, 12)):
         cases = suites[package]
         if not isinstance(cases, dict) or len(cases) != roots:
             raise RuntimeError("Invalid WSL command-contract root inventory")
@@ -506,11 +506,11 @@ def run_process_suite(commands, user, target, cases=None):
     return tests
 
 
-def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=False, app_binary=None):
+def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=False, app_binary=None, images_binary=None):
     suites = None
     if command_contracts and not cleanup_only:
-        if binary is None or process_binary is None or app_binary is None:
-            raise RuntimeError("Command contracts require all three test binaries")
+        if binary is None or process_binary is None or app_binary is None or images_binary is None:
+            raise RuntimeError("Command contracts require all four test binaries")
         suites, inventory_hash = load_command_cases()
     # Validate process bitness before selecting System32, which WOW64 can redirect.
     host_process = require_native_windows_process()
@@ -553,6 +553,8 @@ def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=Fal
             if suites is not None:
                 result["app_binary_sha256"] = require_linux_binary(app_binary)
                 app_binary = app_binary.resolve(strict=True)
+                result["images_binary_sha256"] = require_linux_binary(images_binary)
+                images_binary = images_binary.resolve(strict=True)
             result["wsl_sha256"] = digest(Path(wsl))
             result["source"] = commands.run("source", ["git", "rev-parse", "HEAD", "HEAD^{tree}"], 10)[0].decode("ascii").splitlines()
             result["wsl_version"] = decode_metadata(commands.run("wsl-version", [wsl, "--version"], 20)[0])
@@ -590,6 +592,8 @@ def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=Fal
             app_target = "/home/cli-compat/payload/app.test"
             if suites is not None:
                 copy_payload(commands, root, user, app_binary, app_target, result["app_binary_sha256"], "app-")
+                images_target = "/home/cli-compat/payload/images.test"
+                copy_payload(commands, root, user, images_binary, images_target, result["images_binary_sha256"], "images-")
             identity = "set -eu; test $(id -u) = 2000; test $(uname -m) = x86_64; test $(dpkg --print-architecture) = amd64; cat /etc/os-release; uname -a; id; /bin/bash --version; stat -f -c %T /home/cli-compat"
             observed = commands.run("ubuntu-identity", user + ["/bin/bash", "--noprofile", "--norc", "-c", identity], 20)[0].decode("utf-8")
             if not re.search(r"^ID=ubuntu$", observed, re.MULTILINE):
@@ -607,6 +611,10 @@ def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=Fal
                 if digest(process_binary) != result["process_binary_sha256"]:
                     raise RuntimeError("The host process test binary changed")
             if suites is not None:
+                result["images_tests"] = sorted(run_custom_suite(commands, user, images_target,
+                                                                suites["images"], label="images-contracts"))
+                if digest(images_binary) != result["images_binary_sha256"]:
+                    raise RuntimeError("The host images test binary changed")
                 result["app_tests"] = sorted(run_custom_suite(commands, user, app_target,
                                                              suites["app"], label="app-contracts"))
                 if digest(app_binary) != result["app_binary_sha256"]:
@@ -646,19 +654,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path)
     parser.add_argument("--process-binary", type=Path, help="Also run the fixed noninteractive process suite")
+    parser.add_argument("--images-binary", type=Path, help="Run the image preference and state contracts")
     parser.add_argument("--app-binary", type=Path, help="Run the application lifecycle contracts")
     parser.add_argument("--command-contracts", action="store_true",
-                        help="Run the fixed command-contract supplement using all three test binaries")
+                        help="Run the fixed command-contract supplement using all four test binaries")
     parser.add_argument("--cleanup", action="store_true")
     args = parser.parse_args()
     if not args.cleanup and args.binary is None:
         parser.error("--binary is required for the pilot")
-    if args.command_contracts and not args.cleanup and (args.process_binary is None or args.app_binary is None):
-        parser.error("--command-contracts requires --process-binary and --app-binary")
+    if args.command_contracts and not args.cleanup and (args.process_binary is None or args.app_binary is None or args.images_binary is None):
+        parser.error("--command-contracts requires --process-binary, --app-binary, and --images-binary")
     for number in (signal.SIGINT, signal.SIGTERM):
         signal.signal(number, interrupted)
     try:
-        code = pilot(args.binary, args.cleanup, args.process_binary, args.command_contracts, args.app_binary)
+        code = pilot(args.binary, args.cleanup, args.process_binary, args.command_contracts, args.app_binary, args.images_binary)
     except Exception as error:
         print(f"WSL pager pilot failed: {error}", file=sys.stderr)
         code = 128 + STOP if STOP else 1

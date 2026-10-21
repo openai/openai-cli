@@ -361,8 +361,9 @@ class CommandContractTests(unittest.TestCase):
         suites, checksum = pilot.load_command_cases()
         self.assertEqual(suites, self.suites)
         self.assertEqual(checksum, hashlib.sha256(self.raw).hexdigest())
-        self.assertEqual(set(suites), {"custom", "process", "app"})
-        self.assertEqual((len(suites["custom"]), len(self.names(suites["custom"]))), (10, 71))
+        self.assertEqual(set(suites), {"custom", "images", "process", "app"})
+        self.assertEqual((len(suites["custom"]), len(self.names(suites["custom"]))), (4, 9))
+        self.assertEqual((len(suites["images"]), len(self.names(suites["images"]))), (6, 62))
         self.assertEqual((len(suites["process"]), len(self.names(suites["process"]))), (65, 577))
         self.assertEqual((len(suites["app"]), len(self.names(suites["app"]))), (2, 12))
         self.assertEqual(set(suites["app"]), {"TestRequestConfigurationRestoresEnvironment",
@@ -371,8 +372,8 @@ class CommandContractTests(unittest.TestCase):
             "placement_precedence_and_error", "root_and_body_project", "equals_empty",
             "separate_empty", "completion_stays_local",
         ])
-        self.assertIn("absent/", suites["custom"]["TestImageInlinePreferencePrecedence"])
-        self.assertIn("absent/#01", suites["custom"]["TestImageInlinePreferencePrecedence"])
+        self.assertIn("absent/", suites["images"]["TestImageInlinePreferencePrecedence"])
+        self.assertIn("absent/#01", suites["images"]["TestImageInlinePreferencePrecedence"])
         self.assertIn("#00", suites["process"]["TestMainGlobalFlagsDeepAdminAndCustomCommands"])
         self.assertIn("missing_required_flag/", suites["process"]["TestMainLocalErrorsStayOnStderr"])
         self.assertIn('{"error":true}/--format/text/--format-error/json',
@@ -452,6 +453,7 @@ class CommandContractTests(unittest.TestCase):
 
     def test_supplement_suites_require_exact_output(self):
         for package, runner in (("custom", pilot.run_custom_suite), ("process", pilot.run_process_suite),
+                                ("images", lambda *args: pilot.run_custom_suite(*args, label="images-contracts")),
                                 ("app", lambda *args: pilot.run_custom_suite(*args, label="app-contracts"))):
             cases = self.suites[package]
             good = self.output(cases)
@@ -518,7 +520,9 @@ class CommandContractTests(unittest.TestCase):
     def test_cli_rejects_missing_payloads_and_unknown_flags(self):
         for argv in (["--command-contracts"], ["--command-contracts", "--binary", "custom.test"],
                      ["--command-contracts", "--process-binary", "process.test"],
-                     ["--command-contracts", "--binary", "custom.test", "--process-binary", "process.test"], ["--unknown"]):
+                     ["--command-contracts", "--binary", "custom.test", "--process-binary", "process.test"],
+                     ["--command-contracts", "--binary", "custom.test", "--process-binary", "process.test",
+                      "--app-binary", "app.test"], ["--unknown"]):
             with self.subTest(argv=argv):
                 with patch.object(pilot.sys, "argv", ["check-wsl-pager.py", *argv]), \
                         patch.object(pilot.sys, "stderr", io.StringIO()), patch.object(pilot, "pilot") as run:
@@ -530,15 +534,15 @@ class CommandContractTests(unittest.TestCase):
     def test_cli_preserves_profile_and_cleanup_flags(self):
         for argv, expected in (
             (["--command-contracts", "--binary", "custom.test", "--process-binary", "process.test",
-              "--app-binary", "app.test"],
-             (Path("custom.test"), False, Path("process.test"), True, Path("app.test"))),
-            (["--cleanup", "--command-contracts"], (None, True, None, True, None)),
-            (["--binary", "custom.test"], (Path("custom.test"), False, None, False, None)),
+              "--app-binary", "app.test", "--images-binary", "images.test"],
+             (Path("custom.test"), False, Path("process.test"), True, Path("app.test"), Path("images.test"))),
+            (["--cleanup", "--command-contracts"], (None, True, None, True, None, None)),
+            (["--binary", "custom.test"], (Path("custom.test"), False, None, False, None, None)),
         ):
             calls = []
 
-            def run(binary, cleanup_only=False, process_binary=None, command_contracts=False, app_binary=None):
-                calls.append((binary, cleanup_only, process_binary, command_contracts, app_binary))
+            def run(binary, cleanup_only=False, process_binary=None, command_contracts=False, app_binary=None, images_binary=None):
+                calls.append((binary, cleanup_only, process_binary, command_contracts, app_binary, images_binary))
                 return 0
 
             with self.subTest(argv=argv):
@@ -553,7 +557,7 @@ class CommandContractTests(unittest.TestCase):
             with self.subTest(binary=binary, process=process_binary):
                 with patch.object(pilot, "load_command_cases") as load, \
                         patch.object(pilot, "require_native_windows_process") as native:
-                    with self.assertRaisesRegex(RuntimeError, "all three test binaries"):
+                    with self.assertRaisesRegex(RuntimeError, "all four test binaries"):
                         pilot.pilot(binary, process_binary=process_binary, command_contracts=True)
                 load.assert_not_called()
                 native.assert_not_called()
@@ -583,15 +587,17 @@ class CommandContractTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory)
-            custom, process, app = (parent / name for name in ("custom.test", "process.test", "app.test"))
+            custom, process, app, images = (parent / name for name in ("custom.test", "process.test", "app.test", "images.test"))
             custom.write_bytes(b"synthetic")
             process.write_bytes(b"synthetic")
             app.write_bytes(b"synthetic")
+            images.write_bytes(b"synthetic")
             owned = parent / "owned"
             commands = FakeCommands()
             custom_names = self.names(self.suites["custom"])
             process_names = self.names(self.suites["process"])
             app_names = self.names(self.suites["app"])
+            images_names = self.names(self.suites["images"])
             with patch.object(pilot, "load_command_cases", return_value=(self.suites, "a" * 64)) as load, \
                     patch.object(pilot, "require_native_windows_process", return_value={}), \
                     patch.object(pilot, "owned_paths", return_value=("owned", owned)), \
@@ -603,19 +609,24 @@ class CommandContractTests(unittest.TestCase):
                     patch.object(pilot.shutil, "disk_usage", return_value=Mock(free=6 * 1024**3)), \
                     patch.object(pilot, "download_image", return_value=0), \
                     patch.object(pilot, "copy_payload") as copy, patch.object(pilot, "clean_distro"), \
-                    patch.object(pilot, "run_custom_suite", side_effect=[custom_names, app_names]) as run_custom, \
+                    patch.object(pilot, "run_custom_suite", side_effect=[custom_names, images_names, app_names]) as run_custom, \
                     patch.object(pilot, "run_process_suite", return_value=process_names) as run_process, \
                     patch.dict(os.environ, {"SYSTEMROOT": str(parent / "windows")}):
-                self.assertEqual(pilot.pilot(custom, process_binary=process, command_contracts=True, app_binary=app), 0)
+                self.assertEqual(pilot.pilot(custom, process_binary=process, command_contracts=True, app_binary=app, images_binary=images), 0)
             load.assert_called_once_with()
-            self.assertEqual(run_custom.call_count, 2)
+            self.assertEqual(run_custom.call_count, 3)
             run_process.assert_called_once()
             self.assertEqual(run_custom.call_args_list[0].args[2:], ("/home/cli-compat/payload/custom.test", self.suites["custom"]))
             self.assertEqual(run_process.call_args.args[2:], ("/home/cli-compat/payload/process.test", self.suites["process"]))
-            self.assertEqual(run_custom.call_args_list[1].args[2:], ("/home/cli-compat/payload/app.test", self.suites["app"]))
-            self.assertEqual(run_custom.call_args_list[1].kwargs, {"label": "app-contracts"})
+            self.assertEqual(run_custom.call_args_list[2].args[2:], ("/home/cli-compat/payload/app.test", self.suites["app"]))
+            self.assertEqual(run_custom.call_args_list[2].kwargs, {"label": "app-contracts"})
             self.assertEqual(copy.call_args_list[2].args[3:], (app.resolve(), "/home/cli-compat/payload/app.test", "b" * 64, "app-"))
+            self.assertEqual(run_custom.call_args_list[1].args[2:], ("/home/cli-compat/payload/images.test", self.suites["images"]))
+            self.assertEqual(run_custom.call_args_list[1].kwargs, {"label": "images-contracts"})
+            self.assertEqual(copy.call_args_list[3].args[3:], (images.resolve(), "/home/cli-compat/payload/images.test", "b" * 64, "images-"))
             result = json.loads((owned / "result.json").read_text())
+            self.assertEqual(result["images_tests"], sorted(images_names))
+            self.assertEqual(result["images_binary_sha256"], "b" * 64)
             self.assertEqual(result["selection"], "command-contracts")
             self.assertEqual(result["command_cases_sha256"], "a" * 64)
             self.assertEqual(result["tests"], sorted(custom_names))

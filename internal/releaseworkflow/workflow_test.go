@@ -20,8 +20,8 @@ const (
 	releaseInputsArtifact  = "openai-release-inputs"
 	checkoutAction         = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 	setupGoAction          = "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
-	uploadArtifactAction   = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-	downloadArtifactAction = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+	uploadArtifactAction   = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+	downloadArtifactAction = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 )
 
 var releaseInputPaths = []string{
@@ -957,7 +957,7 @@ func TestArtifactBuildCacheIsSeparateAndRefreshable(t *testing.T) {
 	if cache.With["key"] != prefix+"${{ github.sha }}" || strings.TrimSpace(fmt.Sprint(cache.With["restore-keys"])) != prefix {
 		t.Errorf("artifact cache inputs=%v, want revision-specific save and compatible artifact-only restore", cache.With)
 	}
-	if cache.Uses != "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830" {
+	if cache.Uses != "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" {
 		t.Errorf("artifact cache action=%q, want reviewed cache action with success-only post-save", cache.Uses)
 	}
 	for _, step := range job.Steps {
