@@ -40,11 +40,12 @@ cp "$demo_runtime/scene.sh" "$demo_output/scene.sh"
   echo "child terminal: ${record_width}x${record_height}; outer terminal: ${record_width}x$((record_height+4))"
   echo "NO_COLOR: $record_no_color; GOMAXPROCS=2; isolated HOME; CI unset"
   echo 'render: Menlo 18px, asciinema theme, shared capture_and_render lifecycle'
+  echo 'render projection: observer-derived child viewports; active-grid PNGs; fixed-font letterboxed animations'
   demo_capture_metadata
   "$demo_python" --version
 } > "$demo_output/metadata.txt"
 shasum -a 256 "$record_source/record.sh" "$record_source/server.py" "$record_source/scene.py" \
-  "$record_source/validate.py" "$record_source/README.md" \
+  "$record_source/validate.py" "$record_source/render_viewports.py" "$record_source/README.md" \
   "$record_root/scripts/demos/capture_and_render.sh" "$record_root/scripts/image_picker_harness.py" \
   "$record_root/scripts/demos/audio-workbench/observer.py" "$record_root/scripts/demos/audio-workbench/observer_sources.json" \
   "$record_root/internal/app/limits_commands.go" "$record_root/internal/app/limits_service.go" \
@@ -68,19 +69,9 @@ demo_stop_api
 test "$record_digest" = "$(shasum -a 256 "$demo_after" | cut -d ' ' -f 1)"
 shasum -a 256 -c "$demo_output/source-sha256.txt" > "$demo_output/source-validation.txt"
 "$demo_python" -I -B "$record_source/validate.py" "$demo_output" > "$demo_output/validation.txt"
+# agg uses a fixed terminal grid. Replay resizes before producing derived viewports.
+"$demo_python" -I -B "$record_source/render_viewports.py" "$demo_output" --agg "$demo_agg" --ffmpeg "$demo_ffmpeg"
 demo_assemble_capture 150 "${record_scenes[@]}"
-# Select checkpoint frames from the exact child captures. No UI text is reconstructed.
-: > "$demo_output/checkpoint-frames.txt"
-for record_scene in "${record_scenes[@]}"; do
-  while IFS=$'\t' read -r record_name record_seconds; do
-    "$demo_agg" --quiet "${demo_render_options[@]}" --select "$record_seconds" \
-      "$demo_output/$record_scene-evidence.child.cast" "$demo_output/$record_scene-$record_name-frame.gif" < /dev/null
-    "$demo_ffmpeg" -nostdin -hide_banner -loglevel error -y -i "$demo_output/$record_scene-$record_name-frame.gif" \
-      -frames:v 1 "$demo_output/$record_scene-$record_name.png" < /dev/null
-    printf '%s\t%s\t%s\t%s\t%s\n' "$record_scene" "$record_name" "$record_seconds" \
-      "$record_scene-$record_name-frame.gif" "$record_scene-$record_name.png" >> "$demo_output/checkpoint-frames.txt"
-  done < <("$demo_python" -I -B -c 'import json,sys; data=json.load(open(sys.argv[1])); [print(item["name"]+"\t"+str(item["seconds"])) for item in data["checkpoints"]]' "$demo_output/$record_scene-evidence.json")
-done
 "$demo_python" -I -B "$record_source/validate.py" "$demo_output" --rendered-checkpoints >> "$demo_output/validation.txt"
 (
   cd "$demo_output"

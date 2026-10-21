@@ -6,6 +6,7 @@ import importlib.util
 import json
 import math
 import re
+import struct
 from pathlib import Path
 import sys
 import termios
@@ -68,6 +69,7 @@ def restored_offset(raw, loading=False):
 
 
 def validate_rendered_checkpoints(root):
+    validate_viewport_projections(root)
     expected_rows = []
     expected_pngs = {scene + ".png" for scene in SCENES}
     expected_frames = {scene + "-frame.gif" for scene in SCENES}
@@ -96,6 +98,117 @@ def validate_rendered_checkpoints(root):
         artifact = root / name
         assert artifact.is_file() and not artifact.is_symlink() and artifact.stat().st_size > 0, name
     print("PASS: rendered checkpoint names, exact times, PNGs, and frame GIFs match source evidence without missing or extra files.")
+
+
+def image_size(path):
+    data = path.read_bytes()
+    if path.suffix == ".png":
+        assert data[:8] == b"\x89PNG\r\n\x1a\n", "invalid PNG header"
+        return struct.unpack(">II", data[16:24])
+    assert data[:6] in (b"GIF87a", b"GIF89a"), "invalid GIF header"
+    return struct.unpack("<HH", data[6:10])
+
+
+def validate_viewport_projections(root):
+    """Check projections against original event order, grids, cells, and cursor state."""
+    spec = importlib.util.spec_from_file_location("limits_projection_driver", Path(__file__).with_name("scene.py"))
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    manifest = json.loads((root / "viewport-manifest.json").read_text())
+    digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+    assert manifest["renderer_sha256"] == digest(Path(__file__).with_name("render_viewports.py"))
+    assert manifest["observer_sha256"] == digest(Path(__file__).with_name("scene.py"))
+    assert [entry["scene"] for entry in manifest["scenes"]] == list(SCENES)
+    canvas, pixel_sizes, casts, sizes = tuple(manifest["animation_canvas"]), {}, set(), []
+
+    def same_viewport(source, projected, padded=False):
+        for row in range(source.lines):
+            for column in range(source.columns):
+                assert source.buffer[row][column] == projected.buffer[row][column], "projected cell or style differs"
+        assert (projected.cursor.x, projected.cursor.y, projected.cursor.hidden) == (
+            min(source.cursor.x, source.columns - 1), source.cursor.y, source.cursor.hidden), "projected cursor differs"
+        if padded:
+            for row in range(projected.lines):
+                for column in range(projected.columns):
+                    if row >= source.lines or column >= source.columns:
+                        assert projected.buffer[row][column] == projected.default_char, "letterbox contains stale cells"
+
+    for entry in manifest["scenes"]:
+        scene = entry["scene"]
+        child_path, evidence_path = root / (scene + "-evidence.child.cast"), root / (scene + "-evidence.json")
+        child = [json.loads(line) for line in child_path.read_text().splitlines()]
+        evidence = json.loads(evidence_path.read_text())
+        sizes.append((evidence["width"], evidence["height"]))
+        sizes.extend(tuple(map(int, event[2].split("x"))) for event in child[1:] if event[1] == "r")
+        assert entry["source"] == {"child_cast_sha256": digest(child_path), "evidence_sha256": digest(evidence_path),
+                                    "renderer_sha256": manifest["renderer_sha256"]}
+        assert entry["animation"] == scene + "-viewport.cast"
+        animation_path = root / entry["animation"]
+        casts.add(animation_path.name)
+        assert digest(animation_path) == entry["animation_sha256"]
+        animation = [json.loads(line) for line in animation_path.read_text().splitlines()]
+        assert (animation[0]["width"], animation[0]["height"]) == canvas
+        assert animation[0]["limits_viewport"] == {**entry["source"], "projection": manifest["projection"]}
+        original_events = [(index, event) for index, event in enumerate(child[1:], 1) if event[1] == "r" or event[2]]
+        assert len(animation) == len(original_events) + 2
+        animated_source = driver.TerminalObserver(evidence["width"], evidence["height"], lambda data: None)
+        animated = driver.TerminalObserver(*canvas, lambda data: None)
+        for (index, event), projected, provenance in zip(original_events, animation[1:-1], entry["animation_events"], strict=True):
+            if event[1] == "r":
+                animated_source.resize(*map(int, event[2].split("x")))
+            else:
+                animated_source.feed(event[2].encode())
+            assert projected[:2] == [event[0], "o"], "animation event order or time changed"
+            assert provenance == {"source_event_index": index, "seconds": event[0],
+                                  "active_size": [animated_source.screen.columns, animated_source.screen.lines]}
+            animated.feed(projected[2].encode())
+            same_viewport(animated_source.screen, animated.screen, True)
+        original = driver.TerminalObserver(evidence["width"], evidence["height"], lambda data: None)
+        original_index = 1
+        points = [*evidence["checkpoints"], {"name": "exit", "seconds": evidence["observation_end_seconds"]}]
+        assert len(entry["checkpoints"]) == len(points)
+        for point, projection in zip(points, entry["checkpoints"], strict=True):
+            name, seconds = point["name"], point["seconds"]
+            assert (projection["name"], projection["seconds"]) == (name, seconds)
+            while original_index < len(child) and child[original_index][0] <= seconds:
+                event = child[original_index]
+                if event[1] == "r":
+                    original.resize(*map(int, event[2].split("x")))
+                else:
+                    original.feed(event[2].encode())
+                original_index += 1
+            size = (original.screen.columns, original.screen.lines)
+            assert tuple(projection["active_size"]) == size
+            expected = root / (scene + "-evidence." + name + ".txt")
+            assert original.text() == expected.read_text(), "original checkpoint changed"
+            assert projection["cast"] == scene + "-" + name + "-viewport.cast"
+            path = root / projection["cast"]
+            casts.add(path.name)
+            assert digest(path) == projection["sha256"]
+            static = [json.loads(line) for line in path.read_text().splitlines()]
+            assert (static[0]["width"], static[0]["height"]) == size
+            assert static[0]["limits_viewport"] == projection["source"]
+            assert projection["source"] == {**entry["source"], "checkpoint": name, "seconds": seconds,
+                                             "active_size": list(size), "snapshot_sha256": digest(expected)}
+            assert len(static) == 3 and static[1][:2] == [seconds, "o"]
+            assert static[2] == [evidence["observation_end_seconds"], "o", ""]
+            still = driver.TerminalObserver(*size, lambda data: None)
+            still.feed(static[1][2].encode())
+            same_viewport(original.screen, still.screen)
+            base = scene if name == "exit" else scene + "-" + name
+            pixels = image_size(root / (base + ".png"))
+            assert pixels == image_size(root / (base + "-frame.gif")), "PNG and GIF dimensions differ"
+            assert pixel_sizes.setdefault(size, pixels) == pixels, "same grid has inconsistent dimensions"
+        assert animation[-1] == [evidence["observation_end_seconds"], "o", ""]
+    assert {path.name for path in root.glob("*-viewport.cast")} == casts
+    assert canvas == (max(size[0] for size in sizes), max(size[1] for size in sizes)), "animation canvas omits an observed grid"
+    for first, first_pixels in pixel_sizes.items():
+        for second, second_pixels in pixel_sizes.items():
+            for dimension in (0, 1):
+                if first[dimension] < second[dimension]:
+                    assert first_pixels[dimension] < second_pixels[dimension], "resized viewport retained stale pixel dimensions"
+    for scene in SCENES:
+        assert image_size(root / (scene + ".gif")) == pixel_sizes[canvas], "animation canvas differs"
 
 
 def observed_scene(root, scene, evidence, child):
