@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
@@ -378,28 +379,31 @@ func audioFileSize(bytes int64) string {
 }
 
 func (m *audioWorkbench) moreView() tea.View {
+	items := m.moreItems()
+	spaced := m.height >= len(items)+7
 	lines := []string{m.strong().Render("  More actions")}
-	for index, label := range m.moreItems() {
+	for index, label := range items {
+		if spaced && (index == 2 || index == 3 || index == len(items)-1) {
+			lines = append(lines, "")
+		}
 		lines = append(lines, m.label(label, index == m.moreChoice))
 	}
+	if spaced {
+		lines = append(lines, "")
+	}
+	lines = append(lines, "  "+m.muted().Render("Enter choose · Esc back"))
 	return tea.NewView(m.fitAudio(lines))
 }
 
 func (m *audioWorkbench) choiceView() tea.View {
-	title, count := "History", len(m.entries)
-	history := m.modal == "history"
-	compact := m.height < 24 || m.width < 60
-	if !history {
-		title = []string{"Model", "Voice", "Response format"}[m.setting]
-		count = len(m.choices)
+	if m.modal == "history" {
+		return m.historyView(time.Now())
 	}
+	title := []string{"Model", "Voice", "Response format"}[m.setting]
+	count := len(m.choices)
 	lines := []string{m.strong().Render("  " + title)}
-	hint := "Enter select · Esc back"
-	if history {
-		hint = "Enter open · Esc back"
-	}
-	footer := []string{"  " + m.muted().Render(hint)}
-	if !history && m.setting == 0 && count > 0 {
+	footer := []string{"  " + m.muted().Render("Enter select · Esc back")}
+	if m.setting == 0 && count > 0 {
 		note := ""
 		if strings.HasSuffix(m.choices[m.choice], "1106") {
 			note = "Historical snapshot · access unverified"
@@ -410,33 +414,13 @@ func (m *audioWorkbench) choiceView() tea.View {
 			footer = append([]string{"  " + m.muted().Render(note)}, footer...)
 		}
 	}
-	if !compact {
+	if m.height >= 24 && m.width >= 60 {
 		footer = append([]string{""}, footer...)
 	}
-	rowHeight := 1
-	if history && !compact {
-		rowHeight = 2
-	}
-	visible := max(1, (m.height-1-len(lines)-len(footer))/rowHeight)
+	visible := max(1, m.height-1-len(lines)-len(footer))
 	start := max(0, min(m.choice-visible+1, count-visible))
 	for i := start; i < min(count, start+visible); i++ {
-		if !history {
-			lines = append(lines, m.label(readable.Text(m.choices[i]), i == m.choice))
-			continue
-		}
-		entry := m.entries[i]
-		text := strings.Join(strings.Fields(readable.Text(entry.Settings.Input)), " ")
-		if text == "" {
-			text = "Generated speech"
-		}
-		lines = append(lines, m.label(text, i == m.choice))
-		if !compact {
-			metadata := entry.CreatedAt.Local().Format("Jan 2 · 15:04") + " · " + readable.ChoiceTitle(entry.Settings.Voice) + " · " + strings.ToUpper(entry.Settings.Format)
-			lines = append(lines, "  "+m.muted().Render(readable.Text(metadata)))
-		}
-	}
-	if count == 0 {
-		lines = append(lines, "  No saved audio yet.")
+		lines = append(lines, m.label(readable.Text(m.choices[i]), i == m.choice))
 	}
 	return tea.NewView(m.fitAudio(append(lines, footer...)))
 }

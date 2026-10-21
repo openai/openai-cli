@@ -39,6 +39,16 @@ func registerAudioCommands(root *cli.Command) {
 		},
 		ReportReceipt: ReportSaveReceipt,
 	})
+	audio.ConfigureLiveTranslation(root, audio.TranslationOptions{
+		DefaultRequestOptions: GetDefaultRequestOptions,
+		RequestOptions: func(command *cli.Command) ([]option.RequestOption, error) {
+			// Live sessions do not consume the file-translation body or stdin.
+			// Keep root headers, query options, credential checks, and transport policy.
+			view := *command
+			view.Flags = nil
+			return FlagOptions(&view, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, EmptyBody, true)
+		},
+	})
 }
 
 func configureReadableSpeech(root *cli.Command) {
