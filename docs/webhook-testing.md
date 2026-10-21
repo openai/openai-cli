@@ -161,6 +161,8 @@ Use `--quiet` to suppress optional next steps.
 
 A 2xx response confirms receipt. It does not establish that your application finished processing the event.
 The API's `success: true` means the test request completed.
+A returned `status_code: 0` does not establish receiver acceptance or failure.
+The CLI preserves that response and advises checking receiver logs before sending another test.
 A completed test keeps exit status 0, including a receiver HTTP 500 response.
 API errors keep their existing nonzero status and error output.
 See the [test reference](https://developers.openai.com/api/reference/cli/resources/webhooks/methods/test).

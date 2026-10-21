@@ -79,6 +79,7 @@ func TestMainWebhookTestReceiverStatus(t *testing.T) {
 func TestMainWebhookTestPreservesMachineFormats(t *testing.T) {
 	for _, response := range []string{
 		webhookTestResult,
+		strings.Replace(webhookTestResult, `"status_code":500`, `"status_code":0`, 1),
 		`{"success":true,"status_code":500}`,
 		strings.TrimSuffix(webhookTestResult, "}") + `,"future":{"sequence":9007199254740993,"decimal":1.2300,"items":[null,false,{"text":"synthetic"}]}}`,
 	} {
@@ -134,6 +135,42 @@ func TestMainWebhookTestPreservesExtractionAndRawOutput(t *testing.T) {
 			got := runReadableCommand(t, server, webhookTestCommand(tc.flags...)...)
 			if got.code != 0 || got.stderr != "" || got.stdout != tc.want {
 				t.Fatalf("extraction changed: got %+v, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMainWebhookTestZeroStatusDoesNotInferDelivery(t *testing.T) {
+	response := strings.Replace(webhookTestResult, `"status_code":500`, `"status_code":0`, 1)
+	for _, flags := range [][]string{nil, {"--quiet"}} {
+		t.Run(fmt.Sprint(flags), func(t *testing.T) {
+			server := webhookTestServer(t, response)
+			got := runReadableCommand(t, server, webhookTestCommand(flags...)...)
+			for _, field := range []string{"Status code: 0", "Success: true"} {
+				if !strings.Contains(got.stdout, field) {
+					t.Errorf("zero-status response lost %q: %+v", field, got)
+				}
+			}
+			if got.code != 0 || strings.Contains(got.stdout, "Delivery accepted") || strings.Contains(got.stdout, "Delivery failed") {
+				t.Fatalf("zero status invented a delivery outcome or changed exit status: %+v", got)
+			}
+			if len(flags) == 0 {
+				for _, hint := range []string{"No delivery outcome was inferred.", "receiver logs before sending another test."} {
+					if !strings.Contains(got.stderr, hint) {
+						t.Errorf("zero-status result omitted recovery %q: %+v", hint, got)
+					}
+				}
+			} else if got.stderr != "" {
+				t.Fatalf("quiet zero-status result emitted advice: %+v", got)
+			}
+		})
+	}
+	for _, flags := range [][]string{{"--transform", "status_code"}, {"--transform", "status_code", "--raw-output"}} {
+		t.Run(fmt.Sprint(flags), func(t *testing.T) {
+			server := webhookTestServer(t, response)
+			got := runReadableCommand(t, server, webhookTestCommand(flags...)...)
+			if got.code != 0 || got.stdout != "0\n" || got.stderr != "" {
+				t.Fatalf("zero-status extraction changed: %+v", got)
 			}
 		})
 	}
