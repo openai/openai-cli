@@ -27,7 +27,7 @@ func TestImagePickerResumesWithSessionPromptAndSettings(t *testing.T) {
 	require.Equal(t, original.prompt, string(m.draft))
 	require.Equal(t, len([]rune(original.prompt)), m.cursor)
 	require.Contains(t, ansi.Strip(m.View().Content), original.prompt)
-	require.NotContains(t, ansi.Strip(m.View().Content), "Ctrl+C")
+	require.Contains(t, ansi.Strip(m.View().Content), "Ctrl+C")
 	require.Empty(t, m.result.Args, "reopening alone must never submit")
 	m.insertPrompt(" with edits")
 	require.Equal(t, original.prompt+" with edits", m.settings.prompt)

@@ -59,7 +59,7 @@ func TestImagePickerSelectionHistoryFollowsSuccessfulEcho(t *testing.T) {
 	require.NoError(t, err)
 	model.settings.prompt = "new prompt\n'絵'"
 	model.settings.quality = "high"
-	result := imagePickerResult{Args: model.settings.args(), settings: model.settings, PrintOnly: true, shell: "bash"}
+	result := imagePickerResult{Args: model.settings.args(), settings: model.settings, PrintOnly: true, shell: "bash", workspace: &imagePickerWorkspace{}}
 	var diagnostic bytes.Buffer
 	err = finishImagePickerSelection(ctx, failedImagePickerWriter{}, &diagnostic, path, &result)
 	require.ErrorIs(t, err, io.ErrClosedPipe)

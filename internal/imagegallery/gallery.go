@@ -24,8 +24,9 @@ import (
 )
 
 var (
-	ErrBusy = errors.New("image gallery is already in use; finish the other image command first")
-	ErrFull = errors.New("image gallery is full; open a new Terminal tab to start a new image gallery")
+	ErrOtherTTY = errors.New("image gallery belongs to another Terminal tab")
+	ErrBusy     = errors.New("image gallery is already in use; finish the other image command first")
+	ErrFull     = errors.New("image gallery is full. Open a new Terminal tab with your normal text font to start another gallery")
 )
 
 // State is a copy of the currently committed gallery metadata.

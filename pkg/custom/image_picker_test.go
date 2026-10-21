@@ -64,7 +64,7 @@ func TestImagePickerUnsupportedShellKeepsGeneration(t *testing.T) {
 			m.focus = "command"
 			require.Contains(t, m.View().Content, imagePickerUnsupportedShell)
 			require.NotContains(t, m.View().Content, "openai images generate")
-			require.NotContains(t, m.View().Content, "Ctrl+P print")
+			require.NotContains(t, ansi.Strip(m.View().Content), "[Ctrl+P] Print command")
 			_, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
 			require.Nil(t, cmd)
 			require.Empty(t, m.result.Args)
@@ -149,18 +149,35 @@ func TestImagePickerSettingsConstraints(t *testing.T) {
 
 func TestImagePickerLivePromptAndCommandUpdate(t *testing.T) {
 	m := pickerForTest(t)
+	m.width, m.height = 80, 24
+	checkVisible := func() {
+		t.Helper()
+		require.Equal(t, "prompt", m.focus)
+		view := ansi.Strip(m.View().Content)
+		width, _ := m.commandDimensions()
+		for _, line := range m.commandLines(width) {
+			require.Contains(t, view, line, "the live command must be visible while typing")
+		}
+		require.Contains(t, view, "[Tab] Switch")
+		require.Contains(t, view, "[Ctrl+G] Generate")
+		require.Contains(t, view, "[Ctrl+C] Quit")
+		require.Empty(t, m.result.Args)
+	}
 	m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 	m.Update(tea.PasteMsg{Content: "A 'purple' robot"})
 	require.Equal(t, "A 'purple' robot", m.settings.prompt)
 	require.Equal(t, "prompt", m.focus)
+	checkVisible()
 	preview, _, _ := m.commandPreview(1000, 1)
 	require.Contains(t, preview[0], "--prompt 'A '\\''purple'\\'' robot'")
 	m.field = "quality"
 	m.apply("max")
+	checkVisible()
 	preview, _, _ = m.commandPreview(1000, 1)
 	require.Contains(t, preview[0], "--quality max")
 	m.field = "model"
 	m.apply(openai.ImageModelGPTImage1Mini)
+	checkVisible()
 	preview, _, _ = m.commandPreview(1000, 1)
 	require.Contains(t, preview[0], "--quality auto")
 	require.Contains(t, preview[0], "--model gpt-image-1-mini")
@@ -417,7 +434,7 @@ func TestImagePickerEmptyPromptPlaceholder(t *testing.T) {
 	m, err := newImagePicker(imagePickerOptions{})
 	require.NoError(t, err)
 	m.width, m.height = 80, 24
-	require.Contains(t, m.View().Content, "Describe your image")
+	require.Contains(t, ansi.Strip(m.View().Content), "Describe your image")
 	pickerKey(m, tea.KeyEnter)
 	require.Equal(t, "settings", m.page)
 	require.Equal(t, "Add a prompt first.", m.note)
@@ -433,9 +450,9 @@ func TestImagePickerBoundedCommandPreviewShowsRange(t *testing.T) {
 	require.Len(t, lines, 2)
 	require.False(t, strings.HasSuffix(lines[1], "…"))
 	m.focus = "command"
-	require.Contains(t, m.View().Content, "↑↓ scroll 1-4/")
-	require.Contains(t, m.View().Content, "Ctrl+P print")
-	require.NotContains(t, m.View().Content, "Command")
+	require.Contains(t, ansi.Strip(m.View().Content), "Command preview · 1–4 of")
+	require.Contains(t, ansi.Strip(m.View().Content), "[Ctrl+P] Print command")
+	require.Contains(t, ansi.Strip(m.View().Content), "[↑↓] Scroll")
 	for _, line := range lines {
 		require.LessOrEqual(t, ansi.StringWidth(line), 40)
 	}
@@ -450,12 +467,12 @@ func TestImagePickerNavigationHintsFitNarrowWindows(t *testing.T) {
 			m.focus = focus
 			lines := strings.Split(ansi.Strip(m.View().Content), "\n")
 			footer := lines[len(lines)-1]
-			require.Contains(t, footer, "Ctrl+C exit", "layout=%s width=%d focus=%s", "compact", width, focus)
-			require.Contains(t, footer, "Enter ")
+			require.Contains(t, footer, "[Ctrl+C] Quit", "layout=%s width=%d focus=%s", "compact", width, focus)
+			require.Contains(t, footer, "[Enter] ")
 			if focus == "prompt" {
-				require.Contains(t, footer, "↓ settings")
+				require.Contains(t, ansi.Strip(m.View().Content), "[Tab] Switch")
 			} else {
-				require.Contains(t, footer, "↑↓ scroll")
+				require.Contains(t, ansi.Strip(m.View().Content), "[↑↓] Scroll")
 			}
 			require.NotContains(t, footer, "…", "essential controls must fit without truncation")
 		}
@@ -496,9 +513,11 @@ func TestImagePickerCommandScrollPreservesEveryCharacter(t *testing.T) {
 			for i, line := range lines {
 				visited[start+i] = line
 			}
-			require.Contains(t, m.View().Content, "↑↓ scroll")
+			require.Contains(t, ansi.Strip(m.View().Content), "[↑↓] Scroll")
 			require.NotContains(t, m.View().Content, "Generate image")
-			require.NotContains(t, m.View().Content, "Print command")
+			if size[0] >= 80 {
+				require.Contains(t, ansi.Strip(m.View().Content), "[Ctrl+P] Print command")
+			}
 			if start+len(lines) == count {
 				break
 			}
@@ -638,7 +657,7 @@ func TestImagePickerViewBoundsAndResize(t *testing.T) {
 			}
 			lines := strings.Split(content, "\n")
 			require.LessOrEqual(t, len(lines), size[1], "page=%s", page)
-			require.LessOrEqual(t, len(lines), 18, "page=%s", page)
+			require.LessOrEqual(t, len(lines), 21, "page=%s", page)
 			if size[1] >= 12 {
 				require.LessOrEqual(t, len(lines), size[1]-3, "leave prior shell context visible")
 			}

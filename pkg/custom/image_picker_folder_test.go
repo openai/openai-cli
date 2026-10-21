@@ -66,7 +66,7 @@ func TestImagePickerSaveFolder(t *testing.T) {
 			}
 		}
 		require.Contains(t, ansi.Strip(m.View().Content), "Save to")
-		require.Contains(t, ansi.Strip(m.View().Content), "Ctrl+C exit")
+		require.Contains(t, ansi.Strip(m.View().Content), "[Ctrl+C] Quit")
 	}
 	m.width, m.height = 90, 24
 	require.Equal(t, "more", m.rows()[len(m.rows())-1].id, "End still opens More options")
@@ -355,7 +355,7 @@ func TestImagePickerFolderViewBoundsAndVisibleExit(t *testing.T) {
 	for _, size := range [][2]int{{40, 12}, {48, 14}, {80, 24}, {120, 30}} {
 		m.width, m.height = size[0], size[1]
 		view := m.View().Content
-		require.Contains(t, view, "Ctrl+C exit")
+		require.Contains(t, ansi.Strip(view), "[Ctrl+C] Quit")
 		require.Contains(t, ansi.Strip(view), "› fourth")
 		require.NotContains(t, view, "\x1b[31m")
 		require.LessOrEqual(t, len(strings.Split(view, "\n")), m.viewHeight())

@@ -2,6 +2,7 @@ package custom
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -43,18 +44,33 @@ func runImagePickerSession(ctx context.Context, input, output *os.File, options 
 			options.initialNote = "Could not read the draft. Keeping this session's choices."
 		}
 	}
-	result, err := runImagePicker(ctx, input, output, options)
 	// Unknown, corrupt, or inaccessible state remains untouched this session.
 	if stateErr != nil {
 		path = ""
 	}
+	if generate := options.generate; generate != nil {
+		options.generate = func(requestCtx context.Context, result *imagePickerResult) error {
+			if err := finishImagePickerSelection(requestCtx, output, os.Stderr, path, result); err != nil {
+				return err
+			}
+			return generate(requestCtx, result)
+		}
+	}
+	result, err := runImagePicker(ctx, input, output, options)
+	if options.workspace != nil {
+		err = errors.Join(err, options.workspace.close())
+	}
 	if err != nil || result.Canceled {
+		result.loading.close()
 		if result.changed {
 			result.draftSaved = saveImagePickerExitDraft(ctx, os.Stderr, path, result.settings)
 		}
 		return result, err
 	}
 	err = finishImagePickerSelection(ctx, output, os.Stderr, path, &result)
+	if err != nil {
+		result.loading.close()
+	}
 	if err != nil && result.changed {
 		result.draftSaved = saveImagePickerExitDraft(ctx, os.Stderr, path, result.settings)
 	}
@@ -88,8 +104,9 @@ func saveImagePickerExitDraft(parent context.Context, diagnostics io.Writer, pat
 	return false
 }
 
-// Echo before saving the submitted draft or starting a request. Saving here
-// means a slower API response cannot overwrite a newer interactive selection.
+// Show the command before saving the submitted draft or starting a request.
+// The retained busy form already displays it; print-only selections still echo.
+// Saving now prevents a slower API response from overwriting newer selections.
 func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writer, path string, result *imagePickerResult) error {
 	result.draftSaved = false
 	if err := ctx.Err(); err != nil {
@@ -103,7 +120,7 @@ func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writ
 		if result.PrintOnly {
 			return imageSavingFailure(imagePickerUnsupportedShell, nil)
 		}
-	} else {
+	} else if result.PrintOnly || result.loading == nil && result.workspace == nil {
 		if _, err := fmt.Fprintln(output, command); err != nil {
 			return imageSavingFailure("Could not print the command. No image request was started.", err)
 		}
@@ -114,6 +131,14 @@ func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writ
 	if err := saveImagePickerState(ctx, path, result.settings); err != nil {
 		if canceled := ctx.Err(); canceled != nil {
 			return canceled
+		}
+		if result.loading != nil {
+			result.loading.model.note = "Could not save the draft."
+			return nil
+		}
+		if result.workspace != nil {
+			result.workspace.send(imagePickerWorkspaceRows{[]string{"Could not save the draft."}})
+			return nil
 		}
 		// Storage is optional. Do not expose stored prompts or raw filesystem
 		// errors, and do not prevent an otherwise valid image request.

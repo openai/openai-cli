@@ -33,6 +33,10 @@ const (
 // Feedback starts after request preparation, so it never changes stdin reading
 // or validation. It owns no request/output writers and cannot replace a failure.
 func runWithImageLoading(ctx context.Context, command *cli.Command, plan *imageOutputPlan, next cli.ActionFunc) (err error) {
+	if workspace, _ := ctx.Value(imagePickerWorkspaceKey{}).(*imagePickerWorkspace); workspace != nil && plan != nil {
+		plan.loadingStage = func(stage imageLoadingStage) { workspace.send(imagePickerWorkspaceStage(stage)) }
+		return next(ctx, command)
+	}
 	root := command.Root()
 	out := imageCommandWriter(command)
 	if plan == nil || !isTerminal(out) ||
@@ -150,6 +154,8 @@ func startLoadingFeedback(ctx context.Context, out io.Writer, label, prompt stri
 	started := time.Now()
 	go func() {
 		defer close(done)
+		picker, _ := ctx.Value(imagePickerLoadingKey{}).(*imagePickerLoading)
+		defer picker.close()
 		delay := time.NewTimer(imageLoadingDelay)
 		defer delay.Stop()
 		select {
@@ -213,6 +219,23 @@ func startLoadingFeedback(ctx context.Context, out io.Writer, label, prompt stri
 				currentLabel = "Images saved"
 			}
 			prefix := animation.Frames[frame%len(animation.Frames)] + " "
+			if picker != nil {
+				if !animate {
+					prefix = ""
+				}
+				if err := picker.draw(current, time.Since(started), columns, rows, prefix); err != nil {
+					return
+				}
+				select {
+				case <-stop:
+					return
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				case <-refresh:
+				}
+				continue
+			}
 			text := prefix + loadingPromptLabel(currentLabel, prompt, columns-ansi.StringWidth(prefix))
 			if !animate || rows < 2 || columns <= ansi.StringWidth(text) {
 				if drawn && !clear() {

@@ -18,6 +18,7 @@ import (
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/readable"
 	"github.com/openai/openai-cli/internal/requestflag"
+	"github.com/openai/openai-cli/internal/terminalimage"
 	"github.com/openai/openai-go/v3"
 	"github.com/urfave/cli/v3"
 )
@@ -40,7 +41,28 @@ func imagePickerWorkflow(next cli.ActionFunc) cli.ActionFunc {
 		defer func() {
 			resultErr = errors.Join(resultErr, closeOutput())
 		}()
+		if outputDiagnosticsAllowed(ctx) && !command.Root().Bool("debug") && errorOutputFormat(command.Root()) == "text" && command.Root().String("transform-error") == "" {
+			workspaceCtx, closeWorkspaceOutput := terminalimage.PrepareNativeImageOutput(ctx, out)
+			defer func() { resultErr = errors.Join(resultErr, closeWorkspaceOutput()) }()
+			workspace := &imagePickerWorkspace{out: out, root: command.Root(), context: workspaceCtx}
+			defer func() { resultErr = errors.Join(resultErr, workspace.close()) }()
+			result, err := runImagePickerSession(workspaceCtx, os.Stdin, out, imagePickerOptions{workspace: workspace, generate: func(requestCtx context.Context, result *imagePickerResult) error {
+				return runImagePickerAction(requestCtx, command, result.Args, next)
+			}})
+			if err != nil {
+				return err
+			}
+			if result.Canceled {
+				code := result.ExitCode
+				if code == 0 {
+					code = 130
+				}
+				return cli.Exit("", code)
+			}
+			return nil
+		}
 		return runImagePickerDrafts(ctx, command, next, os.Stderr, func(options imagePickerOptions) (imagePickerResult, error) {
+			options.keepDuringRequest = outputDiagnosticsAllowed(ctx) && !command.Root().Bool("debug") && errorOutputFormat(command.Root()) == "text" && command.Root().String("transform-error") == ""
 			return runImagePickerSession(ctx, os.Stdin, out, options)
 		})
 	}
@@ -56,9 +78,11 @@ func runImagePickerDrafts(ctx context.Context, command *cli.Command, next cli.Ac
 		}
 		result, err := pick(options)
 		if err != nil {
+			result.loading.close()
 			return err
 		}
 		if result.Canceled {
+			result.loading.close()
 			code := result.ExitCode
 			if code == 0 {
 				code = 130
@@ -66,14 +90,21 @@ func runImagePickerDrafts(ctx context.Context, command *cli.Command, next cli.Ac
 			return cli.Exit("", code)
 		}
 		if err := ctx.Err(); err != nil {
+			result.loading.close()
 			return err
 		}
 		if result.PrintOnly {
+			result.loading.close()
 			return nil
 		}
 		options = imagePickerOptions{Prompt: result.settings.prompt, initial: &result.settings, resuming: true}
 		requestCtx := context.WithValue(ctx, imagePickerLoadingPromptKey{}, result.settings.prompt)
-		if err := runImagePickerAction(requestCtx, command, result.Args, next); err != nil {
+		requestCtx = context.WithValue(requestCtx, imagePickerLoadingKey{}, result.loading)
+		requestErr := result.loading.request(requestCtx, func(requestCtx context.Context) error {
+			return runImagePickerAction(requestCtx, command, result.Args, next)
+		})
+		result.loading.close()
+		if err := requestErr; err != nil {
 			if ctx.Err() != nil || !imagePickerRecoverableRequest(err) {
 				return err
 			}

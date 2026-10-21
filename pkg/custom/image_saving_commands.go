@@ -174,6 +174,10 @@ func imageSavingWorkflow(next cli.ActionFunc) cli.ActionFunc {
 			return err
 		}
 		if warnPreference && outputDiagnosticsAllowed(ctx) {
+			if workspace, _ := ctx.Value(imagePickerWorkspaceKey{}).(*imagePickerWorkspace); workspace != nil && isTerminal(os.Stderr) {
+				workspace.send(imagePickerWorkspaceRows{[]string{"Could not read the inline preference. Previews are off; saved files remain available."}})
+				return nil
+			}
 			// Wait until presentation succeeds so this plain-text warning cannot
 			// mix with a structured command error. ErrWriter buffers failures.
 			return readable.WriteText(clioutput.Writer{Context: ctx, Sink: os.Stderr}, "Could not read the inline preference; automatic previews are off for this command. Use --inline auto, on or off to override it, or check your image-preferences.json settings.")
