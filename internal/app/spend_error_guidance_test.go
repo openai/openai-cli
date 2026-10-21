@@ -82,6 +82,26 @@ func TestSpendErrorGuidanceResponseConversionProvenance(t *testing.T) {
 	require.False(t, errors.As(failure, &marker), "pre-conversion cancellation must retain its classification")
 }
 
+func TestSpendMutationResponseValidationPreservesCancellation(t *testing.T) {
+	for _, body := range []string{"", `{"synthetic-private-response": broken}`, `{"id":"alert_synthetic"}`} {
+		t.Run(body, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			checking := &cancelListTableContext{Context: ctx, cancel: cancel, after: 2}
+			var out bytes.Buffer
+			err := ShowJSON(gjson.Parse(body), ShowJSONOpts{Context: checking, Format: "text",
+				Operation: "(resource) admin.organization.spend_alerts > (method) create",
+				OutputKind: OutputResponse, Stdout: &out, Stderr: io.Discard})
+			require.ErrorIs(t, err, context.Canceled)
+			require.Empty(t, out.String())
+			if !gjson.Valid(body) {
+				var syntaxFailure *json.SyntaxError
+				require.ErrorAs(t, err, &syntaxFailure)
+			}
+		})
+	}
+}
+
 func TestSpendErrorGuidanceAdminMetadata(t *testing.T) {
 	root := readableErrorTestCommand(t)
 	root.Metadata["help-invocation"] = "'/tmp/synthetic app/openai'"

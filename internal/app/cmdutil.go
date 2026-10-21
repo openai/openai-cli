@@ -309,7 +309,7 @@ func showJSON(res gjson.Result, opts ShowJSONOpts, selectTransformer transformer
 	if isSpendMutationResponse(opts) && !gjson.Valid(res.Raw) {
 		var raw json.RawMessage
 		if err := json.Unmarshal([]byte(res.Raw), &raw); err != nil {
-			return spendMutationResponseFailure(err, opts)
+			return errors.Join(spendMutationResponseFailure(err, opts), opts.Context.Err())
 		}
 	}
 	if err := opts.Context.Err(); err != nil {
