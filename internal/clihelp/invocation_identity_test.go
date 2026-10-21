@@ -21,7 +21,11 @@ func TestHelpInvocationVerifiedRenamedExecutable(t *testing.T) {
 				name += ".exe"
 			}
 			path := filepath.Join(directory, name)
-			if err := os.Link(running, path); err != nil {
+			if runtime.GOOS == "windows" {
+				// Windows can lock hard links to the running image during cleanup.
+				// A symlink preserves executable identity without linking that image.
+				symlinkHelpInvocationFixture(t, running, path)
+			} else if err := os.Link(running, path); err != nil {
 				t.Fatal(err)
 			}
 			local := "./" + name
