@@ -10,7 +10,7 @@ import (
 
 	"github.com/openai/openai-cli/internal/commands/admin"
 	requestconfig "github.com/openai/openai-cli/internal/request"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -30,7 +30,7 @@ func TestAdminSetupOriginDisplayPreservesDestination(t *testing.T) {
 			require.NoError(t, err)
 			requests := 0
 			root := adminCredentialsTestCommand(t, func(ctx context.Context, command *cli.Command) error {
-				options, display, err := admin.TestRequestOptions(command, custom.GetDefaultRequestOptions)
+				options, display, err := admin.TestRequestOptions(command, appconfig.GetDefaultRequestOptions)
 				if err != nil {
 					return err
 				}

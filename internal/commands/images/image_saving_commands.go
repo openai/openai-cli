@@ -1,0 +1,254 @@
+package images
+
+import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"strconv"
+
+	"github.com/openai/openai-cli/internal/apiquery"
+	clioutput "github.com/openai/openai-cli/internal/output"
+	"github.com/openai/openai-cli/internal/readable"
+	requestconfig "github.com/openai/openai-cli/internal/request"
+	"github.com/openai/openai-cli/internal/requestflag"
+	cliterminal "github.com/openai/openai-cli/internal/terminal"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/tidwall/gjson"
+	"github.com/urfave/cli/v3"
+)
+
+const imageSavingRequestMetadata = "openai-image-saving-request"
+
+// ConfigureSaving decorates the generated image commands with shared saving behavior.
+// Model discovery and terminal rendering have separate owners.
+func ConfigureSaving(root *cli.Command, opts SavingOptions) {
+	images := root.Command("images")
+	if images == nil {
+		return
+	}
+	for _, name := range []string{"generate", "edit", "create-variation"} {
+		command := images.Command(name)
+		if command == nil {
+			continue
+		}
+		registerImageSavingFlags(command)
+		if name == "generate" {
+			command.Description = imageGenerationSavingHelp
+			command.CustomHelpTemplate = imageGenerationQuickHelp
+		} else {
+			command.Description = imageEditSavingHelp
+			if name == "create-variation" {
+				command.Description = imageVariationSavingHelp
+			}
+			command.CustomHelpTemplate = imageUploadQuickHelp
+		}
+		command.Action = imageSavingWorkflow(command.Action, opts)
+		if name == "generate" {
+			command.Action = imagePickerWorkflow(command.Action)
+		}
+	}
+}
+
+func registerImageSavingFlags(command *cli.Command) {
+	command.Flags = append(command.Flags,
+		&cli.StringFlag{Name: "output-dir", Usage: "Save images in an existing `DIRECTORY`", DefaultText: "~/Downloads/gpt-images/"},
+		&cli.StringFlag{Name: "inline", Value: "auto", Usage: "Show previews: auto, on or off. Uses your saved preference unless set. Local Apple Terminal: auto uses color blocks; on permits sharp previews, Terminal Automation and private font caches. Pipes and CI never show previews."},
+		&cli.StringFlag{Name: "name", Usage: "Save with this filename `STEM` (an image extension is optional); duplicates get -2, -3, etc. Existing files are kept"},
+	)
+	for _, flag := range command.Flags {
+		switch flag := flag.(type) {
+		case *requestflag.Flag[*int64]:
+			if flag.Name == "n" {
+				flag.Aliases = append(flag.Aliases, "count")
+			}
+			if flag.Name == "partial-images" {
+				flag.Usage = "Positive values enable streaming when saving. " + flag.Usage
+			}
+		case *requestflag.Flag[*bool]:
+			if flag.Name == "stream" {
+				flag.Usage = "When saving, only the final image is kept. Omit --max-items or use -1. For previews, set --partial-images. Use --format json for API events. " + flag.Usage
+			}
+		case *requestflag.Flag[*string]:
+			if flag.Name == "model" {
+				if command.Name != "create-variation" {
+					flag.Usage = "Saving default when model and response-format are omitted: " + defaultSavedImageModel + ". Explicit models retain API defaults. API behavior: " + flag.Usage
+				}
+				flag.HideDefault = true
+			}
+			if flag.Name == "response-format" {
+				if command.Name != "create-variation" {
+					flag.Usage = "CLI saving requests b64_json for DALL-E when omitted; url disables saving. API behavior: " + flag.Usage
+				}
+				flag.HideDefault = true
+			}
+		}
+	}
+}
+
+type preparedImageSavingRequest struct {
+	options  []option.RequestOption
+	consumed bool
+	bodyType requestconfig.BodyContentType
+}
+
+type imagePresentationKey struct{}
+type imagePresentation struct {
+	plan   *imageOutputPlan
+	writer io.Writer
+}
+
+// Prepare once so stdin and @file values are not consumed twice. The generated
+// handler still owns SDK dispatch and response/stream lifetime.
+func imageSavingWorkflow(next cli.ActionFunc, opts SavingOptions) cli.ActionFunc {
+	return func(ctx context.Context, command *cli.Command) (resultErr error) {
+		inline := command.String("inline")
+		if inline != "auto" && inline != "on" && inline != "off" {
+			return imageSavingFailure("--inline must be auto, on or off.", nil)
+		}
+		ctx, closeOutput := prepareNativeImageOutput(ctx, command)
+		defer func() { resultErr = errors.Join(resultErr, closeOutput()) }()
+		if command.Metadata == nil {
+			command.Metadata = make(map[string]any)
+		}
+		if _, exists := command.Metadata[imageSavingRequestMetadata]; exists {
+			return errors.New("image request is already being prepared")
+		}
+		var options []option.RequestOption
+		var plan *imageOutputPlan
+		var streaming bool
+		var warnPreference bool
+		var err error
+		bodyType := requestconfig.ApplicationJSON
+		if command.Name != "generate" {
+			if command.Args().Len() != 0 {
+				return imageSavingFailure("Unexpected extra arguments. Put source filenames after --image; use --help for usage.", nil)
+			}
+			bodyType = requestconfig.MultipartFormEncoded
+			state := &imageMultipartPreparation{context: ctx}
+			// Prepared uploads still need an owner if the generated action fails
+			// before dispatch. Close is idempotent after the SDK has used the body.
+			defer func() {
+				if state.body != nil {
+					_ = state.body.Close()
+				}
+			}()
+			command.Metadata[imageMultipartMetadata] = state
+			defer delete(command.Metadata, imageMultipartMetadata)
+			options, err = opts.RequestOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, bodyType, false)
+			plan, streaming = state.plan, state.streaming
+		} else {
+			var body gjson.Result
+			options, err = opts.RequestOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatBrackets, bodyType, false,
+				func(raw []byte) { body = gjson.ParseBytes(raw) })
+			if err == nil {
+				plan, streaming, err = prepareImageSaving(ctx, command, body)
+			}
+			if err == nil && plan != nil {
+				options = append(options, plan.options...)
+			}
+		}
+		if err != nil {
+			return err
+		}
+		if plan != nil {
+			mode, preferenceErr := imageInlineMode(ctx, command, cliterminal.IsWriterTerminal(imageCommandWriter(command)))
+			if preferenceErr != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				warnPreference = true
+				mode = "off"
+			}
+			plan.inline = mode
+			plan.diagnostics = os.Stderr
+		}
+		restore, err := selectImageGenerationStream(command, streaming)
+		if err != nil {
+			return err
+		}
+		defer restore()
+		command.Metadata[imageSavingRequestMetadata] = &preparedImageSavingRequest{options: options, bodyType: bodyType}
+		defer delete(command.Metadata, imageSavingRequestMetadata)
+		ctx = context.WithValue(ctx, imagePresentationKey{}, imagePresentation{plan, command.Root().Writer})
+		if err := runWithImageLoading(ctx, command, plan, next, opts); err != nil {
+			return err
+		}
+		if warnPreference && opts.DiagnosticsAllowed(ctx) {
+			// Wait until presentation succeeds so this plain-text warning cannot
+			// mix with a structured command error. ErrWriter buffers failures.
+			return readable.WriteText(clioutput.Writer{Context: ctx, Sink: os.Stderr}, "Could not read the inline preference; automatic previews are off for this command. Use --inline auto, on or off to override it, or check your image-preferences.json settings.")
+		}
+		return nil
+	}
+}
+
+// ConsumeSavingRequest returns one prepared request to its generated handler.
+func ConsumeSavingRequest(command *cli.Command, nested apiquery.NestedQueryFormat, array apiquery.ArrayQueryFormat, body requestconfig.BodyContentType, ignoreStdin bool) ([]option.RequestOption, bool, error) {
+	prepared, ok := command.Metadata[imageSavingRequestMetadata].(*preparedImageSavingRequest)
+	if !ok {
+		return nil, false, nil
+	}
+	if prepared.consumed || nested != apiquery.NestedQueryFormatBrackets || array != apiquery.ArrayQueryFormatBrackets || body != prepared.bodyType || ignoreStdin {
+		return nil, true, errors.New("image request preparation does not match the generated action")
+	}
+	prepared.consumed = true
+	return prepared.options, true, nil
+}
+
+// The generated action selects streaming from a flag, but stdin also supplies
+// request fields. Change only that selector and restore its original set state.
+func selectImageGenerationStream(command *cli.Command, streaming bool) (func(), error) {
+	current, _ := command.Value("stream").(*bool)
+	if (current != nil && *current) == streaming {
+		return func() {}, nil
+	}
+	for _, candidate := range command.Flags {
+		flag, ok := candidate.(*requestflag.Flag[*bool])
+		if !ok || flag.Name != "stream" {
+			continue
+		}
+		original, replacement := *flag, *flag
+		if err := replacement.PreParse(); err != nil {
+			return nil, err
+		}
+		if err := replacement.Set("stream", strconv.FormatBool(streaming)); err != nil {
+			return nil, err
+		}
+		*flag = replacement
+		return func() { *flag = original }, nil
+	}
+	return nil, errors.New("image command has no compatible stream selector")
+}
+
+func savedImagePresentation(ctx context.Context) (imagePresentation, bool) {
+	if ctx == nil {
+		return imagePresentation{}, false
+	}
+	presentation, ok := ctx.Value(imagePresentationKey{}).(imagePresentation)
+	return presentation, ok && presentation.plan != nil
+}
+
+// ShowSavedResponse handles a response selected by application routing.
+func ShowSavedResponse(ctx context.Context, res []byte) (bool, error) {
+	presentation, ok := savedImagePresentation(ctx)
+	if !ok {
+		return false, nil
+	}
+	return true, presentation.output(func(out io.Writer) error { return presentation.plan.save(ctx, res, out) })
+}
+
+func (p imagePresentation) output(write func(io.Writer) error) error {
+	out := p.writer
+	if out == nil {
+		out = os.Stdout
+	}
+	if stdout, ok := out.(*os.File); ok && stdout == os.Stdout {
+		// Use the existing SIGPIPE protection, retaining saving errors even when
+		// reporting a completed path also encounters a closed pipe.
+		var result error
+		_ = clioutput.StreamToStdout(func(*os.File) error { result = write(out); return nil })
+		return result
+	}
+	return write(out)
+}

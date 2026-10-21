@@ -16713,7 +16713,8 @@ paths:
                                 "object": "organization.usage.completions.result",
                                 "input_tokens": 1000,
                                 "input_cached_tokens": 400,
-                                "input_cache_write_tokens": 75,
+                                "input_cache_write_tokens": 100,
+                                "input_cache_write_30m_tokens": 75,
                                 "input_cache_write_12h_tokens": 25,
                                 "input_uncached_tokens": 500,
                                 "output_tokens": 500,
@@ -36936,6 +36937,11 @@ webhooks:
 components:
   schemas:
     UpdateProjectApiKeyBody:
+      anyOf:
+      - required:
+        - scopes
+      - required:
+        - expires_in_seconds
       properties:
         expires_in_seconds:
           type: integer
@@ -70248,7 +70254,7 @@ components:
           description: The aggregated number of cached input tokens used across text, audio, and image inputs. For customers subscribed to Scale Tier, this includes Scale Tier tokens.
         input_cache_write_tokens:
           type: integer
-          description: The aggregated number of input tokens written to the cache with a 30-minute retention period.
+          description: The aggregated number of input tokens written to the cache across 30-minute and 12-hour retention periods.
         input_cache_write_12h_tokens:
           type: integer
           description: The aggregated number of input tokens written to the cache with a 12-hour retention period.
@@ -70335,7 +70341,8 @@ components:
               "object": "organization.usage.completions.result",
               "input_tokens": 5000,
               "input_cached_tokens": 1800,
-              "input_cache_write_tokens": 150,
+              "input_cache_write_tokens": 200,
+              "input_cache_write_30m_tokens": 150,
               "input_cache_write_12h_tokens": 50,
               "input_uncached_tokens": 3000,
               "output_tokens": 1000,
@@ -79160,7 +79167,7 @@ components:
         input_cache_write_tokens:
           anyOf:
           - type: integer
-            description: The aggregated number of input tokens written to the cache with a 30-minute retention period.
+            description: The aggregated number of input tokens written to the cache across 30-minute and 12-hour retention periods.
           - type: 'null'
         input_cache_write_12h_tokens:
           anyOf:
@@ -87321,13 +87328,13 @@ components:
           type: string
           minLength: 0
           description: The public ID of the environment.
-        container_size:
-          anyOf:
-          - $ref: '#/components/schemas/ContainerSizeResource'
-          - type: 'null'
-          description: The effective CPU and memory tier, or null when unknown or outside the public tiers.
-          x-stainless-skip:
-          - cli
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/HostedEnvironmentFileResource'
+          minItems: 0
+          maxItems: 50
+          description: Files available in the environment, excluding their contents.
         packages:
           $ref: '#/components/schemas/EnvironmentPackagesResource'
           description: Packages installed in the environment.
@@ -87359,13 +87366,6 @@ components:
           minItems: 0
           maxItems: 2000
           description: Plugins installed in the environment, excluding their archive contents.
-        files:
-          type: array
-          items:
-            $ref: '#/components/schemas/HostedEnvironmentFileResource'
-          minItems: 0
-          maxItems: 50
-          description: Files available in the environment, excluding their contents.
       required:
       - type
       - id
@@ -88074,11 +88074,6 @@ components:
           minLength: 0
           maxLength: 64
           description: A reusable hosted template applied before inline session configuration. Omitted fields inherit the template; network overrides cannot broaden its policy.
-        container_size:
-          $ref: '#/components/schemas/ContainerSizeParam'
-          description: The hosted container size. Omission selects the medium tier.
-          x-stainless-skip:
-          - cli
       required:
       - type
       additionalProperties: false
@@ -93483,11 +93478,6 @@ components:
           minLength: 1
           maxLength: 1
           pattern: ^[0-9A-D*#]$
-        client_event_id:
-          description: The event_id of the client command, when supplied.
-          type: string
-          x-stainless-skip:
-          - cli
       required:
       - type
       - event_id

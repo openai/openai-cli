@@ -44,9 +44,9 @@ cp "$demo_runtime/scene.sh" "$demo_output/scene.sh"
 shasum -a 256 "$record_source/record.sh" "$record_source/server.py" "$record_source/scene.py" \
   "$record_source/validate.py" "$record_source/README.md" \
   "$record_root/scripts/demos/capture_and_render.sh" "$record_root/scripts/image_picker_harness.py" \
-  "$record_root/pkg/custom/limits_commands.go" "$record_root/pkg/custom/limits_service.go" \
-  "$record_root/pkg/custom/limits_values.go" "$record_root/pkg/custom/limits_draft.go" \
-  "$record_root/pkg/custom/limits_workspace.go" "$record_root/pkg/custom/limits_workspace_view.go" \
+  "$record_root/internal/app/limits_commands.go" "$record_root/internal/app/limits_service.go" \
+  "$record_root/internal/app/limits_values.go" "$record_root/internal/app/limits_draft.go" \
+  "$record_root/internal/app/limits_workspace.go" "$record_root/internal/app/limits_workspace_view.go" \
   "$record_root/internal/output/transform/project_limits_overview.go" > "$demo_output/source-sha256.txt"
 demo_window_size="${record_width}x$((record_height+4))"
 demo_render_options=(--renderer resvg --font-family Menlo --font-size 18 --line-height 1.2 \

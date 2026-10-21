@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/openai/openai-cli/generated/commands"
+	"github.com/openai/openai-cli/internal/app"
 	"github.com/openai/openai-cli/internal/requestflag"
-	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/urfave/cli/v3"
 )
 
@@ -311,11 +311,11 @@ func TestMainErrorCoverageManifestProcess(t *testing.T) {
 		return
 	}
 	root := commands.Command
-	root.Flags = append(root.Flags, custom.NewRequestHeaderFlag())
-	if _, _, err := custom.ConfigureHelp(root, []string{"openai", "--help"}); err != nil {
+	root.Flags = append(root.Flags, app.NewRequestHeaderFlag())
+	if _, _, err := app.ConfigureHelp(root, []string{"openai", "--help"}); err != nil {
 		t.Fatal(err)
 	}
-	custom.ConfigureCommandErrors(root)
+	app.ConfigureCommandErrors(root)
 	manifest, err := buildErrorCoverageManifest(root)
 	if err != nil {
 		t.Fatal(err)

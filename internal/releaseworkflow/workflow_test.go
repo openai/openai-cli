@@ -20,8 +20,8 @@ const (
 	releaseInputsArtifact  = "openai-release-inputs"
 	checkoutAction         = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 	setupGoAction          = "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
-	uploadArtifactAction   = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-	downloadArtifactAction = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+	uploadArtifactAction   = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+	downloadArtifactAction = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 )
 
 var releaseInputPaths = []string{
@@ -368,30 +368,42 @@ esac
 					failed = "1"
 				}
 				command := exec.Command("bash", "-e", "-c", tag.Run)
-				command.Env = append(os.Environ(),
-					"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
-					"GITHUB_TOKEN="+token,
+				// Keep host credentials and shell startup variables out of the fixture.
+				command.Env = []string{
+					"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+					"HOME=" + bin,
+					"TMPDIR=" + bin,
+					"GITHUB_TOKEN=" + token,
 					"GITHUB_REPOSITORY=openai/openai-cli",
-					"GITHUB_OUTPUT="+filepath.Join(t.TempDir(), "github-output"),
+					"GITHUB_OUTPUT=" + filepath.Join(t.TempDir(), "github-output"),
 					"TAG=v1.2.3",
-					"EXPECTED_TAG_SHA="+tagSHA,
-					"FAKE_TAG_SHA="+tagSHA,
-					"EXPECTED_AUTH_HEADER="+encodedToken,
-					"FAKE_GIT_FAILURE="+failed,
-				)
-				output, err := command.CombinedOutput()
-				if failure && err == nil || !failure && err != nil {
-					t.Fatalf("trusted tag command error=%v, failure=%t, output:\n%s", err, failure, output)
+					"EXPECTED_TAG_SHA=" + tagSHA,
+					"FAKE_TAG_SHA=" + tagSHA,
+					"EXPECTED_AUTH_HEADER=" + encodedToken,
+					"FAKE_GIT_FAILURE=" + failed,
 				}
-				visible := string(output)
-				for _, line := range strings.Split(visible, "\n") {
-					if mask, ok := strings.CutPrefix(line, "::add-mask::"); ok {
-						visible = strings.ReplaceAll(visible, line+"\n", "")
-						visible = strings.ReplaceAll(visible, mask, "***")
+				output, err := command.CombinedOutput()
+				// Apply workflow masking before any diagnostic, including unexpected
+				// exits. A mask directive need not end with a newline.
+				lines := strings.Split(string(output), "\n")
+				var masks []string
+				for i, line := range lines {
+					if mask, ok := strings.CutPrefix(strings.TrimSuffix(line, "\r"), "::add-mask::"); ok {
+						lines[i] = ""
+						if mask != "" {
+							masks = append(masks, mask)
+						}
 					}
 				}
+				visible := strings.Join(lines, "\n")
+				for _, mask := range masks {
+					visible = strings.ReplaceAll(visible, mask, "***")
+				}
 				if strings.Contains(visible, token) || strings.Contains(visible, encodedToken) {
-					t.Fatalf("Git failure exposed a raw or derived credential in workflow logs:\n%s", visible)
+					t.Fatal("Git failure exposed a raw or derived credential in workflow logs (output withheld)")
+				}
+				if failure && err == nil || !failure && err != nil {
+					t.Fatalf("trusted tag command error=%v, failure=%t, sanitized output:\n%s", err, failure, visible)
 				}
 			})
 		}
@@ -957,7 +969,7 @@ func TestArtifactBuildCacheIsSeparateAndRefreshable(t *testing.T) {
 	if cache.With["key"] != prefix+"${{ github.sha }}" || strings.TrimSpace(fmt.Sprint(cache.With["restore-keys"])) != prefix {
 		t.Errorf("artifact cache inputs=%v, want revision-specific save and compatible artifact-only restore", cache.With)
 	}
-	if cache.Uses != "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830" {
+	if cache.Uses != "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" {
 		t.Errorf("artifact cache action=%q, want reviewed cache action with success-only post-save", cache.Uses)
 	}
 	for _, step := range job.Steps {
