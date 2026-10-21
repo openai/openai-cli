@@ -56,7 +56,7 @@ func TestAudioHistoryKeepsEverySelectionAndFooterVisible(t *testing.T) {
 
 func TestAudioHistorySanitizesAndTruncatesPromptBeforeTime(t *testing.T) {
 	m := audioReviewModel(t)
-	m.width, m.height = 40, 12
+	m.width, m.height = 60, 12
 	entry := audioReviewResult("private-id", false).entry
 	entry.Settings.Input = strings.Repeat("界", 60) + "\x1b[2J\nsecond line"
 	entry.CreatedAt = time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)

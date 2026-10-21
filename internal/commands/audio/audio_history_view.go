@@ -64,6 +64,10 @@ func (m *audioWorkbench) historyView(now time.Time) tea.View {
 		if prompt == "" {
 			prompt = "Generated speech"
 		}
+		if m.width < 60 {
+			lines = append(lines, m.label(prompt, r.entry == choice))
+			continue
+		}
 		stamp := "--:--"
 		if !entry.CreatedAt.IsZero() {
 			stamp = entry.CreatedAt.In(now.Location()).Format("15:04")

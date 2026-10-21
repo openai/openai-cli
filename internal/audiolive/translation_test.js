@@ -30,7 +30,7 @@ function page(options = {}) {
     setSinkId(){return Promise.resolve();}
     click(){downloads.push({name:this.download,blob:blobs.get(this.href)});}
   }
-  for(const id of ['status','source','language','microphone','output','listen','noise','start','mute','clear','original','translated','usage','download','transcript','player','error','waveform','tab-hint']) elements.set(id,new Element(id));
+  for(const id of ['status','time','source','language','microphone','output','listen','noise','start','mute','clear','original','translated','usage','download','transcript','player','error','waveform','tab-hint']) elements.set(id,new Element(id));
   elements.get('source').value=options.tab?'tab':'microphone'; elements.get('language').value='en';
   elements.get('noise').checked=false;elements.get('player').hidden=true;
   class AudioContext {
