@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/openai/openai-cli/internal/autocomplete"
+	"github.com/openai/openai-cli/internal/clihelp"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/urfave/cli/v3"
@@ -145,7 +146,7 @@ func ConfigureShellSetup(root *cli.Command, receipt func(context.Context, string
 				err = errors.Join(migrationErr, declineImagePickerTab(ctx, string(targets[0].Shell)))
 			}
 			if setupErr := changeImagePickerShellSetup(ctx, targets, remove); setupErr != nil {
-				return imagePickerShellSetupFailure(errors.Join(setupErr, err), remove)
+				return imagePickerShellSetupFailure(command, errors.Join(setupErr, err), remove)
 			}
 			if !remove {
 				err = clearImagePickerTabDecline(string(targets[0].Shell))
@@ -168,14 +169,14 @@ func ConfigureShellSetup(root *cli.Command, receipt func(context.Context, string
 	}
 }
 
-func imagePickerShellSetupFailure(err error, remove bool) error {
+func imagePickerShellSetupFailure(command *cli.Command, err error, remove bool) error {
 	message := "Could not finish Tab shortcut setup. Some startup files may already be configured; rerunning this command is safe."
 	if errors.Is(err, autocomplete.ErrPickerAtomicRenameUnsupported) {
 		message = "Could not finish Tab shortcut setup: this environment does not support the required atomic rename."
 		if remove {
 			message = "Could not finish Tab shortcut removal: this environment does not support the required atomic rename. Existing shortcuts may remain active."
 		}
-		message += " Type openai images generate and press Enter to use the picker." +
+		message += " Type " + clihelp.DisplayInvocation(command.Root()) + " images generate and press Enter to use the picker." +
 			" Some startup files or preferences may already have changed." +
 			" Keep any .openai-picker-recovery-* directories beside the startup file; inspect their original files before manual recovery." +
 			" Persistent setup needs a filesystem with atomic rename support."

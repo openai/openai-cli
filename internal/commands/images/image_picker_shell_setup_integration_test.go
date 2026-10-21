@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -38,7 +39,7 @@ func TestImagePickerShellSetupCapabilityErrors(t *testing.T) {
 	} {
 		for _, remove := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/remove=%t", tc.name, remove), func(t *testing.T) {
-				failure := images.TestImagePickerShellSetupFailure(tc.cause, remove)
+				failure := images.TestImagePickerShellSetupFailure(&cli.Command{Name: "openai"}, tc.cause, remove)
 				require.ErrorIs(t, failure, syscall.ENOSYS)
 				require.ErrorIs(t, failure, autocomplete.ErrPickerAtomicRenameUnsupported)
 				require.ErrorIs(t, failure, tc.cause)
@@ -70,7 +71,7 @@ func TestImagePickerShellSetupCapabilityErrors(t *testing.T) {
 					writerFailure := errors.New("synthetic output failure")
 					require.ErrorIs(t, appconfig.ShowCommandError(command, failure, errorSink{writerFailure}), writerFailure)
 					for _, canceled := range []error{context.Canceled, context.DeadlineExceeded} {
-						combined := images.TestImagePickerShellSetupFailure(errors.Join(tc.cause, canceled), remove)
+						combined := images.TestImagePickerShellSetupFailure(command, errors.Join(tc.cause, canceled), remove)
 						require.ErrorIs(t, combined, canceled)
 						require.ErrorIs(t, combined, syscall.ENOSYS)
 						output.Reset()
@@ -86,6 +87,69 @@ func TestImagePickerShellSetupCapabilityErrors(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestImagePickerShellSetupRecoveryInvocation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Bash recovery invocation requires a Unix host")
+	}
+	home := images.TestPickerShellSetupHome(t)
+	work := t.TempDir()
+	selectedDirectory := filepath.Join(work, "CLI with ' quotes")
+	otherDirectory := filepath.Join(work, "other")
+	emptyDirectory := filepath.Join(work, "empty")
+	for _, directory := range []string{selectedDirectory, otherDirectory, emptyDirectory} {
+		require.NoError(t, os.Mkdir(directory, 0700))
+	}
+	selected := filepath.Join(selectedDirectory, "openai")
+	require.NoError(t, os.WriteFile(selected, []byte("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\"\n"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(otherDirectory, "openai"), []byte("#!/bin/sh\nexit 94\n"), 0700))
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{"absent from PATH", emptyDirectory},
+		{"competing executable", otherDirectory},
+		{"installed executable", selectedDirectory},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PATH", tc.path)
+			for _, remove := range []bool{false, true} {
+				for _, format := range []string{"text", "json"} {
+					t.Run(fmt.Sprintf("remove=%t/%s", remove, format), func(t *testing.T) {
+						command := readableErrorTestCommand(t, "--format-error", format)
+						_, handled, err := appconfig.ConfigureHelp(command, []string{selected, "@completion", "bash", "--install-picker"})
+						require.NoError(t, err)
+						require.False(t, handled)
+						failure := images.TestImagePickerShellSetupFailure(command, errors.Join(autocomplete.ErrPickerAtomicRenameUnsupported, syscall.ENOSYS), remove)
+						var output bytes.Buffer
+						require.NoError(t, appconfig.ShowCommandError(command, failure, &output))
+						message := strings.TrimSpace(output.String())
+						if format == "json" {
+							var value struct {
+								Message string `json:"message"`
+							}
+							require.NoError(t, json.Unmarshal(output.Bytes(), &value))
+							message = value.Message
+						}
+						_, recovery, found := strings.Cut(message, " Type ")
+						require.True(t, found)
+						recovery, _, found = strings.Cut(recovery, " and press Enter")
+						require.True(t, found)
+						ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+						defer cancel()
+						process := exec.CommandContext(ctx, "/bin/bash", "--noprofile", "--norc", "-c", recovery)
+						process.Dir = emptyDirectory
+						process.Env = []string{"PATH=" + tc.path, "HOME=" + home, "BASH_ENV=/dev/null", "ENV=/dev/null", "LC_ALL=C"}
+						process.WaitDelay = time.Second
+						actual, err := process.Output()
+						require.NoError(t, err, "recovery command: %s", recovery)
+						require.Equal(t, selected+"\nimages\ngenerate\n", string(actual))
+					})
+				}
+			}
+		})
 	}
 }
 
