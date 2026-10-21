@@ -14,10 +14,10 @@ SCENES = ("org-limit", "org-limit-delete", "project-limit", "alert-create", "ale
           "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print", "preflight-400")
 
 
-def restored_offset(raw):
+def restored_offset(raw, loading=False):
     """Require inline readiness and cursor restoration after the last rendered frame."""
     assert b"\x1b[?1049h" not in raw and b"\x1b[?1049l" not in raw, "workspace entered an alternate screen"
-    ready = raw.find(b"Website controls and source errors: ?")
+    ready = raw.find(b"Loading" if loading else b"Website controls and source errors: ?")
     hidden, restored = raw.find(b"\x1b[?25l"), raw.rfind(b"\x1b[?25h")
     assert ready >= 0 and hidden >= 0 and restored > max(ready, hidden), "inline workspace did not restore its cursor"
     return restored + len(b"\x1b[?25h")
@@ -86,7 +86,7 @@ def main():
         assert staged["removed"] is True and not staged_path.parent.exists(), (scene, "staged CLI cleanup incomplete")
         assert (evidence["width"], evidence["height"]) in {(80, 24), (40, 12)}
         raw = (root / (scene + "-evidence.tty")).read_bytes()
-        restored_offset(raw)
+        restored_offset(raw, loading=scene == "slow-cancel")
         child = [json.loads(line) for line in (root / (scene + "-evidence.child.cast")).read_text().splitlines()]
         child_bytes = "".join(event[2] for event in child[1:] if event[1] == "o").encode()
         outer = [json.loads(line) for line in (root / (scene + ".cast")).read_text().splitlines()]
@@ -99,7 +99,7 @@ def main():
         assert relay[:-len(prompt)] == raw == child_bytes, (scene, "capture changed CLI bytes")
         assert hashlib.sha256(raw).hexdigest() == evidence["relayed_sha256"]
         if expected_status != 0:
-            restored = restored_offset(raw)
+            restored = restored_offset(raw, loading=scene == "slow-cancel")
             diagnostic = b" ".join(raw[restored:].lower().split())
             for action in (b"press r", b"use r to", b"refresh with r", b"press ?", b"press f1", b"use f1",
                            b"f1 for", b"f1:", b"ctrl+p", b"tab to apply"):
@@ -138,8 +138,8 @@ def main():
             expected = (command + newline).encode()
             printed = (root / (scene + "-evidence.printed-command.raw.txt")).read_bytes()
             start = len(raw) - len(expected)
-            restored_end = restored_offset(raw)
-            assert restored_offset(raw) <= start
+            restored_end = restored_offset(raw, loading=scene == "slow-cancel")
+            assert restored_offset(raw, loading=scene == "slow-cancel") <= start
             assert raw.rfind(b"\x1b[?25h") > raw.rfind(b"\x1b[?25l") >= 0
             assert restored_end <= start and raw.rfind(b"\x1b[?25h") < start
             assert printed == expected == raw[start:], (scene, "printed command bytes changed")
@@ -166,7 +166,7 @@ def main():
                 compact = "".join(screen.split())
                 assert all("".join(message.split()) in compact for message in messages), (scene, name, "missing recovery evidence")
             assert b"synthetic-private-preflight" not in raw, (scene, "private response leaked")
-            restored_end = restored_offset(raw)
+            restored_end = restored_offset(raw, loading=scene == "slow-cancel")
             diagnostic = raw[restored_end:]
             assert all(message in diagnostic for message in (b"HTTP 400", b"No write sent.", b"request fields and scope",
                                                             b"Reopen the limits workspace", b"review current settings",
