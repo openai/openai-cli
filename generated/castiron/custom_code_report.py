@@ -239,7 +239,13 @@ def legacy_snapshot_on_main(repo: Path, commit: str, *, fetch: bool) -> bool:
 
 
 def validate_public_target(
-    repo: Path, commit: str, metadata: dict[str, str], *, target_branch: str, fetch: bool
+    repo: Path,
+    commit: str,
+    metadata: dict[str, str],
+    *,
+    target_branch: str,
+    fetch: bool,
+    bootstrap_lineage: str | None = None,
 ) -> None:
     if target_branch not in TARGET_BRANCHES:
         raise ReportError("unsupported report target")
@@ -252,7 +258,19 @@ def validate_public_target(
         if metadata.get("Target") == "next":
             raise ReportError("next checkpoint cannot authorize a main report")
         if "Target" not in metadata and not legacy_snapshot_on_main(repo, commit, fetch=fetch):
-            raise ReportError("legacy snapshot has no verified main adoption")
+            if bootstrap_lineage is None:
+                raise ReportError("legacy snapshot has no verified main adoption")
+            # Pre-bootstrap SDK stats have no public snapshot pointer. Their
+            # baseline may be an ancestor of an adopted snapshot, never adopted
+            # directly. Validate the lineage independently before trusting it.
+            validate_public_target(
+                repo,
+                bootstrap_lineage,
+                public_metadata(repo, bootstrap_lineage),
+                target_branch=target_branch,
+                fetch=fetch,
+            )
+            git(repo, "merge-base", "--is-ancestor", commit, bootstrap_lineage)
 
 
 def resolve_public_baseline(
@@ -280,7 +298,14 @@ def resolve_public_baseline(
     elif fetch:
         git(repo, "fetch", "--quiet", "--no-tags", "origin", commit)
     metadata = public_metadata(repo, commit)
-    validate_public_target(repo, commit, metadata, target_branch=target_branch, fetch=fetch)
+    validate_public_target(
+        repo,
+        commit,
+        metadata,
+        target_branch=target_branch,
+        fetch=fetch,
+        bootstrap_lineage=lineage if stats.get("public_codegen_sha") is None else None,
+    )
     if metadata["Generation-ID"] != stats["generation_id"]:
         raise ReportError("public codegen generation ID does not match stats")
     ref = f"refs/heads/{metadata['Branch']}"
@@ -427,12 +452,22 @@ def prepare_public_snapshot(
     git(destination, "check-ref-format", ref)
     remote = git(destination, "ls-remote", "--refs", "origin", ref).decode().splitlines()
     previous = require_sha(remote[0].split()[0]) if remote else ""
+    upgrade_legacy_parent = False
     if previous:
         git(destination, "fetch", "--quiet", "--no-tags", "origin", previous)
         metadata = public_metadata(destination, previous)
-        validate_public_target(
-            destination, previous, metadata, target_branch=target_branch, fetch=True
+        # A pending legacy promotion has not been adopted on main. It may be
+        # retained as public history, but never reused to authorize the new
+        # snapshot: rebuild that from the verified private checkpoint below.
+        upgrade_legacy_parent = (
+            target_branch == "main"
+            and "Target" not in metadata
+            and metadata["Branch"] == codegen_branch
         )
+        if not upgrade_legacy_parent:
+            validate_public_target(
+                destination, previous, metadata, target_branch=target_branch, fetch=True
+            )
         # Stats pin the snapshot, not the SDK branch that currently uses it.
         # Another promotion may legitimately reuse this public commit; its
         # original branch remains the locator used by resolve_public_baseline.
@@ -478,7 +513,8 @@ def prepare_public_snapshot(
             parent = previous
         metadata = public_metadata(destination, previous)
         if (
-            metadata["Generation-ID"] == after["generation_id"]
+            not upgrade_legacy_parent
+            and metadata["Generation-ID"] == after["generation_id"]
             and metadata["Hash"] == baseline["hash"]
             and git(destination, "rev-parse", f"{previous}^{{tree}}").decode().strip() == tree
             and base_snapshot in ancestors
