@@ -151,3 +151,43 @@ The CLI retains completed audio when optional analysis fails.
 The [speech API reference](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create) defines request controls.
 The [text-to-speech guide](https://developers.openai.com/api/docs/guides/text-to-speech) documents formats and model-specific voices.
 See [transcript output](transcript-output.md) for finite transcription and translation presentation.
+
+## Live microphone and browser-tab translation
+
+```sh
+openai audio translate --live
+```
+
+This explicit mode opens a private local browser page. It keeps your API key in the CLI.
+Choose Microphone or Browser tab, select a target language, then start the session.
+For tab capture, choose a browser tab and enable Share tab audio in the browser dialog.
+The CLI sends audio only. It does not send the shared video track.
+Tab-audio support depends on the browser and operating system.
+
+The page exposes the target language, microphone, output device, playback, and noise reduction controls.
+It uses `gpt-realtime-translate` for translation and `gpt-realtime-whisper` for input transcription.
+Device selection depends on browser support. Unsupported output selection stays disabled.
+Stop session flushes captured audio and waits for final translation updates.
+Stop now interrupts that wait and retains received output.
+The page reports interrupted capture instead of claiming successful completion.
+
+Original and translated captions appear beside the measured waveform.
+Play, Pause, Replay, waveform clicks, and arrow keys use the recording's actual position.
+Save audio exports the complete translated WAV. Save transcript exports both caption tracks.
+The browser controls the download destination. Filenames derive from translated text.
+A failed replacement attempt preserves the previous recording until new translated output arrives.
+Clear removes the current browser recording. Browser recordings do not enter speech History.
+Ctrl+C closes the local page's connection and removes its private launch file.
+
+The live page currently supports microphone and browser-tab audio.
+Typed text and file upload remain separate workflows.
+Existing file translation keeps its input, output, and English translation behavior:
+
+```sh
+openai audio translate --file recording.wav --model whisper-1
+```
+
+Speech History groups recordings by local date and shows one prompt row per recording.
+Roomy terminals show timestamps and selected-recording metadata.
+Compact terminals preserve prompt space and keep the selected recording visible.
+More actions groups retained recordings, voice preview, form actions, and guidance without filled focus backgrounds.

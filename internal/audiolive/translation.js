@@ -240,7 +240,7 @@
     const run = current;
     if (!run) return;
     if (state === 'starting') {
-      current = null; generation++; run.controller.abort(); releaseCapture(run); await stopOutput();
+      current = null; generation++; run.controller.abort(); releaseCapture(run); restoreRecording(run); await stopOutput();
       setState('ready'); updateSource(); status('Ready'); return;
     }
     if (state !== 'running') return;
@@ -261,6 +261,7 @@
     if (run.id) request(endpoint('/stop',run.id),{method:'POST'}).catch(() => {});
     run.controller.abort();
     if (!run.hasOutput) await stopOutput();
+    if (current !== run) return;
     if (!restoreRecording(run)) { try { prepareRecording(); } catch (_) {} }
     showError(error.message || 'Translation stopped. Start a new session.'); status('Stopped'); setState('ready'); updateSource();
   }

@@ -41,6 +41,12 @@ func TestLiveTranslationSetupErrorsAreUsefulAndPrivate(t *testing.T) {
 	}
 }
 
+func TestLiveTranslationAuthenticationCauseNeedsEvidence(t *testing.T) {
+	require.Contains(t, translationFailure(401, "", nil).Error(), "could not verify your access")
+	require.NotContains(t, translationFailure(401, "", nil).Error(), "key was not accepted")
+	require.Contains(t, translationFailure(0, "invalid_api_key", nil).Error(), "key was not accepted")
+}
+
 func TestLiveTranslationPreservesFileRouteAndRejectsMixedModes(t *testing.T) {
 	for _, tc := range []struct {
 		args      []string

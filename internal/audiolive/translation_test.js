@@ -34,9 +34,9 @@ function page(options = {}) {
   elements.get('source').value=options.tab?'tab':'microphone'; elements.get('language').value='en';
   elements.get('noise').checked=false;elements.get('player').hidden=true;
   class AudioContext {
-    constructor(config){this.sampleRate=config?.sampleRate||48000;this.currentTime=0;this.state='running';this.destination={};this.audioWorklet={addModule:async()=>{}};contexts.push(this);}
+    constructor(config){this.output=!config;this.sampleRate=config?.sampleRate||48000;this.currentTime=0;this.state='running';this.destination={};this.audioWorklet={addModule:async()=>{}};contexts.push(this);}
     resume(){return Promise.resolve();}
-    close(){this.state='closed';return Promise.resolve();}
+    close(){this.state='closed';return this.output && options.closeOutput ? options.closeOutput : Promise.resolve();}
     createGain(){return {gain:{value:1},connect(){}};}
     createMediaStreamSource(){return {connect(){},disconnect(){}};}
     createBuffer(channels,frames,rate){const values=Array.from({length:channels},()=>new Float32Array(frames));return {duration:frames/rate,getChannelData:index=>values[index]};}
@@ -44,7 +44,7 @@ function page(options = {}) {
     setSinkId(){return Promise.resolve();}
   }
   class AudioWorkletNode {
-    constructor(){nodes.push(this);this.port={postMessage:value=>{if(value==='flush' && !options.holdFlush)queueMicrotask(()=>this.port.onmessage({data:'flushed'}));}};}
+    constructor(){if(options.nodeFail)throw new Error('Capture setup failed.');nodes.push(this);this.port={postMessage:value=>{if(value==='flush' && !options.holdFlush)queueMicrotask(()=>this.port.onmessage({data:'flushed'}));}};}
     connect(){} disconnect(){}
   }
   const context = {
@@ -186,4 +186,16 @@ test('missing worklet flush acknowledgement reports interrupted input and reject
   p.nodes[0].port.onmessage({data:new Int16Array([1,2]).buffer});await settle();
   assert.equal(p.calls.filter(call=>call.url?.startsWith('/input')).length,0);
   assert.equal(p.tracks[0].stopped,true);p.close();
+});
+
+test('an old setup failure cannot reset a replacement session after delayed cleanup',async()=>{
+  let release;
+  const options={nodeFail:true,closeOutput:new Promise(resolve=>{release=resolve;})},p=page(options);
+  const failed=p.elements.get('start').onclick();await settle();
+  await p.elements.get('start').onclick();
+  options.nodeFail=false;options.closeOutput=null;
+  await p.elements.get('start').onclick();assert.equal(p.elements.get('status').textContent,'Translating');
+  release();await failed;
+  assert.equal(p.elements.get('status').textContent,'Translating');
+  assert.equal(p.elements.get('start').textContent,'Stop session');p.close();
 });
