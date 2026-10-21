@@ -516,6 +516,18 @@ func (m *webhookCreatePicker) View() tea.View {
 	inner := width - 4 // Border and one padding cell on each side.
 	clip := func(s string) string { return ansi.Truncate(s, inner, "…") }
 	active := func(s string) string { return selected.Render(clip(s)) }
+	controls := func(bindings ...string) string {
+		parts := make([]string, 0, len(bindings))
+		for _, binding := range bindings {
+			key, label, _ := strings.Cut(binding, " ")
+			part := lipgloss.NewStyle().Bold(m.color).Render(key)
+			if label != "" {
+				part += quiet.Render(" " + label)
+			}
+			parts = append(parts, part)
+		}
+		return "  " + strings.Join(parts, "  ")
+	}
 	compact := height < 14
 	if compact && m.stage < 3 {
 		inner = width // Short terminals omit decoration, not fields or controls.
@@ -567,20 +579,34 @@ func (m *webhookCreatePicker) View() tea.View {
 			search = quiet.Render(ansi.Truncate("Type to filter events", inner-9, "…"))
 		}
 		body = append(body, quiet.Render("  Search ")+search)
-		matches := m.filteredEvents()
-		if m.stage == 2 && !m.reviewFocused && m.note == "" {
-			hint := "  ←→ category · Space select · Ctrl+A all"
-			if inner < 42 {
-				hint = "←→ category · Space select"
-			}
-			body = append(body, quiet.Render(clip(hint)))
+		if !compact {
+			body = append(body, "")
 		}
-		// Reserve fields, controls and validation before sizing the event viewport.
-		overhead, tail := 1, 2 // Heading; continuation and its controls.
+		matches := m.filteredEvents()
+		footer := []string{controls("↑↓ move", "Enter next", "Esc cancel")}
+		if m.stage == 2 {
+			footer = []string{controls("↑↓ move", "←→ category", "Space select", "Ctrl+A all", "Esc cancel")}
+			if inner < 62 {
+				footer = []string{controls("↑↓ move", "←→ category"), controls("Space select", "Enter", "Esc")}
+			}
+			if compact && m.note != "" {
+				footer = []string{controls("Space select", "Enter", "Esc")}
+			}
+			if m.reviewFocused {
+				footer = []string{controls("↑ back", "Enter continue", "Esc cancel")}
+				if inner < 38 {
+					footer = []string{controls("↑ back", "Enter", "Esc")}
+				}
+			}
+		} else if inner < 34 {
+			footer = []string{controls("↑↓ move", "Enter next", "Esc")}
+		}
+		// Reserve complete controls before sizing the event viewport.
+		overhead, tail := 1, 1+len(footer)
 		if !compact {
 			overhead += 2
 			tail++
-		} // Border and action spacing.
+		}
 		if m.note != "" {
 			tail++
 		}
@@ -594,7 +620,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			_, group := webhookCreateEventGroup(event)
 			if !compact && m.category == 0 && group != lastGroup {
 				headingRows[len(rows)] = true
-				rows = append(rows, quiet.Render(clip("  "+group)))
+				rows = append(rows, lipgloss.NewStyle().Bold(m.color).Render(clip("  "+group)))
 				lastGroup = group
 			}
 			marker, tick := " ", " "
@@ -607,12 +633,23 @@ func (m *webhookCreatePicker) View() tea.View {
 			if m.selected[event] {
 				tick = "x"
 			}
-			row := clip(marker + " [" + tick + "] " + webhookCreateLine(event))
-			if index == m.current && m.stage == 2 && !m.reviewFocused {
-				row = active(row)
-			} else if m.selected[event] {
-				row = strong.Bold(false).Render(row)
+			name := ansi.Truncate(webhookCreateLine(event), inner-6, "…")
+			checkbox := marker + " [" + tick + "] "
+			emphasized := m.selected[event] || index == m.current && m.stage == 2 && !m.reviewFocused
+			if emphasized {
+				checkbox = selected.Render(checkbox)
 			}
+			leaf := name
+			if dot := strings.LastIndex(name, "."); dot >= 0 {
+				leaf = name[dot+1:]
+				name = quiet.Render(name[:dot+1])
+			} else {
+				name = ""
+			}
+			if emphasized {
+				leaf = selected.Render(leaf)
+			}
+			row := checkbox + name + leaf
 			rows = append(rows, row)
 		}
 		m.offset = min(m.offset, max(0, len(rows)-available))
@@ -639,15 +676,11 @@ func (m *webhookCreatePicker) View() tea.View {
 		} else {
 			action = strong.Render(action)
 		}
+		if m.stage == 2 && inner >= 38 {
+			action += quiet.Render("  Enter")
+		}
 		body = append(body, action)
-		hint := "↑↓ move · Enter next · Esc cancel"
-		if m.stage == 2 {
-			hint = "↑↓ move · Enter continue · Esc cancel"
-		}
-		if inner < 37 {
-			hint = strings.Replace(hint, "Esc cancel", "Esc", 1)
-		}
-		body = append(body, quiet.Render(clip(hint)))
+		body = append(body, footer...)
 		if m.note != "" {
 			body = append(body, clip(m.note))
 		}
@@ -675,7 +708,11 @@ func (m *webhookCreatePicker) View() tea.View {
 			choice = " No   [Yes, create]"
 		}
 		body = append(body, strong.Render("Create endpoint now?"), active(choice))
-		body = append(body, quiet.Render(clip("←→ choose · Enter confirm")))
+		hint := controls("←→ choose", "Enter confirm", "Esc cancel")
+		if inner < 40 {
+			hint = controls("←→ choose", "Enter confirm")
+		}
+		body = append(body, hint)
 	}
 	if m.stage == 3 && m.note != "" {
 		body = append(body, clip(m.note))

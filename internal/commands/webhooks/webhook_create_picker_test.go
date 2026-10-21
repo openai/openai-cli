@@ -388,6 +388,11 @@ func TestWebhookCreatePickerArrowNavigationIncludesReview(t *testing.T) {
 	webhookCreateKey(m, tea.KeyDown)
 	require.True(t, m.reviewFocused)
 	require.Contains(t, ansi.Strip(m.View().Content), "> [ Continue to confirmation ]")
+	foot := ansi.Strip(m.View().Content)
+	require.Contains(t, foot, "↑ back")
+	for _, inactive := range []string{"←→ category", "Space select", "Ctrl+A all"} {
+		require.NotContains(t, foot, inactive, "the action must not advertise event controls")
+	}
 	before := m.settings()
 	webhookCreatePaste(m, "hidden text")
 	webhookCreateKey(m, ' ')
@@ -699,9 +704,9 @@ func TestWebhookCreatePickerSteadyCursorAndCompactSpacing(t *testing.T) {
 			require.NotRegexp(t, `\x1b\[[^m]*48;`, view.Content, "focus must not paint a highlight bar")
 			if stage == 2 {
 				require.Nil(t, view.Cursor, "category browsing has no flashing search cursor")
-				require.Contains(t, view.Content, "←→ category")
-				require.Contains(t, view.Content, "Space select")
-				require.Contains(t, view.Content, "Enter continue")
+				require.Contains(t, ansi.Strip(view.Content), "←→ category")
+				require.Contains(t, ansi.Strip(view.Content), "Space select")
+				require.Contains(t, ansi.Strip(view.Content), "Enter")
 			}
 			input := m.input()
 			input.insert(strings.Repeat("猫🙂", 30))
