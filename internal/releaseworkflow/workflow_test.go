@@ -368,30 +368,42 @@ esac
 					failed = "1"
 				}
 				command := exec.Command("bash", "-e", "-c", tag.Run)
-				command.Env = append(os.Environ(),
-					"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
-					"GITHUB_TOKEN="+token,
+				// Keep host credentials and shell startup variables out of the fixture.
+				command.Env = []string{
+					"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+					"HOME=" + bin,
+					"TMPDIR=" + bin,
+					"GITHUB_TOKEN=" + token,
 					"GITHUB_REPOSITORY=openai/openai-cli",
-					"GITHUB_OUTPUT="+filepath.Join(t.TempDir(), "github-output"),
+					"GITHUB_OUTPUT=" + filepath.Join(t.TempDir(), "github-output"),
 					"TAG=v1.2.3",
-					"EXPECTED_TAG_SHA="+tagSHA,
-					"FAKE_TAG_SHA="+tagSHA,
-					"EXPECTED_AUTH_HEADER="+encodedToken,
-					"FAKE_GIT_FAILURE="+failed,
-				)
-				output, err := command.CombinedOutput()
-				if failure && err == nil || !failure && err != nil {
-					t.Fatalf("trusted tag command error=%v, failure=%t, output:\n%s", err, failure, output)
+					"EXPECTED_TAG_SHA=" + tagSHA,
+					"FAKE_TAG_SHA=" + tagSHA,
+					"EXPECTED_AUTH_HEADER=" + encodedToken,
+					"FAKE_GIT_FAILURE=" + failed,
 				}
-				visible := string(output)
-				for _, line := range strings.Split(visible, "\n") {
-					if mask, ok := strings.CutPrefix(line, "::add-mask::"); ok {
-						visible = strings.ReplaceAll(visible, line+"\n", "")
-						visible = strings.ReplaceAll(visible, mask, "***")
+				output, err := command.CombinedOutput()
+				// Apply workflow masking before any diagnostic, including unexpected
+				// exits. A mask directive need not end with a newline.
+				lines := strings.Split(string(output), "\n")
+				var masks []string
+				for i, line := range lines {
+					if mask, ok := strings.CutPrefix(strings.TrimSuffix(line, "\r"), "::add-mask::"); ok {
+						lines[i] = ""
+						if mask != "" {
+							masks = append(masks, mask)
+						}
 					}
 				}
+				visible := strings.Join(lines, "\n")
+				for _, mask := range masks {
+					visible = strings.ReplaceAll(visible, mask, "***")
+				}
 				if strings.Contains(visible, token) || strings.Contains(visible, encodedToken) {
-					t.Fatalf("Git failure exposed a raw or derived credential in workflow logs:\n%s", visible)
+					t.Fatal("Git failure exposed a raw or derived credential in workflow logs (output withheld)")
+				}
+				if failure && err == nil || !failure && err != nil {
+					t.Fatalf("trusted tag command error=%v, failure=%t, sanitized output:\n%s", err, failure, visible)
 				}
 			})
 		}

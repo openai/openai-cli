@@ -207,6 +207,18 @@ func init() {
 				},
 			},
 			{
+				Name:     "audio:voice-consents",
+				Category: "API RESOURCE",
+				Suggest:  true,
+				Commands: []*cli.Command{
+					&audioVoiceConsentsCreate,
+					&audioVoiceConsentsRetrieve,
+					&audioVoiceConsentsUpdate,
+					&audioVoiceConsentsList,
+					&audioVoiceConsentsDelete,
+				},
+			},
+			{
 				Name:     "moderations",
 				Category: "API RESOURCE",
 				Suggest:  true,

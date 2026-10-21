@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.39.1](https://github.com/openai/openai-cli/compare/v1.39.0...v1.39.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* build CLI releases with Go 1.26.10 ([#571](https://github.com/openai/openai-cli/issues/571)) ([1097d74](https://github.com/openai/openai-cli/commit/1097d74755b36efc3892b36eec69a7a2d0f485e0))
+* explain missing file-write permission in readable errors ([#550](https://github.com/openai/openai-cli/issues/550)) ([03b1ccd](https://github.com/openai/openai-cli/commit/03b1ccd2f0c56526f82254db32e3f327183c9859))
+* normalize automatic download filenames ([#556](https://github.com/openai/openai-cli/issues/556)) ([4deb0c1](https://github.com/openai/openai-cli/commit/4deb0c12cd05d949bc62508f61c2822c63dbf05a))
+* preserve literal PowerShell reference completions ([#554](https://github.com/openai/openai-cli/issues/554)) ([d39c80b](https://github.com/openai/openai-cli/commit/d39c80bb049b9e9ba55ba02830dbfd10c07cffbd))
+* reject symlinks as explicit download destinations; use the target path directly ([e539d97](https://github.com/openai/openai-cli/commit/e539d9772a0db679dc2c5c1f77fec4df556c9980))
+* require HTTPS for remote API endpoints ([#549](https://github.com/openai/openai-cli/issues/549)) ([2f2232a](https://github.com/openai/openai-cli/commit/2f2232a2f72b8ad44b148017b171ce34af97e984))
+* use visible generated names for automatic hidden filename suggestions ([fa7f917](https://github.com/openai/openai-cli/commit/fa7f917e8a872cda9ac4174ec437b495ccd522c2))
+
+
+### Chores
+
+* **api:** describe 30-minute cache-write usage counts ([#551](https://github.com/openai/openai-cli/issues/551)) ([e963b2f](https://github.com/openai/openai-cli/commit/e963b2f5b9d493313061e09273c6ab62ece426cd))
+* **deps:** bump actions/cache from 4.3.0 to 6.1.0 ([#544](https://github.com/openai/openai-cli/issues/544)) ([34a9790](https://github.com/openai/openai-cli/commit/34a9790b32b0f8e8d614928af3bf1cb2491a2ee8))
+* **deps:** bump actions/download-artifact from 8.0.1 to 8.0.2 ([#545](https://github.com/openai/openai-cli/issues/545)) ([fb273e3](https://github.com/openai/openai-cli/commit/fb273e352638108229c00b78aae8b04400947230))
+* **deps:** bump actions/upload-artifact from 7.0.1 to 7.0.2 ([#542](https://github.com/openai/openai-cli/issues/542)) ([31ea038](https://github.com/openai/openai-cli/commit/31ea0385d1b7c73edaa0a7065da697c066c587f7))
+* **deps:** update openai-go to v3.84.0 ([#569](https://github.com/openai/openai-cli/issues/569)) ([74fe949](https://github.com/openai/openai-cli/commit/74fe949c464fec5bf759ae256d3336eaba47a23b))
+* finish generated tooling layout ([#566](https://github.com/openai/openai-cli/issues/566)) ([9e47d2e](https://github.com/openai/openai-cli/commit/9e47d2e4a125f21c354f7f64988a024fa87ec95a))
+* refresh API-key constraints and Castiron reporting ([#564](https://github.com/openai/openai-cli/issues/564)) ([9983bef](https://github.com/openai/openai-cli/commit/9983befc63f4bf263e6b20ca92fd7888c2ccce7d))
+
+
+### Refactors
+
+* **admin:** isolate credential and secure setup workflows ([#553](https://github.com/openai/openai-cli/issues/553)) ([44fa4f3](https://github.com/openai/openai-cli/commit/44fa4f3ff76f8aabb69244aba3cfe21188636f38))
+* **app:** consolidate handwritten application runtime ([#563](https://github.com/openai/openai-cli/issues/563)) ([7639dab](https://github.com/openai/openai-cli/commit/7639dab16a033ef6335cbb386b990b2ff6098d80))
+* **app:** move help assembly out of custom ([#561](https://github.com/openai/openai-cli/issues/561)) ([7e8300a](https://github.com/openai/openai-cli/commit/7e8300adcef5ccabe13574f9c818401147ff9686))
+* **app:** own optional first-run setup admission ([#562](https://github.com/openai/openai-cli/issues/562)) ([4a159a6](https://github.com/openai/openai-cli/commit/4a159a67b74818d51d16c97f48e17d7cda7e432a))
+* **audio:** isolate speech and local audio workflows ([#557](https://github.com/openai/openai-cli/issues/557)) ([f5558be](https://github.com/openai/openai-cli/commit/f5558be09ec4e1ee9a5c9b83cfad0b59c31fc057))
+* **images:** isolate image workflows and presentation ([#560](https://github.com/openai/openai-cli/issues/560)) ([6ec6708](https://github.com/openai/openai-cli/commit/6ec670807e4d9b81d5c58690901c80e121822806))
+* **models:** separate workflows and shared list navigation ([#548](https://github.com/openai/openai-cli/issues/548)) ([82d5341](https://github.com/openai/openai-cli/commit/82d5341af6df0aa5c8e277c8d41457ec97edf8ca))
+* remove legacy runtime adapter ([#565](https://github.com/openai/openai-cli/issues/565)) ([04e59e0](https://github.com/openai/openai-cli/commit/04e59e00fcceb6ad1145f0b739448403127c1c2c))
+
 ## [1.39.0](https://github.com/openai/openai-cli/compare/v1.38.0...v1.39.0) (2026-10-19)
 
 
