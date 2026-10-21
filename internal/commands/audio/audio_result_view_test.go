@@ -92,7 +92,12 @@ func TestAudioResultViewKeepsWaveformAndControlsVisible(t *testing.T) {
 					if size[1] >= 24 && size[0] >= 60 {
 						require.Contains(t, view, "│", "quiet speech must retain a visible thin shape")
 						require.NotContains(t, view, "█")
-						require.Contains(t, view, audioDefaultSaveFolder)
+						if saved == 0 {
+							require.Contains(t, view, "Save to  "+audioDefaultSaveFolder)
+						} else {
+							require.Contains(t, view, "Saved: synthetic-speech-29.wav")
+							require.NotContains(t, view, "Save to  "+audioDefaultSaveFolder)
+						}
 					} else {
 						require.Contains(t, view, "█")
 					}
