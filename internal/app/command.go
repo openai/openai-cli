@@ -45,13 +45,20 @@ func ConfigureCommand(root *cli.Command) {
 	audio.ConfigureText(root)
 	configureReadableSpeech(root)
 	registerAdminSetup(root)
-	admin.ConfigureCredentials(root)
+	admin.ConfigureCredentials(root, func(command *cli.Command) (string, error) {
+		resolved, err := resolvedCommandRequestContext(command)
+		return resolved.BaseURL.Value, err
+	})
 	localcommands.ConfigureSubgroups(root)
 	localcommands.ConfigureTasks(root)
 	registerAudioCommands(root)
 	filecommands.Configure(root)
 	tokenize.Register(root)
 	codex.Register(root)
+	registerProjectLinkCommands(root)
+	registerAuthCommands(root)
+	configureProfileContext(root)
+	registerProfileCommands(root)
 	localcommands.ConfigurePresentation(root)
 	manpages.Configure(root, func(command *cli.Command, message string) error {
 		return ReportSaveReceipt(command, os.Stderr, message, nil)

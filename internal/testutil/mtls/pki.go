@@ -39,7 +39,7 @@ func NewPKI(t *testing.T) PKI {
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 	}
-	rootDER, rootCertificate, rootKey := createTestCertificate(t, rootTemplate, rootTemplate, nil)
+	rootDER, rootCertificate, rootKey := CreateCertificate(t, rootTemplate, rootTemplate, nil)
 
 	intermediateTemplate := &x509.Certificate{
 		SerialNumber:          big.NewInt(2),
@@ -52,7 +52,7 @@ func NewPKI(t *testing.T) PKI {
 		MaxPathLen:            0,
 		MaxPathLenZero:        true,
 	}
-	intermediateDER, intermediateCertificate, intermediateKey := createTestCertificate(
+	intermediateDER, intermediateCertificate, intermediateKey := CreateCertificate(
 		t,
 		intermediateTemplate,
 		rootCertificate,
@@ -67,7 +67,7 @@ func NewPKI(t *testing.T) PKI {
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
-	clientDER, _, clientKey := createTestCertificate(
+	clientDER, _, clientKey := CreateCertificate(
 		t,
 		clientTemplate,
 		intermediateCertificate,
@@ -87,7 +87,7 @@ func NewPKI(t *testing.T) PKI {
 	}
 }
 
-func createTestCertificate(
+func CreateCertificate(
 	t *testing.T,
 	template *x509.Certificate,
 	parent *x509.Certificate,

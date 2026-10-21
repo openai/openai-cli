@@ -98,7 +98,7 @@ func finishImagePickerSelection(ctx context.Context, output, diagnostics io.Writ
 	if result.Canceled || len(result.Args) < 4 || (len(result.Args)-2)%2 != 0 {
 		return fmt.Errorf("no image request was selected")
 	}
-	command := cliterminal.FormatCommand(result.Args, result.shell)
+	command := cliterminal.FormatCommand(imagePickerDisplayArgs(result.Args, result.profile), result.shell)
 	if command == "" {
 		if result.PrintOnly {
 			return imageSavingFailure(imagePickerUnsupportedShell, nil)

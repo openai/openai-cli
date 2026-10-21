@@ -17,6 +17,11 @@ const openAISDKResponseHeaderTimeout = 10 * time.Minute
 
 // NewMTLSHTTPClient constructs an endpoint-bound mTLS client using default transport settings.
 func NewMTLSHTTPClient(certFile, keyFile, baseURL string) (*http.Client, error) {
+	return NewMTLSHTTPClientWithReader(certFile, keyFile, baseURL, readMTLSFile)
+}
+
+// NewMTLSHTTPClientWithReader shares TLS and transport policy while callers select their credential-file reader.
+func NewMTLSHTTPClientWithReader(certFile, keyFile, baseURL string, readFile func(string, string) ([]byte, error)) (*http.Client, error) {
 	if certFile == "" && keyFile == "" {
 		return nil, nil
 	}
@@ -28,13 +33,13 @@ func NewMTLSHTTPClient(certFile, keyFile, baseURL string) (*http.Client, error) 
 		return nil, errors.New("mTLS requires an explicit HTTPS base URL")
 	}
 
-	certPEM, err := readMTLSFile("certificate", certFile)
+	certPEM, err := readFile("certificate", certFile)
 	if err != nil {
 		return nil, err
 	}
 	defer clear(certPEM)
 
-	keyPEM, err := readMTLSFile("key", keyFile)
+	keyPEM, err := readFile("key", keyFile)
 	if err != nil {
 		return nil, err
 	}

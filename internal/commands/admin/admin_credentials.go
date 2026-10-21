@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/url"
 	"os"
 	"strings"
@@ -11,6 +12,10 @@ import (
 
 // CredentialsError provides fixed guidance for missing admin authentication.
 type CredentialsError struct{ invocation string }
+
+type baseURLResolver func(*cli.Command) (string, error)
+
+const baseURLResolverMetadata = "openai-admin-base-url-resolver"
 
 // CredentialsRequiredMetadata marks admin operations before command-tree cloning.
 const CredentialsRequiredMetadata = "admin-credentials-required"
@@ -30,9 +35,14 @@ For key creation and manual setup instructions, run:
   ` + invocation + ` help setup admin`
 }
 
-// ConfigureCredentials marks canonical generated operations before subgroup cloning. Request setup
-// checks credentials after positional and required-input validation.
-func ConfigureCredentials(root *cli.Command) {
+// ConfigureCredentials installs endpoint selection and marks generated operations before subgroup cloning.
+// resolveBaseURL is required and must preserve the request snapshot and safe resolution errors.
+// Request setup checks credentials after positional and required-input validation.
+func ConfigureCredentials(root *cli.Command, resolveBaseURL func(*cli.Command) (string, error)) {
+	if root.Metadata == nil {
+		root.Metadata = map[string]any{}
+	}
+	root.Metadata[baseURLResolverMetadata] = baseURLResolver(resolveBaseURL)
 	for _, resource := range root.Commands {
 		if resource.Category != "API RESOURCE" ||
 			(!strings.HasPrefix(resource.Name, "admin:") && resource.Name != "fine-tuning:checkpoints:permissions") {
@@ -59,7 +69,11 @@ func CheckCredentials(command *cli.Command) error {
 	missing := &CredentialsError{invocation: invocation}
 	// Custom endpoints own their authentication contracts and server errors.
 	// Do not infer whether an arbitrary gateway requires credentials.
-	if !usesStandardAdminService(command) {
+	baseURL, err := effectiveBaseURL(command)
+	if err != nil {
+		return err
+	}
+	if !usesStandardAdminService(baseURL) {
 		return nil
 	}
 	// Validate headers before considering authentication, matching FlagOptions.
@@ -100,12 +114,9 @@ func CheckCredentials(command *cli.Command) error {
 	return missing
 }
 
-func usesStandardAdminService(command *cli.Command) bool {
-	baseURL := command.String("base-url")
+func usesStandardAdminService(baseURL string) bool {
 	if baseURL == "" {
-		baseURL = os.Getenv("OPENAI_BASE_URL")
-	}
-	if baseURL == "" {
+		// Keep the guard without replacing the explicitly empty request endpoint.
 		return true
 	}
 	endpoint, err := url.Parse(baseURL)
@@ -116,4 +127,24 @@ func usesStandardAdminService(command *cli.Command) bool {
 	return endpoint.User == nil && strings.EqualFold(endpoint.Scheme, "https") &&
 		(strings.EqualFold(endpoint.Hostname(), "api.openai.com") || strings.EqualFold(endpoint.Hostname(), "mtls.api.openai.com")) &&
 		(endpoint.Port() == "" || endpoint.Port() == "443")
+}
+
+// effectiveBaseURL shares endpoint selection between credential checks and interactive setup.
+func effectiveBaseURL(command *cli.Command) (string, error) {
+	if value, present := command.Root().Metadata[baseURLResolverMetadata]; present {
+		resolve, ok := value.(baseURLResolver)
+		if !ok || resolve == nil {
+			return "", errors.New("Admin endpoint selection is unavailable.")
+		}
+		return resolve(command)
+	}
+	// Standalone Admin helpers retain their pre-profile flag and environment behavior.
+	baseURL := command.String("base-url")
+	if baseURL == "" {
+		baseURL = os.Getenv("OPENAI_BASE_URL")
+	}
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	return baseURL, nil
 }

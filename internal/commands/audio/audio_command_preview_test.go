@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
 	requestconfig "github.com/openai/openai-cli/internal/request"
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
@@ -436,5 +437,136 @@ func TestAudioCommandPrintCancelsBlockedContextWriter(t *testing.T) {
 		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(5 * time.Second):
 		t.Fatal("print did not stop after cancellation")
+	}
+}
+
+// Parse the same public root-selection contract consumed by Audio previews.
+// Files tests retain the real profile selector; these tests exercise Audio's consumer.
+func audioProfilePreviewModel(t *testing.T, invocation, environment string, childProfile bool, arguments []string) *audioWorkbench {
+	t.Helper()
+	t.Setenv("OPENAI_PROFILE", environment)
+	t.Setenv("OPENAI_API_KEY", "sk-fake-inherited")
+	for _, name := range []string{"OPENAI_ADMIN_KEY", "OPENAI_WEBHOOK_SECRET", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID", "OPENAI_BASE_URL", "OPENAI_CUSTOM_HEADERS", requestconfig.MTLSClientCertFileEnv, requestconfig.MTLSClientKeyFileEnv} {
+		t.Setenv(name, "")
+		require.NoError(t, os.Unsetenv(name))
+	}
+	var model *audioWorkbench
+	leaf := &cli.Command{Name: "probe", Action: func(ctx context.Context, command *cli.Command) error {
+		model = newAudioWorkbench(ctx, command, nil, audiohistory.Store{})
+		return nil
+	}}
+	if childProfile {
+		leaf.Flags = append(leaf.Flags, &cli.StringFlag{Name: "profile"})
+	}
+	root := &cli.Command{Name: "synthetic-profile-preview", Writer: io.Discard, ErrWriter: io.Discard,
+		Metadata:       map[string]any{"help-invocation": invocation},
+		ExitErrHandler: func(context.Context, *cli.Command, error) {},
+		Flags:          []cli.Flag{&cli.StringFlag{Name: "profile"}, &cli.StringFlag{Name: "base-url"}, requestconfig.NewRequestHeaderFlag()},
+		Commands:       []*cli.Command{leaf},
+	}
+	for _, pair := range [][2]string{{"api-key", "OPENAI_API_KEY"}, {"admin-api-key", "OPENAI_ADMIN_KEY"}, {"webhook-secret", "OPENAI_WEBHOOK_SECRET"}, {"organization", "OPENAI_ORG_ID"}, {"project", "OPENAI_PROJECT_ID"}} {
+		root.Flags = append(root.Flags, &requestflag.Flag[string]{Name: pair[0], Sources: cli.EnvVars(pair[1])})
+	}
+	root.Flags = append(root.Flags, requestconfig.MTLSClientFlags()...)
+	requestconfig.ConfigureRootFlags(root)
+	require.NoError(t, root.Run(t.Context(), append([]string{"synthetic-profile-preview"}, arguments...)))
+	require.NotNil(t, model, "Audio preview action must run")
+	return model
+}
+
+func TestAudioProfileRequestContext(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		want  []string
+		omit  bool
+	}{
+		{"environment credentials", nil, nil, false},
+		{"explicit profile", []string{"--profile=selected"}, []string{"--profile=selected"}, false},
+		{"explicit empty profile", []string{"--profile="}, []string{"--profile="}, false},
+		{"profile and request selection", []string{"--profile=selected", "--project=project-one"}, []string{"--profile=selected", "--project=project-one"}, false},
+		{"request selection", []string{"--project=project-one", "--organization=org-one", "--base-url=https://example.invalid/proxy/v1"}, []string{"--project=project-one", "--organization=org-one", "--base-url=https://example.invalid/proxy/v1"}, false},
+		{"explicit empty project", []string{"--project="}, []string{"--project="}, false},
+		{"same inherited key", []string{"--api-key=sk-fake-inherited"}, nil, false},
+		{"different key", []string{"--api-key=sk-fake-override"}, nil, true},
+		{"empty key override", []string{"--api-key="}, nil, true},
+		{"admin key override", []string{"--admin-api-key=sk-fake-admin"}, nil, true},
+		{"webhook secret override", []string{"--webhook-secret=fake-secret"}, nil, true},
+		{"header override", []string{"-H", "Authorization: Bearer fake-secret"}, nil, true},
+		{"certificate override", []string{"--mtls-client-cert-file=/synthetic/private/cert.pem"}, nil, true},
+		{"private key override", []string{"--mtls-client-key-file=/synthetic/private/key.pem"}, nil, true},
+		{"URL user info", []string{"--base-url=https://fake:secret@example.invalid"}, nil, true},
+		{"URL query", []string{"--base-url=https://example.invalid/v1?key=fake-secret"}, nil, true},
+		{"URL fragment", []string{"--base-url=https://example.invalid/v1#fake-secret"}, nil, true},
+		{"URL empty query", []string{"--base-url=https://example.invalid/v1?"}, nil, true},
+		{"invalid project", []string{"--project=proj\x00name"}, nil, true},
+		{"invalid profile NUL", []string{"--profile=bad\x00name"}, nil, true},
+		{"invalid profile UTF-8", []string{"--profile=bad\xffname"}, nil, true},
+		{"profile with secret override", []string{"--profile=selected", "--api-key=sk-fake-override"}, nil, true},
+		{"profile with private URL", []string{"--profile=selected", "--base-url=https://example.invalid/v1?key=fake-secret"}, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := audioProfilePreviewModel(t, "openai", "inherited-profile", false, append([]string{"probe"}, tc.flags...))
+			requestArgs, omit := requestconfig.NextCommandOptions(model.command.Root())
+			require.Equal(t, tc.want, requestArgs)
+			require.Equal(t, tc.omit, omit)
+			model.input.SetValue("SYNTHETIC_PRIVATE_EDITOR_TEXT")
+			preview := model.commandPreview()
+			if tc.omit {
+				require.Equal(t, "Command preview unavailable with private request overrides.", preview)
+				require.NotContains(t, preview, "SYNTHETIC_PRIVATE_EDITOR_TEXT")
+			} else {
+				require.Contains(t, preview, "OPENAI_UNTRUSTED_STDIN=true")
+			}
+			for _, secret := range []string{"sk-fake", "fake-secret", "/synthetic/private/", "inherited-profile"} {
+				require.NotContains(t, preview, secret)
+			}
+		})
+	}
+}
+
+func TestAudioCopiedCommandsPreserveProfileSelector(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh"} {
+		t.Run(shell, func(t *testing.T) {
+			binary, directory := audioPreviewExecutable(t, "openai preview's binary")
+			for _, tc := range []struct {
+				name, environment, rootFlag, childFlag string
+				want                                   []string
+			}{
+				{"explicit", "inherited-profile", "--profile=team's \"$(printf altered)\" 世界\u202e", "", []string{"--profile=team's \"$(printf altered)\" 世界\u202e"}},
+				{"explicit empty", "inherited-profile", "--profile=", "", []string{"--profile="}},
+				{"inherited", "inherited-profile", "", "", nil},
+				{"inherited empty", "", "", "", nil},
+				{"child ownership", "inherited-profile", "", "--profile=/synthetic/private/child", nil},
+				{"root and child ownership", "inherited-profile", "--profile=selected", "--profile=/synthetic/private/child", []string{"--profile=selected"}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					var args []string
+					if tc.rootFlag != "" {
+						args = append(args, tc.rootFlag)
+					}
+					args = append(args, "probe")
+					if tc.childFlag != "" {
+						args = append(args, tc.childFlag)
+					}
+					model := audioProfilePreviewModel(t, audioShellQuote(binary), tc.environment, tc.childFlag != "", args)
+					requestArgs, omit := requestconfig.NextCommandOptions(model.command.Root())
+					require.Equal(t, tc.want, requestArgs)
+					require.False(t, omit)
+					model.settings.Format = "wav"
+					model.input.SetValue("@synthetic 'literal' text")
+					preview := model.commandPreview()
+					require.NotContains(t, preview, "/synthetic/private/")
+					require.NotContains(t, preview, "inherited-profile")
+					for _, character := range strings.TrimSpace(preview) {
+						require.False(t, unicode.IsControl(character) || unicode.Is(unicode.Cf, character), "literal control in copied command")
+					}
+					capture := executeAudioPreview(t, shell, preview, directory)
+					require.Equal(t, append(append([]string{}, tc.want...), "audio", "speak", "--output", "speech.wav"), capture.args)
+					require.Equal(t, "true", capture.protected)
+					assertAudioPreviewJSON(t, model, capture.stdin)
+				})
+			}
+		})
 	}
 }

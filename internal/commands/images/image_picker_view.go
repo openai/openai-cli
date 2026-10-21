@@ -282,7 +282,7 @@ func (m *imagePicker) commandPreview(width, height int) ([]string, int, int) {
 }
 
 func (m *imagePicker) commandLines(width int) []string {
-	command := cliterminal.FormatCommand(m.settings.args(), m.shell)
+	command := cliterminal.FormatCommand(imagePickerDisplayArgs(m.settings.args(), m.profile), m.shell)
 	if command == "" {
 		command = imagePickerUnsupportedShell
 	}

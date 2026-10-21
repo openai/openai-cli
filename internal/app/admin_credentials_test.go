@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/openai/openai-cli/internal/apiquery"
@@ -19,12 +20,14 @@ import (
 	requestconfig "github.com/openai/openai-cli/internal/request"
 	mtlstest "github.com/openai/openai-cli/internal/testutil/mtls"
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
 
 func adminCredentialsTestCommand(t *testing.T, action cli.ActionFunc) *cli.Command {
 	t.Helper()
+	profileCommandTestEnvironment(t)
 	for _, name := range []string{
 		"OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_CUSTOM_HEADERS", "OPENAI_BASE_URL",
 		requestconfig.MTLSClientCertFileEnv, requestconfig.MTLSClientKeyFileEnv,
@@ -217,6 +220,171 @@ func TestAdminCredentialsEndpointOverrides(t *testing.T) {
 				require.ErrorAs(t, err, &missing)
 				require.Zero(t, calls)
 			}
+		})
+	}
+}
+
+func TestAdminCredentialsProfileEndpointsMatchRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name, endpoint string
+		absentEndpoint bool
+		env            map[string]string
+		args           []string
+		wantURL        string
+		wantAuth       string
+	}{
+		{name: "saved gateway", endpoint: "https://gateway.example.test/v1", wantURL: "https://gateway.example.test/v1/organization/projects"},
+		{name: "standard profile", endpoint: productionProfileURL},
+		{name: "standard mtls profile", endpoint: "https://MTLS.API.OpenAI.com:443/v1"},
+		{name: "empty profile endpoint"},
+		{name: "absent profile endpoint", absentEndpoint: true},
+		{name: "empty flag retains profile", endpoint: "https://gateway.example.test/v1", args: []string{"--base-url="}, wantURL: "https://gateway.example.test/v1/organization/projects"},
+		{name: "environment replaces profile", endpoint: "https://gateway.example.test/v1", env: map[string]string{"OPENAI_BASE_URL": productionProfileURL}},
+		{name: "environment gateway", endpoint: productionProfileURL, env: map[string]string{"OPENAI_BASE_URL": "https://environment.example.test/v1/"}, wantURL: "https://environment.example.test/v1/organization/projects"},
+		{name: "empty environment retains credential guard", endpoint: "https://gateway.example.test/v1", env: map[string]string{"OPENAI_BASE_URL": ""}},
+		{name: "flag replaces environment and profile", endpoint: "https://gateway.example.test/v1", env: map[string]string{"OPENAI_BASE_URL": "https://environment.example.test/v1/"}, args: []string{"--base-url=" + productionProfileURL}},
+		{name: "flag gateway", endpoint: productionProfileURL, args: []string{"--base-url=https://flag.example.test/v1/"}, wantURL: "https://flag.example.test/v1/organization/projects"},
+		{name: "disabled profile", endpoint: "https://gateway.example.test/v1", args: []string{"--profile="}},
+		{name: "disabled environment selector", endpoint: "https://gateway.example.test/v1", env: map[string]string{"OPENAI_PROFILE": ""}},
+		{name: "explicit selector", endpoint: "https://gateway.example.test/v1", args: []string{"--profile=work"}, wantURL: "https://gateway.example.test/v1/organization/projects"},
+		{name: "standard profile admin key", endpoint: productionProfileURL, env: map[string]string{"OPENAI_ADMIN_KEY": "synthetic-admin-key"}, wantURL: "https://api.openai.com/v1/organization/projects", wantAuth: "Bearer synthetic-admin-key"},
+		{name: "standard profile literal header", endpoint: productionProfileURL, args: []string{"-H", "Authorization: Basic synthetic-header"}, wantURL: "https://api.openai.com/v1/organization/projects", wantAuth: "Basic synthetic-header"},
+		{name: "empty literal header overrides admin key", endpoint: productionProfileURL, env: map[string]string{"OPENAI_ADMIN_KEY": "synthetic-admin-key"}, args: []string{"-H", "Authorization:"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			root := adminCredentialsTestCommand(t, func(ctx context.Context, command *cli.Command) error {
+				methodOptions, err := FlagOptions(command, apiquery.NestedQueryFormatBrackets, apiquery.ArrayQueryFormatRepeat, EmptyBody, false)
+				if err != nil {
+					return err
+				}
+				options := append(GetDefaultRequestOptions(command), option.WithHTTPClient(profileContextTransport(func(request *http.Request) {
+					calls++
+					require.Equal(t, tc.wantURL, request.URL.String())
+					require.Equal(t, tc.wantAuth, request.Header.Get("Authorization"))
+				})))
+				client := openai.NewClient(options...)
+				_, err = client.Admin.Organization.Projects.List(ctx, openai.AdminOrganizationProjectListParams{}, methodOptions...)
+				return err
+			})
+			require.NoError(t, os.Unsetenv("OPENAI_BASE_URL"))
+			for name, value := range tc.env {
+				t.Setenv(name, value)
+			}
+			path, err := profileStorePath()
+			require.NoError(t, err)
+			_, err = updateProfiles(t.Context(), path, func(registry *profileRegistry) error {
+				values := profileValues{}
+				if !tc.absentEndpoint {
+					values.BaseURL = &tc.endpoint
+				}
+				registry.Profiles["work"] = values
+				name := "work"
+				registry.DefaultProfile = &name
+				return nil
+			})
+			require.NoError(t, err)
+			ConfigureCommand(root)
+			args := append([]string{root.Name, "admin", "organization", "projects", "list"}, tc.args...)
+			err = root.Run(t.Context(), args)
+			if tc.wantURL != "" {
+				require.NoError(t, err)
+				require.Equal(t, 1, calls)
+			} else {
+				var missing *admin.CredentialsError
+				require.ErrorAs(t, err, &missing)
+				require.Zero(t, calls)
+			}
+		})
+	}
+}
+
+func TestAdminCredentialsProfileResolutionFailures(t *testing.T) {
+	for _, malformed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("malformed=%t", malformed), func(t *testing.T) {
+			root := adminCredentialsTestCommand(t, func(context.Context, *cli.Command) error {
+				t.Fatal("profile resolution failure must stop the action")
+				return nil
+			})
+			t.Setenv("OPENAI_PROFILE", "missing")
+			if malformed {
+				path, err := profileStorePath()
+				require.NoError(t, err)
+				writeProfileRegistryTestFile(t, path, `{"synthetic-sensitive-field":"synthetic-sensitive-value"}`)
+			}
+			ConfigureCommand(root)
+			err := root.Run(t.Context(), []string{root.Name, "--base-url=https://gateway.example.test/v1/", "admin", "organization", "projects", "list"})
+			var local *localcommands.LocalError
+			require.ErrorAs(t, err, &local)
+			require.NotContains(t, err.Error(), "synthetic-sensitive")
+			var missing *admin.CredentialsError
+			require.False(t, errors.As(err, &missing))
+		})
+	}
+}
+
+func TestAdminCredentialsProfileEndpointSnapshot(t *testing.T) {
+	endpoint := "https://gateway.example.test/v1"
+	var path string
+	requests := 0
+	root := adminCredentialsTestCommand(t, func(ctx context.Context, command *cli.Command) error {
+		_, err := updateProfiles(ctx, path, func(registry *profileRegistry) error {
+			standard := productionProfileURL
+			registry.Profiles["work"] = profileValues{BaseURL: &standard}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		options := append(GetDefaultRequestOptions(command), option.WithHTTPClient(profileContextTransport(func(request *http.Request) {
+			requests++
+			require.Equal(t, endpoint+"/organization/projects", request.URL.String())
+		})))
+		client := openai.NewClient(options...)
+		_, err = client.Admin.Organization.Projects.List(ctx, openai.AdminOrganizationProjectListParams{})
+		return err
+	})
+	require.NoError(t, os.Unsetenv("OPENAI_BASE_URL"))
+	var err error
+	path, err = profileStorePath()
+	require.NoError(t, err)
+	_, err = updateProfiles(t.Context(), path, func(registry *profileRegistry) error {
+		registry.Profiles["work"] = profileValues{BaseURL: &endpoint}
+		name := "work"
+		registry.DefaultProfile = &name
+		return nil
+	})
+	require.NoError(t, err)
+	ConfigureCommand(root)
+	args := []string{root.Name, "admin", "organization", "projects", "list"}
+	require.NoError(t, root.Run(t.Context(), args))
+	require.Equal(t, 1, requests)
+	var missing *admin.CredentialsError
+	require.ErrorAs(t, root.Run(t.Context(), args), &missing)
+	require.Equal(t, 1, requests)
+}
+
+func TestAdminProfileEndpointDoesNotAuthorizeMTLS(t *testing.T) {
+	for _, route := range [][]string{{"admin", "organization", "projects", "list"}, {"setup", "admin"}} {
+		t.Run(route[0], func(t *testing.T) {
+			root := adminCredentialsTestCommand(t, func(context.Context, *cli.Command) error {
+				t.Fatal("mTLS must reject a profile-only endpoint before the action")
+				return nil
+			})
+			require.NoError(t, os.Unsetenv("OPENAI_BASE_URL"))
+			path, err := profileStorePath()
+			require.NoError(t, err)
+			_, err = updateProfiles(t.Context(), path, func(registry *profileRegistry) error {
+				endpoint, name := "https://mtls.api.openai.com/v1", "work"
+				registry.Profiles[name] = profileValues{BaseURL: &endpoint}
+				registry.DefaultProfile = &name
+				return nil
+			})
+			require.NoError(t, err)
+			ConfigureCommand(root)
+			args := []string{root.Name, "--mtls-client-cert-file=synthetic-cert.pem", "--mtls-client-key-file=synthetic-key.pem"}
+			err = root.Run(t.Context(), append(args, route...))
+			require.ErrorContains(t, err, "mTLS requires an explicit HTTPS base URL")
 		})
 	}
 }

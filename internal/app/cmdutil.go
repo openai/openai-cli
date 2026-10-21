@@ -41,7 +41,8 @@ func ValidateBaseURL(value, source string) error {
 
 // GetDefaultRequestOptions keeps feature middleware composition with its current owner.
 func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
-	return requestconfig.DefaultOptions(cmd, Version, audio.CaptureText, captureSaveReceiptPolicy(cmd))
+	opts := requestconfig.DefaultOptions(cmd, Version, audio.CaptureText, captureSaveReceiptPolicy(cmd))
+	return append(opts, resolvedRequestOptions(cmd)...)
 }
 
 func isTerminal(w io.Writer) bool { return terminal.IsWriterTerminal(w) }

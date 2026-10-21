@@ -27,7 +27,11 @@ func SetupImagePickerShellOnFirstRun(ctx context.Context, args []string, roots .
 	}
 	// Read command declarations before the optional worker starts. CLI parsing
 	// may mutate them after the foreground timeout, so the worker borrows none.
-	if len(roots) > 0 && audiocommands.SkipFirstRunSetup(roots[0], args) {
+	var root *cli.Command
+	if len(roots) > 0 {
+		root = roots[0]
+	}
+	if audiocommands.SkipFirstRunSetup(root, args) || skipContextFirstRunSetup(root, args) {
 		return
 	}
 	args = append([]string(nil), args...)

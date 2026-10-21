@@ -135,6 +135,66 @@ func TestImagePickerDraftRecovery(t *testing.T) {
 	}
 }
 
+func TestImagePickerDraftsKeepExplicitRootProfile(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		args     []string
+		explicit bool
+		profile  string
+	}{
+		{name: "environment only"},
+		{name: "explicit", args: []string{"--profile", "studio"}, explicit: true, profile: "studio"},
+		{name: "explicit empty", args: []string{"--profile="}, explicit: true},
+		{name: "special name", args: []string{"--profile", "studio '雪' $HOME $(touch NOT_RUN)"}, explicit: true, profile: "studio '雪' $HOME $(touch NOT_RUN)"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("OPENAI_PROFILE", "ambient-profile")
+			generate := &cli.Command{Name: "generate", Flags: []cli.Flag{
+				&requestflag.Flag[string]{Name: "prompt", BodyPath: "prompt"},
+			}}
+			root := &cli.Command{Name: "openai", Commands: []*cli.Command{{Name: "images", Commands: []*cli.Command{generate}}}}
+			root.Flags = append(root.Flags, &cli.StringFlag{Name: "profile"})
+			picks, requests := 0, 0
+			generate.Action = func(ctx context.Context, command *cli.Command) error {
+				require.True(t, imagePickerRequested(command), "a root selector must still allow the picker")
+				return runImagePickerDrafts(ctx, command, func(context.Context, *cli.Command) error {
+					requests++
+					require.Equal(t, test.explicit, root.IsSet("profile"))
+					require.Equal(t, test.profile, root.String("profile"))
+					require.Equal(t, map[string]any{"prompt": "synthetic scene"}, requestflag.ExtractRequestContents(command).Body)
+					if requests == 1 {
+						return &openai.Error{StatusCode: 429}
+					}
+					return nil
+				}, io.Discard, func(options imagePickerOptions) (imagePickerResult, error) {
+					picks++
+					require.Equal(t, picks-1, requests)
+					if test.explicit {
+						require.NotNil(t, options.profile)
+						require.Equal(t, test.profile, *options.profile)
+					} else {
+						require.Nil(t, options.profile, "ambient selection must not become an explicit copied flag")
+					}
+					require.Equal(t, picks > 1, options.resuming)
+					require.False(t, command.IsSet("prompt"), "each picker must receive restored request flags")
+					if picks == 3 {
+						return imagePickerResult{PrintOnly: true}, nil
+					}
+					return imagePickerResult{
+						settings: imagePickerSettings{prompt: "synthetic scene"},
+						Args:     []string{"images", "generate", "--prompt", "synthetic scene"},
+					}, nil
+				})
+			}
+			args := append([]string{"openai"}, test.args...)
+			args = append(args, "images", "generate")
+			require.NoError(t, root.Run(t.Context(), args))
+			require.Equal(t, 3, picks)
+			require.Equal(t, 2, requests)
+		})
+	}
+}
+
 func TestImagePickerRecoverableRequest(t *testing.T) {
 	apiFailure := &openai.Error{StatusCode: 400}
 	transportFailure := &url.Error{Op: "Post", URL: "https://example.invalid", Err: io.EOF}

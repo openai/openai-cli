@@ -318,7 +318,8 @@ func ShowNextCommand(batch gjson.Result, opts HintOptions) error {
 // A new process inherits environment configuration but loses command-line
 // overrides. Compare effective values without ever printing private options.
 func batchHintNeedsRequestOptions(root *cli.Command) bool {
-	if root.IsSet("header") {
+	// Even an empty selector overrides the saved default in this process only.
+	if root.IsSet("header") || root.IsSet("profile") {
 		return true
 	}
 	// Startup may temporarily normalize an invalid environment URL to this

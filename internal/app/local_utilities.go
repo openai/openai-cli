@@ -6,6 +6,13 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+// Preserve authored cancellation guidance without changing the shared error contract.
+type localCancellationGuidanceError struct {
+	*localcommands.LocalError
+}
+
+func (e *localCancellationGuidanceError) Unwrap() error { return e.LocalError }
+
 // IsLocalUtilityCommand identifies a registered utility after root flag parsing.
 // Request values and unregistered command names never select the local path.
 func IsLocalUtilityCommand(command *cli.Command) bool {

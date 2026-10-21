@@ -39,7 +39,7 @@ Do not ask the owner to share a key.
 Setup requires a terminal and text output. Ctrl+C cancels.
 Interactive entry is available on macOS, Linux, and Windows.
 Verification stops after 15 seconds, without retries or redirects.
-The displayed destination follows --base-url or OPENAI_BASE_URL.
+The displayed destination follows --base-url, OPENAI_BASE_URL, or the selected profile.
 HTTPS is required except for a local loopback server.
 The pasted key replaces the Authorization header for this request.
 Debug logging and structured output are unavailable during interactive setup.
@@ -157,12 +157,9 @@ func handleAdminSetup(ctx context.Context, command *cli.Command, policy Options)
 }
 
 func adminSetupRequestOptions(command *cli.Command, defaultOptions func(*cli.Command) []option.RequestOption) ([]option.RequestOption, string, error) {
-	baseURL := command.String("base-url")
-	if baseURL == "" {
-		baseURL = os.Getenv("OPENAI_BASE_URL")
-	}
-	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
+	baseURL, err := effectiveBaseURL(command)
+	if err != nil {
+		return nil, "", err
 	}
 	endpoint, err := url.Parse(baseURL)
 	if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {

@@ -28,7 +28,7 @@ func NextCommandOptions(root *cli.Command) (args []string, omit bool) {
 			return nil, true
 		}
 	}
-	for _, name := range []string{"project", "organization", "base-url"} {
+	for _, name := range []string{"profile", "project", "organization", "base-url"} {
 		if !root.IsSet(name) {
 			continue
 		}

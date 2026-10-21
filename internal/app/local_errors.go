@@ -72,6 +72,11 @@ func localErrorMessage(root *cli.Command, failure error) string {
 		if errors.As(failure, &imageFailure) && imageFailure.PreserveOnCancel() {
 			return imageFailure.Error()
 		}
+		var guidance *localCancellationGuidanceError
+		// An outer local failure owns its cancellation guidance.
+		if errors.As(failure, &utilityFailure) && errors.As(failure, &guidance) && guidance.LocalError == utilityFailure {
+			return utilityFailure.Message
+		}
 		return "Request canceled."
 	case errors.As(failure, &utilityFailure):
 		return utilityFailure.Error()
