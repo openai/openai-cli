@@ -385,7 +385,7 @@ func TestWebhookCreatePreparationFailurePreservesFlags(t *testing.T) {
 func TestWebhookCreateDispatchFailureRetainsCauseWithoutRetry(t *testing.T) {
 	apiFailure := &openai.Error{StatusCode: http.StatusBadRequest}
 	for _, failure := range []error{apiFailure, context.Canceled, io.ErrClosedPipe,
-		&output.WriteError{io.ErrClosedPipe}, errors.New("sensitive URL or response body"),
+		&output.WriteError{Err: io.ErrClosedPipe}, errors.New("sensitive URL or response body"),
 	} {
 		app := webhookCreateTestCommand(func(ctx context.Context, command *cli.Command) error {
 			calls := 0

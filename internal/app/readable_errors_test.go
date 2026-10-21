@@ -291,7 +291,7 @@ func TestStructuredStreamErrorWithoutJSONData(t *testing.T) {
 func TestWebhookDiscoveryErrorPreservesAPIFormatsAndKnownOutcome(t *testing.T) {
 	apierr := &openai.Error{StatusCode: http.StatusUnauthorized}
 	require.NoError(t, json.Unmarshal([]byte(`{"message":"synthetic-private-response","code":"invalid_api_key","future_field":true}`), apierr))
-	failure := &webhooks.WorkflowError{"Could not load webhook event types.\nNo endpoint was created.", apierr}
+	failure := &webhooks.WorkflowError{Message: "Could not load webhook event types.\nNo endpoint was created.", Cause: apierr}
 	for _, format := range []string{"auto", "text", "json", "jsonl", "raw", "yaml", "pretty", "explore"} {
 		t.Run(format, func(t *testing.T) {
 			root := readableErrorTestCommand(t, "--format-error", format)
