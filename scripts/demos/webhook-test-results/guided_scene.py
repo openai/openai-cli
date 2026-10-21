@@ -115,11 +115,11 @@ def main():
         paste(terminal, "Response notifications")
         checkpoint(terminal, evidence, "name")
         terminal.send(b"\r")
-        terminal.wait("> URL")
+        wait_screen(terminal, "> URL")
         paste(terminal, "https://example.com/webhook")
         checkpoint(terminal, evidence, "url")
         terminal.send(b"\r")
-        terminal.wait("> [ ] batch.completed")
+        wait_screen(terminal, "> [ ] batch.completed")
         paste(terminal, "response")
         wait_screen(terminal, "> [ ] response.completed")
         terminal.send(b"\x01")  # Ctrl+A selects all matching response events.

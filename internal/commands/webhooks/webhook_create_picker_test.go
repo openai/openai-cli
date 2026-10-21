@@ -253,8 +253,10 @@ func TestWebhookCreateInputViewportKeepsCursorVisible(t *testing.T) {
 		for _, width := range []int{1, 2, 3, 8, 16, 32, 60} {
 			for cursor := 0; cursor <= len(input.value); cursor++ {
 				input.cursor = cursor
-				view := input.display(width, "")
-				require.Contains(t, view, "▏", "width=%d cursor=%d", width, cursor)
+				view, column := input.viewport(width, "")
+				require.GreaterOrEqual(t, column, 0)
+				require.Less(t, column, width)
+				require.NotContains(t, view, "▏")
 				require.LessOrEqual(t, ansi.StringWidth(view), width, "view=%q", view)
 			}
 		}
@@ -266,18 +268,25 @@ func TestWebhookCreateLongURLCanBeEditedAtVisibleTail(t *testing.T) {
 	input := webhookCreateInput{}
 	value := "https://example.invalid/" + strings.Repeat("long/", 30) + "tail"
 	require.True(t, input.insert(value))
-	require.Contains(t, input.display(32, ""), "tail▏")
+	check := func(suffix string, cursorBefore int) {
+		view, column := input.viewport(32, "")
+		require.True(t, strings.HasSuffix(view, suffix+" "), view)
+		require.Equal(t, ansi.StringWidth(view)-1-cursorBefore, column)
+	}
+	check("tail", 0)
 	require.True(t, input.edit(tea.KeyPressMsg{Code: tea.KeyLeft}))
-	require.Contains(t, input.display(32, ""), "tai▏l")
+	check("tail", 1)
 	require.True(t, input.edit(tea.KeyPressMsg{Code: tea.KeyBackspace}))
-	require.Contains(t, input.display(32, ""), "ta▏l")
+	check("tal", 1)
 	require.True(t, input.insert("NEW"))
-	require.Contains(t, input.display(32, ""), "taNEW▏l")
+	check("taNEWl", 1)
 	require.Equal(t, strings.TrimSuffix(value, "tail")+"taNEWl", string(input.value))
 	require.True(t, input.edit(tea.KeyPressMsg{Code: tea.KeyHome}))
-	require.True(t, strings.HasPrefix(input.display(32, ""), "▏https://"))
+	view, column := input.viewport(32, "")
+	require.True(t, strings.HasPrefix(view, "https://"))
+	require.Zero(t, column)
 	require.True(t, input.edit(tea.KeyPressMsg{Code: tea.KeyEnd}))
-	require.Contains(t, input.display(32, ""), "taNEWl▏")
+	check("taNEWl", 0)
 }
 
 func TestWebhookCreateUppercaseSchemeDoesNotReachReview(t *testing.T) {
@@ -343,9 +352,12 @@ func TestWebhookCreatePickerThemeAndPlainSelection(t *testing.T) {
 		for _, dark := range []bool{true, false} {
 			m.color, m.dark = true, dark
 			colored := m.View().Content
-			marker := "\x1b[38;2;49;89;188;48;2;233;239;254m>"
+			marker := "\x1b[1;38;2;49;89;188m>"
 			if dark {
-				marker = "\x1b[38;2;138;168;255;48;2;52;61;88m>"
+				marker = "\x1b[1;38;2;138;168;255m>"
+			}
+			if stage == 2 {
+				marker = strings.Replace(marker, "[1;", "[", 1)
 			}
 			require.Contains(t, colored, marker, "focus marker must use the theme's blue accent")
 			color := "138;168;255"
@@ -353,7 +365,7 @@ func TestWebhookCreatePickerThemeAndPlainSelection(t *testing.T) {
 				color = "49;89;188"
 			}
 			for _, label := range []string{"Name", "URL", "Events"} {
-				require.Regexp(t, "\\x1b\\[[^m]*38;2;"+color+"[^m]*m *"+label, colored, "field labels keep their accent when focus changes")
+				require.Regexp(t, "\\x1b\\[[^m]*38;2;"+color+"[^m]*m[> ]*"+label, colored, "field labels keep their accent when focus changes")
 			}
 			require.Equal(t, plain, ansi.Strip(colored), "theme must not change content or alignment")
 		}
@@ -397,13 +409,13 @@ func TestWebhookCreatePickerArrowNavigationIncludesReview(t *testing.T) {
 	require.False(t, m.confirmed)
 }
 
-func TestWebhookCreatePickerOmitsCountersAndFooter(t *testing.T) {
+func TestWebhookCreatePickerKeepsOnlyContextualControls(t *testing.T) {
 	for _, size := range [][2]int{{80, 24}, {36, 10}} {
 		for stage := range 4 {
 			m := newWebhookCreatePicker([]string{"response.completed"})
 			m.width, m.height, m.stage = size[0], size[1], stage
 			view := ansi.Strip(m.View().Content)
-			for _, removed := range []string{" selected ·", "matching events", "Tab fields", "Enter next", "Shift+Tab", "Esc cancel", "Space select", "Ctrl+A"} {
+			for _, removed := range []string{" selected ·", "matching events", "Tab fields", "Enter next · Shift+Tab", "Shift+Tab"} {
 				require.NotContains(t, view, removed)
 			}
 			if stage < 3 {
@@ -418,7 +430,7 @@ func TestWebhookCreatePickerKeepsEditingFieldsTogether(t *testing.T) {
 	for stage := range 3 {
 		m.stage = stage
 		view := ansi.Strip(m.View().Content)
-		require.True(t, strings.HasPrefix(view, "Create webhook endpoint\n\n"), "separate the heading from the form")
+		require.True(t, strings.HasPrefix(view, "Create webhook endpoint\n╭"), "keep the heading beside the form")
 		for _, value := range []string{"Name", "Webhook", "URL", "https://example.com/webhook", "Events", "response.completed", "response.failed"} {
 			require.Contains(t, view, value, "changing focus must not replace the other fields")
 		}
@@ -674,4 +686,61 @@ func TestWebhookPickerCleanupCancellationKeepsRealErrors(t *testing.T) {
 		require.NotErrorIs(t, got, context.Canceled)
 		require.NotErrorIs(t, got, tea.ErrProgramKilled)
 	}
+}
+
+func TestWebhookCreatePickerNativeCursorAndCompactSpacing(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {36, 10}, {40, 12}} {
+		m := newWebhookCreatePicker([]string{"response.completed", "response.failed"})
+		m.width, m.height, m.color = size[0], size[1], true
+		for stage := range 3 {
+			m.stage = stage
+			view := m.View()
+			require.NotNil(t, view.Cursor)
+			require.Equal(t, tea.CursorUnderline, view.Cursor.Shape)
+			lines := strings.Split(ansi.Strip(view.Content), "\n")
+			require.NotContains(t, view.Content, "▏")
+			require.NotRegexp(t, `\x1b\[[^m]*48;`, view.Content, "focus must not paint a highlight bar")
+			require.Less(t, view.Cursor.Y, len(lines))
+			require.Contains(t, lines[view.Cursor.Y], []string{"Name", "URL", "Events"}[stage])
+			column := 9
+			if size[1] >= 15 {
+				column += 2
+			}
+			require.Equal(t, column, view.Cursor.X)
+			if stage == 2 {
+				require.Contains(t, view.Content, "Space select")
+				require.Contains(t, view.Content, "Enter review")
+			}
+			input := m.input()
+			input.insert(strings.Repeat("猫🙂", 30))
+			for _, position := range []int{0, len(input.value) / 2, len(input.value)} {
+				input.cursor = position
+				inputWidth := min(76, size[0]-2) - 9
+				if size[1] >= 15 {
+					inputWidth -= 4
+				}
+				_, offset := input.viewport(inputWidth, "")
+				painted := m.View()
+				require.Equal(t, column+offset, painted.Cursor.X)
+				require.Less(t, painted.Cursor.X, size[0]-2)
+			}
+		}
+		m.reviewFocused = true
+		require.Nil(t, m.View().Cursor)
+		m.canceled = true
+		require.Nil(t, m.View().Cursor)
+	}
+}
+
+func TestWebhookCreatePickerDoesNotEndWithEmptyGroupHeading(t *testing.T) {
+	m := newWebhookCreatePicker([]string{"agent.session.action_required", "agent.session.created", "agent.session.failed", "agent.session.idle", "agent.session.in_progress", "batch.completed"})
+	m.stage = 2
+	view := ansi.Strip(m.View().Content)
+	require.NotContains(t, view, "Batches", "the next group needs space for its first event")
+	for range 5 {
+		webhookCreateKey(m, tea.KeyDown)
+	}
+	view = ansi.Strip(m.View().Content)
+	require.Contains(t, view, "Batches")
+	require.Contains(t, view, "> [ ] batch.completed")
 }

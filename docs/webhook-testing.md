@@ -33,6 +33,7 @@ Selections remain when you change the search. Press Enter to review them.
 Use Shift+Tab to go back. Press Escape or Ctrl+C to cancel.
 The final confirmation defaults to No.
 The form stays inline and keeps the fields and Review action together.
+A text cursor marks the input position. Brief controls appear for the active field.
 It preserves terminal scrollback and supports both light and dark terminal colors.
 Set `NO_COLOR=1` for plain output; selection markers remain visible.
 
