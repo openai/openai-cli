@@ -196,7 +196,7 @@ Results show the default export folder below the playback and Save controls.
 Only completed exports show a Saved receipt. Waveform columns use narrow strokes instead of filled blocks.
 Roomy result views leave one blank row between the waveform and playback time.
 
-## Local layout refinement
+## Layout
 
 Field labels use secondary text color. Values retain normal terminal text.
 More actions reuses the form layout when space permits, keeping the draft and settings visible.
@@ -205,3 +205,9 @@ Roomy playback uses light waveform strokes and a distinct progress marker.
 Play and Save share one row when they fit. The next row shows the suggested export folder.
 After export, that row shows the actual saved path instead.
 Filename and Save to keep their value columns while editing.
+
+Wide terminals use a reading column of at most 96 cells.
+Instructions follows the composer, separately from technical settings.
+Generate, History and More actions share a row when they fit.
+Left and Right move between these actions. Up and Down retain their existing behavior.
+Compact terminals retain stacked controls. Keyboard guidance uses secondary text styling.

@@ -182,6 +182,9 @@ func (m *audioWorkbench) resizeEditors() {
 		}
 		if m.height >= 24 && (editor == &m.input || editor == &m.instructions) {
 			height = min(3, 1+strings.Count(editor.Value(), "\n"))
+			if editor == &m.input && m.width >= 60 {
+				height = max(2, height)
+			}
 		}
 		if editor.Height() != height {
 			editor.SetHeight(height)

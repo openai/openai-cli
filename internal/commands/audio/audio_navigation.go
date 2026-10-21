@@ -78,6 +78,15 @@ func (m *audioWorkbench) navigateSection(key string) (bool, tea.Cmd) {
 		}
 	case 2:
 		switch key {
+		case "left", "right":
+			if m.setting < 4 || len(m.formActionRows()) != 1 {
+				return false, nil
+			}
+			step := 1
+			if key == "left" {
+				step = -1
+			}
+			m.setting = max(4, min(audioSettingMore, m.setting+step))
 		case "up":
 			if m.setting == 0 {
 				if !m.instructionsSupported() {

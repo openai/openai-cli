@@ -86,7 +86,7 @@ func TestAudioViewSelectedSettingAndPrimaryActionsStayVisible(t *testing.T) {
 
 func TestAudioViewEditorSizeTracksMultilineInput(t *testing.T) {
 	m := audioReviewModel(t)
-	require.Equal(t, 1, m.input.Height())
+	require.Equal(t, 2, m.input.Height())
 	m.Update(tea.PasteMsg{Content: "First\nSecond\nThird\nFourth"})
 	require.Equal(t, 3, m.input.Height())
 	require.Equal(t, "First\nSecond\nThird\nFourth", m.input.Value())
@@ -139,10 +139,12 @@ func TestAudioViewKeepsImageStyleFormStableAcrossFocus(t *testing.T) {
 			view := ansi.Strip(m.View().Content)
 			rows := strings.Split(view, "\n")
 			require.Equal(t, 4, strings.Index(rows[0], "Text to speech"))
-			require.Equal(t, width-4, ansi.StringWidth(rows[1])-2, "input must use the available form width")
+			require.Equal(t, min(96, width-4), ansi.StringWidth(rows[1])-2, "wide terminals must retain a bounded reading column")
 			require.Contains(t, rows[2], "A clear short example.")
-			require.Contains(t, rows[3], "╯")
-			require.Equal(t, "    Settings", rows[4], "Settings must follow the input without an extra gap")
+			require.Contains(t, rows[4], "╯")
+			require.Contains(t, rows[5], "Instructions", "delivery instructions must follow the composer")
+			require.Empty(t, strings.TrimSpace(rows[6]))
+			require.Equal(t, "    Settings", rows[7], "technical settings need a separate group")
 			require.Equal(t, 1, strings.Count(view, "╭"), "Instructions must not replace the primary input")
 			require.NotContains(t, view, "› Text")
 			if focus == 2 {
@@ -215,4 +217,28 @@ func TestAudioHistoryShowsPromptInsteadOfOpaqueID(t *testing.T) {
 	m.result = &audioWorkResult{entry: entry}
 	m.focusSection(0)
 	require.NotContains(t, ansi.Strip(m.View().Content), "[Ctrl+O] Listen")
+}
+
+func TestAudioWideFormKeepsActionRowAndEditorWithinReadingColumn(t *testing.T) {
+	m := audioReviewModel(t)
+	m.Update(tea.WindowSizeMsg{Width: 186, Height: 34})
+	m.input.SetValue("A short draft stays near its settings.")
+	m.focusSection(2)
+	m.setting = 4
+	for index, key := range []rune{tea.KeyRight, tea.KeyRight, tea.KeyLeft, tea.KeyLeft} {
+		require.Nil(t, audioReviewKey(m, key))
+		require.Equal(t, []int{audioSettingHistory, audioSettingMore, audioSettingHistory, 4}[index], m.setting)
+		view := ansi.Strip(m.View().Content)
+		require.Contains(t, view, m.input.Value())
+		require.Empty(t, m.modal)
+		require.False(t, m.busy)
+		for _, row := range strings.Split(view, "\n") {
+			require.LessOrEqual(t, ansi.StringWidth(row), 98)
+			if strings.Contains(row, "Generate speech") {
+				require.Contains(t, row, "History")
+				require.Contains(t, row, "More actions…")
+			}
+		}
+	}
+	require.Equal(t, 4, m.setting)
 }

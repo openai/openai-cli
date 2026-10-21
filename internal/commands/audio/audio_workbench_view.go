@@ -16,7 +16,7 @@ import (
 )
 
 // Keep the audio form aligned with the image picker's palette and cell budgets.
-func (m *audioWorkbench) audioWidth() int { return max(1, m.width-4) }
+func (m *audioWorkbench) audioWidth() int { return min(96, max(1, m.width-4)) }
 
 func (m *audioWorkbench) accent() lipgloss.Style {
 	s := lipgloss.NewStyle()
@@ -122,7 +122,7 @@ func (m *audioWorkbench) formEditorRows(name string, editor textarea.Model, acti
 func (m *audioWorkbench) shortcutLine(pairs ...[2]string) string {
 	line := ""
 	for _, pair := range pairs {
-		item := m.accent().Render("["+pair[0]+"]") + " " + m.muted().Render(pair[1])
+		item := m.muted().Render("["+pair[0]+"]") + " " + m.muted().Render(pair[1])
 		if line != "" {
 			item = "  " + item
 		}
@@ -173,13 +173,7 @@ func (m *audioWorkbench) View() tea.View {
 	if !compact {
 		lines = append(lines, "")
 	}
-	generate := "Generate speech"
-	if m.busy {
-		generate = m.progressText()
-	}
-	lines = append(lines, m.actionRow(generate, m.focus == 2 && m.setting == 4, true),
-		m.actionRow("History", m.focus == 2 && m.setting == audioSettingHistory, false),
-		m.actionRow("More actions…", m.focus == 2 && m.setting == audioSettingMore, false))
+	lines = append(lines, m.formActionRows()...)
 	if !compact {
 		lines = append(lines, "")
 	}
@@ -213,9 +207,6 @@ func (m *audioWorkbench) View() tea.View {
 func (m *audioWorkbench) formRows(compact, interactive bool) []string {
 	var lines []string
 	for i, editor := range []textarea.Model{m.input, m.instructions} {
-		if i > 0 && !compact {
-			lines = append(lines, m.strong().Render("  Settings"))
-		}
 		name := []string{"Text", "Instructions"}[i]
 		if i == 1 && !m.instructionsSupported() {
 			lines = append(lines, m.label(m.muted().Render("Instructions   Not used by this model"), false))
@@ -237,6 +228,9 @@ func (m *audioWorkbench) formRows(compact, interactive bool) []string {
 			lines = append(lines, m.label(label+" "+value, false))
 		}
 	}
+	if !compact {
+		lines = append(lines, "", m.muted().Render("  Settings"))
+	}
 	values := []string{m.settings.Model, readable.ChoiceTitle(m.settings.Voice), strings.ToUpper(m.settings.Format), fmt.Sprintf("%.2f x", m.settings.Speed)}
 	if !audioSupportsVoice(m.settings.Model, m.settings.Voice) {
 		values[1] += " (unavailable)"
@@ -247,6 +241,26 @@ func (m *audioWorkbench) formRows(compact, interactive bool) []string {
 		lines = append(lines, m.label(label+" "+readable.Text(values[index]), active))
 	}
 	return lines
+}
+
+// Keep primary and secondary actions together when they fit the reading column.
+func (m *audioWorkbench) formActionRows() []string {
+	generate := "Generate speech"
+	if m.busy {
+		generate = m.progressText()
+	}
+	rows := []string{
+		m.actionRow(generate, m.focus == 2 && m.setting == 4, true),
+		m.actionRow("History", m.focus == 2 && m.setting == audioSettingHistory, false),
+		m.actionRow("More actions…", m.focus == 2 && m.setting == audioSettingMore, false),
+	}
+	if m.height >= 24 && m.width >= 60 {
+		joined := strings.Join(rows, "    ")
+		if ansi.StringWidth(joined) <= m.audioWidth() {
+			return []string{joined}
+		}
+	}
+	return rows
 }
 
 func (m *audioWorkbench) actionRow(label string, active, primary bool) string {
