@@ -645,14 +645,14 @@ func (m *webhookCreatePicker) View() tea.View {
 	if m.browser != nil && m.browser.active {
 		return m.endpointView(width, height)
 	}
-	accent, muted, border := "#3159BC", "#657087", "#BAC4D8"
+	accent, muted, border := "#3159BC", "#657087", "#D0D5DF"
 	if m.dark {
-		accent, muted, border = "#8AA8FF", "#A4ACC2", "#51566B"
+		accent, muted, border = "#8AA8FF", "#A4ACC2", "#3D4352"
 	}
 	strong, quiet, selected := lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle()
 	panel := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	if m.color {
-		strong = strong.Bold(true).Foreground(lipgloss.Color(accent))
+		strong = strong.Bold(true)
 		quiet = quiet.Foreground(lipgloss.Color(muted))
 		selected = selected.Foreground(lipgloss.Color(accent))
 		panel = panel.BorderForeground(lipgloss.Color(border))
@@ -694,7 +694,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			if focused {
 				value, column := input.viewport(inner-9, placeholder)
 				cursorAt(column, row)
-				return strong.Render("> "+label) + value
+				return selected.Render("> ") + strong.Render(label) + value
 			}
 			value := webhookCreateLine(string(input.value))
 			if value == "" {
@@ -702,22 +702,22 @@ func (m *webhookCreatePicker) View() tea.View {
 			} else {
 				value = ansi.Truncate(value, inner-9, "…")
 			}
-			return "  " + strong.Render(label) + value
+			return "  " + quiet.Render(label) + value
 		}
 		body = append(body, field("Name", &m.name, "Webhook", m.stage == 0, 0),
 			field("URL", &m.url, "https://example.com/webhook", m.stage == 1, 1))
 		if !compact {
 			body = append(body, "")
 		}
-		eventLabel := "  Events "
+		eventLabel := "  " + quiet.Render("Events ")
 		if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateCategory {
-			eventLabel = "> Events "
+			eventLabel = selected.Render("> ") + strong.Render("Events ")
 		}
 		arrow := " ▾"
 		if m.categoryOpen {
 			arrow = " ▴"
 		}
-		body = append(body, strong.Render(eventLabel)+ansi.Truncate(m.categories()[m.category]+arrow, inner-9, "…"))
+		body = append(body, eventLabel+ansi.Truncate(m.categories()[m.category]+arrow, inner-9, "…"))
 		body = append(body, field("Search", &m.search, "Type an event or group name",
 			m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateSearch, len(body)))
 		if !compact {
@@ -747,7 +747,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			_, group := webhookCreateEventGroup(event)
 			if !compact && m.category == 0 && group != lastGroup {
 				headingRows[len(rows)] = true
-				rows = append(rows, lipgloss.NewStyle().Bold(m.color).Render(clip("  "+group)))
+				rows = append(rows, quiet.Render(clip("  "+group)))
 				lastGroup = group
 			}
 			marker, tick := " ", " "
@@ -784,7 +784,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			for index, category := range m.categories() {
 				row := "  " + webhookCreateLine(category)
 				if index == m.categoryChoice {
-					row = strong.Render("> " + webhookCreateLine(category))
+					row = selected.Render("> ") + strong.Render(webhookCreateLine(category))
 				}
 				rows = append(rows, row)
 			}
@@ -815,7 +815,7 @@ func (m *webhookCreatePicker) View() tea.View {
 		if m.reviewFocused && !m.existingFocused {
 			action = active(">" + action[1:])
 		} else {
-			action = strong.Render(action)
+			action = quiet.Render(action)
 		}
 		if m.browser != nil {
 			label := "  [ Existing webhooks ]"
@@ -823,9 +823,10 @@ func (m *webhookCreatePicker) View() tea.View {
 				label = "  [ Webhooks ]"
 			}
 			if m.reviewFocused && m.existingFocused {
-				label = ">" + label[1:]
+				action += active(">" + label[1:])
+			} else {
+				action += quiet.Render(label)
 			}
-			action += strong.Render(label)
 		}
 		body = append(body, action)
 		body = append(body, footer...)

@@ -199,15 +199,16 @@ func (b *webhookEndpointBrowser) update(key string) tea.Cmd {
 
 func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 	b := m.browser
-	accent, muted, border := "#3159BC", "#657087", "#BAC4D8"
+	accent, muted, border := "#3159BC", "#657087", "#D0D5DF"
 	if m.dark {
-		accent, muted, border = "#8AA8FF", "#A4ACC2", "#51566B"
+		accent, muted, border = "#8AA8FF", "#A4ACC2", "#3D4352"
 	}
-	strong, quiet := lipgloss.NewStyle(), lipgloss.NewStyle()
+	strong, quiet, selected := lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle()
 	panel := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	if m.color {
-		strong = strong.Bold(true).Foreground(lipgloss.Color(accent))
+		strong = strong.Bold(true)
 		quiet = quiet.Foreground(lipgloss.Color(muted))
+		selected = selected.Foreground(lipgloss.Color(accent))
 		panel = panel.BorderForeground(lipgloss.Color(border))
 	}
 	inner, overhead := width-4, 5
@@ -225,10 +226,10 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 		rows = []string{"Loading webhooks..."}
 	} else if b.details && len(b.items) > 0 {
 		item := b.items[b.current]
-		rows = []string{"Name: " + webhookCreateLine(item.name), "ID: " + webhookCreateLine(item.id),
-			"URL: " + webhookCreateLine(item.url), "Events:"}
+		rows = []string{quiet.Render("Name    ") + webhookCreateLine(item.name), quiet.Render("ID      ") + webhookCreateLine(item.id),
+			quiet.Render("URL     ") + webhookCreateLine(item.url), quiet.Render("Events")}
 		for _, event := range item.events {
-			rows = append(rows, "  "+webhookCreateLine(event))
+			rows = append(rows, "        "+webhookCreateLine(event))
 		}
 		rows = strings.Split(ansi.Hardwrap(strings.Join(rows, "\n"), inner, false), "\n")
 		b.offset = min(b.offset, max(0, len(rows)-available))
@@ -238,14 +239,22 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 			rows = []string{"No webhook endpoints in this project."}
 		}
 	} else {
+		// Use display cells so Unicode names preserve the ID column.
+		nameWidth := 0
+		for _, item := range b.items {
+			nameWidth = max(nameWidth, ansi.StringWidth(webhookCreateLine(item.name)))
+		}
+		nameWidth = min(max(8, nameWidth), max(8, inner/2-3))
 		for index, item := range b.items {
 			name := item.name
 			if name == "" {
 				name = item.id
 			}
-			row := "  " + webhookCreateLine(name)
+			name = ansi.Truncate(webhookCreateLine(name), nameWidth, "…")
+			name += strings.Repeat(" ", max(0, nameWidth-ansi.StringWidth(name)))
+			row := "  " + name
 			if index == b.current && !b.actions {
-				row = strong.Render("> " + webhookCreateLine(name))
+				row = selected.Render("> ") + strong.Render(name)
 			}
 			row += quiet.Render("  " + webhookCreateLine(item.id))
 			rows = append(rows, ansi.Truncate(row, inner, "…"))
@@ -259,13 +268,13 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 		rows = rows[b.offset:min(len(rows), b.offset+available)]
 	}
 	rows = append(rows, note...)
-	back, refresh := "  [ Back ]", "  [ Refresh ]"
+	back, refresh := quiet.Render("  [ Back ]"), quiet.Render("  [ Refresh ]")
 	if b.actions && !b.refresh {
-		back = "> [ Back ]"
+		back = selected.Render("> [ Back ]")
 	} else if b.actions {
-		refresh = "> [ Refresh ]"
+		refresh = selected.Render("> [ Refresh ]")
 	}
-	rows = append(rows, "", strong.Render(back)+quiet.Render("  ")+strong.Render(refresh))
+	rows = append(rows, "", back+"  "+refresh)
 	for index := range rows {
 		rows[index] = ansi.Truncate(rows[index], inner, "…")
 	}

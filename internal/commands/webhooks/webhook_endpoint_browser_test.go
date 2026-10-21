@@ -150,6 +150,37 @@ func TestWebhookCreateEndpointBrowserFramesAndSafeFailure(t *testing.T) {
 	}
 }
 
+func TestWebhookCreateEndpointBrowserAlignsUnicodeNamesAndKeepsDetails(t *testing.T) {
+	m := newWebhookCreatePicker([]string{"response.completed"})
+	m.width, m.height = 80, 24
+	m.browser = &webhookEndpointBrowser{active: true, items: []webhookEndpoint{
+		{name: "短い", id: "whe_short"},
+		{name: "Response notifications", id: "whe_response"},
+		{name: strings.Repeat("通知", 12), id: "whe_long", url: "https://example.invalid/long"},
+	}}
+	for _, colored := range []bool{false, true} {
+		m.color = colored
+		view := ansi.Strip(m.View().Content)
+		column := -1
+		for _, line := range strings.Split(view, "\n") {
+			before, _, found := strings.Cut(line, "whe_")
+			if !found {
+				continue
+			}
+			if column < 0 {
+				column = ansi.StringWidth(before)
+			}
+			require.Equal(t, column, ansi.StringWidth(before), "IDs align by display cells")
+		}
+		require.Greater(t, column, 0)
+		require.Contains(t, view, "…")
+	}
+	m.browser.current, m.browser.details = 2, true
+	view := ansi.Strip(m.View().Content)
+	require.Contains(t, view, strings.Repeat("通知", 12))
+	require.Contains(t, view, "https://example.invalid/long")
+}
+
 func TestWebhookCreateEndpointDiscoveryKeepsScopeAndPagination(t *testing.T) {
 	for _, failure := range []string{"", "HTTP", "repeated", "empty"} {
 		t.Run(failure, func(t *testing.T) {

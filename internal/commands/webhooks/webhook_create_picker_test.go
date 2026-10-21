@@ -360,9 +360,9 @@ func TestWebhookCreatePickerThemeAndPlainSelection(t *testing.T) {
 		for _, dark := range []bool{true, false} {
 			m.color, m.dark = true, dark
 			colored := m.View().Content
-			marker := "\x1b[1;38;2;49;89;188m>"
+			marker := "\x1b[38;2;49;89;188m>"
 			if dark {
-				marker = "\x1b[1;38;2;138;168;255m>"
+				marker = "\x1b[38;2;138;168;255m>"
 			}
 			require.Contains(t, colored, marker, "focus marker must use the theme's blue accent")
 			color := "138;168;255"
@@ -370,8 +370,9 @@ func TestWebhookCreatePickerThemeAndPlainSelection(t *testing.T) {
 				color = "49;89;188"
 			}
 			for _, label := range []string{"Name", "URL", "Events"} {
-				require.Regexp(t, "\\x1b\\[[^m]*38;2;"+color+"[^m]*m[> ]*"+label, colored, "field labels keep their accent when focus changes")
+				require.NotRegexp(t, "\\x1b\\[[^m]*38;2;"+color+"[^m]*m[> ]*"+label, colored, "neutral labels must not compete with the focus marker")
 			}
+			require.NotContains(t, colored, "48;", "focus must not add a selection background")
 			require.Equal(t, plain, ansi.Strip(colored), "theme must not change content or alignment")
 		}
 	}
