@@ -199,16 +199,15 @@ func (b *webhookEndpointBrowser) update(key string) tea.Cmd {
 
 func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 	b := m.browser
-	accent, muted, border := "#3159BC", "#657087", "#D0D5DF"
+	accent, muted, border := "#3159BC", "#657087", "#BAC4D8"
 	if m.dark {
-		accent, muted, border = "#8AA8FF", "#A4ACC2", "#3D4352"
+		accent, muted, border = "#8AA8FF", "#A4ACC2", "#51566B"
 	}
-	strong, quiet, selected := lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle()
+	strong, quiet := lipgloss.NewStyle(), lipgloss.NewStyle()
 	panel := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	if m.color {
-		strong = strong.Bold(true)
+		strong = strong.Bold(true).Foreground(lipgloss.Color(accent))
 		quiet = quiet.Foreground(lipgloss.Color(muted))
-		selected = selected.Foreground(lipgloss.Color(accent))
 		panel = panel.BorderForeground(lipgloss.Color(border))
 	}
 	inner, overhead := width-4, 5
@@ -226,8 +225,8 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 		rows = []string{"Loading webhooks..."}
 	} else if b.details && len(b.items) > 0 {
 		item := b.items[b.current]
-		rows = []string{quiet.Render("Name    ") + webhookCreateLine(item.name), quiet.Render("ID      ") + webhookCreateLine(item.id),
-			quiet.Render("URL     ") + webhookCreateLine(item.url), quiet.Render("Events")}
+		rows = []string{strong.Render("Name    ") + webhookCreateLine(item.name), strong.Render("ID      ") + webhookCreateLine(item.id),
+			strong.Render("URL     ") + webhookCreateLine(item.url), strong.Render("Events")}
 		for _, event := range item.events {
 			rows = append(rows, "        "+webhookCreateLine(event))
 		}
@@ -254,7 +253,7 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 			name += strings.Repeat(" ", max(0, nameWidth-ansi.StringWidth(name)))
 			row := "  " + name
 			if index == b.current && !b.actions {
-				row = selected.Render("> ") + strong.Render(name)
+				row = strong.Render("> " + name)
 			}
 			row += quiet.Render("  " + webhookCreateLine(item.id))
 			rows = append(rows, ansi.Truncate(row, inner, "…"))
@@ -268,13 +267,13 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 		rows = rows[b.offset:min(len(rows), b.offset+available)]
 	}
 	rows = append(rows, note...)
-	back, refresh := quiet.Render("  [ Back ]"), quiet.Render("  [ Refresh ]")
+	back, refresh := "  [ Back ]", "  [ Refresh ]"
 	if b.actions && !b.refresh {
-		back = selected.Render("> [ Back ]")
+		back = "> [ Back ]"
 	} else if b.actions {
-		refresh = selected.Render("> [ Refresh ]")
+		refresh = "> [ Refresh ]"
 	}
-	rows = append(rows, "", back+"  "+refresh)
+	rows = append(rows, "", strong.Render(back)+"  "+strong.Render(refresh))
 	for index := range rows {
 		rows[index] = ansi.Truncate(rows[index], inner, "…")
 	}
