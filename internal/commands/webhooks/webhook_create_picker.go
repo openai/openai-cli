@@ -720,9 +720,6 @@ func (m *webhookCreatePicker) View() tea.View {
 		body = append(body, strong.Render(eventLabel)+ansi.Truncate(m.categories()[m.category]+arrow, inner-9, "…"))
 		body = append(body, field("Search", &m.search, "Type an event or group name",
 			m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateSearch, len(body)))
-		if !compact {
-			body = append(body, "")
-		}
 		matches := m.filteredEvents()
 		var footer []string
 		if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateChoices && !m.categoryOpen {
@@ -825,7 +822,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			if m.reviewFocused && m.existingFocused {
 				label = ">" + label[1:]
 			}
-			action += strong.Render(label)
+			action += "  " + strong.Render(label)
 		}
 		body = append(body, action)
 		body = append(body, footer...)
