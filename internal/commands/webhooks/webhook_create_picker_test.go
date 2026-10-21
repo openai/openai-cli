@@ -329,15 +329,21 @@ func TestWebhookCreatePickerTallTerminalDoesNotExpandPanel(t *testing.T) {
 
 func TestWebhookCreatePickerThemeAndPlainSelection(t *testing.T) {
 	m := newWebhookCreatePicker([]string{"response.completed"})
-	m.stage = 2
-	plain := m.View().Content
-	require.Contains(t, plain, "> [ ] response.completed")
-	require.NotContains(t, plain, "\x1b")
-	for _, dark := range []bool{true, false} {
-		m.color, m.dark = true, dark
-		colored := m.View().Content
-		require.Contains(t, colored, "\x1b[")
-		require.Equal(t, plain, ansi.Strip(colored), "theme must not change content or alignment")
+	for stage := range 3 {
+		m.stage, m.color = stage, false
+		plain := m.View().Content
+		require.Contains(t, plain, "> ")
+		require.NotContains(t, plain, "\x1b")
+		for _, dark := range []bool{true, false} {
+			m.color, m.dark = true, dark
+			colored := m.View().Content
+			marker := "\x1b[38;2;49;89;188;48;2;233;239;254m>"
+			if dark {
+				marker = "\x1b[38;2;138;168;255;48;2;52;61;88m>"
+			}
+			require.Contains(t, colored, marker, "focus marker must use the theme's blue accent")
+			require.Equal(t, plain, ansi.Strip(colored), "theme must not change content or alignment")
+		}
 	}
 }
 

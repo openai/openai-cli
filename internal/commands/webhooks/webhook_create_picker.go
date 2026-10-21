@@ -432,7 +432,11 @@ func (m *webhookCreatePicker) View() tea.View {
 	clip := func(s string) string { return ansi.Truncate(s, inner, "…") }
 	active := func(s string) string {
 		s = clip(s)
-		return selected.Render(s + strings.Repeat(" ", max(0, inner-ansi.StringWidth(s))))
+		padding := strings.Repeat(" ", max(0, inner-ansi.StringWidth(s)))
+		if m.color && strings.HasPrefix(s, ">") {
+			return selected.Foreground(lipgloss.Color(accent)).Render(">") + selected.Render(s[1:]+padding)
+		}
+		return selected.Render(s + padding)
 	}
 	body := []string{}
 	footer := "Enter next · Shift+Tab back · Esc cancel"
