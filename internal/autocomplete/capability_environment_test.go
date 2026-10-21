@@ -35,7 +35,7 @@ func TestCompletionCapabilityEnvironmentIsScoped(t *testing.T) {
 						case CompletionStyleBash, CompletionStyleZsh:
 							probe = `
 openai() {
-  printf '%s\n%s\n' "$OPENAI_CLI_COMPLETION_FILE_VALUES" "$COMPLETION_STYLE" > observed
+  printf '%s\n%s\n%s\n' "$OPENAI_CLI_COMPLETION_FILE_VALUES" "$COMPLETION_STYLE" "$OPENAI_CLI_COMPLETION_PRESERVE_WORDS" > observed
   if [ "$COMPLETION_PROBE_FAILURE" = 1 ]; then return 1; fi
   return 11
 }
@@ -46,7 +46,7 @@ compdef() { :; }
 							} else {
 								probe += "\nwords=(openai --image assets/lo)\nCURRENT=3\n__openai_zsh_autocomplete\n"
 							}
-							probe += `printf '%s\n%s\n' "${OPENAI_CLI_COMPLETION_FILE_VALUES-unset}" "${COMPLETION_STYLE-unset}"`
+							probe += `printf '%s\n%s\n%s\n' "${OPENAI_CLI_COMPLETION_FILE_VALUES-unset}" "${COMPLETION_STYLE-unset}" "${OPENAI_CLI_COMPLETION_PRESERVE_WORDS-unset}"`
 							args = []string{"-c", probe}
 							if style == CompletionStyleZsh {
 								args = append([]string{"-f"}, args...)
@@ -55,7 +55,7 @@ compdef() { :; }
 							if runtime.GOOS == "windows" {
 								t.Skip("fish probe requires a POSIX executable fixture")
 							}
-							fixture := "#!/bin/sh\nprintf '%s\\n%s\\n' \"$OPENAI_CLI_COMPLETION_FILE_VALUES\" \"$COMPLETION_STYLE\" > observed\nif [ \"$COMPLETION_PROBE_FAILURE\" = 1 ]; then exit 1; fi\nexit 11\n"
+							fixture := "#!/bin/sh\nprintf '%s\\n%s\\n%s\\n' \"$OPENAI_CLI_COMPLETION_FILE_VALUES\" \"$COMPLETION_STYLE\" \"$OPENAI_CLI_COMPLETION_PRESERVE_WORDS\" > observed\nif [ \"$COMPLETION_PROBE_FAILURE\" = 1 ]; then exit 1; fi\nexit 11\n"
 							require.NoError(t, os.WriteFile(filepath.Join(dir, "openai"), []byte(fixture), 0700))
 							probe = script + `
 complete -C 'openai --image assets/lo' >/dev/null
@@ -69,20 +69,25 @@ if set -q COMPLETION_STYLE
 else
   printf 'unset\n'
 end
+if set -q OPENAI_CLI_COMPLETION_PRESERVE_WORDS
+  printf '%s\n' "$OPENAI_CLI_COMPLETION_PRESERVE_WORDS"
+else
+  printf 'unset\n'
+end
 `
 							args = []string{"--no-config", "-c", probe}
 						case CompletionStylePowershell:
 							probe = `
 function openai {
-  $global:observed = @($env:OPENAI_CLI_COMPLETION_FILE_VALUES, $env:COMPLETION_STYLE)
+  $global:observed = @($env:OPENAI_CLI_COMPLETION_FILE_VALUES, $env:COMPLETION_STYLE, $env:OPENAI_CLI_COMPLETION_PRESERVE_WORDS)
   if ($env:COMPLETION_PROBE_FAILURE -eq '1') { throw 'synthetic backend failure' }
   $global:LASTEXITCODE = 11
 }
-$before = @($env:OPENAI_CLI_COMPLETION_FILE_VALUES, $env:COMPLETION_STYLE)
+$before = @($env:OPENAI_CLI_COMPLETION_FILE_VALUES, $env:COMPLETION_STYLE, $env:OPENAI_CLI_COMPLETION_PRESERVE_WORDS)
 ` + script + `
 $line = 'openai --image assets/lo'
 TabExpansion2 $line $line.Length | Out-Null
-[pscustomobject]@{ before=$before; after=@($env:OPENAI_CLI_COMPLETION_FILE_VALUES, $env:COMPLETION_STYLE); observed=$global:observed } | ConvertTo-Json -Compress
+[pscustomobject]@{ before=$before; after=@($env:OPENAI_CLI_COMPLETION_FILE_VALUES, $env:COMPLETION_STYLE, $env:OPENAI_CLI_COMPLETION_PRESERVE_WORDS); observed=$global:observed } | ConvertTo-Json -Compress
 `
 							probePath := filepath.Join(dir, "probe.ps1")
 							require.NoError(t, os.WriteFile(probePath, []byte(probe), 0600))
@@ -94,13 +99,13 @@ TabExpansion2 $line $line.Length | Out-Null
 						command.Dir = dir
 						for _, entry := range os.Environ() {
 							name, _, _ := strings.Cut(entry, "=")
-							if name != "OPENAI_CLI_COMPLETION_FILE_VALUES" && name != "COMPLETION_STYLE" && name != "PATH" {
+							if name != "OPENAI_CLI_COMPLETION_FILE_VALUES" && name != "COMPLETION_STYLE" && name != "OPENAI_CLI_COMPLETION_PRESERVE_WORDS" && name != "PATH" {
 								command.Env = append(command.Env, entry)
 							}
 						}
 						command.Env = append(command.Env, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "COMPLETION_PROBE_FAILURE="+failure)
 						if previous != "unset" {
-							command.Env = append(command.Env, "OPENAI_CLI_COMPLETION_FILE_VALUES="+previous, "COMPLETION_STYLE="+previous)
+							command.Env = append(command.Env, "OPENAI_CLI_COMPLETION_FILE_VALUES="+previous, "COMPLETION_STYLE="+previous, "OPENAI_CLI_COMPLETION_PRESERVE_WORDS="+previous)
 						}
 						var stdout, stderr bytes.Buffer
 						command.Stdout, command.Stderr = &stdout, &stderr
@@ -110,16 +115,18 @@ TabExpansion2 $line $line.Length | Out-Null
 							var result struct{ Before, After, Observed []*string }
 							require.NoError(t, json.Unmarshal(stdout.Bytes(), &result), stdout.String())
 							require.Equal(t, result.Before, result.After, "completion leaked its environment")
-							require.Len(t, result.Observed, 2)
+							require.Len(t, result.Observed, 3)
 							require.NotNil(t, result.Observed[0])
 							require.NotNil(t, result.Observed[1])
 							require.Equal(t, "1", *result.Observed[0])
 							require.Equal(t, string(style), *result.Observed[1])
+							require.NotNil(t, result.Observed[2])
+							require.Equal(t, "1", *result.Observed[2])
 						} else {
 							observed, err := os.ReadFile(filepath.Join(dir, "observed"))
 							require.NoError(t, err)
-							require.Equal(t, "1\n"+string(style)+"\n", string(observed))
-							require.Equal(t, previous+"\n"+previous+"\n", stdout.String(), "completion leaked its environment")
+							require.Equal(t, "1\n"+string(style)+"\n1\n", string(observed))
+							require.Equal(t, previous+"\n"+previous+"\n"+previous+"\n", stdout.String(), "completion leaked its environment")
 						}
 					})
 				}

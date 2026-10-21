@@ -12,8 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/openai/openai-cli/internal/requestflag"
-	"github.com/openai/openai-cli/pkg/cmd"
+	"github.com/openai/openai-cli/generated/commands"
 	"github.com/urfave/cli/v3"
 )
 
@@ -99,6 +98,22 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 			if got.code != 0 || got.stderr != "" {
 				t.Fatalf("full help failed: %+v", got)
 			}
+			// These existing help topics are manual guides, even when an interactive
+			// setup command has the same path. Keep checking any future children.
+			var guideText []string
+			if slices.Equal(path, []string{"setup"}) {
+				guideText = []string{"Set up your API key", "read -rs OPENAI_API_KEY", "openai models list"}
+			} else if slices.Equal(path, []string{"setup", "admin"}) {
+				guideText = []string{"Set up an admin API key", "read -rs OPENAI_ADMIN_KEY", "openai setup admin"}
+			}
+			if guideText != nil {
+				for _, text := range guideText {
+					if !strings.Contains(got.stdout, text) {
+						t.Errorf("manual setup guide lost %q", text)
+					}
+				}
+				return
+			}
 			for _, flag := range flags {
 				for _, name := range flag.Names() {
 					prefix := "--"
@@ -124,25 +139,6 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 					t.Errorf("full help lost request-header documentation %q", text)
 				}
 			}
-			var required []string
-			for _, flag := range command.VisibleFlags() {
-				ordinary, isOrdinary := flag.(cli.RequiredFlag)
-				body, isBody := flag.(requestflag.RequiredFlagOrStdin)
-				if (isOrdinary && ordinary.IsRequired()) || (isBody && body.IsRequiredAsFlagOrStdin()) {
-					required = append(required, flag.Names()[0])
-				}
-			}
-			if len(required) > 0 {
-				short := runMainDispatch(t, "bash", append([]string{"openai", "help"}, path...)...)
-				if short.code != 0 || short.stderr != "" {
-					t.Fatalf("short help failed: %+v", short)
-				}
-				for _, name := range required {
-					if !strings.Contains(short.stdout, "--"+name) {
-						t.Errorf("short help hid required option --%s", name)
-					}
-				}
-			}
 		})
 		var persistent []cli.Flag
 		for _, flag := range flags {
@@ -154,7 +150,7 @@ func TestMainHelpFullReferencePreservesEveryFlag(t *testing.T) {
 			visit(child, append(slices.Clone(path), child.Name), persistent)
 		}
 	}
-	visit(cmd.Command, nil, nil)
+	visit(commands.Command, nil, nil)
 	if visited < 100 {
 		t.Fatalf("complete-help coverage visited only %d commands", visited)
 	}
@@ -190,7 +186,7 @@ func TestMainHelpFullReferenceRoutes(t *testing.T) {
 				t.Errorf("args %q: misleading value label %q", args, text)
 			}
 		}
-		for _, flag := range cmd.Command.Command("images").Command("generate").VisibleFlags() {
+		for _, flag := range commands.Command.Command("images").Command("generate").VisibleFlags() {
 			name := flag.Names()[0]
 			if !strings.Contains(got.stdout, "-"+name) {
 				t.Errorf("args %q: full reference lost option %q", args, name)

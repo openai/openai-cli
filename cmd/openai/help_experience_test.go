@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openai/openai-cli/generated/commands"
 	"github.com/openai/openai-cli/internal/clihelp"
-	"github.com/openai/openai-cli/pkg/cmd"
 )
 
 func TestMainHelpExperienceRootMapAndOrdering(t *testing.T) {
@@ -16,7 +16,7 @@ func TestMainHelpExperienceRootMapAndOrdering(t *testing.T) {
 			t.Fatalf("offline overview failed: %+v", got)
 		}
 		last := -1
-		for _, group := range clihelp.VisibleCommands(cmd.Command) {
+		for _, group := range clihelp.VisibleCommands(commands.Command) {
 			if group.Category != "API RESOURCE" {
 				continue
 			}
@@ -42,7 +42,7 @@ func TestMainHelpExperienceRootMapAndOrdering(t *testing.T) {
 }
 
 func TestMainHelpExperienceUnknownTopicUsesParent(t *testing.T) {
-	const suggestion = "Did you mean 'openai admin organization projects'?"
+	const suggestion = "Unknown help topic. Did you mean: openai help admin organization projects?"
 	for _, args := range [][]string{
 		{"openai", "help", "admin", "organization", "projcts"},
 		{"openai", "help", "--all", "admin", "organization", "projcts"},
@@ -55,8 +55,8 @@ func TestMainHelpExperienceUnknownTopicUsesParent(t *testing.T) {
 		}
 	}
 	got := runMainDispatch(t, "bash", "openai", "admin", "organization", "projcts")
-	if got.code == 0 || !strings.Contains(got.stderr, suggestion) {
-		t.Errorf("direct typo suggestion differs from help: %+v", got)
+	if got.code != 3 || got.stdout != "" || !strings.Contains(got.stderr, "Unknown command. Did you mean: openai help admin organization projects?\nTo run it, correct only the command spelling. Keep your original options and arguments.") {
+		t.Errorf("direct typo lost its command suggestion: %+v", got)
 	}
 	got = runMainDispatch(t, "bash", "openai", "help", "admin", "organization", "zzzzzzzzzz")
 	if got.code != 3 || got.stdout != "" || !strings.Contains(got.stderr, "openai help admin organization") || strings.Contains(got.stderr, "zzzzzzzzzz") {
@@ -74,7 +74,7 @@ func TestMainHelpExperienceUnknownTopicUsesParent(t *testing.T) {
 
 func TestMainHelpExperienceCompleteMixedGroups(t *testing.T) {
 	for _, path := range [][]string{{"admin", "organization"}, {"admin", "organization", "projects"}, {"beta", "threads", "runs"}} {
-		group := cmd.Command
+		group := commands.Command
 		for _, part := range path {
 			group = group.Command(part)
 		}
@@ -103,8 +103,11 @@ func TestMainHelpExperienceCompleteMixedGroups(t *testing.T) {
 }
 
 func TestMainHelpExperienceLegacyTypoSuggestions(t *testing.T) {
-	const suggestion = "Did you mean 'openai audio:transcriptions'?"
 	for _, topic := range [][]string{{"audio:transcriptins"}, {"help", "audio:transcriptins"}} {
+		suggestion := "Unknown command. Did you mean: openai help audio:transcriptions?\nTo run it, correct only the command spelling. Keep your original options and arguments."
+		if topic[0] == "help" {
+			suggestion = "Unknown help topic. Did you mean: openai help audio:transcriptions?"
+		}
 		for _, format := range []string{"text", "json"} {
 			args := append([]string{"openai", "--format-error", format}, topic...)
 			got := runMainDispatch(t, "bash", args...)

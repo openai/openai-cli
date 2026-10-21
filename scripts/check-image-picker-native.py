@@ -10,12 +10,10 @@ import base64
 import importlib.util
 import json
 import pathlib
-import re
 import shutil
 import struct
 import tempfile
 import threading
-import time
 import zlib
 
 
@@ -101,26 +99,22 @@ def main():
                     replace_executable()
                 for number in range(2):
                     mark = len(terminal.raw)
-                    terminal.send(b'\x1b[200~synthetic image ' + str(number).encode() + b'\x1b[201~\r')
-                    terminal.wait('Saved image:', after=mark)
-                    saved = terminal.raw.index(b'Saved image:', mark)
-                    terminal.wait('Describe your image', after=saved)
+                    prompt = 'synthetic image ' + str(number)
+                    terminal.send(picker.END+b'\x15\x1b[200~' + prompt.encode() + b'\x1b[201~\r')
+                    picker.wait_resumed(terminal, mark, prompt)
+                    assert server.requests[-1]['prompt'] == prompt, 'picker changed request prompt'
                     # Respect the resumed picker's existing submit-key quiet guard.
-                    until = time.monotonic() + 1
-                    while time.monotonic() < until:
-                        terminal.read(0.02)
+                    picker.wait_submit_guard(terminal)
+                    assert len(server.requests) == number + 1, 'resumed picker submitted another request'
                 terminal.send(b'\x03')
                 terminal.finish(130)
                 assert len(server.requests) == 2, 'unexpected request count'
                 files = list((home / 'Downloads' / 'gpt-images').glob('*.png'))
                 assert len(files) == 2 and all(path.read_bytes() == png for path in files)
-                frames = re.findall(rb'\x1b_G([^;]*);(.*?)\x1b\\', terminal.raw, re.S)
-                assert len(frames) == terminal.raw.count(b'\x1b_G') == 2, 'missing or partial preview'
-                for header, payload in frames:
-                    fields = dict(field.split(b'=', 1) for field in header.split(b','))
-                    assert all(fields.get(k) == v for k, v in
-                               {b'a': b'T', b'f': b'100', b'm': b'0', b'q': b'2'}.items())
-                    compatibility.check_fixture_png(base64.b64decode(payload, validate=True))
+                images = compatibility.kitty_images(terminal.raw)
+                assert len(images) == 2, 'missing or partial preview'
+                for png_image in images:
+                    compatibility.check_fixture_png(png_image)
                 results.append({'case': name, 'requests': 2, 'exact_pixel_previews': 2,
                                 'saved_originals': 2, 'picker_returns': 2, 'exit': 130, 'passed': True})
                 print('PASS', name, flush=True)
