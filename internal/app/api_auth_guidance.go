@@ -36,7 +36,7 @@ func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *
 		}
 		return strings.Join(lines, "\n")
 	}
-	if message := readableAPIPermissionMessage(root, failure, apierr); message != "" {
+	if message := readableAPIAccessPermissionMessage(root, failure, apierr); message != "" {
 		return message
 	}
 	message := "The server did not accept authentication."
@@ -72,7 +72,7 @@ func readableAPIAuthenticationMessage(root *cli.Command, failure error, apierr *
 
 // Recognize the API's permission message without echoing its prose or unknown
 // scope names. Status alone does not establish why authentication failed.
-func readableAPIPermissionMessage(root *cli.Command, failure error, apierr *openai.Error) string {
+func readableAPIAccessPermissionMessage(root *cli.Command, failure error, apierr *openai.Error) string {
 	if apierr == nil || apierr.StatusCode != http.StatusUnauthorized && apierr.StatusCode != http.StatusForbidden {
 		return ""
 	}

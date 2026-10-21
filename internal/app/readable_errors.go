@@ -163,7 +163,7 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 		message = readableAPIAuthenticationMessage(root, failure, apierr)
 	case http.StatusForbidden:
 		message = "Check your key's permissions.\nCheck project access to this resource."
-		if permission := readableAPIPermissionMessage(root, failure, apierr); permission != "" {
+		if permission := readableAPIAccessPermissionMessage(root, failure, apierr); permission != "" {
 			message = permission
 		}
 	case http.StatusNotFound:
@@ -188,6 +188,13 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 	default:
 		if apierr.StatusCode >= 500 {
 			message = "The API is temporarily unavailable.\nThe API may have received the request.\nCheck its status before trying again."
+		}
+	}
+	if guidance := readableAPIPermissionMessage(failure, apierr); guidance != "" {
+		if strings.Contains(message, "Missing permission: api.webhooks.") {
+			message += "\n" + guidance
+		} else {
+			message = guidance
 		}
 	}
 	// Workflow messages contain fixed local stage/outcome guidance. Preserve
