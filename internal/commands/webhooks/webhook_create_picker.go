@@ -603,10 +603,8 @@ func (m *webhookCreatePicker) View() tea.View {
 			x, y = x+2, y+1
 		}
 		cursor = tea.NewCursor(x, y)
-		// Tea encodes (shape*2)+1+steady. This pair emits ANSI style 0,
-		// which uses the terminal's configured cursor instead of forcing a shape.
-		cursor.Shape = tea.CursorShape(-1)
-		cursor.Blink = false
+		cursor.Shape = tea.CursorBar
+		cursor.Blink = true
 	}
 	switch m.stage {
 	case 0, 1, 2:

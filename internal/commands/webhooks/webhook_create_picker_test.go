@@ -762,7 +762,7 @@ func TestWebhookPickerCleanupCancellationKeepsRealErrors(t *testing.T) {
 	}
 }
 
-func TestWebhookCreatePickerDefaultCursorAndCompactSpacing(t *testing.T) {
+func TestWebhookCreatePickerBlinkingTextCursorAndCompactSpacing(t *testing.T) {
 	for _, size := range [][2]int{{80, 24}, {36, 10}, {40, 12}} {
 		m := newWebhookCreatePicker([]string{"response.completed", "response.failed"})
 		m.width, m.height, m.color = size[0], size[1], true
@@ -788,8 +788,8 @@ func TestWebhookCreatePickerDefaultCursorAndCompactSpacing(t *testing.T) {
 				_, offset := input.viewport(inputWidth, "")
 				painted := m.View()
 				require.NotNil(t, painted.Cursor)
-				require.Equal(t, tea.CursorShape(-1), painted.Cursor.Shape, "request the terminal's default cursor")
-				require.False(t, painted.Cursor.Blink)
+				require.Equal(t, tea.CursorBar, painted.Cursor.Shape, "text editing uses a thin cursor")
+				require.True(t, painted.Cursor.Blink)
 				require.Equal(t, column+offset, painted.Cursor.X)
 				require.Less(t, painted.Cursor.X, size[0]-2)
 				lines := strings.Split(ansi.Strip(painted.Content), "\n")
