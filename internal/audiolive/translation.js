@@ -183,6 +183,7 @@
     if (event.type === 'error') fail(run,new Error(event.message));
     if (event.type === 'session.closed') {
       run.closed = true; releaseCapture(run);
+      if (!run.hasOutput) stopOutput().catch(() => {});
       const restored = restoreRecording(run);
       if (!restored) { complete = true; prepareRecording(); }
       setState('ready'); updateSource(); status(restored ? 'No translated output. Previous recording kept.' : run.hasOutput ? 'Finished' : 'No translated output.');

@@ -219,3 +219,18 @@ test('playback scheduling failure retains received audio for saving',async()=>{
   assert.equal(p.elements.get('download').disabled,false);
   p.elements.get('download').onclick();assert.deepEqual(Buffer.from(await p.downloads[0].blob.arrayBuffer()).subarray(44),pcm);p.close();
 });
+
+test('an empty replacement closes its output context and restores the previous seek position',async()=>{
+  const p=page();await p.elements.get('start').onclick();
+  const pcm=Buffer.alloc(48000);
+  p.emit({type:'session.output_audio.delta',delta:pcm.toString('base64')});await settle();
+  await p.elements.get('start').onclick();await settle();
+  p.elements.get('waveform').onclick({clientX:250});
+  await p.elements.get('start').onclick();
+  p.emit({type:'session.closed'});await settle();p.frame();
+  assert.equal(p.contexts[3].state,'closed');
+  assert.equal(p.elements.get('player').currentTime,.5);
+  assert.equal(p.elements.get('time').textContent,'00:00.500 / 00:01.000');
+  assert.match(p.elements.get('status').textContent,/Previous recording kept/);
+  p.elements.get('download').onclick();assert.equal((await p.downloads[0].blob.arrayBuffer()).byteLength,48044);p.close();
+});
