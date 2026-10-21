@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/openai/openai-cli/internal/audiohistory"
 	"github.com/stretchr/testify/require"
@@ -88,16 +89,40 @@ func TestAudioHistoryDateUsesLocalCalendarAcrossDST(t *testing.T) {
 }
 
 func TestAudioMoreActionsPreservesEveryActionAtCompactSizes(t *testing.T) {
-	for _, height := range []int{12, 13, 14, 24, 32} {
-		m := audioReviewModel(t)
-		m.width, m.height = 60, height
-		for i, item := range m.moreItems() {
-			m.moreChoice = i
-			view := ansi.Strip(m.moreView().Content)
-			require.Contains(t, view, "› "+item)
-			require.Contains(t, view, "Back to form")
-			require.Contains(t, view, "[Enter] Choose  [Esc] Back")
-			require.LessOrEqual(t, len(strings.Split(view, "\n")), height-1)
+	for _, width := range []int{40, 60, 90} {
+		for _, height := range []int{12, 13, 14, 24, 32} {
+			for _, failed := range []bool{false, true} {
+				m := audioReviewModel(t)
+				m.width, m.height = width, height
+				if failed {
+					m.rememberFailure("speech", audioFailure("Synthetic failure.", nil))
+				}
+				for i, item := range m.moreItems() {
+					m.moreChoice = i
+					view := ansi.Strip(m.moreView().Content)
+					require.Contains(t, view, "› "+item)
+					require.NotContains(t, view, "Back to form")
+					require.Contains(t, view, "[Esc] Back")
+					require.LessOrEqual(t, len(strings.Split(view, "\n")), height-1)
+				}
+			}
 		}
 	}
+}
+
+func TestAudioMoreActionsKeepsDraftContextAndEscapePreservesResult(t *testing.T) {
+	m := audioReviewModel(t)
+	m.input.SetValue("Keep this draft while browsing actions.")
+	r := audioReviewResult("retained", false)
+	m.result = &r
+	m.modal = "more"
+	view := ansi.Strip(m.View().Content)
+	require.Contains(t, view, m.input.Value())
+	require.Contains(t, view, "Text to speech")
+	require.Contains(t, view, "More actions")
+	require.NotContains(t, view, "Back to form")
+	audioReviewKey(m, tea.KeyEscape)
+	require.Empty(t, m.modal)
+	require.Equal(t, "Keep this draft while browsing actions.", m.input.Value())
+	require.Same(t, &r, m.result)
 }

@@ -70,7 +70,7 @@ func audioWaveform(peaks []float64, width, height, selectedBoundary int) []strin
 				cell = blocks[level]
 			case level == 0:
 				if row == height/2 {
-					cell = '─'
+					cell = '·'
 				}
 			default:
 				// Two vertical half-cells per row keep both halves symmetric.
@@ -78,11 +78,11 @@ func audioWaveform(peaks []float64, width, height, selectedBoundary int) []strin
 				bottom := row*2+1 >= height-level && row*2+1 < height+level
 				switch {
 				case top && bottom:
-					cell = '█'
+					cell = '┃'
 				case top:
-					cell = '▀'
+					cell = '╹'
 				case bottom:
-					cell = '▄'
+					cell = '╻'
 				}
 			}
 			cells[column*2+1] = cell

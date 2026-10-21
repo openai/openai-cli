@@ -90,7 +90,9 @@ func TestAudioResultViewKeepsWaveformAndControlsVisible(t *testing.T) {
 					require.Contains(t, view, "00:00.750 / 00:02.250")
 					require.Contains(t, view, "│")
 					if size[1] >= 24 && size[0] >= 60 {
-						require.Contains(t, view, "█", "quiet speech must have a visible relative shape")
+						require.Contains(t, view, "┃", "quiet speech must retain a visible thin shape")
+						require.NotContains(t, view, "█")
+						require.Contains(t, view, audioDefaultSaveFolder)
 					} else {
 						require.Contains(t, view, "█")
 					}
@@ -164,4 +166,16 @@ func TestAudioSaveViewKeepsFailureRecoveryVisible(t *testing.T) {
 			require.LessOrEqual(t, len(strings.Split(view, "\n")), 11)
 		})
 	}
+}
+
+func TestAudioResultDistinguishesSuggestedFolderFromCompletedExport(t *testing.T) {
+	m := audioReviewModel(t)
+	r := audioReviewResult("retained", false)
+	m.result, m.focus = &r, 4
+	view := ansi.Strip(m.View().Content)
+	require.Contains(t, view, "Save audio…  "+audioDefaultSaveFolder)
+	require.NotContains(t, view, "Saved:")
+	r.savedPaths = []string{"/chosen/folder/recording.wav"}
+	view = ansi.Strip(m.View().Content)
+	require.Contains(t, view, "Saved: /chosen/folder/recording.wav")
 }

@@ -14,9 +14,9 @@ func TestAudioWaveformPreservesFractionalRatios(t *testing.T) {
 	if got := audioWaveform(peaks, 19, 1, 0); !slices.Equal(got, []string{"│─ ▁ ▂ ▃ ▄ ▅ ▆ ▇ █ "}) {
 		t.Fatalf("compact relative amplitudes: %q", got)
 	}
-	want := []string{"│    ▄ █ ", "│─ █ █ █ ", "│    ▀ █ "}
+	want := []string{"│    ╻ ┃ ", "│· ┃ ┃ ┃ ", "│    ╹ ┃ "}
 	if got := audioWaveform([]float64{0, .25, .5, 1}, 9, 3, 0); !slices.Equal(got, want) {
-		t.Fatalf("solid relative amplitudes: %q; want %q", got, want)
+		t.Fatalf("thin relative amplitudes: %q; want %q", got, want)
 	}
 }
 
@@ -57,7 +57,7 @@ func TestAudioWaveformPreservesIntervalTransientMaxima(t *testing.T) {
 
 func TestAudioWaveformSilenceAndInvalidPeaks(t *testing.T) {
 	zero := []float64{0, 0, 0}
-	want := []string{"  │    ", " ─│─ ─ ", "  │    "}
+	want := []string{"  │    ", " ·│· · ", "  │    "}
 	if got := audioWaveform(zero, 7, 3, 1); !slices.Equal(got, want) {
 		t.Fatalf("silence invented variation: %q; want %q", got, want)
 	}
@@ -155,7 +155,7 @@ func TestAudioWaveformQuietTailDoesNotBecomeFullCenterBars(t *testing.T) {
 		for _, column := range []int{3, 5} {
 			want := ' '
 			if row == 2 {
-				want = '─'
+				want = '·'
 			}
 			if cells[column] != want {
 				t.Fatalf("quiet tail is exaggerated at row %d: %q", row, rows)

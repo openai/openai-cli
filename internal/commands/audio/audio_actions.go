@@ -182,7 +182,7 @@ func (m *audioWorkbench) moreItems() []string {
 	if m.activeFailure() {
 		items = append(items, "Last error")
 	}
-	return append(items, "Back to form")
+	return items
 }
 
 func (m *audioWorkbench) updateMore(key string) tea.Cmd {

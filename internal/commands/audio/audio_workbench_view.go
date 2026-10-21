@@ -303,8 +303,12 @@ func (m *audioWorkbench) resultRows(compact, full bool) []string {
 	} else if longTime {
 		play += " · " + position
 	}
+	save := "Save audio…"
+	if !compact {
+		save += "  " + m.muted().Render(audioDefaultSaveFolder)
+	}
 	lines = append(lines, m.actionRow(play, m.focus == 4 && m.resultAction == 0, false),
-		m.actionRow("Save audio…", m.focus == 4 && m.resultAction == 1, false))
+		m.actionRow(save, m.focus == 4 && m.resultAction == 1, false))
 	if m.focus == 4 {
 		hint := "←→ seek · Space play · Esc back"
 		if m.playing {
@@ -384,13 +388,24 @@ func audioFileSize(bytes int64) string {
 func (m *audioWorkbench) moreView() tea.View {
 	items := m.moreItems()
 	lines := []string{m.strong().Render("  More actions")}
+	if m.height >= 24 && m.width >= 60 {
+		// Keep the draft above secondary actions, as in the image picker.
+		prompt := m.formEditorRows("Text", m.input, false)
+		if len(prompt)+len(items)+5 < m.height {
+			lines = append([]string{m.strong().Render("  Text to speech")}, prompt...)
+			lines = append(lines, m.strong().Render("  More actions"))
+		}
+	}
 	for index, label := range items {
-		lines = append(lines, m.actionRow(label, index == m.moreChoice, false))
+		if index == m.moreChoice {
+			label = m.strong().Render(label)
+		}
+		lines = append(lines, m.label(label, index == m.moreChoice))
 	}
 	if m.height > len(lines)+2 {
 		lines = append(lines, "")
 	}
-	lines = append(lines, m.shortcutLine([2]string{"Enter", "Choose"}, [2]string{"Esc", "Back"}))
+	lines = append(lines, m.shortcutLine([2]string{"Esc", "Back"}))
 	return tea.NewView(m.fitAudio(lines))
 }
 
