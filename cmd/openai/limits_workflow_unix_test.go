@@ -58,7 +58,7 @@ func TestMainLimitsBorrowedWriterProcess(t *testing.T) {
 	commands.Command.Writer, commands.Command.Reader = borrowed, os.Stdin
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 	defer cancel()
-	code := app.Run(ctx, os.Args[separator+1:])
+	code := app.Run(ctx, os.Args[separator+1:], commands.Command)
 	if err := ctx.Err(); err != nil {
 		t.Fatal("workspace required fallback cancellation", err)
 	}
