@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/openai/openai-cli/internal/app"
 	"github.com/tidwall/gjson"
 )
 
@@ -425,6 +426,9 @@ func TestMainLimitsWorkflowEnvironmentHeadersAndDebug(t *testing.T) {
 			server, _ := newLimitsWorkflowServer(t, func(r *http.Request) (int, string) {
 				if r.Header.Get("X-Limits-Env") != "synthetic-private-header" {
 					t.Error("overview lost configured environment headers")
+				}
+				if r.Header.Get("User-Agent") != "OpenAI/CLI "+app.Version || r.Header.Get("X-Stainless-Package-Version") != app.Version {
+					t.Error("overview lost the CLI version metadata")
 				}
 				return limitsWorkflowSuccess(t, false, r)
 			})

@@ -44,6 +44,10 @@ func registerLimitsCommands(root *cli.Command) {
 		routes = append(routes, projects.Command("rate-limits"))
 	}
 	// Subgroup cloning already created the preserved colon route.
+	dailyTokens := &requestflag.Flag[int64]{
+		Name: "max-tokens-per-1-day", BodyPath: "max_tokens_per_1_day",
+		Usage: "The maximum number of tokens per day for this model.",
+	}
 	for _, rates := range routes {
 		if rates == nil {
 			continue
@@ -59,10 +63,7 @@ func registerLimitsCommands(root *cli.Command) {
 			}
 		}
 		if !found {
-			update.Flags = append(update.Flags, &requestflag.Flag[int64]{
-				Name: "max-tokens-per-1-day", BodyPath: "max_tokens_per_1_day",
-				Usage: "The maximum number of tokens per day for this model.",
-			})
+			update.Flags = append(update.Flags, dailyTokens)
 		}
 	}
 }
