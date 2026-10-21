@@ -25,14 +25,18 @@ func TestPickerRenameCapabilityClassification(t *testing.T) {
 		{"success", nil, false},
 		{"ENOSYS", unix.ENOSYS, true},
 		{"EOPNOTSUPP", unix.EOPNOTSUPP, true},
-		{"EINVAL", unix.EINVAL, false},
+		{"EINVAL", unix.EINVAL, true},
 		{"EACCES", unix.EACCES, false},
+		{"EPERM", unix.EPERM, false},
+		{"EROFS", unix.EROFS, false},
 		{"EEXIST", unix.EEXIST, false},
 		{"ENOENT", unix.ENOENT, false},
+		{"EBADF", unix.EBADF, false},
 		{"EXDEV", unix.EXDEV, false},
 		{"canceled", context.Canceled, false},
 		{"deadline", context.DeadlineExceeded, false},
 		{"wrapped unrelated operation", &os.PathError{Op: "open", Path: "synthetic-private", Err: unix.ENOSYS}, false},
+		{"wrapped unrelated EINVAL", &os.PathError{Op: "open", Path: "synthetic-private", Err: unix.EINVAL}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := pickerRenameCapabilityError(tc.err)
@@ -45,11 +49,13 @@ func TestPickerRenameCapabilityClassification(t *testing.T) {
 			}
 		})
 	}
-	joined := errors.Join(errPickerProfilePublished, pickerRenameCapabilityError(unix.ENOSYS), context.Canceled)
-	require.ErrorIs(t, joined, errPickerProfilePublished)
-	require.ErrorIs(t, joined, context.Canceled)
-	require.ErrorIs(t, joined, unix.ENOSYS)
-	require.ErrorIs(t, joined, ErrPickerAtomicRenameUnsupported)
+	for _, errno := range []error{unix.ENOSYS, unix.EOPNOTSUPP, unix.EINVAL} {
+		joined := errors.Join(errPickerProfilePublished, pickerRenameCapabilityError(errno), context.Canceled)
+		require.ErrorIs(t, joined, errPickerProfilePublished)
+		require.ErrorIs(t, joined, context.Canceled)
+		require.ErrorIs(t, joined, errno)
+		require.ErrorIs(t, joined, ErrPickerAtomicRenameUnsupported)
+	}
 }
 
 // The lane selects its expected contract explicitly. A refusal never turns a
@@ -81,6 +87,8 @@ func TestPickerNativeSetupContract(t *testing.T) {
 			observed = "ENOSYS"
 		case errors.Is(err, unix.EOPNOTSUPP):
 			observed = "EOPNOTSUPP"
+		case errors.Is(err, unix.EINVAL):
+			observed = "EINVAL"
 		default:
 			t.Fatalf("capability refusal lost its operation errno: %v", err)
 		}
