@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/openai/openai-cli/internal/autocomplete"
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	"github.com/openai/openai-cli/internal/commands/images"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )

@@ -114,3 +114,21 @@ func TestImagePickerReplacingResizedRowsPreservesLaterImages(t *testing.T) {
 	require.Equal(t, "other image", w.rows[w.images[1].start+2])
 	require.Equal(t, "retained diagnostic", w.rows[len(w.rows)-1])
 }
+
+func TestImagePickerResizeCompletionClearsPendingAfterSelectionChanges(t *testing.T) {
+	w := &imagePickerWorkspace{previewRevision: 3, previewPending: true, selected: 1, images: []imagePickerWorkspaceImage{{}, {}}}
+	p := &imagePickerInline{workspace: w}
+	handled, _ := p.updateWorkspace(imagePickerExpandedRows{revision: 3, index: 0, rows: []string{"resized"}, inline: true})
+	require.True(t, handled)
+	require.False(t, w.previewPending, "the completed worker cannot remain pending after selection changes")
+}
+
+func TestImagePickerBackCancelsPendingPreviewForReentry(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	w := &imagePickerWorkspace{previewPending: true, expanded: true, previewCancel: cancel}
+	p := &imagePickerInline{workspace: w}
+	p.closeExpanded()
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+	require.False(t, w.previewPending, "returning to this image must permit a new worker")
+	require.False(t, w.expanded)
+}

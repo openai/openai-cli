@@ -116,6 +116,9 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	case imagePickerExpandedRows:
 		w := p.workspace
+		if msg.revision == w.previewRevision {
+			w.previewPending = false
+		}
 		if msg.revision == w.previewRevision && msg.index == w.selected {
 			w.previewPending = false
 			if msg.inline {
@@ -278,6 +281,7 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 				break
 			}
 			if msg.String() == "enter" || msg.String() == "left" || msg.String() == "right" || msg.String() == "up" || msg.String() == "down" || msg.String() == "home" || msg.String() == "end" || msg.String() == "esc" {
+				p.prepareExpanded()
 				draw(true)
 				return true, nil
 			}

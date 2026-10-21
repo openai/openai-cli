@@ -20,6 +20,7 @@ func TestPrepareRowsNativeAndBlocksStayIndependent(t *testing.T) {
 		require.NoError(t, err, protocol)
 		require.Len(t, rows, 4, protocol)
 		for _, row := range rows {
+			require.Equal(t, 8, RowColumns(row), "prepared rows must report their actual encoded cell width")
 			require.NotContains(t, row, "\n")
 			if protocol == "kitty" {
 				require.Contains(t, row, "r=1")
