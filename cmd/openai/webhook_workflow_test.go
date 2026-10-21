@@ -833,7 +833,7 @@ steps = [(b"> Name", b"Synthetic receiver\x1b[Bhttps://example.com/webhook\x1b[B
          (b"Create endpoint now?", b"y\r\r\r")] if config["Confirm"] else []
 if config["Browse"]:
     steps = [(b"> Name", b"Draft receiver\x1b[Bhttps://example.invalid/draft\x1b[B\x1b[B\x1b[B\t\x1b[C\r"),
-             (b"Synthetic first", b"\r"), (b"ID: whe_visible", b"\x1b"),
+             (b"Synthetic first", b"\r"), (b"ID      whe_visible", b"\x1b"),
              (b"> Synthetic first", b"\x1b"), (b"> [ Existing webhooks ]", b"\x1b")]
 step = 0
 step_start = 0
