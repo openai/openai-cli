@@ -979,8 +979,8 @@ def wide_case(ctx):
     ctx.paste(terminal, draft)
     terminal.send(b"\t\t" + ctx.picker.END)
     ctx.wait(terminal, "› More actions…")
-    for keys, label in [(ctx.picker.LEFT, "History"), (ctx.picker.LEFT, "Generate speech"),
-                        (ctx.picker.RIGHT, "History"), (ctx.picker.RIGHT, "More actions…")]:
+    for keys, label in [(b"\x1b[D", "History"), (b"\x1b[D", "Generate speech"),
+                        (b"\x1b[C", "History"), (b"\x1b[C", "More actions…")]:
         terminal.send(keys)
         ctx.wait(terminal, "› " + label)
         assert not server.records, "Horizontal navigation generated speech"
