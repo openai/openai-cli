@@ -264,6 +264,10 @@ func finishLimitsWorkspace(ctx context.Context, m *limitsWorkspace, runErr error
 		opts.Operation, opts.OutputKind = m.lastSavedOperation, OutputResponse
 		opts.Title = "Last confirmed result"
 		receiptErr = ShowJSON(m.lastSaved, opts)
+		if receiptErr != nil {
+			// Keep the confirmed outcome independent so EPIPE suppression cannot discard it.
+			receiptErr = errors.Join(&limitsWorkflowFailure{message: "A limits change was confirmed, but its receipt could not be printed. Inspect its current state before another change.\n" + m.readRecoveryFor("overview")}, receiptErr)
+		}
 	}
 	var overviewErr error
 	if incomplete {
