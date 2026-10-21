@@ -217,12 +217,27 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 	if compact {
 		inner, overhead = width, 3
 	}
+	bindings := []string{"Tab actions", "Esc back"}
+	if b.actions {
+		content := "Tab list"
+		if b.details {
+			content = "Tab details"
+		}
+		bindings = []string{"←→ action", "Enter choose", content, "Esc back"}
+	} else if b.details {
+		bindings = []string{"↑↓ scroll", "Tab actions", "Esc back"}
+	} else if !b.loading && len(b.items) > 0 {
+		bindings = []string{"↑↓ move", "Enter details", "Tab actions", "Esc back"}
+	}
+	controls := webhookCreateControls(inner, m.color, quiet, bindings...)
+	overhead += len(controls)
 	table := !compact && !b.loading && !b.details && len(b.items) > 0
 	if table {
 		overhead += 2 // Column headings and their connected rule.
-		if b.note != "" {
-			overhead++ // End the columns before a full-width error note.
-		}
+	}
+	columns := !compact && !b.loading && len(b.items) > 0
+	if columns && b.note != "" {
+		overhead++ // End the columns before a full-width error note.
 	}
 	panelSplit := 0
 	dividers := map[int]string{}
@@ -236,12 +251,25 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 		rows = []string{"Loading webhooks..."}
 	} else if b.details && len(b.items) > 0 {
 		item := b.items[b.current]
-		rows = []string{strong.Render("Name    ") + webhookCreateLine(item.name), strong.Render("ID      ") + webhookCreateLine(item.id),
-			strong.Render("URL     ") + webhookCreateLine(item.url), strong.Render("Events")}
-		for _, event := range item.events {
-			rows = append(rows, "        "+webhookCreateLine(event))
+		valueColumn, separator := 9, " "
+		if !compact {
+			valueColumn, panelSplit, separator = 11, 11, rule.Render(" │ ")
 		}
-		rows = strings.Split(ansi.Hardwrap(strings.Join(rows, "\n"), inner, false), "\n")
+		field := func(label string, values []string) {
+			if len(values) == 0 {
+				values = []string{""}
+			}
+			for _, value := range values {
+				for _, line := range strings.Split(ansi.Hardwrap(webhookCreateLine(value), inner-valueColumn, false), "\n") {
+					rows = append(rows, "  "+strong.Render(fmt.Sprintf("%-6s", label))+separator+line)
+					label = ""
+				}
+			}
+		}
+		field("Name", []string{item.name})
+		field("ID", []string{item.id})
+		field("URL", []string{item.url})
+		field("Events", item.events)
 		b.offset = min(b.offset, max(0, len(rows)-available))
 		rows = rows[b.offset:min(len(rows), b.offset+available)]
 	} else if len(b.items) == 0 {
@@ -285,11 +313,11 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 			header := "  " + strong.Render("Endpoint"+strings.Repeat(" ", nameWidth-8)) + rule.Render(" │ ") + strong.Render("ID")
 			rows = append([]string{header, ""}, rows...)
 			dividers[1] = "┼"
-			if len(note) > 0 {
-				dividers[len(rows)] = "┴"
-				rows = append(rows, "")
-			}
 		}
+	}
+	if columns && len(note) > 0 {
+		dividers[len(rows)] = "┴"
+		rows = append(rows, "")
 	}
 	rows = append(rows, note...)
 	back, refresh := "  [ Back ]", "  [ Refresh ]"
@@ -300,11 +328,12 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 	}
 	if !compact {
 		dividers[len(rows)] = "─"
-		if table && len(note) == 0 {
+		if columns && len(note) == 0 {
 			dividers[len(rows)] = "┴"
 		}
 	}
 	rows = append(rows, "", strong.Render(back)+"  "+strong.Render(refresh))
+	rows = append(rows, controls...)
 	for index := range rows {
 		rows[index] = ansi.Truncate(rows[index], inner, "…")
 	}

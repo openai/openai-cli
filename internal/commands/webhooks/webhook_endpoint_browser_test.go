@@ -18,36 +18,32 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func TestWebhookCreateCategoryMenuSelectsDirectlyAndCancelsWithoutChanges(t *testing.T) {
+func TestWebhookCreateCategoryArrowsKeepSelectionsAndEnterMovesToSearch(t *testing.T) {
 	for _, size := range [][2]int{{80, 24}, {36, 10}} {
 		m := newWebhookCreatePicker([]string{"agent.session.created", "batch.completed", "response.completed", "future.event"})
 		m.width, m.height, m.stage = size[0], size[1], 2
 		m.selected["agent.session.created"] = true
-		webhookCreateKey(m, tea.KeyEnter)
-		require.True(t, m.categoryOpen)
-		webhookCreateKey(m, tea.KeyEnd)
+		webhookCreateKey(m, tea.KeyLeft)
 		view := ansi.Strip(m.View().Content)
-		require.Contains(t, view, "> Other")
-		require.LessOrEqual(t, strings.Count(view, "\n")+1, size[1]-1)
-		webhookCreateKey(m, tea.KeyEnter)
-		require.False(t, m.categoryOpen)
+		require.Contains(t, view, "‹ Other ›")
+		require.NotContains(t, view, "▾")
+		require.Contains(t, view, "←→ category")
 		require.Equal(t, []string{"future.event"}, m.filteredEvents())
 		require.True(t, m.selected["agent.session.created"])
-		require.Equal(t, webhookCreateChoices, m.eventFocus)
-		m.eventFocus = webhookCreateCategory
+		webhookCreateKey(m, tea.KeyEnter)
+		require.Equal(t, webhookCreateSearch, m.eventFocus)
+		require.NotNil(t, m.View().Cursor)
 		m.search.insert("retained query")
-		webhookCreateKey(m, tea.KeyEnter)
-		webhookCreateKey(m, tea.KeyHome)
-		webhookCreateKey(m, tea.KeyEscape)
-		require.False(t, m.canceled)
-		require.False(t, m.categoryOpen)
-		require.Equal(t, "Other", m.categories()[m.category])
-		require.Equal(t, "retained query", string(m.search.value))
-		webhookCreateKey(m, tea.KeyEnter)
-		webhookCreateKey(m, tea.KeyHome)
-		webhookCreateKey(m, tea.KeyEnter)
-		require.Len(t, m.filteredEvents(), 4)
+		webhookCreateKey(m, tea.KeyLeft)
+		require.Equal(t, "Other", m.categories()[m.category], "search arrows edit text")
+		webhookCreateKey(m, tea.KeyUp)
+		webhookCreateKey(m, tea.KeyRight)
+		require.Equal(t, "All event types", m.categories()[m.category])
+		require.Empty(t, m.search.value)
+		require.True(t, m.selected["agent.session.created"])
 		require.False(t, m.confirmed)
+		webhookCreateKey(m, tea.KeyEscape)
+		require.True(t, m.canceled, "Escape cancels without a nested menu")
 	}
 }
 
@@ -179,6 +175,56 @@ func TestWebhookCreateEndpointBrowserAlignsUnicodeNamesAndKeepsDetails(t *testin
 	view := ansi.Strip(m.View().Content)
 	require.Contains(t, view, strings.Repeat("通知", 12))
 	require.Contains(t, view, "https://example.invalid/long")
+}
+
+func TestWebhookCreateEndpointDetailsScrollCompleteValuesWithVisibleControls(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {36, 10}} {
+		m := newWebhookCreatePicker([]string{"response.completed"})
+		m.width, m.height = size[0], size[1]
+		url := "https://example.invalid/" + strings.Repeat("long-path/", 80) + "end-marker"
+		events := []string{"response.completed", "response.failed", "future.event"}
+		m.browser = &webhookEndpointBrowser{active: true, details: true, items: []webhookEndpoint{{name: "Full values", id: "whe_full", url: url, events: events}}}
+		rows := map[int]string{}
+		for range 100 {
+			view := ansi.Strip(m.View().Content)
+			require.Contains(t, view, "↑↓ scroll")
+			require.Contains(t, view, "Tab actions")
+			require.Contains(t, view, "Esc back")
+			lines := strings.Split(view, "\n")
+			start, column := 2, 11
+			if size[1] < 15 {
+				start, column = 1, 9
+			}
+			for i := start; i < len(lines); i++ {
+				line := lines[i]
+				if line == "" || strings.HasPrefix(line, "├") {
+					break
+				}
+				if strings.HasPrefix(line, "│ ") {
+					line = strings.TrimSuffix(strings.TrimPrefix(line, "│ "), " │")
+				}
+				rows[m.browser.offset+i-start] = strings.TrimRight(line[column:], " ")
+			}
+			before := m.browser.offset
+			webhookCreateKey(m, tea.KeyDown)
+			m.View()
+			if before == m.browser.offset {
+				break
+			}
+		}
+		var complete strings.Builder
+		for i := range len(rows) {
+			complete.WriteString(rows[i])
+		}
+		for _, value := range append([]string{"Full values", "whe_full", url}, events...) {
+			require.Contains(t, complete.String(), value)
+		}
+		webhookCreateKey(m, tea.KeyTab)
+		require.Contains(t, ansi.Strip(m.View().Content), "Tab details")
+		webhookCreateKey(m, tea.KeyEscape)
+		require.False(t, m.browser.details)
+		require.False(t, m.confirmed)
+	}
 }
 
 func TestWebhookCreateEndpointDiscoveryKeepsScopeAndPagination(t *testing.T) {

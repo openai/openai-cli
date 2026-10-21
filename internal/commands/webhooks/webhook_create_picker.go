@@ -163,8 +163,6 @@ type webhookCreatePicker struct {
 	selected             map[string]bool
 	current, offset      int
 	category             int
-	categoryOpen         bool
-	categoryChoice       int
 	eventFocus           webhookCreateEventFocus
 	reviewOffset         int
 	reviewFocused        bool
@@ -257,10 +255,6 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.browser.back()
 		return m, nil
 	}
-	if key, ok := message.(tea.KeyPressMsg); ok && key.String() == "esc" && m.categoryOpen {
-		m.categoryOpen = false
-		return m, nil
-	}
 	if key, ok := message.(tea.KeyPressMsg); ok && (key.String() == "ctrl+c" || key.String() == "esc") {
 		m.canceled, m.confirmed = true, false
 		return m, tea.Quit
@@ -279,7 +273,7 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.width < 36 || m.height < 10 {
 			return m, nil
 		}
-		if m.stage < 3 && !m.reviewFocused && !m.categoryOpen && (m.browser == nil || !m.browser.active) {
+		if m.stage < 3 && !m.reviewFocused && (m.browser == nil || !m.browser.active) {
 			if m.stage == 2 {
 				m.eventFocus = webhookCreateSearch
 			}
@@ -299,27 +293,6 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		key := msg.String()
 		if m.browser != nil && m.browser.active {
 			return m, m.browser.update(key)
-		}
-		if m.categoryOpen {
-			last := len(m.categories()) - 1
-			switch key {
-			case "up":
-				m.categoryChoice = max(0, m.categoryChoice-1)
-			case "down":
-				m.categoryChoice = min(last, m.categoryChoice+1)
-			case "home", "pgup":
-				m.categoryChoice = 0
-			case "end", "pgdown":
-				m.categoryChoice = last
-			case "enter", "space", " ":
-				m.chooseCategory(m.categoryChoice)
-				m.categoryOpen, m.eventFocus = false, webhookCreateChoices
-			case "tab":
-				m.categoryOpen, m.eventFocus = false, webhookCreateSearch
-			case "shift+tab":
-				m.categoryOpen = false
-			}
-			return m, nil
 		}
 		if key == "shift+tab" {
 			if m.reviewFocused {
@@ -405,10 +378,6 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.stage == 2 {
-			if m.eventFocus == webhookCreateCategory && (key == "enter" || key == "space" || key == " ") {
-				m.categoryOpen, m.categoryChoice = true, m.category
-				return m, nil
-			}
 			if m.eventFocus != webhookCreateChoices {
 				switch key {
 				case "enter", "tab", "down":
@@ -630,9 +599,6 @@ func (i *webhookCreateInput) viewport(width int, placeholder string) (string, in
 
 func (m *webhookCreatePicker) View() tea.View {
 	width, height := max(1, min(76, m.width-2)), max(1, min(18, m.height-1))
-	if m.categoryOpen {
-		height = max(1, min(22, m.height-1))
-	}
 	if m.canceled {
 		return m.frame([]string{"Webhook creation canceled."}, width, height)
 	}
@@ -662,18 +628,6 @@ func (m *webhookCreatePicker) View() tea.View {
 	inner := width - 4 // Border and one padding cell on each side.
 	clip := func(s string) string { return ansi.Truncate(s, inner, "…") }
 	active := func(s string) string { return selected.Render(clip(s)) }
-	controls := func(bindings ...string) string {
-		parts := make([]string, 0, len(bindings))
-		for _, binding := range bindings {
-			key, label, _ := strings.Cut(binding, " ")
-			part := lipgloss.NewStyle().Bold(m.color).Render(key)
-			if label != "" {
-				part += quiet.Render(" " + label)
-			}
-			parts = append(parts, part)
-		}
-		return "  " + strings.Join(parts, "  ")
-	}
 	compact := height < 14
 	if compact && m.stage < 3 {
 		inner = width // Short terminals omit decoration, not fields or controls.
@@ -724,21 +678,44 @@ func (m *webhookCreatePicker) View() tea.View {
 		if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateCategory {
 			eventLabel = "> Events"
 		}
-		arrow := " ▾"
-		if m.categoryOpen {
-			arrow = " ▴"
-		}
-		body = append(body, strong.Render(eventLabel)+separator+ansi.Truncate(m.categories()[m.category]+arrow, inner-valueColumn, "…"))
+		category := "‹ " + ansi.Truncate(m.categories()[m.category], inner-valueColumn-4, "…") + " ›"
+		body = append(body, strong.Render(eventLabel)+separator+category)
 		body = append(body, field("Search", &m.search, "Type an event or group name",
 			m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateSearch, len(body)))
 		if !compact {
 			divide("┴")
 		}
 		matches := m.filteredEvents()
-		var footer []string
-		if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateChoices && !m.categoryOpen {
-			footer = []string{controls("Space select", "Ctrl+A all")}
+		bindings := []string{"↑↓ move", "Tab next", "Esc cancel"}
+		if m.reviewFocused {
+			enter := "Enter continue"
+			if m.existingFocused {
+				enter = "Enter open"
+			}
+			bindings = []string{"←→ action", enter, "↑ back", "Esc cancel"}
+			if m.browser == nil {
+				bindings = []string{enter, "↑ back", "Esc cancel"}
+			} else if compact {
+				bindings = []string{"←→", enter, "Esc cancel"}
+			}
+		} else if m.stage == 2 {
+			switch m.eventFocus {
+			case webhookCreateCategory:
+				bindings = []string{"←→ category", "↑↓ move", "Esc cancel"}
+			case webhookCreateSearch:
+				bindings = []string{"↑↓ move", "Tab next", "Esc cancel"}
+			case webhookCreateChoices:
+				move := "↑↓ move"
+				if inner < 55 {
+					move = "↑↓"
+				}
+				bindings = []string{move, "Space select", "Ctrl+A all", "Enter next", "Esc cancel"}
+				if compact && m.note != "" {
+					bindings = []string{"Space select", "Esc cancel"}
+				}
+			}
 		}
+		footer := webhookCreateControls(inner, m.color, quiet, bindings...)
 		// Reserve complete controls before sizing the event viewport.
 		overhead, tail := 1, 1+len(footer)
 		if !compact {
@@ -790,17 +767,6 @@ func (m *webhookCreatePicker) View() tea.View {
 			row := checkbox + name + leaf
 			rows = append(rows, row)
 		}
-		if m.categoryOpen {
-			rows, headingRows = nil, map[int]bool{}
-			for index, category := range m.categories() {
-				row := "  " + webhookCreateLine(category)
-				if index == m.categoryChoice {
-					row = strong.Render("> " + webhookCreateLine(category))
-				}
-				rows = append(rows, row)
-			}
-			currentRow = m.categoryChoice
-		}
 		m.offset = min(m.offset, max(0, len(rows)-available))
 		if currentRow < m.offset {
 			m.offset = max(0, currentRow-1)
@@ -850,7 +816,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			details = append(details, "  "+webhookCreateLine(event))
 		}
 		wrapped := strings.Split(ansi.Hardwrap(strings.Join(details, "\n"), inner, false), "\n")
-		available := max(1, height-6)
+		available := max(1, height-5-len(webhookCreateControls(inner, m.color, quiet, "←→ choose", "Enter confirm", "Esc cancel")))
 		if m.note != "" {
 			available = max(1, available-1)
 		}
@@ -867,8 +833,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			choice = " No   [Yes, create]"
 		}
 		body = append(body, strong.Render("Create endpoint now?"), active(choice))
-		hint := controls("←→ choose", "Enter confirm")
-		body = append(body, hint)
+		body = append(body, webhookCreateControls(inner, m.color, quiet, "←→ choose", "Enter confirm", "Esc cancel")...)
 	}
 	if m.stage == 3 && m.note != "" {
 		body = append(body, clip(m.note))
@@ -882,6 +847,29 @@ func (m *webhookCreatePicker) View() tea.View {
 	view := m.frame(lines, width, height)
 	view.Cursor = cursor
 	return view
+}
+
+// Keep key/action pairs together instead of clipping controls in narrow terminals.
+func webhookCreateControls(width int, color bool, quiet lipgloss.Style, bindings ...string) []string {
+	var rows []string
+	line := "  "
+	for _, binding := range bindings {
+		key, label, _ := strings.Cut(binding, " ")
+		part := lipgloss.NewStyle().Bold(color).Render(key)
+		if label != "" {
+			part += quiet.Render(" " + label)
+		}
+		gap := ""
+		if line != "  " {
+			gap = "  "
+		}
+		if ansi.StringWidth(line+gap+part) > width && line != "  " {
+			rows = append(rows, line)
+			line, gap = "  ", ""
+		}
+		line += gap + part
+	}
+	return append(rows, line)
 }
 
 // Connect section rules to the outer frame without changing content row geometry.

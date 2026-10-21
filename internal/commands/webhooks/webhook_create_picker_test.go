@@ -396,9 +396,11 @@ func TestWebhookCreatePickerArrowNavigationIncludesReview(t *testing.T) {
 	require.True(t, m.reviewFocused)
 	require.Contains(t, ansi.Strip(m.View().Content), "> [ Continue to confirmation ]")
 	foot := ansi.Strip(m.View().Content)
-	for _, inactive := range []string{"↑ back", "←→ category", "Space select", "Ctrl+A all", "Enter continue"} {
+	for _, inactive := range []string{"←→ category", "Space select", "Ctrl+A all"} {
 		require.NotContains(t, foot, inactive, "the action must not advertise event controls")
 	}
+	require.Contains(t, foot, "Enter continue")
+	require.Contains(t, foot, "↑ back")
 	before := m.settings()
 	webhookCreatePaste(m, "hidden text")
 	webhookCreateKey(m, ' ')
