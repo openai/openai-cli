@@ -763,7 +763,7 @@ func TestWebhookPickerCleanupCancellationKeepsRealErrors(t *testing.T) {
 }
 
 func TestWebhookCreatePickerBlinkingTextCursorAndCompactSpacing(t *testing.T) {
-	for _, size := range [][2]int{{80, 24}, {36, 10}, {40, 12}} {
+	for _, size := range [][2]int{{80, 24}, {40, 24}, {36, 10}, {40, 12}} {
 		m := newWebhookCreatePicker([]string{"response.completed", "response.failed"})
 		m.width, m.height, m.color = size[0], size[1], true
 		for stage := range 3 {
@@ -782,8 +782,8 @@ func TestWebhookCreatePickerBlinkingTextCursorAndCompactSpacing(t *testing.T) {
 				input.cursor = position
 				inputWidth, column := min(76, size[0]-2)-9, 9
 				if size[1] >= 15 {
-					inputWidth -= 4
-					column += 2
+					inputWidth -= 6 // Border padding and the fixed column divider.
+					column += 4
 				}
 				_, offset := input.viewport(inputWidth, "")
 				painted := m.View()

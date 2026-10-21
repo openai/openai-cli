@@ -650,12 +650,14 @@ func (m *webhookCreatePicker) View() tea.View {
 		accent, muted, border = "#8AA8FF", "#A4ACC2", "#51566B"
 	}
 	strong, quiet, selected := lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle()
+	rule := lipgloss.NewStyle()
 	panel := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	if m.color {
 		strong = strong.Bold(true).Foreground(lipgloss.Color(accent))
 		quiet = quiet.Foreground(lipgloss.Color(muted))
 		selected = selected.Foreground(lipgloss.Color(accent))
 		panel = panel.BorderForeground(lipgloss.Color(border))
+		rule = rule.Foreground(lipgloss.Color(border))
 	}
 	inner := width - 4 // Border and one padding cell on each side.
 	clip := func(s string) string { return ansi.Truncate(s, inner, "…") }
@@ -676,10 +678,19 @@ func (m *webhookCreatePicker) View() tea.View {
 	if compact && m.stage < 3 {
 		inner = width // Short terminals omit decoration, not fields or controls.
 	}
+	valueColumn, panelSplit, separator := 9, 0, " "
+	if !compact && m.stage < 3 {
+		valueColumn, panelSplit, separator = 11, 11, rule.Render(" │ ")
+	}
 	body := []string{}
+	dividers := map[int]string{}
+	divide := func(junction string) {
+		dividers[len(body)] = junction
+		body = append(body, "")
+	}
 	var cursor *tea.Cursor
 	cursorAt := func(column, row int) {
-		x, y := 9+column, 1+row
+		x, y := valueColumn+column, 1+row
 		if !compact {
 			x, y = x+2, y+1
 		}
@@ -690,36 +701,39 @@ func (m *webhookCreatePicker) View() tea.View {
 	switch m.stage {
 	case 0, 1, 2:
 		field := func(label string, input *webhookCreateInput, placeholder string, focused bool, row int) string {
-			label = fmt.Sprintf("%-6s ", label)
+			label = fmt.Sprintf("%-6s", label)
 			if focused {
-				value, column := input.viewport(inner-9, placeholder)
+				value, column := input.viewport(inner-valueColumn, placeholder)
 				cursorAt(column, row)
-				return strong.Render("> "+label) + value
+				return strong.Render("> "+label) + separator + value
 			}
 			value := webhookCreateLine(string(input.value))
 			if value == "" {
-				value = quiet.Render(ansi.Truncate(placeholder, inner-9, "…"))
+				value = quiet.Render(ansi.Truncate(placeholder, inner-valueColumn, "…"))
 			} else {
-				value = ansi.Truncate(value, inner-9, "…")
+				value = ansi.Truncate(value, inner-valueColumn, "…")
 			}
-			return "  " + strong.Render(label) + value
+			return "  " + strong.Render(label) + separator + value
 		}
 		body = append(body, field("Name", &m.name, "Webhook", m.stage == 0, 0),
 			field("URL", &m.url, "https://example.com/webhook", m.stage == 1, 1))
 		if !compact {
-			body = append(body, "")
+			divide("┼")
 		}
-		eventLabel := "  Events "
+		eventLabel := "  Events"
 		if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateCategory {
-			eventLabel = "> Events "
+			eventLabel = "> Events"
 		}
 		arrow := " ▾"
 		if m.categoryOpen {
 			arrow = " ▴"
 		}
-		body = append(body, strong.Render(eventLabel)+ansi.Truncate(m.categories()[m.category]+arrow, inner-9, "…"))
+		body = append(body, strong.Render(eventLabel)+separator+ansi.Truncate(m.categories()[m.category]+arrow, inner-valueColumn, "…"))
 		body = append(body, field("Search", &m.search, "Type an event or group name",
 			m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateSearch, len(body)))
+		if !compact {
+			divide("┴")
+		}
 		matches := m.filteredEvents()
 		var footer []string
 		if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateChoices && !m.categoryOpen {
@@ -803,7 +817,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			body = append(body, rows[m.offset:end]...)
 		}
 		if !compact {
-			body = append(body, "")
+			divide("─")
 		}
 		action := "  [ Continue to confirmation ]"
 		if m.browser != nil && inner < 55 {
@@ -863,11 +877,30 @@ func (m *webhookCreatePicker) View() tea.View {
 	if compact && m.stage < 3 {
 		lines = append(lines, body...)
 	} else {
-		lines = append(lines, strings.Split(panel.Width(width).Render(strings.Join(body, "\n")), "\n")...)
+		lines = append(lines, webhookCreatePanel(body, width, panelSplit, dividers, panel, rule)...)
 	}
 	view := m.frame(lines, width, height)
 	view.Cursor = cursor
 	return view
+}
+
+// Connect section rules to the outer frame without changing content row geometry.
+func webhookCreatePanel(rows []string, width, split int, dividers map[int]string, panel, rule lipgloss.Style) []string {
+	lines := strings.Split(panel.Width(width).Render(strings.Join(rows, "\n")), "\n")
+	line := func(left, junction, right string) string {
+		middle := strings.Repeat("─", width-2)
+		if split > 0 && split < width-1 {
+			middle = strings.Repeat("─", split-1) + junction + strings.Repeat("─", width-split-2)
+		}
+		return rule.Render(left + middle + right)
+	}
+	if split > 0 {
+		lines[0] = line("╭", "┬", "╮")
+	}
+	for row, junction := range dividers {
+		lines[row+1] = line("├", junction, "┤")
+	}
+	return lines
 }
 
 // Retain only the compact region this form has drawn. Padding goes after the

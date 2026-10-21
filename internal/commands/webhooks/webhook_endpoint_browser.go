@@ -204,17 +204,28 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 		accent, muted, border = "#8AA8FF", "#A4ACC2", "#51566B"
 	}
 	strong, quiet := lipgloss.NewStyle(), lipgloss.NewStyle()
+	rule := lipgloss.NewStyle()
 	panel := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	if m.color {
 		strong = strong.Bold(true).Foreground(lipgloss.Color(accent))
 		quiet = quiet.Foreground(lipgloss.Color(muted))
 		panel = panel.BorderForeground(lipgloss.Color(border))
+		rule = rule.Foreground(lipgloss.Color(border))
 	}
 	inner, overhead := width-4, 5
 	compact := height < 14
 	if compact {
 		inner, overhead = width, 3
 	}
+	table := !compact && !b.loading && !b.details && len(b.items) > 0
+	if table {
+		overhead += 2 // Column headings and their connected rule.
+		if b.note != "" {
+			overhead++ // End the columns before a full-width error note.
+		}
+	}
+	panelSplit := 0
+	dividers := map[int]string{}
 	var note []string
 	if b.note != "" {
 		note = strings.Split(ansi.Hardwrap(b.note, inner, false), "\n")
@@ -255,7 +266,11 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 			if index == b.current && !b.actions {
 				row = strong.Render("> " + name)
 			}
-			row += quiet.Render("  " + webhookCreateLine(item.id))
+			if table {
+				row += rule.Render(" │ ") + quiet.Render(webhookCreateLine(item.id))
+			} else {
+				row += quiet.Render("  " + webhookCreateLine(item.id))
+			}
 			rows = append(rows, ansi.Truncate(row, inner, "…"))
 		}
 		b.offset = min(b.offset, max(0, len(rows)-available))
@@ -265,6 +280,16 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 			b.offset = b.current - available + 1
 		}
 		rows = rows[b.offset:min(len(rows), b.offset+available)]
+		if table {
+			panelSplit = nameWidth + 5
+			header := "  " + strong.Render("Endpoint"+strings.Repeat(" ", nameWidth-8)) + rule.Render(" │ ") + strong.Render("ID")
+			rows = append([]string{header, ""}, rows...)
+			dividers[1] = "┼"
+			if len(note) > 0 {
+				dividers[len(rows)] = "┴"
+				rows = append(rows, "")
+			}
+		}
 	}
 	rows = append(rows, note...)
 	back, refresh := "  [ Back ]", "  [ Refresh ]"
@@ -272,6 +297,12 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 		back = "> [ Back ]"
 	} else if b.actions {
 		refresh = "> [ Refresh ]"
+	}
+	if !compact {
+		dividers[len(rows)] = "─"
+		if table && len(note) == 0 {
+			dividers[len(rows)] = "┴"
+		}
 	}
 	rows = append(rows, "", strong.Render(back)+"  "+strong.Render(refresh))
 	for index := range rows {
@@ -281,7 +312,7 @@ func (m *webhookCreatePicker) endpointView(width, height int) tea.View {
 	if compact {
 		lines = append(lines, rows...)
 	} else {
-		lines = append(lines, strings.Split(panel.Width(width).Render(strings.Join(rows, "\n")), "\n")...)
+		lines = append(lines, webhookCreatePanel(rows, width, panelSplit, dividers, panel, rule)...)
 	}
 	return m.frame(lines, width, height)
 }
