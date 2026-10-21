@@ -208,7 +208,7 @@ func finishLimitsWorkspace(ctx context.Context, m *limitsWorkspace, runErr error
 		outputErr = m.output.Err()
 	}
 	if outputErr != nil && m.lastSaved.Exists() && message == "" {
-		message = "A limits change was confirmed, but terminal output failed. Inspect its current state before another change.\n" + m.readRecovery()
+		message = "A limits change was confirmed, but terminal output failed. Inspect its current state before another change.\n" + m.readRecoveryFor("overview")
 	}
 	interrupted := m.interrupted || errors.Is(runErr, tea.ErrInterrupted)
 	if ctx.Err() != nil {
@@ -295,6 +295,10 @@ func finishLimitsWorkspace(ctx context.Context, m *limitsWorkspace, runErr error
 }
 
 func (m *limitsWorkspace) readRecovery() string {
+	return m.readRecoveryFor(m.change.Kind)
+}
+
+func (m *limitsWorkspace) readRecoveryFor(kind string) string {
 	invocation := m.invocation
 	if invocation == "" {
 		invocation = "openai"
@@ -303,7 +307,12 @@ func (m *limitsWorkspace) readRecovery() string {
 	if m.snapshot.ProjectID != "" {
 		resource += "projects "
 	}
-	switch m.change.Kind {
+	switch kind {
+	case "overview":
+		resource = "admin limits show"
+		if m.snapshot.ProjectID != "" {
+			resource = "projects limits show"
+		}
 	case "alert_create", "alert_update", "alert_delete":
 		resource += "spend-alerts list"
 	case "rate_update":

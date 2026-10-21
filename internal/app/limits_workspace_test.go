@@ -1759,7 +1759,7 @@ func TestLimitsWorkspaceFinalizationPreservesIndependentFailures(t *testing.T) {
 }
 
 func TestLimitsWorkspaceConfirmedSaveSurvivesTerminalFailure(t *testing.T) {
-	for _, kind := range []string{"limit_set", "alert_create", "limit_delete"} {
+	for _, kind := range []string{"limit_set", "alert_create", "limit_delete", "rate_update"} {
 		t.Run(kind, func(t *testing.T) {
 			m, _ := newLimitsController(t, 80, 24)
 			m.workerSaved = gjson.Parse(`{"object":"organization.spend_limit","threshold_amount":10000,"currency":"USD","interval":"month"}`)
@@ -1767,8 +1767,15 @@ func TestLimitsWorkspaceConfirmedSaveSurvivesTerminalFailure(t *testing.T) {
 				m.workerSaved = gjson.Parse(limitsControllerAlert)
 			} else if kind == "limit_delete" {
 				m.workerSaved = gjson.Parse(`{"object":"organization.spend_limit.deleted","deleted":true}`)
+			} else if kind == "rate_update" {
+				m.snapshot.ProjectID = "proj_synthetic"
+				m.workerSaved = gjson.Parse(limitsControllerRate)
 			}
-			m.workerSavedOperation = limitsChangeOperation(kind, false)
+			m.workerSavedOperation = limitsChangeOperation(kind, m.snapshot.ProjectID != "")
+			m.change.Kind = "limit_set"
+			if kind == "limit_set" {
+				m.change.Kind = "alert_create"
+			}
 			m.output = &limitsWorkspaceOutput{err: &clioutput.WriteError{Err: syscall.EPIPE}}
 			var out bytes.Buffer
 			err := finishLimitsWorkspace(t.Context(), m, tea.ErrProgramKilled, ShowJSONOpts{Context: t.Context(), Format: "text", Stdout: &out, Stderr: io.Discard})
@@ -1778,6 +1785,13 @@ func TestLimitsWorkspaceConfirmedSaveSurvivesTerminalFailure(t *testing.T) {
 			}
 			if !strings.Contains(safe.Error(), "change was confirmed") || !strings.Contains(safe.Error(), "terminal output failed") || !strings.Contains(safe.Error(), "before another change") {
 				t.Fatalf("missing confirmed-save recovery: %v", err)
+			}
+			readOptions := "help admin limits show"
+			if m.snapshot.ProjectID != "" {
+				readOptions = "help projects limits show"
+			}
+			if !strings.Contains(safe.Error(), readOptions) || strings.Contains(safe.Error(), "spend-limit retrieve") || strings.Contains(safe.Error(), "spend-alerts list") {
+				t.Fatalf("unsent draft redirected confirmed-save recovery: %v", err)
 			}
 			if out.Len() != 0 || m.mutationPending || m.lastSaved.Raw != m.workerSaved.Raw {
 				t.Fatal("finalization repeated output or lost the confirmed result")
