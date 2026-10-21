@@ -539,7 +539,11 @@ def startup_case(ctx):
                         assert destination.read_bytes() == ctx.fixture.WAV
                 assert {str(p): p.read_bytes() for p in canaries} == expected_profiles, "Startup changed a profile canary"
                 assert files(config) == expected_config, "Startup wrote optional shell configuration"
-                assert files(cache) == expected_cache, "Startup changed existing private history"
+                observed_cache = files(cache)
+                if observed_cache != expected_cache:
+                    result["startup_cache_change"] = {"shell": name, "command": command, "position": position,
+                                                       "expected": expected_cache, "actual": observed_cache}
+                assert observed_cache == expected_cache, "Startup changed existing private history"
         assert not server.records, "Local startup coverage reached the synthetic API"
     assert result["commands"], "No supported native shell was available"
     result.update(pass_=True, exit_status=0, requests=[])
