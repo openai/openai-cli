@@ -333,6 +333,14 @@
       "mode": "100644",
       "sha256": "1ff06e79177074f4a3c9b62ebd5529b9203a8452d77393c09fda981829253538"
     },
+    "generated/commands/audiovoiceconsent.go": {
+      "mode": "100644",
+      "sha256": "b33da7cab44b87db14b51842966442cfefd6e5b23867aeedcd3b45d06af08a82"
+    },
+    "generated/commands/audiovoiceconsent_test.go": {
+      "mode": "100644",
+      "sha256": "d07fd4aefb8012fb9ff1fb9ebf5f6bec7783c92c78626ffcd8dafee50d32d6fd"
+    },
     "generated/commands/batch.go": {
       "mode": "100644",
       "sha256": "83f4665183a8959433676a2926fdb7bd54dbfcb4a65bedcd291cae91d748aa88"
@@ -455,7 +463,7 @@
     },
     "generated/commands/cmd.go": {
       "mode": "100644",
-      "sha256": "d84614e473f1c68f166e3bc5eaf4894aee6542c331ac9568a72d029d29371b62"
+      "sha256": "cd3c6d9101a12f93b7ceefffc6a7e1447b5200589335b22946cfea3d3ac0e25a"
     },
     "generated/commands/completion.go": {
       "mode": "100644",
