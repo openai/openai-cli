@@ -122,11 +122,13 @@ func TestMainLimitsWorkflowBorrowedTerminalWriter(t *testing.T) {
 			if got.Code != test.exit || !strings.Contains(got.Stderr, "borrowed-terminal-verified\n") {
 				t.Fatalf("borrowed terminal changed exit or ownership: %+v", got)
 			}
-			enter, leave := strings.Index(got.Stdout, "\x1b[?1049h"), strings.LastIndex(got.Stdout, "\x1b[?1049l")
-			if enter < 0 || leave <= enter || strings.Contains(got.Stdout+got.Stderr, "panic:") || strings.Contains(got.Stderr, "synthetic-private") {
+			ready := strings.Index(got.Stdout, "Website controls and source errors: ?")
+			restored := strings.LastIndex(got.Stdout, "\x1b[?25h")
+			if ready < 0 || restored <= ready || strings.Contains(got.Stdout, "\x1b[?1049h") || strings.Contains(got.Stdout, "\x1b[?1049l") ||
+				strings.Contains(got.Stdout+got.Stderr, "panic:") || strings.Contains(got.Stderr, "synthetic-private") {
 				t.Fatalf("workspace did not restore safe terminal output: %+v", got)
 			}
-			if test.exit == 0 && (!strings.Contains(got.Stdout[leave:], "Limits workspace closed.") || got.Stderr != "borrowed-terminal-verified\n") {
+			if test.exit == 0 && (!strings.Contains(got.Stdout[restored:], "Limits workspace closed.") || got.Stderr != "borrowed-terminal-verified\n") {
 				t.Fatalf("workspace did not close normally after restoration: %+v", got)
 			}
 			if test.mode == "write-failure" && got.Stderr != "Could not write command output. Check your terminal, output file, or receiving command.\nborrowed-terminal-verified\n" {

@@ -14,6 +14,15 @@ SCENES = ("org-limit", "org-limit-delete", "project-limit", "alert-create", "ale
           "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print", "preflight-400")
 
 
+def restored_offset(raw):
+    """Require inline readiness and cursor restoration after the last rendered frame."""
+    assert b"\x1b[?1049h" not in raw and b"\x1b[?1049l" not in raw, "workspace entered an alternate screen"
+    ready = raw.find(b"Website controls and source errors: ?")
+    hidden, restored = raw.find(b"\x1b[?25l"), raw.rfind(b"\x1b[?25h")
+    assert ready >= 0 and hidden >= 0 and restored > max(ready, hidden), "inline workspace did not restore its cursor"
+    return restored + len(b"\x1b[?25h")
+
+
 def validate_rendered_checkpoints(root):
     expected_rows = []
     expected_pngs = {scene + ".png" for scene in SCENES}
@@ -77,6 +86,7 @@ def main():
         assert staged["removed"] is True and not staged_path.parent.exists(), (scene, "staged CLI cleanup incomplete")
         assert (evidence["width"], evidence["height"]) in {(80, 24), (40, 12)}
         raw = (root / (scene + "-evidence.tty")).read_bytes()
+        restored_offset(raw)
         child = [json.loads(line) for line in (root / (scene + "-evidence.child.cast")).read_text().splitlines()]
         child_bytes = "".join(event[2] for event in child[1:] if event[1] == "o").encode()
         outer = [json.loads(line) for line in (root / (scene + ".cast")).read_text().splitlines()]
@@ -89,9 +99,8 @@ def main():
         assert relay[:-len(prompt)] == raw == child_bytes, (scene, "capture changed CLI bytes")
         assert hashlib.sha256(raw).hexdigest() == evidence["relayed_sha256"]
         if expected_status != 0:
-            restored = raw.rfind(b"\x1b[?1049l")
-            assert restored >= 0, (scene, "final diagnostic lacks terminal restoration")
-            diagnostic = b" ".join(raw[restored + len(b"\x1b[?1049l"):].lower().split())
+            restored = restored_offset(raw)
+            diagnostic = b" ".join(raw[restored:].lower().split())
             for action in (b"press r", b"use r to", b"refresh with r", b"press ?", b"press f1", b"use f1",
                            b"f1 for", b"f1:", b"ctrl+p", b"tab to apply"):
                 assert action not in diagnostic, (scene, "final diagnostic names an action from the closed workspace")
@@ -129,8 +138,8 @@ def main():
             expected = (command + newline).encode()
             printed = (root / (scene + "-evidence.printed-command.raw.txt")).read_bytes()
             start = len(raw) - len(expected)
-            restored_end = raw.rfind(b"\x1b[?1049l") + len(b"\x1b[?1049l")
-            assert raw.rfind(b"\x1b[?1049l") > raw.rfind(b"\x1b[?1049h") >= 0
+            restored_end = restored_offset(raw)
+            assert restored_offset(raw) <= start
             assert raw.rfind(b"\x1b[?25h") > raw.rfind(b"\x1b[?25l") >= 0
             assert restored_end <= start and raw.rfind(b"\x1b[?25h") < start
             assert printed == expected == raw[start:], (scene, "printed command bytes changed")
@@ -157,7 +166,7 @@ def main():
                 compact = "".join(screen.split())
                 assert all("".join(message.split()) in compact for message in messages), (scene, name, "missing recovery evidence")
             assert b"synthetic-private-preflight" not in raw, (scene, "private response leaked")
-            restored_end = raw.rfind(b"\x1b[?1049l") + len(b"\x1b[?1049l")
+            restored_end = restored_offset(raw)
             diagnostic = raw[restored_end:]
             assert all(message in diagnostic for message in (b"HTTP 400", b"No write sent.", b"request fields and scope",
                                                             b"Reopen the limits workspace", b"review current settings",
@@ -191,7 +200,7 @@ def main():
         elif scene == "alert-delete":
             assert request["method"] == "DELETE" and request["path"].endswith("/spend_alerts/alert_demo")
         elif scene == "rate-update":
-            assert request["body"] == {"max_requests_per_1_minute": 250}
+            assert request["body"] == {"max_requests_per_1_minute": 250, "max_tokens_per_1_day": 9007199254740993}
         if scene == "uncertain":
             assert request["status"] == "response_lost_after_write"
         else:

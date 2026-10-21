@@ -234,13 +234,21 @@ func limitsEditableBaselineContext(ctx context.Context, value gjson.Result, kind
 			value.Get("model").Type != gjson.String || value.Get("model").Str == "" {
 			return errors.New("The returned rate limit has no recognized identity.")
 		}
+		if limitsRateReadOnly(value) {
+			return errors.New("This model's rate limit is read-only. Inspect the original API record for its current values.")
+		}
+		available := false
 		for _, field := range limitsRateFields {
 			item := value.Get(field)
-			if item.Exists() || field == "max_requests_per_1_minute" || field == "max_tokens_per_1_minute" {
+			if item.Exists() && item.Type != gjson.Null {
 				if _, err := limitsInteger(item); err != nil {
 					return err
 				}
+				available = true
 			}
+		}
+		if !available {
+			return errors.New("This record has no editable numeric rate fields. Inspect the original API record.")
 		}
 		return nil
 	default:
@@ -256,6 +264,12 @@ func limitsEditableBaselineContext(ctx context.Context, value gjson.Result, kind
 var limitsRateFields = []string{
 	"max_requests_per_1_minute", "max_tokens_per_1_minute", "max_requests_per_1_day",
 	"max_images_per_1_minute", "max_audio_megabytes_per_1_minute", "batch_1_day_max_input_tokens",
+	"max_tokens_per_1_day",
+}
+
+func limitsRateReadOnly(value gjson.Result) bool {
+	model := value.Get("model").Str
+	return strings.HasPrefix(model, "ft:") || strings.HasSuffix(model, "-shared")
 }
 
 func limitsValidateChange(change limitsChange) error {
@@ -294,13 +308,19 @@ func limitsValidateChangeContext(ctx context.Context, change limitsChange) error
 		if len(change.RateValues) == 0 {
 			return errors.New("Set at least one rate-limit value.")
 		}
-		for key := range change.RateValues {
+		for key, value := range change.RateValues {
 			known := false
 			for _, field := range limitsRateFields {
 				known = known || key == field
 			}
 			if !known {
 				return errors.New("This form does not support the requested rate-limit field.")
+			}
+			if value < 0 {
+				return errors.New("Rate values cannot be negative. Enter zero or a positive integer.")
+			}
+			if change.Before.Get(key).Type != gjson.Number {
+				return errors.New("This rate field was not returned for this model. Inspect the original API record before editing.")
 			}
 		}
 	case "limit_delete", "alert_delete":

@@ -794,23 +794,23 @@ func TestLimitsDraftRatesSendOnlyExplicitChanges(t *testing.T) {
 	}
 	draft.inputs[0].SetValue("") // Blank retains the existing value.
 	draft.inputs[1].SetValue("201")
-	draft.inputs[4].SetValue("0") // Explicit zero remains a real change.
+	draft.inputs[3].SetValue("1")
 	change, err := draft.validate()
-	want := map[string]int64{"max_tokens_per_1_minute": 201, "max_audio_megabytes_per_1_minute": 0}
+	want := map[string]int64{"max_tokens_per_1_minute": 201, "max_images_per_1_minute": 1}
 	if err != nil || !reflect.DeepEqual(change.RateValues, want) {
 		t.Fatalf("rate changes=%v error=%v; want %v", change.RateValues, err, want)
 	}
 	for _, tc := range []struct {
 		text  string
 		value int64
-	}{{"-1", -1}, {"-9223372036854775808", math.MinInt64}} {
+	}{{"0", 0}, {"9223372036854775807", math.MaxInt64}} {
 		draft.inputs[1].SetValue(tc.text)
 		change, err := draft.validate()
 		if err != nil || change.RateValues["max_tokens_per_1_minute"] != tc.value {
-			t.Errorf("signed rate %q was not preserved: %v, %v", tc.text, change.RateValues, err)
+			t.Errorf("nonnegative rate %q was not preserved: %v, %v", tc.text, change.RateValues, err)
 		}
 	}
-	for _, invalid := range []string{"-", "1.5", "1e3", "9223372036854775808", "-9223372036854775809"} {
+	for _, invalid := range []string{"-1", "-9223372036854775808", "-", "1.5", "1e3", "9223372036854775808", "-9223372036854775809"} {
 		draft.inputs[1].SetValue(invalid)
 		if _, err := draft.validate(); err == nil {
 			t.Errorf("rate draft accepted %q", invalid)
@@ -1067,12 +1067,12 @@ func TestLimitsWorkspaceListStatusStaysVisible(t *testing.T) {
 			m.snapshot.CostsTotal, m.snapshot.CostsComplete = "1.23", false
 			for _, section := range []int{1, 2} {
 				m.section = section
-				status, label, tab := "Incomplete.", "Alerts loaded: 1", "[Alerts]"
+				status, label, tab := "Incomplete.", "Alerts loaded: 1", "> Alerts"
 				if complete {
 					status = "Complete."
 				}
 				if section == 2 {
-					label, tab = "Rate records loaded: 1", "[Rates]"
+					label, tab = "Rate records loaded: 1", "> Rates"
 				}
 				for _, colored := range []bool{false, true} {
 					for _, dark := range []bool{false, true} {
@@ -1866,4 +1866,131 @@ func TestLimitsWorkspaceAmbiguousEnforcementStaysUnknown(t *testing.T) {
 	if !strings.Contains(view, "Returned enforcement: ambiguous; inspect original") || strings.Contains(view, "Returned enforcement: inactive") {
 		t.Fatalf("workspace selected one conflicting enforcement value: %q", view)
 	}
+}
+
+func TestLimitsWorkspaceSparseAndReadOnlyRates(t *testing.T) {
+	const daily = `{"object":"project.rate_limit","id":"rl_daily","model":"daily-model","max_tokens_per_1_day":100,"max_tokens_per_1_minute":null}`
+	for _, size := range [][2]int{{40, 12}, {160, 60}} {
+		m, backend := newLimitsController(t, size[0], size[1])
+		m.snapshot.ProjectID = "proj_demo"
+		m.begin("rate_update", gjson.Parse(daily))
+		require.Equal(t, "form", m.page)
+		require.Equal(t, 6, m.focus, "only the returned numeric field is editable")
+		require.Contains(t, ansi.Strip(m.View().Content), "Tokens / day")
+		require.NotContains(t, ansi.Strip(m.View().Content), "Requests / minute")
+		m.draft.inputs[6].SetValue("9007199254740993")
+		limitsControllerKey(m, tea.KeyTab)
+		require.Equal(t, 7, m.focus)
+		m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+		require.Equal(t, 6, m.focus)
+		change, err := m.draft.validate()
+		require.NoError(t, err)
+		require.Equal(t, map[string]int64{"max_tokens_per_1_day": 9007199254740993}, change.RateValues)
+		for _, index := range []int{0, 1} {
+			m.draft.inputs[index].SetValue("1")
+			_, err := m.draft.validate()
+			require.ErrorContains(t, err, "unavailable")
+			m.draft.inputs[index].SetValue("")
+		}
+		for _, model := range []string{"ft:synthetic", "synthetic-shared"} {
+			rate := gjson.Parse(strings.Replace(daily, "daily-model", model, 1))
+			m.page, m.section, m.selection = "home", 2, 0
+			m.snapshot.Rates = []gjson.Result{rate}
+			require.Equal(t, "rate_inspect", m.menu()[0].kind)
+			require.Contains(t, m.menu()[0].label, "read only")
+			limitsControllerKey(m, tea.KeyEnter)
+			require.Equal(t, "details", m.page)
+			require.Contains(t, m.details, model)
+			m.begin("rate_update", rate)
+			require.Equal(t, "details", m.page)
+		}
+		require.Zero(t, backend.writes.Load())
+		require.Zero(t, backend.reads.Load())
+	}
+}
+
+func TestLimitsWorkspaceCompactGeometryAndReviewGate(t *testing.T) {
+	for _, size := range [][2]int{{40, 12}, {80, 24}, {200, 80}} {
+		m, backend := newLimitsController(t, size[0], size[1])
+		m.snapshot.ProjectID = "proj_demo"
+		m.snapshot.Limit = gjson.Parse(limitsTestLimit)
+		m.snapshot.Alerts = []gjson.Result{gjson.Parse(limitsControllerAlert)}
+		m.snapshot.Rates = []gjson.Result{gjson.Parse(limitsControllerRate)}
+		rows, columns := 0, 0
+		for section := 0; section < 3; section++ {
+			m.section, m.selection = section, 0
+			view := m.View()
+			require.False(t, view.AltScreen)
+			require.NotContains(t, view.Content, "\x1b[1m")
+			lines := strings.Split(ansi.Strip(view.Content), "\n")
+			if section == 0 {
+				rows, columns = len(lines), ansi.StringWidth(lines[1])
+			}
+			require.Len(t, lines, rows, "tab changes must preserve panel height")
+			require.Equal(t, columns, ansi.StringWidth(lines[1]), "tab markers must reserve the same cells")
+			require.LessOrEqual(t, len(lines), min(size[1], 18))
+			for _, line := range lines {
+				require.LessOrEqual(t, ansi.StringWidth(line), min(size[0], 76))
+			}
+		}
+		m.begin("limit_set", m.snapshot.Limit)
+		m.draft.inputs[0].SetValue("100.01")
+		m.review()
+		require.Equal(t, "review", m.page)
+		require.Equal(t, min(size[0], 76)-2, m.viewport.Width())
+		require.LessOrEqual(t, m.viewport.Height(), min(size[1], 18)-5)
+		require.False(t, m.viewport.AtBottom(), "clamped review must not approve unread content")
+		limitsControllerKey(m, tea.KeyTab)
+		require.False(t, m.apply)
+		m.viewport.GotoBottom()
+		limitsControllerKey(m, tea.KeyTab)
+		require.True(t, m.apply)
+		m.Update(tea.WindowSizeMsg{Width: 180, Height: 70})
+		require.False(t, m.apply)
+		require.False(t, m.viewport.AtBottom())
+		require.Zero(t, backend.writes.Load())
+	}
+}
+
+func TestLimitsWorkspaceRefreshRetainsUnavailableRateDraftUntilDiscarded(t *testing.T) {
+	for _, current := range []string{
+		`{"object":"project.rate_limit","id":"rl_synthetic","model":"synthetic-model","max_tokens_per_1_minute":300}`,
+		`{"object":"project.rate_limit","id":"rl_synthetic","model":"synthetic-model","max_requests_per_1_minute":null,"max_tokens_per_1_minute":300}`,
+	} {
+		m, backend := newLimitsController(t, 40, 12)
+		m.begin("rate_update", gjson.Parse(limitsControllerRate))
+		m.draft.inputs[0].SetValue("101")
+		m.draft.inputs[1].SetValue("201")
+		m.snapshot.Rates = []gjson.Result{gjson.Parse(current)}
+		m.refreshRequired = true
+		m.reconcileDraft()
+		require.False(t, m.refreshRequired)
+		require.True(t, m.draft.hasUnavailableEdits())
+		require.Equal(t, "101", m.draft.inputs[0].Value(), "refresh must not silently discard an edit")
+		require.Contains(t, m.help(), "Requests / minute: 101")
+		require.Equal(t, len(m.draft.inputs), m.focus)
+		require.Contains(t, ansi.Strip(m.View().Content), "> Discard unavailable edits")
+		require.LessOrEqual(t, len(strings.Split(m.View().Content, "\n")), 12)
+		_, err := m.draft.validate()
+		require.ErrorContains(t, err, "unavailable")
+		limitsControllerKey(m, tea.KeyF1)
+		limitsControllerKey(m, tea.KeyEscape)
+		limitsControllerKey(m, tea.KeyEnter)
+		require.False(t, m.draft.hasUnavailableEdits())
+		require.Empty(t, m.draft.inputs[0].Value())
+		require.Equal(t, "201", m.draft.inputs[1].Value())
+		change, err := m.draft.validate()
+		require.NoError(t, err)
+		require.Equal(t, map[string]int64{"max_tokens_per_1_minute": 201}, change.RateValues)
+		require.Zero(t, backend.writes.Load())
+	}
+}
+
+func TestLimitsWorkspaceShortDetailsFitContent(t *testing.T) {
+	m, _ := newLimitsController(t, 120, 50)
+	m.page = "details"
+	m.setDetails("One line\nTwo lines")
+	require.Equal(t, 2, m.viewport.Height())
+	require.True(t, m.viewport.AtBottom())
+	require.Len(t, strings.Split(ansi.Strip(m.View().Content), "\n"), 5)
 }

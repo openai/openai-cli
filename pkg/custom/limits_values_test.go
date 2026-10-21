@@ -160,7 +160,7 @@ func TestLimitsMutationConfirmationMatchesReviewedFields(t *testing.T) {
 	require.NoError(t, limitsMutationConfirmed(gjson.Parse(strings.Replace(matching, `"subject_prefix":null`, `"subject_prefix":""`, 1)), change, false))
 	change.SubjectPrefixSet = false
 	require.NoError(t, limitsMutationConfirmed(gjson.Parse(strings.Replace(matching, `,"subject_prefix":null`, ``, 1)), change, false))
-	rateChange := limitsChange{Kind: "rate_update", ID: "rate_demo", RateValues: map[string]int64{"max_requests_per_1_minute": 9007199254740993}}
+	rateChange := limitsChange{Kind: "rate_update", ID: "rate_demo", Before: gjson.Parse(limitsTestRate), RateValues: map[string]int64{"max_requests_per_1_minute": 9007199254740993}}
 	rate := strings.Replace(limitsTestRate, `"max_requests_per_1_minute":100`, `"max_requests_per_1_minute":9007199254740993`, 1)
 	require.NoError(t, limitsMutationConfirmed(gjson.Parse(rate), rateChange, true))
 	require.Error(t, limitsMutationConfirmed(gjson.Parse(strings.Replace(rate, "9007199254740993", "9007199254740992", 1)), rateChange, true))

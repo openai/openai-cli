@@ -107,12 +107,39 @@ An empty replacement remains an empty string.
 The workspace does not require a hard limit before creating an alert.
 The API still validates account-specific constraints.
 
-Project Rates supports all six public rate fields.
+Project Rates supports seven named rate fields, including tokens per day.
 The form sends only changed fields.
 Blank fields remain unchanged.
 Zero has no assumed unlimited meaning.
-The API decides which integer values the project permits.
+The workspace accepts nonnegative integers for fields returned as integers.
+The workspace skips missing and null fields.
+Sparse records can expose only daily limits.
+Fine-tuned `ft:` models and `-shared` records remain available for inspection.
+The API decides account-specific caps.
+Scriptable commands retain their existing input behavior.
 Rate updates require a complete preflight list; use `--max-items -1` when necessary.
+
+The named tokens-per-day flag extends an existing API field:
+
+```sh
+openai projects rate-limits update-rate-limit \
+  --project-id proj_example --rate-limit-id rl_example \
+  --max-tokens-per-1-day 100000
+```
+
+JSON and YAML stdin can also send `max_tokens_per_1_day`.
+The workspace verifies the returned model and every requested value before confirming success.
+A mismatched confirmation locks further writes and directs you to inspect current settings.
+
+## Compact terminal interface
+
+The workspace uses an inline panel and preserves shell scrollback.
+The panel uses up to 76 columns and 18 rows.
+The minimum terminal size remains 40 columns and 12 rows.
+Selection uses a fixed-width marker and keeps the same font weight.
+Forms and details open through explicit actions.
+Short details use only their content height.
+Machine output and redirected output remain read-only.
 
 ## Concurrent changes and recovery
 
@@ -122,6 +149,9 @@ A changed baseline stops the write.
 A 404 response leaves the current limit unconfirmed.
 Setting a limit requires reviewing that uncertainty and explicitly approving creation or replacement.
 Refresh the retained draft before reviewing it again.
+If a refreshed rate field becomes unavailable, its edited draft remains in F1 details.
+Select Discard unavailable edits to remove those drafts explicitly.
+Other edits remain intact.
 Ambiguous or unfamiliar replacement configuration remains available for inspection.
 The form refuses edits that could discard that configuration.
 

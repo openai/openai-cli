@@ -20,6 +20,7 @@ var limitsRateInputs = []struct{ key, label string }{
 	{"max_images_per_1_minute", "Images / minute"},
 	{"max_audio_megabytes_per_1_minute", "Audio megabytes / minute"},
 	{"batch_1_day_max_input_tokens", "Batch input tokens / day"},
+	{"max_tokens_per_1_day", "Tokens / day"},
 }
 
 type limitsDraft struct {
@@ -67,8 +68,10 @@ func newLimitsDraft(change limitsChange) (limitsDraft, error) {
 			text := ""
 			if value.Type == gjson.Number {
 				text = value.Raw
+				add(field.label+" (blank: unchanged)", text)
+			} else {
+				add(field.label+" (unavailable for this model)", "")
 			}
-			add(field.label+" (blank: unchanged)", text)
 		}
 	}
 	for i, input := range d.inputs {
@@ -119,6 +122,9 @@ func (d limitsDraft) validate() (limitsChange, error) {
 			if value == "" || value == d.initial[i] {
 				continue
 			}
+			if c.Before.Get(field.key).Type != gjson.Number {
+				return c, fmt.Errorf("%s is unavailable for this model. Inspect the original API record.", field.label)
+			}
 			digits := strings.TrimPrefix(value, "-")
 			if digits == "" {
 				return c, fmt.Errorf("%s needs an integer.", field.label)
@@ -132,6 +138,9 @@ func (d limitsDraft) validate() (limitsChange, error) {
 			if err != nil {
 				return c, fmt.Errorf("%s exceeds the supported integer range.", field.label)
 			}
+			if number < 0 {
+				return c, fmt.Errorf("%s cannot be negative. Enter zero or a positive integer.", field.label)
+			}
 			c.RateValues[field.key] = number
 		}
 		if len(c.RateValues) == 0 {
@@ -139,6 +148,20 @@ func (d limitsDraft) validate() (limitsChange, error) {
 		}
 	}
 	return c, nil
+}
+
+func (d limitsDraft) inputAvailable(index int) bool {
+	return d.change.Kind != "rate_update" || index >= len(d.inputs) ||
+		d.change.Before.Get(limitsRateInputs[index].key).Type == gjson.Number
+}
+
+func (d limitsDraft) hasUnavailableEdits() bool {
+	for i := range d.inputs {
+		if !d.inputAvailable(i) && d.inputs[i].Value() != "" && d.inputs[i].Value() != d.initial[i] {
+			return true
+		}
+	}
+	return false
 }
 
 func limitsChangeTitle(kind string) string {

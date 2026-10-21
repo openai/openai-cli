@@ -54,6 +54,7 @@ type limitsWorkspace struct {
 	width, height, section, selection, focus      int
 	page, note, formError                         string
 	details                                       string
+	detailsLines                                  int
 	busy, quitting, interrupted, locked, apply    bool
 	refreshRequired, refreshingDraft, color, dark bool
 	lastSaved                                     gjson.Result
@@ -399,6 +400,24 @@ func (m *limitsWorkspace) reconcileDraft() {
 	}
 	change.Before, change.BeforeMissing = current, false
 	m.draft.change, m.refreshRequired, m.formError = change, false, "Baseline refreshed. Review the before and after values."
+	if change.Kind == "rate_update" {
+		for i, field := range limitsRateInputs {
+			if m.draft.inputs[i].Value() == "" || m.draft.inputs[i].Value() == m.draft.initial[i] {
+				value := ""
+				if current.Get(field.key).Type == gjson.Number {
+					value = current.Get(field.key).Raw
+				}
+				m.draft.inputs[i].SetValue(value)
+				m.draft.initial[i] = value
+			}
+		}
+		if m.draft.hasUnavailableEdits() {
+			m.formError = "Some edited rates are unavailable. Inspect F1, then discard those edits to continue."
+			m.setFocus(len(m.draft.inputs))
+		} else {
+			m.setFocus(m.focus)
+		}
+	}
 }
 
 func (m *limitsWorkspace) menu() []limitsMenuItem {
@@ -418,13 +437,23 @@ func (m *limitsWorkspace) menu() []limitsMenuItem {
 		}
 	case 2:
 		for _, rate := range m.snapshot.Rates {
-			rows = append(rows, limitsMenuItem{label: rate.Get("model").String() + "  " + rate.Get("id").String(), kind: "rate_update", value: rate})
+			label, kind := rate.Get("model").String()+"  "+rate.Get("id").String(), "rate_update"
+			if limitsRateReadOnly(rate) {
+				label, kind = label+"  (read only)", "rate_inspect"
+			}
+			rows = append(rows, limitsMenuItem{label: label, kind: kind, value: rate})
 		}
 	}
 	return rows
 }
 
 func (m *limitsWorkspace) begin(kind string, value gjson.Result) {
+	if kind == "rate_inspect" || kind == "rate_update" && limitsRateReadOnly(value) {
+		m.detailsReturnPage = "home"
+		m.page, m.detailsHeading = "details", "Read-only model rate limit"
+		m.setDetails(limitsSafeJSON(value))
+		return
+	}
 	if m.locked {
 		m.note = "Writes are locked after a failed save. Inspect the resource before reopening."
 		return
@@ -461,7 +490,17 @@ func (m *limitsWorkspace) setFocus(next int) {
 	if len(m.draft.inputs) == 3 {
 		count++
 	}
+	if m.draft.hasUnavailableEdits() {
+		count++
+	}
+	direction := 1
+	if next < m.focus {
+		direction = -1
+	}
 	m.focus = (next + count) % count
+	for !m.draft.inputAvailable(m.focus) {
+		m.focus = (m.focus + direction + count) % count
+	}
 	if m.focus < len(m.draft.inputs) {
 		m.draft.inputs[m.focus].Focus()
 	}
@@ -487,17 +526,25 @@ func (m *limitsWorkspace) setReview() {
 }
 
 func (m *limitsWorkspace) detailsHeight() int {
+	height := max(1, m.panelHeight()-3)
 	if m.page == "review" && m.previewCommand != "" {
-		return max(1, m.height-6)
+		height = max(1, m.panelHeight()-6)
+	} else if m.page == "review" {
+		height = max(1, m.panelHeight()-5)
 	}
-	return max(1, m.height-5)
+	return min(height, max(1, m.detailsLines))
 }
+
+func (m *limitsWorkspace) panelWidth() int  { return min(m.width, 76) }
+func (m *limitsWorkspace) panelHeight() int { return min(m.height, 18) }
 
 func (m *limitsWorkspace) setDetails(content string) {
 	m.details = content
-	m.viewport.SetWidth(max(1, m.width-2))
+	wrapped := ansi.Hardwrap(content, max(1, m.panelWidth()-2), true)
+	m.detailsLines = strings.Count(wrapped, "\n") + 1
+	m.viewport.SetWidth(max(1, m.panelWidth()-2))
 	m.viewport.SetHeight(m.detailsHeight())
-	m.viewport.SetContent(ansi.Hardwrap(content, max(1, m.width-2), true))
+	m.viewport.SetContent(wrapped)
 	m.viewport.GotoTop()
 }
 
@@ -519,7 +566,7 @@ func (m *limitsWorkspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailsReturnOffset = 0
 			m.setDetails(m.details)
 		}
-		m.viewport.SetWidth(max(1, msg.Width-2))
+		m.viewport.SetWidth(max(1, m.panelWidth()-2))
 		m.viewport.SetHeight(m.detailsHeight())
 		return m, nil
 	case limitsWorkResult:
@@ -653,7 +700,16 @@ func (m *limitsWorkspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.setFocus(m.focus - 1)
 				return m, nil
 			case "enter":
-				if m.focus == len(m.draft.inputs) && len(m.draft.inputs) == 3 {
+				if m.focus == len(m.draft.inputs) && m.draft.hasUnavailableEdits() {
+					for i := range m.draft.inputs {
+						if !m.draft.inputAvailable(i) {
+							m.draft.inputs[i].SetValue("")
+							m.draft.initial[i] = ""
+						}
+					}
+					m.formError = "Unavailable edits discarded. Review the remaining values."
+					m.setFocus(len(m.draft.inputs))
+				} else if m.focus == len(m.draft.inputs) && len(m.draft.inputs) == 3 {
 					m.draft.prefixMode = (m.draft.prefixMode + 1) % 3
 				} else if m.focus >= len(m.draft.inputs) {
 					if !m.locked {
@@ -702,7 +758,7 @@ func (m *limitsWorkspace) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, command
 	}
-	if m.page == "form" && m.focus < len(m.draft.inputs) && !m.small() {
+	if m.page == "form" && m.focus < len(m.draft.inputs) && m.draft.inputAvailable(m.focus) && !m.small() {
 		var command tea.Cmd
 		m.draft.inputs[m.focus], command = m.draft.inputs[m.focus].Update(message)
 		return m, command
@@ -870,7 +926,16 @@ func (m *limitsWorkspace) help() string {
 	if invocation == "" {
 		invocation = "openai"
 	}
-	text := "Spend manages hard monthly USD limits.\nAlerts notify recipients; they do not enforce caps.\nRates manages six project rate fields.\n\nEvery change requires a before/after review.\nRead to the end, then Tab to Apply.\nBack remains the default action.\nCtrl+P prints the reviewed command and exits. Printing sends no change.\n\nUse r to refresh. Use i to inspect original fields.\nUse --max-items -1 to load complete lists.\n\n"
+	text := "Spend manages hard monthly USD limits.\nAlerts notify recipients; they do not enforce caps.\nRates manages seven project rate fields.\n\nEvery change requires a before/after review.\nRead to the end, then Tab to Apply.\nBack remains the default action.\nCtrl+P prints the reviewed command and exits. Printing sends no change.\n\nUse r to refresh. Use i to inspect original fields.\nUse --max-items -1 to load complete lists.\n\n"
+	if m.draft.hasUnavailableEdits() {
+		text += "Unavailable rate drafts remain saved until you select Discard unavailable edits.\n"
+		for i, field := range limitsRateInputs {
+			if !m.draft.inputAvailable(i) && m.draft.inputs[i].Value() != "" && m.draft.inputs[i].Value() != m.draft.initial[i] {
+				text += field.label + ": " + readable.Text(m.draft.inputs[i].Value()) + "\n"
+			}
+		}
+		text += "Other edited fields remain unchanged.\n\n"
+	}
 	if m.locked {
 		m.mu.Lock()
 		failure := m.mutationError

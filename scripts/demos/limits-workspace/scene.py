@@ -34,6 +34,15 @@ exit "$limits_scene_status"
 '''
 
 
+def restored_offset(raw):
+    """Require inline readiness and cursor restoration after the last rendered frame."""
+    assert b"\x1b[?1049h" not in raw and b"\x1b[?1049l" not in raw, "workspace entered an alternate screen"
+    ready = raw.find(b"Website controls and source errors: ?")
+    hidden, restored = raw.find(b"\x1b[?25l"), raw.rfind(b"\x1b[?25h")
+    assert ready >= 0 and hidden >= 0 and restored > max(ready, hidden), "inline workspace did not restore its cursor"
+    return restored + len(b"\x1b[?25h")
+
+
 def write_text(path, value):
     with Path(path).open("x", encoding="utf-8") as destination:
         if destination.write(value) != len(value):
@@ -79,8 +88,7 @@ class RelayTerminal(harness.Terminal):
             initial[3] &= ~termios.PENDIN
         if restored != initial:
             raise AssertionError("workspace did not restore terminal input")
-        if self.raw.rfind(b"\x1b[?1049l") <= self.raw.rfind(b"\x1b[?1049h"):
-            raise AssertionError("workspace did not leave its alternate screen")
+        restored_offset(self.raw)
         if self.raw.rfind(b"\x1b[?25h") <= self.raw.rfind(b"\x1b[?25l"):
             raise AssertionError("workspace did not restore cursor visibility")
 
@@ -279,6 +287,9 @@ def run_scene(terminal, scene, evidence, output):
         replace(terminal, evidence, "Requests per minute", "250")
         for _ in range(6):
             key(terminal, evidence, "Next rate field", b"\t")
+        wait_screen(terminal, ["Tokens / day", "Review change"])
+        replace(terminal, evidence, "Tokens per day", "9007199254740993")
+        key(terminal, evidence, "Review rate action", b"\t")
         checkpoint(terminal, evidence, output, "form")
         key(terminal, evidence, "Review", b"\r")
     else:
@@ -304,7 +315,7 @@ def run_scene(terminal, scene, evidence, output):
         output_flags = terminal.terminal_modes["initial"][1]
         newline = "\r\n" if output_flags & termios.OPOST and output_flags & termios.ONLCR else "\n"
         expected = (command + newline).encode()
-        restored = terminal.raw.rfind(b"\x1b[?1049l") + len(b"\x1b[?1049l")
+        restored = restored_offset(terminal.raw)
         start = len(terminal.raw) - len(expected)
         if (start < restored or terminal.raw[start:] != expected
                 or terminal.raw[restored:].count(expected) != 1
@@ -340,7 +351,7 @@ def run_scene(terminal, scene, evidence, output):
             raise AssertionError("failed preflight sent a mutation")
         if b"synthetic-private-preflight" in terminal.raw:
             raise AssertionError("preflight recovery exposed private response data")
-        restored = terminal.raw.rfind(b"\x1b[?1049l") + len(b"\x1b[?1049l")
+        restored = restored_offset(terminal.raw)
         diagnostic = terminal.raw[restored:]
         for message in (b"HTTP 400", b"No write sent.", b"request fields and scope",
                         b"Reopen the limits workspace", b"review current settings",
@@ -433,10 +444,8 @@ def main():
                 if str(binary).encode() in terminal.raw:
                     raise AssertionError("capture exposed the private binary source path")
                 if terminal.child.returncode != 0:
-                    restored = terminal.raw.rfind(b"\x1b[?1049l")
-                    if restored < 0:
-                        raise AssertionError("final diagnostic lacks terminal restoration")
-                    diagnostic = b" ".join(terminal.raw[restored + len(b"\x1b[?1049l"):].lower().split())
+                    restored = restored_offset(terminal.raw)
+                    diagnostic = b" ".join(terminal.raw[restored:].lower().split())
                     for action in (b"press r", b"use r to", b"refresh with r", b"press ?", b"press f1", b"use f1",
                                    b"f1 for", b"f1:", b"ctrl+p", b"tab to apply"):
                         if action in diagnostic:

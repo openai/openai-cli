@@ -35,7 +35,7 @@ def initial_state(project):
         "rates": [{"object": "project.rate_limit", "id": "rl_demo", "model": "synthetic-model",
                    "max_requests_per_1_minute": 100, "max_tokens_per_1_minute": 20000,
                    "max_images_per_1_minute": 5, "max_requests_per_1_day": 1000,
-                   "max_audio_megabytes_per_1_minute": 10, "batch_1_day_max_input_tokens": 50000}],
+                   "max_audio_megabytes_per_1_minute": 10, "batch_1_day_max_input_tokens": 50000, "max_tokens_per_1_day": 100000}],
     }
 
 
@@ -146,8 +146,8 @@ def main():
                     if self.command == "GET":
                         result = page(state["rates"])
                     elif self.command == "POST" and tail[1:] == ["rl_demo"]:
-                        if payload != {"max_requests_per_1_minute": 250}:
-                            raise AssertionError("rate update must change only the selected dimension")
+                        if payload != {"max_requests_per_1_minute": 250, "max_tokens_per_1_day": 9007199254740993}:
+                            raise AssertionError("rate update must change only the two selected dimensions")
                         state["rates"][0].update(payload)
                         result = state["rates"][0]
                 if result is None:

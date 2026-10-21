@@ -29,7 +29,8 @@ exec "$DEMO_PYTHON" -I -B "$DEMO_DRIVER"
 SCENE
 cp "$demo_runtime/scene.sh" "$demo_output/scene.sh"
 {
-  echo 'feature: supported limits workspace workflows'
+  echo 'feature: compact inline limits workspace workflows'
+  echo 'presentation: stable selection geometry; maximum76 columns and18rows; preserved shell scrollback'
   echo "candidate source commit: $demo_after_sha"
   echo "candidate source state: ${DEMO_SOURCE_STATE:-committed source supplied by caller}"
   echo 'baseline: no before comparison; this records the supplied workspace binary only'

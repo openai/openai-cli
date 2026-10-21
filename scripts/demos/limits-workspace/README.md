@@ -40,7 +40,7 @@ The isolated child environment includes only fake credentials and the fixture en
 | `alert-print` | Organization | Print the complete reviewed alert command after terminal restoration; perform no mutation |
 | `alert-edit` | Project | Change the alert to USD 150.25 and clear its prefix to null |
 | `alert-delete` | Organization | Delete the selected synthetic alert |
-| `rate-update` | Project | Change requests per minute to 250; preserve all other dimensions |
+| `rate-update` | Project | Set requests per minute to 250 and tokens per day to 9007199254740993; preserve other dimensions |
 | `uncertain` | Organization | Apply a synthetic write, lose its response, and verify that repetition stays blocked |
 | `slow-cancel` | Organization | Cancel a held read with Ctrl+C; perform no mutation |
 | `preflight-400` | Organization | Reject the preflight read, retain the draft, explain recovery, and exit with failure without mutation |
@@ -97,3 +97,10 @@ Check clipping, stale rows, focus markers, controls, and final state after exit.
 Generated artifacts are terminal replays, not native terminal appearance evidence.
 Do not commit binary media or claim these planned scenes ran before execution.
 The earlier spend-threshold recorder remains the separate before/after comparison.
+
+The workspace now stays inline and preserves shell scrollback.
+Selection keeps fixed geometry and font weight.
+The panel uses at most 76 columns and 18 rows.
+The recorder requires inline readiness, cursor restoration, and restored terminal modes.
+Historical full-screen recordings do not validate this revision.
+The rate scene exercises the seventh field and exact tokens-per-day request bytes.

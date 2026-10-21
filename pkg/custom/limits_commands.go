@@ -12,6 +12,7 @@ import (
 	"github.com/openai/openai-cli/internal/commands/admin"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	"github.com/openai/openai-cli/internal/output/transform"
+	"github.com/openai/openai-cli/internal/requestflag"
 	"github.com/urfave/cli/v3"
 )
 
@@ -39,6 +40,22 @@ func registerLimitsCommands(root *cli.Command) {
 	organization.Commands = append(organization.Commands, newLimitsCommand(false))
 	if projects := organization.Command("projects"); projects != nil {
 		projects.Commands = append(projects.Commands, newLimitsCommand(true))
+		if rates := projects.Command("rate-limits"); rates != nil {
+			if update := rates.Command("update-rate-limit"); update != nil {
+				found := false
+				for _, flag := range update.Flags {
+					for _, name := range flag.Names() {
+						found = found || name == "max-tokens-per-1-day"
+					}
+				}
+				if !found {
+					update.Flags = append(update.Flags, &requestflag.Flag[int64]{
+						Name: "max-tokens-per-1-day", BodyPath: "max_tokens_per_1_day",
+						Usage: "The maximum number of tokens per day for this model.",
+					})
+				}
+			}
+		}
 	}
 }
 

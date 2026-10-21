@@ -181,13 +181,14 @@ func TestLimitsServiceAlertPrefixPresenceAndNoMutationRetries(t *testing.T) {
 	}
 }
 
-func TestLimitsServiceRateUpdatePreservesZeroNegativeAndUnknownResponseFields(t *testing.T) {
+func TestLimitsServiceRateUpdatePreservesZeroPrecisionAndUnknownResponseFields(t *testing.T) {
 	var body []byte
+	baseline := strings.Replace(limitsTestRate, `"future":`, `"max_requests_per_1_day":1,"max_images_per_1_minute":2,"max_audio_megabytes_per_1_minute":3,"batch_1_day_max_input_tokens":4,"max_tokens_per_1_day":5,"future":`, 1)
 	backend := limitsTestBackend(t, "proj_demo", 100, func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/proj_demo") {
 			limitsTestWrite(t, w, `{"id":"proj_demo","object":"organization.project"}`)
 		} else if r.Method == http.MethodGet {
-			limitsTestWrite(t, w, `{"object":"list","data":[`+limitsTestRate+`],"has_more":false}`)
+			limitsTestWrite(t, w, `{"object":"list","data":[`+baseline+`],"has_more":false}`)
 		} else {
 			var err error
 			body, err = io.ReadAll(r.Body)
@@ -196,7 +197,7 @@ func TestLimitsServiceRateUpdatePreservesZeroNegativeAndUnknownResponseFields(t 
 			}
 			var updated map[string]json.RawMessage
 			var changed map[string]json.RawMessage
-			if err := json.Unmarshal([]byte(limitsTestRate), &updated); err != nil {
+			if err := json.Unmarshal([]byte(baseline), &updated); err != nil {
 				t.Error(err)
 			}
 			if err := json.Unmarshal(body, &changed); err != nil {
@@ -212,13 +213,15 @@ func TestLimitsServiceRateUpdatePreservesZeroNegativeAndUnknownResponseFields(t 
 			limitsTestWrite(t, w, string(encoded))
 		}
 	})
-	value, err := backend.Mutate(t.Context(), limitsChange{Kind: "rate_update", ID: "rate_demo", Before: gjson.Parse(limitsTestRate),
-		RateValues: map[string]int64{"max_requests_per_1_minute": 0, "max_tokens_per_1_minute": -1,
+	value, err := backend.Mutate(t.Context(), limitsChange{Kind: "rate_update", ID: "rate_demo", Before: gjson.Parse(baseline),
+		RateValues: map[string]int64{"max_requests_per_1_minute": 0, "max_tokens_per_1_minute": 201,
 			"max_requests_per_1_day": 123, "max_images_per_1_minute": 4,
-			"max_audio_megabytes_per_1_minute": 5, "batch_1_day_max_input_tokens": 9007199254740993}})
+			"max_audio_megabytes_per_1_minute": 5, "batch_1_day_max_input_tokens": 9007199254740993,
+			"max_tokens_per_1_day": 9223372036854775807}})
 	require.NoError(t, err)
 	require.Equal(t, "9007199254740993", gjson.GetBytes(body, "batch_1_day_max_input_tokens").Raw)
-	require.JSONEq(t, `{"max_requests_per_1_minute":0,"max_tokens_per_1_minute":-1,"max_requests_per_1_day":123,"max_images_per_1_minute":4,"max_audio_megabytes_per_1_minute":5,"batch_1_day_max_input_tokens":9007199254740993}`, string(body))
+	require.JSONEq(t, `{"max_requests_per_1_minute":0,"max_tokens_per_1_minute":201,"max_requests_per_1_day":123,"max_images_per_1_minute":4,"max_audio_megabytes_per_1_minute":5,"batch_1_day_max_input_tokens":9007199254740993,"max_tokens_per_1_day":9223372036854775807}`, string(body))
+	require.Equal(t, "9223372036854775807", gjson.GetBytes(body, "max_tokens_per_1_day").Raw)
 	require.Equal(t, "0.1234567890123456789", value.Get("future.precision").Raw)
 }
 
@@ -809,4 +812,67 @@ func TestLimitsCostsCancellationRetainsEarlierBuckets(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "canceled", value.Get("source_errors.0.status").Str)
 	require.Equal(t, "0.1", value.Get("costs.buckets.0.results.0.amount.value").Raw)
+}
+
+func TestLimitsServiceRejectsUneditableRatesWithoutRequests(t *testing.T) {
+	for _, test := range []struct {
+		name, baseline, field string
+		value                 int64
+	}{
+		{"negative", limitsTestRate, "max_requests_per_1_minute", -1},
+		{"absent", limitsTestRate, "max_tokens_per_1_day", 1},
+		{"null", strings.Replace(limitsTestRate, `200`, `null`, 1), "max_tokens_per_1_minute", 1},
+		{"fine tuned", strings.Replace(limitsTestRate, `synthetic-model`, `ft:synthetic-model`, 1), "max_requests_per_1_minute", 1},
+		{"shared", strings.Replace(limitsTestRate, `synthetic-model`, `synthetic-shared`, 1), "max_requests_per_1_minute", 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requests atomic.Int32
+			backend := limitsTestBackend(t, "proj_demo", 100, func(w http.ResponseWriter, r *http.Request) { requests.Add(1) })
+			_, err := backend.Mutate(t.Context(), limitsChange{Kind: "rate_update", ID: "rate_demo", Before: gjson.Parse(test.baseline), RateValues: map[string]int64{test.field: test.value}})
+			var failure *limitsMutationFailure
+			require.ErrorAs(t, err, &failure)
+			require.False(t, failure.Attempted)
+			require.Zero(t, requests.Load())
+		})
+	}
+}
+
+func TestLimitsServiceSparseTokensPerDayConfirmation(t *testing.T) {
+	const baseline = `{"object":"project.rate_limit","id":"rate_demo","model":"synthetic-model","max_tokens_per_1_day":100,"max_tokens_per_1_minute":null,"future":{"precision":0.1234567890123456789}}`
+	const updated = `{"object":"project.rate_limit","id":"rate_demo","model":"synthetic-model","max_tokens_per_1_day":9007199254740993,"max_tokens_per_1_minute":null}`
+	for _, test := range []struct {
+		name, response string
+		success        bool
+	}{
+		{"matching", updated, true},
+		{"different model", strings.Replace(updated, `synthetic-model`, `other-model`, 1), false},
+		{"rounded value", strings.Replace(updated, `9007199254740993`, `9007199254740992`, 1), false},
+		{"missing value", strings.Replace(updated, `9007199254740993`, `null`, 1), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var writes atomic.Int32
+			backend := limitsTestBackend(t, "proj_demo", 100, func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/proj_demo") {
+					limitsTestWrite(t, w, `{"object":"organization.project","id":"proj_demo"}`)
+				} else if r.Method == http.MethodGet {
+					limitsTestWrite(t, w, `{"object":"list","data":[`+baseline+`],"has_more":false}`)
+				} else {
+					writes.Add(1)
+					body, err := io.ReadAll(r.Body)
+					require.NoError(t, err)
+					require.JSONEq(t, `{"max_tokens_per_1_day":9007199254740993}`, string(body))
+					limitsTestWrite(t, w, test.response)
+				}
+			})
+			_, err := backend.Mutate(t.Context(), limitsChange{Kind: "rate_update", ID: "rate_demo", Before: gjson.Parse(baseline), RateValues: map[string]int64{"max_tokens_per_1_day": 9007199254740993}})
+			require.Equal(t, int32(1), writes.Load())
+			if test.success {
+				require.NoError(t, err)
+			} else {
+				var failure *limitsMutationFailure
+				require.ErrorAs(t, err, &failure)
+				require.True(t, failure.Attempted)
+			}
+		})
+	}
 }

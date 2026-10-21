@@ -519,6 +519,8 @@ func (backend *limitsAPIBackend) Mutate(ctx context.Context, change limitsChange
 				params.MaxAudioMegabytesPer1Minute = openai.Int(value)
 			case "batch_1_day_max_input_tokens":
 				params.Batch1DayMaxInputTokens = openai.Int(value)
+			case "max_tokens_per_1_day":
+				options = append(options, option.WithJSONSet(field, value))
 			}
 		}
 		attempted = true
@@ -575,8 +577,10 @@ func limitsMutationConfirmedContext(ctx context.Context, value gjson.Result, cha
 		return ctx.Err()
 	}
 	if resource == "rate_limit" {
-		if value.Get("model").Type != gjson.String || value.Get("model").Str == "" ||
-			value.Get("max_requests_per_1_minute").Type != gjson.Number || value.Get("max_tokens_per_1_minute").Type != gjson.Number {
+		if err := limitsEditableBaselineContext(ctx, value, "rate_update"); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return invalid
 		}
 	} else {
@@ -593,6 +597,9 @@ func limitsMutationConfirmedContext(ctx context.Context, value gjson.Result, cha
 	}
 	mismatch := errors.New("The API returned different values from the reviewed change. Inspect the returned record before another change.")
 	if resource == "rate_limit" {
+		if value.Get("model").Str != change.Before.Get("model").Str {
+			return mismatch
+		}
 		for field, requested := range change.RateValues {
 			if err := ctx.Err(); err != nil {
 				return err

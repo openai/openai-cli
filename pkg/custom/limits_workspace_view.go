@@ -12,7 +12,6 @@ import (
 
 func (m *limitsWorkspace) View() tea.View {
 	view := tea.NewView("")
-	view.AltScreen = true
 	if m.quitting {
 		return view
 	}
@@ -20,8 +19,8 @@ func (m *limitsWorkspace) View() tea.View {
 		view.Content = "Resize to at least 40 x 12.\nCtrl+C: quit"
 		return view
 	}
-	width := m.width - 2
-	accent := lipgloss.NewStyle().Bold(true)
+	width, height := m.panelWidth()-2, m.panelHeight()
+	accent := lipgloss.NewStyle()
 	if m.color {
 		color := "#3159BC"
 		if m.dark {
@@ -46,11 +45,16 @@ func (m *limitsWorkspace) View() tea.View {
 			sections = append(sections, "Rates")
 		}
 		for i := range sections {
+			prefix := "  "
 			if i == m.section {
-				sections[i] = accent.Render("[" + sections[i] + "]")
+				prefix = "> "
+				sections[i] = accent.Render(prefix + sections[i])
+			} else {
+				sections[i] = prefix + sections[i]
 			}
 		}
 		body = append(body, strings.Join(sections, "   "), line(m.sourceSummary()), line(m.costsSummary()))
+		enforcement := ""
 		if m.section == 0 && m.snapshot.Limit.Exists() {
 			state := m.snapshot.Limit.Get("enforcement.status")
 			status := "not reported"
@@ -59,13 +63,20 @@ func (m *limitsWorkspace) View() tea.View {
 			} else if state.Type == gjson.String {
 				status = state.String()
 			}
-			body = append(body, line("Returned enforcement: "+status))
+			enforcement = line("Returned enforcement: " + status)
 		}
+		body = append(body, enforcement)
 		rows := m.menu()
-		room := max(1, m.height-6-len(body))
-		if m.locked {
-			room = max(1, room-1)
+		// Reserve the same menu rows across tabs, without filling the terminal.
+		room := max(2, len(m.snapshot.Alerts)+1)
+		if m.snapshot.ProjectID != "" {
+			room = max(room, len(m.snapshot.Rates))
 		}
+		budget := height - 10
+		if m.locked {
+			budget--
+		}
+		room = max(1, min(room, budget))
 		start := max(0, m.selection-room+1)
 		for i := start; i < min(len(rows), start+room); i++ {
 			body = append(body, mark(rows[i].label, i == m.selection))
@@ -73,11 +84,14 @@ func (m *limitsWorkspace) View() tea.View {
 		if len(rows) == 0 {
 			body = append(body, "No editable records loaded.")
 		}
+		for i := max(1, min(len(rows), room)); i < room; i++ {
+			body = append(body, "")
+		}
 		body = append(body, line(m.note))
 		if m.locked {
 			body = append(body, "Writes locked. Inspect before retrying.")
 		}
-		footer = "←/→: section  ↑/↓: select  Enter: edit\nr: refresh  i: inspect  d: delete alert\nq: quit  ?: help  Ctrl+C: interrupt"
+		footer = "←/→ section  ↑/↓ select  Enter open\nr refresh  i inspect  d delete alert\nq quit  ? help  Ctrl+C interrupt"
 	case "form":
 		body = append(body, "Tab: next field · Shift+Tab: previous")
 		count := len(m.draft.inputs)
@@ -90,27 +104,54 @@ func (m *limitsWorkspace) View() tea.View {
 			}
 		}
 		// Reserve navigation, Review, diagnostics, and the optional prefix action before fields.
-		fieldRows := m.height - 4 - 2 - len(notice)
+		fieldRows := height - 4 - 2 - len(notice)
 		if count == 3 {
 			fieldRows--
 		}
+		unavailable := m.draft.hasUnavailableEdits()
+		if unavailable {
+			fieldRows--
+		}
+		var fields []int
+		position := 0
+		for i := range m.draft.inputs {
+			if m.draft.inputAvailable(i) {
+				if i <= m.focus {
+					position = len(fields)
+				}
+				fields = append(fields, i)
+			}
+		}
+		if len(fields) < count {
+			fieldRows--
+		}
 		visible := max(1, fieldRows/2)
-		start := max(0, min(m.focus, count-1)-visible+1)
-		end := min(count, start+visible)
-		for i := start; i < end; i++ {
+		start := max(0, position-visible+1)
+		end := min(len(fields), start+visible)
+		for _, i := range fields[start:end] {
 			m.draft.inputs[i].SetWidth(max(1, width-4))
-			marker, label := "  ", line(m.draft.labels[i])
+			text := m.draft.labels[i]
+			if m.draft.change.Kind == "rate_update" {
+				text = limitsRateInputs[i].label + " (blank: unchanged)"
+			}
+			marker, label := "  ", line(text)
 			if i == m.focus {
 				marker = "> "
 				label = accent.Render(label)
 			}
 			body = append(body, label, marker+ansi.Truncate(m.draft.inputs[i].View(), width, "…"))
 		}
+		if len(fields) < count {
+			body = append(body, line("Other rate fields were not returned."))
+		}
 		if count == 3 {
 			modes := []string{"Keep unless edited", "Replace (empty is allowed)", "Clear to null"}
 			body = append(body, mark("Prefix: "+modes[m.draft.prefixMode], m.focus == count))
 		}
-		body = append(body, mark("Review change", m.focus >= count && !(count == 3 && m.focus == count)))
+		if unavailable {
+			body = append(body, mark("Discard unavailable edits", m.focus == count))
+		}
+		body = append(body, mark("Review change", m.focus >= count && !((count == 3 || unavailable) && m.focus == count)))
 		body = append(body, notice...)
 		footer = "Enter: next / select\nF1: help  Esc: back  Ctrl+C: quit"
 		if m.refreshRequired {
@@ -144,13 +185,17 @@ func (m *limitsWorkspace) View() tea.View {
 	}
 	// The action row and controls occupy reserved rows. Long data stays in the viewport.
 	footerRows := strings.Count(footer, "\n") + 1
-	available := max(0, m.height-2-footerRows)
+	available := max(0, height-2-footerRows)
 	text := strings.Join(body, "\n")
 	rows := strings.Split(text, "\n")
 	if len(rows) > available {
 		rows = rows[:available]
 	}
-	view.Content = header + "\n" + strings.Join(rows, "\n") + strings.Repeat("\n", max(1, available-len(rows)+1)) + footer
+	controls := strings.Split(footer, "\n")
+	for i := range controls {
+		controls[i] = line(controls[i])
+	}
+	view.Content = header + "\n" + strings.Join(rows, "\n") + "\n\n" + strings.Join(controls, "\n")
 	return view
 }
 
