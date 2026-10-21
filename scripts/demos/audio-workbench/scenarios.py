@@ -679,7 +679,7 @@ def workflow_case(ctx):
                 width = int(event[2].split("x")[0])
         physical = []
         for line in visible.splitlines():
-            assert all(32 <= ord(char) < 127 or char in "│┃╷╵█▀▄─·›…←→↑↓" for char in line), \
+            assert all(32 <= ord(char) < 127 or char in "╭╮╰╯│┃╷╵█▀▄─·›…←→↑↓" for char in line), \
                 "Waveform fixture contains a character with an unverified cell width"
             physical.extend([line[start:start + width] for start in range(0, len(line), width)] or [""])
         indices = [index for index, row in enumerate(physical) if "┃" in row]

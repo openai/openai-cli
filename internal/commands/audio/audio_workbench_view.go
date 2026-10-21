@@ -301,7 +301,7 @@ func (m *audioWorkbench) formRows(compact, interactive bool) []string {
 		} else if interactive && m.focus == i || i == 0 && !compact {
 			lines = append(lines, m.formEditorRows(name, editor, interactive && m.focus == i)...)
 		} else {
-			value := readable.Text(strings.ReplaceAll(editor.Value(), "\n", " "))
+			value := readable.Text(strings.NewReplacer("\n", " ", "\t", "    ").Replace(editor.Value()))
 			if value == "" {
 				value = "(optional)"
 				if i == 0 {
@@ -452,7 +452,7 @@ func (m *audioWorkbench) saveView() tea.View {
 		if m.saveFocus == i {
 			lines = append(lines, m.inlineEditorRows(name, editor, true, labelWidth)...)
 		} else {
-			value := readable.Text(strings.ReplaceAll(editor.Value(), "\n", " "))
+			value := readable.Text(strings.NewReplacer("\n", " ", "\t", "    ").Replace(editor.Value()))
 			lines = append(lines, m.label(m.muted().Render(fmt.Sprintf("%-*s", labelWidth, name))+" "+value, false))
 		}
 	}

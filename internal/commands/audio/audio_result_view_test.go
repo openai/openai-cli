@@ -228,3 +228,21 @@ func TestAudioSaveInactiveMultilineDraftKeepsControlsVisible(t *testing.T) {
 		}
 	}
 }
+
+func TestAudioSaveTabContainingPathSummaryFitsPanel(t *testing.T) {
+	m := audioReviewModel(t)
+	r := audioReviewResult("retained", false)
+	m.result = &r
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	m.openSave()
+	draft := strings.Repeat("folder\t", 30) + "clip.wav"
+	m.path.SetValue(draft)
+	m.focusSave(1)
+	view := ansi.Strip(m.View().Content)
+	require.Equal(t, draft, m.path.Value())
+	require.LessOrEqual(t, len(strings.Split(view, "\n")), 23)
+	for _, row := range strings.Split(view, "\n") {
+		require.LessOrEqual(t, ansi.StringWidth(row), 58)
+	}
+	require.Contains(t, view, "Enter done · Esc back")
+}
