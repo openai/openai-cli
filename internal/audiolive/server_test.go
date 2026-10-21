@@ -268,7 +268,14 @@ func TestCompanionRunCancellationRemovesPrivateLaunchFile(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			launch = filepath.FromSlash(u.Path)
+			if u.Host != "" {
+				t.Error("private file URL unexpectedly contained a host")
+			}
+			path := u.Path
+			if runtime.GOOS == "windows" {
+				path = strings.TrimPrefix(path, "/")
+			}
+			launch = filepath.FromSlash(path)
 			info, err := os.Stat(launch)
 			if err != nil {
 				return err

@@ -130,7 +130,11 @@ func Run(ctx context.Context, options Options) error {
 		<-ended
 	}()
 	openCtx, stopOpen := context.WithTimeout(ctx, 5*time.Second)
-	err = options.OpenBrowser(openCtx, (&url.URL{Scheme: "file", Path: filepath.ToSlash(launch)}).String())
+	launchPath := filepath.ToSlash(launch)
+	if filepath.VolumeName(launch) != "" {
+		launchPath = "/" + launchPath
+	}
+	err = options.OpenBrowser(openCtx, (&url.URL{Scheme: "file", Path: launchPath}).String())
 	stopOpen()
 	if err != nil {
 		_, err = fmt.Fprintln(options.Writer, "Open this private launch page in your browser:\n"+launch+"\nCtrl+C to close.")
