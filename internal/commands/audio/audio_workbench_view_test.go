@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAudioViewUsesOneEditorAndNoBackgroundFill(t *testing.T) {
+func TestAudioViewFramesEachSurfaceAndFillsOnlySelectedControls(t *testing.T) {
 	background := regexp.MustCompile(`\x1b\[[0-9;:]*48[;:]`)
 	for _, dark := range []bool{false, true} {
 		m := audioReviewModel(t)
@@ -20,25 +20,27 @@ func TestAudioViewUsesOneEditorAndNoBackgroundFill(t *testing.T) {
 		for _, focus := range []int{0, 1, 2} {
 			m.focusSection(focus)
 			view := m.View().Content
-			require.False(t, background.MatchString(view))
+			require.Equal(t, focus == 2, background.MatchString(view))
+			require.False(t, background.MatchString(m.editorView(m.input)))
+			require.False(t, background.MatchString(m.editorView(m.instructions)))
 			require.Equal(t, 1, strings.Count(ansi.Strip(view), "╭"))
 			require.Contains(t, ansi.Strip(view), "│")
 		}
 		m.modal, m.setting, m.choices = "choice", 0, audioModels
-		require.False(t, background.MatchString(m.View().Content))
+		require.True(t, background.MatchString(m.View().Content))
 		r := audioReviewResult("result", false)
 		m.modal, m.result = "", &r
 		m.focusSection(4)
 		view := m.View().Content
 		require.NotContains(t, ansi.Strip(view), "Generate speech")
 		require.NotContains(t, ansi.Strip(view), "Instructions")
-		require.False(t, background.MatchString(view))
+		require.True(t, background.MatchString(view))
 		m.openSave()
 		view = m.View().Content
 		require.Contains(t, ansi.Strip(view), "Filename")
 		require.Contains(t, ansi.Strip(view), audioDefaultSaveFolder)
 		require.Contains(t, ansi.Strip(view), "Full recording")
-		require.False(t, background.MatchString(view))
+		require.True(t, background.MatchString(view))
 	}
 }
 
@@ -47,8 +49,9 @@ func TestAudioViewUsesPlainEditorAndAlignedSettings(t *testing.T) {
 	m.input.SetValue("Read this text.")
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 32})
 	view := ansi.Strip(m.View().Content)
-	require.True(t, strings.HasPrefix(view, "    Text to speech\n  ╭─"))
-	require.Contains(t, view, "    Settings\n")
+	require.True(t, strings.HasPrefix(view, "  ╭─"))
+	require.Contains(t, view, "Text to speech")
+	require.Contains(t, view, "Settings")
 	for _, row := range []string{"Model          gpt-4o-mini-tts", "Voice          Coral", "Format         WAV", "Speed          1.00 x"} {
 		require.Contains(t, view, row)
 	}
@@ -138,25 +141,25 @@ func TestAudioViewKeepsImageStyleFormStableAcrossFocus(t *testing.T) {
 			m.focusSection(focus)
 			view := ansi.Strip(m.View().Content)
 			rows := strings.Split(view, "\n")
-			require.Equal(t, 4, strings.Index(rows[0], "Text to speech"))
-			require.Equal(t, min(96, width-4), ansi.StringWidth(rows[1])-2, "wide terminals must retain a bounded reading column")
+			require.Equal(t, 6, strings.Index(rows[1], "Text to speech"))
+			require.Equal(t, min(96, width-4), ansi.StringWidth(rows[0])-2, "wide terminals must retain a bounded panel")
 			require.Contains(t, rows[2], "A clear short example.")
-			require.Contains(t, rows[4], "╯")
-			require.Contains(t, rows[5], "Instructions", "delivery instructions must follow the composer")
-			require.Empty(t, strings.TrimSpace(rows[6]))
-			require.Equal(t, "    Settings", rows[7], "technical settings need a separate group")
+			require.Contains(t, rows[4], "──", "separate the composer from its controls")
+			require.Contains(t, rows[5], "Instructions")
+			require.Empty(t, strings.Trim(rows[6], " │"))
+			require.Contains(t, rows[7], "Settings")
 			require.Equal(t, 1, strings.Count(view, "╭"), "Instructions must not replace the primary input")
 			require.NotContains(t, view, "› Text")
 			if focus == 2 {
-				require.NotContains(t, view, "[Alt+Enter] New line")
+				require.NotContains(t, view, "Alt+Enter New line")
 			} else if width >= 100 {
-				require.Contains(t, view, "[Alt+Enter] New line")
+				require.Contains(t, view, "Alt+Enter New line")
 			}
 			next := "Settings"
 			if focus == 2 {
 				next = "Text"
 			}
-			require.Contains(t, view, "[Tab] "+next)
+			require.Contains(t, view, "Tab "+next)
 		}
 	}
 }
@@ -179,7 +182,7 @@ func TestAudioSaveFieldsKeepTheirRowsAndValueColumns(t *testing.T) {
 				for row, text := range rows {
 					if strings.Contains(text, value) {
 						found = row
-						column := 19
+						column := 21
 						if size[0] == 40 {
 							column = 13
 						}

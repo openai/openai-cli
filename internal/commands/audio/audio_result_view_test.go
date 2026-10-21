@@ -114,7 +114,7 @@ func TestAudioResultViewKeepsWaveformAndControlsVisible(t *testing.T) {
 						for index, row := range rows {
 							if strings.Contains(row, "00:00.750 / 00:02.250") {
 								require.Greater(t, index, 0)
-								require.Empty(t, strings.TrimSpace(rows[index-1]), "roomy waveform needs breathing room before timing")
+								require.Empty(t, strings.Trim(rows[index-1], " │"), "roomy waveform needs breathing room before timing")
 							}
 						}
 					}

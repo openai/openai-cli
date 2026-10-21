@@ -372,7 +372,7 @@ func audioCommandRows(text string, width int) []string {
 	return append(rows, line.String())
 }
 
-func (m *audioWorkbench) informationHeight() int { return max(1, m.height-5) }
+func (m *audioWorkbench) informationHeight() int { return max(1, m.height-5-m.frameRows()) }
 
 func audioScrollOffset(offset, rows, height int, key string) int {
 	limit := max(0, rows-height)
@@ -405,8 +405,8 @@ func (m *audioWorkbench) informationView() tea.View {
 			footer = "↑↓ · Ctrl+P print/exit · Esc back"
 		}
 	}
-	lines = append(lines, "", m.muted().Render(footer))
-	return tea.NewView(m.fitAudio(lines))
+	lines = append(lines, "")
+	return m.panelView(lines, m.keyHint(footer))
 }
 
 const audioFormHelp = `Use Tab to move between sections.

@@ -165,7 +165,7 @@ func (m *audioWorkbench) resizeEditors() {
 			}
 			width = max(1, m.audioWidth()-labelWidth-3)
 		}
-		if editor == &m.instructions && m.height >= 24 && m.width >= 60 {
+		if (editor == &m.input || editor == &m.instructions) && m.framed() {
 			width = max(1, m.audioWidth()-17)
 		}
 		if editor.Width() != width {

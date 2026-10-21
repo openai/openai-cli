@@ -161,7 +161,7 @@ def failure_case(ctx):
     terminal.send(b"\x1b")
     main_form()
     terminal.send(b"\t\t" + ctx.picker.END + b"\r")
-    visible_failure(("More actions", "[Esc] Back"), absent=("Last error",))
+    visible_failure(("More actions", "Esc back"), absent=("Last error",))
     terminal.send(b"\x1b")
     main_form()
     visible_failure(("› More actions…",))
@@ -987,7 +987,7 @@ def wide_case(ctx):
     ctx.mark(terminal, "wide-actions", result)
     terminal.send(b"\r")
     visible = ctx.wait(terminal, "› History")
-    assert draft in visible and "Settings" in visible, "More actions lost form context"
+    assert draft in visible and "Open a previous recording" in visible, "More actions lost draft context"
     ctx.mark(terminal, "wide-more", result)
     terminal.send(b"\x1b")
     ctx.wait(terminal, "› More actions…")
