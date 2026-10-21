@@ -187,6 +187,10 @@ func readableAPIErrorMessage(root *cli.Command, failure error, apierr *openai.Er
 			message = "The API is temporarily unavailable.\nThe API may have received the request.\nCheck its status before trying again."
 		}
 	}
+	if guidance := readableAPIPermissionMessage(failure, apierr); guidance != "" {
+		message = guidance
+	}
+
 	if apierr.StatusCode > 0 {
 		status := fmt.Sprintf("HTTP %d", apierr.StatusCode)
 		if reason := http.StatusText(apierr.StatusCode); reason != "" {
