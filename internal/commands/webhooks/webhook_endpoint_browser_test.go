@@ -203,7 +203,7 @@ func TestWebhookCreateEndpointDetailsScrollCompleteValuesWithVisibleControls(t *
 				if strings.HasPrefix(line, "│ ") {
 					line = strings.TrimSuffix(strings.TrimPrefix(line, "│ "), " │")
 				}
-				rows[m.browser.offset+i-start] = strings.TrimRight(line[column:], " ")
+				rows[m.browser.offset+i-start] = strings.TrimRight(ansi.Cut(line, column, ansi.StringWidth(line)), " ")
 			}
 			before := m.browser.offset
 			webhookCreateKey(m, tea.KeyDown)
