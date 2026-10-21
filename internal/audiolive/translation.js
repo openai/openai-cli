@@ -12,7 +12,7 @@
 
   const status = value => { $('status').textContent = value; };
   const showError = message => { $('error').textContent = message; $('error').hidden = !message; };
-  const time = value => `${String(Math.floor(value / 60)).padStart(2,'0')}:${String(Math.floor(value % 60)).padStart(2,'0')}`;
+  const time = value => `${String(Math.floor(value / 60)).padStart(2,'0')}:${String(Math.floor(value % 60)).padStart(2,'0')}.${String(Math.floor(value * 1000) % 1000).padStart(3,'0')}`;
   const endpoint = (route, id) => route + (id ? '?id=' + encodeURIComponent(id) : '');
   async function request(route, options = {}) {
     const response = await fetch(route, {...options, cache:'no-store', headers:{'X-OpenAI-Audio':token,...options.headers}});
@@ -55,7 +55,7 @@
     outputRate = 24000; outputChannels = 1; peakFrames = 0; peakValue = 0; framesPerPeak = 240;
     chunks = []; peaks = []; outputText = []; originalText = []; sampleCount = 0; nextStart = 0; complete = false;
     $('original').replaceChildren(); $('translated').replaceChildren(); $('usage').textContent = '';
-    $('download').disabled = true; $('transcript').disabled = true;
+    $('download').disabled = true; $('transcript').disabled = true; $('playback').disabled = true;
     $('player').pause(); $('player').removeAttribute('src'); $('player').load(); $('player').hidden = true;
     if (recordingURL) URL.revokeObjectURL(recordingURL);
     recordingURL = '';
@@ -202,7 +202,7 @@
     if (!sampleCount) return;
     if (recordingURL) URL.revokeObjectURL(recordingURL);
     recordingURL = URL.createObjectURL(wavBlob());
-    $('player').src = recordingURL; $('player').hidden = false; $('download').disabled = false;
+    $('player').src = recordingURL; $('download').disabled = false; $('playback').disabled = false;
   }
   async function stop() {
     const run = current;
@@ -233,17 +233,27 @@
     const link = document.createElement('a'), url = URL.createObjectURL(blob);
     link.href = url; link.download = 'translation-' + filename + '.' + extension; link.click(); setTimeout(() => URL.revokeObjectURL(url),1000);
   }
+  function playbackPosition() {
+    if (!outputContext) return $('player').currentTime || 0;
+    while (playedSegment+1 < segments.length && outputContext.currentTime >= segments[playedSegment+1].start) playedSegment++;
+    const segment = segments[playedSegment];
+    return segment ? segment.offset + Math.max(0,Math.min(segment.duration,outputContext.currentTime-segment.start)) : 0;
+  }
+  async function togglePlayback() {
+    if (!recordingURL) return;
+    if (outputContext && outputContext.currentTime < nextStart) {
+      const position = playbackPosition(); await stopOutput(); $('player').currentTime = position; return;
+    }
+    if (!$('player').paused) { $('player').pause(); return; }
+    if ($('player').currentTime >= sampleCount/outputRate - .001) $('player').currentTime = 0;
+    try { await $('player').play(); } catch (_) { showError('Press Play again to allow audio playback.'); }
+  }
   function draw() {
     const canvas = $('waveform'), ratio = devicePixelRatio || 1, width = canvas.clientWidth;
     if (canvas.width !== Math.round(width*ratio)) canvas.width = Math.round(width*ratio);
     if (canvas.height !== 120*ratio) canvas.height = 120*ratio;
     const context = canvas.getContext('2d'); context.setTransform(ratio,0,0,ratio,0,0); context.clearRect(0,0,width,120);
-    let position = $('player').currentTime || 0;
-    if (outputContext && $('player').paused) {
-      while (playedSegment+1 < segments.length && outputContext.currentTime >= segments[playedSegment+1].start) playedSegment++;
-      const segment = segments[playedSegment];
-      if (segment) position = segment.offset + Math.max(0,Math.min(segment.duration,outputContext.currentTime-segment.start));
-    }
+    const position = playbackPosition();
     const totalPeaks = peaks.length + (peakFrames ? 1 : 0);
     const duration = sampleCount / outputRate, bars = Math.max(1,Math.floor(width / 5));
     const style = getComputedStyle(document.documentElement);
@@ -257,7 +267,9 @@
     }
     if (duration) { context.fillStyle = style.getPropertyValue('--accent'); context.fillRect(Math.min(width-1,width*position/duration),8,1.5,104); }
     $('time').textContent = time(position) + ' / ' + time(duration);
-    canvas.tabIndex = $('player').hidden ? -1 : 0;
+    canvas.tabIndex = recordingURL ? 0 : -1;
+    const playing = outputContext ? outputContext.currentTime < nextStart : !$('player').paused;
+    $('playback').textContent = playing ? 'Pause' : duration && position >= duration - .001 ? 'Replay' : 'Play';
     canvas.setAttribute('aria-valuenow',position.toFixed(2)); canvas.setAttribute('aria-valuemax',duration.toFixed(2));
     requestAnimationFrame(draw);
   }
@@ -276,22 +288,24 @@
     $('mute').textContent = enabled ? 'Unmute input' : 'Mute input';
   };
   $('waveform').onclick = event => {
-    if ($('player').hidden) return;
+    if (!recordingURL) return;
+    $('player').pause(); stopOutput().catch(() => {});
     const box = $('waveform').getBoundingClientRect();
     $('player').currentTime = Math.max(0,Math.min(sampleCount/outputRate,(event.clientX-box.left)/box.width*sampleCount/outputRate));
   };
   $('waveform').onkeydown = event => {
-    if ($('player').hidden) return;
-    let position = $('player').currentTime;
+    if (!recordingURL) return;
+    let position = playbackPosition();
     if (event.key === 'ArrowLeft') position -= .5;
     else if (event.key === 'ArrowRight') position += .5;
     else if (event.key === 'Home') position = 0;
     else if (event.key === 'End') position = sampleCount/outputRate;
-    else if (event.key === ' ') { event.preventDefault(); $('player').paused ? $('player').play().catch(() => showError('Press Play to allow audio playback.')) : $('player').pause(); return; }
+    else if (event.key === ' ') { event.preventDefault(); togglePlayback(); return; }
     else return;
-    event.preventDefault(); $('player').currentTime = Math.max(0,Math.min(sampleCount/outputRate,position));
+    event.preventDefault(); $('player').pause(); stopOutput().catch(() => {}); $('player').currentTime = Math.max(0,Math.min(sampleCount/outputRate,position));
   };
-  $('player').onplay = () => stopOutput();
+  $('player').onplay = () => stopOutput().catch(() => {});
+  $('playback').onclick = togglePlayback;
   $('download').onclick = () => { try { save(wavBlob(),'wav'); } catch (error) { showError(error.message); } };
   $('transcript').onclick = () => save(new Blob(['Original\n',originalText.join(''),'\n\nTranslation\n',outputText.join('')],{type:'text/plain;charset=utf-8'}),'txt');
   $('clear').onclick = async () => { if (state === 'running' || state === 'starting' || state === 'finishing') return; current = null; await stopOutput(); resetRecording(); showError(''); status('Ready'); };
