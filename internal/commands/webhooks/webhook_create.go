@@ -97,7 +97,9 @@ func webhookCreateWorkflow(next cli.ActionFunc) cli.ActionFunc {
 			}
 			return runWebhookCreateFlow(ctx, command, next, discoverWebhookCreateEvents,
 				func(ctx context.Context, events []string) (webhookCreateSettings, bool, error) {
-					return runWebhookCreatePicker(ctx, os.Stdin, out, events)
+					return runWebhookCreatePicker(ctx, os.Stdin, out, events, func(ctx context.Context) ([]webhookEndpoint, error) {
+						return discoverWebhookEndpoints(ctx, command)
+					})
 				})
 		})
 	}

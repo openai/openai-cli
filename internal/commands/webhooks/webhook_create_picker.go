@@ -22,7 +22,9 @@ import (
 	"github.com/openai/openai-cli/internal/terminal"
 )
 
-func runWebhookCreatePicker(ctx context.Context, input, output *os.File, events []string) (webhookCreateSettings, bool, error) {
+func runWebhookCreatePicker(ctx context.Context, input, output *os.File, events []string,
+	loadEndpoints ...func(context.Context) ([]webhookEndpoint, error),
+) (webhookCreateSettings, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return webhookCreateSettings{}, false, err
 	}
@@ -37,6 +39,10 @@ func runWebhookCreatePicker(ctx context.Context, input, output *os.File, events 
 			"Use openai webhooks create --help for explicit flags.", err}
 	}
 	model := newWebhookCreatePicker(events)
+	if len(loadEndpoints) > 0 && loadEndpoints[0] != nil {
+		model.browser = &webhookEndpointBrowser{ctx: ctx, load: loadEndpoints[0]}
+		defer model.browser.close()
+	}
 	model.width, model.height = width, height
 	model.color = os.Getenv("NO_COLOR") == ""
 	model.dark = terminal.DarkBackground(os.Getenv("COLORFGBG"))
@@ -157,9 +163,13 @@ type webhookCreatePicker struct {
 	selected             map[string]bool
 	current, offset      int
 	category             int
+	categoryOpen         bool
+	categoryChoice       int
 	eventFocus           webhookCreateEventFocus
 	reviewOffset         int
 	reviewFocused        bool
+	existingFocused      bool
+	browser              *webhookEndpointBrowser
 	confirmYes           bool
 	confirmed, canceled  bool
 	color                bool
@@ -232,16 +242,34 @@ func (m *webhookCreatePicker) filteredEvents() []string {
 	return matches
 }
 
+func (m *webhookCreatePicker) chooseCategory(index int) {
+	m.category = index
+	m.search = webhookCreateInput{}
+	m.current, m.offset, m.note = 0, 0, ""
+}
+
 func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if _, canceled := message.(webhookCreateCancelMsg); canceled {
 		m.canceled, m.confirmed = true, false
 		return m, tea.Quit
+	}
+	if key, ok := message.(tea.KeyPressMsg); ok && key.String() == "esc" && m.browser != nil && m.browser.active {
+		m.browser.back()
+		return m, nil
+	}
+	if key, ok := message.(tea.KeyPressMsg); ok && key.String() == "esc" && m.categoryOpen {
+		m.categoryOpen = false
+		return m, nil
 	}
 	if key, ok := message.(tea.KeyPressMsg); ok && (key.String() == "ctrl+c" || key.String() == "esc") {
 		m.canceled, m.confirmed = true, false
 		return m, tea.Quit
 	}
 	if m.confirmed || m.canceled {
+		return m, nil
+	}
+	if msg, ok := message.(webhookEndpointLoadMsg); ok && m.browser != nil {
+		m.browser.receive(msg)
 		return m, nil
 	}
 	switch msg := message.(type) {
@@ -251,7 +279,7 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.width < 36 || m.height < 10 {
 			return m, nil
 		}
-		if m.stage < 3 && !m.reviewFocused {
+		if m.stage < 3 && !m.reviewFocused && !m.categoryOpen && (m.browser == nil || !m.browser.active) {
 			if m.stage == 2 {
 				m.eventFocus = webhookCreateSearch
 			}
@@ -269,9 +297,34 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		key := msg.String()
+		if m.browser != nil && m.browser.active {
+			return m, m.browser.update(key)
+		}
+		if m.categoryOpen {
+			last := len(m.categories()) - 1
+			switch key {
+			case "up":
+				m.categoryChoice = max(0, m.categoryChoice-1)
+			case "down":
+				m.categoryChoice = min(last, m.categoryChoice+1)
+			case "home", "pgup":
+				m.categoryChoice = 0
+			case "end", "pgdown":
+				m.categoryChoice = last
+			case "enter", "space", " ":
+				m.chooseCategory(m.categoryChoice)
+				m.categoryOpen, m.eventFocus = false, webhookCreateChoices
+			case "tab":
+				m.categoryOpen, m.eventFocus = false, webhookCreateSearch
+			case "shift+tab":
+				m.categoryOpen = false
+			}
+			return m, nil
+		}
 		if key == "shift+tab" {
 			if m.reviewFocused {
 				m.reviewFocused = false
+				m.existingFocused = false
 				m.eventFocus = webhookCreateChoices
 			} else if m.stage == 3 {
 				m.stage, m.eventFocus = 2, webhookCreateChoices
@@ -296,9 +349,27 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.reviewFocused {
 			switch key {
 			case "up":
+				if m.existingFocused {
+					m.existingFocused = false
+					return m, nil
+				}
 				m.reviewFocused = false
 				m.eventFocus = webhookCreateChoices
-			case "enter", "tab":
+			case "down", "right":
+				m.existingFocused = m.browser != nil
+			case "left":
+				m.existingFocused = false
+			case "tab":
+				if m.browser != nil {
+					m.existingFocused = !m.existingFocused
+					return m, nil
+				}
+				m.reviewFocused = false
+				m.advance()
+			case "enter":
+				if m.existingFocused && m.browser != nil {
+					return m, m.browser.start()
+				}
 				m.reviewFocused = false
 				m.advance()
 			}
@@ -334,6 +405,10 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.stage == 2 {
+			if m.eventFocus == webhookCreateCategory && (key == "enter" || key == "space" || key == " ") {
+				m.categoryOpen, m.categoryChoice = true, m.category
+				return m, nil
+			}
 			if m.eventFocus != webhookCreateChoices {
 				switch key {
 				case "enter", "tab", "down":
@@ -361,9 +436,7 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					direction = -1
 				}
 				count := len(m.categories())
-				m.category = (m.category + direction + count) % count
-				m.search = webhookCreateInput{}
-				m.current, m.offset, m.note = 0, 0, ""
+				m.chooseCategory((m.category + direction + count) % count)
 				return m, nil
 			case "up":
 				if m.current == 0 {
@@ -375,6 +448,7 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			case "down":
 				if m.current >= len(matches)-1 {
 					m.reviewFocused = true
+					m.existingFocused = false
 				} else {
 					m.current++
 				}
@@ -407,6 +481,7 @@ func (m *webhookCreatePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "tab":
 				m.reviewFocused = true
+				m.existingFocused = false
 				return m, nil
 			case "enter":
 				m.advance()
@@ -555,6 +630,9 @@ func (i *webhookCreateInput) viewport(width int, placeholder string) (string, in
 
 func (m *webhookCreatePicker) View() tea.View {
 	width, height := max(1, min(76, m.width-2)), max(1, min(18, m.height-1))
+	if m.categoryOpen {
+		height = max(1, min(22, m.height-1))
+	}
 	if m.canceled {
 		return m.frame([]string{"Webhook creation canceled."}, width, height)
 	}
@@ -563,6 +641,9 @@ func (m *webhookCreatePicker) View() tea.View {
 	}
 	if m.width < 36 || m.height < 10 {
 		return m.frame([]string{"Resize to 36 x 10.", "Esc or Ctrl+C cancels."}, width, height)
+	}
+	if m.browser != nil && m.browser.active {
+		return m.endpointView(width, height)
 	}
 	accent, muted, border := "#3159BC", "#657087", "#BAC4D8"
 	if m.dark {
@@ -632,7 +713,11 @@ func (m *webhookCreatePicker) View() tea.View {
 		if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateCategory {
 			eventLabel = "> Events "
 		}
-		body = append(body, strong.Render(eventLabel)+ansi.Truncate("‹ "+m.categories()[m.category]+" ›", inner-9, "…"))
+		arrow := " ▾"
+		if m.categoryOpen {
+			arrow = " ▴"
+		}
+		body = append(body, strong.Render(eventLabel)+ansi.Truncate(m.categories()[m.category]+arrow, inner-9, "…"))
 		body = append(body, field("Search", &m.search, "Type an event or group name",
 			m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateSearch, len(body)))
 		if !compact {
@@ -640,7 +725,7 @@ func (m *webhookCreatePicker) View() tea.View {
 		}
 		matches := m.filteredEvents()
 		var footer []string
-		if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateChoices {
+		if m.stage == 2 && !m.reviewFocused && m.eventFocus == webhookCreateChoices && !m.categoryOpen {
 			footer = []string{controls("Space select", "Ctrl+A all")}
 		}
 		// Reserve complete controls before sizing the event viewport.
@@ -694,6 +779,17 @@ func (m *webhookCreatePicker) View() tea.View {
 			row := checkbox + name + leaf
 			rows = append(rows, row)
 		}
+		if m.categoryOpen {
+			rows, headingRows = nil, map[int]bool{}
+			for index, category := range m.categories() {
+				row := "  " + webhookCreateLine(category)
+				if index == m.categoryChoice {
+					row = strong.Render("> " + webhookCreateLine(category))
+				}
+				rows = append(rows, row)
+			}
+			currentRow = m.categoryChoice
+		}
 		m.offset = min(m.offset, max(0, len(rows)-available))
 		if currentRow < m.offset {
 			m.offset = max(0, currentRow-1)
@@ -713,10 +809,23 @@ func (m *webhookCreatePicker) View() tea.View {
 			body = append(body, "")
 		}
 		action := "  [ Continue to confirmation ]"
-		if m.reviewFocused {
-			action = active("> [ Continue to confirmation ]")
+		if m.browser != nil && inner < 55 {
+			action = "  [ Continue ]"
+		}
+		if m.reviewFocused && !m.existingFocused {
+			action = active(">" + action[1:])
 		} else {
 			action = strong.Render(action)
+		}
+		if m.browser != nil {
+			label := "  [ Existing webhooks ]"
+			if inner < 55 {
+				label = "  [ Webhooks ]"
+			}
+			if m.reviewFocused && m.existingFocused {
+				label = ">" + label[1:]
+			}
+			action += strong.Render(label)
 		}
 		body = append(body, action)
 		body = append(body, footer...)

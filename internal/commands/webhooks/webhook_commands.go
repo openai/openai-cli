@@ -42,6 +42,7 @@ func Configure(root *cli.Command, options CommandOptions) {
 			InputNote: "Run without request flags in a terminal for guided creation.\nFor scripts, supply --name, --url, and at least one --event-type, or pipe JSON/YAML.",
 			Description: "Use a public HTTPS receiver URL. Repeat --event-type to select multiple events.\n" +
 				"The guided flow loads current project events and asks before creating anything.\n" +
+				"Open Events to choose a category, or Existing webhooks to browse your project's endpoints.\n" +
 				"Save the returned signing secret securely; create and rotate-secret are the only ways to receive it.\n" +
 				"Verify webhook signatures in your receiver before processing events.",
 			Examples: []clihelp.Example{{Description: "Create an endpoint for completed responses:", Command: `webhooks create --name "Response notifications" --url https://example.com/webhook --event-type response.completed`}},

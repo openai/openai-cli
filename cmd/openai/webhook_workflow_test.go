@@ -739,6 +739,41 @@ func webhookCreateFailureFixture(t *testing.T, catalog string, drop bool) (*http
 }
 
 func runWebhookCreateWorkflowPTY(t *testing.T, server *httptest.Server, confirm bool) mainDispatchResult {
+	return runWebhookCreateWorkflowPTYMode(t, server, confirm, false)
+}
+
+func TestMainWebhookWorkflowPTYBrowseEndpointsKeepsCreationDraft(t *testing.T) {
+	var catalogs, lists, creates atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /webhook_event_types":
+			catalogs.Add(1)
+			_, _ = io.WriteString(w, `{"object":"list","data":["response.completed"]}`)
+		case "GET /webhook_endpoints":
+			lists.Add(1)
+			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"whe_visible","name":"Synthetic first","url":"https://example.invalid/receiver","event_types":["response.failed"]}],"has_more":false}`)
+		case "POST /webhook_endpoints":
+			creates.Add(1)
+			http.Error(w, "must not create", 500)
+		default:
+			t.Errorf("unexpected endpoint browser request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected request", 400)
+		}
+	}))
+	defer server.Close()
+	got := runWebhookCreateWorkflowPTYMode(t, server, false, true)
+	if got.code != 130 || catalogs.Load() != 1 || lists.Load() != 1 || creates.Load() != 0 {
+		t.Fatalf("endpoint browsing changed creation: %+v, catalogs=%d lists=%d creates=%d", got, catalogs.Load(), lists.Load(), creates.Load())
+	}
+	for _, text := range []string{"Synthetic first", "whe_visible", "https://example.invalid/receiver", "response.failed", "Draft receiver"} {
+		if !strings.Contains(got.stdout, text) {
+			t.Fatalf("endpoint browser omitted %q: %q", text, got.stdout)
+		}
+	}
+}
+
+func runWebhookCreateWorkflowPTYMode(t *testing.T, server *httptest.Server, confirm, browse bool) mainDispatchResult {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("guided creation PTY checks require a Unix host")
@@ -753,8 +788,8 @@ func runWebhookCreateWorkflowPTY(t *testing.T, server *httptest.Server, confirm 
 	}
 	input, err := json.Marshal(struct {
 		Binary, Endpoint, Work string
-		Confirm                bool
-	}{binary, server.URL, t.TempDir(), confirm})
+		Confirm, Browse        bool
+	}{binary, server.URL, t.TempDir(), confirm, browse})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -796,7 +831,12 @@ process = None
 completed = False
 steps = [(b"> Name", b"Synthetic receiver\x1b[Bhttps://example.com/webhook\x1b[B\x1b[B\x1b[B \r"),
          (b"Create endpoint now?", b"y\r\r\r")] if config["Confirm"] else []
+if config["Browse"]:
+    steps = [(b"> Name", b"Draft receiver\x1b[Bhttps://example.invalid/draft\x1b[B\x1b[B\x1b[B\t\x1b[C\r"),
+             (b"Synthetic first", b"\r"), (b"ID: whe_visible", b"\x1b"),
+             (b"> Synthetic first", b"\x1b"), (b"> [ Existing webhooks ]", b"\x1b")]
 step = 0
+step_start = 0
 try:
     # Retain the supervisor's process group so its deadline covers this child.
     process = subprocess.Popen([config["Binary"], "-test.run=^TestMainDispatchProcess$", "--", "openai", "webhooks", "create"],
@@ -823,8 +863,9 @@ try:
             output[key.data].extend(data)
             if key.data == 0 and b"\x1b[6n" in data:
                 os.write(master, b"\x1b[1;1R")
-            if key.data == 0 and step < len(steps) and steps[step][0] in output[0]:
+            if key.data == 0 and step < len(steps) and steps[step][0] in output[0][step_start:]:
                 os.write(master, steps[step][1])
+                step_start = len(output[0])
                 step += 1
     code = process.wait(timeout=2)
     completed = True
