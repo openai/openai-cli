@@ -168,9 +168,9 @@ func (m *limitsWorkspace) View() tea.View {
 				apply = "  Read to the end before applying"
 			}
 			body = append(body, line(back+"   "+apply))
-			footer = "↑/↓: scroll  Tab: action  Enter: select\nF1: help  Esc: back  Ctrl+C: quit"
+			footer = "↑/↓ scroll  Tab action  Enter: select\nF1: help  Esc: back  Ctrl+C: quit"
 			if m.previewCommand != "" {
-				footer = "↑/↓: scroll  Tab: action  Enter: select\nCtrl+P: print command and exit\nF1: help  Esc: back  Ctrl+C: quit"
+				footer = "↑/↓ scroll  Tab action  Enter: select\nCtrl+P: print command and exit\nF1: help  Esc: back  Ctrl+C: quit"
 			}
 		} else {
 			footer = "↑/↓: scroll  Esc: back  Ctrl+C: quit"

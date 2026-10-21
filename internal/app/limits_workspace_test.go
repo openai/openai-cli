@@ -573,6 +573,8 @@ func TestLimitsWorkspacePrintedCommandNativeShellPreservesArguments(t *testing.T
 					want: []string{"admin", "organization", "projects", "spend-alerts", "delete", "--project-id", "proj target's", "--alert-id", "alert owner's"}},
 				{name: "rate-update", projectID: "proj target's", change: limitsChange{Kind: "rate_update", ID: "rl owner's", RateValues: map[string]int64{"max_requests_per_1_minute": -1}},
 					want: []string{"admin", "organization", "projects", "rate-limits", "update-rate-limit", "--project-id", "proj target's", "--rate-limit-id", "rl owner's", "--max-requests-per-1-minute", "-1"}},
+				{name: "tokens-per-day", projectID: "proj target's", change: limitsChange{Kind: "rate_update", ID: "rl owner's", RateValues: map[string]int64{"max_tokens_per_1_day": 9007199254740993}},
+					want: []string{"admin", "organization", "projects", "rate-limits", "update-rate-limit", "--project-id", "proj target's", "--rate-limit-id", "rl owner's", "--max-tokens-per-1-day", "9007199254740993"}},
 			}
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
@@ -1937,6 +1939,7 @@ func TestLimitsWorkspaceCompactGeometryAndReviewGate(t *testing.T) {
 		m.draft.inputs[0].SetValue("100.01")
 		m.review()
 		require.Equal(t, "review", m.page)
+		require.Contains(t, ansi.Strip(m.View().Content), "Enter: select")
 		require.Equal(t, min(size[0], 76)-2, m.viewport.Width())
 		require.LessOrEqual(t, m.viewport.Height(), min(size[1], 18)-5)
 		require.False(t, m.viewport.AtBottom(), "clamped review must not approve unread content")

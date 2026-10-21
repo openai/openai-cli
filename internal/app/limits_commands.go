@@ -38,23 +38,31 @@ func registerLimitsCommands(root *cli.Command) {
 		return
 	}
 	organization.Commands = append(organization.Commands, newLimitsCommand(false))
+	routes := []*cli.Command{root.Command("admin:organization:projects:rate-limits")}
 	if projects := organization.Command("projects"); projects != nil {
 		projects.Commands = append(projects.Commands, newLimitsCommand(true))
-		if rates := projects.Command("rate-limits"); rates != nil {
-			if update := rates.Command("update-rate-limit"); update != nil {
-				found := false
-				for _, flag := range update.Flags {
-					for _, name := range flag.Names() {
-						found = found || name == "max-tokens-per-1-day"
-					}
-				}
-				if !found {
-					update.Flags = append(update.Flags, &requestflag.Flag[int64]{
-						Name: "max-tokens-per-1-day", BodyPath: "max_tokens_per_1_day",
-						Usage: "The maximum number of tokens per day for this model.",
-					})
-				}
+		routes = append(routes, projects.Command("rate-limits"))
+	}
+	// Subgroup cloning already created the preserved colon route.
+	for _, rates := range routes {
+		if rates == nil {
+			continue
+		}
+		update := rates.Command("update-rate-limit")
+		if update == nil {
+			continue
+		}
+		found := false
+		for _, flag := range update.Flags {
+			for _, name := range flag.Names() {
+				found = found || name == "max-tokens-per-1-day"
 			}
+		}
+		if !found {
+			update.Flags = append(update.Flags, &requestflag.Flag[int64]{
+				Name: "max-tokens-per-1-day", BodyPath: "max_tokens_per_1_day",
+				Usage: "The maximum number of tokens per day for this model.",
+			})
 		}
 	}
 }

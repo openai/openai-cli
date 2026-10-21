@@ -612,51 +612,59 @@ func TestMainLimitsWorkflowCostsPrecisionAndPartialFailure(t *testing.T) {
 }
 
 func TestMainLimitsTokensPerDayFlagAndStdin(t *testing.T) {
-	for _, test := range []struct{ name, input, value, want string }{
-		{"flag zero", "", "0", "0"},
-		{"flag signed", "", "-1", "-1"},
-		{"flag exact", "", "9223372036854775807", "9223372036854775807"},
-		{"JSON", `{"max_tokens_per_1_day":9007199254740993,"future":{"kept":true}}`, "", "9007199254740993"},
-		{"YAML", "max_tokens_per_1_day: 9007199254740993\nfuture:\n  kept: true\n", "", "9007199254740993"},
-		{"explicit override", `{"max_tokens_per_1_day":9007199254740993,"future":{"kept":true}}`, "0", "0"},
+	for _, route := range [][]string{
+		{"projects", "rate-limits", "update-rate-limit"},
+		{"admin", "organization", "projects", "rate-limits", "update-rate-limit"},
+		{"admin:organization:projects:rate-limits", "update-rate-limit"},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			var requests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests.Add(1)
-				if r.Method != http.MethodPost || r.URL.Path != "/organization/projects/proj_synthetic/rate_limits/rl_synthetic" {
-					t.Errorf("unexpected rate route: %s %s", r.Method, r.URL.Path)
+		for _, test := range []struct{ name, input, value, want string }{
+			{"flag zero", "", "0", "0"},
+			{"flag signed", "", "-1", "-1"},
+			{"flag exact", "", "9223372036854775807", "9223372036854775807"},
+			{"JSON", `{"max_tokens_per_1_day":9007199254740993,"future":{"kept":true}}`, "", "9007199254740993"},
+			{"YAML", "max_tokens_per_1_day: 9007199254740993\nfuture:\n  kept: true\n", "", "9007199254740993"},
+			{"explicit override", `{"max_tokens_per_1_day":9007199254740993,"future":{"kept":true}}`, "0", "0"},
+		} {
+			t.Run(strings.Join(route, "_")+"/"+test.name, func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					if r.Method != http.MethodPost || r.URL.Path != "/organization/projects/proj_synthetic/rate_limits/rl_synthetic" {
+						t.Errorf("unexpected rate route: %s %s", r.Method, r.URL.Path)
+					}
+					if r.Header.Get("Authorization") != "Bearer sk-fake-spend-admin" {
+						t.Error("rate update did not use the admin credential")
+					}
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Error(err)
+					}
+					value := gjson.ParseBytes(body)
+					if value.Get("max_tokens_per_1_day").Raw != test.want {
+						t.Errorf("daily tokens changed: %s", body)
+					}
+					if test.input != "" && value.Get("future.kept").Type != gjson.True {
+						t.Error("stdin lost an unfamiliar field")
+					}
+					w.Header().Set("Content-Type", "application/json")
+					fmt.Fprintf(w, `{"id":"rl_synthetic","object":"project.rate_limit","model":"synthetic-model","max_tokens_per_1_day":%s}`, test.want)
+				}))
+				defer server.Close()
+				args := append([]string{"openai", "--format", "json"}, route...)
+				args = append(args, "--project-id", "proj_synthetic", "--rate-limit-id", "rl_synthetic")
+				if test.value != "" {
+					args = append(args, "--max-tokens-per-1-day="+test.value)
 				}
-				if r.Header.Get("Authorization") != "Bearer sk-fake-spend-admin" {
-					t.Error("rate update did not use the admin credential")
+				got := runMainDispatchWithStdin(t, "bash", []string{"OPENAI_BASE_URL=" + server.URL, "OPENAI_ADMIN_KEY=sk-fake-spend-admin", "NO_COLOR=1"}, shellFileInput(t, []byte(test.input)), args...)
+				if got.code != 0 || got.stderr != "" || requests.Load() != 1 || gjson.Get(got.stdout, "max_tokens_per_1_day").Raw != test.want {
+					t.Fatalf("daily token command failed: code=%d stderr=%q requests=%d stdout=%s", got.code, got.stderr, requests.Load(), got.stdout)
 				}
-				body, err := io.ReadAll(r.Body)
-				if err != nil {
-					t.Error(err)
-				}
-				value := gjson.ParseBytes(body)
-				if value.Get("max_tokens_per_1_day").Raw != test.want {
-					t.Errorf("daily tokens changed: %s", body)
-				}
-				if test.input != "" && value.Get("future.kept").Type != gjson.True {
-					t.Error("stdin lost an unfamiliar field")
-				}
-				w.Header().Set("Content-Type", "application/json")
-				fmt.Fprintf(w, `{"id":"rl_synthetic","object":"project.rate_limit","model":"synthetic-model","max_tokens_per_1_day":%s}`, test.want)
-			}))
-			defer server.Close()
-			args := []string{"openai", "--format", "json", "projects", "rate-limits", "update-rate-limit", "--project-id", "proj_synthetic", "--rate-limit-id", "rl_synthetic"}
-			if test.value != "" {
-				args = append(args, "--max-tokens-per-1-day="+test.value)
-			}
-			got := runMainDispatchWithStdin(t, "bash", []string{"OPENAI_BASE_URL=" + server.URL, "OPENAI_ADMIN_KEY=sk-fake-spend-admin", "NO_COLOR=1"}, shellFileInput(t, []byte(test.input)), args...)
-			if got.code != 0 || got.stderr != "" || requests.Load() != 1 || gjson.Get(got.stdout, "max_tokens_per_1_day").Raw != test.want {
-				t.Fatalf("daily token command failed: code=%d stderr=%q requests=%d stdout=%s", got.code, got.stderr, requests.Load(), got.stdout)
-			}
-		})
-	}
-	got := runMainDispatch(t, "bash", "openai", "projects", "rate-limits", "update-rate-limit", "--help")
-	if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "--max-tokens-per-1-day") {
-		t.Fatalf("daily token flag missing from help: %+v", got)
+			})
+		}
+		helpArgs := append([]string{"openai"}, route...)
+		got := runMainDispatch(t, "bash", append(helpArgs, "--help")...)
+		if got.code != 0 || got.stderr != "" || !strings.Contains(got.stdout, "--max-tokens-per-1-day") {
+			t.Fatalf("daily token flag missing from help: %+v", got)
+		}
 	}
 }
