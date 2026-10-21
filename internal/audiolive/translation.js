@@ -51,14 +51,39 @@
     outputContext = null; outputGain = null; segments = []; playedSegment = 0;
     if (context && context.state !== 'closed') await context.close();
   }
-  function resetRecording() {
+  function resetRecording(revoke = true) {
     outputRate = 24000; outputChannels = 1; peakFrames = 0; peakValue = 0; framesPerPeak = 240;
     chunks = []; peaks = []; outputText = []; originalText = []; sampleCount = 0; nextStart = 0; complete = false;
     $('original').replaceChildren(); $('translated').replaceChildren(); $('usage').textContent = '';
     $('download').disabled = true; $('transcript').disabled = true; $('playback').disabled = true;
     $('player').pause(); $('player').removeAttribute('src'); $('player').load(); $('player').hidden = true;
-    if (recordingURL) URL.revokeObjectURL(recordingURL);
+    if (revoke && recordingURL) URL.revokeObjectURL(recordingURL);
     recordingURL = '';
+  }
+  function retainRecording() {
+    return {chunks,peaks,outputText,originalText,sampleCount,outputRate,outputChannels,
+      peakFrames,peakValue,framesPerPeak,complete,recordingURL,position:playbackPosition(),usage:$('usage').textContent};
+  }
+  function replaceRecording(run) {
+    if (run.hasOutput) return;
+    run.hasOutput = true;
+    if (run.previous?.recordingURL) URL.revokeObjectURL(run.previous.recordingURL);
+    run.previous = null;
+  }
+  function restoreRecording(run) {
+    if (!run.replaced || run.hasOutput || !run.previous) return false;
+    const old = run.previous;
+    ({chunks,peaks,outputText,originalText,sampleCount,outputRate,outputChannels,
+      peakFrames,peakValue,framesPerPeak,complete,recordingURL} = old);
+    $('original').replaceChildren(document.createTextNode(originalText.join('')));
+    $('translated').replaceChildren(document.createTextNode(outputText.join('')));
+    $('usage').textContent = old.usage;
+    if (recordingURL) $('player').src = recordingURL;
+    $('player').currentTime = old.position;
+    $('download').disabled = !sampleCount; $('playback').disabled = !sampleCount;
+    $('transcript').disabled = !outputText.length;
+    run.previous = null;
+    return !!(sampleCount || outputText.length);
   }
   function releaseCapture(run) {
     for (const track of run.stream?.getTracks() || []) track.stop();
@@ -71,12 +96,13 @@
     showError('');
     if (!navigator.mediaDevices || !window.AudioWorkletNode) { showError('This browser cannot capture live audio. Try Chrome or Edge.'); return; }
     const run = {generation:++generation, controller:new AbortController(), stream:null, queue:Promise.resolve(), sequence:0, id:'', failed:false};
+    run.previous = retainRecording();
+    $('player').pause();
     current = run;
     setState('starting'); status('Choose your audio source');
     try {
       await stopOutput();
       if (current !== run) return;
-      resetRecording();
       const tab = $('source').value === 'tab';
       if (tab) {
         if (!navigator.mediaDevices.getDisplayMedia) throw new Error('This browser cannot share tab audio. Try Chrome or Edge.');
@@ -98,11 +124,12 @@
       if ($('output').value && playback.setSinkId) await playback.setSinkId($('output').value);
       await playback.resume();
       if (current !== run) { releaseCapture(run); return; }
-      outputContext = playback; outputGain = gain;
       status('Connecting');
       const response = await request('/start',{method:'POST',signal:run.controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({language:$('language').value,noise_reduction:$('noise').checked})});
       run.id = (await response.json()).id;
       if (current !== run) { releaseCapture(run); request(endpoint('/stop',run.id),{method:'POST'}).catch(() => {}); return; }
+      resetRecording(false); run.replaced = true;
+      outputContext = playback; outputGain = gain;
       run.input = run.context.createMediaStreamSource(run.stream);
       run.node = new AudioWorkletNode(run.context,'translation-capture');
       run.node.port.onmessage = ({data}) => {
@@ -150,22 +177,25 @@
   function receive(run,event) {
     if (current !== run || run.failed) return;
     if (event.type === 'session.input_transcript.delta') { originalText.push(event.delta); $('original').append(document.createTextNode(event.delta)); }
-    if (event.type === 'session.output_transcript.delta') { outputText.push(event.delta); $('translated').append(document.createTextNode(event.delta)); $('transcript').disabled = false; }
-    if (event.type === 'session.output_audio.delta') playChunk(event);
+    if (event.type === 'session.output_transcript.delta' && event.delta) { replaceRecording(run); outputText.push(event.delta); $('translated').append(document.createTextNode(event.delta)); $('transcript').disabled = false; }
+    if (event.type === 'session.output_audio.delta') playChunk(run,event);
     if (event.tokens) $('usage').textContent = event.tokens.toLocaleString() + ' tokens';
     if (event.type === 'error') fail(run,new Error(event.message));
     if (event.type === 'session.closed') {
-      complete = true; run.closed = true; releaseCapture(run); prepareRecording();
-      setState('ready'); updateSource(); status('Finished');
+      run.closed = true; releaseCapture(run);
+      const restored = restoreRecording(run);
+      if (!restored) { complete = true; prepareRecording(); }
+      setState('ready'); updateSource(); status(restored ? 'No translated output. Previous recording kept.' : run.hasOutput ? 'Finished' : 'No translated output.');
     }
   }
-  function playChunk(event) {
+  function playChunk(run,event) {
     const rate = event.sample_rate || 24000, channels = event.channels || 1;
     if ((event.format && event.format !== 'pcm16') || !Number.isInteger(rate) || rate <= 0 || !Number.isInteger(channels) || channels < 1) throw new Error('The service returned an unsupported audio format. Received audio remains available.');
     if (sampleCount && (rate !== outputRate || channels !== outputChannels)) throw new Error('The audio format changed during translation. Received audio remains available.');
     const bytes = Uint8Array.from(atob(event.delta), c => c.charCodeAt(0));
     if (!bytes.length) return;
     if (bytes.length % (2 * channels)) throw new Error('The service returned incomplete audio. Received audio remains available.');
+    replaceRecording(run);
     outputRate = rate; outputChannels = channels;
     if (!sampleCount) framesPerPeak = Math.max(1,Math.round(rate / 100));
     const view = new DataView(bytes.buffer), frames = bytes.length / (2 * channels);
@@ -216,7 +246,11 @@
     if (state !== 'running') return;
     setState('finishing'); status('Finishing translation');
     try {
-      await new Promise(resolve => { run.flushed = resolve; run.node.port.postMessage('flush'); setTimeout(resolve,500); });
+      await new Promise((resolve,reject) => {
+        const timer = setTimeout(() => reject(new Error('Audio capture did not finish sending. The final input may be incomplete. Received audio remains available.')),500);
+        run.flushed = () => { clearTimeout(timer); resolve(); };
+        run.node.port.postMessage('flush');
+      });
       releaseCapture(run); await run.queue;
       if (!run.failed) await request(endpoint('/stop',run.id),{method:'POST',signal:run.controller.signal});
     } catch (error) { await fail(run,error); }
@@ -226,7 +260,8 @@
     run.failed = true; releaseCapture(run);
     if (run.id) request(endpoint('/stop',run.id),{method:'POST'}).catch(() => {});
     run.controller.abort();
-    try { prepareRecording(); } catch (_) {}
+    if (!run.hasOutput) await stopOutput();
+    if (!restoreRecording(run)) { try { prepareRecording(); } catch (_) {} }
     showError(error.message || 'Translation stopped. Start a new session.'); status('Stopped'); setState('ready'); updateSource();
   }
   function save(blob,extension) {

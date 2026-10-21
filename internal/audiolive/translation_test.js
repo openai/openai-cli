@@ -7,7 +7,7 @@ const path = require('node:path');
 
 // These stand-ins exercise browser control flow without permissions or external requests.
 function page(options = {}) {
-  const elements = new Map(), calls = [], contexts = [], nodes = [], blobs = new Map(), downloads = [];
+  const elements = new Map(), calls = [], contexts = [], nodes = [], blobs = new Map(), downloads = [], timers = [];
   const tracks = [{kind:'audio',enabled:true,stopped:false,stop(){this.stopped=true;},addEventListener(){}}];
   if (options.noTabAudio) tracks[0].kind = 'video';
   const stream = {getTracks:()=>tracks,getAudioTracks:()=>tracks.filter(track=>track.kind==='audio')};
@@ -44,7 +44,7 @@ function page(options = {}) {
     setSinkId(){return Promise.resolve();}
   }
   class AudioWorkletNode {
-    constructor(){nodes.push(this);this.port={postMessage:value=>{if(value==='flush')queueMicrotask(()=>this.port.onmessage({data:'flushed'}));}};}
+    constructor(){nodes.push(this);this.port={postMessage:value=>{if(value==='flush' && !options.holdFlush)queueMicrotask(()=>this.port.onmessage({data:'flushed'}));}};}
     connect(){} disconnect(){}
   }
   const context = {
@@ -55,20 +55,20 @@ function page(options = {}) {
     navigator:{mediaDevices:{enumerateDevices:async()=>[],getUserMedia:async()=>{calls.push({kind:'microphone'});if(options.permission)throw new DOMException('denied','NotAllowedError');return options.capture?options.capture:stream;},getDisplayMedia:async()=>{calls.push({kind:'tab'});return stream;}}},
     fetch:async(url,config)=>{
       calls.push({url,config});
-      if(url==='/start')return new Response(JSON.stringify({id:'synthetic-session'}));
+      if(url==='/start')return options.failStart ? new Response('Your API key was not accepted.',{status:401}) : new Response(JSON.stringify({id:'synthetic-session'}));
       if(url.startsWith('/events')){config.signal.addEventListener('abort',()=>{try{eventController.error(new DOMException('aborted','AbortError'));}catch(_){}},{once:true});return new Response(eventStream);}
       if(url.startsWith('/stop')){emit({type:'session.closed'});eventController.close();}
       return new Response(null,{status:204});
     },
     URL:{createObjectURL(blob){const id='blob:synthetic-'+blobs.size;blobs.set(id,blob);return id;},revokeObjectURL(){}},
     getComputedStyle:()=>({getPropertyValue:()=> '#888'}),requestAnimationFrame:callback=>{frame=callback;},
-    setTimeout:()=>1,clearTimeout(){},addEventListener(name,callback){if(name==='pagehide')this.pagehide=callback;},
+    setTimeout:(callback,delay)=>{const timer={callback,delay,active:true};timers.push(timer);return timer;},clearTimeout(timer){timer.active=false;},addEventListener(name,callback){if(name==='pagehide')this.pagehide=callback;},
     atob:value=>Buffer.from(value,'base64').toString('binary'),queueMicrotask,
   };
   context.window=context;
   function emit(event){eventController.enqueue(new TextEncoder().encode(JSON.stringify(event)+'\n'));}
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'translation.js'),'utf8'),context);
-  return {elements,calls,contexts,nodes,tracks,downloads,emit,frame:()=>frame(),close:()=>context.pagehide?.()};
+  return {elements,calls,contexts,nodes,tracks,downloads,emit,timers,frame:()=>frame(),close:()=>context.pagehide?.()};
 }
 const settle = () => new Promise(resolve=>setImmediate(resolve));
 
@@ -157,4 +157,33 @@ test('pausing queued playback retains its real position before replay',async()=>
   p.elements.get('waveform').onkeydown({key:'ArrowRight',preventDefault(){}});
   assert.ok(Math.abs(p.elements.get('player').currentTime-2.5)<.0001);
   assert.equal(p.elements.get('player').paused,true);p.close();
+});
+
+for (const failure of ['permission','failStart']) {
+  test(`a failed replacement preserves the previous recording: ${failure}`,async()=>{
+    const options={},p=page(options);await p.elements.get('start').onclick();
+    const pcm=Buffer.from(new Int16Array([120,-120]).buffer);
+    p.emit({type:'session.output_audio.delta',delta:pcm.toString('base64')});
+    p.emit({type:'session.output_transcript.delta',delta:'Keep this recording.'});await settle();
+    await p.elements.get('start').onclick();await settle();
+    options[failure]=true;await p.elements.get('start').onclick();
+    assert.equal(p.elements.get('download').disabled,false);
+    assert.equal(p.elements.get('transcript').disabled,false);
+    assert.equal(p.elements.get('translated').textContent,'Keep this recording.');
+    p.elements.get('download').onclick();
+    assert.deepEqual(Buffer.from(await p.downloads[0].blob.arrayBuffer()).subarray(44),pcm);
+    assert.notEqual(p.elements.get('error').textContent,'');p.close();
+  });
+}
+
+test('missing worklet flush acknowledgement reports interrupted input and rejects late PCM',async()=>{
+  const p=page({holdFlush:true});await p.elements.get('start').onclick();
+  const stopping=p.elements.get('start').onclick();
+  const timer=p.timers.find(timer=>timer.delay===500);assert.ok(timer);timer.callback();
+  await stopping;await settle();
+  assert.match(p.elements.get('error').textContent,/final input may be incomplete/);
+  assert.equal(p.elements.get('status').textContent,'Stopped');
+  p.nodes[0].port.onmessage({data:new Int16Array([1,2]).buffer});await settle();
+  assert.equal(p.calls.filter(call=>call.url?.startsWith('/input')).length,0);
+  assert.equal(p.tracks[0].stopped,true);p.close();
 });

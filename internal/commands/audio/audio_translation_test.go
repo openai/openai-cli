@@ -24,7 +24,7 @@ import (
 )
 
 func TestLiveTranslationSetupErrorsAreUsefulAndPrivate(t *testing.T) {
-	for status, message := range map[int]string{401: "API key was not accepted", 403: "API key permissions", 404: "API address", 429: "API usage limit", 503: "Try again later"} {
+	for status, message := range map[int]string{400: "rejected the live translation settings", 401: "could not verify your access", 403: "API key permissions", 404: "API address", 429: "API usage limit", 503: "Try again later"} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(status)

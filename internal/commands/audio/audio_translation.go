@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/openai/openai-cli/internal/audiolive"
+	"github.com/openai/openai-cli/internal/clihelp"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"github.com/openai/openai-go/v3"
@@ -32,6 +33,23 @@ func ConfigureLiveTranslation(root *cli.Command, policy TranslationOptions) {
 	command := group.Command("translate")
 	if command == nil || policy.DefaultRequestOptions == nil || policy.RequestOptions == nil {
 		return
+	}
+	command.Usage = "Translate a saved file or live microphone and browser-tab audio."
+	command.UsageText = "openai audio translate --file AUDIO --model whisper-1 [OPTIONS]\nopenai audio translate --live [GLOBAL OPTIONS]"
+	if command.Metadata == nil {
+		command.Metadata = map[string]any{}
+	}
+	command.Metadata["help-content"] = clihelp.Content{
+		Summary:   command.Usage,
+		InputNote: "File mode requires file and model inputs through flags or piped JSON/YAML.\nLive mode needs neither input.",
+		Description: "Use --live to open a private local browser page. Select Microphone or Browser tab there.\n" +
+			"Choose the target language, start capture, and stop the session to save translated audio and captions.\n" +
+			"The CLI uses your configured API key. Browser audio starts only after your explicit capture choice.\n" +
+			"File mode keeps its existing English translation behavior and output options.",
+		Examples: []clihelp.Example{
+			{Description: "Translate a saved recording into English:", Command: "audio translate --file recording.wav --model whisper-1"},
+			{Description: "Translate microphone or browser-tab audio:", Command: "audio translate --live"},
+		},
 	}
 	next := command.Action
 	command.Flags = append(command.Flags, &cli.BoolFlag{Name: "live", Usage: "Translate microphone or browser-tab audio in a private local browser page"})
@@ -173,8 +191,12 @@ func (s *apiTranslationSession) Receive(ctx context.Context) (audiolive.Event, e
 func translationFailure(status int, code string, err error) error {
 	message := "Could not connect to live translation. Check your network, proxy, and API address."
 	switch {
-	case status == 401 || code == "invalid_api_key":
+	case code == "invalid_api_key":
 		message = "Your API key was not accepted. Run openai help setup and check the selected project."
+	case status == 401:
+		message = "The API could not verify your access. Run openai help setup and check your key, project, and organization."
+	case status == 400:
+		message = "The API rejected the live translation settings. Check the API address and update the CLI."
 	case status == 403 || code == "permission_denied":
 		message = "Your project cannot start live translation. Check model access and API key permissions."
 	case status == 429 || code == "rate_limit_exceeded" || code == "insufficient_quota":
