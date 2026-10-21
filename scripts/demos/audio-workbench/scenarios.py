@@ -127,7 +127,7 @@ def failure_case(ctx):
     ctx.wait(terminal, "gpt-4o-mini-tts-2025-03-20")
     terminal.send(ctx.picker.DOWN + ctx.picker.UP + b"\r")
     main_form()
-    terminal.send(ctx.picker.END + b"\r" + ctx.picker.END + ctx.picker.UP + b"\r")
+    terminal.send(ctx.picker.END + b"\r" + ctx.picker.END + b"\r")
     visible_failure((summary, "› API setup"))  # More -> Last error.
     terminal.send(b"\x1b")
     visible_failure(("More actions", "› Last error"))
