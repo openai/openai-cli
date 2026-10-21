@@ -103,6 +103,14 @@ func TestAudioResultViewKeepsWaveformAndControlsVisible(t *testing.T) {
 					require.NotContains(t, view, "108044 bytes")
 					require.NotContains(t, view, "⣿")
 					rows := strings.Split(view, "\n")
+					if size[1] >= 24 && size[0] >= 60 {
+						for index, row := range rows {
+							if strings.Contains(row, "00:00.750 / 00:02.250") {
+								require.Greater(t, index, 0)
+								require.Empty(t, strings.TrimSpace(rows[index-1]), "roomy waveform needs breathing room before timing")
+							}
+						}
+					}
 					require.LessOrEqual(t, len(rows), size[1]-1)
 					for _, row := range rows {
 						require.LessOrEqual(t, ansi.StringWidth(row), size[0]-2)

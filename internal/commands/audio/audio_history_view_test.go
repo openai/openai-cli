@@ -96,7 +96,7 @@ func TestAudioMoreActionsPreservesEveryActionAtCompactSizes(t *testing.T) {
 			view := ansi.Strip(m.moreView().Content)
 			require.Contains(t, view, "› "+item)
 			require.Contains(t, view, "Back to form")
-			require.Contains(t, view, "Enter choose · Esc back")
+			require.Contains(t, view, "[Enter] Choose  [Esc] Back")
 			require.LessOrEqual(t, len(strings.Split(view, "\n")), height-1)
 		}
 	}

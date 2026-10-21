@@ -190,4 +190,5 @@ openai audio translate --file recording.wav --model whisper-1
 Speech History groups recordings by local date and shows one prompt row per recording.
 Roomy terminals show timestamps and selected-recording metadata.
 Compact terminals preserve prompt space and keep the selected recording visible.
-More actions groups retained recordings, voice preview, form actions, and guidance without filled focus backgrounds.
+More actions keeps one compact list with subdued inactive labels and bracketed keyboard guidance.
+Roomy result views leave one blank row between the waveform and playback time.

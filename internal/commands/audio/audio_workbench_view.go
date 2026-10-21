@@ -278,6 +278,9 @@ func (m *audioWorkbench) resultRows(compact, full bool) []string {
 			parts := strings.SplitN(row, "│", 2)
 			lines = append(lines, "  "+m.accent().Bold(false).Render(parts[0])+m.strong().Render("│")+m.muted().Render(parts[1]))
 		}
+		if !compact {
+			lines = append(lines, "")
+		}
 		timing := position + " / " + audioDuration(r.analysis.Duration)
 		if ansi.StringWidth(timing) > m.audioWidth()-2 {
 			longTime = true
@@ -380,18 +383,14 @@ func audioFileSize(bytes int64) string {
 
 func (m *audioWorkbench) moreView() tea.View {
 	items := m.moreItems()
-	spaced := m.height >= len(items)+7
 	lines := []string{m.strong().Render("  More actions")}
 	for index, label := range items {
-		if spaced && (index == 2 || index == 3 || index == len(items)-1) {
-			lines = append(lines, "")
-		}
-		lines = append(lines, m.label(label, index == m.moreChoice))
+		lines = append(lines, m.actionRow(label, index == m.moreChoice, false))
 	}
-	if spaced {
+	if m.height > len(lines)+2 {
 		lines = append(lines, "")
 	}
-	lines = append(lines, "  "+m.muted().Render("Enter choose · Esc back"))
+	lines = append(lines, m.shortcutLine([2]string{"Enter", "Choose"}, [2]string{"Esc", "Back"}))
 	return tea.NewView(m.fitAudio(lines))
 }
 
