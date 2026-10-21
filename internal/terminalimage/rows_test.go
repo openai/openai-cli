@@ -38,3 +38,20 @@ func TestPrepareRowsNativeAndBlocksStayIndependent(t *testing.T) {
 	_, err = PrepareRows(ctx, out, img, "kitty", 8)
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+func TestPreparedRowColumns(t *testing.T) {
+	for _, test := range []struct {
+		row  string
+		want int
+	}{
+		{"plain", 5},
+		{"\x1b]1337;File=inline=1;width=64;height=1:AA==\a", 64},
+		{"\x1b_Ga=T,c=64,r=1;AA==\x1b\\", 64},
+		{"\x1b_Gc=32,a=T;AA==\x1b\\", 32},
+		{"\x1b]1337;File=inline=1;width=999999999999999999999:AA==\a", -1},
+		{"\x1b]1337;File=inline=1;width=auto:AA==\a", -1},
+		{"\x1b_Ga=T,r=1;AA==\x1b\\", -1},
+	} {
+		require.Equal(t, test.want, RowColumns(test.row))
+	}
+}

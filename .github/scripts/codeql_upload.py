@@ -54,6 +54,25 @@ def pages(get, route, key=None):
     raise RuntimeError("Too many GitHub results")
 
 
+def current_pull_requests(get, root, run, repository_id):
+    """Resolve only current PR identities from authenticated GitHub metadata."""
+    associated = run["pull_requests"]
+    if not associated:
+        associated = list(pages(get, f"{root}/commits/{run['head_sha']}/pulls"))
+    if not associated:
+        head = quote(run["head_repository"]["owner"]["login"] + ":" + run["head_branch"], safe="")
+        associated = list(pages(get, f"{root}/pulls?state=open&head={head}"))
+    candidates = []
+    for number in sorted({int(p["number"]) for p in associated}):
+        pr = get(f"{root}/pulls/{number}")
+        if (pr["state"] == "open" and pr["head"]["sha"] == run["head_sha"] and
+                pr["head"]["ref"] == run["head_branch"] and
+                (pr["head"]["repo"] or {}).get("id") == run["head_repository"]["id"] and
+                pr["base"]["repo"]["id"] == repository_id and pr["base"]["ref"] in {"main", "next"}):
+            candidates.append(pr)
+    return candidates
+
+
 def destination(get, repository, repository_id, source):
     """Candidate metadata never selects the upload repository or destination."""
     root = f"repos/{repository}"
@@ -66,20 +85,7 @@ def destination(get, repository, repository_id, source):
             not SHA.fullmatch(run["head_sha"])):
         raise RuntimeError("Unexpected source workflow")
     if run["event"] == "pull_request":
-        associated = run["pull_requests"]
-        if not associated:
-            associated = list(pages(get, f"{root}/commits/{run['head_sha']}/pulls"))
-        if not associated:
-            head = quote(run["head_repository"]["owner"]["login"] + ":" + run["head_branch"], safe="")
-            associated = list(pages(get, f"{root}/pulls?state=open&base=main&head={head}"))
-        candidates = []
-        for number in sorted({int(p["number"]) for p in associated}):
-            pr = get(f"{root}/pulls/{number}")
-            if (pr["state"] == "open" and pr["head"]["sha"] == run["head_sha"] and
-                    pr["head"]["ref"] == run["head_branch"] and
-                    (pr["head"]["repo"] or {}).get("id") == run["head_repository"]["id"] and
-                    pr["base"]["repo"]["id"] == repository_id and pr["base"]["ref"] == "main"):
-                candidates.append(pr)
+        candidates = current_pull_requests(get, root, run, repository_id)
         if len(candidates) != 1:
             raise StaleRun("No unique current pull request for this run")
         pr = candidates[0]
@@ -97,16 +103,22 @@ def destination(get, repository, repository_id, source):
     else:
         branch = run["head_branch"]
         if (run["head_repository"]["id"] != repository_id or
-                not (run["event"] == "push" and branch == "main" or
-                     run["event"] == "merge_group" and branch.startswith("gh-readonly-queue/main/"))):
+                not (run["event"] == "push" and branch in {"main", "next"} or
+                     run["event"] == "merge_group" and branch.startswith(("gh-readonly-queue/main/", "gh-readonly-queue/next/")))):
             raise RuntimeError("Unexpected source event or branch")
         ref, sha = "refs/heads/" + branch, run["head_sha"]
         current = get(f"{root}/git/ref/heads/{quote(branch, safe='')}", missing_ok=True)
         if current["ref"] != ref or current["object"]["sha"] != sha:
             raise StaleRun("Source branch advanced")
     runs = pages(get, f"{root}/actions/workflows/codeql.yml/runs?head_sha={run['head_sha']}&event={run['event']}", "workflow_runs")
-    if any(other["id"] > run["id"] and other["head_branch"] == run["head_branch"] and
-           other["head_repository"]["id"] == run["head_repository"]["id"] for other in runs):
+    for other in runs:
+        if (other["id"] <= run["id"] or other["head_branch"] != run["head_branch"] or
+                other["head_repository"]["id"] != run["head_repository"]["id"]):
+            continue
+        if run["event"] == "pull_request":
+            other_prs = current_pull_requests(get, root, other, repository_id)
+            if len(other_prs) != 1 or other_prs[0]["number"] != pr["number"]:
+                continue
         raise StaleRun("A newer CodeQL run superseded this run")
     return run, {"sha": sha, "ref": ref}
 

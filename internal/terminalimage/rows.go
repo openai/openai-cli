@@ -6,7 +6,10 @@ import (
 	"errors"
 	"image"
 	"os"
+	"strconv"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 type fontRowsKey struct{}
@@ -61,3 +64,35 @@ type previewStripe struct {
 }
 
 func (s previewStripe) Bounds() image.Rectangle { return s.bounds }
+
+// RowColumns measures prepared text or the explicit cell width of a native row.
+// Unknown native dimensions are unsafe to replay inside a bounded panel.
+func RowColumns(row string) int {
+	if strings.HasPrefix(row, "\x1b]1337;") {
+		header, _, _ := strings.Cut(row, ":")
+		for field := range strings.SplitSeq(header, ";") {
+			if value, ok := strings.CutPrefix(field, "width="); ok {
+				width, err := strconv.Atoi(value)
+				if err == nil && width > 0 {
+					return width
+				}
+				return -1
+			}
+		}
+		return -1
+	}
+	if strings.HasPrefix(row, "\x1b_G") {
+		header, _, _ := strings.Cut(row, ";")
+		for field := range strings.SplitSeq(strings.TrimPrefix(header, "\x1b_G"), ",") {
+			if value, ok := strings.CutPrefix(field, "c="); ok {
+				width, err := strconv.Atoi(value)
+				if err == nil && width > 0 {
+					return width
+				}
+				return -1
+			}
+		}
+		return -1
+	}
+	return ansi.StringWidth(row)
+}

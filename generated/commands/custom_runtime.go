@@ -7,8 +7,8 @@ import (
 	"net/http"
 
 	"github.com/openai/openai-cli/internal/apiquery"
+	custom "github.com/openai/openai-cli/internal/app"
 	"github.com/openai/openai-cli/internal/jsonview"
-	"github.com/openai/openai-cli/pkg/custom"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/tidwall/gjson"
 	"github.com/urfave/cli/v3"

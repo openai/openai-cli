@@ -14,7 +14,7 @@ import (
 
 	localcommands "github.com/openai/openai-cli/internal/commands"
 	manpagecmd "github.com/openai/openai-cli/internal/commands/manpages"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/urfave/cli/v3"
 )
 
@@ -41,7 +41,7 @@ func manpageTestCommand(t *testing.T, dir string) (*cli.Command, *cli.Command) {
 		Commands: []*cli.Command{group, hidden, manpages},
 	}
 	manpagecmd.Configure(root, func(command *cli.Command, message string) error {
-		return custom.ReportSaveReceipt(command, os.Stderr, message, nil)
+		return appconfig.ReportSaveReceipt(command, os.Stderr, message, nil)
 	})
 	return root, manpages
 }
@@ -281,7 +281,7 @@ func TestWriteManpageFileErrorsAndCleanup(t *testing.T) {
 					t.Fatalf("write/finalization failure lost recovery: %v", err)
 				}
 				var diagnostic bytes.Buffer
-				if showErr := custom.ShowCommandError(manpageJSONErrorCommand(t), err, &diagnostic); showErr != nil {
+				if showErr := appconfig.ShowCommandError(manpageJSONErrorCommand(t), err, &diagnostic); showErr != nil {
 					t.Fatal(showErr)
 				}
 				if strings.Contains(diagnostic.String(), "synthetic") {
@@ -311,7 +311,7 @@ func TestWriteManpageFileErrorsAndCleanup(t *testing.T) {
 func manpageErrorMessage(t *testing.T, root *cli.Command, failure error) string {
 	t.Helper()
 	var diagnostic bytes.Buffer
-	if err := custom.ShowCommandError(root, failure, &diagnostic); err != nil {
+	if err := appconfig.ShowCommandError(root, failure, &diagnostic); err != nil {
 		t.Fatal(err)
 	}
 	return strings.TrimSpace(diagnostic.String())

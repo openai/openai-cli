@@ -54,7 +54,7 @@ def run(binary, output, case):
                 opener=bindir/'open'
                 opener.write_text("#!/bin/sh\n[ -z \"$OPENAI_API_KEY\" ] || exit 91\nprintf '%s\\n' \"$1\" >> \"$HOME/opened-file-uri\"\n/bin/sleep 0.2\n")
                 opener.chmod(0o700)
-                env['PATH']=str(bindir)+':/usr/bin:/bin' 
+                env['PATH']=str(bindir)+':/usr/bin:/bin'
             executable = binary
             if case == 'removed-executable':
                 executable = home / 'copied-openai'

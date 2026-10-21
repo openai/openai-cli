@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/openai/openai-cli/generated/commands"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/urfave/cli/v3"
 )
 
@@ -220,7 +220,7 @@ func TestMainWrappedExitCodeProcess(t *testing.T) {
 			},
 		}}}},
 	}
-	custom.ConfigureCommand(commands.Command)
+	appconfig.ConfigureCommand(commands.Command)
 	os.Args = []string{"openai", "synthetic", "fail"}
 	main()
 	os.Exit(0)
