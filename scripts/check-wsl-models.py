@@ -162,29 +162,40 @@ def main():
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
+                        # The owned group exited; still reap the child and verify pipe EOF.
                         pass
                 process.wait(timeout=2)
                 if not process.fixture_stdout_eof or not process.fixture_stderr_eof:
                     cleanup_errors.append("Models pipe EOF was not observed")
             except BaseException as error:
                 cleanup_errors.append("child cleanup: " + str(error)[:1000])
-        try:
-            if server is not None:
+        if server is not None:
+            try:
                 if worker is not None and worker.is_alive():
                     server.shutdown()
+            except BaseException as error:
+                cleanup_errors.append("fixture shutdown: " + str(error)[:1000])
+            try:
                 server.server_close()
-            if worker is not None:
+            except BaseException as error:
+                cleanup_errors.append("fixture close: " + str(error)[:1000])
+        report["fixture_thread_joined"] = False
+        if worker is not None:
+            try:
                 worker.join(timeout=2)
                 assert not worker.is_alive(), "Models fixture thread remained alive"
-            report["fixture_thread_joined"] = worker is not None and not worker.is_alive()
-            if port is not None:
+                report["fixture_thread_joined"] = True
+            except BaseException as error:
+                cleanup_errors.append("fixture join: " + str(error)[:1000])
+        if port is not None and (worker is None or report["fixture_thread_joined"]):
+            try:
                 with socket.socket() as probe:
                     probe.settimeout(1)
                     result = probe.connect_ex(("127.0.0.1", port))
                 report["listener_errno"] = result
                 assert result == errno.ECONNREFUSED, "Models fixture listener remained open"
-        except BaseException as error:
-            cleanup_errors.append("fixture cleanup: " + str(error)[:1000])
+            except BaseException as error:
+                cleanup_errors.append("fixture listener: " + str(error)[:1000])
         with lock:
             report.update(request_count=requests["count"], accepted_request_count=requests["accepted"])
             if requests != {"count": 1, "accepted": 1, "failures": []}:

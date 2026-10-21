@@ -139,11 +139,25 @@ INDEPENDENT_PROCESS_ROOTS = {
     "TestMainAdminSetupIsReadOnly",
     "TestMainAdminSetupPreservesOrdinarySetup",
     "TestMainAdminSetupRejectsExtraArguments",
+    "TestMainImageModelsRequestDeadlineCancelsHTTP",
+    "TestMainImageModelsInterruptPreservesCompletedResults",
+    "TestMainWelcomeRedirectedOutputMatchesHelp",
+    "TestMainWelcomeExplicitArgumentsStayPlain",
+    "TestMainWelcomeBareInvocationStaysOffline",
+    "TestMainCommandSubgroupsBareInvocation",
+    "TestMainDispatchOutputManpagesDeepSubgroups",
+    "TestMainPickerShellSetupRefusesUnsafeConfigurationAncestry",
+    "TestMainPickerShellSetupReadOnlyModesDoNotWrite",
 }
+SUPPORTED_AUTOCOMPLETE_ROOTS = {
+    "TestPickerRenameNoReplace", "TestPickerInstallRoundTrip", "TestPickerRemoveRestoresAbsentProfile",
+}
+NATIVE_CUSTOM_ROOT = "TestImagePickerFirstRunNativeSetupContract"
+NATIVE_PROCESS_ROOT = "TestMainPickerShellSetupNativeContract"
 PROFILE_PHASES = {
     # Direct installer checks retain native errors before public commands redact them.
-    "local-state": {"imageprefs": 70, "custom": 70, "autocomplete": 70,
-                    "process": 170, "clihelp": 70, "final": 20},
+    "local-state": {"imageprefs": 70, "clihelp": 70, "custom": 70,
+                    "process": 170, "autocomplete": 70, "final": 20},
     "shell-contracts": {"invocation": 170, "completion": 75, "startup-login": 130,
                         "startup-nonlogin": 130, "models": 40, "final": 20},
 }
@@ -159,6 +173,8 @@ COMPLETION_CASES = {
     "single quoted assigned file", "double quoted assigned file", "double quoted apostrophe",
     "escaped assigned file", "separate quoted file", "unquoted assigned control",
     "UTF-8 midline file with later flag",
+    "escaped colon command", "quoted colon command", "unquoted colon command",
+    "literal colon flag value", "separate colon command words",
 }
 SHELL_ASSETS = ("check-bash-completion.py", "image_picker_harness.py",
                 "check-wsl-shell-startup.py", "check-wsl-models.py")
@@ -514,12 +530,12 @@ def load_command_cases():
         raise RuntimeError("Expected a regular WSL command-contract inventory")
     data = COMMAND_CASES_PATH.read_bytes()
     suites = json.loads(data, object_pairs_hook=unique_object)
-    if not isinstance(suites, dict) or set(suites) != {"custom", "process", "app"}:
+    if not isinstance(suites, dict) or set(suites) != {"custom", "images", "process", "app"}:
         raise RuntimeError("Invalid WSL command-contract inventory")
     excluded = set(PROCESS_CASES) | {ROOT, "TestMainDispatchProcess", "TestMainWrappedExitCodeProcess",
                                       "TestRequestConfigurationChildEnvironment"}
     selected = set()
-    for package, roots, names in (("custom", 10, 71), ("process", 65, 577), ("app", 2, 12)):
+    for package, roots, names in (("custom", 4, 9), ("images", 6, 62), ("process", 65, 577), ("app", 2, 12)):
         cases = suites[package]
         if not isinstance(cases, dict) or len(cases) != roots:
             raise RuntimeError("Invalid WSL command-contract root inventory")
@@ -574,8 +590,8 @@ def load_local_cases():
         raise RuntimeError("Expected a regular local-state inventory")
     raw = LOCAL_CASES_PATH.read_bytes()
     suites = json.loads(raw, object_pairs_hook=unique_object)
-    counts = {"imageprefs": (9, 30), "custom": (10, 15), "autocomplete": (3, 32),
-              "process": (28, 142), "clihelp": (3, 4)}
+    counts = {"imageprefs": (9, 30), "custom": (12, 29), "autocomplete": (5, 55),
+              "process": (29, 147), "clihelp": (5, 6)}
     if not isinstance(suites, dict) or set(suites) != set(counts):
         raise RuntimeError("Invalid local-state packages")
     excluded = set(PROCESS_CASES) | {ROOT, "TestMainDispatchProcess", "TestImagePreferenceWaitingWriterProcess"}
@@ -609,13 +625,39 @@ def admit_profile(commands, phases):
         raise RuntimeError("Insufficient work time for the complete remaining WSL profile")
 
 
-def run_selected_tests(commands, user, target, cases, label, seconds, selector=None, dynamic_loopback=False):
+def require_capability_receipt(stdout, contract):
+    lines = [line.removeprefix("PICKER_CAPABILITY ") for line in stdout.decode("utf-8").splitlines()
+             if line.startswith("PICKER_CAPABILITY ")]
+    if len(lines) != 1:
+        raise RuntimeError("Missing or duplicated native capability receipt")
+    def unique_object(pairs):
+        value = dict(pairs)
+        if len(value) != len(pairs):
+            raise RuntimeError("Duplicated native capability receipt key")
+        return value
+    value = json.loads(lines[0], object_pairs_hook=unique_object)
+    errnos = {""} if contract == "supported" else {"ENOSYS", "EOPNOTSUPP"}
+    if (contract not in {"supported", "refused"} or not isinstance(value, dict)
+            or set(value) != {"contract", "errno", "checks"} or value["contract"] != contract
+            or not isinstance(value["errno"], str) or value["errno"] not in errnos or type(value["checks"]) is not int or value["checks"] != 10):
+        raise RuntimeError("Invalid native capability receipt")
+    return value
+
+
+def run_selected_tests(commands, user, target, cases, label, seconds, selector=None, dynamic_loopback=False,
+                       setup_contract=None, capability_receipt=None):
     go_seconds, guest_seconds = (150, 160) if seconds == 170 else (45, 60)
     selector = selector or "^(" + "|".join(cases) + ")$"
     argv = ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", f"{guest_seconds}s", target,
             "-test.run=" + selector, f"-test.timeout={go_seconds}s", "-test.v"]
-    stdout, stderr, code = commands.run(label, user + argv, seconds)
-    return sorted(require_test_pass(stdout, stderr, code, test_names(cases), label, dynamic_loopback))
+    env = [] if setup_contract is None else ["OPENAI_CLI_PICKER_SETUP_CONTRACT=" + setup_contract]
+    stdout, stderr, code = commands.run(label, user + env + argv, seconds)
+    names = sorted(require_test_pass(stdout, stderr, code, test_names(cases), label, dynamic_loopback))
+    if "TestPickerNativeSetupContract" in cases:
+        receipt = require_capability_receipt(stdout, setup_contract or "supported")
+        if capability_receipt is not None:
+            capability_receipt.update(receipt)
+    return names
 
 
 def require_driver_pass(stdout, stderr, code, names, receipt_case=None):
@@ -653,9 +695,29 @@ def require_driver_pass(stdout, stderr, code, names, receipt_case=None):
                 or receipt.get("response_sha256") != "65a35e98b76235a982e331fe094c5d044e3e6380c7bf2de51655459ff77f6d47"):
             raise RuntimeError("Models receipt lost the complete selected record")
     else:
-        expected_counts = {"setup_call_count": 6, "fresh_shell_count": 3,
-                           "expected_setup_calls": 6, "expected_fresh_shells": 3}
+        refused = receipt_case in {"bash-login-refused", "bash-nonlogin-refused"}
+        if receipt_case not in {"bash-login", "bash-nonlogin", "bash-login-refused", "bash-nonlogin-refused"}:
+            raise RuntimeError("Unknown startup receipt case")
+        call_count = 7 if refused else 6
+        expected_counts = {"setup_call_count": call_count, "fresh_shell_count": 3,
+                           "expected_setup_calls": call_count, "expected_fresh_shells": 3}
         required_true = ("setup_stdout_eof", "setup_stderr_eof", "pty_eof", "system_sources_unchanged")
+        if refused:
+            required_true += ("original_profiles_unchanged", "seeded_profiles_unchanged", "recovery_evidence_unchanged",
+                              "absent_profiles_preserved", "opt_out_created", "generated_scripts_removed",
+                              "unselected_profile_unchanged")
+            seeded = receipt.get("seeded_existing_state")
+            if (receipt.get("setup_contract") != "refused"
+                    or receipt.get("installation_scope") != "Seeded existing state tests activation and cleanup, not installation."
+                    or receipt.get("automatic_setup_scope") != "Not exercised: private HOME differs from the account home."
+                    or not isinstance(seeded, dict) or seeded.get("contract") != "seeded-existing-state"
+                    or seeded.get("stdout_eof") is not True or seeded.get("stderr_eof") is not True
+                    or any(type(seeded.get(key)) is not int or seeded[key] != value for key, value in
+                           {"exporter_exit_code": 0, "exporter_stderr_bytes": 0, "profile_count": 2, "script_count": 2}.items())
+                    or type(seeded.get("exporter_stdout_bytes")) is not int
+                    or not 0 < seeded["exporter_stdout_bytes"] <= 1048576
+                    or not re.fullmatch(r"[0-9a-f]{64}", str(seeded.get("exporter_stdout_sha256", "")))):
+                raise RuntimeError("Refused startup receipt lost its seeded-state evidence boundary")
         sources = receipt.get("system_sources")
         if (not isinstance(sources, list) or len(sources) != 2
                 or any(not isinstance(item, dict) for item in sources)
@@ -678,16 +740,23 @@ def require_driver_pass(stdout, stderr, code, names, receipt_case=None):
             receipt_bytes({"source_base64": item.get("content_base64"), "source_bytes": item.get("bytes"),
                            "source_sha256": item.get("sha256")}, "source", 65536)
         calls, shells = receipt.get("setup_calls"), receipt.get("fresh_shells")
-        if (not isinstance(calls, list) or len(calls) != 6 or not isinstance(shells, list) or len(shells) != 3
+        actions = (["install-refused-text", "install-refused-json", "install-refused-again", "seeded-install-noop",
+                    "seeded-remove-refused-text", "seeded-remove-refused-json", "absent-profile-remove"] if refused else
+                   ["install", "install-again", "remove", "remove-again", "reenable", "remove-final"])
+        checkpoints = (["fresh-original", "fresh-seeded-existing", "fresh-after-refused-remove"] if refused else
+                       ["fresh-installed", "fresh-removed", "fresh-reenabled"])
+        if (not isinstance(calls, list) or len(calls) != call_count or not isinstance(shells, list) or len(shells) != 3
                 or any(not isinstance(item, dict) for item in calls + shells)
-                or [item.get("action") for item in calls] !=
-                ["install", "install-again", "remove", "remove-again", "reenable", "remove-final"]
-                or [item.get("checkpoint") for item in shells] !=
-                ["fresh-installed", "fresh-removed", "fresh-reenabled"]):
+                or [item.get("action") for item in calls] != actions
+                or [item.get("checkpoint") for item in shells] != checkpoints):
             raise RuntimeError("Startup receipt lost a lifecycle action")
         for item in calls + shells:
-            if type(item.get("exit_code")) is not int or item["exit_code"] != 0:
+            expected_exit = int(refused and "refused" in item.get("action", ""))
+            if type(item.get("exit_code")) is not int or item["exit_code"] != expected_exit:
                 raise RuntimeError("Startup receipt contains a failed command")
+            if refused and item in calls and (type(item.get("expected_exit_code")) is not int
+                                              or item["expected_exit_code"] != expected_exit):
+                raise RuntimeError("Refused startup receipt changed an expected exit status")
         if any(item.get("stdout_eof") is not True or item.get("stderr_eof") is not True for item in calls):
             raise RuntimeError("Startup receipt contains incomplete setup output")
         if any(item.get("pty_eof") is not True or item.get("forced_cleanup") is not False for item in shells):
@@ -697,6 +766,33 @@ def require_driver_pass(stdout, stderr, code, names, receipt_case=None):
                 raw = receipt_bytes(item, stream, 1048576)
                 if stream == "stdout" and raw:
                     raise RuntimeError("Startup setup wrote unexpected stdout")
+            if refused:
+                is_remove = "remove" in item["action"]
+                error_format = "json" if item["action"].endswith("-json") else "text"
+                if item.get("format_error") != error_format:
+                    raise RuntimeError("Refused startup receipt lost its output format")
+                if item["expected_exit_code"]:
+                    operation = "removal" if is_remove else "setup"
+                    message = ("Could not finish Tab shortcut " + operation
+                               + ": this environment does not support the required atomic rename."
+                               + (" Existing shortcuts may remain active." if is_remove else "")
+                               + " Type openai images generate and press Enter to use the picker."
+                               + " Some startup files or preferences may already have changed."
+                               + " Keep any .openai-picker-recovery-* directories beside the startup file; inspect their original files before manual recovery."
+                               + " Persistent setup needs a filesystem with atomic rename support.")
+                    if error_format == "json":
+                        if json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object) != {"message": message}:
+                            raise RuntimeError("Refused startup receipt lost its JSON diagnostic")
+                    elif raw != (message + "\n").encode():
+                        raise RuntimeError("Refused startup receipt lost its text diagnostic")
+                else:
+                    message = ("Tab shortcut setup removed. Open a new terminal to finish.\n" if is_remove else
+                               "Tab setup saved for future terminals. Existing custom bindings are preserved.\n")
+                    if raw != message.encode():
+                        raise RuntimeError("Seeded-state cleanup receipt changed")
+        if refused and (any(type(item.get("expected_active")) is not bool for item in shells)
+                        or [item["expected_active"] for item in shells] != [False, True, True]):
+            raise RuntimeError("Refused startup receipt lost its fresh-shell states")
         for item in shells:
             raw = receipt_bytes(item, "pty", 1048576)
             if b"__PROFILE_READY__> " not in raw:
@@ -781,47 +877,70 @@ def profile_file_hashes(commands, user, paths, label, seconds=10):
     return {path: value for value, path in rows}
 
 
-def run_profile(commands, user, profile, suites, hashes, result):
+def run_profile(commands, user, profile, suites, hashes, result, setup_contract="supported"):
+    if setup_contract not in {"supported", "refused"}:
+        raise RuntimeError("Unknown setup contract")
     remaining = dict(PROFILE_PHASES[profile])
     admit_profile(commands, remaining)
     result["profile_admission_seconds"] = sum(remaining.values())
+    result["setup_contract"] = setup_contract
     result["profile_results"] = {}
 
-    def run_local_process(cases, key):
-        # Both groups share the original process allowance, excluding other phases.
+    def run_local_group(phase, cases, key, complete=True):
+        admit_profile(commands, remaining)
         deadline, started = commands.deadline, time.monotonic()
-        commands.deadline = min(deadline, started + remaining["process"])
+        commands.deadline = min(deadline, started + remaining[phase])
+        capability = {}
         try:
-            names = run_selected_tests(commands, user, PAYLOAD_ROOT + "process.test", cases,
-                                       "local-" + key, 170, dynamic_loopback=key == "process")
+            names = run_selected_tests(
+                commands, user, PAYLOAD_ROOT + phase + ".test", cases, "local-" + key,
+                PROFILE_PHASES[profile][phase], dynamic_loopback=WELCOME_DYNAMIC_NAME in test_names(cases),
+                setup_contract=setup_contract, capability_receipt=capability)
         finally:
-            remaining["process"] -= time.monotonic() - started
+            remaining[phase] -= time.monotonic() - started
             commands.deadline = deadline
-        if remaining["process"] <= 0:
-            raise RuntimeError("Local process checks exhausted their shared time budget")
-        result["profile_results"][key] = {"tests": names, "final_PASS": 1}
+        if remaining[phase] <= 0:
+            raise RuntimeError("Local checks exhausted their shared time budget")
+        entry = {"tests": names, "final_PASS": 1}
+        if capability:
+            entry["native_capability"] = capability
+        result["profile_results"][key] = entry
+        if complete:
+            del remaining[phase]
+
+    if profile == "local-state":
+        independent = {root: children for root, children in suites["process"].items()
+                       if root in INDEPENDENT_PROCESS_ROOTS}
+        if set(independent) != INDEPENDENT_PROCESS_ROOTS:
+            raise RuntimeError("Missing independent local process roots")
+        run_local_group("imageprefs", suites["imageprefs"], "imageprefs")
+        run_local_group("clihelp", suites["clihelp"], "clihelp")
+        custom_independent = {root: children for root, children in suites["custom"].items()
+                              if root != NATIVE_CUSTOM_ROOT}
+        run_local_group("custom", custom_independent, "custom-independent", complete=False)
+        run_local_group("process", independent, "process-independent", complete=False)
+        autocomplete = {root: children for root, children in suites["autocomplete"].items()
+                        if setup_contract == "supported" or root not in SUPPORTED_AUTOCOMPLETE_ROOTS}
+        run_local_group("autocomplete", autocomplete, "autocomplete")
+        run_local_group("custom", {NATIVE_CUSTOM_ROOT: suites["custom"][NATIVE_CUSTOM_ROOT]}, "custom")
+        dependent = {root: children for root, children in suites["process"].items()
+                     if root not in INDEPENDENT_PROCESS_ROOTS
+                     and (setup_contract == "supported" or root == NATIVE_PROCESS_ROOT)}
+        run_local_group("process", dependent, "process")
+        result["positive_installation_tests_executed"] = setup_contract == "supported"
+        result["positive_installation_tests_not_selected"] = (
+            [] if setup_contract == "supported" else sorted(
+                test_names({root: suites["autocomplete"][root] for root in SUPPORTED_AUTOCOMPLETE_ROOTS})
+                | test_names({root: children for root, children in suites["process"].items()
+                              if root not in INDEPENDENT_PROCESS_ROOTS and root != NATIVE_PROCESS_ROOT})))
+        admit_profile(commands, remaining)
+        return remaining
 
     for phase, seconds in list(remaining.items()):
         admit_profile(commands, remaining)
         if phase == "final":
             break
-        if profile == "local-state":
-            if phase == "autocomplete":
-                independent = {root: suites["process"][root] for root in suites["process"]
-                               if root in INDEPENDENT_PROCESS_ROOTS}
-                if set(independent) != INDEPENDENT_PROCESS_ROOTS:
-                    raise RuntimeError("Missing independent local process roots")
-                run_local_process(independent, "process-independent")
-                admit_profile(commands, remaining)
-            if phase == "process":
-                dependent = {root: children for root, children in suites[phase].items()
-                             if root not in INDEPENDENT_PROCESS_ROOTS}
-                run_local_process(dependent, phase)
-            else:
-                names = run_selected_tests(commands, user, PAYLOAD_ROOT + phase + ".test", suites[phase],
-                                           "local-" + phase, seconds, dynamic_loopback=False)
-                result["profile_results"][phase] = {"tests": names, "final_PASS": 1}
-        elif phase == "invocation":
+        if phase == "invocation":
             env = ["OPENAI_CLI_REQUIRE_NATIVE_SHELLS=bash",
                    "OPENAI_CLI_NATIVE_SHELL_BINARY=" + PAYLOAD_ROOT + "openai",
                    "OPENAI_CLI_NATIVE_SHELL_SHA256=" + hashes["openai"]]
@@ -834,7 +953,12 @@ def run_profile(commands, user, profile, suites, hashes, result):
             elif phase.startswith("startup-"):
                 mode = phase.removeprefix("startup-")
                 script, args, guest_seconds = "check-wsl-shell-startup.py", [mode], 120
-                names, receipt = {"bash-" + mode}, "bash-" + mode
+                receipt = "bash-" + mode
+                if setup_contract == "refused":
+                    args += ["--setup-contract", "refused", "--autocomplete-test-binary",
+                             PAYLOAD_ROOT + "autocomplete.test"]
+                    receipt += "-refused"
+                names = {receipt}
             else:
                 script, args, guest_seconds = "check-wsl-models.py", [], 30
                 names, receipt = {"models-filter-sort-limit"}, "models-filter-sort-limit"
@@ -848,7 +972,9 @@ def run_profile(commands, user, profile, suites, hashes, result):
 
 
 def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=False, app_binary=None,
-          profile=None, extra_payloads=None):
+          images_binary=None, profile=None, extra_payloads=None, setup_contract="supported"):
+    if setup_contract not in {"supported", "refused"} or (profile is None and setup_contract != "supported"):
+        raise RuntimeError("Setup contracts require a fixed WSL profile")
     suites = None
     payloads, asset_paths, artifact_hashes = {}, {}, {}
     if profile is not None and profile not in PROFILE_PHASES:
@@ -856,14 +982,15 @@ def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=Fal
     if profile is not None and command_contracts:
         raise RuntimeError("WSL profiles cannot be combined")
     if profile is not None and not cleanup_only:
-        if app_binary is not None:
-            raise RuntimeError("Application lifecycle binaries require the command-contract profile")
+        if app_binary is not None or images_binary is not None:
+            raise RuntimeError("Application and image binaries require the command-contract profile")
         payloads = dict(extra_payloads or {})
         if binary is not None:
             payloads["custom.test"] = binary
         if process_binary is not None:
             payloads["process.test"] = process_binary
-        required = {"custom.test", "process.test", "imageprefs.test", "clihelp.test", "autocomplete.test"} if profile == "local-state" else {"process.test", "openai"}
+        required = {"custom.test", "process.test", "imageprefs.test", "clihelp.test", "autocomplete.test"} if profile == "local-state" else ({"process.test", "openai", "autocomplete.test"}
+                    if setup_contract == "refused" else {"process.test", "openai"})
         if set(payloads) != required:
             raise RuntimeError("The fixed WSL profile requires its exact payload set")
         if profile == "local-state":
@@ -874,8 +1001,8 @@ def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=Fal
                 if path.is_symlink() or not path.is_file():
                     raise RuntimeError("Expected a regular shell fixture source")
     if command_contracts and not cleanup_only:
-        if binary is None or process_binary is None or app_binary is None:
-            raise RuntimeError("Command contracts require all three test binaries")
+        if binary is None or process_binary is None or app_binary is None or images_binary is None:
+            raise RuntimeError("Command contracts require all four test binaries")
         suites, inventory_hash = load_command_cases()
     # Validate process bitness before selecting System32, which WOW64 can redirect.
     host_process = require_native_windows_process()
@@ -929,6 +1056,8 @@ def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=Fal
                 if suites is not None:
                     result["app_binary_sha256"] = require_linux_binary(app_binary)
                     app_binary = app_binary.resolve(strict=True)
+                    result["images_binary_sha256"] = require_linux_binary(images_binary)
+                    images_binary = images_binary.resolve(strict=True)
             result["wsl_sha256"] = digest(Path(wsl))
             result["source"] = commands.run("source", ["git", "rev-parse", "HEAD", "HEAD^{tree}"], 10)[0].decode("ascii").splitlines()
             result["wsl_version"] = decode_metadata(commands.run("wsl-version", [wsl, "--version"], 20)[0])
@@ -971,6 +1100,8 @@ def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=Fal
                     copy_payload(commands, root, user, process_binary, process_target, result["process_binary_sha256"], "process-")
                 if suites is not None:
                     copy_payload(commands, root, user, app_binary, app_target, result["app_binary_sha256"], "app-")
+                    images_target = "/home/cli-compat/payload/images.test"
+                    copy_payload(commands, root, user, images_binary, images_target, result["images_binary_sha256"], "images-")
             identity = "set -eu; test $(id -u) = 2000; test $(uname -m) = x86_64; test $(dpkg --print-architecture) = amd64; cat /etc/os-release; uname -a; id; /bin/bash --version; stat -f -c %T /home/cli-compat"
             observed = commands.run("ubuntu-identity", user + ["/bin/bash", "--noprofile", "--norc", "-c", identity], 20)[0].decode("utf-8")
             if not re.search(r"^ID=ubuntu$", observed, re.MULTILINE):
@@ -988,7 +1119,7 @@ def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=Fal
                     raise RuntimeError("A prepared profile artifact changed")
                 if profile == "shell-contracts":
                     result["shell_prerequisites"] = shell_prerequisites(commands, user)
-                remaining = run_profile(commands, user, profile, suites, artifact_hashes, result)
+                remaining = run_profile(commands, user, profile, suites, artifact_hashes, result, setup_contract)
                 admit_profile(commands, remaining)
                 # Keep final source and artifact verification inside its reserved phase.
                 commands.deadline = min(commands.deadline, time.monotonic() + remaining["final"])
@@ -1012,6 +1143,10 @@ def pilot(binary, cleanup_only=False, process_binary=None, command_contracts=Fal
                     if digest(process_binary) != result["process_binary_sha256"]:
                         raise RuntimeError("The host process test binary changed")
                 if suites is not None:
+                    result["images_tests"] = sorted(run_custom_suite(commands, user, images_target,
+                                                                    suites["images"], label="images-contracts"))
+                    if digest(images_binary) != result["images_binary_sha256"]:
+                        raise RuntimeError("The host images test binary changed")
                     result["app_tests"] = sorted(run_custom_suite(commands, user, app_target,
                                                                  suites["app"], label="app-contracts"))
                     if digest(app_binary) != result["app_binary_sha256"]:
@@ -1051,40 +1186,44 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path)
     parser.add_argument("--process-binary", type=Path, help="Also run the fixed noninteractive process suite")
+    parser.add_argument("--images-binary", type=Path, help="Run the image preference and state contracts")
     parser.add_argument("--app-binary", type=Path, help="Run the application lifecycle contracts")
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--command-contracts", action="store_true",
-                           help="Run the fixed command-contract supplement using all three test binaries")
+                           help="Run the fixed command-contract supplement using all four test binaries")
     selection.add_argument("--profile", choices=sorted(PROFILE_PHASES), help="Run one fixed successor profile")
     parser.add_argument("--imageprefs-binary", type=Path)
     parser.add_argument("--clihelp-binary", type=Path)
     parser.add_argument("--autocomplete-binary", type=Path)
     parser.add_argument("--cli-binary", type=Path)
+    parser.add_argument("--setup-contract", choices=("supported", "refused"), default="supported")
     parser.add_argument("--cleanup", action="store_true")
     args = parser.parse_args()
+    if args.profile is None and args.setup_contract != "supported":
+        parser.error("--setup-contract requires --profile")
     if not args.cleanup and args.profile != "shell-contracts" and args.binary is None:
         parser.error("--binary is required for the pilot")
-    if args.command_contracts and not args.cleanup and (args.process_binary is None or args.app_binary is None):
-        parser.error("--command-contracts requires --process-binary and --app-binary")
+    if args.command_contracts and not args.cleanup and (args.process_binary is None or args.app_binary is None or args.images_binary is None):
+        parser.error("--command-contracts requires --process-binary, --app-binary, and --images-binary")
     extras = {name: path for name, path in (("imageprefs.test", args.imageprefs_binary),
               ("clihelp.test", args.clihelp_binary), ("autocomplete.test", args.autocomplete_binary),
               ("openai", args.cli_binary)) if path is not None}
     if not args.cleanup:
-        if args.profile is not None and args.app_binary is not None:
-            parser.error("--app-binary cannot be combined with --profile")
+        if args.profile is not None and (args.app_binary is not None or args.images_binary is not None):
+            parser.error("--app-binary and --images-binary cannot be combined with --profile")
         if args.profile == "local-state" and (args.process_binary is None or set(extras) != {"imageprefs.test", "clihelp.test", "autocomplete.test"}):
             parser.error("--profile local-state requires process, imageprefs, clihelp, and autocomplete test binaries")
-        if args.profile == "shell-contracts" and (args.binary is not None or args.process_binary is None or set(extras) != {"openai"}):
-            parser.error("--profile shell-contracts requires only process and CLI binaries")
+        if args.profile == "shell-contracts" and (args.binary is not None or args.process_binary is None or set(extras) != ({"openai", "autocomplete.test"} if args.setup_contract == "refused" else {"openai"})):
+            parser.error("--profile shell-contracts requires process and CLI binaries, plus autocomplete for refused setup")
         if args.profile is None and extras:
             parser.error("Additional binaries require a fixed successor profile")
     for number in (signal.SIGINT, signal.SIGTERM):
         signal.signal(number, interrupted)
     try:
         if args.profile is None:
-            code = pilot(args.binary, args.cleanup, args.process_binary, args.command_contracts, args.app_binary)
+            code = pilot(args.binary, args.cleanup, args.process_binary, args.command_contracts, args.app_binary, args.images_binary)
         else:
-            code = pilot(args.binary, args.cleanup, args.process_binary, profile=args.profile, extra_payloads=extras)
+            code = pilot(args.binary, args.cleanup, args.process_binary, profile=args.profile, extra_payloads=extras, setup_contract=args.setup_contract)
     except Exception as error:
         print(f"WSL pager pilot failed: {error}", file=sys.stderr)
         code = 128 + STOP if STOP else 1

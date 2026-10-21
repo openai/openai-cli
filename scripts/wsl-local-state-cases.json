@@ -52,7 +52,23 @@
       "symlink"
     ],
     "TestImagePickerDefaultFolderPrintHasNoSideEffects": [],
-    "TestImagePickerReadOnlyFolderKeepsPickerOpen": []
+    "TestImagePickerReadOnlyFolderKeepsPickerOpen": [],
+    "TestImagePickerFirstRunNativeSetupContract": [
+      "absent",
+      "existing"
+    ],
+    "TestImagePickerShellSetupCapabilityErrors": [
+      "direct/remove=false",
+      "direct/remove=true",
+      "path/remove=false",
+      "path/remove=true",
+      "link/remove=false",
+      "link/remove=true",
+      "wrapped/remove=false",
+      "wrapped/remove=true",
+      "joined/remove=false",
+      "joined/remove=true"
+    ]
   },
   "autocomplete": {
     "TestPickerRenameNoReplace": [
@@ -89,6 +105,31 @@
       "zsh/missing-directory=true",
       "fish/missing-directory=false",
       "fish/missing-directory=true"
+    ],
+    "TestPickerRenameCapabilityClassification": [
+      "success",
+      "ENOSYS",
+      "EOPNOTSUPP",
+      "EINVAL",
+      "EACCES",
+      "EEXIST",
+      "ENOENT",
+      "EXDEV",
+      "canceled",
+      "deadline",
+      "wrapped_unrelated_operation"
+    ],
+    "TestPickerNativeSetupContract": [
+      "rename_absent",
+      "rename_existing",
+      "install_absent",
+      "install_existing",
+      "seeded_noop",
+      "seeded_remove",
+      "missing_profile_cleanup",
+      "pending_recovery",
+      "replaced_profile",
+      "canceled"
     ]
   },
   "process": {
@@ -252,13 +293,21 @@
       "containers_files",
       "skills_versions"
     ],
-    "TestMainDispatchOutputManpagesDeepSubgroups": []
+    "TestMainDispatchOutputManpagesDeepSubgroups": [],
+    "TestMainPickerShellSetupNativeContract": [
+      "absent_text",
+      "absent_json",
+      "existing_text",
+      "existing_json"
+    ]
   },
   "clihelp": {
     "TestHelpInvocationUsesSameExecutableOnPath": [],
     "TestHelpInvocationFollowsInstalledSymlink": [],
     "TestHelpInvocationKeepsPowerShellScriptOnPath": [
       "dangling_symlink"
-    ]
+    ],
+    "TestHelpInvocationKeepsDifferentExecutable": [],
+    "TestHelpInvocationKeepsLocalPathWithImplicitLookup": []
   }
 }

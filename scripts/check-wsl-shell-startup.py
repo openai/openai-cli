@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Check one explicit Bash setup lifecycle through three fresh private-PTY sessions."""
+"""Check one supported or refused Bash setup lifecycle through three private-PTY sessions."""
+import argparse
 import base64
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import stat
@@ -23,6 +25,69 @@ DONE = "PROFILE_PROBE_DONE"
 LIMIT = 1048576
 SMALL = 65536
 SYSTEM_STARTUP_FILES = (Path("/etc/profile"), Path("/etc/bash.bashrc"))
+REFUSAL_GUIDANCE = (
+    " Type openai images generate and press Enter to use the picker."
+    " Some startup files or preferences may already have changed."
+    " Keep any .openai-picker-recovery-* directories beside the startup file; inspect their original files before manual recovery."
+    " Persistent setup needs a filesystem with atomic rename support."
+)
+
+
+def refusal_message(action):
+    if action == "--install-picker":
+        return "Could not finish Tab shortcut setup: this environment does not support the required atomic rename." + REFUSAL_GUIDANCE
+    assert action == "--uninstall-picker", "unknown refused setup action"
+    return ("Could not finish Tab shortcut removal: this environment does not support the required atomic rename."
+            " Existing shortcuts may remain active." + REFUSAL_GUIDANCE)
+
+
+def unique_object(pairs):
+    result = dict(pairs)
+    assert len(result) == len(pairs), "duplicate fixture JSON key"
+    return result
+
+
+def require_setup_result(got, action, refused=False, error_format="text"):
+    assert got.stdout_eof and got.stderr_eof, "setup pipe EOF was not observed"
+    assert got.stdout == b"", "setup wrote unexpected stdout"
+    assert got.returncode == (1 if refused else 0), "setup exit status differed"
+    if refused:
+        message = refusal_message(action)
+        if error_format == "json":
+            assert json.loads(got.stderr.decode("utf-8"), object_pairs_hook=unique_object) == {"message": message}
+        else:
+            assert got.stderr == (message + "\n").encode(), "setup refusal message differed"
+    else:
+        message = ("Tab setup saved for future terminals. Existing custom bindings are preserved.\n"
+                   if action == "--install-picker" else
+                   "Tab shortcut setup removed. Open a new terminal to finish.\n")
+        assert got.stderr == message.encode(), "setup receipt differed"
+
+
+def exported_fixtures(got, directory, profiles):
+    assert got.returncode == 0 and got.stderr == b"", "startup fixture exporter failed"
+    assert got.stdout_eof and got.stderr_eof, "startup fixture exporter pipe EOF was not observed"
+    assert len(got.stdout) <= LIMIT, "startup fixture exporter exceeded its bound"
+    lines = got.stdout.decode("utf-8").splitlines()
+    assert len(lines) == 4 and lines[0] == "=== RUN   TestPickerStartupFixtureExport"
+    assert re.fullmatch(r"--- PASS: TestPickerStartupFixtureExport \([0-9.]+s\)", lines[2])
+    assert lines[3] == "PASS" and lines[1].startswith("PICKER_STARTUP_FIXTURE ")
+    value = json.loads(lines[1][len("PICKER_STARTUP_FIXTURE "):], object_pairs_hook=unique_object)
+    assert set(value) == {"contract", "shell", "directory", "fixtures"}, "unexpected exporter fields"
+    assert value["contract"] == "seeded-existing-state" and value["shell"] == "bash"
+    assert value["directory"] == str(directory), "exporter changed the owned script directory"
+    fixtures = value["fixtures"]
+    assert isinstance(fixtures, list) and len(fixtures) == len(profiles), "exporter profile count differed"
+    for fixture, profile in zip(fixtures, profiles):
+        assert set(fixture) == {"profile", "script_name", "script", "block"}, "unexpected fixture fields"
+        assert fixture["profile"] == str(profile), "exporter changed the owned profile"
+        for field, limit in (("script", LIMIT), ("block", SMALL)):
+            assert isinstance(fixture[field], str) and 0 < len(fixture[field].encode()) <= limit
+        script_hash = hashlib.sha256(fixture["script"].encode()).hexdigest()
+        profile_hash = hashlib.sha256(str(profile).encode()).hexdigest()[:16]
+        assert fixture["script_name"] == f"picker-bash-{profile_hash}-{script_hash}.bash", "exporter script identity differed"
+        assert fixture["block"].count("# >>> openai image picker") == 1, "exporter block marker differed"
+    return fixtures
 
 
 def system_source(path):
@@ -63,16 +128,25 @@ def recheck_system_sources(before):
 
 
 def main():
-    if len(sys.argv) != 4 or sys.argv[3] not in ("login", "nonlogin"):
-        raise SystemExit("usage: check-wsl-shell-startup.py CLI BASH login|nonlogin")
-    binary, bash = (str(Path(value).resolve(strict=True)) for value in sys.argv[1:3])
-    mode = sys.argv[3]
-    name = "bash-" + mode
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("cli")
+    parser.add_argument("bash")
+    parser.add_argument("mode", choices=("login", "nonlogin"))
+    parser.add_argument("--setup-contract", choices=("supported", "refused"), default="supported")
+    parser.add_argument("--autocomplete-test-binary")
+    options = parser.parse_args()
+    if options.setup_contract == "refused" and not options.autocomplete_test_binary:
+        parser.error("--setup-contract refused requires --autocomplete-test-binary")
+    binary, bash = (str(Path(value).resolve(strict=True)) for value in (options.cli, options.bash))
+    exporter = str(Path(options.autocomplete_test_binary).resolve(strict=True)) if options.autocomplete_test_binary else None
+    mode, contract = options.mode, options.setup_contract
+    name = "bash-" + mode + ("-refused" if contract == "refused" else "")
+    expected_calls = 7 if contract == "refused" else 6
     deadline = time.monotonic() + 115
     root = Path(tempfile.mkdtemp(prefix="openai-wsl-startup-"))
     identity = root.stat()
     owned = []
-    report = {"case": name, "exit_code": 1, "cleanup_complete": False,
+    report = {"case": name, "setup_contract": contract, "exit_code": 1, "cleanup_complete": False,
               "setup_calls": [], "fresh_shells": [], "failures": [],
               "system_sources": [], "system_sources_after": [], "system_sources_unchanged": False}
     terminal = None
@@ -127,10 +201,10 @@ def main():
             if time.monotonic() + seconds > deadline:
                 raise TimeoutError("insufficient startup time for the complete next action")
 
-        def snapshot():
+        def snapshot(paths=None, limit=SMALL):
             result = {}
-            for path in managed:
-                data = picker.read_fixture_file(path, SMALL)
+            for path in (managed if paths is None else paths):
+                data = picker.read_fixture_file(path, limit)
                 info = path.stat()
                 result[path.name] = (data, info.st_dev, info.st_ino, info.st_mtime_ns,
                                     info.st_mode, info.st_size)
@@ -147,20 +221,22 @@ def main():
                 assert count <= 256, "owned profile inventory exceeded its bound"
                 assert not any(value.startswith("picker-bash-") for value in files + subdirs), directory
 
-        def setup(label, action):
+        def setup(label, action, refused=False, error_format="text"):
             admit(10)
-            got = picker.capture_fixture([binary, "@completion", "bash", action], env=env,
+            command = [binary]
+            if error_format == "json":
+                command.extend(["--format-error", "json"])
+            command.extend(["@completion", "bash", action])
+            got = picker.capture_fixture(command, env=env,
                                          cwd=home, timeout=10, limit=LIMIT, owned_processes=owned)
             report["setup_calls"].append({"action": label, "exit_code": got.returncode,
+                                          "expected_exit_code": 1 if refused else 0, "format_error": error_format,
                                           "stdout_eof": got.stdout_eof, "stderr_eof": got.stderr_eof,
                                           "stdout_bytes": len(got.stdout), "stderr_bytes": len(got.stderr),
                                           "stdout_base64": base64.b64encode(got.stdout).decode("ascii"),
                                           "stderr_base64": base64.b64encode(got.stderr).decode("ascii"),
                                           "stderr_sha256": hashlib.sha256(got.stderr).hexdigest()})
-            message = ("Tab setup saved for future terminals. Existing custom bindings are preserved.\n"
-                       if action == "--install-picker" else
-                       "Tab shortcut setup removed. Open a new terminal to finish.\n")
-            assert got.returncode == 0 and got.stdout == b"" and got.stderr == message.encode(), label
+            require_setup_result(got, action, refused, error_format)
             assert picker.read_fixture_file(other, SMALL) == originals[other], "unselected profile changed"
 
         def fresh(label, active):
@@ -219,31 +295,124 @@ def main():
                 terminal.close()
                 terminal = None
 
-        setup("install", "--install-picker")
-        installed = snapshot()
-        for path in managed:
-            data = installed[path.name][0]
-            assert data.startswith(originals[path]) and data.count(b"# >>> openai image picker") == 1
-        setup("install-again", "--install-picker")
-        assert snapshot() == installed, "repeated installation changed bytes or identity"
-        fresh("fresh-installed", True)
         marker = home / ".openai/shell/image-picker.tab-off-bash"
-        setup("remove", "--uninstall-picker")
-        original_profiles()
-        assert picker.read_fixture_file(marker, SMALL) == b""
-        no_generated_scripts()
-        setup("remove-again", "--uninstall-picker")
-        original_profiles()
-        assert picker.read_fixture_file(marker, SMALL) == b""
-        fresh("fresh-removed", False)
-        setup("reenable", "--install-picker")
-        assert not marker.exists() and not marker.is_symlink(), "explicit re-enable retained opt-out"
-        fresh("fresh-reenabled", True)
-        setup("remove-final", "--uninstall-picker")
-        original_profiles()
-        assert picker.read_fixture_file(marker, SMALL) == b""
-        no_generated_scripts()
-        assert len(report["setup_calls"]) == 6 and len(report["fresh_shells"]) == 3
+        if contract == "refused":
+            report["installation_scope"] = "Seeded existing state tests activation and cleanup, not installation."
+            report["automatic_setup_scope"] = "Not exercised: private HOME differs from the account home."
+
+            def write_new(path, data):
+                descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(descriptor, "wb") as handle:
+                    handle.write(data)
+
+            # A completed synthetic archive must survive every setup/removal attempt.
+            archive_hash = hashlib.sha256(b".bashrc").hexdigest()[:16]
+            archive = home / (".openai-picker-recovery-" + archive_hash + "-fixture")
+            archive.mkdir(mode=0o700)
+            write_new(archive / "manifest.json", b'{"version":1,"profile":".bashrc"}')
+            write_new(archive / "original", b"# Synthetic archived startup; retain for manual recovery.\n")
+            write_new(archive / "complete", b"")
+            preserved_paths = [other, archive / "manifest.json", archive / "original", archive / "complete"]
+            preserved_before = [system_source(path) for path in preserved_paths]
+
+            def preserved():
+                assert [system_source(path) for path in preserved_paths] == preserved_before, "unselected profile or recovery evidence changed"
+
+            original_snapshot = snapshot()
+            for label, error_format in (("install-refused-text", "text"), ("install-refused-json", "json"),
+                                        ("install-refused-again", "text")):
+                setup(label, "--install-picker", refused=True, error_format=error_format)
+                assert snapshot() == original_snapshot, "refused installation changed startup bytes or identity"
+                no_generated_scripts()
+                preserved()
+            report["original_profiles_unchanged"] = True
+            fresh("fresh-original", False)
+
+            directory = config / "openai/shell"
+            request = json.dumps({"directory": str(directory), "profiles": [str(path) for path in managed]})
+            admit(10)
+            exported = picker.capture_fixture([exporter, "-test.run", "^TestPickerStartupFixtureExport$", "-test.v"],
+                                               env={**env, "OPENAI_CLI_PICKER_FIXTURE_REQUEST": request},
+                                               cwd=home, timeout=10, limit=LIMIT, owned_processes=owned)
+            fixtures = exported_fixtures(exported, directory, managed)
+            assert snapshot() == original_snapshot, "fixture exporter changed startup files"
+            no_generated_scripts()
+            preserved()
+            for path in (directory.parent, directory):
+                if not path.exists():
+                    path.mkdir(mode=0o700)
+                info = path.lstat()
+                assert stat.S_ISDIR(info.st_mode) and not stat.S_IMODE(info.st_mode) & 0o077, "unsafe owned fixture directory"
+            scripts = []
+            for fixture, profile in zip(fixtures, managed):
+                script = directory / fixture["script_name"]
+                write_new(script, fixture["script"].encode())
+                with profile.open("ab") as handle:
+                    handle.write(fixture["block"].encode())
+                scripts.append(script)
+            report["seeded_existing_state"] = {
+                "contract": "seeded-existing-state", "exporter_exit_code": exported.returncode,
+                "stdout_eof": exported.stdout_eof, "stderr_eof": exported.stderr_eof,
+                "exporter_stdout_bytes": len(exported.stdout), "exporter_stderr_bytes": len(exported.stderr),
+                "exporter_stdout_sha256": hashlib.sha256(exported.stdout).hexdigest(),
+                "profile_count": len(managed), "script_count": len(scripts),
+            }
+            seeded_snapshot = snapshot()
+            scripts_before = snapshot(scripts, LIMIT)
+
+            def seeded_unchanged():
+                assert snapshot() == seeded_snapshot, "seeded startup bytes or identity changed"
+                assert snapshot(scripts, LIMIT) == scripts_before, "seeded script bytes or identity changed"
+                preserved()
+
+            setup("seeded-install-noop", "--install-picker")
+            seeded_unchanged()
+            assert not marker.exists() and not marker.is_symlink(), "unchanged install retained opt-out"
+            fresh("fresh-seeded-existing", True)
+            for label, error_format in (("seeded-remove-refused-text", "text"), ("seeded-remove-refused-json", "json")):
+                setup(label, "--uninstall-picker", refused=True, error_format=error_format)
+                seeded_unchanged()
+                assert picker.read_fixture_file(marker, SMALL) == b"", "refused removal lost explicit opt-out"
+            fresh("fresh-after-refused-remove", True)
+            seeded_unchanged()
+            report["seeded_profiles_unchanged"] = True
+
+            # Only the harness removes these owned fixtures; this is not successful profile replacement.
+            for path in managed:
+                path.unlink()
+            setup("absent-profile-remove", "--uninstall-picker")
+            assert all(not path.exists() and not path.is_symlink() for path in managed), "cleanup recreated an absent profile"
+            assert picker.read_fixture_file(marker, SMALL) == b"", "absent-profile cleanup lost opt-out"
+            no_generated_scripts()
+            preserved()
+            report.update(absent_profiles_preserved=True, opt_out_created=True, generated_scripts_removed=True,
+                          unselected_profile_unchanged=True, recovery_evidence_unchanged=True,
+                          recovery_evidence_scope="Completed synthetic archive with retained original bytes.")
+        else:
+            setup("install", "--install-picker")
+            installed = snapshot()
+            for path in managed:
+                data = installed[path.name][0]
+                assert data.startswith(originals[path]) and data.count(b"# >>> openai image picker") == 1
+            setup("install-again", "--install-picker")
+            assert snapshot() == installed, "repeated installation changed bytes or identity"
+            fresh("fresh-installed", True)
+            setup("remove", "--uninstall-picker")
+            original_profiles()
+            assert picker.read_fixture_file(marker, SMALL) == b""
+            no_generated_scripts()
+            setup("remove-again", "--uninstall-picker")
+            original_profiles()
+            assert picker.read_fixture_file(marker, SMALL) == b""
+            fresh("fresh-removed", False)
+            setup("reenable", "--install-picker")
+            assert not marker.exists() and not marker.is_symlink(), "explicit re-enable retained opt-out"
+            fresh("fresh-reenabled", True)
+            setup("remove-final", "--uninstall-picker")
+            original_profiles()
+            assert picker.read_fixture_file(marker, SMALL) == b""
+            no_generated_scripts()
+        assert len(report["setup_calls"]) == expected_calls and len(report["fresh_shells"]) == 3
         assert all(item["pty_eof"] and not item["forced_cleanup"] for item in report["fresh_shells"])
         assert time.monotonic() < deadline, "startup lifecycle exceeded115seconds"
         report["exit_code"] = 0
@@ -264,30 +433,41 @@ def main():
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-        try:
-            if terminal is not None:
+        cleanup_errors = []
+        if terminal is not None:
+            try:
                 terminal.close()
-            for process in owned:
+            except BaseException as error:
+                cleanup_errors.append("terminal cleanup: " + str(error)[:2000])
+        for process in owned:
+            try:
                 if process.poll() is None:
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
+                        # The owned group exited; still reap the child and verify pipe EOF.
                         pass
                 process.wait(timeout=2)
                 assert process.fixture_stdout_eof and process.fixture_stderr_eof, "setup pipe EOF was not observed"
-            info = root.lstat()
-            assert stat.S_ISDIR(info.st_mode) and (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino)
-            shutil.rmtree(root)
-            assert not root.exists()
-            report["cleanup_complete"] = True
-        except BaseException as error:
+            except BaseException as error:
+                cleanup_errors.append("child cleanup: " + str(error)[:2000])
+        if not cleanup_errors:
+            try:
+                info = root.lstat()
+                assert stat.S_ISDIR(info.st_mode) and (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino)
+                shutil.rmtree(root)
+                assert not root.exists()
+                report["cleanup_complete"] = True
+            except BaseException as error:
+                cleanup_errors.append("root cleanup: " + str(error)[:2000])
+        if cleanup_errors:
             report["exit_code"] = 1
-            report["failures"].append("cleanup: " + str(error)[:2000])
+            report["failures"].extend(cleanup_errors)
     report.update(setup_call_count=len(report["setup_calls"]), fresh_shell_count=len(report["fresh_shells"]),
-                  expected_setup_calls=6, expected_fresh_shells=3, request_count=None,
+                  expected_setup_calls=expected_calls, expected_fresh_shells=3, request_count=None,
                   request_count_scope="Not measured; these are local setup commands.",
-                  setup_stdout_eof=len(report["setup_calls"]) == 6 and all(x["stdout_eof"] for x in report["setup_calls"]),
-                  setup_stderr_eof=len(report["setup_calls"]) == 6 and all(x["stderr_eof"] for x in report["setup_calls"]),
+                  setup_stdout_eof=len(report["setup_calls"]) == expected_calls and all(x["stdout_eof"] for x in report["setup_calls"]),
+                  setup_stderr_eof=len(report["setup_calls"]) == expected_calls and all(x["stderr_eof"] for x in report["setup_calls"]),
                   pty_eof=len(report["fresh_shells"]) == 3 and all(x["pty_eof"] for x in report["fresh_shells"]))
     report["cleanup_scope"] = "Owned direct children, observed pipe/PTY EOF, and private root; no complete descendant census."
     report["system_source_scope"] = "Two startup entrypoint snapshots; no transitive-source completeness or arbitrary-code safety claim."

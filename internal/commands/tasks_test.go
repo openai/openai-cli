@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/openai/openai-cli/internal/commands"
-	"github.com/openai/openai-cli/pkg/custom"
+	appconfig "github.com/openai/openai-cli/internal/app"
 	"github.com/urfave/cli/v3"
 )
 
@@ -26,9 +26,9 @@ func TestTaskCommandsPreserveIdentityAndIndependentNodes(t *testing.T) {
 			selected = commands.ResourceName(command)
 			return nil
 		}
-		custom.ConfigureCommand(root)
+		appconfig.ConfigureCommand(root)
 		count := len(root.Commands)
-		custom.ConfigureCommand(root)
+		appconfig.ConfigureCommand(root)
 		if len(root.Commands) != count {
 			t.Fatal("repeated configuration duplicated routes")
 		}

@@ -1,19 +1,43 @@
 package request
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urfave/cli/v3"
 )
 
-// ValidateBaseURL checks that a base URL is correctly prefixed with a protocol scheme and produces a better
-// error message than the person would see otherwise if it doesn't.
+const BaseURLHTTPSRequired = " must use HTTPS, except for localhost or a loopback IP address"
+const BaseURLHostRequired = " must be an absolute HTTP(S) URL with a valid host"
+
+// ValidateBaseURL permits cleartext HTTP only for explicit local development endpoints.
+// Use the same URL parser as the SDK, and never resolve DNS names to grant an exception.
 func ValidateBaseURL(value, source string) error {
-	if value != "" && !strings.HasPrefix(value, "http://") && !strings.HasPrefix(value, "https://") {
+	if value == "" {
+		return nil
+	}
+	endpoint, err := url.Parse(value)
+	if err != nil {
+		return errors.New(source + BaseURLHostRequired)
+	}
+	if endpoint.Scheme != "http" && endpoint.Scheme != "https" {
 		return fmt.Errorf("%s %q is missing a scheme (expected http:// or https://)", source, value)
+	}
+	if endpoint.Hostname() == "" || endpoint.Opaque != "" {
+		return errors.New(source + BaseURLHostRequired)
+	}
+	if endpoint.Scheme == "http" {
+		host := endpoint.Hostname()
+		localhost := strings.EqualFold(host, "localhost") && !strings.HasPrefix(endpoint.Host, "[")
+		ip := net.ParseIP(host)
+		if !localhost && (ip == nil || !ip.IsLoopback()) {
+			return errors.New(source + BaseURLHTTPSRequired)
+		}
 	}
 	return nil
 }

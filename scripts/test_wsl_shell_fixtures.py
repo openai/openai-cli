@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Offline controls for bounded fixture captures and owned PTY cleanup."""
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
+from copy import deepcopy
 import errno
 import importlib.util
+import io
+import json
 import os
 from pathlib import Path
 import signal
@@ -10,7 +13,7 @@ import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest import mock
+import unittest.mock
 
 
 HERE = Path(__file__).resolve().parent
@@ -20,6 +23,12 @@ spec.loader.exec_module(harness)
 startup_spec = importlib.util.spec_from_file_location("startup_fixture", HERE / "check-wsl-shell-startup.py")
 startup = importlib.util.module_from_spec(startup_spec)
 startup_spec.loader.exec_module(startup)
+models_spec = importlib.util.spec_from_file_location("models_fixture", HERE / "check-wsl-models.py")
+models = importlib.util.module_from_spec(models_spec)
+models_spec.loader.exec_module(models)
+pilot_spec = importlib.util.spec_from_file_location("fixture_controller", HERE / "check-wsl-pager.py")
+pilot = importlib.util.module_from_spec(pilot_spec)
+pilot_spec.loader.exec_module(pilot)
 
 
 class Pipe:
@@ -82,12 +91,12 @@ class Capture:
 
     def run(self, **kwargs):
         with ExitStack() as stack:
-            stack.enter_context(mock.patch.object(harness.subprocess, "Popen", return_value=self.process))
-            stack.enter_context(mock.patch.object(harness.selectors, "DefaultSelector", return_value=self.selector))
-            stack.enter_context(mock.patch.object(harness.os, "set_blocking"))
-            stack.enter_context(mock.patch.object(harness.os, "read", side_effect=self.read))
-            stack.enter_context(mock.patch.object(harness.os, "killpg", side_effect=self.kill))
-            stack.enter_context(mock.patch.object(harness.time, "monotonic", side_effect=lambda: self.clock))
+            stack.enter_context(unittest.mock.patch.object(harness.subprocess, "Popen", return_value=self.process))
+            stack.enter_context(unittest.mock.patch.object(harness.selectors, "DefaultSelector", return_value=self.selector))
+            stack.enter_context(unittest.mock.patch.object(harness.os, "set_blocking"))
+            stack.enter_context(unittest.mock.patch.object(harness.os, "read", side_effect=self.read))
+            stack.enter_context(unittest.mock.patch.object(harness.os, "killpg", side_effect=self.kill))
+            stack.enter_context(unittest.mock.patch.object(harness.time, "monotonic", side_effect=lambda: self.clock))
             return harness.capture_fixture(["never-executed"], env={}, timeout=0.2, **kwargs)
 
 
@@ -147,7 +156,7 @@ class CaptureTests(unittest.TestCase):
 
     def test_exited_unreaped_leader_with_open_pipe_keeps_group_ownership(self):
         fake = Capture([b""], [], code=None)
-        fake.process.poll = mock.Mock(side_effect=AssertionError("reaped before pipe EOF"))
+        fake.process.poll = unittest.mock.Mock(side_effect=AssertionError("reaped before pipe EOF"))
 
         def wait(timeout):
             fake.waits.append(timeout)
@@ -162,11 +171,14 @@ class CaptureTests(unittest.TestCase):
         fake.process.poll.assert_not_called()
 
     def test_read_error_keeps_cleanup(self):
-        fake = Capture([b"x"], [], code=None, read_error=OSError("synthetic read failure"))
-        with self.assertRaisesRegex(OSError, "synthetic read failure"):
-            fake.run()
-        self.assertEqual(fake.signals, [(321, signal.SIGKILL)])
-        self.assertTrue(fake.process.stdout.closed and fake.process.stderr.closed)
+        for error in (OSError("synthetic read failure"), KeyboardInterrupt(), SystemExit(7)):
+            with self.subTest(error=type(error).__name__):
+                fake = Capture([b"x"], [], code=None, read_error=error)
+                with self.assertRaises(type(error)) as raised:
+                    fake.run()
+                self.assertIs(raised.exception, error)
+                self.assertEqual(fake.signals, [(321, signal.SIGKILL)])
+                self.assertTrue(fake.process.stdout.closed and fake.process.stderr.closed)
 
     def test_failed_join_cannot_report_success(self):
         fake = Capture([b""], [b""], wait_error=subprocess.TimeoutExpired("fake", 2))
@@ -180,23 +192,23 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(owned, [fake.process])
 
     def test_invalid_bounds_fail_before_launch(self):
-        with mock.patch.object(harness.subprocess, "Popen") as launch:
+        with unittest.mock.patch.object(harness.subprocess, "Popen") as launch:
             for kwargs in ({"limit": 0}, {"limit": -1}, {"timeout": 0}):
                 with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                     harness.capture_fixture(["never-executed"], env={}, **kwargs)
             launch.assert_not_called()
 
     def test_selector_constructor_failure_cannot_launch_child(self):
-        with mock.patch.object(harness.subprocess, "Popen") as launch, \
-                mock.patch.object(harness.selectors, "DefaultSelector", side_effect=OSError("selector failure")):
+        with unittest.mock.patch.object(harness.subprocess, "Popen") as launch, \
+                unittest.mock.patch.object(harness.selectors, "DefaultSelector", side_effect=OSError("selector failure")):
             with self.assertRaisesRegex(OSError, "selector failure"):
                 harness.capture_fixture(["never-executed"], env={})
             launch.assert_not_called()
 
     def test_launch_failure_closes_selector(self):
-        selector = mock.Mock()
-        with mock.patch.object(harness.subprocess, "Popen", side_effect=OSError("launch failure")), \
-                mock.patch.object(harness.selectors, "DefaultSelector", return_value=selector):
+        selector = unittest.mock.Mock()
+        with unittest.mock.patch.object(harness.subprocess, "Popen", side_effect=OSError("launch failure")), \
+                unittest.mock.patch.object(harness.selectors, "DefaultSelector", return_value=selector):
             with self.assertRaisesRegex(OSError, "launch failure"):
                 harness.capture_fixture(["never-executed"], env={})
         selector.close.assert_called_once_with()
@@ -217,14 +229,14 @@ class TerminalTests(unittest.TestCase):
         terminal._slave_closed = terminal._master_closed = False
         terminal.retain_child_identity = False
         terminal._identity_lost = False
-        terminal.child = mock.Mock(pid=456)
+        terminal.child = unittest.mock.Mock(pid=456)
         terminal.child.returncode = 0
         terminal.child.poll.return_value = 0
         return terminal
 
     def read(self, terminal, data=None, error=None):
-        with mock.patch.object(harness.select, "select", return_value=([20], [], [])), \
-                mock.patch.object(harness.os, "read", return_value=data, side_effect=error):
+        with unittest.mock.patch.object(harness.select, "select", return_value=([20], [], [])), \
+                unittest.mock.patch.object(harness.os, "read", return_value=data, side_effect=error):
             terminal.read()
 
     def test_raw_exact_limit_is_accepted(self):
@@ -270,24 +282,24 @@ class TerminalTests(unittest.TestCase):
     def test_deadline_rejects_before_read(self):
         terminal = self.terminal()
         terminal.deadline = 1
-        with mock.patch.object(harness.time, "monotonic", return_value=2), \
-                mock.patch.object(harness.os, "read") as read:
+        with unittest.mock.patch.object(harness.time, "monotonic", return_value=2), \
+                unittest.mock.patch.object(harness.os, "read") as read:
             with self.assertRaises(TimeoutError):
                 terminal.read()
             read.assert_not_called()
 
     def test_completed_child_close_sends_no_signal(self):
         terminal = self.terminal()
-        with mock.patch.object(harness.os, "close") as close, mock.patch.object(harness.os, "killpg") as kill:
+        with unittest.mock.patch.object(harness.os, "close") as close, unittest.mock.patch.object(harness.os, "killpg") as kill:
             terminal.close()
             kill.assert_not_called()
-            self.assertEqual(close.call_args_list, [mock.call(20), mock.call(21)])
+            self.assertEqual(close.call_args_list, [unittest.mock.call(20), unittest.mock.call(21)])
             terminal.child.wait.assert_called_once_with(timeout=5)
 
     def test_live_child_close_signals_owned_group_and_joins(self):
         terminal = self.terminal()
         terminal.child.poll.return_value = None
-        with mock.patch.object(harness.os, "close"), mock.patch.object(harness.os, "killpg") as kill:
+        with unittest.mock.patch.object(harness.os, "close"), unittest.mock.patch.object(harness.os, "killpg") as kill:
             terminal.close()
             kill.assert_called_once_with(456, signal.SIGKILL)
             terminal.child.wait.assert_called_once_with(timeout=5)
@@ -296,11 +308,11 @@ class TerminalTests(unittest.TestCase):
         terminal = self.terminal()
         terminal.retain_child_identity = True
         terminal.child.returncode = None
-        with mock.patch.object(harness.os, "waitid", return_value=SimpleNamespace(si_pid=456), create=True), \
-                mock.patch.object(harness.os, "WNOWAIT", 0x1000000, create=True), \
-                mock.patch.object(harness.os, "P_PID", 1, create=True), \
-                mock.patch.object(harness.os, "WEXITED", 4, create=True), \
-                mock.patch.object(harness.os, "WNOHANG", 1, create=True):
+        with unittest.mock.patch.object(harness.os, "waitid", return_value=SimpleNamespace(si_pid=456), create=True), \
+                unittest.mock.patch.object(harness.os, "WNOWAIT", 0x1000000, create=True), \
+                unittest.mock.patch.object(harness.os, "P_PID", 1, create=True), \
+                unittest.mock.patch.object(harness.os, "WEXITED", 4, create=True), \
+                unittest.mock.patch.object(harness.os, "WNOHANG", 1, create=True):
             self.assertFalse(terminal.running())
         terminal.child.poll.assert_not_called()
         self.assertIsNone(terminal.child.returncode)
@@ -309,7 +321,7 @@ class TerminalTests(unittest.TestCase):
         terminal = self.terminal()
         terminal.retain_child_identity = True
         terminal.child.returncode = None
-        with mock.patch.object(harness.os, "close"), mock.patch.object(harness.os, "killpg") as kill:
+        with unittest.mock.patch.object(harness.os, "close"), unittest.mock.patch.object(harness.os, "killpg") as kill:
             terminal.close()
             kill.assert_called_once_with(456, signal.SIGKILL)
             terminal.child.poll.assert_not_called()
@@ -320,26 +332,456 @@ class TerminalTests(unittest.TestCase):
         terminal.retain_child_identity = True
         terminal._identity_lost = True
         terminal.child.returncode = None
-        with mock.patch.object(harness.os, "close"), mock.patch.object(harness.os, "killpg") as kill:
+        with unittest.mock.patch.object(harness.os, "close"), unittest.mock.patch.object(harness.os, "killpg") as kill:
             terminal.close()
             kill.assert_not_called()
 
     def test_drain_rejects_live_child(self):
         terminal = self.terminal()
         terminal.child.poll.return_value = None
-        with mock.patch.object(harness.os, "close") as close:
+        with unittest.mock.patch.object(harness.os, "close") as close:
             with self.assertRaisesRegex(RuntimeError, "before child exit"):
                 terminal.drain_eof()
             close.assert_not_called()
 
     def test_drain_closes_parent_slave_before_eof(self):
         terminal = self.terminal()
-        with mock.patch.object(harness.os, "close") as close, \
-                mock.patch.object(harness.select, "select", return_value=([20], [], [])), \
-                mock.patch.object(harness.os, "read", side_effect=OSError(errno.EIO, "closed PTY")):
+        with unittest.mock.patch.object(harness.os, "close") as close, \
+                unittest.mock.patch.object(harness.select, "select", return_value=([20], [], [])), \
+                unittest.mock.patch.object(harness.os, "read", side_effect=OSError(errno.EIO, "closed PTY")):
             terminal.drain_eof()
             close.assert_called_once_with(21)
             self.assertTrue(terminal.eof and terminal._slave_closed)
+
+
+class DriverCleanupTests(unittest.TestCase):
+    def child(self, pid=321):
+        child = unittest.mock.Mock(pid=pid, fixture_stdout_eof=True, fixture_stderr_eof=True)
+        child.poll.return_value = 0
+        return child
+
+    def worker(self):
+        worker = unittest.mock.Mock()
+        worker.is_alive.return_value = True
+        worker.join.side_effect = lambda **_kwargs: setattr(worker.is_alive, "return_value", False)
+        return worker
+
+    def run_driver(self, driver, *, children=(), failure=None, terminal=None, server=None, worker=None,
+                   signal_number=None, recheck_error=None, kill_error=None, replace_root=False):
+        """Run the real entrypoint with no child, thread, socket, alarm, or real signal."""
+        server = server if server is not None else unittest.mock.Mock(server_port=54321)
+        worker = worker if worker is not None else self.worker()
+        probe = unittest.mock.Mock()
+        probe.connect_ex.return_value = errno.ECONNREFUSED
+        callbacks = {}
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory(prefix="driver-cleanup-control-") as directory, ExitStack() as stack:
+            root = Path(directory) / "owned"
+            root.mkdir()
+
+            def register(selected_signal, callback):
+                if callable(callback):
+                    callbacks[selected_signal] = callback
+
+            def locale(_requested, _env, owned):
+                owned.extend(children)
+                if replace_root:
+                    root.rename(root.with_name("original"))
+                    root.mkdir()
+                if signal_number is not None:
+                    callbacks[signal_number](signal_number, None)
+                if terminal is None:
+                    raise failure if failure is not None else RuntimeError("synthetic execution failure")
+                return "C.UTF-8", "synthetic"
+
+            def install(_command, *, cwd, **_kwargs):
+                for name in (".bashrc", ".bash_profile"):
+                    path = cwd / name
+                    data = path.read_bytes()
+                    if b"# >>> openai image picker" not in data:
+                        path.write_bytes(data + b"# >>> openai image picker\n")
+                return SimpleNamespace(returncode=0, stdout=b"", stdout_eof=True, stderr_eof=True,
+                                       stderr=b"Tab setup saved for future terminals. Existing custom bindings are preserved.\n")
+
+            argv = [str(driver.__file__), str(Path(__file__).resolve()), str(Path(__file__).resolve())]
+            if driver is startup:
+                argv.append("login")
+                stack.enter_context(unittest.mock.patch.object(startup, "SYSTEM_STARTUP_FILES", ()))
+                stack.enter_context(unittest.mock.patch.object(startup, "recheck_system_sources",
+                                                               return_value=([], True), side_effect=recheck_error))
+            stack.enter_context(unittest.mock.patch.object(driver.sys, "argv", argv))
+            stack.enter_context(unittest.mock.patch.object(driver.tempfile, "mkdtemp", return_value=str(root)))
+            stack.enter_context(unittest.mock.patch.object(driver.time, "monotonic", return_value=1))
+            stack.enter_context(unittest.mock.patch.object(driver.signal, "signal", side_effect=register))
+            timer = stack.enter_context(unittest.mock.patch.object(driver.signal, "setitimer"))
+            kill = stack.enter_context(unittest.mock.patch.object(driver.os, "killpg", side_effect=kill_error))
+            stack.enter_context(unittest.mock.patch.object(driver.picker, "fixture_utf8_locale", side_effect=locale))
+            capture = stack.enter_context(unittest.mock.patch.object(driver.picker, "capture_fixture", side_effect=install))
+            launch = stack.enter_context(unittest.mock.patch.object(driver.picker, "Terminal", return_value=terminal))
+            stack.enter_context(unittest.mock.patch.object(models.http.server, "HTTPServer", return_value=server))
+            stack.enter_context(unittest.mock.patch.object(models.threading, "Thread", return_value=worker))
+            sockets = stack.enter_context(unittest.mock.patch.object(models.socket, "socket"))
+            sockets.return_value.__enter__.return_value = probe
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                status = driver.main()
+            retained = root.exists()
+            if terminal is None:
+                capture.assert_not_called()
+                launch.assert_not_called()
+        lines = stdout.getvalue().splitlines()
+        self.assertEqual(status, 1)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("RECEIPT: "))
+        encoded = lines[0][len("RECEIPT: "):]
+        self.assertLessEqual(len(encoded.encode()), 8 * startup.LIMIT if driver is startup else 65536)
+        report = json.loads(encoded)
+        self.assertEqual(report["exit_code"], 1)
+        self.assertTrue(report["failures"])
+        self.assertEqual(stderr.getvalue(), "FAIL: " + report["case"] + "\n")
+        self.assertEqual(timer.call_args_list, [unittest.mock.call(signal.ITIMER_REAL, 115 if driver is startup else 25),
+                                               unittest.mock.call(signal.ITIMER_REAL, 0)])
+        with self.assertRaises(RuntimeError):
+            pilot.require_driver_pass(stdout.getvalue().encode(), stderr.getvalue().encode(), status,
+                                      {report["case"]}, report["case"])
+        return SimpleNamespace(report=report, retained=retained, server=server, worker=worker,
+                               probe=probe, sockets=sockets, kill=kill)
+
+    def test_execution_failures_keep_receipt_and_owned_cleanup(self):
+        for driver in (startup, models):
+            for error in (OSError("synthetic failure"), KeyboardInterrupt(), SystemExit(7), RuntimeError("x" * 30000)):
+                with self.subTest(driver=driver.__name__, error=type(error).__name__):
+                    child = self.child()
+                    got = self.run_driver(driver, children=[child], failure=error)
+                    child.wait.assert_called_once_with(timeout=2)
+                    self.assertTrue(got.report["cleanup_complete"])
+                    self.assertFalse(got.retained)
+                    self.assertEqual(got.report["failures"][0], str(error)[:2000])
+
+    def test_signal_callbacks_keep_timeout_failure_status(self):
+        for driver in (startup, models):
+            for selected_signal in (signal.SIGINT, signal.SIGTERM, signal.SIGALRM):
+                with self.subTest(driver=driver.__name__, signal=selected_signal):
+                    child = self.child()
+                    got = self.run_driver(driver, children=[child], signal_number=selected_signal)
+                    self.assertIn("fixture interrupted", got.report["failures"][0])
+                    child.wait.assert_called_once_with(timeout=2)
+                    self.assertTrue(got.report["cleanup_complete"])
+
+    def test_terminal_failure_does_not_skip_owned_children(self):
+        for error in (OSError("terminal close"), KeyboardInterrupt("terminal close"), SystemExit(7)):
+            with self.subTest(error=type(error).__name__):
+                terminal = unittest.mock.Mock(raw=bytearray(), events=[], child=SimpleNamespace(returncode=None))
+                terminal.wait.side_effect = OSError("synthetic prompt failure")
+                terminal.close.side_effect = error
+                child = self.child()
+                got = self.run_driver(startup, children=[child], terminal=terminal)
+                self.assertEqual(terminal.close.call_count, 2)
+                child.wait.assert_called_once_with(timeout=2)
+                self.assertTrue(got.retained)
+                self.assertFalse(got.report["cleanup_complete"])
+                self.assertIn("terminal cleanup: " + str(error), got.report["failures"])
+
+    def test_child_failure_does_not_skip_later_owned_children(self):
+        for driver in (startup, models):
+            for error in (OSError("child wait"), KeyboardInterrupt("child wait"), SystemExit(7), None):
+                with self.subTest(driver=driver.__name__, error=type(error).__name__):
+                    first, second = self.child(), self.child(654)
+                    first.wait.side_effect = error
+                    first.fixture_stderr_eof = error is not None
+                    second.poll.return_value = None
+                    got = self.run_driver(driver, children=[first, second])
+                    first.wait.assert_called_once_with(timeout=2)
+                    second.wait.assert_called_once_with(timeout=2)
+                    got.kill.assert_called_once_with(second.pid, signal.SIGKILL)
+                    self.assertTrue(got.retained)
+                    self.assertFalse(got.report["cleanup_complete"])
+
+    def test_disappeared_owned_group_still_requires_join_and_eof(self):
+        for driver in (startup, models):
+            for eof in (True, False):
+                with self.subTest(driver=driver.__name__, eof=eof):
+                    child = self.child()
+                    child.poll.return_value = None
+                    child.fixture_stderr_eof = eof
+                    got = self.run_driver(driver, children=[child], kill_error=ProcessLookupError())
+                    got.kill.assert_called_once_with(child.pid, signal.SIGKILL)
+                    child.wait.assert_called_once_with(timeout=2)
+                    self.assertEqual(got.report["cleanup_complete"], eof)
+                    self.assertEqual(got.retained, not eof)
+
+    def test_fixture_failure_does_not_skip_later_cleanup(self):
+        for stage in ("shutdown", "server_close"):
+            for error in (OSError("fixture failure"), KeyboardInterrupt("fixture failure"), SystemExit(7)):
+                with self.subTest(stage=stage, error=type(error).__name__):
+                    server, worker = unittest.mock.Mock(server_port=54321), self.worker()
+                    getattr(server, stage).side_effect = error
+                    order = unittest.mock.Mock()
+                    order.attach_mock(server.shutdown, "shutdown")
+                    order.attach_mock(server.server_close, "close")
+                    order.attach_mock(worker.join, "join")
+                    got = self.run_driver(models, server=server, worker=worker)
+                    self.assertEqual(order.mock_calls, [unittest.mock.call.shutdown(), unittest.mock.call.close(),
+                                                        unittest.mock.call.join(timeout=2)])
+                    self.assertTrue(got.report["fixture_thread_joined"])
+                    got.probe.settimeout.assert_called_once_with(1)
+                    self.assertTrue(got.retained)
+                    self.assertFalse(got.report["cleanup_complete"])
+
+    def test_all_fixture_cleanup_failures_retain_their_diagnostics(self):
+        server, worker = unittest.mock.Mock(server_port=54321), self.worker()
+        server.shutdown.side_effect = OSError("shutdown failed")
+        server.server_close.side_effect = KeyboardInterrupt("close interrupted")
+        worker.join.side_effect = SystemExit(7)
+        got = self.run_driver(models, server=server, worker=worker)
+        self.assertIn("fixture shutdown: shutdown failed", got.report["failures"])
+        self.assertIn("fixture close: close interrupted", got.report["failures"])
+        self.assertIn("fixture join: 7", got.report["failures"])
+        worker.join.assert_called_once_with(timeout=2)
+        got.sockets.assert_not_called()
+        self.assertFalse(got.report["fixture_thread_joined"])
+        self.assertTrue(got.retained)
+
+    def test_live_fixture_worker_prevents_probe_and_root_removal(self):
+        worker = self.worker()
+        worker.join.side_effect = None
+        got = self.run_driver(models, worker=worker)
+        worker.join.assert_called_once_with(timeout=2)
+        got.sockets.assert_not_called()
+        self.assertFalse(got.report["fixture_thread_joined"])
+        self.assertFalse(got.report["cleanup_complete"])
+        self.assertTrue(got.retained)
+
+    def test_source_recheck_failure_still_cleans_owned_children(self):
+        for error in (OSError("recheck failed"), KeyboardInterrupt("recheck interrupted"), SystemExit(7)):
+            with self.subTest(error=type(error).__name__):
+                child = self.child()
+                got = self.run_driver(startup, children=[child], recheck_error=error)
+                child.wait.assert_called_once_with(timeout=2)
+                self.assertIn("system source recheck: " + str(error), got.report["failures"])
+                self.assertTrue(got.report["cleanup_complete"])
+                self.assertFalse(got.retained)
+
+    def test_replaced_private_root_is_retained(self):
+        for driver in (startup, models):
+            with self.subTest(driver=driver.__name__):
+                got = self.run_driver(driver, replace_root=True)
+                self.assertFalse(got.report["cleanup_complete"])
+                self.assertTrue(got.retained)
+                self.assertIn("root cleanup: ", got.report["failures"])
+
+
+class RefusedStartupContractTests(unittest.TestCase):
+    def result(self, code=0, stdout=b"", stderr=b""):
+        return SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr, stdout_eof=True, stderr_eof=True)
+
+    def export_result(self, directory, profiles):
+        fixtures = []
+        for profile in profiles:
+            script = "# Synthetic candidate fixture for " + profile.name + "\n"
+            profile_hash = startup.hashlib.sha256(str(profile).encode()).hexdigest()[:16]
+            script_hash = startup.hashlib.sha256(script.encode()).hexdigest()
+            name = f"picker-bash-{profile_hash}-{script_hash}.bash"
+            fixtures.append({"profile": str(profile), "script_name": name, "script": script,
+                             "block": "\n# >>> openai image picker\n# " + name + "\n# <<< openai image picker\n"})
+        value = {"contract": "seeded-existing-state", "shell": "bash", "directory": str(directory), "fixtures": fixtures}
+        return value, self.encoded_export(value)
+
+    def encoded_export(self, value):
+        output = ("=== RUN   TestPickerStartupFixtureExport\nPICKER_STARTUP_FIXTURE " + json.dumps(value) +
+                  "\n--- PASS: TestPickerStartupFixtureExport (0.00s)\nPASS\n")
+        return self.result(stdout=output.encode())
+
+    def test_refusal_requires_exact_status_message_and_pipe_eof(self):
+        for action in ("--install-picker", "--uninstall-picker"):
+            for error_format in ("text", "json"):
+                with self.subTest(action=action, format=error_format):
+                    message = startup.refusal_message(action)
+                    stderr = ((message + "\n") if error_format == "text" else json.dumps({"message": message})).encode()
+                    good = self.result(1, stderr=stderr)
+                    startup.require_setup_result(good, action, True, error_format)
+                    for field, value in (("returncode", 0), ("returncode", 7), ("stdout", b"unexpected"),
+                                         ("stderr", b"generic failure\n"), ("stdout_eof", False), ("stderr_eof", False)):
+                        bad = deepcopy(good)
+                        setattr(bad, field, value)
+                        with self.subTest(field=field), self.assertRaises((AssertionError, ValueError)):
+                            startup.require_setup_result(bad, action, True, error_format)
+
+    def test_structured_refusal_rejects_extra_keys_duplicates_and_trailing_prose(self):
+        message = json.dumps(startup.refusal_message("--install-picker"))
+        for stderr in ('{"message":' + message + ',"extra":true}',
+                       '{"message":' + message + ',"message":' + message + '}',
+                       '{"message":' + message + '}\nadditional diagnostic'):
+            with self.subTest(stderr=stderr), self.assertRaises((AssertionError, ValueError)):
+                startup.require_setup_result(self.result(1, stderr=stderr.encode()), "--install-picker", True, "json")
+
+    def test_exporter_binds_owned_paths_content_and_test_completion(self):
+        directory = Path("/synthetic/config/openai/shell")
+        profiles = [Path("/synthetic/.bashrc"), Path("/synthetic/.bash_profile")]
+        value, good = self.export_result(directory, profiles)
+        self.assertEqual(startup.exported_fixtures(good, directory, profiles), value["fixtures"])
+        mutations = [
+            lambda data: data.update(contract="installed"),
+            lambda data: data.update(directory="/outside/shell"),
+            lambda data: data.update(shell="zsh"),
+            lambda data: data["fixtures"].pop(),
+            lambda data: data["fixtures"][0].update(profile="/outside/.bashrc"),
+            lambda data: data["fixtures"][0].update(script_name="../escape.bash"),
+            lambda data: data["fixtures"][0].update(script="changed bytes"),
+            lambda data: data["fixtures"][0].update(block="missing marker"),
+            lambda data: data["fixtures"][0].update(block="x" * (startup.SMALL + 1)),
+        ]
+        for index, mutate in enumerate(mutations):
+            bad = deepcopy(value)
+            mutate(bad)
+            with self.subTest(mutation=index), self.assertRaises(AssertionError):
+                startup.exported_fixtures(self.encoded_export(bad), directory, profiles)
+        for field, value in (("returncode", 1), ("stderr", b"failure"), ("stdout_eof", False),
+                             ("stderr_eof", False), ("stdout", good.stdout.replace(b"--- PASS:", b"--- SKIP:")),
+                             ("stdout", good.stdout + b"unexpected\n"), ("stdout", b"x" * (startup.LIMIT + 1))):
+            bad = deepcopy(good)
+            setattr(bad, field, value)
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                startup.exported_fixtures(bad, directory, profiles)
+
+    def test_refused_contract_requires_exporter_before_resource_creation(self):
+        with unittest.mock.patch.object(startup.sys, "argv", ["fixture", "cli", "bash", "login", "--setup-contract", "refused"]), \
+                unittest.mock.patch.object(startup.tempfile, "mkdtemp") as create, redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                startup.main()
+            self.assertEqual(raised.exception.code, 2)
+            create.assert_not_called()
+
+    def run_lifecycle(self, mode, fault=None):
+        """Exercise lifecycle decisions with synthetic captures and terminal observations."""
+        calls = []
+        counters = {"install": 0, "remove": 0}
+        stdout, stderr = io.StringIO(), io.StringIO()
+        binary, bash, exporter = str(Path(startup.__file__).resolve()), str(Path(__file__).resolve()), str(Path(models.__file__).resolve())
+
+        class Terminal:
+            def __init__(self, _bash, args, env, **_kwargs):
+                self.raw, self.events = bytearray(startup.PROMPT.encode()), []
+                self.child, self.eof = SimpleNamespace(returncode=None), False
+                name = "bash_profile" if "--login" in args else "bashrc"
+                profile = Path(env["HOME"]) / ("." + name)
+                active = b"# >>> openai image picker" in profile.read_bytes()
+                output = ("\nSENTINEL:" + name + "\nEXECUTABLE:" + env["OPENAI_PROFILE_BIN"] + "/openai" +
+                          "\nVERSION:5.2.15\nINTEGRATION:" + ("bash" if active else "") + "\n")
+                if active:
+                    output += 'complete -o filenames -F __openai_picker_complete openai\n"\\C-i": "\\e[99;1\\C-i\\e[99;2~"\n'
+                self.probe = (output + startup.DONE + "\n").encode()
+
+            def wait(self, marker, **_kwargs):
+                if marker == startup.DONE:
+                    self.raw.extend(self.probe)
+
+            def send(self, data):
+                if data == b"finish\r":
+                    self.child.returncode = 0
+
+            def running(self):
+                return self.child.returncode is None
+
+            def text(self):
+                return self.raw.decode()
+
+            def drain_eof(self):
+                self.eof = True
+
+            def close(self):
+                pass
+
+        def capture(command, *, env, cwd, **_kwargs):
+            calls.append(command)
+            if command[0] == exporter:
+                request = json.loads(env["OPENAI_CLI_PICKER_FIXTURE_REQUEST"])
+                return self.export_result(Path(request["directory"]), [Path(path) for path in request["profiles"]])[1]
+            action = command[-1]
+            if action == "--install-picker":
+                counters["install"] += 1
+                refused = counters["install"] <= 3
+                if fault == "accept-install" and counters["install"] == 1:
+                    refused = False
+                if fault == "rewrite-refusal" and counters["install"] == 1:
+                    profile = cwd / ".bashrc"
+                    profile.write_bytes(profile.read_bytes() + b"# unexpected rewrite\n")
+                if fault == "rewrite-noop" and counters["install"] == 4:
+                    script = next((Path(env["XDG_CONFIG_HOME"]) / "openai/shell").glob("picker-bash-*"))
+                    script.write_bytes(script.read_bytes() + b"# unexpected rewrite\n")
+            else:
+                counters["remove"] += 1
+                refused = counters["remove"] <= 2
+                marker = cwd / ".openai/shell/image-picker.tab-off-bash"
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.touch(mode=0o600)
+                if fault == "erase-recovery" and counters["remove"] == 1:
+                    next(cwd.glob(".openai-picker-recovery-*/original")).unlink()
+                if not refused and fault != "retain-script":
+                    for script in (Path(env["XDG_CONFIG_HOME"]) / "openai/shell").glob("picker-bash-*"):
+                        script.unlink()
+            if refused:
+                message = startup.refusal_message(action)
+                if "--format-error" in command:
+                    return self.result(1, stderr=(json.dumps({"message": message}) + "\n").encode())
+                return self.result(1, stderr=(message + "\n").encode())
+            message = ("Tab setup saved for future terminals. Existing custom bindings are preserved.\n"
+                       if action == "--install-picker" else "Tab shortcut setup removed. Open a new terminal to finish.\n")
+            return self.result(stderr=message.encode())
+
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            root = Path(directory) / "owned"
+            root.mkdir()
+            argv = ["fixture", binary, bash, mode, "--setup-contract", "refused", "--autocomplete-test-binary", exporter]
+            stack.enter_context(unittest.mock.patch.object(startup.sys, "argv", argv))
+            stack.enter_context(unittest.mock.patch.object(startup.tempfile, "mkdtemp", return_value=str(root)))
+            stack.enter_context(unittest.mock.patch.object(startup, "SYSTEM_STARTUP_FILES", ()))
+            stack.enter_context(unittest.mock.patch.object(startup, "recheck_system_sources", return_value=([], True)))
+            stack.enter_context(unittest.mock.patch.object(startup.signal, "signal"))
+            timer = stack.enter_context(unittest.mock.patch.object(startup.signal, "setitimer"))
+            stack.enter_context(unittest.mock.patch.object(startup.time, "monotonic", return_value=1))
+            stack.enter_context(unittest.mock.patch.object(startup.picker, "fixture_utf8_locale", return_value=("C.UTF-8", "synthetic")))
+            stack.enter_context(unittest.mock.patch.object(startup.picker, "capture_fixture", side_effect=capture))
+            stack.enter_context(unittest.mock.patch.object(startup.picker, "Terminal", Terminal))
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                status = startup.main()
+            self.assertFalse(root.exists())
+        timer.assert_has_calls([unittest.mock.call(signal.ITIMER_REAL, 115), unittest.mock.call(signal.ITIMER_REAL, 0)])
+        lines = stdout.getvalue().splitlines()
+        report = json.loads(lines[0][len("RECEIPT: "):])
+        self.assertLessEqual(len(lines[0].encode()), 8 * startup.LIMIT + len("RECEIPT: "))
+        return status, report, lines[1:], stderr.getvalue(), calls
+
+    def test_refused_lifecycle_has_separate_cases_and_exact_checkpoints(self):
+        for mode in ("login", "nonlogin"):
+            with self.subTest(mode=mode):
+                status, report, markers, stderr, calls = self.run_lifecycle(mode)
+                self.assertEqual((status, markers, stderr), (0, ["PASS: bash-" + mode + "-refused"], ""))
+                self.assertEqual(report["setup_contract"], "refused")
+                self.assertEqual([item["action"] for item in report["setup_calls"]],
+                                 ["install-refused-text", "install-refused-json", "install-refused-again", "seeded-install-noop",
+                                  "seeded-remove-refused-text", "seeded-remove-refused-json", "absent-profile-remove"])
+                self.assertEqual([item["exit_code"] for item in report["setup_calls"]], [1, 1, 1, 0, 1, 1, 0])
+                self.assertEqual([(item["checkpoint"], item["expected_active"]) for item in report["fresh_shells"]],
+                                 [("fresh-original", False), ("fresh-seeded-existing", True), ("fresh-after-refused-remove", True)])
+                for field in ("original_profiles_unchanged", "seeded_profiles_unchanged", "recovery_evidence_unchanged",
+                              "absent_profiles_preserved", "opt_out_created", "generated_scripts_removed", "unselected_profile_unchanged",
+                              "cleanup_complete", "setup_stdout_eof", "setup_stderr_eof", "pty_eof"):
+                    self.assertIs(report[field], True)
+                self.assertEqual(report["setup_call_count"], 7)
+                self.assertEqual(report["fresh_shell_count"], 3)
+                self.assertEqual(len(calls), 8)
+                self.assertEqual(report["seeded_existing_state"]["contract"], "seeded-existing-state")
+                self.assertEqual(report["installation_scope"], "Seeded existing state tests activation and cleanup, not installation.")
+                self.assertEqual(report["automatic_setup_scope"], "Not exercised: private HOME differs from the account home.")
+
+    def test_refused_lifecycle_rejects_success_and_state_loss(self):
+        for fault in ("accept-install", "rewrite-refusal", "rewrite-noop", "erase-recovery", "retain-script"):
+            with self.subTest(fault=fault):
+                status, report, markers, stderr, _calls = self.run_lifecycle("login", fault)
+                self.assertEqual(status, 1)
+                self.assertEqual(markers, [])
+                self.assertEqual(stderr, "FAIL: bash-login-refused\n")
+                self.assertTrue(report["failures"])
 
 
 class FixtureFileTests(unittest.TestCase):
@@ -420,7 +862,7 @@ class SystemStartupSourceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "profile"
             path.write_bytes(b"x" * (startup.SMALL + 1))
-            with mock.patch.object(startup.os, "open") as opened:
+            with unittest.mock.patch.object(startup.os, "open") as opened:
                 with self.assertRaisesRegex(RuntimeError, "exceeds64KiB"):
                     startup.system_source(path)
                 opened.assert_not_called()

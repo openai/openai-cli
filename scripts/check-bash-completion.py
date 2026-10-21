@@ -32,6 +32,20 @@ def main():
         ("UTF-8 midline file with later flag", "--file=assets/雪-fi" + later_flag,
          [b"transcribe", "--file=assets/雪-file.txt".encode("utf-8"), b"--format=json"]),
     ]
+    cases = [(name, "transcribe " + typed, wanted, None, 10) for name, typed, wanted in cases]
+    cases += [
+        ("escaped colon command", r"chat\:comple", [b"chat:completions"],
+         [b"__complete", b"--", b"chat:comple"], 0),
+        ("quoted colon command", "'chat:comple'", [b"chat:completions"],
+         [b"__complete", b"--", b"chat:comple"], 0),
+        ("unquoted colon command", "chat:comple", [b"chat:completions"],
+         [b"__complete", b"--", b"chat:comple"], 0),
+        ("literal colon flag value", "--project : chat:completions create --moda",
+         [b"--project", b":", b"chat:completions", b"create", b"--modality"],
+         [b"__complete", b"--", b"--project", b":", b"chat:completions", b"create", b"--moda"], 0),
+        ("separate colon command words", "chat: comple", [b"chat:", b"comple"],
+         [b"__complete", b"--", b"chat:", b"comple"], 11),
+    ]
     with tempfile.TemporaryDirectory(prefix="openai-bash-completion-") as temporary:
         root = pathlib.Path(temporary)
         os.chdir(root)
@@ -80,7 +94,7 @@ openai() {
       if "$COMPLETION_BINARY" "$@"; then status=0; else status=$?; fi
       printf '%s\n' "$status" >> "$COMPLETION_ROOT/backend.status" || return 92
       return "$status" ;;
-    transcribe)
+    transcribe|chat:completions|chat:|--project)
       completion_record_locale > "$COMPLETION_ROOT/accepted.locale" || return 92
       printf '%s\0' "$@" > "$COMPLETION_ROOT/accepted.argv" || return 92
       printf '\nCOMPLETION_ENTERED\n' ;;
@@ -89,7 +103,7 @@ openai() {
 }
 printf '\nCOMPLETION_READY\n'
 ''', encoding="utf-8")
-        for name, typed, wanted in cases:
+        for name, typed, wanted, expected_backend, expected_status in cases:
             unicode_case = name == "UTF-8 midline file with later flag"
             case_env = env
             if unicode_case:
@@ -117,7 +131,7 @@ printf '\nCOMPLETION_READY\n'
                     assert charmap == b"UTF8", (selected, charmap, terminal.text())
                     assert harness.read_fixture_file(root / "locale.character") == "雪\0".encode("utf-8") + b"1\0", terminal.text()
                 before = b"\x02" * len(later_flag.encode("ascii")) if unicode_case else b""
-                terminal.send(("openai transcribe " + typed).encode("utf-8") + before + b"\t")
+                terminal.send(("openai " + typed).encode("utf-8") + before + b"\t")
                 phase_deadline = min(deadline, time.monotonic() + 5)
                 while not (root / "backend.status").exists():
                     terminal.read()
@@ -135,15 +149,17 @@ printf '\nCOMPLETION_READY\n'
                 assert terminal.child.returncode == 0, terminal.text()
                 accepted = harness.read_fixture_file(root / "accepted.argv")
                 assert accepted == b"\0".join(wanted) + b"\0", (name, accepted, terminal.text())
-                value = "assets/fixture n" if name == "escaped assigned file" else "assets/fi"
-                if name == "double quoted apostrophe":
-                    value = "assets/quote's"
-                if unicode_case:
-                    value = "assets/雪-fi"
-                args = [b"__complete", b"--", b"transcribe"]
-                args += [b"--file", value.encode()] if name == "separate quoted file" else [("--file=" + value).encode()]
+                args = expected_backend
+                if args is None:
+                    value = "assets/fixture n" if name == "escaped assigned file" else "assets/fi"
+                    if name == "double quoted apostrophe":
+                        value = "assets/quote's"
+                    if unicode_case:
+                        value = "assets/雪-fi"
+                    args = [b"__complete", b"--", b"transcribe"]
+                    args += [b"--file", value.encode()] if name == "separate quoted file" else [("--file=" + value).encode()]
                 assert harness.read_fixture_file(root / "backend.argv") == b"\0".join(args) + b"\0", name
-                assert harness.read_fixture_file(root / "backend.status") == b"10\n", name
+                assert harness.read_fixture_file(root / "backend.status") == f"{expected_status}\n".encode("ascii"), name
                 expected_locale = b"\0".join(case_env.get(key, "").encode("utf-8")
                                               for key in ("LC_ALL", "LC_CTYPE", "LANG")) + b"\0"
                 for stage in ("startup", "backend", "accepted"):
