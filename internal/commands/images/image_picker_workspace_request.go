@@ -2,7 +2,6 @@ package images
 
 import (
 	"context"
-	"errors"
 	clioutput "github.com/openai/openai-cli/internal/output"
 	cliterminal "github.com/openai/openai-cli/internal/terminal"
 	"os"
