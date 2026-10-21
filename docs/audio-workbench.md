@@ -30,7 +30,7 @@ Returning to a compatible model restores access to the instruction draft.
 Voice choices follow the form's existing model validator.
 Changing models preserves the selected voice. An unavailable voice needs another explicit choice before generation.
 
-Generate speech is the primary action. Its nearby note states that generation saves audio and inputs locally.
+Generate speech is the primary action.
 More actions contains History, Preview voice, Clear form, Show command, and Help.
 The form keeps command text and help inside More actions.
 Show command opens a vertically scrollable Bash/zsh command.
@@ -55,7 +55,7 @@ Normal generation also requires an explicit action.
 
 The form retains completed audio, request inputs, and settings in private local History.
 It stores History under the operating system's user cache directory, within `openai/audio`.
-History can contain sensitive text. The form states what it stores beside Generate speech.
+History can contain sensitive text.
 Clear form resets the draft and current result. It preserves History and exported files.
 
 Failed actions open recovery choices with a plain-language cause and a safe next action.
