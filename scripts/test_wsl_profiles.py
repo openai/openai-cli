@@ -18,7 +18,9 @@ from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location("wsl_profiles", Path(__file__).with_name("check-wsl-pager.py"))
 pilot = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = pilot
 spec.loader.exec_module(pilot)
+receipts = pilot.load_shell_receipts()
 
 WELCOME = "TestMainWelcomeBareInvocationStaysOffline"
 DYNAMIC = WELCOME + "/<loopback>"
@@ -178,6 +180,34 @@ def refused_startup_receipt(case):
     return receipt
 
 
+def resolved_plan(profile="local-state", setup_contract="supported"):
+    if profile == "local-state":
+        return pilot.resolve_profile(
+            Path("custom.test"), process_binary=Path("process.test"), profile=profile,
+            extra_payloads={name + ".test": Path(name + ".test")
+                            for name in ("imageprefs", "clihelp", "autocomplete")},
+            setup_contract=setup_contract)
+    extras = {"openai": Path("openai")}
+    if setup_contract == "refused":
+        extras["autocomplete.test"] = Path("autocomplete.test")
+    return pilot.resolve_profile(process_binary=Path("process.test"), profile=profile,
+                                 extra_payloads=extras, setup_contract=setup_contract)
+
+
+def local_phase_response(phase, contract="supported", errno=None):
+    raw = test_output(pilot.test_names(phase.cases))
+    raw = raw.replace(DYNAMIC.encode(), (WELCOME + "/http://127.0.0.1:12345").encode())
+    if NATIVE_SETUP_ROOT in phase.cases:
+        receipt = {"contract": contract, "errno": errno if errno is not None else (
+            "" if contract == "supported" else "ENOSYS"), "checks": 10}
+        raw = raw.removesuffix(b"PASS\n") + f"PICKER_CAPABILITY {json.dumps(receipt)}\nPASS\n".encode()
+    return raw, b"", 0
+
+
+def phase_named(plan, label):
+    return next(phase for phase in plan.phases if phase.label == label)
+
+
 class LocalInventoryTests(unittest.TestCase):
     def setUp(self):
         self.raw = Path(__file__).with_name("wsl-local-state-cases.json").read_bytes()
@@ -196,14 +226,14 @@ class LocalInventoryTests(unittest.TestCase):
         suites, digest = self.load(raw=self.raw)
         self.assertEqual(set(suites), {"imageprefs", "custom", "autocomplete", "process", "clihelp"})
         expected = {"imageprefs": (9, 21, 30), "custom": (12, 17, 29),
-                    "autocomplete": (5, 50, 55), "process": (29, 118, 147), "clihelp": (5, 1, 6)}
+                    "autocomplete": (5, 54, 59), "process": (29, 118, 147), "clihelp": (5, 1, 6)}
         total = [0, 0, 0]
         for package, counts in expected.items():
             cases = suites[package]
             observed = (len(cases), sum(map(len, cases.values())), len(pilot.test_names(cases)))
             self.assertEqual(observed, counts)
             total = [left + right for left, right in zip(total, observed)]
-        self.assertEqual(total, [60, 207, 267])
+        self.assertEqual(total, [60, 211, 271])
         self.assertEqual(digest, hashlib.sha256(self.raw).hexdigest())
         self.assertEqual(suites["process"][WELCOME], ["<loopback>", "not%url"])
         self.assertEqual(len(suites["process"]["TestMainCommandSubgroupsBareInvocation"]), 10)
@@ -223,6 +253,11 @@ class LocalInventoryTests(unittest.TestCase):
             "TestPickerRenameCapabilityClassification", NATIVE_SETUP_ROOT,
         })
         self.assertEqual(suites["autocomplete"][NATIVE_SETUP_ROOT], NATIVE_SETUP_CASES[NATIVE_SETUP_ROOT])
+        self.assertEqual(suites["autocomplete"]["TestPickerRenameCapabilityClassification"], [
+            "success", "ENOSYS", "EOPNOTSUPP", "EINVAL", "EACCES", "EPERM", "EROFS", "EBADF",
+            "wrapped_unrelated_EINVAL", "EEXIST", "ENOENT", "EXDEV", "canceled", "deadline",
+            "wrapped_unrelated_operation",
+        ])
         self.assertEqual(suites["autocomplete"]["TestPickerInstallRoundTrip"], [
             shell + "/" + original for shell in ("bash", "zsh", "fish")
             for original in ("", "#_personal_setting", "#_personal_setting_", "\\ufeff#_Windows_setting__")
@@ -397,7 +432,7 @@ class DynamicWelcomeTests(unittest.TestCase):
 
 class CapabilityReceiptTests(unittest.TestCase):
     def test_exact_supported_and_refused_receipts(self):
-        for contract, errno in (("supported", ""), ("refused", "ENOSYS"), ("refused", "EOPNOTSUPP")):
+        for contract, errno in (("supported", ""), ("refused", "ENOSYS"), ("refused", "EOPNOTSUPP"), ("refused", "EINVAL")):
             with self.subTest(contract=contract, errno=errno):
                 self.assertEqual(pilot.require_capability_receipt(capability_output(contract, errno), contract),
                                  {"contract": contract, "errno": errno, "checks": 10})
@@ -407,14 +442,14 @@ class CapabilityReceiptTests(unittest.TestCase):
         bad = [None, [], {}, {**good, "extra": True}]
         for key, values in {
             "contract": ("supported", "auto", "", None, False),
-            "errno": ("", "EINVAL", "EACCES", "EEXIST", "EXDEV", "function not implemented", None, []),
+            "errno": ("", "EACCES", "EPERM", "EEXIST", "EROFS", "EBADF", "EXDEV", "function not implemented", None, []),
             "checks": (0, 9, 11, True, False, "10", 10.0, None),
         }.items():
             bad.extend({**good, key: value} for value in values)
         for receipt in bad:
             with self.subTest(receipt=receipt), self.assertRaises(RuntimeError):
                 pilot.require_capability_receipt(capability_output(receipt=json.dumps(receipt)), "refused")
-        for contract, errno in (("supported", "ENOSYS"), ("supported", "EOPNOTSUPP"), ("auto", "")):
+        for contract, errno in (("supported", "ENOSYS"), ("supported", "EOPNOTSUPP"), ("supported", "EINVAL"), ("auto", "")):
             with self.subTest(contract=contract, errno=errno), self.assertRaises(RuntimeError):
                 pilot.require_capability_receipt(capability_output(contract, errno), contract)
 
@@ -430,23 +465,24 @@ class CapabilityReceiptTests(unittest.TestCase):
             with self.subTest(index=index), self.assertRaises((RuntimeError, ValueError)):
                 pilot.require_capability_receipt(output, "refused")
 
-    def test_selected_tests_require_native_execution_and_receipt_before_return(self):
-        for contract, errno in (("supported", ""), ("refused", "ENOSYS"), ("refused", "EOPNOTSUPP")):
-            commands, receipt = Mock(), {}
-            commands.run.return_value = capability_output(contract, errno), b"", 0
+    def test_planned_native_phase_requires_execution_and_receipt_before_acceptance(self):
+        for contract, errno in (("supported", ""), ("refused", "ENOSYS"),
+                                ("refused", "EOPNOTSUPP"), ("refused", "EINVAL")):
+            phase = phase_named(resolved_plan(setup_contract=contract), "local-autocomplete")
             with self.subTest(contract=contract, errno=errno):
-                names = pilot.run_selected_tests(commands, ["synthetic-user"], "/payload/autocomplete.test",
-                                                 NATIVE_SETUP_CASES, "native-capability", 70,
-                                                 setup_contract=contract, capability_receipt=receipt)
-                self.assertEqual(set(names), pilot.test_names(NATIVE_SETUP_CASES))
-                self.assertEqual(receipt, {"contract": contract, "errno": errno, "checks": 10})
-                self.assertEqual(commands.run.call_args.args, (
-                    "native-capability", ["synthetic-user", "OPENAI_CLI_PICKER_SETUP_CONTRACT=" + contract,
-                    "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "60s", "/payload/autocomplete.test",
-                    "-test.run=^(TestPickerNativeSetupContract)$", "-test.timeout=45s", "-test.v"], 70))
+                entry = phase.validate(*local_phase_response(phase, contract, errno))
+                self.assertEqual(set(entry["tests"]), pilot.test_names(phase.cases))
+                self.assertEqual(entry["native_capability"],
+                                 {"contract": contract, "errno": errno, "checks": 10})
+                self.assertEqual(phase.arguments({}, {}), [
+                    "OPENAI_CLI_PICKER_SETUP_CONTRACT=" + contract,
+                    "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "60s",
+                    "/home/cli-compat/payload/autocomplete.test",
+                    "-test.run=^(" + "|".join(phase.cases) + ")$", "-test.timeout=45s", "-test.v"])
 
     def test_receipt_never_overrides_failed_skipped_or_incomplete_tests(self):
-        good = capability_output()
+        phase = phase_named(resolved_plan(setup_contract="refused"), "local-autocomplete")
+        good = local_phase_response(phase, "refused")[0]
         child = NATIVE_SETUP_ROOT + "/seeded_remove"
         passed = f"--- PASS: {child} (0.01s)\n".encode()
         variants = [(good, b"arbitrary failure", 0), (good, b"", 1),
@@ -455,144 +491,179 @@ class CapabilityReceiptTests(unittest.TestCase):
                     (good.replace(passed, b""), b"", 0),
                     (good.replace(f"=== RUN   {child}\n".encode(), b""), b"", 0),
                     (good + passed, b"", 0),
-                    (test_output(pilot.test_names(NATIVE_SETUP_CASES)), b"", 0),
-                    (capability_output(receipt={"contract": "refused", "errno": "EACCES", "checks": 10}), b"", 0)]
+                    (test_output(pilot.test_names(phase.cases)), b"", 0),
+                    local_phase_response(phase, "refused", "EACCES")]
         for index, response in enumerate(variants):
-            commands, receipt = Mock(), {}
-            commands.run.return_value = response
+            accepted = {}
             with self.subTest(index=index), self.assertRaises(RuntimeError):
-                pilot.run_selected_tests(commands, [], "/payload/autocomplete.test", NATIVE_SETUP_CASES,
-                                         "native-capability", 70, setup_contract="refused", capability_receipt=receipt)
-            self.assertEqual(receipt, {}, "failed native evidence must not populate the accepted receipt")
+                accepted["entry"] = phase.validate(*response)
+            self.assertEqual(accepted, {}, "failed native evidence must not populate an accepted result")
 
 
 class ProfileAdmissionTests(unittest.TestCase):
+    def local_commands(self, contract="supported", deadline=470.0):
+        plan = resolved_plan(setup_contract=contract)
+        commands = Mock(deadline=deadline)
+        commands.run.side_effect = lambda label, _argv, _seconds: local_phase_response(
+            phase_named(plan, label), contract)
+        return plan, commands
+
+    def shell_commands(self, contract="supported", deadline=565.0):
+        plan = resolved_plan("shell-contracts", contract)
+        suffix = "-refused" if contract == "refused" else ""
+        responses = {"invocation": test_output(NATIVE_NAMES), "completion": completion_output(),
+                     "models": receipt_output("models-filter-sort-limit")}
+        for mode in ("login", "nonlogin"):
+            case = "bash-" + mode + suffix
+            responses["startup-" + mode] = receipt_output(
+                case, refused_startup_receipt(case) if suffix else valid_receipt(case))
+        commands = Mock(deadline=deadline)
+        commands.run.side_effect = lambda label, _argv, _seconds: (responses[label], b"", 0)
+        return plan, commands
+
     def test_whole_profile_exact_budget_and_shortfall(self):
         for profile, seconds in (("local-state", 470), ("shell-contracts", 565)):
-            self.assertEqual(sum(pilot.PROFILE_PHASES[profile].values()), seconds)
+            plan = resolved_plan(profile)
+            self.assertEqual(sum(plan.budgets.values()), seconds)
             for difference in (0, -0.001):
                 commands = Mock(deadline=1000 + seconds + difference)
-                with self.subTest(profile=profile, difference=difference), patch.object(pilot.time, "monotonic", return_value=1000):
+                with self.subTest(profile=profile, difference=difference), \
+                        patch.object(pilot.time, "monotonic", return_value=1000):
                     if difference:
                         with self.assertRaises(RuntimeError):
-                            pilot.run_profile(commands, [], profile, {}, {}, {})
+                            pilot.run_profile(commands, [], plan, {}, {})
                         commands.run.assert_not_called()
                     else:
-                        pilot.admit_profile(commands, pilot.PROFILE_PHASES[profile])
+                        pilot.admit_profile(commands, plan.budgets)
 
     def test_expired_first_phase_stops_before_next_launch(self):
-        suites, _ = pilot.load_local_cases()
         for profile, seconds, first in (("local-state", 470, 70), ("shell-contracts", 565, 170)):
+            plan, commands = self.local_commands() if profile == "local-state" else self.shell_commands()
+            response = commands.run.side_effect
             clock = [0.0]
-            commands = Mock(deadline=float(seconds))
-            def first_phase(*_args, **_kwargs):
+            def first_phase(*args):
                 clock[0] = first + 0.001
-                return []
-            with self.subTest(profile=profile), patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]), \
-                    patch.object(pilot, "run_selected_tests", side_effect=first_phase) as selected:
+                return response(*args)
+            commands.run.side_effect = first_phase
+            result = {"shell_prerequisites": {"bash": {"path": "/usr/bin/bash"}}}
+            with self.subTest(profile=profile), patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]):
                 message = "shared time budget" if profile == "local-state" else "complete remaining"
                 with self.assertRaisesRegex(RuntimeError, message):
-                    pilot.run_profile(commands, [], profile, suites, {"openai": "a" * 64}, {})
-                self.assertEqual(selected.call_count, 1)
-                commands.run.assert_not_called()
+                    pilot.run_profile(commands, [], plan, {"openai": "a" * 64}, result)
+            self.assertEqual(commands.run.call_count, 1)
 
     def test_local_payloads_keep_separate_bounds_and_final_reserve(self):
         suites, _ = pilot.load_local_cases()
-        commands, result = Mock(deadline=470.0), {}
-        def names(_commands, _user, _target, cases, *_args, **_kwargs):
-            return sorted(pilot.test_names(cases))
-        with patch.object(pilot.time, "monotonic", return_value=0), \
-                patch.object(pilot, "run_selected_tests", side_effect=names) as selected:
-            remaining = pilot.run_profile(commands, ["synthetic-user"], "local-state", suites, {}, result)
+        plan, commands = self.local_commands()
+        result = {}
+        with patch.object(pilot.time, "monotonic", return_value=0):
+            remaining = pilot.run_profile(commands, ["synthetic-user"], plan, {}, result)
         self.assertEqual(remaining, {"final": 20})
         self.assertEqual(result["profile_admission_seconds"], 470)
-        self.assertEqual([(call.args[2], call.args[4], call.args[5], call.kwargs) for call in selected.call_args_list], [
-            ("/home/cli-compat/payload/imageprefs.test", "local-imageprefs", 70,
-             {"dynamic_loopback": False, "setup_contract": "supported", "capability_receipt": {}}),
-            ("/home/cli-compat/payload/clihelp.test", "local-clihelp", 70,
-             {"dynamic_loopback": False, "setup_contract": "supported", "capability_receipt": {}}),
-            ("/home/cli-compat/payload/custom.test", "local-custom-independent", 70,
-             {"dynamic_loopback": False, "setup_contract": "supported", "capability_receipt": {}}),
-            ("/home/cli-compat/payload/process.test", "local-process-independent", 170,
-             {"dynamic_loopback": True, "setup_contract": "supported", "capability_receipt": {}}),
-            ("/home/cli-compat/payload/autocomplete.test", "local-autocomplete", 70,
-             {"dynamic_loopback": False, "setup_contract": "supported", "capability_receipt": {}}),
-            ("/home/cli-compat/payload/custom.test", "local-custom", 70,
-             {"dynamic_loopback": False, "setup_contract": "supported", "capability_receipt": {}}),
-            ("/home/cli-compat/payload/process.test", "local-process", 170,
-             {"dynamic_loopback": False, "setup_contract": "supported", "capability_receipt": {}}),
-        ])
-        groups = [call.args[3] for call in selected.call_args_list if call.args[2].endswith("/process.test")]
+        expected = [
+            ("imageprefs", "local-imageprefs", 70), ("clihelp", "local-clihelp", 70),
+            ("custom", "local-custom-independent", 70), ("process", "local-process-independent", 170),
+            ("autocomplete", "local-autocomplete", 70), ("custom", "local-custom", 70),
+            ("process", "local-process", 170),
+        ]
+        self.assertEqual([(call.args[0], call.args[2]) for call in commands.run.call_args_list],
+                         [(label, seconds) for _, label, seconds in expected])
+        for call, (payload, label, seconds) in zip(commands.run.call_args_list, expected):
+            cases = phase_named(plan, label).cases
+            self.assertEqual(call.args[1], [
+                "synthetic-user", "OPENAI_CLI_PICKER_SETUP_CONTRACT=supported",
+                "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s",
+                "160s" if seconds == 170 else "60s", "/home/cli-compat/payload/" + payload + ".test",
+                "-test.run=^(" + "|".join(cases) + ")$",
+                "-test.timeout=150s" if seconds == 170 else "-test.timeout=45s", "-test.v"])
+        groups = [phase_named(plan, label).cases for label in ("local-process-independent", "local-process")]
         self.assertEqual([len(group) for group in groups], [23, 6])
         self.assertEqual([len(pilot.test_names(group)) for group in groups], [130, 17])
         self.assertFalse(set(groups[0]) & set(groups[1]))
-        self.assertEqual({**groups[0], **groups[1]}, suites["process"])
+        self.assertEqual({root: list(children) for root, children in {**groups[0], **groups[1]}.items()}, suites["process"])
         self.assertEqual(set(groups[0]), pilot.INDEPENDENT_PROCESS_ROOTS)
         self.assertIn("TestMainPickerShellSetupRefusesUnsafeConfigurationAncestry", groups[0])
         self.assertIn("TestMainPickerShellSetupReadOnlyModesDoNotWrite", groups[0])
         self.assertIn(WELCOME, groups[0])
-        custom = [call.args[3] for call in selected.call_args_list if call.args[2].endswith("/custom.test")]
+        custom = [phase_named(plan, label).cases for label in ("local-custom-independent", "local-custom")]
         self.assertEqual([len(group) for group in custom], [11, 1])
         self.assertEqual([len(pilot.test_names(group)) for group in custom], [26, 3])
         self.assertFalse(set(custom[0]) & set(custom[1]))
-        self.assertEqual({**custom[0], **custom[1]}, suites["custom"])
-        self.assertEqual(sum(len(item["tests"]) for item in result["profile_results"].values()), 267)
+        self.assertEqual({root: list(children) for root, children in {**custom[0], **custom[1]}.items()}, suites["custom"])
+        self.assertEqual(sum(len(item["tests"]) for item in result["profile_results"].values()), 271)
         self.assertTrue(result["positive_installation_tests_executed"])
         self.assertEqual(result["positive_installation_tests_not_selected"], [])
         self.assertEqual(commands.deadline, 470)
-        commands.run.assert_not_called()
 
     def test_autocomplete_failure_retains_independent_process_results(self):
-        suites, _ = pilot.load_local_cases()
-        commands, result = Mock(deadline=470.0), {}
-        def names(_commands, _user, _target, cases, label, *_args, **_kwargs):
+        plan, commands = self.local_commands()
+        result = {}
+        response = commands.run.side_effect
+        def fail_autocomplete(label, *args):
             if label == "local-autocomplete":
                 raise RuntimeError("native rename failure")
-            return sorted(pilot.test_names(cases))
-        with patch.object(pilot.time, "monotonic", return_value=0), \
-                patch.object(pilot, "run_selected_tests", side_effect=names) as selected:
+            return response(label, *args)
+        commands.run.side_effect = fail_autocomplete
+        with patch.object(pilot.time, "monotonic", return_value=0):
             with self.assertRaisesRegex(RuntimeError, "native rename failure"):
-                pilot.run_profile(commands, [], "local-state", suites, {}, result)
-        self.assertEqual([call.args[4] for call in selected.call_args_list],
+                pilot.run_profile(commands, [], plan, {}, result)
+        self.assertEqual([call.args[0] for call in commands.run.call_args_list],
                          ["local-imageprefs", "local-clihelp", "local-custom-independent",
                           "local-process-independent", "local-autocomplete"])
-        self.assertEqual(set(result["profile_results"]), {"imageprefs", "clihelp", "custom-independent", "process-independent"})
+        self.assertEqual(set(result["profile_results"]),
+                         {"imageprefs", "clihelp", "custom-independent", "process-independent"})
         self.assertEqual(len(result["profile_results"]["process-independent"]["tests"]), 130)
         self.assertEqual(len(result["profile_results"]["custom-independent"]["tests"]), 26)
         self.assertEqual(len(result["profile_results"]["clihelp"]["tests"]), 6)
         self.assertNotIn("positive_installation_tests_executed", result)
         self.assertEqual(commands.deadline, 470)
-        commands.run.assert_not_called()
+
+    def test_invalid_phase_receipt_stops_later_phases(self):
+        plan, commands = self.local_commands("refused")
+        result = {}
+        response = commands.run.side_effect
+        def invalid_capability(label, *args):
+            if label == "local-autocomplete":
+                return local_phase_response(phase_named(plan, label), "refused", "EACCES")
+            return response(label, *args)
+        commands.run.side_effect = invalid_capability
+        with patch.object(pilot.time, "monotonic", return_value=0):
+            with self.assertRaisesRegex(RuntimeError, "capability receipt"):
+                pilot.run_profile(commands, [], plan, {}, result)
+        self.assertEqual([call.args[0] for call in commands.run.call_args_list],
+                         ["local-imageprefs", "local-clihelp", "local-custom-independent",
+                          "local-process-independent", "local-autocomplete"])
+        self.assertEqual(set(result["profile_results"]),
+                         {"imageprefs", "clihelp", "custom-independent", "process-independent"})
+        self.assertNotIn("positive_installation_tests_executed", result)
+        self.assertEqual(commands.deadline, 470)
 
     def test_refused_profile_records_omitted_positive_tests_separately(self):
         suites, _ = pilot.load_local_cases()
-        commands, result = Mock(deadline=470.0), {}
-        receipt = {"contract": "refused", "errno": "ENOSYS", "checks": 10}
-        def names(_commands, _user, _target, cases, *_args, **kwargs):
-            self.assertEqual(kwargs["setup_contract"], "refused")
-            if NATIVE_SETUP_ROOT in cases:
-                kwargs["capability_receipt"].update(receipt)
-            return sorted(pilot.test_names(cases))
-        with patch.object(pilot.time, "monotonic", return_value=0), \
-                patch.object(pilot, "run_selected_tests", side_effect=names) as selected:
-            remaining = pilot.run_profile(commands, [], "local-state", suites, {}, result, "refused")
+        plan, commands = self.local_commands("refused")
+        result = {}
+        with patch.object(pilot.time, "monotonic", return_value=0):
+            remaining = pilot.run_profile(commands, [], plan, {}, result)
         self.assertEqual(remaining, {"final": 20})
         self.assertEqual(result["setup_contract"], "refused")
         self.assertFalse(result["positive_installation_tests_executed"])
-        self.assertEqual(result["profile_results"]["autocomplete"]["native_capability"], receipt)
-        self.assertEqual([call.args[4] for call in selected.call_args_list], [
+        self.assertEqual(result["profile_results"]["autocomplete"]["native_capability"],
+                         {"contract": "refused", "errno": "ENOSYS", "checks": 10})
+        self.assertEqual([call.args[0] for call in commands.run.call_args_list], [
             "local-imageprefs", "local-clihelp", "local-custom-independent", "local-process-independent",
-            "local-autocomplete", "local-custom", "local-process",
-        ])
-        groups = {call.args[4]: call.args[3] for call in selected.call_args_list}
-        self.assertEqual(set(groups["local-autocomplete"]), {NATIVE_SETUP_ROOT, "TestPickerRenameCapabilityClassification"})
+            "local-autocomplete", "local-custom", "local-process"])
+        for call in commands.run.call_args_list:
+            self.assertIn("OPENAI_CLI_PICKER_SETUP_CONTRACT=refused", call.args[1])
+        groups = {phase.label: phase.cases for phase in plan.phases}
+        self.assertEqual(set(groups["local-autocomplete"]),
+                         {NATIVE_SETUP_ROOT, "TestPickerRenameCapabilityClassification"})
         self.assertEqual(set(groups["local-process"]), {"TestMainPickerShellSetupNativeContract"})
-        self.assertEqual(len(pilot.test_names(groups["local-autocomplete"])), 23)
+        self.assertEqual(len(pilot.test_names(groups["local-autocomplete"])), 27)
         self.assertEqual(len(pilot.test_names(groups["local-process"])), 5)
         executed = set().union(*(set(entry["tests"]) for entry in result["profile_results"].values()))
         omitted = set(result["positive_installation_tests_not_selected"])
         inventory = set().union(*(pilot.test_names(cases) for cases in suites.values()))
-        self.assertEqual(len(executed), 223)
+        self.assertEqual(len(executed), 227)
         self.assertEqual(len(omitted), 44)
         self.assertFalse(executed & omitted)
         self.assertEqual(executed | omitted, inventory)
@@ -602,23 +673,28 @@ class ProfileAdmissionTests(unittest.TestCase):
                                              if root not in pilot.INDEPENDENT_PROCESS_ROOTS
                                              and root != "TestMainPickerShellSetupNativeContract"}))
         self.assertEqual(commands.deadline, 470)
-        commands.run.assert_not_called()
 
     def test_independent_process_failure_restores_deadline_and_stops_profile(self):
-        suites, _ = pilot.load_local_cases()
-        commands, result = Mock(deadline=470.0), {}
-        with patch.object(pilot.time, "monotonic", return_value=0), \
-                patch.object(pilot, "run_selected_tests", side_effect=[[], [], [], RuntimeError("process failure")]) as selected:
+        plan, commands = self.local_commands()
+        result = {}
+        response = commands.run.side_effect
+        def fail_process(label, *args):
+            if label == "local-process-independent":
+                raise RuntimeError("process failure")
+            return response(label, *args)
+        commands.run.side_effect = fail_process
+        with patch.object(pilot.time, "monotonic", return_value=0):
             with self.assertRaisesRegex(RuntimeError, "process failure"):
-                pilot.run_profile(commands, [], "local-state", suites, {}, result)
-        self.assertEqual(selected.call_count, 4)
+                pilot.run_profile(commands, [], plan, {}, result)
+        self.assertEqual(commands.run.call_count, 4)
         self.assertEqual(set(result["profile_results"]), {"imageprefs", "clihelp", "custom-independent"})
         self.assertEqual(commands.deadline, 470)
 
     def test_process_groups_share_original_budget_across_autocomplete(self):
-        suites, _ = pilot.load_local_cases()
-        commands, result, clock, observed = Mock(deadline=470.0), {}, [0.0], []
-        def run(_commands, _user, _target, cases, label, *_args, **_kwargs):
+        plan, commands = self.local_commands()
+        result, clock, observed = {}, [0.0], []
+        response = commands.run.side_effect
+        def run(label, *args):
             if label == "local-process-independent":
                 observed.append((label, commands.deadline))
                 clock[0] += 37
@@ -627,58 +703,61 @@ class ProfileAdmissionTests(unittest.TestCase):
             elif label == "local-process":
                 observed.append((label, commands.deadline))
                 clock[0] += 21
-            return sorted(pilot.test_names(cases))
-        with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]), \
-                patch.object(pilot, "run_selected_tests", side_effect=run):
-            pilot.run_profile(commands, [], "local-state", suites, {}, result)
+            return response(label, *args)
+        commands.run.side_effect = run
+        with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]):
+            pilot.run_profile(commands, [], plan, {}, result)
         self.assertEqual(observed, [("local-process-independent", 170), ("local-process", 239)])
         self.assertEqual(commands.deadline, 470)
         self.assertEqual(result["profile_admission_seconds"], 470)
 
     def test_custom_groups_share_original_budget_across_other_phases(self):
-        suites, _ = pilot.load_local_cases()
-        commands, result, clock, observed = Mock(deadline=470.0), {}, [0.0], []
+        plan, commands = self.local_commands()
+        result, clock, observed = {}, [0.0], []
+        response = commands.run.side_effect
         elapsed = {"local-custom-independent": 11, "local-process-independent": 37,
                    "local-autocomplete": 69, "local-custom": 9}
-        def run(_commands, _user, _target, cases, label, *_args, **_kwargs):
+        def run(label, *args):
             if label in {"local-custom-independent", "local-custom"}:
                 observed.append((label, commands.deadline))
             clock[0] += elapsed.get(label, 0)
-            return sorted(pilot.test_names(cases))
-        with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]), \
-                patch.object(pilot, "run_selected_tests", side_effect=run):
-            pilot.run_profile(commands, [], "local-state", suites, {}, result)
+            return response(label, *args)
+        commands.run.side_effect = run
+        with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]):
+            pilot.run_profile(commands, [], plan, {}, result)
         self.assertEqual(observed, [("local-custom-independent", 70), ("local-custom", 176)])
         self.assertEqual(commands.deadline, 470)
         self.assertEqual(result["profile_admission_seconds"], 470)
 
     def test_custom_exhaustion_stops_before_dependent_mutations(self):
-        suites, _ = pilot.load_local_cases()
-        commands, result, clock = Mock(deadline=470.0), {}, [0.0]
-        def run(_commands, _user, _target, _cases, label, *_args, **_kwargs):
+        plan, commands = self.local_commands()
+        result, clock = {}, [0.0]
+        response = commands.run.side_effect
+        def run(label, *args):
             if label == "local-custom-independent":
                 clock[0] = 70
-            return []
-        with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]), \
-                patch.object(pilot, "run_selected_tests", side_effect=run) as selected:
+            return response(label, *args)
+        commands.run.side_effect = run
+        with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]):
             with self.assertRaisesRegex(RuntimeError, "shared time budget"):
-                pilot.run_profile(commands, [], "local-state", suites, {}, result)
-        self.assertEqual(selected.call_count, 3)
+                pilot.run_profile(commands, [], plan, {}, result)
+        self.assertEqual(commands.run.call_count, 3)
         self.assertEqual(set(result["profile_results"]), {"imageprefs", "clihelp"})
         self.assertEqual(commands.deadline, 470)
 
     def test_late_independent_result_cannot_be_accepted(self):
-        suites, _ = pilot.load_local_cases()
-        commands, result, clock = Mock(deadline=470.0), {}, [0.0]
-        def run(_commands, _user, _target, _cases, label, *_args, **_kwargs):
+        plan, commands = self.local_commands()
+        result, clock = {}, [0.0]
+        response = commands.run.side_effect
+        def run(label, *args):
             if label == "local-process-independent":
                 clock[0] = 170
-            return []
-        with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]), \
-                patch.object(pilot, "run_selected_tests", side_effect=run) as selected:
+            return response(label, *args)
+        commands.run.side_effect = run
+        with patch.object(pilot.time, "monotonic", side_effect=lambda: clock[0]):
             with self.assertRaisesRegex(RuntimeError, "shared time budget"):
-                pilot.run_profile(commands, [], "local-state", suites, {}, result)
-        self.assertEqual(selected.call_count, 4)
+                pilot.run_profile(commands, [], plan, {}, result)
+        self.assertEqual(commands.run.call_count, 4)
         self.assertNotIn("process-independent", result["profile_results"])
         self.assertEqual(commands.deadline, 470)
 
@@ -695,33 +774,23 @@ class ProfileAdmissionTests(unittest.TestCase):
             self.assertFalse(all(re.fullmatch(pattern, part) for pattern, part in zip(expressions, name.split("/"))))
 
     def test_native_process_uses_prebuilt_cli_and_bounded_selected_invocation(self):
-        responses = {
-            "invocation": test_output(NATIVE_NAMES), "completion": completion_output(),
-            "startup-login": receipt_output("bash-login"),
-            "startup-nonlogin": receipt_output("bash-nonlogin"),
-            "models": receipt_output("models-filter-sort-limit"),
-        }
-        commands = Mock(deadline=565.0)
-        commands.run.side_effect = lambda label, _argv, _seconds: (responses[label], b"", 0)
+        plan, commands = self.shell_commands()
         result = {"shell_prerequisites": {"bash": {"path": "/usr/bin/bash"}}}
         with patch.object(pilot.time, "monotonic", return_value=0):
-            remaining = pilot.run_profile(commands, ["synthetic-user"], "shell-contracts", None,
-                                          {"openai": "a" * 64}, result)
+            remaining = pilot.run_profile(commands, ["synthetic-user"], plan, {"openai": "a" * 64}, result)
         self.assertEqual(remaining, {"final": 20})
         self.assertEqual(result["profile_admission_seconds"], 565)
         calls = commands.run.call_args_list
         self.assertEqual([(call.args[0], call.args[2]) for call in calls], [
             ("invocation", 170), ("completion", 75), ("startup-login", 130),
-            ("startup-nonlogin", 130), ("models", 40),
-        ])
+            ("startup-nonlogin", 130), ("models", 40)])
         self.assertEqual(calls[0].args[1], [
             "synthetic-user", "OPENAI_CLI_REQUIRE_NATIVE_SHELLS=bash",
             "OPENAI_CLI_NATIVE_SHELL_BINARY=/home/cli-compat/payload/openai",
             "OPENAI_CLI_NATIVE_SHELL_SHA256=" + "a" * 64,
             "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "160s",
             "/home/cli-compat/payload/process.test", "-test.run=" + pilot.NATIVE_SELECTOR,
-            "-test.timeout=150s", "-test.v",
-        ])
+            "-test.timeout=150s", "-test.v"])
         for call, timeout in zip(calls[1:], ("65s", "120s", "120s", "30s")):
             argv = call.args[1]
             self.assertEqual(argv[1:8], ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s",
@@ -732,26 +801,18 @@ class ProfileAdmissionTests(unittest.TestCase):
         self.assertEqual(set(result["profile_results"]["invocation"]["tests"]), NATIVE_NAMES)
 
     def test_refused_shell_profile_routes_exporter_to_both_startup_modes(self):
-        responses = {
-            "invocation": test_output(NATIVE_NAMES), "completion": completion_output(),
-            "startup-login": receipt_output("bash-login-refused", refused_startup_receipt("bash-login-refused")),
-            "startup-nonlogin": receipt_output("bash-nonlogin-refused", refused_startup_receipt("bash-nonlogin-refused")),
-            "models": receipt_output("models-filter-sort-limit"),
-        }
-        commands = Mock(deadline=565.0)
-        commands.run.side_effect = lambda label, _argv, _seconds: (responses[label], b"", 0)
+        plan, commands = self.shell_commands("refused")
         result = {"shell_prerequisites": {"bash": {"path": "/usr/bin/bash"}}}
         with patch.object(pilot.time, "monotonic", return_value=0):
-            remaining = pilot.run_profile(commands, ["synthetic-user"], "shell-contracts", None,
-                                          {"openai": "a" * 64, "autocomplete.test": "b" * 64}, result, "refused")
+            remaining = pilot.run_profile(commands, ["synthetic-user"], plan,
+                                          {"openai": "a" * 64, "autocomplete.test": "b" * 64}, result)
         self.assertEqual(remaining, {"final": 20})
         self.assertEqual(result["profile_admission_seconds"], 565)
         self.assertEqual(result["setup_contract"], "refused")
         calls = commands.run.call_args_list
         self.assertEqual([(call.args[0], call.args[2]) for call in calls], [
             ("invocation", 170), ("completion", 75), ("startup-login", 130),
-            ("startup-nonlogin", 130), ("models", 40),
-        ])
+            ("startup-nonlogin", 130), ("models", 40)])
         for call, mode in zip(calls[2:4], ("login", "nonlogin")):
             expected = [mode, "--setup-contract", "refused", "--autocomplete-test-binary",
                         "/home/cli-compat/payload/autocomplete.test"]
@@ -766,7 +827,7 @@ class ProfileAdmissionTests(unittest.TestCase):
 
 class DriverReceiptTests(unittest.TestCase):
     def test_first_use_requires_two_attempts_and_two_negative_controls(self):
-        pilot.require_first_use_receipt(first_use_receipt())
+        receipts.require_first_use_receipt(first_use_receipt())
         for index in range(4):
             for fault in ("no-stage", "stage", "unremoved-stage", "wrong-status", "missing-eof"):
                 bad = first_use_receipt()
@@ -787,7 +848,7 @@ class DriverReceiptTests(unittest.TestCase):
                 if (fault == "no-stage" and index in (0, 3)) or (fault == "stage" and index in (1, 2)):
                     continue
                 with self.subTest(index=index, fault=fault), self.assertRaises(RuntimeError):
-                    pilot.require_first_use_receipt(bad)
+                    receipts.require_first_use_receipt(bad)
 
     def test_first_use_rejects_output_changes_and_incomplete_source_identity(self):
         variants = []
@@ -814,7 +875,7 @@ class DriverReceiptTests(unittest.TestCase):
         variants.append(bad)
         for index, receipt in enumerate(variants):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
-                pilot.require_first_use_receipt(receipt)
+                receipts.require_first_use_receipt(receipt)
 
     def test_refused_nonlogin_requires_first_use_evidence(self):
         case = "bash-nonlogin-refused"
@@ -822,7 +883,7 @@ class DriverReceiptTests(unittest.TestCase):
             receipt = refused_startup_receipt(case)
             receipt["first_use_admission"] = value
             with self.subTest(value=value), self.assertRaises(RuntimeError):
-                pilot.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
+                receipts.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
 
     def test_first_use_rejects_reordered_duplicate_and_incomplete_staging_events(self):
         for fault in ("reverse", "duplicate", "incomplete"):
@@ -835,7 +896,7 @@ class DriverReceiptTests(unittest.TestCase):
             else:
                 sequence.pop()
             with self.subTest(fault=fault), self.assertRaises(RuntimeError):
-                pilot.require_first_use_receipt(receipt)
+                receipts.require_first_use_receipt(receipt)
 
     def test_startup_requires_bound_unchanged_system_sources(self):
         good = valid_receipt("bash-login")
@@ -857,11 +918,11 @@ class DriverReceiptTests(unittest.TestCase):
         variants.append(absent)
         for index, receipt in enumerate(variants):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
-                pilot.require_driver_pass(receipt_output("bash-login", receipt), b"", 0, {"bash-login"}, "bash-login")
+                receipts.require_driver_pass(receipt_output("bash-login", receipt), b"", 0, {"bash-login"}, "bash-login")
 
     def test_completion_requires_all_twelve_names_and_bash_version(self):
         self.assertEqual(pilot.COMPLETION_CASES, COMPLETION_NAMES)
-        self.assertEqual(pilot.require_driver_pass(completion_output(), b"", 0, COMPLETION_NAMES),
+        self.assertEqual(receipts.require_driver_pass(completion_output(), b"", 0, COMPLETION_NAMES),
                          {"cases": sorted(COMPLETION_NAMES)})
         first = sorted(COMPLETION_NAMES)[0]
         line = f"PASS: {first}\n".encode()
@@ -871,23 +932,23 @@ class DriverReceiptTests(unittest.TestCase):
                completion_output() + b"PASS: unexpected\n", completion_output() + b"diagnostic\n"]
         for index, raw in enumerate(bad):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
-                pilot.require_driver_pass(raw, b"", 0, COMPLETION_NAMES)
+                receipts.require_driver_pass(raw, b"", 0, COMPLETION_NAMES)
 
     def test_each_receipt_driver_requires_its_case_and_cleanup(self):
         for case in ("bash-login", "bash-nonlogin", "models-filter-sort-limit"):
             with self.subTest(case=case):
-                receipt = pilot.require_driver_pass(receipt_output(case), b"", 0, {case}, case)
+                receipt = receipts.require_driver_pass(receipt_output(case), b"", 0, {case}, case)
                 self.assertEqual(receipt, valid_receipt(case))
 
     def test_refused_receipts_keep_their_distinct_state_contract(self):
         for case in ("bash-login-refused", "bash-nonlogin-refused"):
             receipt = refused_startup_receipt(case)
             with self.subTest(case=case):
-                self.assertEqual(pilot.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case), receipt)
+                self.assertEqual(receipts.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case), receipt)
                 self.assertEqual([item["exit_code"] for item in receipt["setup_calls"]], [1, 1, 1, 0, 1, 1, 0])
                 self.assertEqual([item["expected_active"] for item in receipt["fresh_shells"]], [False, True, True])
                 with self.assertRaises(RuntimeError):
-                    pilot.require_driver_pass(receipt_output(case, valid_receipt(case)), b"", 0, {case}, case)
+                    receipts.require_driver_pass(receipt_output(case, valid_receipt(case)), b"", 0, {case}, case)
 
     def test_refused_receipts_reject_changed_actions_and_exit_contracts(self):
         case = "bash-login-refused"
@@ -910,7 +971,7 @@ class DriverReceiptTests(unittest.TestCase):
                     variants.append(bad)
         for index, receipt in enumerate(variants):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
-                pilot.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
+                receipts.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
 
     def test_refused_receipts_reject_changed_formats_and_diagnostics(self):
         case = "bash-nonlogin-refused"
@@ -937,7 +998,7 @@ class DriverReceiptTests(unittest.TestCase):
         variants.append(duplicate)
         for index, receipt in enumerate(variants):
             with self.subTest(index=index), self.assertRaises((RuntimeError, ValueError)):
-                pilot.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
+                receipts.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
 
     def test_refused_receipts_require_preservation_and_evidence_limits(self):
         case = "bash-login-refused"
@@ -961,7 +1022,7 @@ class DriverReceiptTests(unittest.TestCase):
                 variants.append(bad)
         for index, receipt in enumerate(variants):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
-                pilot.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
+                receipts.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
 
     def test_refused_receipts_require_bounded_successful_fixture_export(self):
         case = "bash-login-refused"
@@ -983,7 +1044,7 @@ class DriverReceiptTests(unittest.TestCase):
             variants.append(missing)
         for index, receipt in enumerate(variants):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
-                pilot.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
+                receipts.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
 
     def test_driver_exit_stderr_and_encoding_fail_independently(self):
         fixtures = [(completion_output(), COMPLETION_NAMES, None),
@@ -991,9 +1052,9 @@ class DriverReceiptTests(unittest.TestCase):
         for raw, names, case in fixtures:
             for stderr, code in ((b"diagnostic", 0), (b"", 7)):
                 with self.subTest(case=case, stderr=stderr, code=code), self.assertRaises(RuntimeError):
-                    pilot.require_driver_pass(raw, stderr, code, names, case)
+                    receipts.require_driver_pass(raw, stderr, code, names, case)
             with self.assertRaises(UnicodeDecodeError):
-                pilot.require_driver_pass(b"\xff" + raw, b"", 0, names, case)
+                receipts.require_driver_pass(b"\xff" + raw, b"", 0, names, case)
 
     def test_receipt_missing_duplicate_pass_and_extra_output_reject(self):
         case = "models-filter-sort-limit"
@@ -1003,7 +1064,7 @@ class DriverReceiptTests(unittest.TestCase):
                     raw + b"unexpected\n", raw.replace(pass_line, b"PASS: other\n")]
         for index, value in enumerate(variants):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
-                pilot.require_driver_pass(value, b"", 0, {case}, case)
+                receipts.require_driver_pass(value, b"", 0, {case}, case)
 
     def test_receipt_field_types_and_failure_values_reject(self):
         case = "bash-login"
@@ -1015,14 +1076,14 @@ class DriverReceiptTests(unittest.TestCase):
             variants.append({**good, "cleanup_complete": value})
         for receipt in variants:
             with self.subTest(receipt=receipt), self.assertRaises(RuntimeError):
-                pilot.require_driver_pass(receipt_output(case, json.dumps(receipt)), b"", 0, {case}, case)
+                receipts.require_driver_pass(receipt_output(case, json.dumps(receipt)), b"", 0, {case}, case)
 
     def test_duplicate_receipt_keys_cannot_override_failure(self):
         good = json.dumps(valid_receipt("bash-login"), separators=(",", ":"))
         for field, duplicate in (('"exit_code":0', '"exit_code":1,"exit_code":0'),
                                  ('"cleanup_complete":true', '"cleanup_complete":false,"cleanup_complete":true')):
             with self.subTest(duplicate=duplicate), self.assertRaises(RuntimeError):
-                pilot.require_driver_pass(receipt_output("bash-login", good.replace(field, duplicate, 1)),
+                receipts.require_driver_pass(receipt_output("bash-login", good.replace(field, duplicate, 1)),
                                           b"", 0, {"bash-login"}, "bash-login")
 
     def test_models_requires_exact_counts_output_and_eofs(self):
@@ -1039,7 +1100,7 @@ class DriverReceiptTests(unittest.TestCase):
         for key, values in mutations.items():
             for value in values:
                 with self.subTest(key=key, value=value), self.assertRaises(RuntimeError):
-                    pilot.require_driver_pass(receipt_output(case, {**good, key: value}), b"", 0, {case}, case)
+                    receipts.require_driver_pass(receipt_output(case, {**good, key: value}), b"", 0, {case}, case)
 
     def test_startup_requires_all_ordered_actions_and_checkpoints(self):
         case = "bash-login"
@@ -1056,7 +1117,7 @@ class DriverReceiptTests(unittest.TestCase):
             mutations.append(reordered)
         for index, receipt in enumerate(mutations):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
-                pilot.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
+                receipts.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
 
     def test_startup_requires_per_command_success_and_complete_output(self):
         case = "bash-nonlogin"
@@ -1069,14 +1130,14 @@ class DriverReceiptTests(unittest.TestCase):
             receipt = valid_receipt(case)
             receipt[key][-1][field] = value
             with self.subTest(key=key, field=field), self.assertRaises(RuntimeError):
-                pilot.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
+                receipts.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
         for key, value in (("setup_call_count", 5), ("fresh_shell_count", 2),
                            ("expected_setup_calls", 5), ("expected_fresh_shells", 2),
                            ("setup_stdout_eof", False), ("setup_stderr_eof", False), ("pty_eof", False)):
             receipt = valid_receipt(case)
             receipt[key] = value
             with self.subTest(key=key), self.assertRaises(RuntimeError):
-                pilot.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
+                receipts.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
 
     def test_startup_rejects_missing_or_corrupted_raw_evidence(self):
         case = "bash-login"
@@ -1101,55 +1162,85 @@ class DriverReceiptTests(unittest.TestCase):
         mutations.append(extra_stdout)
         for index, receipt in enumerate(mutations):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
-                pilot.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
+                receipts.require_driver_pass(receipt_output(case, receipt), b"", 0, {case}, case)
 
 
 class ProfileCLIAndCleanupTests(unittest.TestCase):
     def invoke_main(self, args):
         with patch.object(sys, "argv", ["check-wsl-pager.py", *args]), \
                 patch.object(pilot.signal, "signal"), patch.object(pilot, "pilot", return_value=0) as run, \
+                patch.object(pilot, "resolve_profile", wraps=pilot.resolve_profile) as resolve, \
                 patch.object(sys, "stderr", io.StringIO()):
             result = pilot.main()
+        resolve.assert_called_once()
         return result, run
+
+    def assert_plan(self, run, selection, payloads):
+        run.assert_called_once()
+        self.assertEqual(run.call_args.kwargs, {})
+        self.assertEqual(len(run.call_args.args), 1)
+        plan = run.call_args.args[0]
+        self.assertEqual(plan.selection, selection)
+        self.assertFalse(plan.cleanup_only)
+        self.assertEqual({item.filename: item.path for item in plan.payloads if item.executable}, payloads)
+        return plan
 
     def test_cli_routes_exact_payload_sets(self):
         code, run = self.invoke_main([
             "--profile", "local-state", "--binary", "custom.test", "--process-binary", "process.test",
             "--imageprefs-binary", "imageprefs.test", "--clihelp-binary", "clihelp.test",
-            "--autocomplete-binary", "autocomplete.test",
-        ])
+            "--autocomplete-binary", "autocomplete.test"])
         self.assertEqual(code, 0)
-        run.assert_called_once_with(Path("custom.test"), False, Path("process.test"),
-                                    profile="local-state", extra_payloads={
-                                        "imageprefs.test": Path("imageprefs.test"), "clihelp.test": Path("clihelp.test"),
-                                        "autocomplete.test": Path("autocomplete.test")}, setup_contract="supported")
+        plan = self.assert_plan(run, "local-state", {
+            name + ".test": Path(name + ".test")
+            for name in ("custom", "process", "imageprefs", "clihelp", "autocomplete")})
+        self.assertEqual(plan.initial_result["setup_contract"], "supported")
         code, run = self.invoke_main(["--profile", "shell-contracts", "--process-binary", "process.test",
                                      "--cli-binary", "openai"])
         self.assertEqual(code, 0)
-        run.assert_called_once_with(None, False, Path("process.test"), profile="shell-contracts",
-                                    extra_payloads={"openai": Path("openai")}, setup_contract="supported")
+        plan = self.assert_plan(run, "shell-contracts", {"process.test": Path("process.test"), "openai": Path("openai")})
+        self.assertEqual(plan.initial_result["setup_contract"], "supported")
 
     def test_cli_routes_refused_contract_with_its_exact_payloads(self):
         code, run = self.invoke_main([
             "--profile", "local-state", "--setup-contract", "refused",
             "--binary", "custom.test", "--process-binary", "process.test",
             "--imageprefs-binary", "imageprefs.test", "--clihelp-binary", "clihelp.test",
-            "--autocomplete-binary", "autocomplete.test",
-        ])
+            "--autocomplete-binary", "autocomplete.test"])
         self.assertEqual(code, 0)
-        run.assert_called_once_with(Path("custom.test"), False, Path("process.test"),
-                                    profile="local-state", setup_contract="refused", extra_payloads={
-                                        "imageprefs.test": Path("imageprefs.test"), "clihelp.test": Path("clihelp.test"),
-                                        "autocomplete.test": Path("autocomplete.test")})
+        plan = self.assert_plan(run, "local-state", {
+            name + ".test": Path(name + ".test")
+            for name in ("custom", "process", "imageprefs", "clihelp", "autocomplete")})
+        self.assertEqual(plan.initial_result["setup_contract"], "refused")
         code, run = self.invoke_main([
             "--profile", "shell-contracts", "--setup-contract", "refused",
             "--process-binary", "process.test", "--cli-binary", "openai",
-            "--autocomplete-binary", "autocomplete.test",
-        ])
+            "--autocomplete-binary", "autocomplete.test"])
         self.assertEqual(code, 0)
-        run.assert_called_once_with(None, False, Path("process.test"), profile="shell-contracts",
-                                    setup_contract="refused", extra_payloads={
-                                        "openai": Path("openai"), "autocomplete.test": Path("autocomplete.test")})
+        plan = self.assert_plan(run, "shell-contracts", {
+            "process.test": Path("process.test"), "openai": Path("openai"),
+            "autocomplete.test": Path("autocomplete.test")})
+        self.assertEqual(plan.initial_result["setup_contract"], "refused")
+
+    def test_cli_resolves_once_before_pilot(self):
+        plan = resolved_plan("shell-contracts")
+        events = []
+        def resolve(*_args, **_kwargs):
+            events.append("resolve")
+            return plan
+        def run(actual):
+            self.assertIs(actual, plan)
+            events.append("pilot")
+            return 0
+        with patch.object(sys, "argv", ["check-wsl-pager.py", "--profile", "shell-contracts",
+                                       "--process-binary", "process.test", "--cli-binary", "openai"]), \
+                patch.object(pilot.signal, "signal"), \
+                patch.object(pilot, "resolve_profile", side_effect=resolve) as selected, \
+                patch.object(pilot, "pilot", side_effect=run) as execute:
+            self.assertEqual(pilot.main(), 0)
+        selected.assert_called_once()
+        execute.assert_called_once_with(plan)
+        self.assertEqual(events, ["resolve", "pilot"])
 
     def test_cli_rejects_missing_mixed_and_extra_payloads(self):
         bad = [
@@ -1200,14 +1291,14 @@ class ProfileCLIAndCleanupTests(unittest.TestCase):
         for kwargs in invalid:
             with self.subTest(kwargs=kwargs), patch.object(pilot, "require_native_windows_process") as native:
                 with self.assertRaises(RuntimeError):
-                    pilot.pilot(None, **kwargs)
+                    pilot.resolve_profile(**kwargs)
                 native.assert_not_called()
 
     def test_local_profile_requires_autocomplete_before_native_access(self):
         with patch.object(pilot, "require_native_windows_process") as native:
             with self.assertRaisesRegex(RuntimeError, "exact payload set"):
-                pilot.pilot(Path("custom.test"), process_binary=Path("process.test"), profile="local-state",
-                            extra_payloads={"imageprefs.test": Path("imageprefs.test"), "clihelp.test": Path("clihelp.test")})
+                pilot.resolve_profile(Path("custom.test"), process_binary=Path("process.test"), profile="local-state",
+                                      extra_payloads={"imageprefs.test": Path("imageprefs.test"), "clihelp.test": Path("clihelp.test")})
             native.assert_not_called()
 
     def test_successor_profiles_reject_command_contract_app_and_image_binaries(self):
@@ -1225,6 +1316,7 @@ class ProfileCLIAndCleanupTests(unittest.TestCase):
                     args = ["--profile", profile, "--process-binary", "process.test",
                             "--" + name + "-binary", name + ".test", *flags]
                     with patch.object(sys, "argv", ["check-wsl-pager.py", *args]), \
+                            patch.object(pilot.signal, "signal"), \
                             patch.object(sys, "stderr", io.StringIO()), patch.object(pilot, "pilot") as run:
                         with self.assertRaises(SystemExit) as caught:
                             pilot.main()
@@ -1232,8 +1324,8 @@ class ProfileCLIAndCleanupTests(unittest.TestCase):
                         run.assert_not_called()
                     with patch.object(pilot, "require_native_windows_process") as native:
                         with self.assertRaisesRegex(RuntimeError, "Application and image binaries"):
-                            pilot.pilot(binary, process_binary=Path("process.test"), profile=profile,
-                                        extra_payloads=extras, **{name + "_binary": Path(name + ".test")})
+                            pilot.resolve_profile(binary, process_binary=Path("process.test"), profile=profile,
+                                                  extra_payloads=extras, **{name + "_binary": Path(name + ".test")})
                         native.assert_not_called()
 
     def test_cleanup_cli_requires_no_payload_arguments(self):
@@ -1242,7 +1334,31 @@ class ProfileCLIAndCleanupTests(unittest.TestCase):
                 with self.subTest(profile=profile, contract=contract):
                     code, run = self.invoke_main(["--profile", profile, "--cleanup", "--setup-contract", contract])
                     self.assertEqual(code, 0)
-                    run.assert_called_once_with(None, True, None, profile=profile, extra_payloads={}, setup_contract=contract)
+                    run.assert_called_once()
+                    plan = run.call_args.args[0]
+                    self.assertEqual(plan.selection, profile)
+                    self.assertTrue(plan.cleanup_only)
+                    self.assertEqual(plan.payloads, ())
+                    self.assertEqual(plan.phases, ())
+                    self.assertEqual(plan.inventory, ())
+
+    def test_cleanup_resolver_does_not_access_payloads_or_inventories(self):
+        for profile in ("local-state", "shell-contracts"):
+            for contract in ("supported", "refused"):
+                with self.subTest(profile=profile, contract=contract), \
+                        patch.object(pilot, "require_native_windows_process", side_effect=AssertionError("native access")), \
+                        patch.object(pilot, "load_shell_receipts", side_effect=AssertionError("receipt helper loaded")), \
+                        patch.object(pilot, "load_local_cases", side_effect=AssertionError("inventory accessed")), \
+                        patch.object(pilot, "load_command_cases", side_effect=AssertionError("inventory accessed")), \
+                        patch.object(pilot, "require_linux_binary", side_effect=AssertionError("payload accessed")), \
+                        patch.object(pilot, "digest", side_effect=AssertionError("asset accessed")), \
+                        patch.object(pilot.Path, "is_file", side_effect=AssertionError("asset inspected")), \
+                        patch.object(pilot.Path, "is_symlink", side_effect=AssertionError("asset inspected")):
+                    plan = pilot.resolve_profile(cleanup_only=True, profile=profile, setup_contract=contract)
+                self.assertTrue(plan.cleanup_only)
+                self.assertEqual(plan.payloads, ())
+                self.assertEqual(plan.phases, ())
+                self.assertEqual(plan.inventory, ())
 
     def test_cleanup_uses_owned_state_without_assets_or_inventories(self):
         for profile in ("local-state", "shell-contracts"):
@@ -1256,6 +1372,7 @@ class ProfileCLIAndCleanupTests(unittest.TestCase):
                         patch.object(pilot, "remaining_deadline", return_value=1000.0), \
                         patch.object(pilot.time, "monotonic", return_value=0.0), \
                         patch.object(pilot, "Commands", return_value=commands), \
+                        patch.object(pilot, "load_shell_receipts", side_effect=AssertionError("receipt helper loaded")), \
                         patch.object(pilot, "load_local_cases", side_effect=AssertionError("inventory accessed")) as local, \
                         patch.object(pilot, "load_command_cases", side_effect=AssertionError("inventory accessed")) as prior, \
                         patch.object(pilot, "require_linux_binary", side_effect=AssertionError("payload accessed")) as binary, \
@@ -1264,7 +1381,7 @@ class ProfileCLIAndCleanupTests(unittest.TestCase):
                         patch.object(pilot.Path, "is_symlink", side_effect=AssertionError("asset inspected")), \
                         patch.object(pilot, "clean_distro") as clean, \
                         patch.dict(os.environ, {"SYSTEMROOT": str(path / "windows")}):
-                    self.assertEqual(pilot.pilot(None, cleanup_only=True, profile=profile), 0)
+                    self.assertEqual(pilot.pilot(pilot.resolve_profile(cleanup_only=True, profile=profile)), 0)
                 local.assert_not_called()
                 prior.assert_not_called()
                 binary.assert_not_called()
