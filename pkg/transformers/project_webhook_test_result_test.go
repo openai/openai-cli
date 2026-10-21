@@ -29,6 +29,59 @@ func TestProjectWebhookTestResult(t *testing.T) {
 	}
 }
 
+func TestProjectWebhookTestResultOptionalContext(t *testing.T) {
+	for _, status := range []int{200, 500} {
+		for mask := 0; mask < 8; mask++ {
+			t.Run(fmt.Sprintf("status%d/context%d", status, mask), func(t *testing.T) {
+				body := fmt.Sprintf(`{"success":true,"status_code":%d`, status)
+				outcome := "failed"
+				if status == 200 {
+					outcome = "accepted"
+				}
+				want := fmt.Sprintf("Test request completed.\nDelivery %s: endpoint returned HTTP %d.", outcome, status)
+				if mask&1 != 0 {
+					body += `,"object":"webhook_endpoint.test"`
+				}
+				if mask&2 != 0 {
+					body += `,"webhook_endpoint_id":"wh_demo"`
+					want += "\nWebhook endpoint ID: \"wh_demo\""
+				}
+				if mask&4 != 0 {
+					body += `,"event_type":"response.completed"`
+					want += "\nEvent type: \"response.completed\""
+				}
+				got, err := ProjectWebhookTestResult(context.Background(), gjson.Parse(body+"}"))
+				if err != nil || got.Type != gjson.String || got.Str != want {
+					t.Fatalf("projection: %q, %v; want %q", got.Raw, err, want)
+				}
+			})
+		}
+	}
+}
+
+func TestProjectWebhookTestOutcome(t *testing.T) {
+	for i, body := range []string{
+		webhookTestResult,
+		`{"success":true,"status_code":500}`,
+		strings.Replace(webhookTestResult, "wh_demo", `wh_\nDelivery accepted.\t\u001b[31m\r\u202e`, 1),
+	} {
+		for _, status := range []int{200, 202, 299, 300, 500} {
+			t.Run(fmt.Sprintf("body%d/status%d", i, status), func(t *testing.T) {
+				input := strings.Replace(body, "500", fmt.Sprint(status), 1)
+				got, err := ProjectWebhookTestOutcome(context.Background(), gjson.Parse(input))
+				outcome := "failed"
+				if status >= 200 && status < 300 {
+					outcome = "accepted"
+				}
+				want := fmt.Sprintf("Test request completed.\nDelivery %s: endpoint returned HTTP %d.", outcome, status)
+				if err != nil || got.Type != gjson.String || got.Str != want {
+					t.Fatalf("projection included response context: %q, %v; want %q", got.Raw, err, want)
+				}
+			})
+		}
+	}
+}
+
 func TestProjectWebhookTestResultFallback(t *testing.T) {
 	cases := []string{
 		`null`, `[]`, `"unexpected"`, `{}`, webhookTestResult[:len(webhookTestResult)-1],
@@ -36,8 +89,14 @@ func TestProjectWebhookTestResultFallback(t *testing.T) {
 		strings.Replace(webhookTestResult, `"success":true`, `"success":true,"success":false`, 1),
 		strings.Replace(webhookTestResult, `"success":true`, `"success":true,"\u0073uccess":false`, 1),
 		strings.Replace(webhookTestResult, `"success":true`, `"success":true,"future":{"count":9007199254740993}`, 1),
+		`{"success":true,"status_code":500,"future":{"count":9007199254740993}}`,
+		`{"success":true,"status_code":500,"status_code":200}`,
+		`{"success":true,"status_code":500,"\u0073tatus_code":200}`,
+		`{"success":true,"status_code":500,"object":"webhook_endpoint.test","object":"webhook_endpoint.test"}`,
+		`{"success":true,"status_code":500,"webhook_endpoint_id":"wh_demo","webhook_endpoint_id":"wh_other"}`,
+		`{"success":true,"status_code":500,"event_type":"response.completed","event_type":"batch.failed"}`,
 	}
-	for _, field := range []string{`"success":true`, `"status_code":500`, `"webhook_endpoint_id":"wh_demo"`, `"event_type":"response.completed"`} {
+	for _, field := range []string{`"object":"webhook_endpoint.test"`, `"success":true`, `"status_code":500`, `"webhook_endpoint_id":"wh_demo"`, `"event_type":"response.completed"`} {
 		parts := strings.SplitN(field, ":", 2)
 		for _, replacement := range []string{"null", "false", `"500"`, "[]", "{}"} {
 			// A string remains a valid context value.
@@ -46,21 +105,25 @@ func TestProjectWebhookTestResultFallback(t *testing.T) {
 			}
 			cases = append(cases, strings.Replace(webhookTestResult, field, parts[0]+":"+replacement, 1))
 		}
-		omitted := strings.Replace(webhookTestResult, field+",", "", 1)
-		omitted = strings.Replace(omitted, ","+field, "", 1)
-		cases = append(cases, omitted)
+		if parts[0] == `"success"` || parts[0] == `"status_code"` {
+			omitted := strings.Replace(webhookTestResult, field+",", "", 1)
+			omitted = strings.Replace(omitted, ","+field, "", 1)
+			cases = append(cases, omitted)
+		}
 	}
 	for _, status := range []string{"0", "99", "600", "-500", "500.5", "1e99", "99999999999999999999"} {
 		cases = append(cases, strings.Replace(webhookTestResult, "500", status, 1))
 	}
-	for i, body := range cases {
-		t.Run(fmt.Sprint(i), func(t *testing.T) {
-			original := gjson.Parse(body)
-			got, err := ProjectWebhookTestResult(context.Background(), original)
-			if err != nil || got.Raw != original.Raw {
-				t.Fatalf("fallback changed data: %q, %v; want %q", got.Raw, err, original.Raw)
-			}
-		})
+	for name, project := range map[string]Transformer{"result": ProjectWebhookTestResult, "outcome": ProjectWebhookTestOutcome} {
+		for i, body := range cases {
+			t.Run(fmt.Sprintf("%s/%d", name, i), func(t *testing.T) {
+				original := gjson.Parse(body)
+				got, err := project(context.Background(), original)
+				if err != nil || got.Raw != original.Raw {
+					t.Fatalf("fallback changed data: %q, %v; want %q", got.Raw, err, original.Raw)
+				}
+			})
+		}
 	}
 }
 
@@ -76,9 +139,13 @@ func TestProjectWebhookTestResultContext(t *testing.T) {
 func TestProjectWebhookTestResultCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := ProjectWebhookTestResult(ctx, gjson.Parse(webhookTestResult))
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("want cancellation, got %v", err)
+	for name, project := range map[string]Transformer{"result": ProjectWebhookTestResult, "outcome": ProjectWebhookTestOutcome} {
+		t.Run(name, func(t *testing.T) {
+			_, err := project(ctx, gjson.Parse(webhookTestResult))
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("want cancellation, got %v", err)
+			}
+		})
 	}
 }
 

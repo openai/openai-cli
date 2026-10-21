@@ -13,6 +13,8 @@ It selects `response.completed` and `response.failed` with Space and arrow keys.
 It checks an empty search, then restores the search and both selections.
 It returns from review to event selection with Shift+Tab, then opens review again.
 The review initially selects No.
+The compact panel retains terminal scrollback and keeps hints beside its content.
+Tall terminals do not stretch the panel.
 The driver chooses Yes before pressing Enter.
 The fixture verifies both subscriptions and rejects creation before confirmation or duplicate creation.
 The response contains a clearly fake signing secret.

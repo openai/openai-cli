@@ -16,7 +16,9 @@ import (
 
 const webhookTestResult = `{"object":"webhook_endpoint.test","webhook_endpoint_id":"wh_demo","event_type":"response.completed","status_code":500,"success":true}`
 
-const webhookTestReadable500 = "Test request completed.\nDelivery failed: endpoint returned HTTP 500.\nWebhook endpoint ID: \"wh_demo\"\nEvent type: \"response.completed\"\n"
+const webhookTestRequestContext = "Project: determined by API key (ID unavailable)\nEndpoint: wh_demo\nEvent: response.completed\n\n"
+
+const webhookTestReadable500 = webhookTestRequestContext + "Test request completed.\nDelivery failed: endpoint returned HTTP 500.\n"
 
 func webhookTestCommand(flags ...string) []string {
 	return append(flags, "webhooks", "test", "--webhook-endpoint-id", "wh_demo", "--event-type", "response.completed")
@@ -65,7 +67,7 @@ func TestMainWebhookTestReceiverStatus(t *testing.T) {
 				if status >= 200 && status < 300 {
 					outcome = "accepted"
 				}
-				want := fmt.Sprintf("Test request completed.\nDelivery %s: endpoint returned HTTP %d.\nWebhook endpoint ID: \"wh_demo\"\nEvent type: \"response.completed\"\n", outcome, status)
+				want := webhookTestRequestContext + fmt.Sprintf("Test request completed.\nDelivery %s: endpoint returned HTTP %d.\n", outcome, status)
 				if got.code != 0 || !strings.Contains(got.stderr, "Next:") || got.stdout != want {
 					t.Fatalf("receiver status changed process outcome: got %+v, want stdout %q and exit 0", got, want)
 				}
@@ -77,6 +79,7 @@ func TestMainWebhookTestReceiverStatus(t *testing.T) {
 func TestMainWebhookTestPreservesMachineFormats(t *testing.T) {
 	for _, response := range []string{
 		webhookTestResult,
+		`{"success":true,"status_code":500}`,
 		strings.TrimSuffix(webhookTestResult, "}") + `,"future":{"sequence":9007199254740993,"decimal":1.2300,"items":[null,false,{"text":"synthetic"}]}}`,
 	} {
 		for _, format := range []string{"json", "JSON", "jsonl", "JsOnL", "raw", "RAW"} {
@@ -149,7 +152,6 @@ func TestMainWebhookTestPreservesUnrecognizedResults(t *testing.T) {
 		{"missing success", `,"success":true`, "", "Status code: 500"},
 		{"string success", `"success":true`, `"success":"true"`, "Success: true"},
 		{"null success", `"success":true`, `"success":null`, "Success: (null)"},
-		{"missing endpoint", `"webhook_endpoint_id":"wh_demo",`, "", "Event type: response.completed"},
 		{"null endpoint", `"webhook_endpoint_id":"wh_demo"`, `"webhook_endpoint_id":null`, "Webhook endpoint ID: (null)"},
 		{"malformed event", `"event_type":"response.completed"`, `"event_type":false`, "Event type: false"},
 		{"unknown field", `"success":true`, `"success":true,"future":{"sequence":9007199254740993,"detail":"retained"}`, "Future:\n  Sequence: 9007199254740993\n  Detail: retained"},
@@ -169,17 +171,21 @@ func TestMainWebhookTestPreservesUnrecognizedResults(t *testing.T) {
 	}
 }
 
-func TestMainWebhookTestContextEscapesControls(t *testing.T) {
+func TestMainWebhookTestResponseCannotReplaceRequestContext(t *testing.T) {
 	response := strings.Replace(webhookTestResult, `"wh_demo"`, `"wh_\u001b[31m\r\nforged"`, 1)
 	response = strings.Replace(response, `"response.completed"`, `"response.\t\u0007\u202ecompleted"`, 1)
 	server := webhookTestServer(t, response)
 	got := runReadableCommand(t, server, webhookTestCommand()...)
-	want := "Test request completed.\nDelivery failed: endpoint returned HTTP 500.\nWebhook endpoint ID: \"wh_\\x1b[31m\\r\\nforged\"\nEvent type: \"response.\\t\\a\\u202ecompleted\"\n"
-	if got.code != 0 || !strings.Contains(got.stderr, "Next:") || got.stdout != want {
-		t.Fatalf("external context changed presentation structure: %+v, want %q", got, want)
+	if got.code != 0 || !strings.Contains(got.stderr, "Next:") || got.stdout != webhookTestReadable500 {
+		t.Fatalf("response replaced request context: %+v, want %q", got, webhookTestReadable500)
 	}
-	if strings.Contains(got.stderr, "webhooks retrieve") || strings.Contains(got.stderr, "webhooks test") || strings.ContainsAny(got.stderr, "\x1b\r") {
-		t.Fatalf("unsafe context became a command suggestion: %q", got.stderr)
+	for _, want := range []string{"webhooks retrieve --webhook-endpoint-id=wh_demo", "webhooks test --webhook-endpoint-id=wh_demo --event-type=response.completed"} {
+		if !strings.Contains(got.stderr, want) {
+			t.Fatalf("request context missing from recovery: %q, want %q", got.stderr, want)
+		}
+	}
+	if strings.ContainsAny(got.stdout+got.stderr, "\x1b\r\a\u202e") || strings.Contains(got.stdout+got.stderr, "forged") {
+		t.Fatalf("response context leaked into presentation: %+v", got)
 	}
 }
 

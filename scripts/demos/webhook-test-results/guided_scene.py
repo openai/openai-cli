@@ -107,11 +107,11 @@ def main():
         env.update({"TERM": "xterm-256color", "LANG": "en_US.UTF-8", "NO_COLOR": "1", "FORCE_COLOR": "0",
                     "GOMAXPROCS": "2", "OPENAI_API_KEY": "synthetic-demo-key", "XDG_CONFIG_HOME": env["HOME"]})
         terminal = RelayTerminal(binary, ["webhooks", "create"], env, width=width, height=24)
-        terminal.wait("Name (optional")
+        terminal.wait("default: Webhook")
         paste(terminal, "Response notifications")
         checkpoint(terminal, evidence, "name")
         terminal.send(b"\r")
-        terminal.wait("Receiver URL")
+        terminal.wait("URL   ")
         paste(terminal, "https://example.com/webhook")
         checkpoint(terminal, evidence, "url")
         terminal.send(b"\r")

@@ -1,12 +1,14 @@
 package custom
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"testing"
 
@@ -17,6 +19,142 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v3"
 )
+
+func TestWebhookDiscoveryErrorPreservesAPIFormatsAndKnownOutcome(t *testing.T) {
+	apierr := &openai.Error{StatusCode: http.StatusUnauthorized}
+	require.NoError(t, json.Unmarshal([]byte(`{"message":"synthetic-private-response","code":"invalid_api_key","future_field":true}`), apierr))
+	failure := &webhookWorkflowError{"Could not load webhook event types.\nNo endpoint was created.", apierr}
+	for _, format := range []string{"auto", "text", "json", "jsonl", "raw", "yaml", "pretty", "explore"} {
+		t.Run(format, func(t *testing.T) {
+			root := readableErrorTestCommand(t, "--format-error", format)
+			var before, after bytes.Buffer
+			require.NoError(t, ShowCommandError(root, apierr, &before))
+			require.NoError(t, ShowCommandError(root, failure, &after))
+			if format == "auto" || format == "text" {
+				require.Contains(t, after.String(), "Could not load webhook event types.\nNo endpoint was created.")
+				require.NotContains(t, after.String(), "synthetic-private-response")
+				require.NotContains(t, before.String(), "No endpoint was created")
+			} else {
+				require.Equal(t, before.String(), after.String())
+			}
+		})
+	}
+	root := readableErrorTestCommand(t, "--transform-error", "future_field")
+	var out bytes.Buffer
+	require.NoError(t, ShowCommandError(root, failure, &out))
+	require.Equal(t, "true\n", out.String())
+	require.ErrorIs(t, failure, apierr)
+}
+
+func TestWebhookCreateAPIFailurePreservesFormatsAndIdentity(t *testing.T) {
+	apierr := &openai.Error{StatusCode: http.StatusInternalServerError}
+	require.NoError(t, json.Unmarshal([]byte(`{"message":"synthetic-private-response","code":"server_error","future_field":true}`), apierr))
+	failure := webhookCreateRequestError(context.Background(), nil, apierr)
+	var underlying *openai.Error
+	require.ErrorIs(t, failure, apierr)
+	require.ErrorAs(t, failure, &underlying)
+	require.Same(t, apierr, underlying)
+	for _, format := range []string{"auto", "text", "json", "jsonl", "raw", "yaml", "pretty", "explore"} {
+		t.Run(format, func(t *testing.T) {
+			root := readableErrorTestCommand(t, "--format-error", format)
+			var before, after bytes.Buffer
+			require.NoError(t, ShowCommandError(root, apierr, &before))
+			require.NoError(t, ShowCommandError(root, failure, &after))
+			if format == "auto" || format == "text" {
+				require.Contains(t, after.String(), "Webhook creation is unconfirmed.")
+				require.Contains(t, after.String(), "webhooks list with your original authentication, project, organization, and API settings")
+				require.NotContains(t, after.String(), "synthetic-private-response")
+			} else {
+				require.Equal(t, before.String(), after.String())
+			}
+		})
+	}
+	root := readableErrorTestCommand(t, "--transform-error", "future_field")
+	var out bytes.Buffer
+	require.NoError(t, ShowCommandError(root, failure, &out))
+	require.Equal(t, "true\n", out.String())
+}
+
+func TestWebhookCreateAPIFailureKeepsOtherStages(t *testing.T) {
+	apierr := &openai.Error{StatusCode: http.StatusServiceUnavailable}
+	for _, failure := range []error{
+		nil,
+		&openai.Error{StatusCode: http.StatusUnauthorized},
+		&openai.Error{StatusCode: http.StatusBadRequest},
+		&openai.Error{StatusCode: http.StatusTooManyRequests},
+		&webhookWorkflowError{"Could not load webhook event types.\nNo endpoint was created.", apierr},
+		errors.New("synthetic local validation failure"),
+		context.Canceled,
+		errors.Join(apierr, context.Canceled),
+	} {
+		require.Equal(t, failure, webhookCreateRequestError(context.Background(), nil, failure))
+	}
+	for _, operation := range []string{"create", "update", "test", "event-types"} {
+		t.Run(operation, func(t *testing.T) {
+			app := webhookCreateTestCommand(webhookActionContext(operation, func(context.Context, *cli.Command) error { return apierr }))
+			failure := app.Run(t.Context(), []string{"openai", "webhooks", "create"})
+			require.ErrorIs(t, failure, apierr)
+			var workflow *webhookWorkflowError
+			require.Equal(t, operation == "create", errors.As(failure, &workflow))
+		})
+	}
+}
+
+func TestWebhookCreateTransportFailurePreservesFallbackAndIdentity(t *testing.T) {
+	failure := &url.Error{Op: "Post", URL: "https://example.invalid/?token=synthetic-private", Err: io.EOF}
+	for _, flags := range [][]string{nil, {"--format-error", "text"},
+		{"--format", "json", "--format-error", "text"}, {"--format", "json"},
+		{"--format-error", "json"}, {"--format-error", "jsonl"}, {"--format-error", "raw"},
+		{"--format-error", "yaml"}, {"--transform-error", "message"},
+		{"--format-error", "text", "--transform-error", "message"},
+	} {
+		root := readableErrorTestCommand(t, flags...)
+		got := webhookCreateRequestError(t.Context(), root, failure)
+		require.ErrorIs(t, got, failure)
+		var transport *url.Error
+		require.ErrorAs(t, got, &transport)
+		require.Same(t, failure, transport)
+		var before, after bytes.Buffer
+		require.NoError(t, ShowCommandError(root, failure, &before))
+		require.NoError(t, ShowCommandError(root, got, &after))
+		if errorOutputFormat(root) == "text" && root.String("transform-error") == "" {
+			require.Contains(t, after.String(), before.String())
+			require.Contains(t, after.String(), "Webhook creation is unconfirmed.")
+			require.Contains(t, after.String(), "webhooks list")
+			require.NotContains(t, after.String(), "synthetic-private")
+		} else {
+			require.Same(t, failure, got)
+			require.Equal(t, before.String(), after.String())
+		}
+	}
+	timeout := &url.Error{Op: "Post", URL: "https://example.invalid/?token=synthetic-private", Err: context.DeadlineExceeded}
+	for _, flags := range [][]string{nil, {"--format-error", "json"}, {"--transform-error", "message"}} {
+		root := readableErrorTestCommand(t, flags...)
+		got := webhookCreateRequestError(t.Context(), root, timeout)
+		require.ErrorIs(t, got, context.DeadlineExceeded)
+		var before, after bytes.Buffer
+		require.NoError(t, ShowCommandError(root, timeout, &before))
+		require.NoError(t, ShowCommandError(root, got, &after))
+		if len(flags) == 0 {
+			require.Contains(t, after.String(), before.String())
+			require.Contains(t, after.String(), "The request timed out.")
+			require.Contains(t, after.String(), "webhooks list")
+			require.NotContains(t, after.String(), "synthetic-private")
+		} else {
+			require.Same(t, timeout, got)
+			require.Equal(t, before.String(), after.String())
+		}
+	}
+	root := readableErrorTestCommand(t)
+	for _, unchanged := range []error{
+		&url.Error{Op: "Get", Err: io.EOF},
+		&url.Error{Op: "Post", Err: context.Canceled},
+		&url.Error{Op: "Post", Err: errors.New("mTLS does not support HTTPS proxies")},
+		errors.New("mTLS client certificate and key files must be configured together"),
+	} {
+		require.Same(t, unchanged, webhookCreateRequestError(t.Context(), root, unchanged))
+	}
+}
 
 func webhookCreateTestCommand(action cli.ActionFunc) *cli.Command {
 	create := &cli.Command{Name: "create", Action: action, Flags: []cli.Flag{
@@ -169,7 +307,8 @@ func TestWebhookCreateDiscoveryErrorsKeepSafeGuidanceAndAPIErrors(t *testing.T) 
 			if status == http.StatusUnauthorized {
 				var apiError *openai.Error
 				require.ErrorAs(t, err, &apiError)
-				require.False(t, errors.As(err, &workflow))
+				require.ErrorAs(t, err, &workflow)
+				require.Contains(t, err.Error(), "No endpoint was created")
 				require.Equal(t, status, apiError.StatusCode)
 			} else {
 				require.ErrorAs(t, err, &workflow)

@@ -36,6 +36,7 @@ func runWebhookCreatePicker(ctx context.Context, input, output *os.File, events 
 	model := newWebhookCreatePicker(events)
 	model.width, model.height = width, height
 	model.color = os.Getenv("NO_COLOR") == ""
+	model.dark = codexGuideDarkBackground(os.Getenv("COLORFGBG"))
 	// Parent cancellation must reach the model so Tea paints its final frame.
 	// Only a failed output write immediately stops the private program context.
 	programContext, stop := context.WithCancel(context.WithoutCancel(ctx))
@@ -147,11 +148,13 @@ type webhookCreatePicker struct {
 	confirmYes           bool
 	confirmed, canceled  bool
 	color                bool
+	dark                 bool
+	ownedHeight          int
 	note                 string
 }
 
 func newWebhookCreatePicker(events []string) *webhookCreatePicker {
-	m := &webhookCreatePicker{selected: map[string]bool{}, width: 80, height: 24}
+	m := &webhookCreatePicker{selected: map[string]bool{}, width: 80, height: 24, dark: true}
 	seen := map[string]bool{}
 	for _, event := range events {
 		if !seen[event] {
@@ -400,37 +403,53 @@ func (i *webhookCreateInput) display(width int, placeholder string) string {
 }
 
 func (m *webhookCreatePicker) View() tea.View {
-	width, height := max(1, m.width-2), max(1, m.height-1)
+	width, height := max(1, min(76, m.width-2)), max(1, min(18, m.height-1))
 	if m.canceled {
-		return webhookCreateFrame([]string{"Webhook creation canceled."}, width, height)
+		return m.frame([]string{"Webhook creation canceled."}, width, height)
 	}
 	if m.confirmed {
-		return webhookCreateFrame([]string{"Creating webhook endpoint..."}, width, height)
+		return m.frame([]string{"Creating webhook endpoint..."}, width, height)
 	}
 	if m.width < 36 || m.height < 10 {
-		return webhookCreateFrame([]string{"Resize to 36 x 10.", "Esc or Ctrl+C cancels."}, width, height)
+		return m.frame([]string{"Resize to 36 x 10.", "Esc or Ctrl+C cancels."}, width, height)
 	}
-	title := fmt.Sprintf("Create webhook endpoint · %d/4", m.stage+1)
+	accent, fill, text, muted, border := "#3159BC", "#E9EFFE", "#20283B", "#657087", "#BAC4D8"
+	if m.dark {
+		accent, fill, text, muted, border = "#8AA8FF", "#343D58", "#F2F4FA", "#A4ACC2", "#51566B"
+	}
+	strong, quiet, selected := lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle()
+	panel := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	if m.color {
-		title = lipgloss.NewStyle().Bold(true).Render(title)
+		strong = strong.Bold(true).Foreground(lipgloss.Color(accent))
+		quiet = quiet.Foreground(lipgloss.Color(muted))
+		selected = selected.Foreground(lipgloss.Color(text)).Background(lipgloss.Color(fill))
+		panel = panel.BorderForeground(lipgloss.Color(border))
 	}
-	lines := []string{title, ""}
+	inner := width - 4 // Border and one padding cell on each side.
+	clip := func(s string) string { return ansi.Truncate(s, inner, "…") }
+	active := func(s string) string {
+		s = clip(s)
+		return selected.Render(s + strings.Repeat(" ", max(0, inner-ansi.StringWidth(s))))
+	}
+	body := []string{}
 	footer := "Enter next · Shift+Tab back · Esc cancel"
-	if width < 40 {
+	if width < 44 {
 		footer = "Enter next · Esc cancel"
 	}
 	switch m.stage {
 	case 0:
-		lines = append(lines, "Name (optional; default: Webhook)", "  "+m.name.display(width-2, "Webhook"), "",
-			"Choose a name to recognize this endpoint.", "No endpoint is created until you confirm.")
+		body = append(body, active("> Name  "+m.name.display(inner-8, "Webhook")),
+			quiet.Render(clip("Optional; default: Webhook")), "",
+			clip("Choose a name to recognize this endpoint."))
 	case 1:
-		lines = append(lines, "Receiver URL", "  "+m.url.display(width-2, "https://example.com/webhook"), "",
-			"OpenAI sends events to this public HTTPS URL.", "Use your application's webhook receiver.")
+		body = append(body, active("> URL   "+m.url.display(inner-8, "https://example.com/webhook")), "",
+			clip("OpenAI sends events to this HTTPS receiver."))
 	case 2:
-		lines = append(lines, "Search: "+m.search.display(width-8, "type an event or group"))
+		body = append(body, "Search: "+m.search.display(inner-8, "event or group"))
 		matches := m.filteredEvents()
-		lines = append(lines, fmt.Sprintf("%d selected · %d matching events", len(m.settings().events), len(matches)))
-		available := max(1, (height-len(lines)-3)/2)
+		body = append(body, quiet.Render(clip(fmt.Sprintf("%d selected · %d matching events", len(m.settings().events), len(matches)))))
+		// Reserve title, border, hints, and a note. Every event may start a group.
+		available := min(8, max(1, (height-8)/2))
 		m.current = min(m.current, max(0, len(matches)-1))
 		m.offset = min(m.offset, max(0, len(matches)-available))
 		if m.current < m.offset {
@@ -443,7 +462,7 @@ func (m *webhookCreatePicker) View() tea.View {
 			event := matches[index]
 			_, group := webhookCreateEventGroup(event)
 			if group != lastGroup {
-				lines = append(lines, group)
+				body = append(body, quiet.Render(clip(group)))
 				lastGroup = group
 			}
 			marker, tick := " ", " "
@@ -453,59 +472,64 @@ func (m *webhookCreatePicker) View() tea.View {
 			if m.selected[event] {
 				tick = "x"
 			}
-			lines = append(lines, marker+" ["+tick+"] "+webhookCreateLine(event))
+			row := clip(marker + " [" + tick + "] " + webhookCreateLine(event))
+			if index == m.current {
+				row = active(row)
+			}
+			body = append(body, row)
 		}
 		if len(matches) == 0 {
-			lines = append(lines, "No matches. Edit the search to see other events.")
+			body = append(body, clip("No matches. Edit the search."))
 		}
 		footer = "↑↓ move · Space select · Enter review"
+		if width < 44 {
+			footer = "↑↓ · Space select · Enter · Esc"
+		}
 	case 3:
 		settings := m.settings()
 		details := []string{"Name: " + webhookCreateLine(settings.name), "URL: " + webhookCreateLine(settings.url), "Events:"}
 		for _, event := range settings.events {
 			details = append(details, "  "+webhookCreateLine(event))
 		}
-		wrapped := strings.Split(ansi.Hardwrap(strings.Join(details, "\n"), width, false), "\n")
-		available := max(1, height-len(lines)-6)
+		wrapped := strings.Split(ansi.Hardwrap(strings.Join(details, "\n"), inner, false), "\n")
+		available := max(1, height-8)
 		m.reviewOffset = min(m.reviewOffset, max(0, len(wrapped)-available))
-		lines = append(lines, wrapped[m.reviewOffset:min(len(wrapped), m.reviewOffset+available)]...)
+		body = append(body, wrapped[m.reviewOffset:min(len(wrapped), m.reviewOffset+available)]...)
 		if len(wrapped) > available {
-			lines = append(lines, fmt.Sprintf("↑↓ review %d-%d/%d", m.reviewOffset+1, min(len(wrapped), m.reviewOffset+available), len(wrapped)))
+			body = append(body, quiet.Render(clip(fmt.Sprintf("↑↓ review %d-%d/%d", m.reviewOffset+1, min(len(wrapped), m.reviewOffset+available), len(wrapped)))))
 		}
 		choice := "[No]   Yes, create"
 		if m.confirmYes {
 			choice = " No   [Yes, create]"
 		}
-		lines = append(lines, "", "Create endpoint now?", choice)
+		body = append(body, strong.Render("Create endpoint now?"), active(choice))
 		footer = "←→ choose · Enter confirm · Esc cancel"
-		if width < 40 {
+		if width < 44 {
 			footer = "←→ choose · Enter · Esc cancel"
 		}
 	}
 	if m.note != "" {
-		lines = append(lines, m.note)
+		body = append(body, clip(m.note))
 	}
-	if m.stage == 2 {
-		lines = append(lines, "Type to search · Shift+Tab back · Esc cancel")
+	lines := []string{strong.Render("Create webhook endpoint")}
+	lines = append(lines, strings.Split(panel.Width(width).Render(strings.Join(body, "\n")), "\n")...)
+	lines = append(lines, quiet.Render(footer))
+	if m.stage == 2 && height >= 12 {
+		lines = append(lines, quiet.Render("Type to search · Shift+Tab back · Esc cancel"))
 	}
-	lines = append(lines, footer)
-	return webhookCreateFrame(lines, width, height)
+	return m.frame(lines, width, height)
 }
 
-// Keep the inline form's height fixed for the current terminal size. The
-// renderer can then replace every prior row when filtering shrinks a list.
-// Pad before the footer so keyboard guidance stays in the same position.
-func webhookCreateFrame(lines []string, width, height int) tea.View {
-	if len(lines) > height {
-		lines = append(lines[:height-1], lines[len(lines)-1])
+// Retain only the compact region this form has drawn. Padding goes after the
+// nearby hints, so filtering and final frames erase owned rows without putting
+// controls at the bottom of a tall terminal or clearing its scrollback.
+func (m *webhookCreatePicker) frame(lines []string, width, height int) tea.View {
+	m.ownedHeight = min(height, max(m.ownedHeight, len(lines)))
+	if len(lines) > m.ownedHeight {
+		lines = lines[:m.ownedHeight]
 	}
-	if len(lines) < height {
-		footer := lines[len(lines)-1]
-		lines = lines[:len(lines)-1]
-		for len(lines) < height-1 {
-			lines = append(lines, "")
-		}
-		lines = append(lines, footer)
+	for len(lines) < m.ownedHeight {
+		lines = append(lines, "")
 	}
 	for i, line := range lines {
 		lines[i] = ansi.Truncate(line, width, "…")

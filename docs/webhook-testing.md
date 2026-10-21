@@ -27,6 +27,9 @@ Type to search the grouped list. Use arrow keys to move and Space to select even
 Selections remain when you change the search. Press Enter to review them.
 Use Shift+Tab to go back. Press Escape or Ctrl+C to cancel.
 The final confirmation defaults to No.
+The form stays inline and uses a compact panel with nearby keyboard hints.
+It preserves terminal scrollback and supports both light and dark terminal colors.
+Set `NO_COLOR=1` for plain output; selection markers remain visible.
 
 Creation returns a signing secret. Save it securely before closing the terminal.
 Configure your receiver to verify webhook signatures with that secret before processing events.
@@ -48,6 +51,39 @@ openai webhooks create \
 Replace the example URL with your receiver URL. The API requires a name in explicit requests.
 Repeat `--event-type` for each subscription. Existing JSON/YAML input remains supported.
 See the [create reference](https://developers.openai.com/api/reference/cli/resources/webhooks/methods/create).
+
+## Recover from authentication or permission failures
+
+If event discovery returns HTTP 401, the CLI has not created an endpoint.
+If the error includes `Key setup:`, use that command to open the local setup guide.
+That command preserves the executable you used, including a renamed preview.
+Displaying the guide does not send an API request or change your credentials.
+
+Use an API key for the project where you want the endpoint.
+Set `OPENAI_API_KEY` in the same shell where you run the CLI.
+An explicit `--api-key` overrides that environment variable, including an empty override.
+Check explicit `--project` and `--organization` options against the key's project and organization.
+Their environment settings are `OPENAI_PROJECT_ID` and `OPENAI_ORG_ID`.
+
+The API key authorizes webhook setup. The signing secret verifies events received by your server.
+An admin key alone cannot authorize webhook event discovery.
+Custom API endpoints and authorization headers can require different credentials.
+HTTP 401 alone does not identify which credential or setting is wrong.
+See the [authentication error guide](https://developers.openai.com/api/docs/guides/error-codes) for documented causes.
+
+An explicit missing-permission response can also use HTTP 401 or 403.
+This response identifies an access failure; it does not establish that your API key is invalid.
+The CLI names recognized missing webhook permissions, such as `api.webhooks.read`.
+Check the key's permissions and your organization and project roles in the linked API key settings.
+The Read only preset may omit webhook permissions. Restricted may not offer a Webhooks permission.
+All grants broader permissions within your organization and project roles. Select it only deliberately.
+An organization or project role can still restrict an All key.
+
+After correcting access, run `openai webhooks event-types list` with your original project and API settings.
+This read-only check loads the event catalog without creating an endpoint.
+To recheck endpoint-list access, run `openai webhooks list` with those settings.
+Successful event discovery alone does not prove that endpoint-list access works.
+Then run `openai webhooks create` with those settings to restart the guided flow.
 
 ## Discover available operations
 
@@ -90,11 +126,18 @@ Replace `whe_example` with your endpoint ID. This command sends an actual sample
 Readable output separates test completion from the receiver's HTTP response:
 
 ```text
+Project: determined by API key (ID unavailable)
+Endpoint: whe_example
+Event: response.completed
+
 Test request completed.
 Delivery failed: endpoint returned HTTP 500.
-Webhook endpoint ID: "whe_example"
-Event type: "response.completed"
 ```
+
+The context identifies the endpoint and event from the submitted request, including JSON/YAML and file inputs.
+The CLI shows the effective project header when available.
+Otherwise, it explains that the API key determines the project without exposing its ID.
+The CLI does not look up the project or infer it from the key.
 
 The CLI also writes recovery guidance to stderr.
 For HTTP 500, it recommends checking receiver and proxy logs before retrying.
@@ -122,7 +165,8 @@ A completed test keeps exit status 0, including a receiver HTTP 500 response.
 API errors keep their existing nonzero status and error output.
 See the [test reference](https://developers.openai.com/api/reference/cli/resources/webhooks/methods/test).
 
-Unknown fields, missing fields, duplicate keys, and malformed results retain the complete generic readable output.
+The CLI also explains minimal results containing only `success: true` and a valid `status_code`.
+Unknown fields, missing outcome fields, duplicate keys, and malformed results retain the complete generic readable output.
 The CLI does not infer a delivery outcome from an unexpected result.
 
 ## Preserve machine output

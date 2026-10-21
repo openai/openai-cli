@@ -93,7 +93,7 @@ func TestMainWebhookWorkflowStatusAdvice(t *testing.T) {
 		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
 			server := webhookTestServer(t, strings.Replace(webhookTestResult, `"status_code":500`, fmt.Sprintf(`"status_code":%d`, tc.status), 1))
 			got := runReadableCommand(t, server, webhookTestCommand()...)
-			if got.code != 0 || !strings.Contains(got.stderr, tc.want) || strings.Contains(got.stdout, "Next:") {
+			if got.code != 0 || !strings.Contains(got.stderr, tc.want) || strings.Contains(got.stdout, "Next:") || strings.Contains(got.stderr, "Webhook creation is unconfirmed.") {
 				t.Fatalf("receiver guidance changed output or exit status: %+v, want %q on stderr", got, tc.want)
 			}
 			if tc.status >= 300 && !strings.Contains(got.stderr, "webhooks retrieve --webhook-endpoint-id=wh_demo") {
@@ -280,19 +280,36 @@ func TestMainWebhookWorkflowDoesNotGuideScripts(t *testing.T) {
 
 func TestMainWebhookWorkflowOmitsUnsafeFollowups(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		flags    []string
-		response string
+		name, endpoint, event string
+		flags                 []string
 	}{
-		{"credential override", []string{"--api-key", "sk-fake-private-override"}, webhookTestResult},
-		{"custom header", []string{"--header", "X-Synthetic: fake-private-header"}, webhookTestResult},
-		{"at endpoint", nil, strings.Replace(webhookTestResult, `"wh_demo"`, `"@synthetic-file"`, 1)},
-		{"at event", nil, strings.Replace(webhookTestResult, `"response.completed"`, `"@synthetic-file"`, 1)},
+		{"credential override", "wh_demo", "response.completed", []string{"--api-key", "sk-fake-private-override"}},
+		{"custom header", "wh_demo", "response.completed", []string{"--header", "X-Synthetic: fake-private-header"}},
+		{"at endpoint", "@synthetic-file", "response.completed", nil},
+		{"at event", "wh_demo", "@synthetic-file", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			server := webhookTestServer(t, tc.response)
-			got := runReadableCommand(t, server, webhookTestCommand(tc.flags...)...)
-			if got.code != 0 || !strings.Contains(got.stderr, "Next:") {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if r.Method != http.MethodPost || r.URL.Path != "/webhook_endpoints/"+tc.endpoint+"/test" {
+					t.Errorf("request changed: %s %s", r.Method, r.URL.Path)
+				}
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["event_type"] != tc.event {
+					t.Errorf("request changed: body=%v error=%v", body, err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, webhookTestResult)
+			}))
+			defer server.Close()
+			event := tc.event
+			if strings.HasPrefix(event, "@") {
+				event = `\` + event // Keep this request value literal instead of opening a file.
+			}
+			args := append(append([]string{}, tc.flags...), "webhooks", "test", "--webhook-endpoint-id="+tc.endpoint, "--event-type="+event)
+			got := runReadableCommand(t, server, args...)
+			if got.code != 0 || calls.Load() != 1 || !strings.Contains(got.stderr, "Next:") {
 				t.Fatalf("unsafe-context result failed: %+v", got)
 			}
 			for _, private := range []string{"sk-fake-private-override", "fake-private-header", "@synthetic-file"} {
@@ -302,6 +319,295 @@ func TestMainWebhookWorkflowOmitsUnsafeFollowups(t *testing.T) {
 			}
 			if strings.Contains(got.stderr, "After fixing the receiver, retry:") {
 				t.Fatalf("unsafe context produced retry command: %q", got.stderr)
+			}
+		})
+	}
+}
+
+func TestMainWebhookWorkflowCreateAPIFailureRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		flags  []string
+		retry  bool
+	}{
+		{"timeout", 408, nil, false},
+		{"server error", 500, nil, false},
+		{"unavailable", 503, nil, false},
+		{"gateway timeout", 504, nil, false},
+		{"quiet", 500, []string{"--quiet"}, false},
+		{"private override", 500, []string{"--api-key", "sk-fake-private-override"}, false},
+		{"SDK retries", 500, nil, true},
+		{"unauthorized", 401, nil, false},
+		{"invalid input", 400, nil, false},
+		{"rate limited", 429, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var creates, lists atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				key := "sk-fake-webhook-workflow"
+				if tc.name == "private override" {
+					key = "sk-fake-private-override"
+				}
+				if r.Header.Get("OpenAI-Project") != "proj-f34" || r.Header.Get("OpenAI-Organization") != "org-f34" || r.Header.Get("Authorization") != "Bearer "+key {
+					t.Error("create or recovery changed request context")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method + " " + r.URL.Path {
+				case "POST /webhook_endpoints":
+					creates.Add(1)
+					if tc.retry {
+						w.Header().Set("Retry-After-Ms", "1")
+					} else {
+						w.Header().Set("X-Should-Retry", "false")
+					}
+					w.Header().Set("X-Request-ID", "req_synthetic_create")
+					w.WriteHeader(tc.status)
+					_, _ = io.WriteString(w, `{"error":{"message":"synthetic-private-create-detail","type":"server_error"}}`)
+				case "GET /webhook_endpoints":
+					lists.Add(1)
+					_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"whe_existing","name":"Synthetic receiver","url":"https://example.com/webhook"}],"has_more":false}`)
+				default:
+					t.Errorf("unexpected recovery request: %s %s", r.Method, r.URL.Path)
+					http.Error(w, "unexpected request", http.StatusBadRequest)
+				}
+			}))
+			defer server.Close()
+			settings := append([]string{"openai", "--base-url=" + server.URL, "--project=proj-f34", "--organization=org-f34"}, tc.flags...)
+			args := append(slices.Clone(settings), "webhooks", "create", "--name", "Synthetic receiver", "--url", "https://example.com/webhook", "--event-type", "response.completed")
+			env := []string{"OPENAI_API_KEY=sk-fake-webhook-workflow", "FORCE_COLOR=0"}
+			got := runMainDispatchWithEnv(t, "bash", env, args...)
+			attempts := int32(1)
+			if tc.retry {
+				attempts = 3
+			}
+			if got.code != 1 || got.stdout != "" || creates.Load() != attempts || lists.Load() != 0 || !strings.Contains(got.stderr, "Request ID: req_synthetic_create") {
+				t.Fatalf("create failure changed lifecycle: %+v, creates=%d lists=%d", got, creates.Load(), lists.Load())
+			}
+			if strings.Contains(got.stderr, "synthetic-private-create-detail") || strings.Contains(got.stderr, "sk-fake-") {
+				t.Fatalf("create guidance exposed private values: %q", got.stderr)
+			}
+			uncertain := tc.status == 408 || tc.status >= 500
+			if strings.Contains(got.stderr, "Webhook creation is unconfirmed.") != uncertain {
+				t.Fatalf("create failure misclassified outcome: %q", got.stderr)
+			}
+			if !uncertain {
+				if strings.Contains(got.stderr, "List endpoints:") {
+					t.Fatalf("non-server error acquired uncertain-create recovery: %q", got.stderr)
+				}
+				return
+			}
+			var copied string
+			for line := range strings.SplitSeq(got.stderr, "\n") {
+				if after, ok := strings.CutPrefix(line, "List endpoints: "); ok {
+					copied = after
+				}
+			}
+			var recovery []string
+			if tc.name == "private override" {
+				if copied != "" || !strings.Contains(got.stderr, "webhooks list with your original authentication, project, organization, and API settings") {
+					t.Fatalf("private override lacks safe manual recovery: %q", got.stderr)
+				}
+				recovery = append(slices.Clone(settings), "webhooks", "list")
+			} else {
+				// These fixture arguments are plain tokens in every supported shell.
+				// Execute the emitted command through the production entrypoint.
+				if copied == "" || strings.ContainsAny(copied, "'\"`\\") {
+					t.Fatalf("missing plain-token recovery: %q", got.stderr)
+				}
+				recovery = strings.Fields(copied)
+			}
+			listed := runMainDispatchWithEnv(t, "bash", env, recovery...)
+			if listed.code != 0 || lists.Load() != 1 || creates.Load() != attempts || !strings.Contains(listed.stdout, "whe_existing") {
+				t.Fatalf("read-only recovery failed or repeated create: %+v, creates=%d lists=%d", listed, creates.Load(), lists.Load())
+			}
+		})
+	}
+}
+
+func TestMainWebhookWorkflowCreateTransportFailureRecovery(t *testing.T) {
+	const message = "Could not connect to the API. Check your connection, proxy, and --base-url setting."
+	for _, tc := range []struct {
+		name, format string
+		flags        []string
+	}{
+		{"readable", "", nil},
+		{"quiet", "", []string{"--quiet"}},
+		{"inherited JSON", "json", []string{"--format", "json"}},
+		{"explicit JSON", "json", []string{"--format-error", "json"}},
+		{"JSONL", "jsonl", []string{"--format-error", "jsonl"}},
+		{"raw", "raw", []string{"--format-error", "raw"}},
+		{"YAML", "yaml", []string{"--format-error", "yaml"}},
+		{"extraction", "extract", []string{"--transform-error", "message"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var creates, lists atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("OpenAI-Project") != "proj-f34" || r.Header.Get("Authorization") != "Bearer sk-fake-webhook-workflow" {
+					t.Error("transport recovery changed request context")
+				}
+				switch r.Method + " " + r.URL.Path {
+				case "POST /webhook_endpoints":
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["name"] != "Synthetic receiver" {
+						t.Errorf("transport fixture received invalid create: %#v, error=%v", body, err)
+					}
+					creates.Add(1)
+					// The API accepts the body before losing the response connection.
+					connection, _, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					if err := connection.Close(); err != nil {
+						t.Error(err)
+					}
+				case "GET /webhook_endpoints":
+					lists.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"whe_existing","name":"Synthetic receiver","url":"https://example.com/webhook"}],"has_more":false}`)
+				default:
+					t.Errorf("unexpected transport recovery request: %s %s", r.Method, r.URL.Path)
+					http.Error(w, "unexpected request", http.StatusBadRequest)
+				}
+			}))
+			defer server.Close()
+			settings := append([]string{"openai", "--base-url=" + server.URL, "--project=proj-f34"}, tc.flags...)
+			args := append(slices.Clone(settings), "webhooks", "create", "--name", "Synthetic receiver", "--url", "https://example.com/webhook", "--event-type", "response.completed")
+			env := []string{"OPENAI_API_KEY=sk-fake-webhook-workflow", "FORCE_COLOR=0"}
+			got := runMainDispatchWithEnv(t, "bash", env, args...)
+			if got.code != 1 || got.stdout != "" || creates.Load() != 3 || lists.Load() != 0 {
+				t.Fatalf("transport failure changed SDK retries or exit: %+v, creates=%d lists=%d", got, creates.Load(), lists.Load())
+			}
+			if tc.format == "extract" {
+				// Automatic extraction preserves the existing JSON scalar format.
+				quoted, _ := json.Marshal(message)
+				if got.stderr != string(quoted)+"\n" {
+					t.Fatalf("transport error extraction changed: %q", got.stderr)
+				}
+				return
+			}
+			if tc.format != "" {
+				if actual := decodeMainErrorObject(t, tc.format, got.stderr); !reflect.DeepEqual(actual, map[string]any{"message": message}) {
+					t.Fatalf("transport fallback payload changed: %#v", actual)
+				}
+				return
+			}
+			if !strings.Contains(got.stderr, message) || !strings.Contains(got.stderr, "Webhook creation is unconfirmed.") || strings.Contains(got.stderr, "sk-fake-") {
+				t.Fatalf("transport failure lacks safe uncertainty guidance: %q", got.stderr)
+			}
+			var copied string
+			for line := range strings.SplitSeq(got.stderr, "\n") {
+				if after, ok := strings.CutPrefix(line, "List endpoints: "); ok {
+					copied = after
+				}
+			}
+			if copied == "" || strings.ContainsAny(copied, "'\"`\\") {
+				t.Fatalf("missing plain-token transport recovery: %q", got.stderr)
+			}
+			listed := runMainDispatchWithEnv(t, "bash", env, strings.Fields(copied)...)
+			if listed.code != 0 || lists.Load() != 1 || creates.Load() != 3 || !strings.Contains(listed.stdout, "whe_existing") {
+				t.Fatalf("transport recovery repeated create or failed: %+v, creates=%d lists=%d", listed, creates.Load(), lists.Load())
+			}
+		})
+	}
+}
+
+func TestMainWebhookWorkflowCreateLocalFailureDoesNotImplyDispatch(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+	defer server.Close()
+	for _, flags := range [][]string{{"--mtls-client-cert-file", "synthetic-unpaired-cert.pem"}, nil} {
+		args := append(slices.Clone(flags), "webhooks", "create", "--name", "Synthetic receiver")
+		got := runWebhookWorkflowInput(t, server, "", args...)
+		if got.code != 1 || calls.Load() != 0 || strings.Contains(got.stderr, "creation is unconfirmed") || strings.Contains(got.stderr, "List endpoints:") {
+			t.Fatalf("local validation acquired uncertain-create guidance: %+v, requests=%d", got, calls.Load())
+		}
+		if len(flags) != 0 && !strings.Contains(got.stderr, "mTLS client certificate and key files must be configured together") {
+			t.Fatalf("mTLS validation lost its actual recovery: %q", got.stderr)
+		}
+	}
+}
+
+func TestMainWebhookWorkflowCreateAPIFailureFormats(t *testing.T) {
+	const details = `{"message":"synthetic-private-create-detail","type":"server_error","future_field":{"sequence":9007199254740993}}`
+	want := decodeMainErrorObject(t, "json", details)
+	for _, flag := range []string{"--format", "--format-error"} {
+		for _, format := range []string{"json", "jsonl", "raw", "yaml"} {
+			t.Run(flag+"/"+format, func(t *testing.T) {
+				var calls atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls.Add(1)
+					if r.Method != http.MethodPost || r.URL.Path != "/webhook_endpoints" {
+						t.Errorf("unexpected error-format request: %s %s", r.Method, r.URL.Path)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set("X-Should-Retry", "false")
+					w.WriteHeader(http.StatusInternalServerError)
+					_, _ = io.WriteString(w, `{"error":`+details+`}`)
+				}))
+				defer server.Close()
+				args := []string{flag, format, "webhooks", "create", "--name", "Synthetic receiver", "--url", "https://example.com/webhook", "--event-type", "response.completed"}
+				got := runWebhookWorkflowInput(t, server, "", args...)
+				if got.code != 1 || got.stdout != "" || calls.Load() != 1 || !reflect.DeepEqual(decodeMainErrorObject(t, format, got.stderr), want) {
+					t.Fatalf("create failure changed structured errors: %+v, calls=%d", got, calls.Load())
+				}
+				args = append([]string{"--transform-error", "future_field.sequence"}, args...)
+				extracted := runWebhookWorkflowInput(t, server, "", args...)
+				if extracted.code != 1 || extracted.stdout != "" || calls.Load() != 2 || strings.TrimSpace(extracted.stderr) != "9007199254740993" {
+					t.Fatalf("create failure changed extraction: %+v, calls=%d", extracted, calls.Load())
+				}
+			})
+		}
+	}
+}
+
+func TestMainWebhookWorkflowPTYCreateAPIFailureStages(t *testing.T) {
+	for _, discoveryFails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("discovery-fails=%t", discoveryFails), func(t *testing.T) {
+			var catalogs, creates, lists atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Should-Retry", "false")
+				switch r.Method + " " + r.URL.Path {
+				case "GET /webhook_event_types":
+					catalogs.Add(1)
+					if !discoveryFails {
+						_, _ = io.WriteString(w, `{"object":"list","data":["response.completed"]}`)
+						return
+					}
+				case "POST /webhook_endpoints":
+					creates.Add(1)
+				case "GET /webhook_endpoints":
+					lists.Add(1)
+					_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"whe_existing","name":"Synthetic receiver","url":"https://example.com/webhook"}],"has_more":false}`)
+					return
+				default:
+					t.Errorf("unexpected guided request: %s %s", r.Method, r.URL.Path)
+				}
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = io.WriteString(w, `{"error":{"message":"synthetic-private-guided-error","type":"server_error"}}`)
+			}))
+			defer server.Close()
+			got := runWebhookCreateWorkflowPTY(t, server, !discoveryFails)
+			if got.code != 1 || catalogs.Load() != 1 || lists.Load() != 0 || strings.Contains(got.stderr, "synthetic-private") {
+				t.Fatalf("guided API failure changed lifecycle: %+v, catalogs=%d creates=%d lists=%d", got, catalogs.Load(), creates.Load(), lists.Load())
+			}
+			if discoveryFails {
+				if creates.Load() != 0 || !strings.Contains(got.stderr, "No endpoint was created.") || strings.Contains(got.stderr, "creation is unconfirmed") {
+					t.Fatalf("discovery failure acquired a create outcome: %+v, creates=%d", got, creates.Load())
+				}
+				return
+			}
+			if creates.Load() != 1 || !strings.Contains(got.stderr, "Webhook creation is unconfirmed.") || strings.Contains(got.stderr, "No endpoint was created.") {
+				t.Fatalf("confirmed create lost uncertainty: %+v, creates=%d", got, creates.Load())
+			}
+			if !strings.Contains(got.stderr, "List endpoints: openai webhooks list\n") {
+				t.Fatalf("guided create omitted read-only recovery: %q", got.stderr)
+			}
+			listed := runWebhookWorkflowInput(t, server, "", "webhooks", "list")
+			if listed.code != 0 || lists.Load() != 1 || creates.Load() != 1 || !strings.Contains(listed.stdout, "whe_existing") {
+				t.Fatalf("guided recovery failed or repeated create: %+v, creates=%d lists=%d", listed, creates.Load(), lists.Load())
 			}
 		})
 	}
@@ -324,7 +630,7 @@ func TestMainWebhookWorkflowPTYRejectsInvalidCatalogs(t *testing.T) {
 			if !strings.Contains(got.stderr, "webhooks event-types list") && !strings.Contains(got.stderr, "Check your project") {
 				t.Fatalf("catalog failure lacks actionable stderr: %+v", got)
 			}
-			if strings.Contains(got.stdout, "Name (optional") || strings.Contains(got.stdout, "signing_secret") {
+			if strings.Contains(got.stdout, "default: Webhook") || strings.Contains(got.stdout, "signing_secret") {
 				t.Fatalf("invalid catalog opened the form or displayed a result: %q", got.stdout)
 			}
 		})
@@ -475,7 +781,7 @@ func runWebhookCreateWorkflowPTY(t *testing.T, server *httptest.Server, confirm 
 }
 
 const webhookCreateWorkflowPTYScript = `
-import errno, fcntl, json, os, pty, selectors, signal, struct, subprocess, sys, termios, time, tty
+import errno, fcntl, json, os, pty, selectors, struct, subprocess, sys, termios, time, tty
 config = json.load(sys.stdin)
 env = {"PATH": "/usr/bin:/bin", "HOME": config["Work"], "XDG_CONFIG_HOME": config["Work"],
        "TERM": "xterm-256color", "NO_COLOR": "1", "FORCE_COLOR": "0", "LANG": "en_US.UTF-8",
@@ -488,14 +794,15 @@ selector = selectors.DefaultSelector()
 output = [bytearray(), bytearray()]
 process = None
 completed = False
-steps = [(b"Name (optional", b"Synthetic receiver\r"),
-         (b"Receiver URL", b"https://example.com/webhook\r"),
+steps = [(b"default: Webhook", b"Synthetic receiver\r"),
+         (b"URL   ", b"https://example.com/webhook\r"),
          (b"Space select", b" \r"), (b"Create endpoint now?", b"y\r\r\r")] if config["Confirm"] else []
 step = 0
 try:
+    # Retain the supervisor's process group so its deadline covers this child.
     process = subprocess.Popen([config["Binary"], "-test.run=^TestMainDispatchProcess$", "--", "openai", "webhooks", "create"],
                                cwd=config["Work"], env=env, stdin=slave, stdout=slave,
-                               stderr=subprocess.PIPE, start_new_session=True)
+                               stderr=subprocess.PIPE)
     os.close(slave)
     slave = None
     selector.register(master, selectors.EVENT_READ, 0)
@@ -525,7 +832,7 @@ try:
 finally:
     if process is not None and not completed:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            process.kill()
         except ProcessLookupError:
             pass
         process.wait(timeout=2)

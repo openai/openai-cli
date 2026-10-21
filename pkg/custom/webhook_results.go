@@ -23,18 +23,21 @@ func showWebhookResult(value gjson.Result, opts ShowJSONOpts) (bool, error) {
 		return true, err
 	}
 	var advice string
+	var contextHeader string
 	projected := value
 	switch {
 	case command.operation == "test" && opts.Operation == "(resource) webhooks > (method) test":
+		request := command.testRequest()
+		contextHeader = request.summary()
 		var err error
-		projected, err = transformers.ProjectWebhookTestResult(opts.Context, value)
+		projected, err = transformers.ProjectWebhookTestOutcome(opts.Context, value)
 		if err != nil {
 			return true, err
 		}
 		if value.IsObject() && projected.Type == gjson.String {
 			advice = webhookTestAdvice(int(value.Get("status_code").Int()))
 			if value.Get("status_code").Int() < 200 || value.Get("status_code").Int() >= 300 {
-				id, event := value.Get("webhook_endpoint_id").Str, value.Get("event_type").Str
+				id, event := request.endpoint, request.event
 				if webhookCommandValue(id) {
 					if inspect := webhookFollowupCommand(opts.Context, "webhooks", "retrieve", "--webhook-endpoint-id="+id); inspect != "" {
 						advice += "\nInspect the receiver URL: " + inspect
@@ -46,6 +49,8 @@ func showWebhookResult(value gjson.Result, opts ShowJSONOpts) (bool, error) {
 					} else {
 						advice += "\nAfter fixing the receiver, repeat your original command to keep its authentication and project settings."
 					}
+				} else {
+					advice += "\nAfter fixing the receiver, repeat your original command to keep its endpoint, event, and project settings."
 				}
 			}
 		} else {
@@ -73,6 +78,11 @@ func showWebhookResult(value gjson.Result, opts ShowJSONOpts) (bool, error) {
 		}
 	default:
 		return false, nil
+	}
+	if contextHeader != "" {
+		if err := readable.WriteText(outputWriter{ctx: opts.Context, out: opts.Stdout}, contextHeader); err != nil {
+			return true, err
+		}
 	}
 	if err := readable.Write(outputWriter{ctx: opts.Context, out: opts.Stdout}, projected); err != nil {
 		if command.operation == "create" {

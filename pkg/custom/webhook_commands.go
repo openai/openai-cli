@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"unicode"
 
 	"github.com/openai/openai-cli/internal/clihelp"
@@ -16,6 +17,7 @@ type webhookCommandKey struct{}
 type webhookCommandContext struct {
 	operation  string
 	invocation fileInvocation
+	request    *atomic.Pointer[webhookTestRequest]
 }
 
 // Configure the existing API commands before subgroup cloning.
@@ -119,8 +121,15 @@ func webhookActionContext(operation string, next cli.ActionFunc) cli.ActionFunc 
 			invocation.goRunDir, err = os.Getwd()
 			invocation.omitHint = invocation.omitHint || err != nil
 		}
-		ctx = context.WithValue(ctx, webhookCommandKey{}, webhookCommandContext{operation, invocation})
+		state := webhookCommandContext{operation: operation, invocation: invocation}
+		if operation == "test" && webhookReadableCommand(command) {
+			state.request = new(atomic.Pointer[webhookTestRequest])
+		}
+		ctx = context.WithValue(ctx, webhookCommandKey{}, state)
 		if err := next(ctx, command); err != nil {
+			if operation == "create" {
+				return webhookCreateRequestError(ctx, command, err)
+			}
 			return err
 		}
 		if operation == "list" && webhookReadableCommand(command) {

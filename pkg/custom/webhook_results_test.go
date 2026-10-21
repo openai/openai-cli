@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -18,9 +19,12 @@ import (
 const webhookResultFixture = `{"object":"webhook_endpoint.test","webhook_endpoint_id":"whe_example","event_type":"response.completed","status_code":500,"success":true}`
 
 func webhookResultOptions(operation string) ShowJSONOpts {
+	request := new(atomic.Pointer[webhookTestRequest])
+	request.Store(&webhookTestRequest{endpoint: "whe_example", event: "response.completed"})
 	ctx := context.WithValue(context.Background(), webhookCommandKey{}, webhookCommandContext{
 		operation:  operation,
 		invocation: fileInvocation{display: "openai", executable: "openai"},
+		request:    request,
 	})
 	return ShowJSONOpts{Context: ctx, Operation: "(resource) webhooks > (method) " + operation, OutputKind: OutputResponse}
 }
@@ -39,7 +43,7 @@ func TestWebhookResultGuidancePreservesOutputBoundary(t *testing.T) {
 			opts.Stdout, opts.Stderr = &stdout, &stderr
 			body := strings.Replace(webhookResultFixture, "500", status.code, 1)
 			handled, err := showWebhookResult(gjson.Parse(body), opts)
-			if !handled || err != nil || !strings.HasPrefix(stdout.String(), "Test request completed.\n") ||
+			if !handled || err != nil || !strings.Contains(stdout.String(), "\n\nTest request completed.\n") ||
 				!strings.Contains(stderr.String(), status.advice) || strings.Contains(stdout.String(), "Next:") {
 				t.Fatalf("result: handled=%t error=%v stdout=%q stderr=%q", handled, err, stdout.String(), stderr.String())
 			}
@@ -89,6 +93,9 @@ func TestWebhookUnexpectedResultPreservesFields(t *testing.T) {
 		}
 		if strings.Contains(body, "9007199254740993") && !strings.Contains(stdout.String(), "9007199254740993") {
 			t.Fatal("precise unknown field was lost")
+		}
+		if !strings.HasPrefix(stdout.String(), "Project: determined by API key (ID unavailable)\nEndpoint: whe_example\nEvent: response.completed\n\n") {
+			t.Fatalf("fallback lost submitted request context: %q", stdout.String())
 		}
 	}
 }

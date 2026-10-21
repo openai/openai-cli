@@ -57,7 +57,7 @@ func TestReadableAPIErrorSummaryDoesNotEchoResponseDetails(t *testing.T) {
 		code   string
 		want   string
 	}{
-		{"authentication", http.StatusUnauthorized, "invalid_api_key", "Check API key, organization and project."},
+		{"authentication", http.StatusUnauthorized, "invalid_api_key", "Key setup: ./openai help setup"},
 		{"permissions", http.StatusForbidden, "synthetic-private-code", "Check your key's permissions."},
 		{"not found", http.StatusNotFound, "synthetic-private-code", "Check the resource or model ID.\nCheck your key's access to it."},
 		{"invalid argument", http.StatusBadRequest, "synthetic-private-code", "The API rejected the request."},
@@ -230,6 +230,14 @@ func TestReadableModelGuidanceRequiresDeclaredFlag(t *testing.T) {
 
 func assertReadableErrorContainsNoPrivateDetails(t *testing.T, text string) {
 	t.Helper()
+	// Fixed public recovery links are permitted. Arbitrary response/request
+	// URLs and credential-bearing query parameters remain forbidden.
+	for _, public := range []string{
+		"https://platform.openai.com/settings/organization/api-keys",
+		"https://developers.openai.com/api/docs/guides/ip-allowlist",
+	} {
+		text = strings.ReplaceAll(text, public, "")
+	}
 	for _, private := range []string{"synthetic-", "https://", "token=", "\x1b", "\a", "\u202e"} {
 		require.NotContains(t, text, private)
 	}

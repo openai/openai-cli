@@ -188,7 +188,12 @@ func TestWebhookCreatePickerReviewCanScrollCompleteURLAndSelections(t *testing.T
 	// URL can cross physical lines, including the final identifying marker.
 	rows := map[int]string{}
 	for range 20 {
-		lines := strings.Split(m.View().Content, "\n")
+		lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+		for i, line := range lines {
+			if strings.HasPrefix(line, "│ ") {
+				lines[i] = strings.TrimRight(strings.TrimSuffix(strings.TrimPrefix(line, "│ "), " │"), " ")
+			}
+		}
 		scrollHint := -1
 		for i := 2; i < len(lines); i++ {
 			if strings.HasPrefix(lines[i], "↑↓ review ") {
@@ -279,25 +284,77 @@ func TestWebhookCreateUppercaseSchemeDoesNotReachReview(t *testing.T) {
 	require.Equal(t, "HTTPS://example.invalid/webhook", m.settings().url)
 }
 
-func TestWebhookCreatePickerFrameHeightStaysStable(t *testing.T) {
-	for _, size := range [][2]int{{80, 24}, {40, 12}, {36, 10}} {
+func TestWebhookCreatePickerCompactFrameAndCleanup(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {80, 60}, {40, 12}, {36, 10}} {
 		m := newWebhookCreatePicker([]string{"agent.session.created", "batch.completed", "response.completed",
 			"response.failed", "eval.run.succeeded", "video.completed", "safety.alert.created", "future.event"})
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-		for stage := range 4 {
+		initial := ansi.Strip(m.View().Content)
+		require.LessOrEqual(t, strings.Count(initial, "\n")+1, 9, "the first prompt must use content height")
+		require.NotContains(t, initial, "1/4")
+		previousHeight := 0
+		for _, stage := range []int{0, 1, 2, 3, 2, 0} {
 			m.stage = stage
 			for _, query := range []string{"", "response", "response.completed", "no-matches"} {
 				m.search = webhookCreateInput{}
 				m.search.insert(query)
 				for _, note := range []string{"", "Select at least one event with Space."} {
 					m.note = note
-					lines := strings.Split(m.View().Content, "\n")
-					require.Len(t, lines, size[1]-1, "stage=%d query=%q note=%q", stage, query, note)
-					require.NotEmpty(t, lines[len(lines)-1], "keep keyboard guidance on the final row")
+					lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+					require.GreaterOrEqual(t, len(lines), previousHeight, "erase all previously owned rows")
+					previousHeight = len(lines)
+					require.LessOrEqual(t, len(lines), min(18, size[1]-1))
 					for _, line := range lines {
-						require.LessOrEqual(t, ansi.StringWidth(line), size[0]-2)
+						require.LessOrEqual(t, ansi.StringWidth(line), min(76, size[0]-2))
 					}
 				}
+			}
+		}
+	}
+}
+
+func TestWebhookCreatePickerTallTerminalDoesNotExpandPanel(t *testing.T) {
+	for stage := range 4 {
+		m := newWebhookCreatePicker([]string{"response.completed", "response.failed", "batch.completed"})
+		m.stage = stage
+		m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+		normal := m.View().Content
+		m.Update(tea.WindowSizeMsg{Width: 160, Height: 60})
+		require.Equal(t, normal, m.View().Content, "unused terminal space must not stretch the panel")
+	}
+}
+
+func TestWebhookCreatePickerThemeAndPlainSelection(t *testing.T) {
+	m := newWebhookCreatePicker([]string{"response.completed"})
+	m.stage = 2
+	plain := m.View().Content
+	require.Contains(t, plain, "> [ ] response.completed")
+	require.NotContains(t, plain, "\x1b")
+	for _, dark := range []bool{true, false} {
+		m.color, m.dark = true, dark
+		colored := m.View().Content
+		require.Contains(t, colored, "\x1b[")
+		require.Equal(t, plain, ansi.Strip(colored), "theme must not change content or alignment")
+	}
+}
+
+func TestWebhookCreatePickerCompactBudgetKeepsControls(t *testing.T) {
+	for _, size := range [][2]int{{36, 10}, {40, 12}, {80, 24}, {80, 60}} {
+		for stage := range 4 {
+			m := newWebhookCreatePicker([]string{"response." + strings.Repeat("long_event", 30)})
+			m.width, m.height, m.stage = size[0], size[1], stage
+			m.url.insert("https://example.invalid/" + strings.Repeat("long/path/", 100))
+			m.selected[m.events[0]] = true
+			m.note = "Check this value before continuing."
+			view := ansi.Strip(m.View().Content)
+			require.Contains(t, view, "Esc", "size=%v stage=%d", size, stage)
+			if stage == 2 {
+				require.Contains(t, view, "Space")
+			}
+			if stage == 3 {
+				require.Contains(t, view, "Create endpoint now?")
+				require.Contains(t, view, "[No]   Yes, create")
+				require.Contains(t, view, "↑↓ review")
 			}
 		}
 	}
@@ -376,7 +433,7 @@ func TestWebhookCreatePickerParentCancelMessageFinishesFrame(t *testing.T) {
 		require.True(t, m.canceled)
 		require.False(t, m.confirmed)
 		require.NotContains(t, m.View().Content, "Create endpoint now?")
-		require.Len(t, strings.Split(m.View().Content, "\n"), size[1]-1)
+		require.LessOrEqual(t, len(strings.Split(m.View().Content, "\n")), min(18, size[1]-1))
 	}
 }
 

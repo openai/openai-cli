@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"slices"
@@ -33,6 +35,45 @@ type webhookWorkflowError struct {
 
 func (e *webhookWorkflowError) Error() string { return e.message }
 func (e *webhookWorkflowError) Unwrap() error { return e.cause }
+
+// HTTP failures after creation can leave an endpoint behind. Discovery errors
+// already carry their known outcome; local validation errors never imply dispatch.
+func webhookCreateRequestError(ctx context.Context, command *cli.Command, err error) error {
+	var apiError *openai.Error
+	var workflow *webhookWorkflowError
+	if errors.Is(err, context.Canceled) || errors.As(err, &workflow) {
+		return err
+	}
+	message := ""
+	if errors.As(err, &apiError) {
+		if apiError.StatusCode != http.StatusRequestTimeout && apiError.StatusCode < 500 {
+			return err
+		}
+	} else {
+		// Local structured errors use their human message as the data payload.
+		// Keep that existing payload while adding guidance to readable errors.
+		var transport *url.Error
+		if !errors.As(err, &transport) || transport.Op != "Post" ||
+			errorOutputFormat(command.Root()) != "text" || command.Root().String("transform-error") != "" {
+			return err
+		}
+		// Vetted transport configuration failures can occur before any request.
+		for cause := err; cause != nil; cause = errors.Unwrap(cause) {
+			if knownLocalError(command, cause.Error()) != "" {
+				return err
+			}
+		}
+		message = localErrorMessage(command.Root(), err) + "\n"
+	}
+	message += "Webhook creation is unconfirmed. The endpoint may already exist.\n" +
+		"Before repeating create, check the endpoint list for the requested name and URL."
+	if list := webhookFollowupCommand(ctx, "webhooks", "list"); list != "" {
+		message += "\nList endpoints: " + list
+	} else {
+		message += "\nUse webhooks list with your original authentication, project, organization, and API settings."
+	}
+	return &webhookWorkflowError{message, err}
+}
 
 const webhookCreateCatalogRetry = "No endpoint was created. " +
 	"Use webhooks event-types list --format json with your original authentication, project, organization, and API settings. " +
@@ -92,8 +133,11 @@ func discoverWebhookCreateEvents(ctx context.Context, command *cli.Command) ([]s
 	options = append(options, option.WithResponseBodyInto(&raw))
 	if _, err := client.Webhooks.EventTypes.List(ctx, options...); err != nil {
 		var apiError *openai.Error
-		if errors.As(err, &apiError) || errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) {
 			return nil, err
+		}
+		if errors.As(err, &apiError) {
+			return nil, &webhookWorkflowError{"Could not load webhook event types.\nNo endpoint was created.", err}
 		}
 		return nil, &webhookWorkflowError{"Could not load webhook event types. Check your connection and API settings. " + webhookCreateCatalogRetry, err}
 	}

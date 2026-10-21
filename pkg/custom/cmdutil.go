@@ -52,6 +52,7 @@ func GetDefaultRequestOptions(cmd *cli.Command) []option.RequestOption {
 		option.WithHeader("X-Stainless-CLI-Command", cmd.FullName()),
 		option.WithMiddleware(captureAudioText),
 		option.WithMiddleware(captureSaveReceiptPolicy(cmd)),
+		option.WithMiddleware(captureWebhookTestRequest),
 	}
 	if cmd.IsSet("api-key") {
 		opts = append(opts, option.WithAPIKey(cmd.String("api-key")))
