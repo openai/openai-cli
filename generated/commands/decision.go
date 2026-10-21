@@ -33,7 +33,7 @@ var decisionsCreate = requestflag.WithInnerFlags(cli.Command{
 		},
 		&requestflag.Flag[[]map[string]any]{
 			Name:     "question",
-			Usage:    "Ask 1–200 questions about the input. Each question can be a predicate, choice, or score. Answers come back in the same order.",
+			Usage:    "Ask 1–400 questions about the input. Each question can be a predicate, choice, or score. Answers come back in the same order.",
 			Required: true,
 			BodyPath: "questions",
 		},
