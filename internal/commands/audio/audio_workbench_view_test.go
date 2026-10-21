@@ -141,7 +141,7 @@ func TestAudioViewKeepsImageStyleFormStableAcrossFocus(t *testing.T) {
 			m.focusSection(focus)
 			view := ansi.Strip(m.View().Content)
 			rows := strings.Split(view, "\n")
-			require.Equal(t, 6, strings.Index(rows[1], "Text to speech"))
+			require.Equal(t, 6, ansi.StringWidth(rows[1][:strings.Index(rows[1], "Text to speech")]))
 			require.Equal(t, min(96, width-4), ansi.StringWidth(rows[0])-2, "wide terminals must retain a bounded panel")
 			require.Contains(t, rows[2], "A clear short example.")
 			require.Contains(t, rows[4], "──", "separate the composer from its controls")

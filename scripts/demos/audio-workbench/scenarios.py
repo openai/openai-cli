@@ -357,8 +357,8 @@ def navigation_case(ctx):
     result["exact_width_editor_columns"] = {}
     for editor in ("text", "instructions"):
         editor_columns = terminal.initial_size[0] - 8
-        if editor == "instructions" and terminal.initial_size[0] >= 60 and terminal.initial_size[1] >= 24:
-            editor_columns = min(100, terminal.initial_size[0] - 4) - 17
+        if terminal.initial_size[0] >= 60 and terminal.initial_size[1] >= 24:
+            editor_columns = min(92, terminal.initial_size[0] - 8) - 17
         result["exact_width_editor_columns"][editor] = editor_columns
         for name, value in (("single-line", "Boundary"), ("multiline", "First line\nSecond line\nThird line"),
                             ("wrapped-unicode", "界🙂e\u0301 " * 26), ("exact-width-unicode", "界" * editor_columns)):
