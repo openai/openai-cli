@@ -142,3 +142,19 @@ test('capture worklet downmixes, clips, and flushes the final partial block',()=
   assert.deepEqual([...new Int16Array(sent[0])],[32767,-32768,0]);assert.equal(sent[1],'flushed');
   assert.equal(capture.process([[]]),false);
 });
+
+
+test('pausing queued playback retains its real position before replay',async()=>{
+  const p=page();await p.elements.get('start').onclick();
+  const pcm=Buffer.alloc(480000);
+  p.emit({type:'session.output_audio.delta',delta:pcm.toString('base64'),sample_rate:24000,channels:1,format:'pcm16'});
+  await settle();await p.elements.get('start').onclick();await settle();
+  p.contexts[1].currentTime=2.025;
+  await p.elements.get('playback').onclick();
+  assert.ok(Math.abs(p.elements.get('player').currentTime-2)<.0001);
+  assert.equal(p.contexts[1].state,'closed');assert.equal(p.elements.get('player').paused,true);
+  await p.elements.get('playback').onclick();assert.equal(p.elements.get('player').paused,false);
+  p.elements.get('waveform').onkeydown({key:'ArrowRight',preventDefault(){}});
+  assert.ok(Math.abs(p.elements.get('player').currentTime-2.5)<.0001);
+  assert.equal(p.elements.get('player').paused,true);p.close();
+});

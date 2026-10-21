@@ -23,8 +23,8 @@
     state = value;
     const busy = value === 'starting' || value === 'running' || value === 'finishing';
     for (const id of controls) $(id).disabled = busy;
-    $('start').textContent = value === 'starting' ? 'Cancel' : value === 'running' ? 'Stop session' : value === 'finishing' ? 'Finishing…' : 'Start session';
-    $('start').disabled = value === 'finishing' || !token;
+    $('start').textContent = value === 'starting' ? 'Cancel' : value === 'running' ? 'Stop session' : value === 'finishing' ? 'Stop now' : 'Start session';
+    $('start').disabled = !token;
     $('mute').hidden = value !== 'running';
     $('clear').disabled = busy;
   }
@@ -65,6 +65,7 @@
     run.node?.disconnect();
     run.input?.disconnect();
     if (run.context && run.context.state !== 'closed') run.context.close().catch(() => {});
+    if (run.output && run.output !== outputContext && run.output.state !== 'closed') run.output.close().catch(() => {});
   }
   async function start() {
     showError('');
@@ -91,12 +92,13 @@
       await run.context.audioWorklet.addModule('/capture-worklet.js');
       await run.context.resume();
       if (current !== run) { releaseCapture(run); return; }
-      outputContext = new AudioContext();
-      outputGain = outputContext.createGain(); outputGain.connect(outputContext.destination);
-      outputGain.gain.value = $('listen').checked ? 1 : 0;
-      if ($('output').value && outputContext.setSinkId) await outputContext.setSinkId($('output').value);
-      await outputContext.resume();
+      const playback = new AudioContext(); run.output = playback;
+      const gain = playback.createGain(); gain.connect(playback.destination);
+      gain.gain.value = $('listen').checked ? 1 : 0;
+      if ($('output').value && playback.setSinkId) await playback.setSinkId($('output').value);
+      await playback.resume();
       if (current !== run) { releaseCapture(run); return; }
+      outputContext = playback; outputGain = gain;
       status('Connecting');
       const response = await request('/start',{method:'POST',signal:run.controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({language:$('language').value,noise_reduction:$('noise').checked})});
       run.id = (await response.json()).id;
@@ -242,7 +244,7 @@
   async function togglePlayback() {
     if (!recordingURL) return;
     if (outputContext && outputContext.currentTime < nextStart) {
-      const position = playbackPosition(); await stopOutput(); $('player').currentTime = position; return;
+      const position = playbackPosition(); $('player').currentTime = position; await stopOutput(); return;
     }
     if (!$('player').paused) { $('player').pause(); return; }
     if ($('player').currentTime >= sampleCount/outputRate - .001) $('player').currentTime = 0;
@@ -273,7 +275,7 @@
     canvas.setAttribute('aria-valuenow',position.toFixed(2)); canvas.setAttribute('aria-valuemax',duration.toFixed(2));
     requestAnimationFrame(draw);
   }
-  $('start').onclick = () => state === 'starting' || state === 'running' ? stop() : start();
+  $('start').onclick = () => state === 'finishing' ? fail(current,new Error('Translation stopped before completion. Received audio remains available.')) : state === 'starting' || state === 'running' ? stop() : start();
   $('source').onchange = updateSource;
   $('listen').onchange = () => { if (outputGain) outputGain.gain.value = $('listen').checked ? 1 : 0; $('player').muted = !$('listen').checked; };
   $('output').onchange = async () => {
