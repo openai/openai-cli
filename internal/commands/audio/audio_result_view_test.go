@@ -203,3 +203,28 @@ func TestAudioPlayerGroupsActionsAndDestination(t *testing.T) {
 		require.Contains(t, view, []string{"› Play audio", "› Save audio…"}[action])
 	}
 }
+
+func TestAudioSaveInactiveMultilineDraftKeepsControlsVisible(t *testing.T) {
+	for _, size := range [][2]int{{40, 12}, {60, 24}, {90, 34}} {
+		for _, field := range []int{0, 1} {
+			m := audioReviewModel(t)
+			r := audioReviewResult("retained", false)
+			m.result = &r
+			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			m.openSave()
+			m.focusSave(field)
+			draft := strings.Repeat("line\n", 40)
+			m.Update(tea.PasteMsg{Content: draft})
+			audioReviewKey(m, tea.KeyTab)
+			view := ansi.Strip(m.View().Content)
+			require.LessOrEqual(t, len(strings.Split(view, "\n")), size[1]-1)
+			require.Contains(t, view, "Save audio")
+			require.Contains(t, view, "Esc back")
+			if field == 0 {
+				require.Contains(t, m.path.Value(), draft)
+			} else {
+				require.Contains(t, m.saveFolder.Value(), draft)
+			}
+		}
+	}
+}

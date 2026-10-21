@@ -127,3 +127,13 @@ func TestAudioMoreActionsKeepsDraftContextAndEscapePreservesResult(t *testing.T)
 	require.Equal(t, "Keep this draft while browsing actions.", m.input.Value())
 	require.Same(t, &r, m.result)
 }
+
+func TestAudioMoreActionsHandlesExpiredFailureSelection(t *testing.T) {
+	m := audioReviewModel(t)
+	m.modal = "more"
+	m.moreChoice = 5 // Last error can disappear after successful work completes.
+	view := ansi.Strip(m.View().Content)
+	require.Contains(t, view, "› Help")
+	require.Contains(t, view, "Read the audio controls and keyboard shortcuts.")
+	require.Contains(t, view, "Esc back")
+}

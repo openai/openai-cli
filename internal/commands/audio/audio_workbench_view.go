@@ -164,7 +164,11 @@ func (m *audioWorkbench) editorView(editor textarea.Model) string {
 // Keep editor values in the same column as their inactive summaries.
 func (m *audioWorkbench) inlineEditorRows(name string, editor textarea.Model, active bool, labelWidth int) []string {
 	rows := strings.Split(m.editorView(editor), "\n")
-	rows[0] = m.label(m.muted().Render(fmt.Sprintf("%-*s", labelWidth, name)), active) + " " + rows[0]
+	label := m.muted()
+	if active {
+		label = m.accent().Bold(false)
+	}
+	rows[0] = m.label(label.Render(fmt.Sprintf("%-*s", labelWidth, name)), active) + " " + rows[0]
 	for i := 1; i < len(rows); i++ {
 		rows[i] = strings.Repeat(" ", labelWidth+3) + rows[i]
 	}
@@ -448,7 +452,7 @@ func (m *audioWorkbench) saveView() tea.View {
 		if m.saveFocus == i {
 			lines = append(lines, m.inlineEditorRows(name, editor, true, labelWidth)...)
 		} else {
-			value := readable.Text(editor.Value())
+			value := readable.Text(strings.ReplaceAll(editor.Value(), "\n", " "))
 			lines = append(lines, m.label(m.muted().Render(fmt.Sprintf("%-*s", labelWidth, name))+" "+value, false))
 		}
 	}
@@ -484,6 +488,7 @@ func audioFileSize(bytes int64) string {
 
 func (m *audioWorkbench) moreView() tea.View {
 	items := m.moreItems()
+	choice := max(0, min(m.moreChoice, len(items)-1))
 	lines := []string{m.strong().Render("  More actions")}
 	if m.framed() {
 		prompt := strings.Join(strings.Fields(readable.Text(m.input.Value())), " ")
@@ -493,7 +498,7 @@ func (m *audioWorkbench) moreView() tea.View {
 		lines = append(lines, m.divider())
 	}
 	for index, label := range items {
-		lines = append(lines, m.selectedRow(label, index == m.moreChoice, m.audioWidth()))
+		lines = append(lines, m.selectedRow(label, index == choice, m.audioWidth()))
 	}
 	if m.framed() {
 		details := map[string]string{
@@ -504,7 +509,7 @@ func (m *audioWorkbench) moreView() tea.View {
 			"Help":          "Read the audio controls and keyboard shortcuts.",
 			"Last error":    "Review the last failure and recovery steps.",
 		}
-		lines = append(lines, m.divider(), "  "+m.muted().Render(details[items[m.moreChoice]]))
+		lines = append(lines, m.divider(), "  "+m.muted().Render(details[items[choice]]))
 	}
 	return m.panelView(lines, "  "+m.keyHint("↑↓ choose · Enter open · Esc back"))
 }
