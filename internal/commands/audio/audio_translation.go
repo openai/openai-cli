@@ -85,7 +85,6 @@ func ConfigureLiveTranslation(root *cli.Command, policy TranslationOptions) {
 			OpenBrowser: cliterminal.OpenBrowser,
 			Writer:      command.Root().Writer,
 		})
-		stopSignals()
 		var interrupted *clioutput.DownloadSignalError
 		if errors.As(context.Cause(ctx), &interrupted) {
 			return cli.Exit("", interrupted.SignalExitCode())
