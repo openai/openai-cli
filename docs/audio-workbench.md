@@ -195,3 +195,13 @@ Escape returns to the form; the menu omits a duplicate Back action.
 Roomy results show the default export folder beside Save audio.
 Only completed exports show a Saved receipt. Waveform columns use narrow strokes instead of filled blocks.
 Roomy result views leave one blank row between the waveform and playback time.
+
+## Local layout refinement
+
+Field labels use secondary text color. Values retain normal terminal text.
+More actions reuses the form layout when space permits, keeping the draft and settings visible.
+Compact screens prioritize the selected action and return guidance.
+Roomy playback uses light waveform strokes and a distinct progress marker.
+Play and Save share one row when they fit. The next row shows the suggested export folder.
+After export, that row shows the actual saved path instead.
+Filename and Save to keep their value columns while editing.

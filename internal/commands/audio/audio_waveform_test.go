@@ -11,10 +11,10 @@ import (
 
 func TestAudioWaveformPreservesFractionalRatios(t *testing.T) {
 	peaks := []float64{0, .125, .25, .375, .5, .625, .75, .875, 1}
-	if got := audioWaveform(peaks, 19, 1, 0); !slices.Equal(got, []string{"│─ ▁ ▂ ▃ ▄ ▅ ▆ ▇ █ "}) {
+	if got := audioWaveform(peaks, 19, 1, 0); !slices.Equal(got, []string{"┃─ ▁ ▂ ▃ ▄ ▅ ▆ ▇ █ "}) {
 		t.Fatalf("compact relative amplitudes: %q", got)
 	}
-	want := []string{"│    ╻ ┃ ", "│· ┃ ┃ ┃ ", "│    ╹ ┃ "}
+	want := []string{"┃    ╷ │ ", "┃· │ │ │ ", "┃    ╵ │ "}
 	if got := audioWaveform([]float64{0, .25, .5, 1}, 9, 3, 0); !slices.Equal(got, want) {
 		t.Fatalf("thin relative amplitudes: %q; want %q", got, want)
 	}
@@ -33,14 +33,14 @@ func TestAudioWaveformUsesOneRecordingWideGain(t *testing.T) {
 	}
 	// Subnormal measurements remain finite when normalized directly.
 	quiet = []float64{math.SmallestNonzeroFloat64, 2 * math.SmallestNonzeroFloat64}
-	if got := audioWaveform(quiet, 5, 1, 0); !slices.Equal(got, []string{"│▄ █ "}) {
+	if got := audioWaveform(quiet, 5, 1, 0); !slices.Equal(got, []string{"┃▄ █ "}) {
 		t.Fatalf("subnormal amplitudes lost their ratio: %q", got)
 	}
 }
 
 func TestAudioWaveformPreservesIntervalTransientMaxima(t *testing.T) {
 	peaks := []float64{.08, .95, .10, .55, .18, .25, .72}
-	if got := audioWaveform(peaks, 7, 1, 0); !slices.Equal(got, []string{"│█ ▅ ▇ "}) {
+	if got := audioWaveform(peaks, 7, 1, 0); !slices.Equal(got, []string{"┃█ ▅ ▇ "}) {
 		t.Fatalf("unequal interval maxima changed: %q", got)
 	}
 	for _, height := range []int{1, 3, 5} {
@@ -50,14 +50,14 @@ func TestAudioWaveformPreservesIntervalTransientMaxima(t *testing.T) {
 			t.Fatalf("interval maxima changed at height %d: %q; want %q", height, got, want)
 		}
 	}
-	if got := audioWaveform([]float64{0, 0, 0, 0, 0, 0, 1}, 7, 1, 0); !slices.Equal(got, []string{"│─ ─ █ "}) {
+	if got := audioWaveform([]float64{0, 0, 0, 0, 0, 0, 1}, 7, 1, 0); !slices.Equal(got, []string{"┃─ ─ █ "}) {
 		t.Fatalf("last transient or silent intervals changed: %q", got)
 	}
 }
 
 func TestAudioWaveformSilenceAndInvalidPeaks(t *testing.T) {
 	zero := []float64{0, 0, 0}
-	want := []string{"  │    ", " ·│· · ", "  │    "}
+	want := []string{"  ┃    ", " ·┃· · ", "  ┃    "}
 	if got := audioWaveform(zero, 7, 3, 1); !slices.Equal(got, want) {
 		t.Fatalf("silence invented variation: %q; want %q", got, want)
 	}
@@ -90,7 +90,7 @@ func TestAudioWaveformMarkerDoesNotReplaceBars(t *testing.T) {
 			for row, text := range rows {
 				cells, before := []rune(text), []rune(original[row])
 				marker := max(0, min(3, selected)) * 2
-				if strings.Count(text, "│") != 1 || cells[marker] != '│' {
+				if strings.Count(text, "┃") != 1 || cells[marker] != '┃' {
 					t.Fatalf("missing selected boundary %d: %q", selected, rows)
 				}
 				for column := 1; column < len(cells); column += 2 {

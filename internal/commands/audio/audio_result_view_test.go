@@ -88,9 +88,9 @@ func TestAudioResultViewKeepsWaveformAndControlsVisible(t *testing.T) {
 					m.resultAction = action
 					view := ansi.Strip(m.View().Content)
 					require.Contains(t, view, "00:00.750 / 00:02.250")
-					require.Contains(t, view, "│")
+					require.Contains(t, view, "┃")
 					if size[1] >= 24 && size[0] >= 60 {
-						require.Contains(t, view, "┃", "quiet speech must retain a visible thin shape")
+						require.Contains(t, view, "│", "quiet speech must retain a visible thin shape")
 						require.NotContains(t, view, "█")
 						require.Contains(t, view, audioDefaultSaveFolder)
 					} else {
@@ -173,9 +173,28 @@ func TestAudioResultDistinguishesSuggestedFolderFromCompletedExport(t *testing.T
 	r := audioReviewResult("retained", false)
 	m.result, m.focus = &r, 4
 	view := ansi.Strip(m.View().Content)
-	require.Contains(t, view, "Save audio…  "+audioDefaultSaveFolder)
+	require.Contains(t, view, "Save to  "+audioDefaultSaveFolder)
 	require.NotContains(t, view, "Saved:")
 	r.savedPaths = []string{"/chosen/folder/recording.wav"}
 	view = ansi.Strip(m.View().Content)
 	require.Contains(t, view, "Saved: /chosen/folder/recording.wav")
+	require.NotContains(t, view, "Save to  "+audioDefaultSaveFolder)
+}
+
+func TestAudioPlayerGroupsActionsAndDestination(t *testing.T) {
+	m := audioReviewModel(t)
+	r := audioReviewResult("retained", false)
+	m.result, m.focus = &r, 4
+	for _, action := range []int{0, 1} {
+		m.resultAction = action
+		view := ansi.Strip(m.View().Content)
+		rows := strings.Split(view, "\n")
+		for i, row := range rows {
+			if strings.Contains(row, "Play audio") {
+				require.Contains(t, row, "Save audio…")
+				require.Contains(t, rows[i+1], "Save to  "+audioDefaultSaveFolder)
+			}
+		}
+		require.Contains(t, view, []string{"› Play audio", "› Save audio…"}[action])
+	}
 }

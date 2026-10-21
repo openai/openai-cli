@@ -78,16 +78,16 @@ func audioWaveform(peaks []float64, width, height, selectedBoundary int) []strin
 				bottom := row*2+1 >= height-level && row*2+1 < height+level
 				switch {
 				case top && bottom:
-					cell = '┃'
+					cell = '│'
 				case top:
-					cell = '╹'
+					cell = '╵'
 				case bottom:
-					cell = '╻'
+					cell = '╷'
 				}
 			}
 			cells[column*2+1] = cell
 		}
-		cells[selectedBoundary*2] = '│'
+		cells[selectedBoundary*2] = '┃'
 		rows[row] = string(cells)
 	}
 	return rows

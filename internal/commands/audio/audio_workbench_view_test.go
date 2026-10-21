@@ -36,7 +36,7 @@ func TestAudioViewUsesOneEditorAndNoBackgroundFill(t *testing.T) {
 		m.openSave()
 		view = m.View().Content
 		require.Contains(t, ansi.Strip(view), "Filename")
-		require.Contains(t, ansi.Strip(view), "~/Downloads/gpt-audio/ (Default)")
+		require.Contains(t, ansi.Strip(view), audioDefaultSaveFolder)
 		require.Contains(t, ansi.Strip(view), "Full recording")
 		require.False(t, background.MatchString(view))
 	}
