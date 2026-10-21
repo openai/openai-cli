@@ -439,7 +439,7 @@
     },
     "generated/commands/chatcompletion.go": {
       "mode": "100644",
-      "sha256": "d189008f82ba53f0143d21cff659a775caada2be58cc91f15e009b0215d8d745"
+      "sha256": "7009ee3b409369027f6b3dd9d6a89fdb513a5064da51646f12497d51a652a77f"
     },
     "generated/commands/chatcompletion_test.go": {
       "mode": "100644",
@@ -519,7 +519,7 @@
     },
     "generated/commands/decision.go": {
       "mode": "100644",
-      "sha256": "27633372d196b06c8d2313d491721192ec0844995e7e21901e4b8a216593e3d9"
+      "sha256": "d228db5dabe2e14988fafd460b6c1f9c67546627d61585cb18c4fed132b0e911"
     },
     "generated/commands/decision_test.go": {
       "mode": "100644",
