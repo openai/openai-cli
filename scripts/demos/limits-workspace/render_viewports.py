@@ -13,6 +13,7 @@ import subprocess
 COLORS = ("black", "red", "green", "brown", "blue", "magenta", "cyan", "white")
 SCENES = ("org-limit", "org-limit-delete", "project-limit", "alert-create", "alert-edit",
           "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print", "preflight-400", "preflight-recover")
+STATIC_RENDER_TIMELINE = {"output_seconds": 0, "selection_seconds": 1, "end_seconds": 2}
 
 
 def digest(path):
@@ -90,7 +91,8 @@ def prepare(root):
     canvas = (max(size[0] for size in sizes), max(size[1] for size in sizes))
     manifest = {"renderer_sha256": digest(__file__), "observer_sha256": digest(Path(__file__).with_name("scene.py")),
                 "animation_canvas": list(canvas), "projection": "observer-derived, fixed-font, letterboxed replay",
-                "limitation": "Offline viewport model; resize clips without terminal reflow.", "scenes": []}
+                "limitation": "Offline viewport model; resize clips without terminal reflow.",
+                "static_render_timeline": dict(STATIC_RENDER_TIMELINE), "scenes": []}
     for scene, evidence_path, child_path, evidence, child in captures:
         source = {"child_cast_sha256": digest(child_path), "evidence_sha256": digest(evidence_path),
                   "renderer_sha256": manifest["renderer_sha256"]}
@@ -105,9 +107,11 @@ def prepare(root):
             width, height = observer.screen.columns, observer.screen.lines
             path = root / (scene + "-" + name + "-viewport.cast")
             provenance = {**source, "checkpoint": name, "seconds": seconds, "active_size": [width, height],
-                          "snapshot_sha256": digest(expected_path)}
-            write_cast(path, width, height, [[seconds, "o", viewport_bytes(observer.screen)],
-                       [evidence["observation_end_seconds"], "o", ""]], provenance)
+                          "snapshot_sha256": digest(expected_path),
+                          "static_render_timeline": manifest["static_render_timeline"]}
+            # This clock renders a static snapshot. Provenance retains the original checkpoint time.
+            write_cast(path, width, height, [[STATIC_RENDER_TIMELINE["output_seconds"], "o", viewport_bytes(observer.screen)],
+                       [STATIC_RENDER_TIMELINE["end_seconds"], "o", ""]], provenance)
             entries.append({"name": name, "seconds": seconds, "active_size": [width, height],
                             "cast": path.name, "sha256": digest(path), "source": provenance})
 
@@ -138,11 +142,11 @@ def prepare(root):
 
 
 def render(root, manifest, agg, ffmpeg):
-    # Derived stills retain absolute checkpoint times, including their initial quiet interval.
+    # Select inside the static interval, away from fractional source timestamp boundaries.
     observation_end = max(point["seconds"] for entry in manifest["scenes"] for point in entry["checkpoints"])
     options = [agg, "--quiet", "--renderer", "resvg", "--font-family", "Menlo", "--font-size", "18",
                "--line-height", "1.2", "--theme", "asciinema", "--fps-cap", "15", "--last-frame-duration", "2",
-               "--idle-time-limit", str(observation_end)]
+               "--idle-time-limit", str(max(observation_end, STATIC_RENDER_TIMELINE["end_seconds"]))]
 
     def run(argv):
         subprocess.run(argv, check=True, stdin=subprocess.DEVNULL, timeout=30)
@@ -154,7 +158,8 @@ def render(root, manifest, agg, ffmpeg):
         for point in entry["checkpoints"]:
             base = scene if point["name"] == "exit" else scene + "-" + point["name"]
             frame, png = base + "-frame.gif", base + ".png"
-            run([*options, "--select", str(point["seconds"]), str(root / point["cast"]), str(root / frame)])
+            run([*options, "--select", str(manifest["static_render_timeline"]["selection_seconds"]),
+                 str(root / point["cast"]), str(root / frame)])
             run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(root / frame),
                  "-frames:v", "1", str(root / png)])
             if point["name"] != "exit":

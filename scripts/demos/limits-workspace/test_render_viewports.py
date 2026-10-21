@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -59,7 +60,7 @@ class ViewportContracts(unittest.TestCase):
         self.assertEqual(projected.screen.display[0], "short".ljust(40))
         self.assertTrue(all(not line.strip() for line in projected.screen.display[1:]))
 
-    def test_static_cast_preserves_checkpoint_and_observation_times(self):
+    def test_cast_keeps_explicit_times_and_rejects_replacement(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "frame.cast"
             events = [[1.5, "o", "payload"], [2.25, "o", ""]]
@@ -84,10 +85,13 @@ class ActualRendererResizeContracts(unittest.TestCase):
         subprocess.run([self.agg, "--quiet", "--renderer", "resvg", "--font-family", "Menlo", "--font-size", "18",
                         "--line-height", "1.2", "--theme", "asciinema", "--select", "2", str(cast), str(gif)],
                        check=True, stdin=subprocess.DEVNULL, timeout=15)
-        pixels = subprocess.check_output([self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-i", str(gif),
+        return self.pixel_hash(gif), gif.read_bytes()[6:10]
+
+    def pixel_hash(self, path):
+        pixels = subprocess.check_output([self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-i", str(path),
                                           "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
                                          stdin=subprocess.DEVNULL, timeout=15)
-        return hashlib.sha256(pixels).hexdigest(), gif.read_bytes()[6:10]
+        return hashlib.sha256(pixels).hexdigest()
 
     def test_shrink_and_enlarge_checkpoints_match_independent_pixels(self):
         for initial, target in (((80, 24), (40, 12)), ((40, 12), (80, 24))):
@@ -120,17 +124,43 @@ class ActualRendererResizeContracts(unittest.TestCase):
                                      [[1, "o", renderer.viewport_bytes(observer.screen)], [3, "o", ""]])
                 self.assertEqual(actual, self.render(directory, "independent-wrap", (80, 24), [[1, "o", expected], [3, "o", ""]]))
 
-    def test_public_export_preserves_late_checkpoint_after_initial_quiet(self):
+    def test_public_export_fractional_late_and_exit_checkpoints_match_pixels(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            events = [[13, "o", "\x1b[?25lquiet checkpoint"], [13, "o", ""]]
-            renderer.write_cast(directory / "sample-viewport.cast", 40, 12, events, {})
-            renderer.write_cast(directory / "sample-exit-viewport.cast", 40, 12, events, {})
-            manifest = {"scenes": [{"scene": "sample", "animation": "sample-viewport.cast",
-                         "checkpoints": [{"name": "exit", "seconds": 13, "cast": "sample-exit-viewport.cast"}]}]}
-            renderer.render(directory, manifest, self.agg, self.ffmpeg)
-            self.assertTrue((directory / "sample.png").stat().st_size)
-            self.assertTrue((directory / "sample-frame.gif").stat().st_size)
+            # Fractional values reproduce timestamps from the rejected synthetic exports.
+            cases = ((0.9312871660222299, 5.30981912498828),
+                     (0.9358217500266619, 7.4997836670372635), (13.25, 15.125))
+            payloads, times = {}, {}
+            for index, scene in enumerate(renderer.SCENES):
+                checkpoint, end = cases[index % len(cases)]
+                payload = "\x1b[?25l\x1b[0m\x1b[2J\x1b[Hcheckpoint " + scene
+                payloads[scene], times[scene] = payload, (checkpoint, end)
+                observer = self.driver.TerminalObserver(40, 12, lambda data: None)
+                observer.feed(payload.encode())
+                evidence = {"width": 40, "height": 12, "observation_end_seconds": end,
+                            "checkpoints": [{"name": "overview", "seconds": checkpoint}]}
+                (directory / (scene + "-evidence.json")).write_text(json.dumps(evidence))
+                child = [{"version": 2, "width": 40, "height": 12}, [0.1, "o", payload], [end, "o", ""]]
+                (directory / (scene + "-evidence.child.cast")).write_text("\n".join(map(json.dumps, child)) + "\n")
+                for point in ("overview", "exit"):
+                    (directory / (scene + "-evidence." + point + ".txt")).write_text(observer.text())
+            originals = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in directory.iterdir()}
+            subprocess.run([sys.executable, "-I", "-B", str(Path(renderer.__file__)), str(directory),
+                            "--agg", self.agg, "--ffmpeg", self.ffmpeg],
+                           check=True, stdin=subprocess.DEVNULL, timeout=30)
+            self.driver.validator.validate_viewport_projections(directory)
+            manifest = json.loads((directory / "viewport-manifest.json").read_text())
+            self.assertEqual(manifest["static_render_timeline"], {"output_seconds": 0, "selection_seconds": 1, "end_seconds": 2})
+            for entry in manifest["scenes"]:
+                scene = entry["scene"]
+                self.assertEqual(tuple(point["seconds"] for point in entry["checkpoints"]), times[scene])
+                expected = self.render(directory, scene + "-independent", (40, 12),
+                                       [[1, "o", payloads[scene]], [3, "o", ""]])[0]
+                for name in (scene + "-overview.png", scene + ".png"):
+                    with self.subTest(scene=scene, frame=name):
+                        self.assertEqual(self.pixel_hash(directory / name), expected)
+            for name, expected in originals.items():
+                self.assertEqual(hashlib.sha256((directory / name).read_bytes()).hexdigest(), expected)
 
 
 if __name__ == "__main__":

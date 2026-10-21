@@ -115,6 +115,7 @@ def validate_viewport_projections(root):
     driver = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver)
     manifest = json.loads((root / "viewport-manifest.json").read_text())
+    assert manifest["static_render_timeline"] == {"output_seconds": 0, "selection_seconds": 1, "end_seconds": 2}
     digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
     assert manifest["renderer_sha256"] == digest(Path(__file__).with_name("render_viewports.py"))
     assert manifest["observer_sha256"] == digest(Path(__file__).with_name("scene.py"))
@@ -189,9 +190,10 @@ def validate_viewport_projections(root):
             assert (static[0]["width"], static[0]["height"]) == size
             assert static[0]["limits_viewport"] == projection["source"]
             assert projection["source"] == {**entry["source"], "checkpoint": name, "seconds": seconds,
-                                             "active_size": list(size), "snapshot_sha256": digest(expected)}
-            assert len(static) == 3 and static[1][:2] == [seconds, "o"]
-            assert static[2] == [evidence["observation_end_seconds"], "o", ""]
+                                             "active_size": list(size), "snapshot_sha256": digest(expected),
+                                             "static_render_timeline": manifest["static_render_timeline"]}
+            assert len(static) == 3 and static[1][:2] == [0, "o"]
+            assert static[2] == [2, "o", ""]
             still = driver.TerminalObserver(*size, lambda data: None)
             still.feed(static[1][2].encode())
             same_viewport(original.screen, still.screen)

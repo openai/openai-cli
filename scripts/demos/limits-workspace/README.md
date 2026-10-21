@@ -88,9 +88,12 @@ The project scene checks retained scrollback markers in emulator history.
 Limits supplies a resizable observer because the shared observer supports fixed audio sizes only.
 The driver retains shared PTY allocation and cleanup.
 The observer clips during resize; it does not model native terminal reflow.
-The viewport exporter replays original output and resize events at their original timestamps.
+The viewport exporter preserves original animation event times, including resize events.
 It creates separately labeled rendering casts from observed cells, colors, attributes, and cursor state.
 Original child bytes, casts, checkpoint times, and process evidence remain unchanged.
+Static rendering casts use a separate 0–2 second interval and select its midpoint.
+Their metadata retains exact source checkpoint times. This avoids selection at fractional timestamp boundaries.
+Animation rendering casts retain original event times.
 Checkpoint PNGs use their actual viewport dimensions, including temporary resize dimensions.
 Animations use a fixed-font, letterboxed canvas that contains every observed viewport.
 These animations represent observer-derived child viewports, rather than the outer PTY mirror.
@@ -102,7 +105,7 @@ It rejects missing, duplicate, or unexpected checkpoint artifacts.
 It verifies derived-cast content and raster dimensions. It does not compare every decoded pixel.
 It compares projected cells, styles, cursor state, and letterboxing against original event replay.
 It also rejects stale viewport dimensions and inconsistent animation canvases.
-Actual renderer tests compare shrink and enlargement against independently specified pixel controls.
+Actual renderer tests compare shrink, enlargement, fractional checkpoints, late checkpoints, and exits against independent decoded-pixel controls.
 Pixel controls and full-frame visual inspection remain required.
 Use fresh output directories when rerendering preserved captures.
 Derived casts reject replacement. Media exports replace legacy GIFs and PNGs inside that fresh copy.
