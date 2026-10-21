@@ -309,4 +309,4 @@ python3 -I -B scripts/demos/audio-workbench/test_observer.py
 These tests cover partial startup, deferred interruption, continued cleanup, source integrity, and scrollback saturation.
 They do not replace the full checker run against the exact candidate binary.
 
-The `wide` case runs at186×34. It checks the96-cell reading column, horizontal action navigation, retained More context, zero requests, and exit cleanup. Its fixed geometry supports internal frame rendering.
+The `wide` case runs at 186×34. It checks the 96-cell reading column, horizontal action navigation, retained More context, zero requests, and exit cleanup. Its fixed geometry supports internal frame rendering.
