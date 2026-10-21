@@ -17,6 +17,8 @@ source "$record_source/../capture_and_render.sh"
 # The shared cleanup also owns synthetic executable paths shown in command previews.
 TMPDIR=/private/tmp demo_prepare_capture "$record_root" "$1" "$1" "$2" "$2" "$3" "$record_source/server.py"
 demo_python="$(command -v python3)"
+: "${DEMO_OBSERVER_SOURCES:?Set the verified observer package directory.}"
+"$demo_python" -I -B "$record_source/scene.py" --check-observer > "$demo_output/observer-validation.txt"
 record_digest="$(shasum -a 256 "$demo_after" | cut -d ' ' -f 1)"
 demo_start_api "$demo_output/requests.jsonl" "$demo_output/fixtures.json" "$demo_runtime/gates"
 cat > "$demo_runtime/scene.sh" <<'SCENE'
@@ -44,6 +46,7 @@ cp "$demo_runtime/scene.sh" "$demo_output/scene.sh"
 shasum -a 256 "$record_source/record.sh" "$record_source/server.py" "$record_source/scene.py" \
   "$record_source/validate.py" "$record_source/README.md" \
   "$record_root/scripts/demos/capture_and_render.sh" "$record_root/scripts/image_picker_harness.py" \
+  "$record_root/scripts/demos/audio-workbench/observer.py" "$record_root/scripts/demos/audio-workbench/observer_sources.json" \
   "$record_root/internal/app/limits_commands.go" "$record_root/internal/app/limits_service.go" \
   "$record_root/internal/app/limits_values.go" "$record_root/internal/app/limits_draft.go" \
   "$record_root/internal/app/limits_workspace.go" "$record_root/internal/app/limits_workspace_view.go" \
@@ -51,14 +54,14 @@ shasum -a 256 "$record_source/record.sh" "$record_source/server.py" "$record_sou
 demo_window_size="${record_width}x$((record_height+4))"
 demo_render_options=(--renderer resvg --font-family Menlo --font-size 18 --line-height 1.2 \
   --theme asciinema --fps-cap 15 --last-frame-duration 2)
-record_scenes=(org-limit org-limit-delete project-limit alert-create alert-edit alert-delete rate-update uncertain slow-cancel alert-print preflight-400)
+record_scenes=(org-limit org-limit-delete project-limit alert-create alert-edit alert-delete rate-update uncertain slow-cancel alert-print preflight-400 preflight-recover)
 for record_scene in "${record_scenes[@]}"; do
   demo_capture_scene "$record_scene" 0 "$demo_runtime/after" "$demo_api_url/$record_scene/v1" \
     "$record_scene: ${record_width}x${record_height}" \
     "DEMO_PYTHON=$demo_python" "DEMO_ASCIINEMA=$demo_asciinema" "DEMO_DRIVER=$record_source/scene.py" \
     "DEMO_SCENE_NAME=$record_scene" "DEMO_EVIDENCE_BASE=$demo_output/$record_scene-evidence" \
     "DEMO_WIDTH=$record_width" "DEMO_HEIGHT=$record_height" "DEMO_NO_COLOR=$record_no_color" \
-    "DEMO_RUNTIME_DIRECTORY=$demo_runtime" \
+    "DEMO_RUNTIME_DIRECTORY=$demo_runtime" "DEMO_OBSERVER_SOURCES=${DEMO_OBSERVER_SOURCES:?Set the verified observer package directory.}" \
     "DEMO_GATE_DIRECTORY=$demo_runtime/gates" "DEMO_REQUEST_LOG=$demo_output/requests.jsonl"
 done
 demo_stop_api

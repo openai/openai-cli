@@ -15,7 +15,7 @@ from urllib.parse import urlsplit, parse_qs
 
 
 SCENES = ("org-limit", "org-limit-delete", "project-limit", "alert-create", "alert-edit",
-          "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print", "preflight-400")
+          "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print", "preflight-400", "preflight-recover")
 
 
 def write_text(path, value):
@@ -109,7 +109,8 @@ def main():
                             return
                         limit_reads[scene] += 1
                         result = state["limit"]
-                        if scene == "preflight-400" and limit_reads[scene] > 1:
+                        if ((scene == "preflight-400" and limit_reads[scene] > 1)
+                                or (scene == "preflight-recover" and limit_reads[scene] == 2)):
                             status, result = 400, {"error": {
                                 "message": "synthetic-private-preflight-message\u001b[2J",
                                 "param": "synthetic-private-preflight-field\nline",

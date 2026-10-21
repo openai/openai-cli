@@ -2,8 +2,10 @@
 """Check recorded bytes, actual child statuses, and synthetic mutation bodies."""
 
 import hashlib
+import importlib.util
 import json
 import math
+import re
 from pathlib import Path
 import sys
 import termios
@@ -11,16 +13,35 @@ from urllib.parse import urlsplit
 
 
 SCENES = ("org-limit", "org-limit-delete", "project-limit", "alert-create", "alert-edit",
-          "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print", "preflight-400")
+          "alert-delete", "rate-update", "uncertain", "slow-cancel", "alert-print", "preflight-400", "preflight-recover")
 
 
 def restored_offset(raw, loading=False):
-    """Require inline readiness and cursor restoration after the last rendered frame."""
-    assert b"\x1b[?1049h" not in raw and b"\x1b[?1049l" not in raw, "workspace entered an alternate screen"
+    """Require readiness and every emitted terminal reset before ordinary output."""
     ready = raw.find(b"Loading" if loading else b"Website controls and source errors: ?")
-    hidden, restored = raw.find(b"\x1b[?25l"), raw.rfind(b"\x1b[?25h")
-    assert ready >= 0 and hidden >= 0 and restored > max(ready, hidden), "inline workspace did not restore its cursor"
-    return restored + len(b"\x1b[?25h")
+    assert ready >= 0, "workspace never reached its expected ready state"
+    states, seen = {}, set()
+    for match in re.finditer(rb"\x1b\[\?([0-9;]+)([hl])", raw):
+        enabled = match[2] == b"h"
+        for value in match[1].split(b";"):
+            if not value:
+                continue
+            mode = int(value)
+            assert mode not in (47, 1047, 1049), "workspace used an alternate screen"
+            if mode in (25, 2004):
+                states[mode] = enabled, match.end()
+                seen.add((mode, enabled))
+    for match in re.finditer(rb"\x1b\[\??([0-9;]*)J", raw):
+        assert int(match[1].split(b";")[0] or b"0") not in (2, 3), "workspace cleared the screen or scrollback"
+    assert (25, False) in seen and (2004, True) in seen, "workspace did not initialize expected terminal modes"
+    assert states.get(25, (False, 0))[0] is True, "workspace left its cursor hidden"
+    assert states.get(2004, (True, 0))[0] is False, "workspace left bracketed paste enabled"
+    controls = list(re.finditer(rb"\x1b\[(?:[<>=?][ -?]*u|>[ -?]*m)", raw))
+    expected = [b"\x1b[>4;2m", b"\x1b[>1u", b"\x1b[?u", b"\x1b[>4m", b"\x1b[<1u"]
+    assert [item[0] for item in controls] == expected, "workspace keyboard controls differ from the pinned lifecycle"
+    endings = [states[25][1], states[2004][1], controls[-2].end(), controls[-1].end()]
+    assert min(endings) > ready, "terminal modes were not restored after workspace readiness"
+    return max(endings)
 
 
 def validate_rendered_checkpoints(root):
@@ -54,6 +75,37 @@ def validate_rendered_checkpoints(root):
     print("PASS: rendered checkpoint names, exact times, PNGs, and frame GIFs match source evidence without missing or extra files.")
 
 
+def observed_scene(root, scene, evidence, child):
+    spec = importlib.util.spec_from_file_location("limits_replay_driver", Path(__file__).with_name("scene.py"))
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    replies = []
+    observer = driver.TerminalObserver(evidence["width"], evidence["height"], replies.append)
+    points = iter(evidence["checkpoints"])
+    point = next(points, None)
+    for event in child[1:]:
+        while point is not None and point["seconds"] < event[0]:
+            expected = (root / (scene + "-evidence." + point["name"] + ".txt")).read_text()
+            assert observer.text() == expected, (scene, point["name"], "viewport differs from captured bytes")
+            point = next(points, None)
+        if event[1] == "o":
+            observer.feed(event[2].encode())
+        elif event[1] == "r":
+            width, height = map(int, event[2].split("x"))
+            observer.resize(width, height)
+        else:
+            raise AssertionError("unexpected child capture event")
+    while point is not None:
+        expected = (root / (scene + "-evidence." + point["name"] + ".txt")).read_text()
+        assert observer.text() == expected, (scene, point["name"], "final viewport differs from capture")
+        point = next(points, None)
+    assert not observer.pending, (scene, "unfinished terminal control")
+    assert observer.text() == (root / (scene + "-evidence.exit.txt")).read_text()
+    assert observer.history() == evidence["prior_scrollback"]["retained"]
+    assert [reply.decode("ascii") for reply in replies] == evidence["protocol_replies"]
+    return observer
+
+
 def main():
     if len(sys.argv) not in {2, 3} or len(sys.argv) == 3 and sys.argv[2] != "--rendered-checkpoints":
         raise SystemExit("usage: validate.py OUTPUT_DIRECTORY [--rendered-checkpoints]")
@@ -61,6 +113,7 @@ def main():
     if len(sys.argv) == 3:
         validate_rendered_checkpoints(root)
         return
+    assert (root / "observer-validation.txt").read_text() == "PASS: observer split/coalesced queries; keyboard controls; cursor bounds; retained history.\n"
     requests = [json.loads(line) for line in (root / "requests.jsonl").read_text().splitlines()]
     for scene in SCENES:
         evidence = json.loads((root / (scene + "-evidence.json")).read_text())
@@ -88,6 +141,24 @@ def main():
         raw = (root / (scene + "-evidence.tty")).read_bytes()
         restored_offset(raw, loading=scene == "slow-cancel")
         child = [json.loads(line) for line in (root / (scene + "-evidence.child.cast")).read_text().splitlines()]
+        observer = observed_scene(root, scene, evidence, child)
+        assert observer.bytes_observed == evidence["observer"]["bytes_observed"] == len(raw)
+        assert evidence["observer"]["source_manifest_sha256"] == "9d048014421425452323fff126d2b460d33357aef64692d07f9e142b6b9888ad"
+        newline = "\r\n" if initial[1] & termios.OPOST and initial[1] & termios.ONLCR else "\n"
+        rows = evidence["height"] * 2 + 4 if scene == "project-limit" else 0
+        prelude = "".join(f"Prior shell output {number:03d}" + newline for number in range(1, rows + 1))
+        prelude += "F40 workspace start" + newline
+        assert raw.startswith(prelude.encode()) and evidence["prelude_boundary"] == len(prelude.encode())
+        assert evidence["prior_scrollback"]["seeded"] == (scene == "project-limit")
+        if scene == "project-limit":
+            expected = [f"Prior shell output {number:03d}" for number in range(1, 4)]
+            positions = [observer.history().index(line) for line in expected]
+            assert positions == sorted(positions), "prior scrollback changed order"
+        resize_events = [event for event in child[1:] if event[1] == "r"]
+        assert resize_events == evidence["resize_events"]
+        target = "40x12" if evidence["width"] == 80 else "80x24"
+        sizes = [event[2] for event in resize_events]
+        assert sizes == (["39x11", target, f'{evidence["width"]}x{evidence["height"]}'] if scene == "alert-create" else [])
         child_bytes = "".join(event[2] for event in child[1:] if event[1] == "o").encode()
         outer = [json.loads(line) for line in (root / (scene + ".cast")).read_text().splitlines()]
         outer_bytes = "".join(event[2] for event in outer[1:] if event[1] == "o").encode()
@@ -176,18 +247,30 @@ def main():
             continue
         if scene == "alert-create":
             required = ("validation", "validation-help", "draft-return", "review-back",
-                        "review-top", "review-before-help", "review-help", "review-return", "review-apply", "saved")
+                        "review-top", "review-before-help", "review-help", "review-help-small", "review-help-resized",
+                        "review-return", "review-resize-return", "review-resize-draft", "review-resized-top",
+                        "review-resized-command", "review-apply", "saved")
             assert all(name in checkpoints for name in required)
             assert all(checkpoints[left]["seconds"] < checkpoints[right]["seconds"] for left, right in zip(required, required[1:]))
             for name, messages in (("validation", ("Enter a USD amount", "Review change")),
                                    ("validation-help", ("Draft details", "two decimal places.")),
                                    ("draft-return", ("> Review change", "Demo")),
                                    ("review-back", ("Monthly USD", "75.50")),
-                                   ("review-return", ("> Back", "Apply change"))):
+                                   ("review-return", ("> Back", "Read to the end"))):
                 screen = (root / (scene + "-evidence." + name + ".txt")).read_text()
                 assert all(message in screen for message in messages), (scene, name, "missing draft recovery evidence")
+        if scene == "preflight-recover":
+            required = ("review-command", "review-apply", "recover-failed", "recover-refreshed",
+                        "refreshed-review-command", "refreshed-review-apply", "saved")
+            assert all(name in checkpoints for name in required)
+            assert all(checkpoints[left]["seconds"] < checkpoints[right]["seconds"] for left, right in zip(required, required[1:]))
+            reads = [entry for entry in requests if entry["scene"] == scene and entry["path"].endswith("/spend_limit") and entry["method"] == "GET"]
+            assert len(reads) >= 4 and [entry["status"] for entry in reads[:2]] == [200, 400]
+            assert all(entry["status"] == 200 for entry in reads[2:])
+            assert (root / (scene + "-evidence.recover-refreshed.txt")).read_text().count("125.25") >= 1
+            assert [event["key"] for event in evidence["keys"]].count("Apply refreshed") == 1
         request = mutations[0]
-        if scene in {"org-limit", "project-limit", "uncertain"}:
+        if scene in {"org-limit", "project-limit", "uncertain", "preflight-recover"}:
             assert request["body"] == {"currency": "USD", "interval": "month", "threshold_amount": 12525}
         elif scene in {"alert-create", "alert-edit"}:
             assert request["body"] == {"currency": "USD", "interval": "month",
@@ -202,18 +285,23 @@ def main():
         elif scene == "rate-update":
             assert request["body"] == {"max_requests_per_1_minute": 250, "max_tokens_per_1_day": 9007199254740993}
         if scene == "uncertain":
+            assert "uncertain-refreshed" in checkpoints
+            assert [event["key"] for event in evidence["keys"]].count("Refresh uncertain outcome") == 1
             assert request["status"] == "response_lost_after_write"
         else:
             assert request["status"] == 200
         assert "review-command" in checkpoints and "review-apply" in checkpoints
         assert checkpoints["review-command"]["seconds"] < checkpoints["review-apply"]["seconds"]
         assert [event["key"] for event in evidence["keys"]].count("Apply") == 1
-    print("PASS: eleven real workspace processes; exact child/raw/outer bytes; expected exits and mutation bodies.")
+    print("PASS: twelve real workspace processes; exact child/raw/outer bytes; expected exits and mutation bodies.")
     print("PASS: one mutation per confirmed action; no retry after uncertain outcome; slow load canceled without mutation.")
-    print("PASS: native Bash parents preserve CLI exits; staged binary hashes match; ten inspection previews; staged files removed.")
+    print("PASS: native Bash parents preserve CLI exits; staged binary hashes match; eleven inspection previews; staged files removed.")
     print("PASS: all seven terminal mode fields restored before Bash exits; only Darwin PENDIN normalized.")
     print("PASS: Ctrl+P exits without mutation; the complete command prints byte-for-byte after terminal restoration.")
     print("PASS: preflight HTTP 400 retains the draft; safe F1 recovery; zero mutations; normal exit preserves failure.")
+    print("PASS: prior shell scrollback retained; child resize events reset Apply; draft survives help and resizing.")
+    print("PASS: failed preflight refresh recovers before one write; uncertain writes remain locked after refresh.")
+    print("PASS: paste, keyboard modes, and cursor reset before ordinary output; viewport checkpoints replay from exact bytes.")
     print("LIMIT: inspect all checkpoint images and GIF frames before claiming visual acceptance.")
 
 

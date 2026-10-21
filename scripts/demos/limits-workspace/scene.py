@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Drive the real workspace with deterministic synthetic input and retain raw bytes."""
 
+import codecs
+import errno
 import hashlib
 import importlib.util
 import json
 import os
+import re
+import select
 from pathlib import Path
 import shutil
 import subprocess
@@ -19,7 +23,11 @@ harness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(harness)
 
 # Trapped signals retain their default disposition in the foreground CLI child.
-BASH_WORKSPACE = r'''trap ':' HUP INT TERM
+BASH_WORKSPACE = r'''for ((limits_seed=1; limits_seed<=DEMO_SCROLLBACK_ROWS; limits_seed++)); do
+  printf "Prior shell output %03d\n" "$limits_seed"
+done
+printf "F40 workspace start\n"
+trap ':' HUP INT TERM
 "$@"
 limits_scene_status=$?
 printf '%s\n' "$limits_scene_status" > "$DEMO_CLI_EXIT" || exit 74
@@ -34,13 +42,136 @@ exit "$limits_scene_status"
 '''
 
 
-def restored_offset(raw, loading=False):
-    """Require inline readiness and cursor restoration after the last rendered frame."""
-    assert b"\x1b[?1049h" not in raw and b"\x1b[?1049l" not in raw, "workspace entered an alternate screen"
-    ready = raw.find(b"Loading" if loading else b"Website controls and source errors: ?")
-    hidden, restored = raw.find(b"\x1b[?25l"), raw.rfind(b"\x1b[?25h")
-    assert ready >= 0 and hidden >= 0 and restored > max(ready, hidden), "inline workspace did not restore its cursor"
-    return restored + len(b"\x1b[?25h")
+validator_spec = importlib.util.spec_from_file_location("limits_demo_validator", Path(__file__).with_name("validate.py"))
+validator = importlib.util.module_from_spec(validator_spec)
+validator_spec.loader.exec_module(validator)
+restored_offset = validator.restored_offset
+
+observer_path = Path(__file__).parents[1] / "audio-workbench" / "observer.py"
+observer_spec = importlib.util.spec_from_file_location("limits_verified_observer_sources", observer_path)
+observer_sources = importlib.util.module_from_spec(observer_spec)
+observer_spec.loader.exec_module(observer_sources)
+pyte = observer_sources._verified_packages(os.environ.get("DEMO_OBSERVER_SOURCES"))
+
+
+class TerminalObserver:
+    """Observe synthetic output and reply at the actual terminal query boundary."""
+    def __init__(self, width, height, reply):
+        class Screen(pyte.HistoryScreen):
+            def write_process_input(self, data):
+                reply(data.encode())
+
+            def report_device_status(self, mode, **kwargs):
+                if not kwargs.get("private"):
+                    column = self.cursor.x
+                    self.cursor.x = min(column, self.columns - 1)
+                    try:
+                        super().report_device_status(mode)
+                    finally:
+                        self.cursor.x = column
+
+            def report_device_attributes(self, mode=0, **kwargs):
+                if mode == 0 and not kwargs.get("private"):
+                    self.write_process_input("\x1b[?1;2c")
+
+        self.screen = Screen(width, height, history=observer_sources.HISTORY_ROWS)
+        self.stream = pyte.ByteStream(self.screen)
+        self.pending = bytearray()
+        self.bytes_observed = 0
+
+    def feed(self, data):
+        self.bytes_observed += len(data)
+        self.pending.extend(data)
+        while self.pending:
+            if self.pending[0] != 27:
+                end = self.pending.find(b"\x1b")
+                end = len(self.pending) if end < 0 else end
+            elif len(self.pending) < 2:
+                break
+            elif self.pending[1] == ord("["):
+                end = next((i + 1 for i in range(2, len(self.pending))
+                            if 0x40 <= self.pending[i] <= 0x7e), None)
+                if end is None:
+                    break
+            elif self.pending[1] in b"]PX^_":
+                terminators = ((b"\x07", 1), (b"\x1b\\", 2)) if self.pending[1] == ord("]") else ((b"\x1b\\", 2),)
+                endings = [position + size for marker, size in terminators
+                           if (position := self.pending.find(marker, 2)) >= 0]
+                if not endings:
+                    break
+                end = min(endings)
+            else:
+                end = 1
+                while end < len(self.pending) and 0x20 <= self.pending[end] <= 0x2f:
+                    end += 1
+                if end == len(self.pending):
+                    break
+                assert 0x30 <= self.pending[end] <= 0x7e, "malformed terminal escape sequence"
+                end += 1
+            token = bytes(self.pending[:end])
+            del self.pending[:end]
+            if token in (b"\x1b]11;?\x07", b"\x1b]11;?\x1b\\"):
+                self.screen.write_process_input("\x1b]11;rgb:1818/1818/1818\x07")
+            elif token[:2] in (b"\x1bP", b"\x1bX", b"\x1b^", b"\x1b_") or re.fullmatch(rb"\x1b\[>[0-9;]*c", token):
+                pass  # Ignore unsupported string controls and secondary device queries.
+            elif not (re.fullmatch(rb"\x1b\[[<>=][0-9;]*u", token)
+                      or re.fullmatch(rb"\x1b\[>4(?:;[0-2])?m", token)):
+                self.stream.feed(token)
+        assert len(self.screen.history.top) < observer_sources.HISTORY_ROWS, "observer history reached its bound"
+
+    def resize(self, width, height):
+        self.screen.resize(lines=height, columns=width)
+
+    def text(self):
+        return "\n".join(self.screen.display)
+
+    def history(self):
+        return ["".join(line.get(column, self.screen.default_char).data
+                        for column in range(self.screen.columns)).rstrip()
+                for line in self.screen.history.top]
+
+
+def probe_observer():
+    payload = (b"before\r\n\x1b[6n\x1b]11;?\x07\x1b[c"
+               b"\x1bP+q5443\x1b\\\x1b_hidden\x1b\\\x1b[>0c"
+               b"\x1b[>4;2m\x1b[>1u\x1b[<1uafter\x1b[6n")
+    expected = [b"\x1b[2;1R", b"\x1b]11;rgb:1818/1818/1818\x07", b"\x1b[?1;2c", b"\x1b[2;6R"]
+    for boundary in range(len(payload) + 1):
+        replies = []
+        observer = TerminalObserver(40, 12, replies.append)
+        observer.feed(payload[:boundary])
+        observer.feed(payload[boundary:])
+        assert replies == expected and not observer.pending, "split query replies differ"
+        assert observer.screen.display[:2] == ["before".ljust(40), "after".ljust(40)]
+    replies = []
+    observer = TerminalObserver(40, 12, replies.append)
+    for byte in payload:
+        observer.feed(bytes([byte]))
+    assert replies == expected, "single-byte query replies differ"
+    observer = TerminalObserver(40, 12, replies.append)
+    observer.feed(b"x" * 40 + b"\x1b[6n")
+    assert replies[-1] == b"\x1b[1;40R", "cursor report exceeded the right margin"
+    observer = TerminalObserver(40, 12, lambda _: None)
+    observer.feed(b"".join(f"seed {number:02d}\r\n".encode() for number in range(30)))
+    assert observer.history()[:3] == ["seed 00", "seed 01", "seed 02"]
+    for prefix, final in ((b"\x1b(", b"B"), (b"\x1b#", b"8"), (b"\x1bPq", b"\x1b\\")):
+        observer = TerminalObserver(40, 12, lambda _: None)
+        observer.feed(prefix)
+        assert observer.pending, "incomplete escape was accepted"
+        observer.feed(final)
+        assert not observer.pending, "complete escape remained pending"
+    restored = (b"\x1b[?25l\x1b[?2004h\x1b[>4;2m\x1b[>1u\x1b[?u"
+                b"Website controls and source errors: ?\x1b[?2004l\x1b[>4m\x1b[<1u\x1b[?25h")
+    assert restored_offset(restored) == len(restored)
+    for late in (b"\x1b[>5u", b"\x1b[>4;1m", b"\x1b[>04;1m", b"\x1b[?25;2004h",
+                 b"\x1b[?1049;25h", b"\x1b[2;0J", b"\x1b[?25l", b"\x1b[<2u"):
+        try:
+            restored_offset(restored + late)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("late terminal mode change was accepted")
+    print("PASS: observer split/coalesced queries; keyboard controls; cursor bounds; retained history.")
 
 
 def write_text(path, value):
@@ -52,15 +183,36 @@ def write_text(path, value):
 class RelayTerminal(harness.Terminal):
     def __init__(self, *args, terminal_snapshot, **kwargs):
         self.terminal_snapshot = terminal_snapshot
+        self.protocol_replies = []
+        self.decoder = codecs.getincrementaldecoder("utf-8")("strict")
+        self.observer = TerminalObserver(kwargs["width"], kwargs["height"], self.reply)
         super().__init__(*args, **kwargs)
 
     def read(self, duration=0.05):
-        offset = len(self.raw)
-        super().read(duration)
-        chunk = self.raw[offset:]
+        if not select.select([self.master], [], [], duration)[0]:
+            return
+        try:
+            chunk = os.read(self.master, 65536)
+        except OSError as error:
+            if error.errno == errno.EIO:
+                return
+            raise
+        self.raw.extend(chunk)
+        decoded = self.decoder.decode(chunk)
+        if decoded:
+            self.events.append([time.monotonic() - self.started, "o", decoded])
+        self.observer.feed(chunk)
         if sys.stdout.buffer.write(chunk) != len(chunk):
             raise OSError("short terminal relay write")
         sys.stdout.buffer.flush()
+
+    def resize(self, width, height, notify=True):
+        self.observer.resize(width, height)
+        super().resize(width, height, notify=notify)
+
+    def reply(self, value):
+        self.protocol_replies.append(value.decode("ascii"))
+        self.send(value)
 
     def send(self, value):
         if os.write(self.master, value) != len(value):
@@ -88,6 +240,7 @@ class RelayTerminal(harness.Terminal):
             initial[3] &= ~termios.PENDIN
         if restored != initial:
             raise AssertionError("workspace did not restore terminal input")
+        self.decoder.decode(b"", final=True)
         restored_offset(self.raw, loading=expected == 130)
         if self.raw.rfind(b"\x1b[?25h") <= self.raw.rfind(b"\x1b[?25l"):
             raise AssertionError("workspace did not restore cursor visibility")
@@ -100,15 +253,7 @@ def drain(terminal, seconds):
 
 
 def screen_text(terminal):
-    with tempfile.TemporaryDirectory(prefix="limits-demo-screen-") as temporary:
-        recording, transcript = Path(temporary) / "screen.cast", Path(temporary) / "screen.txt"
-        header = {"version": 2, "width": terminal.initial_size[0], "height": terminal.initial_size[1]}
-        write_text(recording, "\n".join(json.dumps(item) for item in [header, *terminal.events]) + "\n")
-        subprocess.run([os.environ["DEMO_ASCIINEMA"], "convert", "-f", "txt", str(recording), str(transcript)],
-                       capture_output=True, check=True, timeout=10,
-                       env={"PATH": "/usr/bin:/bin", "HOME": temporary,
-                            "ASCIINEMA_STATE_HOME": temporary + "/state", "ASCIINEMA_CONFIG_HOME": temporary + "/config"})
-        return transcript.read_text()
+    return terminal.observer.text()
 
 
 def wait_screen(terminal, required, forbidden=(), timeout=10):
@@ -153,16 +298,16 @@ def replace(terminal, evidence, label, value):
     key(terminal, evidence, label, b"\x01\x0b\x1b[200~" + value.encode() + b"\x1b[201~")
 
 
-def review(terminal, evidence, scene, output):
+def read_review(terminal, evidence, scene, output, name):
     wait_screen(terminal, ["> Back", "Enter: select"])
-    checkpoint(terminal, evidence, output, "review-top")
+    checkpoint(terminal, evidence, output, name + "-top")
     preview_seen = False
     for _ in range(40):
         screen = screen_text(terminal)
         if "Command printing needs" in screen or "Command preview omitted" in screen:
             raise AssertionError("review omitted the real command preview")
         if not preview_seen and "Command preview (inspection only)" in screen:
-            checkpoint(terminal, evidence, output, "review-command",
+            checkpoint(terminal, evidence, output, name + "-command",
                        ("Command preview (inspection only)",))
             preview_seen = True
         if "Apply change" in screen and "Read to the end" not in screen:
@@ -177,9 +322,13 @@ def review(terminal, evidence, scene, output):
         raise AssertionError("review reached Apply without a command preview checkpoint")
     if mutations(scene):
         raise AssertionError("fixture received a mutation before explicit confirmation")
+
+
+def review(terminal, evidence, scene, output, name="review"):
+    read_review(terminal, evidence, scene, output, name)
     if scene == "alert-print":
         wait_screen(terminal, ["Ctrl+P"])
-        checkpoint(terminal, evidence, output, "review-print", ("Ctrl+P",))
+        checkpoint(terminal, evidence, output, name + "-print", ("Ctrl+P",))
         key(terminal, evidence, "Ctrl+P print and exit", b"\x10")
         return
     key(terminal, evidence, "Tab to Apply", b"\t")
@@ -189,15 +338,36 @@ def review(terminal, evidence, scene, output):
         key(terminal, evidence, "Review help", b"\x1bOP")
         wait_screen(terminal, ["Spend manages hard monthly"])
         checkpoint(terminal, evidence, output, "review-help")
+        terminal.resize(39, 11)
+        wait_screen(terminal, ["Resize to at least 40 x 12."])
+        checkpoint(terminal, evidence, output, "review-help-small")
+        target = (40, 12) if terminal.initial_size == (80, 24) else (80, 24)
+        terminal.resize(*target)
+        wait_screen(terminal, ["Spend manages hard monthly"], ["Resize to at least"])
+        checkpoint(terminal, evidence, output, "review-help-resized")
         key(terminal, evidence, "Return to review", b"\x1b")
-        wait_screen(terminal, ["> Back", "Apply change"], ["> Apply change"])
-        checkpoint(terminal, evidence, output, "review-return", ("> Back",))
+        wait_screen(terminal, ["> Back", "Read to the end"], ["> Apply change"])
+        checkpoint(terminal, evidence, output, "review-return", ("> Back", "Read to the end"))
+        key(terminal, evidence, "Apply blocked until reread", b"\t")
+        wait_screen(terminal, ["> Back", "Read to the end"], ["> Apply change"])
+        terminal.resize(*terminal.initial_size)
+        wait_screen(terminal, ["> Back", "Read to the end"], ["> Apply change"])
+        checkpoint(terminal, evidence, output, "review-resize-return")
         if mutations(scene):
-            raise AssertionError("returning from help applied the draft")
+            raise AssertionError("resizing or returning from help applied the draft")
+        key(terminal, evidence, "Inspect draft after resize", b"\x1b")
+        for _ in range(4):
+            key(terminal, evidence, "Previous resized alert field", b"\x1b[Z")
+        wait_screen(terminal, ["Monthly USD", "75.50", "Review change"])
+        checkpoint(terminal, evidence, output, "review-resize-draft", ("Monthly USD", "75.50"))
+        for _ in range(4):
+            key(terminal, evidence, "Next resized alert field", b"\t")
+        key(terminal, evidence, "Fresh review after resize", b"\r")
+        read_review(terminal, evidence, scene, output, "review-resized")
         key(terminal, evidence, "Select Apply again", b"\t")
         wait_screen(terminal, ["> Apply change"])
-    checkpoint(terminal, evidence, output, "review-apply")
-    key(terminal, evidence, "Apply", b"\r")
+    checkpoint(terminal, evidence, output, name + "-apply")
+    key(terminal, evidence, "Apply" if name == "review" else "Apply refreshed", b"\r")
 
 
 def run_scene(terminal, scene, evidence, output):
@@ -327,6 +497,24 @@ def run_scene(terminal, scene, evidence, output):
         evidence["printed_command"] = {"byte_offset": start, "byte_length": len(expected),
                                        "sha256": hashlib.sha256(expected).hexdigest()}
         checkpoint(terminal, evidence, output, "printed-command")
+    elif scene == "preflight-recover":
+        wait_screen(terminal, ["HTTP 400", "125.25", "Review change"], ["Saving"])
+        checkpoint(terminal, evidence, output, "recover-failed", ("HTTP 400", "125.25"))
+        if mutations(scene):
+            raise AssertionError("failed preflight sent a mutation")
+        key(terminal, evidence, "Refresh retained draft", b"r")
+        wait_screen(terminal, ["Baseline refreshed.", "125.25", "Review change"], ["Loading"])
+        checkpoint(terminal, evidence, output, "recover-refreshed", ("125.25", "Baseline refreshed."))
+        if mutations(scene):
+            raise AssertionError("refresh applied the retained draft")
+        key(terminal, evidence, "Review recovered draft", b"\r")
+        review(terminal, evidence, scene, output, "refreshed-review")
+        wait_screen(terminal, ["Change confirmed."], ["Loading", "Saving"])
+        checkpoint(terminal, evidence, output, "saved")
+        key(terminal, evidence, "Quit", b"q")
+        terminal.finish(0)
+        if len(mutations(scene)) != 1:
+            raise AssertionError("recovered preflight did not produce exactly one mutation")
     elif scene == "preflight-400":
         wait_screen(terminal, ["HTTP 400", "125.25", "Review change"], ["Saving"])
         checkpoint(terminal, evidence, output, "preflight", ("HTTP 400", "125.25"))
@@ -369,6 +557,12 @@ def run_scene(terminal, scene, evidence, output):
             raise AssertionError("uncertain write repeated automatically")
         key(terminal, evidence, "Back", b"\x1b")
         wait_screen(terminal, ["Writes locked"])
+        key(terminal, evidence, "Refresh uncertain outcome", b"r")
+        wait_screen(terminal, ["Writes locked", "125.25"], ["Loading"])
+        checkpoint(terminal, evidence, output, "uncertain-refreshed", ("Writes locked", "125.25"))
+        key(terminal, evidence, "Blocked change after refresh", b"\r")
+        if len(mutations(scene)) != 1:
+            raise AssertionError("refresh unlocked an uncertain write")
         key(terminal, evidence, "Quit", b"q")
         terminal.finish(1)
     else:
@@ -421,7 +615,8 @@ def main():
                    "GOMAXPROCS": "2", "PAGER": "cat", "OPENAI_API_KEY": "synthetic-demo-key",
                    "OPENAI_ADMIN_KEY": "synthetic-demo-admin-key", "OPENAI_BASE_URL": os.environ["OPENAI_BASE_URL"],
                    "DEMO_CLI_EXIT": str(exit_receipt), "DEMO_TERMIOS_PYTHON": sys.executable,
-                   "DEMO_TERMIOS_SNAPSHOT": str(terminal_snapshot)}
+                   "DEMO_TERMIOS_SNAPSHOT": str(terminal_snapshot),
+                   "DEMO_SCROLLBACK_ROWS": str(height * 2 + 4 if scene == "project-limit" else 0)}
             if os.environ.get("DEMO_NO_COLOR", "1") == "1":
                 env.update(NO_COLOR="1", FORCE_COLOR="0")
             terminal = None
@@ -437,6 +632,23 @@ def main():
                     raise AssertionError("Bash did not preserve the actual CLI exit status")
                 evidence["cli_exit_status"] = int(status_text)
                 evidence["terminal_modes"] = terminal.terminal_modes
+                newline = b"\r\n" if terminal.initial[1] & termios.OPOST and terminal.initial[1] & termios.ONLCR else b"\n"
+                marker = b"F40 workspace start" + newline
+                assert terminal.raw.count(marker) == 1, "missing or repeated prelude boundary"
+                evidence["prelude_boundary"] = terminal.raw.index(marker) + len(marker)
+                assert not terminal.observer.pending, "terminal ended inside a control sequence"
+                evidence["observer"] = {"bytes_observed": terminal.observer.bytes_observed,
+                                        "source_manifest_sha256": observer_sources.MANIFEST_SHA256,
+                                        "package_commits": dict(observer_sources.COMMITS),
+                                        "limitation": "Offline viewport model; resize clips without terminal reflow."}
+                history = terminal.observer.history()
+                evidence["prior_scrollback"] = {"seeded": scene == "project-limit", "retained": history}
+                if scene == "project-limit":
+                    expected = [f"Prior shell output {number:03d}" for number in range(1, 4)]
+                    positions = [history.index(line) for line in expected]
+                    assert positions == sorted(positions), "prior shell scrollback changed order"
+                evidence["protocol_replies"] = terminal.protocol_replies
+                evidence["resize_events"] = [event for event in terminal.events if event[1] == "r"]
                 evidence["staged_binary"]["sha256_after"] = hashlib.sha256(staged.read_bytes()).hexdigest()
                 if (evidence["staged_binary"]["sha256_after"] != evidence["binary_sha256"]
                         or hashlib.sha256(binary.read_bytes()).hexdigest() != evidence["binary_sha256"]):
@@ -472,4 +684,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--check-observer"]:
+        probe_observer()
+    elif len(sys.argv) == 1:
+        main()
+    else:
+        raise SystemExit("usage: scene.py [--check-observer]")
