@@ -57,7 +57,12 @@ func TestMainPickerShellSetupNativeContract(t *testing.T) {
 					}
 					data, err := os.ReadFile(profile)
 					if contract == "supported" {
-						if got.code != 0 || got.stderr != "Tab setup saved for future terminals. Existing custom bindings are preserved.\n" {
+						// Machine error output suppresses optional success receipts.
+						wantDiagnostic := ""
+						if format == "text" {
+							wantDiagnostic = "Tab setup saved for future terminals. Existing custom bindings are preserved.\n"
+						}
+						if got.code != 0 || got.stderr != wantDiagnostic {
 							t.Fatalf("positive installation contract failed: %+v", got)
 						}
 						if err != nil || strings.Count(string(data), "# >>> openai image picker") != 1 {

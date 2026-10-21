@@ -115,8 +115,8 @@ filesystems without it refuse the change instead of overwriting a profile.
 
 Some kernels and filesystems, including the tested WSL1 filesystem, lack this
 atomic operation. Explicit setup then fails with a readable error and a nonzero
-exit status. `--format-error json` keeps the error structured. Ordinary commands,
-completion output, and quiet optional first-use setup remain available.
+exit status. `--format-error json` keeps the error structured. Ordinary commands
+and completion output remain available. Failed optional first-use setup stays quiet.
 Type `openai images generate` and press Enter to use the picker without persistent
 setup. The [current-session shortcut](image-picker-shortcuts.md) also avoids
 profile changes. Persistent setup needs a supported kernel and filesystem.
