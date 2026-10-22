@@ -24,6 +24,7 @@ type imagePickerWorkspaceImage struct {
 	file                 imageoutput.SavedImage
 	protocol             string
 	rows                 []string
+	nativeRows           int
 	columns              int
 	offset, inlineOffset int
 	unavailableSize      *interactiveImageSize
@@ -88,17 +89,26 @@ func (w *imagePickerWorkspace) expandedView(m *imagePicker, busy bool) []string 
 		} else if m.note != "" {
 			lines[2] = "    " + ansi.Truncate(imagePickerLine(m.note), max(0, m.width-6), "…")
 		}
-		rows := w.expandedRows
-		if w.expandedIndex != w.selected || w.expandedSize.width != m.width || w.expandedSize.height != m.height || len(rows) == 0 {
+		rows, count, columns, native, expanded := w.expandedRows, w.expandedRowCount(), w.expandedColumns, w.expandedNativeRows > 0, true
+		if w.expandedIndex != w.selected || w.expandedSize.width != m.width || w.expandedSize.height != m.height || count == 0 {
 			rows = entry.rows
+			count, columns, native, expanded = entry.rowCount(), entry.columns, entry.nativeRows > 0, false
 		}
-		if len(rows) == 0 {
+		if count == 0 {
 			rows = []string{"Preview disabled or unavailable. The saved file is unchanged."}
+			count = len(rows)
 		}
 		available := max(0, len(lines)-4)
-		offset := max(0, min(entry.offset, max(0, len(rows)-available)))
-		for i := 0; i < available && offset+i < len(rows); i++ {
-			row := rows[offset+i]
+		offset := max(0, min(entry.offset, max(0, count-available)))
+		for i := 0; i < available && offset+i < count; i++ {
+			row := ""
+			if native {
+				if columns <= max(1, m.width-6) {
+					row = w.nativeViewRow(imagePickerNativeRow{w.selected, offset + i, columns, count, expanded}, i+3)
+				}
+			} else {
+				row = rows[offset+i]
+			}
 			if cells := terminalimage.RowColumns(row); cells < 0 || cells > max(1, m.width-6) {
 				row = ""
 			}
@@ -121,12 +131,17 @@ func (p *imagePickerInline) prepareExpanded() {
 	}
 	expanded := w.expanded
 	index := w.selected
+	missing, cacheMiss := w.missingNativeRow()
+	reload := cacheMiss && missing.expanded == expanded
+	columns := 0
+	if cacheMiss {
+		index, columns = missing.image, missing.columns
+	}
 	if !expanded {
-		index = w.inlineResizeIndex(interactiveImageSize{width: p.model.width, height: p.model.height})
-		if index < 0 {
-			return
+		if !cacheMiss {
+			index = w.inlineResizeIndex(interactiveImageSize{width: p.model.width, height: p.model.height})
 		}
-		if w.previewPending && !w.previewExpanded {
+		if index < 0 {
 			return
 		}
 	}
@@ -136,17 +151,17 @@ func (p *imagePickerInline) prepareExpanded() {
 		p.output.cancel()
 		return
 	}
-	if !expanded {
+	if !expanded && !cacheMiss {
 		index = w.inlineResizeIndex(size)
 		if index < 0 {
 			return
 		}
 	}
 	entry := w.images[index]
-	if w.previewPending && w.previewIndex == index && w.previewSize == size && w.previewExpanded == expanded {
+	if w.previewPending && w.previewIndex == index && w.previewSize == size && w.previewExpanded == expanded && w.previewReload == reload && w.previewColumns == columns {
 		return
 	}
-	if expanded && w.expandedIndex == w.selected && w.expandedSize == size && len(w.expandedRows) > 0 {
+	if expanded && !cacheMiss && w.expandedIndex == w.selected && w.expandedSize == size && w.expandedRowCount() > 0 {
 		return
 	}
 	if w.previewCancel != nil {
@@ -155,6 +170,7 @@ func (p *imagePickerInline) prepareExpanded() {
 	w.previewRevision++
 	revision := w.previewRevision
 	w.previewPending, w.previewIndex, w.previewSize, w.previewExpanded = true, index, size, expanded
+	w.previewReload, w.previewColumns = reload, columns
 	parent := w.context
 	if parent == nil {
 		parent = context.Background()
@@ -167,7 +183,13 @@ func (p *imagePickerInline) prepareExpanded() {
 		prepare = imagePickerPreviewRows
 	}
 	go func() {
-		prepared, failure := imagePickerPrepareResize(ctx, w.out, entry, size, expanded, prepare)
+		var prepared imagePickerExpandedRows
+		var failure error
+		if reload {
+			prepared, failure = imagePickerPrepareReload(ctx, w.out, entry, columns, prepare)
+		} else {
+			prepared, failure = imagePickerPrepareResize(ctx, w.out, entry, size, expanded, prepare)
+		}
 		if failure != nil {
 			w.previewErrorMu.Lock()
 			w.previewError = errors.Join(w.previewError, failure)
@@ -183,6 +205,29 @@ func (p *imagePickerInline) prepareExpanded() {
 			w.send(prepared)
 		}
 	}()
+}
+
+// A cache miss reuses the displayed column width. PrepareRows still measures
+// current cell geometry; its returned row count becomes the new layout geometry.
+func imagePickerPrepareReload(ctx context.Context, out *os.File, entry imagePickerWorkspaceImage, columns int, prepare func(context.Context, *os.File, image.Image, string, int) ([]string, string, error)) (imagePickerExpandedRows, error) {
+	result := imagePickerExpandedRows{protocol: entry.protocol, rows: []string{"Preview unavailable. Open the saved file; no need to generate again."}}
+	if entry.protocol == "" {
+		result.rows = []string{"Previews are disabled. The image is saved; open the saved file to view it."}
+		return result, nil
+	}
+	img, err := terminalimage.ReadSavedMatching(ctx, entry.file.Path, entry.file.SHA256)
+	if err != nil {
+		return result, nil
+	}
+	rows, protocol, err := prepare(ctx, out, img, entry.protocol, columns)
+	if err != nil {
+		if imagePickerSafePreviewFailure(err) {
+			return result, nil
+		}
+		return result, err
+	}
+	result.rows, result.protocol, result.columns = rows, protocol, columns
+	return result, nil
 }
 
 func (p *imagePickerInline) expandImages() {
@@ -226,11 +271,11 @@ func (w *imagePickerWorkspace) selectImage(delta int) {
 
 func (w *imagePickerWorkspace) scrollExpanded(delta int) {
 	if len(w.images) > 0 {
-		rows := w.expandedRows
-		if w.expandedIndex != w.selected || len(rows) == 0 {
-			rows = w.images[w.selected].rows
+		count := w.expandedRowCount()
+		if w.expandedIndex != w.selected || count == 0 {
+			count = w.images[w.selected].rowCount()
 		}
-		limit := max(0, len(rows)-max(0, w.height-4))
+		limit := max(0, count-max(0, w.height-4))
 		offset := max(0, min(w.images[w.selected].offset, limit))
 		if delta >= limit {
 			offset = limit
@@ -244,6 +289,11 @@ func (w *imagePickerWorkspace) scrollExpanded(delta int) {
 }
 
 func (w *imagePickerWorkspace) appendImage(entry imagePickerWorkspaceImage) {
+	if imagePickerNativeRows(entry.rows) {
+		entry.nativeRows = len(entry.rows)
+		w.cacheNativeArrival(len(w.images), entry.columns, entry.rows)
+		entry.rows = nil
+	}
 	w.images = append(w.images, entry)
 	w.galleryRevision++
 }
@@ -373,6 +423,11 @@ func (w *imagePickerWorkspace) replaceImageRows(result imagePickerExpandedRows) 
 	}
 	entry.unavailableSize = nil
 	entry.rows, entry.columns, entry.protocol = result.rows, result.columns, result.protocol
+	entry.nativeRows = 0
+	if imagePickerNativeRows(result.rows) {
+		entry.nativeRows, entry.rows = len(result.rows), nil
+	}
+	w.discardNativeGeometry(result.index, false, entry.columns, entry.nativeRows)
 	w.galleryRevision++
 }
 
@@ -414,7 +469,7 @@ func (w *imagePickerWorkspace) inlineResizeIndex(size interactiveImageSize) int 
 		if entry.unavailableSize != nil {
 			return *entry.unavailableSize != size
 		}
-		return entry.columns > max(1, size.width-8) && len(entry.rows) > 0
+		return entry.columns > max(1, size.width-8) && entry.rowCount() > 0
 	}
 	if needs(w.selected) {
 		return w.selected

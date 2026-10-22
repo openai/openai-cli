@@ -9,7 +9,6 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/charmbracelet/colorprofile"
@@ -28,14 +27,24 @@ func TestImagePickerWorkspaceResizeDoesNotReplayOversizedNativeRows(t *testing.T
 		w := &imagePickerWorkspace{out: out}
 		w.appendImage(imagePickerWorkspaceImage{protocol: "iterm", columns: 64, rows: []string{row}})
 		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
-		require.Contains(t, strings.Join(w.painted, "\n"), row)
+		output, err := os.ReadFile(out.Name())
+		require.NoError(t, err)
+		require.Contains(t, string(output), row)
+		written := len(output)
 		m.width = 40
 		require.NoError(t, w.draw(m, colorprofile.ASCII, false, true))
-		require.NotContains(t, strings.Join(w.painted, "\n"), row)
+		output, err = os.ReadFile(out.Name())
+		require.NoError(t, err)
+		require.NotContains(t, string(output[written:]), row)
+		written = len(output)
 		w.expanded = true
 		require.NoError(t, w.draw(m, colorprofile.ASCII, false, false))
-		require.NotContains(t, strings.Join(w.painted, "\n"), row, "expanded fallback must also respect the smaller viewport")
-		require.Equal(t, row, w.images[0].rows[0], "resizing must retain the original cached preview")
+		output, err = os.ReadFile(out.Name())
+		require.NoError(t, err)
+		require.NotContains(t, string(output[written:]), row, "expanded fallback must also respect the smaller viewport")
+		cached, ok := w.nativePayload(imagePickerNativeRow{0, 0, 64, 1, false})
+		require.True(t, ok)
+		require.Equal(t, row, cached, "resizing may retain the original bounded cache entry")
 	}
 }
 

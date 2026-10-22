@@ -68,6 +68,9 @@ func (w *imagePickerWorkspace) inlineView(m *imagePicker, busy bool) []string {
 			row := ""
 			if w.offset+i < len(w.displayRows) {
 				row = w.displayRows[w.offset+i]
+				if native, ok := w.nativeDisplay[w.offset+i]; ok {
+					row = w.nativeViewRow(native, len(lines))
+				}
 			}
 			if !strings.Contains(row, "\x1b_G") && !strings.Contains(row, "\x1b]1337;") {
 				row = ansi.Truncate(row, max(0, m.width-8), "…")
@@ -94,7 +97,7 @@ func (w *imagePickerWorkspace) imageTitle() string {
 	return title
 }
 
-// Cached rows retain native image strings. Navigation changes offsets, not encodings.
+// Native slots retain their logical geometry without retaining PNG payloads.
 func (w *imagePickerWorkspace) layoutGallery(m *imagePicker) {
 	anchor, relative := -1, 0
 	if len(w.galleryStarts) > 0 && w.offset >= w.galleryStarts[0] {
@@ -103,6 +106,7 @@ func (w *imagePickerWorkspace) layoutGallery(m *imagePicker) {
 	}
 	first := w.layoutWidth == 0
 	w.displayRows = nil
+	w.nativeDisplay = make(map[int]imagePickerNativeRow)
 	appendRow := func(row string) {
 		if strings.Contains(row, "\x1b_G") || strings.Contains(row, "\x1b]1337;") {
 			if cells := terminalimage.RowColumns(row); cells < 0 || cells > max(1, m.width-8) {
@@ -136,10 +140,15 @@ func (w *imagePickerWorkspace) layoutGallery(m *imagePicker) {
 			w.displayRows = append(w.displayRows, ansi.Truncate(caption, max(1, m.width-8), "…"))
 		}
 		switch {
-		case len(entry.rows) == 0:
+		case entry.rowCount() == 0:
 			appendRow("Preview unavailable. Press O to open the saved image.")
 		case entry.columns > max(1, m.width-8):
 			appendRow("Select this image to fit the preview. Press O to open it.")
+		case entry.nativeRows > 0:
+			for row := range entry.nativeRows {
+				w.nativeDisplay[len(w.displayRows)] = imagePickerNativeRow{i, row, entry.columns, entry.nativeRows, false}
+				w.displayRows = append(w.displayRows, "")
+			}
 		default:
 			for _, row := range entry.rows {
 				appendRow(row)

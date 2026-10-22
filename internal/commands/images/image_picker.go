@@ -52,6 +52,12 @@ type imagePickerResult struct {
 }
 
 func runImagePicker(parent context.Context, input, output *os.File, options imagePickerOptions) (result imagePickerResult, err error) {
+	workspaceClosed := false
+	defer func() {
+		if options.workspace != nil && !workspaceClosed {
+			err = errors.Join(err, options.workspace.close())
+		}
+	}()
 	if err := parent.Err(); err != nil {
 		return imagePickerResult{}, err
 	}
@@ -166,6 +172,12 @@ func runImagePicker(parent context.Context, input, output *os.File, options imag
 		inline.err = errors.Join(inline.err, inline.workspace.stopMouse())
 	}
 	inline.stopWorkspaceRequest()
+	if inline.workspace != nil {
+		// DECRC also restores wrapping. Finish every workspace cursor restore
+		// before the inline mode owner restores the caller's wrapping mode.
+		workspaceClosed = true
+		inline.err = errors.Join(inline.err, inline.workspace.close())
+	}
 	inline.close()
 	writeErr := tracked.Err()
 	if writeErr != nil {

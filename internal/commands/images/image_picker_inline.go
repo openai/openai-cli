@@ -29,6 +29,9 @@ type imagePickerInline struct {
 	modesActive    bool
 	mouseShell     bool
 	restoreWrap    bool
+	wrapKnown      bool
+	wrapQueryless  bool
+	wrapProbe      *imagePickerWrapProbe
 	content        string
 	width, height  int
 	err            error
@@ -61,6 +64,7 @@ func (p *imagePickerInline) Init() tea.Cmd {
 	if os.Getenv("TERM_PROGRAM") == "Apple_Terminal" && os.Getenv("KITTY_WINDOW_ID") == "" {
 		// Apple Terminal can expose the final p of unsupported DECRQM requests.
 		query = ""
+		p.wrapQueryless = true
 		if p.workspace != nil {
 			if p.mouseShell {
 				query = p.workspace.mouse.openShell()
@@ -75,8 +79,9 @@ func (p *imagePickerInline) Init() tea.Cmd {
 		query += ansi.RequestBackgroundColor
 	}
 	_, _ = io.WriteString(p.output, query)
-	// Older terminals do not report modes. They retain the normal shell wrap
-	// assumption; terminals that report disabled wrapping get it restored below.
+	if p.wrapQueryless {
+		return p.probeWrapping()
+	}
 	return tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg { return imagePickerWrapTimeout{} })
 }
 
@@ -86,6 +91,9 @@ func (p *imagePickerInline) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			p.err = errors.Join(p.err, p.workspace.stopMouse())
 		}
 	}()
+	if handled, cmd := p.updateWrapProbe(msg); handled {
+		return p, cmd
+	}
 	if p.workspace != nil {
 		if handled, cmd := p.updateWorkspace(msg); handled {
 			return p, cmd
@@ -96,12 +104,15 @@ func (p *imagePickerInline) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		p.err = errors.New("could not read the terminal size")
 		return p, tea.Quit
 	case tea.ModeReportMsg:
-		if msg.Mode == ansi.ModeAutoWrap {
+		if msg.Mode == ansi.ModeAutoWrap && !p.wrapQueryless {
 			if msg.Value == ansi.ModePermanentlyReset {
 				p.err = errors.New("the image picker needs terminal line wrapping")
 				return p, tea.Quit
 			}
-			p.restoreWrap = msg.Value == ansi.ModeReset
+			if !p.started {
+				p.wrapKnown = msg.Value == ansi.ModeReset || msg.Value == ansi.ModeSet || msg.Value == ansi.ModePermanentlySet
+				p.restoreWrap = msg.Value == ansi.ModeReset
+			}
 			p.start()
 		}
 	case imagePickerWrapTimeout:
@@ -155,7 +166,7 @@ func (p *imagePickerInline) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (p *imagePickerInline) View() tea.View { return tea.NewView("") }
 
 func (p *imagePickerInline) start() {
-	if p.started || p.err != nil {
+	if p.started || p.err != nil || p.wrapQueryless && !p.wrapKnown {
 		return
 	}
 	p.openModes()

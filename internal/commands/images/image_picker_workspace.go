@@ -36,55 +36,64 @@ type imagePickerWorkspaceStage clioutput.LoadingStage
 // The UI goroutine owns the screen and history. Request workers publish events;
 // the receipt list also survives cancellation before the UI consumes an event.
 type imagePickerWorkspace struct {
-	out                                      *os.File
-	context                                  context.Context
-	root                                     *cli.Command
-	send                                     func(tea.Msg)
-	rows, painted                            []string
-	displayRows                              []string
-	layoutWidth, layoutCount, layoutSelected int
-	messageRows                              int
-	galleryStarts                            []int
-	galleryRevision, layoutRevision          uint64
-	layoutCaptions                           bool
-	galleryJump, galleryDetails              bool
-	viewportRows, bodyStart, bodyEnd         int
-	offset, top, width, height               int
-	origin                                   int
-	originKnown, originQueryPending          bool
-	frameRevision, originQueryRevision       uint64
-	header                                   tea.View
-	started, kitty                           bool
-	animationFrame                           int
-	stage                                    clioutput.LoadingStage
-	since                                    time.Time
-	receiptMu                                sync.Mutex
-	receipts                                 []string
-	images                                   []imagePickerWorkspaceImage
-	selected                                 int
-	expanded                                 bool
-	mouse                                    imagePickerMouseModes
-	expandedRows                             []string
-	expandedIndex                            int
-	expandedSize                             interactiveImageSize
-	previewRevision                          uint64
-	previewPending                           bool
-	previewIndex                             int
-	previewSize                              interactiveImageSize
-	previewExpanded                          bool
-	previewErrorMu                           sync.Mutex
-	previewError                             error
-	prepareRows                              func(context.Context, *os.File, image.Image, string, int) ([]string, string, error)
-	previewCancel                            context.CancelFunc
-	previewWorkers                           sync.WaitGroup
-	opening                                  bool
-	openWorkers                              sync.WaitGroup
-	openError                                bool
-	openErrorIndex                           int
-	viewAfter                                time.Time
-	openCancel                               context.CancelFunc
-	openImage                                func(context.Context, string) error
-	fontNotice                               bool // Owned by the sequential request worker.
+	out                                       *os.File
+	context                                   context.Context
+	root                                      *cli.Command
+	send                                      func(tea.Msg)
+	rows, painted                             []string
+	displayRows                               []string
+	layoutWidth, layoutCount, layoutSelected  int
+	messageRows                               int
+	galleryStarts                             []int
+	galleryRevision, layoutRevision           uint64
+	layoutCaptions                            bool
+	galleryJump, galleryDetails               bool
+	viewportRows, bodyStart, bodyEnd          int
+	offset, top, width, height                int
+	origin                                    int
+	originKnown, originQueryPending           bool
+	frameRevision, originQueryRevision        uint64
+	header                                    tea.View
+	started, kitty                            bool
+	animationFrame                            int
+	stage                                     clioutput.LoadingStage
+	since                                     time.Time
+	receiptMu                                 sync.Mutex
+	receipts                                  []string
+	images                                    []imagePickerWorkspaceImage
+	selected                                  int
+	expanded                                  bool
+	mouse                                     imagePickerMouseModes
+	expandedRows                              []string
+	expandedNativeRows, expandedColumns       int
+	nativeCache                               map[imagePickerNativeRow]imagePickerNativePayload
+	nativeBytes                               int
+	nativeClock                               uint64
+	nativeTransient                           map[imagePickerNativeRow]string
+	nativeDisplay, nativeFrame, nativePainted map[int]imagePickerNativeRow
+	nativeReady                               map[int]bool
+	expandedIndex                             int
+	expandedSize                              interactiveImageSize
+	previewRevision                           uint64
+	previewPending                            bool
+	previewIndex                              int
+	previewSize                               interactiveImageSize
+	previewExpanded                           bool
+	previewReload                             bool
+	previewColumns                            int
+	previewErrorMu                            sync.Mutex
+	previewError                              error
+	prepareRows                               func(context.Context, *os.File, image.Image, string, int) ([]string, string, error)
+	previewCancel                             context.CancelFunc
+	previewWorkers                            sync.WaitGroup
+	opening                                   bool
+	openWorkers                               sync.WaitGroup
+	openError                                 bool
+	openErrorIndex                            int
+	viewAfter                                 time.Time
+	openCancel                                context.CancelFunc
+	openImage                                 func(context.Context, string) error
+	fontNotice                                bool // Owned by the sequential request worker.
 }
 
 func (w *imagePickerWorkspace) saved(ctx context.Context, files []imageoutput.SavedImage, mode string) error {
@@ -190,6 +199,7 @@ func (w *imagePickerWorkspace) progress() string {
 }
 
 func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile, busy, headerChanged bool) error {
+	defer func() { w.nativeTransient = nil }()
 	width, height := m.width, m.height
 	if width <= 0 || height <= 0 {
 		return nil
@@ -203,6 +213,8 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		w.header = view
 	}
 	w.width, w.height = width, height
+	w.nativeFrame = make(map[int]imagePickerNativeRow)
+	w.nativeReady = make(map[int]bool)
 	var lines []string
 	if w.expanded && len(w.images) > 0 {
 		lines = w.expandedView(m, busy)
@@ -210,6 +222,8 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		lines = w.inlineView(m, busy)
 	}
 	lines = lines[:min(len(lines), height)]
+	repaint := resized || len(lines) != len(w.painted) || len(w.painted) == 0
+	keys, placements := w.nativePaintKeys(lines, repaint)
 	var output strings.Builder
 	if !w.started {
 		// The frame separates its title from the shell's prompt mark. Only
@@ -225,7 +239,7 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 	output.WriteString(ansi.ResetModeTextCursorEnable)
 	// The existing inline helper reserves one reflowable panel. Stable frames
 	// repaint changed rows only; resize and view changes replace that panel.
-	if resized || len(lines) != len(w.painted) || len(w.painted) == 0 {
+	if repaint {
 		w.frameRevision++
 		w.origin, w.originKnown = 0, len(lines) == height
 		if len(w.painted) > 0 {
@@ -236,7 +250,7 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		output.WriteString(ansi.SaveCursor)
 	} else {
 		for i, line := range lines {
-			if line == w.painted[i] {
+			if keys[i] == w.painted[i] {
 				continue
 			}
 			output.WriteString(ansi.RestoreCursor)
@@ -266,7 +280,6 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 		output.WriteString(ansi.CursorHorizontalAbsolute(cursor.X + 1))
 		output.WriteString(ansi.SetCursorStyle(5) + ansi.SetModeTextCursorEnable)
 	}
-	w.painted = lines
 	ctx := w.context
 	if ctx == nil {
 		ctx = context.Background()
@@ -277,10 +290,17 @@ func (w *imagePickerWorkspace) draw(m *imagePicker, profile colorprofile.Profile
 	if w.kitty {
 		protocol = "kitty"
 	}
-	return terminalimage.WriteFrame(writeCtx, w.out, output.String(), protocol)
+	if err := terminalimage.WriteFrame(writeCtx, w.out, output.String(), protocol); err != nil {
+		w.nativePainted = nil
+		return err
+	}
+	w.painted, w.nativePainted = keys, placements
+	w.retainNativeFrame()
+	return nil
 }
 
 func (w *imagePickerWorkspace) clearGraphics(output *strings.Builder) {
+	w.nativePainted = nil
 	if !w.kitty {
 		return
 	}

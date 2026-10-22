@@ -2,7 +2,6 @@ package images
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -57,9 +56,6 @@ func runImagePickerSession(ctx context.Context, input, output *os.File, options 
 		}
 	}
 	result, err := runImagePicker(ctx, input, output, options)
-	if options.workspace != nil {
-		err = errors.Join(err, options.workspace.close())
-	}
 	if err != nil || result.Canceled {
 		if result.changed {
 			result.draftSaved = saveImagePickerExitDraft(ctx, os.Stderr, path, result.settings)

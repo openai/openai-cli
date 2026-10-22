@@ -696,7 +696,7 @@ func TestImagePickerInlineRestoresModes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	w := &imagePickerOutput{File: f, cancel: cancel}
-	p := &imagePickerInline{output: w, restoreWrap: true}
+	p := &imagePickerInline{output: w, restoreWrap: true, wrapKnown: true}
 	p.start()
 	p.start() // Repeated capability replies must not start another lifecycle.
 	p.close()

@@ -117,6 +117,7 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 			w.selected = len(w.images) - 1
 			w.galleryJump = true
 		}
+		w.stageNativeRows(len(w.images)-1, false, msg.columns, msg.rows)
 		draw(true)
 		return true, nil
 	case imagePickerExpandedRows:
@@ -124,19 +125,27 @@ func (p *imagePickerInline) updateWorkspace(msg tea.Msg) (bool, tea.Cmd) {
 		if msg.revision == w.previewRevision {
 			w.previewPending = false
 		}
-		if msg.revision == w.previewRevision && msg.index >= 0 && msg.index < len(w.images) && (msg.inline || msg.index == w.selected) {
+		geometryCurrent := msg.size == w.previewSize && (msg.size.width == 0 || p.model != nil && msg.size.width == p.model.width && msg.size.height == p.model.height)
+		if msg.revision == w.previewRevision && geometryCurrent && msg.index >= 0 && msg.index < len(w.images) && (msg.inline || msg.index == w.selected) {
 			w.previewPending = false
 			if msg.inline {
 				w.replaceImageRows(msg)
+				w.stageNativeRows(msg.index, false, msg.columns, msg.rows)
 				draw(false)
 
 				return true, nil
 			}
 			w.expandedIndex, w.expandedSize, w.expandedRows = msg.index, msg.size, msg.rows
+			w.expandedNativeRows, w.expandedColumns = 0, msg.columns
+			if imagePickerNativeRows(msg.rows) {
+				w.expandedNativeRows, w.expandedRows = len(msg.rows), nil
+			}
+			w.discardNativeGeometry(msg.index, true, msg.columns, w.expandedNativeRows)
 			if msg.protocol != "" {
 				w.images[msg.index].protocol = msg.protocol
 			}
 			if w.expanded {
+				w.stageNativeRows(msg.index, true, msg.columns, msg.rows)
 				draw(false)
 			}
 		}
