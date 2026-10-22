@@ -101,7 +101,7 @@ var adminOrganizationProjectsAPIKeysList = cli.Command{
 
 var adminOrganizationProjectsAPIKeysDelete = cli.Command{
 	Name:    "delete",
-	Usage:   "Deletes an API key from the project.",
+	Usage:   "Deletes an API key from the project, including keys owned by service accounts.",
 	Suggest: true,
 	Flags: []cli.Flag{
 		&requestflag.Flag[string]{

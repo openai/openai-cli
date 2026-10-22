@@ -135,7 +135,7 @@
     },
     "generated/commands/adminorganizationprojectapikey.go": {
       "mode": "100644",
-      "sha256": "fe3e39586c5628f2415af012cce9a8f844222009faddc3fb6507a9aa4e44d1f1"
+      "sha256": "2935792e9609bcc2b09032a104051a480741b0b3a39dd68395b649ffa415b277"
     },
     "generated/commands/adminorganizationprojectapikey_test.go": {
       "mode": "100644",
