@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.2](https://github.com/openai/openai-cli/compare/v1.40.1...v1.40.2) (2026-10-22)
+
+
+### Chores
+
+* **api:** clarify service-account API key deletion ([#582](https://github.com/openai/openai-cli/issues/582)) ([7d32d04](https://github.com/openai/openai-cli/commit/7d32d0447842a4e664c1835a01ae94d7530e5e04))
+
 ## [1.40.1](https://github.com/openai/openai-cli/compare/v1.40.0...v1.40.1) (2026-10-21)
 
 
